@@ -462,10 +462,11 @@ public sealed partial class VideoView : UserControl
 
     private void UpdateDropHint()
     {
-        VideoDropHint.Visibility = _videos.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        // 注意:不能折叠 ListView 也不能关 IsHitTestVisible——空列表还要能拖入(video 列表空时可拖)。
-        // WinUI 空列表"幽灵项"悬停浮出模板「删除」按钮:用 FallbackValue=Collapsed 抑制(模板层)。
-        // 若仍冒「删除」,根治需在模板层把该按钮绑定到一个"真实完成项才可见"的强条件(而非仅 IsDone)。
+        bool empty = _videos.Count == 0;
+        VideoDropHint.Visibility = empty ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+        VideoList.Visibility = empty ? Microsoft.UI.Xaml.Visibility.Collapsed : Microsoft.UI.Xaml.Visibility.Visible;
+        // 空列表时 ListView 本体隐藏(防 WinUI 幽灵项渲染模板"删除/重新激活"浮字);
+        // 拖放功能在 VideoGridHost 上,隐藏 ListView 不影响拖入。
     }
 
     private void UpdateRunState()

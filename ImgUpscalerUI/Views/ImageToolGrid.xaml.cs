@@ -172,6 +172,7 @@ public sealed partial class ImageToolGrid : UserControl
         ClearBtn.IsEnabled = !_processing && n > 0;
         ClearBtn.Visibility = n > 0 ? Visibility.Visible : Visibility.Collapsed;
         DropHint.Visibility = n > 0 ? Visibility.Collapsed : Visibility.Visible;
+        ImageGrid.Visibility = n > 0 ? Visibility.Visible : Visibility.Collapsed;   // 空列表隐藏本体:防幽灵项浮字
         // 注意:不能设 GridHost.IsHitTestVisible=false——那会连拖放一起禁用(列表空时拖不进)。
         // WinUI 空列表幽灵项(悬停浮出模板元素)改用模板内按钮默认隐藏来解决,见 ItemTemplate。
         // (视频项 ReRunBtnVisibility 已加 FallbackValue=Collapsed;此处保持 GridHost 可交互)

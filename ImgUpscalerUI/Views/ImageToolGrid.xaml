@@ -101,7 +101,8 @@
                       CornerRadius="10"
                       Background="{StaticResource AppPanelBrush}"
                       BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
-                      Padding="10">
+                      Padding="10"
+                      Visibility="Collapsed">   <!-- 空列表隐藏本体:防 WinUI 幽灵项渲染模板;有图片时 UpdateListState 显示 -->
                 <GridView.ItemsPanel>
                     <ItemsPanelTemplate>
                         <ItemsWrapGrid Orientation="Horizontal"
