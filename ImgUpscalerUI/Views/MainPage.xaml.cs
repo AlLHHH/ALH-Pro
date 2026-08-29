@@ -1432,13 +1432,8 @@ public sealed partial class MainPage : Page
         var content = new StackPanel { Spacing = 10 };
         content.Children.Add(new TextBlock
         {
-            Text = "ALHPro 完全免费、无广告、无联网、无账号。如果你觉得它帮你省了时间,欢迎请作者喝一杯咖啡 ☕",
+            Text = "打赏完全自愿,仅代表对作者的支持与认可;不代表任何交易或回报承诺,感谢!",
             FontSize = 12, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, LineHeight = 19,
-        });
-        content.Children.Add(new TextBlock
-        {
-            Text = "金额随意,心意最重要;打赏无任何特权,软件会一直免费维护下去,感谢每一份支持!",
-            FontSize = 10, Opacity = 0.55, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, LineHeight = 17,
         });
         // 收款码:把图片放到「发布版\assets\coffee_qr.png」即自动显示(无需改代码)
         var qrPath = Path.Combine(AppContext.BaseDirectory, "assets", "coffee_qr.png");
@@ -1464,7 +1459,7 @@ public sealed partial class MainPage : Page
         }
         content.Children.Add(new TextBlock
         {
-            Text = "用手机扫描上图即可(金额随意,心意最重要)",
+            Text = "用手机扫描上图即可",
             FontSize = 10, Opacity = 0.55,
             HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
         });
