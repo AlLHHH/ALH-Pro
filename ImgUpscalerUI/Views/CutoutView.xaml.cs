@@ -364,10 +364,18 @@ public sealed partial class CutoutView : UserControl
         => PeekEnd();
 
 
-    // 预览图片尺寸确定后:对齐画布与图片显示区域,并重绘标记
+    // 预览图片尺寸确定后:重置缩放比;彩色预览显示中则重对齐/重生成棋盘格
     private void PreviewImage_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         UpdateCanvasRects();
+        if (ChessBg.Visibility == Visibility.Visible)
+        {
+            _chessBrush = null;   // 尺寸变了:让棋盘按新尺寸重生成
+            var cb = EnsureChessBrush();
+            ChessBg.Background = cb;
+            ChessBg.Visibility = cb != null ? Visibility.Visible : Visibility.Collapsed;
+            if (cb != null) ApplyChessPosition();
+        }
     }
 
     private void ToolGrid_ItemDoubleTapped(ImageItem item)
@@ -392,15 +400,38 @@ public sealed partial class CutoutView : UserControl
         PreviewOverlay.Visibility = Visibility.Collapsed;
     }
 
+    // 棋盘格对齐图片显示区域(与 Image Uniform 居中一致:letterbox 不铺棋盘)
+    private void ApplyChessPosition()
+    {
+        try
+        {
+            var item = _previewItem;
+            if (item == null || item.PixelWidth <= 0 || PreviewImage.ActualWidth <= 0) return;
+            double s = Math.Min(PreviewImage.ActualWidth / item.PixelWidth, PreviewImage.ActualHeight / item.PixelHeight);
+            double w = item.PixelWidth * s, h = item.PixelHeight * s;
+            double ox = (PreviewImage.ActualWidth - w) / 2, oy = (PreviewImage.ActualHeight - h) / 2;
+            ChessBg.Width = w;
+            ChessBg.Height = h;
+            ChessBg.HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left;
+            ChessBg.VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Top;
+            ChessBg.Margin = new Microsoft.UI.Xaml.Thickness(ox, oy, 0, 0);
+        }
+        catch { }
+    }
+
     // 棋盘格画刷(彩色预览透明背景的标准视觉):按预览区域尺寸整张生成(格子 16px,非平铺——WinUI3 无 TileMode)
     private Microsoft.UI.Xaml.Media.ImageBrush? _chessBrush;
     private Microsoft.UI.Xaml.Media.ImageBrush? EnsureChessBrush()
     {
         try
         {
-            int w = Math.Max(64, Math.Min(4096, (int)(PreviewRoot.ActualWidth > 0 ? PreviewRoot.ActualWidth : 1200)));
-            int h = Math.Max(64, Math.Min(4096, (int)(PreviewRoot.ActualHeight > 0 ? PreviewRoot.ActualHeight : 900)));
-            int s = 16;
+            var xitem = _previewItem;
+            double s = (xitem != null && xitem.PixelWidth > 0 && PreviewImage.ActualWidth > 0)
+                ? Math.Min(PreviewImage.ActualWidth / xitem.PixelWidth, PreviewImage.ActualHeight / xitem.PixelHeight)
+                : 1.0;
+            int w = Math.Max(64, Math.Min(4096, (int)Math.Round((xitem?.PixelWidth ?? 1200) * s)));
+            int h = Math.Max(64, Math.Min(4096, (int)Math.Round((xitem?.PixelHeight ?? 900) * s)));
+            int s16 = 16;
             using var bmp = new System.Drawing.Bitmap(w, h);
             using (var g = System.Drawing.Graphics.FromImage(bmp))
             {
@@ -408,10 +439,10 @@ public sealed partial class CutoutView : UserControl
                 var c2 = System.Drawing.Color.FromArgb(255, 255, 255, 255);
                 g.Clear(c1);
                 using var b1 = new System.Drawing.SolidBrush(c2);
-                for (int y = 0; y < h; y += s)
-                    for (int x = 0; x < w; x += s)
-                        if (((x / s) + (y / s)) % 2 == 0)
-                            g.FillRectangle(b1, x, y, Math.Min(s, w - x), Math.Min(s, h - y));
+                for (int y = 0; y < h; y += s16)
+                    for (int x = 0; x < w; x += s16)
+                        if (((x / s16) + (y / s16)) % 2 == 0)
+                            g.FillRectangle(b1, x, y, Math.Min(s16, w - x), Math.Min(s16, h - y));
             }
             var png = Path.Combine(Path.GetTempPath(), $"imgup_chess_{Guid.NewGuid():N}.png");
             bmp.Save(png, System.Drawing.Imaging.ImageFormat.Png);
@@ -494,10 +525,11 @@ public sealed partial class CutoutView : UserControl
                 catch { }
             }
             try { PreviewImage.Source = new BitmapImage(new Uri(colorOk ? colorPath : maskPath)); } catch { }
-            // 彩色预览:主体后垫棋盘格(标准"透明"视觉)
+            // 彩色预览:主体后垫棋盘格(只垫图片显示区域,letterbox 保持深色背景)
             var cb = colorOk ? EnsureChessBrush() : null;
             ChessBg.Background = cb;
             ChessBg.Visibility = cb != null ? Visibility.Visible : Visibility.Collapsed;
+            if (cb != null) ApplyChessPosition();
             _maskPreviewShown = true;
             PreviewHint.Text = colorOk
                 ? "抠图预览(彩色:主体保留,背景透明) · 再点一次返回原图 · 调整参数自动刷新"
