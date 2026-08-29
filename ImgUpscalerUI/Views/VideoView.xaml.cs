@@ -391,6 +391,27 @@ public sealed partial class VideoView : UserControl
             }
         };
         VideoGridHost.KeyboardAccelerators.Add(delAcc);
+
+        // ===== 临时诊断(排查"删除"悬停提示来源;确认后删除) =====
+        // 挂到页面根 + handledEventsToo=true:任何子元素移动都触发。
+        var _diagLast = DateTime.MinValue;
+        this.AddHandler(Microsoft.UI.Xaml.UIElement.PointerMovedEvent,
+            new Microsoft.UI.Xaml.Input.PointerEventHandler((_, e2) =>
+            {
+                if ((DateTime.Now - _diagLast).TotalMilliseconds < 600) return;
+                _diagLast = DateTime.Now;
+                try
+                {
+                    var pt = e2.GetCurrentPoint(this);
+                    var hits = Microsoft.UI.Xaml.Media.VisualTreeHelper.FindElementsInHostCoordinates(
+                        new Windows.Foundation.Point(pt.Position.X, pt.Position.Y), this)
+                        .Select(el => $"{el.GetType().Name}" + (el is FrameworkElement fe && !string.IsNullOrEmpty(fe.Name) ? "[" + fe.Name + "]" : ""))
+                        .ToList();
+                    if (hits.Count > 0)
+                        AppLogger.Info($"[诊断] 视频列表悬停命中: {string.Join(" <- ", hits)}");
+                }
+                catch { }
+            }), true);
         // 屏幕刷新率检测:提示"输出帧率≈屏幕刷新率最流畅"(60/120/144/165/240Hz 屏,
         // 高帧率输出不整除时播放器不均匀丢帧=抖动;填=刷新率则 1 帧对 1 刷新)
         try

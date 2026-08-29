@@ -799,7 +799,8 @@
                               Background="Transparent" BorderThickness="0"
                               CanDragItems="True" CanReorderItems="True"
                               DoubleTapped="VideoList_DoubleTapped" KeyDown="VideoList_KeyDown"
-                              AllowDrop="True" DragOver="DropBorder_DragOver" Drop="DropBorder_Drop">
+                              AllowDrop="True" DragOver="DropBorder_DragOver" Drop="DropBorder_Drop"
+                              ToolTipService.ToolTip="">   <!-- 显式空提示:覆盖 WinUI 对空列表悬停的默认"删除"伪影提示 -->
                         <ListView.ItemTemplate>
                             <DataTemplate>
                                 <Grid ColumnSpacing="10" Padding="4">
