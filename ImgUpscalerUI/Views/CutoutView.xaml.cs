@@ -68,6 +68,25 @@ public sealed partial class CutoutView : UserControl
         PreDenoiseCheck.Checked += (_, _) => SetPreDenoiseLevelEnabled(true);
         PreDenoiseCheck.Unchecked += (_, _) => SetPreDenoiseLevelEnabled(false);
         SetPreDenoiseLevelEnabled(PreDenoiseCheck.IsChecked == true);
+        UpdateModelMissingBar();
+    }
+
+    /// <summary>模型缺失提示条:当前选中的模型文件不存在时显示(含解决办法),存在时隐藏。</summary>
+    private void UpdateModelMissingBar()
+    {
+        try
+        {
+            var key = CutoutService.Models[Math.Clamp(ModelCombo.SelectedIndex, 0, CutoutService.Models.Length - 1)].Key;
+            var m = CutoutService.GetModel(key);
+            bool missing = EngineService.FindCutoutModel(m.FileName) == null;
+            ModelMissingBar.Visibility = missing ? Visibility.Visible : Visibility.Collapsed;
+            if (missing)
+                ModelMissingText.Text = $"未找到「{m.Label}」({m.FileName}) — 安装时勾选「下载并安装模型包」,或手动下载 models.zip 解压到程序目录的 engines\\rembg\\models\\ 文件夹,也可换用其它已安装的模型";
+        }
+        catch
+        {
+            ModelMissingBar.Visibility = Visibility.Collapsed;
+        }
     }
 
     // 参数滑条变化 → 刷新数值显示;记住开启时同步保存;蒙版预览显示中则自动刷新
@@ -87,6 +106,7 @@ public sealed partial class CutoutView : UserControl
         UpdateOptions();
         SaveSettings();   // 始终保存(与超分/视频页一致;恢复与否由 Load 侧按 Remember 决定)
         RefreshMaskDelayed();   // 调整参数 → AI 主体预览自动更新
+        UpdateModelMissingBar();   // 模型下拉切换后刷新缺失提示
     }
 
     private void UpdateOptions()
@@ -645,7 +665,7 @@ public sealed partial class CutoutView : UserControl
         // 模型缺失前置校验:文件不存在立即明确报错(不再逐张失败后弹"完成 0 张"掩盖原因)
         if (EngineService.FindCutoutModel(cutModel.FileName) == null)
         {
-            await ShowErrorAsync($"未找到抠图模型「{cutModel.Label}」({cutModel.FileName}) — 请把该模型文件放进 engines/rembg 目录,或换用其它模型");
+            await ShowErrorAsync($"未找到抠图模型「{cutModel.Label}」({cutModel.FileName}) — 请安装/恢复模型包(解压到程序目录的 engines\\rembg\\models\\ 文件夹),或换用其它已安装的模型");
             return;
         }
         var modelKey = cutModel.Key;

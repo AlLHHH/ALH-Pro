@@ -30,6 +30,18 @@
                     <TextBlock x:Name="FileInfo" Text="未添加图片" Style="{StaticResource HintText}"
                                TextTrimming="CharacterEllipsis"/>
 
+                    <!-- 模型缺失提示条(有模型时自动隐藏) -->
+                    <Border x:Name="ModelMissingBar" Visibility="Collapsed" CornerRadius="6" Padding="10,8"
+                            Background="#2AE8A33D" BorderBrush="#66E8A33D" BorderThickness="1">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="⚠ 未找到抠图模型" FontSize="12" FontWeight="SemiBold"
+                                       Foreground="#E8A33D"/>
+                            <TextBlock x:Name="ModelMissingText" FontSize="11" Opacity="0.9"
+                                       TextWrapping="Wrap" Foreground="#E8ECF2"
+                                       Text="安装时勾选「下载并安装模型包」,或手动下载 models.zip 解压到程序目录的 engines\rembg\models\ 文件夹"/>
+                        </StackPanel>
+                    </Border>
+
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
                     <TextBlock Text="输出" Style="{StaticResource SectionTitle}"/>
