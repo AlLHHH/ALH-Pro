@@ -1455,7 +1455,7 @@ public sealed partial class MainPage : Page
         {
             var qr = new Image
             {
-                Width = 232, Height = 232,
+                Width = 460, Height = 460,
                 Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
                 HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
                 Source = new BitmapImage(new Uri(qrPath)),
@@ -1471,6 +1471,12 @@ public sealed partial class MainPage : Page
                 HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
             });
         }
+        content.Children.Add(new TextBlock
+        {
+            Text = "用手机扫描上图即可(金额随意,心意最重要)",
+            FontSize = 10, Opacity = 0.55,
+            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
+        });
         // 打赏平台链接:打开爱发电(作者主页)
         const string CoffeeUrl = "https://www.ifdian.net/a/AlL666";
         var coffeeBtn = new Button
@@ -1485,7 +1491,7 @@ public sealed partial class MainPage : Page
             catch { }
         };
         content.Children.Add(coffeeBtn);
-        ShowCardPopup(content, "☕ 请作者喝一杯咖啡", 520);
+        ShowCardPopup(content, "☕ 请作者喝一杯咖啡", 640);
     }
 
     /// <summary>左下角状态栏单击 → 弹窗放大查看诊断日志(尾部)。</summary>
