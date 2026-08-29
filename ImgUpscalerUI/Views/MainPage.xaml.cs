@@ -10,6 +10,7 @@ public sealed partial class MainPage : Page
     private UpscaleView? _upView;
     private CutoutView? _cutView;
     private VideoView? _videoView;
+    private TutorialView? _tutorialView;
     private string _currentTag = "upscale";
     private int _startupPageIndex;   // 构造时解析的启动页(0/1/2),供 Loaded 弹窗逻辑引用
 
@@ -122,7 +123,8 @@ public sealed partial class MainPage : Page
         _currentTag = tag;
         ContentRoot.Children.Clear();
         // 记录最近使用界面(「上次退出界面」启动模式用);切换即保存,退出时也保存(见 MainWindow_Closed)
-        SaveLastPage(tag == "upscale" ? 0 : tag == "video" ? 2 : 1);
+        if (tag != "tutorial")
+            SaveLastPage(tag == "upscale" ? 0 : tag == "video" ? 2 : 1);
         if (tag == "upscale")
         {
             AppLogger.Info("进入页面:图片放大");
@@ -152,6 +154,12 @@ public sealed partial class MainPage : Page
                     Margin = new Microsoft.UI.Xaml.Thickness(20),
                 });
             }
+        }
+        else if (tag == "tutorial")
+        {
+            AppLogger.Info("进入页面:使用教程");
+            _tutorialView ??= new TutorialView();
+            ContentRoot.Children.Add(_tutorialView);
         }
         else
         {
