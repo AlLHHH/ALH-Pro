@@ -654,7 +654,30 @@ public sealed partial class VideoView : UserControl
             Log("⚠ 处理中修改了参数:本批已按「开始处理」时的快照执行,不追溯;新参数将在下次「开始处理」生效。");
         }
         UpdateOptions();
+        UpdateAnimeFpsHint();   // 动漫档位变化 → 刷新"内容帧率≈X fps"提示
         ScheduleSave();   // 参数记忆:变化后防抖写盘
+    }
+
+    /// <summary>动漫去重档位 → 内容帧率提示:内容帧率 = 输入帧率 ÷ 拍N(31:0→2, 3, 2.5, 1.6, 4)。</summary>
+    private void UpdateAnimeFpsHint()
+    {
+        try
+        {
+            if (AnimeFpsHint == null) return;
+            double inFps = 30;
+            var selected = _videos.Count > 0 && VideoList.SelectedIndex >= 0 && VideoList.SelectedIndex < _videos.Count
+                ? _videos[VideoList.SelectedIndex] : null;
+            if (selected != null && double.TryParse(selected.FpsProbe,
+                    System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var pf) && pf > 0)
+                inFps = pf;
+            double n = DedupAnimeCombo.SelectedIndex switch { 0 => 2, 1 => 3, 2 => 2.5, 3 => 1.6, _ => 4 };
+            double fc = inFps / n;
+            AnimeFpsHint.Text = $"内容帧率 ≈ {fc:0.#} fps(输入 {inFps:0.##} fps ÷ 拍{n:0.##})";
+        }
+        catch
+        {
+            if (AnimeFpsHint != null) AnimeFpsHint.Text = "";
+        }
     }
 
     // 参数写盘防抖(滑条拖动会高频触发 Options_Changed,合并为一次保存)
