@@ -1290,14 +1290,13 @@ public static class VideoService
                 double needScale = targetFps.Value / Math.Max(1, effectiveFps);
                 if (v4Interp && (effectiveFps * interpScale) < targetFps.Value - 0.5 && needScale <= 16.5)
                 {
-                    // v4 + 帧数不够:自动上调倍率到"够用的最小档"(只为凑帧数,输出帧率仍锁定目标)
-                    double[] scales = { 2, 3, 4, 8, 12, 16 };
-                    double pick = 16;
-                    foreach (var s in scales) if (s >= needScale - 0.01) { pick = s; break; }
-                    int pickInt = (int)pick;
+                    // v4 + 帧数不够:倍率直接取"≥目标的最小整数"(RIFE -n 只要整数即可,不限 2/3/4/8/12/16 预设档)——
+                    // 5x/6x/7x/9x 都能用,比"从预设档跳"更省(旧逻辑 需要5x 时跳到 8x,多算 60% 帧再丢)
+                    int pickInt = Math.Max(2, (int)Math.Ceiling(needScale - 0.01));
+                    if (pickInt > 16) pickInt = 16;   // 引擎- n 上限保护
                     progress?.Report((94,
                         $"⚠ 指定 {targetFps.Value:0.##} fps 需 {needScale:0.##}x 帧数,当前 {interpScale}x 不够——已临时按 {pickInt}x 补帧(输出仍精确 {targetFps.Value:0.##} fps)"));
-                    AppLogger.Info($"指定 {targetFps.Value:0.##} fps:倍率 {interpScale}x → {pickInt}x(仅凑帧数,输出帧率不变)");
+                    AppLogger.Info($"指定 {targetFps.Value:0.##} fps:倍率 {interpScale}x → {pickInt}x(最小整数凑帧,输出帧率不变)");
                     interpScale = pickInt;
                 }
                 // 帧数已够(含上调后):精确重映射到目标帧率(时长不变),输出 = 用户指定值
@@ -3027,7 +3026,10 @@ public static class VideoService
                 if (e - 1 - lastK > step * 0.5) segKeep.Add(e - 1);
                 foreach (var f in segKeep) keep.Add(f);
                 keep.Add(e - 1);   // 尾帧恒保留:结尾画面组(88889999 的 9)即使被网格跳过也不丢
-                progress?.Report((4, $"去重|[{s},{e}) 网格抽帧 保留 {segKeep.Count}/{e - s} 帧" + (ph > 0 ? $"(相位 {ph})" : "")));
+                // 进度文案(大白话):告诉用户"删了多少帧、内容帧率≈多少",而不是术语"网格抽帧"
+                int delCnt = Math.Max(0, (e - s) - segKeep.Count);
+                double cf = inFps / step;
+                progress?.Report((4, $"去重|[{s},{e}) 删 {delCnt} 帧,保留 {segKeep.Count} 帧(内容帧率≈{cf:0.###} fps)" + (ph > 0 ? $"(相位 {ph})" : "")));
             }
             AppLogger.Info($"分段|手动内容帧率采样:间隔 {step:0.###} 帧,段数 {segs.Count},抽存 {keep.Count}/{frameCount}(相位对齐:{(phaseAlign ? "开" : "关")})");
             // 档位校验:内容帧率模式填低(实拍被抽稀)时,内容帧对差异会很大 → 提示用户(只提示,不代改)
@@ -3349,7 +3351,9 @@ public static class VideoService
                                 var m = System.Text.RegularExpressions.Regex.Match(lt.msg, @"第\s*(\d+)\s*帧");
                                 if (!m.Success) { progress.Report(lt); return; }
                                 int k = int.Parse(m.Groups[1].Value);
-                                int gf = Math.Min(slotTotal, (int)((double)k / Math.Max(1, batch.Count * 3) * slotTotal));
+                                // 层批每层:每帧对生成 1 张中间帧 → 一批 batch.Count 对 = batch.Count 张;
+                                // 旧代码 /(batch.Count*3) 把进度低估 3 倍 → 进度条长时间不动
+                                int gf = Math.Min(slotTotal, (int)((double)k / Math.Max(1, batch.Count) * slotTotal));
                                 progress.Report((10 + (int)(35.0 * gf / slotTotal),
                                     $"按源时间轴插帧 已处理 {gf} 帧 / 共 {slotTotal} 帧(源 {n} 帧·目标 {F:0.##} fps)"));
                             });
