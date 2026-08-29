@@ -423,13 +423,13 @@ public sealed partial class ImageToolGrid : UserControl
     {
         // 悬停只显示铅笔;选中高亮由容器样式(SelectionBorder)负责,不再改缩略图边框
         if (sender is FrameworkElement root && root.FindName("PencilBtn") is Button b)
-            b.Opacity = 1;
+            b.Visibility = Visibility.Visible;
     }
 
     private void Item_PointerExited(object sender, PointerRoutedEventArgs e)
     {
         if (sender is FrameworkElement root && root.FindName("PencilBtn") is Button b)
-            b.Opacity = 0;
+            b.Visibility = Visibility.Collapsed;
     }
 
     // ---------- 铅笔面板 ----------

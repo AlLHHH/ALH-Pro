@@ -198,9 +198,11 @@
                                     BorderThickness="1">
                                 <Grid>
                                     <Image x:Name="ThumbImg" Source="{Binding Thumb}" Stretch="Uniform"/>
-                                    <!-- 悬停出现的铅笔图标(悬停时背景变蓝) -->
+                                    <!-- 悬停出现的铅笔按钮:默认 Collapsed(悬停由代码设为 Visible)。
+                                         注意:不能 Opacity=0——WinUI 对空网格的幽灵项悬停时会渲染 Opacity=0 的按钮,
+                                         可能呈现为悬停提示"删除"字样;Collapsed 则彻底不渲染,杜绝该提示。 -->
                                     <Button x:Name="PencilBtn" Click="PencilBtn_Click"
-                                            Opacity="0" Width="24" Height="24" Padding="0"
+                                            Visibility="Collapsed" Width="24" Height="24" Padding="0"
                                             CornerRadius="12" Margin="8"
                                             HorizontalAlignment="Right" VerticalAlignment="Top"
                                             Style="{StaticResource PencilButtonStyle}">
