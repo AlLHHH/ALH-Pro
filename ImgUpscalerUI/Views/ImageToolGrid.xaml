@@ -75,9 +75,11 @@
             <Button x:Name="BatchRenameBtn" Grid.Column="3" Content="批量改名"
                     IsEnabled="False" Click="BatchRenameBtn_Click" Margin="0,0,8,0"/>
             <Button x:Name="RemoveBtn" Grid.Column="4" Content="删除选中"
-                    IsEnabled="False" Click="RemoveBtn_Click" Margin="0,0,8,0"/>
+                    IsEnabled="False" Click="RemoveBtn_Click" Margin="0,0,8,0"
+                    Visibility="Collapsed"/>   <!-- 空列表不显示;有选中项时 UpdateListState 显示 -->
             <Button x:Name="ClearBtn" Grid.Column="5" Content="清空"
-                    IsEnabled="False" Click="ClearBtn_Click"/>
+                    IsEnabled="False" Click="ClearBtn_Click"
+                    Visibility="Collapsed"/>   <!-- 空列表不显示;有图片时 UpdateListState 显示 -->
         </Grid>
 
         <!-- ============ 缩略图网格(支持鼠标框选多选) ============
