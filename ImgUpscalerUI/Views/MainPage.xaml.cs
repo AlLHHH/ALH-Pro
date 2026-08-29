@@ -173,6 +173,13 @@ public sealed partial class MainPage : Page
 
     private void OnStatusChanged(string s) => StatusText.Text = s;
 
+    /// <summary>左下角「使用教程」:进入教程页(不改变左侧功能导航高亮)。</summary>
+    private void Tutorial_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        NavList.SelectedIndex = -1;
+        ShowView("tutorial");
+    }
+
     /// <summary>内测声明已同意的标记文件(仅首次显示弹窗)。</summary>
     private static string BetaAcceptedFile => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
