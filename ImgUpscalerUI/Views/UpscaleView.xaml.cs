@@ -17,6 +17,7 @@ public sealed partial class UpscaleView : UserControl
     private string? _customOutDir;
     private CancellationTokenSource? _cts;
     private int _gpuCount;   // 枚举到的 GPU 数量(用于 gpuId 计算)
+    private int _lastJpgQuality = 2;   // 上次 JPG 模式选中的码率档(0-4):切到 PNG 时把"无损"占位替换,保存时保留 JPG 真实档
 
     // ---- 暂停/恢复:暂停后停在下一张之前,可删除"未处理"的项目 ----
     private bool _paused;
@@ -154,8 +155,9 @@ public sealed partial class UpscaleView : UserControl
             TtaCheck.IsChecked = d.Tta;
             SelectedOnlyCheck.IsChecked = d.SelectedOnly;
             // 计算设备已在全局设置(AppSettings),页面不再恢复旧 Gpu 值
-            // 格式下拉顺序已改为 0=JPG 1=PNG:旧设置(0=PNG 1=JPG)需迁移语义
-            if (d.Fmt is >= 0 and <= 1) FmtCombo.SelectedIndex = d.Fmt == 0 ? 1 : 0;
+            // 格式下拉顺序:0=JPG 1=PNG——存读一致(223 行存的就是 SelectedIndex),不再做旧语义迁移
+            // (旧迁移 d.Fmt==0?1:0 会把新存的 1(PNG) 转回 0(JPG):用户选 PNG 重开变 JPG 的 bug 根源)
+            if (d.Fmt is >= 0 and <= 1) FmtCombo.SelectedIndex = d.Fmt;
             // 输出码率档位:PNG 只有「默认无损」一项(不恢复);JPG 用 ImgQualityMode(0-4);旧版滑条值兼容映射
             if (FmtCombo.SelectedIndex == 0)
             {
@@ -182,17 +184,21 @@ public sealed partial class UpscaleView : UserControl
             if (d.Denoise is >= 0 and <= 100) DenoiseSlider.Value = d.Denoise;
             if (d.Aa is >= 0 and <= 100) AaSlider.Value = d.Aa;
             if (d.Dehaze is >= 0 and <= 100) DehazeSlider.Value = d.Dehaze;
-            if (d.ImgQualityMode is >= 0 and <= 4) ImgQualityCombo.SelectedIndex = d.ImgQualityMode;
-            else if (d.ImgQuality is >= 1 and <= 100)
+            // 码率档位仅 JPG 恢复(PNG 只有"无损",无效档位不得写入 185 行旧逻辑)
+            if (FmtCombo.SelectedIndex == 0)
             {
-                // 旧版(滑条值 1~100)兼容映射到档位:≤75=低,≤85=中,≤95=默认,>95=超高
-                ImgQualityCombo.SelectedIndex = d.ImgQuality switch
+                if (d.ImgQualityMode is >= 0 and <= 4) ImgQualityCombo.SelectedIndex = d.ImgQualityMode;
+                else if (d.ImgQuality is >= 1 and <= 100)
                 {
-                    <= 75 => 0,
-                    <= 85 => 1,
-                    <= 95 => 2,
-                    _ => 3,
-                };
+                    // 旧版(滑条值 1~100)兼容映射到档位:≤75=低,≤85=中,≤95=默认,>95=超高
+                    ImgQualityCombo.SelectedIndex = d.ImgQuality switch
+                    {
+                        <= 75 => 0,
+                        <= 85 => 1,
+                        <= 95 => 2,
+                        _ => 3,
+                    };
+                }
             }
             if (d.ImgQualityCustom is >= 1 and <= 100)
                 ImgQualityCustomBox.Text = d.ImgQualityCustom.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -231,7 +237,9 @@ public sealed partial class UpscaleView : UserControl
                 Denoise = (int)DenoiseSlider.Value,
                 Aa = (int)AaSlider.Value,
                 Dehaze = (int)DehazeSlider.Value,
-                ImgQualityMode = FmtCombo.SelectedIndex == 0 ? ImgQualityCombo.SelectedIndex : 2,   // JPG 档位(0-4);PNG 固定 2(仅一项)
+                ImgQualityMode = FmtCombo.SelectedIndex == 0
+                    ? (ImgQualityCombo.SelectedIndex is >= 0 and <= 4 ? ImgQualityCombo.SelectedIndex : 2)
+                    : _lastJpgQuality,   // PNG 时存上次 JPG 的真实档位(读回 JPG 时正确恢复,而非"低")
                 ImgQualityCustom = ParseImgQualityCustom(),
                 PreDenoise = PreDenoiseCheck.IsChecked == true,
                 DenoiseLevel = DenoiseLevelCombo.SelectedIndex,
@@ -926,6 +934,7 @@ public sealed partial class UpscaleView : UserControl
         var isPng = FmtCombo.SelectedIndex == 1;   // 下拉顺序:0=JPG 1=PNG
         // 记住当前选中,切格式后从对应档位恢复
         int prev = ImgQualityCombo.SelectedIndex;
+        if (!isPng && prev is >= 0 and <= 4) _lastJpgQuality = prev;   // JPG 档位记忆(切 PNG 不丢)
         ImgQualityCombo.Items.Clear();
         if (isPng)
         {

@@ -174,6 +174,8 @@ public static class EngineService
     // 最近一次"完整完成一帧"时间(WatchDirProgressAsync 帧数增长时刷新):
     // 用于判定"心跳在跳但没有实质进展"(CPU 逐帧爬但极慢)的实质停滞
     private static long _lastFrameDoneTicks = DateTime.MinValue.Ticks;
+    // 分块处理中"单块平均耗时"(秒,EMA 平滑):用于块内心跳估算当前块进度(让进度条平滑前进)
+    private static double _tileEstAvg = 0;
 
     /// <summary>启动引擎子进程,实时读取输出并解析进度,支持取消(杀进程树)。返回引擎日志尾部。</summary>
     private static async Task<string> RunAsync(string exe, string args,
@@ -859,9 +861,36 @@ public static class EngineService
         {
             ct.ThrowIfCancellationRequested();
             // 块开始即报进度(引擎启动 3~6 秒内界面不空转):"超分 第 X/64 块(引擎启动/处理中)..."
+            // 块处理期间(10~60 秒)无任何上报 → 进度条/文字静止;这里加【块内心跳】:
+            // 每 1 秒上报一次"块内进度%"(按已用时间/该块预计耗时 估算),让进度条平滑前进而不是死等。
+            var tileWatch = System.Diagnostics.Stopwatch.StartNew();
+            // 该块预计耗时:总耗时按"已处理块平均耗时"估算(前 3 块后);无历史用 30s 兜底
+            double estTile = _tileEstAvg > 1 ? _tileEstAvg : 30.0;
+            using var tileHearth = new System.Threading.Timer(_ =>
+            {
+                try
+                {
+                    double frac = Math.Min(0.97, tileWatch.Elapsed.TotalSeconds / estTile);
+                    // 进度 = 已处理块数 + 当前块估算比例(只影响 UI 平滑,不改变真实完成判断)
+                    progress?.Report((5 + (int)(85.0 * (done + frac) / totalTiles),
+                        $"超分 第 {done + 1}/{totalTiles} 块(引擎处理中 {tileWatch.Elapsed.TotalSeconds:0}s)..."));
+                }
+                catch { }
+            }, null, 1000, 1000);
             progress?.Report((5 + (int)(85.0 * done / totalTiles), $"超分 第 {done + 1}/{totalTiles} 块(引擎启动/处理中)..."));
             var of = Path.Combine(outDir, Path.GetFileName(tf));
-            await UpOneTileAsync(tf, of, engine, model, scale, noise, gpuId, tta, progress, ct, tileSize).ConfigureAwait(false);
+            try
+            {
+                await UpOneTileAsync(tf, of, engine, model, scale, noise, gpuId, tta, progress, ct, tileSize).ConfigureAwait(false);
+            }
+            finally
+            {
+                tileHearth.Dispose();
+                tileWatch.Stop();
+                // 更新块平均耗时(EMA:0.3 当前/0.7 历史)
+                double took = Math.Max(1.0, tileWatch.Elapsed.TotalSeconds);
+                _tileEstAvg = _tileEstAvg > 1 ? 0.7 * _tileEstAvg + 0.3 * took : took;
+            }
             // 黑帧防御:单块偶发 vkQueueSubmit 失败→全黑(退出码仍 0)。检测到黑块即用 CPU 软解重处理该块。
             if (gpuId >= 0 && File.Exists(of) && IsBlackPng(of))
             {
