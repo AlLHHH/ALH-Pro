@@ -1455,7 +1455,7 @@ public sealed partial class MainPage : Page
         {
             var qr = new Image
             {
-                Width = 460, Height = 460,
+                Width = 320, Height = 320,
                 Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
                 HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
                 Source = new BitmapImage(new Uri(qrPath)),
@@ -1477,20 +1477,23 @@ public sealed partial class MainPage : Page
             FontSize = 10, Opacity = 0.55,
             HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
         });
-        // 打赏平台链接:打开爱发电(作者主页)
-        const string CoffeeUrl = "https://www.ifdian.net/a/AlL666";
-        var coffeeBtn = new Button
+        // 打赏平台:爱发电主页(图标+文字,点击直达)
+        var ifdLink = new HyperlinkButton
         {
-            Content = "打开打赏页(爱发电)",
-            FontSize = 12, Padding = new Microsoft.UI.Xaml.Thickness(14, 6, 14, 6),
+            NavigateUri = new Uri("https://www.ifdian.net/a/AlL666"),
             HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
+            Content = new StackPanel
+            {
+                Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal,
+                Spacing = 8,
+                Children =
+                {
+                    new FontIcon { Glyph = "\uE8C7", FontSize = 15 },   // ♥
+                    new TextBlock { Text = "爱发电主页", FontSize = 13, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center },
+                },
+            },
         };
-        coffeeBtn.Click += (_, _) =>
-        {
-            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(CoffeeUrl) { UseShellExecute = true }); }
-            catch { }
-        };
-        content.Children.Add(coffeeBtn);
+        content.Children.Add(ifdLink);
         ShowCardPopup(content, "☕ 请作者喝一杯咖啡", 640);
     }
 
