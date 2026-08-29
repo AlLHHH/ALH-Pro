@@ -2437,6 +2437,24 @@ public sealed partial class VideoView : UserControl
         var up = UpscaleToggle.IsChecked == true;
         var interp = InterpToggle.IsChecked == true;
         if (!up && !interp) return;
+        // 引擎前置校验:缺引擎立即提示(超分/补帧分别查,含 ffmpeg)
+        {
+            var missing = new System.Collections.Generic.List<string>();
+            if (up)
+            {
+                int eng = VideoEngineRadios.SelectedIndex;
+                if (eng == 0 && EngineService.FindRealCUGAN() is null) missing.Add("Real-CUGAN 引擎");
+                if (eng == 1 && EngineService.FindRealESRGAN() is null) missing.Add("Real-ESRGAN 引擎");
+                if (eng == 2 && EngineService.FindWaifu2x() is null) missing.Add("waifu2x 引擎");
+            }
+            if (interp && VideoService.RifePath is null) missing.Add("RIFE 补帧引擎");
+            if (VideoService.FfmpegPath is null) missing.Add("ffmpeg");
+            if (missing.Count > 0)
+            {
+                await ShowPauseHintAsync($"未找到 {string.Join("、", missing)}(engines 目录缺失) — 请确认软件引擎包完整(程序目录 engines\\ 下应有对应文件夹),或重新安装/恢复引擎");
+                return;
+            }
+        }
         // 无 GPU/极弱设备:仅"提示"(不改用户设置)——视频AI用 CPU 极慢,提醒用户,决定权交给用户
         if (SafeRender.Profile == SafeRender.DeviceProfile.UltraLow || !ALHPro.VulkanCheck.GpuAvailable)
         {

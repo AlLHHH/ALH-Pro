@@ -549,6 +549,15 @@ public sealed partial class UpscaleView : UserControl
             return;
         }
         if (items.Length == 0 || _running) return;
+        // 引擎前置校验:所选算法缺引擎立即提示(不让它失败后才知道)
+        var needEngine = ModeRadios.SelectedIndex == 0
+            ? (EngineService.FindWaifu2x() is null ? "waifu2x 引擎" : null)
+            : (EngineService.FindRealESRGAN() is null ? "Real-ESRGAN 引擎" : null);
+        if (needEngine != null)
+        {
+            await ShowErrorAsync($"未找到{needEngine}(engines 目录缺失) — 请确认软件引擎包完整(程序目录 engines\\ 下应有 waifu2x / realesrgan 等文件夹),或重新安装/恢复引擎");
+            return;
+        }
         // 自定义码率:选了该项但没填/填了非法值 → 提示并拦截(避免按"默认"悄悄处理)
         if (ImgQualityCombo.SelectedIndex == 4 &&
             !(int.TryParse(ImgQualityCustomBox.Text.Trim(), out var qv) && qv >= 1 && qv <= 100))
