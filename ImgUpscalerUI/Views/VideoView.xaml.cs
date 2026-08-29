@@ -464,9 +464,10 @@ public sealed partial class VideoView : UserControl
     {
         bool empty = _videos.Count == 0;
         VideoDropHint.Visibility = empty ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+        // 终极防幽灵:空列表时 ItemsSource=null + 隐藏本体(悬停不生成幽灵项→无"删除"浮字);
+        // 拖放功能在 VideoGridHost 上,不受影响。
+        VideoList.ItemsSource = empty ? null : _videos;
         VideoList.Visibility = empty ? Microsoft.UI.Xaml.Visibility.Collapsed : Microsoft.UI.Xaml.Visibility.Visible;
-        // 空列表时 ListView 本体隐藏(防 WinUI 幽灵项渲染模板"删除/重新激活"浮字);
-        // 拖放功能在 VideoGridHost 上,隐藏 ListView 不影响拖入。
     }
 
     private void UpdateRunState()
