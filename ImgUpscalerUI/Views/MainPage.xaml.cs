@@ -435,7 +435,7 @@ public sealed partial class MainPage : Page
         authorRow.Children.Add(authorGroup);
         content.Children.Add(authorRow);
 
-        // 「请作者喝咖啡」:打开程序目录 reward.jpg(赞赏码);未放置则提示
+        // 「请作者喝咖啡」:与左下角入口同一打赏卡片(赞赏码大图 + 爱发电主页)
         var rewardBtn = new Button
         {
             Content = "☕ 请作者喝咖啡",
@@ -444,28 +444,8 @@ public sealed partial class MainPage : Page
             HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
             Margin = new Microsoft.UI.Xaml.Thickness(0, 4, 0, 0),
         };
-        ToolTipService.SetToolTip(rewardBtn, "完全免费,打赏自愿;可把赞赏码图片 reward.jpg 放到程序目录");
-        rewardBtn.Click += async (_, _) =>
-        {
-            var img = Path.Combine(AppContext.BaseDirectory, "reward.jpg");
-            if (File.Exists(img))
-            {
-                try
-                {
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(img) { UseShellExecute = true });
-                    return;
-                }
-                catch { }
-            }
-            ShowCardPopup(new StackPanel
-            {
-                Children =
-                {
-                    new TextBlock { Text = "还没有设置赞赏码", FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
-                    new TextBlock { Text = "把赞赏码图片命名为 reward.jpg 放到程序目录,重启后这里就能扫码打赏了。", FontSize = 11, Opacity = 0.7, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Margin = new Microsoft.UI.Xaml.Thickness(0, 6, 0, 0) },
-                },
-            }, "喝咖啡", 380);
-        };
+        ToolTipService.SetToolTip(rewardBtn, "完全免费,打赏自愿(赞赏码 + 爱发电主页)");
+        rewardBtn.Click += (_, _) => ShowCoffeeCard();
         content.Children.Add(rewardBtn);
         content.Children.Add(new Border
         {
