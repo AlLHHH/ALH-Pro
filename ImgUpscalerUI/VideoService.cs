@@ -1284,20 +1284,35 @@ public static class VideoService
             if (postDeshake) postParts.Add("deshake");                      // 画面去抖:轻量稳定
             if (frameInterp && targetFps is > 0)
             {
-                var achievable = (v4Interp ? inFps : effectiveFps) * interpScale;
-                if (achievable < targetFps.Value - 0.5)
+                // 目标帧率(用户指定):输出精确 = 指定值,时长不变。
+                // 倍率只决定"插出多少中间帧"——帧数不够(当前倍率达不到)才调大倍率【凑帧数】,
+                // 凑够后一律用 fps 滤镜精确重映射到目标帧率(绝不"输出高于用户指定")。
+                double needScale = targetFps.Value / Math.Max(1, effectiveFps);
+                if (v4Interp && (effectiveFps * interpScale) < targetFps.Value - 0.5 && needScale <= 16.5)
                 {
-                    // 达不到指定帧率:不报错罢工,按实际补帧后的帧率输出并明确提示(不重复帧凑数,避免卡顿)
+                    // v4 + 帧数不够:自动上调倍率到"够用的最小档"(只为凑帧数,输出帧率仍锁定目标)
+                    double[] scales = { 2, 3, 4, 8, 12, 16 };
+                    double pick = 16;
+                    foreach (var s in scales) if (s >= needScale - 0.01) { pick = s; break; }
+                    int pickInt = (int)pick;
                     progress?.Report((94,
-                        $"⚠ 指定输出 {targetFps.Value:0.##} fps 达不到(补帧后实际只有 {achievable:0.##} fps),已按 {achievable:0.##} fps 输出。" +
-                        $"想要更高帧率,请把补帧倍率调大到至少 {Math.Ceiling(targetFps.Value / Math.Max(1, effectiveFps)):0}x"));
-                    AppLogger.Info($"目标帧率达不到:指定 {targetFps.Value:0.##} fps,实际只能 {achievable:0.##} fps(内容 {effectiveFps:0.##} fps×{interpScale}),按实际输出");
+                        $"⚠ 指定 {targetFps.Value:0.##} fps 需 {needScale:0.##}x 帧数,当前 {interpScale}x 不够——已临时按 {pickInt}x 补帧(输出仍精确 {targetFps.Value:0.##} fps)"));
+                    AppLogger.Info($"指定 {targetFps.Value:0.##} fps:倍率 {interpScale}x → {pickInt}x(仅凑帧数,输出帧率不变)");
+                    interpScale = pickInt;
+                }
+                // 帧数已够(含上调后):精确重映射到目标帧率(时长不变),输出 = 用户指定值
+                if ((v4Interp ? inFps : effectiveFps) * interpScale >= targetFps.Value - 0.5 || v4Interp)
+                {
+                    postParts.Add($"fps={targetFps.Value.ToString("0.##", inv)}");
+                    outFps = targetFps.Value;
                 }
                 else
                 {
-                    // 插值帧足够多时,用 fps 滤镜精确重映射到目标帧率(时长不变)
-                    postParts.Add($"fps={targetFps.Value.ToString("0.##", inv)}");
-                    outFps = targetFps.Value;
+                    // 兜底(16x 上限仍不够):按实际输出 + 明确提示,不重复帧凑数
+                    var achievable = (v4Interp ? inFps : effectiveFps) * interpScale;
+                    progress?.Report((94,
+                        $"⚠ 指定输出 {targetFps.Value:0.##} fps 达不到(补帧后实际只有 {achievable:0.##} fps),已按 {achievable:0.##} fps 输出。"));
+                    AppLogger.Info($"目标帧率达不到:指定 {targetFps.Value:0.##} fps,实际只能 {achievable:0.##} fps,按实际输出");
                 }
             }
             // 运动模糊(1/2/3 档 → 2/3/5 子帧):用运动补偿插帧(minterpolate)沿运动方向做真实模糊,再局部应用
