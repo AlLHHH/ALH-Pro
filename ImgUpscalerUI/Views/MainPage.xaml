@@ -58,6 +58,12 @@
                             <TextBlock Text="视频处理" FontSize="13"/>
                         </StackPanel>
                     </ListViewItem>
+                    <ListViewItem x:Name="NavTutorial" Tag="tutorial" Padding="14,10">
+                        <StackPanel Orientation="Horizontal" Spacing="9">
+                            <FontIcon Glyph="&#xE736;" FontSize="14"/>
+                            <TextBlock Text="使用教程" FontSize="13"/>
+                        </StackPanel>
+                    </ListViewItem>
                 </ListView>
 
                 <!-- 底部署名 + 诊断日志 + 关于 -->
