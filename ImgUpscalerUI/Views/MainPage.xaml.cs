@@ -1430,6 +1430,63 @@ public sealed partial class MainPage : Page
             FontSize = 10, Opacity = 0.5, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
 
+        // ================= 请作者喝咖啡(纯自愿;软件无广告/无联网/无账号) =================
+        content.Children.Add(new Border
+        {
+            Height = 1,
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = "☕ 请作者喝一杯咖啡",
+            FontSize = 13,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = "ALHPro 完全免费、无广告、无联网、无账号。如果你觉得它帮你省了时间,欢迎请作者喝一杯咖啡 ☕\n金额随意,心意最重要;打赏无任何特权,软件会一直免费维护下去。",
+            FontSize = 11, Opacity = 0.8, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, LineHeight = 18,
+        });
+        // 收款码:把图片放到「发布版\assets\coffee_qr.png」即自动显示(无需改代码)
+        var qrPath = Path.Combine(AppContext.BaseDirectory, "assets", "coffee_qr.png");
+        if (File.Exists(qrPath))
+        {
+            var qr = new Image
+            {
+                Width = 232, Height = 232,
+                Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
+                HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
+                Source = new BitmapImage(new Uri(qrPath)),
+            };
+            content.Children.Add(qr);
+        }
+        else
+        {
+            content.Children.Add(new TextBlock
+            {
+                Text = "(收款码图片:放到发布版目录 assets\\coffee_qr.png 后自动显示)",
+                FontSize = 10, Opacity = 0.45,
+                HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
+            });
+        }
+        // 打赏平台链接:CoffeeUrl 非空时显示按钮(作者给定 URL 后填这行)
+        const string CoffeeUrl = "";
+        if (!string.IsNullOrEmpty(CoffeeUrl))
+        {
+            var coffeeBtn = new Button
+            {
+                Content = "打开打赏页",
+                FontSize = 12, Padding = new Microsoft.UI.Xaml.Thickness(14, 6, 14, 6),
+                HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
+            };
+            coffeeBtn.Click += (_, _) =>
+            {
+                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(CoffeeUrl) { UseShellExecute = true }); }
+                catch { }
+            };
+            content.Children.Add(coffeeBtn);
+        }
+
         ShowCardPopup(content, "设置", 560);
     }
 
