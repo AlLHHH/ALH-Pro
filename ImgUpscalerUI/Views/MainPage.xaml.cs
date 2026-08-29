@@ -1436,6 +1436,17 @@ public sealed partial class MainPage : Page
     /// <summary>左下角「☕ 请作者喝咖啡」→ 打赏卡片弹窗(赞赏码图片 + 打赏平台链接)。</summary>
     private void CoffeeCard_Click(object sender, RoutedEventArgs e) => ShowCoffeeCard();
 
+    /// <summary>左下角「💬 ALH Pro 社区」→ 打开爱发电电圈(官方交流社区)。</summary>
+    private void Community_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                "https://www.ifdian.net/group/eb504216a38e11f18b2852540025c377") { UseShellExecute = true });
+        }
+        catch { }
+    }
+
     private void ShowCoffeeCard()
     {
         var content = new StackPanel { Spacing = 10 };

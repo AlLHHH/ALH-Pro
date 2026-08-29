@@ -67,6 +67,9 @@
                     <Button Content="☕ 请作者喝咖啡" Click="CoffeeCard_Click" HorizontalAlignment="Stretch"
                             Padding="0,5" FontSize="11" Margin="0,2,0,0"
                             ToolTipService.ToolTip="完全自愿:请作者喝一杯咖啡(软件无广告/无联网/无账号)"/>
+                    <Button Content="💬 ALH Pro 社区" Click="Community_Click" HorizontalAlignment="Stretch"
+                            Padding="0,5" FontSize="11" Margin="0,2,0,0"
+                            ToolTipService.ToolTip="官方交流社区:使用问题 / 功能建议 / 处理效果交流(友好交流,不爆粗口)"/>
                     <Button Content="设置" Click="Settings_Click" HorizontalAlignment="Stretch"
                             Padding="0,5" FontSize="11" Margin="0,2,0,0"
                             ToolTipService.ToolTip="设置:诊断日志等"/>
