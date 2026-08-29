@@ -380,6 +380,10 @@ public sealed partial class VideoView : UserControl
         VideoList.ItemsSource = _videos;
         // Del 快捷键:全局(框选后焦点不在 VideoGridHost 内也能删;限定 ScopeOwner 会导致
         // 框选释放后 Del 失效)。排除输入框焦点(避免删文本时误删列表项)。
+        // KeyboardAcceleratorPlacementMode=Hidden(宿主 UIElement 属性):
+        // 关掉 Delete 键加速器的自动悬停提示(即"删除"浮字根源),快捷键仍生效。
+        VideoGridHost.KeyboardAcceleratorPlacementMode =
+            Microsoft.UI.Xaml.Input.KeyboardAcceleratorPlacementMode.Hidden;
         var delAcc = new KeyboardAccelerator { Key = Windows.System.VirtualKey.Delete };
         delAcc.Invoked += (_, e) =>
         {

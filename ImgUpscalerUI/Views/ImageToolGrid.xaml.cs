@@ -62,6 +62,11 @@ public sealed partial class ImageToolGrid : UserControl
         Items.CollectionChanged += (_, _) => UpdateListState();
         UpdateListState();
         // Del 快捷键:焦点在网格区域内时按 Del 删除选中(不依赖焦点在具体控件上,最可靠)
+        // 注意:KeyboardAcceleratorPlacementMode 是宿主 UIElement 的属性——
+        // Desktop=默认:为 Delete 键自动生成悬停工具提示"删除";Hidden=不显示(快捷键仍生效)。
+        // 这就是"列表区域悬停出现删除浮字"的根源,将其设为 Hidden 根除。
+        GridHost.KeyboardAcceleratorPlacementMode =
+            Microsoft.UI.Xaml.Input.KeyboardAcceleratorPlacementMode.Hidden;
         var delAcc = new KeyboardAccelerator { Key = Windows.System.VirtualKey.Delete, ScopeOwner = GridHost };
         delAcc.Invoked += (_, e) =>
         {
