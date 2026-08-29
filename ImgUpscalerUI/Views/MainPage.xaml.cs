@@ -209,7 +209,7 @@ public sealed partial class MainPage : Page
                 {
                     new TextBlock
                     {
-                        Text = "本程序为「v0.6 公测版」,仍在测试阶段:\n\n" +
+                        Text = "本程序为「v1.0 公测版」,仍在测试阶段:\n\n" +
                             "· 可能存在不稳定、报错、卡顿或功能不完善;\n" +
                             "· 处理前请自行备份素材,因测试版造成的数据损失由使用者自行承担;\n" +
                             "· 本版本为内测分发,请勿随意分享、传播或二次发布;\n" +
@@ -439,7 +439,7 @@ public sealed partial class MainPage : Page
         });
         content.Children.Add(new TextBlock
         {
-            Text = $"版本 v0.6 公测版 · 构建 {File.GetLastWriteTime(typeof(MainPage).Assembly.Location):MM-dd HH:mm}",
+            Text = $"版本 v1.0 公测版 · 构建 {File.GetLastWriteTime(typeof(MainPage).Assembly.Location):MM-dd HH:mm}",
             FontSize = 12,
             Opacity = 0.7,
         });
