@@ -70,6 +70,27 @@ public sealed partial class ImageToolGrid : UserControl
             e.Handled = true;
         };
         GridHost.KeyboardAccelerators.Add(delAcc);
+
+        // ===== 临时诊断(排查"删除"悬停提示来源;确认后删除) =====
+        // 挂到 UserControl 根 + handledEventsToo=true:任何子元素移动都触发(即使无背景不参与命中也收得到)。
+        var _diagLast = DateTime.MinValue;
+        this.AddHandler(Microsoft.UI.Xaml.UIElement.PointerMovedEvent,
+            new Microsoft.UI.Xaml.Input.PointerEventHandler((_, e2) =>
+            {
+                if ((DateTime.Now - _diagLast).TotalMilliseconds < 600) return;
+                _diagLast = DateTime.Now;
+                try
+                {
+                    var pt = e2.GetCurrentPoint(this);
+                    var hits = Microsoft.UI.Xaml.Media.VisualTreeHelper.FindElementsInHostCoordinates(
+                        new Windows.Foundation.Point(pt.Position.X, pt.Position.Y), this)
+                        .Select(el => $"{el.GetType().Name}" + (el is FrameworkElement fe && !string.IsNullOrEmpty(fe.Name) ? "[" + fe.Name + "]" : ""))
+                        .ToList();
+                    if (hits.Count > 0)
+                        AppLogger.Info($"[诊断] 图片列表悬停命中: {string.Join(" <- ", hits)}");
+                }
+                catch { }
+            }), true);
     }
 
     // ---------- 列表管理 ----------

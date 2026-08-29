@@ -101,7 +101,8 @@
                       CornerRadius="10"
                       Background="{StaticResource AppPanelBrush}"
                       BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
-                      Padding="10">
+                      Padding="10"
+                      ToolTipService.ToolTip="">   <!-- 显式空提示:覆盖 WinUI 对空网格悬停的默认"删除"伪影提示 -->
                 <GridView.ItemsPanel>
                     <ItemsPanelTemplate>
                         <ItemsWrapGrid Orientation="Horizontal"
