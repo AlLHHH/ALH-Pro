@@ -105,7 +105,8 @@ public static class EngineService
         if (FindRealCUGAN() is null) list.Add("realcugan");
         if (VideoService.FfmpegPath is null) list.Add("ffmpeg");
         if (VideoService.RifePath is null) list.Add("rife");
-        if (FindCutoutModel("isnet-general-use.onnx") is null) list.Add("rembg 模型");
+        // 抠图模型:检查默认使用的高精度模型(缺了它,默认抠图不可用)
+        if (FindCutoutModel("birefnet-lite.onnx") is null) list.Add("rembg 模型(默认用 BiRefNet 高精度)");
         missing = string.Join(", ", list);
         return list.Count == 0;
     }
