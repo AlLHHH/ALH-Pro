@@ -803,6 +803,12 @@
                         <ListView.ItemTemplate>
                             <DataTemplate>
                                 <Grid ColumnSpacing="10" Padding="4">
+                                    <Grid.ContextFlyout>
+                                        <MenuFlyout>
+                                            <MenuFlyoutItem Text="重新激活" Click="ItemRerun_Click"/>
+                                            <MenuFlyoutItem Text="删除" Click="ItemDelete_Click"/>
+                                        </MenuFlyout>
+                                    </Grid.ContextFlyout>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="120"/>
                                         <ColumnDefinition Width="*"/>
@@ -869,8 +875,6 @@
                                                     Visibility="{Binding ReRunBtnVisibility, FallbackValue=Collapsed}">
                                             <Button Content="重新激活" FontSize="10" Padding="8,3"
                                                     Click="ReRunVideoBtn_Click"/>
-                                            <Button Content="删除" FontSize="10" Padding="8,3"
-                                                    Click="DoneDeleteBtn_Click"/>
                                         </StackPanel>
                                     </StackPanel>
                                 </Grid>
