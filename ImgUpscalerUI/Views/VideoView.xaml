@@ -274,12 +274,14 @@
                     </StackPanel>
 
                     <TextBlock Text="输出倍率" Style="{StaticResource SectionTitle}"/>
-                    <RadioButtons x:Name="InterpScaleRadios" SelectedIndex="0" ToolTipService.ToolTip="补帧倍率:2x/3x/4x/8x(3x 需「通用画质」系列模型,其余模型按 2x 级联)"
+                    <RadioButtons x:Name="InterpScaleRadios" SelectedIndex="0" ToolTipService.ToolTip="补帧倍率:2x/3x/4x/8x/12x/16x(3x/12x/16x 需「通用画质」系列模型,其余模型按 2x 级联;高倍率耗时显著增加,且多数播放器不支持 >120fps 输出)"
                                   SelectionChanged="Combo_Changed">
                         <RadioButton Content="2x"/>
                         <RadioButton x:Name="Scale3xRadio" Content="3x"/>
                         <RadioButton Content="4x"/>
                         <RadioButton Content="8x"/>
+                        <RadioButton x:Name="Scale12xRadio" Content="12x"/>
+                        <RadioButton x:Name="Scale16xRadio" Content="16x"/>
                     </RadioButtons>
 
                     <Grid ColumnSpacing="8">
@@ -359,11 +361,15 @@
                         </ComboBox>
                     </Grid>
                     <!-- 动漫模式:动画帧率变种(一拍N)。选对 N → 内容帧率=输入帧率÷N → 均匀采样+均匀补帧 -->
-                    <Grid x:Name="DedupAnimeRow" ColumnSpacing="8" Visibility="Collapsed">
+                    <Grid x:Name="DedupAnimeRow" ColumnSpacing="8" RowSpacing="2" Visibility="Collapsed">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
                         <TextBlock Text="动画去重档位" VerticalAlignment="Center" FontSize="12"
                                    ToolTipService.ToolTip="按动画拍型删保持帧(一拍二=每格画面放 2 帧)。去除一拍二=按拍二节奏删保持帧;去除一拍二与一拍三=拍二/拍三(或混合)都能识别删除。只删「确认为重复作画」的帧,口型/眨眼/微动永不删;全动画素材(无重复)自动原样保留——所以不需要「全动画」档,不用去重时直接关掉「启用去重」即可"/>
                         <ComboBox x:Name="DedupAnimeCombo" Grid.Column="1" HorizontalAlignment="Stretch"
@@ -374,8 +380,8 @@
                             <ComboBoxItem Content="半拍二"/>
                             <ComboBoxItem Content="去除一拍四"/>
                         </ComboBox>
-                        <!-- 当前档位对应的内容帧率(按输入帧率实时换算显示) -->
-                        <TextBlock x:Name="AnimeFpsHint" Grid.Column="1" FontSize="10" Opacity="0.6"
+                        <!-- 当前档位对应的内容帧率(按输入帧率实时换算显示);单独一行,不与下拉框重叠 -->
+                        <TextBlock x:Name="AnimeFpsHint" Grid.Row="1" Grid.Column="1" FontSize="10" Opacity="0.6"
                                    TextWrapping="Wrap" Text="" VerticalAlignment="Center"/>
                     </Grid>
                     <!-- 相位自动对齐(动漫-网格采样):素材保持帧起点带相位偏移时自动对齐,高置信才移相 -->

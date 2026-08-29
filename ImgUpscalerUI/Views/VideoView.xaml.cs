@@ -728,12 +728,24 @@ public sealed partial class VideoView : UserControl
         SetScaleRadioEnabled(VScale3xRadio, true);
         SetScaleRadioEnabled(VScale4xRadio, true);
         InterpModelCombo.IsEnabled = interp;
-        // 3x 补帧仅 v4 架构模型(通用画质 v4.13/v4.6/v4.26)支持:选其它模型时灰掉 3x,已选 3x 自动回 2x
+        // 非 2 的幂倍率(3x/12x/16x)仅 v4 架构模型(通用画质 v4.13/v4.6/v4.26)支持;其余模型按 2x 级联:
+        // v2 模型选择时把这些倍率置灰,已选自动回退 2x;指定输出帧率也置灰(v2 无法精确实现非 2 幂目标帧率)
         bool v4Model = InterpModelCombo.SelectedIndex is 0 or 1 or 2;
         Scale3xRadio.IsEnabled = v4Model;
         Scale3xRadio.Opacity = v4Model ? 1.0 : 0.5;
-        if (!v4Model && InterpScaleRadios.SelectedIndex == 1)
+        Scale12xRadio.IsEnabled = v4Model;
+        Scale12xRadio.Opacity = v4Model ? 1.0 : 0.5;
+        Scale16xRadio.IsEnabled = v4Model;
+        Scale16xRadio.Opacity = v4Model ? 1.0 : 0.5;
+        if (!v4Model && InterpScaleRadios.SelectedIndex is 1 or 4 or 5)
             InterpScaleRadios.SelectedIndex = 0;
+        // 指定输出帧率:v2 模型(只能 2 的幂级联)无法精确实现任意目标帧率 → 置灰并提示
+        TargetFpsCheck.IsEnabled = interp && v4Model;
+        TargetFpsCheck.Opacity = interp && v4Model ? 1.0 : 0.5;
+        TargetFpsBox.IsEnabled = interp && v4Model && TargetFpsCheck.IsChecked == true;
+        TargetFpsBox.Opacity = interp && v4Model ? 1.0 : 0.5;
+        if (!v4Model && TargetFpsCheck.IsChecked == true)
+            TargetFpsCheck.IsChecked = false;
         // 果冻修复(运动模糊/去抖)只在补帧时有意义:不补帧置灰(「减少果冻」由动漫插值优化联动)
         MotionBlurCombo.IsEnabled = interp;
         DeShakeCheck.IsEnabled = interp;
@@ -791,10 +803,8 @@ public sealed partial class VideoView : UserControl
             : FpsOffsetSlider.Value == 0
                 ? "0 = 各视频用原帧率;拖滑条统一减帧率,或选「单独调整」逐个设置"
                 : $"当前 {FpsOffsetSlider.Value:0}:各视频原帧率 {FpsOffsetSlider.Value:0}(如 24→{24 + FpsOffsetSlider.Value:0})";
-        // 指定输出帧率时,输出倍率不再有意义 → 置灰
+        // 指定输出帧率时,输出倍率不再有意义 → 置灰;指定帧率可用性由上方 v4Model 逻辑统一控制
         InterpScaleRadios.IsEnabled = interp && !target;
-        TargetFpsCheck.IsEnabled = interp;
-        TargetFpsBox.IsEnabled = target;
         // 去重可单独使用(不勾补帧也能只去重导出);但去重内容帧率依赖补帧逻辑,不开补帧时用"标准/手动"更直观
         DedupCheck.IsEnabled = true;
         DedupModelCombo.IsEnabled = dedup;
