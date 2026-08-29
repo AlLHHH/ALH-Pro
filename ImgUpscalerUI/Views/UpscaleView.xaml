@@ -244,9 +244,9 @@
                         <TextBlock Text="格式" Style="{StaticResource HintText}"/>
                         <ComboBox x:Name="FmtCombo" HorizontalAlignment="Stretch"
                                   SelectedIndex="0"
-                                  ToolTipService.ToolTip="输出格式:PNG 无损(文件大,推荐);JPG 有损压缩(文件小)">
-                            <ComboBoxItem Content="PNG"/>
+                                  ToolTipService.ToolTip="输出格式:JPG 有损压缩(文件小,照片日常首选);PNG 无损(文件大,用于需要透明/后续编辑)">
                             <ComboBoxItem Content="JPG"/>
+                            <ComboBoxItem Content="PNG"/>
                         </ComboBox>
                         <TextBlock Text="输出码率" Style="{StaticResource HintText}"/>
                         <ComboBox x:Name="ImgQualityCombo" HorizontalAlignment="Stretch"

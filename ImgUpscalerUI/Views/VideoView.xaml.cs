@@ -1085,17 +1085,7 @@ public sealed partial class VideoView : UserControl
         public double DedupFrac { get; set; } = 0.33;
         public double DedupSadThr { get; set; } = 3.0;
         public double DedupSsimThr { get; set; } = 0.97;
-        // 手动模式新判据(局部动作保护/参考帧窗口/采样粒度/变化块判线)
-        public double DedupProtect { get; set; } = 0.12;
-        public int DedupWindow { get; set; } = 6;
-        public int DedupScale { get; set; } = 16;
-        public double DedupBlockThr { get; set; } = 4;
-        // 手动模式:静止段合并(开关/段相似度/段帧差)+ 语义运动分析的镜头最大差异
-        public bool DedupSegOn { get; set; } = true;
-        public double DedupSegSsim { get; set; } = 0.92;
-        public double DedupSegSad { get; set; } = 5;
-        public double DedupPanMax { get; set; } = 20;
-        public double DedupPan { get; set; } = 8;   // 手动-语义运动分析:镜头运动阈值
+        // (以下高级字段已无 UI/无读写,2026-08-29 清理:处理参数均为硬编码默认值,删除零影响)
         public double ContentFps { get; set; }      // 内容帧率模式:用户指定内容帧率(0=处理时自动检测)
         public bool DedupMotionComp { get; set; } = true;    // 镜头运动补偿(背景 pan 下识别人物定格):研究推荐默认开
         public bool DedupOnlyTrueHold { get; set; } = true;  // 只删"真定格"(SSIM≥0.995):研究推荐默认开(低阈值是"虚高+跳帧"根因)
@@ -1119,6 +1109,10 @@ public sealed partial class VideoView : UserControl
         public int Codec { get; set; }
         public int Format { get; set; }
         public bool FastMode { get; set; }
+        public bool Mute { get; set; }
+        public bool VideoDenoiseOn { get; set; }
+        public int VideoDenoiseStrong { get; set; }
+        public bool AnimeOpt { get; set; }
     }
 
     private static string SettingsFile => Path.Combine(
@@ -1166,9 +1160,13 @@ public sealed partial class VideoView : UserControl
                 if (d.Quality is >= 0 and <= 5) QualityCombo.SelectedIndex = d.Quality;
                 if (d.BitrateMbps > 0) BitrateBox.Text = d.BitrateMbps.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
                 if (d.Codec is >= 0 and <= 1) CodecCombo.SelectedIndex = d.Codec;
-                FormatCombo.SelectedIndex = 0;
+                if (d.Format is 0 or 1) FormatCombo.SelectedIndex = d.Format;   // 修复:此前 Load 硬编码 0,封装格式记不住
                 FastModeCheck.IsChecked = d.FastMode;
                 // 计算设备已在全局设置(AppSettings),页面不再恢复旧 Gpu 值
+                MuteCheck.IsChecked = d.Mute;
+                DenoiseToggle.IsChecked = d.VideoDenoiseOn;
+                if (d.VideoDenoiseStrong is >= 0 and <= 2) DenoiseStrongRadios.SelectedIndex = d.VideoDenoiseStrong;
+                AnimeOptCheck.IsChecked = d.AnimeOpt;
                 InterpToggle.IsChecked = d.Interp;
                 if (d.Model is >= 0 && d.Model < InterpModelCombo.Items.Count) InterpModelCombo.SelectedIndex = d.Model;
                 if (d.InterpScale is >= 0 and <= 3) InterpScaleRadios.SelectedIndex = d.InterpScale;
@@ -1272,8 +1270,6 @@ public sealed partial class VideoView : UserControl
                 DedupSsimThr = DedupSsimSlider.Value,
                 ManualProtectSmallMotion = ManualProtectSmallMotionCheck.IsChecked == true,
                 DedupPhaseAlign = DedupPhaseAlignManualCheck.IsChecked == true,
-                DedupMotionComp = false,
-                DedupOnlyTrueHold = false,
                 ContentFps = double.TryParse(ContentFpsBox.Text, System.Globalization.NumberStyles.Float,
                     System.Globalization.CultureInfo.InvariantCulture, out var cfv) && cfv > 0 ? cfv : 0,
                 DedupThr = DedupSceneSlider.Value,
@@ -1300,6 +1296,10 @@ public sealed partial class VideoView : UserControl
                 Codec = CodecCombo.SelectedIndex,
                 Format = FormatCombo.SelectedIndex,
                 FastMode = FastModeCheck.IsChecked == true,
+                Mute = MuteCheck.IsChecked == true,
+                VideoDenoiseOn = DenoiseToggle.IsChecked == true,
+                VideoDenoiseStrong = DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex : -1,
+                AnimeOpt = AnimeOptCheck.IsChecked == true,
             };
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile)!);
             File.WriteAllText(SettingsFile, System.Text.Json.JsonSerializer.Serialize(d));

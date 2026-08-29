@@ -85,8 +85,7 @@ public sealed partial class CutoutView : UserControl
     {
         if (FgVal == null) return;   // XAML 解析期事件保护
         UpdateOptions();
-        if (RememberCheck != null && RememberCheck.IsChecked == true)
-            SaveSettings();
+        SaveSettings();   // 始终保存(与超分/视频页一致;恢复与否由 Load 侧按 Remember 决定)
         RefreshMaskDelayed();   // 调整参数 → AI 主体预览自动更新
     }
 
@@ -186,8 +185,9 @@ public sealed partial class CutoutView : UserControl
         public bool PreDenoise { get; set; }
         public int PreDenoiseLevel { get; set; } = 1;
         public bool PreUpscale { get; set; }
-        public int Tolerance { get; set; } = 20;
-        public int Spread { get; set; } = 180;
+        public int Tolerance { get; set; } = 20;   // 兼容旧文件(已删功能,不再读写)
+        public int Spread { get; set; } = 180;     // 兼容旧文件(已删功能,不再读写)
+        public string OutDir { get; set; } = "";
     }
 
     private static string SettingsFile => Path.Combine(
@@ -214,6 +214,12 @@ public sealed partial class CutoutView : UserControl
             PreDenoiseCheck.IsChecked = d.PreDenoise;
             if (d.PreDenoiseLevel is >= 0 and <= 2) PreDenoiseLevelCombo.SelectedIndex = d.PreDenoiseLevel;
             PreUpscaleCheck.IsChecked = d.PreUpscale;
+            // 输出目录恢复(此前只存不读 → 记忆双重丢失,已修)
+            if (!string.IsNullOrWhiteSpace(d.OutDir) && Directory.Exists(d.OutDir))
+            {
+                OutDirBox.Text = d.OutDir;
+                _customOutDir = d.OutDir;
+            }
         }
         catch { /* 读取失败用默认值 */ }
     }
@@ -226,7 +232,6 @@ public sealed partial class CutoutView : UserControl
             {
                 Remember = RememberCheck.IsChecked == true,
                 Model = ModelCombo.SelectedIndex,
-                Gpu = AppSettings.GpuIndex,
                 Fg = (int)FgSlider.Value,
                 Bg = (int)BgSlider.Value,
                 Feather = (int)FeatherSlider.Value,
@@ -236,6 +241,7 @@ public sealed partial class CutoutView : UserControl
                 PreDenoise = PreDenoiseCheck.IsChecked == true,
                 PreDenoiseLevel = PreDenoiseLevelCombo.SelectedIndex,
                 PreUpscale = PreUpscaleCheck.IsChecked == true,
+                OutDir = _customOutDir ?? "",
             };
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile)!);
             File.WriteAllText(SettingsFile, System.Text.Json.JsonSerializer.Serialize(d));
@@ -578,6 +584,7 @@ public sealed partial class CutoutView : UserControl
         {
             OutDirBox.Text = folder.Path;
             _customOutDir = folder.Path;
+            SaveSettings();   // 选择后立即记住(此前遗失)
         }
     }
 
@@ -586,6 +593,7 @@ public sealed partial class CutoutView : UserControl
     {
         var t = OutDirBox.Text.Trim();
         _customOutDir = t.Length > 0 ? t : null;
+        SaveSettings();   // 编辑后立即记住(此前遗失)
     }
 
     // ---------- 批量抠图 ----------
