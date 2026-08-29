@@ -96,9 +96,6 @@
                     <TextBlock Text="高级" Style="{StaticResource SectionTitle}"/>
                     <CheckBox x:Name="TtaCheck" Content="高质量(更慢更清晰)"
                               ToolTipService.ToolTip="高质量:反复推演,细节更稳更清晰,但速度约减半"/>
-                    <CheckBox x:Name="RememberCheck" Content="记住上次参数"
-                              IsChecked="True"
-                              ToolTipService.ToolTip="记住:算法模式、waifu2x 模型、放大倍数、降噪级别、TTA、输出格式、输出目录、保留细节、锐化、预处理降噪及其强度"/>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
@@ -236,6 +233,11 @@
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
                     </StackPanel>
+
+                    <!-- 记住上次参数:放在高级区末尾(增强滑块之后),与参数记忆语义贴近 -->
+                    <CheckBox x:Name="RememberCheck" Content="记住上次参数"
+                              IsChecked="True"
+                              ToolTipService.ToolTip="记住:算法模式、waifu2x 模型、放大倍数、降噪级别、TTA、输出格式、输出目录、保留细节、锐化、预处理降噪及其强度"/>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
