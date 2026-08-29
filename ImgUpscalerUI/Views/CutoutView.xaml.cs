@@ -565,7 +565,7 @@ public sealed partial class CutoutView : UserControl
         picker.FileTypeFilter.Add(".bmp");
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
         WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
-        var files = picker.PickMultipleFilesAsync().AsTask().Result;
+        var files = await picker.PickMultipleFilesAsync();
         if (files != null && files.Count > 0)
         {
             await ToolGrid.AddImagesAsync(files.Select(f => f.Path));
@@ -573,13 +573,13 @@ public sealed partial class CutoutView : UserControl
         }
     }
 
-    private void BrowseOut_Click(object sender, RoutedEventArgs e)
+    private async void BrowseOut_Click(object sender, RoutedEventArgs e)
     {
         var picker = new FolderPicker();
         picker.FileTypeFilter.Add("*");
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
         WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
-        var folder = picker.PickSingleFolderAsync().AsTask().Result;
+        var folder = await picker.PickSingleFolderAsync();
         if (folder != null)
         {
             OutDirBox.Text = folder.Path;

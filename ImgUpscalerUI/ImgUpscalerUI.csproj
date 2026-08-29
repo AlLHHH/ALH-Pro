@@ -68,7 +68,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260803003" />
+        <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260804001" />
         <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.*" />
 
         <Manifest Include="$(ApplicationManifest)" />

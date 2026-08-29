@@ -1,5 +1,5 @@
 <Solution>
-    <Project Path="ALHPro.csproj">
+    <Project Path="ImgUpscalerUI.csproj">
         <Deploy />
     </Project>
     <Properties Name="Visual Studio">
