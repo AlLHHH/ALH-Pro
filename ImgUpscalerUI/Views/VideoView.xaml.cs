@@ -462,12 +462,10 @@ public sealed partial class VideoView : UserControl
 
     private void UpdateDropHint()
     {
-        bool empty = _videos.Count == 0;
-        VideoDropHint.Visibility = empty ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
-        // 终极防幽灵:空列表时 ItemsSource=null + 隐藏本体(悬停不生成幽灵项→无"删除"浮字);
-        // 拖放功能在 VideoGridHost 上,不受影响。
-        VideoList.ItemsSource = empty ? null : _videos;
-        VideoList.Visibility = empty ? Microsoft.UI.Xaml.Visibility.Collapsed : Microsoft.UI.Xaml.Visibility.Visible;
+        VideoDropHint.Visibility = _videos.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        // 注意:不能折叠 ListView 也不能关 IsHitTestVisible——空列表还要能拖入(video 列表空时可拖)。
+        // WinUI 空列表"幽灵项"悬停浮出模板「删除」按钮:用 FallbackValue=Collapsed 抑制(模板层)。
+        // 若仍冒「删除」,根治需在模板层把该按钮绑定到一个"真实完成项才可见"的强条件(而非仅 IsDone)。
     }
 
     private void UpdateRunState()
@@ -2096,7 +2094,7 @@ public sealed partial class VideoView : UserControl
         ClearDoneBtn.Visibility = hasVideos ? Visibility.Visible : Visibility.Collapsed;
         // 处理中(未暂停)锁死删除;但选中里有「已完成(灰)」项时解锁(它们不参与当前任务,任何时候可删)
         var sel = VideoList.SelectedItems.OfType<VideoItem>().ToArray();
-        RemoveVideoBtn.IsEnabled = hasVideos && VideoList.SelectedItem != null &&
+        RemoveVideoBtn.IsEnabled = VideoList.SelectedItem != null &&
             ((!_running || _paused) || sel.Any(v => v.IsDone));
         ClearVideosBtn.IsEnabled = !_running && hasVideos;
         ClearDoneBtn.IsEnabled = _videos.Any(v => v.IsDone);   // 有已完成(灰)项目时才可清除
