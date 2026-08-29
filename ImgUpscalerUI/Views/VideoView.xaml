@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:local="using:ALHPro.Views"
     mc:Ignorable="d">
 
     <Grid>
@@ -799,9 +800,10 @@
                               Background="Transparent" BorderThickness="0"
                               CanDragItems="True" CanReorderItems="True"
                               DoubleTapped="VideoList_DoubleTapped" KeyDown="VideoList_KeyDown"
-                              AllowDrop="True" DragOver="DropBorder_DragOver" Drop="DropBorder_Drop">
+                              AllowDrop="True" DragOver="DropBorder_DragOver" Drop="DropBorder_Drop"
+                              Visibility="Collapsed">   <!-- 空列表隐藏本体:防 WinUI 幽灵项渲染模板(删除/重新激活浮字);有视频时 UpdateDropHint 显示 -->
                         <ListView.ItemTemplate>
-                            <DataTemplate>
+                            <DataTemplate x:DataType="local:VideoItem">
                                 <Grid ColumnSpacing="10" Padding="4">
                                     <Grid.ContextFlyout>
                                         <MenuFlyout>
@@ -872,9 +874,11 @@
                                                     Click="FpsReset_Click"/>
                                         </StackPanel>
                                         <StackPanel Orientation="Horizontal" Spacing="6"
-                                                    Visibility="{Binding ReRunBtnVisibility, FallbackValue=Collapsed}">
+                                                    Visibility="{x:Bind ReRunBtnVisibility, Mode=OneWay, FallbackValue=Collapsed}">
                                             <Button Content="重新激活" FontSize="10" Padding="8,3"
                                                     Click="ReRunVideoBtn_Click"/>
+                                            <Button Content="删除" FontSize="10" Padding="8,3"
+                                                    Click="DoneDeleteBtn_Click"/>
                                         </StackPanel>
                                     </StackPanel>
                                 </Grid>
@@ -890,7 +894,7 @@
                 </Grid>
 
                 <StackPanel x:Name="VideoDropHint" Grid.Row="2" VerticalAlignment="Center" Spacing="12"
-                            IsHitTestVisible="False">
+                            IsHitTestVisible="False">   <!-- 空列表显示;诊断已结束,恢复正常显示 -->
                     <FontIcon Glyph="&#xE714;" FontSize="48" Opacity="0.3"
                               HorizontalAlignment="Center"/>
                     <TextBlock Text="拖入项目" HorizontalAlignment="Center"
