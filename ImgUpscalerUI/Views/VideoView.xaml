@@ -5,7 +5,6 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    xmlns:local="using:ALHPro.Views"
     mc:Ignorable="d">
 
     <Grid>
@@ -790,7 +789,7 @@
                                Opacity="0.5" VerticalAlignment="Center" HorizontalAlignment="Right"/>
                 </Grid>
                 <!-- 视频列表(支持鼠标框选多选,与图片放大一致) -->
-                <Grid x:Name="VideoGridHost" Grid.Row="2" Background="Transparent"
+                <Grid x:Name="VideoGridHost" Grid.Row="2"
                       PointerPressed="VideoGridHost_PointerPressed"
                       PointerMoved="VideoGridHost_PointerMoved"
                       PointerReleased="VideoGridHost_PointerReleased"
@@ -800,17 +799,10 @@
                               Background="Transparent" BorderThickness="0"
                               CanDragItems="True" CanReorderItems="True"
                               DoubleTapped="VideoList_DoubleTapped" KeyDown="VideoList_KeyDown"
-                              AllowDrop="True" DragOver="DropBorder_DragOver" Drop="DropBorder_Drop"
-                              Visibility="Collapsed">   <!-- 空列表隐藏本体:防 WinUI 幽灵项渲染模板(删除/重新激活浮字);有视频时 UpdateDropHint 显示 -->
+                              AllowDrop="True" DragOver="DropBorder_DragOver" Drop="DropBorder_Drop">
                         <ListView.ItemTemplate>
-                            <DataTemplate x:DataType="local:VideoItem">
+                            <DataTemplate>
                                 <Grid ColumnSpacing="10" Padding="4">
-                                    <Grid.ContextFlyout>
-                                        <MenuFlyout>
-                                            <MenuFlyoutItem Text="重新激活" Click="ItemRerun_Click"/>
-                                            <MenuFlyoutItem Text="删除" Click="ItemDelete_Click"/>
-                                        </MenuFlyout>
-                                    </Grid.ContextFlyout>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="120"/>
                                         <ColumnDefinition Width="*"/>
@@ -874,9 +866,11 @@
                                                     Click="FpsReset_Click"/>
                                         </StackPanel>
                                         <StackPanel Orientation="Horizontal" Spacing="6"
-                                                    Visibility="{x:Bind ReRunBtnVisibility, Mode=OneWay, FallbackValue=Collapsed}">
+                                                    Visibility="{Binding ReRunBtnVisibility, FallbackValue=Collapsed}">
                                             <Button Content="重新激活" FontSize="10" Padding="8,3"
                                                     Click="ReRunVideoBtn_Click"/>
+                                            <Button Content="删除" FontSize="10" Padding="8,3"
+                                                    Click="DoneDeleteBtn_Click"/>
                                         </StackPanel>
                                     </StackPanel>
                                 </Grid>
@@ -892,8 +886,7 @@
                 </Grid>
 
                 <StackPanel x:Name="VideoDropHint" Grid.Row="2" VerticalAlignment="Center" Spacing="12"
-                            Background="Transparent" IsHitTestVisible="True"
-                            AllowDrop="True" DragOver="DropBorder_DragOver" Drop="DropBorder_Drop">
+                            IsHitTestVisible="False">
                     <FontIcon Glyph="&#xE714;" FontSize="48" Opacity="0.3"
                               HorizontalAlignment="Center"/>
                     <TextBlock Text="拖入项目" HorizontalAlignment="Center"

@@ -164,19 +164,14 @@ public sealed partial class ImageToolGrid : UserControl
         // 处理中锁死:按钮始终显示(选中/有图片才亮),处理中置灰点不了(锁死但不藏起来);
         // 暂停时解锁「删除」(只删未处理项),清空/批量改名仍锁
         ClearSelBtn.IsEnabled = !_processing && sel.Count > 0;
-        ClearSelBtn.Visibility = sel.Count > 0 && n > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ClearSelBtn.Visibility = sel.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         BatchRenameBtn.IsEnabled = !_processing && sel.Count > 0;
-        BatchRenameBtn.Visibility = sel.Count > 0 && n > 0 ? Visibility.Visible : Visibility.Collapsed;
+        BatchRenameBtn.Visibility = sel.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         RemoveBtn.IsEnabled = (!_processing || _paused) && sel.Count > 0;
-        // 空列表(无真实图片 n==0)绝不显示"删除选中"——WinUI 幽灵项会误报选中,导致按钮浮出
-        RemoveBtn.Visibility = sel.Count > 0 && n > 0 ? Visibility.Visible : Visibility.Collapsed;
+        RemoveBtn.Visibility = sel.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         ClearBtn.IsEnabled = !_processing && n > 0;
         ClearBtn.Visibility = n > 0 ? Visibility.Visible : Visibility.Collapsed;
         DropHint.Visibility = n > 0 ? Visibility.Collapsed : Visibility.Visible;
-        // 终极防幽灵:空列表时 ItemsSource=null(WinUI 对 null 数据源的 List 不渲染任何模板,
-        // 悬停也不会生成幽灵项浮出「删除/铅笔」);有图片时恢复 Items 集合。
-        // (此前 Collapsed 列表本体仍会幽灵,实测无效)
-        ImageGrid.ItemsSource = n > 0 ? Items : null;
         // 注意:不能设 GridHost.IsHitTestVisible=false——那会连拖放一起禁用(列表空时拖不进)。
         // WinUI 空列表幽灵项(悬停浮出模板元素)改用模板内按钮默认隐藏来解决,见 ItemTemplate。
         // (视频项 ReRunBtnVisibility 已加 FallbackValue=Collapsed;此处保持 GridHost 可交互)
