@@ -64,6 +64,9 @@
                 <StackPanel Grid.Row="2" Padding="14,12" Spacing="6">
                     <TextBlock Text="AlL.H" FontSize="16" FontWeight="SemiBold"
                                Foreground="#E8ECF2"/>
+                    <Button Content="☕ 请作者喝咖啡" Click="CoffeeCard_Click" HorizontalAlignment="Stretch"
+                            Padding="0,5" FontSize="11" Margin="0,2,0,0"
+                            ToolTipService.ToolTip="完全自愿:请作者喝一杯咖啡(软件无广告/无联网/无账号)"/>
                     <Button Content="设置" Click="Settings_Click" HorizontalAlignment="Stretch"
                             Padding="0,5" FontSize="11" Margin="0,2,0,0"
                             ToolTipService.ToolTip="设置:诊断日志等"/>

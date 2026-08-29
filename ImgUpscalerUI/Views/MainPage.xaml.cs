@@ -1430,22 +1430,24 @@ public sealed partial class MainPage : Page
             FontSize = 10, Opacity = 0.5, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
 
-        // ================= 请作者喝咖啡(纯自愿;软件无广告/无联网/无账号) =================
-        content.Children.Add(new Border
+        ShowCardPopup(content, "设置", 560);
+    }
+
+    /// <summary>左下角「☕ 请作者喝咖啡」→ 打赏卡片弹窗(赞赏码图片 + 打赏平台链接)。</summary>
+    private void CoffeeCard_Click(object sender, RoutedEventArgs e) => ShowCoffeeCard();
+
+    private void ShowCoffeeCard()
+    {
+        var content = new StackPanel { Spacing = 10 };
+        content.Children.Add(new TextBlock
         {
-            Height = 1,
-            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+            Text = "ALHPro 完全免费、无广告、无联网、无账号。如果你觉得它帮你省了时间,欢迎请作者喝一杯咖啡 ☕",
+            FontSize = 12, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, LineHeight = 19,
         });
         content.Children.Add(new TextBlock
         {
-            Text = "☕ 请作者喝一杯咖啡",
-            FontSize = 13,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-        });
-        content.Children.Add(new TextBlock
-        {
-            Text = "ALHPro 完全免费、无广告、无联网、无账号。如果你觉得它帮你省了时间,欢迎请作者喝一杯咖啡 ☕\n金额随意,心意最重要;打赏无任何特权,软件会一直免费维护下去。",
-            FontSize = 11, Opacity = 0.8, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, LineHeight = 18,
+            Text = "金额随意,心意最重要;打赏无任何特权,软件会一直免费维护下去,感谢每一份支持!",
+            FontSize = 10, Opacity = 0.55, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, LineHeight = 17,
         });
         // 收款码:把图片放到「发布版\assets\coffee_qr.png」即自动显示(无需改代码)
         var qrPath = Path.Combine(AppContext.BaseDirectory, "assets", "coffee_qr.png");
@@ -1469,25 +1471,21 @@ public sealed partial class MainPage : Page
                 HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
             });
         }
-        // 打赏平台链接:CoffeeUrl 非空时显示按钮(作者给定 URL 后填这行)
+        // 打赏平台链接:打开爱发电(作者主页)
         const string CoffeeUrl = "https://www.ifdian.net/a/AlL666";
-        if (!string.IsNullOrEmpty(CoffeeUrl))
+        var coffeeBtn = new Button
         {
-            var coffeeBtn = new Button
-            {
-                Content = "打开打赏页",
-                FontSize = 12, Padding = new Microsoft.UI.Xaml.Thickness(14, 6, 14, 6),
-                HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
-            };
-            coffeeBtn.Click += (_, _) =>
-            {
-                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(CoffeeUrl) { UseShellExecute = true }); }
-                catch { }
-            };
-            content.Children.Add(coffeeBtn);
-        }
-
-        ShowCardPopup(content, "设置", 560);
+            Content = "打开打赏页(爱发电)",
+            FontSize = 12, Padding = new Microsoft.UI.Xaml.Thickness(14, 6, 14, 6),
+            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
+        };
+        coffeeBtn.Click += (_, _) =>
+        {
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(CoffeeUrl) { UseShellExecute = true }); }
+            catch { }
+        };
+        content.Children.Add(coffeeBtn);
+        ShowCardPopup(content, "☕ 请作者喝一杯咖啡", 520);
     }
 
     /// <summary>左下角状态栏单击 → 弹窗放大查看诊断日志(尾部)。</summary>
