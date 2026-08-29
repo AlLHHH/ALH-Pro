@@ -408,15 +408,56 @@ public static class VideoService
             // 手动模式(重复帧检测)仍用 mpdecimate 自由参数。
             // 手动-语义运动分析(独立叠加开关):与上方算法同时生效——先按算法去重,
             // 再叠加检测镜头平移/背景滚动:整幅画面均匀移动=冗余帧删,局部动作保留。
-            // ===== 智能(自动)/ 动漫(一拍N)/ 手动-内容帧率采样:分段内容帧率化 =====
+            // ===== 智能(自动识别拍数)/ 动漫(一拍N)/ 手动-内容帧率采样:分段内容帧率化 =====
             // 不做逐帧判定:先全量拆帧,按转场切段;每段自适应估计内容间隔(一拍N),段内按网格保留内容帧;
             // 之后 RIFE 在内容帧上均匀补帧 = 标准 CFR(段内均匀,节奏按段精确)。
             // 找不准节奏的段(低置信/无保持帧)原样保留,一帧不删——不会"删多/删错/补不回来"。
+            // 智能 = 先自动识别拍数(scdet 事件间隔估计),再按拍数网格采样;不再用自适应多判据(用户定案:
+            // 那套"自适应 SAD+SSIM+变化块+镜头补偿+保护闸"删不干净/过严,结果虚,拍数识别+网格又快又准)。
             if (dedup && (dedupMode is 1 or 2 || (dedupMode == 3 && dedupAlgo == 3)))
             {
                 double userInterval = 0, userTol = 0;
                 string modeNote;
-                if (dedupMode == 2)
+                if (dedupMode == 1)
+                {
+                    // ===== 智能 = 自动识别拍数→网格采样(用户定案:拍数识别比自适应判据快且准) =====
+                    // 三档 = 拍数识别的"采用门槛":
+                    //   均衡(0)=置信度 ≥0.5 才采用(估不准就回退保留,不硬猜)
+                    //   激进(1)=置信度 ≥0.35 就采用(确定有冗余素材,宁可冒点节奏偏差)
+                    //   保守(2)=置信度 ≥0.7 采用,且内容帧率是常见拍数(8/10/12/15/20/24/30 附近)才采用
+                    double confGate = dedupSmartMode switch { 1 => 0.35, 2 => 0.70, _ => 0.50 };
+                    string defaultGateName = dedupSmartMode switch { 1 => "激进", 2 => "保守", _ => "均衡" };
+                    progress?.Report((3, "智能检测:识别素材拍数(一拍N)..."));
+                    var cfInfo = await EstimateContentFpsWithAsync(ffmpeg, inputVideo, ct);
+                    bool commonRatio = IsCommonContentFps(cfInfo.Fps, inFps);
+                    if (cfInfo.Fps <= 0.5 || cfInfo.Confidence < confGate || (dedupSmartMode == 2 && !commonRatio))
+                    {
+                        // 识别不出拍数(连续运动/无保持帧)或置信度不足:原样保留,一帧不删(不硬猜,与"连续运动闸"一致)
+                        AppLogger.Info($"智能检测({defaultGateName}):未采用拍数识别({cfInfo.Summary},置信 {cfInfo.Confidence:0%})→ 原样保留(不删帧)");
+                        progress?.Report((4, $"智能检测({defaultGateName}):{cfInfo.Summary},原样保留..."));
+                        frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs, scaleVf,
+                            framesIn, progress, ct, origCountEst, vfrPassthrough);
+                        frameDurs = null;
+                        effectiveFps = inFps;
+                        tempoSrcIdx = null;
+                        progress?.Report((5, $"已拆出 {frameCount} 帧(智能-未采用拍数,不采样)"));
+                    }
+                    else
+                    {
+                        // 识别出拍数:按内容帧率走网格采样(与动漫/手动同一条路)
+                        double smartFc = Math.Clamp(cfInfo.Fps, 1.0, Math.Max(2.0, inFps));
+                        double smartIv = inFps / smartFc;
+                        progress?.Report((3, $"智能检测({defaultGateName}):内容帧率 ≈{smartFc:0.##} fps(拍型每 {smartIv:0.##} 帧,置信 {cfInfo.Confidence:0%})"));
+                        var (smartFc2, smartEff, smartSrc) = await RunSegmentContentFpsAsync(ffmpeg, inputVideo, trimArgs, scaleVf,
+                            framesIn, origCountEst, vfrPassthrough, inFps, smartIv, 0.8, 0.4, $"智能-{smartFc:0.##}fps",
+                            progress, ct, forceGrid: true, phaseAlign: phaseAlign);
+                        frameCount = smartFc2;
+                        effectiveFps = smartEff;
+                        tempoSrcIdx = smartSrc;
+                        frameDurs = null;
+                    }
+                }
+                else if (dedupMode == 2)
                 {
                     modeNote = animeHoldN switch
                     {
@@ -1226,6 +1267,13 @@ public static class VideoService
             var postParts = new System.Collections.Generic.List<string>();
             var postFilter = BuildPostFilter(postSharpen, postClarity, postUsm, postDetail, postDeblur,
                 postFlicker, postDenoise, postAa, inv);
+            // nlmeans 去重:视频降噪(主开关)与后处理去杂色同为 nlmeans,同时开启时去杂色跳过——
+            // 两个 nlmeans 串行跑一倍耗时至多,画质无增益(降噪强度由主开关决定)。
+            if (postFilter != null && videoDenoise >= 1 && postDenoise > 0)
+            {
+                AppLogger.Info($"去杂色跳过:视频降噪(强度 {videoDenoise})已含 nlmeans 降噪,后处理去杂色不再重复执行");
+                postFilter = postFilter.Replace($"nlmeans={Math.Min(7.0, 1.0 + postDenoise / 25.0).ToString("0.#", inv)}:5:9,", "");
+            }
             if (postFilter != null) preParts.Add(postFilter);
             // 视频降噪(空间+时间,去噪点/闪烁/压缩噪点),放最前:先降噪再锐化
             if (videoDenoise >= 1) preParts.Insert(0, VideoDenoiseFilter(videoDenoise));
@@ -2745,6 +2793,24 @@ public static class VideoService
     }
 
     // ===== 内容帧率估计(智能模式自动的内容帧率化用):scdet 逐帧评分 → 变化事件间隔 → 内容帧率 = 输入帧率/平均间隔 =====
+    /// <summary>内容帧率是否为"常见拍数"(8/10/12/15/20/24/30fps ±8%)——保守档用:
+    /// 只有识别结果落在常见值附近才信任(否则可能把连续运动误估成奇怪拍数)。</summary>
+    private static bool IsCommonContentFps(double fps, double inFps)
+    {
+        if (fps <= 0) return false;
+        // 先按绝对常见值,再按"输入帧率的整数分频"(30→15/10/7.5/6、24→12/8/6、60→30/20/15)
+        double[] common = { 8, 10, 12, 15, 20, 24, 30, 60 };
+        foreach (var c in common)
+            if (Math.Abs(fps - c) <= c * 0.08) return true;
+        // 整数分频:inFps/N (N=1..6) 附近也算(拍N的常见形态)
+        for (int n = 1; n <= 6; n++)
+        {
+            double c = inFps / n;
+            if (Math.Abs(fps - c) <= c * 0.08) return true;
+        }
+        return false;
+    }
+
     /// <summary>内容帧率估计结果(智能模式内部使用;手动模式由用户手填,不经此估计器)。</summary>
     private sealed class ContentFpsInfo
     {
@@ -3226,8 +3292,8 @@ public static class VideoService
             {
             // 每帧对按"实际需要的深度"分层(不再全局 4 层过采样):
             // K=帧对输出帧数(=距×倍率);depth=ceil(log2 K);每对独立深度(浅对不浪费)。
-            // 【安全硬上限 6】最多 2^6-1=63 个中间帧/对——超长静止段(gap 巨大)不会把全局深度拉爆
-            // (旧"全局统一深度"会让所有帧对都生成 2^depth-1 张中间 PN G → 刷爆磁盘/内存)。
+            // 【安全硬上限 4】最多 2^4-1=15 个中间帧/对——dyadic 4 层误差 ≤1/16,视觉无差,
+            // 超长静止段(gap 巨大)不再生成 63 张中间 PN G(省时省磁盘,够用)。
             // 引擎启动次数=深度组数(碎片化素材依然多次启动,但引擎日志已节流,不再刷屏)。
             double scaleF = Math.Max(1.0, F / Math.Max(1.0, inFps));
             var depthGroups = activePairs
@@ -3237,7 +3303,7 @@ public static class VideoService
                     int k = Math.Max(2, (int)Math.Round(dist * scaleF));
                     int d = 1;
                     while ((1 << d) < k) d++;
-                    d = Math.Min(d, 6);
+                    d = Math.Min(d, 4);
                     return (p, d);
                 })
                 .OrderBy(g => g.d)
@@ -3255,7 +3321,7 @@ public static class VideoService
                 for (int lv = 1; lv <= depth && curNodes.Count > 0; lv++)
                 {
                     // 分块批(每块一次引擎进程):块间按真实生成比例上报"已处理 X/总 Y 帧"(逐帧可感)
-                    const int LayerBatch = 192;
+                    const int LayerBatch = 384;
                     var nextNodes = new System.Collections.Generic.List<(int p, double phi0, string a, double phi1, string b)>();
                     for (int off = 0; off < curNodes.Count; off += LayerBatch)
                     {
@@ -3396,17 +3462,21 @@ public static class VideoService
         // 自适应基准参数(随素材变化,不写死):动静越大,快筛阈值越宽;重复越多,删得越有条件(整体已加强)
         double sadThr = Math.Clamp(median * 1.1 + dupRatio * 3.0, 2.0, 5.5);
         double ssimThr = lowDynamic ? 0.94 : 0.95;
-        double smartProtect = lowDynamic ? 0.26 : 0.18;
+        // 变化块闸:均衡放宽(0.34/0.30)——拍2 素材"按拍重复"的帧间微动占比常见 0.2~0.35,
+        // 闸太紧(0.18)会把真重复帧当"有动作"保留(截图:22.6fps 删不干净);局部动作(口型/眨眼,
+        // 变化块远超 0.34)仍被保护保留。保守档维持紧闸防误删。
+        double smartProtect = smartMode == 1 ? 0.45 : smartMode == 2 ? 0.22 : (lowDynamic ? 0.34 : 0.30);
         double segSsim = 0.92, segSad = 5.0;
 
         // 三档 = 整体力度系数(0.7 保守 / 1.0 均衡 / 1.5 激进):在"自适应基准"上整体放大/缩小删除倾向
         double force = smartMode switch { 1 => 1.5, 2 => 0.7, _ => 1.0 };
         sadThr = Math.Clamp(sadThr * force, 1.0, 7.0);
-        // 只删真定格(与主判重一致):SSIM 阈值设 ≥0.995 下限,相似但连续运动的帧不再被当重复删;
-        // 人物定格交给"镜头运动补偿判据"(对齐残差极小)识别。这样任何档位都不会过删→补帧无需桥大gap→不卡。
-        ssimThr = Math.Max(1.0 - (1.0 - ssimThr) * force, 0.995);
+        // 只删真定格(与主判重一致):SSIM 阈值设 ≥0.99 下限(均衡档 0.99,激进 0.985,保守 0.995),
+        // 相似但连续运动的帧不再被当重复删;人物定格交给"镜头运动补偿判据"(对齐残差极小)识别。
+        // 注:上一版下限 0.995 过严 → 拍2素材只删到 22.6fps,现放宽到 0.99(拍N 重复帧结构相同度约 0.99x)。
+        ssimThr = Math.Max(1.0 - (1.0 - ssimThr) * force, smartMode == 1 ? 0.985 : smartMode == 2 ? 0.995 : 0.99);
         smartProtect = Math.Clamp(smartProtect * force, 0.05, 0.60);
-        segSsim = Math.Max(1.0 - (1.0 - segSsim) * force, 0.995);
+        segSsim = Math.Max(1.0 - (1.0 - segSsim) * force, smartMode == 1 ? 0.985 : smartMode == 2 ? 0.995 : 0.99);
         segSad = Math.Clamp(segSad * force, 2.0, 8.0);
         string forceName = smartMode switch { 1 => "激进", 2 => "保守", _ => "均衡" };
         // 静止段占比自适应:近静态相邻对占比 ≥25% 才启用段合并(防高动态素材误删)
@@ -3923,7 +3993,7 @@ public static class VideoService
             int k = (int)Math.Max(100, bitrateKbps);
             return encoder switch
             {
-                "h264_nvenc" or "hevc_nvenc" => $"-c:v {encoder} -preset p7 -rc vbr -cq 18 -b:v {k}K -maxrate {k}K -bufsize {k * 2}K -pix_fmt yuv420p",
+                "h264_nvenc" or "hevc_nvenc" => $"-c:v {encoder} -preset p4 -rc vbr -cq 18 -b:v {k}K -maxrate {k}K -bufsize {k * 2}K -pix_fmt yuv420p",
                 "h264_amf" or "hevc_amf" => $"-c:v {encoder} -quality quality -rc cbr -b:v {k}K -pix_fmt nv12",
                 "h264_qsv" or "hevc_qsv" => $"-c:v {encoder} -b:v {k}K -pix_fmt yuv420p",
                 "libx265" => $"-c:v libx265 -preset veryfast -b:v {k}K -maxrate {k}K -bufsize {k * 2}K -pix_fmt yuv420p -x265-params threads={th}",
@@ -3932,10 +4002,10 @@ public static class VideoService
         }
         return encoder switch
         {
-            "h264_nvenc" => $"-c:v h264_nvenc -preset p7 -cq {q} -pix_fmt yuv420p",
+            "h264_nvenc" => $"-c:v h264_nvenc -preset p4 -cq {q} -pix_fmt yuv420p",
             "h264_amf" => $"-c:v h264_amf -quality quality -rc cqp -qp_i {q} -qp_p {q} -pix_fmt nv12",   // AMF 必须给 NV12,否则黑屏
             "h264_qsv" => $"-c:v h264_qsv -global_quality {q} -pix_fmt yuv420p",
-            "hevc_nvenc" => $"-c:v hevc_nvenc -preset p7 -cq {q} -pix_fmt yuv420p",
+            "hevc_nvenc" => $"-c:v hevc_nvenc -preset p4 -cq {q} -pix_fmt yuv420p",
             "hevc_amf" => $"-c:v hevc_amf -quality quality -rc cqp -qp_i {q} -qp_p {q} -pix_fmt nv12",
             "hevc_qsv" => $"-c:v hevc_qsv -global_quality {q} -pix_fmt yuv420p",
             "libx265" => $"-c:v libx265 -preset veryfast -crf {q} -pix_fmt yuv420p -x265-params threads={th}",

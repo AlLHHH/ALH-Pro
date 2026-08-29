@@ -2665,6 +2665,14 @@ public sealed partial class VideoView : UserControl
         _taskDoneCount = 0;
         TaskSummary.Text = $"等待处理:共 {items.Length} 个视频";
         int progressIndex = 0;
+        // 任务前刷新空闲资源实测(开了其他软件后空闲骤降,批次档位要跟上);并记录日志便于排查
+        SafeRender.RefreshFreeResources();
+        {
+            double fr = SafeRender.FreeRamGB, fv = SafeRender.FreeVramGB;
+            int bs = SafeRender.GetVideoBatchSize();
+            Log($"资源自检:空闲内存 {fr:0.#} GB / 空闲显存 {fv:0.#} GB → 视频批 {bs} 帧/批");
+            AppLogger.Info($"资源自检:空闲内存 {fr:0.#} GB / 空闲显存 {fv:0.#} GB → 视频批 {bs} 帧/批");
+        }
         // 预计时间:全局平均速度(已用时间 ÷ 已完成进度 → 总时长估计,再减已用 = 剩余)
         // 预计总时长初始估算:根据启用的处理项 + 每个视频的时长/帧率/分辨率,
         // 一开始就显示合理数值(偏保守,随时间慢慢对齐),不是从小变大校准
@@ -2793,6 +2801,7 @@ public sealed partial class VideoView : UserControl
             // 阶段结束消息(不含"第N/共M"):把当前步骤行就地转成 "✓ 完成语",不再停留在旧数字
             if (!em.Success && lastLoggedStep != null && stepLogFull != null
                 && (t.msg.Contains("完成", StringComparison.Ordinal)
+                    || t.msg.StartsWith("去重", StringComparison.Ordinal)
                     || t.msg.StartsWith("已拆出", StringComparison.Ordinal)
                     || t.msg.StartsWith("压缩编码器:", StringComparison.Ordinal)))
             {
@@ -2816,10 +2825,7 @@ public sealed partial class VideoView : UserControl
                 : pctFine;
             VideoProgress.Value = Math.Max(VideoProgress.Value, overall);   // 浮点:无取整平台
             VideoStatus.Text = done + active > 0 ? $"({done + 1}/{done + active}) {t.msg}" : t.msg;
-            // 去重关键信息:完成后立即写入底部日志区(不用等整个视频处理完),实时可见
-            if (t.msg.StartsWith("去重完成", StringComparison.Ordinal)
-                || t.msg.StartsWith("去重:", StringComparison.Ordinal))
-                Log("  " + t.msg);
+            // 去重关键信息由"阶段结束消息转写"(上方"完成"匹配)统一写入日志区,避免重复显示两行
             // 当前视频的列表项进度条 + 状态小字 + 预计剩余时间
             if (progressIndex < items.Length)
             {
