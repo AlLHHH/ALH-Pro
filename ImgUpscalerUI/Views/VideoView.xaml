@@ -877,8 +877,6 @@
                                                     Visibility="{x:Bind ReRunBtnVisibility, Mode=OneWay, FallbackValue=Collapsed}">
                                             <Button Content="重新激活" FontSize="10" Padding="8,3"
                                                     Click="ReRunVideoBtn_Click"/>
-                                            <Button Content="删除" FontSize="10" Padding="8,3"
-                                                    Click="DoneDeleteBtn_Click"/>
                                         </StackPanel>
                                     </StackPanel>
                                 </Grid>
