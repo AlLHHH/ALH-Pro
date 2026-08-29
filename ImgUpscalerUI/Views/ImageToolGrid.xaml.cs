@@ -164,11 +164,12 @@ public sealed partial class ImageToolGrid : UserControl
         // 处理中锁死:按钮始终显示(选中/有图片才亮),处理中置灰点不了(锁死但不藏起来);
         // 暂停时解锁「删除」(只删未处理项),清空/批量改名仍锁
         ClearSelBtn.IsEnabled = !_processing && sel.Count > 0;
-        ClearSelBtn.Visibility = sel.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ClearSelBtn.Visibility = sel.Count > 0 && n > 0 ? Visibility.Visible : Visibility.Collapsed;
         BatchRenameBtn.IsEnabled = !_processing && sel.Count > 0;
-        BatchRenameBtn.Visibility = sel.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        BatchRenameBtn.Visibility = sel.Count > 0 && n > 0 ? Visibility.Visible : Visibility.Collapsed;
         RemoveBtn.IsEnabled = (!_processing || _paused) && sel.Count > 0;
-        RemoveBtn.Visibility = sel.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        // 空列表(无真实图片 n==0)绝不显示"删除选中"——WinUI 幽灵项会误报选中,导致按钮浮出
+        RemoveBtn.Visibility = sel.Count > 0 && n > 0 ? Visibility.Visible : Visibility.Collapsed;
         ClearBtn.IsEnabled = !_processing && n > 0;
         ClearBtn.Visibility = n > 0 ? Visibility.Visible : Visibility.Collapsed;
         DropHint.Visibility = n > 0 ? Visibility.Collapsed : Visibility.Visible;
