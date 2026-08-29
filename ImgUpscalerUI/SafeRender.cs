@@ -380,6 +380,7 @@ public static class SafeRender
             if (temp is >= 85)
             {
                 progress?.Report((pct, $"⚠ 显卡 {temp:0}°C 过热,暂停 10 分钟降温(点底部「跳过休息」可继续)..."));
+                AppLogger.Info($"⚠ 显卡 {temp:0}°C 过热,暂停 10 分钟降温(点底部「跳过休息」可继续)...");
                 await RestAsync(pct, TimeSpan.FromMinutes(10), 70.0, progress, ct);
                 return;
             }

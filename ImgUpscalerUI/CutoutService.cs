@@ -220,6 +220,7 @@ public static class CutoutService
             // DirectML GPU 兼容适配(新驱动/老显卡/设备编号错):自动改用 CPU 重跑一次,不直接失败
             AppLogger.Info($"降级:DirectML GPU({gpuId})失败:{ex.Message.Split('\n')[0]},改用 CPU 重试(新显卡/老显卡兼容)");
             progress?.Report((30, "⚠ GPU 推理失败,改用 CPU 重试(较慢但稳定)..."));
+            AppLogger.Info("⚠ GPU 推理失败,改用 CPU 重试(较慢但稳定)...");
             var session = GetOrCreateSession(modelPath, -1);
             ct.ThrowIfCancellationRequested();
             var inputMeta = session.InputMetadata.Keys.First();

@@ -336,7 +336,7 @@ public static class EngineService
         {
             string head = ex.Message.Split('\n')[0];
             if (head.Length > 90) head = head[..90];
-            AppLogger.Info($"降级:GPU 引擎失败({head}),自动改用 CPU 重算");
+            AppLogger.Info($"⚠ 降级:GPU 引擎失败({head}),自动改用 CPU 重算");
             progress?.Report((0, $"⚠ GPU 引擎失败({head}),自动改用 CPU 重算..."));
             var cpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g -1");
             await RunAsync(exe, cpuArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
@@ -798,6 +798,7 @@ public static class EngineService
             if (gpuId >= 0 && File.Exists(of) && IsBlackPng(of))
             {
                 progress?.Report((89, "⚠ 检测到该块超分变黑(GPU 队列异常),改用 CPU 软解重处理..."));
+                AppLogger.Info("⚠ 检测到该块超分变黑(GPU 队列异常),改用 CPU 软解重处理...");
                 await UpOneTileAsync(tf, of, engine, model, scale, noise, -1, tta, progress, ct, tileSize).ConfigureAwait(false);
             }
             done++;
@@ -1005,7 +1006,7 @@ public static class EngineService
                 {
                     attempts++;
                     t = Math.Max(64, t / 2);
-                    AppLogger.Info($"降级:显存不足(第 {attempts} 次,原因:{ex.Message}),分块 {tileSize}→{t} 重试");
+                    AppLogger.Info($"⚠ 降级:显存不足(第 {attempts} 次,原因:{ex.Message}),分块 {tileSize}→{t} 重试");
                     progress?.Report((0, $"⚠ 显存不足,自动降低分块 {tileSize}→{t} 重试(第 {attempts} 次)..."));
                 }
             }
