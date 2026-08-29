@@ -1092,30 +1092,33 @@ public sealed partial class MainPage : Page
 
         content.Children.Add(manualPanel);
 
+        // 资源保护黄字(声明提前:lowPriCheck 事件会刷新它)——专属「系统流畅优先」的提示:
+        // 勾选显示,取消消失。"限制总 CPU 占用"是强制开启的固定功能,不占用这个提示。
+        var resHint = new TextBlock
+        {
+            Text = "已开启系统流畅优先:处理速度可能略降,但电脑更不容易卡顿。",
+            FontSize = 11, Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xE8, 0xA3, 0x3D)),
+            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
+        };
+        void RefreshResHint()
+            => resHint.Visibility = SafeRender.LowPriorityEnabled
+                ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+
         // 处理时降优先级开关(防整机卡;默认开)
         var lowPriCheck = new CheckBox
         {
-            Content = "系统流畅优先",
+            Content = "系统流畅优先 (建议开启)",
             FontSize = 12,
             IsChecked = SafeRender.LowPriorityEnabled,
         };
         ToolTipService.SetToolTip(lowPriCheck,
             "处理时把计算进程设为「低于正常」优先级,并预留 1~2 个 CPU 核心给系统/前台软件(处理器亲和性),线程数也相应收紧:即使 CPU 满载,浏览器和其他软件也不卡。代价是处理速度略慢。不卡电脑的现代做法");
-        lowPriCheck.Checked += (_, _) => { SafeRender.LowPriorityEnabled = true; SafeRender.Save(); };
-        lowPriCheck.Unchecked += (_, _) => { SafeRender.LowPriorityEnabled = false; SafeRender.Save(); };
+        lowPriCheck.Checked += (_, _) => { SafeRender.LowPriorityEnabled = true; SafeRender.Save(); RefreshResHint(); };
+        lowPriCheck.Unchecked += (_, _) => { SafeRender.LowPriorityEnabled = false; SafeRender.Save(); RefreshResHint(); };
         content.Children.Add(lowPriCheck);
 
         // ===== 资源上限保护(给其他程序留余量;3 个手动开关,默认关,觉得卡才勾)=====
-        var resHint = new TextBlock
-        {
-            Text = "已开启资源保护,处理速度可能略降,但更不容易卡顿/抢资源。",
-            FontSize = 11, Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xE8, 0xA3, 0x3D)),
-            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
-        };
         content.Children.Add(resHint);
-        void RefreshResHint()
-            => resHint.Visibility = (SafeRender.LimitCpuJob || SafeRender.SplitCores)
-                ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
 
         var limitCpuCheck = new CheckBox
         {
@@ -1138,6 +1141,14 @@ public sealed partial class MainPage : Page
         };
         ToolTipService.SetToolTip(cpuCapSlider, "引擎+ffmpeg 的总 CPU 上限(50%~95%):给系统/前台留余量。自动模式固定 85%;切到自定义模式即可拖这条滑条(50~95)。");
         var cpuCapVal = new TextBlock { Text = $"{SafeRender.GetEffectiveCpuCapPct():0}%", MinWidth = 40, FontSize = 11, HorizontalTextAlignment = Microsoft.UI.Xaml.TextAlignment.Center, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
+        // 手动模式:滑条可拖、值实时显示;自动模式:锁定 85%,滑条禁用只作显示
+        void RefreshCpuCap()
+        {
+            bool manual = SafeRender.Mode == 1;
+            cpuCapSlider.IsEnabled = manual;
+            cpuCapSlider.Opacity = manual ? 1.0 : 0.5;
+            cpuCapVal.Text = $"{SafeRender.GetEffectiveCpuCapPct():0}%";
+        }
         cpuCapSlider.ValueChanged += (_, _) =>
         {
             SafeRender.CpuCapPct = Math.Clamp(cpuCapSlider.Value, 50, 95);
@@ -1148,6 +1159,7 @@ public sealed partial class MainPage : Page
         Grid.SetColumn(cpuCapVal, 2);
         cpuCapRow.Children.Add(cpuCapSlider);
         cpuCapRow.Children.Add(cpuCapVal);
+        RefreshCpuCap();
 
         limitCpuCheck.Checked += (_, _) => { SafeRender.LimitCpuJob = true; SafeRender.Save(); RefreshResHint(); cpuCapRow.Visibility = Microsoft.UI.Xaml.Visibility.Visible; };
         limitCpuCheck.Unchecked += (_, _) => { SafeRender.LimitCpuJob = true; SafeRender.Save(); RefreshResHint(); cpuCapRow.Visibility = Microsoft.UI.Xaml.Visibility.Visible; };   // 强制开:不可关
@@ -1331,6 +1343,7 @@ public sealed partial class MainPage : Page
             AnimatePanel(manualPanel, SafeRender.Mode == 1);   // 展开/收起都有动画,下方内容跟着平滑移动
             vramVal.Text = vramSlider.Value.ToString("0");
             ramVal.Text = ramSlider.Value.ToString("0");
+            RefreshCpuCap();   // 自动/自定义切换:CPU 上限滑条锁定 85%(自动)或恢复可拖(自定义)
             var modeTxt = SafeRender.Mode == 1 ? "" : "当前生效(自动):";
             applyText.Text = $"{modeTxt}显存墙 {SafeRender.EffectiveVramGB:0.#} GB → 分块 {SafeRender.GetTileSize()} · " +
                 $"内存墙 {SafeRender.EffectiveRamGB:0.#} GB → 每批 {SafeRender.GetVideoBatchSize()} 帧 · CPU {CpuName(SafeRender.EffectiveCpuLevel)}";

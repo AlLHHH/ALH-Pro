@@ -274,7 +274,7 @@
                     </StackPanel>
 
                     <TextBlock Text="输出倍率" Style="{StaticResource SectionTitle}"/>
-                    <RadioButtons x:Name="InterpScaleRadios" SelectedIndex="0" ToolTipService.ToolTip="补帧倍率:2x/3x/4x/8x(3x 需选「通用画质 RIFE v4.6」模型)"
+                    <RadioButtons x:Name="InterpScaleRadios" SelectedIndex="0" ToolTipService.ToolTip="补帧倍率:2x/3x/4x/8x(3x 需「通用画质」系列模型,其余模型按 2x 级联)"
                                   SelectionChanged="Combo_Changed">
                         <RadioButton Content="2x"/>
                         <RadioButton x:Name="Scale3xRadio" Content="3x"/>
@@ -334,13 +334,13 @@
 
                     <TextBlock Text="去重复帧" Style="{StaticResource SectionTitle}"/>
 
-                    <CheckBox x:Name="DedupCheck" Content="启用去重(静态/低变化画面)" ToolTipService.ToolTip="去除重复/静止帧,动漫必备,去重后自动得出内容帧率;可单独使用,不勾补帧也能只去重导出。算法:智能=自适应,动漫=按动画帧率变种(一拍N)均匀采样,标准/敏感=帧差+SSIM,温和=scene,手动可自选(含内容帧率采样)"
+                    <CheckBox x:Name="DedupCheck" Content="启用去重(静态/低变化画面)" ToolTipService.ToolTip="去除重复/静止帧,动漫必备,去重后自动得出内容帧率;可单独使用,不勾补帧也能只去重导出。算法:智能=自动识别素材拍数(一拍N)均匀采样;动漫=按动画拍型(一拍二/三/四)均匀采样;手动=自己选算法调参(含内容帧率采样)"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
                     <TextBlock Text="去重模型" Style="{StaticResource SectionTitle}"/>
-                    <ComboBox x:Name="DedupModelCombo" HorizontalAlignment="Stretch" ToolTipService.ToolTip="去重模型:智能=自动内容帧率化(自动估计素材节奏+分段处理);动漫=按动画帧率变种(一拍N)均匀采样;手动=自选算法(含内容帧率采样)自由调参"
+                    <ComboBox x:Name="DedupModelCombo" HorizontalAlignment="Stretch" ToolTipService.ToolTip="去重模型:智能=自动识别素材拍数(一拍N)并均匀采样;动漫=按动画拍型(一拍二/三/四)均匀采样;手动=自己选算法(含内容帧率采样)自由调参"
                               SelectedIndex="2" SelectionChanged="Combo_Changed">
-                        <ComboBoxItem Content="智能检测" ToolTipService.ToolTip="智能=自动内容帧率化:先估计素材内容节奏(一拍N),按它均匀采样+均匀补帧(不做逐帧判定,无「误删细节」风险);估计不可靠时自动回退保守策略,绝不硬猜"/>
-                        <ComboBoxItem Content="动漫模式" ToolTipService.ToolTip="动画帧率变种(一拍N):动漫是「一拍一/二/三…」的有限动画——每 N 帧才有一帧真内容。选对档位后软件按内容帧率均匀采样+均匀补帧(不做逐帧判定,不会误删细节帧),输出标准丝滑。24fps 源:一拍二=12fps 内容、一拍三=8fps"/>
+                        <ComboBoxItem Content="智能检测" ToolTipService.ToolTip="自动识别素材拍数(一拍N:画面每 N 帧才算一个新动作),识别到就按拍数均匀采样去重;识别不出来的素材(如实拍连续运动)原样保留。三档策略控制采用门槛"/>
+                        <ComboBoxItem Content="动漫模式" ToolTipService.ToolTip="动画帧率变种(一拍N):动漫是「一拍一/二/三…」的有限动画——每 N 帧才有一帧真内容。选对档位后软件按内容帧率均匀采样+均匀补帧(不做逐帧判定,不会误删细节帧),输出标准帧率。24fps 源:一拍二=12fps 内容、一拍三=8fps"/>
                         <ComboBoxItem Content="手动模式" ToolTipService.ToolTip="自己选算法 + 自由调参:重复帧检测(mpdecimate)/ 画面变化阈值(scene)/ 帧差+SSIM/ 内容帧率采样,下方面板展开所有滑条"/>
                     </ComboBox>
                     <!-- 智能模式策略(仅智能模式显示):均衡=自动适配 激进=删得多 保守=几乎不误删 -->
@@ -350,7 +350,7 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="智能策略" VerticalAlignment="Center" FontSize="12"
-                                   ToolTipService.ToolTip="智能模式=自动内容帧率化:先估内容节奏(一拍N),按它采样。三档=「估计的采用门槛」:均衡(推荐)=置信度不低才采用(估不准就回退保守,不硬猜);激进=低置信也采用(适合确定有冗余的素材,宁可冒点节奏偏差);保守=只在高置信且节奏是常见值(8/10/12/15/20/24/30fps)时才采用"/>
+                                   ToolTipService.ToolTip="智能模式自动识别素材拍数(一拍N),三档 = 识别结果的采用门槛:均衡(推荐)= 一般确定就采用(识别不靠谱就原样保留);激进= 不太确定也采用(适合确定有重复帧的素材);保守= 只有拍数很整齐、且是常见拍数(8/10/12/15/20/24/30fps)才采用"/>
                         <ComboBox x:Name="DedupSmartCombo" Grid.Column="1" HorizontalAlignment="Stretch"
                                   SelectedIndex="0" SelectionChanged="Combo_Changed">
                             <ComboBoxItem Content="均衡"/>
@@ -379,7 +379,7 @@
                     <CheckBox x:Name="DedupPhaseAlignAnimeCheck" Content="相位自动对齐(网格模式)" IsChecked="True"
                               Visibility="Collapsed"
                               Click="PhaseAlign_Click"
-                              ToolTipService.ToolTip="只对网格采样(动漫拍N)生效:自动估计素材保持帧的相位偏移,网格从真实保持帧起算,避免素材相位偏移时抽到中间帧。高置信(事件节奏与档位吻合、相位集中≥60%)才启用;拿不准时保持原样从段首起算,绝不错抽"/>
+                              ToolTipService.ToolTip="只对网格采样(动漫拍N)生效:自动估计素材保持帧的相位偏移,网格从真实保持帧起算,避免素材相位偏移时抽到中间帧。高置信(事件节奏与档位吻合、相位集中≥60%)才启用;拿不准时保持原样从段首起算"/>
                     <StackPanel x:Name="DedupManualPanel" Spacing="6" Visibility="Collapsed">
                         <!-- 算法选择 -->
                         <Grid ColumnSpacing="8">
@@ -420,7 +420,7 @@
                         <CheckBox x:Name="DedupPhaseAlignManualCheck" Content="相位自动对齐(网格模式)" IsChecked="True"
                                   Visibility="Collapsed"
                                   Click="PhaseAlign_Click"
-                                  ToolTipService.ToolTip="只对网格采样(手动-内容帧率)生效:自动估计素材保持帧的相位偏移,网格从真实保持帧起算,避免素材相位偏移时抽到中间帧。高置信(事件节奏与档位吻合、相位集中≥60%)才启用;拿不准时保持原样从段首起算,绝不错抽"/>
+                                  ToolTipService.ToolTip="只对网格采样(手动-内容帧率)生效:自动估计素材保持帧的相位偏移,网格从真实保持帧起算,避免素材相位偏移时抽到中间帧。高置信(事件节奏与档位吻合、相位集中≥60%)才启用;拿不准时保持原样从段首起算"/>
                         <!-- 重复帧检测参数:变化判线 -->
                         <Grid x:Name="DedupHiRow" ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
@@ -524,7 +524,7 @@
                     </StackPanel>
                     <!-- 转场识别(转场处不插帧)→ 用上面 SceneCheck/Slider -->
                     <TextBlock x:Name="DedupHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
-                               Text="去重=删重复/静止帧(按节奏治理,非逐帧二分类)。智能=自动:按节奏网格+变化帧保护处理,估不准的回退保守;动漫=选档:拍一/拍二/拍三/混合,内部固定逻辑(按档网格+变化帧保护,口型/微动绝不删);手动=专家:重复帧检测/画面变化阈值/帧差+SSIM/内容帧率采样(自填值)。&#10;「转场识别」=转场处保持不插帧(检测到切换处不插帧避免鬼影)。"/>
+                               Text="去重=删重复/静止帧(按节奏治理,非逐帧二分类)。智能=自动:按节奏网格+变化帧保护处理,估不准的回退保守;动漫=选档:拍一/拍二/拍三/混合,内部固定逻辑(按档网格+变化帧保护,口型/微动不删);手动=自由调参:重复帧检测/画面变化阈值/帧差+SSIM/内容帧率采样(自填值)。&#10;「转场识别」=转场处保持不插帧(检测到切换处不插帧避免鬼影)。"/>
 
                     <CheckBox x:Name="SceneCheck" Content="转场识别(转场处不插帧)" ToolTipService.ToolTip="检测场景切换,转场处不插帧避免鬼影"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
@@ -778,14 +778,12 @@
                     </Grid.ColumnDefinitions>
                     <Button x:Name="AddVideosBtn" Content="添加视频" FontSize="12"
                             Padding="10,5" Click="PickVideoBtn_Click"/>
-                    <Button x:Name="RemoveVideoBtn" Grid.Column="1" Content="删除选中" FontSize="12"
-                            Padding="10,5" IsEnabled="False" Click="RemoveVideo_Click"/>
-                    <Button x:Name="ClearVideosBtn" Grid.Column="2" Content="清空" FontSize="12"
+                    <Button x:Name="ClearVideosBtn" Grid.Column="1" Content="清空" FontSize="12"
                             Padding="10,5" IsEnabled="False" Click="ClearVideos_Click"/>
-                    <Button x:Name="ClearDoneBtn" Grid.Column="3" Content="清除已完成" FontSize="12"
+                    <Button x:Name="ClearDoneBtn" Grid.Column="2" Content="清除已完成" FontSize="12"
                             Padding="10,5" IsEnabled="False" Click="ClearDoneBtn_Click"
                             ToolTipService.ToolTip="清除所有已完成(灰)的项目"/>
-                    <TextBlock Grid.Column="4" Text="双击视频预览 · 拖动时间线裁剪" FontSize="11"
+                    <TextBlock Grid.Column="3" Text="双击视频预览 · 拖动时间线裁剪" FontSize="11"
                                Opacity="0.5" VerticalAlignment="Center" HorizontalAlignment="Right"/>
                 </Grid>
                 <!-- 视频列表(支持鼠标框选多选,与图片放大一致) -->
