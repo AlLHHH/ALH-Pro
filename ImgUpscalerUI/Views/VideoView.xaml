@@ -916,12 +916,12 @@
                               PointerMoved="PreviewPlayerHost_PointerMoved"
                               PointerExited="PreviewPlayerHost_PointerExited">
                             <MediaPlayerElement x:Name="PreviewPlayer" AreTransportControlsEnabled="True"/>
-                            <TextBlock x:Name="PreviewCtrlHint" Text="鼠标移入显示控制条 · 自动隐藏"
-                                       FontSize="10" Opacity="0.4" VerticalAlignment="Top" HorizontalAlignment="Right"
-                                       Margin="0,6,8,0" IsHitTestVisible="False"/>
                         </Grid>
                     </Grid>
-                    <Grid Grid.Row="2" Margin="12,0,12,14" RowSpacing="8">
+                    <Grid x:Name="BottomCtrlPanel" Grid.Row="2" Margin="12,0,12,14" RowSpacing="8"
+                          Visibility="Collapsed"
+                          PointerEntered="BottomCtrlPanel_PointerEntered"
+                          PointerExited="BottomCtrlPanel_PointerExited">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
