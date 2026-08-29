@@ -84,7 +84,7 @@ public static class EngineService
         return File.Exists(direct) ? direct : null;
     }
 
-    /// <summary>在 engines/rembg 目录下(含子目录)查找指定抠图模型文件。</summary>
+    /// <summary>在 engines/rembg 目录下(含 models 子目录)查找指定抠图模型文件。</summary>
     public static string? FindCutoutModel(string fileName)
     {
         var root = Path.Combine(EnginesDir, "rembg");
