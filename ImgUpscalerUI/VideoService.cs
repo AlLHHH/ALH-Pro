@@ -2590,7 +2590,7 @@ public static class VideoService
         var ffmpeg = FfmpegPath;
         if (ffmpeg == null)
         {
-            AppLogger.Info($"预估失败:未找到 ffmpeg({videoPath})");
+            AppLogger.Info($"预估失败:未找到 ffmpeg({Path.GetFileName(videoPath)})");
             return new DupProfile { Estimated = true, Summary = "未找到 ffmpeg" };
         }
         try

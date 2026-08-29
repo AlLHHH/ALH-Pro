@@ -17,7 +17,7 @@ _*/
 .iconregen/
 .smoketest/
 runvideo/
-assets/
+# 根目录 assets(icon.ico/icon.png 为构建必需,必须入库;不要整目录忽略)
 
 # ===== 发布物/临时 =====
 *.zip
