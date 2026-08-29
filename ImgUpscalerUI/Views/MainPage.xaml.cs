@@ -1470,7 +1470,7 @@ public sealed partial class MainPage : Page
             });
         }
         // 打赏平台链接:CoffeeUrl 非空时显示按钮(作者给定 URL 后填这行)
-        const string CoffeeUrl = "";
+        const string CoffeeUrl = "https://www.ifdian.net/a/AlL666";
         if (!string.IsNullOrEmpty(CoffeeUrl))
         {
             var coffeeBtn = new Button
