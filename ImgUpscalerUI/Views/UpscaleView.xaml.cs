@@ -152,10 +152,12 @@ public sealed partial class UpscaleView : UserControl
             if (d.Scale is >= 0 and <= 4) ScaleRadios.SelectedIndex = d.Scale;
             if (d.Noise is >= 0 and <= 3) NoiseCombo.SelectedIndex = d.Noise;
             TtaCheck.IsChecked = d.Tta;
+            SelectedOnlyCheck.IsChecked = d.SelectedOnly;
             // 计算设备已在全局设置(AppSettings),页面不再恢复旧 Gpu 值
-            if (d.Fmt is >= 0 and <= 1) FmtCombo.SelectedIndex = d.Fmt;
+            // 格式下拉顺序已改为 0=JPG 1=PNG:旧设置(0=PNG 1=JPG)需迁移语义
+            if (d.Fmt is >= 0 and <= 1) FmtCombo.SelectedIndex = d.Fmt == 0 ? 1 : 0;
             // 输出码率档位:PNG 只有「默认无损」一项(不恢复);JPG 用 ImgQualityMode(0-4);旧版滑条值兼容映射
-            if (FmtCombo.SelectedIndex == 1)
+            if (FmtCombo.SelectedIndex == 0)
             {
                 if (d.ImgQualityMode is >= 0 and <= 4) ImgQualityCombo.SelectedIndex = d.ImgQualityMode;
                 else if (d.ImgQuality is >= 1 and <= 100)
@@ -217,6 +219,7 @@ public sealed partial class UpscaleView : UserControl
                 Scale = ScaleRadios.SelectedIndex,
                 Noise = NoiseCombo.SelectedIndex,
                 Tta = TtaCheck.IsChecked == true,
+                SelectedOnly = SelectedOnlyCheck.IsChecked == true,
                 Fmt = FmtCombo.SelectedIndex,
                 Detail = (int)DetailSlider.Value,
                 Sharpen = (int)SharpenSlider.Value,
@@ -228,7 +231,7 @@ public sealed partial class UpscaleView : UserControl
                 Denoise = (int)DenoiseSlider.Value,
                 Aa = (int)AaSlider.Value,
                 Dehaze = (int)DehazeSlider.Value,
-                ImgQualityMode = FmtCombo.SelectedIndex == 1 ? ImgQualityCombo.SelectedIndex : 2,   // JPG 档位(0-4);PNG 固定 2(仅一项)
+                ImgQualityMode = FmtCombo.SelectedIndex == 0 ? ImgQualityCombo.SelectedIndex : 2,   // JPG 档位(0-4);PNG 固定 2(仅一项)
                 ImgQualityCustom = ParseImgQualityCustom(),
                 PreDenoise = PreDenoiseCheck.IsChecked == true,
                 DenoiseLevel = DenoiseLevelCombo.SelectedIndex,
@@ -249,7 +252,7 @@ public sealed partial class UpscaleView : UserControl
         public int Scale { get; set; } = 1;
         public int Noise { get; set; } = 0;
         public bool Tta { get; set; } = false;
-        public int Gpu { get; set; } = 0;
+        public bool SelectedOnly { get; set; } = false;
         public int Fmt { get; set; } = 0;
         public int Detail { get; set; } = 50;
         public int Sharpen { get; set; } = 0;
@@ -605,7 +608,7 @@ public sealed partial class UpscaleView : UserControl
         var noise = NoiseCombo.SelectedIndex == 0 ? -1 : NoiseCombo.SelectedIndex - 1;   // 0=不降噪,1/2/3=弱/中/强(映射到 -n 0/1/2,整体偏轻避免揉成一团)
         var tta = TtaCheck.IsChecked == true;
         var gpuId = CurrentGpuId;
-        var outExt = FmtCombo.SelectedIndex == 1 ? ".jpg" : ".png";
+        var outExt = FmtCombo.SelectedIndex == 0 ? ".jpg" : ".png";   // 下拉顺序:0=JPG 1=PNG
         var sharpen = (int)SharpenSlider.Value;
         var detail = (int)DetailSlider.Value;
         var clarity = (int)ClaritySlider.Value;
@@ -616,7 +619,7 @@ public sealed partial class UpscaleView : UserControl
         var denoise = (int)DenoiseSlider.Value;
         var aa = (int)AaSlider.Value;
         var dehaze = (int)DehazeSlider.Value;
-        bool isPng = FmtCombo.SelectedIndex == 0;   // 0=PNG 1=JPG
+        bool isPng = FmtCombo.SelectedIndex == 1;   // 下拉顺序:0=JPG 1=PNG
         // JPG 码率档位:0低(75) 1中(85) 2默认(92) 3超高(98) 4自定义(1~100)
         int imgQ = isPng ? 92 : ImgQualityCombo.SelectedIndex switch
         {
@@ -904,7 +907,7 @@ public sealed partial class UpscaleView : UserControl
     private void RefreshQualityCombo()
     {
         if (ImgQualityCombo == null) return;
-        var isPng = FmtCombo.SelectedIndex == 0;
+        var isPng = FmtCombo.SelectedIndex == 1;   // 下拉顺序:0=JPG 1=PNG
         // 记住当前选中,切格式后从对应档位恢复
         int prev = ImgQualityCombo.SelectedIndex;
         ImgQualityCombo.Items.Clear();
