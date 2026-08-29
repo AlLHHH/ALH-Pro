@@ -135,6 +135,48 @@ public static class SafeRender
     /// <summary>本机物理内存总量(GB)。</summary>
     public static double TotalRamGB => _ramTotal ??= GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 1073741824.0;
 
+    /// <summary>当前空闲物理内存(GB,系统 API 实测);失败按总量的 40% 保守估。</summary>
+    public static double FreeRamGB => _ramFree ??= ProbeFreeRam(TotalRamGB * 0.4);
+
+    private static double? _ramFree;
+
+    /// <summary>每次任务开始前调用:清掉空闲资源缓存,下次访问按当前真实空闲重测。
+    /// (总量不变,只刷新空闲值 — 开了浏览器/剪辑器后空闲骤降,批次档位要即时跟上。)</summary>
+    public static void RefreshFreeResources()
+    {
+        _ramFree = null;
+        _vramFree = null;
+    }
+
+    private static double ProbeFreeRam(double fallback)
+    {
+        try
+        {
+            var mi = new MEMORYSTATUSEX { dwLength = (uint)System.Runtime.InteropServices.Marshal.SizeOf<MEMORYSTATUSEX>() };
+            if (GlobalMemoryStatusEx(ref mi) && mi.ullAvailPhys > 0)
+                return mi.ullAvailPhys / 1073741824.0;
+        }
+        catch { }
+        return fallback;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+    private struct MEMORYSTATUSEX
+    {
+        public uint dwLength;
+        public uint dwMemoryLoad;
+        public ulong ullTotalPhys;
+        public ulong ullAvailPhys;
+        public ulong ullTotalPageFile;
+        public ulong ullAvailPageFile;
+        public ulong ullTotalVirtual;
+        public ulong ullAvailVirtual;
+        public ulong ullAvailExtendedVirtual;
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto, SetLastError = true)]
+    private static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX lpBuffer);
+
     private static double ProbeVram(string field, double fallback)
     {
         try
@@ -189,18 +231,19 @@ public static class SafeRender
         return 768;                // 12GB+:768(≈4.3GB/块),16GB 级仍安全;封顶防 TTA×2 爆显存
     }
 
-    /// <summary>视频逐帧超分的批大小(帧):墙越小批越小,内存峰值越低。
-    /// 内存充足时自动放大批(更少引擎进程启动、更少磁盘往返=速度更快),但受内存墙保护。</summary>
+    /// <summary>视频逐帧超分的批大小(帧):看【空闲】资源——空余内存 >8G 且 空余显存 >4G 开 240(最快);
+    /// 空余不足按档回退(小批 = 内存/显存峰值低,稳)。判定用"当前空闲"而非名义值:
+    /// 名义 32G 但开着浏览器+剪辑器的机器,空余可能只剩 4G → 该小批。</summary>
     public static int GetVideoBatchSize()
     {
-        double r = EffectiveRamGB;
-        if (r <= 4) return 25;
-        if (r <= 6) return 30;
-        if (r <= 8) return 40;
-        if (r <= 12) return 60;
-        if (r <= 16) return 80;
-        if (r <= 24) return 120;   // 大内存:放大批,减少引擎启动/磁盘往返
-        return 150;
+        double fr = FreeRamGB;
+        double fv = FreeVramGB > 0.5 ? FreeVramGB : EffectiveVramGB * 0.6;
+        if (fr > 8 && fv > 4) return 240;          // 空余内存>8G + 空余显存>4G:240(最快)
+        if (fr <= 1.5 || fv <= 0.8) return 25;     // 极端紧张
+        if (fr <= 2.5 || fv <= 1.5) return 40;
+        if (fr <= 4 || fv <= 2.5) return 60;
+        if (fr <= 6 || fv <= 3.5) return 120;
+        return 180;                                // 中档:空余内存 6~8G 或显存 3.5~4G
     }
 
     /// <summary>视频超分的并行批数(同时几个引擎实例):按显存/内存/核数自动定。
