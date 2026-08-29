@@ -1477,20 +1477,26 @@ public sealed partial class MainPage : Page
             FontSize = 10, Opacity = 0.55,
             HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
         });
-        // 打赏平台:爱发电主页(图标+文字,点击直达)
+        // 打赏平台:爱发电主页(官方图标+文字,点击直达)
         var ifdLink = new HyperlinkButton
         {
             NavigateUri = new Uri("https://www.ifdian.net/a/AlL666"),
             HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
-            Content = new StackPanel
+        };
+        var ifdLogoPath = Path.Combine(AppContext.BaseDirectory, "assets", "ifdian_logo.png");
+        object ifdIcon;
+        if (File.Exists(ifdLogoPath))
+            ifdIcon = new Image { Width = 16, Height = 16, Source = new BitmapImage(new Uri(ifdLogoPath)) };
+        else
+            ifdIcon = new FontIcon { Glyph = "\uE8C7", FontSize = 15 };   // 回退:爱心
+        ifdLink.Content = new StackPanel
+        {
+            Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal,
+            Spacing = 8,
+            Children =
             {
-                Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal,
-                Spacing = 8,
-                Children =
-                {
-                    new FontIcon { Glyph = "\uE8C7", FontSize = 15 },   // ♥
-                    new TextBlock { Text = "爱发电主页", FontSize = 13, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center },
-                },
+                (Microsoft.UI.Xaml.UIElement)ifdIcon,
+                new TextBlock { Text = "爱发电主页", FontSize = 13, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center },
             },
         };
         content.Children.Add(ifdLink);
