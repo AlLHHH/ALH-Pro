@@ -710,6 +710,9 @@ public sealed partial class UpscaleView : UserControl
                         progress.Report((0, $"正在处理 {item.Name}..."));
                         await EngineService.UpscaleAsync(srcPath, outPath, engine,
                             model, scale, noise, gpuId, tta, progress, ct,
+                            // 分块放大提速:图片超分逐块启动引擎,512 块=启动占约 2/3 时间;
+                            // 1024 起步(块数约 1/4)省启动;显存不足由引擎自动降分块重试兜底,不会崩。
+                            tileSize: SafeRender.GetTileSize() * 2,
                             upscaleShrink1x: upscaleShrink1x,
                             jpgQuality: imgQ / 100f, pngCompress: pngCompress);
                         succeeded = true;
