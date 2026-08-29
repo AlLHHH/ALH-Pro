@@ -168,7 +168,8 @@ public sealed partial class ImageToolGrid : UserControl
         BatchRenameBtn.IsEnabled = !_processing && sel.Count > 0;
         BatchRenameBtn.Visibility = sel.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         RemoveBtn.IsEnabled = (!_processing || _paused) && sel.Count > 0;
-        RemoveBtn.Visibility = sel.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        // 空列表(无真实图片 n==0)绝不显示:WinUI 幽灵项会误报选中,导致这个"删除提示"悬停浮现
+        RemoveBtn.Visibility = sel.Count > 0 && n > 0 ? Visibility.Visible : Visibility.Collapsed;
         ClearBtn.IsEnabled = !_processing && n > 0;
         ClearBtn.Visibility = n > 0 ? Visibility.Visible : Visibility.Collapsed;
         DropHint.Visibility = n > 0 ? Visibility.Collapsed : Visibility.Visible;
