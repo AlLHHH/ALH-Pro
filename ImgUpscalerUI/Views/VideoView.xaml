@@ -778,12 +778,14 @@
                     </Grid.ColumnDefinitions>
                     <Button x:Name="AddVideosBtn" Content="添加视频" FontSize="12"
                             Padding="10,5" Click="PickVideoBtn_Click"/>
-                    <Button x:Name="ClearVideosBtn" Grid.Column="1" Content="清空" FontSize="12"
+                    <Button x:Name="RemoveVideoBtn" Grid.Column="1" Content="删除选中" FontSize="12"
+                            Padding="10,5" IsEnabled="False" Click="RemoveVideo_Click"/>
+                    <Button x:Name="ClearVideosBtn" Grid.Column="2" Content="清空" FontSize="12"
                             Padding="10,5" IsEnabled="False" Click="ClearVideos_Click"/>
-                    <Button x:Name="ClearDoneBtn" Grid.Column="2" Content="清除已完成" FontSize="12"
+                    <Button x:Name="ClearDoneBtn" Grid.Column="3" Content="清除已完成" FontSize="12"
                             Padding="10,5" IsEnabled="False" Click="ClearDoneBtn_Click"
                             ToolTipService.ToolTip="清除所有已完成(灰)的项目"/>
-                    <TextBlock Grid.Column="3" Text="双击视频预览 · 拖动时间线裁剪" FontSize="11"
+                    <TextBlock Grid.Column="4" Text="双击视频预览 · 拖动时间线裁剪" FontSize="11"
                                Opacity="0.5" VerticalAlignment="Center" HorizontalAlignment="Right"/>
                 </Grid>
                 <!-- 视频列表(支持鼠标框选多选,与图片放大一致) -->
