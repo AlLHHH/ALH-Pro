@@ -905,7 +905,10 @@ public sealed partial class VideoView : UserControl
                 double needScale = tf / inFps;
                 InterpHint.Text = $"输出:{inFps:0.##} × {m} = {inFps * m:0.##} → {tf:0.##} fps (指定){extra}";
                 if (needScale > m + 0.01)
-                    InterpHint.Text += $"\n提示:当前 {m}x 帧数不够凑到 {tf:0.##} fps,处理时会自动按 {Math.Ceiling(needScale):0}x 补帧凑数(输出仍精确 {tf:0.##} fps)";
+                {
+                    int minInt = Math.Max(2, (int)Math.Ceiling(needScale - 0.01));
+                    InterpHint.Text += $"\n提示:当前 {m}x 帧数不够,处理时会自动按 {minInt}x 补帧凑数(最小整数,输出仍精确 {tf:0.##} fps)";
+                }
                 else if (needScale < 1.0 - 0.01)
                     InterpHint.Text += $"\n注意:指定 {tf:0.##} fps 低于输入帧率 {inFps:0.##} fps,补帧只能增帧,输出仍为 {inFps:0.##} fps";
             }
