@@ -790,7 +790,7 @@
                                Opacity="0.5" VerticalAlignment="Center" HorizontalAlignment="Right"/>
                 </Grid>
                 <!-- 视频列表(支持鼠标框选多选,与图片放大一致) -->
-                <Grid x:Name="VideoGridHost" Grid.Row="2"
+                <Grid x:Name="VideoGridHost" Grid.Row="2" Background="Transparent"
                       PointerPressed="VideoGridHost_PointerPressed"
                       PointerMoved="VideoGridHost_PointerMoved"
                       PointerReleased="VideoGridHost_PointerReleased"
@@ -894,8 +894,8 @@
                 </Grid>
 
                 <StackPanel x:Name="VideoDropHint" Grid.Row="2" VerticalAlignment="Center" Spacing="12"
-                            IsHitTestVisible="True"
-                            AllowDrop="True" DragOver="DropBorder_DragOver" Drop="DropBorder_Drop">   <!-- 空列表时拖放目标=提示区本身(列表隐藏了,拖放不能断) -->
+                            Background="Transparent" IsHitTestVisible="True"
+                            AllowDrop="True" DragOver="DropBorder_DragOver" Drop="DropBorder_Drop">
                     <FontIcon Glyph="&#xE714;" FontSize="48" Opacity="0.3"
                               HorizontalAlignment="Center"/>
                     <TextBlock Text="拖入项目" HorizontalAlignment="Center"
