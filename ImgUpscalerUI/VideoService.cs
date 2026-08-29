@@ -1097,7 +1097,9 @@ public static class VideoService
                             // 黑帧防御:ncnn-vulkan 偶发 vkQueueSubmit 失败 → 输出全黑帧(退出码 0 不报错)。
                             // 检测到黑帧即用 CPU 重处理该批(引擎线程参数已改 save=1 降低概率,这里兜底:
                             // 万一还是黑,CPU 软解不依赖 GPU 队列,绝不出黑帧)。
-                            if (batchOutDirHasBlack(batchOut))
+                            // 兜底防误杀:若【源帧】本来就近全黑(视频黑场/淡入淡出),输出黑是素材本身,
+                            // 不是 GPU 故障——跳过降级,不浪费 CPU 重算。
+                            if (batchOutDirHasBlack(batchOut) && !DirNearBlack(batchIn))
                             {
                                 progress?.Report((45 + (int)(45.0 * start / total),
                                     $"⚠ 检测到黑帧(批次 {start}~{end - 1},GPU 输出异常),该批改用 CPU 重处理..." + StageElapsed()));
@@ -1645,7 +1647,8 @@ public static class VideoService
                 {
                     try { if (EngineService.IsBlackPng(f)) { anyBlack = true; break; } } catch { }
                 }
-                if (anyBlack)
+                // 防误杀:段【源帧】(segIn)本来就近黑(素材黑场/淡入淡出)→ 输出黑正常,不降级
+                if (anyBlack && !DirNearBlack(segIn))
                 {
                     AppLogger.Info("⚠ 降级:补帧输出含黑帧(GPU 队列异常),改用 CPU 重算该段");
                     progress?.Report((0, "⚠ 补帧输出黑帧(GPU 异常),改用 CPU 重算该段..."));
@@ -1869,6 +1872,32 @@ public static class VideoService
                         var p = bmp.GetPixel(x, y);
                         total++;
                         if ((int)p.R + (int)p.G + (int)p.B < 24) dark++;   // 接近全黑
+                    }
+                if (total > 0 && dark >= total * 0.95) return true;
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    /// <summary>目录中【源帧】是否本来就近全黑(≥95% 像素 RGB 和 &lt; 24):
+    /// 用于"黑帧防误杀"——素材本身的黑场(淡入淡出/片头黑场/夜间纯黑镜头)
+    /// 输出黑是正常结果,不是 GPU 故障,不需要 CPU 重算。</summary>
+    private static bool DirNearBlack(string dir)
+    {
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(dir, "*.png"))
+            {
+                using var bmp = new System.Drawing.Bitmap(f);
+                int step = Math.Max(4, Math.Min(bmp.Width, bmp.Height) / 32);
+                int dark = 0, total = 0;
+                for (int y = step; y < bmp.Height; y += step)
+                    for (int x = step; x < bmp.Width; x += step)
+                    {
+                        var p = bmp.GetPixel(x, y);
+                        total++;
+                        if ((int)p.R + (int)p.G + (int)p.B < 24) dark++;
                     }
                 if (total > 0 && dark >= total * 0.95) return true;
             }

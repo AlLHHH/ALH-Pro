@@ -171,6 +171,9 @@ public static class EngineService
     private static DateTime _lastEngineStartLog = DateTime.MinValue;
     // 引擎"无进展看门狗":任何引擎进度心跳都会刷新;12 分钟无进展(驱动挂死/引擎卡死)→ 强制终止
     private static long _lastEngineProgressTicks = DateTime.MinValue.Ticks;
+    // 最近一次"完整完成一帧"时间(WatchDirProgressAsync 帧数增长时刷新):
+    // 用于判定"心跳在跳但没有实质进展"(CPU 逐帧爬但极慢)的实质停滞
+    private static long _lastFrameDoneTicks = DateTime.MinValue.Ticks;
 
     /// <summary>启动引擎子进程,实时读取输出并解析进度,支持取消(杀进程树)。返回引擎日志尾部。</summary>
     private static async Task<string> RunAsync(string exe, string args,
@@ -261,18 +264,36 @@ public static class EngineService
         var drainOut = DrainAsync(p.StandardOutput, OnChunk, ct);
         var drainErr = DrainAsync(p.StandardError, OnChunk, ct);
 
-        // 无进展看门狗(12 分钟):驱动挂死/引擎卡死(进程活着但不吐数据)时强制终止,任务不再永久挂起
+        // 无进展看门狗(分设备超时 + 实质停滞监控):
+        // 1) 无输出超时:GPU 8 分钟无任何输出 → 驱动/引擎挂死;CPU 20 分钟无输出(CPU 慢,宽限);
+        // 2) 实质停滞:引擎有帧级心跳但 10 分钟未完成任何一帧(CPU 逐帧爬但慢到不可接受)→ 强制终止,
+        //    避免"半天不动一帧"让用户无限等待(实测:CPU 软解 1280×720 单帧可达 10 分钟级)。
         using var watchdog = new System.Threading.Timer(_ =>
         {
             try
             {
                 lock (lockObj)
                 {
-                    if (!killRequested && !p.HasExited && _lastEngineProgressTicks != DateTime.MinValue.Ticks
-                        && (DateTime.Now.Ticks - _lastEngineProgressTicks) / TimeSpan.TicksPerMinute > 12)
+                    if (killRequested || p.HasExited) return;
+                    bool cpu = args.Contains("-g -1", StringComparison.Ordinal);
+                    long noOutLimitTicks = TimeSpan.FromMinutes(cpu ? 20 : 8).Ticks;
+                    long stallLimitTicks = TimeSpan.FromMinutes(10).Ticks;
+                    long sinceOut = _lastEngineProgressTicks != DateTime.MinValue.Ticks
+                        ? DateTime.Now.Ticks - _lastEngineProgressTicks : 0;
+                    long sinceFrame = _lastFrameDoneTicks != DateTime.MinValue.Ticks
+                        ? DateTime.Now.Ticks - _lastFrameDoneTicks : 0;
+                    // ① 无输出(连心跳都没有)
+                    if (sinceOut > noOutLimitTicks)
                     {
                         killRequested = true;
-                        AppLogger.Info($"看门狗:引擎 ({stage}) 12 分钟无进展(疑似驱动/引擎挂死),强制终止");
+                        AppLogger.Info($"看门狗:引擎 ({stage}) {(cpu ? "CPU" : "GPU")} {noOutLimitTicks / TimeSpan.TicksPerMinute} 分钟无输出(疑似驱动/引擎挂死),强制终止");
+                        try { p.Kill(entireProcessTree: true); } catch { }
+                    }
+                    // ② 有输出但 10 分钟未完成一帧(CPU 爬帧过慢/引擎停滞)
+                    else if (_lastFrameDoneTicks != DateTime.MinValue.Ticks && sinceFrame > stallLimitTicks)
+                    {
+                        killRequested = true;
+                        AppLogger.Info($"看门狗:引擎 ({stage}) 10 分钟未完成一帧(计算过慢或停滞),强制终止——建议改用 GPU/调低倍率/调小分辨率");
                         try { p.Kill(entireProcessTree: true); } catch { }
                     }
                 }
@@ -289,7 +310,7 @@ public static class EngineService
                 break;
             }
             if (killRequested)
-                throw new InvalidOperationException($"引擎 12 分钟无进展(疑似挂死),已强制终止: {stage}");
+                throw new InvalidOperationException($"引擎无进展(已强制终止): {stage} — 建议改用 GPU 或降低倍率/分辨率后重试");
             await Task.Delay(100).ConfigureAwait(false);
         }
         await Task.WhenAll(drainOut, drainErr).ConfigureAwait(false);
@@ -321,7 +342,8 @@ public static class EngineService
     }
 
     /// <summary>运行引擎命令;若命令使用 GPU(-g ≥0)且启动失败(如新显卡 RTX 50 系与 ncnn-vulkan
-    /// 兼容问题 "invalid gpu device"),自动改用 CPU(-g -1)重算一次——失败不再直接中断任务。</summary>
+    /// 兼容问题 "invalid gpu device"),按降级链重算:当前 GPU → 其他 GPU(引擎自检过的,尊重用户
+    /// 主动选的卡;绝不给"选了 GPU1 却只降 CPU"这种无视其他卡的处理)→ CPU。失败不再直接中断任务。</summary>
     private static async Task RunEngFallbackGpuAsync(string exe, string args,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct,
         string stage = "", int totalFrames = 0, string? watchDir = null,
@@ -336,11 +358,56 @@ public static class EngineService
         {
             string head = ex.Message.Split('\n')[0];
             if (head.Length > 90) head = head[..90];
+
+            // ① 先试"其他 GPU"(引擎枚举到的、且不是当前用的那张;多卡机:独显故障→核显兜底)
+            int curGpu = 0;
+            try
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(args, @"-g\s+(\-?\d+)");
+                if (m.Success) curGpu = int.Parse(m.Groups[1].Value);
+            }
+            catch { }
+            var altGpu = TryGetAlternateGpu(curGpu);
+            if (altGpu.HasValue)
+            {
+                AppLogger.Info($"⚠ 降级:GPU 引擎失败({head}),改用 GPU {altGpu.Value}(引擎自检可用)重算...");
+                progress?.Report((0, $"⚠ GPU 引擎失败({head}),改用 GPU {altGpu.Value} 重算..."));
+                var altArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", $"-g {altGpu.Value}");
+                try
+                {
+                    await RunAsync(exe, altArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
+                    return;   // 另一张卡成功:不再降 CPU
+                }
+                catch (InvalidOperationException ex2)
+                {
+                    string head2 = ex2.Message.Split('\n')[0];
+                    if (head2.Length > 90) head2 = head2[..90];
+                    AppLogger.Info($"⚠ GPU {altGpu.Value} 也失败({head2}),继续降级 CPU 重算");
+                }
+            }
+
+            // ② 最后:CPU
             AppLogger.Info($"⚠ 降级:GPU 引擎失败({head}),自动改用 CPU 重算");
             progress?.Report((0, $"⚠ GPU 引擎失败({head}),自动改用 CPU 重算..."));
             var cpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g -1");
             await RunAsync(exe, cpuArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>取"当前 GPU 之外"的备用 GPU 编号(引擎实测枚举到的 Vulkan 设备;多卡机可用)。
+    /// 尊重用户主动选择:当前用 GPU1 → 备用为 GPU0;当前 GPU0 → 备用为其余卡(优先编号小的非当前卡)。
+    /// 无第二张卡(单卡/核显未启用)返回 null → 调用方直接降级 CPU。</summary>
+    private static int? TryGetAlternateGpu(int currentGpu)
+    {
+        try
+        {
+            var devs = VulkanCheck.Devices;
+            if (devs.Count < 2) return null;   // 只有一张卡,无卡可降
+            foreach (var (id, _) in devs)
+                if (id != currentGpu) return id;   // 返回第一张"不是当前"的(通常即另一张独显/核显)
+        }
+        catch { }
+        return null;
     }
 
     /// <summary>自研"任意时刻插帧"核心(M1):对单帧对 (A,B) 用 RIFE 二分级联生成 2^depth-1 个等距中间帧
@@ -453,6 +520,7 @@ public static class EngineService
                 {
                     lastCount = count;
                     System.Threading.Interlocked.Exchange(ref _lastEngineProgressTicks, DateTime.Now.Ticks);
+                    System.Threading.Interlocked.Exchange(ref _lastFrameDoneTicks, DateTime.Now.Ticks);   // 实质完成帧:看门狗"停滞"判据
                     int done = baseFrames + count;
                     int gt = globalTotal > 0 ? globalTotal : totalFrames;
                     int pct = stage == "超分"

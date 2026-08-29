@@ -2086,11 +2086,17 @@ public sealed partial class VideoView : UserControl
 
     private void UpdateListButtons()
     {
+        // 空列表:删除/清空类按钮整体隐藏(不显示"没有项目也能点的空按钮");
+        // 有项目才显示,并按状态启用/禁用。
+        bool hasVideos = _videos.Count > 0;
+        RemoveVideoBtn.Visibility = hasVideos ? Visibility.Visible : Visibility.Collapsed;
+        ClearVideosBtn.Visibility = hasVideos ? Visibility.Visible : Visibility.Collapsed;
+        ClearDoneBtn.Visibility = hasVideos ? Visibility.Visible : Visibility.Collapsed;
         // 处理中(未暂停)锁死删除;但选中里有「已完成(灰)」项时解锁(它们不参与当前任务,任何时候可删)
         var sel = VideoList.SelectedItems.OfType<VideoItem>().ToArray();
         RemoveVideoBtn.IsEnabled = VideoList.SelectedItem != null &&
             ((!_running || _paused) || sel.Any(v => v.IsDone));
-        ClearVideosBtn.IsEnabled = !_running && _videos.Count > 0;
+        ClearVideosBtn.IsEnabled = !_running && hasVideos;
         ClearDoneBtn.IsEnabled = _videos.Any(v => v.IsDone);   // 有已完成(灰)项目时才可清除
     }
 
@@ -2131,6 +2137,7 @@ public sealed partial class VideoView : UserControl
         // 控制条自动隐藏:初始不显示,鼠标移入显示、静止/移开 2 秒后隐藏(不挡画面)
         try { PreviewPlayer.TransportControls.Visibility = Visibility.Collapsed; } catch { }
         _previewCtrlTimer?.Stop();
+        BottomCtrlPanel.Visibility = Visibility.Collapsed;   // 底部面板(时间线/裁剪/重复帧)同样默认隐藏
         // 重复帧预览:显示已有的(预估/分析)结果,未分析则提示
         DupSummaryText.Text = string.IsNullOrEmpty(item.DupSummary) ? "(点击「分析重复帧」查看精细分布)" : item.DupSummary;
         RenderDupStrip(item);
@@ -2184,32 +2191,56 @@ public sealed partial class VideoView : UserControl
         PreviewPlayer.MediaPlayer?.Pause();
         PreviewPlayer.Source = null;
         VideoPreviewOverlay.Visibility = Visibility.Collapsed;
+        BottomCtrlPanel.Visibility = Visibility.Collapsed;
+        _hoverBottomCtrl = false;
+        _previewCtrlTimer?.Stop();
         DupStrip.Children.Clear();
         DupSummaryText.Text = "";
         _previewItem = null;
     }
 
     // 预览控制条自动隐藏:鼠标移入立即显示,静止/移开 2 秒后隐藏(不挡画面)
+    // 底部面板(BottomCtrlPanel)与播放器自带的 TransportControls 同步显示/隐藏
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _previewCtrlTimer;
+    private bool _hoverBottomCtrl;   // 鼠标在底部面板上:不去隐藏,保证能拖时间线
 
     private void PreviewPlayerHost_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
         try { PreviewPlayer.TransportControls.Visibility = Visibility.Visible; } catch { }
+        BottomCtrlPanel.Visibility = Visibility.Visible;
+        RestartHideTimer();
+    }
+
+    /// <summary>重启 2 秒隐藏计时:鼠标在底部面板上时(可拖时间线)暂停隐藏。</summary>
+    private void RestartHideTimer()
+    {
         _previewCtrlTimer?.Stop();
         _previewCtrlTimer = DispatcherQueue.CreateTimer();
         _previewCtrlTimer.Interval = TimeSpan.FromMilliseconds(2000);
         _previewCtrlTimer.IsRepeating = false;
         _previewCtrlTimer.Tick += (_, _) =>
         {
+            if (_hoverBottomCtrl) return;   // 鼠标在面板上:不隐藏
             try { PreviewPlayer.TransportControls.Visibility = Visibility.Collapsed; } catch { }
+            BottomCtrlPanel.Visibility = Visibility.Collapsed;
         };
         _previewCtrlTimer.Start();
     }
 
     private void PreviewPlayerHost_PointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
-        _previewCtrlTimer?.Stop();
-        try { PreviewPlayer.TransportControls.Visibility = Visibility.Collapsed; } catch { }
+        // 不立即隐藏:2 秒计时兜底(鼠标可能正在去底部面板的路上)
+        RestartHideTimer();
+    }
+
+    // 鼠标进入/移出底部面板:悬停期间保持显示(可拖时间线),移开后继续 2 秒计时
+    private void BottomCtrlPanel_PointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+        => _hoverBottomCtrl = true;
+
+    private void BottomCtrlPanel_PointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        _hoverBottomCtrl = false;
+        _previewCtrlTimer?.Start();
     }
 
     // ---------- 时间线裁剪 ----------
@@ -2638,6 +2669,10 @@ public sealed partial class VideoView : UserControl
         // 预计总时长初始估算:根据启用的处理项 + 每个视频的时长/帧率/分辨率,
         // 一开始就显示合理数值(偏保守,随时间慢慢对齐),不是从小变大校准
         double etaInitTotal = 0;
+        var perfKey = PerfMemory.Fingerprint(engine, upscaleShrink1x ? 2.0 : scale, 1920, 1080,
+            interpScale, dedupOn, vdenoiseNow, postSP + postCL + postUM + postDB + postFL + postDN + postAA > 0);
+        double? perFrameHist = PerfMemory.PerFrameFor(perfKey);   // 同配置上次实测(秒/帧,1080p 基准)
+        int totalFramesEst = 0;
         foreach (var it in items)
         {
             try
@@ -2646,22 +2681,41 @@ public sealed partial class VideoView : UserControl
                 var fpsS = VideoService.ProbeFps(it.Path);
                 double fps = double.TryParse(fpsS, NumberStyles.Float, inv, out var pf) && pf > 0 ? pf : 30;
                 var (w, h) = await VideoService.ProbeSizeAsync(it.Path);
+                totalFramesEst += (int)Math.Max(1, dur * fps);
                 etaInitTotal += VideoService.EstimateProcessSeconds(dur, fps, w, h,
                     up, upscaleShrink1x ? 2.0 : scale, engine, interp, interpScale, dedupOn,
                     DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex + 1 : 0);
             }
             catch { etaInitTotal += 60; }
         }
+        // 经验库校准:同配置有实测记录 → 按实测秒/帧重算(权重 50%,避免单次异常把估算带飞)
+        if (perFrameHist.HasValue && totalFramesEst > 0)
+        {
+            double estHistory = 0;
+            foreach (var it in items)
+            {
+                try
+                {
+                    var fpsS = VideoService.ProbeFps(it.Path);
+                    double fps = double.TryParse(fpsS, NumberStyles.Float, inv, out var pf) && pf > 0 ? pf : 30;
+                    var (w, h) = await VideoService.ProbeSizeAsync(it.Path);
+                    double areaN = Math.Max(0.25, (double)w * h / 2_073_600.0);
+                    estHistory += (int)Math.Max(1, (it.Duration > 0 ? it.Duration : 1) * fps) * perFrameHist.Value * areaN;
+                }
+                catch { }
+            }
+            if (estHistory > 1)
+                etaInitTotal = 0.5 * etaInitTotal + 0.5 * estHistory;
+            AppLogger.Info($"ETA 经验库:配置[{perfKey}] 上次实测 {perFrameHist.Value:0.###} 秒/帧 → 校准为 {etaInitTotal:0} 秒");
+        }
 
-        // 预计剩余:用"剩余工作量 ÷ 即时速率(EMA)"——业界标准做法(StackOverflow 智能进度条方案)。
-        // 百分比斜率/累计平均在阶段切换(超分/补帧/编码速率差几十倍)时永远滞后,
-        // 会把"编码剩 55 帧(几秒)"放大成 10 分钟。直接解析消息里的「第 N 帧 / 共 M 帧」:
-        // 剩余行数 = 剩余帧数;即时速率 = 最近 15 秒帧数差 ÷ 时间差,EMA 平滑,阶段切换时重置。
+        // 预计剩余(ETA):整体进度占比法——已用时间 ÷ 进度% → 总时长,减已用 = 剩余。
+        // 优点:跨阶段(超分/补帧/编码)连续平滑,进度条到 99% 时 ETA 必然趋近 0,
+        // 不会出现"补帧剩 1 分钟→超分变 8 分钟""编码 55 帧还剩 34 秒"的跳变/滞后。
+        // 阶段消息解析「第 N 帧 / 共 M 帧」:用于日志步骤行(▶ 超分 中(已处理 N/M))与阶段内精细进度
         var etaRegex = new System.Text.RegularExpressions.Regex(
             @"^(?<stage>[\u4e00-\u9fffA-Za-z0-9 ]+?)\s*(?:已处理|第)\s*(?<now>\d+)\s*(?:帧|块|层)\s*/\s*共\s*(?<total>\d+)\s*(?:帧|块|层)",
             System.Text.RegularExpressions.RegexOptions.Compiled);
-        // 阶段实测速率历史(上一视频/上一阶段的值给下一阶段做种子 → ETA 不再"跳到 10 分钟再矫正")
-        var stageRateHistory = new System.Collections.Generic.Dictionary<string, double>();
         string? lastLoggedStep = null;
         DateTime lastStepLogAt = DateTime.MinValue;   // 步骤行节流:500ms 内原地更新
         string? stepLogFull = null;                   // 当前已显示的步骤完整行([hh:mm:ss] ▶ ...)
@@ -2669,17 +2723,10 @@ public sealed partial class VideoView : UserControl
         DateTime lastEtaAt = DateTime.MinValue;
         DateTime lastPanelAt = DateTime.MinValue;   // 详情面板刷新节流(防高频报告刷 UI 卡顿)
         DateTime lastSpeedAt = DateTime.MinValue;   // 近期速度样本节流
-        double lastEtaShown = -1;   // 上次显示的剩余(秒):轻微 EMA 平滑,消灭"跳档"
+        double lastEtaShown = -1;   // 上次显示的剩余(秒):轻 EMA 平滑,只压抖动
         bool inRest = false;
         DateTime restStartAt = DateTime.MinValue;
         double idleSeconds = 0;
-        // 阶段感知 ETA 状态:阶段名/当前帧/总帧/即时帧率/最近速率样本
-        string? etaStage = null;
-        double etaRate = 0;                                       // 即时帧率(EMA 平滑)
-        string? _prevStage = null;                                // 上一阶段名(阶段结束记速率)
-        double _prevStageRate = 0;
-        DateTime _prevStageStart = DateTime.MinValue;
-        var stageSamples = new System.Collections.Generic.List<(DateTime t, int frames)>();   // 最近 ~15 秒样本
         var progress = new Progress<(int pct, string msg)>(t =>
         {
             // ===== 平滑进度:阶段内用"帧/块计数比"连续换算(修复整数取整的一顿一顿) =====
@@ -2796,55 +2843,26 @@ public sealed partial class VideoView : UserControl
                 double etaProgress = Math.Min(99.9,
                     (doneAll + t.pct / 100.0) / Math.Max(1, items.Length) * 100.0);
                 double initRemain = etaInitTotal - workElapsed;   // 初始估算的剩余(偏保守,线性递减)
-                // ===== ETA:剩余工作量 ÷ 即时速率(EMA),阶段感知 =====
-                // 具体现象:编码阶段(进度 96→100,剩 55 帧其实只要几秒)被"累计平均/限幅"拖成 10 分钟。
-                if (em.Success && now - lastEtaAt >= TimeSpan.FromSeconds(1))
+                // ===== ETA:整体进度占比(main 方案,跨阶段平滑,无跳变) =====
+                // 已用时间 ÷ 进度% → 总时长,再减已用 = 剩余。补帧→超分→编码换阶段时,
+                // 进度占比连续(pct 不回退),ETA 单调下降,不会出现"补帧 1 分钟→超分 8 分钟"的跳变;
+                // 即阶段快慢差异已经折算进进度里(慢阶段进度走得慢 → ETA 自然变大,符合真实)。
+                // 休息时间已从 workElapsed 剔除。
+                if (now - lastEtaAt >= TimeSpan.FromSeconds(1))
                 {
                     lastEtaAt = now;
-                    int nowF = emNow;
-                    int totF = emTotal;
-                    string st = emStage;
-                    if (st != etaStage)
+                    double remain;
+                    if (etaProgress >= 1.0 && workElapsed > 3)
                     {
-                        // 阶段切换:速率窗口重置;种子速率 = 上一视频该阶段实测(多视频第 2 个起秒准),
-                        // 无历史则保持上一阶段速率(不再除以 3 → 编码阶段"10 分钟"喷发已根治)
-                        etaStage = st;
-                        stageSamples.Clear();
-                        if (stageRateHistory.TryGetValue(st, out var hr) && hr > 0.5)
-                            etaRate = hr;
-                        else
-                            etaRate = Math.Max(1.0, etaRate);
-                        // 上一阶段结束:把实测速率存进历史(供后续阶段/视频做种子)
-                        if (_prevStage != null && _prevStageRate > 0.5
-                            && (now - _prevStageStart).TotalSeconds > 4)
-                            stageRateHistory[_prevStage] = _prevStageRate;
-                        _prevStage = st;
-                        _prevStageRate = 0;
-                        _prevStageStart = now;
+                        remain = workElapsed * (100.0 / etaProgress - 1.0);
                     }
-                    stageSamples.Add((now, nowF));
-                    stageSamples.RemoveAll(s => (now - s.t).TotalSeconds > 15);
-                    // 即时速率:窗口首尾帧差 ÷ 时间差(>=3 秒才可信)
-                    if (stageSamples.Count >= 2
-                        && (now - stageSamples[0].t).TotalSeconds >= 3)
+                    else
                     {
-                        double inst = (nowF - stageSamples[0].frames)
-                            / Math.Max(1.0, (now - stageSamples[0].t).TotalSeconds);
-                        if (inst > 0)
-                            etaRate = etaRate <= 0 ? inst : 0.4 * inst + 0.6 * etaRate;   // EMA 0.4/0.6
-                        _prevStageRate = etaRate;   // 阶段结束时存入历史(供下一视频做种子)
+                        remain = initRemain;
                     }
-                    int remainF = Math.Max(0, totF - nowF);
-                    // 各阶段的固定收尾余量(切阶段/封装/音频等开销)
-                    double tail = st.Contains("编码") ? 3.0   // 编码后只剩 mux/收尾
-                        : st.Contains("超分") || st.Contains("补帧") ? 12.0
-                        : 8.0;
-                    double remain = etaRate > 0.5
-                        ? remainF / etaRate + tail
-                        : initRemain;
-                    // 轻微 EMA 平滑显示值(0.35/0.65),只压抖动,不拖慢真实变化
+                    // 轻平滑:70% 真实 + 30% 历史(偏重真实,避免"编码快结束还显示 34 秒"的滞后)
                     if (lastEtaShown > 0 && remain > 0)
-                        remain = 0.35 * remain + 0.65 * lastEtaShown;
+                        remain = 0.7 * remain + 0.3 * lastEtaShown;
                     lastEtaShown = remain;
                     it.EtaText = "预计剩余 " + FormatTime(Math.Max(remain, 5));   // 完成前一直显示
                 }
@@ -3105,6 +3123,23 @@ public sealed partial class VideoView : UserControl
             VideoStatus.Text = $"完成 {okCount} 个";
             var taskSpan = DateTime.Now - taskStart;
             Log($"任务结束:成功 {okCount},失败 {failCount},耗时 {(int)taskSpan.TotalMinutes}分{taskSpan.Seconds}秒,输出 {outputFiles.Count} 个文件");
+            // 耗时经验库:全部成功才算有效样本(失败会扭曲每帧成本),记录"秒/帧"(按总面积归一)
+            if (okCount > 0 && failCount == 0 && totalFramesEst > 0 && taskSpan.TotalSeconds > 10)
+            {
+                double avgAreaN = 0;
+                foreach (var it in items)
+                {
+                    try
+                    {
+                        var (w, h) = await VideoService.ProbeSizeAsync(it.Path);
+                        avgAreaN += Math.Max(0.25, (double)w * h / 2_073_600.0);
+                    }
+                    catch { }
+                }
+                if (items.Length > 0) avgAreaN /= items.Length;
+                PerfMemory.Record(perfKey, taskSpan.TotalSeconds, totalFramesEst, avgAreaN);
+                AppLogger.Info($"ETA 经验库:记录配置[{perfKey}] 实测 {taskSpan.TotalSeconds:0} 秒/{totalFramesEst} 帧 → {taskSpan.TotalSeconds / totalFramesEst / Math.Max(0.25, avgAreaN):0.###} 秒/帧");
+            }
             TaskSummary.Text = failCount > 0
                 ? $"完成:成功 {okCount} 个,失败 {failCount} 个"
                 : $"✓ 全部完成({okCount} 个视频)";
