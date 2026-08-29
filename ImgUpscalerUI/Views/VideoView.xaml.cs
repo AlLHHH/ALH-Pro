@@ -899,7 +899,16 @@ public sealed partial class VideoView : UserControl
         if (interp && inFps > 0)
         {
             if (target && double.TryParse(TargetFpsBox.Text, NumberStyles.Float, inv, out var tf) && tf > 0)
+            {
+                // 指定帧率预判(开始前就提示,不等到处理完):
+                // 所需倍率 = 目标帧率 ÷ 输入帧率;显示当前倍率是否够(不够会自动凑帧数,输出仍精确目标)
+                double needScale = tf / inFps;
                 InterpHint.Text = $"输出:{inFps:0.##} × {m} = {inFps * m:0.##} → {tf:0.##} fps (指定){extra}";
+                if (needScale > m + 0.01)
+                    InterpHint.Text += $"\n提示:当前 {m}x 帧数不够凑到 {tf:0.##} fps,处理时会自动按 {Math.Ceiling(needScale):0}x 补帧凑数(输出仍精确 {tf:0.##} fps)";
+                else if (needScale < 1.0 - 0.01)
+                    InterpHint.Text += $"\n注意:指定 {tf:0.##} fps 低于输入帧率 {inFps:0.##} fps,补帧只能增帧,输出仍为 {inFps:0.##} fps";
+            }
             else
                 InterpHint.Text = $"输出:{inFps:0.##} × {m} = {inFps * m:0.##} fps{extra}";
         }

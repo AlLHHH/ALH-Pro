@@ -158,7 +158,8 @@ public sealed partial class UpscaleView : UserControl
             // 格式下拉顺序:0=JPG 1=PNG——存读一致(223 行存的就是 SelectedIndex),不再做旧语义迁移
             // (旧迁移 d.Fmt==0?1:0 会把新存的 1(PNG) 转回 0(JPG):用户选 PNG 重开变 JPG 的 bug 根源)
             if (d.Fmt is >= 0 and <= 1) FmtCombo.SelectedIndex = d.Fmt;
-            // 输出码率档位:PNG 只有「默认无损」一项(不恢复);JPG 用 ImgQualityMode(0-4);旧版滑条值兼容映射
+            // 输出码率档位(仅 JPG 恢复;PNG 只有"无损"一项不恢复):
+            // JPG 用 ImgQualityMode(0-4);旧版滑条值兼容映射;无有效档位保持"默认(推荐)"(RefreshQualityCombo 兜底)
             if (FmtCombo.SelectedIndex == 0)
             {
                 if (d.ImgQualityMode is >= 0 and <= 4) ImgQualityCombo.SelectedIndex = d.ImgQualityMode;
@@ -173,6 +174,7 @@ public sealed partial class UpscaleView : UserControl
                         _ => 3,
                     };
                 }
+                else ImgQualityCombo.SelectedIndex = 2;   // 默认(推荐)
             }
             if (d.Detail is >= 0 and <= 100) DetailSlider.Value = d.Detail;
             if (d.Sharpen is >= 0 and <= 100) SharpenSlider.Value = d.Sharpen;
@@ -184,22 +186,6 @@ public sealed partial class UpscaleView : UserControl
             if (d.Denoise is >= 0 and <= 100) DenoiseSlider.Value = d.Denoise;
             if (d.Aa is >= 0 and <= 100) AaSlider.Value = d.Aa;
             if (d.Dehaze is >= 0 and <= 100) DehazeSlider.Value = d.Dehaze;
-            // 码率档位仅 JPG 恢复(PNG 只有"无损",无效档位不得写入 185 行旧逻辑)
-            if (FmtCombo.SelectedIndex == 0)
-            {
-                if (d.ImgQualityMode is >= 0 and <= 4) ImgQualityCombo.SelectedIndex = d.ImgQualityMode;
-                else if (d.ImgQuality is >= 1 and <= 100)
-                {
-                    // 旧版(滑条值 1~100)兼容映射到档位:≤75=低,≤85=中,≤95=默认,>95=超高
-                    ImgQualityCombo.SelectedIndex = d.ImgQuality switch
-                    {
-                        <= 75 => 0,
-                        <= 85 => 1,
-                        <= 95 => 2,
-                        _ => 3,
-                    };
-                }
-            }
             if (d.ImgQualityCustom is >= 1 and <= 100)
                 ImgQualityCustomBox.Text = d.ImgQualityCustom.ToString(System.Globalization.CultureInfo.InvariantCulture);
             PreDenoiseCheck.IsChecked = d.PreDenoise;
@@ -951,7 +937,8 @@ public sealed partial class UpscaleView : UserControl
             ImgQualityCombo.Items.Add(new ComboBoxItem { Content = "默认 (推荐)" });
             ImgQualityCombo.Items.Add(new ComboBoxItem { Content = "超高 (文件大)" });
             ImgQualityCombo.Items.Add(new ComboBoxItem { Content = "自定义码率..." });
-            ImgQualityCombo.SelectedIndex = Math.Clamp(prev, 0, 4);
+            // 无有效记忆(prev<0 初次/重置)默认选"默认 (推荐)"(index=2)——旧代码 clamp(-1→0)会把首次默认成"低(文件小)"
+            ImgQualityCombo.SelectedIndex = prev is >= 0 and <= 4 ? prev : 2;
             ImgQualityCombo.IsEnabled = true;
             ImgQualityCombo.Opacity = 1.0;
         }
