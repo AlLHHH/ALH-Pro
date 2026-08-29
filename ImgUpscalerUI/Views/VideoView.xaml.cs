@@ -2086,11 +2086,16 @@ public sealed partial class VideoView : UserControl
 
     private void UpdateListButtons()
     {
-        // 空列表:清空类按钮整体隐藏(不显示"没有项目也能点的空按钮");
-        // 有项目才显示,并按状态启用/禁用。(单个删除走 Del 键或列表项上的「删除」)
+        // 空列表:删除类按钮隐藏(不显示"没有项目也能点的空按钮");
+        // 有项目才显示,并按状态启用/禁用。
         bool hasVideos = _videos.Count > 0;
+        RemoveVideoBtn.Visibility = hasVideos ? Visibility.Visible : Visibility.Collapsed;
         ClearVideosBtn.Visibility = hasVideos ? Visibility.Visible : Visibility.Collapsed;
         ClearDoneBtn.Visibility = hasVideos ? Visibility.Visible : Visibility.Collapsed;
+        // 处理中(未暂停)锁死删除;但选中里有「已完成(灰)」项时解锁(它们不参与当前任务,任何时候可删)
+        var sel = VideoList.SelectedItems.OfType<VideoItem>().ToArray();
+        RemoveVideoBtn.IsEnabled = VideoList.SelectedItem != null &&
+            ((!_running || _paused) || sel.Any(v => v.IsDone));
         ClearVideosBtn.IsEnabled = !_running && hasVideos;
         ClearDoneBtn.IsEnabled = _videos.Any(v => v.IsDone);   // 有已完成(灰)项目时才可清除
     }
