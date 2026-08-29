@@ -22,6 +22,10 @@ public static class VulkanCheck
     /// <summary>友好报告(给用户看:当前设备 + 会有什么问题 + 建议)。</summary>
     public static string Report { get; private set; } = "";
 
+    /// <summary>引擎实际枚举到的 Vulkan 设备(编号+名称)——与注册表顺序可能不同,是"真实序号"。
+    /// MainPage 启动自检用它自动纠正计算设备编号。</summary>
+    public static System.Collections.Generic.List<(int Id, string Name)> Devices { get; } = new();
+
     /// <summary>找 waifu2x 引擎路径(与 EngineService 同一目录布局)。</summary>
     private static string? FindWaifu2x()
     {
@@ -318,6 +322,7 @@ public static class VulkanCheck
         AppSettings.VulkanReport = "";
         try { AppSettings.Save(); } catch { }
         Done = false;
+        Devices.Clear();
         System.Threading.Tasks.Task.Run(() =>
         {
             RunOnce();

@@ -63,6 +63,49 @@ public sealed partial class MainPage : Page
                 $"降温休息={(SafeRender.RestEnabled ? "开(1小时/15分钟)" : "关")}");
             // Vulkan 自检:后台跑完,无 GPU 自动切 CPU。弹窗「设备检测」只对低配设备(无GPU/显存<6/内存<8/核数≤4)
             // 自动弹一次友好提示;强机不弹(结果随时可在「设置 → 计算设备」查看),弹过也不再重复弹。
+            // 【新增】真引擎自检:每次启动都后台跑一次(waifu2x 引擎枚举 Vulkan 设备),结果=日志+状态栏
+            // (之前 RunOnce 只在设置页手动触发,启动从未自检过)。
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    VulkanCheck.RunOnce();
+                    bool gpuOk = VulkanCheck.GpuAvailable;
+                    AppLogger.Info("Vulkan 自检:" + (gpuOk ? "GPU 引擎可用(Vulkan 设备枚举成功)" : "GPU 引擎不可用(未枚举到 Vulkan 设备),建议设置中选 CPU") + VulkanCheck.Report);
+                    // ===== 智能联动(自检结果 → 自动适配,日志+状态栏可见,不弹窗)=====
+                    string? autoMsg = null;
+                    if (!gpuOk)
+                    {
+                        if (AppSettings.GpuIndex >= 0)
+                        {
+                            AppSettings.GpuIndex = -1;
+                            try { AppSettings.Save(); } catch { }
+                            autoMsg = "已自动适配:未检测到可用 GPU → 处理设备已切为 CPU(设置中可改回)";
+                        }
+                        else
+                        {
+                            autoMsg = "未检测到可用 GPU → 处理设备=CPU(软件计算)";
+                        }
+                    }
+                    else if (VulkanCheck.Devices.Count > 0 && AppSettings.GpuIndex >= 0
+                             && !VulkanCheck.Devices.Any(d => d.Id == AppSettings.GpuIndex))
+                    {
+                        // 用户当前编号不在引擎实际枚举列表 → 编号错位(注册表顺序≠Vulkan 顺序),自动纠正
+                        int rec = VulkanCheck.Devices[0].Id;
+                        AppLogger.Info($"编号纠正:当前设备 {AppSettings.GpuIndex} 不在引擎实际枚举列表 {string.Join(",", VulkanCheck.Devices.Select(d => d.Id + ":" + d.Name))},已自动改为引擎识别 {rec}");
+                        AppSettings.GpuIndex = rec;
+                        try { AppSettings.Save(); } catch { }
+                        autoMsg = $"已自动纠正设备编号 → GPU {rec}(引擎实际识别)";
+                    }
+                    if (autoMsg != null) AppLogger.Info("🚀 " + autoMsg);
+                    string finalMsg = autoMsg ?? "就绪";
+                    DispatcherQueue.TryEnqueue(() => { StatusText.Text = finalMsg; });
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Info("Vulkan 自检异常: " + ex.Message);
+                }
+            });
             if (SafeRender.IsWeakDevice)
                 _ = ShowVulkanNoticeAsync();
         };

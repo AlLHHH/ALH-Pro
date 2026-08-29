@@ -489,9 +489,7 @@ public sealed partial class CutoutView : UserControl
             bool colorOk = await ComposeColorPreviewAsync(item, maskPath, colorPath);
             try { PreviewImage.Source = new BitmapImage(new Uri(colorOk ? colorPath : maskPath)); } catch { }
             _maskPreviewShown = true;
-            PreviewHint.Text = colorOk
-                ? "抠图预览(彩色:主体保留,背景棋盘格) · 再点一次返回原图 · 调整参数自动刷新"
-                : "抠图预览(黑白蒙版) · 再点一次返回原图 · 调整参数自动刷新";
+            PreviewHint.Text = "再点一次返回原图 · 调整参数自动刷新";
         }
         catch (Exception ex)
         {
