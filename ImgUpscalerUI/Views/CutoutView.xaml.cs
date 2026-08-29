@@ -392,6 +392,40 @@ public sealed partial class CutoutView : UserControl
         PreviewOverlay.Visibility = Visibility.Collapsed;
     }
 
+    // 棋盘格画刷(彩色预览透明背景的标准视觉):按预览区域尺寸整张生成(格子 16px,非平铺——WinUI3 无 TileMode)
+    private Microsoft.UI.Xaml.Media.ImageBrush? _chessBrush;
+    private Microsoft.UI.Xaml.Media.ImageBrush? EnsureChessBrush()
+    {
+        try
+        {
+            int w = Math.Max(64, Math.Min(4096, (int)(PreviewRoot.ActualWidth > 0 ? PreviewRoot.ActualWidth : 1200)));
+            int h = Math.Max(64, Math.Min(4096, (int)(PreviewRoot.ActualHeight > 0 ? PreviewRoot.ActualHeight : 900)));
+            int s = 16;
+            using var bmp = new System.Drawing.Bitmap(w, h);
+            using (var g = System.Drawing.Graphics.FromImage(bmp))
+            {
+                var c1 = System.Drawing.Color.FromArgb(255, 200, 200, 200);
+                var c2 = System.Drawing.Color.FromArgb(255, 255, 255, 255);
+                g.Clear(c1);
+                using var b1 = new System.Drawing.SolidBrush(c2);
+                for (int y = 0; y < h; y += s)
+                    for (int x = 0; x < w; x += s)
+                        if (((x / s) + (y / s)) % 2 == 0)
+                            g.FillRectangle(b1, x, y, Math.Min(s, w - x), Math.Min(s, h - y));
+            }
+            var png = Path.Combine(Path.GetTempPath(), $"imgup_chess_{Guid.NewGuid():N}.png");
+            bmp.Save(png, System.Drawing.Imaging.ImageFormat.Png);
+            EngineService.RegisterTempFile(png);
+            _chessBrush = new Microsoft.UI.Xaml.Media.ImageBrush
+            {
+                ImageSource = new BitmapImage(new Uri(png)),
+                Stretch = Microsoft.UI.Xaml.Media.Stretch.None,
+            };
+            return _chessBrush;
+        }
+        catch { return null; }
+    }
+
     // AI 主体预览:显示模型识别的黑白蒙版(白=主体);再点恢复原图
     private async void MaskPreview_Click(object sender, RoutedEventArgs e)
     {
@@ -401,6 +435,7 @@ public sealed partial class CutoutView : UserControl
         {
             // 切回原图
             _maskPreviewShown = false;
+            ChessBg.Visibility = Visibility.Collapsed;
             try { PreviewImage.Source = new BitmapImage(new Uri(item.Path)); } catch { }
             PreviewHint.Text = "";
             return;
@@ -432,10 +467,41 @@ public sealed partial class CutoutView : UserControl
                 null, null, null, null, null, 0, null, 0,
                 (int)FeatherSlider.Value, (int)EdgeSlider.Value,
                 (int)MorphSlider.Value, AutoThresholdCheck.IsChecked == true);
-            try { PreviewImage.Source = new BitmapImage(new Uri(maskPath)); } catch { }
+            // 彩色预览:原图 × mask 透明度合成(主体彩色、背景透明=抠图成片效果)
+            var colorPath = Path.Combine(Path.GetTempPath(), $"imgup_mask_color_{Guid.NewGuid():N}.png");
+            EngineService.RegisterTempFile(colorPath);
+            bool colorOk = false;
+            var ff = VideoService.FfmpegPath;
+            if (ff != null)
+            {
+                try
+                {
+                    await Task.Run(() =>
+                    {
+                        var psi = new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = ff,
+                            Arguments = $"-y -v error -i \"{item.Path}\" -i \"{maskPath}\" -filter_complex \"[0:v][1:v]alphamerge\" -frames:v 1 \"{colorPath}\"",
+                            UseShellExecute = false,
+                            CreateNoWindow = true,
+                            RedirectStandardError = true,
+                        };
+                        using var p = System.Diagnostics.Process.Start(psi);
+                        if (p != null) { _ = p.StandardError.ReadToEndAsync(); p.WaitForExit(); }
+                    });
+                    colorOk = File.Exists(colorPath) && new FileInfo(colorPath).Length > 100;
+                }
+                catch { }
+            }
+            try { PreviewImage.Source = new BitmapImage(new Uri(colorOk ? colorPath : maskPath)); } catch { }
+            // 彩色预览:主体后垫棋盘格(标准"透明"视觉)
+            var cb = colorOk ? EnsureChessBrush() : null;
+            ChessBg.Background = cb;
+            ChessBg.Visibility = cb != null ? Visibility.Visible : Visibility.Collapsed;
             _maskPreviewShown = true;
-            PreviewHint.Text = "抠图预览(白=保留,黑=去除) · 再点一次返回原图 · 调整参数自动刷新";
-            // 蒙版图临时文件:下次生成时被新文件替换,无需立即清理
+            PreviewHint.Text = colorOk
+                ? "抠图预览(彩色:主体保留,背景透明) · 再点一次返回原图 · 调整参数自动刷新"
+                : "抠图预览(黑白蒙版) · 再点一次返回原图 · 调整参数自动刷新";
         }
         catch (Exception ex)
         {

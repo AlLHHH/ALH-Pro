@@ -250,6 +250,7 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     <Grid x:Name="PreviewRoot" Margin="16">
+                        <Border x:Name="ChessBg" Visibility="Collapsed"/>
                         <Image x:Name="PreviewImage" Stretch="Uniform"
                                SizeChanged="PreviewImage_SizeChanged"
                                PointerPressed="PreviewImage_PointerPressed"
