@@ -1,0 +1,90 @@
+ALH Pro — 第三方组件许可声明
+================================
+本软件为免费公益软件,集成以下开源项目。所有组件的版权归其各自作者所有,
+本声明依据各项目开源许可要求提供,并包含完整源码获取方式。
+
+如分发本软件,请保留本文件。
+
+--------------------------------------------------
+1. waifu2x-ncnn-vulkan(超分引擎)
+   项目: https://github.com/nihui/waifu2x-ncnn-vulkan
+   算法: waifu2x(naoaki)https://github.com/nagadomi/waifu2x
+   许可: MIT License(waifu2x)
+         BSD 3-Clause(ncnn / nihui 工具)
+   版权: naoaki / nihui
+
+2. Real-ESRGAN-ncnn-vulkan(超分引擎)
+   项目: https://github.com/xinntao/Real-ESRGAN
+         https://github.com/nihui/realesrgan-ncnn-vulkan
+   许可: BSD 3-Clause License
+   版权: Xintao Wang 等(2021)
+
+3. Real-CUGAN-ncnn-vulkan(超分引擎,动漫)
+   项目: https://github.com/bilibili/ailab(Real-CUGAN)
+         https://github.com/nihui/realcugan-ncnn-vulkan
+   许可: 官方仓库未附明确开源许可(LICENSE 文件缺失),
+         默认视为"保留所有权利";个人使用无碍,
+         商业/大规模分发前请向 bilibili 核实。
+   版权: bilibili(哔哩哔哩)
+
+4. RIFE-ncnn-vulkan(视频补帧引擎)
+   项目: https://github.com/hzwer/arXiv2020-RIFE
+         https://github.com/nihui/rife-ncnn-vulkan
+   许可: Apache License 2.0(RIFE)
+         BSD 3-Clause(ncnn / nihui 工具)
+   版权: Zhewei Huang 等(2022)
+
+5. U²-Net(抠图模型)
+   论文: U²-Net: Going Deeper with Nested U-Structure
+          for Salient Object Detection
+   项目: https://github.com/xuebinqin/U-2-Net
+   许可: Apache License 2.0
+   版权: Xuebin Qin 等(2020)
+
+6. IS-Net / ISNet(抠图模型)
+   项目: https://github.com/xuebinqin/IS-Net
+   许可: Apache License 2.0
+   版权: Xuebin Qin 等(2021)
+
+7. BiRefNet(抠图模型,完整版/精简版)
+    项目: https://github.com/ZhengPeng7/BiRefNet
+    许可: Apache License 2.0(仓库 LICENSE;ONNX 导出见下方 rembg)
+    版权: Zheng Peng 等(2024)
+
+8. rembg 模型分发(ISNet / U²-Net / BiRefNet 等 ONNX 权重来源)
+   项目: https://github.com/danielgatis/rembg
+   许可: MIT License
+   版权: Daniel Gatis(2020)
+
+9. FFmpeg(视频拆帧/合成/裁剪/检测)
+   项目: https://ffmpeg.org
+   构建: BtbN(https://github.com/BtbN/FFmpeg-Builds)
+   许可: GPL v2+(该构建启用了 GPL 组件,如 libx264);
+          完整源码:https://ffmpeg.org/download.html
+          本软件以独立进程方式调用 ffmpeg,未与其链接。
+   版权: FFmpeg 开发团队
+
+10. Microsoft ONNX Runtime(抠图模型推理)
+   项目: https://github.com/microsoft/onnxruntime
+   许可: MIT License
+   版权: Microsoft Corporation
+
+11. Windows App SDK / WinUI 3 / Windows UI Library
+    项目: https://github.com/microsoft/WindowsAppSDK
+    许可: MIT License
+    版权: Microsoft Corporation
+
+12. .NET 8
+    项目: https://github.com/dotnet/runtime
+    许可: MIT License
+    版权: Microsoft Corporation
+
+--------------------------------------------------
+附:各开源许可协议全文
+MIT:      https://opensource.org/licenses/MIT
+BSD-3:    https://opensource.org/licenses/BSD-3-Clause
+Apache-2: https://www.apache.org/licenses/LICENSE-2.0
+GPLv2:    https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+
+本软件 100% 本地处理,不收集、不上传任何用户数据。
+作者:AlL.H  ·  AI 协作:DeepSeek

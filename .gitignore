@@ -1,0 +1,30 @@
+# ===== 构建产物 =====
+bin/
+obj/
+*.user
+.vs/
+artifacts/
+
+# ===== 引擎/模型(第三方二进制+大文件,入库无意义且超限)=====
+engines/
+发布版/
+build_*/
+
+# ===== 备份/实验目录 =====
+备份/
+backup_*/
+_*/
+.iconregen/
+.smoketest/
+runvideo/
+assets/
+
+# ===== 发布物/临时 =====
+*.zip
+*.log
+*.tmp
+_diag_screen.png
+
+# ===== 系统/IDE =====
+Thumbs.db
+Desktop.ini
