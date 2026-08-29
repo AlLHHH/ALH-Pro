@@ -51,22 +51,9 @@ public class ImageItem : INotifyPropertyChanged
         set { if (_customName != value) { _customName = value; OnPropertyChanged(nameof(CustomName)); } }
     }
 
-    /// <summary>原图像素宽高(主体标记比例换算用)。</summary>
+    /// <summary>原图像素宽高。</summary>
     public int PixelWidth { get; set; }
     public int PixelHeight { get; set; }
-
-    // ---------- 主体选择标记(抠图页):框选 + 智能涂抹 ----------
-    // 坐标均为 0~1 比例(相对原图),缩略图按比例绘制
-    /// <summary>主体框选(比例坐标,null=未框选)。</summary>
-    public (double X, double Y, double W, double H)? SubjectBox { get; set; }
-
-    /// <summary>智能涂抹笔迹:Keep=true=绿色保留,false=红色删除;点为比例坐标。</summary>
-    public List<(bool Keep, List<(double X, double Y)> Points)> Scribbles { get; } = new();
-
-    /// <summary>是否有主体标记(框选或涂抹),用于列表徽标/缩略图覆盖。</summary>
-    public bool HasMarks => SubjectBox != null || Scribbles.Count > 0;
-
-    public void NotifyMarksChanged() => OnPropertyChanged(nameof(HasMarks));
 
     // ---------- 处理状态(任务暂停后可删除"未处理"项,已处理/处理中的项不可删) ----------
     private int _progress;

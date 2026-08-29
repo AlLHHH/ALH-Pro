@@ -195,11 +195,7 @@
                                     BorderBrush="{StaticResource AppBorderBrush}"
                                     BorderThickness="1">
                                 <Grid>
-                                    <Image x:Name="ThumbImg" Source="{Binding Thumb}" Stretch="Uniform"
-                                           SizeChanged="ThumbImg_SizeChanged"/>
-                                    <!-- 主体选择标记层(抠图页框选/涂抹,按比例绘制,尺寸跟随图片显示区域) -->
-                                    <Canvas x:Name="MarksLayer" IsHitTestVisible="False"
-                                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    <Image x:Name="ThumbImg" Source="{Binding Thumb}" Stretch="Uniform"/>
                                     <!-- 悬停出现的铅笔图标(悬停时背景变蓝) -->
                                     <Button x:Name="PencilBtn" Click="PencilBtn_Click"
                                             Opacity="0" Width="24" Height="24" Padding="0"

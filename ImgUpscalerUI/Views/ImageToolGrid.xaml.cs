@@ -201,101 +201,13 @@ public sealed partial class ImageToolGrid : UserControl
             border.Visibility = isSelected ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    /// <summary>容器内容变化(首次实例化/滚动回收)时应用当前选中视觉 + 主体标记。</summary>
+    /// <summary>容器内容变化(首次实例化/滚动回收)时应用当前选中视觉。</summary>
     private void ImageGrid_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
     {
         if (args.Item is ImageItem item && args.ItemContainer is GridViewItem container)
         {
             var isSelected = ImageGrid.SelectedItems.Contains(item);
             ApplySelectionVisual(container, isSelected);
-            if (args.Phase == 0)
-            {
-                // 挂接标记层(模板回收时重新绑定)
-                var root = container.ContentTemplateRoot as FrameworkElement;
-                var layer = root?.FindName("MarksLayer") as Canvas;
-                if (layer != null)
-                {
-                    // 关键:容器可能被回收复用,先退订/移除所有指向该标记层的旧 item,
-                    // 防止旧图片的标记(框选/涂抹)串到新图片的缩略图上
-                    foreach (var kv in _marksLayers.Where(kv => ReferenceEquals(kv.Value, layer)).ToList())
-                    {
-                        kv.Key.PropertyChanged -= OnItemMarksChanged;
-                        _marksLayers.Remove(kv.Key);
-                    }
-                    _marksLayers[item] = layer;
-                    item.PropertyChanged -= OnItemMarksChanged;
-                    item.PropertyChanged += OnItemMarksChanged;
-                    RenderMarks(item, layer);
-                }
-            }
-        }
-    }
-
-    // 主体标记层缓存(回收时清理)
-    private readonly Dictionary<ImageItem, Canvas> _marksLayers = new();
-
-    private void OnItemMarksChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
-    {
-        if (sender is ImageItem item && e.PropertyName is nameof(ImageItem.HasMarks) or nameof(ImageItem.SubjectBox))
-        {
-            if (_marksLayers.TryGetValue(item, out var layer))
-                RenderMarks(item, layer);
-        }
-    }
-
-    // 缩略图尺寸确定后按实际显示区域重绘标记
-    private void ThumbImg_SizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        if (sender is Image img && img.DataContext is ImageItem item)
-        {
-            if (_marksLayers.TryGetValue(item, out var layer))
-            {
-                layer.Width = img.ActualWidth;
-                layer.Height = img.ActualHeight;
-                RenderMarks(item, layer);
-            }
-        }
-    }
-
-    /// <summary>在缩略图上绘制主体选择标记:框选(绿框)+ 涂抹(绿/红点)。坐标是 0~1 比例。</summary>
-    private static void RenderMarks(ImageItem item, Canvas layer)
-    {
-        layer.Children.Clear();
-        // 以图片实际显示区域为基准(与 Image Uniform 对齐);布局未完成时用容器尺寸兜底
-        double cw = layer.ActualWidth > 0 ? layer.ActualWidth : 120;
-        double ch = layer.ActualHeight > 0 ? layer.ActualHeight : 120;
-        if (cw <= 0 || ch <= 0) { cw = 120; ch = 120; }
-        if (item.SubjectBox is (double bx, double by, double bw, double bh))
-        {
-            var rect = new Microsoft.UI.Xaml.Shapes.Rectangle
-            {
-                Stroke = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 91, 141, 239)),
-                StrokeThickness = 1.5,
-                Fill = new SolidColorBrush(Windows.UI.Color.FromArgb(40, 91, 141, 239)),
-            };
-            Canvas.SetLeft(rect, bx * cw);
-            Canvas.SetTop(rect, by * ch);
-            rect.Width = Math.Max(2, bw * cw);
-            rect.Height = Math.Max(2, bh * ch);
-            layer.Children.Add(rect);
-        }
-        foreach (var (keep, pts) in item.Scribbles)
-        {
-            var color = keep
-                ? Windows.UI.Color.FromArgb(220, 76, 200, 110)   // 绿=保留
-                : Windows.UI.Color.FromArgb(220, 230, 80, 80);   // 红=删除
-            foreach (var (px, py) in pts)
-            {
-                var dot = new Microsoft.UI.Xaml.Shapes.Ellipse
-                {
-                    Width = 6, Height = 6,
-                    Fill = new SolidColorBrush(color),
-                    IsHitTestVisible = false,
-                };
-                Canvas.SetLeft(dot, px * cw - 3);
-                Canvas.SetTop(dot, py * ch - 3);
-                layer.Children.Add(dot);
-            }
         }
     }
 
