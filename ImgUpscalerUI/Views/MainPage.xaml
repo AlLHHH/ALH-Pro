@@ -58,12 +58,6 @@
                             <TextBlock Text="视频处理" FontSize="13"/>
                         </StackPanel>
                     </ListViewItem>
-                    <ListViewItem x:Name="NavTutorial" Tag="tutorial" Padding="14,10">
-                        <StackPanel Orientation="Horizontal" Spacing="9">
-                            <FontIcon Glyph="&#xE736;" FontSize="14"/>
-                            <TextBlock Text="使用教程" FontSize="13"/>
-                        </StackPanel>
-                    </ListViewItem>
                 </ListView>
 
                 <!-- 底部署名 + 诊断日志 + 关于 -->
@@ -72,10 +66,13 @@
                                Foreground="#E8ECF2"/>
                     <Button Content="☕ 请作者喝咖啡" Click="CoffeeCard_Click" HorizontalAlignment="Stretch"
                             Padding="0,5" FontSize="11" Margin="0,2,0,0"
-                            ToolTipService.ToolTip="完全自愿:请作者喝一杯咖啡(软件无广告/无联网/无账号)"/>
+                            ToolTipService.ToolTip="完全自愿:请作者喝一杯咖啡(软件无广告/无账号)"/>
                     <Button Content="💬 ALH Pro 社区" Click="Community_Click" HorizontalAlignment="Stretch"
                             Padding="0,5" FontSize="11" Margin="0,2,0,0"
                             ToolTipService.ToolTip="官方交流社区:使用问题 / 功能建议 / 处理效果交流(友好交流,不爆粗口)"/>
+                    <Button Content="📖 使用教程" Click="Tutorial_Click" HorizontalAlignment="Stretch"
+                            Padding="0,5" FontSize="11" Margin="0,2,0,0"
+                            ToolTipService.ToolTip="图文操作说明:每个功能怎么用、参数什么时候调、常见问题处理"/>
                     <Button Content="设置" Click="Settings_Click" HorizontalAlignment="Stretch"
                             Padding="0,5" FontSize="11" Margin="0,2,0,0"
                             ToolTipService.ToolTip="设置:诊断日志等"/>
