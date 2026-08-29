@@ -482,7 +482,10 @@ public sealed partial class VideoView : UserControl
             bool weak = SafeRender.IsWeakDevice && FastModeCheck.IsChecked != true;
             CompatHintPanel.Visibility = weak ? Visibility.Visible : Visibility.Collapsed;
             if (weak && CompatHint != null)
+            {
                 CompatHint.Text = $"⚠ 检测到设备配置较低({SafeRender.WeakDeviceReason}),建议勾选「兼容模式」防止爆显存/卡顿。";
+                AppLogger.Info($"⚠ 检测到设备配置较低({SafeRender.WeakDeviceReason}),建议勾选「兼容模式」防止爆显存/卡顿");
+            }
         }
         PauseBtn.IsEnabled = _running && !_paused;
         ResumeBtn.IsEnabled = _running && _paused;

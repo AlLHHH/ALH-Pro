@@ -317,6 +317,7 @@ public static class VideoService
         {
             interpModel = "rife-v4.13";
             progress?.Report((2, "⚠ 3x 补帧需要 v4 架构模型,已自动切换为「通用画质最新 (RIFE v4.13)」"));
+            AppLogger.Info("⚠ 3x 补帧需要 v4 架构模型,已自动切换为「通用画质最新 (RIFE v4.13)」");
         }
 
         // 输出扩展名确保 .mp4 / .mkv
@@ -340,6 +341,7 @@ public static class VideoService
                 var drive = new System.IO.DriveInfo(Path.GetPathRoot(workDir)!);
                 if (drive.AvailableFreeSpace < 2L * 1024 * 1024 * 1024)
                     progress?.Report((0, $"⚠ 临时盘({workDir[..3]})剩余 {drive.AvailableFreeSpace / (1024 << 20):0}GB,可能不够,建议清理磁盘"));
+                    AppLogger.Info($"⚠ 临时盘({workDir[..3]})剩余 {drive.AvailableFreeSpace / (1024 << 20):0}GB,可能不够,建议清理磁盘");
             }
             catch { }
 
@@ -1464,6 +1466,7 @@ public static class VideoService
                     var cpuEncoder = encoder.StartsWith("hevc", StringComparison.OrdinalIgnoreCase) ? "libx265" : "libx264";
                     AppLogger.Info($"降级:硬件编码({encoder})不可用(原因:{ex.Message}),改用 CPU 编码({cpuEncoder})");
                     progress?.Report((96, $"⚠ 硬件编码({encoder})不可用,改用轻量 CPU 编码({cpuEncoder});原因:{ex.Message}"));
+                    AppLogger.Info($"⚠ 硬件编码({encoder})不可用,改用轻量 CPU 编码({cpuEncoder});原因:{ex.Message}");
                     await RunAsync(ffmpeg,
                         muxBase + $"{videoMap}{audioPart} {EncoderArgs(cpuEncoder, quality, bitrateKbps)} {vfArg}{fastFlag} \"{outTmp}\"",
                         progress, ct, "编码", encTotal);
@@ -1629,7 +1632,7 @@ public static class VideoService
             }
             catch (InvalidOperationException ex) when (gpuNow >= 0)
             {
-                AppLogger.Info($"降级:补帧 GPU 失败({ex.Message.Split('\n')[0]}),自动改用 CPU 重算");
+                AppLogger.Info($"⚠ 降级:补帧 GPU 失败({ex.Message.Split('\n')[0]}),自动改用 CPU 重算");
                 progress?.Report((0, "⚠ 补帧 GPU 失败,自动改用 CPU 重算..."));
                 var cpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g -1");
                 await RunAsync(rife, cpuArgs, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
@@ -1644,7 +1647,7 @@ public static class VideoService
                 }
                 if (anyBlack)
                 {
-                    AppLogger.Info("降级:补帧输出含黑帧(GPU 队列异常),改用 CPU 重算该段");
+                    AppLogger.Info("⚠ 降级:补帧输出含黑帧(GPU 队列异常),改用 CPU 重算该段");
                     progress?.Report((0, "⚠ 补帧输出黑帧(GPU 异常),改用 CPU 重算该段..."));
                     var cpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g -1");
                     await RunAsync(rife, cpuArgs, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
@@ -2936,7 +2939,7 @@ public static class VideoService
                     if (meanSad > 3.5)
                     {
                         progress?.Report((4, $"⚠ 档位校验:相邻内容帧平均差异 {meanSad:0.#}(较大)——若素材为实拍/高内容帧率,该内容帧率可能把画面抽稀;仍按本次填写处理"));
-                        AppLogger.Info($"档位校验:相邻内容帧平均差异 {meanSad:0.#}(较大) → 若素材为实拍/高内容帧率,该内容帧率可能把画面抽稀;仍按本次填写处理");
+                        AppLogger.Info($"⚠ 档位校验:相邻内容帧平均差异 {meanSad:0.#}(较大) → 若素材为实拍/高内容帧率,该内容帧率可能把画面抽稀;仍按本次填写处理");
                     }
                 }
             }
