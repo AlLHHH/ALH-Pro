@@ -84,7 +84,7 @@
 
         <!-- ============ 缩略图网格(支持鼠标框选多选) ============
              指针事件挂在 GridHost 上:与橡皮筋 RbRect 同坐标系,框选起点/终点精确 -->
-        <Grid x:Name="GridHost" Grid.Row="1"
+        <Grid x:Name="GridHost" Grid.Row="1" Background="Transparent"
               PointerPressed="GridHost_PointerPressed"
               PointerMoved="GridHost_PointerMoved"
               PointerReleased="GridHost_PointerReleased"
@@ -224,9 +224,9 @@
                            IsHitTestVisible="False"/>
             </Canvas>
 
-            <!-- 空状态提示(不挡拖拽);空列表时拖放目标=本区域 -->
+            <!-- 空状态提示(不挡拖拽);空列表时拖放目标=本区域;透明背景必须,否则不参与命中测试 -->
             <StackPanel x:Name="DropHint" VerticalAlignment="Center" Spacing="8"
-                        IsHitTestVisible="True"
+                        Background="Transparent" IsHitTestVisible="True"
                         AllowDrop="True" DragOver="DropBorder_DragOver" Drop="DropBorder_Drop">
                 <FontIcon Glyph="&#xE8B5;" FontSize="40" Opacity="0.3"
                           HorizontalAlignment="Center"/>
