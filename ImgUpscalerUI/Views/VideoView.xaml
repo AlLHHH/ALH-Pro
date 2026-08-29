@@ -894,7 +894,8 @@
                 </Grid>
 
                 <StackPanel x:Name="VideoDropHint" Grid.Row="2" VerticalAlignment="Center" Spacing="12"
-                            IsHitTestVisible="False">   <!-- 空列表显示;诊断已结束,恢复正常显示 -->
+                            IsHitTestVisible="True"
+                            AllowDrop="True" DragOver="DropBorder_DragOver" Drop="DropBorder_Drop">   <!-- 空列表时拖放目标=提示区本身(列表隐藏了,拖放不能断) -->
                     <FontIcon Glyph="&#xE714;" FontSize="48" Opacity="0.3"
                               HorizontalAlignment="Center"/>
                     <TextBlock Text="拖入项目" HorizontalAlignment="Center"
