@@ -214,8 +214,6 @@ public sealed partial class CutoutView : UserControl
             PreDenoiseCheck.IsChecked = d.PreDenoise;
             if (d.PreDenoiseLevel is >= 0 and <= 2) PreDenoiseLevelCombo.SelectedIndex = d.PreDenoiseLevel;
             PreUpscaleCheck.IsChecked = d.PreUpscale;
-            if (d.Tolerance is >= 0 and <= 100) ToleranceSlider.Value = d.Tolerance;
-            if (d.Spread is >= 0 and <= 600) SpreadSlider.Value = d.Spread;
         }
         catch { /* 读取失败用默认值 */ }
     }
@@ -238,8 +236,6 @@ public sealed partial class CutoutView : UserControl
                 PreDenoise = PreDenoiseCheck.IsChecked == true,
                 PreDenoiseLevel = PreDenoiseLevelCombo.SelectedIndex,
                 PreUpscale = PreUpscaleCheck.IsChecked == true,
-                Tolerance = (int)ToleranceSlider.Value,
-                Spread = (int)SpreadSlider.Value,
             };
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile)!);
             File.WriteAllText(SettingsFile, System.Text.Json.JsonSerializer.Serialize(d));
@@ -307,177 +303,10 @@ public sealed partial class CutoutView : UserControl
     // ---------- 预览:原图 / AI 主体蒙版 / 框选主体 / 智能涂抹 ----------
     private ImageItem? _previewItem;
     private bool _maskPreviewShown;      // 当前显示的是蒙版图
-    private bool _selMode;               // 框选模式激活
-    private bool _selDragging;
-    private Windows.Foundation.Point _selStart, _selEnd;
-    private (int x, int y, int w, int h)? _selPixels;   // 主体框选(原图像素坐标)
-    private double _scale = 1;           // 预览缩放比(图片像素 → 画布坐标);画布尺寸=图片显示区域,坐标即图片坐标
-
-    // 智能涂抹
-    private bool _scribbleMode;          // 涂抹模式激活
-    private bool _brushKeep = true;      // 当前笔刷:true=绿色保留,false=红色删除
-    private bool _brushErase;            // 橡皮擦模式(优先于 keep/delete)
-    private bool _erasing;               // 正在擦除中
-    private int _brushSize = 18;         // 笔刷直径(画布像素)
-    private readonly List<CutoutService.CutoutScribble> _scribbles = new();   // 当前预览图的涂抹(像素坐标)
-    private List<(int X, int Y)>? _curStroke;   // 进行中的笔迹
-    private readonly List<Ellipse> _curStrokeDots = new();   // 进行中笔迹的显示点
-    // 撤回/重做(快照式:每次落笔/擦除/清除前存一份,撤回整步)
-    private readonly Stack<List<CutoutService.CutoutScribble>> _undoStack = new();
-    private readonly Stack<List<CutoutService.CutoutScribble>> _redoStack = new();
 
     // 主体标记持久化(按图片路径):框选 + 涂抹
-    private sealed class MarksFile
-    {
-        public Dictionary<string, MarkEntry> Items { get; set; } = new();
-    }
-    private sealed class MarkEntry
-    {
-        public double[]? Box { get; set; }
-        public List<MarkScribble>? Scribbles { get; set; }
-    }
-    private sealed class MarkScribble
-    {
-        public bool Keep { get; set; }
-        public List<double[]> P { get; set; } = new();
-    }
-    private static string MarksFile_ => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ALHPro", "cutout-marks.json");
 
-    private static MarksFile LoadMarks()
-    {
-        try
-        {
-            if (File.Exists(MarksFile_))
-                return System.Text.Json.JsonSerializer.Deserialize<MarksFile>(File.ReadAllText(MarksFile_)) ?? new MarksFile();
-        }
-        catch { }
-        return new MarksFile();
-    }
 
-    private static void SaveMarks(MarksFile m)
-    {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(MarksFile_)!);
-            File.WriteAllText(MarksFile_, System.Text.Json.JsonSerializer.Serialize(m));
-        }
-        catch { }
-    }
-
-    // 保存当前预览图的主体标记(框选+涂抹)到持久化文件
-    private void PersistCurrentMarks()
-    {
-        var item = _previewItem;
-        if (item == null) return;
-        var m = LoadMarks();
-        if (_selPixels == null && _scribbles.Count == 0)
-        {
-            m.Items.Remove(item.OriginalPath.Length > 0 ? item.OriginalPath : item.Path);
-        }
-        else
-        {
-            var e = new MarkEntry();
-            if (_selPixels is (int bx, int by, int bw, int bh))
-                e.Box = new double[] { bx, by, bw, bh };
-            if (_scribbles.Count > 0)
-            {
-                e.Scribbles = _scribbles.Select(s => new MarkScribble
-                {
-                    Keep = s.Keep,
-                    P = s.Points.Select(p => new double[] { p.X, p.Y }).ToList(),
-                }).ToList();
-            }
-            m.Items[item.OriginalPath.Length > 0 ? item.OriginalPath : item.Path] = e;
-        }
-        SaveMarks(m);
-        // 同步到列表项(缩略图标记):比例坐标
-        item.SubjectBox = _selPixels is (int px, int py, int pw, int ph)
-            ? (px / (double)Math.Max(1, item.PixelWidth), py / (double)Math.Max(1, item.PixelHeight), pw / (double)Math.Max(1, item.PixelWidth), ph / (double)Math.Max(1, item.PixelHeight))
-            : null;
-        item.Scribbles.Clear();
-        double w0 = Math.Max(1, item.PixelWidth), h0 = Math.Max(1, item.PixelHeight);
-        foreach (var s in _scribbles)
-            item.Scribbles.Add((s.Keep, s.Points.Select(p => ((double)p.X / w0, (double)p.Y / h0)).ToList()));
-        item.NotifyMarksChanged();
-    }
-
-    // 从持久化文件恢复当前预览图的主体标记
-    private void RestoreMarks(ImageItem item)
-    {
-        _selPixels = null;
-        _scribbles.Clear();
-        var key = item.OriginalPath.Length > 0 ? item.OriginalPath : item.Path;
-        var m = LoadMarks();
-        if (m.Items.TryGetValue(key, out var e))
-        {
-            if (e.Box is { Length: 4 })
-                _selPixels = ((int)e.Box[0], (int)e.Box[1], (int)e.Box[2], (int)e.Box[3]);
-            if (e.Scribbles != null)
-                foreach (var s in e.Scribbles)
-                    _scribbles.Add(new CutoutService.CutoutScribble(s.Keep,
-                        s.P.Select(p => ((int)p[0], (int)p[1])).ToList()));
-        }
-        ClearSelBtn.IsEnabled = _selPixels != null;
-        ClearScribbleBtn.IsEnabled = _scribbles.Count > 0;
-        // 恢复的标记要立即可见:对应画布设为可见(仅显示层,不进入框选/涂抹模式)
-        SelCanvas.Visibility = _selPixels != null ? Visibility.Visible : Visibility.Collapsed;
-        ScribbleCanvas.Visibility = _scribbles.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        // 缩略图标记同步(比例坐标)
-        item.SubjectBox = _selPixels is (int px, int py, int pw, int ph)
-            ? (px / (double)Math.Max(1, item.PixelWidth), py / (double)Math.Max(1, item.PixelHeight), pw / (double)Math.Max(1, item.PixelWidth), ph / (double)Math.Max(1, item.PixelHeight))
-            : null;
-        item.Scribbles.Clear();
-        double w0 = Math.Max(1, item.PixelWidth), h0 = Math.Max(1, item.PixelHeight);
-        foreach (var s in _scribbles)
-            item.Scribbles.Add((s.Keep, s.Points.Select(p => ((double)p.X / w0, (double)p.Y / h0)).ToList()));
-        item.NotifyMarksChanged();
-        UpdateCanvasRects();   // 画布对齐图片显示区域(布局未就绪时由 SizeChanged 补)
-        RenderSelOverlays();   // 在预览画布上重绘框选矩形与涂抹笔迹(布局未就绪时由 SizeChanged 补绘)
-    }
-
-    /// <summary>按像素坐标在预览画布上重绘框选矩形与涂抹笔迹(恢复标记/预览尺寸变化时调用)。
-    /// 画布尺寸=图片显示区域,坐标即图片坐标,无偏移换算。</summary>
-    private void RenderSelOverlays()
-    {
-        var item = _previewItem;
-        if (item == null || _scale <= 0 || item.PixelWidth <= 0) return;
-        // 框选矩形
-        if (_selPixels is (int sx, int sy, int sw, int sh))
-        {
-            SelRect.Width = Math.Max(2, sw * _scale);
-            SelRect.Height = Math.Max(2, sh * _scale);
-            Canvas.SetLeft(SelRect, sx * _scale);
-            Canvas.SetTop(SelRect, sy * _scale);
-            SelRect.Visibility = Visibility.Visible;
-        }
-        else
-        {
-            SelRect.Visibility = Visibility.Collapsed;
-        }
-        // 涂抹笔迹重绘(画在子画布上,不影响其他元素)
-        ScribbleDots.Children.Clear();
-        foreach (var sb in _scribbles)
-        {
-            var color = sb.Keep
-                ? Windows.UI.Color.FromArgb(170, 76, 200, 110)
-                : Windows.UI.Color.FromArgb(170, 230, 80, 80);
-            foreach (var (px, py) in sb.Points)
-            {
-                var dot = new Ellipse
-                {
-                    Width = _brushSize,
-                    Height = _brushSize,
-                    Fill = new SolidColorBrush(color),
-                    IsHitTestVisible = false,
-                };
-                Canvas.SetLeft(dot, px * _scale - _brushSize / 2.0);
-                Canvas.SetTop(dot, py * _scale - _brushSize / 2.0);
-                ScribbleDots.Children.Add(dot);
-            }
-        }
-    }
 
     // 按住查看原图:隐藏框选/涂抹标记;若正在显示 AI 蒙版,临时切回原图,松开恢复。
     // 支持两个入口:预览图本身 或 「按住查看原图」按钮(共用同一逻辑)
@@ -488,8 +317,6 @@ public sealed partial class CutoutView : UserControl
     {
         if (_peeking) return;
         _peeking = true;
-        SelRect.Visibility = Visibility.Collapsed;
-        ScribbleDots.Visibility = Visibility.Collapsed;
         _peekWasMask = _maskPreviewShown;
         var item = _previewItem;
         if (item == null) return;
@@ -498,17 +325,12 @@ public sealed partial class CutoutView : UserControl
         {
             try { PreviewImage.Source = new BitmapImage(new Uri(item.Path)); } catch { }
         }
-        PreviewHint.Text = _maskPreviewShown
-            ? "已临时显示原图(标记隐藏),松开恢复蒙版"
-            : "已隐藏标记(查看原图),松开恢复";
     }
 
     private void PeekEnd()
     {
         if (!_peeking) return;
         _peeking = false;
-        ScribbleDots.Visibility = Visibility.Visible;
-        RenderSelOverlays();
         if (_peekWasMask && _maskPreviewShown)
         {
             // 恢复蒙版显示
@@ -518,8 +340,6 @@ public sealed partial class CutoutView : UserControl
                 try { PreviewImage.Source = new BitmapImage(new Uri(maskPath)); } catch { }
             }
         }
-        PreviewHint.Text = _selPixels != null || _scribbles.Count > 0
-            ? "已恢复标记显示" : "";
     }
 
     // 「按住查看原图」按钮:按住隐藏框选/涂抹标记(或 AI 蒙版临时切回原图),松开恢复。
@@ -543,41 +363,11 @@ public sealed partial class CutoutView : UserControl
     private void PreviewImage_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
         => PeekEnd();
 
-    // 涂抹容差滑条:显示数值;蒙版预览显示中自动刷新
-    private void Tolerance_Changed(object sender, RoutedEventArgs e)
-        => OnToleranceChanged();
-
-    // Slider.ValueChanged 专用(需精确签名)
-    private void ToleranceSlider_Changed(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
-        => OnToleranceChanged();
-
-    private void OnToleranceChanged()
-    {
-        if (ToleranceVal == null) return;
-        ToleranceVal.Text = ((int)ToleranceSlider.Value).ToString();
-        if (_scribbles.Count > 0)
-            PreviewHint.Text = $"容差 {(int)ToleranceSlider.Value}:越大扩散越广,但始终被物体边缘挡住,不会跳到画面其他同色区域(处理时生效)";
-        if (RememberCheck != null && RememberCheck.IsChecked == true)
-            SaveSettings();   // 容差独立保存(勿依赖其他滑条顺带触发)
-        RefreshMaskDelayed();   // 调整容差 → AI 主体预览自动更新
-    }
-
-    // 涂抹扩散距离上限滑条:显示数值;蒙版预览显示中自动刷新
-    private void SpreadSlider_Changed(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
-    {
-        if (SpreadVal == null) return;
-        int v = (int)SpreadSlider.Value;
-        SpreadVal.Text = v <= 0 ? "不限" : v.ToString();
-        if (RememberCheck != null && RememberCheck.IsChecked == true)
-            SaveSettings();
-        RefreshMaskDelayed();   // 调整扩散上限 → AI 主体预览自动更新
-    }
 
     // 预览图片尺寸确定后:对齐画布与图片显示区域,并重绘标记
     private void PreviewImage_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         UpdateCanvasRects();
-        RenderSelOverlays();
     }
 
     private void ToolGrid_ItemDoubleTapped(ImageItem item)
@@ -586,27 +376,11 @@ public sealed partial class CutoutView : UserControl
         {
             _previewItem = item;
             _maskPreviewShown = false;
-            _selMode = false;
-            SelCanvas.Visibility = Visibility.Collapsed;
-            SelRect.Visibility = Visibility.Collapsed;
-            SelModeBtn.Content = "框选主体";
-            _scribbleMode = false;
-            ScribbleCanvas.Visibility = Visibility.Collapsed;
-            ScribbleModeBtn.Content = "智能涂抹";
-            ScribbleToolbar.Visibility = Visibility.Collapsed;
-            _curStroke = null;
-            _curStrokeDots.Clear();
-            _lastDisplayPt = null;
-            ScribbleDots.Children.Clear();
-            ScribbleDots.Visibility = Visibility.Visible;
             _peeking = false;
             PreviewHint.Text = "";
             var rawSrc = new BitmapImage(new Uri(item.Path));
             _lastSourceImage = rawSrc;
             PreviewImage.Source = rawSrc;
-            RestoreMarks(item);   // 恢复保存过的框选/涂抹
-            if (_selPixels != null || _scribbles.Count > 0)
-                PreviewHint.Text = "已恢复上次的主体标记(框选/涂抹),抠图时生效";
             PreviewOverlay.Visibility = Visibility.Visible;
         }
         catch (Exception) { }
@@ -614,7 +388,6 @@ public sealed partial class CutoutView : UserControl
 
     private void PreviewClose_Click(object sender, RoutedEventArgs e)
     {
-        PersistCurrentMarks();   // 关闭预览时保存框选/涂抹
         _previewItem = null;
         PreviewOverlay.Visibility = Visibility.Collapsed;
     }
@@ -654,23 +427,14 @@ public sealed partial class CutoutView : UserControl
             MaskPreviewBtn.IsEnabled = false;
             MaskPreviewBtn.Content = "预览处理中…";
             PreviewHint.Text = "预览处理中…";
-            // 主体预览叠加当前框选/涂抹/参数效果(所见即所得,与抠图输出一致);
-            // 笔刷半径与最终抠图一致(预览与输出所见一致)
-            var sel = _selPixels;
-            var scr = _scribbles.Count > 0 ? _scribbles.ToList() : null;
             await CutoutService.PreviewMaskAsync(item.Path, maskPath, modelKey,
                 (int)FgSlider.Value, (int)BgSlider.Value, CutoutGpuId,
-                sel?.x, sel?.y, sel?.w, sel?.h, scr, (int)ToleranceSlider.Value,
-                _scale > 0 ? _brushSize / 2.0 / _scale : null,
-                (int)SpreadSlider.Value,
+                null, null, null, null, null, 0, null, 0,
                 (int)FeatherSlider.Value, (int)EdgeSlider.Value,
                 (int)MorphSlider.Value, AutoThresholdCheck.IsChecked == true);
             try { PreviewImage.Source = new BitmapImage(new Uri(maskPath)); } catch { }
             _maskPreviewShown = true;
-            var markNote = (sel != null ? "框选" : "") + (scr != null ? "+涂抹" : "");
-            PreviewHint.Text = $"抠图预览(白=保留,黑=去除)" +
-                (markNote.Length > 0 ? $",已叠加你的{markNote}效果" : "") +
-                " · 再点一次返回原图 · 调整参数自动刷新";
+            PreviewHint.Text = "抠图预览(白=保留,黑=去除) · 再点一次返回原图 · 调整参数自动刷新";
             // 蒙版图临时文件:下次生成时被新文件替换,无需立即清理
         }
         catch (Exception ex)
@@ -710,499 +474,12 @@ public sealed partial class CutoutView : UserControl
         return t;
     }
 
-    // 框选主体模式开关(与智能涂抹互斥)
-    private void SelMode_Click(object sender, RoutedEventArgs e)
-    {
-        _selMode = !_selMode;
-        SelModeBtn.Content = _selMode ? "退出框选" : "框选主体";
-        SelCanvas.Visibility = _selMode ? Visibility.Visible : Visibility.Collapsed;
-        if (_selMode)
-        {
-            // 退出涂抹模式
-            _scribbleMode = false;
-            ScribbleCanvas.Visibility = Visibility.Collapsed;
-            ScribbleModeBtn.Content = "智能涂抹";
-            ScribbleToolbar.Visibility = Visibility.Collapsed;
-        }
-        if (!_selMode)
-        {
-            SelRect.Visibility = Visibility.Collapsed;
-            _selDragging = false;
-        }
-        else if (_selPixels != null)
-        {
-            PreviewHint.Text = "已框选;可重新拖拽调整,或直接开始抠图";
-        }
-    }
+    // 框选主体模式开关(与智能涂抹互斥,已废弃功能)
 
-    // 智能涂抹模式开关(与框选互斥):绿色=保留,红色=删除
-    private void ScribbleMode_Click(object sender, RoutedEventArgs e)
-    {
-        _scribbleMode = !_scribbleMode;
-        ScribbleModeBtn.Content = _scribbleMode ? "退出涂抹" : "智能涂抹";
-        ScribbleCanvas.Visibility = _scribbleMode ? Visibility.Visible : Visibility.Collapsed;
-        ScribbleToolbar.Visibility = _scribbleMode ? Visibility.Visible : Visibility.Collapsed;
-        if (_scribbleMode)
-        {
-            HideToolbar();   // 初始淡出:悬停才显示,不挡画面
-            _tbTimer?.Stop();
-            // 退出框选模式
-            _selMode = false;
-            SelCanvas.Visibility = Visibility.Collapsed;
-            SelRect.Visibility = Visibility.Collapsed;
-            SelModeBtn.Content = "框选主体";
-            PreviewHint.Text = _brushKeep
-                ? "智能涂抹:🟢 绿色涂在要保留的物体上(松开后自动扩散到同色区域)"
-                : "智能涂抹:🔴 红色涂在要去除的区域(松开后自动扩散到同色区域)";
-        }
-        else if (_selPixels != null || _scribbles.Count > 0)
-        {
-            // 退出涂抹模式:恢复已有标记的显示
-            SelCanvas.Visibility = _selPixels != null ? Visibility.Visible : Visibility.Collapsed;
-            RenderSelOverlays();
-        }
-        if (!_scribbleMode)
-        {
-            // 非涂抹模式:感应区不拦截鼠标(避免框选/涂抹死区)
-            ToolbarHoverArea.IsHitTestVisible = false;
-        }
-    }
+    // (框选主体 / 智能涂抹 / 保存标记 功能已移除 2026-08-29;如未来需要请从 git 历史恢复)
 
-    // 笔刷切换:绿色保留 / 红色删除 / 橡皮擦
-    private void BrushKeep_Click(object sender, RoutedEventArgs e)
-    {
-        _brushKeep = true;
-        _brushErase = false;
-        PreviewHint.Text = "🟢 保留笔:涂在要保留(抠出)的物体上 (Ctrl+Z 撤回)";
-    }
-
-    private void BrushDel_Click(object sender, RoutedEventArgs e)
-    {
-        _brushKeep = false;
-        _brushErase = false;
-        PreviewHint.Text = "🔴 删除笔:涂在要去除(透明)的区域 (Ctrl+Z 撤回)";
-    }
-
-    private void Eraser_Click(object sender, RoutedEventArgs e)
-    {
-        _brushErase = true;
-        PreviewHint.Text = "🧽 橡皮擦:擦掉已涂抹的笔迹 (Ctrl+Z 可恢复)";
-    }
-
-    private void BrushSize_Changed(object sender, RoutedEventArgs e)
-        => OnBrushSizeChanged();
-
-    // Slider.ValueChanged 专用(需精确签名)
-    private void BrushSizeSlider_Changed(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
-        => OnBrushSizeChanged();
-
-    private void OnBrushSizeChanged()
-    {
-        _brushSize = (int)BrushSizeSlider.Value;
-        RefreshMaskDelayed();   // 笔刷大小影响涂抹扩散半径 → AI 预览自动刷新
-    }
-
-    private void ClearScribble_Click(object sender, RoutedEventArgs e)
-    {
-        if (_scribbles.Count == 0) return;
-        SnapshotScribbles();
-        _scribbles.Clear();
-        RefreshScribbleView();
-        PreviewHint.Text = "已清除全部涂抹(将只按 AI 识别结果抠图),Ctrl+Z 可恢复";
-        RefreshMaskDelayed();   // AI 预览显示中:涂抹变化自动刷新
-    }
-
-    // 落笔/擦除/清除前保存当前涂抹快照,作为一步可撤回
-    private void SnapshotScribbles()
-    {
-        _undoStack.Push(_scribbles.ToList());
-        _redoStack.Clear();
-    }
-
-    private void UndoScribble()
-    {
-        if (_undoStack.Count == 0) return;
-        _redoStack.Push(_scribbles.ToList());
-        _scribbles.Clear();
-        _scribbles.AddRange(_undoStack.Pop());
-        RefreshScribbleView();
-        PreviewHint.Text = "已撤回上一步涂抹 (Ctrl+Shift+Z 重做)";
-        RefreshMaskDelayed();   // AI 预览显示中:涂抹变化自动刷新
-    }
-
-    private void RedoScribble()
-    {
-        if (_redoStack.Count == 0) return;
-        _undoStack.Push(_scribbles.ToList());
-        _scribbles.Clear();
-        _scribbles.AddRange(_redoStack.Pop());
-        RefreshScribbleView();
-        PreviewHint.Text = "已重做涂抹";
-        RefreshMaskDelayed();   // AI 预览显示中:涂抹变化自动刷新
-    }
-
-    private void Undo_Click(object sender, RoutedEventArgs e) => UndoScribble();
-    private void Redo_Click(object sender, RoutedEventArgs e) => RedoScribble();
-
-    // KeyboardAccelerator 触发(Ctrl+Z 撤回 / Ctrl+Shift+Z 重做)
-    private void Undo_Invoked(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender,
-        Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
-    {
-        // 焦点在文本框时交给文本框自己的撤回(不抢)
-        if (FocusInTextBox()) return;
-        if (_undoStack.Count > 0)
-        {
-            UndoScribble();
-            args.Handled = true;
-        }
-    }
-
-    private void Redo_Invoked(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender,
-        Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
-    {
-        if (FocusInTextBox()) return;
-        if (_redoStack.Count > 0)
-        {
-            RedoScribble();
-            args.Handled = true;
-        }
-    }
-
-    private static bool FocusInTextBox()
-    {
-        try
-        {
-            return Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement()
-                is Microsoft.UI.Xaml.Controls.TextBox;
-        }
-        catch { return false; }
-    }
-
-    // 重绘涂抹显示 + 保存
-    private void RefreshScribbleView()
-    {
-        ClearScribbleBtn.IsEnabled = _scribbles.Count > 0;
-        RenderSelOverlays();
-        PersistCurrentMarks();
-    }
-
-    // 橡皮擦:按画布坐标擦除附近已涂抹的点(换算到像素坐标)
-    private void EraseAtCanvas(Windows.Foundation.Point pos)
-    {
-        var item = _previewItem;
-        if (item == null || _scale <= 0) return;
-        double cw = ScribbleCanvas.ActualWidth > 0 ? ScribbleCanvas.ActualWidth : SelCanvas.ActualWidth;
-        double ch = ScribbleCanvas.ActualHeight > 0 ? ScribbleCanvas.ActualHeight : SelCanvas.ActualHeight;
-        if (cw <= 0 || ch <= 0) return;
-        pos.X = Math.Clamp(pos.X, 0, cw);
-        pos.Y = Math.Clamp(pos.Y, 0, ch);
-        int px = (int)(pos.X / _scale);
-        int py = (int)(pos.Y / _scale);
-        double rPx = Math.Max(1.0, _brushSize / _scale);   // 擦除半径(像素坐标)= 笔刷直径
-        double r2 = rPx * rPx;
-        for (int i = _scribbles.Count - 1; i >= 0; i--)
-        {
-            var sb = _scribbles[i];
-            var kept = new List<(int X, int Y)>();
-            bool changed = false;
-            foreach (var p in sb.Points)
-            {
-                double dx = p.X - px, dy = p.Y - py;
-                if (dx * dx + dy * dy <= r2) { changed = true; continue; }
-                kept.Add(p);
-            }
-            if (kept.Count == 0)
-                _scribbles.RemoveAt(i);
-            else if (changed)
-                _scribbles[i] = new CutoutService.CutoutScribble(sb.Keep, kept);
-        }
-    }
-
-    // ---------- 涂抹工具条显隐:悬停 1 秒显示、移开 1 秒淡出、涂抹时立即透明(事件穿透) ----------
-    private DispatcherQueueTimer? _tbTimer;
-    private bool _tbTimerIsShow;
-    private bool _tbShown = true;   // 当前工具条是否处于"完全显示"态(防重复动画/重复调用)
-
-    private DispatcherQueueTimer CreateTbTimer()
-    {
-        var t = DispatcherQueue.CreateTimer();
-        t.IsRepeating = false;
-        t.Tick += (_, _) =>
-        {
-            if (_tbTimerIsShow) ShowToolbar();
-            else HideToolbar();
-        };
-        return t;
-    }
-
-    private void ScheduleTb(bool show, double seconds)
-    {
-        _tbTimer?.Stop();
-        _tbTimer ??= CreateTbTimer();
-        _tbTimerIsShow = show;
-        _tbTimer.Interval = TimeSpan.FromSeconds(seconds);
-        _tbTimer.Start();
-    }
-
-    // 显示工具条:完全不透明(100%),自己接收鼠标事件(感应区让位)
-    private void ShowToolbar()
-    {
-        if (_tbShown) return;
-        _tbShown = true;
-        ScribbleToolbar.IsHitTestVisible = true;
-        ToolbarHoverArea.IsHitTestVisible = false;
-        AnimateToolbarOpacity(1.0);
-    }
-
-    // 淡出工具条:平滑过渡到 55% 透明度(仍可看清按钮),事件穿透(感应区接管,涂抹不被挡)
-    private void HideToolbar()
-    {
-        if (!_tbShown) return;
-        _tbShown = false;
-        ScribbleToolbar.IsHitTestVisible = false;
-        ToolbarHoverArea.IsHitTestVisible = true;
-        AnimateToolbarOpacity(0.55);
-    }
-
-    // 透明度平滑过渡(100% ↔ 30%,约 0.18 秒,自然渐变)
-    private void AnimateToolbarOpacity(double to, double seconds = 0.18)
-    {
-        try
-        {
-            var anim = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
-            {
-                To = to,
-                Duration = new Duration(TimeSpan.FromSeconds(seconds)),
-                EnableDependentAnimation = true,
-            };
-            var sb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
-            sb.Children.Add(anim);
-            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(anim, ScribbleToolbar);
-            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(anim, "Opacity");
-            sb.Begin();
-        }
-        catch { ScribbleToolbar.Opacity = to; }
-    }
-
-    // 鼠标悬停在工具条上:取消隐藏,保持显示
-    private void ScribbleToolbar_PointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-    {
-        _tbTimer?.Stop();
-        ShowToolbar();
-    }
-
-    // 鼠标移出工具条:1 秒后淡出
-    private void ScribbleToolbar_PointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-        => ScheduleTb(false, 1.0);
-
-    // 淡出状态下鼠标移到感应区:0.5 秒后显示工具条
-    private void ToolbarHoverArea_PointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-        => ScheduleTb(true, 0.5);
-
-    // 鼠标离开感应区(工具条仍淡出):取消显示
-    private void ToolbarHoverArea_PointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-        => _tbTimer?.Stop();
-
-    // 预览区指针移动 → 按指针位置直接判断是否悬停在工具条/感应区上。
-    // 为什么不用 PointerEntered/Exited:工具条淡出时 IsHitTestVisible 被翻转,指针已停在
-    // 原位不动时 WinUI 不会重发 PointerEntered,导致"鼠标放上去没反应,移出去再移回来才好"。
-    // PointerMoved 无论命中测试如何都会持续触发,按坐标判断最可靠。
-    private void PreviewRoot_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-    {
-        if (!_scribbleMode || ScribbleToolbar.Visibility != Visibility.Visible) return;
-        if (_erasing || _curStroke != null) return;   // 涂抹落笔中不抢焦点
-        bool over = false;
-        var tb = e.GetCurrentPoint(ScribbleToolbar).Position;
-        if (tb.X >= 0 && tb.Y >= 0 && tb.X <= ScribbleToolbar.ActualWidth && tb.Y <= ScribbleToolbar.ActualHeight)
-            over = true;
-        else if (ToolbarHoverArea.Visibility == Visibility.Visible && ToolbarHoverArea.IsHitTestVisible)
-        {
-            var ha = e.GetCurrentPoint(ToolbarHoverArea).Position;
-            if (ha.X >= 0 && ha.Y >= 0 && ha.X <= ToolbarHoverArea.ActualWidth && ha.Y <= ToolbarHoverArea.ActualHeight)
-                over = true;
-        }
-        if (over)
-        {
-            _tbTimer?.Stop();
-            ShowToolbar();
-        }
-        else if (_tbShown)
-        {
-            ScheduleTb(false, 1.0);
-        }
-    }
-
-    // 涂抹交互:按下开始一笔(起点必须在图片区域内),移动画点并记录像素坐标,松开结束
-    private void ScribbleCanvas_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-    {
-        if (!_scribbleMode) return;
-        var pos = e.GetCurrentPoint(ScribbleCanvas).Position;
-        // 只能在图片区域内开始涂抹(画布=图片区域)
-        if (pos.X < 0 || pos.Y < 0 || pos.X > ScribbleCanvas.ActualWidth || pos.Y > ScribbleCanvas.ActualHeight) return;
-        _tbTimer?.Stop();
-        HideToolbar();   // 涂抹时工具条立即淡出,不挡画面
-        if (_brushErase)
-        {
-            SnapshotScribbles();   // 擦除前快照(撤回=撤销整次擦除)
-            _erasing = true;
-            ScribbleCanvas.CapturePointer(e.Pointer);
-            EraseAtCanvas(pos);
-            return;
-        }
-        SnapshotScribbles();   // 落笔前快照(撤回=撤销整笔)
-        _curStroke = new List<(int, int)>();
-        _curStrokeDots.Clear();
-        _lastDisplayPt = null;   // 新一笔:插值基准重置
-        ScribbleCanvas.CapturePointer(e.Pointer);
-        AddScribblePoint(pos);
-    }
-
-    private void ScribbleCanvas_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-    {
-        if (_erasing)
-        {
-            EraseAtCanvas(e.GetCurrentPoint(ScribbleCanvas).Position);
-            return;
-        }
-        if (_curStroke == null) return;
-        AddScribblePoint(e.GetCurrentPoint(ScribbleCanvas).Position);
-    }
-
-    private void ScribbleCanvas_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-    {
-        if (_erasing)
-        {
-            _erasing = false;
-            RefreshScribbleView();   // 擦完重绘 + 保存
-            PreviewHint.Text = $"橡皮擦完成,当前共 {_scribbles.Count} 笔 (Ctrl+Z 可恢复)";
-            try { ScribbleCanvas.ReleasePointerCapture(e.Pointer); } catch { }
-            RefreshMaskDelayed();   // AI 预览显示中:涂抹变化自动刷新
-            return;
-        }
-        if (_curStroke == null) return;
-        if (_curStroke.Count > 0)
-        {
-            _scribbles.Add(new CutoutService.CutoutScribble(_brushKeep, _curStroke));
-            ClearScribbleBtn.IsEnabled = true;
-            PreviewHint.Text = $"已涂抹 {_scribbles.Count} 笔({(_brushKeep ? "保留" : "删除")});AI 会按颜色自动扩散,可继续涂或直接开始抠图 (Ctrl+Z 撤回)";
-            PersistCurrentMarks();   // 每笔完成即保存
-            RefreshMaskDelayed();   // AI 预览显示中:涂抹变化自动刷新
-        }
-        _curStroke = null;
-        _lastDisplayPt = null;   // 一笔结束,插值基准清空
-        _curStrokeDots.Clear();
-        try { ScribbleCanvas.ReleasePointerCapture(e.Pointer); } catch { }
-    }
-
-    private void ScribbleCanvas_PointerCaptureLost(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-    {
-        _curStroke = null;
-        if (_erasing) { _erasing = false; RefreshScribbleView(); }
-    }
-
-    // 画布坐标 → 像素坐标并画点(笔迹可视化)。
-    // 画布尺寸=图片显示区域,坐标即图片坐标:显示跟手,记录=坐标/缩放,无偏移可能。
-    // 滑动连续:与上一点间距超过步长时线性插值补点(快速划过也不断线);
-    // 渲染用圆点但插值足够密,边缘平滑无马赛克。
-    private void AddScribblePoint(Windows.Foundation.Point pos)
-    {
-        var item = _previewItem;
-        if (item == null || _curStroke == null || _scale <= 0) return;
-        double cw = ScribbleCanvas.ActualWidth > 0 ? ScribbleCanvas.ActualWidth : SelCanvas.ActualWidth;
-        double ch = ScribbleCanvas.ActualHeight > 0 ? ScribbleCanvas.ActualHeight : SelCanvas.ActualHeight;
-        if (cw <= 0 || ch <= 0) return;
-        // 限制在图片显示区域内(画布=图片区域)
-        pos.X = Math.Clamp(pos.X, 0, cw);
-        pos.Y = Math.Clamp(pos.Y, 0, ch);
-
-        // 与上一点插值补点:步长 = 笔刷直径的 1/3(足够密,快速划过也连续)
-        double step = Math.Max(2.0, _brushSize / 3.0);
-        if (_lastDisplayPt is { } lp)
-        {
-            double dx = pos.X - lp.X, dy = pos.Y - lp.Y;
-            double dist = Math.Sqrt(dx * dx + dy * dy);
-            if (dist > step)
-            {
-                int n = (int)Math.Ceiling(dist / step);
-                for (int k = 1; k <= n; k++)
-                {
-                    double t = (double)k / n;
-                    DrawStrokePoint(new Windows.Foundation.Point(lp.X + dx * t, lp.Y + dy * t), item);
-                }
-                _lastDisplayPt = pos;
-                return;
-            }
-        }
-        DrawStrokePoint(pos, item);
-        _lastDisplayPt = pos;
-    }
-
-    private Windows.Foundation.Point? _lastDisplayPt;   // 上一笔迹点(画布坐标,用于滑动插值补点)
-
-    /// <summary>在画布上画一个笔迹点(绿/红圆点)+ 记录像素坐标。</summary>
-    private void DrawStrokePoint(Windows.Foundation.Point pos, ALHPro.Views.ImageItem item)
-    {
-        double cw = ScribbleCanvas.ActualWidth > 0 ? ScribbleCanvas.ActualWidth : SelCanvas.ActualWidth;
-        double ch = ScribbleCanvas.ActualHeight > 0 ? ScribbleCanvas.ActualHeight : SelCanvas.ActualHeight;
-        pos.X = Math.Clamp(pos.X, 0, cw);
-        pos.Y = Math.Clamp(pos.Y, 0, ch);
-        var color = _brushKeep
-            ? Windows.UI.Color.FromArgb(170, 76, 200, 110)
-            : Windows.UI.Color.FromArgb(170, 230, 80, 80);
-        var dot = new Ellipse
-        {
-            Width = _brushSize,
-            Height = _brushSize,
-            Fill = new SolidColorBrush(color),
-            IsHitTestVisible = false,
-        };
-        Canvas.SetLeft(dot, pos.X - _brushSize / 2.0);
-        Canvas.SetTop(dot, pos.Y - _brushSize / 2.0);
-        ScribbleDots.Children.Add(dot);
-        _curStrokeDots.Add(dot);
-        // 换算像素坐标(画布内部坐标 0..w 即图片显示坐标,除以缩放比即原图像素)
-        var (px, py) = CanvasToImage(pos.X, pos.Y, item);
-        _curStroke.Add((px, py));
-    }
-
-    /// <summary>画布坐标 → 原图像素坐标(统一换算,框选与涂抹共用)。
-    /// 画布尺寸=图片显示尺寸(UpdateCanvasRects 已定),内部坐标即图片显示坐标,除以 _scale 得原图像素。</summary>
-    private (int X, int Y) CanvasToImage(double cx, double cy, ALHPro.Views.ImageItem item)
-    {
-        int px = (int)(cx / Math.Max(0.0001, _scale));
-        int py = (int)(cy / Math.Max(0.0001, _scale));
-        px = Math.Clamp(px, 0, Math.Max(0, item.PixelWidth - 1));
-        py = Math.Clamp(py, 0, Math.Max(0, item.PixelHeight - 1));
-        return (px, py);
-    }
-
-    // 显式保存标记(框选/涂抹已自动保存;此按钮给确认反馈)
-    private void SaveMarks_Click(object sender, RoutedEventArgs e)
-    {
-        if (_previewItem == null) return;
-        PersistCurrentMarks();
-        var n = (_selPixels != null ? 1 : 0) + _scribbles.Count;
-        SaveMarksBtn.Content = n > 0 ? "已保存 ✓" : "无标记可保存";
-        PreviewHint.Text = n > 0 ? $"已保存 {(_selPixels != null ? "框选 + " : "")}{_scribbles.Count} 笔涂抹,缩略图上可见标记" : "当前没有框选或涂抹标记";
-        var t = DispatcherQueue.CreateTimer();
-        t.Interval = TimeSpan.FromSeconds(1.5);
-        t.IsRepeating = false;
-        t.Tick += (_, _) => SaveMarksBtn.Content = "保存标记";
-        t.Start();
-    }
-
-    private void ClearSel_Click(object sender, RoutedEventArgs e)
-    {
-        _selPixels = null;
-        SelRect.Visibility = Visibility.Collapsed;
-        ClearSelBtn.IsEnabled = false;
-        PreviewHint.Text = "已清除框选(将按全图抠取)";
-        PersistCurrentMarks();
-        RefreshMaskDelayed();   // AI 预览显示中:框选变化自动刷新
-    }
-
-    // 让框选/涂抹画布精确覆盖图片显示区域(画布坐标=图片坐标),并记录缩放比。
-    // 在预览尺寸/图片变化时调用。
+    // 记录预览缩放比(图片显示尺寸/原图像素尺寸)。
+    private double _scale;
     private void UpdateCanvasRects()
     {
         var item = _previewItem;
@@ -1211,87 +488,8 @@ public sealed partial class CutoutView : UserControl
             _scale = 0;
             return;
         }
-        double s = Math.Min(PreviewImage.ActualWidth / item.PixelWidth, PreviewImage.ActualHeight / item.PixelHeight);
-        double w = item.PixelWidth * s, h = item.PixelHeight * s;
-        double ox = (PreviewImage.ActualWidth - w) / 2, oy = (PreviewImage.ActualHeight - h) / 2;
-        _scale = s;
-        // 关键修复(蒙版偏移):PreviewRoot 是 Grid,Canvas.SetLeft/Top 附加属性只被 Canvas 父级识别,
-        // 在 Grid 里被忽略 → 画布钉在 (0,0),而图片 Uniform 居中(letterbox 边距 ox,oy) →
-        // 框选/涂抹像素坐标整体偏移 (ox,oy)/scale → 蒙版偏移。
-        // Grid 里定位用 Margin + Left/Top 对齐(与 Canvas.SetLeft/Top 语义一致)。
-        SelCanvas.Width = w;
-        SelCanvas.Height = h;
-        SelCanvas.HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left;
-        SelCanvas.VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Top;
-        SelCanvas.Margin = new Microsoft.UI.Xaml.Thickness(ox, oy, 0, 0);
-        ScribbleCanvas.Width = w;
-        ScribbleCanvas.Height = h;
-        ScribbleCanvas.HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left;
-        ScribbleCanvas.VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Top;
-        ScribbleCanvas.Margin = new Microsoft.UI.Xaml.Thickness(ox, oy, 0, 0);
+        _scale = Math.Min(PreviewImage.ActualWidth / item.PixelWidth, PreviewImage.ActualHeight / item.PixelHeight);
     }
-
-    private void SelCanvas_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-    {
-        if (!_selMode) return;
-        var pos = e.GetCurrentPoint(SelCanvas).Position;
-        // 只能在图片区域内开始框选(画布=图片区域)
-        if (pos.X < 0 || pos.Y < 0 || pos.X > SelCanvas.ActualWidth || pos.Y > SelCanvas.ActualHeight) return;
-        _selDragging = true;
-        _selStart = _selEnd = pos;
-        SelRect.Visibility = Visibility.Visible;
-    }
-
-    private void SelCanvas_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-    {
-        if (!_selDragging) return;
-        var pos = e.GetCurrentPoint(SelCanvas).Position;
-        // 拖拽过程 Clamp 到图片显示区域(框不超出图片)
-        pos.X = Math.Clamp(pos.X, 0, SelCanvas.ActualWidth);
-        pos.Y = Math.Clamp(pos.Y, 0, SelCanvas.ActualHeight);
-        _selEnd = pos;
-        double x = Math.Min(_selStart.X, _selEnd.X), y = Math.Min(_selStart.Y, _selEnd.Y);
-        double w2 = Math.Abs(_selEnd.X - _selStart.X), h2 = Math.Abs(_selEnd.Y - _selStart.Y);
-        Canvas.SetLeft(SelRect, x);
-        Canvas.SetTop(SelRect, y);
-        SelRect.Width = w2;
-        SelRect.Height = h2;
-        SelRect.Visibility = w2 > 2 && h2 > 2 ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    private void SelCanvas_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-    {
-        if (!_selDragging) return;
-        _selDragging = false;
-        if (SelRect.Visibility != Visibility.Visible) return;
-        // 画布坐标 → 原图像素坐标(画布=图片显示区域,除以缩放比即像素)
-        var item = _previewItem;
-        if (item == null || _scale <= 0 || item.PixelWidth <= 0) return;
-        int x = (int)Math.Floor(Math.Min(_selStart.X, _selEnd.X) / _scale);
-        int y = (int)Math.Floor(Math.Min(_selStart.Y, _selEnd.Y) / _scale);
-        int x2 = (int)Math.Ceiling(Math.Max(_selStart.X, _selEnd.X) / _scale);
-        int y2 = (int)Math.Ceiling(Math.Max(_selStart.Y, _selEnd.Y) / _scale);
-        x = Math.Clamp(x, 0, item.PixelWidth);
-        y = Math.Clamp(y, 0, item.PixelHeight);
-        x2 = Math.Clamp(x2, 0, item.PixelWidth);
-        y2 = Math.Clamp(y2, 0, item.PixelHeight);
-        if (x2 - x >= 8 && y2 - y >= 8)
-        {
-            _selPixels = (x, y, x2 - x, y2 - y);
-            ClearSelBtn.IsEnabled = true;
-            PreviewHint.Text = $"已框选 {x2 - x}×{y2 - y} 像素主体区域(区域外将被去除,已保存,缩略图可见标记)";
-            PersistCurrentMarks();   // 框选完成即保存
-            RefreshMaskDelayed();   // AI 预览显示中:框选变化自动刷新
-        }
-        else
-        {
-            _selPixels = null;
-            PreviewHint.Text = "选区过小(至少 8×8 像素),请重新框选";
-        }
-    }
-
-    private void SelCanvas_PointerCaptureLost(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-        => _selDragging = false;
 
     // ---------- 选择 ----------
     public void PickImage() => PickBtn_Click(this, new RoutedEventArgs());
@@ -1329,25 +527,6 @@ public sealed partial class CutoutView : UserControl
         }
     }
 
-    // 取这张图的框选/涂抹标记(像素坐标):
-    // 当前预览图用内存最新值;其它图片从持久化文件按路径读取(关闭预览后依然生效)
-    private ((int x, int y, int w, int h)? sel, List<CutoutService.CutoutScribble>? scr) GetMarksForItem(ImageItem item)
-    {
-        if (ReferenceEquals(item, _previewItem))
-            return (_selPixels, _scribbles.Count > 0 ? _scribbles.ToList() : null);
-        var key = item.OriginalPath.Length > 0 ? item.OriginalPath : item.Path;
-        var m = LoadMarks();
-        if (!m.Items.TryGetValue(key, out var e)) return (null, null);
-        (int, int, int, int)? sel = null;
-        if (e.Box is { Length: 4 })
-            sel = ((int)e.Box[0], (int)e.Box[1], (int)e.Box[2], (int)e.Box[3]);
-        List<CutoutService.CutoutScribble>? scr = null;
-        if (e.Scribbles is { Count: > 0 })
-            scr = e.Scribbles.Select(s => new CutoutService.CutoutScribble(s.Keep,
-                s.P.Select(p => ((int)p[0], (int)p[1])).ToList())).ToList();
-        return (sel, scr);
-    }
-
     // 手动编辑输出目录也生效(留空=源图目录)
     private void OutDirBox_TextChanged(object sender, TextChangedEventArgs e)
     {
@@ -1367,7 +546,6 @@ public sealed partial class CutoutView : UserControl
             return;
         }
         if (items.Length == 0 || _running) return;
-        PersistCurrentMarks();   // 确保当前预览图的框选/涂抹已落盘(关闭预览后才点开始的情况)
         _running = true;
         _paused = false;
         _resumeTcs = null;
@@ -1428,8 +606,7 @@ public sealed partial class CutoutView : UserControl
         catch { }
         Log($"模型={modelKey},前景阈值={fgThreshold},背景阈值={bgThreshold},羽化={featherRadius},边缘增强={edgeStrength}" +
             (preDenoise ? $",预处理降噪({preDenoiseLevel})" : "") +
-            (preUpscale ? ",预处理超分 2x" : "") +
-            (_selPixels != null ? $",主体框选 {_selPixels.Value.w}×{_selPixels.Value.h}@{_selPixels.Value.x},{_selPixels.Value.y}" : ""));
+            (preUpscale ? ",预处理超分 2x" : ""));
         int progressIndex = 0;
         int okCount = 0, failCount = 0;
         var outputFiles = new System.Collections.Generic.List<string>();   // 本次成功输出(弹窗高亮用)
@@ -1521,24 +698,11 @@ public sealed partial class CutoutView : UserControl
                             "models-cunet", 2, 0, CurrentGpuId, false, progress, ct);
                         srcPath = tmpUp;
                     }
-                    // 主体框选/涂抹:按图片路径读取标记(预览关闭后依然生效);
-                    // 若启用了预处理超分 2x,标记坐标同步放大到超分图坐标系
-                    var (selRaw, scrRaw) = GetMarksForItem(item);
-                    int markMul = preUpscale ? 2 : 1;
-                    var sel = selRaw is (int sx, int sy, int sw, int sh)
-                        ? (sx * markMul, sy * markMul, sw * markMul, sh * markMul)
-                        : ((int, int, int, int)?)null;
-                    List<CutoutService.CutoutScribble>? scr = null;
-                    if (scrRaw != null)
-                        scr = scrRaw.Select(s => new CutoutService.CutoutScribble(s.Keep,
-                            s.Points.Select(p => (p.X * markMul, p.Y * markMul)).ToList())).ToList();
                     await CutoutService.CutoutAsync(srcPath, outPath, modelKey,
                         fgThreshold, bgThreshold, featherRadius, edgeStrength, CutoutGpuId,
-                        sel?.Item1, sel?.Item2, sel?.Item3, sel?.Item4, scr,
-                        (int)ToleranceSlider.Value, _scale > 0 ? _brushSize / 2.0 / _scale : null,
-                        (int)SpreadSlider.Value,
-                        (int)MorphSlider.Value, AutoThresholdCheck.IsChecked == true,
-                        progress, ct);
+                        morphStrength: (int)MorphSlider.Value,
+                        autoThreshold: AutoThresholdCheck.IsChecked == true,
+                        progress: progress, ct: ct);
                 }
                 catch (OperationCanceledException)
                 {
