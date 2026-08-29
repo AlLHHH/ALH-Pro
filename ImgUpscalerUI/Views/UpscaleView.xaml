@@ -1,0 +1,344 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<UserControl
+    x:Class="ALHPro.Views.UpscaleView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:local="using:ALHPro.Views"
+    mc:Ignorable="d">
+
+    <!-- 内容区(背景由 MainPage 统一,这里只做内部圆角卡片) -->
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <!-- 参数面板 -->
+            <ColumnDefinition Width="300"/>
+            <!-- 右侧:图片列表 + 预览 -->
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- ============ 参数面板(圆角卡片) ============ -->
+        <Border Grid.Column="0" Background="{StaticResource AppPanelBrush}"
+                BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
+                CornerRadius="12" Margin="0,0,10,10">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel Padding="14,16" Spacing="14">
+
+                    <TextBlock Text="输入" Style="{StaticResource SectionTitle}"/>
+                    <Button x:Name="PickBtn" Content="添加图片(可多选)..." Click="PickBtn_Click"
+                            HorizontalAlignment="Stretch"/>
+                    <TextBlock x:Name="FileInfo" Text="未添加图片" Style="{StaticResource HintText}"
+                               TextTrimming="CharacterEllipsis"/>
+
+                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
+
+                    <TextBlock Text="算法" Style="{StaticResource SectionTitle}"/>
+                    <RadioButtons x:Name="ModeRadios" SelectedIndex="0"
+                                  ToolTipService.ToolTip="算法模式:动漫插画用 waifu2x;真实照片用 Real-ESRGAN">
+                        <RadioButton Content="动漫插画 (waifu2x)"/>
+                        <RadioButton Content="真实照片 (Real-ESRGAN)"/>
+                    </RadioButtons>
+
+                    <StackPanel x:Name="ModelPanel" Spacing="6">
+                        <TextBlock Text="waifu2x 模型" Style="{StaticResource SectionTitle}"/>
+                        <ComboBox x:Name="ModelCombo" HorizontalAlignment="Stretch"
+                                  SelectedIndex="0"
+                                  ToolTipService.ToolTip="模型:cunet=通用;upconv_7_anime=动漫插画;Real-CUGAN pro/se/nose=专业/语义增强/无降噪"/>
+                    </StackPanel>
+
+                    <TextBlock Text="放大倍数" Style="{StaticResource SectionTitle}"/>
+                    <RadioButtons x:Name="ScaleRadios" SelectedIndex="2"
+                                  ToolTipService.ToolTip="放大倍数:输出尺寸 = 原图 × 倍数(不放大=原尺寸;1x 超分=先 2x 超分再缩回原尺寸,画质更好)">
+                        <RadioButton x:Name="ScaleNoUpscaleRadio" Content="不放大 (1x)"/>
+                        <RadioButton x:Name="Scale1xRadio" Content="1x 超分（2x 放大后缩回）"/>
+                        <RadioButton x:Name="Scale2xRadio" Content="2x"/>
+                        <RadioButton x:Name="Scale3xRadio" Content="3x"/>
+                        <RadioButton x:Name="Scale4xRadio" Content="4x"/>
+                    </RadioButtons>
+                    <TextBlock x:Name="ScaleHint" FontSize="10" Opacity="0.6"
+                               Foreground="#E8A33D" TextWrapping="Wrap"
+                               Text="当前模型不支持 3x/4x 倍率(已置灰);倍率由引擎内置权重决定,请选择灰色项以外的倍数"
+                               Visibility="Collapsed"/>
+
+                    <StackPanel x:Name="NoisePanel" Spacing="6">
+                        <TextBlock Text="降噪级别" Style="{StaticResource SectionTitle}"/>
+                        <ComboBox x:Name="NoiseCombo" HorizontalAlignment="Stretch"
+                                  SelectedIndex="0"
+                                  ToolTipService.ToolTip="降噪级别:不降噪/弱/中/强(仅动漫模式 waifu2x 生效)">
+                            <ComboBoxItem Content="不降噪"/>
+                            <ComboBoxItem Content="弱"/>
+                            <ComboBoxItem Content="中"/>
+                            <ComboBoxItem Content="强"/>
+                        </ComboBox>
+                        <TextBlock x:Name="NoiseHint" FontSize="10" Opacity="0.6"
+                                   Foreground="#E8A33D" TextWrapping="Wrap"
+                                   Text="Real-ESRGAN 不支持降噪,可用下方「预处理降噪」弥补"
+                                   Visibility="Collapsed"/>
+                    </StackPanel>
+
+                    <!-- 照片模式弥补:预处理降噪(waifu2x cunet 先降噪,再超分) -->
+                    <StackPanel x:Name="PhotoDenoisePanel" Spacing="6" Visibility="Collapsed">
+                        <CheckBox x:Name="PreDenoiseCheck"
+                                  Content="预处理降噪 (waifu2x)"
+                                  ToolTipService.ToolTip="照片模式专属:先降噪再超分,适合噪点多的照片(Real-ESRGAN 本身不降噪)"/>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="强度" FontSize="11" Opacity="0.7"
+                                       VerticalAlignment="Center"/>
+                            <ComboBox x:Name="DenoiseLevelCombo" SelectedIndex="0" Width="100"
+                                      ToolTipService.ToolTip="预处理降噪强度:弱/中/强">
+                                <ComboBoxItem Content="弱"/>
+                                <ComboBoxItem Content="中"/>
+                                <ComboBoxItem Content="强"/>
+                            </ComboBox>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <TextBlock Text="高级" Style="{StaticResource SectionTitle}"/>
+                    <CheckBox x:Name="TtaCheck" Content="高质量(更慢更清晰)"
+                              ToolTipService.ToolTip="高质量:反复推演,细节更稳更清晰,但速度约减半"/>
+                    <CheckBox x:Name="RememberCheck" Content="记住上次参数"
+                              IsChecked="True"
+                              ToolTipService.ToolTip="记住:算法模式、waifu2x 模型、放大倍数、降噪级别、TTA、输出格式、输出目录、保留细节、锐化、预处理降噪及其强度"/>
+
+                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
+
+                    <!-- 增强:与视频页后处理一致(紧凑滑块行,只留一个总重置) -->
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="增强" Style="{StaticResource SectionTitle}"
+                                   VerticalAlignment="Center"/>
+                        <Button x:Name="EnhanceResetBtn" Grid.Column="1" Content="重置"
+                                FontSize="11" Padding="12,4" Click="EnhanceResetBtn_Click"
+                                ToolTipService.ToolTip="把所有增强参数恢复默认"/>
+                    </Grid>
+                    <StackPanel Spacing="2">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="去雾:去除画面灰蒙蒙(雾霾/逆光发灰),提对比增饱和,画面通透">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="56"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="28"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="去雾" VerticalAlignment="Center"/>
+                            <Slider x:Name="DehazeSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                                    Value="0" StepFrequency="5"/>
+                            <TextBlock x:Name="DehazeValue" Grid.Column="2" Text="0" TextAlignment="Right"
+                                       VerticalAlignment="Center" Style="{StaticResource HintText}"/>
+                        </Grid>
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="减少杂色:中值滤波去噪点/颗粒,保边缘不糊(先降噪再做锐化,效果最稳)">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="56"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="28"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="减少杂色" VerticalAlignment="Center"/>
+                            <Slider x:Name="DenoiseSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                                    Value="0" StepFrequency="5"/>
+                            <TextBlock x:Name="DenoiseValue" Grid.Column="2" Text="0" TextAlignment="Right"
+                                       VerticalAlignment="Center" Style="{StaticResource HintText}"/>
+                        </Grid>
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="锐化:增强边缘对比,画面更利落(过大会出白边)">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="56"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="28"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="锐化" VerticalAlignment="Center"/>
+                            <Slider x:Name="SharpenSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                                    Value="0" StepFrequency="5"/>
+                            <TextBlock x:Name="SharpenValue" Grid.Column="2" Text="0" TextAlignment="Right"
+                                       VerticalAlignment="Center" Style="{StaticResource HintText}"/>
+                        </Grid>
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="清晰:大范围局部对比度增强,画面更通透">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="56"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="28"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="清晰" VerticalAlignment="Center"/>
+                            <Slider x:Name="ClaritySlider" Grid.Column="1" Minimum="0" Maximum="100"
+                                    Value="0" StepFrequency="5"/>
+                            <TextBlock x:Name="ClarityValue" Grid.Column="2" Text="0" TextAlignment="Right"
+                                       VerticalAlignment="Center" Style="{StaticResource HintText}"/>
+                        </Grid>
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="钝化蒙版:只锐化物体边缘、不锐化平坦区域,让轮廓更清晰(比「锐化」更柔和)">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="56"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="28"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="钝化蒙版" VerticalAlignment="Center"/>
+                            <Slider x:Name="UsmSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                                    Value="0" StepFrequency="5"/>
+                            <TextBlock x:Name="UsmValue" Grid.Column="2" Text="0" TextAlignment="Right"
+                                       VerticalAlignment="Center" Style="{StaticResource HintText}"/>
+                        </Grid>
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="保留细节:自适应锐化,平坦区不动,噪点少">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="56"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="28"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="保留细节" VerticalAlignment="Center"/>
+                            <Slider x:Name="DetailSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                                    Value="50" StepFrequency="5"/>
+                            <TextBlock x:Name="DetailValue" Grid.Column="2" Text="50" TextAlignment="Right"
+                                       VerticalAlignment="Center" Style="{StaticResource HintText}"/>
+                        </Grid>
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="细节增强:强力拉出毛发/纹理等细小细节(比「保留细节」更猛,可能略放大噪点)">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="56"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="28"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="细节增强" VerticalAlignment="Center"/>
+                            <Slider x:Name="DetailEnhanceSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                                    Value="0" StepFrequency="5"/>
+                            <TextBlock x:Name="DetailEnhanceValue" Grid.Column="2" Text="0" TextAlignment="Right"
+                                       VerticalAlignment="Center" Style="{StaticResource HintText}"/>
+                        </Grid>
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="去模糊:减轻轻微模糊/对焦不实(过大会发灰)">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="56"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="28"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="去模糊" VerticalAlignment="Center"/>
+                            <Slider x:Name="DeblurSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                                    Value="0" StepFrequency="5"/>
+                            <TextBlock x:Name="DeblurValue" Grid.Column="2" Text="0" TextAlignment="Right"
+                                       VerticalAlignment="Center" Style="{StaticResource HintText}"/>
+                        </Grid>
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="边缘增强:强化物体轮廓边缘,不放大噪点">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="56"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="28"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="边缘增强" VerticalAlignment="Center"/>
+                            <Slider x:Name="EdgeSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                                    Value="0" StepFrequency="5"/>
+                            <TextBlock x:Name="EdgeValue" Grid.Column="2" Text="0" TextAlignment="Right"
+                                       VerticalAlignment="Center" Style="{StaticResource HintText}"/>
+                        </Grid>
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="边缘抗锯齿:只磨边缘的阶梯锯齿,平滑区/细节不动(适合放大后边缘发毛)">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="56"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="28"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="边缘抗锯齿" VerticalAlignment="Center"/>
+                            <Slider x:Name="AaSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                                    Value="0" StepFrequency="5"/>
+                            <TextBlock x:Name="AaValue" Grid.Column="2" Text="0" TextAlignment="Right"
+                                       VerticalAlignment="Center" Style="{StaticResource HintText}"/>
+                        </Grid>
+                    </StackPanel>
+
+                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
+
+                    <TextBlock Text="输出" Style="{StaticResource SectionTitle}"/>
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="格式" Style="{StaticResource HintText}"/>
+                        <ComboBox x:Name="FmtCombo" HorizontalAlignment="Stretch"
+                                  SelectedIndex="0"
+                                  ToolTipService.ToolTip="输出格式:PNG 无损(文件大,推荐);JPG 有损压缩(文件小)">
+                            <ComboBoxItem Content="PNG"/>
+                            <ComboBoxItem Content="JPG"/>
+                        </ComboBox>
+                        <TextBlock Text="输出码率" Style="{StaticResource HintText}"/>
+                        <ComboBox x:Name="ImgQualityCombo" HorizontalAlignment="Stretch"
+                                  SelectionChanged="ImgQualityCombo_Changed"
+                                  ToolTipService.ToolTip="JPG=压缩质量(越高文件越大画质越好);PNG=无损,档位只影响文件大小与保存速度,画质不变"/>
+                        <Grid x:Name="ImgQualityCustomRow" ColumnSpacing="8" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="质量" VerticalAlignment="Center" FontSize="12"/>
+                            <TextBox x:Name="ImgQualityCustomBox" Grid.Column="1" PlaceholderText="1~100"
+                                     IsSpellCheckEnabled="False" TextChanged="ImgQualityCustomBox_TextChanged"/>
+                            <TextBlock Grid.Column="2" Text="1~100" VerticalAlignment="Center" FontSize="11" Opacity="0.6"/>
+                        </Grid>
+                    </StackPanel>
+                    <TextBox x:Name="OutDirBox" PlaceholderText="默认与源图同目录"
+                             IsSpellCheckEnabled="False" TextChanged="OutDirBox_TextChanged"
+                             ToolTipService.ToolTip="输出文件夹:留空=和源图同目录"/>
+                    <Button Content="选择输出文件夹..." Click="BrowseOut_Click"
+                            HorizontalAlignment="Stretch"/>
+                    <TextBlock Text="多张图片时自动在输出目录创建子文件夹"
+                               Style="{StaticResource HintText}" TextWrapping="Wrap"/>
+
+                    <!-- 操作按钮:上一排「开始放大」(占满变宽),中间「暂停/恢复」,最下方「停止」 -->
+                    <StackPanel Spacing="8">
+                        <Button x:Name="RunBtn" Content="开始处理"
+                                Style="{StaticResource AccentButtonStyle}"
+                                HorizontalAlignment="Stretch" MinHeight="48"
+                                IsEnabled="False" Click="RunBtn_Click"/>
+                        <CheckBox x:Name="SelectedOnlyCheck" Content="只处理选中的项目"
+                                  ToolTipService.ToolTip="勾选后只处理右侧列表里选中的项;不勾选则处理全部"/>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Button x:Name="PauseBtn" Grid.Column="0" Content="暂停"
+                                    HorizontalAlignment="Stretch" MinHeight="44"
+                                    IsEnabled="False" Click="PauseBtn_Click"
+                                    ToolTipService.ToolTip="暂停:处理完当前这张后停下,可删除还没处理的项目"/>
+                            <Button x:Name="ResumeBtn" Grid.Column="1" Content="恢复"
+                                    HorizontalAlignment="Stretch" MinHeight="44"
+                                    IsEnabled="False" Click="ResumeBtn_Click"
+                                    ToolTipService.ToolTip="恢复:立即继续处理"/>
+                        </Grid>
+                        <Button x:Name="CancelBtn" Content="强制结束"
+                                HorizontalAlignment="Stretch" MinHeight="44" Background="#E5484D" Foreground="White"
+                                IsEnabled="False" Click="CancelBtn_Click"
+                                ToolTipService.ToolTip="强制结束当前任务;休息时变「跳过休息」,点一下跳过休息继续处理"/>
+                    </StackPanel>
+
+                    <ProgressBar x:Name="TaskProgress" Minimum="0" Maximum="100" Value="0"/>
+                    <TextBlock x:Name="TaskStatus" Style="{StaticResource HintText}"
+                               TextTrimming="CharacterEllipsis"/>
+
+                    <!-- 日志详情:记录处理过程,自动滚动,超限自动清理 -->
+                    <Border Background="{StaticResource AppPanelBrush}"
+                            BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
+                            CornerRadius="6" Padding="8,6">
+                        <ScrollViewer x:Name="TaskLogScroll" MaxHeight="220"
+                                      VerticalScrollBarVisibility="Auto">
+                            <TextBlock x:Name="TaskLogText" FontSize="10" Opacity="0.7"
+                                       TextWrapping="Wrap"
+                                       Text="日志:等待任务..."/>
+                        </ScrollViewer>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <!-- ============ 右侧:列表控件 + 预览覆盖层 ============ -->
+        <Grid Grid.Column="1" Margin="0,0,10,10">
+            <Grid>
+                <local:ImageToolGrid x:Name="ToolGrid"
+                                     SelectionChanged="ToolGrid_SelectionChanged"/>
+
+                <!-- 大图预览覆盖层(双击缩略图打开,纯查看) -->
+                <Grid x:Name="PreviewOverlay" Visibility="Collapsed" Background="#CC0D0F14">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Image x:Name="PreviewImage" Stretch="Uniform" Margin="16"/>
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="10"
+                                HorizontalAlignment="Center" Margin="0,0,0,14">
+                        <Button Content="关闭预览" Click="PreviewClose_Click"/>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Grid>
+</UserControl>

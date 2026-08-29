@@ -1,0 +1,345 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<UserControl
+    x:Class="ALHPro.Views.ImageToolGrid"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:local="using:ALHPro.Views"
+    mc:Ignorable="d">
+
+    <!-- 铅笔按钮样式:默认深色底,悬停变蓝、按下变深蓝 -->
+    <UserControl.Resources>
+        <Style x:Key="PencilButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="#D0101014"/>
+            <Setter Property="Foreground" Value="#E8ECF2"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid x:Name="Root">
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal"/>
+                                    <VisualState x:Name="PointerOver">
+                                        <Storyboard>
+                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Bg" Storyboard.TargetProperty="Background">
+                                                <DiscreteObjectKeyFrame KeyTime="0" Value="#5B8DEF"/>
+                                            </ObjectAnimationUsingKeyFrames>
+                                        </Storyboard>
+                                    </VisualState>
+                                    <VisualState x:Name="Pressed">
+                                        <Storyboard>
+                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Bg" Storyboard.TargetProperty="Background">
+                                                <DiscreteObjectKeyFrame KeyTime="0" Value="#4A7BD4"/>
+                                            </ObjectAnimationUsingKeyFrames>
+                                        </Storyboard>
+                                    </VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                            <Border x:Name="Bg" Background="{TemplateBinding Background}"
+                                    CornerRadius="12">
+                                <ContentPresenter HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"/>
+                            </Border>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- ============ 工具栏 ============ -->
+        <Grid Grid.Row="0" ColumnSpacing="8" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="图片列表" VerticalAlignment="Center" FontSize="13"
+                       FontWeight="SemiBold" Opacity="0.8"/>
+            <TextBlock x:Name="ListCount" Grid.Column="1" VerticalAlignment="Center"
+                       FontSize="11" Opacity="0.4"/>
+            <Button x:Name="ClearSelBtn" Grid.Column="2" Content="取消选择"
+                    IsEnabled="False" Click="ClearSelBtn_Click" Margin="0,0,8,0"/>
+            <Button x:Name="BatchRenameBtn" Grid.Column="3" Content="批量改名"
+                    IsEnabled="False" Click="BatchRenameBtn_Click" Margin="0,0,8,0"/>
+            <Button x:Name="RemoveBtn" Grid.Column="4" Content="删除选中"
+                    IsEnabled="False" Click="RemoveBtn_Click" Margin="0,0,8,0"/>
+            <Button x:Name="ClearBtn" Grid.Column="5" Content="清空"
+                    IsEnabled="False" Click="ClearBtn_Click"/>
+        </Grid>
+
+        <!-- ============ 缩略图网格(支持鼠标框选多选) ============
+             指针事件挂在 GridHost 上:与橡皮筋 RbRect 同坐标系,框选起点/终点精确 -->
+        <Grid x:Name="GridHost" Grid.Row="1"
+              PointerPressed="GridHost_PointerPressed"
+              PointerMoved="GridHost_PointerMoved"
+              PointerReleased="GridHost_PointerReleased"
+              PointerCaptureLost="GridHost_PointerCaptureLost"
+              KeyDown="GridHost_KeyDown"
+              IsTabStop="True"
+              AllowDrop="True" DragOver="DropBorder_DragOver"
+              Drop="DropBorder_Drop">
+            <GridView x:Name="ImageGrid"
+                      SelectionChanged="ImageGrid_SelectionChanged"
+                      ContainerContentChanging="ImageGrid_ContainerContentChanging"
+                      SelectionMode="Multiple"
+                      KeyDown="ImageGrid_KeyDown"
+                      CornerRadius="10"
+                      Background="{StaticResource AppPanelBrush}"
+                      BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
+                      Padding="10">
+                <GridView.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <ItemsWrapGrid Orientation="Horizontal"
+                                       ItemWidth="128" ItemHeight="150"/>
+                    </ItemsPanelTemplate>
+                </GridView.ItemsPanel>
+
+                <!-- 自定义项容器样式:悬停浅亮、选中蓝色背景+圆角蓝框(蓝框画在内容之上,清晰可辨) -->
+                <GridView.ItemContainerStyle>
+                    <Style TargetType="GridViewItem">
+                        <Setter Property="Padding" Value="0"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="GridViewItem">
+                                    <Grid x:Name="Root">
+                                        <VisualStateManager.VisualStateGroups>
+                                            <VisualStateGroup x:Name="CommonStates">
+                                                <VisualState x:Name="Normal"/>
+                                                <VisualState x:Name="PointerOver">
+                                                    <Storyboard>
+                                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="HoverBorder" Storyboard.TargetProperty="Visibility">
+                                                            <DiscreteObjectKeyFrame KeyTime="0" Value="Visible"/>
+                                                        </ObjectAnimationUsingKeyFrames>
+                                                    </Storyboard>
+                                                </VisualState>
+                                                <VisualState x:Name="Pressed">
+                                                    <Storyboard>
+                                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="PressedBorder" Storyboard.TargetProperty="Visibility">
+                                                            <DiscreteObjectKeyFrame KeyTime="0" Value="Visible"/>
+                                                        </ObjectAnimationUsingKeyFrames>
+                                                    </Storyboard>
+                                                </VisualState>
+                                                <VisualState x:Name="Selected">
+                                                    <Storyboard>
+                                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SelectedBg" Storyboard.TargetProperty="Visibility">
+                                                            <DiscreteObjectKeyFrame KeyTime="0" Value="Visible"/>
+                                                        </ObjectAnimationUsingKeyFrames>
+                                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SelectionBorder" Storyboard.TargetProperty="Visibility">
+                                                            <DiscreteObjectKeyFrame KeyTime="0" Value="Visible"/>
+                                                        </ObjectAnimationUsingKeyFrames>
+                                                    </Storyboard>
+                                                </VisualState>
+                                                <VisualState x:Name="SelectedPointerOver">
+                                                    <Storyboard>
+                                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SelectedBg" Storyboard.TargetProperty="Visibility">
+                                                            <DiscreteObjectKeyFrame KeyTime="0" Value="Visible"/>
+                                                        </ObjectAnimationUsingKeyFrames>
+                                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SelectionBorder" Storyboard.TargetProperty="Visibility">
+                                                            <DiscreteObjectKeyFrame KeyTime="0" Value="Visible"/>
+                                                        </ObjectAnimationUsingKeyFrames>
+                                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="HoverBorder" Storyboard.TargetProperty="Visibility">
+                                                            <DiscreteObjectKeyFrame KeyTime="0" Value="Visible"/>
+                                                        </ObjectAnimationUsingKeyFrames>
+                                                    </Storyboard>
+                                                </VisualState>
+                                            </VisualStateGroup>
+                                        </VisualStateManager.VisualStateGroups>
+                                        <!-- 背景层(在内容之下):悬停微亮 / 选中淡蓝 -->
+                                        <Border x:Name="HoverBorder" Visibility="Collapsed"
+                                                Background="#12FFFFFF" CornerRadius="8"
+                                                IsHitTestVisible="False"/>
+                                        <Border x:Name="PressedBorder" Visibility="Collapsed"
+                                                Background="#18FFFFFF" CornerRadius="8"
+                                                IsHitTestVisible="False"/>
+                                        <Border x:Name="SelectedBg" Visibility="Collapsed"
+                                                Background="#335B8DEF" CornerRadius="8"
+                                                IsHitTestVisible="False"/>
+                                        <ContentPresenter Content="{TemplateBinding Content}"
+                                                          ContentTemplate="{TemplateBinding ContentTemplate}"/>
+                                        <!-- 选中框(在内容之上,透明填充只显示描边) -->
+                                        <Border x:Name="SelectionBorder" Visibility="Collapsed"
+                                                BorderBrush="#5B8DEF" BorderThickness="2"
+                                                CornerRadius="8" IsHitTestVisible="False"/>
+                                    </Grid>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </GridView.ItemContainerStyle>
+
+                <GridView.ItemTemplate>
+                    <DataTemplate x:DataType="local:ImageItem">
+                        <Grid Width="120" Height="140" Margin="4"
+                              PointerEntered="Item_PointerEntered"
+                              PointerExited="Item_PointerExited"
+                              DoubleTapped="Item_DoubleTapped">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Border x:Name="ThumbBorder" Grid.Row="0" CornerRadius="6"
+                                    Background="#12141A"
+                                    BorderBrush="{StaticResource AppBorderBrush}"
+                                    BorderThickness="1">
+                                <Grid>
+                                    <Image x:Name="ThumbImg" Source="{Binding Thumb}" Stretch="Uniform"
+                                           SizeChanged="ThumbImg_SizeChanged"/>
+                                    <!-- 主体选择标记层(抠图页框选/涂抹,按比例绘制,尺寸跟随图片显示区域) -->
+                                    <Canvas x:Name="MarksLayer" IsHitTestVisible="False"
+                                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    <!-- 悬停出现的铅笔图标(悬停时背景变蓝) -->
+                                    <Button x:Name="PencilBtn" Click="PencilBtn_Click"
+                                            Opacity="0" Width="24" Height="24" Padding="0"
+                                            CornerRadius="12" Margin="8"
+                                            HorizontalAlignment="Right" VerticalAlignment="Top"
+                                            Style="{StaticResource PencilButtonStyle}">
+                                        <FontIcon Glyph="&#xE70F;" FontSize="11"/>
+                                    </Button>
+                                </Grid>
+                            </Border>
+                            <TextBlock Grid.Row="1" Text="{Binding Name}" FontSize="10"
+                                       Opacity="0.7" TextTrimming="CharacterEllipsis"
+                                       Margin="2,3,2,0" MaxWidth="116"/>
+                        </Grid>
+                    </DataTemplate>
+                </GridView.ItemTemplate>
+            </GridView>
+
+            <!-- 框选橡皮筋(必须放在 Canvas 里,Canvas.SetLeft/Top 才生效) -->
+            <Canvas IsHitTestVisible="False" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                <Rectangle x:Name="RbRect" Visibility="Collapsed"
+                           Stroke="#5B8DEF" StrokeThickness="1" Fill="#335B8DEF"
+                           IsHitTestVisible="False"/>
+            </Canvas>
+
+            <!-- 空状态提示(不挡拖拽) -->
+            <StackPanel x:Name="DropHint" VerticalAlignment="Center" Spacing="8"
+                        IsHitTestVisible="False">
+                <FontIcon Glyph="&#xE8B5;" FontSize="40" Opacity="0.3"
+                          HorizontalAlignment="Center"/>
+                <TextBlock Text="拖入图片到此处(支持多张)" HorizontalAlignment="Center"
+                           FontSize="14" Opacity="0.5"/>
+                <TextBlock Text="鼠标拖拽可框选多张" HorizontalAlignment="Center"
+                           FontSize="11" Opacity="0.35"/>
+                <TextBlock Text="PNG / JPG / WebP / BMP" HorizontalAlignment="Center"
+                           Style="{StaticResource HintText}"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- ============ 铅笔面板(信息 + 操作) ============ -->
+        <Border x:Name="PencilPanel" Grid.Row="2" Visibility="Collapsed"
+                Background="{StaticResource AppPanel2Brush}"
+                BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
+                CornerRadius="8" Padding="12,10" Margin="0,10,0,0">
+            <Grid ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- 信息区:两列标签/值 -->
+                <Grid Grid.Column="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="分辨率" Style="{StaticResource HintText}" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="InfoResolution" Grid.Column="1" FontSize="11"
+                               VerticalAlignment="Center" Margin="6,0,16,0" Text="—"/>
+                    <TextBlock Text="大小" Grid.Column="2" Style="{StaticResource HintText}" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="InfoSize" Grid.Column="3" FontSize="11"
+                               VerticalAlignment="Center" Margin="6,0,0,0" Text="—"/>
+
+                    <TextBlock Grid.Row="1" Text="格式" Style="{StaticResource HintText}" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="InfoFormat" Grid.Row="1" Grid.Column="1" FontSize="11"
+                               VerticalAlignment="Center" Margin="6,0,16,0" Text="—"/>
+                    <TextBlock Grid.Row="1" Grid.Column="2" Text="色深" Style="{StaticResource HintText}" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="InfoBitDepth" Grid.Row="1" Grid.Column="3" FontSize="11"
+                               VerticalAlignment="Center" Margin="6,0,0,0" Text="—"/>
+
+                    <TextBlock Grid.Row="2" Text="色域" Style="{StaticResource HintText}" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="InfoColorSpace" Grid.Row="2" Grid.Column="1" FontSize="11"
+                               VerticalAlignment="Center" Margin="6,0,16,0" Text="—"/>
+                    <TextBlock Grid.Row="2" Grid.Column="2" Text="平均 RGB" Style="{StaticResource HintText}" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="InfoAvgRgb" Grid.Row="2" Grid.Column="3" FontSize="11"
+                               VerticalAlignment="Center" Margin="6,0,0,0" Text="—"/>
+
+                    <TextBlock Grid.Row="3" Text="亮度" Style="{StaticResource HintText}" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="InfoLuma" Grid.Row="3" Grid.Column="1" FontSize="11"
+                               VerticalAlignment="Center" Margin="6,0,16,0" Text="—"/>
+                    <TextBlock Grid.Row="3" Grid.Column="2" Text="文件名" Style="{StaticResource HintText}" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="InfoName" Grid.Row="3" Grid.Column="3" FontSize="11"
+                               VerticalAlignment="Center" Margin="6,0,0,0" Text="—"
+                               TextTrimming="CharacterEllipsis"/>
+                </Grid>
+
+                <!-- 操作按钮 -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
+                            VerticalAlignment="Center">
+                    <Button x:Name="RenameBtn" Content="改名" Click="RenameBtn_Click"
+                            MinWidth="70"/>
+                    <Button x:Name="CropBtn" Content="裁剪" Click="CropBtn_Click"
+                            MinWidth="70"/>
+                    <Button x:Name="PencilCloseBtn" Content="收回 ✕"
+                            Click="PencilCloseBtn_Click" MinWidth="70"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ============ 裁剪浮层 ============ -->
+        <Grid x:Name="CropOverlay" Grid.RowSpan="3" Visibility="Collapsed"
+              Background="#E60D0F14">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid x:Name="CropHost" Margin="16">
+                <Image x:Name="CropImage" Stretch="Uniform"/>
+                <Canvas x:Name="CropCanvas" Visibility="Collapsed" Background="Transparent"
+                        PointerPressed="CropCanvas_PointerPressed"
+                        PointerMoved="CropCanvas_PointerMoved"
+                        PointerReleased="CropCanvas_PointerReleased"
+                        PointerCaptureLost="CropCanvas_PointerCaptureLost">
+                    <Rectangle x:Name="CropRect" Visibility="Collapsed"
+                               Stroke="#5B8DEF" StrokeThickness="1.5" Fill="#335B8DEF"/>
+                    <Border x:Name="CropInfo" Background="#99000000" CornerRadius="3"
+                            Padding="6,3">
+                        <TextBlock x:Name="CropInfoText" FontSize="12" Foreground="#E8ECF2"
+                                   Text="在图片上拖拽框选裁剪区域"/>
+                    </Border>
+                </Canvas>
+            </Grid>
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="10"
+                        HorizontalAlignment="Center" Margin="0,0,0,14">
+                <Button x:Name="CropConfirmBtn" Content="确认裁剪" Click="CropConfirm_Click"
+                        IsEnabled="False" Style="{StaticResource AccentButtonStyle}"
+                        Padding="0,8" MinWidth="110"/>
+                <Button x:Name="RegionUpscaleBtn" Content="放大选区" Click="RegionUpscale_Click"
+                        Visibility="Collapsed" Padding="0,8" MinWidth="110"
+                        ToolTipService.ToolTip="只对框选区域做 AI 放大(需在图片放大页)"/>
+                <Button Content="取消裁剪" Click="CropCancel_Click" Padding="0,8" MinWidth="110"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</UserControl>

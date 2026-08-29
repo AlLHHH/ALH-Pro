@@ -1,0 +1,1548 @@
+using System;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media.Imaging;
+
+namespace ALHPro.Views;
+
+public sealed partial class MainPage : Page
+{
+    private UpscaleView? _upView;
+    private CutoutView? _cutView;
+    private VideoView? _videoView;
+    private string _currentTag = "upscale";
+    private int _startupPageIndex;   // 构造时解析的启动页(0/1/2),供 Loaded 弹窗逻辑引用
+
+    public MainPage()
+    {
+        this.InitializeComponent();
+        AppSettings.Load();      // 应用级开关(自动删除已完成项目等)
+        SafeRender.Load();       // 加载"安全渲染"墙配置(自动/自定义)
+        // 休息提示 + 显眼的「跳过休息」按钮:显示在窗口底部状态栏右侧(任务处理中休息降温时)
+        SafeRender.RestUiChanged += resting =>
+        {
+            RestHint.Visibility = resting ? Visibility.Visible : Visibility.Collapsed;
+            SkipRestBtn.Visibility = resting ? Visibility.Visible : Visibility.Collapsed;
+        };
+        LoadStartupPage();   // 默认启动页(-1=上次退出 0图片 1抠图 2视频)
+        // 退出时记录最后一次使用的界面(「上次退出界面」启动模式保证准确;切换时也已记录,这里兜底)
+        try { App.MainWindow.Closed += (_, _) => SaveLastPage(_currentTag == "video" ? 2 : _currentTag == "cutout" ? 1 : 0); } catch { }
+        // 视图随构造一起就绪(同步):窗口 Activate 在 App 侧,Navigate(MainPage) 完成即已构造好
+        // MainPage + 挂载视图 → 窗口一出现就是完整界面(用户要求:等渲染完再开窗口)
+        {
+            int page0 = _startupPage >= 0 ? _startupPage : LoadLastPage();
+            _startupPageIndex = page0;
+            NavList.SelectedIndex = page0;
+            ShowView(page0 == 1 ? "cutout" : page0 == 2 ? "video" : "upscale");
+        }
+        Loaded += async (_, _) =>
+        {
+            // 首个弹窗/检查类任务(视图已在构造时挂载)
+            // 内测声明:仅第一次启动显示;同意后记标记,以后不再弹;拒绝则退出
+            if (!File.Exists(BetaAcceptedFile) && !await ShowBetaNoticeAsync())
+            {
+                App.MainWindow.Close();
+                return;
+            }
+            if (!File.Exists(BetaAcceptedFile))
+            {
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(BetaAcceptedFile)!);
+                    File.WriteAllText(BetaAcceptedFile, "accepted");
+                }
+                catch { }
+            }
+            // 引擎可用性:仅缺失时提示,正常就绪不刷屏
+            var ok = EngineService.CheckEngines(out var missing);
+            StatusText.Text = ok ? "就绪" : "引擎缺失: " + missing;
+            AppLogger.Info($"安全渲染:模式={(SafeRender.Mode == 0 ? "自动" : "自定义")}," +
+                $"显存墙 {SafeRender.EffectiveVramGB:0.#} GB(总 {SafeRender.TotalVramGB:0.#} GB / 空闲 {SafeRender.FreeVramGB:0.#} GB)," +
+                $"分块 {SafeRender.GetTileSize()},内存墙 {SafeRender.EffectiveRamGB:0.#} GB," +
+                $"视频批 {SafeRender.GetVideoBatchSize()} 帧/批,CPU {SafeRender.EffectiveCpuLevel switch { 1 => "低", 2 => "中", _ => "高" }}({SafeRender.CpuCoreCount} 核)," +
+                $"降温休息={(SafeRender.RestEnabled ? "开(1小时/15分钟)" : "关")}");
+            // Vulkan 自检:后台跑完,无 GPU 自动切 CPU。弹窗「设备检测」只对低配设备(无GPU/显存<6/内存<8/核数≤4)
+            // 自动弹一次友好提示;强机不弹(结果随时可在「设置 → 计算设备」查看),弹过也不再重复弹。
+            if (SafeRender.IsWeakDevice)
+                _ = ShowVulkanNoticeAsync();
+        };
+    }
+
+    private void NavList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (NavList.SelectedItem is ListViewItem item && item.Tag is string tag)
+            ShowView(tag);
+    }
+
+    private void ShowView(string tag)
+    {
+        _currentTag = tag;
+        ContentRoot.Children.Clear();
+        // 记录最近使用界面(「上次退出界面」启动模式用);切换即保存,退出时也保存(见 MainWindow_Closed)
+        SaveLastPage(tag == "upscale" ? 0 : tag == "video" ? 2 : 1);
+        if (tag == "upscale")
+        {
+            AppLogger.Info("进入页面:图片放大");
+            _upView ??= new UpscaleView();
+            _upView.StatusChanged -= OnStatusChanged;
+            _upView.StatusChanged += OnStatusChanged;
+            ContentRoot.Children.Add(_upView);
+        }
+        else if (tag == "video")
+        {
+            try
+            {
+                AppLogger.Info("进入页面:视频处理");
+                _videoView ??= new VideoView();
+                ContentRoot.Children.Add(_videoView);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error($"视频页加载失败 HRESULT=0x{ex.HResult:X8}", ex);
+                // 不闪退:显示错误信息,便于定位
+                _videoView = null;
+                ContentRoot.Children.Add(new TextBlock
+                {
+                    Text = "视频页加载失败(已记录到诊断日志):\n" + ex.Message,
+                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                    FontSize = 13,
+                    Margin = new Microsoft.UI.Xaml.Thickness(20),
+                });
+            }
+        }
+        else
+        {
+            AppLogger.Info("进入页面:AI 抠图");
+            _cutView ??= new CutoutView();
+            _cutView.StatusChanged -= OnStatusChanged;
+            _cutView.StatusChanged += OnStatusChanged;
+            ContentRoot.Children.Add(_cutView);
+        }
+    }
+
+    private void OnStatusChanged(string s) => StatusText.Text = s;
+
+    /// <summary>内测声明已同意的标记文件(仅首次显示弹窗)。</summary>
+    private static string BetaAcceptedFile => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ALHPro", "beta-accepted.txt");
+
+    /// <summary>设备检测弹窗已显示过的标记文件(持久化:跨启动只显示一次,不靠进程内变量)。</summary>
+    private static string VulkanNoticeShownFile => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ALHPro", "vulkan-notice-shown.txt");
+
+    /// <summary>启动强制「内测声明」:5 秒倒计时后才能点「同意并继续」;点「退出程序」则关闭应用。</summary>
+    private async Task<bool> ShowBetaNoticeAsync()
+    {
+        int remain = 5;
+        bool agreed = false;
+        var agreeBtn = new Button
+        {
+            Content = $"同意并继续 ({remain})",
+            IsEnabled = false,
+            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Right,
+            Margin = new Microsoft.UI.Xaml.Thickness(0, 10, 0, 0),
+        };
+        agreeBtn.Click += (_, _) => { agreed = true; _betaNoticeDlg.Hide(); };
+        var dlg = new ContentDialog
+        {
+            Title = "内测声明",
+            XamlRoot = this.XamlRoot,
+            CloseButtonText = "退出程序",
+            DefaultButton = ContentDialogButton.None,
+            Content = new StackPanel
+            {
+                Spacing = 6,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "本程序为「v0.6 公测版」,仍在测试阶段:\n\n" +
+                            "· 可能存在不稳定、报错、卡顿或功能不完善;\n" +
+                            "· 处理前请自行备份素材,因测试版造成的数据损失由使用者自行承担;\n" +
+                            "· 本版本为内测分发,请勿随意分享、传播或二次发布;\n" +
+                            "· 引擎/模型版权归各自作者所有,详见 README 与许可声明。\n\n" +
+                            "请完整阅读以上声明,5 秒后方可继续使用。",
+                        TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                    },
+                    agreeBtn,
+                },
+            },
+        };
+        _betaNoticeDlg = dlg;   // 供按钮关闭
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromSeconds(1);
+        timer.IsRepeating = true;
+        timer.Tick += (_, _) =>
+        {
+            remain--;
+            if (remain > 0)
+            {
+                agreeBtn.Content = $"同意并继续 ({remain})";
+            }
+            else
+            {
+                timer.Stop();
+                agreeBtn.Content = "同意并继续";
+                agreeBtn.IsEnabled = true;
+            }
+        };
+        timer.Start();
+        await dlg.ShowAsync();
+        timer.Stop();
+        _betaNoticeDlg = null;
+        return agreed;
+    }
+    private ContentDialog? _betaNoticeDlg;
+
+    /// <summary>设备自检提示:只显示一次(用持久化文件标记,跨启动有效);立即显示,检测中不可确认,
+    /// 完成后自动更新并解锁。结果常驻显示在「设置 → 计算设备」区。</summary>
+    private async Task ShowVulkanNoticeAsync()
+    {
+        try
+        {
+            // 已显示过(持久化标记):直接跳过,不再弹
+            if (File.Exists(VulkanNoticeShownFile)) return;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(VulkanNoticeShownFile)!);
+                File.WriteAllText(VulkanNoticeShownFile, "shown");   // 先写标记:即使中途失败也不重复弹
+            }
+            catch { }
+
+            // 报告区(可滚动);检测中先显示占位,完成后填入完整报告
+            var reportBlock = new TextBlock
+            {
+                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                FontSize = 12,
+            };
+            TextBlock? summaryBlock = null;
+
+            // 底部「知道了」按钮:检测未完成时禁用,完成后启用
+            var okBtn = new Button
+            {
+                Content = VulkanCheck.Done ? "知道了" : "检测中…",
+                IsEnabled = VulkanCheck.Done,
+                HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Right,
+                MinWidth = 96,
+                Margin = new Microsoft.UI.Xaml.Thickness(0, 6, 0, 0),
+            };
+
+            var dlg = new ContentDialog
+            {
+                Title = "设备检测",
+                XamlRoot = this.XamlRoot,
+                DefaultButton = ContentDialogButton.None,   // 用自定义按钮控制启用/禁用
+                Content = new ScrollViewer
+                {
+                    MaxHeight = 460,
+                    Content = new StackPanel
+                    {
+                        Spacing = 8,
+                        Children =
+                        {
+                            reportBlock,
+                            new TextBlock
+                            {
+                                Text = "此窗口只会显示一次,之后可随时在「设置 → 计算设备」里查看本机自检结果,也可以手动切换计算设备。",
+                                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                                FontSize = 11,
+                                Opacity = 0.7,
+                            },
+                            okBtn,
+                        },
+                    },
+                },
+            };
+            okBtn.Click += (_, _) => dlg.Hide();
+
+            // 渲染当前状态(检测完成=完整报告;未完成=占位)
+            void Render()
+            {
+                if (VulkanCheck.Done && !string.IsNullOrEmpty(VulkanCheck.Report))
+                {
+                    BuildReportContent(reportBlock, VulkanCheck.Report, out summaryBlock);
+                    okBtn.Content = "知道了";
+                    okBtn.IsEnabled = true;
+                }
+                else
+                {
+                    reportBlock.Inlines.Clear();
+                    reportBlock.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
+                    {
+                        Text = "正在检测本机设备(GPU / 显卡驱动 / 显存 / 内存 / CPU),请稍候…",
+                        FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    });
+                    okBtn.Content = "检测中…";
+                    okBtn.IsEnabled = false;
+                }
+            }
+            Render();
+
+            // 检测完成前:轮询解锁(自检通常 1 秒内完成;最多等 20 秒,超时也解锁显示兜底)
+            var timer = DispatcherQueue.CreateTimer();
+            timer.Interval = TimeSpan.FromMilliseconds(200);
+            timer.IsRepeating = true;
+            int waited = 0;
+            timer.Tick += (_, _) =>
+            {
+                waited++;
+                if (!VulkanCheck.Done && waited < 100) return;
+                timer.Stop();
+                Render();
+            };
+            timer.Start();
+
+            await dlg.ShowAsync();
+            timer.Stop();
+        }
+        catch { /* 弹窗失败不影响主流程 */ }
+    }
+
+    /// <summary>把自检报告渲染进弹窗:去掉「设备自检报告」标题行(设置界面不受影响);
+    /// 所有内容(计算设备/驱动/显存/内存/CPU/可用性/建议/提示)统一普通样式,不加粗不变色;
+    /// 「注意:」整块内容作为「提示:」区块放最下面。</summary>
+    private static void BuildReportContent(TextBlock block, string report, out TextBlock? summary)
+    {
+        summary = null;
+        block.Inlines.Clear();
+        var lines = report.Split('\n');
+        var noteLines = new System.Collections.Generic.List<string>();   // 「注意:」后面的整块内容(可能多行)
+        bool inNote = false;
+        foreach (var raw in lines)
+        {
+            var line = raw.TrimEnd('\r').TrimEnd();
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            if (line.StartsWith("设备自检报告", StringComparison.Ordinal)) continue;   // 弹窗不显示标题行
+            if (line.StartsWith("注意:", StringComparison.Ordinal))
+            {
+                inNote = true;
+                noteLines.Add(line.Substring("注意:".Length).TrimStart());
+                continue;
+            }
+            if (inNote)
+            {
+                // 「注意:」后的连续行都属于提示内容(如无 GPU 场景的多行注意)
+                noteLines.Add(line);
+                continue;
+            }
+            block.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = line });
+            block.Inlines.Add(new Microsoft.UI.Xaml.Documents.LineBreak());
+        }
+        // 提示区块:整块放最下面,与普通内容同样式(不加粗不变色),前面空一行分隔
+        if (noteLines.Count > 0)
+        {
+            block.Inlines.Add(new Microsoft.UI.Xaml.Documents.LineBreak());
+            block.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
+            {
+                Text = "提示:" + string.Join(";", noteLines),
+            });
+            block.Inlines.Add(new Microsoft.UI.Xaml.Documents.LineBreak());
+        }
+        // 补充一句更详细的说明(按设备状态)
+        var extra = VulkanCheck.GpuAvailable
+            ? "若处理大图/高倍率时提示显存不足,程序会自动降低分块重试;仍失败时可在「计算设备」里改用 CPU。"
+            : "当前以 CPU 计算,速度会明显慢;若电脑有独立显卡却检测不到,请更新显卡驱动(需支持 Vulkan)后点「重新检测」。";
+        block.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = extra, FontSize = 11 });
+    }
+
+    /// <summary>生成默认头像(蓝色圆底 + AL 字母),供关于弹窗显示;用户可替换为程序目录下的 avatar.jpg。</summary>
+    private static void CreateDefaultAvatar(string path)
+    {
+        using var bmp = new System.Drawing.Bitmap(256, 256);
+        using var g = System.Drawing.Graphics.FromImage(bmp);
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+        g.Clear(System.Drawing.Color.Transparent);
+        using var bg = new System.Drawing.Drawing2D.LinearGradientBrush(
+            new System.Drawing.Point(0, 0), new System.Drawing.Point(256, 256),
+            System.Drawing.Color.FromArgb(255, 79, 140, 239), System.Drawing.Color.FromArgb(255, 52, 96, 190));
+        g.FillEllipse(bg, 0, 0, 256, 256);
+        using var font = new System.Drawing.Font("Segoe UI", 92, System.Drawing.FontStyle.Bold,
+            System.Drawing.GraphicsUnit.Pixel);
+        using var sf = new System.Drawing.StringFormat { Alignment = System.Drawing.StringAlignment.Center, LineAlignment = System.Drawing.StringAlignment.Center };
+        using var tb = new System.Drawing.SolidBrush(System.Drawing.Color.White);
+        g.DrawString("AL", font, tb, new System.Drawing.RectangleF(0, -4, 256, 256), sf);
+        bmp.Save(path, System.Drawing.Imaging.ImageFormat.Jpeg);
+    }
+
+    // 底部状态栏「跳过休息」:和任务面板的「取消(休息时变跳过休息)」等效,休息时在底部显眼处一键跳过
+    private void SkipRestBtn_Click(object sender, RoutedEventArgs e)
+        => SafeRender.CurrentRestCts?.Cancel();
+
+    private void About_Click(object sender, RoutedEventArgs e)
+    {
+        var ok = EngineService.CheckEngines(out var missing);
+        var engines = ok
+            ? "全部引擎就绪 ✓"
+            : "缺失: " + missing;
+        var content = new StackPanel { Spacing = 8 };
+
+        // 标题 + 版本 + 署名
+        content.Children.Add(new TextBlock
+        {
+            Text = "ALH Pro",
+            FontSize = 18,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = $"版本 v0.6 公测版 · 构建 {File.GetLastWriteTime(typeof(MainPage).Assembly.Location):MM-dd HH:mm}",
+            FontSize = 12,
+            Opacity = 0.7,
+        });
+        // 公测免责横幅(测试版提示,一眼可见)
+        content.Children.Add(new Border
+        {
+            Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(40, 232, 163, 61)),
+            CornerRadius = new Microsoft.UI.Xaml.CornerRadius(6),
+            Padding = new Microsoft.UI.Xaml.Thickness(10, 6, 10, 6),
+            Child = new TextBlock
+            {
+                Text = "⚠ 公测版:软件仍在测试,可能存在不稳定、报错或功能不完善,建议先备份素材再处理。",
+                FontSize = 11,
+                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+            },
+        });
+
+        // 作者 + 头像(头像文件:程序目录 avatar.jpg;缺失时自动生成默认头像,名字始终显示)
+        var authorRow = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 16 };
+        var avatarFile = Path.Combine(AppContext.BaseDirectory, "avatar.jpg");
+        if (!File.Exists(avatarFile))
+        {
+            try { CreateDefaultAvatar(avatarFile); } catch { /* 生成失败不影响 */ }
+        }
+        var authorGroup = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 10 };
+        if (File.Exists(avatarFile))
+        {
+            authorGroup.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse
+            {
+                Width = 44,
+                Height = 44,
+                StrokeThickness = 0,
+                Fill = new Microsoft.UI.Xaml.Media.ImageBrush
+                {
+                    ImageSource = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(avatarFile)),
+                    Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill,
+                },
+            });
+        }
+        var authorTexts = new StackPanel { VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center, Spacing = 2 };
+        authorTexts.Children.Add(new TextBlock { Text = "AlL.H", FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        authorTexts.Children.Add(new TextBlock { Text = "作者 · 免费公益", FontSize = 10, Opacity = 0.6 });
+        authorGroup.Children.Add(authorTexts);
+        authorRow.Children.Add(authorGroup);
+        content.Children.Add(authorRow);
+
+        // 「请作者喝咖啡」:打开程序目录 reward.jpg(赞赏码);未放置则提示
+        var rewardBtn = new Button
+        {
+            Content = "☕ 请作者喝咖啡",
+            FontSize = 12,
+            Padding = new Microsoft.UI.Xaml.Thickness(14, 6, 14, 6),
+            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
+            Margin = new Microsoft.UI.Xaml.Thickness(0, 4, 0, 0),
+        };
+        ToolTipService.SetToolTip(rewardBtn, "完全免费,打赏自愿;可把赞赏码图片 reward.jpg 放到程序目录");
+        rewardBtn.Click += async (_, _) =>
+        {
+            var img = Path.Combine(AppContext.BaseDirectory, "reward.jpg");
+            if (File.Exists(img))
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(img) { UseShellExecute = true });
+                    return;
+                }
+                catch { }
+            }
+            ShowCardPopup(new StackPanel
+            {
+                Children =
+                {
+                    new TextBlock { Text = "还没有设置赞赏码", FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
+                    new TextBlock { Text = "把赞赏码图片命名为 reward.jpg 放到程序目录,重启后这里就能扫码打赏了。", FontSize = 11, Opacity = 0.7, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Margin = new Microsoft.UI.Xaml.Thickness(0, 6, 0, 0) },
+                },
+            }, "喝咖啡", 380);
+        };
+        content.Children.Add(rewardBtn);
+        content.Children.Add(new Border
+        {
+            Height = 1,
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+        });
+
+        // 功能
+        content.Children.Add(new TextBlock
+        {
+            Text = "功能:图片超分放大(waifu2x / Real-ESRGAN / Real-CUGAN,1x~4x、\n批量、区域放大、输出质量可调)、AI 抠图(多模型 + 笔刷/框选\n+ 阈值/羽化/边缘增强)、视频超分 + 光流补帧(RIFE,2x~8x)、\n智能去重(自适应/动漫/手动)、转场识别、时间线裁剪、批量处理、\n编码格式 H.264/H.265、码率自定义、暂停/恢复/强制结束。",
+            FontSize = 12,
+            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+        });
+
+        // 模型致谢(蓝色超链接,点击跳转项目官网)
+        content.Children.Add(new TextBlock
+        {
+            Text = "模型与引擎致谢(点击名称可访问项目)",
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        });
+        var modelLinks = new (string name, string desc, string url)[]
+        {
+            ("waifu2x", "naoaki + nihui/ncnn", "https://github.com/nagadomi/waifu2x"),
+            ("Real-ESRGAN", "Xintao Wang 等 + nihui/ncnn", "https://github.com/xinntao/Real-ESRGAN"),
+            ("Real-CUGAN", "bilibili 哔哩哔哩", "https://github.com/bilibili/ailab"),
+            ("RIFE", "Zhewei Huang 等 + nihui/ncnn", "https://github.com/hzwer/arXiv2020-RIFE"),
+            ("U²-Net", "Qin 等", "https://github.com/xuebinqin/U-2-Net"),
+            ("ISNet", "Xuebin Qin 等", "https://github.com/xuebinqin/IS-Net"),
+            ("BiRefNet", "ZhengPeng7(BiRefNet)", "https://github.com/ZhengPeng7/BiRefNet"),
+            ("rembg(模型封装)", "Daniel Gatis", "https://github.com/danielgatis/rembg"),
+            ("ffmpeg", "FFmpeg 团队(BtbN 构建)", "https://ffmpeg.org"),
+            ("ONNX Runtime", "Microsoft", "https://github.com/microsoft/onnxruntime"),
+            ("Windows App SDK / WinUI 3", "Microsoft", "https://github.com/microsoft/WindowsAppSDK"),
+            (".NET 8", "Microsoft", "https://github.com/dotnet/runtime"),
+        };
+        foreach (var (name, desc, url) in modelLinks)
+        {
+            var line = new TextBlock { FontSize = 11, Opacity = 0.85, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap };
+            line.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "· " });
+            var link = new Microsoft.UI.Xaml.Documents.Hyperlink { NavigateUri = new Uri(url) };
+            link.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = name });
+            line.Inlines.Add(link);
+            line.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = " — " + desc });
+            content.Children.Add(line);
+        }
+        // 许可声明可直接点开
+        var noticesPath = Path.Combine(AppContext.BaseDirectory, "THIRD_PARTY_NOTICES.txt");
+        if (File.Exists(noticesPath))
+        {
+            var docLink = new HyperlinkButton
+            {
+                Content = "📄 完整许可声明(THIRD_PARTY_NOTICES.txt)",
+                FontSize = 11,
+                Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 76, 141, 255)),
+            };
+            docLink.Click += (_, _) =>
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(noticesPath)
+                    {
+                        UseShellExecute = true,
+                    });
+                }
+                catch { }
+            };
+            content.Children.Add(docLink);
+        }
+
+        // 隐私
+        content.Children.Add(new TextBlock
+        {
+            Text = "隐私:100% 本地处理,所有数据不上传任何服务器。",
+            FontSize = 12,
+            Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 120, 190, 130)),
+        });
+
+        // 致谢:自动扫描程序目录 thanks/ 文件夹(文件名=名字,支持后续添加)
+        var thanksDir = Path.Combine(AppContext.BaseDirectory, "thanks");
+        if (Directory.Exists(thanksDir))
+        {
+            var thankFiles = Directory.EnumerateFiles(thanksDir)
+                .Where(f => f.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+                    || f.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+                    || f.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
+                    || f.EndsWith(".webp", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (thankFiles.Length > 0)
+            {
+                content.Children.Add(new Border
+                {
+                    Height = 1,
+                    Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+                });
+                content.Children.Add(new TextBlock
+                {
+                    Text = "特别致谢(不分先后)— 帮忙找 Bug、反馈问题,让 ALH Pro 越来越好",
+                    FontSize = 12,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                });
+                // 名单:只显示头像 + 名字,横向排列自动换行
+                var thanksControl = new ItemsControl();
+                thanksControl.ItemsPanel = (Microsoft.UI.Xaml.Controls.ItemsPanelTemplate)
+                    Microsoft.UI.Xaml.Markup.XamlReader.Load(
+                        "<ItemsPanelTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'>" +
+                        "<ItemsWrapGrid Orientation='Horizontal' ItemWidth='150' ItemHeight='64'/>" +
+                        "</ItemsPanelTemplate>");
+                foreach (var f in thankFiles)
+                {
+                    var name = Path.GetFileNameWithoutExtension(f);
+                    var row = new StackPanel
+                    {
+                        Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal,
+                        Spacing = 8,
+                        VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+                    };
+                    row.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse
+                    {
+                        Width = 40,
+                        Height = 40,
+                        StrokeThickness = 0,
+                        Fill = new Microsoft.UI.Xaml.Media.ImageBrush
+                        {
+                            ImageSource = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(f)),
+                            Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill,
+                        },
+                    });
+                    row.Children.Add(new TextBlock
+                    {
+                        Text = name,
+                        FontSize = 12,
+                        VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+                    });
+                    thanksControl.Items.Add(row);
+                }
+                content.Children.Add(thanksControl);
+            }
+        }
+
+        // 状态
+        content.Children.Add(new TextBlock
+        {
+            Text = "组件: " + engines + "\n技术栈:WinUI 3 · .NET 8 · Windows App SDK 1.8\n开源协议:MIT(详情见 LICENSE)\n安全机制:自动防爆显存(分块/降级)、CPU 线程限制、降温休息",
+            FontSize = 11,
+            Opacity = 0.6,
+            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+        });
+
+        // 关于弹窗:全屏遮罩 + 中央圆角卡片(水平垂直精确居中)
+        var popup = new Microsoft.UI.Xaml.Controls.Primitives.Popup { XamlRoot = this.XamlRoot };
+        var overlay = new Grid
+        {
+            Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(150, 0, 0, 0)),
+        };
+        // 遮罩随窗口尺寸变化自适应(全屏/调整大小时不残留显示问题);
+        // 卡片与滚动区高度跟随窗口:窗口过小时也能滚动看全(不超出屏幕被截断)
+        Border? card = null;
+        ScrollViewer? scroll = null;
+        Action ResizeOverlay = () =>
+        {
+            var w = this.ActualWidth > 0 ? this.ActualWidth : this.XamlRoot.Size.Width;
+            var h = this.ActualHeight > 0 ? this.ActualHeight : this.XamlRoot.Size.Height;
+            overlay.Width = w;
+            overlay.Height = h;
+            if (card != null) card.MaxHeight = Math.Max(280, h - 32);
+            if (scroll != null) scroll.MaxHeight = Math.Max(220, h - 100);
+        };
+        // 单例守卫:已有关于弹窗打开时直接关闭旧的(防连点叠加)
+        if (_aboutPopup?.IsOpen == true) _aboutPopup.IsOpen = false;
+        void OnSizeChanged(object s, SizeChangedEventArgs a) => ResizeOverlay();
+        this.SizeChanged += OnSizeChanged;
+        popup.Closed += (_, _) => this.SizeChanged -= OnSizeChanged;
+        card = new Border
+        {
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppPanelBrush"],
+            BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+            BorderThickness = new Microsoft.UI.Xaml.Thickness(1),
+            CornerRadius = new Microsoft.UI.Xaml.CornerRadius(14),
+            Width = 660,
+            MaxHeight = 780,
+            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
+            VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+        };
+        var cardPanel = new StackPanel();
+        var header = new Grid { ColumnSpacing = 8, Margin = new Microsoft.UI.Xaml.Thickness(18, 12, 10, 6) };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.Children.Add(new TextBlock
+        {
+            Text = "关于 ALH Pro",
+            FontSize = 16,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+        });
+        var closeBtn = new Button
+        {
+            Content = "✕",
+            FontSize = 12,
+            Padding = new Microsoft.UI.Xaml.Thickness(10, 4, 10, 4),
+            Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
+            BorderThickness = new Microsoft.UI.Xaml.Thickness(0),
+        };
+        closeBtn.Click += (_, _) => popup.IsOpen = false;
+        Grid.SetColumn(closeBtn, 1);
+        header.Children.Add(closeBtn);
+        cardPanel.Children.Add(header);
+        cardPanel.Children.Add(new Border
+        {
+            Height = 1,
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+            Margin = new Microsoft.UI.Xaml.Thickness(12, 0, 12, 6),
+        });
+        scroll = new ScrollViewer
+        {
+            Content = content,
+            MaxHeight = 660,
+            Padding = new Microsoft.UI.Xaml.Thickness(18, 0, 22, 16),
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        };
+        cardPanel.Children.Add(scroll);
+        card.Child = cardPanel;
+        overlay.Children.Add(card);
+        ResizeOverlay();   // 首次按当前窗口尺寸设置卡片/滚动区高度
+        // 点遮罩关闭;卡片内部点击不冒泡
+        overlay.Tapped += (_, _) => popup.IsOpen = false;
+        card.Tapped += (_, args) => args.Handled = true;
+        popup.Child = overlay;
+        _aboutPopup = popup;
+        popup.IsOpen = true;
+    }
+
+    private Microsoft.UI.Xaml.Controls.Primitives.Popup? _aboutPopup;   // 关于弹窗(单例守卫)
+    private Microsoft.UI.Xaml.Controls.Primitives.Popup? _logPopup;     // 日志弹窗(单例守卫)
+
+    /// <summary>默认启动页:-1=上次退出界面(默认) 0=图片放大 1=AI 抠图 2=视频处理。</summary>
+    private int _startupPage = -1;
+    private static string StartupFile => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ALHPro", "startup-page.txt");
+    // 最近一次使用的界面(切换即写,退出时也写):"上次退出界面"模式启动用
+    private static string LastPageFile => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ALHPro", "last-page.txt");
+
+    private void LoadStartupPage()
+    {
+        try
+        {
+            if (File.Exists(StartupFile) && int.TryParse(File.ReadAllText(StartupFile).Trim(), out var p)
+                && p is >= -1 and <= 2)
+                _startupPage = p;
+        }
+        catch { }
+    }
+
+    private void SaveStartupPage(int p)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(StartupFile)!);
+            File.WriteAllText(StartupFile, p.ToString());
+        }
+        catch { }
+    }
+
+    /// <summary>记录最近使用的界面(0图片 1抠图 2视频):切换页面与退出时都写,供「上次退出界面」启动。</summary>
+    private void SaveLastPage(int page)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(LastPageFile)!);
+            File.WriteAllText(LastPageFile, page.ToString());
+        }
+        catch { }
+    }
+
+    private int LoadLastPage()
+    {
+        try
+        {
+            if (File.Exists(LastPageFile) && int.TryParse(File.ReadAllText(LastPageFile).Trim(), out var p)
+                && p is >= 0 and <= 2)
+                return p;
+        }
+        catch { }
+        return 0;   // 无历史记录:默认图片放大
+    }
+
+    /// <summary>设置弹窗(诊断日志 + 后续更多设置项)。</summary>
+    private void Settings_Click(object sender, RoutedEventArgs e)
+    {
+        var content = new StackPanel { Spacing = 10 };
+
+        // ================= 默认打开应用时界面(最顶部) =================
+        content.Children.Add(new TextBlock
+        {
+            Text = "默认打开应用时界面",
+            FontSize = 13,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        });
+        var pageCombo = new ComboBox { HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch };
+        pageCombo.Items.Add(new ComboBoxItem { Content = "上次退出界面(默认)" });
+        pageCombo.Items.Add(new ComboBoxItem { Content = "图片放大" });
+        pageCombo.Items.Add(new ComboBoxItem { Content = "AI 抠图" });
+        pageCombo.Items.Add(new ComboBoxItem { Content = "视频处理" });
+        pageCombo.SelectedIndex = _startupPage + 1;   // 下拉索引 = 模式 + 1(-1→0,0→1,…)
+        pageCombo.SelectionChanged += (_, _) =>
+        {
+            _startupPage = pageCombo.SelectedIndex - 1;   // 还原:0→-1(上次退出),1→0(图片),…
+            SaveStartupPage(_startupPage);
+            AppLogger.Info($"启动页面已设为:{_startupPage switch { -1 => "上次退出界面", 0 => "图片放大", 1 => "AI 抠图", _ => "视频处理" }}");
+        };
+        content.Children.Add(pageCombo);
+        content.Children.Add(new TextBlock
+        {
+            Text = "打开应用时默认进入的界面,下次启动生效。",
+            FontSize = 10, Opacity = 0.5,
+        });
+        content.Children.Add(new Border
+        {
+            Height = 1,
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+        });
+
+        // ================= 处理完成后自动删除项目 =================
+        var autoRemove = new CheckBox
+        {
+            Content = "处理完成后自动删除项目",
+            IsChecked = AppSettings.AutoRemoveDone,
+        };
+        ToolTipService.SetToolTip(autoRemove,
+            "开启后:处理完成的项目(图片/视频)等 3 秒自动从列表删除(留 3 秒看完成信息);关闭则保留在列表,已完成的视频会变灰,点「重新激活」可再处理");
+        autoRemove.Checked += (_, _) => { AppSettings.AutoRemoveDone = true; AppSettings.Save(); AppLogger.Info("已开启「完成后自动删除项目」(等 3 秒)"); };
+        autoRemove.Unchecked += (_, _) => { AppSettings.AutoRemoveDone = false; AppSettings.Save(); AppLogger.Info("已关闭「完成后自动删除项目」"); };
+        content.Children.Add(autoRemove);
+        content.Children.Add(new TextBlock
+        {
+            Text = "开启后:跑完的图片/视频等 3 秒自动从列表删除(留 3 秒看结果信息);关闭则一直留在列表。",
+            FontSize = 10, Opacity = 0.5,
+            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+        });
+        content.Children.Add(new Border
+        {
+            Height = 1,
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+        });
+
+        // ================= 计算设备(全局:图片/抠图/视频共用) =================
+        content.Children.Add(new TextBlock
+        {
+            Text = "计算设备",
+            FontSize = 13,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        });
+        var gpuCombo = new ComboBox { HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch };
+        var (gpuLabels, gpuRec) = GpuInfo.BuildLabels();   // "GPU N · 型号"(推荐项带标记),与日志 -g X 对应
+        int gpuCount = gpuLabels.Count;
+        if (gpuLabels.Count > 0)
+        {
+            foreach (var l in gpuLabels)
+                gpuCombo.Items.Add(new ComboBoxItem { Content = l });
+        }
+        else
+        {
+            // 枚举失败:仍提供 GPU 0/1 选项
+            gpuCombo.Items.Add(new ComboBoxItem { Content = "GPU 0" });
+            gpuCombo.Items.Add(new ComboBoxItem { Content = "GPU 1" });
+            gpuCount = 2;
+        }
+        gpuCombo.Items.Add(new ComboBoxItem { Content = "CPU (软件计算)" });
+        // 当前全局选择:-1=CPU(末项);≥0=GPU 编号
+        gpuCombo.SelectedIndex = AppSettings.GpuIndex >= 0 && AppSettings.GpuIndex < gpuCount
+            ? AppSettings.GpuIndex : gpuCount;
+        gpuCombo.SelectionChanged += (_, _) =>
+        {
+            // 末项=CPU
+            AppSettings.GpuIndex = gpuCombo.SelectedIndex >= gpuCount ? -1 : gpuCombo.SelectedIndex;
+            AppSettings.Save();
+            AppLogger.Info($"计算设备已设为:{gpuCombo.SelectedItem?.ToString()}");
+        };
+        content.Children.Add(gpuCombo);
+        content.Children.Add(new TextBlock
+        {
+            Text = "三个功能(图片放大 / AI 抠图 / 视频处理)统一使用这里选的计算设备。编号顺序可能与引擎实际识别的设备不一致(Windows 顺序 ≠ 引擎顺序):若选某编号处理崩/慢,换其它编号实测,日志「引擎启动...设备 -g X」会显示所选编号。无独显的电脑建议选 CPU(软件计算)。",
+            FontSize = 10, Opacity = 0.5,
+            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+        });
+        // 本机 GPU 加速自检报告(首次启动实测,常驻显示:告诉用户当前设备状态 + 会有什么问题)
+        TextBlock? reportText = null;
+        if (AppSettings.VulkanCheckDone && !string.IsNullOrEmpty(AppSettings.VulkanReport))
+        {
+            reportText = new TextBlock
+            {
+                Text = AppSettings.VulkanReport,
+                FontSize = 11,
+                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                IsTextSelectionEnabled = true,   // 可复制分享给作者排查
+            };
+            content.Children.Add(new Border
+            {
+                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(18, 120, 190, 130)),
+                CornerRadius = new Microsoft.UI.Xaml.CornerRadius(6),
+                Padding = new Microsoft.UI.Xaml.Thickness(10, 8, 10, 8),
+                Margin = new Microsoft.UI.Xaml.Thickness(0, 4, 0, 0),
+                Child = reportText,
+            });
+        }
+        else
+        {
+            reportText = new TextBlock
+            {
+                Text = "首次启动正在后台检测本机 GPU 加速支持,检测结果会显示在这里。",
+                FontSize = 10, Opacity = 0.6,
+                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+            };
+            content.Children.Add(reportText);
+        }
+        // 重新检测按钮:重新跑一遍设备自检(GPU/驱动/显存/内存/CPU),完成后自动更新报告
+        var recheckBtn = new Button
+        {
+            Content = "重新检测",
+            FontSize = 11,
+            Padding = new Microsoft.UI.Xaml.Thickness(12, 4, 12, 4),
+            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
+            Margin = new Microsoft.UI.Xaml.Thickness(0, 6, 0, 0),
+        };
+        recheckBtn.Click += (_, _) =>
+        {
+            recheckBtn.IsEnabled = false;
+            recheckBtn.Content = "检测中…";
+            reportText.Text = "正在重新检测本机设备(GPU / 显卡驱动 / 显存 / 内存 / CPU)…";
+            VulkanCheck.Completed += OnVulkanRecheckDone;
+            VulkanCheck.Recheck();
+            void OnVulkanRecheckDone()
+            {
+                VulkanCheck.Completed -= OnVulkanRecheckDone;
+                try
+                {
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        reportText.Text = VulkanCheck.Report;
+                        recheckBtn.IsEnabled = true;
+                        recheckBtn.Content = "重新检测";
+                    });
+                }
+                catch { }
+            }
+        };
+        content.Children.Add(recheckBtn);
+        content.Children.Add(new Border
+        {
+            Height = 1,
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+        });
+
+        // ================= 安全渲染(显存/内存/CPU 墙,放最上面) =================
+        content.Children.Add(new TextBlock
+        {
+            Text = "安全渲染",
+            FontSize = 13,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = "防止处理大图/视频时电脑卡死或闪退。选【自动】就行:程序按这台电脑的配置自动限制,换电脑会重新检测、自动调整。",
+            FontSize = 12, Opacity = 0.75, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+        });
+
+        // 模式:自动 / 手动
+        var modeRadios = new RadioButtons { SelectedIndex = SafeRender.Mode };
+        modeRadios.Items.Add(new RadioButton { Content = "自动" });
+        modeRadios.Items.Add(new RadioButton { Content = "手动设置上限" });
+        content.Children.Add(modeRadios);
+
+        // 手动面板:三个可调安全墙,选中「手动设置上限」时才显示(放在休息/温度墙复选框上面)
+        var manualPanel = new StackPanel { Spacing = 6, Visibility = SafeRender.Mode == 1 ? Visibility.Visible : Visibility.Collapsed };
+
+        // 显存上限(滑条 + 数值 + 重置为设备最优值)
+        var vramLabel = new TextBlock
+        {
+            Text = "显存上限:AI 最多用多少显存(GB)",
+            FontSize = 11, Opacity = 0.8,
+        };
+        manualPanel.Children.Add(vramLabel);
+        var vramRow = new Grid { ColumnSpacing = 8 };
+        vramRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        vramRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        vramRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var vramSlider = new Slider
+        {
+            Minimum = 1,
+            Maximum = Math.Min(24, Math.Max(2, (int)Math.Round(SafeRender.TotalVramGB))),
+            Value = SafeRender.VramCapGB > 0
+                ? Math.Clamp(SafeRender.VramCapGB, 1, Math.Min(24, (int)Math.Round(SafeRender.TotalVramGB)))
+                : Math.Min(8, (int)Math.Round(SafeRender.TotalVramGB)),
+            StepFrequency = 1,
+            TickFrequency = 1,
+            IsThumbToolTipEnabled = true,
+        };
+        var vramVal = new TextBlock
+        {
+            MinWidth = 30,
+            HorizontalTextAlignment = Microsoft.UI.Xaml.TextAlignment.Center,
+            VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+        };
+        var vramReset = new Button
+        {
+            Content = "重置", FontSize = 10,
+            Padding = new Microsoft.UI.Xaml.Thickness(10, 4, 10, 4),
+            VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+        };
+        ToolTipService.SetToolTip(vramReset, "恢复为设备最优值");
+        Grid.SetColumn(vramSlider, 0);
+        Grid.SetColumn(vramVal, 1);
+        Grid.SetColumn(vramReset, 2);
+        vramRow.Children.Add(vramSlider);
+        vramRow.Children.Add(vramVal);
+        vramRow.Children.Add(vramReset);
+        manualPanel.Children.Add(vramRow);
+
+        // 内存上限(滑条 + 数值 + 重置为设备最优值)
+        var ramLabel = new TextBlock
+        {
+            Text = "内存上限:处理时最多用多少内存(GB)",
+            FontSize = 11, Opacity = 0.8,
+        };
+        manualPanel.Children.Add(ramLabel);
+        var ramRow = new Grid { ColumnSpacing = 8 };
+        ramRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        ramRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        ramRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var ramSlider = new Slider
+        {
+            Minimum = 2,
+            Maximum = Math.Min(64, Math.Max(4, (int)Math.Round(SafeRender.TotalRamGB))),
+            Value = SafeRender.RamCapGB > 0
+                ? Math.Clamp(SafeRender.RamCapGB, 2, Math.Min(64, (int)Math.Round(SafeRender.TotalRamGB)))
+                : Math.Min(16, (int)Math.Round(SafeRender.TotalRamGB)),
+            StepFrequency = 1,
+            TickFrequency = 1,
+            IsThumbToolTipEnabled = true,
+        };
+        var ramVal = new TextBlock
+        {
+            MinWidth = 30,
+            HorizontalTextAlignment = Microsoft.UI.Xaml.TextAlignment.Center,
+            VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+        };
+        var ramReset = new Button
+        {
+            Content = "重置", FontSize = 10,
+            Padding = new Microsoft.UI.Xaml.Thickness(10, 4, 10, 4),
+            VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+        };
+        ToolTipService.SetToolTip(ramReset, "恢复为设备最优值");
+        Grid.SetColumn(ramSlider, 0);
+        Grid.SetColumn(ramVal, 1);
+        Grid.SetColumn(ramReset, 2);
+        ramRow.Children.Add(ramSlider);
+        ramRow.Children.Add(ramVal);
+        ramRow.Children.Add(ramReset);
+        manualPanel.Children.Add(ramRow);
+
+        // 手动:CPU 占用 —— 这是"引擎自己的线程量"(单实例吃多少核),与下方「限制总 CPU 占用」(总%硬上限)是两回事
+        var cpuLabel = new TextBlock
+        {
+            Text = "引擎线程量(单实例吃多少核)",
+            FontSize = 11, Opacity = 0.8,
+        };
+        ToolTipService.SetToolTip(cpuLabel,
+            "引擎自己的计算线程数:低=1 线程、中≈半核封顶 4、高≈半核封顶 8。控制的是「单个引擎实例用多少核」;想限制所有引擎+ffmpeg 的【总】CPU 百分比,请用下方「限制总 CPU 占用」(那是 Windows Job 硬上限)。");
+        manualPanel.Children.Add(cpuLabel);
+        var cpuRadios = new RadioButtons
+        {
+            SelectedIndex = SafeRender.CpuLevel > 0 ? SafeRender.CpuLevel - 1 : 1,
+        };
+        cpuRadios.Items.Add(new RadioButton { Content = "低" });
+        cpuRadios.Items.Add(new RadioButton { Content = "中" });
+        cpuRadios.Items.Add(new RadioButton { Content = "高" });
+        manualPanel.Children.Add(cpuRadios);
+
+        content.Children.Add(manualPanel);
+
+        // 处理时降优先级开关(防整机卡;默认开)
+        var lowPriCheck = new CheckBox
+        {
+            Content = "系统流畅优先",
+            FontSize = 12,
+            IsChecked = SafeRender.LowPriorityEnabled,
+        };
+        ToolTipService.SetToolTip(lowPriCheck,
+            "处理时把计算进程设为「低于正常」优先级,并预留 1~2 个 CPU 核心给系统/前台软件(处理器亲和性),线程数也相应收紧:即使 CPU 满载,浏览器和其他软件也不卡。代价是处理速度略慢。不卡电脑的现代做法");
+        lowPriCheck.Checked += (_, _) => { SafeRender.LowPriorityEnabled = true; SafeRender.Save(); };
+        lowPriCheck.Unchecked += (_, _) => { SafeRender.LowPriorityEnabled = false; SafeRender.Save(); };
+        content.Children.Add(lowPriCheck);
+
+        // ===== 资源上限保护(给其他程序留余量;3 个手动开关,默认关,觉得卡才勾)=====
+        var resHint = new TextBlock
+        {
+            Text = "已开启资源保护,处理速度可能略降,但更不容易卡顿/抢资源。",
+            FontSize = 11, Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xE8, 0xA3, 0x3D)),
+            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
+        };
+        content.Children.Add(resHint);
+        void RefreshResHint()
+            => resHint.Visibility = (SafeRender.LimitCpuJob || SafeRender.SplitCores)
+                ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+        var limitCpuCheck = new CheckBox
+        {
+            Content = "限制总 CPU 占用",
+            FontSize = 12, IsChecked = true, IsEnabled = false,   // 强制开启:给其他程序留余量,不允许关闭
+        };
+        ToolTipService.SetToolTip(limitCpuCheck,
+            "把引擎和 ffmpeg 的总 CPU 占用限制在约 85%,保证其他程序至少有 15% 核可用;开启后即使多任务排队也不卡前台,速度略降。");
+
+        // 手动模式:总 CPU 上限滑条(50~95);自动模式显示固定 85%
+        var cpuCapRow = new Grid { ColumnSpacing = 8, Margin = new Microsoft.UI.Xaml.Thickness(24, 0, 0, 0), Visibility = SafeRender.LimitCpuJob ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed };
+        cpuCapRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        cpuCapRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        cpuCapRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        cpuCapRow.Children.Add(new TextBlock { Text = "总CPU上限", FontSize = 11, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center });
+        var cpuCapSlider = new Slider
+        {
+            Minimum = 50, Maximum = 95, StepFrequency = 1, Value = SafeRender.CpuCapPct, FontSize = 11,
+            VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+        };
+        ToolTipService.SetToolTip(cpuCapSlider, "引擎+ffmpeg 的总 CPU 上限(50%~95%):给系统/前台留余量。自动模式固定 85%;切到自定义模式即可拖这条滑条(50~95)。");
+        var cpuCapVal = new TextBlock { Text = $"{SafeRender.GetEffectiveCpuCapPct():0}%", MinWidth = 40, FontSize = 11, HorizontalTextAlignment = Microsoft.UI.Xaml.TextAlignment.Center, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
+        cpuCapSlider.ValueChanged += (_, _) =>
+        {
+            SafeRender.CpuCapPct = Math.Clamp(cpuCapSlider.Value, 50, 95);
+            SafeRender.Save();
+            cpuCapVal.Text = $"{SafeRender.GetEffectiveCpuCapPct():0}%";
+        };
+        Grid.SetColumn(cpuCapSlider, 1);
+        Grid.SetColumn(cpuCapVal, 2);
+        cpuCapRow.Children.Add(cpuCapSlider);
+        cpuCapRow.Children.Add(cpuCapVal);
+
+        limitCpuCheck.Checked += (_, _) => { SafeRender.LimitCpuJob = true; SafeRender.Save(); RefreshResHint(); cpuCapRow.Visibility = Microsoft.UI.Xaml.Visibility.Visible; };
+        limitCpuCheck.Unchecked += (_, _) => { SafeRender.LimitCpuJob = true; SafeRender.Save(); RefreshResHint(); cpuCapRow.Visibility = Microsoft.UI.Xaml.Visibility.Visible; };   // 强制开:不可关
+        content.Children.Add(limitCpuCheck);
+        content.Children.Add(cpuCapRow);
+
+        var splitCoresCheck = new CheckBox
+        {
+            Content = "引擎/ffmpeg 按可用核分线程",
+            FontSize = 12, IsChecked = SafeRender.SplitCores,
+        };
+        ToolTipService.SetToolTip(splitCoresCheck,
+            "把超分/补帧引擎线程数除以并发路数,并给每个实例分配独立核,避免多路引擎挤在同一批核上超订;同时给 ffmpeg 拆帧/编码限制线程。开启后后台占用更规整,不抢系统核。");
+        splitCoresCheck.Checked += (_, _) => { SafeRender.SplitCores = true; SafeRender.Save(); RefreshResHint(); };
+        splitCoresCheck.Unchecked += (_, _) => { SafeRender.SplitCores = false; SafeRender.Save(); RefreshResHint(); };
+        content.Children.Add(splitCoresCheck);
+
+        RefreshResHint();
+
+        // 降温休息开关(可选)+ 可调间隔/时长
+        var restCheck = new CheckBox
+        {
+            Content = "长时间处理时,按下面的间隔休息降温",
+            FontSize = 12,
+            IsChecked = SafeRender.RestEnabled,
+        };
+        content.Children.Add(restCheck);
+
+        var restRow = new Grid { ColumnSpacing = 8 };
+        restRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        restRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        restRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        restRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        restRow.Children.Add(new TextBlock { Text = "连续处理", FontSize = 12, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center });
+        var restIntervalCombo = new ComboBox { FontSize = 12 };
+        restIntervalCombo.Items.Add(new ComboBoxItem { Content = "30 分钟", Tag = 30.0 });
+        restIntervalCombo.Items.Add(new ComboBoxItem { Content = "1 小时", Tag = 60.0 });
+        restIntervalCombo.SelectedIndex = SafeRender.RestIntervalMin >= 45 ? 1 : 0;
+        restIntervalCombo.SelectionChanged += (_, _) =>
+        {
+            if (restIntervalCombo.SelectedItem is ComboBoxItem ci && ci.Tag is double m)
+            {
+                SafeRender.RestIntervalMin = m;
+                SafeRender.Save();
+            }
+        };
+        Grid.SetColumn(restIntervalCombo, 1);
+        restRow.Children.Add(restIntervalCombo);
+        var restDurLabel = new TextBlock { Text = "每次休息", FontSize = 12, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
+        Grid.SetColumn(restDurLabel, 2);
+        restRow.Children.Add(restDurLabel);
+        var restDurationCombo = new ComboBox { FontSize = 12 };
+        foreach (var m in new[] { 10, 15, 30 })
+            restDurationCombo.Items.Add(new ComboBoxItem { Content = $"{m} 分钟", Tag = m });
+        restDurationCombo.SelectedIndex = SafeRender.RestDurationMin switch { 10 => 0, 30 => 2, _ => 1 };
+        restDurationCombo.SelectionChanged += (_, _) =>
+        {
+            if (restDurationCombo.SelectedItem is ComboBoxItem ci && ci.Tag is int m)
+            {
+                SafeRender.RestDurationMin = m;
+                SafeRender.Save();
+            }
+        };
+        Grid.SetColumn(restDurationCombo, 3);
+        restRow.Children.Add(restDurationCombo);
+        content.Children.Add(restRow);
+
+        // 温度墙开关(独立,默认关)
+        var tempCheck = new CheckBox
+        {
+            Content = "显卡过热时自动暂停降温(超过 85°C 暂停 10 分钟)",
+            FontSize = 12,
+            IsChecked = SafeRender.TempWallEnabled,
+        };
+        // 无 N 卡(NVIDIA)时读不到温度,温度墙不会生效——开关置灰 + tooltip 说明
+        bool hasNvidia = GpuInfo.GetAdapterNames().Any(n => n.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase));
+        tempCheck.IsEnabled = hasNvidia;
+        tempCheck.Opacity = hasNvidia ? 1.0 : 0.5;
+        ToolTipService.SetToolTip(tempCheck, hasNvidia
+            ? "N 卡温度超过 85°C 自动暂停 10 分钟,降到 70°C 提前恢复继续"
+            : "未检测到 NVIDIA 显卡:本机读不到 GPU 温度,此功能不可用(AMD/Intel 显卡暂不支持温度读取)");
+        content.Children.Add(tempCheck);
+
+
+
+        // 当前生效结果
+        var applyText = new TextBlock
+        {
+            Text = "",
+            FontSize = 11, Opacity = 0.85, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+        };
+        content.Children.Add(applyText);
+
+        static string CpuName(int lv) => lv switch { 1 => "低", 2 => "中", _ => "高" };
+
+        // 手动面板展开/收起动画:高度 0→实际高度 + 淡入淡出;
+        // 展开 QuarticEase EaseOut(优雅),收回 LinearEase 匀速(EaseOut 尾部停滞是"顿"的元凶);
+        // 下方内容随高度动画平滑推下/收上;状态没变不重播;新动画前停掉旧的防止竞争
+        Microsoft.UI.Xaml.Media.Animation.Storyboard? lastPanelSb = null;
+        void AnimatePanel(Microsoft.UI.Xaml.UIElement el, bool show)
+        {
+            if ((el.Visibility == Visibility.Visible) == show) return;
+            var fe = el as Microsoft.UI.Xaml.FrameworkElement;
+            if (fe == null) { el.Visibility = show ? Visibility.Visible : Visibility.Collapsed; return; }
+            if (lastPanelSb != null) { try { lastPanelSb.Stop(); } catch { } }
+            var sb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+            lastPanelSb = sb;
+            var ease = show
+                ? (Microsoft.UI.Xaml.Media.Animation.EasingFunctionBase?)new Microsoft.UI.Xaml.Media.Animation.QuarticEase
+                {
+                    EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut,
+                }
+                : null;
+            if (show)
+            {
+                el.Visibility = Visibility.Visible;
+                el.Opacity = 0;
+                try { el.UpdateLayout(); } catch { }
+                double target = fe.ActualHeight > 0 ? fe.ActualHeight : 80;
+                fe.Height = 0;
+                var ha = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+                {
+                    To = target, Duration = new Duration(TimeSpan.FromMilliseconds(220)),
+                    EasingFunction = ease, EnableDependentAnimation = true,
+                };
+                Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(ha, fe);
+                Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(ha, "Height");
+                sb.Children.Add(ha);
+                sb.Completed += (_, _) => fe.Height = double.NaN;
+            }
+            else
+            {
+                // 收起:高度动画到 0,结束后隐藏。淡出比高度收缩更快(内容先消失,末尾不"顿")
+                double from = fe.ActualHeight > 0 ? fe.ActualHeight : fe.Height;
+                var ha = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+                {
+                    From = from, To = 0, Duration = new Duration(TimeSpan.FromMilliseconds(120)),
+                    EasingFunction = ease, EnableDependentAnimation = true,
+                };
+                Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(ha, fe);
+                Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(ha, "Height");
+                sb.Children.Add(ha);
+                sb.Completed += (_, _) =>
+                {
+                    fe.Height = double.NaN;
+                    el.Visibility = Visibility.Collapsed;
+                };
+            }
+            var oa = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+            {
+                To = show ? 1 : 0,
+                Duration = new Duration(TimeSpan.FromMilliseconds(show ? 220 : 90)),
+                EasingFunction = ease, EnableDependentAnimation = true,
+            };
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(oa, el);
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(oa, "Opacity");
+            sb.Children.Add(oa);
+            sb.Begin();
+        }
+
+        void RefreshSafeRender()
+        {
+            SafeRender.Mode = modeRadios.SelectedIndex;
+            SafeRender.RestEnabled = restCheck.IsChecked == true;
+            SafeRender.TempWallEnabled = tempCheck.IsChecked == true;
+            // 休息间隔/时长选择:启用休息才可选(置灰表示不生效)
+            restIntervalCombo.IsEnabled = restCheck.IsChecked == true;
+            restDurationCombo.IsEnabled = restCheck.IsChecked == true;
+            restIntervalCombo.Opacity = restCheck.IsChecked == true ? 1.0 : 0.5;
+            restDurationCombo.Opacity = restCheck.IsChecked == true ? 1.0 : 0.5;
+            if (SafeRender.Mode == 1)
+            {
+                SafeRender.VramCapGB = (int)vramSlider.Value;
+                SafeRender.RamCapGB = (int)ramSlider.Value;
+                SafeRender.CpuLevel = cpuRadios.SelectedIndex + 1;
+            }
+            else
+            {
+                SafeRender.CpuLevel = 0;   // 自动:按本机重新推荐
+            }
+            AnimatePanel(manualPanel, SafeRender.Mode == 1);   // 展开/收起都有动画,下方内容跟着平滑移动
+            vramVal.Text = vramSlider.Value.ToString("0");
+            ramVal.Text = ramSlider.Value.ToString("0");
+            var modeTxt = SafeRender.Mode == 1 ? "" : "当前生效(自动):";
+            applyText.Text = $"{modeTxt}显存墙 {SafeRender.EffectiveVramGB:0.#} GB → 分块 {SafeRender.GetTileSize()} · " +
+                $"内存墙 {SafeRender.EffectiveRamGB:0.#} GB → 每批 {SafeRender.GetVideoBatchSize()} 帧 · CPU {CpuName(SafeRender.EffectiveCpuLevel)}";
+            SafeRender.Save();
+            AppLogger.Info($"安全渲染设置已保存:模式={(SafeRender.Mode == 0 ? "自动" : "自定义")}," +
+                $"显存墙 {SafeRender.EffectiveVramGB:0.#} GB,内存墙 {SafeRender.EffectiveRamGB:0.#} GB," +
+                $"CPU {SafeRender.EffectiveCpuLevel},休息={(SafeRender.RestEnabled ? $"{SafeRender.RestIntervalMin:0}分钟/{SafeRender.RestDurationMin}分钟" : "关")}," +
+                $"温度墙={(SafeRender.TempWallEnabled ? "开" : "关")},后台流畅优先={(SafeRender.LowPriorityEnabled ? "开" : "关")}");
+        }
+        modeRadios.SelectionChanged += (_, _) => RefreshSafeRender();
+        vramReset.Click += (_, _) => { vramSlider.Value = (int)Math.Round(SafeRender.TotalVramGB * 0.75); RefreshSafeRender(); };
+        ramReset.Click += (_, _) => { ramSlider.Value = (int)Math.Round(SafeRender.TotalRamGB * 0.75); RefreshSafeRender(); };
+        vramSlider.ValueChanged += (_, _) => { if (SafeRender.Mode == 1) RefreshSafeRender(); };
+        ramSlider.ValueChanged += (_, _) => { if (SafeRender.Mode == 1) RefreshSafeRender(); };
+        cpuRadios.SelectionChanged += (_, _) => { if (SafeRender.Mode == 1) RefreshSafeRender(); };
+        restCheck.Checked += (_, _) => RefreshSafeRender();
+        restCheck.Unchecked += (_, _) => RefreshSafeRender();
+        tempCheck.Checked += (_, _) => RefreshSafeRender();
+        tempCheck.Unchecked += (_, _) => RefreshSafeRender();
+        RefreshSafeRender();
+
+        // ================= 诊断日志(放在最下面) =================
+        content.Children.Add(new Border
+        {
+            Height = 1,
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = "诊断日志",
+            FontSize = 13,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = "日志会记录你的操作和报错(含原因)。出问题时,把这个日志文件发给作者即可快速定位。",
+            FontSize = 12, Opacity = 0.75, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+        });
+
+        // 打开按钮行
+        var btnRow = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 8 };
+        var openBtn = new Button { Content = "打开日志文件", FontSize = 12, Padding = new Microsoft.UI.Xaml.Thickness(12, 6, 12, 6) };
+        openBtn.Click += (_, _) =>
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(AppLogger.LogFile)
+                { UseShellExecute = true });
+            }
+            catch { }
+        };
+        var openDirBtn = new Button { Content = "打开所在文件夹", FontSize = 12, Padding = new Microsoft.UI.Xaml.Thickness(12, 6, 12, 6) };
+        openDirBtn.Click += (_, _) => AppLogger.OpenInExplorer();
+        btnRow.Children.Add(openBtn);
+        btnRow.Children.Add(openDirBtn);
+        content.Children.Add(btnRow);
+
+        // 位置 + 当前大小
+        var sizeMb = AppLogger.CurrentSize / 1024.0 / 1024.0;
+        content.Children.Add(new TextBlock
+        {
+            Text = $"位置:{AppLogger.LogFile}\n当前大小:{sizeMb:0.0} MB",
+            FontSize = 10, Opacity = 0.5, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+        });
+
+        content.Children.Add(new Border
+        {
+            Height = 1,
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+        });
+
+        // 按时间清理
+        var timeClean = new CheckBox
+        {
+            Content = "按时间清理(只保留最近 N 天)",
+            FontSize = 12,
+            IsChecked = AppLogger.CleanByTime,
+        };
+        var daysCombo = new ComboBox { MinWidth = 90 };
+        daysCombo.Items.Add(new ComboBoxItem { Content = "7 天" });
+        daysCombo.Items.Add(new ComboBoxItem { Content = "14 天" });
+        daysCombo.Items.Add(new ComboBoxItem { Content = "30 天" });
+        daysCombo.SelectedIndex = AppLogger.KeepDays >= 30 ? 2 : (AppLogger.KeepDays >= 14 ? 1 : 0);
+        var timeRow = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 8, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
+        timeRow.Children.Add(timeClean);
+        timeRow.Children.Add(daysCombo);
+        content.Children.Add(timeRow);
+
+        // 按大小清理
+        var sizeClean = new CheckBox
+        {
+            Content = "按大小清理(超过则只留最新)",
+            FontSize = 12,
+            IsChecked = AppLogger.CleanBySize,
+        };
+        var mbCombo = new ComboBox { MinWidth = 90 };
+        mbCombo.Items.Add(new ComboBoxItem { Content = "5 MB" });
+        mbCombo.Items.Add(new ComboBoxItem { Content = "10 MB" });
+        mbCombo.Items.Add(new ComboBoxItem { Content = "20 MB" });
+        mbCombo.SelectedIndex = AppLogger.MaxSizeMb >= 20 ? 2 : (AppLogger.MaxSizeMb >= 10 ? 1 : 0);
+        var sizeRow = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 8, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
+        sizeRow.Children.Add(sizeClean);
+        sizeRow.Children.Add(mbCombo);
+        content.Children.Add(sizeRow);
+
+        // 事件:变更即保存
+        void ApplyAndSave()
+        {
+            AppLogger.CleanByTime = timeClean.IsChecked == true;
+            AppLogger.CleanBySize = sizeClean.IsChecked == true;
+            AppLogger.KeepDays = daysCombo.SelectedIndex == 2 ? 30 : (daysCombo.SelectedIndex == 1 ? 14 : 7);
+            AppLogger.MaxSizeMb = mbCombo.SelectedIndex == 2 ? 20 : (mbCombo.SelectedIndex == 1 ? 10 : 5);
+            AppLogger.SaveConfig();
+        }
+        timeClean.Checked += (_, _) => ApplyAndSave();
+        timeClean.Unchecked += (_, _) => ApplyAndSave();
+        sizeClean.Checked += (_, _) => ApplyAndSave();
+        sizeClean.Unchecked += (_, _) => ApplyAndSave();
+        daysCombo.SelectionChanged += (_, _) => ApplyAndSave();
+        mbCombo.SelectionChanged += (_, _) => ApplyAndSave();
+
+        // 立即清理按钮
+        var cleanNow = new Button { Content = "立即清理", FontSize = 12, HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Right, Padding = new Microsoft.UI.Xaml.Thickness(12, 6, 12, 6) };
+        cleanNow.Click += (_, _) =>
+        {
+            ApplyAndSave();
+            AppLogger.Cleanup();
+            AppLogger.Info("手动清理日志");
+        };
+        content.Children.Add(cleanNow);
+
+        content.Children.Add(new TextBlock
+        {
+            Text = "两项清理相辅相成:满足任一条即触发。下次启动时自动清理。",
+            FontSize = 10, Opacity = 0.5, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+        });
+
+        ShowCardPopup(content, "设置", 560);
+    }
+
+    /// <summary>左下角状态栏单击 → 弹窗放大查看诊断日志(尾部)。</summary>
+    private void StatusText_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
+    {
+        string text;
+        try
+        {
+            text = File.Exists(AppLogger.LogFile) ? File.ReadAllText(AppLogger.LogFile) : "(暂无日志)";
+        }
+        catch { text = "(日志读取失败)"; }
+        if (text.Length > 200000) text = text.Substring(text.Length - 200000);   // 只显示尾部,避免卡顿
+
+        var box = new TextBox
+        {
+            Text = text,
+            IsReadOnly = true,
+            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
+            FontSize = 12,
+            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+            AcceptsReturn = true,
+            MaxHeight = 540,
+        };
+        ScrollViewer.SetVerticalScrollBarVisibility(box, ScrollBarVisibility.Auto);
+        var content = new StackPanel { Spacing = 6 };
+        content.Children.Add(new TextBlock { Text = "日志内容(显示最近部分)", FontSize = 11, Opacity = 0.6 });
+        content.Children.Add(box);
+        ShowCardPopup(content, "诊断日志", 760);
+    }
+
+    /// <summary>居中圆角卡片弹窗(遮罩 + 标题 + 关闭按钮 + 可滚动内容)。</summary>
+    private void ShowCardPopup(StackPanel content, string title, double width)
+    {
+        var popup = new Microsoft.UI.Xaml.Controls.Primitives.Popup { XamlRoot = this.XamlRoot };
+        var overlay = new Grid
+        {
+            Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(150, 0, 0, 0)),
+        };
+        // 遮罩随窗口尺寸变化自适应;卡片/滚动区高度跟随窗口,窗口过小时也能滚动看全
+        Border? card = null;
+        ScrollViewer? scroll = null;
+        Action ResizeOverlay = () =>
+        {
+            var w = this.ActualWidth > 0 ? this.ActualWidth : this.XamlRoot.Size.Width;
+            var h = this.ActualHeight > 0 ? this.ActualHeight : this.XamlRoot.Size.Height;
+            overlay.Width = w;
+            overlay.Height = h;
+            if (card != null) card.MaxHeight = Math.Max(280, h - 32);
+            if (scroll != null) scroll.MaxHeight = Math.Max(220, h - 100);
+        };
+        if (_logPopup?.IsOpen == true) _logPopup.IsOpen = false;
+        // 用页面 SizeChanged 跟踪窗口尺寸变化(最大化/还原/全屏时能拿到更新后的尺寸,避免遮罩盖不满)
+        void OnSizeChanged(object s, SizeChangedEventArgs a) => ResizeOverlay();
+        this.SizeChanged += OnSizeChanged;
+        popup.Closed += (_, _) => this.SizeChanged -= OnSizeChanged;
+
+        card = new Border
+        {
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppPanelBrush"],
+            BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+            BorderThickness = new Microsoft.UI.Xaml.Thickness(1),
+            CornerRadius = new Microsoft.UI.Xaml.CornerRadius(14),
+            Width = width,
+            MaxHeight = 700,
+            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
+            VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+        };
+        var cardPanel = new StackPanel();
+        var header = new Grid { ColumnSpacing = 8, Margin = new Microsoft.UI.Xaml.Thickness(18, 12, 10, 6) };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 16,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+        });
+        var closeBtn = new Button
+        {
+            Content = "✕",
+            FontSize = 12,
+            Padding = new Microsoft.UI.Xaml.Thickness(10, 4, 10, 4),
+            Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
+            BorderThickness = new Microsoft.UI.Xaml.Thickness(0),
+        };
+        closeBtn.Click += (_, _) => popup.IsOpen = false;
+        Grid.SetColumn(closeBtn, 1);
+        header.Children.Add(closeBtn);
+        cardPanel.Children.Add(header);
+        cardPanel.Children.Add(new Border
+        {
+            Height = 1,
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+            Margin = new Microsoft.UI.Xaml.Thickness(12, 0, 12, 6),
+        });
+        scroll = new ScrollViewer
+        {
+            Content = content,
+            MaxHeight = 620,
+            Padding = new Microsoft.UI.Xaml.Thickness(18, 0, 22, 16),
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        };
+        cardPanel.Children.Add(scroll);
+        card.Child = cardPanel;
+        overlay.Children.Add(card);
+        ResizeOverlay();   // 首次按当前窗口尺寸设置卡片/滚动区高度
+        overlay.Tapped += (_, _) => popup.IsOpen = false;
+        card.Tapped += (_, args) => args.Handled = true;
+        popup.Child = overlay;
+        _logPopup = popup;
+        popup.IsOpen = true;
+    }
+}

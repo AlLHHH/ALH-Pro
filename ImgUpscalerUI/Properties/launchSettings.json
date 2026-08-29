@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "ALHPro (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "ALHPro (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

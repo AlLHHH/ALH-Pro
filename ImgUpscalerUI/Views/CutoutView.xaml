@@ -1,0 +1,399 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<UserControl
+    x:Class="ALHPro.Views.CutoutView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:local="using:ALHPro.Views"
+    mc:Ignorable="d">
+
+    <!-- 内容区(背景由 MainPage 统一,这里只做内部圆角卡片) -->
+    <Grid>
+        <Grid.KeyboardAccelerators>
+            <KeyboardAccelerator Key="Z" Modifiers="Control" Invoked="Undo_Invoked"/>
+            <KeyboardAccelerator Key="Z" Modifiers="Control,Shift" Invoked="Redo_Invoked"/>
+        </Grid.KeyboardAccelerators>
+        <Grid.ColumnDefinitions>
+            <!-- 参数面板 -->
+            <ColumnDefinition Width="300"/>
+            <!-- 右侧 -->
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- ============ 参数面板(圆角卡片) ============ -->
+        <Border Grid.Column="0" Background="{StaticResource AppPanelBrush}"
+                BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
+                CornerRadius="12" Margin="0,0,10,10">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel Padding="14,16" Spacing="14">
+
+                    <TextBlock Text="输入" Style="{StaticResource SectionTitle}"/>
+                    <Button x:Name="PickBtn" Content="添加图片(可多选)..." Click="PickBtn_Click"
+                            HorizontalAlignment="Stretch"/>
+                    <TextBlock x:Name="FileInfo" Text="未添加图片" Style="{StaticResource HintText}"
+                               TextTrimming="CharacterEllipsis"/>
+
+                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
+
+                    <TextBlock Text="输出" Style="{StaticResource SectionTitle}"/>
+                    <TextBox x:Name="OutDirBox" PlaceholderText="默认与源图同目录"
+                             IsSpellCheckEnabled="False"
+                             ToolTipService.ToolTip="输出文件夹:留空=和源图同目录"/>
+                    <Button Content="选择输出文件夹..." Click="BrowseOut_Click"
+                            HorizontalAlignment="Stretch"/>
+                    <TextBlock Text="多张图片时自动在输出目录创建子文件夹"
+                               Style="{StaticResource HintText}" TextWrapping="Wrap"/>
+
+                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
+
+                    <TextBlock Text="抠图模型" Style="{StaticResource SectionTitle}"/>
+                    <ComboBox x:Name="ModelCombo" HorizontalAlignment="Stretch"
+                              SelectedIndex="0" SelectionChanged="ParamsCombo_Changed"
+                              ToolTipService.ToolTip="BiRefNet 高精度:2025 年 SOTA,暗光/复杂背景/远景多人效果最好;ISNet 精细边缘经典稳定;U²-Net 轻量快速">
+                        <ComboBoxItem Content="BiRefNet 高精度 (推荐)"/>
+                        <ComboBoxItem Content="BiRefNet 完整版 (复杂背景)"/>
+                        <ComboBoxItem Content="ISNet 精细边缘"/>
+                        <ComboBoxItem Content="ISNet 动漫"/>
+                        <ComboBoxItem Content="U²-Net 通用 (简单背景)"/>
+                        <ComboBoxItem Content="U²-Net 轻量 (快速,效果一般)"/>
+                    </ComboBox>
+
+                    <TextBlock Text="预处理" Style="{StaticResource SectionTitle}"/>
+                    <CheckBox x:Name="PreDenoiseCheck" Content="抠图前降噪 (waifu2x)"
+                              ToolTipService.ToolTip="先用 AI 1x 降噪再抠图:噪点多、压缩痕迹重的图片边缘更干净"
+                              Checked="Params_Changed" Unchecked="Params_Changed"/>
+                    <Grid ColumnSpacing="8" Margin="24,0,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="PreDenoiseLevelLabel" Text="降噪强度" VerticalAlignment="Center" FontSize="11" Opacity="0.7"/>
+                        <ComboBox x:Name="PreDenoiseLevelCombo" Grid.Column="1" SelectedIndex="1"
+                                  SelectionChanged="ParamsCombo_Changed"
+                                  ToolTipService.ToolTip="降噪强度:弱/中/强">
+                            <ComboBoxItem Content="弱"/>
+                            <ComboBoxItem Content="中"/>
+                            <ComboBoxItem Content="强"/>
+                        </ComboBox>
+                    </Grid>
+                    <CheckBox x:Name="PreUpscaleCheck" Content="抠图前超分 2x"
+                              ToolTipService.ToolTip="先 AI 放大再抠图:小图输出更大更精细(速度变慢)"
+                              Checked="Params_Changed" Unchecked="Params_Changed"/>
+
+                    <TextBlock Text="参数" Style="{StaticResource SectionTitle}"/>
+
+                    <!-- 前景阈值 -->
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="前景阈值" VerticalAlignment="Center" FontSize="12"/>
+                        <Slider x:Name="FgSlider" Grid.Column="1" Minimum="0" Maximum="255"
+                                StepFrequency="1" ValueChanged="ParamsSlider_Changed"
+                                ToolTipService.ToolTip="前景阈值:高于这个值的像素算主体(保留);调大=多保留边缘"/>
+                        <TextBlock x:Name="FgVal" Grid.Column="2" Text="128" MinWidth="34"
+                                   HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
+                        <Button Grid.Column="3" Content="重置" FontSize="10" Padding="10,4"
+                                Click="ResetFgBtn_Click"
+                                ToolTipService.ToolTip="恢复当前模型的前景阈值预设"/>
+                    </Grid>
+                    <!-- 背景阈值 -->
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="背景阈值" VerticalAlignment="Center" FontSize="12"/>
+                        <Slider x:Name="BgSlider" Grid.Column="1" Minimum="0" Maximum="255"
+                                StepFrequency="1" ValueChanged="ParamsSlider_Changed"
+                                ToolTipService.ToolTip="背景阈值:低于这个值的像素算背景(透明);调大=多去除背景"/>
+                        <TextBlock x:Name="BgVal" Grid.Column="2" Text="64" MinWidth="34"
+                                   HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
+                        <Button Grid.Column="3" Content="重置" FontSize="10" Padding="10,4"
+                                Click="ResetBgBtn_Click"
+                                ToolTipService.ToolTip="恢复当前模型的背景阈值预设"/>
+                    </Grid>
+                    <!-- 自适应阈值:在上下两个阈值滑条下面(勾选时滑条自动置灰失效) -->
+                    <CheckBox x:Name="AutoThresholdCheck" Content="自适应阈值 (按图自动定界)"
+                              IsChecked="True" Checked="Params_Changed" Unchecked="Params_Changed"
+                              ToolTipService.ToolTip="自动分析每张图的蒙版灰度分布,自动确定前景/背景的分界,比固定阈值更贴合当前图;勾选后上方两个阈值滑条自动失效"/>
+                    <!-- 边缘羽化 -->
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="边缘羽化" VerticalAlignment="Center" FontSize="12"/>
+                        <Slider x:Name="FeatherSlider" Grid.Column="1" Minimum="0" Maximum="20"
+                                StepFrequency="1" ValueChanged="ParamsSlider_Changed"
+                                ToolTipService.ToolTip="边缘羽化:让抠图边缘柔和过渡(像素,0=锐利边缘)"/>
+                        <TextBlock x:Name="FeatherVal" Grid.Column="2" Text="0" MinWidth="34"
+                                   HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
+                        <Button Grid.Column="3" Content="重置" FontSize="10" Padding="10,4"
+                                Click="ResetFeatherBtn_Click"
+                                ToolTipService.ToolTip="羽化恢复为 0"/>
+                    </Grid>
+                    <!-- 边缘增强 -->
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="边缘增强" VerticalAlignment="Center" FontSize="12"/>
+                        <Slider x:Name="EdgeSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                                StepFrequency="1" ValueChanged="ParamsSlider_Changed"
+                                ToolTipService.ToolTip="边缘增强:让主体边缘更锐利清晰"/>
+                        <TextBlock x:Name="EdgeVal" Grid.Column="2" Text="0" MinWidth="34"
+                                   HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
+                        <Button Grid.Column="3" Content="重置" FontSize="10" Padding="10,4"
+                                Click="ResetEdgeBtn_Click"
+                                ToolTipService.ToolTip="边缘增强恢复为 0"/>
+                    </Grid>
+                    <!-- 边缘清理(形态学清洗) -->
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="边缘清理" VerticalAlignment="Center" FontSize="12"/>
+                        <Slider x:Name="MorphSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                                StepFrequency="1" ValueChanged="ParamsSlider_Changed"
+                                ToolTipService.ToolTip="蒙版形态学清洗:去除背景小噪点岛+剥离边缘残留背景(0=关闭;边缘有背景残留时调大)"/>
+                        <TextBlock x:Name="MorphVal" Grid.Column="2" Text="35" MinWidth="34"
+                                   HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
+                        <Button Grid.Column="3" Content="重置" FontSize="10" Padding="10,4"
+                                Click="ResetMorphBtn_Click"
+                                ToolTipService.ToolTip="恢复当前模型的边缘清理预设"/>
+                    </Grid>
+                    <TextBlock x:Name="CutHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
+                               Text="拿不准主体?双击图片打开预览:「抠图预览」看识别区域(调参数自动刷新);「框选主体」限定范围(框外去除,框内仍按 AI 抠);「智能涂抹」绿笔保留/红笔删除,可精确修补"/>
+
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="ResetBtn" Grid.Column="0" Content="重置参数"
+                                HorizontalAlignment="Stretch" Click="ResetBtn_Click"/>
+                        <CheckBox x:Name="RememberCheck" Grid.Column="1" Content="记住上次"
+                                  VerticalAlignment="Center"
+                                  Checked="Remember_Changed" Unchecked="Remember_Changed"/>
+                    </Grid>
+
+                    <!-- 操作按钮:上一排「开始抠图」(占满变宽),中间「暂停/恢复」,最下方「停止」 -->
+                    <StackPanel Spacing="8">
+                        <Button x:Name="RunBtn" Content="开始处理"
+                                Style="{StaticResource AccentButtonStyle}"
+                                HorizontalAlignment="Stretch" MinHeight="48"
+                                IsEnabled="False" Click="RunBtn_Click"/>
+                        <CheckBox x:Name="SelectedOnlyCheck" Content="只处理选中的项目"
+                                  ToolTipService.ToolTip="勾选后只处理右侧列表里选中的项;不勾选则处理全部"/>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Button x:Name="PauseBtn" Grid.Column="0" Content="暂停"
+                                    HorizontalAlignment="Stretch" MinHeight="44"
+                                    IsEnabled="False" Click="PauseBtn_Click"
+                                    ToolTipService.ToolTip="暂停:处理完当前这张后停下,可删除还没处理的项目"/>
+                            <Button x:Name="ResumeBtn" Grid.Column="1" Content="恢复"
+                                    HorizontalAlignment="Stretch" MinHeight="44"
+                                    IsEnabled="False" Click="ResumeBtn_Click"
+                                    ToolTipService.ToolTip="恢复:立即继续处理"/>
+                        </Grid>
+                        <Button x:Name="CancelBtn" Content="强制结束"
+                                HorizontalAlignment="Stretch" MinHeight="44" Background="#E5484D" Foreground="White"
+                                IsEnabled="False" Click="CancelBtn_Click"
+                                ToolTipService.ToolTip="强制结束当前任务;休息时变「跳过休息」,点一下跳过休息继续处理"/>
+                    </StackPanel>
+
+                    <ProgressBar x:Name="TaskProgress" Minimum="0" Maximum="100" Value="0"/>
+                    <TextBlock x:Name="TaskStatus" Style="{StaticResource HintText}"
+                               TextTrimming="CharacterEllipsis"/>
+
+                    <!-- 日志详情:记录处理过程,自动滚动,超限自动清理 -->
+                    <Border Background="{StaticResource AppPanelBrush}"
+                            BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
+                            CornerRadius="6" Padding="8,6">
+                        <ScrollViewer x:Name="TaskLogScroll" MaxHeight="220"
+                                      VerticalScrollBarVisibility="Auto">
+                            <TextBlock x:Name="TaskLogText" FontSize="10" Opacity="0.7"
+                                       TextWrapping="Wrap"
+                                       Text="日志:等待任务..."/>
+                        </ScrollViewer>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <!-- ============ 右侧:列表控件 + 预览覆盖层 ============ -->
+        <Grid Grid.Column="1" Margin="0,0,10,10">
+            <Grid>
+                <local:ImageToolGrid x:Name="ToolGrid"
+                                     SelectionChanged="ToolGrid_SelectionChanged"/>
+
+                <!-- 大图预览覆盖层(选中项预览 + AI 主体预览 + 框选主体 + 智能涂抹) -->
+                <Grid x:Name="PreviewOverlay" Visibility="Collapsed" Background="#CC0D0F14">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid x:Name="PreviewRoot" Margin="16"
+                          PointerMoved="PreviewRoot_PointerMoved">
+                        <Image x:Name="PreviewImage" Stretch="Uniform"
+                               SizeChanged="PreviewImage_SizeChanged"
+                               PointerPressed="PreviewImage_PointerPressed"
+                               PointerReleased="PreviewImage_PointerReleased"
+                               PointerCanceled="PreviewImage_PointerReleased"
+                               PointerCaptureLost="PreviewImage_PointerReleased"
+                               ToolTipService.ToolTip="按住预览图或「按住查看原图」按钮:隐藏框选/涂抹标记查看原图(AI 蒙版显示中则临时显示原图)"/>
+                        <Canvas x:Name="SelCanvas" Visibility="Collapsed" Background="Transparent"
+                                PointerPressed="SelCanvas_PointerPressed"
+                                PointerMoved="SelCanvas_PointerMoved"
+                                PointerReleased="SelCanvas_PointerReleased"
+                                PointerCaptureLost="SelCanvas_PointerCaptureLost">
+                            <Rectangle x:Name="SelRect" Visibility="Collapsed"
+                                       Stroke="#5B8DEF" StrokeThickness="1.5" Fill="#335B8DEF"/>
+                        </Canvas>
+                        <!-- 智能涂抹画布:绿色笔=保留,红色笔=删除 -->
+                        <Canvas x:Name="ScribbleCanvas" Visibility="Collapsed"
+                                Background="Transparent"
+                                PointerPressed="ScribbleCanvas_PointerPressed"
+                                PointerMoved="ScribbleCanvas_PointerMoved"
+                                PointerReleased="ScribbleCanvas_PointerReleased"
+                                PointerCaptureLost="ScribbleCanvas_PointerCaptureLost">
+                            <!-- 笔迹点画在子画布上(恢复重绘/清除时不影响其他元素) -->
+                            <Canvas x:Name="ScribbleDots" IsHitTestVisible="False"/>
+                        </Canvas>
+                        <!-- 涂抹工具条:悬浮在图片底部;默认淡出不挡画面,鼠标悬停 1 秒后显示,
+                             移开 1 秒后淡回;涂抹时事件穿透(笔迹不被挡) -->
+                        <Border x:Name="ScribbleToolbar" Visibility="Collapsed"
+                                Background="#E01B1D24" CornerRadius="8" Padding="12,7"
+                                HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                                Margin="0,0,0,12"
+                                PointerEntered="ScribbleToolbar_PointerEntered"
+                                PointerExited="ScribbleToolbar_PointerExited">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="BrushKeepBtn" Content="🟢 保留" FontSize="12"
+                                        Click="BrushKeep_Click"
+                                        ToolTipService.ToolTip="绿色笔刷:涂在要保留(抠出)的物体上"/>
+                                <Button x:Name="BrushDelBtn" Content="🔴 删除" FontSize="12"
+                                        Click="BrushDel_Click"
+                                        ToolTipService.ToolTip="红色笔刷:涂在要去除(透明)的区域"/>
+                                <Button x:Name="BrushEraseBtn" Content="🧽 橡皮擦" FontSize="12"
+                                        Click="Eraser_Click"
+                                        ToolTipService.ToolTip="橡皮擦:擦掉已涂抹的笔迹"/>
+                                <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                    <TextBlock x:Name="BrushSizeLabel" Text="大小" FontSize="11"
+                                               Opacity="0.8" VerticalAlignment="Center"/>
+                                    <Slider x:Name="BrushSizeSlider" Width="80"
+                                            Minimum="4" Maximum="60" Value="18" StepFrequency="2"
+                                            ValueChanged="BrushSizeSlider_Changed"
+                                            ToolTipService.ToolTip="笔刷大小"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                    <TextBlock x:Name="ToleranceLabel" Text="容差" FontSize="11"
+                                               Opacity="0.8" VerticalAlignment="Center"/>
+                                    <Slider x:Name="ToleranceSlider" Width="80"
+                                            Minimum="0" Maximum="100" Value="20" StepFrequency="5"
+                                            ValueChanged="ToleranceSlider_Changed"
+                                            ToolTipService.ToolTip="涂抹扩散范围:小=只扩散到颜色几乎相同的连通区域(精准贴边);大=颜色差稍大也扩散,但始终被物体边缘挡住,不会跳到远处同色区域"/>
+                                    <TextBlock x:Name="ToleranceVal" Text="20" FontSize="10"
+                                               Opacity="0.7" VerticalAlignment="Center" MinWidth="22"
+                                               TextAlignment="Right"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                    <TextBlock Text="扩散" FontSize="11"
+                                               Opacity="0.8" VerticalAlignment="Center"/>
+                                    <Slider x:Name="SpreadSlider" Width="80"
+                                            Minimum="0" Maximum="600" Value="180" StepFrequency="20"
+                                            ValueChanged="SpreadSlider_Changed"
+                                            ToolTipService.ToolTip="扩散距离上限(像素):涂一笔最多扩散这么远,超远同色区域不碰;0=不限(一整笔可能铺满大面积渐变区);想全选大区域可调大或多涂几笔"/>
+                                    <TextBlock x:Name="SpreadVal" Text="180" FontSize="10"
+                                               Opacity="0.7" VerticalAlignment="Center" MinWidth="30"
+                                               TextAlignment="Right"/>
+                                </StackPanel>
+                                <Button Content="↩ 撤回" FontSize="12"
+                                        Click="Undo_Click"
+                                        ToolTipService.ToolTip="撤回上一步涂抹 (Ctrl+Z)"/>
+                                <Button Content="↪ 重做" FontSize="12"
+                                        Click="Redo_Click"
+                                        ToolTipService.ToolTip="重做涂抹 (Ctrl+Shift+Z)"/>
+                                <Button x:Name="ClearScribbleBtn" Content="清除涂抹" FontSize="12"
+                                        IsEnabled="False" Click="ClearScribble_Click"/>
+                                <Button x:Name="ClearSelBtn" Content="清除框选" FontSize="12"
+                                        IsEnabled="False" Click="ClearSel_Click"/>
+                            </StackPanel>
+                        </Border>
+                        <!-- 透明感应区:工具条淡出时接管鼠标事件(悬停后重新显示),不挡涂抹;仅涂抹模式启用 -->
+                        <Border x:Name="ToolbarHoverArea" Background="Transparent" Opacity="0"
+                                HorizontalAlignment="Stretch" VerticalAlignment="Bottom"
+                                Margin="0,0,0,8" Height="64" IsHitTestVisible="False"
+                                PointerEntered="ToolbarHoverArea_PointerEntered"
+                                PointerExited="ToolbarHoverArea_PointerExited"/>
+                    </Grid>
+                    <!-- 提示文字行(独立一行,不被按钮遮挡) -->
+                    <TextBlock x:Name="PreviewHint" Grid.Row="1" HorizontalAlignment="Center"
+                               FontSize="11" Opacity="0.65" Margin="0,0,0,6" TextWrapping="Wrap"
+                               MaxWidth="760"/>
+                    <!-- 底部按钮区:两行对齐——清除按钮在对应模式按钮正下方 -->
+                    <Grid Grid.Row="2" HorizontalAlignment="Center" Margin="0,0,0,8" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <!-- 第一行:功能按钮 -->
+                        <Button x:Name="MaskPreviewBtn" Grid.Column="0" Content="抠图预览" FontSize="12"
+                                ToolTipService.ToolTip="运行当前模型,显示 AI 识别的主体蒙版(白=主体,黑=背景;会叠加显示你的框选/涂抹)"
+                                Click="MaskPreview_Click"/>
+                        <!-- 「按住查看原图」:用普通 Border(非 Button)实现——WinUI Button 的指针捕获会干扰按住保持,
+                             导致按下即触发 PointerCaptureLost 立刻恢复(表现为"按住失效")。Border 手动管理指针,稳定。 -->
+                        <Border x:Name="PeekBtn" Grid.Column="1" Padding="16,7" CornerRadius="5"
+                                Background="#D0101014" BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
+                                VerticalAlignment="Center" HorizontalAlignment="Stretch"
+                                ToolTipService.ToolTip="按住此按钮:隐藏框选和涂抹标记查看原图;AI 蒙版预览中则临时切回原图。松开恢复"
+                                PointerPressed="PeekBtn_PointerPressed"
+                                PointerReleased="PeekBtn_PointerReleased"
+                                PointerCanceled="PeekBtn_PointerReleased"
+                                PointerCaptureLost="PeekBtn_PointerReleased">
+                            <TextBlock Text="按住查看原图" FontSize="12" HorizontalAlignment="Center"/>
+                        </Border>
+                        <Button x:Name="SelModeBtn" Grid.Column="2" Content="框选主体" FontSize="12"
+                                ToolTipService.ToolTip="拖拽框选主体所在区域,抠图时区域外自动去除"
+                                Click="SelMode_Click"/>
+                        <Button x:Name="ScribbleModeBtn" Grid.Column="3" Content="智能涂抹" FontSize="12"
+                                ToolTipService.ToolTip="用笔刷标记:绿色涂在要保留的物体上,红色涂在要去除的地方,AI 按颜色自动扩散"
+                                Click="ScribbleMode_Click"/>
+                        <Button x:Name="SaveMarksBtn" Grid.Column="4" Content="保存标记" FontSize="12"
+                                ToolTipService.ToolTip="保存框选/涂抹标记(已自动保存;此按钮用于确认,点击有反馈)"
+                                Click="SaveMarks_Click"/>
+                        <Button Grid.Column="5" Content="关闭预览" FontSize="12" Click="PreviewClose_Click"/>
+                    </Grid>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Grid>
+</UserControl>
