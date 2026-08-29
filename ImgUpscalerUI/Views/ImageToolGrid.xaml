@@ -224,9 +224,10 @@
                            IsHitTestVisible="False"/>
             </Canvas>
 
-            <!-- 空状态提示(不挡拖拽) -->
+            <!-- 空状态提示(不挡拖拽);空列表时拖放目标=本区域 -->
             <StackPanel x:Name="DropHint" VerticalAlignment="Center" Spacing="8"
-                        IsHitTestVisible="False">
+                        IsHitTestVisible="True"
+                        AllowDrop="True" DragOver="DropBorder_DragOver" Drop="DropBorder_Drop">
                 <FontIcon Glyph="&#xE8B5;" FontSize="40" Opacity="0.3"
                           HorizontalAlignment="Center"/>
                 <TextBlock Text="拖入图片到此处(支持多张)" HorizontalAlignment="Center"
