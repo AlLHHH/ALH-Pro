@@ -8,8 +8,8 @@
 ;   4. 模型包(models_v1.0.zip, 1.65GB)单独上传 GitHub Release 附件。
 ;
 ; 安装时「选择附加任务」页勾选「下载并安装模型包(来自 GitHub)」:
-;   安装完成即从 GitHub 下载模型包并解压到 程序目录(模型包根=程序目录,含 engines\rembg\models\),
-;   不勾选 = 之后手动下载模型包,解压到 程序目录(与安装器解压路径一致,得到 engines\rembg\models\)。
+;   安装完成即从 GitHub 下载模型包并解压到 程序目录\engines\rembg\(扁平结构:6 个 .onnx 直接展开),
+;   不勾选 = 之后手动下载模型包,解压到 程序目录\engines\rembg\ 即可。
 
 #define MyAppName "ALH Pro"
 #define MyAppVersion "1.0"
@@ -92,13 +92,13 @@ begin
       Exit;
     end;
 
-    // 解压到 {app}(zip 根=程序目录,内含 engines\rembg\models\ — 用系统 tar.exe 解压 zip,无 2GB 限制)
-    ForceDirectories(ExpandConstant('{app}\engines\rembg\models'));
+    // 解压到 {app}\engines\rembg(模型包为扁平结构,6 个 .onnx 直接展开;用系统 tar.exe 解压,无 2GB 限制)
+    ForceDirectories(ExpandConstant('{app}\engines\rembg'));
     if not Exec(ExpandConstant('{sys}\tar.exe'),
-        '-xf "' + ZipPath + '" -C "' + ExpandConstant('{app}') + '"',
+        '-xf "' + ZipPath + '" -C "' + ExpandConstant('{app}\engines\rembg') + '"',
         '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     begin
-      MsgBox('模型包解压失败(请手动解压 models_v1.0.zip 到程序目录)。', mbError, MB_OK);
+      MsgBox('模型包解压失败(请手动解压 models_v1.0.zip 到程序目录 engines\rembg\)。', mbError, MB_OK);
       Result := False;
       Exit;
     end;
