@@ -1199,6 +1199,8 @@ public sealed partial class VideoView : UserControl
             if (!File.Exists(SettingsFile)) return;
             var d = System.Text.Json.JsonSerializer.Deserialize<VideoSettings>(File.ReadAllText(SettingsFile));
             if (d is null) return;
+            // 诊断:记录设置文件读到的值与时间戳(排查"记不住码率/格式")
+            AppLogger.Info($"[记忆] 视频设置加载: Quality={d.Quality}, Format={d.Format}, Codec={d.Codec}, Remember={d.Remember}, 文件时间={File.GetLastWriteTime(SettingsFile):HH:mm:ss}");
             _suppressEvents = true;
             VideoRememberCheck.IsChecked = d.Remember;
             if (d.Remember)

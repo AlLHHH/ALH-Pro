@@ -144,6 +144,8 @@ public sealed partial class UpscaleView : UserControl
             var d = System.Text.Json.JsonSerializer.Deserialize<UpscaleSettings>(
                 File.ReadAllText(SettingsFile));
             if (d is null) return;
+            // 诊断:记录设置文件读到的值与时间戳(排查"记不住格式/码率")
+            AppLogger.Info($"[记忆] 图片设置加载: Fmt={d.Fmt}(0=JPG/1=PNG), ImgQualityMode={d.ImgQualityMode}, Remember={d.Remember}, 文件时间={File.GetLastWriteTime(SettingsFile):HH:mm:ss}");
             // 开关本身总是恢复;关闭时不恢复其他参数
             RememberCheck.IsChecked = d.Remember;
             if (!d.Remember) return;
@@ -234,6 +236,8 @@ public sealed partial class UpscaleView : UserControl
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile)!);
             File.WriteAllText(SettingsFile,
                 System.Text.Json.JsonSerializer.Serialize(d));
+            // 诊断:记录每次保存(排查"改格式/码率后记不住")
+            AppLogger.Info($"[记忆] 图片设置保存: Fmt={d.Fmt}, ImgQualityMode={d.ImgQualityMode}, QualityCombo.Sel={ImgQualityCombo.SelectedIndex}, _lastJpgQuality={_lastJpgQuality}, 时间={DateTime.Now:HH:mm:ss}");
         }
         catch { /* 保存失败忽略 */ }
     }
