@@ -35,7 +35,7 @@
 - 显存 / 内存 / CPU 墙按本机配置自动调节;分块 / 批大小自适应;处理时降低进程优先级;设备降温休息(可调间隔)
 
 ### 设备适配
-- 启动时自动检测 GPU:有独显自动启用(无 GPU 自动切 CPU);RTX 50 系因 NVIDIA Vulkan 驱动缺指令自动回退 CPU,输出不受影响
+- 启动时自动检测 GPU:有独显自动启用(无 GPU 自动切 CPU);**RTX 50 系(Blackwell)**:waifu2x / RIFE 补帧可正常用 GPU;Real-CUGAN / Real-ESRGAN(旧版 ncnn)若遇兼容问题会自动改用其它 GPU,再不行则 CPU——处理开始前会提示换用 waifu2x(最快),输出不受影响
 
 ---
 

@@ -2065,6 +2065,39 @@ public sealed partial class VideoView : UserControl
         await dlg.ShowAsync();
     }
 
+    /// <summary>当前引擎 GPU 不可用提示:「好的」= 改用 waifu2x(兼容+最快);「仍然继续」= 保持当前引擎(处理中自动降级 GPU→CPU)。</summary>
+    private async Task<bool> AskBlackwellCompatibleAsync(string engineLabel)
+    {
+        var dlg = new ContentDialog
+        {
+            Title = "当前引擎无法用 GPU",
+            Content = new TextBlock
+            {
+                Text = $"检测到当前超分引擎「{engineLabel}」在你的显卡上无法用 GPU 计算" +
+                    "(显卡过新/过旧或驱动不兼容,AI 超分会很慢甚至失败)。\n\n" +
+                    "「好的」= 换用 waifu2x(兼容性好,且速度最快)\n" +
+                    "「仍然继续」= 保持当前引擎(不通时会自动改用其它 GPU,再不行则 CPU,不影响输出)",
+                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+            },
+            PrimaryButtonText = "好的",
+            CloseButtonText = "仍然继续",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = this.XamlRoot,
+        };
+        try
+        {
+            var r = await dlg.ShowAsync();
+            if (r == ContentDialogResult.Primary)
+            {
+                Log("已按 50 系兼容提示切换超分引擎为 waifu2x(最快)");
+                return true;
+            }
+            Log("用户选择保持当前引擎,50 系上可能降级 CPU(可到设置改)");
+            return false;
+        }
+        catch { return false; }
+    }
+
     /// <summary>「去重后帧数过少」确认:用户点「仍要进行」则继续(跳过防删光保护),否则取消。</summary>
     private async Task<bool> AskDedupTooStrongAsync(string message)
     {
@@ -2549,9 +2582,9 @@ public sealed partial class VideoView : UserControl
             if (up)
             {
                 int eng = VideoEngineRadios.SelectedIndex;
-                if (eng == 0 && EngineService.FindRealCUGAN() is null) missing.Add("Real-CUGAN 引擎");
-                if (eng == 1 && EngineService.FindRealESRGAN() is null) missing.Add("Real-ESRGAN 引擎");
-                if (eng == 2 && EngineService.FindWaifu2x() is null) missing.Add("waifu2x 引擎");
+                if (eng == 0 && EngineService.FindWaifu2x() is null) missing.Add("waifu2x 引擎");
+                if (eng == 1 && EngineService.FindRealCUGAN() is null) missing.Add("Real-CUGAN 引擎");
+                if (eng == 2 && EngineService.FindRealESRGAN() is null) missing.Add("Real-ESRGAN 引擎");
             }
             if (interp && VideoService.RifePath is null) missing.Add("RIFE 补帧引擎");
             if (VideoService.FfmpegPath is null) missing.Add("ffmpeg");
@@ -2621,9 +2654,9 @@ public sealed partial class VideoView : UserControl
 
         var (engine, model) = VideoEngineRadios.SelectedIndex switch
         {
-            0 => ("realcugan", "models-pro"),
-            1 => ("realesrgan", "realesrgan-x4plus"),
-            _ => ("waifu2x", "models-cunet"),
+            0 => ("waifu2x", "models-cunet"),
+            1 => ("realcugan", "models-pro"),
+            _ => ("realesrgan", "realesrgan-x4plus"),
         };
         // 倍率:0=1x超分(2x放大后缩回) 1=1.5x 2=2x 3=3x 4=4x 5=自定义分辨率
         bool upscaleShrink1x = false;
@@ -2711,6 +2744,20 @@ public sealed partial class VideoView : UserControl
         _cts = cts;
         _midRunWarned = false;
         var gpuId = CurrentGpuId;
+        // ===== 超分引擎 GPU 兼容探测(全设备,不猜型号) =====
+        // 任何显卡(50系/AMD/Intel/老驱动)只要当前引擎 realcugan/realesrgan 在 GPU 上跑不通,
+        // 处理前提示:「好的」→ 换 waifu2x(兼容最快);「仍然继续」→ 保持(处理中自动降级其他GPU→CPU)
+        if (up && VideoEngineRadios.SelectedIndex is 1 or 2)
+        {
+            var engineName = VideoEngineRadios.SelectedIndex switch { 1 => "realcugan", _ => "realesrgan" };
+            bool usable = await EngineService.IsEngineGpuUsableAsync(engineName, gpuId, cts.Token).ConfigureAwait(false);
+            if (!usable)
+            {
+                var engineLabel = VideoEngineRadios.SelectedIndex == 1 ? "Real-CUGAN" : "Real-ESRGAN";
+                var useWaifu = await AskBlackwellCompatibleAsync(engineLabel).ConfigureAwait(false);
+                if (useWaifu) VideoEngineRadios.SelectedIndex = 0;   // 换成 waifu2x(兼容+最快)
+            }
+        }
         // ===== 参数快照(关键):处理中切换界面【不影响本批】——以下全部在开始时一次性读取,
         // 循环/ProcessOneAsync 只使用快照变量;不这样做,处理中改编码/后处理/VFR 等会
         // 让批内后面的视频悄悄用新值(批级日志与实际不符)。
