@@ -971,6 +971,19 @@ public static class VideoService
 
                 // 3b) 分段补帧(输入 framesIn,输出 framesFinal)
                 progress?.Report((10, $"RIFE 补帧({interpScale}x,源 {frameCount} 帧 → 输出 {(long)Math.Round((double)((frameCount - 1) * interpScale)) + 1} 帧,模型 {interpModel})..."));
+                // ===== RIFE GPU 探测(50 系等可能静默 hang,不预检白等 8 分钟)=====
+                // 实测 2 帧插 1 帧能否 GPU 出图;不能 → 本视频补帧改用 CPU(慢但确定能跑),日志+进度提示。
+                int interpGpu = gpuId;
+                if (gpuId >= 0)
+                {
+                    bool rifeOk = await EngineService.IsRifeGpuUsableAsync(rife, interpModel, gpuId, ct).ConfigureAwait(false);
+                    if (!rifeOk)
+                    {
+                        AppLogger.Info($"⚠ RIFE {interpModel} GPU 探测失败,改用 CPU 补帧(慢但不会挂起白等)");
+                        progress?.Report((10, $"⚠ RIFE 无法用 GPU,自动改用 CPU 补帧(较慢但稳定)..."));
+                        interpGpu = -1;   // 本视频后续补帧 API 全部 CPU(InterpSegmentAsync 传入)
+                    }
+                }
                 var segStart = 0;
                 int globalIdx = 1;
                 int segNo = 0;
@@ -1044,7 +1057,7 @@ public static class VideoService
                             }
                         }
                         globalIdx = await InterpSegmentAsync(rife, framesIn, framesFinal, s, e, interpScale,
-                            interpModel, timeStep, tta, gpuId, globalIdx, segProg, ct, frameScale,
+                            interpModel, timeStep, tta, interpGpu, globalIdx, segProg, ct, frameScale,
                             isLastSeg ? globalTarget : 0,
                             false);   // appendTailCopy = false
                         if (progress != null)

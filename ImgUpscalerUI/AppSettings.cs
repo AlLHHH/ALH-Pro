@@ -23,9 +23,7 @@ public static class AppSettings
     /// <summary>首次 Vulkan 自检的友好报告文本(设置界面「计算设备」区常驻显示)。</summary>
     public static string VulkanReport { get; set; } = "";
 
-    private static string FilePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ALHPro", "app-settings.json");
+    private static string FilePath => ParaPaths.SettingsFile("app-settings.json");
 
     public static void Load()
     {

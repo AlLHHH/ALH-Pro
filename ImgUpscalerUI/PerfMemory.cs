@@ -22,9 +22,7 @@ public static class PerfMemory
     private static Dictionary<string, Entry>? _cache;
     private static int _dirty;
 
-    private static string FilePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ALHPro", "perf-history.json");
+    private static string FilePath => ParaPaths.SettingsFile("perf-history.json");
 
     private static Dictionary<string, Entry> Load()
     {

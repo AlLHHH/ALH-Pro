@@ -208,9 +208,7 @@ public sealed partial class MainPage : Page
     }
 
     /// <summary>启动声明已同意的标记文件(仅首次显示弹窗)。</summary>
-    private static string BetaAcceptedFile => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ALHPro", "beta-accepted.txt");
+    private static string BetaAcceptedFile => ParaPaths.SettingsFile("beta-accepted.txt");
 
     /// <summary>欢迎弹窗(所有设备第一次启动只弹一次,合并两件事):
     /// 1) 正式版启动说明(简短无内测措辞);2) 设备自检报告(低配/高配都显示,检测完自动更新)。
@@ -726,13 +724,9 @@ public sealed partial class MainPage : Page
 
     /// <summary>默认启动页:-1=上次退出界面(默认) 0=图片放大 1=AI 抠图 2=视频处理。</summary>
     private int _startupPage = -1;
-    private static string StartupFile => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ALHPro", "startup-page.txt");
+    private static string StartupFile => ParaPaths.SettingsFile("startup-page.txt");
     // 最近一次使用的界面(切换即写,退出时也写):"上次退出界面"模式启动用
-    private static string LastPageFile => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ALHPro", "last-page.txt");
+    private static string LastPageFile => ParaPaths.SettingsFile("last-page.txt");
 
     private void LoadStartupPage()
     {

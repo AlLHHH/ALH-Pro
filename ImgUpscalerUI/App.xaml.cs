@@ -406,10 +406,7 @@ namespace ALHPro
         private static bool _hasPlacement = false;
 
         /// <summary>窗口状态文件(JSON):{ "monitors":[[l,t,r,b],...], "placement":"base64(WINDOWPLACEMENT)" }。</summary>
-        private static readonly string StateFile = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ALHPro", "window-state.json");
-
+        private static string StateFile => ParaPaths.SettingsFile("window-state.json");
         /// <summary>窗口显示瞬间恢复(WM_SHOWWINDOW 钩子回调):显示器布局与保存时一致才恢复;
         /// 不一致(拔了屏/分辨率变了)则跳过,窗口用系统默认——避免跑到已拔掉的屏上。</summary>
         private static void RestoreWindowStateAt(IntPtr hwnd)

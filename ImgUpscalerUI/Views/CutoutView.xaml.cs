@@ -210,9 +210,7 @@ public sealed partial class CutoutView : UserControl
         public string OutDir { get; set; } = "";
     }
 
-    private static string SettingsFile => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ALHPro", "cutout-settings.json");
+    private static string SettingsFile => ParaPaths.SettingsFile("cutout-settings.json");
 
     private void LoadSettings()
     {

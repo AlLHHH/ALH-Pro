@@ -8,9 +8,7 @@ namespace ALHPro;
 
 public static class CroppedStorage
 {
-    private static string DirPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ALHPro", "cropped");
+    private static string DirPath => Path.Combine(ParaPaths.CacheDir, "cropped");
 
     public static string Dir
     {
