@@ -29,7 +29,19 @@ public static class AppSettings
     {
         try
         {
-            if (!File.Exists(FilePath)) return;
+            if (!File.Exists(FilePath))
+            {
+                // 首次启动:自动采用推荐 GPU(跳过 Intel/AMD 核显选独立显卡),不再默认 0(核显)。
+                // 此前默认 0 会让"软件推荐 NVIDIA 但实际用核显"——补帧/超分极慢,用户以为卡死。
+                try
+                {
+                    var names = GpuInfo.GetAdapterNames();
+                    int rec = GpuInfo.GetRecommendedIndex(names);
+                    if (rec >= 0) GpuIndex = rec;
+                }
+                catch { }
+                return;
+            }
             var d = System.Text.Json.JsonSerializer.Deserialize<Data>(File.ReadAllText(FilePath));
             if (d is null) return;
             AutoRemoveDone = d.AutoRemoveDone;

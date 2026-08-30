@@ -3317,6 +3317,8 @@ public sealed partial class VideoView : UserControl
             CloseButtonText = "关闭",
             XamlRoot = this.XamlRoot,
         };
+        // 保护:任务完成时窗口可能已关闭(XamlRoot 为 null)→ 不再弹窗,避免未处理异常
+        if (dlg.XamlRoot == null) return;
         if (await dlg.ShowAsync() == ContentDialogResult.Primary)
             ProcessStartHelper.OpenSelect(outputFiles.Count > 0 ? outputFiles : new System.Collections.Generic.List<string> { dir });
     }
