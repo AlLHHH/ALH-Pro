@@ -2043,6 +2043,53 @@ public sealed partial class VideoView : UserControl
         await dlg.ShowAsync();
     }
 
+    /// <summary>检测是否 RTX 50 系列(Blackwell 架构)显卡:从 VulkanCheck 设备或系统枚举名称判断。</summary>
+    private static bool IsBlackwellGpu()
+    {
+        try
+        {
+            var names = new System.Collections.Generic.List<string>();
+            names.AddRange(VulkanCheck.Devices.Select(d => d.Name));
+            try { names.AddRange(GpuInfo.GetAdapterNames()); } catch { }
+            return names.Any(n => System.Text.RegularExpressions.Regex.IsMatch(n, @"RTX 5[0-9]{2}", System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+        }
+        catch { return false; }
+    }
+
+    /// <summary>RTX 50 系 + 旧引擎(2022 版 ncnn)提前提示:「好的」= 换 waifu2x(官方新版,兼容 50 系且快);
+    /// 「仍然继续」= 保持原引擎(处理中探测失败会自动换卡/CPU,不影响输出)。</summary>
+    private async Task<bool> AskBlackwellOldEngineAsync(string engineLabel)
+    {
+        var dlg = new ContentDialog
+        {
+            Title = "RTX 50 系兼容提示",
+            Content = new TextBlock
+            {
+                Text = $"检测到 RTX 50 系显卡。当前超分引擎「{engineLabel}」是较旧版本(2022 年)," +
+                    "在 50 系上可能无法用 GPU 计算(会慢或自动降级)。\n\n" +
+                    "「好的」= 换用 waifu2x(官方 2025 新版,完全兼容 50 系,且速度最快)\n" +
+                    "「仍然继续」= 保持当前引擎(不通时会自动改用其它 GPU,再不行则 CPU,不影响输出)",
+                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+            },
+            PrimaryButtonText = "好的",
+            CloseButtonText = "仍然继续",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = this.XamlRoot,
+        };
+        try
+        {
+            var r = await dlg.ShowAsync();
+            if (r == ContentDialogResult.Primary)
+            {
+                Log("已按 50 系兼容提示换用 waifu2x 超分");
+                return true;
+            }
+            Log("用户选择保留旧引擎,50 系上可能降级 CPU(可手动改 waifu2x)");
+            return false;
+        }
+        catch { return false; }
+    }
+
     /// <summary>当前引擎 GPU 不可用提示:「好的」= 改用 waifu2x(兼容+最快);「仍然继续」= 保持当前引擎(处理中自动降级 GPU→CPU)。</summary>
     private async Task<bool> AskBlackwellCompatibleAsync(string engineLabel)
     {
@@ -2576,6 +2623,15 @@ public sealed partial class VideoView : UserControl
         if (SafeRender.Profile == SafeRender.DeviceProfile.UltraLow || !ALHPro.VulkanCheck.GpuAvailable)
         {
             Log("⚠ 无 GPU/弱设备:视频超分/补帧将用 CPU 计算,可能非常慢。建议(可选):降低输出分辨率、补帧用 2x、先跑几秒的小片段、或勾选「兼容模式」。");
+        }
+        // ===== RTX 50 系 + 旧引擎(realcugan/realesrgan,2022 版 ncnn)提前提示 =====
+        // 50 系上 real 引擎可能降级 CPU;waifu2x(官方 20250915 版)兼容。让用户知情,而非跑起来才发现掉速。
+        // 探测(超分前 1×1 实测)仍会兜底;这里只是提前告知+给选择。
+        if (up && IsBlackwellGpu() && VideoEngineRadios.SelectedIndex is 1 or 2)
+        {
+            var oldEngineLabel = VideoEngineRadios.SelectedIndex == 1 ? "Real-CUGAN" : "Real-ESRGAN";
+            if (await AskBlackwellOldEngineAsync(oldEngineLabel))
+                VideoEngineRadios.SelectedIndex = 0;   // 好,换成 waifu2x(兼容 50 系,且最快)
         }
         // 自定义码率:选了该项但没填/填了非法值 → 提示并拦截(避免按"自动"悄悄处理)
         if (QualityCombo.SelectedIndex == 5 && ParseBitrate() <= 0)
