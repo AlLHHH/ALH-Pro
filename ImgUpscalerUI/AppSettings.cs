@@ -13,9 +13,10 @@ public static class AppSettings
     /// <summary>全局计算设备(gpuId 语义):-1=CPU(软件计算),≥0=GPU 编号。三个功能页共用,设置弹窗统一修改。</summary>
     public static int GpuIndex { get; set; } = 0;
 
-    /// <summary>抠图推理用 CPU 软算(流畅不卡):DirectML GPU 推理会占满 GPU,WinUI 界面合成也要用同一张 GPU → 窗口抖。
-    /// 设为 true 时抠图模型推理走 CPU(慢一些但不碰 GPU,界面全程流畅);false 时用 GpuIndex。</summary>
-    public static bool CutoutCpuOnly { get; set; } = true;
+    /// <summary>抠图推理设备:false=GPU(DirectML,默认快);true=CPU 软算(保界面流畅)。
+    /// v1.1 起默认 GPU:推理快几倍;GPU 失败自动降级 CPU(见 CutoutService 兼容适配),
+    /// 用户可手动切回 CPU(抠图页提示:若窗口抖动再切 CPU)。</summary>
+    public static bool CutoutCpuOnly { get; set; } = false;
 
     /// <summary>是否已完成首次 Vulkan 自检(只跑一次,结果缓存)。</summary>
     public static bool VulkanCheckDone { get; set; }
@@ -81,7 +82,7 @@ public static class AppSettings
     {
         public bool AutoRemoveDone { get; set; }
         public int GpuIndex { get; set; } = 0;
-        public bool CutoutCpuOnly { get; set; } = true;
+        public bool CutoutCpuOnly { get; set; } = false;
         public bool VulkanCheckDone { get; set; }
         public string VulkanReport { get; set; } = "";
     }
