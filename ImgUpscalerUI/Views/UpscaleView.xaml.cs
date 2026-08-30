@@ -133,9 +133,7 @@ public sealed partial class UpscaleView : UserControl
     }
 
     // ---------- 参数记忆 ----------
-    private static string SettingsFile => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ALHPro", "upscale-settings.json");
+    private static string SettingsFile => ParaPaths.SettingsFile("upscale-settings.json");
 
     private void LoadSettings()
     {

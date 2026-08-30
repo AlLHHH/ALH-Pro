@@ -1168,9 +1168,7 @@ public sealed partial class VideoView : UserControl
         public bool AnimeOpt { get; set; }
     }
 
-    private static string SettingsFile => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ALHPro", "video-settings.json");
+    private static string SettingsFile => ParaPaths.SettingsFile("video-settings.json");
 
     private void LoadSettings()
     {

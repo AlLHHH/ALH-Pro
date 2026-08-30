@@ -407,6 +407,62 @@ public static class EngineService
         }
     }
 
+    /// <summary>探测 RIFE 补帧引擎能否用 GPU(-g)插出一帧(2 帧输入→1 帧中间帧)。
+    /// 用途:补帧开始前实测(50 系/AMD/Intel 等:RIFE 可能静默 hang,不出图也不报错——
+    /// 不预检用户只能白等 8 分钟看门狗)。失败返回 false,调用方改用 CPU。
+    /// 注意:RIFE 单对模式(-0 -1 -o)而非目录模式(目录模式需 ≥2 帧输入,探测用单对最快)。</summary>
+    public static async Task<bool> IsRifeGpuUsableAsync(string rifeExe, string model, int gpuId, CancellationToken ct)
+    {
+        try
+        {
+            if (gpuId < 0 || rifeExe == null) return false;
+            var tmp = Path.Combine(Path.GetTempPath(), $"rife_probe_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tmp);
+            var a = Path.Combine(tmp, "a.png");
+            var b = Path.Combine(tmp, "b.png");
+            var o = Path.Combine(tmp, "out.png");
+            try
+            {
+                // 两帧:黑→白(有显著运动,引擎必然尝试插帧)
+                using (var bmp = new System.Drawing.Bitmap(64, 64))
+                {
+                    using var g = System.Drawing.Graphics.FromImage(bmp);
+                    g.Clear(System.Drawing.Color.Black);
+                    bmp.Save(a, System.Drawing.Imaging.ImageFormat.Png);
+                    g.Clear(System.Drawing.Color.White);
+                    bmp.Save(b, System.Drawing.Imaging.ImageFormat.Png);
+                }
+                var psi = new ProcessStartInfo
+                {
+                    FileName = rifeExe,
+                    Arguments = $"-0 \"{a}\" -1 \"{b}\" -o \"{o}\" -m {model} -g {gpuId}",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    WorkingDirectory = Path.GetDirectoryName(rifeExe) ?? ".",
+                };
+                using var p = Process.Start(psi);
+                if (p == null) return false;
+                using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                waitCts.CancelAfter(TimeSpan.FromSeconds(30));   // 单对插帧正常 1~2 秒;30 秒无果=引擎 hang
+                await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
+                bool ok = p.ExitCode == 0 && File.Exists(o) && new FileInfo(o).Length > 0;
+                AppLogger.Info($"[探测] RIFE {model} GPU(-g {gpuId})出图:{(ok ? "可用" : "失败")}(exit={p.ExitCode})");
+                return ok;
+            }
+            finally
+            {
+                try { Directory.Delete(tmp, true); } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Info($"[探测] RIFE GPU 探测异常(按不可用):{ex.Message}");
+            return false;
+        }
+    }
+
     /// <summary>运行引擎命令;若命令使用 GPU(-g ≥0)且启动失败(如新显卡 RTX 50 系与 ncnn-vulkan
     /// 兼容问题 "invalid gpu device"),按降级链重算:当前 GPU → 其他 GPU(引擎自检过的,尊重用户
     /// 主动选的卡;绝不给"选了 GPU1 却只降 CPU"这种无视其他卡的处理)→ CPU。失败不再直接中断任务。</summary>

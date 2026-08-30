@@ -16,9 +16,7 @@ namespace ALHPro;
 public static class SafeRender
 {
     private const string SettingsFile = "safe-render.json";
-    private static string ConfigPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ALHPro", SettingsFile);
+    private static string ConfigPath => ParaPaths.SettingsFile(SettingsFile);
 
     /// <summary>0=自动(推荐) 1=自定义。</summary>
     public static int Mode { get; set; } = 0;
