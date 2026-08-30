@@ -10,6 +10,7 @@ public sealed partial class MainPage : Page
     private UpscaleView? _upView;
     private CutoutView? _cutView;
     private VideoView? _videoView;
+    private AudioView? _audioView;
     private TutorialView? _tutorialView;
     private string _currentTag = "upscale";
     private int _startupPageIndex;   // 构造时解析的启动页(0/1/2),供 Loaded 弹窗逻辑引用
@@ -195,7 +196,7 @@ public sealed partial class MainPage : Page
         ContentRoot.Children.Clear();
         // 记录最近使用界面(「上次退出界面」启动模式用);切换即保存,退出时也保存(见 MainWindow_Closed)
         if (tag != "tutorial")
-            SaveLastPage(tag == "upscale" ? 0 : tag == "video" ? 2 : 1);
+            SaveLastPage(tag == "upscale" ? 0 : tag == "video" ? 2 : tag == "audio" ? 3 : 1);
         if (tag == "upscale")
         {
             AppLogger.Info("进入页面:图片放大");
@@ -225,6 +226,14 @@ public sealed partial class MainPage : Page
                     Margin = new Microsoft.UI.Xaml.Thickness(20),
                 });
             }
+        }
+        else if (tag == "audio")
+        {
+            AppLogger.Info("进入页面:音频处理");
+            _audioView ??= new AudioView();
+            _audioView.StatusChanged -= OnStatusChanged;
+            _audioView.StatusChanged += OnStatusChanged;
+            ContentRoot.Children.Add(_audioView);
         }
         else if (tag == "tutorial")
         {
@@ -777,7 +786,7 @@ public sealed partial class MainPage : Page
         try
         {
             if (File.Exists(StartupFile) && int.TryParse(File.ReadAllText(StartupFile).Trim(), out var p)
-                && p is >= -1 and <= 2)
+                && p is >= -1 and <= 3)
                 _startupPage = p;
         }
         catch { }
@@ -833,12 +842,13 @@ public sealed partial class MainPage : Page
         pageCombo.Items.Add(new ComboBoxItem { Content = "图片放大" });
         pageCombo.Items.Add(new ComboBoxItem { Content = "AI 抠图" });
         pageCombo.Items.Add(new ComboBoxItem { Content = "视频处理" });
+        pageCombo.Items.Add(new ComboBoxItem { Content = "音频处理" });
         pageCombo.SelectedIndex = _startupPage + 1;   // 下拉索引 = 模式 + 1(-1→0,0→1,…)
         pageCombo.SelectionChanged += (_, _) =>
         {
             _startupPage = pageCombo.SelectedIndex - 1;   // 还原:0→-1(上次退出),1→0(图片),…
             SaveStartupPage(_startupPage);
-            AppLogger.Info($"启动页面已设为:{_startupPage switch { -1 => "上次退出界面", 0 => "图片放大", 1 => "AI 抠图", _ => "视频处理" }}");
+            AppLogger.Info($"启动页面已设为:{_startupPage switch { -1 => "上次退出界面", 0 => "图片放大", 1 => "AI 抠图", 2 => "视频处理", _ => "音频处理" }}");
         };
         content.Children.Add(pageCombo);
         content.Children.Add(new TextBlock
