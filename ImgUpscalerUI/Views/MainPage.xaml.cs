@@ -108,8 +108,6 @@ public sealed partial class MainPage : Page
                     AppLogger.Info("Vulkan 自检异常: " + ex.Message);
                 }
             });
-            if (SafeRender.IsWeakDevice)
-                _ = ShowVulkanNoticeAsync();
             // 更新检查:后台静默(有新版才弹提示条;失败/无网/已最新均无感)
             _ = CheckUpdateSilentAsync();
         };
@@ -209,55 +207,100 @@ public sealed partial class MainPage : Page
         ShowView("tutorial");
     }
 
-    /// <summary>内测声明已同意的标记文件(仅首次显示弹窗)。</summary>
+    /// <summary>启动声明已同意的标记文件(仅首次显示弹窗)。</summary>
     private static string BetaAcceptedFile => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "ALHPro", "beta-accepted.txt");
 
-    /// <summary>设备检测弹窗已显示过的标记文件(持久化:跨启动只显示一次,不靠进程内变量)。</summary>
-    private static string VulkanNoticeShownFile => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ALHPro", "vulkan-notice-shown.txt");
-
-    /// <summary>启动强制「内测声明」:5 秒倒计时后才能点「同意并继续」;点「退出程序」则关闭应用。</summary>
+    /// <summary>欢迎弹窗(所有设备第一次启动只弹一次,合并两件事):
+    /// 1) 正式版启动说明(简短无内测措辞);2) 设备自检报告(低配/高配都显示,检测完自动更新)。
+    /// 按钮 3 秒倒计时后可用;点「开始使用」进主界面,点「退出程序」关闭应用。</summary>
     private async Task<bool> ShowBetaNoticeAsync()
     {
-        int remain = 5;
+        int remain = 3;
         bool agreed = false;
         var agreeBtn = new Button
         {
-            Content = $"同意并继续 ({remain})",
+            Content = $"开始使用 ({remain})",
             IsEnabled = false,
             HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Right,
             Margin = new Microsoft.UI.Xaml.Thickness(0, 10, 0, 0),
         };
         agreeBtn.Click += (_, _) => { agreed = true; _betaNoticeDlg.Hide(); };
+
+        // 设备自检报告区:检测中占位,完成后渲染完整报告
+        var reportBlock = new TextBlock
+        {
+            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+            FontSize = 11,
+            Opacity = 0.9,
+        };
         var dlg = new ContentDialog
         {
-            Title = "内测声明",
+            Title = "欢迎使用 ALH Pro",
             XamlRoot = this.XamlRoot,
             CloseButtonText = "退出程序",
             DefaultButton = ContentDialogButton.None,
             Content = new StackPanel
             {
-                Spacing = 6,
+                Spacing = 8,
                 Children =
                 {
                     new TextBlock
                     {
-                        Text = "本程序为「v1.0 公测版」,仍在测试阶段:\n\n" +
-                            "· 可能存在不稳定、报错、卡顿或功能不完善;\n" +
-                            "· 处理前请自行备份素材,因测试版造成的数据损失由使用者自行承担;\n" +
-                            "· 本版本为内测分发,请勿随意分享、传播或二次发布;\n" +
+                        Text = "本程序为「ALH Pro v1.0」正式版:\n\n" +
+                            "· 图片超分 / AI 抠图 / 视频超分补帧去重,全部本地处理;\n" +
+                            "· 处理前建议备份重要素材;\n" +
                             "· 引擎/模型版权归各自作者所有,详见 README 与许可声明。\n\n" +
-                            "请完整阅读以上声明,5 秒后方可继续使用。",
+                            "首次启动会进行一次本机设备自检,以下结果来自当前电脑:",
                         TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                        FontSize = 12,
                     },
+                    new Border
+                    {
+                        Height = 1,
+                        Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+                        Margin = new Microsoft.UI.Xaml.Thickness(0, 2, 0, 2),
+                    },
+                    reportBlock,
                     agreeBtn,
                 },
             },
         };
         _betaNoticeDlg = dlg;   // 供按钮关闭
+
+        // 渲染自检结果(完成=完整报告;未完成=占位)
+        void RenderReport()
+        {
+            if (VulkanCheck.Done && !string.IsNullOrEmpty(VulkanCheck.Report))
+                BuildReportContent(reportBlock, VulkanCheck.Report, out _);
+            else
+            {
+                reportBlock.Inlines.Clear();
+                reportBlock.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
+                {
+                    Text = "正在检测本机设备(GPU / 显卡驱动 / 显存 / 内存 / CPU),请稍候…",
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                });
+            }
+        }
+        RenderReport();
+
+        // 自检完成前轮询刷新(通常 1 秒内;最多等 20 秒,超时也显示兜底)
+        var checkTimer = DispatcherQueue.CreateTimer();
+        checkTimer.Interval = TimeSpan.FromMilliseconds(200);
+        checkTimer.IsRepeating = true;
+        int waited = 0;
+        checkTimer.Tick += (_, _) =>
+        {
+            waited++;
+            if (!VulkanCheck.Done && waited < 100) return;
+            checkTimer.Stop();
+            RenderReport();
+        };
+        checkTimer.Start();
+
+        // 按钮倒计时(3 秒)
         var timer = DispatcherQueue.CreateTimer();
         timer.Interval = TimeSpan.FromSeconds(1);
         timer.IsRepeating = true;
@@ -266,126 +309,23 @@ public sealed partial class MainPage : Page
             remain--;
             if (remain > 0)
             {
-                agreeBtn.Content = $"同意并继续 ({remain})";
+                agreeBtn.Content = $"开始使用 ({remain})";
             }
             else
             {
                 timer.Stop();
-                agreeBtn.Content = "同意并继续";
+                agreeBtn.Content = "开始使用";
                 agreeBtn.IsEnabled = true;
             }
         };
         timer.Start();
         await dlg.ShowAsync();
         timer.Stop();
+        checkTimer.Stop();
         _betaNoticeDlg = null;
         return agreed;
     }
     private ContentDialog? _betaNoticeDlg;
-
-    /// <summary>设备自检提示:只显示一次(用持久化文件标记,跨启动有效);立即显示,检测中不可确认,
-    /// 完成后自动更新并解锁。结果常驻显示在「设置 → 计算设备」区。</summary>
-    private async Task ShowVulkanNoticeAsync()
-    {
-        try
-        {
-            // 已显示过(持久化标记):直接跳过,不再弹
-            if (File.Exists(VulkanNoticeShownFile)) return;
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(VulkanNoticeShownFile)!);
-                File.WriteAllText(VulkanNoticeShownFile, "shown");   // 先写标记:即使中途失败也不重复弹
-            }
-            catch { }
-
-            // 报告区(可滚动);检测中先显示占位,完成后填入完整报告
-            var reportBlock = new TextBlock
-            {
-                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-                FontSize = 12,
-            };
-            TextBlock? summaryBlock = null;
-
-            // 底部「知道了」按钮:检测未完成时禁用,完成后启用
-            var okBtn = new Button
-            {
-                Content = VulkanCheck.Done ? "知道了" : "检测中…",
-                IsEnabled = VulkanCheck.Done,
-                HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Right,
-                MinWidth = 96,
-                Margin = new Microsoft.UI.Xaml.Thickness(0, 6, 0, 0),
-            };
-
-            var dlg = new ContentDialog
-            {
-                Title = "设备检测",
-                XamlRoot = this.XamlRoot,
-                DefaultButton = ContentDialogButton.None,   // 用自定义按钮控制启用/禁用
-                Content = new ScrollViewer
-                {
-                    MaxHeight = 460,
-                    Content = new StackPanel
-                    {
-                        Spacing = 8,
-                        Children =
-                        {
-                            reportBlock,
-                            new TextBlock
-                            {
-                                Text = "此窗口只会显示一次,之后可随时在「设置 → 计算设备」里查看本机自检结果,也可以手动切换计算设备。",
-                                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-                                FontSize = 11,
-                                Opacity = 0.7,
-                            },
-                            okBtn,
-                        },
-                    },
-                },
-            };
-            okBtn.Click += (_, _) => dlg.Hide();
-
-            // 渲染当前状态(检测完成=完整报告;未完成=占位)
-            void Render()
-            {
-                if (VulkanCheck.Done && !string.IsNullOrEmpty(VulkanCheck.Report))
-                {
-                    BuildReportContent(reportBlock, VulkanCheck.Report, out summaryBlock);
-                    okBtn.Content = "知道了";
-                    okBtn.IsEnabled = true;
-                }
-                else
-                {
-                    reportBlock.Inlines.Clear();
-                    reportBlock.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
-                    {
-                        Text = "正在检测本机设备(GPU / 显卡驱动 / 显存 / 内存 / CPU),请稍候…",
-                        FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    });
-                    okBtn.Content = "检测中…";
-                    okBtn.IsEnabled = false;
-                }
-            }
-            Render();
-
-            // 检测完成前:轮询解锁(自检通常 1 秒内完成;最多等 20 秒,超时也解锁显示兜底)
-            var timer = DispatcherQueue.CreateTimer();
-            timer.Interval = TimeSpan.FromMilliseconds(200);
-            timer.IsRepeating = true;
-            int waited = 0;
-            timer.Tick += (_, _) =>
-            {
-                waited++;
-                if (!VulkanCheck.Done && waited < 100) return;
-                timer.Stop();
-                Render();
-            };
-            timer.Start();
-
-            await dlg.ShowAsync();
-            timer.Stop();
-        }
-        catch { /* 弹窗失败不影响主流程 */ }
-    }
 
     /// <summary>把自检报告渲染进弹窗:去掉「设备自检报告」标题行(设置界面不受影响);
     /// 所有内容(计算设备/驱动/显存/内存/CPU/可用性/建议/提示)统一普通样式,不加粗不变色;
@@ -460,10 +400,6 @@ public sealed partial class MainPage : Page
 
     private void About_Click(object sender, RoutedEventArgs e)
     {
-        var ok = EngineService.CheckEngines(out var missing);
-        var engines = ok
-            ? "全部引擎就绪 ✓"
-            : "缺失: " + missing;
         var content = new StackPanel { Spacing = 8 };
 
         // 标题 + 版本 + 署名
@@ -475,7 +411,7 @@ public sealed partial class MainPage : Page
         });
         content.Children.Add(new TextBlock
         {
-            Text = $"版本 v1.0 公测版 · 构建 {File.GetLastWriteTime(typeof(MainPage).Assembly.Location):MM-dd HH:mm}",
+            Text = $"版本 v1.0 · 构建 {File.GetLastWriteTime(typeof(MainPage).Assembly.Location):MM-dd HH:mm}",
             FontSize = 12,
             Opacity = 0.7,
         });
@@ -525,19 +461,6 @@ public sealed partial class MainPage : Page
         updateRow.Children.Add(updateBtn);
         updateRow.Children.Add(updateResult);
         content.Children.Add(updateRow);
-        // 公测免责横幅(测试版提示,一眼可见)
-        content.Children.Add(new Border
-        {
-            Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(40, 232, 163, 61)),
-            CornerRadius = new Microsoft.UI.Xaml.CornerRadius(6),
-            Padding = new Microsoft.UI.Xaml.Thickness(10, 6, 10, 6),
-            Child = new TextBlock
-            {
-                Text = "⚠ 公测版:软件仍在测试,可能存在不稳定、报错或功能不完善,建议先备份素材再处理。",
-                FontSize = 11,
-                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-            },
-        });
 
         // 作者 + 头像(头像文件:程序目录 avatar.jpg;缺失时自动生成默认头像,名字始终显示)
         var authorRow = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 16 };
@@ -650,14 +573,6 @@ public sealed partial class MainPage : Page
             content.Children.Add(docLink);
         }
 
-        // 隐私
-        content.Children.Add(new TextBlock
-        {
-            Text = "隐私:100% 本地处理,所有数据不上传任何服务器。",
-            FontSize = 12,
-            Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 120, 190, 130)),
-        });
-
         // 致谢:自动扫描程序目录 thanks/ 文件夹(文件名=名字,支持后续添加)
         var thanksDir = Path.Combine(AppContext.BaseDirectory, "thanks");
         if (Directory.Exists(thanksDir))
@@ -721,15 +636,6 @@ public sealed partial class MainPage : Page
                 content.Children.Add(thanksControl);
             }
         }
-
-        // 状态
-        content.Children.Add(new TextBlock
-        {
-            Text = "组件: " + engines + "\n技术栈:WinUI 3 · .NET 8 · Windows App SDK 1.8\n开源协议:MIT(详情见 LICENSE)\n安全机制:自动防爆显存(分块/降级)、CPU 线程限制、降温休息",
-            FontSize = 11,
-            Opacity = 0.6,
-            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-        });
 
         // 关于弹窗:全屏遮罩 + 中央圆角卡片(水平垂直精确居中)
         var popup = new Microsoft.UI.Xaml.Controls.Primitives.Popup { XamlRoot = this.XamlRoot };
