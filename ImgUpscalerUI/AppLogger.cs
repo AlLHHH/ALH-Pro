@@ -68,6 +68,9 @@ public static class AppLogger
     /// <summary>记录一条普通操作日志。</summary>
     public static void Info(string msg) => Write("INFO ", msg);
 
+    /// <summary>记录一条警告(用户需注意的降级/兼容/探测失败等;同步写盘,必落日志)。</summary>
+    public static void Warn(string msg) => Write("WARN ", msg, sync: true);
+
     /// <summary>记录一条错误日志(含原因与堆栈)。错误级日志【同步写盘】——异常/崩溃瞬间资源紧张,
     /// 走后台线程可能来不及落盘就没了,同步写保证"崩溃前最后一行"一定在日志里。</summary>
     public static void Error(string msg, Exception? ex = null)

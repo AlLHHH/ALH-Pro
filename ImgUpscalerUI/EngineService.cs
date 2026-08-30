@@ -391,7 +391,10 @@ public static class EngineService
                 await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
                 // 判定:退出码 0 且输出文件存在(引擎正常出图)
                 bool ok = p.ExitCode == 0 && File.Exists(outPng) && new FileInfo(outPng).Length > 0;
-                AppLogger.Info($"[探测] 引擎 {engine} GPU(-g {gpuId})出图:{(ok ? "可用" : "失败")}(exit={p.ExitCode})");
+                if (ok)
+                    AppLogger.Info($"[探测] 引擎 {engine} GPU(-g {gpuId})可用(1×1 图出图)");
+                else
+                    AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId})不可用(exit={p.ExitCode}/无输出)——将自动改用 CPU");
                 return ok;
             }
             finally
@@ -402,7 +405,7 @@ public static class EngineService
         }
         catch (Exception ex)
         {
-            AppLogger.Info($"[探测] 引擎 {engine} GPU 探测异常(按不可用):{ex.Message}");
+            AppLogger.Warn($"[探测] 引擎 {engine} GPU 探测异常(按不可用):{ex.Message}");
             return false;
         }
     }
@@ -448,7 +451,10 @@ public static class EngineService
                 waitCts.CancelAfter(TimeSpan.FromSeconds(30));   // 单对插帧正常 1~2 秒;30 秒无果=引擎 hang
                 await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
                 bool ok = p.ExitCode == 0 && File.Exists(o) && new FileInfo(o).Length > 0;
-                AppLogger.Info($"[探测] RIFE {model} GPU(-g {gpuId})出图:{(ok ? "可用" : "失败")}(exit={p.ExitCode})");
+                if (ok)
+                    AppLogger.Info($"[探测] RIFE {model} GPU(-g {gpuId})可用(1~2 秒出帧)");
+                else
+                    AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId})不可用(exit={p.ExitCode}/无输出)——将自动改用 CPU 补帧");
                 return ok;
             }
             finally
@@ -458,7 +464,7 @@ public static class EngineService
         }
         catch (Exception ex)
         {
-            AppLogger.Info($"[探测] RIFE GPU 探测异常(按不可用):{ex.Message}");
+            AppLogger.Warn($"[探测] RIFE GPU 探测异常(按不可用):{ex.Message}");
             return false;
         }
     }
