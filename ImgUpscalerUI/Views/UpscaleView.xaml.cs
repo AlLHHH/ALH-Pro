@@ -161,6 +161,9 @@ public sealed partial class UpscaleView : UserControl
             // 格式下拉顺序:0=JPG 1=PNG——存读一致(223 行存的就是 SelectedIndex),不再做旧语义迁移
             // (旧迁移 d.Fmt==0?1:0 会把新存的 1(PNG) 转回 0(JPG):用户选 PNG 重开变 JPG 的 bug 根源)
             if (d.Fmt is >= 0 and <= 1) FmtCombo.SelectedIndex = d.Fmt;
+            // 关键:LoadSettings 在事件挂接前执行,设置 Fmt 不会触发 SelectionChanged→RefreshQualityCombo;
+            // 必须手动刷新码率下拉(否则 PNG 时仍显示 JPG 的"默认(推荐)"档——用户反馈"PNG 出现 JPG 码率样式")
+            RefreshQualityCombo();
             // 输出码率档位(仅 JPG 恢复;PNG 只有"无损"一项不恢复):
             // JPG 用 ImgQualityMode(0-4);旧版滑条值兼容映射;无有效档位保持"默认(推荐)"(RefreshQualityCombo 兜底)
             if (FmtCombo.SelectedIndex == 0)
