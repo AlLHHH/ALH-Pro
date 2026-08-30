@@ -14,8 +14,8 @@
 #define MyAppName "ALH Pro"
 #define MyAppVersion "1.0"
 #define MyAppExeName "ALHPro.exe"
-; GitHub Release 模型包直链(发布时替换为真实地址;必须与 Release 附件名一致)
-#define ModelsUrl "https://github.com/AlL666/ALHPro/releases/download/v1.0/models_v1.0.zip"
+; GitHub Release 模型包直链(与 Release 附件名必须一致;仓库=AlLHHHDYTH/ALH-Pro)
+#define ModelsUrl "https://github.com/AlLHHHDYTH/ALH-Pro/releases/download/v1.0/models_v1.0.zip"
 #define ModelsFile "models_v1.0.zip"
 
 [Setup]
