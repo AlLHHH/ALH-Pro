@@ -110,6 +110,8 @@ public sealed partial class MainPage : Page
             });
             if (SafeRender.IsWeakDevice)
                 _ = ShowVulkanNoticeAsync();
+            // 更新检查:后台静默(有新版才弹提示条;失败/无网/已最新均无感)
+            _ = CheckUpdateSilentAsync();
         };
     }
 
@@ -118,6 +120,32 @@ public sealed partial class MainPage : Page
         if (NavList.SelectedItem is ListViewItem item && item.Tag is string tag)
             ShowView(tag);
     }
+
+    // ---------- 更新检查 ----------
+    /// <summary>启动静默检查:有新版本才显示提示条;失败/已最新不打扰。</summary>
+    private async Task CheckUpdateSilentAsync()
+    {
+        var r = await UpdateChecker.CheckAsync().ConfigureAwait(false);
+        if (r is not { HasNew: true }) return;   // 失败/已最新 → 无感
+        var (_, tag, _) = r.Value;
+        DispatcherQueue.TryEnqueue(() => ShowUpdateBar(tag));
+    }
+
+    private void ShowUpdateBar(string latestTag)
+    {
+        UpdateBarText.Text = $"发现新版本 {latestTag}(当前 v{UpdateChecker.CurrentVersion})";
+        UpdateBar.Visibility = Visibility.Visible;
+    }
+
+    private void UpdateBarGo_Click(object sender, RoutedEventArgs e)
+    {
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(UpdateChecker.ReleasePageUrl) { UseShellExecute = true }); }
+        catch { /* 打开失败忽略 */ }
+        UpdateBar.Visibility = Visibility.Collapsed;
+    }
+
+    private void UpdateBarClose_Click(object sender, RoutedEventArgs e)
+        => UpdateBar.Visibility = Visibility.Collapsed;
 
     private void ShowView(string tag)
     {
@@ -451,6 +479,52 @@ public sealed partial class MainPage : Page
             FontSize = 12,
             Opacity = 0.7,
         });
+        // 手动检查更新:点击后显示结果;成功展示"已最新/发现新版本",失败才提示(启动静默检查不打扰)
+        var updateRow = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 10 };
+        var updateBtn = new Button
+        {
+            Content = "检查更新",
+            FontSize = 11,
+            Padding = new Microsoft.UI.Xaml.Thickness(14, 4, 14, 4),
+        };
+        var updateResult = new TextBlock
+        {
+            FontSize = 11,
+            Opacity = 0.8,
+            VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+        };
+        updateBtn.Click += async (_, _) =>
+        {
+            updateBtn.IsEnabled = false;
+            updateResult.Text = "检查中...";
+            var r = await UpdateChecker.CheckAsync();
+            if (r is null)
+            {
+                updateResult.Text = "检查失败(网络或 GitHub 暂时不可用)";
+                updateBtn.IsEnabled = true;
+                return;
+            }
+            var (hasNew, tag, _) = r.Value;
+            if (hasNew)
+            {
+                updateResult.Inlines.Clear();
+                var hyper = new Microsoft.UI.Xaml.Documents.Hyperlink
+                {
+                    NavigateUri = new Uri(UpdateChecker.ReleasePageUrl),
+                    UnderlineStyle = Microsoft.UI.Xaml.Documents.UnderlineStyle.Single,
+                };
+                hyper.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = $"发现新版本 {tag},点此下载" });
+                updateResult.Inlines.Add(hyper);
+            }
+            else
+            {
+                updateResult.Text = "已是最新版本 ✓";
+            }
+            updateBtn.IsEnabled = true;
+        };
+        updateRow.Children.Add(updateBtn);
+        updateRow.Children.Add(updateResult);
+        content.Children.Add(updateRow);
         // 公测免责横幅(测试版提示,一眼可见)
         content.Children.Add(new Border
         {
