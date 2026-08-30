@@ -316,7 +316,8 @@ public static class SafeRender
     private static IntPtr? _cpuJob;
     private static readonly object _cpuJobLock = new();
 
-    /// <summary>取 Job 句柄(按 LimitCpuJob 创建一次并按有效上限设 CPU 硬上限);未开/失败返回 Zero。</summary>
+    /// <summary>取 Job 句柄(按 LimitCpuJob 创建一次);每次调用前按【当前系统负载】重设 CPU 硬上限,
+    /// 保证"其他软件占用高时软件自动让路"。(Job 创建后 CpuRate 可随时覆盖。)</summary>
     internal static IntPtr GetCpuJob()
     {
         if (!LimitCpuJob) return IntPtr.Zero;
@@ -325,24 +326,73 @@ public static class SafeRender
             if (_cpuJob is null)
             {
                 _cpuJob = CreateJobObject(IntPtr.Zero, null);
-                if (_cpuJob.Value != IntPtr.Zero)
-                {
-                    var info = new JOBOBJECT_CPU_RATE_CONTROL_INFORMATION
-                    {
-                        ControlFlags = 0x1 | 0x4,   // JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | HARD_CAP
-                        CpuRate = (uint)(GetEffectiveCpuCapPct() * 100),
-                    };
-                    try { SetInformationJobObject(_cpuJob.Value, 15 /* JobObjectCpuRateControlInformation */, ref info, (uint)System.Runtime.InteropServices.Marshal.SizeOf(info)); }
-                    catch { }
-                }
+                if (_cpuJob.Value == IntPtr.Zero) return IntPtr.Zero;
             }
+            // 每次分配进程前刷新上限:GetEffectiveCpuCapPct 内部按系统已占用动态降档
+            var info = new JOBOBJECT_CPU_RATE_CONTROL_INFORMATION
+            {
+                ControlFlags = 0x1 | 0x4,   // JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | HARD_CAP
+                CpuRate = (uint)(GetEffectiveCpuCapPct() * 100),
+            };
+            try { SetInformationJobObject(_cpuJob.Value, 15 /* JobObjectCpuRateControlInformation */, ref info, (uint)System.Runtime.InteropServices.Marshal.SizeOf(info)); } catch { }
             return _cpuJob.Value;
         }
     }
 
-    /// <summary>有效 CPU 上限百分比:自动模式(Mode==0)=85(留给系统/前台余量);手动模式=滑条值(钳 50~95)。</summary>
+    /// <summary>有效 CPU 上限百分比:手动模式=滑条值(钳 50~95);
+    /// 自动模式=85,但**按系统当前已占用动态降档**——其他软件已占了 70%,
+    /// 软件再占 85% 会让整机 155% 爆卡。规则:系统空闲越少,软件上限越低,
+    /// 保证"软件+其他"总占用 ≤ ~100%(软件永远让位)。</summary>
     public static double GetEffectiveCpuCapPct()
-        => Mode == 1 ? Math.Clamp(CpuCapPct, 50.0, 95.0) : 85.0;
+    {
+        if (Mode == 1) return Math.Clamp(CpuCapPct, 50.0, 95.0);
+        try
+        {
+            double sysUsed = GetSystemCpuLoad();   // 0~1:当前系统已被其他程序占用
+            return GetEffectiveCpuCapPctRaw(sysUsed);
+        }
+        catch { /* 读不到保持 85 */ }
+        return 85.0;
+    }
+
+    /// <summary>系统整体 CPU 使用率(0~1,最近采样):GetSystemTimes 两次采样窗口。
+    /// 失败返回 0(视为空闲,保持全速)。</summary>
+    private static double GetSystemCpuLoad()
+    {
+        try
+        {
+            if (!GetSystemTimes(out var idle0, out var ker0, out var user0)) return 0;
+            System.Threading.Thread.Sleep(300);   // 300ms 采样窗口(不阻塞太久)
+            if (!GetSystemTimes(out var idle1, out var ker1, out var user1)) return 0;
+            double idle = idle1.ToMilliseconds() - idle0.ToMilliseconds();
+            double total = (ker1.ToMilliseconds() - ker0.ToMilliseconds()) + (user1.ToMilliseconds() - user0.ToMilliseconds());
+            if (total <= 0) return 0;
+            double used = 1.0 - idle / total;
+            AppLogger.Info($"[资源] 系统 CPU 已占用 {used * 100:0}% → 软件上限 {GetEffectiveCpuCapPctRaw(used)}%");
+            return Math.Clamp(used, 0, 1);
+        }
+        catch { return 0; }
+    }
+
+    private static double GetEffectiveCpuCapPctRaw(double sysUsed)
+    {
+        if (sysUsed > 0.85) return 8;
+        if (sysUsed > 0.70) return 15;
+        if (sysUsed > 0.50) return 40;
+        if (sysUsed > 0.30) return 65;
+        return 85;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct FILETIME
+    {
+        public uint dwLowDateTime;
+        public uint dwHighDateTime;
+        public long ToMilliseconds() => (((long)dwHighDateTime << 32) | dwLowDateTime) / 10000L;
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetSystemTimes(out FILETIME lpIdleTime, out FILETIME lpKernelTime, out FILETIME lpUserTime);
 
     /// <summary>把子进程分配进 CPU 限制 Job(开关1);失败(进程已在其它 Job)静默。</summary>
     internal static void AssignToCpuJob(IntPtr processHandle)

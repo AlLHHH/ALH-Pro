@@ -3075,8 +3075,34 @@ public sealed partial class VideoView : UserControl
                     + (dedupOn ? DedupSuffix(dedupModel, dedupAnimeThr, contentFpsNow, animeHoldN) : "")
                     + (sceneThreshold != null ? "_转场" : "");
                 var outExt = outExtNow;
-                var outPath = UpscaleView.UniquePath(baseDir,
-                    Path.GetFileNameWithoutExtension(item.Path) + suffix + outExt);
+                var outName = Path.GetFileNameWithoutExtension(item.Path) + suffix + outExt;
+                // 输出路径过长自动缩短(Windows 260 字符限制:中文文件名+长后缀+深目录会静默失败)
+                try
+                {
+                    var full = Path.Combine(baseDir, outName);
+                    if (full.Length > 220)
+                    {
+                        // 截断文件名部分(保留后缀与关键信息),如原素材名超过 120 字符则截断
+                        var baseName = Path.GetFileNameWithoutExtension(item.Path);
+                        if (baseName.Length > 80)
+                        {
+                            var shortBase = baseName[..80];
+                            outName = shortBase + suffix + outExt;
+                            Log($"⚠ 输出文件名过长,已缩短素材名({baseName.Length} 字符→80),避免路径超限失败");
+                        }
+                        // 仍超:再截断 suffix(去掉非关键部分)
+                        if (Path.Combine(baseDir, outName).Length > 220 && suffix.Length > 40)
+                        {
+                            // 保留补帧倍率与引擎,去掉其他
+                            outName = Path.GetFileNameWithoutExtension(item.Path)[..Math.Min(50, Path.GetFileNameWithoutExtension(item.Path).Length)]
+                                + (interp ? $"_补帧{interpScale}x" : "")
+                                + (up ? $"_超分" : "") + outExt;
+                            Log("⚠ 输出文件名仍过长,已最短化(带补帧/超分标记)");
+                        }
+                    }
+                }
+                catch { }
+                var outPath = UpscaleView.UniquePath(baseDir, outName);
                 Log($"→ ({i + 1}/{items.Length}) {item.Name}");
                 Log($"   输出 → {outPath}");
                 // 暂停等待:暂停时停在「当前批次/段」之间(几秒~十几秒),恢复立即续上;取消可从中退出

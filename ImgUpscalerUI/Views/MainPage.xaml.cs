@@ -93,7 +93,9 @@ public sealed partial class MainPage : Page
                              && !VulkanCheck.Devices.Any(d => d.Id == AppSettings.GpuIndex))
                     {
                         // 用户当前编号不在引擎实际枚举列表 → 编号错位(注册表顺序≠Vulkan 顺序),自动纠正
-                        int rec = VulkanCheck.Devices[0].Id;
+                        // 纠正目标:独立显卡(跳过核显,避免纠正成 Intel/AMD 核显)
+                        int rec = VulkanCheck.Devices.FirstOrDefault(d => IsDiscreteGpu(d.Name)).Id;
+                        if (!VulkanCheck.Devices.Any(d => d.Id == rec)) rec = VulkanCheck.Devices[0].Id;
                         AppLogger.Info($"编号纠正:当前设备 {AppSettings.GpuIndex} 不在引擎实际枚举列表 {string.Join(",", VulkanCheck.Devices.Select(d => d.Id + ":" + d.Name))},已自动改为引擎识别 {rec}");
                         AppSettings.GpuIndex = rec;
                         try { AppSettings.Save(); } catch { }
@@ -111,6 +113,48 @@ public sealed partial class MainPage : Page
             // 更新检查:后台静默(有新版才弹提示条;失败/无网/已最新均无感)
             _ = CheckUpdateSilentAsync();
         };
+    }
+
+    /// <summary>生成设备下拉标签与推荐编号:优先【引擎实际枚举】(VulkanCheck.Devices,含引擎真实 -g 编号),
+    /// 引擎未枚举时退回注册表顺序。引擎枚举才是用户真正能用的设备,避免"注册表选GPU1实际用GPU0"错位。</summary>
+    private static (System.Collections.Generic.List<string> labels, int recommended) BuildGpuLabels()
+    {
+        var labels = new System.Collections.Generic.List<string>();
+        try
+        {
+            // 引擎枚举(VulkanCheck 启动时用 waifu2x 引擎跑过,Devices = 引擎真实 -g 编号表)
+            var devs = ALHPro.VulkanCheck.Devices;
+            int recommended = -1;
+            if (devs.Count > 0)
+            {
+                for (int i = 0; i < devs.Count; i++)
+                {
+                    var d = devs[i];
+                    string mark = i == 0 ? "" : "";
+                    labels.Add($"GPU {d.Id} · {d.Name}{mark}");
+                    // 推荐:非 Intel/AMD 核显的第一张(通常就是独立 NVIDIA)
+                    if (recommended < 0 && IsDiscreteGpu(d.Name)) recommended = d.Id;
+                }
+                if (recommended < 0) recommended = devs[0].Id;   // 全核显/未知:第一张
+                return (labels, recommended);
+            }
+            // 引擎未枚举(检测没跑成):退回注册表顺序(旧逻辑)
+            var (regLabels, regRec) = GpuInfo.BuildLabels();
+            return (regLabels, regRec);
+        }
+        catch { return (labels, -1); }
+    }
+
+    /// <summary>判断是否独立显卡(非 Intel/AMD 核显):按名称特征,与 GpuInfo.GetRecommendedIndex 一致。</summary>
+    private static bool IsDiscreteGpu(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return false;
+        var isI = name.Contains("Intel", StringComparison.OrdinalIgnoreCase)
+            && (name.Contains("UHD", StringComparison.OrdinalIgnoreCase)
+                || name.Contains("Iris", StringComparison.OrdinalIgnoreCase)
+                || name.Contains("HD Graphics", StringComparison.OrdinalIgnoreCase));
+        var isA = name.Contains("AMD Radeon(TM) Graphics", StringComparison.OrdinalIgnoreCase);
+        return !isI && !isA;
     }
 
     private void NavList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -839,7 +883,10 @@ public sealed partial class MainPage : Page
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
         });
         var gpuCombo = new ComboBox { HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch };
-        var (gpuLabels, gpuRec) = GpuInfo.BuildLabels();   // "GPU N · 型号"(推荐项带标记),与日志 -g X 对应
+        // ===== 设备列表以【引擎实际枚举】为准(VulkanCheck.Devices,带引擎真实 -g 编号)=====
+        // 注册表顺序≠引擎 -g 编号(实测:注册表[0 Intel][1 NVIDIA],引擎[1 NVIDIA][2 Intel])——
+        // 用注册表顺序生成下拉会让用户选错卡。VulkanCheck 跑过 waifu2x 引擎枚举,是真实的设备表。
+        var (gpuLabels, gpuRec) = BuildGpuLabels();
         int gpuCount = gpuLabels.Count;
         if (gpuLabels.Count > 0)
         {
@@ -854,7 +901,7 @@ public sealed partial class MainPage : Page
             gpuCount = 2;
         }
         gpuCombo.Items.Add(new ComboBoxItem { Content = "CPU (软件计算)" });
-        // 当前全局选择:-1=CPU(末项);≥0=GPU 编号
+        // 当前全局选择:-1=CPU(末项);≥0=GPU 编号(引擎枚举的编号)
         gpuCombo.SelectedIndex = AppSettings.GpuIndex >= 0 && AppSettings.GpuIndex < gpuCount
             ? AppSettings.GpuIndex : gpuCount;
         gpuCombo.SelectionChanged += (_, _) =>

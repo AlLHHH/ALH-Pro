@@ -387,15 +387,25 @@ public static class EngineService
                 using var p = Process.Start(psi);
                 if (p == null) return false;
                 using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                waitCts.CancelAfter(TimeSpan.FromSeconds(20));   // 探测超时 20s(正常 1×1 图秒级)
-                await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
-                // 判定:退出码 0 且输出文件存在(引擎正常出图)
-                bool ok = p.ExitCode == 0 && File.Exists(outPng) && new FileInfo(outPng).Length > 0;
-                if (ok)
-                    AppLogger.Info($"[探测] 引擎 {engine} GPU(-g {gpuId})可用(1×1 图出图)");
-                else
-                    AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId})不可用(exit={p.ExitCode}/无输出)——将自动改用 CPU");
-                return ok;
+                waitCts.CancelAfter(TimeSpan.FromSeconds(5));   // 探测超时 5 秒(用户要求:检测不能阻塞太久)
+                try
+                {
+                    await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
+                    // 判定:退出码 0 且输出文件存在(引擎正常出图)
+                    bool ok = p.ExitCode == 0 && File.Exists(outPng) && new FileInfo(outPng).Length > 0;
+                    if (ok)
+                        AppLogger.Info($"[探测] 引擎 {engine} GPU(-g {gpuId})可用(1×1 图出图)");
+                    else
+                        AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId})不可用(exit={p.ExitCode}/无输出)——将自动改用 CPU");
+                    return ok;
+                }
+                catch (OperationCanceledException)
+                {
+                    // 5 秒无果:判定不可用,并杀掉探测进程(避免孤儿引擎占 GPU/CPU)
+                    AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId}) 5 秒无响应(疑似 hang)——按不可用处理,已终止探测");
+                    try { p.Kill(entireProcessTree: true); } catch { }
+                    return false;
+                }
             }
             finally
             {
@@ -448,14 +458,23 @@ public static class EngineService
                 using var p = Process.Start(psi);
                 if (p == null) return false;
                 using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                waitCts.CancelAfter(TimeSpan.FromSeconds(30));   // 单对插帧正常 1~2 秒;30 秒无果=引擎 hang
-                await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
-                bool ok = p.ExitCode == 0 && File.Exists(o) && new FileInfo(o).Length > 0;
-                if (ok)
-                    AppLogger.Info($"[探测] RIFE {model} GPU(-g {gpuId})可用(1~2 秒出帧)");
-                else
-                    AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId})不可用(exit={p.ExitCode}/无输出)——将自动改用 CPU 补帧");
-                return ok;
+                waitCts.CancelAfter(TimeSpan.FromSeconds(5));   // 单对插帧正常 1~2 秒;5 秒无果=引擎 hang(用户要求≤5秒)
+                try
+                {
+                    await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
+                    bool ok = p.ExitCode == 0 && File.Exists(o) && new FileInfo(o).Length > 0;
+                    if (ok)
+                        AppLogger.Info($"[探测] RIFE {model} GPU(-g {gpuId})可用(1~2 秒出帧)");
+                    else
+                        AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId})不可用(exit={p.ExitCode}/无输出)——将自动改用 CPU 补帧");
+                    return ok;
+                }
+                catch (OperationCanceledException)
+                {
+                    AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId}) 5 秒无响应(疑似 hang)——按不可用处理,已终止探测");
+                    try { p.Kill(entireProcessTree: true); } catch { }
+                    return false;
+                }
             }
             finally
             {
