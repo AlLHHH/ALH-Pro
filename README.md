@@ -41,9 +41,19 @@
 
 ## 🚀 快速开始
 
-1. 下载发布版(Release 页,含全部引擎)或按下方自行构建;
-2. 若只拿源码:把 `engines\` 目录(waffu2x / realcugan / realesrgan / rife / ffmpeg / rembg)放进程序目录;
-3. 启动 → 左侧选择功能 → 添加素材 → 调整参数 → 开始处理。
+**普通用户(不碰代码):**
+
+1. 打开 Releases 页面 → 点 **Assets** 里的 `ALHPro_v1.0_Setup.exe` 下载(约 630MB);
+2. 双击安装,一路"下一步"即可;
+3. 要用 AI 抠图:安装到"选择附加任务"一步勾选「下载并安装模型包」(约 1.4GB,可选);
+4. 启动 → 左侧选择功能 → 添加素材 → 调整参数 → 开始处理。
+
+> 国内下载慢:把链接前加 `https://ghproxy.com/` 前缀走加速镜像,或用 IDM/迅雷多线程下载。安装后离线可用。
+
+**开发者(拿源码构建):**
+
+1. 把 `engines\` 目录(waifu2x / realcugan / realesrgan / rife / ffmpeg / rembg)放进程序目录;
+2. `dotnet build ImgUpscalerUI/ImgUpscalerUI.csproj -c Release -p:Platform=x64`(见下方构建)。
 
 **动漫素材推荐**:启用去重(智能检测/动漫模式)→ 补帧(RIFE v4.13)。
 
