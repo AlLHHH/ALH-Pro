@@ -61,11 +61,12 @@ ALH Pro — 第三方组件许可声明
    项目: https://ffmpeg.org
    构建: BtbN(https://github.com/BtbN/FFmpeg-Builds,gpl 变体)
    许可: GNU GPL version 3(构建启用 --enable-gpl --enable-version3)
-   许可全文: 本目录 COPYING.GPLv3(与发布版随附)
+   许可全文: 本目录 licenses/GPLv3.txt(随附)
    对应源码: https://ffmpeg.org/download.html
              https://github.com/FFmpeg/FFmpeg
    说明: 本软件以独立进程方式调用 ffmpeg/ffprobe,未与其链接;
-         依 GPLv3 第 6 条提供对应源码获取途径。
+         依 GPLv3 第 6 条提供对应源码获取途径;源码见上方官方链接(未随附源码,
+         按 GPLv3 第 6c 条以"获取途径"方式履行义务)。
    版权: FFmpeg 开发团队
 
 10. Microsoft ONNX Runtime(抠图模型推理)
@@ -84,12 +85,12 @@ ALH Pro — 第三方组件许可声明
     版权: Microsoft Corporation
 
 --------------------------------------------------
-附:各开源许可协议全文
-MIT:      https://opensource.org/licenses/MIT
-BSD-3:    https://opensource.org/licenses/BSD-3-Clause
-Apache-2: https://www.apache.org/licenses/LICENSE-2.0
-GPLv3:    https://www.gnu.org/licenses/gpl-3.0.txt
+附:各开源许可协议全文(随附于本程序目录 licenses\ 文件夹)
+MIT:             licenses/MIT.txt
+BSD-3-Clause:   licenses/BSD-3-Clause.txt
+Apache-2.0:     licenses/Apache-2.0.txt
+GPLv3:          licenses/GPLv3.txt
 
 本软件所有处理在本机完成,不上传、不收集任何用户数据;
 软件可能联网检查 GitHub 更新(素材处理始终在本机)。
-作者:AlL.H  ·  AI 协作:DeepSeek
+作者:AlL.H
