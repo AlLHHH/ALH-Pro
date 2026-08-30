@@ -112,7 +112,7 @@ public sealed partial class UpscaleView : UserControl
         NoiseCombo.SelectionChanged += (_, _) => SaveSettings();
         TtaCheck.Checked += (_, _) => SaveSettings();
         TtaCheck.Unchecked += (_, _) => SaveSettings();
-        FmtCombo.SelectionChanged += (_, _) => { SaveSettings(); RefreshQualityCombo(); };
+        FmtCombo.SelectionChanged += (_, _) => { RefreshQualityCombo(); SaveSettings(); };
         DetailSlider.ValueChanged += (_, _) => SaveSettings();
         SharpenSlider.ValueChanged += (_, _) => SaveSettings();
         ClaritySlider.ValueChanged += (_, _) => SaveSettings();
@@ -235,7 +235,9 @@ public sealed partial class UpscaleView : UserControl
                 Aa = (int)AaSlider.Value,
                 Dehaze = (int)DehazeSlider.Value,
                 ImgQualityMode = FmtCombo.SelectedIndex == 0
-                    ? (ImgQualityCombo.SelectedIndex is >= 0 and <= 4 ? ImgQualityCombo.SelectedIndex : 2)
+                    ? (ImgQualityCombo.SelectedIndex is >= 0 and <= 4
+                        ? ImgQualityCombo.SelectedIndex
+                        : _lastJpgQuality)   // 下拉被清空的瞬间(Sel=-1):不落 2,用记忆档位
                     : _lastJpgQuality,   // PNG 时存上次 JPG 的真实档位(读回 JPG 时正确恢复,而非"低")
                 ImgQualityCustom = ParseImgQualityCustom(),
                 PreDenoise = PreDenoiseCheck.IsChecked == true,
@@ -922,18 +924,25 @@ public sealed partial class UpscaleView : UserControl
         // 选「自定义码率...」(JPG 档)时显示质量输入行;其余档位隐藏
         if (ImgQualityCustomRow != null)
             ImgQualityCustomRow.Visibility = ImgQualityCombo.SelectedIndex == 4 ? Visibility.Visible : Visibility.Collapsed;
+        // JPG 下每次选档即记忆(0-4),保证切 PNG 再切回 JPG 不丢档
+        if (!IsPngFormat && ImgQualityCombo.SelectedIndex is >= 0 and <= 4)
+            _lastJpgQuality = ImgQualityCombo.SelectedIndex;
         SaveSettings();
     }
 
-    /// <summary>按当前输出格式填充码率档位下拉:PNG=3 档(低压缩/默认无损/更小文件),JPG=5 档(低/中/默认/超高/自定义)。
-    /// 格式切换时调用;档位选择各自记忆。</summary>
+    private bool IsPngFormat => FmtCombo.SelectedIndex == 1;   // 下拉顺序:0=JPG 1=PNG
+
+    /// <summary>按当前输出格式填充码率档位下拉:PNG=1 档(无损占位),JPG=5 档(低/中/默认/超高/自定义)。
+    /// 格式切换时调用;JPG 档位各自记忆(切 PNG 不丢)。</summary>
     private void RefreshQualityCombo()
     {
         if (ImgQualityCombo == null) return;
-        var isPng = FmtCombo.SelectedIndex == 1;   // 下拉顺序:0=JPG 1=PNG
+        var isPng = IsPngFormat;
         // 记住当前选中,切格式后从对应档位恢复
         int prev = ImgQualityCombo.SelectedIndex;
-        if (!isPng && prev is >= 0 and <= 4) _lastJpgQuality = prev;   // JPG 档位记忆(切 PNG 不丢)
+        // 关键:PIN 模式只有 1 项占位"无损"(index=0),它不代表 JPG 档位——否则切回 JPG 时
+        // 被当成"低(文件小)"(index=0)选中,并把 _lastJpgQuality 覆盖成 0(用户反馈"切JPG默认是低"的根因)
+        bool wasPngPlaceholder = ImgQualityCombo.Items.Count <= 1;
         ImgQualityCombo.Items.Clear();
         if (isPng)
         {
@@ -950,8 +959,9 @@ public sealed partial class UpscaleView : UserControl
             ImgQualityCombo.Items.Add(new ComboBoxItem { Content = "默认 (推荐)" });
             ImgQualityCombo.Items.Add(new ComboBoxItem { Content = "超高 (文件大)" });
             ImgQualityCombo.Items.Add(new ComboBoxItem { Content = "自定义码率..." });
-            // 无有效记忆(prev<0 初次/重置)默认选"默认 (推荐)"(index=2)——旧代码 clamp(-1→0)会把首次默认成"低(文件小)"
-            ImgQualityCombo.SelectedIndex = prev is >= 0 and <= 4 ? prev : 2;
+            // 从 PNG 切回 JPG 时,prev 是 PNG 占位(0),不能用 → 用记忆的 JPG 档位;初次(prev<0)也用记忆(默认 2=推荐)
+            int pick = wasPngPlaceholder ? _lastJpgQuality : prev;
+            ImgQualityCombo.SelectedIndex = pick is >= 0 and <= 4 ? pick : 2;
             ImgQualityCombo.IsEnabled = true;
             ImgQualityCombo.Opacity = 1.0;
         }
