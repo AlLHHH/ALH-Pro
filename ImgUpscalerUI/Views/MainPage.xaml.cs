@@ -33,8 +33,9 @@ public sealed partial class MainPage : Page
         {
             int page0 = _startupPage >= 0 ? _startupPage : LoadLastPage();
             _startupPageIndex = page0;
-            NavList.SelectedIndex = page0;
-            ShowView(page0 == 1 ? "cutout" : page0 == 2 ? "video" : "upscale");
+            NavList.SelectedIndex = page0;   // 触发 SelectionChanged → ShowView(唯一入口;下面不再重复调用)
+            // 注意:曾在此处再手动 ShowView 一次 → 视图被创建两次(日志"进入页面:图片放大"出现2次),
+            // 第二个实例用默认值覆盖第一个恢复的设置 → "图片记不住格式/码率"的真正元凶。已删。
         }
         Loaded += async (_, _) =>
         {

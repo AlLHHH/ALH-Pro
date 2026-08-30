@@ -16,6 +16,7 @@ namespace ALHPro
 
         /// <summary>主窗口引用(供 FileOpenPicker 初始化等使用)。</summary>
         public static Window? MainWindow { get; private set; }
+        private static System.Threading.Mutex? _singleInstance;   // 单实例锁(Mutex,进程存活期间持有;退出自动释放)
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
         private struct MemoryStatusEx
@@ -152,6 +153,17 @@ namespace ALHPro
         [DllImport("user32.dll")]
         private static extern bool SetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT lpwndpl);
 
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);   // 单实例:把已运行窗口调回前台
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);   // 单实例:最小化还原
+
+        private static void Win32_SafeShowWindow(IntPtr hWnd)
+        {
+            try { ShowWindow(hWnd, 9 /*SW_RESTORE*/); } catch { }
+        }
+
         private delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, ref WP_RECT lprcMonitor, IntPtr dwData);
 
         [DllImport("user32.dll")]
@@ -253,6 +265,30 @@ namespace ALHPro
 
         protected override void OnLaunched(LaunchActivatedEventArgs e)
         {
+            // ===== 单实例锁定(Mutex):只允许一个 ALH Pro 运行 =====
+            // 第二次启动:尝试已有窗口(置前),本进程退出——杜绝多实例并存互相覆盖设置文件
+            // (那正是"图片格式/码率记不住"的元凶;多个旧实例持续用默认值写盘)。
+            bool createdNew;
+            _singleInstance = new System.Threading.Mutex(true, "ALHPro_SingleInstance_Mutex", out createdNew);
+            if (!createdNew)
+            {
+                try
+                {
+                    // 找到已运行窗口:置前(设置前台 + 最小化还原)
+                    foreach (var p in System.Diagnostics.Process.GetProcessesByName("ALHPro"))
+                    {
+                        if (p.MainWindowHandle != IntPtr.Zero)
+                        {
+                            Win32_SafeShowWindow(p.MainWindowHandle);
+                            SetForegroundWindow(p.MainWindowHandle);
+                            break;
+                        }
+                    }
+                }
+                catch { }
+                Environment.Exit(0);
+                return;
+            }
             // ===== 快速显示窗口:仅做窗口创建必需的同步工作,其余挪到后台/Activate 后 =====
             // (启动黑屏 1 秒的根源:窗口 Activate 前做了大量同步任务——日志/自检/清理/图标等,
             //  全部完成后才首帧渲染。下面只保留"显示窗口所必需"的,其余延迟执行。)
