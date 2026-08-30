@@ -2764,6 +2764,7 @@ public sealed partial class VideoView : UserControl
         int progressIndex = 0;
         // 任务前刷新空闲资源实测(开了其他软件后空闲骤降,批次档位要跟上);并记录日志便于排查
         SafeRender.RefreshFreeResources();
+        SafeRender.RefreshIdleCpu();   // 处理前采样系统占用(引擎未启动,读数=其他软件真实占用)→ CPU 上限自适应
         {
             double fr = SafeRender.FreeRamGB, fv = SafeRender.FreeVramGB;
             int bs = SafeRender.GetVideoBatchSize();

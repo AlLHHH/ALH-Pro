@@ -370,10 +370,20 @@ public static class EngineService
                     bmp.SetPixel(0, 0, System.Drawing.Color.Red);
                     bmp.Save(inPng, System.Drawing.Imaging.ImageFormat.Png);
                 }
-                // 引擎参数:waifu2x/realesrgan 用 -s 2(2x 模型);realcugan 用 -s 2 -m models-pro
-                string args = engine == "realcugan"
-                    ? $"-i \"{inPng}\" -o \"{outPng}\" -s 2 -m \"models-pro\" -g {gpuId}"
-                    : $"-i \"{inPng}\" -o \"{outPng}\" -s 2 -g {gpuId}";
+                // 引擎参数:waifu2x/realesrgan 用 -s 2(2x 模型);realcugan 用 -s 2 + 真实模型目录
+                // (realcugan 必须带 -m 正确模型名,否则探测失败误报"GPU不可用"→白白转CPU)
+                string args;
+                if (engine == "realcugan")
+                {
+                    var exeDir = Path.GetDirectoryName(exe) ?? ".";
+                    var md = Directory.EnumerateDirectories(exeDir, "models-*").OrderBy(d => d).FirstOrDefault();
+                    if (md == null) return false;   // 无模型可测:不探测(调用方按可用处理)
+                    args = $"-i \"{inPng}\" -o \"{outPng}\" -s 2 -m \"{Path.GetFileName(md)}\" -g {gpuId}";
+                }
+                else
+                {
+                    args = $"-i \"{inPng}\" -o \"{outPng}\" -s 2 -g {gpuId}";
+                }
                 var psi = new ProcessStartInfo
                 {
                     FileName = exe,
@@ -399,12 +409,18 @@ public static class EngineService
                         AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId})不可用(exit={p.ExitCode}/无输出)——将自动改用 CPU");
                     return ok;
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                 {
                     // 5 秒无果:判定不可用,并杀掉探测进程(避免孤儿引擎占 GPU/CPU)
                     AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId}) 5 秒无响应(疑似 hang)——按不可用处理,已终止探测");
                     try { p.Kill(entireProcessTree: true); } catch { }
                     return false;
+                }
+                catch (OperationCanceledException)
+                {
+                    // 用户取消(主令牌被取消):杀掉探测进程,重新抛出(不能让取消失效)
+                    try { p.Kill(entireProcessTree: true); } catch { }
+                    throw;
                 }
             }
             finally
@@ -469,11 +485,16 @@ public static class EngineService
                         AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId})不可用(exit={p.ExitCode}/无输出)——将自动改用 CPU 补帧");
                     return ok;
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                 {
                     AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId}) 5 秒无响应(疑似 hang)——按不可用处理,已终止探测");
                     try { p.Kill(entireProcessTree: true); } catch { }
                     return false;
+                }
+                catch (OperationCanceledException)
+                {
+                    try { p.Kill(entireProcessTree: true); } catch { }
+                    throw;
                 }
             }
             finally

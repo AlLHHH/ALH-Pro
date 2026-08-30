@@ -342,36 +342,43 @@ public static class SafeRender
     /// <summary>有效 CPU 上限百分比:手动模式=滑条值(钳 50~95);
     /// 自动模式=85,但**按系统当前已占用动态降档**——其他软件已占了 70%,
     /// 软件再占 85% 会让整机 155% 爆卡。规则:系统空闲越少,软件上限越低,
-    /// 保证"软件+其他"总占用 ≤ ~100%(软件永远让位)。</summary>
+    /// 保证"软件+其他"总占用 ≤ ~100%(软件永远让位)。
+    /// 【关键】必须用"处理开始前"采样的闲置负载(见 _sysLoadIdle):软件自己引擎跑起来后
+    /// 系统负载读数会包含软件自身(85%+),按它降档会把软件限死到 8%→更慢→振荡。故每次任务
+    /// 开始前刷新一次闲置读数(此时引擎还没跑,读到的即"其他软件"占用)。</summary>
     public static double GetEffectiveCpuCapPct()
     {
         if (Mode == 1) return Math.Clamp(CpuCapPct, 50.0, 95.0);
-        try
-        {
-            double sysUsed = GetSystemCpuLoad();   // 0~1:当前系统已被其他程序占用
-            return GetEffectiveCpuCapPctRaw(sysUsed);
-        }
-        catch { /* 读不到保持 85 */ }
-        return 85.0;
+        double sysUsed = _sysLoadIdle;   // 处理开始前的闲置占用(其他软件的真实占用)
+        return GetEffectiveCpuCapPctRaw(sysUsed);
     }
 
-    /// <summary>系统整体 CPU 使用率(0~1,最近采样):GetSystemTimes 两次采样窗口。
-    /// 失败返回 0(视为空闲,保持全速)。</summary>
-    private static double GetSystemCpuLoad()
+    /// <summary>任务开始前刷新的"系统闲置负载"缓存(引擎未启动时采样,过滤掉软件自身负载)。</summary>
+    private static double _sysLoadIdle;
+
+    /// <summary>任务开始前调用:采样当前系统占用(此时引擎还没跑,读数≈其他软件真实占用)。
+    /// 之后整个任务期间 GetEffectiveCpuCapPct 用此固定值(不再每次采样,避免引擎自身负载引起的振荡)。</summary>
+    public static void RefreshIdleCpu()
     {
         try
         {
-            if (!GetSystemTimes(out var idle0, out var ker0, out var user0)) return 0;
-            System.Threading.Thread.Sleep(300);   // 300ms 采样窗口(不阻塞太久)
-            if (!GetSystemTimes(out var idle1, out var ker1, out var user1)) return 0;
-            double idle = idle1.ToMilliseconds() - idle0.ToMilliseconds();
-            double total = (ker1.ToMilliseconds() - ker0.ToMilliseconds()) + (user1.ToMilliseconds() - user0.ToMilliseconds());
-            if (total <= 0) return 0;
-            double used = 1.0 - idle / total;
-            AppLogger.Info($"[资源] 系统 CPU 已占用 {used * 100:0}% → 软件上限 {GetEffectiveCpuCapPctRaw(used)}%");
-            return Math.Clamp(used, 0, 1);
+            _sysLoadIdle = SampleSystemCpuLoad();
+            AppLogger.Info($"[资源] 处理前系统占用 {_sysLoadIdle * 100:0}% → 软件 CPU 上限 {GetEffectiveCpuCapPctRaw(_sysLoadIdle)}%(防整机过载)");
         }
-        catch { return 0; }
+        catch { _sysLoadIdle = 0; }
+    }
+
+    /// <summary>采样系统整体 CPU 使用率(0~1,GetSystemTimes 双采样,非阻塞由调用方控制)。
+    /// 失败返回 0(视为空闲)。</summary>
+    private static double SampleSystemCpuLoad()
+    {
+        if (!GetSystemTimes(out var idle0, out var ker0, out var user0)) return 0;
+        System.Threading.Thread.Sleep(250);
+        if (!GetSystemTimes(out var idle1, out var ker1, out var user1)) return 0;
+        long idle = idle1.ToMilliseconds() - idle0.ToMilliseconds();
+        long total = (ker1.ToMilliseconds() - ker0.ToMilliseconds()) + (user1.ToMilliseconds() - user0.ToMilliseconds());
+        if (total <= 0) return 0;
+        return Math.Clamp(1.0 - idle / total, 0, 1);
     }
 
     private static double GetEffectiveCpuCapPctRaw(double sysUsed)

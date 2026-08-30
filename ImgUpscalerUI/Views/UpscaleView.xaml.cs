@@ -670,6 +670,7 @@ public sealed partial class UpscaleView : UserControl
             TaskLogText.Text = "";
             // 任务前刷新空闲资源实测;并记录日志(开了其他软件后空闲骤降,分块档位要跟上)
             SafeRender.RefreshFreeResources();
+            SafeRender.RefreshIdleCpu();   // 处理前采样系统占用→CPU 上限自适应(不卡其他软件)
             {
                 double fr = SafeRender.FreeRamGB, fv = SafeRender.FreeVramGB;
                 Log($"资源自检:空闲内存 {fr:0.#} GB / 空闲显存 {fv:0.#} GB → 分块 {SafeRender.GetTileSize()}");
