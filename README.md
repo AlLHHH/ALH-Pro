@@ -65,8 +65,8 @@ dotnet build ImgUpscalerUI/ImgUpscalerUI.csproj -c Release -p:Platform=x64
 - 第三方引擎/模型许可明细与源码链接见 **`THIRD_PARTY_NOTICES.txt`**;
 - **Real-CUGAN**:模型版权归哔哩哔哩 (bilibili),MIT License,见其仓库;
 - **FFmpeg**:随附构建为 GPL v3(BtbN 构建),本软件以独立子进程方式调用(未链接);
-- 不再声称"不联网":软件可能在未来版本联网检查 GitHub 更新;图片/视频素材处理始终在本机完成。
+- 图片/视频素材处理全部在本机完成。
 
 ---
 
-作者:AlL.H · AI 协作开发:DeepSeek
+作者:AlL.H
