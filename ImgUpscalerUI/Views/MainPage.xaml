@@ -58,6 +58,12 @@
                             <TextBlock Text="视频处理" FontSize="13"/>
                         </StackPanel>
                     </ListViewItem>
+                    <ListViewItem x:Name="NavAudio" Tag="audio" Padding="14,10">
+                        <StackPanel Orientation="Horizontal" Spacing="9">
+                            <FontIcon Glyph="&#xE8D6;" FontSize="14"/>
+                            <TextBlock Text="音频处理" FontSize="13"/>
+                        </StackPanel>
+                    </ListViewItem>
                 </ListView>
 
                 <!-- 底部署名 + 诊断日志 + 关于 -->
