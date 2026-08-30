@@ -13,6 +13,7 @@ build_*/
 # ===== 备份/实验目录 =====
 备份/
 backup_*/
+发布版_带模型_备份/
 _*/
 .iconregen/
 .smoketest/
@@ -23,6 +24,7 @@ runvideo/
 *.zip
 *.log
 *.tmp
+ALHPro_v*_Setup.exe
 _diag_screen.png
 
 # ===== 系统/IDE =====

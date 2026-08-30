@@ -8,8 +8,8 @@
 ;   4. 模型包(models_v1.0.zip, 1.65GB)单独上传 GitHub Release 附件。
 ;
 ; 安装时「选择附加任务」页勾选「下载并安装模型包(来自 GitHub)」:
-;   安装完成即从 GitHub 下载模型包并解压到 engines\rembg\models\
-;   不勾选 = 之后手动下载模型包,解压到 程序目录\engines\rembg\models\ 即可。
+;   安装完成即从 GitHub 下载模型包并解压到 程序目录(模型包根=程序目录,含 engines\rembg\models\),
+;   不勾选 = 之后手动下载模型包,解压到 程序目录(与安装器解压路径一致,得到 engines\rembg\models\)。
 
 #define MyAppName "ALH Pro"
 #define MyAppVersion "1.0"
@@ -48,10 +48,9 @@ Name: "downloadmodels"; Description: "下载并安装模型包(约 1.6GB,来自 
 
 [Files]
 ; 发布版 = 软件 + 引擎(不含模型)。模型不在安装包内,保持体积 ~900MB
-Source: "发布版\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-; 注意:发布版\engines\rembg 下的模型文件会被上面的通配符一并打进去!
-; 若发布版含模型,请在编译前把模型移出 发布版\engines\rembg\(保留目录结构,只移 .onnx),
-; 或改用下面的排除方案:把模型目录先移到 发布版_models\ 单独放。
+; Excludes:排除抠图模型(engines\rembg\*.onnx 1.65GB)与发布版里的解压副本(models_v1.0\),
+; 否则安装包 ~4.2GB 超过 GitHub Release 单文件 2GB 上限
+Source: "发布版\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "engines\rembg\*.onnx,models_v1.0\*"
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -75,7 +74,8 @@ begin
       Page.Show;
       try
         Page.Clear;
-        Page.Add(ExpandConstant('{#ModelsUrl}'), ExpandConstant('{tmp}\{#ModelsFile}'), '');
+        ; 第二参数只给文件名(不带头部路径):Inno 自动存到 {tmp},重复传 {tmp}\ 会路径拼错
+        Page.Add(ExpandConstant('{#ModelsUrl}'), '{#ModelsFile}', '');
         Page.Download;
       finally
         Page.Hide;
@@ -92,13 +92,13 @@ begin
       Exit;
     end;
 
-    // 解压到 {app}\engines\rembg\models\(用系统 tar.exe 解压 zip,无 2GB 限制)
+    // 解压到 {app}(zip 根=程序目录,内含 engines\rembg\models\ — 用系统 tar.exe 解压 zip,无 2GB 限制)
     ForceDirectories(ExpandConstant('{app}\engines\rembg\models'));
     if not Exec(ExpandConstant('{sys}\tar.exe'),
-        '-xf "' + ZipPath + '" -C "' + ExpandConstant('{app}\engines\rembg') + '"',
+        '-xf "' + ZipPath + '" -C "' + ExpandConstant('{app}') + '"',
         '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     begin
-      MsgBox('模型包解压失败(请手动解压 models_v1.0.zip 到程序目录 engines\rembg\models\)。', mbError, MB_OK);
+      MsgBox('模型包解压失败(请手动解压 models_v1.0.zip 到程序目录)。', mbError, MB_OK);
       Result := False;
       Exit;
     end;
