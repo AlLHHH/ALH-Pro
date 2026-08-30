@@ -48,7 +48,24 @@
 3. 要用 AI 抠图:安装到"选择附加任务"一步勾选「下载并安装模型包」(约 1.4GB,可选);
 4. 启动 → 左侧选择功能 → 添加素材 → 调整参数 → 开始处理。
 
-> 国内下载慢:把链接前加 `https://ghproxy.com/` 前缀走加速镜像,或用 IDM/迅雷多线程下载。安装后离线可用。
+**版本更新**:直接下载新安装包覆盖安装即可,引擎/模型/设置原样保留,不用重装模型。
+
+**下载慢或下载不了怎么办(国内常用方案):**
+
+| 场景 | 方法 |
+|---|---|
+| 网页直连慢/断 | 用**加速镜像**:在下载链接前加 `https://ghproxy.com/` 前缀(即 `https://ghproxy.com/https://github.com/...`,免费不用注册) |
+| 想稳定快速 | **复制直链挂到下载器**:打开迅雷/IDM/Motrix → 新建任务 → 粘贴直链 → 多线程下载,支持断点续传 |
+| 镜像也慢 | 换 `https://ghproxy.net/`、`https://gh-proxy.com/` 等镜像前缀再试;或错峰(早/深夜快) |
+
+**直链(复制粘贴用):**
+
+```
+安装包: https://github.com/AlLHHHDYTH/ALH-Pro/releases/download/v1.0/ALHPro_v1.0_Setup.exe
+模型包: https://github.com/AlLHHHDYTH/ALH-Pro/releases/download/v1.0/models_v1.0.zip
+```
+
+> 下载只需要这一下访问 GitHub;安装完软件**离线可用**,之后不需要加速器。
 
 **开发者(拿源码构建):**
 
