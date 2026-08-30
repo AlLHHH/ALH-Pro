@@ -22,6 +22,8 @@
 AppId={{8F3A2C1E-5D4B-4C6A-9E7F-2A3B4C5D6E7F}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+; 窗口标题/卸载名:默认"AppName 版本 AppVersion",改为简洁的 "ALH Pro v1.0"
+AppVerName=ALH Pro v{#MyAppVersion}
 AppPublisher=AlL.H
 DefaultDirName={autopf}\ALH Pro
 DefaultGroupName=ALH Pro
