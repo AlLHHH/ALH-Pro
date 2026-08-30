@@ -90,7 +90,38 @@
             </Grid.RowDefinitions>
 
             <!-- 中央内容区 -->
-            <Grid x:Name="ContentRoot" Grid.Row="0"/>
+            <Grid Grid.Row="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <!-- 新版本提示条:启动检查发现新版时出现(可点「去下载」或关闭) -->
+                <Border x:Name="UpdateBar" Grid.Row="0" Visibility="Collapsed"
+                        Background="#2EE8A33D" BorderBrush="#77E8A33D" BorderThickness="1"
+                        CornerRadius="8" Padding="12,8" Margin="0,0,0,10">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <TextBlock Text="🆕" FontSize="14" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="UpdateBarText" FontSize="12" VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" TextWrapping="Wrap"/>
+                        </StackPanel>
+                        <Button x:Name="UpdateBarGoBtn" Grid.Column="1" Content="去下载" FontSize="12"
+                                Padding="14,4" Margin="10,0,8,0" Style="{StaticResource AccentButtonStyle}"
+                                Click="UpdateBarGo_Click"/>
+                        <Button Grid.Column="2" Content="✕" FontSize="12" Padding="10,4"
+                                Background="Transparent" BorderThickness="0"
+                                Click="UpdateBarClose_Click"/>
+                    </Grid>
+                </Border>
+
+                <Grid x:Name="ContentRoot" Grid.Row="1"/>
+            </Grid>
 
             <!-- 底部状态栏:左侧常规状态,右侧休息提示 + 显眼的「跳过休息」按钮(休息时出现) -->
             <Border Grid.Row="1" Background="{StaticResource AppPanel2Brush}"

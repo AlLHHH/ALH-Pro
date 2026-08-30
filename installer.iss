@@ -74,8 +74,8 @@ begin
       Page.Show;
       try
         Page.Clear;
-        ; 第二参数只给文件名(不带头部路径):Inno 自动存到 {tmp},重复传 {tmp}\ 会路径拼错
         Page.Add(ExpandConstant('{#ModelsUrl}'), '{#ModelsFile}', '');
+        // 第二参数只给文件名:Inno 自动存到 {tmp},带 {tmp}\ 前缀会路径拼错
         Page.Download;
       finally
         Page.Hide;
