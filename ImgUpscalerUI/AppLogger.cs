@@ -193,18 +193,46 @@ public static class AppLogger
         }
     }
 
-    /// <summary>用资源管理器打开日志文件所在目录并选中该文件。</summary>
+    /// <summary>用资源管理器打开日志文件所在目录并选中该文件;目录打不开时降级为直接打开目录;
+    /// 仍失败则用记事本打开日志文件。失败原因写进日志(不再静默吞)。</summary>
     public static void OpenInExplorer()
     {
         try
         {
-            var p = new System.Diagnostics.ProcessStartInfo("explorer.exe", $"/select,\"{LogFile}\"")
+            Directory.CreateDirectory(LogDir);   // 确保目录存在(否则 explorer /select 无反应)
+            try
             {
-                UseShellExecute = true,
-            };
-            System.Diagnostics.Process.Start(p);
+                var p = new System.Diagnostics.ProcessStartInfo("explorer.exe", $"/select,\"{LogFile}\"")
+                {
+                    UseShellExecute = true,
+                };
+                System.Diagnostics.Process.Start(p);
+                return;
+            }
+            catch
+            {
+                // /select 选中文件失败(路径/权限问题)→ 直接打开目录
+                var p2 = new System.Diagnostics.ProcessStartInfo(LogDir)
+                {
+                    UseShellExecute = true,
+                };
+                System.Diagnostics.Process.Start(p2);
+            }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            // 都失败:用记事本打开日志文件(至少能看到日志内容)
+            Info("打开日志文件夹失败(降级记事本):" + ex.Message);
+            try
+            {
+                var p3 = new System.Diagnostics.ProcessStartInfo("notepad.exe", $"\"{LogFile}\"")
+                {
+                    UseShellExecute = true,
+                };
+                System.Diagnostics.Process.Start(p3);
+            }
+            catch { }
+        }
     }
 
     private static bool TryParseTime(string line, out DateTime t)
