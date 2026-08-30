@@ -984,10 +984,11 @@ public static class VideoService
                 int interpGpu = gpuId;
                 if (gpuId >= 0)
                 {
+                    progress?.Report((10, $"正在检测补帧 GPU 兼容性(最长 5 秒)..."));
                     bool rifeOk = await EngineService.IsRifeGpuUsableAsync(rife, interpModel, gpuId, ct).ConfigureAwait(false);
                     if (!rifeOk)
                     {
-                        AppLogger.Info($"⚠ RIFE {interpModel} GPU 探测失败,改用 CPU 补帧(慢但不会挂起白等)");
+                        AppLogger.Warn($"⚠ RIFE {interpModel} GPU 探测失败,改用 CPU 补帧(慢但不会挂起白等)");
                         progress?.Report((10, $"⚠ RIFE 无法用 GPU,自动改用 CPU 补帧(较慢但稳定)..."));
                         interpGpu = -1;   // 本视频后续补帧 API 全部 CPU(InterpSegmentAsync 传入)
                     }
@@ -1119,10 +1120,11 @@ public static class VideoService
                 int upGpu = gpuId;
                 if (gpuId >= 0)
                 {
+                    progress?.Report((45, $"正在检测超分 GPU 兼容性(最长 5 秒)..."));
                     bool usable = await EngineService.IsEngineGpuUsableAsync(engine, gpuId, ct).ConfigureAwait(false);
                     if (!usable)
                     {
-                        AppLogger.Info($"⚠ 超分引擎 {engine} GPU 探测失败,改用 CPU(视频超分会慢,但不会卡死白等)");
+                        AppLogger.Warn($"⚠ 超分引擎 {engine} GPU 探测失败,改用 CPU(视频超分会慢,但不会卡死白等)");
                         progress?.Report((45, $"⚠ 超分引擎 {engine} 无法用 GPU,自动改用 CPU 计算(较慢但稳定)..."));
                         upGpu = -1;
                     }
@@ -1700,6 +1702,20 @@ public static class VideoService
         return segs;
     }
 
+    /// <summary>CPU 重算预计时长(分钟)估算:补帧 CPU 软解约 2~6 秒/帧(随分辨率),给个上界让用户有"可等"预期。
+    /// 避免降级后进度条久不动,用户以为卡死。</summary>
+    private static string EstimateCpuTime(int segFrames, int watchTotal)
+    {
+        try
+        {
+            // 按常用 1080p 估算:CPU 补帧 1 帧约 3~5 秒;帧数按"整段剩余"最坏估计
+            var per = 30 + Math.Min(150, watchTotal / 20);   // 30~150 秒/帧区间的粗估(取较大值=更保守)
+            double minutes = Math.Max(1, segFrames /*实际当前段*/ * per / 60.0);
+            return minutes > 120 ? "2 小时以上" : $"约 {minutes:0} 分钟";
+        }
+        catch { return "较长时间"; }
+    }
+
     /// <summary>对 [start, end) 帧区间跑一次 RIFE,输出合并到 framesFinal(帧号全局递增)。返回新的全局帧号。
     /// frameScale = 原帧数/去重后帧数(补帧按原素材帧率补足,去重不降低输出帧率/缩短时长)。
     /// globalTarget &gt; 0 时(末段):-n = 全局目标帧数 - 已输出帧数,保证最后锚点帧精确落在最后一帧。
@@ -1744,7 +1760,7 @@ public static class VideoService
                         if (anyBlack && !DirNearBlack(segIn))
                         {
                             AppLogger.Info($"⚠ 降级:补帧 GPU {g} 输出黑帧(GPU 队列异常),{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 CPU")}重算该段");
-                            progress?.Report((0, $"⚠ 补帧 GPU {g} 输出黑帧,{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 CPU")}重算该段..."));
+                            progress?.Report((0, $"⚠ 补帧 GPU {g} 输出黑帧,{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 CPU 重算该段,约 {EstimateCpuTime(segLen, watchTotal)} 分钟...")}"));
                             if (altGpu.HasValue)
                                 await TryGpuAsync(altGpu.Value, null).ConfigureAwait(false);   // 只再降一级:换卡后失败直接 CPU
                             else
@@ -4315,6 +4331,16 @@ public static class VideoService
         {
             var tail = (await drainErr).Trim();
             if (tail.Length > 500) tail = tail[^500..];
+            // 杀软/防护拦截检测:引擎启动后 <5 秒就退出(毫秒级)且无正常输出 → 大概率被安全软件拦截
+            try
+            {
+                bool quickExit = false;
+                try { quickExit = (DateTime.Now - p.StartTime).TotalSeconds < 5; } catch { }
+                if (quickExit && tail.Contains("access", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException($"命令失败 (exit {p.ExitCode}) — 引擎可能被杀毒/安全软件拦截:\n{tail}");
+            }
+            catch (InvalidOperationException) { throw; }
+            catch { }
             throw new InvalidOperationException($"命令失败 (exit {p.ExitCode}):\n{tail}");
         }
     }
