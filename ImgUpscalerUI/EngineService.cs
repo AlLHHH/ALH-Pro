@@ -343,6 +343,70 @@ public static class EngineService
         return tail;
     }
 
+    /// <summary>探测指定超分引擎能否用 GPU(-g 0)成功跑一张 1×1 图。
+    /// 用途:视频处理开始前,若当前引擎在用户显卡上跑不通(不仅 RTX 50 系——
+    /// AMD/Intel/老驱动等任何"该引擎不支持"的场景),提前提示换引擎,而不是处理中默默降级。
+    /// 返回 false = GPU 不可用(建议换 waifu2x);异常/超时一律按 false 处理(不中断主流程)。
+    /// 注意:仅探测(1×1 图,毫秒级),不影响正常处理;结果不缓存(显卡/驱动随时可能变)。</summary>
+    public static async Task<bool> IsEngineGpuUsableAsync(string engine, int gpuId, CancellationToken ct)
+    {
+        try
+        {
+            string? exe = engine switch
+            {
+                "waifu2x" => FindWaifu2x(),
+                "realcugan" => FindRealCUGAN(),
+                "realesrgan" => FindRealESRGAN(),
+                _ => null,
+            };
+            if (exe == null) return false;
+            // 生成 1×1 测试图
+            var inPng = Path.Combine(Path.GetTempPath(), $"eng_probe_{Guid.NewGuid():N}.png");
+            var outPng = Path.Combine(Path.GetTempPath(), $"eng_probe_out_{Guid.NewGuid():N}.png");
+            try
+            {
+                using (var bmp = new System.Drawing.Bitmap(1, 1))
+                {
+                    bmp.SetPixel(0, 0, System.Drawing.Color.Red);
+                    bmp.Save(inPng, System.Drawing.Imaging.ImageFormat.Png);
+                }
+                // 引擎参数:waifu2x/realesrgan 用 -s 2(2x 模型);realcugan 用 -s 2 -m models-pro
+                string args = engine == "realcugan"
+                    ? $"-i \"{inPng}\" -o \"{outPng}\" -s 2 -m \"models-pro\" -g {gpuId}"
+                    : $"-i \"{inPng}\" -o \"{outPng}\" -s 2 -g {gpuId}";
+                var psi = new ProcessStartInfo
+                {
+                    FileName = exe,
+                    Arguments = args,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    WorkingDirectory = Path.GetDirectoryName(exe) ?? ".",
+                };
+                using var p = Process.Start(psi);
+                if (p == null) return false;
+                using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                waitCts.CancelAfter(TimeSpan.FromSeconds(20));   // 探测超时 20s(正常 1×1 图秒级)
+                await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
+                // 判定:退出码 0 且输出文件存在(引擎正常出图)
+                bool ok = p.ExitCode == 0 && File.Exists(outPng) && new FileInfo(outPng).Length > 0;
+                AppLogger.Info($"[探测] 引擎 {engine} GPU(-g {gpuId})出图:{(ok ? "可用" : "失败")}(exit={p.ExitCode})");
+                return ok;
+            }
+            finally
+            {
+                try { File.Delete(inPng); } catch { }
+                try { File.Delete(outPng); } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Info($"[探测] 引擎 {engine} GPU 探测异常(按不可用):{ex.Message}");
+            return false;
+        }
+    }
+
     /// <summary>运行引擎命令;若命令使用 GPU(-g ≥0)且启动失败(如新显卡 RTX 50 系与 ncnn-vulkan
     /// 兼容问题 "invalid gpu device"),按降级链重算:当前 GPU → 其他 GPU(引擎自检过的,尊重用户
     /// 主动选的卡;绝不给"选了 GPU1 却只降 CPU"这种无视其他卡的处理)→ CPU。失败不再直接中断任务。</summary>
