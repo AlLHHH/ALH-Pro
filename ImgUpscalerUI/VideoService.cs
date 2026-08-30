@@ -1092,6 +1092,20 @@ public static class VideoService
                     }
                 }
                 var upScale = upscaleShrink1x ? 2.0 : scale;
+                // ===== 超分 GPU 探测(避免"GPU hang 8 分钟"白等)=====
+                // 50 系/AMD/Intel/老驱动等:当前引擎在 GPU 上跑 1×1 图如果能出图 → GPU 放心用;
+                // 不能 → 直接改 CPU,并提示用户(不再等引擎启动失败/黑帧降级,省时间)。
+                int upGpu = gpuId;
+                if (gpuId >= 0)
+                {
+                    bool usable = await EngineService.IsEngineGpuUsableAsync(engine, gpuId, ct).ConfigureAwait(false);
+                    if (!usable)
+                    {
+                        AppLogger.Info($"⚠ 超分引擎 {engine} GPU 探测失败,改用 CPU(视频超分会慢,但不会卡死白等)");
+                        progress?.Report((45, $"⚠ 超分引擎 {engine} 无法用 GPU,自动改用 CPU 计算(较慢但稳定)..."));
+                        upGpu = -1;
+                    }
+                }
                 // 分批目录批处理超分 + 并行 2 批(video2x 式多 worker):
                 // 一次引擎启动处理一批帧,避免每帧启动引擎;批间并行提高 GPU 利用率
                 var upInput = framesFinal;
@@ -1129,7 +1143,7 @@ public static class VideoService
                             progress?.Report((45 + (int)(45.0 * start / total),
                                 $"超分 已处理 {start} 帧 / 共 {total} 帧(批次 {start / batchSize + 1}/{batches})..."));
                             await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
-                                upScale, 0, gpuId, false, progress, ct,
+                                upScale, 0, upGpu, false, progress, ct,
                                 SafeRender.GetTileSize() / (fastMode ? 2 : 1),   // 分块按"安全渲染"墙;快速模式再减半(显存占用约降 4 倍)
                                 watchStage: "超分",   // 逐帧汇报(像补帧一样显示"超分 第 N 帧 / 共 M 帧")
                                 globalBaseFrames: start, globalTotalFrames: total);   // 百分比按全局帧数算,预计时间才准
