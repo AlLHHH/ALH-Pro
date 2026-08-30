@@ -38,6 +38,17 @@
         <PackageReference Include="System.Drawing.Common" Version="8.0.7" />
     </ItemGroup>
 
+    <!-- ===== 关键:VC++ 运行库 + D3D 编译器(自包含部署必须手动带上)=====
+         Windows App SDK 自包含模式(SelfContained=true)不自动携带 VC++ 运行库,
+         缺 msvcp140.dll 的干净电脑启动即闪退(转圈后无窗口)。
+         微软许可允许再分发;从仓库 assets\runtime 复制,任何人 clone 后都可构建。 -->
+    <ItemGroup>
+        <None Include="..\assets\runtime\msvcp140.dll" Link="msvcp140.dll" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="..\assets\runtime\vcruntime140.dll" Link="vcruntime140.dll" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="..\assets\runtime\vcruntime140_1.dll" Link="vcruntime140_1.dll" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="..\assets\runtime\d3dcompiler_47.dll" Link="d3dcompiler_47.dll" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
     <!-- 窗口顶栏图标:复制到输出目录供 AppWindow.SetIcon 使用 -->
     <ItemGroup>
         <None Include="..\assets\icon.ico" Link="ALHPro.ico" CopyToOutputDirectory="PreserveNewest"/>
