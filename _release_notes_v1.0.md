@@ -31,7 +31,7 @@
 **方法一:加速镜像(最简单,网页直接下)**
 在下载链接前加 `https://ghproxy.com/` 前缀,例如:
 ```
-https://ghproxy.com/https://github.com/AlLHHHDYTH/ALH-Pro/releases/download/v1.0/ALHPro_v1.0_Setup.exe
+https://ghproxy.com/https://github.com/AlLHHH/ALH-Pro/releases/download/v1.0/ALHPro_v1.0_Setup.exe
 ```
 免费、不用注册。镜像也慢就换 `https://ghproxy.net/`、`https://gh-proxy.com/` 再试。
 
@@ -40,10 +40,10 @@ https://ghproxy.com/https://github.com/AlLHHHDYTH/ALH-Pro/releases/download/v1.0
 
 ```
 安装包直链:
-https://github.com/AlLHHHDYTH/ALH-Pro/releases/download/v1.0/ALHPro_v1.0_Setup.exe
+https://github.com/AlLHHH/ALH-Pro/releases/download/v1.0/ALHPro_v1.0_Setup.exe
 
 模型包直链:
-https://github.com/AlLHHHDYTH/ALH-Pro/releases/download/v1.0/models_v1.0.zip
+https://github.com/AlLHHH/ALH-Pro/releases/download/v1.0/models_v1.0.zip
 ```
 
 **方法三:错峰下载** — 晚间高峰慢,早/深夜通常快很多。
