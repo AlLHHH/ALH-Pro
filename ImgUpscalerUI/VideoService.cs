@@ -335,13 +335,21 @@ public static class VideoService
 
         try
         {
-            // C3:临时磁盘空间检查(不足 2GB 提示,避免中途爆盘)
+            // C3:临时磁盘空间检查(不足 2GB 直接提示;8x+TTA 补帧每帧几 MB,512 帧可超 30GB)
             try
             {
                 var drive = new System.IO.DriveInfo(Path.GetPathRoot(workDir)!);
                 if (drive.AvailableFreeSpace < 2L * 1024 * 1024 * 1024)
+                {
                     progress?.Report((0, $"⚠ 临时盘({workDir[..3]})剩余 {drive.AvailableFreeSpace / (1024 << 20):0}GB,可能不够,建议清理磁盘"));
                     AppLogger.Info($"⚠ 临时盘({workDir[..3]})剩余 {drive.AvailableFreeSpace / (1024 << 20):0}GB,可能不够,建议清理磁盘");
+                }
+                // 38GB 级:补帧(8x+TTA)加超分可能临时占用 30GB+,剩余不足 35GB 提醒"高负荷可能不够"
+                else if (drive.AvailableFreeSpace < 35L * 1024 * 1024 * 1024)
+                {
+                    progress?.Report((0, $"临时盘({workDir[..3]})剩余 {drive.AvailableFreeSpace / (1024 << 20):0}GB — 8x 补帧+超分临时文件较多,若提示空间不足请清理或改输出到其它盘"));
+                    AppLogger.Info($"临时盘({workDir[..3]})剩余 {drive.AvailableFreeSpace / (1024 << 20):0}GB — 高负荷(补帧8x+超分)可能占 30GB+,建议清理磁盘");
+                }
             }
             catch { }
 
