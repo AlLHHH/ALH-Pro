@@ -1722,36 +1722,72 @@ public static class VideoService
         if (!Directory.Exists(Path.Combine(rifeDir, interpModel)))
             throw new InvalidOperationException($"未找到补帧模型目录:{Path.Combine(rifeDir, interpModel)} — 请检查 engines/rife 下的模型文件夹(如 rife-v4.13)");
 
-        // GPU 失败自动降级 CPU 重算(与超分同策略;RTX 50 系等 ncnn 兼容问题不再直接失败)
+        // GPU 失败自动降级:当前 GPU → 其他 GPU(多卡机:核显失败切独显)→ CPU(与超分同策略)
         async Task RunRifeAsync(string args, int gpuNow, int watchTotal, string? watchDir)
         {
-            try
+            // 尝试一张 GPU;失败/黑帧时传入 alt 走"换卡,再不行 CPU"链
+            async Task TryGpuAsync(int g, int? altGpu)
+            {
+                try
+                {
+                    var gArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", $"-g {g}");
+                    await RunAsync(rife, gArgs, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
+                    // 黑帧防御:GPU 输出全黑(vkQueueSubmit 失败但退出码 0)→ 换卡/CPU 重跑该段
+                    if (g >= 0 && watchDir != null && Directory.Exists(watchDir))
+                    {
+                        bool anyBlack = false;
+                        foreach (var f in Directory.EnumerateFiles(watchDir, "*.png").Take(4))
+                        {
+                            try { if (EngineService.IsBlackPng(f)) { anyBlack = true; break; } } catch { }
+                        }
+                        // 防误杀:段【源帧】(segIn)本来就近黑(素材黑场/淡入淡出)→ 输出黑正常,不降级
+                        if (anyBlack && !DirNearBlack(segIn))
+                        {
+                            AppLogger.Info($"⚠ 降级:补帧 GPU {g} 输出黑帧(GPU 队列异常),{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 CPU")}重算该段");
+                            progress?.Report((0, $"⚠ 补帧 GPU {g} 输出黑帧,{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 CPU")}重算该段..."));
+                            if (altGpu.HasValue)
+                                await TryGpuAsync(altGpu.Value, null).ConfigureAwait(false);   // 只再降一级:换卡后失败直接 CPU
+                            else
+                            {
+                                var cpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g -1");
+                                await RunAsync(rife, cpuArgs, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
+                            }
+                        }
+                    }
+                }
+                catch (InvalidOperationException ex) when (g >= 0)
+                {
+                    AppLogger.Info($"⚠ 降级:补帧 GPU {g} 失败({ex.Message.Split('\n')[0]}),{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 CPU")}重算");
+                    progress?.Report((0, $"⚠ 补帧 GPU {g} 失败,{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 CPU")}重算..."));
+                    if (altGpu.HasValue)
+                        await TryGpuAsync(altGpu.Value, null).ConfigureAwait(false);
+                    else
+                    {
+                        var cpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g -1");
+                        await RunAsync(rife, cpuArgs, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
+                    }
+                }
+            }
+
+            if (gpuNow >= 0)
+            {
+                // ① 当前用户选的 GPU;② 其他 GPU(VulkanCheck 枚举到的另一张,如核显失败切独显);③ CPU
+                int? alt = null;
+                try
+                {
+                    var devs = VulkanCheck.Devices;
+                    if (devs.Count >= 2)
+                        alt = devs.FirstOrDefault(d => d.Id != gpuNow).Id;
+                }
+                catch { }
+                if (alt.HasValue)
+                    await TryGpuAsync(gpuNow, alt).ConfigureAwait(false);
+                else
+                    await TryGpuAsync(gpuNow, null).ConfigureAwait(false);   // 单卡:失败黑帧直接 CPU
+            }
+            else
             {
                 await RunAsync(rife, args, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
-            }
-            catch (InvalidOperationException ex) when (gpuNow >= 0)
-            {
-                AppLogger.Info($"⚠ 降级:补帧 GPU 失败({ex.Message.Split('\n')[0]}),自动改用 CPU 重算");
-                progress?.Report((0, "⚠ 补帧 GPU 失败,自动改用 CPU 重算..."));
-                var cpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g -1");
-                await RunAsync(rife, cpuArgs, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
-            }
-            // 黑帧防御:GPU 输出全黑(vkQueueSubmit 失败但退出码 0)→ CPU 重跑该段(与超分黑帧兜底一致)
-            if (gpuNow >= 0 && watchDir != null && Directory.Exists(watchDir))
-            {
-                bool anyBlack = false;
-                foreach (var f in Directory.EnumerateFiles(watchDir, "*.png").Take(4))
-                {
-                    try { if (EngineService.IsBlackPng(f)) { anyBlack = true; break; } } catch { }
-                }
-                // 防误杀:段【源帧】(segIn)本来就近黑(素材黑场/淡入淡出)→ 输出黑正常,不降级
-                if (anyBlack && !DirNearBlack(segIn))
-                {
-                    AppLogger.Info("⚠ 降级:补帧输出含黑帧(GPU 队列异常),改用 CPU 重算该段");
-                    progress?.Report((0, "⚠ 补帧输出黑帧(GPU 异常),改用 CPU 重算该段..."));
-                    var cpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g -1");
-                    await RunAsync(rife, cpuArgs, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
-                }
             }
         }
 
