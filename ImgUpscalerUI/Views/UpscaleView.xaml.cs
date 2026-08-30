@@ -18,6 +18,7 @@ public sealed partial class UpscaleView : UserControl
     private CancellationTokenSource? _cts;
     private int _gpuCount;   // 枚举到的 GPU 数量(用于 gpuId 计算)
     private int _lastJpgQuality = 2;   // 上次 JPG 模式选中的码率档(0-4):切到 PNG 时把"无损"占位替换,保存时保留 JPG 真实档
+    private bool _settingsLoaded;      // LoadSettings 完成后才允许保存(防构造期默认值覆盖用户设置)——修复"记不住格式"的守卫
 
     // ---- 暂停/恢复:暂停后停在下一张之前,可删除"未处理"的项目 ----
     private bool _paused;
@@ -197,12 +198,17 @@ public sealed partial class UpscaleView : UserControl
                 OutDirBox.Text = d.OutDir;
                 _customOutDir = d.OutDir;
             }
+            _settingsLoaded = true;   // 恢复完成,此后才允许保存(防构造期默认覆盖用户设置)
         }
         catch { /* 读取失败用默认值 */ }
+        _settingsLoaded = true;   // 读取失败也放行(否则首次全新安装永远无法保存)
     }
 
     private void SaveSettings()
     {
+        // 加载完成前禁止保存:构造期任何控件默认赋值可能触发事件→用默认值覆盖用户设置
+        // (实测日志:启动时"进入页面→保存Fmt=0→加载Fmt=0"——保存抢先于加载,把用户 PNG(1) 覆盖回 JPG(0))
+        if (!_settingsLoaded) return;
         try
         {
             var d = new UpscaleSettings
