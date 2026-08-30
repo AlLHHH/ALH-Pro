@@ -61,8 +61,8 @@
 **直链(复制粘贴用):**
 
 ```
-安装包: https://github.com/AlLHHHDYTH/ALH-Pro/releases/download/v1.0/ALHPro_v1.0_Setup.exe
-模型包: https://github.com/AlLHHHDYTH/ALH-Pro/releases/download/v1.0/models_v1.0.zip
+安装包: https://github.com/AlLHHH/ALH-Pro/releases/download/v1.0/ALHPro_v1.0_Setup.exe
+模型包: https://github.com/AlLHHH/ALH-Pro/releases/download/v1.0/models_v1.0.zip
 ```
 
 > 下载只需要这一下访问 GitHub;安装完软件**离线可用**,之后不需要加速器。

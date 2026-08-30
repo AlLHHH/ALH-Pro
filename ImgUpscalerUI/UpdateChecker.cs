@@ -13,7 +13,7 @@ namespace ALHPro;
 public static class UpdateChecker
 {
     /// <summary>本项目的 GitHub 仓库(改动仓库后只需改这两处)。</summary>
-    public const string Owner = "AlLHHHDYTH";
+    public const string Owner = "AlLHHH";
     public const string Repo = "ALH-Pro";
 
     public static string LatestApiUrl => $"https://api.github.com/repos/{Owner}/{Repo}/releases/latest";
