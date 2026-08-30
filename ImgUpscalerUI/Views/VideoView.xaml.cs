@@ -1127,7 +1127,7 @@ public sealed partial class VideoView : UserControl
         public bool Scene { get; set; }
         public double SceneThr { get; set; } = 0.3;
         public double TimeStep { get; set; } = 0.5;
-        public bool Tta { get; set; } = true;   // 高质量(TTA)默认开:实测非 TTA 有 ~13% 帧跳步(卡),TTA 后 ~1%;代价慢 5~7 倍
+        public bool Tta { get; set; } = false;   // TTA(高质量)默认关:v1.0 起改,默认开会让新机器慢 5~7 倍(用户感知"补帧慢/卡");要画质用户手动开
         public string OutDir { get; set; } = "";
         public string CustomW { get; set; } = "1920";
         public string CustomH { get; set; } = "1080";
