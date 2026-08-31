@@ -71,11 +71,35 @@
         <!-- 右侧:文件列表 + 预览(带裁剪) + 日志 -->
         <Grid Grid.Column="1">
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
-            <Grid x:Name="AudioListHost" Grid.Row="0" AllowDrop="True"
+            <!-- 列表工具栏 -->
+            <Grid Grid.Row="0" ColumnSpacing="8" Margin="0,0,0,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Button x:Name="AddAudioBtn" Content="添加音频" FontSize="12"
+                        Padding="10,5" Click="PickAudioBtn_Click"/>
+                <Button x:Name="RemoveAudioBtn" Grid.Column="1" Content="删除选中" FontSize="12"
+                        Padding="10,5" IsEnabled="False" Click="RemoveAudio_Click"/>
+                <Button x:Name="ClearAudioBtn" Grid.Column="2" Content="清空" FontSize="12"
+                        Padding="10,5" IsEnabled="False" Click="ClearAudio_Click"/>
+                <Button x:Name="ClearDoneAudioBtn" Grid.Column="3" Content="清除已完成" FontSize="12"
+                        Padding="10,5" IsEnabled="False" Click="ClearDoneAudio_Click"
+                        ToolTipService.ToolTip="清除所有已完成的项目"/>
+                <TextBlock Grid.Column="4" Text="双击预览/播放 · 拖动滑块裁剪" FontSize="11"
+                           Opacity="0.5" VerticalAlignment="Center" HorizontalAlignment="Right"/>
+            </Grid>
+
+            <!-- 列表(支持框选多选 + Delete 删除) -->
+            <Grid x:Name="AudioListHost" Grid.Row="1" AllowDrop="True"
                   DragOver="DropAudio_DragOver" Drop="DropAudio_Drop">
                 <ListView x:Name="AudioList" SelectionMode="Multiple"
                           Background="{StaticResource AppPanelBrush}"
@@ -83,7 +107,9 @@
                           CornerRadius="12" Padding="8" Margin="0,0,0,10"
                           AllowDrop="True" DragOver="DropAudio_DragOver" Drop="DropAudio_Drop"
                           SelectionChanged="AudioList_SelectionChanged"
-                          DoubleTapped="AudioList_DoubleTapped">
+                          DoubleTapped="AudioList_DoubleTapped"
+                          KeyDown="AudioList_KeyDown"
+                          ToolTipService.ToolTip="">   <!-- 显式空提示:覆盖 WinUI 对空列表悬停的默认"删除"伪影提示 -->
                     <ListView.ItemTemplate>
                         <DataTemplate>
                             <Grid>
@@ -95,7 +121,7 @@
             </Grid>
 
             <!-- 预览区:播放 + 首尾裁剪 -->
-            <Border Grid.Row="1" Background="{StaticResource AppPanel2Brush}"
+            <Border Grid.Row="2" Background="{StaticResource AppPanel2Brush}"
                     BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
                     CornerRadius="8" Padding="12,10" Margin="0,0,0,8">
                 <StackPanel Spacing="8">
@@ -134,7 +160,7 @@
                 </StackPanel>
             </Border>
 
-            <Border Grid.Row="2" Background="{StaticResource AppPanel2Brush}"
+            <Border Grid.Row="3" Background="{StaticResource AppPanel2Brush}"
                     BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
                     CornerRadius="8" Padding="10,6">
                 <StackPanel Spacing="2">
