@@ -481,6 +481,27 @@ public sealed partial class VideoView : UserControl
         if (RunHint != null)
             RunHint.Visibility = _videos.Count > 0 && !_running && !anyWork
                 ? Visibility.Visible : Visibility.Collapsed;
+        // 耗时提示(黄色):启用耗时的功能时,提示处理时间会增加
+        if (SpeedHint != null)
+        {
+            var slow = new System.Collections.Generic.List<string>();
+            if (UpscaleToggle.IsChecked == true) slow.Add("超分");
+            if (InterpToggle.IsChecked == true) slow.Add("补帧");
+            if (InterpModelCombo.SelectedIndex is 3 or 4 or 5 or 6) slow.Add("非 v4 补帧模型");   // anime/HD/UHD/v2.3 只能级联
+            if (TtaCheck.IsChecked == true) slow.Add("高质量 TTA");
+            if (InterpScaleRadios.SelectedIndex is 3 or 4) slow.Add("高倍率");
+            if (SceneCheck.IsChecked == true) slow.Add("转场识别");
+            if ((int)SharpenSlider.Value > 0 || (int)ClaritySlider.Value > 0 || (int)UsmSlider.Value > 0
+                || (int)DetailSlider.Value > 0 || (int)DeblurSlider.Value > 0) slow.Add("后处理");
+            if (FlickerSlider.Value > 0 || PostDenoiseSlider.Value > 0 || PostAaSlider.Value > 0) slow.Add("后处理(时域)");
+            if (DedupCheck.IsChecked == true) slow.Add("去重");   // 去重需分析,微耗时,仅提示
+            if (slow.Count > 0 && anyWork && !_running)
+            {
+                SpeedHint.Text = $"⚠ 已启用 {string.Join("、", slow)}:处理时间会增加{ExtraTimeHint(slow)}";
+                SpeedHint.Visibility = Visibility.Visible;
+            }
+            else SpeedHint.Visibility = Visibility.Collapsed;
+        }
         // 弱设备 + 未开兼容模式 → 显示黄字提示(建议开启);否则隐藏
         if (CompatHintPanel != null)
         {
@@ -495,6 +516,16 @@ public sealed partial class VideoView : UserControl
         PauseBtn.IsEnabled = _running && !_paused;
         ResumeBtn.IsEnabled = _running && _paused;
         UpdatePauseButtonVisual();
+    }
+
+    /// <summary>耗时提示的后缀:按功能给出大致耗时说明(大白话,不堆术语)。</summary>
+    private static string ExtraTimeHint(System.Collections.Generic.List<string> slow)
+    {
+        if (slow.Contains("高质量 TTA")) return "(约为不开时的 5~7 倍,画质优先可选)";
+        if (slow.Contains("高倍率")) return "(倍率越高越慢,8x/16x 请耐心等待)";
+        if (slow.Contains("非 v4 补帧模型")) return "(老模型只能 2x 级联,高倍率较慢)";
+        if (slow.Count >= 3) return "(功能叠加,时间按倍数累积)";
+        return "(为画质多花时间,属正常)";
     }
 
     // 弱设备提示:一键开启「兼容模式」

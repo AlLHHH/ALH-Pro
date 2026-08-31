@@ -718,6 +718,10 @@
                         <TextBlock x:Name="RunHint" Text="⚠ 至少启用一项处理(超分或补帧)"
                                    Foreground="#E8A33D" FontSize="11" TextWrapping="Wrap"
                                    TextAlignment="Center" Visibility="Collapsed"/>
+                        <!-- 耗时提示(黄色):启用耗时功能时提示处理时间会增加 -->
+                        <TextBlock x:Name="SpeedHint" Text=""
+                                   Foreground="#E8A33D" FontSize="11" TextWrapping="Wrap"
+                                   TextAlignment="Center" Visibility="Collapsed"/>
                         <!-- 弱设备提示(黄色)+ 一键开启兼容模式 -->
                         <StackPanel x:Name="CompatHintPanel" Orientation="Vertical" Visibility="Collapsed" Spacing="4">
                             <TextBlock x:Name="CompatHint" Foreground="#E8A33D" FontSize="11" TextWrapping="Wrap"
