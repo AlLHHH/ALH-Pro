@@ -94,37 +94,54 @@
                 </ListView>
             </Grid>
 
-            <!-- 预览区:播放 + 首尾裁剪(仿视频页,简化:滑块拖拽) -->
+            <!-- 预览区:播放 + 首尾裁剪 -->
             <Border Grid.Row="1" Background="{StaticResource AppPanel2Brush}"
                     BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
-                    CornerRadius="8" Padding="10,8" Margin="0,0,0,10">
-                <StackPanel Spacing="6">
+                    CornerRadius="8" Padding="12,10" Margin="0,0,0,8">
+                <StackPanel Spacing="8">
                     <TextBlock x:Name="PreviewName" Text="选中音频后可预览/裁剪" Style="{StaticResource HintText}"/>
-                    <MediaPlayerElement x:Name="PreviewPlayer" Height="40"
-                                        AreTransportControlsEnabled="True"/>
-                    <Grid ColumnSpacing="8" x:Name="TrimRow" Visibility="Collapsed">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="52"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="52"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock x:Name="TrimStartLabel" Text="起点 0:00" FontSize="11" Opacity="0.7"/>
-                        <Slider x:Name="TrimStartSlider" Grid.Column="1" Minimum="0" Maximum="1" StepFrequency="0.01"
-                                ValueChanged="TrimStartSlider_ValueChanged"/>
-                        <Slider x:Name="TrimEndSlider" Grid.Column="2" Minimum="0" Maximum="1" StepFrequency="0.01"
-                                ValueChanged="TrimEndSlider_ValueChanged"/>
-                        <TextBlock x:Name="TrimEndLabel" Grid.Column="3" Text="终点 0:00" FontSize="11" Opacity="0.7"
-                                   TextAlignment="Right"/>
-                    </Grid>
+
+                    <!-- 播放器:高一点,控件舒展 -->
+                    <Border Background="{StaticResource AppPanelBrush}" CornerRadius="6" Padding="6,0">
+                        <MediaPlayerElement x:Name="PreviewPlayer" Height="64"
+                                            AreTransportControlsEnabled="True"/>
+                    </Border>
+
+                    <!-- 裁剪:两行独立,起点/终点分开展示 -->
+                    <StackPanel x:Name="TrimRow" Visibility="Collapsed" Spacing="4">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="70"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="起点" FontSize="11" Opacity="0.7"
+                                       VerticalAlignment="Center"/>
+                            <Slider x:Name="TrimStartSlider" Grid.Column="1" Minimum="0" Maximum="1"
+                                    StepFrequency="0.01" ValueChanged="TrimStartSlider_ValueChanged"/>
+                        </Grid>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="70"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="终点" FontSize="11" Opacity="0.7"
+                                       VerticalAlignment="Center"/>
+                            <Slider x:Name="TrimEndSlider" Grid.Column="1" Minimum="0" Maximum="1"
+                                    StepFrequency="0.01" ValueChanged="TrimEndSlider_ValueChanged"/>
+                        </Grid>
+                        <TextBlock x:Name="TrimHint" Text="" FontSize="11" Opacity="0.6"/>
+                    </StackPanel>
                 </StackPanel>
             </Border>
 
             <Border Grid.Row="2" Background="{StaticResource AppPanel2Brush}"
                     BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
                     CornerRadius="8" Padding="10,6">
-                <TextBlock x:Name="LogText" FontSize="11" Opacity="0.8" Text="" TextWrapping="Wrap"
-                           MaxHeight="90"/>
+                <StackPanel Spacing="2">
+                    <TextBlock Text="日志" FontSize="11" Opacity="0.5"/>
+                    <TextBlock x:Name="LogText" FontSize="11" Opacity="0.8" Text="" TextWrapping="Wrap"
+                               MaxHeight="48"/>
+                </StackPanel>
             </Border>
         </Grid>
     </Grid>

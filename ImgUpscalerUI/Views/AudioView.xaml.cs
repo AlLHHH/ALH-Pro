@@ -144,6 +144,7 @@ public sealed partial class AudioView : UserControl
             TrimStartSlider.Value = it.TrimStart;
             TrimEndSlider.Value = it.TrimEnd > 0.1 ? it.TrimEnd : it.DurationSec;
             TrimRow.Visibility = Visibility.Visible;
+            TrimHint.Text = $"裁剪: {FormatTime(it.TrimStart)} ~ {FormatTime(it.TrimEnd > 0.1 ? it.TrimEnd : it.DurationSec)}";
             // 到 TrimEnd 自动暂停
             if (PreviewPlayer.MediaPlayer != null)
             {
@@ -182,7 +183,7 @@ public sealed partial class AudioView : UserControl
         if (TrimStartSlider.Value > TrimEndSlider.Value)
             TrimStartSlider.Value = TrimEndSlider.Value;
         _previewItem.TrimStart = TrimStartSlider.Value;
-        TrimStartLabel.Text = $"起点 {FormatTime(TrimStartSlider.Value)}";
+        TrimHint.Text = $"裁剪: {FormatTime(TrimStartSlider.Value)} ~ {FormatTime(TrimEndSlider.Value)}";
     }
 
     private void TrimEndSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
@@ -191,7 +192,7 @@ public sealed partial class AudioView : UserControl
         if (TrimEndSlider.Value < TrimStartSlider.Value)
             TrimEndSlider.Value = TrimStartSlider.Value;
         _previewItem.TrimEnd = TrimEndSlider.Value;
-        TrimEndLabel.Text = $"终点 {FormatTime(TrimEndSlider.Value)}";
+        TrimHint.Text = $"裁剪: {FormatTime(TrimStartSlider.Value)} ~ {FormatTime(TrimEndSlider.Value)}";
     }
 
     // ---------- 开始处理 ----------
