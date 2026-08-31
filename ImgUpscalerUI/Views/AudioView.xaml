@@ -109,7 +109,11 @@
 
             <!-- 列表(支持框选多选 + Delete 删除) -->
             <Grid x:Name="AudioListHost" Grid.Row="1" AllowDrop="True"
-                  DragOver="DropAudio_DragOver" Drop="DropAudio_Drop">
+                  DragOver="DropAudio_DragOver" Drop="DropAudio_Drop"
+                  PointerPressed="AudioListHost_PointerPressed"
+                  PointerMoved="AudioListHost_PointerMoved"
+                  PointerReleased="AudioListHost_PointerReleased"
+                  PointerCaptureLost="AudioListHost_PointerCaptureLost">
                 <ListView x:Name="AudioList" SelectionMode="Multiple"
                           Background="{StaticResource AppPanelBrush}"
                           BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
@@ -127,6 +131,11 @@
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
+                <!-- 框选矩形(橡皮筋) -->
+                <Canvas IsHitTestVisible="False">
+                    <Rectangle x:Name="RbRectA" Stroke="#4C8DFF" StrokeThickness="1"
+                               Fill="#404C8DFF" Visibility="Collapsed"/>
+                </Canvas>
             </Grid>
 
             <!-- 预览区:播放 + 首尾裁剪 -->
