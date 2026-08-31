@@ -46,15 +46,9 @@ public static class VideoService
             var ffmpegDir = FfmpegPath != null ? Path.GetDirectoryName(FfmpegPath) : null;
             var ffprobe = ffmpegDir != null ? Path.Combine(ffmpegDir, "ffprobe.exe") : null;
             if (ffprobe == null || !File.Exists(ffprobe)) return (1920, 1080);
-            var psi = new ProcessStartInfo
-            {
-                FileName = ffprobe,
-                Arguments = $"-v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 \"{videoPath}\"",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
+            var psi = AudioService.NewFfmpegPsi(ffprobe, $"-v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 \"{videoPath}\"");
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
             using var p = Process.Start(psi);
             if (p == null) return (1920, 1080);
             var line = (await p.StandardOutput.ReadToEndAsync()).Trim();
@@ -109,14 +103,10 @@ public static class VideoService
         {
             try
             {
-                var psi = new ProcessStartInfo
-                {
-                    FileName = ffprobe,
-                    Arguments = $"-v error -select_streams v:0 " +
-                                $"-show_entries stream=avg_frame_rate -of csv=p=0 \"{videoPath}\"",
-                    UseShellExecute = false, CreateNoWindow = true,
-                    RedirectStandardOutput = true, RedirectStandardError = true,
-                };
+                var psi = AudioService.NewFfmpegPsi(ffprobe, $"-v error -select_streams v:0 " +
+                                $"-show_entries stream=avg_frame_rate -of csv=p=0 \"{videoPath}\"");
+                psi.RedirectStandardOutput = true;
+                psi.RedirectStandardError = true;
                 using var p = Process.Start(psi);
                 if (p == null) return null;
                 var o = p.StandardOutput.ReadToEnd().Trim();
@@ -136,14 +126,8 @@ public static class VideoService
         // 回退:旧 stderr 正则但改用【最后一个】匹配(流信息行在末,文件名在最前)
         try
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName = ffmpeg,
-                Arguments = $"-i \"{videoPath}\"",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardError = true,
-            };
+            var psi = AudioService.NewFfmpegPsi(ffmpeg, $"-i \"{videoPath}\"");
+            psi.RedirectStandardError = true;
             using var p = Process.Start(psi);
             if (p == null) return null;
             var err = p.StandardError.ReadToEnd();

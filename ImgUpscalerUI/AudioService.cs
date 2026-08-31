@@ -31,19 +31,28 @@ public static class AudioService
         }
     }
 
+    /// <summary>ffmpeg/ffprobe 进程参数预处理:强制 UTF-8 路径解析。
+    /// 中文路径在部分旧版 ffmpeg/系统代码页下会 "Illegal byte sequence"(字节序列非法),
+    /// 设置 LANG/LC_ALL=UTF-8 可让路径按 UTF-8 解析(对 7.x 及以上无副作用)。</summary>
+    public static ProcessStartInfo NewFfmpegPsi(string fileName, string arguments)
+    {
+        var psi = new ProcessStartInfo(fileName, arguments)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        psi.Environment["LANG"] = "C.UTF-8";
+        psi.Environment["LC_ALL"] = "C.UTF-8";
+        return psi;
+    }
+
     /// <summary>音频文件信息:时长、声道、采样率(用于进度估算/展示)。</summary>
     public static (double DurationSec, int Channels, int SampleRate) Probe(string path)
     {
         try
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName = FfmpegPath,
-                Arguments = $"-i \"{path}\" -f null -",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardError = true,
-            };
+            var psi = NewFfmpegPsi(FfmpegPath, $"-i \"{path}\" -f null -");
+            psi.RedirectStandardError = true;
             using var p = Process.Start(psi);
             if (p == null) return (0, 0, 0);
             var err = p.StandardError.ReadToEnd();
@@ -72,15 +81,9 @@ public static class AudioService
     {
         try
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName = FfmpegPath,
-                Arguments = $"-i \"{path}\" -f s16le -ac 1 -ar 8000 -",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
+            var psi = NewFfmpegPsi(FfmpegPath, $"-i \"{path}\" -f s16le -ac 1 -ar 8000 -");
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
             using var p = Process.Start(psi);
             if (p == null) return Array.Empty<float>();
             var ms = new MemoryStream();
@@ -142,16 +145,10 @@ public static class AudioService
             1 => "-c:a flac",
             _ => $"-c:a libmp3lame -b:a {mp3BitrateKbps}k",
         };
-        var psi = new ProcessStartInfo
-        {
-            FileName = FfmpegPath,
-            Arguments = $"-y {trim} -i \"{input}\" {af} {codec} -progress pipe:1 -nostats \"{output}\"",
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-        };
+        var psi = NewFfmpegPsi(FfmpegPath, $"-y {trim} -i \"{input}\" {af} {codec} -progress pipe:1 -nostats \"{output}\"");
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        psi.StandardOutputEncoding = Encoding.UTF8;
         // 进度:ffmpeg -progress 输出 out_time_ms
         using var p = Process.Start(psi);
         if (p == null) throw new InvalidOperationException("无法启动 ffmpeg");
