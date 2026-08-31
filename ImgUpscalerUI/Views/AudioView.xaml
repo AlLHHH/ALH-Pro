@@ -138,10 +138,11 @@
                 </Canvas>
             </Grid>
 
-            <!-- 预览区:播放 + 首尾裁剪 -->
+            <!-- 预览区:播放 + 首尾裁剪(双击列表项才展开) -->
             <Border Grid.Row="2" Background="{StaticResource AppPanel2Brush}"
                     BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
-                    CornerRadius="8" Padding="12,10" Margin="0,0,0,8">
+                    CornerRadius="8" Padding="12,10" Margin="0,0,0,8"
+                    Visibility="Collapsed" x:Name="PreviewPanel">
                 <StackPanel Spacing="8">
                     <TextBlock x:Name="PreviewName" Text="选中音频后可预览/裁剪" Style="{StaticResource HintText}"/>
 

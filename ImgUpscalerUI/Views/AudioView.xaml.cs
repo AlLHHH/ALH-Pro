@@ -279,19 +279,16 @@ public sealed partial class AudioView : UserControl
         AddFiles(files.Select(f => f.Path).ToArray());
     }
 
-    // ---------- 预览/裁剪 ----------
+    // ---------- 预览/裁剪(双击才展开) ----------
     private async void AudioList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (AudioList.SelectedItem is AudioItem it)
-        {
-            _previewItem = it;
-            await ShowPreviewAsync(it);
-        }
+        // 单击只更新选中状态;预览区保留(双击会打开;这里不清除以免闪)
     }
 
-    private async void AudioList_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    private void AudioList_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
-        try { PreviewPlayer.MediaPlayer?.Play(); } catch { }
+        if (e.OriginalSource is FrameworkElement fe && fe.DataContext is AudioItem item)
+            _ = ShowPreviewAsync(item);
     }
 
     private async Task ShowPreviewAsync(AudioItem it)
@@ -299,6 +296,7 @@ public sealed partial class AudioView : UserControl
         try
         {
             RemovePreviewHandler();
+            PreviewPanel.Visibility = Visibility.Visible;   // 双击展开预览区
             PreviewPlayer.Source = MediaSource.CreateFromUri(new Uri(it.Path));
             PreviewName.Text = $"{it.Name} · {FormatTime(it.DurationSec)}";
             // 裁剪滑块:0~时长;默认终点=时长
