@@ -95,7 +95,7 @@
 
                     <TextBlock Text="高级" Style="{StaticResource SectionTitle}"/>
                     <CheckBox x:Name="TtaCheck" Content="高质量(更慢更清晰)"
-                              ToolTipService.ToolTip="高质量:反复推演,细节更稳更清晰,但速度约减半"/>
+                              ToolTipService.ToolTip="高质量:反复推演,细节更稳更清晰,但速度明显变慢(约 2~3 倍)。默认关闭;要极致画质可开启"/>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 

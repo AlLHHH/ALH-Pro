@@ -611,8 +611,8 @@
                                         Click="ResetTimeStepBtn_Click"
                                         ToolTipService.ToolTip="时间步恢复默认 0.5"/>
                             </Grid>
-                            <CheckBox x:Name="TtaCheck" Content="高质量(减少运动伪影,更慢)" ToolTipService.ToolTip="高质量(TTA):反复推演减少补帧的跳步/扭曲伪影。实测同一素材:不开有 ~13% 帧突然跳一步(观感卡),开 TTA 后降到 ~1%。默认开启;代价约慢 5~7 倍(GPU 计算)。追求速度可关闭"
-                                      IsChecked="True" Checked="Options_Changed" Unchecked="Options_Changed"/>
+                            <CheckBox x:Name="TtaCheck" Content="高质量(减少运动伪影,更慢)" ToolTipService.ToolTip="高质量(TTA):反复推演减少补帧的跳步/扭曲伪影。代价约慢 5~7 倍。默认关闭(追求速度);画质优先可手动开启"
+                                      Checked="Options_Changed" Unchecked="Options_Changed"/>
                             <CheckBox x:Name="AnimeOptCheck" Content="动漫插值优化" ToolTipService.ToolTip="为动漫素材一键调整并锁定:时间步 0.35 + 减少果冻:弱(勾选后这两项置灰,取消勾选恢复手动)。配合「动漫模式 + 更狠去重」效果最佳"
                                       Checked="Options_Changed" Unchecked="Options_Changed"/>
                         </StackPanel>
