@@ -66,6 +66,50 @@ public static class AudioService
         catch { return (0, 0, 0); }
     }
 
+    /// <summary>解码音频为单声道 8kHz 采样(用于波形显示,所有格式 MP3/WAV/FLAC 都支持,
+    /// 用 ffmpeg 输出原始 PCM,免第三方解码器)。返回归一化 0~1 采样幅度数组。</summary>
+    public static async Task<float[]> DecodeWaveformAsync(string path, int maxSamples = 2000, CancellationToken ct = default)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = FfmpegPath,
+                Arguments = $"-i \"{path}\" -f s16le -ac 1 -ar 8000 -",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            using var p = Process.Start(psi);
+            if (p == null) return Array.Empty<float>();
+            var ms = new MemoryStream();
+            await p.StandardOutput.BaseStream.CopyToAsync(ms, ct);
+            await p.WaitForExitAsync(ct);
+            var data = ms.ToArray();
+            if (data.Length < 2) return Array.Empty<float>();
+            // s16le:每 2 字节一个 int16 采样
+            int samples = data.Length / 2;
+            // 压缩到 maxSamples:每桶取绝对值平均(峰值)
+            var result = new float[Math.Min(maxSamples, samples)];
+            int perBucket = Math.Max(1, samples / result.Length);
+            for (int i = 0; i < result.Length; i++)
+            {
+                int start = i * perBucket;
+                int end = Math.Min(samples, start + perBucket);
+                float sum = 0;
+                for (int j = start; j < end; j++)
+                {
+                    short v = (short)(data[j * 2] | (data[j * 2 + 1] << 8));
+                    sum += Math.Abs(v) / 32768.0f;
+                }
+                result[i] = Math.Min(1f, sum / Math.Max(1, end - start));
+            }
+            return result;
+        }
+        catch { return Array.Empty<float>(); }
+    }
+
     /// <summary>
     /// 音频增强主流程。denoise:0~2(关/弱/强), loudness:bool, lowcut:bool, eq:bool;
     /// 输出格式:0=WAV,1=FLAC,2=MP3;outDir=输出目录(空=源目录)。
