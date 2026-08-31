@@ -68,25 +68,59 @@
             </ScrollViewer>
         </Border>
 
-        <!-- 右侧:文件列表 + 日志 -->
+        <!-- 右侧:文件列表 + 预览(带裁剪) + 日志 -->
         <Grid Grid.Column="1">
             <Grid.RowDefinitions>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
-            <ListView x:Name="AudioList" SelectionMode="Multiple"
-                      Background="{StaticResource AppPanelBrush}"
-                      BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
-                      CornerRadius="12" Padding="8" Margin="0,0,0,10">
-                <ListView.ItemTemplate>
-                    <DataTemplate>
-                        <Grid>
-                            <TextBlock Text="{Binding Display}" FontSize="12" TextTrimming="CharacterEllipsis"/>
-                        </Grid>
-                    </DataTemplate>
-                </ListView.ItemTemplate>
-            </ListView>
+            <Grid x:Name="AudioListHost" Grid.Row="0" AllowDrop="True"
+                  DragOver="DropAudio_DragOver" Drop="DropAudio_Drop">
+                <ListView x:Name="AudioList" SelectionMode="Multiple"
+                          Background="{StaticResource AppPanelBrush}"
+                          BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
+                          CornerRadius="12" Padding="8" Margin="0,0,0,10"
+                          AllowDrop="True" DragOver="DropAudio_DragOver" Drop="DropAudio_Drop"
+                          SelectionChanged="AudioList_SelectionChanged"
+                          DoubleTapped="AudioList_DoubleTapped">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid>
+                                <TextBlock Text="{Binding Display}" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Grid>
+
+            <!-- 预览区:播放 + 首尾裁剪(仿视频页,简化:滑块拖拽) -->
             <Border Grid.Row="1" Background="{StaticResource AppPanel2Brush}"
+                    BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
+                    CornerRadius="8" Padding="10,8" Margin="0,0,0,10">
+                <StackPanel Spacing="6">
+                    <TextBlock x:Name="PreviewName" Text="选中音频后可预览/裁剪" Style="{StaticResource HintText}"/>
+                    <MediaPlayerElement x:Name="PreviewPlayer" Height="40"
+                                        AreTransportControlsEnabled="True"/>
+                    <Grid ColumnSpacing="8" x:Name="TrimRow" Visibility="Collapsed">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="52"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="52"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="TrimStartLabel" Text="起点 0:00" FontSize="11" Opacity="0.7"/>
+                        <Slider x:Name="TrimStartSlider" Grid.Column="1" Minimum="0" Maximum="1" StepFrequency="0.01"
+                                ValueChanged="TrimStartSlider_ValueChanged"/>
+                        <Slider x:Name="TrimEndSlider" Grid.Column="2" Minimum="0" Maximum="1" StepFrequency="0.01"
+                                ValueChanged="TrimEndSlider_ValueChanged"/>
+                        <TextBlock x:Name="TrimEndLabel" Grid.Column="3" Text="终点 0:00" FontSize="11" Opacity="0.7"
+                                   TextAlignment="Right"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Row="2" Background="{StaticResource AppPanel2Brush}"
                     BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
                     CornerRadius="8" Padding="10,6">
                 <TextBlock x:Name="LogText" FontSize="11" Opacity="0.8" Text="" TextWrapping="Wrap"

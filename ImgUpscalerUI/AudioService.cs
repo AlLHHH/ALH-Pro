@@ -69,11 +69,12 @@ public static class AudioService
     /// <summary>
     /// 音频增强主流程。denoise:0~2(关/弱/强), loudness:bool, lowcut:bool, eq:bool;
     /// 输出格式:0=WAV,1=FLAC,2=MP3;outDir=输出目录(空=源目录)。
-    /// 进度:按 ffmpeg 时间戳百分比(0-100)。
+    /// trimStart/trimEnd:裁剪(秒;0=不裁)。进度按 ffmpeg 时间戳百分比(0-100)。
     /// </summary>
     public static async Task EnhanceAsync(string input, string output, int denoise, bool loudness,
         bool lowcut, bool eq, int outFmt, int mp3BitrateKbps, double? outDir,
-        IProgress<(int pct, string msg)>? progress, CancellationToken ct)
+        IProgress<(int pct, string msg)>? progress, CancellationToken ct,
+        double trimStart = 0, double trimEnd = 0)
     {
         var filters = new System.Collections.Generic.List<string>();
         // 1) 降噪(anlmdn 非局部均值,零模型)
@@ -87,6 +88,10 @@ public static class AudioService
         if (loudness) filters.Add("loudnorm=I=-16:TP=-1.5:LRA=11");
 
         var af = filters.Count > 0 ? $"-af \"{string.Join(",", filters)}\"" : "";
+        // 裁剪:起点用 -ss(输入侧,快);终点用 -t(duration)
+        var trim = "";
+        if (trimStart > 0.01) trim += $"-ss {trimStart.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} ";
+        if (trimEnd > 0.01) trim += $"-t {Math.Max(0.1, trimEnd - trimStart).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} ";
         var codec = outFmt switch
         {
             0 => "-c:a pcm_s16le",
@@ -96,7 +101,7 @@ public static class AudioService
         var psi = new ProcessStartInfo
         {
             FileName = FfmpegPath,
-            Arguments = $"-y -i \"{input}\" {af} {codec} -progress pipe:1 -nostats \"{output}\"",
+            Arguments = $"-y {trim} -i \"{input}\" {af} {codec} -progress pipe:1 -nostats \"{output}\"",
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
