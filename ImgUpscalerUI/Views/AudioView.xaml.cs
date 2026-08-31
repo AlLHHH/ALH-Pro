@@ -57,6 +57,66 @@ public sealed partial class AudioView : UserControl
 
     private void Options_Changed(object sender, RoutedEventArgs e) { }
 
+    // ---------- Delete 键删除选中 ----------
+    private void AudioList_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key == Windows.System.VirtualKey.Delete)
+        {
+            e.Handled = true;
+            if (_running) { Log("处理中不能删除(可先暂停/强制结束)"); return; }
+            RemoveAudio_Click(sender, new RoutedEventArgs());
+        }
+    }
+
+    private void RemoveAudio_Click(object sender, RoutedEventArgs e)
+    {
+        if (_running) { Log("处理中不能删除(可先暂停/强制结束)"); return; }
+        var selected = AudioList.SelectedItems.Cast<AudioItem>().ToArray();
+        if (selected.Length == 0) return;
+        foreach (var it in selected)
+        {
+            _items.Remove(it);
+            AudioList.Items.Remove(it);
+        }
+        UpdateListButtons();
+        AudioInfo.Text = _items.Count == 0 ? "未选择音频" : $"{_items.Count} 个音频";
+        Log($"删除了 {selected.Length} 个音频(列表剩 {_items.Count} 个)");
+    }
+
+    private void ClearAudio_Click(object sender, RoutedEventArgs e)
+    {
+        if (_running) { Log("处理中不能清空(可先暂停/强制结束)"); return; }
+        _items.Clear();
+        AudioList.Items.Clear();
+        UpdateListButtons();
+        AudioInfo.Text = "未选择音频";
+        Log($"清空了音频列表");
+    }
+
+    private void ClearDoneAudio_Click(object sender, RoutedEventArgs e)
+    {
+        if (_running) { Log("处理中不能清除(可先暂停/强制结束)"); return; }
+        var done = _items.Where(it => it.IsDone).ToArray();
+        foreach (var it in done)
+        {
+            _items.Remove(it);
+            AudioList.Items.Remove(it);
+        }
+        UpdateListButtons();
+        AudioInfo.Text = _items.Count == 0 ? "未选择音频" : $"{_items.Count} 个音频";
+        Log($"清除了 {done.Length} 个已完成");
+    }
+
+    private void UpdateListButtons()
+    {
+        bool hasList = _items.Count > 0;
+        bool hasSel = AudioList.SelectedItems.Count > 0;
+        RemoveAudioBtn.IsEnabled = hasSel && !_running;
+        ClearAudioBtn.IsEnabled = hasList && !_running;
+        ClearDoneAudioBtn.IsEnabled = _items.Any(it => it.IsDone) && !_running;
+        UpdateRunState();
+    }
+
     // ---------- 拖拽添加 ----------
     private void DropAudio_DragOver(object sender, DragEventArgs e)
         => e.AcceptedOperation = DataPackageOperation.Copy;
