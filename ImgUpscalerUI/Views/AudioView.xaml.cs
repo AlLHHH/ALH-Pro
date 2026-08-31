@@ -66,7 +66,18 @@ public sealed partial class AudioView : UserControl
         _mediaPlayer.Volume = v;
     }
 
-    private void Log(string msg) { LogText.Text = msg; StatusChanged?.Invoke(msg); }
+    private void Log(string msg)
+    {
+        AppLogger.Info(msg);   // 同步写诊断日志文件(与视频页一致)
+        var line = $"[{DateTime.Now:HH:mm:ss}] {msg}";
+        LogText.Text = LogText.Text == "日志:等待任务..."
+            ? line : LogText.Text + "\n" + line;
+        var lines = LogText.Text.Split('\n');
+        if (lines.Length > 200)
+            LogText.Text = string.Join("\n", lines.Skip(80)) + "\n";
+        try { LogScroll?.ChangeView(null, LogScroll.ScrollableHeight, null, true); } catch { }
+        StatusChanged?.Invoke(msg);
+    }
     public static string FormatTime(double s) => s <= 0 ? "0:00" : $"{(int)s / 60}:{(int)s % 60:00}";
 
     private void UpdateRunState()

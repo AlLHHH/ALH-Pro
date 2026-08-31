@@ -2610,10 +2610,16 @@ public sealed partial class VideoView : UserControl
             : _videos.Where(v => !v.IsDone)).ToArray();
         if (onlySelected && items.Length == 0)
         {
+            Log("⚠ 「只处理选中的项目」已勾选,但右侧没有选中任何视频(或被处理完的自动跳过)——请先在列表选中待处理项。");
             await ShowPauseHintAsync("请先在右侧选中要处理的视频(可框选/多选)");
             return;
         }
-        if (items.Length == 0 || _running) return;
+        if (items.Length == 0)
+        {
+            Log("⚠ 没有需要处理的视频(全部已完成;如需重跑请在列表项上点「重新处理」)。");
+            return;
+        }
+        if (_running) return;
         var inv = CultureInfo.InvariantCulture;
         var up = UpscaleToggle.IsChecked == true;
         var interp = InterpToggle.IsChecked == true;
