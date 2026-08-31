@@ -306,14 +306,11 @@ public sealed partial class AudioView : UserControl
             var samples = await AudioService.DecodeWaveformAsync(it.Path, 1200);
             _waveSamples = samples;
             DrawWaveform();
-            // 裁剪滑块:0~时长;默认终点=时长
-            TrimStartSlider.Maximum = Math.Max(1, it.DurationSec);
-            TrimEndSlider.Maximum = Math.Max(1, it.DurationSec);
-            TrimStartSlider.Value = it.TrimStart;
-            TrimEndSlider.Value = it.TrimEnd > 0.1 ? it.TrimEnd : it.DurationSec;
-            TrimRow.Visibility = Visibility.Visible;
-            TrimHint.Text = $"裁剪: {FormatTime(it.TrimStart)} ~ {FormatTime(it.TrimEnd > 0.1 ? it.TrimEnd : it.DurationSec)}";
-            UpdateTrimOverlay();
+            // 裁剪:把手显示(拖动),不再是滑条
+            it.TrimEnd = it.TrimEnd > 0.1 ? it.TrimEnd : it.DurationSec;
+            TrimStartThumb.Visibility = Visibility.Visible;
+            TrimEndThumb.Visibility = Visibility.Visible;
+            UpdateTrimUI();
             // 播放进度线跟随
             if (PreviewPlayer.MediaPlayer != null)
             {
@@ -341,7 +338,7 @@ public sealed partial class AudioView : UserControl
     // ---------- 波形绘制 ----------
     private float[] _waveSamples = Array.Empty<float>();
 
-    private void WaveCanvas_SizeChanged(object sender, SizeChangedEventArgs e) => DrawWaveform();
+    private void WaveCanvas_SizeChanged(object sender, SizeChangedEventArgs e) { DrawWaveform(); UpdateTrimUI(); }
 
     private void DrawWaveform()
     {
@@ -365,26 +362,108 @@ public sealed partial class AudioView : UserControl
         }
     }
 
-    private void UpdatePlayLine(double pos)
+    // ---------- 裁剪把手(拖动首尾,与视频页时间线一致) ----------
+    private bool _dragStartThumb, _dragEndThumb;
+
+    private void TrimThumb_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
-        if (_previewItem == null || _previewItem.DurationSec <= 0 || WaveCanvas == null) return;
-        var w = WaveCanvas.ActualWidth;
-        var x = w * pos / _previewItem.DurationSec;
-        PlayLine.Width = 2;
-        PlayLine.Visibility = Visibility.Visible;
-        Canvas.SetLeft(PlayLine, x);
-        Canvas.SetTop(PlayLine, 0);
+        _dragStartThumb = ReferenceEquals(sender, TrimStartThumb);
+        _dragEndThumb = ReferenceEquals(sender, TrimEndThumb);
+        ((UIElement)sender).CapturePointer(e.Pointer);
+        UpdateTrimFromPointer(e);
+        e.Handled = true;
     }
 
-    private void UpdateTrimOverlay()
+    private void TrimThumb_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
-        if (_previewItem == null || _previewItem.DurationSec <= 0 || WaveCanvas == null) return;
-        var w = WaveCanvas.ActualWidth;
-        double s = _previewItem.TrimStart;
-        double e = _previewItem.TrimEnd > 0.1 ? _previewItem.TrimEnd : _previewItem.DurationSec;
-        TrimOverlay.Width = Math.Max(0, w * (e - s) / _previewItem.DurationSec);
-        TrimOverlay.Margin = new Thickness(w * s / _previewItem.DurationSec, 0, 0, 0);
-        TrimOverlay.Visibility = Visibility.Visible;
+        if (_dragStartThumb || _dragEndThumb)
+        {
+            UpdateTrimFromPointer(e);
+            e.Handled = true;
+        }
+    }
+
+    private void TrimThumb_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        _dragStartThumb = false;
+        _dragEndThumb = false;
+        try { ((UIElement)sender).ReleasePointerCapture(e.Pointer); } catch { }
+    }
+
+    private void UpdateTrimFromPointer(Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (_previewItem == null || _previewItem.DurationSec <= 0) return;
+        var usable = WaveHost.ActualWidth - 20;
+        if (usable <= 0) return;
+        var sec = Math.Clamp((e.GetCurrentPoint(WaveHost).Position.X - 10) / usable * _previewItem.DurationSec,
+            0, _previewItem.DurationSec);
+        if (_dragStartThumb)
+            _previewItem.TrimStart = Math.Min(sec, Math.Max(0, _previewItem.TrimEnd - 0.1));
+        else if (_dragEndThumb)
+            _previewItem.TrimEnd = Math.Max(sec, Math.Min(_previewItem.DurationSec, _previewItem.TrimStart + 0.1));
+        UpdateTrimUI();
+    }
+
+    private void UpdateTrimUI()
+    {
+        if (_previewItem == null || _previewItem.DurationSec <= 0 || WaveHost.ActualWidth <= 0) return;
+        var usable = WaveHost.ActualWidth - 20;
+        var sx = 10 + _previewItem.TrimStart / _previewItem.DurationSec * usable;
+        var ex = 10 + _previewItem.TrimEnd / _previewItem.DurationSec * usable;
+        TrimStartThumb.Margin = new Thickness(sx - 5, 0, 0, 0);
+        TrimEndThumb.Margin = new Thickness(ex - 5, 0, 0, 0);
+        TrimRange.Margin = new Thickness(sx, 0, 0, 0);
+        TrimRange.Width = Math.Max(0, ex - sx);
+        TrimRange.Visibility = Visibility.Visible;
+        TrimHint.Text = $"裁剪: {FormatTime(_previewItem.TrimStart)} ~ {FormatTime(_previewItem.TrimEnd)} / 总 {FormatTime(_previewItem.DurationSec)}";
+    }
+
+    // ---------- 波形点击:拖动调整播放位置 ----------
+    private bool _waveSeeking;
+
+    private void WaveHost_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (_previewItem == null || _previewItem.DurationSec <= 0) return;
+        _waveSeeking = true;
+        WaveHost.CapturePointer(e.Pointer);
+        SeekWave(e);
+        e.Handled = true;
+    }
+
+    private void WaveHost_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_waveSeeking) return;
+        SeekWave(e);
+        e.Handled = true;
+    }
+
+    private void WaveHost_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        _waveSeeking = false;
+        try { WaveHost.ReleasePointerCapture(e.Pointer); } catch { }
+    }
+
+    private void SeekWave(Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (_previewItem == null || _previewItem.DurationSec <= 0 || WaveHost.ActualWidth <= 0) return;
+        var sec = Math.Clamp(e.GetCurrentPoint(WaveHost).Position.X / WaveHost.ActualWidth * _previewItem.DurationSec,
+            0, _previewItem.DurationSec);
+        try
+        {
+            if (PreviewPlayer.MediaPlayer != null)
+                PreviewPlayer.MediaPlayer.PlaybackSession.Position = TimeSpan.FromSeconds(sec);
+        }
+        catch { }
+        UpdatePlayLine(sec);
+    }
+
+    private void UpdatePlayLine(double pos)
+    {
+        if (_previewItem == null || _previewItem.DurationSec <= 0 || WaveHost == null) return;
+        var w = WaveHost.ActualWidth;
+        var x = w * pos / _previewItem.DurationSec;
+        PlayLine.Visibility = Visibility.Visible;
+        PlayLine.Margin = new Thickness(x, 0, 0, 0);
     }
 
     private void RemovePreviewHandler()
@@ -396,25 +475,7 @@ public sealed partial class AudioView : UserControl
         }
     }
 
-    private void TrimStartSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
-    {
-        if (_previewItem == null || TrimStartSlider == null || TrimEndSlider == null) return;
-        if (TrimStartSlider.Value > TrimEndSlider.Value)
-            TrimStartSlider.Value = TrimEndSlider.Value;
-        _previewItem.TrimStart = TrimStartSlider.Value;
-        TrimHint.Text = $"裁剪: {FormatTime(TrimStartSlider.Value)} ~ {FormatTime(TrimEndSlider.Value)}";
-        UpdateTrimOverlay();
-    }
-
-    private void TrimEndSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
-    {
-        if (_previewItem == null || TrimStartSlider == null || TrimEndSlider == null) return;
-        if (TrimEndSlider.Value < TrimStartSlider.Value)
-            TrimEndSlider.Value = TrimStartSlider.Value;
-        _previewItem.TrimEnd = TrimEndSlider.Value;
-        TrimHint.Text = $"裁剪: {FormatTime(TrimStartSlider.Value)} ~ {FormatTime(TrimEndSlider.Value)}";
-        UpdateTrimOverlay();
-    }
+    // ---------- 裁剪把手(波形上拖首尾)见上方 ----------
 
     // ---------- 开始处理 ----------
     private async void RunBtn_Click(object sender, RoutedEventArgs e)
