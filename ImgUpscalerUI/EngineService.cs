@@ -1021,7 +1021,8 @@ public static class EngineService
             var exe = FindRealESRGAN() ?? throw new FileNotFoundException("未找到 Real-ESRGAN 引擎");
             // 与单张路径一致:realesrgan 权重基本只有 2x/4x,非原生倍率统一 4x 后高保真缩回
             int engineScale = 4;
-            var args = $"-i \"{input}\" -o \"{output}\" -s {engineScale} -n {model} " +
+            // -m 显式模型目录(models),-n 模型名(=realesrgan-x4plus)——显式写全,不依赖引擎默认/工作目录
+            var args = $"-i \"{input}\" -o \"{output}\" -s {engineScale} -m models -n {model} " +
                 $"-t {tileSize} -g {gpuId}{SafeRender.GetEngineThreadArgs()}";
             if (tta) args += " -x";
             await RunEngFallbackGpuAsync(exe, args, progress, ct).ConfigureAwait(false);
