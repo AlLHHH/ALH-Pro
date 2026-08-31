@@ -287,7 +287,7 @@ public sealed partial class UpscaleView : UserControl
     private void UpdateRunState()
     {
         RunBtn.IsEnabled = ToolGrid.Items.Count > 0 && !_running;
-        // 耗时提示(黄色):启用耗时功能时,显示在"开始处理"下方
+        // 耗时提示(黄色):启用耗时功能时,显示在"开始处理"下方(开什么显示什么)
         if (SpeedHint != null)
         {
             var slow = new System.Collections.Generic.List<string>();
@@ -300,7 +300,7 @@ public sealed partial class UpscaleView : UserControl
             if (PreDenoiseCheck.IsChecked == true) slow.Add("预处理降噪");
             if (slow.Count > 0 && ToolGrid.Items.Count > 0 && !_running)
             {
-                SpeedHint.Text = $"⚠ 已启用 {string.Join("、", slow)}:处理时间会增加{ExtraTimeHint(slow)}";
+                SpeedHint.Text = $"⚠ 已启用 {string.Join("、", slow)} 处理时间会增加";
                 SpeedHint.Visibility = Visibility.Visible;
             }
             else SpeedHint.Visibility = Visibility.Collapsed;
@@ -308,15 +308,6 @@ public sealed partial class UpscaleView : UserControl
         PauseBtn.IsEnabled = _running && !_paused;
         ResumeBtn.IsEnabled = _running && _paused;
         UpdatePauseButtonVisual();
-    }
-
-    /// <summary>耗时提示后缀(大白话)。</summary>
-    private static string ExtraTimeHint(System.Collections.Generic.List<string> slow)
-    {
-        if (slow.Contains("高质量 TTA")) return "(约为不开时的 2~3 倍,画质优先可选)";
-        if (slow.Contains("高倍率")) return "(倍率越高越慢,4x 请耐心等待)";
-        if (slow.Count >= 2) return "(功能叠加,时间按倍数累积)";
-        return "(为画质多花时间,属正常)";
     }
 
     /// <summary>按当前模型刷新放大倍数可用性(引擎/模型原生权重决定):
