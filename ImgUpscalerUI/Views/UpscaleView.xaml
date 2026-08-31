@@ -280,6 +280,10 @@
                                 Style="{StaticResource AccentButtonStyle}"
                                 HorizontalAlignment="Stretch" MinHeight="48"
                                 IsEnabled="False" Click="RunBtn_Click"/>
+                        <!-- 耗时提示(黄色):启用耗时功能时提示处理时间会增加 -->
+                        <TextBlock x:Name="SpeedHint" Text=""
+                                   Foreground="#E8A33D" FontSize="11" TextWrapping="Wrap"
+                                   TextAlignment="Center" Visibility="Collapsed"/>
                         <CheckBox x:Name="SelectedOnlyCheck" Content="只处理选中的项目"
                                   ToolTipService.ToolTip="勾选后只处理右侧列表里选中的项;不勾选则处理全部"/>
                         <Grid ColumnSpacing="8">
