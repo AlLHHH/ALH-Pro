@@ -2789,7 +2789,19 @@ public sealed partial class VideoView : UserControl
             {
                 var engineLabel = VideoEngineRadios.SelectedIndex == 1 ? "Real-CUGAN" : "Real-ESRGAN";
                 var useWaifu = await AskBlackwellCompatibleAsync(engineLabel).ConfigureAwait(false);
-                if (useWaifu) VideoEngineRadios.SelectedIndex = 0;   // 换成 waifu2x(兼容+最快)
+                // 关键:IsEngineGpuUsableAsync 内部 ConfigureAwait(false),回来后线程已非 UI 线程,
+                // 直接改 RadioButtons.SelectedIndex 会抛 0x8001010E(跨线程访问)→ 用 DispatcherQueue 回 UI 线程。
+                var tcs = new System.Threading.Tasks.TaskCompletionSource();
+                _ = DispatcherQueue.TryEnqueue(() =>
+                {
+                    try
+                    {
+                        if (useWaifu && VideoEngineRadios.SelectedIndex != 0)
+                            VideoEngineRadios.SelectedIndex = 0;   // 换成 waifu2x(兼容+最快)
+                    }
+                    finally { tcs.TrySetResult(); }
+                });
+                await tcs.Task.ConfigureAwait(false);
             }
         }
         // ===== 参数快照(关键):处理中切换界面【不影响本批】——以下全部在开始时一次性读取,
