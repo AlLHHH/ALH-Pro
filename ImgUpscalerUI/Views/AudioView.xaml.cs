@@ -117,6 +117,109 @@ public sealed partial class AudioView : UserControl
         UpdateRunState();
     }
 
+    // ---------- 鼠标框选(橡皮筋,与视频/图片页一致) ----------
+    private const double RbThreshold = 4;
+    private bool _rbBanding;
+    private bool _rbMoved;
+    private Windows.Foundation.Point _rbStart;
+
+    private void AudioListHost_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (IsPressOnAudioItem(e.GetCurrentPoint(AudioListHost).Position)) return;
+        _rbBanding = true;
+        _rbMoved = false;
+        _rbStart = e.GetCurrentPoint(AudioListHost).Position;
+        RbRectA.Visibility = Visibility.Visible;
+        RbRectA.Width = 0;
+        RbRectA.Height = 0;
+        Canvas.SetLeft(RbRectA, _rbStart.X);
+        Canvas.SetTop(RbRectA, _rbStart.Y);
+        AudioListHost.CapturePointer(e.Pointer);
+    }
+
+    private bool IsPressOnAudioItem(Windows.Foundation.Point pt)
+    {
+        for (int i = 0; i < _items.Count; i++)
+        {
+            if (AudioList.ContainerFromIndex(i) is FrameworkElement c && c.ActualWidth > 0)
+            {
+                var tl = c.TransformToVisual(AudioListHost).TransformPoint(new Windows.Foundation.Point(0, 0));
+                var r = new Windows.Foundation.Rect(tl.X, tl.Y, c.ActualWidth, c.ActualHeight);
+                if (r.Contains(pt)) return true;
+            }
+        }
+        return false;
+    }
+
+    private void AudioListHost_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_rbBanding) return;
+        var cur = e.GetCurrentPoint(AudioListHost).Position;
+        if (!_rbMoved && Math.Abs(cur.X - _rbStart.X) < RbThreshold && Math.Abs(cur.Y - _rbStart.Y) < RbThreshold)
+            return;
+        _rbMoved = true;
+        UpdateRbRectA(cur);
+    }
+
+    private void AudioListHost_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_rbBanding) return;
+        _rbBanding = false;
+        AudioListHost.ReleasePointerCapture(e.Pointer);
+        if (_rbMoved)
+        {
+            UpdateRbRectA(e.GetCurrentPoint(AudioListHost).Position);
+            ApplyRubberSelectionA();
+        }
+        else
+        {
+            AudioList.SelectedItems.Clear();
+            UpdateListButtons();
+        }
+        RbRectA.Visibility = Visibility.Collapsed;
+    }
+
+    private void AudioListHost_PointerCaptureLost(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        _rbBanding = false;
+        RbRectA.Visibility = Visibility.Collapsed;
+    }
+
+    private void UpdateRbRectA(Windows.Foundation.Point cur)
+    {
+        double x = Math.Min(_rbStart.X, cur.X);
+        double y = Math.Min(_rbStart.Y, cur.Y);
+        Canvas.SetLeft(RbRectA, x);
+        Canvas.SetTop(RbRectA, y);
+        RbRectA.Width = Math.Abs(cur.X - _rbStart.X);
+        RbRectA.Height = Math.Abs(cur.Y - _rbStart.Y);
+        RbRectA.Visibility = RbRectA.Width > 2 && RbRectA.Height > 2
+            ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void ApplyRubberSelectionA()
+    {
+        var rect = new Windows.Foundation.Rect(Canvas.GetLeft(RbRectA), Canvas.GetTop(RbRectA),
+            RbRectA.Width, RbRectA.Height);
+        if (rect.Width < 2 || rect.Height < 2) return;
+        AudioList.SelectedItems.Clear();
+        for (int i = 0; i < _items.Count; i++)
+        {
+            if (AudioList.ContainerFromIndex(i) is FrameworkElement c)
+            {
+                var tf = c.TransformToVisual(AudioListHost);
+                var topLeft = tf.TransformPoint(new Windows.Foundation.Point(0, 0));
+                var itemRect = new Windows.Foundation.Rect(topLeft.X, topLeft.Y, c.ActualWidth, c.ActualHeight);
+                if (RectIntersects(itemRect, rect))
+                    AudioList.SelectedItems.Add(_items[i]);
+            }
+        }
+        UpdateListButtons();
+    }
+
+    private bool RectIntersects(Windows.Foundation.Rect a, Windows.Foundation.Rect b)
+        => a.Left < b.Right && a.Right > b.Left && a.Top < b.Bottom && a.Bottom > b.Top;
+
     // ---------- 拖拽添加 ----------
     private void DropAudio_DragOver(object sender, DragEventArgs e)
         => e.AcceptedOperation = DataPackageOperation.Copy;
