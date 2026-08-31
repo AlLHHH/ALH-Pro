@@ -103,7 +103,7 @@
                 <Button x:Name="ClearDoneAudioBtn" Grid.Column="3" Content="清除已完成" FontSize="12"
                         Padding="10,5" IsEnabled="False" Click="ClearDoneAudio_Click"
                         ToolTipService.ToolTip="清除所有已完成的项目"/>
-                <TextBlock Grid.Column="4" Text="双击预览/播放 · 拖动滑块裁剪" FontSize="11"
+                <TextBlock Grid.Column="4" Text="双击预览 · 拖动波形两端裁剪" FontSize="11"
                            Opacity="0.5" VerticalAlignment="Center" HorizontalAlignment="Right"/>
             </Grid>
 
@@ -148,14 +148,19 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock x:Name="PreviewName" Text="" Style="{StaticResource HintText}"/>
+                        <TextBlock x:Name="PreviewName" Text="" Style="{StaticResource HintText}"
+                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
                         <TextBlock x:Name="PreviewMeta" Grid.Column="1" FontSize="11" Opacity="0.6"
                                    Text=""/>
+                        <Button x:Name="PreviewCloseBtn" Grid.Column="2" Content="✕" FontSize="11"
+                                Padding="7,3" Background="Transparent" BorderThickness="0"
+                                Click="PreviewCloseBtn_Click" ToolTipService.ToolTip="关闭预览"/>
                     </Grid>
 
                     <!-- 波形图:自绘(峰值条 + 播放进度线 + 裁剪把手) -->
-                    <Grid x:Name="WaveHost" Height="80" PointerPressed="WaveHost_PointerPressed"
+                    <Grid x:Name="WaveHost" Height="72" PointerPressed="WaveHost_PointerPressed"
                           PointerMoved="WaveHost_PointerMoved" PointerReleased="WaveHost_PointerReleased">
                         <Border Background="{StaticResource AppBgBrush}" CornerRadius="6"/>
                         <Canvas x:Name="WaveCanvas" SizeChanged="WaveCanvas_SizeChanged"/>
@@ -180,13 +185,29 @@
                                    Visibility="Collapsed"/>
                     </Grid>
 
-                    <!-- 播放器:高一点,控件舒展 -->
-                    <Border Background="{StaticResource AppPanelBrush}" CornerRadius="6" Padding="6,0">
-                        <MediaPlayerElement x:Name="PreviewPlayer" Height="56"
-                                            AreTransportControlsEnabled="True"/>
-                    </Border>
+                    <!-- 控制条:自绘(播放/暂停 + 时间) — 不用 MediaPlayerElement 自带控件(多出投屏/全屏无用按钮) -->
+                    <Grid ColumnSpacing="8" x:Name="ControlBar">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="PlayBtn" Content="▶" FontSize="14" Width="44" Height="36" Padding="0"
+                                Background="{StaticResource AppPanelBrush}" Click="PlayBtn_Click"/>
+                        <Button x:Name="ResetBtn" Grid.Column="1" Content="再听一次" FontSize="11" Padding="10,4"
+                                Click="ResetBtn_Click"/>
+                        <TextBlock x:Name="TimeText" Grid.Column="2" Text="0:00 / 0:00" FontSize="12"
+                                   VerticalAlignment="Center" Margin="8,0,0,0"/>
+                        <TextBlock Grid.Column="4" Text="点波形跳位置" FontSize="11" Opacity="0.5"
+                                   VerticalAlignment="Center" Margin="8,0,0,0"/>
+                        <TextBlock Grid.Column="5" Text="拖两端裁剪" FontSize="11" Opacity="0.5"
+                                   VerticalAlignment="Center" Margin="8,0,0,0"/>
+                    </Grid>
 
-                    <!-- 裁剪信息(只读显示,不再用滑条) -->
+                    <!-- 裁剪信息(只读显示) -->
                     <TextBlock x:Name="TrimHint" Text="" FontSize="11" Opacity="0.6"/>
                 </StackPanel>
             </Border>

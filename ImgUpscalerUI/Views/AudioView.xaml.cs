@@ -34,6 +34,7 @@ public sealed partial class AudioView : UserControl
     private bool _running;
     private CancellationTokenSource? _cts;
     private AudioItem? _previewItem;
+    private Windows.Media.Playback.MediaPlayer? _mediaPlayer;
     private Windows.Foundation.TypedEventHandler<Windows.Media.Playback.MediaPlaybackSession, object>? _previewHandler;
 
     /// <summary>状态变化(底部状态栏显示)。</summary>
@@ -42,6 +43,14 @@ public sealed partial class AudioView : UserControl
     public AudioView()
     {
         this.InitializeComponent();
+        _mediaPlayer = new Windows.Media.Playback.MediaPlayer();
+        _mediaPlayer.AutoPlay = false;   // 打开预览不自动播,由用户点 ▶
+        _mediaPlayer.MediaOpened += (s, _) =>
+        {
+            if (_previewItem != null && _previewItem.TrimStart > 0.1 && s.PlaybackSession.CanSeek)
+                s.PlaybackSession.Position = TimeSpan.FromSeconds(_previewItem.TrimStart);
+        };
+        _playStateHandler = PlayStateChanged;
         UpdateRunState();
     }
 
@@ -78,6 +87,7 @@ public sealed partial class AudioView : UserControl
             _items.Remove(it);
             AudioList.Items.Remove(it);
         }
+        if (_previewItem != null && selected.Contains(_previewItem)) ClosePreview();
         UpdateListButtons();
         AudioInfo.Text = _items.Count == 0 ? "未选择音频" : $"{_items.Count} 个音频";
         Log($"删除了 {selected.Length} 个音频(列表剩 {_items.Count} 个)");
@@ -88,6 +98,7 @@ public sealed partial class AudioView : UserControl
         if (_running) { Log("处理中不能清空(可先暂停/强制结束)"); return; }
         _items.Clear();
         AudioList.Items.Clear();
+        ClosePreview();
         UpdateListButtons();
         AudioInfo.Text = "未选择音频";
         Log($"清空了音频列表");
@@ -280,7 +291,7 @@ public sealed partial class AudioView : UserControl
     }
 
     // ---------- 预览/裁剪(双击才展开) ----------
-    private async void AudioList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void AudioList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         // 单击只更新选中状态;预览区保留(双击会打开;这里不清除以免闪)
     }
@@ -296,8 +307,8 @@ public sealed partial class AudioView : UserControl
         try
         {
             RemovePreviewHandler();
+            _previewItem = it;
             PreviewPanel.Visibility = Visibility.Visible;   // 双击展开预览区
-            PreviewPlayer.Source = MediaSource.CreateFromUri(new Uri(it.Path));
             var (dur, ch, sampleRate) = AudioService.Probe(it.Path);
             it.DurationSec = (float)(dur > 0 ? dur : it.DurationSec);
             PreviewName.Text = $"{it.Name}";
@@ -311,10 +322,10 @@ public sealed partial class AudioView : UserControl
             TrimStartThumb.Visibility = Visibility.Visible;
             TrimEndThumb.Visibility = Visibility.Visible;
             UpdateTrimUI();
-            // 播放进度线跟随
-            if (PreviewPlayer.MediaPlayer != null)
+            // 播放:自绘控制(纯 MediaPlayer,不再用 MediaPlayerElement 自带控件)
+            if (_mediaPlayer != null)
             {
-                var mp = PreviewPlayer.MediaPlayer;
+                var mp = _mediaPlayer;
                 _previewHandler = (s, _) =>
                 {
                     try
@@ -322,17 +333,67 @@ public sealed partial class AudioView : UserControl
                         var pos = s.Position.TotalSeconds;
                         var end = it.TrimEnd > 0.1 && it.DurationSec > 0 ? it.TrimEnd : 0;
                         if (end > 0.1 && pos >= end - 0.05)
-                            s.PlaybackRate = 0;
-                        DispatcherQueue.TryEnqueue(() => UpdatePlayLine(pos));
+                            mp.Pause();
+                        DispatcherQueue.TryEnqueue(() =>
+                        {
+                            UpdatePlayLine(pos);
+                            TimeText.Text = $"{FormatTime(pos)} / {FormatTime(it.DurationSec)}";
+                        });
                     }
                     catch { }
                 };
+                mp.Source = MediaSource.CreateFromUri(new Uri(it.Path));
                 mp.PlaybackSession.PositionChanged += _previewHandler;
+                mp.PlaybackSession.PlaybackStateChanged += _playStateHandler;
                 if (it.TrimStart > 0.1)
                     mp.PlaybackSession.Position = TimeSpan.FromSeconds(it.TrimStart);
+                TimeText.Text = $"0:00 / {FormatTime(it.DurationSec)}";
             }
         }
         catch { }
+    }
+
+    private void PlayStateChanged(Windows.Media.Playback.MediaPlaybackSession s, object _)
+    {
+        var playing = s.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing;
+        DispatcherQueue.TryEnqueue(() => PlayBtn.Content = playing ? "⏸" : "▶");
+    }
+
+    private readonly Windows.Foundation.TypedEventHandler<Windows.Media.Playback.MediaPlaybackSession, object> _playStateHandler;
+
+    private void PlayBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var mp = _mediaPlayer;
+        if (mp == null) return;
+        if (mp.PlaybackSession.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing)
+        {
+            mp.Pause();
+            PlayBtn.Content = "▶";
+        }
+        else
+        {
+            var it = _previewItem;
+            var pos = mp.PlaybackSession.Position.TotalSeconds;
+            // 没在播:若已到裁剪末尾或起点之后,回到起点再听(不然点播放没反应)
+            if (it != null)
+            {
+                var end = it.TrimEnd > 0.1 && it.DurationSec > 0 ? it.TrimEnd : 0;
+                if ((end > 0.1 && pos >= end - 0.05) || pos < it.TrimStart - 0.1)
+                    mp.PlaybackSession.Position = TimeSpan.FromSeconds(it.TrimStart > 0.1 ? it.TrimStart : 0);
+            }
+            mp.Play();
+            PlayBtn.Content = "⏸";
+        }
+    }
+
+    private void ResetBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var mp = _mediaPlayer;
+        if (mp == null || _previewItem == null) return;
+        mp.Pause();
+        mp.PlaybackSession.Position = TimeSpan.FromSeconds(_previewItem.TrimStart > 0.1 ? _previewItem.TrimStart : 0);
+        PlayBtn.Content = "▶";
+        UpdatePlayLine(_previewItem.TrimStart > 0.1 ? _previewItem.TrimStart : 0);
     }
 
     // ---------- 波形绘制 ----------
@@ -450,8 +511,8 @@ public sealed partial class AudioView : UserControl
             0, _previewItem.DurationSec);
         try
         {
-            if (PreviewPlayer.MediaPlayer != null)
-                PreviewPlayer.MediaPlayer.PlaybackSession.Position = TimeSpan.FromSeconds(sec);
+            if (_mediaPlayer != null)
+                _mediaPlayer.PlaybackSession.Position = TimeSpan.FromSeconds(sec);
         }
         catch { }
         UpdatePlayLine(sec);
@@ -468,12 +529,27 @@ public sealed partial class AudioView : UserControl
 
     private void RemovePreviewHandler()
     {
-        if (_previewHandler != null && PreviewPlayer.MediaPlayer != null)
+        if (_previewHandler != null && _mediaPlayer != null)
         {
-            try { PreviewPlayer.MediaPlayer.PlaybackSession.PositionChanged -= _previewHandler; } catch { }
+            try { _mediaPlayer.PlaybackSession.PositionChanged -= _previewHandler; } catch { }
+            try { _mediaPlayer.PlaybackSession.PlaybackStateChanged -= _playStateHandler; } catch { }
             _previewHandler = null;
         }
     }
+
+    private void ClosePreview()
+    {
+        RemovePreviewHandler();
+        if (_mediaPlayer != null)
+        {
+            try { _mediaPlayer.Pause(); _mediaPlayer.Source = null; } catch { }
+        }
+        _previewItem = null;
+        PlayBtn.Content = "▶";
+        PreviewPanel.Visibility = Visibility.Collapsed;
+    }
+
+    private void PreviewCloseBtn_Click(object sender, RoutedEventArgs e) => ClosePreview();
 
     // ---------- 裁剪把手(波形上拖首尾)见上方 ----------
 
