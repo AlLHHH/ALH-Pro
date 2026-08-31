@@ -2623,7 +2623,11 @@ public sealed partial class VideoView : UserControl
         var inv = CultureInfo.InvariantCulture;
         var up = UpscaleToggle.IsChecked == true;
         var interp = InterpToggle.IsChecked == true;
-        if (!up && !interp) return;
+        if (!up && !interp)
+        {
+            Log("⚠ 超分和补帧都未启用,没有可执行的处理项(请勾选「启用超分」或「启用补帧」)");
+            return;
+        }
         // 引擎前置校验:缺引擎立即提示(超分/补帧分别查,含 ffmpeg)
         {
             var missing = new System.Collections.Generic.List<string>();
