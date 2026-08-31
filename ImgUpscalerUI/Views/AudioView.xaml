@@ -64,16 +64,25 @@
                     <ProgressBar x:Name="AudioProgress" Minimum="0" Maximum="100" Value="0"/>
                     <TextBlock x:Name="AudioStatus" Text="" Style="{StaticResource HintText}" TextWrapping="Wrap"/>
 
+                    <!-- 日志(左下,仿视频页) -->
+                    <Border Background="{StaticResource AppBgBrush}"
+                            BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
+                            CornerRadius="6" Padding="8,6">
+                        <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto">
+                            <TextBlock x:Name="LogText" FontSize="10" Opacity="0.7"
+                                       TextWrapping="Wrap" Text="日志:等待任务..."/>
+                        </ScrollViewer>
+                    </Border>
+
                 </StackPanel>
             </ScrollViewer>
         </Border>
 
-        <!-- 右侧:文件列表 + 预览(带裁剪) + 日志 -->
+        <!-- 右侧:工具 + 列表 + 预览(带裁剪) -->
         <Grid Grid.Column="1">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
-                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             <!-- 列表工具栏 -->
@@ -157,16 +166,6 @@
                         </Grid>
                         <TextBlock x:Name="TrimHint" Text="" FontSize="11" Opacity="0.6"/>
                     </StackPanel>
-                </StackPanel>
-            </Border>
-
-            <Border Grid.Row="3" Background="{StaticResource AppPanel2Brush}"
-                    BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
-                    CornerRadius="8" Padding="10,6">
-                <StackPanel Spacing="2">
-                    <TextBlock Text="日志" FontSize="11" Opacity="0.5"/>
-                    <TextBlock x:Name="LogText" FontSize="11" Opacity="0.8" Text="" TextWrapping="Wrap"
-                               MaxHeight="48"/>
                 </StackPanel>
             </Border>
         </Grid>
