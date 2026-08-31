@@ -511,7 +511,9 @@ public static class EngineService
 
     /// <summary>运行引擎命令;若命令使用 GPU(-g ≥0)且启动失败(如新显卡 RTX 50 系与 ncnn-vulkan
     /// 兼容问题 "invalid gpu device"),按降级链重算:当前 GPU → 其他 GPU(引擎自检过的,尊重用户
-    /// 主动选的卡;绝不给"选了 GPU1 却只降 CPU"这种无视其他卡的处理)→ CPU。失败不再直接中断任务。</summary>
+    /// 主动选的卡;绝不给"选了 GPU1 却只降 CPU"这种无视其他卡的处理)→ CPU。失败不再直接中断任务。
+    /// CPU(-g -1)模式在这批引擎二进制上也有崩溃风险(实测 waifu2x 20250915 CPU 模式 exit -1073741819),
+    /// 故 CPU 失败时反向再试 GPU 0,双路都死才报带指引的错误。</summary>
     private static async Task RunEngFallbackGpuAsync(string exe, string args,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct,
         string stage = "", int totalFrames = 0, string? watchDir = null,
@@ -521,13 +523,37 @@ public static class EngineService
         try
         {
             await RunAsync(exe, args, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
+            return;
         }
-        catch (InvalidOperationException ex) when (usesGpu)
+        catch (InvalidOperationException ex) when (!usesGpu)
         {
+            // CPU(-g -1)初始模式:这批 ncnn 引擎的 CPU 模式有 bug(实测 waifu2x 20250915
+            // -g -1 直接 exit -1073741819 内存访问违规)→ 反向试 GPU 0,再失败抛指引异常
+            string head = ex.Message.Split('\n')[0];
+            if (head.Length > 90) head = head[..90];
+            AppLogger.Info($"⚠ CPU 引擎失败({head}),自动改用 GPU 0 重算...");
+            progress?.Report((0, $"⚠ CPU 引擎失败({head}),自动改用 GPU 0 重算..."));
+            var gpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g 0");
+            try
+            {
+                await RunAsync(exe, gpuArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
+            }
+            catch (InvalidOperationException gpuEx)
+            {
+                throw new InvalidOperationException(
+                    $"超分引擎在 GPU 和 CPU 模式都不行(exit {ExtractExit(gpuEx.Message)}):\n" +
+                    $"这多半是引擎版本与显卡不兼容(如 RTX 50 系 + 旧版 ncnn-vulkan,或引擎自身 CPU 模式 bug)。\n" +
+                    $"建议:①换用 waifu2x 引擎(官方新版,兼容 50 系/Blackwell);" +
+                    "②或到 https://github.com/nihui/waifu2x-ncnn-vulkan/releases 下载最新版替换 engines/waifu2x/ 下的文件。" +
+                    $"\n--\n{gpuEx.Message}");
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            // GPU 初始模式:按原降级链 当前GPU → 其他GPU → CPU,CPU 也崩则反向试 GPU0
             string head = ex.Message.Split('\n')[0];
             if (head.Length > 90) head = head[..90];
 
-            // ① 先试"其他 GPU"(引擎枚举到的、且不是当前用的那张;多卡机:独显故障→核显兜底)
             int curGpu = 0;
             try
             {
@@ -535,6 +561,8 @@ public static class EngineService
                 if (m.Success) curGpu = int.Parse(m.Groups[1].Value);
             }
             catch { }
+
+            // ① 其他 GPU(多卡机:独显故障→核显兜底)
             var altGpu = TryGetAlternateGpu(curGpu);
             if (altGpu.HasValue)
             {
@@ -544,7 +572,7 @@ public static class EngineService
                 try
                 {
                     await RunAsync(exe, altArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
-                    return;   // 另一张卡成功:不再降 CPU
+                    return;
                 }
                 catch (InvalidOperationException ex2)
                 {
@@ -554,12 +582,42 @@ public static class EngineService
                 }
             }
 
-            // ② 最后:CPU
+            // ② CPU
             AppLogger.Info($"⚠ 降级:GPU 引擎失败({head}),自动改用 CPU 重算");
             progress?.Report((0, $"⚠ GPU 引擎失败({head}),自动改用 CPU 重算..."));
             var cpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g -1");
-            await RunAsync(exe, cpuArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
+            try
+            {
+                await RunAsync(exe, cpuArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
+            }
+            catch (InvalidOperationException cpuEx)
+            {
+                // ③ CPU 也崩(老式 ncnn 引擎 CPU 模式 bug):反向再试 GPU 0
+                if (curGpu != 0)
+                {
+                    AppLogger.Info("⚠ CPU 也失败,回退重试 GPU 0...");
+                    progress?.Report((0, "⚠ CPU 也失败,回退重试 GPU 0..."));
+                    await RunAsync(exe,
+                        System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g 0"),
+                        progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
+                }
+                else
+                {
+                    throw new InvalidOperationException(
+                        $"超分引擎在 GPU 和 CPU 模式都不行(exit {ExtractExit(cpuEx.Message)}):\n" +
+                        $"这多半是引擎版本与显卡不兼容(如 RTX 50 系 + 旧版 ncnn-vulkan)。\n" +
+                        $"建议:①换用 waifu2x 引擎(官方新版支持 50 系/Blackwell);" +
+                        "②或到 https://github.com/nihui/waifu2x-ncnn-vulkan/releases 下载最新版替换 engines/waifu2x/ 下的文件。" +
+                        $"\n--\n{cpuEx.Message}");
+                }
+            }
         }
+    }
+
+    private static string ExtractExit(string msg)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(msg, @"exit (-?\d+)");
+        return m.Success ? m.Groups[1].Value : "?";
     }
 
     /// <summary>取"当前 GPU 之外"的备用 GPU 编号(引擎实测枚举到的 Vulkan 设备;多卡机可用)。
@@ -719,6 +777,9 @@ public static class EngineService
         if (scale <= 0 || scale > 32)
             throw new ArgumentOutOfRangeException(nameof(scale), "放大倍数必须在 0~32 之间");
         tileSize = SafeRender.ResolveTile(tileSize);   // 未显式指定时按"安全渲染"墙自适应
+        // 中文路径 → 8.3 短路径(引擎按 ANSI/GBK 解析参数,中文路径会 Illegal byte sequence)
+        input = AudioService.FfmpegSafePath(input);
+        output = AudioService.FfmpegSafePath(output);
         // 调用引擎前清理旧输出(含引擎可能改名的 output.png),
         // 避免上次残留干扰输出收拢判断
         try { if (File.Exists(output)) File.Delete(output); } catch { }

@@ -264,6 +264,11 @@ public static class VideoService
         LastDedupReport = null;
         LastDedupShort = null;
         LastVideoEncoderInfo = "libx264 (CPU 软编)";
+        // 中文路径 → 8.3 短路径:防「中文 Windows 用户名/文件名 + GBK 代码页」下 ffmpeg
+        // "Illegal byte sequence"(用户实测 8月28日.mp4 在 C:\Users\小花\ 下必现)。
+        // 只影响传给 ffmpeg 的路径字符串;日志/文件系统操作仍用原路径。
+        inputVideo = AudioService.FfmpegSafePath(inputVideo);
+        outputVideo = AudioService.FfmpegSafePath(outputVideo);
         var ffmpeg = FfmpegPath ?? throw new FileNotFoundException("未找到 ffmpeg,请将其放入 engines/ffmpeg/ 目录");
         var rife = frameInterp ? RifePath
             ?? throw new FileNotFoundException("未找到 rife-ncnn-vulkan,请将其放入 engines/rife/ 目录") : null;
@@ -2917,8 +2922,9 @@ public static class VideoService
         try
         {
             // scdet 滤镜:每帧输出 lavfi.scd.score(新版 ffmpeg 已移除 scene 滤镜;无 scdet 时回退 select-scene)
+            var safeVideo = AudioService.FfmpegSafePath(videoPath);   // 中文路径→8.3,防 GBK 代码页乱码
             var lines = await RunCaptureAsync(ffmpeg,
-                $"-y -i \"{videoPath}\" -vf \"scdet=threshold=0,metadata=print\" -f null NUL", ct);
+                $"-y -i \"{safeVideo}\" -vf \"scdet=threshold=0,metadata=print\" -f null NUL", ct);
             var scores = new System.Collections.Generic.List<double>();
             foreach (var l in lines)
             {
@@ -2929,7 +2935,7 @@ public static class VideoService
             if (scores.Count == 0)
             {
                 lines = await RunCaptureAsync(ffmpeg,
-                    $"-y -i \"{videoPath}\" -vf \"select='gt(scene,-1)',metadata=print\" -f null NUL", ct);
+                    $"-y -i \"{safeVideo}\" -vf \"select='gt(scene,-1)',metadata=print\" -f null NUL", ct);
                 foreach (var l in lines)
                 {
                     var m = System.Text.RegularExpressions.Regex.Match(l, @"lavfi\.scene_score=([\d.]+)");
