@@ -193,7 +193,6 @@
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
@@ -204,17 +203,13 @@
                                 Click="ResetBtn_Click"/>
                         <TextBlock x:Name="TimeText" Grid.Column="2" Text="0:00 / 0:00" FontSize="12"
                                    VerticalAlignment="Center" Margin="8,0,0,0"/>
-                        <!-- 音量:静音切换 + 滑动条 -->
-                        <Button x:Name="MuteBtn" Grid.Column="3" Content="🔊" FontSize="14"
-                                Width="36" Height="30" Padding="0" VerticalAlignment="Center"
-                                Background="{StaticResource AppPanelBrush}"
-                                Click="MuteBtn_Click" ToolTipService.ToolTip="静音开关"/>
-                        <Slider x:Name="VolSlider" Grid.Column="4" Width="110" Minimum="0" Maximum="100"
+                        <!-- 音量:拖动滑动条调音量(拖到最左=静音) -->
+                        <Slider x:Name="VolSlider" Grid.Column="3" Width="130" Minimum="0" Maximum="100"
                                 Value="100" VerticalAlignment="Center" StepFrequency="5"
                                 ValueChanged="VolSlider_ValueChanged"/>
-                        <TextBlock Grid.Column="6" Text="点波形跳位置" FontSize="11" Opacity="0.5"
+                        <TextBlock Grid.Column="5" Text="点波形跳位置" FontSize="11" Opacity="0.5"
                                    VerticalAlignment="Center" Margin="8,0,0,0"/>
-                        <TextBlock Grid.Column="7" Text="拖两端裁剪" FontSize="11" Opacity="0.5"
+                        <TextBlock Grid.Column="6" Text="拖两端裁剪" FontSize="11" Opacity="0.5"
                                    VerticalAlignment="Center" Margin="8,0,0,0"/>
                     </Grid>
 
