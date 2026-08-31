@@ -45,6 +45,7 @@ public sealed partial class AudioView : UserControl
         this.InitializeComponent();
         _mediaPlayer = new Windows.Media.Playback.MediaPlayer();
         _mediaPlayer.AutoPlay = false;   // 打开预览不自动播,由用户点 ▶
+        _mediaPlayer.Volume = _lastVolume;   // 恢复上次音量
         _mediaPlayer.MediaOpened += (s, _) =>
         {
             if (_previewItem != null && _previewItem.TrimStart > 0.1 && s.PlaybackSession.CanSeek)
@@ -52,6 +53,38 @@ public sealed partial class AudioView : UserControl
         };
         _playStateHandler = PlayStateChanged;
         UpdateRunState();
+    }
+
+    // ---------- 音量 ----------
+    private double _lastVolume = 1.0;   // 0~1,静音前的音量
+    private bool _muted;
+
+    private void MuteBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (_mediaPlayer == null) return;
+        _muted = !_muted;
+        _mediaPlayer.IsMuted = _muted;
+        MuteBtn.Content = _muted ? "🔇" : "🔊";
+        if (!_muted && _lastVolume <= 0.01) _lastVolume = 0.5;   // 静音时音量拉到0再取消,给个默认值
+        if (!_muted) VolSlider.Value = _lastVolume * 100;   // 滑块同步回来(会触发ValueChanged恢复音量)
+        else _mediaPlayer.Volume = _lastVolume;   // IsMuted已为true,保留音量值待恢复
+    }
+
+    private void VolSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        if (_mediaPlayer == null) return;
+        var v = e.NewValue / 100.0;
+        if (v > 0.01)
+        {
+            _lastVolume = v;
+            _mediaPlayer.Volume = v;
+            if (_muted) { _muted = false; _mediaPlayer.IsMuted = false; MuteBtn.Content = "🔊"; }
+        }
+        else
+        {
+            _mediaPlayer.Volume = v;
+            if (!_muted) { _muted = true; _mediaPlayer.IsMuted = true; MuteBtn.Content = "🔇"; }
+        }
     }
 
     private void Log(string msg) { LogText.Text = msg; StatusChanged?.Invoke(msg); }
@@ -483,11 +516,16 @@ public sealed partial class AudioView : UserControl
 
     // ---------- 波形点击:拖动调整播放位置 ----------
     private bool _waveSeeking;
+    private bool _resumeAfterSeek;
 
     private void WaveHost_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
         if (_previewItem == null || _previewItem.DurationSec <= 0) return;
         _waveSeeking = true;
+        // 拖动进度条时先暂停,防止边拖边播的刮擦声;松手恢复
+        _resumeAfterSeek = _mediaPlayer != null
+            && _mediaPlayer.PlaybackSession.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing;
+        if (_resumeAfterSeek) _mediaPlayer.Pause();
         WaveHost.CapturePointer(e.Pointer);
         SeekWave(e);
         e.Handled = true;
@@ -503,7 +541,16 @@ public sealed partial class AudioView : UserControl
     private void WaveHost_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
         _waveSeeking = false;
-        try { WaveHost.ReleasePointerCapture(e.Pointer); } catch { }
+        try
+        {
+            WaveHost.ReleasePointerCapture(e.Pointer);
+            if (_resumeAfterSeek && _mediaPlayer != null)
+            {
+                _resumeAfterSeek = false;
+                _mediaPlayer.Play();
+            }
+        }
+        catch { }
     }
 
     private void SeekWave(Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
