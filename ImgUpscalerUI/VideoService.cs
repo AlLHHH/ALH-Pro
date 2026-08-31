@@ -1496,7 +1496,25 @@ public static class VideoService
             progress?.Report((96, $"ffmpeg 合成视频({outFps.ToString("0.##", inv)} fps)..."));
             var framePattern = Path.Combine(framesFinal, "frame_%06d.png");
             // 6 位小数:83.376 这类非整数帧率用 0.## 会被量化成 83.38,长视频会累积微小漂移(10 分钟约 9ms)
-            var fr = baseFps.ToString("0.######", inv);
+            // 【帧率保险】编码标称帧率 = 实际帧数 ÷ 源时长(而非公式估 baseFps):公式在某分支
+            // (内容帧率模式+v4 模型等)可能算错导致输出标称=内容帧率(用户实测:补帧2x输出标称50fps
+            // 而非 100);用真实帧数÷时长标称后,播放器按真实帧率播,不再丢插值帧。仅日志提示偏差。
+            var frBase = baseFps;
+            try
+            {
+                int fcFinal = Directory.EnumerateFiles(framesFinal, "*.png").Count();
+                if (fcFinal > 1 && muxDur > 0.01)
+                {
+                    double realFps = (fcFinal - 1) / muxDur;
+                    if (Math.Abs(realFps - baseFps) / Math.Max(0.01, baseFps) > 0.03)
+                    {
+                        AppLogger.Info($"⚠ 输出帧率标称修正:{baseFps:0.##} → {realFps:0.##} fps(实际 {fcFinal} 帧 / {muxDur:0.###}s;内容帧率模式偏差自愈)");
+                        frBase = realFps;
+                    }
+                }
+            }
+            catch { }
+            var fr = frBase.ToString("0.######", inv);
             // 时长表输出(VFR):setpts 已在滤镜链构造处接入(精确重映射时间轴,精度=输出时基)。
             // 注:曾用 concat demuxer + duration,实测其内部 image2 时基固定 25fps,0.0333/0.1 被
             // 量化成 0.04/0.08/0.12(30fps 素材半段快 20%),故改为 setpts。
@@ -2065,7 +2083,13 @@ public static class VideoService
             p.WaitForExit();
             var inv = System.Globalization.CultureInfo.InvariantCulture;
             var durM = System.Text.RegularExpressions.Regex.Match(err, @"Duration: (\d+):(\d+):([\d.]+)");
-            var fpsM = System.Text.RegularExpressions.Regex.Match(err, @"(\d+(?:\.\d+)?)\s*fps");
+            // 用最后一个 fps(流帧率在 stderr 末尾;编解码器信息行/文件名数字会误匹配)
+            var fpsMs = System.Text.RegularExpressions.Regex.Matches(err, @"(\d+(?:\.\d+)?)\s*fps");
+            var fpsM = fpsMs.Count > 0
+                ? fpsMs[fpsMs.Count - 1]
+                : System.Text.RegularExpressions.Regex.Matches(err, @"(\d+(?:\.\d+)?)\s*fps").Count > 0
+                    ? System.Text.RegularExpressions.Regex.Matches(err, @"(\d+(?:\.\d+)?)\s*fps")[0]
+                    : null;
             if (durM.Success && fpsM.Success
                 && double.TryParse(durM.Groups[3].Value, System.Globalization.NumberStyles.Float, inv, out var sec)
                 && double.TryParse(fpsM.Groups[1].Value, System.Globalization.NumberStyles.Float, inv, out var fps)
@@ -2101,8 +2125,10 @@ public static class VideoService
                 var err = p.StandardError.ReadToEnd();
                 p.WaitForExit();
                 var inv = System.Globalization.CultureInfo.InvariantCulture;
-                var fpsM = System.Text.RegularExpressions.Regex.Match(err, @"(\d+(?:\.\d+)?)\s*fps");
-                var fps = fpsM.Success ? fpsM.Groups[1].Value : "?";
+                // 用【最后一个】fps 匹配:ffmpeg stderr 里编解码器信息(如 "25 fps")在流信息之前,
+                // 文件含 "7fps" 之类也会被误匹配;流帧率行在末尾(与 ProbeFps 同口径)。
+                var fpsMs = System.Text.RegularExpressions.Regex.Matches(err, @"(\d+(?:\.\d+)?)\s*fps");
+                var fps = fpsMs.Count > 0 ? fpsMs[fpsMs.Count - 1].Groups[1].Value : "?";
                 var durM = System.Text.RegularExpressions.Regex.Match(err, @"Duration: (\d+):(\d+):([\d.]+)");
                 var dur = "";
                 if (durM.Success)
