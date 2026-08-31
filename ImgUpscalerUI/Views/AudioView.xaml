@@ -68,7 +68,7 @@
                     <Border Background="{StaticResource AppBgBrush}"
                             BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
                             CornerRadius="6" Padding="8,6">
-                        <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto">
+                        <ScrollViewer x:Name="LogScroll" MaxHeight="180" VerticalScrollBarVisibility="Auto">
                             <TextBlock x:Name="LogText" FontSize="10" Opacity="0.7"
                                        TextWrapping="Wrap" Text="日志:等待任务..."/>
                         </ScrollViewer>

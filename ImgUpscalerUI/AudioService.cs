@@ -133,6 +133,9 @@ public static class AudioService
         catch { return Array.Empty<float>(); }
     }
 
+    /// <summary>当前处理音频的时长(秒),供进度百分比换算;0=未知(进度只显示秒数)。</summary>
+    private static double DurSec;
+
     /// <summary>
     /// 音频增强主流程。denoise:0~2(关/弱/强), loudness:bool, lowcut:bool, eq:bool;
     /// 输出格式:0=WAV,1=FLAC,2=MP3;outDir=输出目录(空=源目录)。
@@ -143,10 +146,18 @@ public static class AudioService
         IProgress<(int pct, string msg)>? progress, CancellationToken ct,
         double trimStart = 0, double trimEnd = 0)
     {
+        // 总时长(进度百分比基准;失败给 0=只显示秒数)
+        DurSec = 0;
+        try { DurSec = Probe(input).DurationSec; } catch { }
+        // 保留原采样率:loudnorm 内部按 192k 处理、输出会变 48k(实测 44100→48000=降频),
+        // 滤镜链末尾 aresample=原采样率 强制还原;失败则跟随输出默认(不崩)。
+        double srcRate = 0;
+        try { srcRate = Probe(input).SampleRate; } catch { }
+        var keepRate = srcRate > 0 ? $"aresample={srcRate.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}" : "";
         var filters = new System.Collections.Generic.List<string>();
-        // 1) 降噪(anlmdn 非局部均值,零模型)
-        if (denoise == 1) filters.Add("anlmdn=strength=0.01");
-        else if (denoise == 2) filters.Add("anlmdn=strength=0.08");
+        // 1) 降噪(afftdn FFT 降噪:经实测定于此 ffmpeg 构建有效;原 anlmdn 在此构建无效果——已替换)
+        if (denoise == 1) filters.Add("afftdn=nf=-25");
+        else if (denoise == 2) filters.Add("afftdn=nf=-35");
         // 2) 低切(去低频隆隆/直流,人声/音乐更干净)
         if (lowcut) filters.Add("highpass=f=40");
         // 3) 均衡(柔和高频增强,提清晰度)
@@ -154,7 +165,9 @@ public static class AudioService
         // 4) 响度归一(EBU R128)
         if (loudness) filters.Add("loudnorm=I=-16:TP=-1.5:LRA=11");
 
-        var af = filters.Count > 0 ? $"-af \"{string.Join(",", filters)}\"" : "";
+        var af = filters.Count > 0
+            ? $"-af \"{string.Join(",", filters)}{(keepRate.Length > 0 ? "," + keepRate : "")}\""
+            : "";
         // 裁剪:起点用 -ss(输入侧,快);终点用 -t(duration)
         var trim = "";
         if (trimStart > 0.01) trim += $"-ss {trimStart.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} ";
@@ -180,12 +193,16 @@ public static class AudioService
                 string? line;
                 while ((line = p.StandardOutput.ReadLine()) != null)
                 {
-                    var m = System.Text.RegularExpressions.Regex.Match(line, @"out_time_ms=(\d+)");
+                    // ffmpeg -progress 的 out_time_ms 实际是【微秒】(历史坑:名字叫 ms 实为 us);
+                    // 优先用 out_time_us(=微秒),两者除以 1,000,000 才是秒。
+                    var m = System.Text.RegularExpressions.Regex.Match(line, @"out_time_us=(\d+)");
+                    if (!m.Success)
+                        m = System.Text.RegularExpressions.Regex.Match(line, @"out_time_ms=(\d+)");
                     if (m.Success)
                     {
-                        double ms = double.Parse(m.Groups[1].Value);
-                        int pct = (int)Math.Min(99, ms / 1000.0);
-                        progress?.Report((pct, $"处理中 {ms / 1000.0:0.0}s..."));
+                        double sec = double.Parse(m.Groups[1].Value) / 1_000_000.0;
+                        int pct = (int)Math.Min(99, sec / (DurSec > 0 ? DurSec : 1) * 100);
+                        progress?.Report((pct, $"处理中 {sec:0.#}s"));
                     }
                 }
             });
