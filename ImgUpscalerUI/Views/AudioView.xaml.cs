@@ -368,7 +368,7 @@ public sealed partial class AudioView : UserControl
     private void PlayStateChanged(Windows.Media.Playback.MediaPlaybackSession s, object _)
     {
         var playing = s.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing;
-        DispatcherQueue.TryEnqueue(() => PlayBtn.Content = playing ? "⏸" : "▶");
+        DispatcherQueue.TryEnqueue(() => PlayIcon.Glyph = playing ? "\uE769" : "\uE768");
     }
 
     private readonly Windows.Foundation.TypedEventHandler<Windows.Media.Playback.MediaPlaybackSession, object> _playStateHandler;
@@ -380,7 +380,7 @@ public sealed partial class AudioView : UserControl
         if (mp.PlaybackSession.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing)
         {
             mp.Pause();
-            PlayBtn.Content = "▶";
+            PlayIcon.Glyph = "\uE768";
         }
         else
         {
@@ -394,7 +394,7 @@ public sealed partial class AudioView : UserControl
                     mp.PlaybackSession.Position = TimeSpan.FromSeconds(it.TrimStart > 0.1 ? it.TrimStart : 0);
             }
             mp.Play();
-            PlayBtn.Content = "⏸";
+            PlayIcon.Glyph = "\uE769";
         }
     }
 
@@ -405,7 +405,7 @@ public sealed partial class AudioView : UserControl
         // 再听一次 = 从头(0:00)开始播放
         mp.PlaybackSession.Position = TimeSpan.Zero;
         mp.Play();
-        PlayBtn.Content = "⏸";
+        PlayIcon.Glyph = "\uE769";
         UpdatePlayLine(0);
     }
 
@@ -568,7 +568,7 @@ public sealed partial class AudioView : UserControl
             try { _mediaPlayer.Pause(); _mediaPlayer.Source = null; } catch { }
         }
         _previewItem = null;
-        PlayBtn.Content = "▶";
+        PlayIcon.Glyph = "\uE768";
         PreviewPanel.Visibility = Visibility.Collapsed;
     }
 
