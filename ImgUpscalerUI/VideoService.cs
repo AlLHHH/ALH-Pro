@@ -1853,6 +1853,8 @@ public static class VideoService
                 // v2 架构模型(anime/HD/UHD/v2.3)不支持 -n(默认 2x),4x/8x 用级联多次 2x
                 finalOut = segIn;
                 int m = interpScale;
+                // 兜底:非 2 幂级联会少补(3/2=1 只补 1 次,12→8 不精确),回落最近 2 的幂
+                while (m > 1 && m % 2 != 0) m--;
                 int pass = 0;
                 int inLen = segLen;
                 while (m > 1)
