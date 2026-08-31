@@ -161,9 +161,9 @@ public static class AudioService
         if (trimEnd > 0.01) trim += $"-t {Math.Max(0.1, trimEnd - trimStart).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} ";
         var codec = outFmt switch
         {
-            0 => "-c:a pcm_s16le",
-            1 => "-c:a flac",
-            _ => $"-c:a libmp3lame -b:a {mp3BitrateKbps}k",
+            0 => $"-c:a libmp3lame -b:a {mp3BitrateKbps}k",   // MP3(UI:0)
+            1 => "-c:a pcm_s16le",                            // WAV(UI:1)
+            _ => "-c:a flac",                                 // FLAC(UI:2)
         };
         var psi = NewFfmpegPsi(FfmpegPath, $"-y {trim} -i \"{input}\" {af} {codec} -progress pipe:1 -nostats \"{output}\"");
         psi.RedirectStandardOutput = true;
@@ -198,7 +198,11 @@ public static class AudioService
             }
             await Task.WhenAll(lineTask, errTask).ConfigureAwait(false);
             if (p.ExitCode != 0)
-                throw new InvalidOperationException($"ffmpeg 处理失败(exit {p.ExitCode})");
+            {
+                var errTail = await errTask.ConfigureAwait(false);
+                if (errTail.Length > 400) errTail = errTail[^400..];
+                throw new InvalidOperationException($"ffmpeg 处理失败(exit {p.ExitCode}):\n{errTail}");
+            }
             progress?.Report((100, "完成"));
         }
         finally
