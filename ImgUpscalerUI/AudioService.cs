@@ -46,6 +46,26 @@ public static class AudioService
         return psi;
     }
 
+    /// <summary>路径转 8.3 短路径(纯 ASCII),防「中文路径 + GBK 系统代码页」下
+    /// ffmpeg 报 Illegal byte sequence。失败(如 8.3 被禁用)时原样返回。
+    /// 含中文/非 ASCII 的路径才转,纯 ASCII 路径直接返回(避免多一毫秒)。</summary>
+    public static string FfmpegSafePath(string path)
+    {
+        try
+        {
+            bool needShort = false;
+            foreach (var c in path) if (c > 127) { needShort = true; break; }
+            if (!needShort) return path;
+            var sb = new System.Text.StringBuilder(512);
+            uint r = GetShortPathName(path, sb, 512);
+            return r > 0 ? sb.ToString() : path;
+        }
+        catch { return path; }
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+    private static extern uint GetShortPathName(string lpszLongPath, System.Text.StringBuilder lpszShortPath, uint cchBuffer);
+
     /// <summary>音频文件信息:时长、声道、采样率(用于进度估算/展示)。</summary>
     public static (double DurationSec, int Channels, int SampleRate) Probe(string path)
     {
