@@ -298,7 +298,14 @@ public sealed partial class AudioView : UserControl
             RemovePreviewHandler();
             PreviewPanel.Visibility = Visibility.Visible;   // 双击展开预览区
             PreviewPlayer.Source = MediaSource.CreateFromUri(new Uri(it.Path));
-            PreviewName.Text = $"{it.Name} · {FormatTime(it.DurationSec)}";
+            var (dur, ch, sampleRate) = AudioService.Probe(it.Path);
+            it.DurationSec = (float)(dur > 0 ? dur : it.DurationSec);
+            PreviewName.Text = $"{it.Name}";
+            PreviewMeta.Text = $"{FormatTime(it.DurationSec)} · {sampleRate}Hz · {(ch == 1 ? "单声道" : ch == 2 ? "立体声" : $"{ch} 声道")}";
+            // 波形:解码 → 绘制
+            var samples = await AudioService.DecodeWaveformAsync(it.Path, 1200);
+            _waveSamples = samples;
+            DrawWaveform();
             // 裁剪滑块:0~时长;默认终点=时长
             TrimStartSlider.Maximum = Math.Max(1, it.DurationSec);
             TrimEndSlider.Maximum = Math.Max(1, it.DurationSec);
@@ -306,7 +313,8 @@ public sealed partial class AudioView : UserControl
             TrimEndSlider.Value = it.TrimEnd > 0.1 ? it.TrimEnd : it.DurationSec;
             TrimRow.Visibility = Visibility.Visible;
             TrimHint.Text = $"裁剪: {FormatTime(it.TrimStart)} ~ {FormatTime(it.TrimEnd > 0.1 ? it.TrimEnd : it.DurationSec)}";
-            // 到 TrimEnd 自动暂停
+            UpdateTrimOverlay();
+            // 播放进度线跟随
             if (PreviewPlayer.MediaPlayer != null)
             {
                 var mp = PreviewPlayer.MediaPlayer;
@@ -317,7 +325,8 @@ public sealed partial class AudioView : UserControl
                         var pos = s.Position.TotalSeconds;
                         var end = it.TrimEnd > 0.1 && it.DurationSec > 0 ? it.TrimEnd : 0;
                         if (end > 0.1 && pos >= end - 0.05)
-                            s.PlaybackRate = 0;   // 到终点暂停
+                            s.PlaybackRate = 0;
+                        DispatcherQueue.TryEnqueue(() => UpdatePlayLine(pos));
                     }
                     catch { }
                 };
@@ -327,6 +336,55 @@ public sealed partial class AudioView : UserControl
             }
         }
         catch { }
+    }
+
+    // ---------- 波形绘制 ----------
+    private float[] _waveSamples = Array.Empty<float>();
+
+    private void WaveCanvas_SizeChanged(object sender, SizeChangedEventArgs e) => DrawWaveform();
+
+    private void DrawWaveform()
+    {
+        if (WaveCanvas == null || _waveSamples.Length == 0) return;
+        var w = WaveCanvas.ActualWidth;
+        var h = WaveCanvas.ActualHeight;
+        if (w <= 0 || h <= 0) return;
+        WaveCanvas.Children.Clear();
+        int n = _waveSamples.Length;
+        for (int i = 0; i < n; i++)
+        {
+            var rect = new Microsoft.UI.Xaml.Shapes.Rectangle
+            {
+                Width = Math.Max(1, w / n - 0.5),
+                Height = Math.Max(1, _waveSamples[i] * h * 0.9),
+                Fill = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 120, 160, 220)),
+            };
+            Canvas.SetLeft(rect, i * (w / n));
+            Canvas.SetTop(rect, (h - rect.Height) / 2);
+            WaveCanvas.Children.Add(rect);
+        }
+    }
+
+    private void UpdatePlayLine(double pos)
+    {
+        if (_previewItem == null || _previewItem.DurationSec <= 0 || WaveCanvas == null) return;
+        var w = WaveCanvas.ActualWidth;
+        var x = w * pos / _previewItem.DurationSec;
+        PlayLine.Width = 2;
+        PlayLine.Visibility = Visibility.Visible;
+        Canvas.SetLeft(PlayLine, x);
+        Canvas.SetTop(PlayLine, 0);
+    }
+
+    private void UpdateTrimOverlay()
+    {
+        if (_previewItem == null || _previewItem.DurationSec <= 0 || WaveCanvas == null) return;
+        var w = WaveCanvas.ActualWidth;
+        double s = _previewItem.TrimStart;
+        double e = _previewItem.TrimEnd > 0.1 ? _previewItem.TrimEnd : _previewItem.DurationSec;
+        TrimOverlay.Width = Math.Max(0, w * (e - s) / _previewItem.DurationSec);
+        TrimOverlay.Margin = new Thickness(w * s / _previewItem.DurationSec, 0, 0, 0);
+        TrimOverlay.Visibility = Visibility.Visible;
     }
 
     private void RemovePreviewHandler()
@@ -345,6 +403,7 @@ public sealed partial class AudioView : UserControl
             TrimStartSlider.Value = TrimEndSlider.Value;
         _previewItem.TrimStart = TrimStartSlider.Value;
         TrimHint.Text = $"裁剪: {FormatTime(TrimStartSlider.Value)} ~ {FormatTime(TrimEndSlider.Value)}";
+        UpdateTrimOverlay();
     }
 
     private void TrimEndSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
@@ -354,6 +413,7 @@ public sealed partial class AudioView : UserControl
             TrimEndSlider.Value = TrimStartSlider.Value;
         _previewItem.TrimEnd = TrimEndSlider.Value;
         TrimHint.Text = $"裁剪: {FormatTime(TrimStartSlider.Value)} ~ {FormatTime(TrimEndSlider.Value)}";
+        UpdateTrimOverlay();
     }
 
     // ---------- 开始处理 ----------

@@ -138,21 +138,43 @@
                 </Canvas>
             </Grid>
 
-            <!-- 预览区:播放 + 首尾裁剪(双击列表项才展开) -->
+            <!-- 预览区:波形 + 播放 + 首尾裁剪(双击列表项才展开) -->
             <Border Grid.Row="2" Background="{StaticResource AppPanel2Brush}"
                     BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
                     CornerRadius="8" Padding="12,10" Margin="0,0,0,8"
                     Visibility="Collapsed" x:Name="PreviewPanel">
                 <StackPanel Spacing="8">
-                    <TextBlock x:Name="PreviewName" Text="选中音频后可预览/裁剪" Style="{StaticResource HintText}"/>
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="PreviewName" Text="" Style="{StaticResource HintText}"/>
+                        <TextBlock x:Name="PreviewMeta" Grid.Column="1" FontSize="11" Opacity="0.6"
+                                   Text=""/>
+                    </Grid>
+
+                    <!-- 波形图:自绘(峰值条 + 播放进度线 + 裁剪区间高亮) -->
+                    <Grid Height="80">
+                        <Border Background="{StaticResource AppBgBrush}" CornerRadius="6"/>
+                        <Canvas x:Name="WaveCanvas" SizeChanged="WaveCanvas_SizeChanged"/>
+
+                        <!-- 裁剪区间高亮(半透明蓝,覆盖波形在裁剪范围内) -->
+                        <Border x:Name="TrimOverlay" Background="#304C8DFF" CornerRadius="4"
+                                VerticalAlignment="Stretch" Visibility="Collapsed"/>
+                        <!-- 播放进度线 -->
+                        <Rectangle x:Name="PlayLine" Width="2" Fill="#4C8DFF"
+                                   HorizontalAlignment="Left" VerticalAlignment="Stretch"
+                                   Visibility="Collapsed"/>
+                    </Grid>
 
                     <!-- 播放器:高一点,控件舒展 -->
                     <Border Background="{StaticResource AppPanelBrush}" CornerRadius="6" Padding="6,0">
-                        <MediaPlayerElement x:Name="PreviewPlayer" Height="64"
+                        <MediaPlayerElement x:Name="PreviewPlayer" Height="56"
                                             AreTransportControlsEnabled="True"/>
                     </Border>
 
-                    <!-- 裁剪:两行独立,起点/终点分开展示 -->
+                    <!-- 裁剪:两行独立 -->
                     <StackPanel x:Name="TrimRow" Visibility="Collapsed" Spacing="4">
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
