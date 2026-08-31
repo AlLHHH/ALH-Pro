@@ -757,7 +757,7 @@ public sealed partial class VideoView : UserControl
         TargetFpsBox.Opacity = interp && v4Model ? 1.0 : 0.5;
         if (!v4Model && TargetFpsCheck.IsChecked == true)
             TargetFpsCheck.IsChecked = false;
-        // 果冻修复(运动模糊/去抖)只在补帧时有意义:不补帧置灰(「减少果冻」由动漫插值优化联动)
+        // 果冻修复(运动模糊/去抖)只在补帧时有意义:不补帧置灰
         MotionBlurCombo.IsEnabled = interp;
         DeShakeCheck.IsEnabled = interp;
         MotionBlurCombo.Opacity = interp ? 1.0 : 0.5;
@@ -823,17 +823,11 @@ public sealed partial class VideoView : UserControl
         DedupAnimeRow.Visibility = dedup && dedupModel == 1 ? Visibility.Visible : Visibility.Collapsed;
         // 智能策略:仅智能模式显示(均衡/激进/保守)
         DedupSmartRow.Visibility = dedup && dedupModel == 0 ? Visibility.Visible : Visibility.Collapsed;
-        // 动漫插值优化:勾选后强制设值(时间步 0.35 + 减少果冻:弱)并置灰锁定;取消勾选恢复手动
-        bool animeOpt = AnimeOptCheck.IsChecked == true;
-        TimeStepSlider.IsEnabled = interp && !animeOpt && v4Model;
-        TimeStepSlider.Opacity = interp && !animeOpt && v4Model ? 1.0 : 0.5;
-        JelloCombo.IsEnabled = interp && !animeOpt;
-        JelloCombo.Opacity = interp && !animeOpt ? 1.0 : 0.5;
-        if (animeOpt && interp)
-        {
-            TimeStepSlider.Value = 0.35;
-            JelloCombo.SelectedIndex = 1;
-        }
+        // 时间步(仅 v4 模型):其它模型置灰(级联无时间步概念)
+        TimeStepSlider.IsEnabled = interp && v4Model;
+        TimeStepSlider.Opacity = interp && v4Model ? 1.0 : 0.5;
+        JelloCombo.IsEnabled = interp;
+        JelloCombo.Opacity = interp ? 1.0 : 0.5;
         // 去重手动面板:仅"手动模式"展开显示,其他模式收起隐藏(带动画)
         AnimateShowHide(DedupManualPanel, dedup && dedupModel == 2);
         // 内容帧率采样:手动模式(dedupModel==2)默认算法(UI 第 1 项,核心语义 3)时显示(行在手动面板内,随面板带动画)
@@ -1196,7 +1190,6 @@ public sealed partial class VideoView : UserControl
         public bool Mute { get; set; }
         public bool VideoDenoiseOn { get; set; }
         public int VideoDenoiseStrong { get; set; }
-        public bool AnimeOpt { get; set; }
     }
 
     private static string SettingsFile => ParaPaths.SettingsFile("video-settings.json");
@@ -1250,7 +1243,6 @@ public sealed partial class VideoView : UserControl
                 MuteCheck.IsChecked = d.Mute;
                 DenoiseToggle.IsChecked = d.VideoDenoiseOn;
                 if (d.VideoDenoiseStrong is >= 0 and <= 2) DenoiseStrongRadios.SelectedIndex = d.VideoDenoiseStrong;
-                AnimeOptCheck.IsChecked = d.AnimeOpt;
                 InterpToggle.IsChecked = d.Interp;
                 if (d.Model is >= 0 && d.Model < InterpModelCombo.Items.Count) InterpModelCombo.SelectedIndex = d.Model;
                 if (d.InterpScale is >= 0 and <= 3) InterpScaleRadios.SelectedIndex = d.InterpScale;
@@ -1383,7 +1375,6 @@ public sealed partial class VideoView : UserControl
                 Mute = MuteCheck.IsChecked == true,
                 VideoDenoiseOn = DenoiseToggle.IsChecked == true,
                 VideoDenoiseStrong = DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex : -1,
-                AnimeOpt = AnimeOptCheck.IsChecked == true,
             };
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile)!);
             File.WriteAllText(SettingsFile, System.Text.Json.JsonSerializer.Serialize(d));
