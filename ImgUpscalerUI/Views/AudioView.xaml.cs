@@ -390,10 +390,11 @@ public sealed partial class AudioView : UserControl
     {
         var mp = _mediaPlayer;
         if (mp == null || _previewItem == null) return;
-        mp.Pause();
-        mp.PlaybackSession.Position = TimeSpan.FromSeconds(_previewItem.TrimStart > 0.1 ? _previewItem.TrimStart : 0);
-        PlayBtn.Content = "▶";
-        UpdatePlayLine(_previewItem.TrimStart > 0.1 ? _previewItem.TrimStart : 0);
+        // 再听一次 = 从头(0:00)开始播放
+        mp.PlaybackSession.Position = TimeSpan.Zero;
+        mp.Play();
+        PlayBtn.Content = "⏸";
+        UpdatePlayLine(0);
     }
 
     // ---------- 波形绘制 ----------
@@ -454,9 +455,9 @@ public sealed partial class AudioView : UserControl
     private void UpdateTrimFromPointer(Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
         if (_previewItem == null || _previewItem.DurationSec <= 0) return;
-        var usable = WaveHost.ActualWidth - 20;
-        if (usable <= 0) return;
-        var sec = Math.Clamp((e.GetCurrentPoint(WaveHost).Position.X - 10) / usable * _previewItem.DurationSec,
+        var w = WaveHost.ActualWidth;
+        if (w <= 0) return;
+        var sec = Math.Clamp(e.GetCurrentPoint(WaveHost).Position.X / w * _previewItem.DurationSec,
             0, _previewItem.DurationSec);
         if (_dragStartThumb)
             _previewItem.TrimStart = Math.Min(sec, Math.Max(0, _previewItem.TrimEnd - 0.1));
@@ -468,11 +469,12 @@ public sealed partial class AudioView : UserControl
     private void UpdateTrimUI()
     {
         if (_previewItem == null || _previewItem.DurationSec <= 0 || WaveHost.ActualWidth <= 0) return;
-        var usable = WaveHost.ActualWidth - 20;
-        var sx = 10 + _previewItem.TrimStart / _previewItem.DurationSec * usable;
-        var ex = 10 + _previewItem.TrimEnd / _previewItem.DurationSec * usable;
-        TrimStartThumb.Margin = new Thickness(sx - 5, 0, 0, 0);
-        TrimEndThumb.Margin = new Thickness(ex - 5, 0, 0, 0);
+        var w = WaveHost.ActualWidth;
+        var sx = Math.Clamp(_previewItem.TrimStart / _previewItem.DurationSec * w, 0, w);
+        var ex = Math.Clamp(_previewItem.TrimEnd / _previewItem.DurationSec * w, 0, w);
+        // 把手中心对准裁剪边界(半宽 5,贴边时不会露出)
+        TrimStartThumb.Margin = new Thickness(Math.Clamp(sx - 5, 0, Math.Max(0, w - 10)), 0, 0, 0);
+        TrimEndThumb.Margin = new Thickness(Math.Clamp(ex - 5, 0, Math.Max(0, w - 10)), 0, 0, 0);
         TrimRange.Margin = new Thickness(sx, 0, 0, 0);
         TrimRange.Width = Math.Max(0, ex - sx);
         TrimRange.Visibility = Visibility.Visible;
