@@ -1815,7 +1815,9 @@ public static class VideoService
         }
 
         // TTA 开关(所有模型可用);时间步仅 v4 架构模型支持
-        var ttaArgs = tta ? " -x -z" : "";
+        // 实测:rife-v4.26 模型加 -x(空间TTA)会卡死(60秒无输出,引擎/模型兼容问题);
+        // -z(时间TTA)正常。故 v4.26 只加 -z,其他模型 -x -z。
+        var ttaArgs = tta ? (IsV4Model(interpModel) && interpModel == "rife-v4.26" ? " -z" : " -x -z") : "";
         var gpuArg = gpuId >= 0 ? gpuId : -1;   // ncnn:-1 = CPU
         string finalOut;
         if (segLen >= 2)
