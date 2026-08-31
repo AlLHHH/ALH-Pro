@@ -154,17 +154,29 @@
                                    Text=""/>
                     </Grid>
 
-                    <!-- 波形图:自绘(峰值条 + 播放进度线 + 裁剪区间高亮) -->
-                    <Grid Height="80">
+                    <!-- 波形图:自绘(峰值条 + 播放进度线 + 裁剪把手) -->
+                    <Grid x:Name="WaveHost" Height="80" PointerPressed="WaveHost_PointerPressed"
+                          PointerMoved="WaveHost_PointerMoved" PointerReleased="WaveHost_PointerReleased">
                         <Border Background="{StaticResource AppBgBrush}" CornerRadius="6"/>
                         <Canvas x:Name="WaveCanvas" SizeChanged="WaveCanvas_SizeChanged"/>
 
-                        <!-- 裁剪区间高亮(半透明蓝,覆盖波形在裁剪范围内) -->
-                        <Border x:Name="TrimOverlay" Background="#304C8DFF" CornerRadius="4"
-                                VerticalAlignment="Stretch" Visibility="Collapsed"/>
+                        <!-- 裁剪区间高亮 -->
+                        <Rectangle x:Name="TrimRange" Fill="#304C8DFF" VerticalAlignment="Stretch"
+                                   Visibility="Collapsed"/>
                         <!-- 播放进度线 -->
                         <Rectangle x:Name="PlayLine" Width="2" Fill="#4C8DFF"
                                    HorizontalAlignment="Left" VerticalAlignment="Stretch"
+                                   Visibility="Collapsed"/>
+                        <!-- 裁剪把手:左右各一个(可拖) -->
+                        <Rectangle x:Name="TrimStartThumb" Width="10" Fill="#4C8DFF" RadiusX="3" RadiusY="3"
+                                   HorizontalAlignment="Left" VerticalAlignment="Stretch"
+                                   PointerPressed="TrimThumb_PointerPressed" PointerMoved="TrimThumb_PointerMoved"
+                                   PointerReleased="TrimThumb_PointerReleased"
+                                   Visibility="Collapsed"/>
+                        <Rectangle x:Name="TrimEndThumb" Width="10" Fill="#4C8DFF" RadiusX="3" RadiusY="3"
+                                   HorizontalAlignment="Left" VerticalAlignment="Stretch"
+                                   PointerPressed="TrimThumb_PointerPressed" PointerMoved="TrimThumb_PointerMoved"
+                                   PointerReleased="TrimThumb_PointerReleased"
                                    Visibility="Collapsed"/>
                     </Grid>
 
@@ -174,30 +186,8 @@
                                             AreTransportControlsEnabled="True"/>
                     </Border>
 
-                    <!-- 裁剪:两行独立 -->
-                    <StackPanel x:Name="TrimRow" Visibility="Collapsed" Spacing="4">
-                        <Grid ColumnSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="70"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="起点" FontSize="11" Opacity="0.7"
-                                       VerticalAlignment="Center"/>
-                            <Slider x:Name="TrimStartSlider" Grid.Column="1" Minimum="0" Maximum="1"
-                                    StepFrequency="0.01" ValueChanged="TrimStartSlider_ValueChanged"/>
-                        </Grid>
-                        <Grid ColumnSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="70"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="终点" FontSize="11" Opacity="0.7"
-                                       VerticalAlignment="Center"/>
-                            <Slider x:Name="TrimEndSlider" Grid.Column="1" Minimum="0" Maximum="1"
-                                    StepFrequency="0.01" ValueChanged="TrimEndSlider_ValueChanged"/>
-                        </Grid>
-                        <TextBlock x:Name="TrimHint" Text="" FontSize="11" Opacity="0.6"/>
-                    </StackPanel>
+                    <!-- 裁剪信息(只读显示,不再用滑条) -->
+                    <TextBlock x:Name="TrimHint" Text="" FontSize="11" Opacity="0.6"/>
                 </StackPanel>
             </Border>
         </Grid>
