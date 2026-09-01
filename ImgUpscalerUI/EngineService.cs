@@ -38,6 +38,14 @@ public static partial class EngineService
         return IsBlackwellGpu() || OldNcnnGpuRisky();
     }
 
+    /// <summary>Real-CUGAN 是否应走 ONNX 路线:50系/无独显(Vulkan 不可用)→ ONNX(与 Real-ESRGAN 同策略)。
+    /// CUGAN 官方引擎停在 2022 版(与 waifu2x 20250915 不同),50系上无可靠 GPU 路 → ONNX 兜底。</summary>
+    public static bool ShouldUseOnnxCugan()
+    {
+        if (EsrganOnnxService.FindCuganModel() == null) return false;
+        return IsBlackwellGpu() || OldNcnnGpuRisky();
+    }
+
     /// <summary>旧 ncnn 引擎(2022 版,realcugan/realesrgan ncnn)在 GPU 上可能不可用的设备:
     /// ①RTX 50 系(Blackwell,ncnn-Vulkan vkQueueSubmit 崩,全局已知)②Vulkan 不可用/无独显(只能 CPU,而 CPU 也崩)。
     /// 用于全设备兼容自检提示(不限 50 系)。</summary>

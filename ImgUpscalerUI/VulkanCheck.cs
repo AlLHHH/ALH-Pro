@@ -303,6 +303,10 @@ public static class VulkanCheck
         // 视频超分
         sb.Append("· 视频超分(Real-ESRGAN):").Append(onnxEsrgan ? "显卡加速,稳定\n"
             : "GPU 加速,速度快;异常时自动改用 CPU\n");
+        // Real-CUGAN(动漫)
+        bool onnxCugan = EngineService.ShouldUseOnnxCugan();
+        sb.Append("· 图片/视频超分(Real-CUGAN 动漫):").Append(onnxCugan ? "显卡加速,稳定\n"
+            : "GPU 加速,速度快,稳定\n");
         // 补帧
         sb.Append("· 视频补帧(RIFE):").Append(onnxRife ? "稳定(已自动选用合适引擎)\n"
             : blackwell ? "稳定(已自动适配,较慢)\n"

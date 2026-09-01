@@ -28,14 +28,30 @@ public static class EsrganOnnxService
         return null;
     }
 
+    /// <summary>Real-CUGAN ONNX 模型路径(engines/realcugan/ realcugan-x4.onnx;社区导出,BSD 许可)。</summary>
+    public static string? FindCuganModel()
+    {
+        var root = Path.Combine(EngineService.EnginesDir, "realcugan");
+        foreach (var f in new[] { "realcugan-x4.onnx", "4x-cugan-pretrain.onnx", "RealCUGAN_x4.onnx" })
+        {
+            foreach (var found in Directory.EnumerateFiles(root, f, SearchOption.AllDirectories))
+                return found;
+            var direct = Path.Combine(root, f);
+            if (File.Exists(direct)) return direct;
+        }
+        return null;
+    }
+
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, InferenceSession> _sessions = new();
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, SemaphoreSlim> _locks = new();
 
-    /// <summary>ONNX 超分一张图(4x)。scale=目标倍数(4x 原生;2x 也走 4x 再缩回)。</summary>
+    /// <summary>ONNX 超分一张图(4x)。scale=目标倍数(4x 原生;2x 也走 4x 再缩回)。
+    /// modelPath: 指定模型(Real-CUGAN 等);null = Real-ESRGAN 自动查找。</summary>
     public static async Task UpscaleAsync(string input, string output, double scale,
-        int gpuId = -1, IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default)
+        int gpuId = -1, IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default,
+        string? modelPath = null)
     {
-        var modelPath = FindModel()
+        modelPath ??= FindModel()
             ?? throw new FileNotFoundException(
                 "未找到 RealESRGAN_x4plus.onnx,请放入 engines/rembg/ 目录(或程序目录)");
         progress?.Report((5, "加载 ONNX 模型..."));
@@ -44,9 +60,10 @@ public static class EsrganOnnxService
     }
 
     /// <summary>ONNX 目录批处理(视频逐帧超分用):遍历 inputDir 的 PNG,逐帧 UpscaleAsync 输出到 outputDir。
-    /// 供视频超分在 50 系/无独显设备走 ONNX(不走会崩的 ncnn-vulkan)。</summary>
+    /// 供视频超分在 50 系/无独显设备走 ONNX(不走会崩的 ncnn-vulkan)。modelPath=null 用 Real-ESRGAN。</summary>
     public static async Task UpscaleDirAsync(string inputDir, string outputDir, double scale,
-        int gpuId = -1, IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default)
+        int gpuId = -1, IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default,
+        string? modelPath = null)
     {
         var files = Directory.EnumerateFiles(inputDir, "*.png")
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -56,7 +73,7 @@ public static class EsrganOnnxService
         {
             ct.ThrowIfCancellationRequested();
             var outPath = Path.Combine(outputDir, Path.GetFileName(files[i]));
-            await UpscaleAsync(files[i], outPath, scale, gpuId, null, ct).ConfigureAwait(false);
+            await UpscaleAsync(files[i], outPath, scale, gpuId, null, ct, modelPath).ConfigureAwait(false);
             progress?.Report(((int)((double)(i + 1) / files.Length * 100),
                 $"超分 {i + 1}/{files.Length} 帧({Path.GetFileName(files[i])})"));
         }
