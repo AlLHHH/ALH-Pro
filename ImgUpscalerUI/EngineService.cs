@@ -13,8 +13,31 @@ using System.Threading.Tasks;
 
 namespace ALHPro;
 
-public static class EngineService
+public static partial class EngineService
 {
+    /// <summary>是否 RTX 50 系(Blackwell)显卡:从 VulkanCheck/GPU 枚举名字判断。
+    /// 50 系上 2022 版 ncnn 引擎(Vulkan)会崩 —— 需换 ONNX 路线(不走 Vulkan)。</summary>
+    public static bool IsBlackwellGpu()
+    {
+        try
+        {
+            var names = new System.Collections.Generic.List<string>();
+            try { names.AddRange(VulkanCheck.Devices.Select(d => d.Name)); } catch { }
+            try { names.AddRange(GpuInfo.GetAdapterNames()); } catch { }
+            return names.Any(n => Regex.IsMatch(n, @"RTX 5[0-9]{2}", RegexOptions.IgnoreCase));
+        }
+        catch { return false; }
+    }
+
+    /// <summary>照片超分(Real-ESRGAN)是否应走 ONNX 路线:50 系(Blackwell,ncnn 崩)或 ONNX 模型缺失时 false→ncnn;
+    /// 50 系优先 ONNX;模型缺失时回退 ncnn。</summary>
+    public static bool ShouldUseOnnxEsrgan()
+    {
+        if (EsrganOnnxService.FindModel() == null) return false;
+        // 50 系必须 ONNX;非 50 系默认 ncnn(GPU 更快,已成熟),——ONNX 仅在 50 系启用(避免非 50 系无谓切换)
+        return IsBlackwellGpu();
+    }
+
     // 引擎根目录:优先 exe 旁 engines/ 目录;否则从当前目录向上逐级搜索(覆盖源码布局/输出目录)
     public static string EnginesDir
     {

@@ -753,15 +753,23 @@ public sealed partial class UpscaleView : UserControl
                         _progressSegStart = preDenoise ? 0.4 : 0.0;
                         _progressSegEnd = 0.97;   // 给最后"画质增强"留 3%(否则超分就满 100%)
                         progress.Report((0, $"正在处理 {item.Name}..."));
-                        // 照片模式 + ONNX 模型存在 → 用 ONNX 版 Real-ESRGAN(50 系 Blackwell/CPU 都稳,
-                        // 2022 ncnn 老引擎在 50 系会崩);否则 ncnn。ONNX 内部按 4x 出图再缩到目标倍数。
-                        if (engine == "realesrgan" && EsrganOnnxService.FindModel() != null)
+                        // 智能自检选择:照片模式 + 50系(Blackwell,ncnn-Vulkan 会崩) + ONNX 模型存在
+                        // → 走 ONNX 版(不走 Vulkan,稳定);否则 ncnn GPU(非 50 系更快更成熟)。
+                        // 自检结果写日志+进度,用户一眼看懂走了哪条路。
+                        bool useOnnx = engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan();
+                        if (useOnnx)
                         {
+                            Log("✅ 自检:检测到 RTX 50 系(Blackwell),Real-ESRGAN 自动改用 ONNX 路线(DirectML GPU,兼容 50 系,不走 Vulkan)");
+                            progress.Report((0, "✅ 自检完毕:50 系 → 用 ONNX 版 Real-ESRGAN(兼容稳定)..."));
                             await EsrganOnnxService.UpscaleAsync(srcPath, outPath, scale,
                                 gpuId, progress, ct);
                         }
                         else
                         {
+                            if (engine == "realesrgan" && EngineService.IsBlackwellGpu())
+                                Log("⚠ 自检:检测到 RTX 50 系但未找到 ONNX 模型(engines\\rembg\\RealESRGAN_x4plus.onnx),回退 ncnn 引擎(50 系可能失败,建议补模型)");
+                            else
+                                Log($"✅ 自检完毕:{(engine == "realesrgan" ? "非 50 系,用 ncnn GPU 引擎(快)" : "常规引擎")}");
                             await EngineService.UpscaleAsync(srcPath, outPath, engine,
                                 model, scale, noise, gpuId, tta, progress, ct,
                                 // 分块放大提速:图片超分逐块启动引擎,512 块=启动占约 2/3 时间;
