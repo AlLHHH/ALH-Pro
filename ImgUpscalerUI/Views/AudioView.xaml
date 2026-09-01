@@ -65,19 +65,11 @@
                     </RadioButtons>
 
                     <!-- 自定义组合:勾选要保留的轨(人声=轨3,伴奏=轨0,其他1/2) -->
-                    <StackPanel x:Name="CustomMixPanel" Visibility="Collapsed" Margin="24,2,0,4" Spacing="2">
+                    <StackPanel x:Name="CustomMixPanel" Visibility="Collapsed" Margin="24,2,0,8" Spacing="2">
                         <CheckBox x:Name="CmVocals" Content="人声" Checked="Options_Changed" Unchecked="Options_Changed"/>
                         <CheckBox x:Name="CmAcc" Content="伴奏" Checked="Options_Changed" Unchecked="Options_Changed"/>
                         <CheckBox x:Name="CmOther1" Content="其他 1(部分歌内含鼓/贝斯)" Checked="Options_Changed" Unchecked="Options_Changed"/>
                         <CheckBox x:Name="CmOther2" Content="其他 2(同上)" Checked="Options_Changed" Unchecked="Options_Changed"/>
-                    </StackPanel>
-
-                    <!-- 伴奏洗人声力度(手动调整):0=保留伴奏里的人声;100=尽力洗净(可能削一点伴奏) -->
-                    <StackPanel Margin="24,4,0,0" Spacing="2">
-                        <TextBlock Text="伴奏洗人声力度" FontSize="11" Opacity="0.7"/>
-                        <Slider x:Name="VocalStrength" Minimum="0" Maximum="100" Value="100" StepFrequency="1"
-                                ValueChanged="Options_Changed" ToolTipService.ToolTip="去人声力度:0=伴奏里保留人声(未洗净);100=尽力洗净人声(伴奏可能稍偏薄)——手动平衡干净度" Margin="4,0"/>
-                        <TextBlock x:Name="VocalStrengthLabel" Text="洗净(100%)" FontSize="10" Opacity="0.6"/>
                     </StackPanel>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
