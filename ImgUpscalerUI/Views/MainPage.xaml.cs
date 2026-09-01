@@ -634,7 +634,8 @@ public sealed partial class MainPage : Page
                 .Where(f => f.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
                     || f.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
                     || f.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
-                    || f.EndsWith(".webp", StringComparison.OrdinalIgnoreCase))
+                    || f.EndsWith(".webp", StringComparison.OrdinalIgnoreCase)
+                    || f.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))   // 纯名字文件(无头像;文件名即名字)
                 .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             if (thankFiles.Length > 0)
@@ -661,23 +662,39 @@ public sealed partial class MainPage : Page
                 foreach (var f in thankFiles)
                 {
                     var name = Path.GetFileNameWithoutExtension(f);
+                    bool hasAvatar = !f.EndsWith(".txt", StringComparison.OrdinalIgnoreCase);
                     var row = new StackPanel
                     {
                         Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal,
                         Spacing = 8,
                         VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
                     };
-                    row.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse
+                    if (hasAvatar)
                     {
-                        Width = 40,
-                        Height = 40,
-                        StrokeThickness = 0,
-                        Fill = new Microsoft.UI.Xaml.Media.ImageBrush
+                        row.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse
                         {
-                            ImageSource = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(f)),
-                            Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill,
-                        },
-                    });
+                            Width = 40,
+                            Height = 40,
+                            StrokeThickness = 0,
+                            Fill = new Microsoft.UI.Xaml.Media.ImageBrush
+                            {
+                                ImageSource = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(f)),
+                                Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill,
+                            },
+                        });
+                    }
+                    else
+                    {
+                        // 纯名字:蓝色圆点占位(无头像文件也能显示名单)
+                        row.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse
+                        {
+                            Width = 40,
+                            Height = 40,
+                            StrokeThickness = 0,
+                            Fill = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                                Windows.UI.Color.FromArgb(255, 76, 141, 255)),
+                        });
+                    }
                     row.Children.Add(new TextBlock
                     {
                         Text = name,
