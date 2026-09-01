@@ -48,10 +48,21 @@ public static class RifeOnnxService
         return _session;
     }
 
-    /// <summary>用 ONNX 模型在 img0 与 img1 之间插 time(0~1) 帧,输出到 outputPng。gpuId&gt;=0 走 DirectML,失败自动 CPU。</summary>
+    /// <summary>用 ONNX 模型在 img0 与 img1 之间插 time(0~1) 帧,输出到 outputPng。gpuId&gt;=0 走 DirectML,失败自动 CPU;
+    /// gpuId=-2 表示自动(按输入尺寸:大帧 GPU/小帧 CPU,实测小帧 CPU 反而快 19 倍)。</summary>
     public static void Interp(string img0, string img1, float time, string outputPng, int gpuId = -1)
     {
         var model = FindModel() ?? throw new FileNotFoundException("未找到 rife49.onnx(ONNX 补帧模型)");
+        // -2 = 自动选设备
+        if (gpuId == -2)
+        {
+            try
+            {
+                using (var probe = new System.Drawing.Bitmap(img0))
+                    gpuId = EsrganOnnxService.PickDevice(probe.Width, probe.Height);
+            }
+            catch { gpuId = -1; }
+        }
         var session = GetSession(gpuId);
         RunCore(session, img0, img1, time, outputPng, gpuId, model);
     }

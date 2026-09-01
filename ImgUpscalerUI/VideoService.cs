@@ -1169,7 +1169,7 @@ public static class VideoService
                                 progress?.Report((45 + (int)(45.0 * start / total),
                                     $"超分(稳定引擎) 批次 {start / batchSize + 1}/{batches}..."));
                                 await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
-                                    upGpu, progress, ct, onnxModelPath);
+                                    -2, progress, ct, onnxModelPath);   // -2 = 自动选设备(大帧 GPU/小帧 CPU)
                             }
                             else
                             {
@@ -1838,7 +1838,7 @@ public static class VideoService
                     AppLogger.Info($"✅ 补帧改走 ONNX 路线(rife49.onnx,DirectML→CPU)——50 系/GPU 不可用设备稳定且更快");
                     progress?.Report((0, $"补帧改用 ONNX 模型(50 系/GPU 不可用设备更稳定)..."));
                     // 传原始 gpuId:ONNX 内部 DirectML GPU 优先,失败自动 CPU(单会话加速优于 ncnn-CPU)
-                    await RifeOnnxInterpDirAsync(onnxSegIn!, onnxOut!, onnxTarget, gpuId, watchTotal, watchDir).ConfigureAwait(false);
+                    await RifeOnnxInterpDirAsync(onnxSegIn!, onnxOut!, onnxTarget, -2, watchTotal, watchDir).ConfigureAwait(false);   // -2 = 按帧自动选设备
                 }
                 else
                 {
