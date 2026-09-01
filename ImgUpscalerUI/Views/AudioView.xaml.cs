@@ -107,13 +107,13 @@ public sealed partial class AudioView : UserControl
         if (CustomMixPanel != null)
             CustomMixPanel.Visibility = DemucsRadios.SelectedIndex == 4
                 ? Visibility.Visible : Visibility.Collapsed;
-        // 人声强度滑条标签
+        // 伴奏洗人声力度标签
         if (VocalStrengthLabel != null)
         {
             int v = (int)VocalStrength.Value;
-            VocalStrengthLabel.Text = v == 100 ? "纯人声(100%)"
-                : v == 0 ? "原曲(0%)"
-                : $"混合 {v}%";
+            VocalStrengthLabel.Text = v == 100 ? "洗净(100%)"
+                : v == 0 ? "不洗(保留人声)"
+                : $"力度 {v}%";
         }
         SaveSettings();
     }

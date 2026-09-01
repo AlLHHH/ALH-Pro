@@ -124,10 +124,11 @@ public static class AudioEnhanceService
                     float v = outBuf[3, c, s] / w;      // 人声(轨3)
                     float org = mix[c, s];              // 原曲
                     float acc = acc1;                   // 伴奏 = 轨0(轨1/2 奇怪,不加)
-                    // 人声强度混合:人声轨 = s×人声+(1-s)×原曲;伴奏 = 原曲 − s×人声(残留可调)
-                    float vs = Math.Clamp(vocalStrength, 0f, 1f);
-                    float vM = vs * v + (1 - vs) * org;
-                    float accM = org - vs * v;
+                    // 伴奏洗人声力度:滑条 0~100 → k = 0~1.5(0=不洗(保留人声);1=标准洗净;1.5=强洗(削伴奏多))
+                    // 人声轨:输出纯人声(v);伴奏轨:原曲 − k×人声(去人声但可调残留)
+                    float k = 0f + (vocalStrength / 100f) * 1.5f;
+                    float vM = v;                        // 人声输出纯(不混原曲,分离就是要纯人声)
+                    float accM = org - k * v;
                     if (target >= 100)
                     {
                         // 自定义组合:100+bitmask(1人声 2伴奏 4其他1 8其他2)——左右声道分别合成
