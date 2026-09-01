@@ -563,7 +563,7 @@ public sealed partial class MainPage : Page
         // 功能
         content.Children.Add(new TextBlock
         {
-            Text = "功能:图片超分放大(waifu2x / Real-ESRGAN / Real-CUGAN,1x~4x、\n批量、区域放大、输出质量可调)、AI 抠图(多模型 + 笔刷/框选\n+ 阈值/羽化/边缘增强)、视频超分 + 光流补帧(RIFE,2x~8x)、\n智能去重(自适应/动漫/手动)、转场识别、时间线裁剪、批量处理、\n编码格式 H.264/H.265、码率自定义、暂停/恢复/强制结束。",
+            Text = "功能:图片超分(waifu2x / Real-ESRGAN / Real-CUGAN)、AI 抠图、视频超分 + 光流补帧、\n智能去重、转场识别、批量处理、音频增强。",
             FontSize = 12,
             TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
@@ -582,13 +582,15 @@ public sealed partial class MainPage : Page
             ("Real-CUGAN", "bilibili 哔哩哔哩", "https://github.com/bilibili/ailab"),
             ("RIFE", "Zhewei Huang 等 + nihui/ncnn", "https://github.com/hzwer/arXiv2020-RIFE"),
             ("U²-Net", "Qin 等", "https://github.com/xuebinqin/U-2-Net"),
-            ("ISNet", "Xuebin Qin 等", "https://github.com/xuebinqin/IS-Net"),
+            ("ISNet", "Xuebin Qin 等", "https://github.com/xuebinqin/DIS"),
             ("BiRefNet", "ZhengPeng7(BiRefNet)", "https://github.com/ZhengPeng7/BiRefNet"),
             ("rembg(模型封装)", "Daniel Gatis", "https://github.com/danielgatis/rembg"),
             ("ffmpeg", "FFmpeg 团队(BtbN 构建)", "https://ffmpeg.org"),
             ("ONNX Runtime", "Microsoft", "https://github.com/microsoft/onnxruntime"),
             ("Windows App SDK / WinUI 3", "Microsoft", "https://github.com/microsoft/WindowsAppSDK"),
             (".NET 8", "Microsoft", "https://github.com/dotnet/runtime"),
+            ("Real-ESRGAN ONNX(照片超分)", "fernandotonon / xinntao", "https://huggingface.co/fernandotonon/QtMeshEditor-realesrgan-onnx"),
+            ("Apollo(音乐修复,计划)", "清华大学 / 腾讯 AI Lab", "https://github.com/JusperLee/Apollo"),
         };
         foreach (var (name, desc, url) in modelLinks)
         {
