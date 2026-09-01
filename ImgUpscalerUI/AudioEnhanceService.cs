@@ -114,25 +114,28 @@ public static class AudioEnhanceService
                 for (int s = 0; s < total; s++)
                 {
                     float w = Math.Max(weight[s], 1e-8f);
-                    float a = outBuf[0, c, s] / w;   // vocals
-                    float b = outBuf[1, c, s] / w;   // drums
-                    float d = outBuf[2, c, s] / w;   // bass
-                    float o = outBuf[3, c, s] / w;   // other
+                    // 实测(用户试听 10s《GIRL LIKE ME》):单体输出轨序 = 轨0:伴奏 · 轨1/2:其他 · 轨3:人声!
+                    // (官方"drums/bass/other/vocals"标注与引擎实际输出不符——以听感为准)
+                    float acc1 = outBuf[0, c, s] / w;   // 伴奏(轨0)
+                    float o1 = outBuf[1, c, s] / w;     // 其他1
+                    float o2 = outBuf[2, c, s] / w;     // 其他2
+                    float v = outBuf[3, c, s] / w;      // 人声(轨3)
+                    float acc = acc1;                   // 伴奏 = 轨0(轨1/2 奇怪,不加)
                     if (target == 6)
                     {
-                        sel[0, c, s] = a;                 // 人声
-                        sel[1, c, s] = b + d + o;         // 伴奏(去人声)
+                        sel[0, c, s] = v;                 // 人声(轨3)
+                        sel[1, c, s] = acc;               // 伴奏(轨0)
                     }
                     else
                     {
                         sel[0, c, s] = target switch
                         {
-                            0 => a,                       // 人声
-                            1 => b + d + o,               // 伴奏(去人声)
-                            2 => b,                       // 鼓
-                            3 => d,                       // 贝斯
-                            4 => o,                       // 其他
-                            _ => a + b + d + o,           // 人声+伴奏(重混=近似原曲,增强后)
+                            0 => v,                       // 人声
+                            1 => acc,                     // 伴奏(去人声)
+                            2 => o1,                      // 其他1
+                            3 => o2,                      // 其他2
+                            4 => acc,                     // 伴奏(近似)
+                            _ => v + acc,                 // 人声+伴奏(重混=近似原曲)
                         };
                     }
                 }
