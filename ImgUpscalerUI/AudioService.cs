@@ -328,6 +328,70 @@ public static class AudioService
         }
     }
 
+    /// <summary>若干 44.1k 立体声 WAV 混合成一个(等量求和,限幅防削波)。1 个时直接复制;0 个抛错。
+    /// 用于"自定义组合"多轨合成——各轨来自同一次 AI 分轨,无相位问题。</summary>
+    public static async Task MixWavsAsync(System.Collections.Generic.List<string> inputs, string outputWav,
+        IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default)
+    {
+        if (inputs.Count == 0) throw new ArgumentException("没有可混合的轨道");
+        if (inputs.Count == 1)
+        {
+            System.IO.File.Copy(inputs[0], outputWav, true);
+            progress?.Report((100, "完成"));
+            return;
+        }
+        DurSec = 0;
+        try { DurSec = Probe(inputs[0]).DurationSec; } catch { }
+        var ins = string.Concat(inputs.Select(f => $"-i \"{f}\" "));
+        var labels = string.Concat(Enumerable.Range(0, inputs.Count).Select(i => $"[{i}:a]"));
+        var fc = $"{labels}amix=inputs={inputs.Count}:duration=first:normalize=0,alimiter=limit=0.98[out]";
+        var psi = NewFfmpegPsi(FfmpegPath, $"-y {ins}-filter_complex \"{fc}\" -map \"[out]\" -ar 44100 -ac 2 -c:a pcm_s16le -progress pipe:1 -nostats \"{outputWav}\"");
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        psi.StandardOutputEncoding = Encoding.UTF8;
+        using var p = Process.Start(psi);
+        if (p == null) throw new InvalidOperationException("无法启动 ffmpeg");
+        App.ActiveProcesses.Register(p);
+        try
+        {
+            var lineTask = Task.Run(() =>
+            {
+                string? line;
+                while ((line = p.StandardOutput.ReadLine()) != null)
+                {
+                    var m = System.Text.RegularExpressions.Regex.Match(line, @"out_time_us=(\d+)");
+                    if (!m.Success)
+                        m = System.Text.RegularExpressions.Regex.Match(line, @"out_time_ms=(\d+)");
+                    if (m.Success)
+                    {
+                        double sec = double.Parse(m.Groups[1].Value) / 1_000_000.0;
+                        int pct = (int)Math.Min(99, sec / (DurSec > 0 ? DurSec : 1) * 100);
+                        progress?.Report((pct, $"混合轨道中 {sec:0.#}s"));
+                    }
+                }
+            });
+            var errTask = p.StandardError.ReadToEndAsync();
+            while (!p.HasExited && !ct.IsCancellationRequested) await Task.Delay(100, ct).ConfigureAwait(false);
+            if (ct.IsCancellationRequested)
+            {
+                try { p.Kill(entireProcessTree: true); } catch { }
+                throw new OperationCanceledException();
+            }
+            await Task.WhenAll(lineTask, errTask).ConfigureAwait(false);
+            if (p.ExitCode != 0)
+            {
+                var errTail = await errTask.ConfigureAwait(false);
+                if (errTail.Length > 400) errTail = errTail[^400..];
+                throw new InvalidOperationException($"ffmpeg 混轨失败(exit {p.ExitCode}):\n{errTail}");
+            }
+            progress?.Report((100, "完成"));
+        }
+        finally
+        {
+            App.ActiveProcesses.Unregister(p.Id);
+        }
+    }
+
     /// <summary>任意音频 → 44.1kHz 立体声 16-bit WAV(Demucs 模型输入要求)。</summary>
     public static async Task ConvertToWav44kAsync(string input, string outputWav)
     {

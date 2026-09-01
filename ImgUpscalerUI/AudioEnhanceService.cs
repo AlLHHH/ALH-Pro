@@ -110,7 +110,7 @@ public static class AudioEnhanceService
             }
 
             // 归一化权重 + 选轨输出
-            int outCount = target == 6 ? 2 : 1;   // 分离=2 个(人声+伴奏),其余 1 个
+            int outCount = target == 6 ? 2 : target == 7 ? 4 : 1;   // 6=人声+伴奏;7=四轨全部;其余 1 个
             var sel = new float[outCount, N_CHANNELS, total];
             for (int c = 0; c < N_CHANNELS; c++)
                 for (int s = 0; s < total; s++)
@@ -145,6 +145,13 @@ public static class AudioEnhanceService
                         sel[0, c, s] = vM;                // 人声(轨3,强度混合)
                         sel[1, c, s] = accM;              // 伴奏(原曲−人声,干净)
                     }
+                    else if (target == 7)
+                    {
+                        sel[0, c, s] = vM;                // 人声(轨3)
+                        sel[1, c, s] = accM;              // 伴奏(原曲−人声)
+                        sel[2, c, s] = o1;                // 其他1(轨1)
+                        sel[3, c, s] = o2;                // 其他2(轨2)
+                    }
                     else
                     {
                         sel[0, c, s] = target switch
@@ -176,6 +183,23 @@ public static class AudioEnhanceService
                     }
                 WriteWav(vocals, v, total);
                 WriteWav(accomp, a2, total);
+            }
+            else if (target == 7)
+            {
+                // 全轨:输出 4 个文件(人声/伴奏/其他1/其他2)——一次推理供"分离+超分"共用,免两次分轨
+                var dir = System.IO.Path.GetDirectoryName(outputWav) ?? ".";
+                var baseName = System.IO.Path.GetFileNameWithoutExtension(outputWav);
+                var ext = System.IO.Path.GetExtension(outputWav);
+                var names = new[] { "_人声", "_伴奏", "_其他1", "_其他2" };
+                for (int st = 0; st < 4; st++)
+                {
+                    var path = System.IO.Path.Combine(dir, baseName + names[st] + ext);
+                    var d = new float[N_CHANNELS, total];
+                    for (int c = 0; c < N_CHANNELS; c++)
+                        for (int s = 0; s < total; s++)
+                            d[c, s] = sel[st, c, s];
+                    WriteWav(path, d, total);
+                }
             }
             else
             {
