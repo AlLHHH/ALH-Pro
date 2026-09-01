@@ -1157,6 +1157,10 @@ public static class VideoService
                             // 视频超分:50系/无独显 + Real-ESRGAN + ONNX 模型在 → 走 ONNX 逐帧(不走会崩的 ncnn-vulkan)
                             if (engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan())
                             {
+                                if (start == 0)   // 仅首批写自检日志(视频批多,避免刷屏)
+                                {
+                                    AppLogger.Info("✅ 自检:视频超分 Real-ESRGAN 自动改用 ONNX 路线(DirectML GPU / CPU,兼容当前显卡;不走会崩的 ncnn-vulkan)");
+                                }
                                 progress?.Report((45 + (int)(45.0 * start / total),
                                     $"超分(ONNX) 批次 {start / batchSize + 1}/{batches}..."));
                                 await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
