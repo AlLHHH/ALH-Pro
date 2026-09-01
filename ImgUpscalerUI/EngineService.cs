@@ -208,7 +208,8 @@ public static partial class EngineService
     // 引擎启动/完成日志节流状态(同阶段 10 秒内只记首次,防"引擎启动中"刷屏)
     private static string _lastEngineStageLog = "";
     private static DateTime _lastEngineStartLog = DateTime.MinValue;
-    // 引擎"无进展看门狗":任何引擎进度心跳都会刷新;12 分钟无进展(驱动挂死/引擎卡死)→ 强制终止
+    // 引擎"无进展看门狗":任何引擎进度心跳都会刷新;按设备超时(启动30秒/GPU8分钟/CPU20分钟/10分钟无帧)→ 强制终止
+    // (引擎崩溃=进程退出→RunAsync 抛异常→降级链接管,不依赖看门狗;看门狗兜底"引擎 hang 不退出的情况")
     private static long _lastEngineProgressTicks = DateTime.MinValue.Ticks;
     // 最近一次"完整完成一帧"时间(WatchDirProgressAsync 帧数增长时刷新):
     // 用于判定"心跳在跳但没有实质进展"(CPU 逐帧爬但极慢)的实质停滞
@@ -234,6 +235,7 @@ public static partial class EngineService
         };
         using var p = Process.Start(psi) ?? throw new InvalidOperationException("无法启动引擎: " + exe);
         var startTime = DateTime.Now;   // 引擎耗时统计
+        bool sawAnyOutput = false;   // 启动超时看门狗:是否已出现任何输出(引擎启动即产出 → 排除"启动即挂死")
         SafeRender.ApplyProcessPriority(p);   // 处理时降优先级,防整机卡
         App.ActiveProcesses.Register(p);   // 纳入"暂停=冻结"管理(冻结遍历整个注册表,含并发多路)
         // 诊断:记录引擎使用的设备编号(-g;日志一眼看出是在用 GPU 还是 CPU)
@@ -286,6 +288,7 @@ public static partial class EngineService
         {
             lock (lockObj)
             {
+                sawAnyOutput = true;
                 if (chunk.Length > 0) System.Threading.Interlocked.Exchange(ref _lastEngineProgressTicks, DateTime.Now.Ticks);
                 log.Append(chunk);
                 if (log.Length > 4096) log.Remove(0, log.Length - 4096); // 只保留尾部,防内存膨胀
@@ -309,6 +312,8 @@ public static partial class EngineService
         // 1) 无输出超时:GPU 8 分钟无任何输出 → 驱动/引擎挂死;CPU 20 分钟无输出(CPU 慢,宽限);
         // 2) 实质停滞:引擎有帧级心跳但 10 分钟未完成任何一帧(CPU 逐帧爬但慢到不可接受)→ 强制终止,
         //    避免"半天不动一帧"让用户无限等待(实测:CPU 软解 1280×720 单帧可达 10 分钟级)。
+        // 3) 启动超时(新增):引擎启动后 30 秒无任何输出 → 大概率立即挂死(如 Blackwell + 旧 ncnn:
+        //    vkQueueSubmit 失败但进程不退出,原逻辑要等 8 分钟才降级!)。30 秒即杀降级,不再让用户白等。
         using var watchdog = new System.Threading.Timer(_ =>
         {
             try
@@ -323,14 +328,21 @@ public static partial class EngineService
                         ? DateTime.Now.Ticks - _lastEngineProgressTicks : 0;
                     long sinceFrame = _lastFrameDoneTicks != DateTime.MinValue.Ticks
                         ? DateTime.Now.Ticks - _lastFrameDoneTicks : 0;
-                    // ① 无输出(连心跳都没有)
-                    if (sinceOut > noOutLimitTicks)
+                    // ① 启动超时:30 秒零输出 + 进程还在(而非立即失败退出)
+                    if (!sawAnyOutput && sinceOut > TimeSpan.FromSeconds(30).Ticks)
+                    {
+                        killRequested = true;
+                        AppLogger.Warn($"看门狗:引擎 ({stage}) 启动 30 秒无任何输出(疑似驱动/引擎挂死,常见于 50 系+旧 ncnn)——强制终止降级");
+                        try { p.Kill(entireProcessTree: true); } catch { }
+                    }
+                    // ② 无输出(连心跳都没有,已有输出后)
+                    else if (sawAnyOutput && sinceOut > noOutLimitTicks)
                     {
                         killRequested = true;
                         AppLogger.Info($"看门狗:引擎 ({stage}) {(cpu ? "CPU" : "GPU")} {noOutLimitTicks / TimeSpan.TicksPerMinute} 分钟无输出(疑似驱动/引擎挂死),强制终止");
                         try { p.Kill(entireProcessTree: true); } catch { }
                     }
-                    // ② 有输出但 10 分钟未完成一帧(CPU 爬帧过慢/引擎停滞)
+                    // ③ 有输出但 10 分钟未完成一帧(CPU 爬帧过慢/引擎停滞)
                     else if (_lastFrameDoneTicks != DateTime.MinValue.Ticks && sinceFrame > stallLimitTicks)
                     {
                         killRequested = true;
