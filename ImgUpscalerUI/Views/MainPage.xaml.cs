@@ -299,7 +299,7 @@ public sealed partial class MainPage : Page
                 {
                     new TextBlock
                     {
-                        Text = "本程序为「ALH Pro v1.0」正式版:\n\n" +
+                        Text = $"本程序为「ALH Pro v{UpdateChecker.CurrentVersion}」正式版:\n\n" +
                             "· 图片超分 / AI 抠图 / 视频超分补帧去重,全部本地处理;\n" +
                             "· 处理前建议备份重要素材;\n" +
                             "· 引擎/模型版权归各自作者所有,详见 README 与许可声明。\n\n" +
