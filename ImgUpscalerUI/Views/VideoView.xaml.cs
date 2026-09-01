@@ -489,7 +489,7 @@ public sealed partial class VideoView : UserControl
             if (UpscaleToggle.IsChecked == true) slow.Add("超分");
             if (interp && InterpModelCombo.SelectedIndex is 3 or 4 or 5 or 6) slow.Add("非 v4 补帧模型");   // anime/HD/UHD/v2.3 只能级联
             if (TtaCheck.IsChecked == true) slow.Add("高质量 TTA");
-            if (interp && InterpScaleRadios.SelectedIndex is 3 or 4) slow.Add("高倍率");
+            if (interp && InterpScaleRadios.SelectedIndex is 3 or 4) slow.Add("高倍率补帧");
             if (interp && SceneCheck.IsChecked == true) slow.Add("转场识别");
             if (DenoiseToggle.IsChecked == true) slow.Add("视频降噪");
             if ((int)SharpenSlider.Value > 0 || (int)ClaritySlider.Value > 0 || (int)UsmSlider.Value > 0
