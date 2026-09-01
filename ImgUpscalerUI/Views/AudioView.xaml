@@ -28,9 +28,8 @@
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
-                    <TextBlock Text="音频增强" Style="{StaticResource SectionTitle}"/>
-
-                    <!-- 降噪(FFT):radio 关/弱/中/强 -->
+                    <!-- 降噪:独立板块(去噪声/修复,与音色调色不同性质) -->
+                    <TextBlock Text="降噪" Style="{StaticResource SectionTitle}"/>
                     <RadioButtons x:Name="DenoiseRadios" SelectedIndex="0" ToolTipService.ToolTip="FFT 降噪(afftdn):去底噪/电流声/压缩噪点(仅录音/降噪场景适用;对已混音音乐可能削细节)"
                                   SelectionChanged="Options_Changed">
                         <RadioButton Content="关"/>
@@ -39,6 +38,10 @@
                         <RadioButton Content="强(重降噪,可能有损失)"/>
                     </RadioButtons>
 
+                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
+
+                    <!-- 音色调整:独立板块(美化,与去噪声不同) -->
+                    <TextBlock Text="音色调整" Style="{StaticResource SectionTitle}"/>
                     <CheckBox x:Name="LoudnessCheck" Content="响度归一(音量统一)" ToolTipService.ToolTip="EBU R128 响度标准化:音量忽大忽小统一,听感更稳"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
 
