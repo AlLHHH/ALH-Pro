@@ -35,6 +35,52 @@
 
 ---
 
+## 🧩 模型怎么装(新手必看)
+
+软件处理需要**引擎(exe)**和**模型(权重文件,几百 MB~1GB)**。官方发布版**自带全部引擎**,但**抠图模型可选装**(安装包大,默认不强制)。
+
+### 抠图模型(6 个 .onnx,约 1.6GB)
+
+**方式 A(推荐)· 安装时勾选**:
+安装程序到「选择附加任务」页 → 勾选 **「下载并安装模型包(来自 GitHub)」** → 安装完成自动下载并解压好。
+
+**方式 B · 手动下载**:
+1. 打开 GitHub Release 页:https://github.com/AlLHHH/ALH-Pro/releases
+2. 找到最新版本的 **`models_v1.0.zip`**(约 1.6GB)下载(国内打不开 GitHub → 用加速器/镜像,或找软件群/网盘分享)
+3. **解压到程序目录** `engines\rembg\` 文件夹下:
+   ```
+   程序目录\
+     engines\
+       rembg\
+         birefnet-lite.onnx       ← 6 个 .onnx 直接放这里
+         birefnet.onnx
+         isnet-anime.onnx
+         isnet-general-use.onnx
+         u2net.onnx
+         u2netp.onnx
+   ```
+   ⚠️ **注意:直接放 6 个 .onnx 到 `engines\rembg\`,不要再套一层 `models` 子文件夹**(旧版本才需要)。
+
+**验证装好了**:打开软件 → AI 抠图页 → 左上角若**没有**黄色"⚠ 未找到抠图模型"提示条 = 装好了;若还有提示,就是没放对位置(见上面结构)。
+
+### 引擎 exe(waifu2x/realesrgan/realcugan/rife/ffmpeg)
+官方发布版已自带;仅当你**手动下载引擎包**时,按 Release 说明解压,确保程序目录是:
+```
+程序目录\engines\waifu2x\...        (引擎 exe + 模型目录)
+程序目录\engines\realcugan\...
+程序目录\engines\realesrgan\...
+程序目录\engines\rife\...
+程序目录\engines\ffmpeg\ffmpeg.exe
+```
+启动软件后,「设置」页或各页顶部会有引擎检测结果的提示;缺哪个会在处理时明确告诉你。
+
+### 50 系显卡(Blackwell)特别说明
+- 图片/视频超分:照片模式自动用兼容版(无需额外安装);动漫模式用 `waifu2x` 即可。
+- 视频补帧:选 `rife v4.13 / v4.6`;不要用 `Real-CUGAN` 或 `rife 老模型`(旧引擎在 50 系会崩,软件会黄字提示你换)。
+- 如果你需要 Real-ESRGAN 的兼容版模型(照片超分更稳),确保 `engines\rembg\RealESRGAN_x4plus.onnx` 存在(随发布版附带)。
+
+---
+
 ## 🔨 构建
 
 ```
