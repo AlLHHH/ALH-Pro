@@ -510,28 +510,26 @@ public sealed partial class VideoView : UserControl
         if (CompatHintPanel != null)
         {
             bool weak = SafeRender.IsWeakDevice && FastModeCheck.IsChecked != true;
-            // 50 系兼容提示优先(Real-CUGAN/Real-ESRGAN 2022 版在 Blackwell 崩 → 建议 waifu2x;rife 老模型同理)
-            string? blackwellMsg = null;
-            if (EngineService.IsBlackwellGpu())
+            // 引擎兼容自检优先(不限 50 系):旧 ncnn 引擎(realcugan/realesrgan 2022)在
+            // Blackwell/Vulkan 不可用设备上 GPU 崩 → 建议 waifu2x;rife 老模型在 Blackwell 不稳 → 建议 v4.13/v4.6
+            string? compatMsg = null;
+            bool upOn = UpscaleToggle.IsChecked == true;
+            bool interpOn = InterpToggle.IsChecked == true;
+            if (upOn && VideoEngineRadios.SelectedIndex is 1 or 2 && EngineService.OldNcnnGpuRisky())
             {
-                bool upOn = UpscaleToggle.IsChecked == true;
-                bool interpOn = InterpToggle.IsChecked == true;
-                if (upOn && VideoEngineRadios.SelectedIndex is 1 or 2)
-                {
-                    var oldEngineLabel = VideoEngineRadios.SelectedIndex == 1 ? "Real-CUGAN" : "Real-ESRGAN";
-                    blackwellMsg = $"⚠ RTX 50 系:「{oldEngineLabel}」(2022 版)无法用 GPU,建议改用「waifu2x」(官方新版,兼容 50 系;照片超分也可用 ONNX 版)";
-                }
-                else if (interpOn && InterpModelCombo.SelectedIndex is 3 or 4 or 5 or 6)
-                {
-                    var oldModel = InterpModelCombo.SelectedIndex switch { 3 => "动漫专用(RIFE Anime)", 4 => "高清(RIFE HD)", 5 => "超高清(RIFE UHD)", _ => "经典兼容(RIFE v2.3)" };
-                    blackwellMsg = $"⚠ RTX 50 系:「{oldModel}」是旧模型,50 系可能不稳定,建议改用「通用画质最新 v4.13/v4.6」(兼容 50 系)";
-                }
+                var oldEngineLabel = VideoEngineRadios.SelectedIndex == 1 ? "Real-CUGAN" : "Real-ESRGAN";
+                compatMsg = $"⚠ 当前显卡与「{oldEngineLabel}」(2022 版)不兼容,建议改用「waifu2x」(官方新版,更稳定;照片超分也可用 ONNX 版)";
             }
-            if (blackwellMsg != null)
+            else if (interpOn && InterpModelCombo.SelectedIndex is 3 or 4 or 5 or 6 && EngineService.OldRifeModelRisky())
+            {
+                var oldModel = InterpModelCombo.SelectedIndex switch { 3 => "动漫专用(RIFE Anime)", 4 => "高清(RIFE HD)", 5 => "超高清(RIFE UHD)", _ => "经典兼容(RIFE v2.3)" };
+                compatMsg = $"⚠ 当前显卡与「{oldModel}」旧模型兼容性差,建议改用「通用画质最新 v4.13/v4.6」(更稳定)";
+            }
+            if (compatMsg != null)
             {
                 CompatHintPanel.Visibility = Visibility.Visible;
-                if (CompatHint != null) CompatHint.Text = blackwellMsg;
-                AppLogger.Info(blackwellMsg);
+                if (CompatHint != null) CompatHint.Text = compatMsg;
+                AppLogger.Info(compatMsg);
             }
             else
             {

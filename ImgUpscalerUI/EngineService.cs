@@ -38,6 +38,22 @@ public static partial class EngineService
         return IsBlackwellGpu();
     }
 
+    /// <summary>旧 ncnn 引擎(2022 版,realcugan/realesrgan ncnn)在 GPU 上可能不可用的设备:
+    /// ①RTX 50 系(Blackwell,ncnn-Vulkan vkQueueSubmit 崩,全局已知)②Vulkan 不可用/无独显(只能 CPU,而 CPU 也崩)。
+    /// 用于全设备兼容自检提示(不限 50 系)。</summary>
+    public static bool OldNcnnGpuRisky()
+    {
+        // Blackwell:Vulkan 驱动问题,已知崩
+        if (IsBlackwellGpu()) return true;
+        // Vulkan 不可用(无独显/驱动缺):引擎 GPU 无法跑,CPU 模式也崩 → 风险
+        try { if (!ALHPro.VulkanCheck.GpuAvailable) return true; } catch { }
+        // 其余(AMD/Intel 核显/NVIDIA 老卡):Vulkan 正常即可用,不预判(避免误报)
+        return false;
+    }
+
+    /// <summary>旧 rife 模型(anime/HD/UHD/v2.3,ncnn 2022 权重)在 Blackwell 上不稳(其余卡正常)。</summary>
+    public static bool OldRifeModelRisky() => IsBlackwellGpu();
+
     // 引擎根目录:优先 exe 旁 engines/ 目录;否则从当前目录向上逐级搜索(覆盖源码布局/输出目录)
     public static string EnginesDir
     {
