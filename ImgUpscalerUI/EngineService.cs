@@ -531,8 +531,9 @@ public static class EngineService
             // -g -1 直接 exit -1073741819 内存访问违规)→ 反向试 GPU 0,再失败抛指引异常
             string head = ex.Message.Split('\n')[0];
             if (head.Length > 90) head = head[..90];
-            AppLogger.Info($"⚠ CPU 引擎失败({head}),自动改用 GPU 0 重算...");
-            progress?.Report((0, $"⚠ CPU 引擎失败({head}),自动改用 GPU 0 重算..."));
+            string gpu0Name = GpuName(0);
+            AppLogger.Info($"⚠ CPU 模式不可用(引擎 CPU 路径不稳定: {head})——自动改用 GPU 0({gpu0Name}) 重算");
+            progress?.Report((0, $"⚠ CPU 模式不可用,自动改用 GPU 0({gpu0Name}) 重算(更快更稳)..."));
             var gpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g 0");
             try
             {
@@ -566,8 +567,9 @@ public static class EngineService
             var altGpu = TryGetAlternateGpu(curGpu);
             if (altGpu.HasValue)
             {
-                AppLogger.Info($"⚠ 降级:GPU 引擎失败({head}),改用 GPU {altGpu.Value}(引擎自检可用)重算...");
-                progress?.Report((0, $"⚠ GPU 引擎失败({head}),改用 GPU {altGpu.Value} 重算..."));
+                string altName = GpuName(altGpu.Value);
+                AppLogger.Info($"⚠ 降级:GPU 引擎失败({head}),改用 GPU {altGpu.Value}({altName}) 重算...");
+                progress?.Report((0, $"⚠ GPU 引擎失败({head}),改用 GPU {altGpu.Value}({altName}) 重算..."));
                 var altArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", $"-g {altGpu.Value}");
                 try
                 {
@@ -578,12 +580,12 @@ public static class EngineService
                 {
                     string head2 = ex2.Message.Split('\n')[0];
                     if (head2.Length > 90) head2 = head2[..90];
-                    AppLogger.Info($"⚠ GPU {altGpu.Value} 也失败({head2}),继续降级 CPU 重算");
+                    AppLogger.Info($"⚠ GPU {altGpu.Value}({altName}) 也失败({head2}),继续降级 CPU 重算");
                 }
             }
 
             // ② CPU
-            AppLogger.Info($"⚠ 降级:GPU 引擎失败({head}),自动改用 CPU 重算");
+            AppLogger.Info($"⚠ 降级:GPU 引擎失败({head});CPU 模式在此引擎不稳定,自动改用 CPU 重算");
             progress?.Report((0, $"⚠ GPU 引擎失败({head}),自动改用 CPU 重算..."));
             var cpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g -1");
             try
@@ -595,8 +597,9 @@ public static class EngineService
                 // ③ CPU 也崩(老式 ncnn 引擎 CPU 模式 bug):反向再试 GPU 0
                 if (curGpu != 0)
                 {
-                    AppLogger.Info("⚠ CPU 也失败,回退重试 GPU 0...");
-                    progress?.Report((0, "⚠ CPU 也失败,回退重试 GPU 0..."));
+                    string g0Name = GpuName(0);
+                    AppLogger.Info($"⚠ CPU 模式也失败,回退重试 GPU 0({g0Name})...");
+                    progress?.Report((0, $"⚠ CPU 模式也失败,回退重试 GPU 0({g0Name})..."));
                     await RunAsync(exe,
                         System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g 0"),
                         progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
@@ -618,6 +621,18 @@ public static class EngineService
     {
         var m = System.Text.RegularExpressions.Regex.Match(msg, @"exit (-?\d+)");
         return m.Success ? m.Groups[1].Value : "?";
+    }
+
+    /// <summary>GPU 显示名(降级日志用):从 VulkanCheck 枚举取;取不到回退 "GPU {id}"。</summary>
+    private static string GpuName(int id)
+    {
+        try
+        {
+            foreach (var (devId, name) in VulkanCheck.Devices)
+                if (devId == id && !string.IsNullOrWhiteSpace(name)) return name;
+        }
+        catch { }
+        return $"GPU {id}";
     }
 
     /// <summary>取"当前 GPU 之外"的备用 GPU 编号(引擎实测枚举到的 Vulkan 设备;多卡机可用)。
