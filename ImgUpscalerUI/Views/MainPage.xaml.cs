@@ -449,6 +449,32 @@ public sealed partial class MainPage : Page
     private void SkipRestBtn_Click(object sender, RoutedEventArgs e)
         => SafeRender.CurrentRestCts?.Cancel();
 
+    /// <summary>显示"更新详情":读取随包 RELEASE_NOTES.md(当前版本修复/改进/新增)。</summary>
+    private void ShowReleaseNotes()
+    {
+        string text;
+        try
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, "RELEASE_NOTES.md");
+            text = File.Exists(path) ? File.ReadAllText(path) : "未找到 RELEASE_NOTES.md(程序目录)。";
+        }
+        catch (Exception ex) { text = "读取更新详情失败: " + ex.Message; }
+        var dlg = new ContentDialog
+        {
+            Title = "更新详情 · ALH Pro v1.1.0",
+            Content = new ScrollViewer
+            {
+                MaxHeight = 520,
+                VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
+                Content = new TextBlock { Text = text, FontSize = 12, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap },
+            },
+            PrimaryButtonText = "关闭",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = this.XamlRoot,
+        };
+        try { _ = dlg.ShowAsync(); } catch { }
+    }
+
     private void About_Click(object sender, RoutedEventArgs e)
     {
         var content = new StackPanel { Spacing = 8 };
@@ -462,10 +488,20 @@ public sealed partial class MainPage : Page
         });
         content.Children.Add(new TextBlock
         {
-            Text = $"版本 v1.0 · 构建 {File.GetLastWriteTime(typeof(MainPage).Assembly.Location):MM-dd HH:mm}",
+            Text = $"版本 v{UpdateChecker.CurrentVersion}(1.1.0) · 构建 {File.GetLastWriteTime(typeof(MainPage).Assembly.Location):MM-dd HH:mm}",
             FontSize = 12,
             Opacity = 0.7,
         });
+        // 更新详情:查看当前版本更新了什么(读取随包 RELEASE_NOTES.md)
+        var notesLink = new Microsoft.UI.Xaml.Controls.HyperlinkButton
+        {
+            Content = "查看更新详情(v1.1.0)",
+            FontSize = 11,
+            Padding = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 0),
+            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
+        };
+        notesLink.Click += (_, _) => ShowReleaseNotes();
+        content.Children.Add(notesLink);
         // 手动检查更新:点击后显示结果;成功展示"已最新/发现新版本",失败才提示(启动静默检查不打扰)
         var updateRow = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 10 };
         var updateBtn = new Button
