@@ -164,8 +164,10 @@ public static class AudioService
         var keepRate = srcRate > 0 ? $"aresample={srcRate.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}" : "";
         var filters = new System.Collections.Generic.List<string>();
         // 1) 降噪(afftdn FFT 降噪:经实测定于此 ffmpeg 构建有效;原 anlmdn 在此构建无效果——已替换)
+        // denoise:0=关 1=弱 2=中 3=强
         if (denoise == 1) filters.Add("afftdn=nf=-25");
-        else if (denoise == 2) filters.Add("afftdn=nf=-35");
+        else if (denoise == 2) filters.Add("afftdn=nf=-30");
+        else if (denoise == 3) filters.Add("afftdn=nf=-35");
         // 2) 低切(去低频隆隆/直流,人声/音乐更干净)
         if (lowcut) filters.Add("highpass=f=40");
         // 3) 均衡(柔和高频增强,提清晰度)
