@@ -615,7 +615,7 @@ public sealed partial class AudioView : UserControl
                         AudioStatus.Text = t.msg;
                     });
                     // ==== AI 分离(Demucs)优先:先转 44.1k stereo wav → 分离 → 再转目标格式 ====
-                    int demucsSel = DemucsRadios.SelectedIndex;   // 0=关 1=人声 2=去人声 3=重混增强
+                    int demucsSel = DemucsRadios.SelectedIndex;   // 0=关 1=人声 2=去人声 3=分离 4=重混增强
                     if (demucsSel > 0)
                     {
                         // 1) 转 44.1k 立体声 WAV(ffmpeg,DurSec 探测)
@@ -624,11 +624,30 @@ public sealed partial class AudioView : UserControl
                         Log("AI 分离:转为 44.1kHz 立体声 WAV...");
                         await AudioService.ConvertToWav44kAsync(item.Path, tmpWav);
                         // 2) 分离(CPU 推理,模型 158MB;慢但稳)
-                        await AudioEnhanceService.SeparateAsync(tmpWav, tmpWav, demucsSel == 1 ? 0 : demucsSel == 2 ? 1 : 5,
+                        int sepTarget = demucsSel switch { 1 => 0, 2 => 1, 3 => 6, _ => 5 };
+                        // target 6 = 分离两文件;输出名带 _增强;分离版用 tmpWav 派生(会生成 _人声/_伴奏 于目标目录)
+                        string sepOut = demucsSel == 3
+                            ? System.IO.Path.Combine(System.IO.Path.GetDirectoryName(item.Path)!,
+                                System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_分离.wav")
+                            : tmpWav;
+                        await AudioEnhanceService.SeparateAsync(tmpWav, sepOut, sepTarget,
                             -1, prog, _cts.Token);
-                        // 3) 转目标格式(输出文件名保持 _增强.ext)
-                        Log("AI 分离完成,转换为 " + ext + " ...");
-                        await AudioService.ConvertWavToAsync(tmpWav, outPath, outFmt);
+                        // 3) 转目标格式(输出文件名保持 _增强.ext;分离版:人声/伴奏两个都转)
+                        if (demucsSel == 3)
+                        {
+                            var d = System.IO.Path.GetDirectoryName(item.Path)!;
+                            var b = System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_分离";
+                            Log("AI 分离完成,转换 " + ext + " ...");
+                            await AudioService.ConvertWavToAsync(System.IO.Path.Combine(d, b + "_人声.wav"), System.IO.Path.Combine(d, b + "_人声" + ext), outFmt);
+                            await AudioService.ConvertWavToAsync(System.IO.Path.Combine(d, b + "_伴奏.wav"), System.IO.Path.Combine(d, b + "_伴奏" + ext), outFmt);
+                            try { System.IO.File.Delete(System.IO.Path.Combine(d, b + "_人声.wav")); } catch { }
+                            try { System.IO.File.Delete(System.IO.Path.Combine(d, b + "_伴奏.wav")); } catch { }
+                        }
+                        else
+                        {
+                            Log("AI 分离完成,转换为 " + ext + " ...");
+                            await AudioService.ConvertWavToAsync(tmpWav, outPath, outFmt);
+                        }
                         try { System.IO.File.Delete(tmpWav); } catch { }
                     }
                     else
