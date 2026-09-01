@@ -57,6 +57,7 @@ public sealed partial class AudioView : UserControl
 
     // ---------- 音量(滑动条,拖到最左=静音) ----------
     private double _lastVolume = 1.0;   // 0~1
+    private int _lastProgSec = -1;      // 进度日志节流:上次写入日志的百分比
 
     private void VolSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
@@ -592,6 +593,7 @@ public sealed partial class AudioView : UserControl
     {
         if (_running || _items.Count == 0) return;
         _running = true;
+        _lastProgSec = -1;
         _cts = new CancellationTokenSource();
         UpdateRunState();
         int total = _items.Count, done = 0, fail = 0;
@@ -613,6 +615,11 @@ public sealed partial class AudioView : UserControl
                     {
                         AudioProgress.Value = t.pct;
                         AudioStatus.Text = t.msg;
+                        if (_lastProgSec != t.pct)   // 每 1% 变化写一次日志(进度可见,不会刷屏)
+                        {
+                            _lastProgSec = t.pct;
+                            Log(t.msg);
+                        }
                     });
                     // ==== AI 分离(Demucs)优先:先转 44.1k stereo wav → 分离 → 再转目标格式 ====
                     int demucsSel = DemucsRadios.SelectedIndex;   // 0=关 1=人声 2=去人声 3=分离(两文件)
