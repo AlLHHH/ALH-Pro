@@ -610,7 +610,7 @@ public sealed partial class AudioView : UserControl
                         System.IO.Path.GetDirectoryName(item.Path)!,
                         System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_增强" + ext);
                     await AudioService.EnhanceAsync(item.Path, outPath,
-                        DenoiseRadios.SelectedIndex,
+                        DenoiseCheck.IsChecked == true ? 1 : 0,   // 勾选=弱降噪(afftdn nf=-25)
                         LoudnessCheck.IsChecked == true,
                         LowcutCheck.IsChecked == true,
                         EqCheck.IsChecked == true,
