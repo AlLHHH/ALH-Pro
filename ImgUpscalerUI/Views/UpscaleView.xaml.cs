@@ -320,7 +320,7 @@ public sealed partial class UpscaleView : UserControl
             }
             else if (EngineService.ShouldUseOnnxEsrgan())
             {
-                SpeedHint.Text = "✅ 已自动用兼容版 Real-ESRGAN(当前显卡可用,稳定)";
+                SpeedHint.Text = "✅ 已按此显卡自动选用稳定引擎处理(无需其他设置)";
                 SpeedHint.Visibility = Visibility.Visible;
             }
         }
@@ -778,15 +778,15 @@ public sealed partial class UpscaleView : UserControl
                         bool useOnnx = engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan();
                         if (useOnnx)
                         {
-                            Log("✅ 自检:Real-ESRGAN 自动改用兼容版(DirectML GPU 加速,当前显卡可用,稳定)");
-                            progress.Report((0, "✅ 自检完毕:Real-ESRGAN 用兼容版(稳定)..."));
+                            Log("✅ 自检:已按当前显卡自动改用稳定引擎(直接处理,无需设置)");
+                            progress.Report((0, "✅ 自检完毕:用稳定引擎处理..."));
                             await EsrganOnnxService.UpscaleAsync(srcPath, outPath, scale,
                                 gpuId, progress, ct);
                         }
                         else
                         {
                             if (engine == "realesrgan" && EngineService.OldNcnnGpuRisky())
-                                Log("⚠ 自检:当前显卡与老引擎不兼容且未找到兼容版模型,回退 ncnn(可能失败,建议补模型或改用 waifu2x)");
+                                Log("⚠ 自检:当前显卡与老引擎不兼容且未找到稳定版,回退旧引擎(可能失败,建议改用 waifu2x)");
                             else
                                 Log($"✅ 自检完毕:{(engine == "realesrgan" ? "ncnn GPU 引擎可用(快)" : "常规引擎")}");
                             await EngineService.UpscaleAsync(srcPath, outPath, engine,
