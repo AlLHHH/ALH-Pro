@@ -300,7 +300,7 @@ namespace ALHPro
             // 系统标题栏(不扩展内容区):窗口由系统立刻绘制 → 无黑屏(流畅)。
             // 标题栏颜色:Win11 支持对系统标题栏着色(背景/按钮同深色),尽力设置,失败无碍。
             window.ExtendsContentIntoTitleBar = false;
-            window.Title = "ALH Pro v1.0";
+            window.Title = "ALH Pro v" + UpdateChecker.CurrentVersion;
             MainWindow = window;
 
             // 关闭窗口时:杀掉所有处理子进程(防止引擎孤儿)+ 清理裁剪/转码/临时文件
