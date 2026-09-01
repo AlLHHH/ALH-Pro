@@ -124,9 +124,9 @@ public static class AudioEnhanceService
                     float v = outBuf[3, c, s] / w;      // 人声(轨3)
                     float org = mix[c, s];              // 原曲
                     float acc = acc1;                   // 伴奏 = 轨0(轨1/2 奇怪,不加)
-                    // 伴奏洗人声力度:滑条 0~100 → k = 0~1.5(0=不洗(保留人声);1=标准洗净;1.5=强洗(削伴奏多))
-                    // 人声轨:输出纯人声(v);伴奏轨:原曲 − k×人声(去人声但可调残留)
-                    float k = 0f + (vocalStrength / 100f) * 1.5f;
+                    // 伴奏洗净力度(vocalStrength 0~100;k=1=精确全洗"伴奏=原曲−人声",>1=过洗削伴奏,<1=留人声)
+                    // 默认传 100 → k=1(标准);不再有滑条(已删),固定标准全洗。
+                    float k = Math.Clamp(vocalStrength / 100f, 0f, 1.5f);
                     float vM = v;                        // 人声输出纯(不混原曲,分离就是要纯人声)
                     float accM = org - k * v;
                     if (target >= 100)
