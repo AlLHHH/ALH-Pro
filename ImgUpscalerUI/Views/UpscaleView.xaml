@@ -35,8 +35,8 @@
                     <TextBlock Text="算法" Style="{StaticResource SectionTitle}"/>
                     <RadioButtons x:Name="ModeRadios" SelectedIndex="0"
                                   ToolTipService.ToolTip="算法模式:动漫插画用 waifu2x;真实照片用 Real-ESRGAN">
-                        <RadioButton Content="动漫插画 (waifu2x)"/>
-                        <RadioButton Content="真实照片 (Real-ESRGAN)"/>
+                        <RadioButton Content="动漫插画"/>
+                        <RadioButton Content="真实照片"/>
                     </RadioButtons>
 
                     <StackPanel x:Name="ModelPanel" Spacing="6">
