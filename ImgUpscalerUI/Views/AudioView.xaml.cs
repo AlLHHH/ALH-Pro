@@ -717,7 +717,7 @@ public sealed partial class AudioView : UserControl
                             ? System.IO.Path.Combine(sepDir, System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_分离.wav")
                             : tmpWav;
                         await AudioEnhanceService.SeparateAsync(tmpWav, sepOut, sepTarget,
-                            -1, 1f, prog, _cts.Token);
+                            -1, 100f, prog, _cts.Token);   // 100=默认全洗(伴奏=原曲−人声)
                         // 3) 转目标格式(输出文件名保持 _增强.ext;分离版:人声/伴奏两个都转,放 sepDir,UniquePath 防覆盖)
                         if (isSepMode)
                         {
