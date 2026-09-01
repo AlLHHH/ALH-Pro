@@ -72,12 +72,12 @@
                         <CheckBox x:Name="CmOther2" Content="其他 2(同上)" Checked="Options_Changed" Unchecked="Options_Changed"/>
                     </StackPanel>
 
-                    <!-- 人声强度(手动调整,类似抠图阈值):100=纯人声;50=人声+伴奏自然混合;0=原曲 -->
+                    <!-- 伴奏洗人声力度(手动调整):0=保留伴奏里的人声;100=尽力洗净(可能削一点伴奏) -->
                     <StackPanel Margin="24,4,0,0" Spacing="2">
-                        <TextBlock Text="人声强度" FontSize="11" Opacity="0.7"/>
+                        <TextBlock Text="伴奏洗人声力度" FontSize="11" Opacity="0.7"/>
                         <Slider x:Name="VocalStrength" Minimum="0" Maximum="100" Value="100" StepFrequency="1"
-                                ValueChanged="Options_Changed" ToolTipService.ToolTip="0=原曲(不分离);50=人声+伴奏自然混合;100=纯人声(最分离)" Margin="4,0"/>
-                        <TextBlock x:Name="VocalStrengthLabel" Text="纯人声(100%)" FontSize="10" Opacity="0.6"/>
+                                ValueChanged="Options_Changed" ToolTipService.ToolTip="去人声力度:0=伴奏里保留人声(未洗净);100=尽力洗净人声(伴奏可能稍偏薄)——手动平衡干净度" Margin="4,0"/>
+                        <TextBlock x:Name="VocalStrengthLabel" Text="洗净(100%)" FontSize="10" Opacity="0.6"/>
                     </StackPanel>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
