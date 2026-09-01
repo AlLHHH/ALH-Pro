@@ -68,8 +68,16 @@
                     <StackPanel x:Name="CustomMixPanel" Visibility="Collapsed" Margin="24,2,0,4" Spacing="2">
                         <CheckBox x:Name="CmVocals" Content="人声" Checked="Options_Changed" Unchecked="Options_Changed"/>
                         <CheckBox x:Name="CmAcc" Content="伴奏" Checked="Options_Changed" Unchecked="Options_Changed"/>
-                        <CheckBox x:Name="CmOther1" Content="其他 1" Checked="Options_Changed" Unchecked="Options_Changed"/>
-                        <CheckBox x:Name="CmOther2" Content="其他 2" Checked="Options_Changed" Unchecked="Options_Changed"/>
+                        <CheckBox x:Name="CmOther1" Content="其他 1(部分歌内含鼓/贝斯)" Checked="Options_Changed" Unchecked="Options_Changed"/>
+                        <CheckBox x:Name="CmOther2" Content="其他 2(同上)" Checked="Options_Changed" Unchecked="Options_Changed"/>
+                    </StackPanel>
+
+                    <!-- 人声强度(手动调整,类似抠图阈值):100=纯人声;50=人声+伴奏自然混合;0=原曲 -->
+                    <StackPanel Margin="24,4,0,0" Spacing="2">
+                        <TextBlock Text="人声强度" FontSize="11" Opacity="0.7"/>
+                        <Slider x:Name="VocalStrength" Minimum="0" Maximum="100" Value="100" StepFrequency="1"
+                                ValueChanged="Options_Changed" ToolTipService.ToolTip="0=原曲(不分离);50=人声+伴奏自然混合;100=纯人声(最分离)" Margin="4,0"/>
+                        <TextBlock x:Name="VocalStrengthLabel" Text="纯人声(100%)" FontSize="10" Opacity="0.6"/>
                     </StackPanel>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
