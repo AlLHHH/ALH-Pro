@@ -1825,8 +1825,83 @@ public static class VideoService
             }
             else
             {
-                await RunAsync(rife, args, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
+                // ===== ONNX 补帧路线(50 系/GPU 不可用设备):ncnn-CPU 慢,若 ONNX 模型在 → 走 ONNX(DirectML/CPU 逐对)=====
+                // 50 系 ncnn-Vulkan 崩(黑帧/静默 hang)→ 原逻辑直接降 ncnn-CPU(慢);
+                // 现在优先 ONNX:DirectML GPU 可跑(50 系 DirectML 正常),失败自动 CPU。
+                if (RifeOnnxService.Available() && TryGetRifeOnnxFrames(args, out var onnxSegIn, out var onnxOut, out var onnxTarget))
+                {
+                    AppLogger.Info($"✅ 补帧改走 ONNX 路线(rife49.onnx,DirectML→CPU)——50 系/GPU 不可用设备稳定且更快");
+                    progress?.Report((0, $"补帧改用 ONNX 模型(50 系/GPU 不可用设备更稳定)..."));
+                    // 传原始 gpuId:ONNX 内部 DirectML GPU 优先,失败自动 CPU(单会话加速优于 ncnn-CPU)
+                    await RifeOnnxInterpDirAsync(onnxSegIn!, onnxOut!, onnxTarget, gpuId, watchTotal, watchDir).ConfigureAwait(false);
+                }
+                else
+                {
+                    await RunAsync(rife, args, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
+                }
             }
+        }
+
+        // ===== ONNX 补帧辅助(局部函数,可用外层 gpuId)=====
+        bool TryGetRifeOnnxFrames(string args, out string? sIn, out string? oDir, out int target)
+        {
+            sIn = null; oDir = null; target = 0;
+            try
+            {
+                var mIn = System.Text.RegularExpressions.Regex.Match(args, @"-i\s+""([^""]+)""");
+                var mOut = System.Text.RegularExpressions.Regex.Match(args, @"-o\s+""([^""]+)""");
+                var mN = System.Text.RegularExpressions.Regex.Match(args, @"-n\s+(\d+)");
+                if (!mIn.Success || !mOut.Success || !mN.Success) return false;
+                sIn = mIn.Groups[1].Value;
+                oDir = mOut.Groups[1].Value;
+                target = int.Parse(mN.Groups[1].Value);
+                return target >= 2;
+            }
+            catch { return false; }
+        }
+
+        async Task RifeOnnxInterpDirAsync(string sIn, string oDir, int target, int gpuId,
+            int watchTotal, string? watchDir)
+        {
+            await Task.Run(() =>
+            {
+                Directory.CreateDirectory(oDir);
+                var files = Directory.EnumerateFiles(sIn, "frame_*.png")
+                    .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
+                if (files.Count < 2) return;
+
+                int srcCount = files.Count;
+                int pairs = srcCount - 1;
+                if (pairs <= 0) return;
+
+                int idx = 1;
+                for (int p = 0; p < pairs; p++)
+                {
+                    CopyFrame(files[p], Path.Combine(oDir, $"frame_{idx:D6}.png"));
+                    idx++;
+                    int mids = Math.Max(0, (target - 1) / pairs - 1);
+                    if (p < (target - 1) % pairs) mids++;
+                    for (int t = 1; t <= mids; t++)
+                    {
+                        float time = t / (float)(mids + 1);
+                        var outF = Path.Combine(oDir, $"frame_{idx:D6}.png");
+                        try { RifeOnnxService.Interp(files[p], files[p + 1], time, outF, gpuId); idx++; }
+                        catch (Exception ex)
+                        {
+                            AppLogger.Warn($"ONNX 补帧失败({ex.Message.Split('\n')[0]})——回退复制原帧");
+                            CopyFrame(files[p], outF);
+                            idx++;
+                        }
+                    }
+                }
+                CopyFrame(files[^1], Path.Combine(oDir, $"frame_{idx:D6}.png"));
+            }).ConfigureAwait(false);
+        }
+
+        void CopyFrame(string src, string dst)
+        {
+            try { File.Copy(src, dst, true); }
+            catch { }
         }
 
         // TTA 开关(所有模型可用);时间步仅 v4 架构模型支持
