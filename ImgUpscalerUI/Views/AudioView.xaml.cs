@@ -24,6 +24,7 @@ public sealed partial class AudioView : UserControl
         public bool Lowcut { get; set; }
         public bool Eq { get; set; }
         public int OutputFmt { get; set; } = 0;      // 0=MP3 1=WAV 2=FLAC
+        public int VocalStrength { get; set; } = 100;
     }
 
     private static string SettingsFile => ParaPaths.SettingsFile("audio-settings.json");
@@ -106,6 +107,14 @@ public sealed partial class AudioView : UserControl
         if (CustomMixPanel != null)
             CustomMixPanel.Visibility = DemucsRadios.SelectedIndex == 4
                 ? Visibility.Visible : Visibility.Collapsed;
+        // 人声强度滑条标签
+        if (VocalStrengthLabel != null)
+        {
+            int v = (int)VocalStrength.Value;
+            VocalStrengthLabel.Text = v == 100 ? "纯人声(100%)"
+                : v == 0 ? "原曲(0%)"
+                : $"混合 {v}%";
+        }
         SaveSettings();
     }
 
@@ -122,6 +131,7 @@ public sealed partial class AudioView : UserControl
             LowcutCheck.IsChecked = d.Lowcut;
             EqCheck.IsChecked = d.Eq;
             FmtRadios.SelectedIndex = Math.Clamp(d.OutputFmt, 0, 2);
+            VocalStrength.Value = Math.Clamp(d.VocalStrength, 0, 100);
         }
         catch { /* 读取失败用默认 */ }
     }
@@ -140,6 +150,7 @@ public sealed partial class AudioView : UserControl
                     Lowcut = LowcutCheck.IsChecked == true,
                     Eq = EqCheck.IsChecked == true,
                     OutputFmt = FmtRadios.SelectedIndex,
+                    VocalStrength = (int)VocalStrength.Value,
                 }));
         }
         catch { /* 保存失败忽略 */ }
@@ -700,7 +711,7 @@ public sealed partial class AudioView : UserControl
                                 System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_分离.wav")
                             : tmpWav;
                         await AudioEnhanceService.SeparateAsync(tmpWav, sepOut, sepTarget,
-                            -1, prog, _cts.Token);
+                            -1, (float)(VocalStrength.Value / 100.0), prog, _cts.Token);
                         // 3) 转目标格式(输出文件名保持 _增强.ext;分离版:人声/伴奏两个都转)
                         if (demucsSel == 3)
                         {

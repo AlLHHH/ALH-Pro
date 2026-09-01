@@ -36,18 +36,20 @@ public static class AudioEnhanceService
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
 
     /// <summary>分离音频。input=任意音频(程序内先用 ffmpeg 转成 44.1k stereo wav);输出所选轨 wav。
-    /// target:0人声 1伴奏 2鼓 3贝斯 4其他 5重混 6分离(输出 人声+伴奏 两文件)。</summary>
+    /// target:0人声 1伴奏 2鼓 3贝斯 4其他 5重混 6分离(输出 人声+伴奏 两文件)。
+    /// vocalStrength=0~1:人声轨混合比例(0=原曲,0.5=一半,1=纯人声)——用于"人声强度"滑条手动调整。</summary>
     public static async Task SeparateAsync(string inputWav, string outputWav, int target,
-        int gpuId = -1, IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default)
+        int gpuId = -1, float vocalStrength = 1f,
+        IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default)
     {
         var modelPath = FindModel()
             ?? throw new FileNotFoundException("未找到 HT-Demucs 模型,请放入 engines\\demucs\\htdemucs.onnx");
-        await Task.Run(() => RunCore(inputWav, outputWav, target, modelPath, gpuId, progress, ct), ct);
+        await Task.Run(() => RunCore(inputWav, outputWav, target, modelPath, gpuId, vocalStrength, progress, ct), ct);
         progress?.Report((100, "完成"));
     }
 
     private static void RunCore(string inputWav, string outputWav, int target, string modelPath, int gpuId,
-        IProgress<(int pct, string msg)>? progress, CancellationToken ct)
+        float vocalStrength, IProgress<(int pct, string msg)>? progress, CancellationToken ct)
     {
         var key = (modelPath, gpuId);
         // 分离是用户单次操作,无需并发;且全局 gate.Wait() 在后台线程 + UI 上下文下可能死锁(实测 CPU 0 增量)。
@@ -120,33 +122,38 @@ public static class AudioEnhanceService
                     float o1 = outBuf[1, c, s] / w;     // 其他1
                     float o2 = outBuf[2, c, s] / w;     // 其他2
                     float v = outBuf[3, c, s] / w;      // 人声(轨3)
+                    float org = mix[c, s];              // 原曲
                     float acc = acc1;                   // 伴奏 = 轨0(轨1/2 奇怪,不加)
+                    // 人声强度混合:人声轨 = s×人声+(1-s)×原曲;伴奏 = 原曲 − s×人声(残留可调)
+                    float vs = Math.Clamp(vocalStrength, 0f, 1f);
+                    float vM = vs * v + (1 - vs) * org;
+                    float accM = org - vs * v;
                     if (target >= 100)
                     {
                         // 自定义组合:100+bitmask(1人声 2伴奏 4其他1 8其他2)——左右声道分别合成
                         int mask = target - 100;
                         float sum = 0;
-                        if ((mask & 1) != 0) sum += v;
-                        if ((mask & 2) != 0) sum += acc;
+                        if ((mask & 1) != 0) sum += vM;
+                        if ((mask & 2) != 0) sum += accM;
                         if ((mask & 4) != 0) sum += o1;
                         if ((mask & 8) != 0) sum += o2;
                         sel[0, c, s] = sum;
                     }
                     else if (target == 6)
                     {
-                        sel[0, c, s] = v;                 // 人声(轨3)
-                        sel[1, c, s] = acc;               // 伴奏(轨0)
+                        sel[0, c, s] = vM;                // 人声(轨3,强度混合)
+                        sel[1, c, s] = accM;              // 伴奏(原曲−人声,干净)
                     }
                     else
                     {
                         sel[0, c, s] = target switch
                         {
-                            0 => v,                       // 人声
-                            1 => acc,                     // 伴奏(去人声)
+                            0 => vM,                      // 人声(强度混合)
+                            1 => accM,                    // 伴奏(原曲−人声)
                             2 => o1,                      // 其他1
                             3 => o2,                      // 其他2
-                            4 => acc,                     // 伴奏(近似)
-                            _ => v + acc,                 // 人声+伴奏(重混=近似原曲)
+                            4 => accM,                    // 伴奏(近似)
+                            _ => vM + accM,               // 人声+伴奏(重混=近似原曲)
                         };
                     }
                 }
