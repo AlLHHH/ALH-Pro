@@ -276,7 +276,14 @@ public static class VulkanCheck
             notes.Add("若安装有独立显卡却显示不可用,请更新显卡驱动(需支持 Vulkan)或检查显卡是否被禁用");
         }
         if (hasAmd) notes.Add("AMD 显卡个别驱动版本存在兼容问题(黑屏/崩溃),若遇到请更新驱动或改用 CPU");
-        if (hasNvidia) notes.Add("较老的 NVIDIA 型号(如 GTX 600/700 系)可能不支持 GPU 加速,遇到报错请改用 CPU");
+        // 只有真的检测到旧型号 N 卡(GTX 600/700/900 系)才提示;新卡(20系+)不打扰
+        if (hasNvidia)
+        {
+            bool oldNv = GpuInfo.GetAdapterNames()?.Any(n => n.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase)
+                && System.Text.RegularExpressions.Regex.IsMatch(n, @"GTX\s*(6|7|8|9)\d{2}", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) == true;
+            if (oldNv)
+                notes.Add("较老的 NVIDIA 型号(GTX 600/700/900 系)可能不支持 GPU 加速,遇到报错请改用 CPU");
+        }
         if (hasIntel && !hasAmd && !hasNvidia)
             notes.Add("核显使用共享内存,处理大图或高倍率时可能显存不足,建议勾选「快速模式」或改用 CPU");
         if (gpuOk && notes.Count == 0)
