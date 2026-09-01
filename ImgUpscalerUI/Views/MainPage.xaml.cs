@@ -536,8 +536,17 @@ public sealed partial class MainPage : Page
                     NavigateUri = new Uri(UpdateChecker.ReleasePageUrl),
                     UnderlineStyle = Microsoft.UI.Xaml.Documents.UnderlineStyle.Single,
                 };
-                hyper.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = $"发现新版本 {tag},点此下载" });
+                hyper.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = $"发现新版本 {tag},点此打开下载页" });
                 updateResult.Inlines.Add(hyper);
+                // 操作指引(追加在 updateResult 下方;动态插入 content)
+                var guide = new TextBlock
+                {
+                    FontSize = 10,
+                    Opacity = 0.65,
+                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                    Text = $"怎么更新:\n1. 点上方链接打开 GitHub Release 页面;打不开就用加速器/镜像,或找软件群/网盘获取安装包。\n2. 下载「ALHPro_v{tag.TrimStart('v')}_Setup.exe」(安装包;别下源码 zip)。\n3. 双击安装,等完成即可——设置/记录都保留,可手动卸载旧版。",
+                };
+                content.Children.Add(guide);
             }
             else
             {
