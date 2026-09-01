@@ -61,7 +61,16 @@
                         <RadioButton Content="提取人声"/>
                         <RadioButton Content="去人声(卡拉OK伴奏)"/>
                         <RadioButton Content="分离(导出人声+伴奏两个文件)"/>
+                        <RadioButton Content="自定义组合(选下面轨道)"/>
                     </RadioButtons>
+
+                    <!-- 自定义组合:勾选要保留的轨(人声=轨3,伴奏=轨0,其他1/2) -->
+                    <StackPanel x:Name="CustomMixPanel" Visibility="Collapsed" Margin="24,2,0,4" Spacing="2">
+                        <CheckBox x:Name="CmVocals" Content="人声" Checked="Options_Changed" Unchecked="Options_Changed"/>
+                        <CheckBox x:Name="CmAcc" Content="伴奏" Checked="Options_Changed" Unchecked="Options_Changed"/>
+                        <CheckBox x:Name="CmOther1" Content="其他 1" Checked="Options_Changed" Unchecked="Options_Changed"/>
+                        <CheckBox x:Name="CmOther2" Content="其他 2" Checked="Options_Changed" Unchecked="Options_Changed"/>
+                    </StackPanel>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 

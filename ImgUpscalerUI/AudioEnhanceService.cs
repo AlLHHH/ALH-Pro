@@ -121,7 +121,18 @@ public static class AudioEnhanceService
                     float o2 = outBuf[2, c, s] / w;     // 其他2
                     float v = outBuf[3, c, s] / w;      // 人声(轨3)
                     float acc = acc1;                   // 伴奏 = 轨0(轨1/2 奇怪,不加)
-                    if (target == 6)
+                    if (target >= 100)
+                    {
+                        // 自定义组合:100+bitmask(1人声 2伴奏 4其他1 8其他2)——左右声道分别合成
+                        int mask = target - 100;
+                        float sum = 0;
+                        if ((mask & 1) != 0) sum += v;
+                        if ((mask & 2) != 0) sum += acc;
+                        if ((mask & 4) != 0) sum += o1;
+                        if ((mask & 8) != 0) sum += o2;
+                        sel[0, c, s] = sum;
+                    }
+                    else if (target == 6)
                     {
                         sel[0, c, s] = v;                 // 人声(轨3)
                         sel[1, c, s] = acc;               // 伴奏(轨0)
