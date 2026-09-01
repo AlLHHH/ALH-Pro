@@ -634,7 +634,7 @@ public sealed partial class AudioView : UserControl
                     else
                     {
                         await AudioService.EnhanceAsync(item.Path, outPath,
-                            DenoiseCheck.IsChecked == true ? DenoiseRadios.SelectedIndex + 1 : 0,   // 0=关;1弱 2中 3强
+                            DenoiseRadios.SelectedIndex,   // 0=关 1=弱 2=中 3=强(afftdn nf=-25/-30/-35)
                             LoudnessCheck.IsChecked == true,
                             LowcutCheck.IsChecked == true,
                             EqCheck.IsChecked == true,
