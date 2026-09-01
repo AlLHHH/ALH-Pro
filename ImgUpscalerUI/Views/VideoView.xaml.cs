@@ -518,7 +518,7 @@ public sealed partial class VideoView : UserControl
             if (upOn && VideoEngineRadios.SelectedIndex is 1 or 2 && EngineService.OldNcnnGpuRisky())
             {
                 var oldEngineLabel = VideoEngineRadios.SelectedIndex == 1 ? "Real-CUGAN" : "Real-ESRGAN";
-                compatMsg = $"⚠ 当前显卡与「{oldEngineLabel}」(2022 版)不兼容,建议改用「waifu2x」(官方新版,更稳定;照片超分也可用 ONNX 版)";
+                compatMsg = $"⚠ 当前显卡与「{oldEngineLabel}」(2022 版)不兼容,建议改用「waifu2x」(官方新版,更稳定)";
             }
             else if (interpOn && InterpModelCombo.SelectedIndex is 3 or 4 or 5 or 6 && EngineService.OldRifeModelRisky())
             {
