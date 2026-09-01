@@ -688,113 +688,126 @@ public sealed partial class AudioView : UserControl
                         AudioProgress.Value = t.pct;
                         AudioStatus.Text = t.msg;
                     });
-                    // ==== AI 超分/分离(Demucs):先转 44.1k stereo wav → 分轨 → 重混/导出 ====
+                    // ==== AI(超分/分离):先转 44.1k stereo wav → 【一次分轨】 → 分离/超分各取所需 ====
                     int demucsSel = DemucsRadios.SelectedIndex;   // 0=关 1=人声 2=去人声 3=分离(两文件) 4=自定义组合
                     int srSel = SrRadios.SelectedIndex;           // 0=关 1=柔和 2=标准 3=强力(AI 超分)
-                    if (demucsSel > 0)
+                    bool needAI = demucsSel > 0 || srSel > 0;
+                    double trS = item.TrimStart > 0.1 ? item.TrimStart : 0;
+                    double trE = (item.TrimEnd > 0.1 && item.DurationSec > 0.2) ? item.TrimEnd : 0;
+                    if (!needAI)
                     {
-                        // 1) 转 44.1k 立体声 WAV(ffmpeg,DurSec 探测)
-                        var tmpWav = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
-                            $"alh_demucs_{Guid.NewGuid():N}.wav");
-                        Log("AI 分离:转为 44.1kHz 立体声 WAV...");
-                        await AudioService.ConvertToWav44kAsync(item.Path, tmpWav);
-                        Log("⚠ AI 分离处理中(CPU 较慢:约 1.5 分钟/分钟音频,请耐心等待;也可先处理音频后离开页面)");
-                        // 2) 分离(CPU 推理,158MB 模型;一首歌约几至十几分钟——快不了,耐心等)
-                        //    人声=轨3;伴奏=原曲−人声(更干净,数学减法);其他1/2=轨1/2
-                        int sepTarget = demucsSel switch { 1 => 0, 2 => 1, _ => 6 };
-                        if (demucsSel == 4)
-                        {
-                            // 自定义组合:勾勾选轨道(bitmask 1=人声 2=伴奏 4=其他1 8=其他2)
-                            int mask = 0;
-                            if (CmVocals.IsChecked == true) mask |= 1;
-                            if (CmAcc.IsChecked == true) mask |= 2;
-                            if (CmOther1.IsChecked == true) mask |= 4;
-                            if (CmOther2.IsChecked == true) mask |= 8;
-                            if (mask == 0) { Log("⚠ 自定义组合未勾选任何轨道"); throw new OperationCanceledException(); }
-                            sepTarget = 100 + mask;   // >100 = 自定义
-                        }
-                        // target 6 = 分离两文件;输出到"音频名_分离"文件夹(唯一化防覆盖);其余分离用 tmpWav
-                        bool isSepMode = demucsSel == 3;
-                        string sepDir = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(item.Path)!,
-                            System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_分离");
-                        string sepOut = isSepMode
-                            ? System.IO.Path.Combine(sepDir, System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_分离.wav")
-                            : tmpWav;
-                        await AudioEnhanceService.SeparateAsync(tmpWav, sepOut, sepTarget,
-                            -1, 100f, prog, _cts.Token);   // 100=默认全洗(伴奏=原曲−人声)
-                        // 3) 转目标格式(输出文件名保持 _增强.ext;分离版:人声/伴奏两个都转,放 sepDir,UniquePath 防覆盖)
-                        if (isSepMode)
-                        {
-                            System.IO.Directory.CreateDirectory(sepDir);
-                            var b = System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_分离";
-                            var vWav = System.IO.Path.Combine(sepDir, b + "_人声.wav");
-                            var aWav = System.IO.Path.Combine(sepDir, b + "_伴奏.wav");
-                            Log("AI 分离完成,转换 " + ext + " ...");
-                            await AudioService.ConvertWavToAsync(vWav, System.IO.Path.Combine(sepDir, b + "_人声" + ext), outFmt);
-                            await AudioService.ConvertWavToAsync(aWav, System.IO.Path.Combine(sepDir, b + "_伴奏" + ext), outFmt);
-                            try { System.IO.File.Delete(vWav); } catch { }
-                            try { System.IO.File.Delete(aWav); } catch { }
-                            sepOutputs.Add(System.IO.Path.Combine(sepDir, b + "_人声" + ext));
-                            sepOutputs.Add(System.IO.Path.Combine(sepDir, b + "_伴奏" + ext));
-                            outPath = System.IO.Path.Combine(sepDir, b + ext);   // 主输出路径=文件夹(弹窗定位用)
-                        }
-                        else
-                        {
-                            Log("AI 分离完成,转换为 " + ext + " ...");
-                            await AudioService.ConvertWavToAsync(tmpWav, outPath, outFmt);
-                            sepOutputs.Add(outPath);
-                        }
-                        try { System.IO.File.Delete(tmpWav); } catch { }
-                    }
-                    else if (srSel == 0)
-                    {
+                        // 普通增强(无 AI):降噪/音色调整/裁剪 → 输出格式
                         await AudioService.EnhanceAsync(item.Path, outPath,
                             DenoiseRadios.SelectedIndex,   // 0=关 1=弱 2=中 3=强(afftdn nf=-25/-30/-35)
                             LoudnessCheck.IsChecked == true,
                             LowcutCheck.IsChecked == true,
                             EqCheck.IsChecked == true,
                             outFmt, 320, null,   // MP3 用 320k 高品质(源 AAC 256k 时不再降档;WAV/FLAC 无损,此值忽略)
-                            prog, _cts.Token,
-                            item.TrimStart > 0.1 ? item.TrimStart : 0,
-                            (item.TrimEnd > 0.1 && item.DurationSec > 0.2) ? item.TrimEnd : 0);
+                            prog, _cts.Token, trS, trE);
                     }
-                    // ==== AI 超分(音质增强):分轨 → 人声/伴奏分别优化 → 重混 → 降噪/音色/输出格式 ====
-                    if (srSel > 0)
+                    else
                     {
+                        // 1) 转 44.1k 立体声 WAV(ffmpeg)
+                        var tmpWav = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                            $"alh_demucs_{Guid.NewGuid():N}.wav");
+                        Log("AI 处理:转为 44.1kHz 立体声 WAV...");
+                        await AudioService.ConvertToWav44kAsync(item.Path, tmpWav);
+                        Log("⚠ AI 分轨处理中(CPU 较慢:约 1.5 分钟/分钟音频,请耐心等待;也可先处理音频后离开页面)");
+                        // 2) 【一次分轨】输出 4 轨(人声=轨3,伴奏=原曲−人声,其他1/2=轨1/2)
+                        //    超分和分离共用这份结果——全开也只推理一次,不重复耗时
+                        var aiDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                            $"alh_ai_{Guid.NewGuid():N}");
+                        System.IO.Directory.CreateDirectory(aiDir);
+                        var stemBase = System.IO.Path.Combine(aiDir, "stems");
+                        await AudioEnhanceService.SeparateAsync(tmpWav, stemBase + ".wav", 7,
+                            -1, 100f, prog, _cts.Token);   // target 7 = 全 4 轨文件
+                        var vWav = stemBase + "_人声.wav";
+                        var aWav = stemBase + "_伴奏.wav";
+                        var o1Wav = stemBase + "_其他1.wav";
+                        var o2Wav = stemBase + "_其他2.wav";
+                        // 3) AI 分离输出(从 4 轨合成所选目标;同样应用降噪/音色调整/裁剪)
                         if (demucsSel > 0)
-                            Log("⚠ AI 超分与 AI 分离同时开启:需分轨两次,耗时加倍(一般只开一项即可)");
-                        // 1) 转 44.1k 立体声 WAV
-                        var srTmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
-                            $"alh_sr_{Guid.NewGuid():N}.wav");
-                        Log("AI 超分:转为 44.1kHz 立体声 WAV...");
-                        await AudioService.ConvertToWav44kAsync(item.Path, srTmp);
-                        Log("⚠ AI 超分处理中(神经网络分轨,CPU 较慢:约 1.5 分钟/分钟音频,请耐心等待)");
-                        // 2) 分轨(人声/伴奏两个文件)
-                        var srDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
-                            $"alh_sr_{Guid.NewGuid():N}");
-                        System.IO.Directory.CreateDirectory(srDir);
-                        var srB = System.IO.Path.Combine(srDir, "stems");
-                        await AudioEnhanceService.SeparateAsync(srTmp, srB + ".wav", 6, -1, 100f, prog, _cts.Token);
-                        // 3) 人声/伴奏分别优化后重混
-                        Log("AI 超分:人声/伴奏分别优化,重新混音...");
-                        var mixWav = System.IO.Path.Combine(srDir, "mix.wav");
-                        await AudioService.RemasterAsync(srB + "_人声.wav", srB + "_伴奏.wav", mixWav, srSel, prog, _cts.Token);
-                        // 4) 后续(降噪/音色调整/裁剪)在重混结果上完成,再转输出格式
-                        var srOut = UniquePath(System.IO.Path.GetDirectoryName(item.Path)!,
-                            System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_超分" + ext);
-                        Log("AI 超分完成,应用降噪/音色调整并转换 " + ext + " ...");
-                        await AudioService.EnhanceAsync(mixWav, srOut,
-                            DenoiseRadios.SelectedIndex,
-                            LoudnessCheck.IsChecked == true,
-                            LowcutCheck.IsChecked == true,
-                            EqCheck.IsChecked == true,
-                            outFmt, 320, null,
-                            prog, _cts.Token,
-                            item.TrimStart > 0.1 ? item.TrimStart : 0,
-                            (item.TrimEnd > 0.1 && item.DurationSec > 0.2) ? item.TrimEnd : 0);
-                        sepOutputs.Add(srOut);
-                        try { System.IO.File.Delete(srTmp); } catch { }
-                        try { System.IO.Directory.Delete(srDir, true); } catch { }
+                        {
+                            if (demucsSel == 1)   // 提取人声
+                            {
+                                Log("AI 分离完成(人声),应用降噪/音色调整并转换 " + ext + " ...");
+                                await AudioService.EnhanceAsync(vWav, outPath,
+                                    DenoiseRadios.SelectedIndex, LoudnessCheck.IsChecked == true,
+                                    LowcutCheck.IsChecked == true, EqCheck.IsChecked == true,
+                                    outFmt, 320, null, prog, _cts.Token, trS, trE);
+                                sepOutputs.Add(outPath);
+                            }
+                            else if (demucsSel == 2)   // 去人声(卡拉OK伴奏)
+                            {
+                                Log("AI 分离完成(伴奏),应用降噪/音色调整并转换 " + ext + " ...");
+                                await AudioService.EnhanceAsync(aWav, outPath,
+                                    DenoiseRadios.SelectedIndex, LoudnessCheck.IsChecked == true,
+                                    LowcutCheck.IsChecked == true, EqCheck.IsChecked == true,
+                                    outFmt, 320, null, prog, _cts.Token, trS, trE);
+                                sepOutputs.Add(outPath);
+                            }
+                            else if (demucsSel == 3)   // 分离两文件 → 输出到"音频名_分离"文件夹
+                            {
+                                var sepDir = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(item.Path)!,
+                                    System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_分离");
+                                System.IO.Directory.CreateDirectory(sepDir);
+                                var b = System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_分离";
+                                Log("AI 分离完成(两文件),应用降噪/音色调整并转换 " + ext + " ...");
+                                await AudioService.EnhanceAsync(vWav, System.IO.Path.Combine(sepDir, b + "_人声" + ext),
+                                    DenoiseRadios.SelectedIndex, LoudnessCheck.IsChecked == true,
+                                    LowcutCheck.IsChecked == true, EqCheck.IsChecked == true,
+                                    outFmt, 320, null, prog, _cts.Token, trS, trE);
+                                await AudioService.EnhanceAsync(aWav, System.IO.Path.Combine(sepDir, b + "_伴奏" + ext),
+                                    DenoiseRadios.SelectedIndex, LoudnessCheck.IsChecked == true,
+                                    LowcutCheck.IsChecked == true, EqCheck.IsChecked == true,
+                                    outFmt, 320, null, prog, _cts.Token, trS, trE);
+                                sepOutputs.Add(System.IO.Path.Combine(sepDir, b + "_人声" + ext));
+                                sepOutputs.Add(System.IO.Path.Combine(sepDir, b + "_伴奏" + ext));
+                                outPath = System.IO.Path.Combine(sepDir, b + ext);   // 主输出路径=文件夹(弹窗定位用)
+                            }
+                            else   // demucsSel == 4 自定义组合
+                            {
+                                // 勾选要保留的轨(bitmask 1=人声 2=伴奏 4=其他1 8=其他2)
+                                int mask = 0;
+                                if (CmVocals.IsChecked == true) mask |= 1;
+                                if (CmAcc.IsChecked == true) mask |= 2;
+                                if (CmOther1.IsChecked == true) mask |= 4;
+                                if (CmOther2.IsChecked == true) mask |= 8;
+                                if (mask == 0) { Log("⚠ 自定义组合未勾选任何轨道"); throw new OperationCanceledException(); }
+                                var selFiles = new System.Collections.Generic.List<string>();
+                                if ((mask & 1) != 0) selFiles.Add(vWav);
+                                if ((mask & 2) != 0) selFiles.Add(aWav);
+                                if ((mask & 4) != 0) selFiles.Add(o1Wav);
+                                if ((mask & 8) != 0) selFiles.Add(o2Wav);
+                                Log("AI 分离完成(自定义组合),混合所选轨道...");
+                                var mixWav = System.IO.Path.Combine(aiDir, "custom.wav");
+                                await AudioService.MixWavsAsync(selFiles, mixWav, prog, _cts.Token);
+                                Log("应用降噪/音色调整并转换 " + ext + " ...");
+                                await AudioService.EnhanceAsync(mixWav, outPath,
+                                    DenoiseRadios.SelectedIndex, LoudnessCheck.IsChecked == true,
+                                    LowcutCheck.IsChecked == true, EqCheck.IsChecked == true,
+                                    outFmt, 320, null, prog, _cts.Token, trS, trE);
+                                sepOutputs.Add(outPath);
+                            }
+                        }
+                        // 4) AI 超分输出:人声/伴奏分别优化后重混(同一份分轨结果,不重复推理)
+                        if (srSel > 0)
+                        {
+                            Log("AI 超分:人声/伴奏分别优化,重新混音...");
+                            var mixWav = System.IO.Path.Combine(aiDir, "remix.wav");
+                            await AudioService.RemasterAsync(vWav, aWav, mixWav, srSel, prog, _cts.Token);
+                            var srOut = UniquePath(System.IO.Path.GetDirectoryName(item.Path)!,
+                                System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_超分" + ext);
+                            Log("AI 超分完成,应用降噪/音色调整并转换 " + ext + " ...");
+                            await AudioService.EnhanceAsync(mixWav, srOut,
+                                DenoiseRadios.SelectedIndex, LoudnessCheck.IsChecked == true,
+                                LowcutCheck.IsChecked == true, EqCheck.IsChecked == true,
+                                outFmt, 320, null, prog, _cts.Token, trS, trE);
+                            sepOutputs.Add(srOut);
+                        }
+                        // 5) 清理临时文件
+                        try { System.IO.File.Delete(tmpWav); } catch { }
+                        try { System.IO.Directory.Delete(aiDir, true); } catch { }
                     }
                     item.IsDone = true;
                     item.Status = "✅ 完成";
