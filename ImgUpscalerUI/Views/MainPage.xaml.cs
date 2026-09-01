@@ -683,18 +683,7 @@ public sealed partial class MainPage : Page
                             },
                         });
                     }
-                    else
-                    {
-                        // 纯名字:蓝色圆点占位(无头像文件也能显示名单)
-                        row.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse
-                        {
-                            Width = 40,
-                            Height = 40,
-                            StrokeThickness = 0,
-                            Fill = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                                Windows.UI.Color.FromArgb(255, 76, 141, 255)),
-                        });
-                    }
+                    // 只显示名字(无头像/无圆点占位,简洁)
                     row.Children.Add(new TextBlock
                     {
                         Text = name,
