@@ -208,12 +208,9 @@ public static partial class EngineService
     // 引擎启动/完成日志节流状态(同阶段 10 秒内只记首次,防"引擎启动中"刷屏)
     private static string _lastEngineStageLog = "";
     private static DateTime _lastEngineStartLog = DateTime.MinValue;
-    // 引擎"无进展看门狗":任何引擎进度心跳都会刷新;按设备超时(启动30秒/GPU8分钟/CPU20分钟/10分钟无帧)→ 强制终止
+    // 引擎"无进展看门狗":时间戳已改为 RunAsync 每次调用私有(局部变量 lastOutTicks/lastFrameTicks,
+    // 闭包捕获)——原全局静态已被并发任务"喂狗"导致看门狗失效,已废弃(无引用)。
     // (引擎崩溃=进程退出→RunAsync 抛异常→降级链接管,不依赖看门狗;看门狗兜底"引擎 hang 不退出的情况")
-    private static long _lastEngineProgressTicks = DateTime.MinValue.Ticks;
-    // 最近一次"完整完成一帧"时间(WatchDirProgressAsync 帧数增长时刷新):
-    // 用于判定"心跳在跳但没有实质进展"(CPU 逐帧爬但极慢)的实质停滞
-    private static long _lastFrameDoneTicks = DateTime.MinValue.Ticks;
     // 分块处理中"单块平均耗时"(秒,EMA 平滑):用于块内心跳估算当前块进度(让进度条平滑前进)
     private static double _tileEstAvg = 0;
 
@@ -252,14 +249,19 @@ public static partial class EngineService
 
         // 引擎不输出百分比时(目录模式),轮询输出目录已生成帧数,像补帧那样逐帧报告
         using var watchCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var watchTask = (watchDir != null && totalFrames > 0 && stage.Length > 0)
-            ? WatchDirProgressAsync(watchDir, stage, totalFrames, progress, watchCts.Token, watchBase, watchGlobalTotal)
-            : Task.CompletedTask;
 
         var log = new StringBuilder();
         var lockObj = new object();
         int maxPct = 0;
         bool killRequested = false;
+        // 看门狗时间戳(每次 RunAsync 私有,不再用全局静态共享——否则多引擎并发时 A 的心跳会"喂狗"B,
+        // B 真卡死看门狗也不判死,用户无限等)。闭包捕获,每个引擎进程独立哨兵。
+        long lastOutTicks = DateTime.Now.Ticks;
+        long lastFrameTicks = DateTime.Now.Ticks;
+        var watchTask = (watchDir != null && totalFrames > 0 && stage.Length > 0)
+            ? WatchDirProgressAsync(watchDir, stage, totalFrames, progress, watchCts.Token, watchBase, watchGlobalTotal,
+                () => { lastOutTicks = DateTime.Now.Ticks; lastFrameTicks = DateTime.Now.Ticks; })   // 完成帧回调:刷新本引擎私有看门狗时间戳
+            : Task.CompletedTask;
         // 引擎无进度输出时(部分模型/CPU 软算):每 4 秒若有变化就渐 +1(上限 98),避免进度条"空→满"跳变。
         // 【关键修复】watchDir(目录轮询)场景禁用空闲心跳:它会 10 秒内把进度虚推到 96~98%,
         // 之后真实帧/块进度(数值更小)被 Math.Max 卡住 → 进度条永远定格 98% 假装满——"进度条不会动"的根因。
@@ -274,7 +276,7 @@ public static partial class EngineService
                         if (!p.HasExited && maxPct == lastIdlePct && maxPct < 98)
                         {
                             maxPct = Math.Min(98, maxPct + 1);
-                            System.Threading.Interlocked.Exchange(ref _lastEngineProgressTicks, DateTime.Now.Ticks);
+                            lastOutTicks = DateTime.Now.Ticks;
                             progress?.Report((maxPct, $"引擎处理中 {maxPct}%..."));
                         }
                         lastIdlePct = maxPct;
@@ -289,7 +291,7 @@ public static partial class EngineService
             lock (lockObj)
             {
                 sawAnyOutput = true;
-                if (chunk.Length > 0) System.Threading.Interlocked.Exchange(ref _lastEngineProgressTicks, DateTime.Now.Ticks);
+                if (chunk.Length > 0) lastOutTicks = DateTime.Now.Ticks;
                 log.Append(chunk);
                 if (log.Length > 4096) log.Remove(0, log.Length - 4096); // 只保留尾部,防内存膨胀
                 foreach (Match m in PctRegex.Matches(chunk))
@@ -324,10 +326,8 @@ public static partial class EngineService
                     bool cpu = args.Contains("-g -1", StringComparison.Ordinal);
                     long noOutLimitTicks = TimeSpan.FromMinutes(cpu ? 20 : 8).Ticks;
                     long stallLimitTicks = TimeSpan.FromMinutes(10).Ticks;
-                    long sinceOut = _lastEngineProgressTicks != DateTime.MinValue.Ticks
-                        ? DateTime.Now.Ticks - _lastEngineProgressTicks : 0;
-                    long sinceFrame = _lastFrameDoneTicks != DateTime.MinValue.Ticks
-                        ? DateTime.Now.Ticks - _lastFrameDoneTicks : 0;
+                    long sinceOut = DateTime.Now.Ticks - lastOutTicks;
+                    long sinceFrame = DateTime.Now.Ticks - lastFrameTicks;
                     // ① 启动超时:30 秒零输出 + 进程还在(而非立即失败退出)
                     if (!sawAnyOutput && sinceOut > TimeSpan.FromSeconds(30).Ticks)
                     {
@@ -343,7 +343,7 @@ public static partial class EngineService
                         try { p.Kill(entireProcessTree: true); } catch { }
                     }
                     // ③ 有输出但 10 分钟未完成一帧(CPU 爬帧过慢/引擎停滞)
-                    else if (_lastFrameDoneTicks != DateTime.MinValue.Ticks && sinceFrame > stallLimitTicks)
+                    else if (sinceFrame > stallLimitTicks)
                     {
                         killRequested = true;
                         AppLogger.Info($"看门狗:引擎 ({stage}) 10 分钟未完成一帧(计算过慢或停滞),强制终止——建议改用 GPU/调低倍率/调小分辨率");
@@ -797,10 +797,11 @@ public static partial class EngineService
     }
 
     /// <summary>轮询输出目录已生成的帧数,逐帧报告"超分 第 N 帧 / 共 M 帧"(目录模式引擎不输出百分比)。
-    /// baseFrames=本批起始的全局已处理帧数,globalTotal=全局总帧数:百分比按全局算,预计时间才准。</summary>
+    /// baseFrames=本批起始的全局已处理帧数,globalTotal=全局总帧数:百分比按全局算,预计时间才准。
+    /// onFrameDone=完成一帧回调(刷新本引擎私有看门狗时间戳,不刷全局——防并发"喂狗")。</summary>
     private static async Task WatchDirProgressAsync(string dir, string stage, int totalFrames,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct,
-        int baseFrames = 0, int globalTotal = 0)
+        int baseFrames = 0, int globalTotal = 0, System.Action? onFrameDone = null)
     {
         int lastCount = 0;
         while (!ct.IsCancellationRequested)
@@ -811,8 +812,7 @@ public static partial class EngineService
                 if (count > lastCount)
                 {
                     lastCount = count;
-                    System.Threading.Interlocked.Exchange(ref _lastEngineProgressTicks, DateTime.Now.Ticks);
-                    System.Threading.Interlocked.Exchange(ref _lastFrameDoneTicks, DateTime.Now.Ticks);   // 实质完成帧:看门狗"停滞"判据
+                    onFrameDone?.Invoke();   // 实质完成帧:刷新本引擎私有看门狗时间戳(不再刷全局,防并发喂狗)
                     int done = baseFrames + count;
                     int gt = globalTotal > 0 ? globalTotal : totalFrames;
                     int pct = stage == "超分"
