@@ -207,13 +207,15 @@ public static class CutoutService
             var inputs = new[] { NamedOnnxValue.CreateFromTensor(inputMeta, inputTensor) };
 
             // 串行 Run(同一模型+设备并发推理会冲突,用信号量保护)
-            using var results = RunSession(session, modelPath, gpuId, inputs);
-            smoothTimer.Dispose();   // 推理结束:平滑计时器停止(后续由真实阶段报告)
-            ct.ThrowIfCancellationRequested();
-            // 选择真正的掩码输出:优先注册表 OutputName;u2net(u2net/u2netp)无固定名 → 取首个 [1,1,H,W] 输出。
-            // BiRefNet 输出未激活 logits,ExtractMask 内先 sigmoid;所有模型再 min-max 归一化(rembg 官方)。
-            var outputTensor = SelectMaskOutput(results, model.OutputName);
-            mask = ExtractMask(outputTensor, model.LogitsOutput);
+            using (var results = RunSession(session, modelPath, gpuId, inputs))
+            {
+                smoothTimer.Dispose();   // 推理结束:平滑计时器停止(后续由真实阶段报告)
+                ct.ThrowIfCancellationRequested();
+                // 选择真正的掩码输出:优先注册表 OutputName;u2net(u2net/u2netp)无固定名 → 取首个 [1,1,H,W] 输出。
+                // BiRefNet 输出未激活 logits,ExtractMask 内先 sigmoid;所有模型再 min-max 归一化(rembg 官方)。
+                var outputTensor = SelectMaskOutput(results, model.OutputName);
+                mask = ExtractMask(outputTensor, model.LogitsOutput);
+            }
         }
         catch (Exception ex) when (gpuId >= 0 && ex is not OperationCanceledException)
         {
@@ -226,11 +228,13 @@ public static class CutoutService
             var inputMeta = session.InputMetadata.Keys.First();
             var inputTensor = new DenseTensor<float>(pixels, new[] { 1, 3, model.InputSize, model.InputSize });
             var inputs = new[] { NamedOnnxValue.CreateFromTensor(inputMeta, inputTensor) };
-            using var results = RunSession(session, modelPath, -1, inputs);
-            smoothTimer.Dispose();
-            ct.ThrowIfCancellationRequested();
-            var outputTensor = SelectMaskOutput(results, model.OutputName);
-            mask = ExtractMask(outputTensor, model.LogitsOutput);
+            using (var results = RunSession(session, modelPath, -1, inputs))
+            {
+                smoothTimer.Dispose();
+                ct.ThrowIfCancellationRequested();
+                var outputTensor = SelectMaskOutput(results, model.OutputName);
+                mask = ExtractMask(outputTensor, model.LogitsOutput);
+            }
         }
 
         // 放大到原图尺寸 → 参数后处理(阈值 / 形态学清洗 / 主体框选 / 涂抹 / 羽化 / 边缘增强)
