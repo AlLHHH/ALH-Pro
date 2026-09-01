@@ -301,7 +301,7 @@ public static class VulkanCheck
             : blackwell ? "50 系:引擎探测失败会降 CPU(慢),建议使用 ONNX 模型包(如已放置 engines/rife/rife49.onnx)\n"
             : "GPU 引擎,稳定(50 系格外留意:已自动探测+看门狗兜底)\n");
         // 抠图
-        sb.Append("· AI 抠图:DirectML GPU 优先,失败自动 CPU(各显卡可用)\n");
+        sb.Append("· AI 抠图:强制 CPU(模型小、速度快;用 GPU 会占满显卡卡顿整机——「宁慢勿卡」设计),任何显卡均稳定\n");
         // 音频
         sb.Append("· 音频处理:全程 CPU(不依赖显卡,任何设备稳定)\n");
 
