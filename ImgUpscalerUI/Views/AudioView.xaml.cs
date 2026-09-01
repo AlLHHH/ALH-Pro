@@ -15,6 +15,18 @@ namespace ALHPro.Views;
 
 public sealed partial class AudioView : UserControl
 {
+    /// <summary>音频页设置(降噪/AI分离/响亮/低切/清晰/输出格式),存 %LOCALAPPDATA%\ALHPro\settings\audio-settings.json。</summary>
+    public class AudioSettings
+    {
+        public int Denoise { get; set; } = 0;        // 0关 1弱 2中 3强
+        public int Demucs { get; set; } = 0;         // 0关 1人声 2去人声 3分离
+        public bool Loudness { get; set; }
+        public bool Lowcut { get; set; }
+        public bool Eq { get; set; }
+        public int OutputFmt { get; set; } = 0;      // 0=MP3 1=WAV 2=FLAC
+    }
+
+    private static string SettingsFile => ParaPaths.SettingsFile("audio-settings.json");
     public sealed class AudioItem
     {
         public string Path { get; set; } = "";
@@ -43,6 +55,7 @@ public sealed partial class AudioView : UserControl
     public AudioView()
     {
         this.InitializeComponent();
+        LoadSettings();   // 恢复上次:降噪/AI分离/响亮/低切/清晰/输出格式
         _mediaPlayer = new Windows.Media.Playback.MediaPlayer();
         _mediaPlayer.AutoPlay = false;   // 打开预览不自动播,由用户点 ▶
         _mediaPlayer.Volume = _lastVolume;   // 恢复上次音量
@@ -87,7 +100,43 @@ public sealed partial class AudioView : UserControl
         RunBtn.Content = _running ? "处理中..." : "开始处理";
     }
 
-    private void Options_Changed(object sender, RoutedEventArgs e) { }
+    private void Options_Changed(object sender, RoutedEventArgs e) => SaveSettings();
+
+    private void LoadSettings()
+    {
+        try
+        {
+            if (!File.Exists(SettingsFile)) return;
+            var d = System.Text.Json.JsonSerializer.Deserialize<AudioSettings>(File.ReadAllText(SettingsFile));
+            if (d is null) return;
+            DenoiseRadios.SelectedIndex = Math.Clamp(d.Denoise, 0, 3);
+            DemucsRadios.SelectedIndex = Math.Clamp(d.Demucs, 0, 3);
+            LoudnessCheck.IsChecked = d.Loudness;
+            LowcutCheck.IsChecked = d.Lowcut;
+            EqCheck.IsChecked = d.Eq;
+            FmtRadios.SelectedIndex = Math.Clamp(d.OutputFmt, 0, 2);
+        }
+        catch { /* 读取失败用默认 */ }
+    }
+
+    private void SaveSettings()
+    {
+        try
+        {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(SettingsFile)!);
+            System.IO.File.WriteAllText(SettingsFile,
+                System.Text.Json.JsonSerializer.Serialize(new AudioSettings
+                {
+                    Denoise = DenoiseRadios.SelectedIndex,
+                    Demucs = DemucsRadios.SelectedIndex,
+                    Loudness = LoudnessCheck.IsChecked == true,
+                    Lowcut = LowcutCheck.IsChecked == true,
+                    Eq = EqCheck.IsChecked == true,
+                    OutputFmt = FmtRadios.SelectedIndex,
+                }));
+        }
+        catch { /* 保存失败忽略 */ }
+    }
 
     // ---------- Delete 键删除选中 ----------
     private void AudioList_KeyDown(object sender, KeyRoutedEventArgs e)
