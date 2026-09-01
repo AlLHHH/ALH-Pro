@@ -29,13 +29,13 @@ public static partial class EngineService
         catch { return false; }
     }
 
-    /// <summary>照片超分(Real-ESRGAN)是否应走 ONNX 路线:50 系(Blackwell,ncnn 崩)或 ONNX 模型缺失时 false→ncnn;
-    /// 50 系优先 ONNX;模型缺失时回退 ncnn。</summary>
+    /// <summary>照片超分(Real-ESRGAN)是否应走 ONNX 路线:
+    /// ①Blackwell(ncnn-Vulkan 崩)②无独显/Vulkan 不可用(只能 CPU,而 ncnn CPU 也崩)—— 都走 ONNX(DML/CPU 稳)。
+    /// 非风险设备(常规 GPU)默认 ncnn(GPU 更快),避免无谓切换。</summary>
     public static bool ShouldUseOnnxEsrgan()
     {
         if (EsrganOnnxService.FindModel() == null) return false;
-        // 50 系必须 ONNX;非 50 系默认 ncnn(GPU 更快,已成熟),——ONNX 仅在 50 系启用(避免非 50 系无谓切换)
-        return IsBlackwellGpu();
+        return IsBlackwellGpu() || OldNcnnGpuRisky();
     }
 
     /// <summary>旧 ncnn 引擎(2022 版,realcugan/realesrgan ncnn)在 GPU 上可能不可用的设备:
