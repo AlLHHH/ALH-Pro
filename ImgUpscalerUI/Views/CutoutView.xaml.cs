@@ -130,7 +130,9 @@ public sealed partial class CutoutView : UserControl
     private int CurrentGpuId
         => AppSettings.GpuIndex >= 0 && AppSettings.GpuIndex < _gpuCount ? AppSettings.GpuIndex : -1;
 
-    // 抠图推理设备 = 全局计算设备(设置选什么就是什么;GPU 失败自动降级 CPU,见 CutoutService)
+    // 抠图推理设备:【强制 CPU】——AI 抠图用 GPU(DirectML)会占满显卡,导致整个电脑卡顿(实测);
+    // 宁慢勿卡,此功能不使用 GPU(引擎自动降级链也不走 GPU)。
+    private const int CutoutGpuId = -1;
 
     // 重置为当前模型的最优参数预设
     private void ResetBtn_Click(object sender, RoutedEventArgs e)
@@ -509,7 +511,7 @@ public sealed partial class CutoutView : UserControl
             MaskPreviewBtn.Content = "预览处理中…";
             PreviewHint.Text = "预览处理中…";
             await CutoutService.PreviewMaskAsync(item.Path, maskPath, modelKey,
-                (int)FgSlider.Value, (int)BgSlider.Value, CurrentGpuId,
+                (int)FgSlider.Value, (int)BgSlider.Value, CutoutGpuId,
                 null, null, null, null, null, 0, null, 0,
                 (int)FeatherSlider.Value, (int)EdgeSlider.Value,
                 (int)MorphSlider.Value, AutoThresholdCheck.IsChecked == true);
@@ -726,11 +728,8 @@ public sealed partial class CutoutView : UserControl
         {
             int total = items.Length;
             TaskLogText.Text = "";
-            Log($"开始抠图任务:共 {total} 张,设备={(CurrentGpuId >= 0 ? $"GPU {CurrentGpuId}" : "CPU")}");
-            if (CurrentGpuId < 0)
-                Log("当前用 CPU(计算设备=软件计算);如需 GPU,在「设置→计算设备」选 GPU。");
-            else
-                Log("✅ 使用 GPU(计算设备);如界面抖动,可在「设置→计算设备」改为 CPU。");
+            Log($"开始抠图任务:共 {total} 张,设备=CPU");
+            Log("⚠ 本功能强制使用 CPU:AI 抠图用 GPU 会占满显卡,导致整个电脑卡顿;CPU 处理较慢但稳定流畅(设置里选 GPU 对抠图无效)。");
             Log($"输出目录:{outDir}");
             for (int i = 0; i < total; i++)
             {
@@ -789,7 +788,7 @@ public sealed partial class CutoutView : UserControl
                         srcPath = tmpUp;
                     }
                     await CutoutService.CutoutAsync(srcPath, outPath, modelKey,
-                        fgThreshold, bgThreshold, featherRadius, edgeStrength, CurrentGpuId,
+                        fgThreshold, bgThreshold, featherRadius, edgeStrength, CutoutGpuId,
                         morphStrength: (int)MorphSlider.Value,
                         autoThreshold: AutoThresholdCheck.IsChecked == true,
                         progress: progress, ct: ct);

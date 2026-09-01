@@ -968,7 +968,7 @@ public sealed partial class MainPage : Page
         content.Children.Add(gpuCombo);
         content.Children.Add(new TextBlock
         {
-            Text = "三个功能(图片放大 / AI 抠图 / 视频处理)统一使用这里选的计算设备。编号顺序可能与引擎实际识别的设备不一致(Windows 顺序 ≠ 引擎顺序):若选某编号处理崩/慢,换其它编号实测,日志「引擎启动...设备 -g X」会显示所选编号。无独显的电脑建议选 CPU(软件计算)。注意:AI 抠图用 GPU 会占满显卡,可能导致整个电脑卡顿;若遇到立即在设置改回 CPU 即可。",
+            Text = "三个功能(图片放大 / AI 抠图 / 视频处理)统一使用这里选的计算设备。编号顺序可能与引擎实际识别的设备不一致(Windows 顺序 ≠ 引擎顺序):若选某编号处理崩/慢,换其它编号实测,日志「引擎启动...设备 -g X」会显示所选编号。无独显的电脑建议选 CPU(软件计算)。注意:AI 抠图已强制使用 CPU(GPU 推理会占满显卡导致整机卡),此处设置对抠图不生效。",
             FontSize = 10, Opacity = 0.5,
             TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
