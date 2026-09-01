@@ -29,20 +29,24 @@
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
                     <TextBlock Text="音频增强" Style="{StaticResource SectionTitle}"/>
-                    <!-- 降噪:可展开选项(独立板块)——主框勾选启用,展开选强度 -->
-                    <Expander x:Name="DenoiseExpander" HorizontalAlignment="Stretch">
-                        <Expander.Header>
-                            <CheckBox x:Name="DenoiseCheck" Content="降噪(去底噪/电流声)"
-                                      ToolTipService.ToolTip="FFT 降噪(afftdn):去底噪/电流声/压缩噪点(仅录音/降噪场景适用;对已混音音乐可能削细节)"
-                                      Checked="Options_Changed" Unchecked="Options_Changed"/>
-                        </Expander.Header>
-                        <RadioButtons x:Name="DenoiseRadios" SelectedIndex="1" Margin="24,4,0,4"
-                                      SelectionChanged="Options_Changed">
-                            <RadioButton Content="弱(轻降噪,推荐)"/>
-                            <RadioButton Content="中"/>
-                            <RadioButton Content="强(重降噪,可能有损失)"/>
-                        </RadioButtons>
-                    </Expander>
+
+                    <!-- 降噪(FFT):radio 关/弱/中/强 -->
+                    <RadioButtons x:Name="DenoiseRadios" SelectedIndex="0" ToolTipService.ToolTip="FFT 降噪(afftdn):去底噪/电流声/压缩噪点(仅录音/降噪场景适用;对已混音音乐可能削细节)"
+                                  SelectionChanged="Options_Changed">
+                        <RadioButton Content="关"/>
+                        <RadioButton Content="弱(轻降噪,推荐)"/>
+                        <RadioButton Content="中"/>
+                        <RadioButton Content="强(重降噪,可能有损失)"/>
+                    </RadioButtons>
+
+                    <!-- AI 分离/降噪(神经网络):radio 关/提取人声/去人声/重混增强 -->
+                    <RadioButtons x:Name="DemucsRadios" SelectedIndex="0" ToolTipService.ToolTip="神经网络分离(Demucs):提取人声/去人声(伴奏)/重混增强——比 FFT 降噪更智能,适合音乐/复杂人声"
+                                  SelectionChanged="Options_Changed">
+                        <RadioButton Content="关"/>
+                        <RadioButton Content="提取人声"/>
+                        <RadioButton Content="去人声(卡拉OK伴奏)"/>
+                        <RadioButton Content="重混增强(保留整体,更干净)"/>
+                    </RadioButtons>
 
                     <CheckBox x:Name="LoudnessCheck" Content="响度归一(音量统一)" ToolTipService.ToolTip="EBU R128 响度标准化:音量忽大忽小统一,听感更稳"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
@@ -52,18 +56,6 @@
 
                     <CheckBox x:Name="EqCheck" Content="清晰增强(高频微调)" ToolTipService.ToolTip="3.5kHz 柔和提升 2dB:话语/乐器更明亮清晰"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
-
-                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
-
-                    <!-- AI 分离/降噪(Ht-Demucs 神经网络,MIT)——与人声/伴奏分离,同 tsai.ai 的 Demucs 增强 -->
-                    <TextBlock Text="AI 分离 / 降噪" Style="{StaticResource SectionTitle}"/>
-                    <RadioButtons x:Name="DemucsRadios" SelectedIndex="0" ToolTipService.ToolTip="神经网络分离(Demucs):提取人声/去人声(伴奏)/重混增强——比 FFT 降噪更智能,适合音乐/复杂人声"
-                                  SelectionChanged="Options_Changed">
-                        <RadioButton Content="关"/>
-                        <RadioButton Content="提取人声"/>
-                        <RadioButton Content="去人声(卡拉OK伴奏)"/>
-                        <RadioButton Content="重混增强(保留整体,更干净)"/>
-                    </RadioButtons>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
