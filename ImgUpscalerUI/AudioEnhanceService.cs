@@ -50,19 +50,14 @@ public static class AudioEnhanceService
         IProgress<(int pct, string msg)>? progress, CancellationToken ct)
     {
         var key = (modelPath, gpuId);
-        var gate = _locks.GetOrAdd(key.ToString(), _ => new SemaphoreSlim(1, 1));
-        gate.Wait();
-        try
+        // 分离是用户单次操作,无需并发;且全局 gate.Wait() 在后台线程 + UI 上下文下可能死锁(实测 CPU 0 增量)。
+        // 直接每次新建 session(不复用 gate/缓存)——简单可靠,158MB 模型加载约 2~5 秒,可接受。
+        var opts0 = new SessionOptions();
+        if (gpuId >= 0)
         {
-            var session = _sessions.GetOrAdd(key.ToString(), _ =>
-            {
-                var opts = new SessionOptions();
-                if (gpuId >= 0)
-                {
-                    try { opts.AppendExecutionProvider_DML(gpuId); } catch { /* DirectML 不可用回退 CPU */ }
-                }
-                return new InferenceSession(modelPath, opts);
-            });
+            try { opts0.AppendExecutionProvider_DML(gpuId); } catch { /* DirectML 不可用回退 CPU */ }
+        }
+        using var session = new InferenceSession(modelPath, opts0);
 
             // 读取 WAV(44.1k stereo float32)
             var (mix, samples) = ReadWav(inputWav);
@@ -90,18 +85,14 @@ public static class AudioEnhanceService
                 IDisposableReadOnlyCollection<DisposableNamedOnnxValue>? results = null;
                 try
                 {
-                    gate.Wait();
-                    try { results = session.Run(new[] { NamedOnnxValue.CreateFromTensor("mix", tensor) }); }
-                    finally { gate.Release(); }
+                    results = session.Run(new[] { NamedOnnxValue.CreateFromTensor("mix", tensor) });
                 }
                 catch (Exception ex) when (gpuId >= 0)
                 {
-                    // DirectML 失败 → 改用 CPU 重试(兼容)
+                    // DirectML 失败 → 改用 CPU 重试(兼容);新建 CPU session(原复用已删)
                     progress?.Report((0, "⚠ GPU 推理失败,改用 CPU 重试..."));
-                    var cpuSession = _sessions.GetOrAdd((modelPath, -1).ToString(), _ => new InferenceSession(modelPath, new SessionOptions()));
-                    gate.Wait();
-                    try { results = cpuSession.Run(new[] { NamedOnnxValue.CreateFromTensor("mix", tensor) }); }
-                    finally { gate.Release(); }
+                    using var cpuSession = new InferenceSession(modelPath, new SessionOptions());
+                    results = cpuSession.Run(new[] { NamedOnnxValue.CreateFromTensor("mix", tensor) });
                 }
                 using (results)
                 {
@@ -115,7 +106,6 @@ public static class AudioEnhanceService
                 }
                 progress?.Report(((int)((double)(i + 1) / nChunks * 90), $"分离 {i + 1}/{nChunks} 段..."));
             }
-            gate.Release();
 
             // 归一化权重 + 选轨输出
             int outCount = target == 6 ? 2 : 1;   // 分离=2 个(人声+伴奏),其余 1 个
@@ -173,11 +163,6 @@ public static class AudioEnhanceService
                         only[c, s] = sel[0, c, s];
                 WriteWav(outputWav, only, total);
             }
-        }
-        finally
-        {
-            try { gate.Release(); } catch { }
-        }
     }
 
     private static float[] MakeWindow(int n, int overlap)
