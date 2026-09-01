@@ -337,11 +337,13 @@ public sealed partial class CutoutView : UserControl
     private bool _peeking;
     private bool _peekWasMask;   // 按住时是否正处于 AI 蒙版显示(松开需恢复蒙版)
     private BitmapImage? _lastSourceImage;   // 进入预览时的原图源(按住查看原图时判断/恢复用)
+    private Microsoft.UI.Xaml.Media.ImageSource? _peekPrevSource;   // 按住前的实际显示源(松开精确恢复,防"松手变黑白")
     private void PeekStart()
     {
         if (_peeking) return;
         _peeking = true;
         _peekWasMask = _maskPreviewShown;
+        _peekPrevSource = PreviewImage.Source;
         var item = _previewItem;
         if (item == null) return;
         bool isRawOriginal = _lastSourceImage != null && ReferenceEquals(PreviewImage.Source, _lastSourceImage);
@@ -355,9 +357,16 @@ public sealed partial class CutoutView : UserControl
     {
         if (!_peeking) return;
         _peeking = false;
-        if (_peekWasMask && _maskPreviewShown)
+        // 精确恢复按住前的显示源(可能是彩色预览/蒙版/原图)——原先无脑恢复蒙版,
+        // 若按住前显示的是"彩色预览"(ComposeColorPreviewAsync 生成),松手会变黑白蒙版(用户反馈 bug)
+        var prev = _peekPrevSource;
+        _peekPrevSource = null;
+        if (prev != null)
         {
-            // 恢复蒙版显示
+            try { PreviewImage.Source = prev; } catch { }
+        }
+        else if (_peekWasMask && _maskPreviewShown)
+        {
             var maskPath = _lastMaskPath;
             if (!string.IsNullOrEmpty(maskPath) && File.Exists(maskPath))
             {
@@ -720,7 +729,9 @@ public sealed partial class CutoutView : UserControl
         {
             int total = items.Length;
             TaskLogText.Text = "";
-            Log($"开始抠图任务:共 {total} 张,设备={(CutoutGpuId >= 0 ? $"GPU {CutoutGpuId}" : "CPU (软件计算,流畅不卡)")}");
+            Log($"开始抠图任务:共 {total} 张,设备={(CutoutGpuId >= 0 ? $"GPU {CutoutGpuId}" : "CPU")}");
+            if (CutoutGpuId < 0)
+                Log("⚠ 抠图默认用 CPU(DirectML GPU 会占满显卡导致界面抖动);如需 GPU 提速,在左下「设置→计算设备」选 GPU 并关闭「抠图流畅模式」。");
             Log($"输出目录:{outDir}");
             for (int i = 0; i < total; i++)
             {
