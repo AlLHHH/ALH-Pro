@@ -785,7 +785,7 @@ public sealed partial class UpscaleView : UserControl
                             Log("✅ 自检:已按当前显卡自动改用稳定引擎(直接处理,无需设置)");
                             progress.Report((0, "✅ 自检完毕:用稳定引擎处理..."));
                             await EsrganOnnxService.UpscaleAsync(srcPath, outPath, scale,
-                                gpuId, progress, ct, onnxPath);
+                                -2, progress, ct, onnxPath);   // -2 = 按图大小自动选设备(大图 GPU/小图 CPU)
                         }
                         else
                         {
