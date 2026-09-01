@@ -130,10 +130,7 @@ public sealed partial class CutoutView : UserControl
     private int CurrentGpuId
         => AppSettings.GpuIndex >= 0 && AppSettings.GpuIndex < _gpuCount ? AppSettings.GpuIndex : -1;
 
-    // 抠图推理设备:流畅模式(AppSettings.CutoutCpuOnly,默认开)用 CPU 软算——
-    // DirectML GPU 推理会占满 GPU,而 WinUI 界面合成也用同一张 GPU → 窗口抖(卡)。
-    // CPU 软算不碰 GPU,界面全程流畅,代价是慢(用户接受延长时间;且同图蒙版缓存后调参即时)。
-    private int CutoutGpuId => AppSettings.CutoutCpuOnly ? -1 : CurrentGpuId;
+    // 抠图推理设备 = 全局计算设备(设置选什么就是什么;GPU 失败自动降级 CPU,见 CutoutService)
 
     // 重置为当前模型的最优参数预设
     private void ResetBtn_Click(object sender, RoutedEventArgs e)
@@ -512,7 +509,7 @@ public sealed partial class CutoutView : UserControl
             MaskPreviewBtn.Content = "预览处理中…";
             PreviewHint.Text = "预览处理中…";
             await CutoutService.PreviewMaskAsync(item.Path, maskPath, modelKey,
-                (int)FgSlider.Value, (int)BgSlider.Value, CutoutGpuId,
+                (int)FgSlider.Value, (int)BgSlider.Value, CurrentGpuId,
                 null, null, null, null, null, 0, null, 0,
                 (int)FeatherSlider.Value, (int)EdgeSlider.Value,
                 (int)MorphSlider.Value, AutoThresholdCheck.IsChecked == true);
@@ -729,11 +726,11 @@ public sealed partial class CutoutView : UserControl
         {
             int total = items.Length;
             TaskLogText.Text = "";
-            Log($"开始抠图任务:共 {total} 张,设备={(CutoutGpuId >= 0 ? $"GPU {CutoutGpuId}" : "CPU")}");
-            if (CutoutGpuId < 0)
-                Log("⚠ 当前用 CPU 软算(快不了但绝对流畅);如需 GPU 提速,在左下「设置→计算设备」选 GPU 并关闭「抠图流畅模式」。");
+            Log($"开始抠图任务:共 {total} 张,设备={(CurrentGpuId >= 0 ? $"GPU {CurrentGpuId}" : "CPU")}");
+            if (CurrentGpuId < 0)
+                Log("当前用 CPU(计算设备=软件计算);如需 GPU,在「设置→计算设备」选 GPU。");
             else
-                Log("✅ GPU 加速(DirectML):已加推理节流,若界面仍抖动可在设置开「抠图流畅模式」切回 CPU。");
+                Log("✅ 使用 GPU(计算设备);如界面抖动,可在「设置→计算设备」改为 CPU。");
             Log($"输出目录:{outDir}");
             for (int i = 0; i < total; i++)
             {
@@ -792,7 +789,7 @@ public sealed partial class CutoutView : UserControl
                         srcPath = tmpUp;
                     }
                     await CutoutService.CutoutAsync(srcPath, outPath, modelKey,
-                        fgThreshold, bgThreshold, featherRadius, edgeStrength, CutoutGpuId,
+                        fgThreshold, bgThreshold, featherRadius, edgeStrength, CurrentGpuId,
                         morphStrength: (int)MorphSlider.Value,
                         autoThreshold: AutoThresholdCheck.IsChecked == true,
                         progress: progress, ct: ct);
