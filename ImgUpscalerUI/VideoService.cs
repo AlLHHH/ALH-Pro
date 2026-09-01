@@ -1154,11 +1154,22 @@ public static class VideoService
                                 File.Copy(upFiles[i], Path.Combine(batchIn, Path.GetFileName(upFiles[i])), true);
                             progress?.Report((45 + (int)(45.0 * start / total),
                                 $"超分 已处理 {start} 帧 / 共 {total} 帧(批次 {start / batchSize + 1}/{batches})..."));
-                            await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
-                                upScale, 0, upGpu, false, progress, ct,
-                                SafeRender.GetTileSize() / (fastMode ? 2 : 1),   // 分块按"安全渲染"墙;快速模式再减半(显存占用约降 4 倍)
-                                watchStage: "超分",   // 逐帧汇报(像补帧一样显示"超分 第 N 帧 / 共 M 帧")
-                                globalBaseFrames: start, globalTotalFrames: total);   // 百分比按全局帧数算,预计时间才准
+                            // 视频超分:50系/无独显 + Real-ESRGAN + ONNX 模型在 → 走 ONNX 逐帧(不走会崩的 ncnn-vulkan)
+                            if (engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan())
+                            {
+                                progress?.Report((45 + (int)(45.0 * start / total),
+                                    $"超分(ONNX) 批次 {start / batchSize + 1}/{batches}..."));
+                                await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
+                                    upGpu, progress, ct);
+                            }
+                            else
+                            {
+                                await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
+                                    upScale, 0, upGpu, false, progress, ct,
+                                    SafeRender.GetTileSize() / (fastMode ? 2 : 1),   // 分块按"安全渲染"墙;快速模式再减半(显存占用约降 4 倍)
+                                    watchStage: "超分",   // 逐帧汇报(像补帧一样显示"超分 第 N 帧 / 共 M 帧")
+                                    globalBaseFrames: start, globalTotalFrames: total);   // 百分比按全局帧数算,预计时间才准
+                            }
                             foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
                                 File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
                             // 黑帧防御:ncnn-vulkan 偶发 vkQueueSubmit 失败 → 输出全黑帧(退出码 0 不报错)。

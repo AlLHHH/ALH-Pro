@@ -43,6 +43,25 @@ public static class EsrganOnnxService
         progress?.Report((100, "完成"));
     }
 
+    /// <summary>ONNX 目录批处理(视频逐帧超分用):遍历 inputDir 的 PNG,逐帧 UpscaleAsync 输出到 outputDir。
+    /// 供视频超分在 50 系/无独显设备走 ONNX(不走会崩的 ncnn-vulkan)。</summary>
+    public static async Task UpscaleDirAsync(string inputDir, string outputDir, double scale,
+        int gpuId = -1, IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default)
+    {
+        var files = Directory.EnumerateFiles(inputDir, "*.png")
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
+        Directory.CreateDirectory(outputDir);
+        if (files.Length == 0) return;
+        for (int i = 0; i < files.Length; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var outPath = Path.Combine(outputDir, Path.GetFileName(files[i]));
+            await UpscaleAsync(files[i], outPath, scale, gpuId, null, ct).ConfigureAwait(false);
+            progress?.Report(((int)((double)(i + 1) / files.Length * 100),
+                $"ONNX 超分 {i + 1}/{files.Length} 帧({Path.GetFileName(files[i])})"));
+        }
+    }
+
     private static void RunCore(string input, string output, double scale, string modelPath, int gpuId,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct)
     {
