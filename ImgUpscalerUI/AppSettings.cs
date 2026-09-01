@@ -13,11 +13,6 @@ public static class AppSettings
     /// <summary>全局计算设备(gpuId 语义):-1=CPU(软件计算),≥0=GPU 编号。三个功能页共用,设置弹窗统一修改。</summary>
     public static int GpuIndex { get; set; } = 0;
 
-    /// <summary>抠图推理设备。-1=CPU 软算(绝对流畅,慢);≥0=GPU(DirectML,快)。
-    /// 默认 false(=用 GPU,有独显时):GPU 推理快,已加"推理节流"(每次推理后让出时间片给 UI 合成),
-    /// 界面抖动已缓解;若仍抖动可在设置切回 CPU 软算。</summary>
-    public static bool CutoutCpuOnly { get; set; } = false;
-
     /// <summary>是否已完成首次 Vulkan 自检(只跑一次,结果缓存)。</summary>
     public static bool VulkanCheckDone { get; set; }
 
@@ -47,7 +42,6 @@ public static class AppSettings
             if (d is null) return;
             AutoRemoveDone = d.AutoRemoveDone;
             GpuIndex = d.GpuIndex;
-            CutoutCpuOnly = d.CutoutCpuOnly;
             VulkanCheckDone = d.VulkanCheckDone;
             VulkanReport = d.VulkanReport ?? "";
         }
@@ -69,7 +63,6 @@ public static class AppSettings
                     {
                         AutoRemoveDone = AutoRemoveDone,
                         GpuIndex = GpuIndex,
-                        CutoutCpuOnly = CutoutCpuOnly,
                         VulkanCheckDone = VulkanCheckDone,
                         VulkanReport = VulkanReport,
                     }));
@@ -82,7 +75,6 @@ public static class AppSettings
     {
         public bool AutoRemoveDone { get; set; }
         public int GpuIndex { get; set; } = 0;
-        public bool CutoutCpuOnly { get; set; } = true;
         public bool VulkanCheckDone { get; set; }
         public string VulkanReport { get; set; } = "";
     }
