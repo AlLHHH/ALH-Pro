@@ -81,7 +81,7 @@ public sealed partial class CutoutView : UserControl
             bool missing = EngineService.FindCutoutModel(m.FileName) == null;
             ModelMissingBar.Visibility = missing ? Visibility.Visible : Visibility.Collapsed;
             if (missing)
-                ModelMissingText.Text = $"未找到「{m.Label}」({m.FileName}) — 安装时勾选「下载并安装模型包」,或手动下载 models.zip 解压到程序目录的 engines\\rembg\\models\\ 文件夹,也可换用其它已安装的模型";
+                ModelMissingText.Text = $"未找到「{m.Label}」({m.FileName}) — 安装时勾选「下载并安装模型包」;或到 GitHub Release 页下载 models_v1.0.zip,解压到程序目录的 engines\\rembg\\ 文件夹(6 个 .onnx 直接放这,不要建 models 子文件夹);也可换用其它已安装的模型";
         }
         catch
         {
