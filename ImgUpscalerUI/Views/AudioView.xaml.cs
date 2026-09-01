@@ -100,7 +100,14 @@ public sealed partial class AudioView : UserControl
         RunBtn.Content = _running ? "处理中..." : "开始处理";
     }
 
-    private void Options_Changed(object sender, RoutedEventArgs e) => SaveSettings();
+    private void Options_Changed(object sender, RoutedEventArgs e)
+    {
+        // 「自定义组合」选中 → 显示轨道勾选面板
+        if (CustomMixPanel != null)
+            CustomMixPanel.Visibility = DemucsRadios.SelectedIndex == 4
+                ? Visibility.Visible : Visibility.Collapsed;
+        SaveSettings();
+    }
 
     private void LoadSettings()
     {
@@ -664,7 +671,7 @@ public sealed partial class AudioView : UserControl
                         AudioStatus.Text = t.msg;
                     });
                     // ==== AI 分离(Demucs)优先:先转 44.1k stereo wav → 分离 → 再转目标格式 ====
-                    int demucsSel = DemucsRadios.SelectedIndex;   // 0=关 1=人声 2=去人声 3=分离(两文件)
+                    int demucsSel = DemucsRadios.SelectedIndex;   // 0=关 1=人声 2=去人声 3=分离(两文件) 4=自定义组合
                     if (demucsSel > 0)
                     {
                         // 1) 转 44.1k 立体声 WAV(ffmpeg,DurSec 探测)
@@ -674,7 +681,19 @@ public sealed partial class AudioView : UserControl
                         await AudioService.ConvertToWav44kAsync(item.Path, tmpWav);
                         Log("⚠ AI 分离处理中(CPU 较慢:约 1.5 分钟/分钟音频,请耐心等待;也可先处理音频后离开页面)");
                         // 2) 分离(CPU 推理,158MB 模型;一首歌约几至十几分钟——快不了,耐心等)
+                        //    人声=轨3;伴奏=原曲−人声(更干净,数学减法);其他1/2=轨1/2
                         int sepTarget = demucsSel switch { 1 => 0, 2 => 1, _ => 6 };
+                        if (demucsSel == 4)
+                        {
+                            // 自定义组合:勾勾选轨道(bitmask 1=人声 2=伴奏 4=其他1 8=其他2)
+                            int mask = 0;
+                            if (CmVocals.IsChecked == true) mask |= 1;
+                            if (CmAcc.IsChecked == true) mask |= 2;
+                            if (CmOther1.IsChecked == true) mask |= 4;
+                            if (CmOther2.IsChecked == true) mask |= 8;
+                            if (mask == 0) { Log("⚠ 自定义组合未勾选任何轨道"); throw new OperationCanceledException(); }
+                            sepTarget = 100 + mask;   // >100 = 自定义
+                        }
                         // target 6 = 分离两文件;输出名带 _增强;分离版用 tmpWav 派生(会生成 _人声/_伴奏 于目标目录)
                         string sepOut = demucsSel == 3
                             ? System.IO.Path.Combine(System.IO.Path.GetDirectoryName(item.Path)!,
