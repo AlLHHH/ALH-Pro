@@ -1159,10 +1159,10 @@ public static class VideoService
                             {
                                 if (start == 0)   // 仅首批写自检日志(视频批多,避免刷屏)
                                 {
-                                    AppLogger.Info("✅ 自检:视频超分 Real-ESRGAN 自动改用 ONNX 路线(DirectML GPU / CPU,兼容当前显卡;不走会崩的 ncnn-vulkan)");
+                                    AppLogger.Info("✅ 自检:视频超分 Real-ESRGAN 自动改用兼容版(DirectML GPU 加速,当前显卡可用;老引擎会崩)");
                                 }
                                 progress?.Report((45 + (int)(45.0 * start / total),
-                                    $"超分(ONNX) 批次 {start / batchSize + 1}/{batches}..."));
+                                    $"超分(兼容版) 批次 {start / batchSize + 1}/{batches}..."));
                                 await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
                                     upGpu, progress, ct);
                             }

@@ -58,7 +58,7 @@ public static class EsrganOnnxService
             var outPath = Path.Combine(outputDir, Path.GetFileName(files[i]));
             await UpscaleAsync(files[i], outPath, scale, gpuId, null, ct).ConfigureAwait(false);
             progress?.Report(((int)((double)(i + 1) / files.Length * 100),
-                $"ONNX 超分 {i + 1}/{files.Length} 帧({Path.GetFileName(files[i])})"));
+                $"超分 {i + 1}/{files.Length} 帧({Path.GetFileName(files[i])})"));
         }
     }
 
