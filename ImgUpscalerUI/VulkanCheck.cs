@@ -284,6 +284,27 @@ public static class VulkanCheck
         if (notes.Count == 0) notes.Add("各项功能均可正常使用");
         sb.Append(string.Join(";", notes)).Append('\n');
 
+        // ===== 各模型在本机的兼容性(按当前代码路由逻辑如实展示,不夸不贬)=====
+        sb.Append("模型兼容性:").Append('\n');
+        bool blackwell = EngineService.IsBlackwellGpu();
+        bool onnxEsrgan = EngineService.ShouldUseOnnxEsrgan();   // 50系/Vulkan不可用 → ONNX
+        bool onnxRife = RifeOnnxService.Available();
+
+        // 图片超分
+        sb.Append("· 图片超分(Real-ESRGAN):").Append(onnxEsrgan ? "自动走 ONNX 稳定版(已按此显卡选用,稳定)\n"
+            : "GPU 引擎(ncnn-Vulkan),速度快,稳定\n");
+        // 视频超分
+        sb.Append("· 视频超分(Real-ESRGAN):").Append(onnxEsrgan ? "自动走 ONNX 稳定版\n"
+            : "GPU 引擎快;若中途黑帧/失败会自动降级 CPU\n");
+        // 补帧
+        sb.Append("· 视频补帧(RIFE):").Append(onnxRife ? "优先 ONNX 路线(rife49);GPU 探测失败自动用 ONNX/DirectML\n"
+            : blackwell ? "50 系:引擎探测失败会降 CPU(慢),建议使用 ONNX 模型包(如已放置 engines/rife/rife49.onnx)\n"
+            : "GPU 引擎,稳定(50 系格外留意:已自动探测+看门狗兜底)\n");
+        // 抠图
+        sb.Append("· AI 抠图:DirectML GPU 优先,失败自动 CPU(各显卡可用)\n");
+        // 音频
+        sb.Append("· 音频处理:全程 CPU(不依赖显卡,任何设备稳定)\n");
+
         return sb.ToString().TrimEnd('\n');
     }
 
