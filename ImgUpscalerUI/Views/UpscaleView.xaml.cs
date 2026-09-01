@@ -305,6 +305,25 @@ public sealed partial class UpscaleView : UserControl
             }
             else SpeedHint.Visibility = Visibility.Collapsed;
         }
+        // 50 系兼容提醒(黄色同一提示区,优先于耗时提示;处理前让用户知道:
+        // Real-CUGAN(2022 ncnn)在 Blackwell 无法 GPU → 建议换 waifu2x;照片模式已自动 ONNX)
+        if (ToolGrid.Items.Count > 0 && !_running && EngineService.IsBlackwellGpu())
+        {
+            if (ModeRadios.SelectedIndex == 0)
+            {
+                var idx = Math.Clamp(ModelCombo.SelectedIndex, 0, EngineService.AnimeModels.Length - 1);
+                if (EngineService.AnimeModels[idx].Engine == "realcugan")
+                {
+                    SpeedHint.Text = "⚠ RTX 50 系:Real-CUGAN(2022 版)无法用 GPU,建议改用「waifu2x」(官方新版,兼容 50 系)";
+                    SpeedHint.Visibility = Visibility.Visible;
+                }
+            }
+            else
+            {
+                SpeedHint.Text = "✅ RTX 50 系:照片模式已自动用 ONNX 版 Real-ESRGAN(兼容,稳定)";
+                SpeedHint.Visibility = Visibility.Visible;
+            }
+        }
         PauseBtn.IsEnabled = _running && !_paused;
         ResumeBtn.IsEnabled = _running && _paused;
         UpdatePauseButtonVisual();

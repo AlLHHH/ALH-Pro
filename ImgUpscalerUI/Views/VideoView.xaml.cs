@@ -510,11 +510,37 @@ public sealed partial class VideoView : UserControl
         if (CompatHintPanel != null)
         {
             bool weak = SafeRender.IsWeakDevice && FastModeCheck.IsChecked != true;
-            CompatHintPanel.Visibility = weak ? Visibility.Visible : Visibility.Collapsed;
-            if (weak && CompatHint != null)
+            // 50 系兼容提示优先(Real-CUGAN/Real-ESRGAN 2022 版在 Blackwell 崩 → 建议 waifu2x;rife 老模型同理)
+            string? blackwellMsg = null;
+            if (EngineService.IsBlackwellGpu())
             {
-                CompatHint.Text = $"⚠ 检测到设备配置较低({SafeRender.WeakDeviceReason}),建议勾选「兼容模式」防止爆显存/卡顿。";
-                AppLogger.Info($"⚠ 检测到设备配置较低({SafeRender.WeakDeviceReason}),建议勾选「兼容模式」防止爆显存/卡顿");
+                bool upOn = UpscaleToggle.IsChecked == true;
+                bool interpOn = InterpToggle.IsChecked == true;
+                if (upOn && VideoEngineRadios.SelectedIndex is 1 or 2)
+                {
+                    var oldEngineLabel = VideoEngineRadios.SelectedIndex == 1 ? "Real-CUGAN" : "Real-ESRGAN";
+                    blackwellMsg = $"⚠ RTX 50 系:「{oldEngineLabel}」(2022 版)无法用 GPU,建议改用「waifu2x」(官方新版,兼容 50 系;照片超分也可用 ONNX 版)";
+                }
+                else if (interpOn && InterpModelCombo.SelectedIndex is 3 or 4 or 5 or 6)
+                {
+                    var oldModel = InterpModelCombo.SelectedIndex switch { 3 => "动漫专用(RIFE Anime)", 4 => "高清(RIFE HD)", 5 => "超高清(RIFE UHD)", _ => "经典兼容(RIFE v2.3)" };
+                    blackwellMsg = $"⚠ RTX 50 系:「{oldModel}」是旧模型,50 系可能不稳定,建议改用「通用画质最新 v4.13/v4.6」(兼容 50 系)";
+                }
+            }
+            if (blackwellMsg != null)
+            {
+                CompatHintPanel.Visibility = Visibility.Visible;
+                if (CompatHint != null) CompatHint.Text = blackwellMsg;
+                AppLogger.Info(blackwellMsg);
+            }
+            else
+            {
+                CompatHintPanel.Visibility = weak ? Visibility.Visible : Visibility.Collapsed;
+                if (weak && CompatHint != null)
+                {
+                    CompatHint.Text = $"⚠ 检测到设备配置较低({SafeRender.WeakDeviceReason}),建议勾选「兼容模式」防止爆显存/卡顿。";
+                    AppLogger.Info($"⚠ 检测到设备配置较低({SafeRender.WeakDeviceReason}),建议勾选「兼容模式」防止爆显存/卡顿");
+                }
             }
         }
         PauseBtn.IsEnabled = _running && !_paused;
