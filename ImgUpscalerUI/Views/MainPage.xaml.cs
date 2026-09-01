@@ -523,7 +523,7 @@ public sealed partial class MainPage : Page
             var r = await UpdateChecker.CheckAsync();
             if (r is null)
             {
-                updateResult.Text = "检查失败(网络或 GitHub 暂时不可用)";
+                updateResult.Text = "网络或 GitHub 不通(国内直连慢/被限制),建议:①使用加速器或镜像 ②稍后重试 ③直接在 GitHub 仓库页面查看最新 Release";
                 updateBtn.IsEnabled = true;
                 return;
             }

@@ -71,7 +71,7 @@ begin
   Result := True;
   try
     // 进度页
-    Page := CreateDownloadPage('下载模型包', '正在从 GitHub 下载模型包(约 1.6GB),请保持网络连接...', nil);
+    Page := CreateDownloadPage('下载模型包', '正在从 GitHub 下载模型包(约 1.6GB),请保持网络连接;之后解压约需几分钟,进度条"不动"是解压中,请耐心等待...', nil);
     try
       Page.Show;
       try
@@ -89,7 +89,11 @@ begin
     ZipPath := ExpandConstant('{tmp}\{#ModelsFile}');
     if not FileExists(ZipPath) then
     begin
-      MsgBox('模型包下载失败,请检查网络后重新安装,或稍后手动下载解压。', mbError, MB_OK);
+      MsgBox('模型包下载失败。' + #13#10#13#10 +
+        '可能原因:网络不稳定 / GitHub 国内直连慢或被限制。' + #13#10 +
+        '建议:1) 使用加速器或 GitHub 镜像(如 gh.ddlc.top / hf-mirror)后重试;' + #13#10 +
+        '2) 直接在 GitHub Release 页面下载 models_v1.0.zip(浏览器或下载工具更稳);' + #13#10 +
+        '3) 解压到 程序目录\engines\rembg\ 即可(软件自动识别)。', mbError, MB_OK);
       Result := False;
       Exit;
     end;
@@ -100,13 +104,17 @@ begin
         '-xf "' + ZipPath + '" -C "' + ExpandConstant('{app}\engines\rembg') + '"',
         '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     begin
-      MsgBox('模型包解压失败(请手动解压 models_v1.0.zip 到程序目录 engines\rembg\)。', mbError, MB_OK);
+      MsgBox('模型包解压失败/卡住。' + #13#10#13#10 +
+        '请手动解压:下载 models_v1.0.zip → 解压到 程序目录\engines\rembg\(' + #13#10 +
+        '提示:1.6GB 解压需几分钟,期间进度条看似"卡住"是正常解压中,请耐心等待;' + #13#10 +
+        '若 10 分钟无进展,取消后用系统资源管理器解压更快)。', mbError, MB_OK);
       Result := False;
       Exit;
     end;
     if ResultCode <> 0 then
     begin
-      MsgBox('模型包解压失败(代码 ' + IntToStr(ResultCode) + ')。', mbError, MB_OK);
+      MsgBox('模型包解压失败(代码 ' + IntToStr(ResultCode) + ')。' + #13#10 +
+        '请手动下载 models_v1.0.zip 解压到 程序目录\engines\rembg\。', mbError, MB_OK);
       Result := False;
       Exit;
     end;
@@ -114,7 +122,8 @@ begin
     // 删除临时 zip
     DeleteFile(ZipPath);
   except
-    MsgBox('模型包下载出错:' + #13#10 + GetExceptionMessage, mbError, MB_OK);
+    MsgBox('模型包下载出错:' + #13#10 + GetExceptionMessage + #13#10#13#10 +
+      '建议:使用加速器/镜像,或直接在 GitHub Release 下载 models_v1.0.zip 手动解压。', mbError, MB_OK);
     Result := False;
   end;
 end;
