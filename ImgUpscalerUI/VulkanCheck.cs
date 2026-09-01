@@ -298,19 +298,19 @@ public static class VulkanCheck
         bool onnxRife = RifeOnnxService.Available();
 
         // 图片超分
-        sb.Append("· 图片超分(Real-ESRGAN):").Append(onnxEsrgan ? "自动走 ONNX 稳定版(已按此显卡选用,稳定)\n"
-            : "GPU 引擎(ncnn-Vulkan),速度快,稳定\n");
+        sb.Append("· 图片超分(Real-ESRGAN):").Append(onnxEsrgan ? "显卡加速,稳定\n"
+            : "GPU 加速,速度快,稳定\n");
         // 视频超分
-        sb.Append("· 视频超分(Real-ESRGAN):").Append(onnxEsrgan ? "自动走 ONNX 稳定版\n"
-            : "GPU 引擎快;若中途黑帧/失败会自动降级 CPU\n");
+        sb.Append("· 视频超分(Real-ESRGAN):").Append(onnxEsrgan ? "显卡加速,稳定\n"
+            : "GPU 加速,速度快;异常时自动改用 CPU\n");
         // 补帧
-        sb.Append("· 视频补帧(RIFE):").Append(onnxRife ? "优先 ONNX 路线(rife49);GPU 探测失败自动用 ONNX/DirectML\n"
-            : blackwell ? "50 系:引擎探测失败会降 CPU(慢),建议使用 ONNX 模型包(如已放置 engines/rife/rife49.onnx)\n"
-            : "GPU 引擎,稳定(50 系格外留意:已自动探测+看门狗兜底)\n");
+        sb.Append("· 视频补帧(RIFE):").Append(onnxRife ? "稳定(已自动选用合适引擎)\n"
+            : blackwell ? "稳定(已自动适配,较慢)\n"
+            : "GPU 加速,流畅稳定\n");
         // 抠图
-        sb.Append("· AI 抠图:强制 CPU(模型小、速度快;用 GPU 会占满显卡卡顿整机——「宁慢勿卡」设计),任何显卡均稳定\n");
+        sb.Append("· AI 抠图:CPU 计算,速度快,任何显卡均稳定\n");
         // 音频
-        sb.Append("· 音频处理:全程 CPU(不依赖显卡,任何设备稳定)\n");
+        sb.Append("· 音频处理:CPU 计算,任何设备均稳定\n");
 
         return sb.ToString().TrimEnd('\n');
     }
