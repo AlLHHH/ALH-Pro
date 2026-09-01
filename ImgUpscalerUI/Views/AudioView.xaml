@@ -28,6 +28,39 @@
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
+                    <!-- AI 超分:分轨后逐轨优化再重混,最优先 -->
+                    <TextBlock Text="AI 超分(音质增强)" Style="{StaticResource SectionTitle}"/>
+                    <RadioButtons x:Name="SrRadios" SelectedIndex="0" ToolTipService.ToolTip="AI 分轨后分别优化人声/伴奏再重新混音:咬字更清晰、伴奏更有层次(CPU 较慢,约 1.5 分钟/分钟音频)"
+                                  SelectionChanged="Options_Changed">
+                        <RadioButton Content="关"/>
+                        <RadioButton Content="柔和(推荐)"/>
+                        <RadioButton Content="标准"/>
+                        <RadioButton Content="强力"/>
+                    </RadioButtons>
+
+                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
+
+                    <!-- AI 分离(神经网络):独立板块,拆人声/伴奏 -->
+                    <TextBlock Text="AI 分离(人声 / 伴奏)" Style="{StaticResource SectionTitle}"/>
+                    <RadioButtons x:Name="DemucsRadios" SelectedIndex="0" ToolTipService.ToolTip="神经网络分离(Demucs):提取人声/去人声(伴奏)/分离导出两文件——需分轨时用(CPU 较慢,一首歌约几至十几分钟)"
+                                  SelectionChanged="Options_Changed">
+                        <RadioButton Content="关"/>
+                        <RadioButton Content="提取人声"/>
+                        <RadioButton Content="去人声(卡拉OK伴奏)"/>
+                        <RadioButton Content="分离(导出人声+伴奏两个文件)"/>
+                        <RadioButton Content="自定义组合(选下面轨道)"/>
+                    </RadioButtons>
+
+                    <!-- 自定义组合:勾选要保留的轨(人声=轨3,伴奏=轨0,其他1/2) -->
+                    <StackPanel x:Name="CustomMixPanel" Visibility="Collapsed" Margin="24,2,0,8" Spacing="2">
+                        <CheckBox x:Name="CmVocals" Content="人声" Checked="Options_Changed" Unchecked="Options_Changed"/>
+                        <CheckBox x:Name="CmAcc" Content="伴奏" Checked="Options_Changed" Unchecked="Options_Changed"/>
+                        <CheckBox x:Name="CmOther1" Content="其他 1(部分歌内含鼓/贝斯)" Checked="Options_Changed" Unchecked="Options_Changed"/>
+                        <CheckBox x:Name="CmOther2" Content="其他 2(同上)" Checked="Options_Changed" Unchecked="Options_Changed"/>
+                    </StackPanel>
+
+                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
+
                     <!-- 降噪:独立板块(去噪声/修复,与音色调色不同性质) -->
                     <TextBlock Text="降噪" Style="{StaticResource SectionTitle}"/>
                     <RadioButtons x:Name="DenoiseRadios" SelectedIndex="0" ToolTipService.ToolTip="FFT 降噪(afftdn):去底噪/电流声/压缩噪点(仅录音/降噪场景适用;对已混音音乐可能削细节)"
@@ -50,27 +83,6 @@
 
                     <CheckBox x:Name="EqCheck" Content="清晰增强(高频微调)" ToolTipService.ToolTip="3.5kHz 柔和提升 2dB:话语/乐器更明亮清晰"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
-
-                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
-
-                    <!-- AI 分离(神经网络):独立板块,拆人声/伴奏 -->
-                    <TextBlock Text="AI 分离(人声 / 伴奏)" Style="{StaticResource SectionTitle}"/>
-                    <RadioButtons x:Name="DemucsRadios" SelectedIndex="0" ToolTipService.ToolTip="神经网络分离(Demucs):提取人声/去人声(伴奏)/分离导出两文件——需分轨时用(CPU 较慢,一首歌约几至十几分钟)"
-                                  SelectionChanged="Options_Changed">
-                        <RadioButton Content="关"/>
-                        <RadioButton Content="提取人声"/>
-                        <RadioButton Content="去人声(卡拉OK伴奏)"/>
-                        <RadioButton Content="分离(导出人声+伴奏两个文件)"/>
-                        <RadioButton Content="自定义组合(选下面轨道)"/>
-                    </RadioButtons>
-
-                    <!-- 自定义组合:勾选要保留的轨(人声=轨3,伴奏=轨0,其他1/2) -->
-                    <StackPanel x:Name="CustomMixPanel" Visibility="Collapsed" Margin="24,2,0,8" Spacing="2">
-                        <CheckBox x:Name="CmVocals" Content="人声" Checked="Options_Changed" Unchecked="Options_Changed"/>
-                        <CheckBox x:Name="CmAcc" Content="伴奏" Checked="Options_Changed" Unchecked="Options_Changed"/>
-                        <CheckBox x:Name="CmOther1" Content="其他 1(部分歌内含鼓/贝斯)" Checked="Options_Changed" Unchecked="Options_Changed"/>
-                        <CheckBox x:Name="CmOther2" Content="其他 2(同上)" Checked="Options_Changed" Unchecked="Options_Changed"/>
-                    </StackPanel>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 

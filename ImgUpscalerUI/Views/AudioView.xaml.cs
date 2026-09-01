@@ -15,9 +15,10 @@ namespace ALHPro.Views;
 
 public sealed partial class AudioView : UserControl
 {
-    /// <summary>音频页设置(降噪/AI分离/响亮/低切/清晰/输出格式),存 %LOCALAPPDATA%\ALHPro\settings\audio-settings.json。</summary>
+    /// <summary>音频页设置(超分/降噪/AI分离/响亮/低切/清晰/输出格式),存 %LOCALAPPDATA%\ALHPro\settings\audio-settings.json。</summary>
     public class AudioSettings
     {
+        public int Sr { get; set; } = 0;           // 0关 1柔和 2标准 3强力(AI 超分)
         public int Denoise { get; set; } = 0;        // 0关 1弱 2中 3强
         public int Demucs { get; set; } = 0;         // 0关 1人声 2去人声 3分离
         public bool Loudness { get; set; }
@@ -131,6 +132,7 @@ public sealed partial class AudioView : UserControl
             if (!File.Exists(SettingsFile)) return;
             var d = System.Text.Json.JsonSerializer.Deserialize<AudioSettings>(File.ReadAllText(SettingsFile));
             if (d is null) return;
+            SrRadios.SelectedIndex = Math.Clamp(d.Sr, 0, 3);
             DenoiseRadios.SelectedIndex = Math.Clamp(d.Denoise, 0, 3);
             DemucsRadios.SelectedIndex = Math.Clamp(d.Demucs, 0, 3);
             LoudnessCheck.IsChecked = d.Loudness;
@@ -149,6 +151,7 @@ public sealed partial class AudioView : UserControl
             System.IO.File.WriteAllText(SettingsFile,
                 System.Text.Json.JsonSerializer.Serialize(new AudioSettings
                 {
+                    Sr = SrRadios.SelectedIndex,
                     Denoise = DenoiseRadios.SelectedIndex,
                     Demucs = DemucsRadios.SelectedIndex,
                     Loudness = LoudnessCheck.IsChecked == true,
@@ -685,8 +688,9 @@ public sealed partial class AudioView : UserControl
                         AudioProgress.Value = t.pct;
                         AudioStatus.Text = t.msg;
                     });
-                    // ==== AI 分离(Demucs)优先:先转 44.1k stereo wav → 分离 → 再转目标格式 ====
+                    // ==== AI 超分/分离(Demucs):先转 44.1k stereo wav → 分轨 → 重混/导出 ====
                     int demucsSel = DemucsRadios.SelectedIndex;   // 0=关 1=人声 2=去人声 3=分离(两文件) 4=自定义组合
+                    int srSel = SrRadios.SelectedIndex;           // 0=关 1=柔和 2=标准 3=强力(AI 超分)
                     if (demucsSel > 0)
                     {
                         // 1) 转 44.1k 立体声 WAV(ffmpeg,DurSec 探测)
@@ -742,7 +746,7 @@ public sealed partial class AudioView : UserControl
                         }
                         try { System.IO.File.Delete(tmpWav); } catch { }
                     }
-                    else
+                    else if (srSel == 0)
                     {
                         await AudioService.EnhanceAsync(item.Path, outPath,
                             DenoiseRadios.SelectedIndex,   // 0=关 1=弱 2=中 3=强(afftdn nf=-25/-30/-35)
@@ -753,6 +757,44 @@ public sealed partial class AudioView : UserControl
                             prog, _cts.Token,
                             item.TrimStart > 0.1 ? item.TrimStart : 0,
                             (item.TrimEnd > 0.1 && item.DurationSec > 0.2) ? item.TrimEnd : 0);
+                    }
+                    // ==== AI 超分(音质增强):分轨 → 人声/伴奏分别优化 → 重混 → 降噪/音色/输出格式 ====
+                    if (srSel > 0)
+                    {
+                        if (demucsSel > 0)
+                            Log("⚠ AI 超分与 AI 分离同时开启:需分轨两次,耗时加倍(一般只开一项即可)");
+                        // 1) 转 44.1k 立体声 WAV
+                        var srTmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                            $"alh_sr_{Guid.NewGuid():N}.wav");
+                        Log("AI 超分:转为 44.1kHz 立体声 WAV...");
+                        await AudioService.ConvertToWav44kAsync(item.Path, srTmp);
+                        Log("⚠ AI 超分处理中(神经网络分轨,CPU 较慢:约 1.5 分钟/分钟音频,请耐心等待)");
+                        // 2) 分轨(人声/伴奏两个文件)
+                        var srDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                            $"alh_sr_{Guid.NewGuid():N}");
+                        System.IO.Directory.CreateDirectory(srDir);
+                        var srB = System.IO.Path.Combine(srDir, "stems");
+                        await AudioEnhanceService.SeparateAsync(srTmp, srB + ".wav", 6, -1, 100f, prog, _cts.Token);
+                        // 3) 人声/伴奏分别优化后重混
+                        Log("AI 超分:人声/伴奏分别优化,重新混音...");
+                        var mixWav = System.IO.Path.Combine(srDir, "mix.wav");
+                        await AudioService.RemasterAsync(srB + "_人声.wav", srB + "_伴奏.wav", mixWav, srSel, prog, _cts.Token);
+                        // 4) 后续(降噪/音色调整/裁剪)在重混结果上完成,再转输出格式
+                        var srOut = UniquePath(System.IO.Path.GetDirectoryName(item.Path)!,
+                            System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_超分" + ext);
+                        Log("AI 超分完成,应用降噪/音色调整并转换 " + ext + " ...");
+                        await AudioService.EnhanceAsync(mixWav, srOut,
+                            DenoiseRadios.SelectedIndex,
+                            LoudnessCheck.IsChecked == true,
+                            LowcutCheck.IsChecked == true,
+                            EqCheck.IsChecked == true,
+                            outFmt, 320, null,
+                            prog, _cts.Token,
+                            item.TrimStart > 0.1 ? item.TrimStart : 0,
+                            (item.TrimEnd > 0.1 && item.DurationSec > 0.2) ? item.TrimEnd : 0);
+                        sepOutputs.Add(srOut);
+                        try { System.IO.File.Delete(srTmp); } catch { }
+                        try { System.IO.Directory.Delete(srDir, true); } catch { }
                     }
                     item.IsDone = true;
                     item.Status = "✅ 完成";
