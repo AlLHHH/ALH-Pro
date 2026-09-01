@@ -1024,7 +1024,8 @@ public static class EngineService
             // -m 显式模型目录(models),-n 模型名(=realesrgan-x4plus)——显式写全,不依赖引擎默认/工作目录
             var args = $"-i \"{input}\" -o \"{output}\" -s {engineScale} -m models -n {model} " +
                 $"-t {tileSize} -g {gpuId}{SafeRender.GetEngineThreadArgs()}";
-            if (tta) args += " -x";
+            // 实测:realesrgan(2022 版)加 -x(TTA)会卡死(120秒无输出,引擎兼容问题)——禁用,仅 waifu2x/realcugan 新版支持 TTA;
+            // 50 系适配升级新版引擎后如支持再放开。
             await RunEngFallbackGpuAsync(exe, args, progress, ct).ConfigureAwait(false);
             EnsureFinalOutput(output);
             if (Math.Abs(engineScale - scale) > 0.001)
@@ -1414,8 +1415,9 @@ public static class EngineService
         else
         {
             var exe = FindRealESRGAN() ?? throw new FileNotFoundException("未找到 Real-ESRGAN 引擎");
-            await RunEngAsync(exe, t => $"-i \"{inputDir}\" -o \"{outputDir}\" -s {engineScale} -n {model} " +
-                $"-t {t} -g {gpuId}{SafeRender.GetEngineThreadArgs()}" + (tta ? " -x" : "")).ConfigureAwait(false);
+            // 同单张路径:显式 -m models -n 模型名(缺 -m 会找不到模型加载失败);TTA(-x)在 2022 老引擎上会卡死,故不传
+            await RunEngAsync(exe, t => $"-i \"{inputDir}\" -o \"{outputDir}\" -s {engineScale} -m models -n {model} " +
+                $"-t {t} -g {gpuId}{SafeRender.GetEngineThreadArgs()}").ConfigureAwait(false);
         }
 
         // 非引擎原生倍数:批量缩放到目标倍数
