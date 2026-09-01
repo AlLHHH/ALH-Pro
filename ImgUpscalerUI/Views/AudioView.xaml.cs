@@ -615,7 +615,7 @@ public sealed partial class AudioView : UserControl
                         AudioStatus.Text = t.msg;
                     });
                     // ==== AI 分离(Demucs)优先:先转 44.1k stereo wav → 分离 → 再转目标格式 ====
-                    int demucsSel = DemucsRadios.SelectedIndex;   // 0=关 1=人声 2=去人声 3=分离 4=重混增强
+                    int demucsSel = DemucsRadios.SelectedIndex;   // 0=关 1=人声 2=去人声 3=分离(两文件)
                     if (demucsSel > 0)
                     {
                         // 1) 转 44.1k 立体声 WAV(ffmpeg,DurSec 探测)
@@ -623,8 +623,9 @@ public sealed partial class AudioView : UserControl
                             $"alh_demucs_{Guid.NewGuid():N}.wav");
                         Log("AI 分离:转为 44.1kHz 立体声 WAV...");
                         await AudioService.ConvertToWav44kAsync(item.Path, tmpWav);
-                        // 2) 分离(CPU 推理,模型 158MB;慢但稳)
-                        int sepTarget = demucsSel switch { 1 => 0, 2 => 1, 3 => 6, _ => 5 };
+                        Log("⚠ AI 分离处理中(CPU 较慢:约 1.5 分钟/分钟音频,请耐心等待;也可先处理音频后离开页面)");
+                        // 2) 分离(CPU 推理,158MB 模型;一首歌约几至十几分钟——快不了,耐心等)
+                        int sepTarget = demucsSel switch { 1 => 0, 2 => 1, _ => 6 };
                         // target 6 = 分离两文件;输出名带 _增强;分离版用 tmpWav 派生(会生成 _人声/_伴奏 于目标目录)
                         string sepOut = demucsSel == 3
                             ? System.IO.Path.Combine(System.IO.Path.GetDirectoryName(item.Path)!,
