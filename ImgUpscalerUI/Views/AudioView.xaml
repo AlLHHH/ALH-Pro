@@ -55,6 +55,18 @@
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
+                    <!-- AI 分离/降噪(Ht-Demucs 神经网络,MIT)——与人声/伴奏分离,同 tsai.ai 的 Demucs 增强 -->
+                    <TextBlock Text="AI 分离 / 降噪" Style="{StaticResource SectionTitle}"/>
+                    <RadioButtons x:Name="DemucsRadios" SelectedIndex="0" ToolTipService.ToolTip="神经网络分离(Demucs):提取人声/去人声(伴奏)/重混增强——比 FFT 降噪更智能,适合音乐/复杂人声"
+                                  SelectionChanged="Options_Changed">
+                        <RadioButton Content="关"/>
+                        <RadioButton Content="提取人声"/>
+                        <RadioButton Content="去人声(卡拉OK伴奏)"/>
+                        <RadioButton Content="重混增强(保留整体,更干净)"/>
+                    </RadioButtons>
+
+                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
+
                     <TextBlock Text="输出格式" Style="{StaticResource SectionTitle}"/>
                     <RadioButtons x:Name="FmtRadios" SelectedIndex="0" ToolTipService.ToolTip="WAV/FLAC 无损;MP3 有损(文件小)"
                                   SelectionChanged="Options_Changed">

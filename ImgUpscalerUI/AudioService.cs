@@ -252,4 +252,36 @@ public static class AudioService
             App.ActiveProcesses.Unregister(p.Id);
         }
     }
+
+    /// <summary>任意音频 → 44.1kHz 立体声 16-bit WAV(Demucs 模型输入要求)。</summary>
+    public static async Task ConvertToWav44kAsync(string input, string outputWav)
+    {
+        var psi = NewFfmpegPsi(FfmpegPath, $"-y -i \"{input}\" -ar 44100 -ac 2 -c:a pcm_s16le \"{outputWav}\"");
+        psi.RedirectStandardError = true;
+        using var p = Process.Start(psi);
+        if (p == null) throw new InvalidOperationException("无法启动 ffmpeg");
+        var err = p.StandardError.ReadToEndAsync();
+        await p.WaitForExitAsync();
+        if (p.ExitCode != 0 || !File.Exists(outputWav) || new FileInfo(outputWav).Length < 100)
+            throw new InvalidOperationException("转换为 44.1kHz WAV 失败");
+    }
+
+    /// <summary>44.1kHz WAV → 目标格式(0=MP3 320k 1=WAV 2=FLAC)。</summary>
+    public static async Task ConvertWavToAsync(string inputWav, string output, int outFmt)
+    {
+        var codec = outFmt switch
+        {
+            0 => "-c:a libmp3lame -b:a 320k",
+            1 => "-c:a pcm_s16le",
+            _ => "-c:a flac",
+        };
+        var psi = NewFfmpegPsi(FfmpegPath, $"-y -i \"{inputWav}\" {codec} \"{output}\"");
+        psi.RedirectStandardError = true;
+        using var p = Process.Start(psi);
+        if (p == null) throw new InvalidOperationException("无法启动 ffmpeg");
+        var err = p.StandardError.ReadToEndAsync();
+        await p.WaitForExitAsync();
+        if (p.ExitCode != 0 || !File.Exists(output) || new FileInfo(output).Length < 100)
+            throw new InvalidOperationException("转换输出格式失败");
+    }
 }

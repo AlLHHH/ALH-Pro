@@ -609,19 +609,40 @@ public sealed partial class AudioView : UserControl
                     var outPath = System.IO.Path.Combine(
                         System.IO.Path.GetDirectoryName(item.Path)!,
                         System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_增强" + ext);
-                    await AudioService.EnhanceAsync(item.Path, outPath,
-                        DenoiseCheck.IsChecked == true ? DenoiseRadios.SelectedIndex + 1 : 0,   // 0=关;1弱 2中 3强
-                        LoudnessCheck.IsChecked == true,
-                        LowcutCheck.IsChecked == true,
-                        EqCheck.IsChecked == true,
-                        outFmt, 320, null,   // MP3 用 320k 高品质(源 AAC 256k 时不再降档;WAV/FLAC 无损,此值忽略)
-                        new Progress<(int pct, string msg)>(t =>
-                        {
-                            AudioProgress.Value = t.pct;
-                            AudioStatus.Text = t.msg;
-                        }), _cts.Token,
-                        item.TrimStart > 0.1 ? item.TrimStart : 0,
-                        (item.TrimEnd > 0.1 && item.DurationSec > 0.2) ? item.TrimEnd : 0);
+                    var prog = new Progress<(int pct, string msg)>(t =>
+                    {
+                        AudioProgress.Value = t.pct;
+                        AudioStatus.Text = t.msg;
+                    });
+                    // ==== AI 分离(Demucs)优先:先转 44.1k stereo wav → 分离 → 再转目标格式 ====
+                    int demucsSel = DemucsRadios.SelectedIndex;   // 0=关 1=人声 2=去人声 3=重混增强
+                    if (demucsSel > 0)
+                    {
+                        // 1) 转 44.1k 立体声 WAV(ffmpeg,DurSec 探测)
+                        var tmpWav = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                            $"alh_demucs_{Guid.NewGuid():N}.wav");
+                        Log("AI 分离:转为 44.1kHz 立体声 WAV...");
+                        await AudioService.ConvertToWav44kAsync(item.Path, tmpWav);
+                        // 2) 分离(CPU 推理,模型 158MB;慢但稳)
+                        await AudioEnhanceService.SeparateAsync(tmpWav, tmpWav, demucsSel == 1 ? 0 : demucsSel == 2 ? 1 : 5,
+                            -1, prog, _cts.Token);
+                        // 3) 转目标格式(输出文件名保持 _增强.ext)
+                        Log("AI 分离完成,转换为 " + ext + " ...");
+                        await AudioService.ConvertWavToAsync(tmpWav, outPath, outFmt);
+                        try { System.IO.File.Delete(tmpWav); } catch { }
+                    }
+                    else
+                    {
+                        await AudioService.EnhanceAsync(item.Path, outPath,
+                            DenoiseCheck.IsChecked == true ? DenoiseRadios.SelectedIndex + 1 : 0,   // 0=关;1弱 2中 3强
+                            LoudnessCheck.IsChecked == true,
+                            LowcutCheck.IsChecked == true,
+                            EqCheck.IsChecked == true,
+                            outFmt, 320, null,   // MP3 用 320k 高品质(源 AAC 256k 时不再降档;WAV/FLAC 无损,此值忽略)
+                            prog, _cts.Token,
+                            item.TrimStart > 0.1 ? item.TrimStart : 0,
+                            (item.TrimEnd > 0.1 && item.DurationSec > 0.2) ? item.TrimEnd : 0);
+                    }
                     item.IsDone = true;
                     item.Status = "✅ 完成";
                     item.Display = item.Name + "  (已增强)";
