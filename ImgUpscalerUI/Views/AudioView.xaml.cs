@@ -24,10 +24,24 @@ public sealed partial class AudioView : UserControl
         public bool Lowcut { get; set; }
         public bool Eq { get; set; }
         public int OutputFmt { get; set; } = 0;      // 0=MP3 1=WAV 2=FLAC
-        public int VocalStrength { get; set; } = 100;
     }
 
     private static string SettingsFile => ParaPaths.SettingsFile("audio-settings.json");
+    private System.Collections.Generic.List<string> _allOutputs = new();   // 本次任务输出文件(完成弹窗用)
+
+    /// <summary>唯一化输出路径:同名时自动加 (1)/(2)... 不覆盖(与图片/视频页一致)。</summary>
+    public static string UniquePath(string dir, string fileName)
+    {
+        var candidate = Path.Combine(dir, fileName);
+        if (!File.Exists(candidate)) return candidate;
+        var ext = Path.GetExtension(fileName);
+        var baseName = Path.GetFileNameWithoutExtension(fileName);
+        for (int i = 2; ; i++)
+        {
+            candidate = Path.Combine(dir, $"{baseName} ({i}){ext}");
+            if (!File.Exists(candidate)) return candidate;
+        }
+    }
     public sealed class AudioItem
     {
         public string Path { get; set; } = "";
@@ -107,14 +121,6 @@ public sealed partial class AudioView : UserControl
         if (CustomMixPanel != null)
             CustomMixPanel.Visibility = DemucsRadios.SelectedIndex == 4
                 ? Visibility.Visible : Visibility.Collapsed;
-        // 伴奏洗人声力度标签
-        if (VocalStrengthLabel != null)
-        {
-            int v = (int)VocalStrength.Value;
-            VocalStrengthLabel.Text = v == 100 ? "洗净(100%)"
-                : v == 0 ? "不洗(保留人声)"
-                : $"力度 {v}%";
-        }
         SaveSettings();
     }
 
@@ -131,7 +137,6 @@ public sealed partial class AudioView : UserControl
             LowcutCheck.IsChecked = d.Lowcut;
             EqCheck.IsChecked = d.Eq;
             FmtRadios.SelectedIndex = Math.Clamp(d.OutputFmt, 0, 2);
-            VocalStrength.Value = Math.Clamp(d.VocalStrength, 0, 100);
         }
         catch { /* 读取失败用默认 */ }
     }
@@ -150,7 +155,6 @@ public sealed partial class AudioView : UserControl
                     Lowcut = LowcutCheck.IsChecked == true,
                     Eq = EqCheck.IsChecked == true,
                     OutputFmt = FmtRadios.SelectedIndex,
-                    VocalStrength = (int)VocalStrength.Value,
                 }));
         }
         catch { /* 保存失败忽略 */ }
@@ -673,9 +677,9 @@ public sealed partial class AudioView : UserControl
                 {
                     var outFmt = FmtRadios.SelectedIndex;   // 0=MP3 1=WAV 2=FLAC
                     var ext = outFmt == 0 ? ".mp3" : outFmt == 1 ? ".wav" : ".flac";
-                    var outPath = System.IO.Path.Combine(
-                        System.IO.Path.GetDirectoryName(item.Path)!,
+                    var outPath = UniquePath(System.IO.Path.GetDirectoryName(item.Path)!,
                         System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_增强" + ext);
+                    var sepOutputs = new System.Collections.Generic.List<string>();   // 本次输出(分离/增强),弹窗用
                     var prog = new Progress<(int pct, string msg)>(t =>
                     {
                         AudioProgress.Value = t.pct;
@@ -705,28 +709,36 @@ public sealed partial class AudioView : UserControl
                             if (mask == 0) { Log("⚠ 自定义组合未勾选任何轨道"); throw new OperationCanceledException(); }
                             sepTarget = 100 + mask;   // >100 = 自定义
                         }
-                        // target 6 = 分离两文件;输出名带 _增强;分离版用 tmpWav 派生(会生成 _人声/_伴奏 于目标目录)
-                        string sepOut = demucsSel == 3
-                            ? System.IO.Path.Combine(System.IO.Path.GetDirectoryName(item.Path)!,
-                                System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_分离.wav")
+                        // target 6 = 分离两文件;输出到"音频名_分离"文件夹(唯一化防覆盖);其余分离用 tmpWav
+                        bool isSepMode = demucsSel == 3;
+                        string sepDir = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(item.Path)!,
+                            System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_分离");
+                        string sepOut = isSepMode
+                            ? System.IO.Path.Combine(sepDir, System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_分离.wav")
                             : tmpWav;
                         await AudioEnhanceService.SeparateAsync(tmpWav, sepOut, sepTarget,
-                            -1, (float)(VocalStrength.Value / 100.0), prog, _cts.Token);
-                        // 3) 转目标格式(输出文件名保持 _增强.ext;分离版:人声/伴奏两个都转)
-                        if (demucsSel == 3)
+                            -1, 1f, prog, _cts.Token);
+                        // 3) 转目标格式(输出文件名保持 _增强.ext;分离版:人声/伴奏两个都转,放 sepDir,UniquePath 防覆盖)
+                        if (isSepMode)
                         {
-                            var d = System.IO.Path.GetDirectoryName(item.Path)!;
+                            System.IO.Directory.CreateDirectory(sepDir);
                             var b = System.IO.Path.GetFileNameWithoutExtension(item.Path) + "_分离";
+                            var vWav = System.IO.Path.Combine(sepDir, b + "_人声.wav");
+                            var aWav = System.IO.Path.Combine(sepDir, b + "_伴奏.wav");
                             Log("AI 分离完成,转换 " + ext + " ...");
-                            await AudioService.ConvertWavToAsync(System.IO.Path.Combine(d, b + "_人声.wav"), System.IO.Path.Combine(d, b + "_人声" + ext), outFmt);
-                            await AudioService.ConvertWavToAsync(System.IO.Path.Combine(d, b + "_伴奏.wav"), System.IO.Path.Combine(d, b + "_伴奏" + ext), outFmt);
-                            try { System.IO.File.Delete(System.IO.Path.Combine(d, b + "_人声.wav")); } catch { }
-                            try { System.IO.File.Delete(System.IO.Path.Combine(d, b + "_伴奏.wav")); } catch { }
+                            await AudioService.ConvertWavToAsync(vWav, System.IO.Path.Combine(sepDir, b + "_人声" + ext), outFmt);
+                            await AudioService.ConvertWavToAsync(aWav, System.IO.Path.Combine(sepDir, b + "_伴奏" + ext), outFmt);
+                            try { System.IO.File.Delete(vWav); } catch { }
+                            try { System.IO.File.Delete(aWav); } catch { }
+                            sepOutputs.Add(System.IO.Path.Combine(sepDir, b + "_人声" + ext));
+                            sepOutputs.Add(System.IO.Path.Combine(sepDir, b + "_伴奏" + ext));
+                            outPath = System.IO.Path.Combine(sepDir, b + ext);   // 主输出路径=文件夹(弹窗定位用)
                         }
                         else
                         {
                             Log("AI 分离完成,转换为 " + ext + " ...");
                             await AudioService.ConvertWavToAsync(tmpWav, outPath, outFmt);
+                            sepOutputs.Add(outPath);
                         }
                         try { System.IO.File.Delete(tmpWav); } catch { }
                     }
@@ -746,6 +758,7 @@ public sealed partial class AudioView : UserControl
                     item.Status = "✅ 完成";
                     item.Display = item.Name + "  (已增强)";
                     done++;
+                    _allOutputs.AddRange(sepOutputs.Where(f => File.Exists(f)));
                 }
                 catch (OperationCanceledException)
                 {
@@ -771,6 +784,31 @@ public sealed partial class AudioView : UserControl
             UpdateRunState();
             Log($"任务结束:成功 {done},失败 {fail},共 {total}");
             StatusChanged?.Invoke($"音频处理完成:成功 {done} 失败 {fail}");
+            try
+            {
+                // 完成弹窗:打开输出文件夹(与图片/视频页一致)
+                if (done > 0 && _allOutputs.Count > 0)
+                {
+                    var dir = System.IO.Path.GetDirectoryName(_allOutputs[0]) ?? "";
+                    var dlg = new ContentDialog
+                    {
+                        Title = "处理完成",
+                        Content = new TextBlock
+                        {
+                            Text = $"已处理 {done} 个音频\n输出:\n{string.Join("\n", _allOutputs.Take(8).Select(f => "· " + System.IO.Path.GetFileName(f)))}{( _allOutputs.Count > 8 ? $"\n...共 {_allOutputs.Count} 个" : "")}",
+                            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                        },
+                        PrimaryButtonText = "打开输出文件夹",
+                        CloseButtonText = "关闭",
+                        XamlRoot = this.XamlRoot,
+                    };
+                    var r = await dlg.ShowAsync();
+                    if (r == ContentDialogResult.Primary)
+                        ProcessStartHelper.OpenSelect(_allOutputs);
+                }
+            }
+            catch { }
+            _allOutputs = new();
         }
     }
 
