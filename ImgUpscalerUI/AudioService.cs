@@ -67,18 +67,18 @@ public static class AudioService
     private static extern uint GetShortPathName(string lpszLongPath, System.Text.StringBuilder lpszShortPath, uint cchBuffer);
 
     /// <summary>音频文件信息:时长、声道、采样率(用于进度估算/展示)。</summary>
-    public static (double DurationSec, int Channels, int SampleRate) Probe(string path)
+    public static (double DurationSec, int Channels, int SampleRate, double MaxVolumeDb, double MeanVolumeDb) Probe(string path)
     {
         try
         {
-            var psi = NewFfmpegPsi(FfmpegPath, $"-i \"{path}\" -f null -");
+            var psi = NewFfmpegPsi(FfmpegPath, $"-ss 0 -t 30 -i \"{path}\" -af volumedetect -f null -");   // 只解码前 30 秒测峰值(快;通常音量稳定)
             psi.RedirectStandardError = true;
             using var p = Process.Start(psi);
-            if (p == null) return (0, 0, 0);
+            if (p == null) return (0, 0, 0, 0, 0);
             var err = p.StandardError.ReadToEnd();
             p.WaitForExit();
-            double dur = 0; int ch = 0, sr = 0;
-            // 解析 "Duration: 00:01:23.45" 与 "audio: 44100 Hz, stereo"
+            double dur = 0; int ch = 0, sr = 0; double maxDb = -99; double meanDb = -99;
+            // 解析 "Duration: 00:01:23.45" 与 "audio: 44100 Hz, stereo" 与 "max_volume: -0.0 dB"/"mean_volume"
             foreach (var line in err.Split('\n'))
             {
                 var m = System.Text.RegularExpressions.Regex.Match(line,
@@ -89,10 +89,18 @@ public static class AudioService
                 if (m2.Success) sr = int.Parse(m2.Groups[1].Value);
                 var m3 = System.Text.RegularExpressions.Regex.Match(line, @"(mono|stereo|5\.1|7\.1)");
                 if (m3.Success) ch = m3.Groups[1].Value == "mono" ? 1 : m3.Groups[1].Value == "stereo" ? 2 : 6;
+                var m4 = System.Text.RegularExpressions.Regex.Match(line, @"max_volume:\s*(-?[\d.]+)\s*dB");
+                if (m4.Success && double.TryParse(m4.Groups[1].Value, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var db))
+                    maxDb = db;
+                var m5 = System.Text.RegularExpressions.Regex.Match(line, @"mean_volume:\s*(-?[\d.]+)\s*dB");
+                if (m5.Success && double.TryParse(m5.Groups[1].Value, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var db2))
+                    meanDb = db2;
             }
-            return (dur, ch, sr);
+            return (dur, ch, sr, maxDb, meanDb);
         }
-        catch { return (0, 0, 0); }
+        catch { return (0, 0, 0, 0, 0); }
     }
 
     /// <summary>解码音频为单声道 8kHz 采样(用于波形显示,所有格式 MP3/WAV/FLAC 都支持,
@@ -163,7 +171,22 @@ public static class AudioService
         // 3) 均衡(柔和高频增强,提清晰度)
         if (eq) filters.Add("equalizer=f=3500:t=q:w=1:g=2");
         // 4) 响度归一(EBU R128)
-        if (loudness) filters.Add("loudnorm=I=-16:TP=-1.5:LRA=11");
+        if (loudness)
+        {
+            // 实测保护:loudnorm 会按目标 I=-16 压缩,源【已经很响】(mean > -14dB,如 AI 混音/母带,
+            // 本机测试源 mean=-11.9)会被压掉 5dB+ → 音量变小、听感变差=破坏!
+            // 规则:源 mean_volume > -14dB(已够响)→ 完全跳过 loudnorm(不破坏);
+            // 源偏小(mean ≤ -14,如旧录音/音量小)→ 才做响度归一(真正需要)。
+            double srcMean = Probe(input).MeanVolumeDb;
+            if (srcMean > -14.0)
+            {
+                // 源已响:跳过(静默,不打补丁) —— 不加入 filters
+            }
+            else
+            {
+                filters.Add("loudnorm=I=-16:TP=-1.5:LRA=11");
+            }
+        }
 
         var af = filters.Count > 0
             ? $"-af \"{string.Join(",", filters)}{(keepRate.Length > 0 ? "," + keepRate : "")}\""

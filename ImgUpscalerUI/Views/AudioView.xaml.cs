@@ -284,7 +284,7 @@ public sealed partial class AudioView : UserControl
             var it = new AudioItem { Path = p };
             it.Display = it.Name;
             // 探测时长(用于裁剪滑块与展示)
-            var (dur, _, _) = AudioService.Probe(p);
+            var (dur, _, _, _, _) = AudioService.Probe(p);
             it.DurationSec = (float)dur;
             _items.Add(it);
             AudioList.Items.Add(it);
@@ -332,7 +332,7 @@ public sealed partial class AudioView : UserControl
             RemovePreviewHandler();
             _previewItem = it;
             PreviewPanel.Visibility = Visibility.Visible;   // 双击展开预览区
-            var (dur, ch, sampleRate) = AudioService.Probe(it.Path);
+            var (dur, ch, sampleRate, _, _) = AudioService.Probe(it.Path);
             it.DurationSec = (float)(dur > 0 ? dur : it.DurationSec);
             PreviewName.Text = $"{it.Name}";
             PreviewMeta.Text = $"{FormatTime(it.DurationSec)} · {sampleRate}Hz · {(ch == 1 ? "单声道" : ch == 2 ? "立体声" : $"{ch} 声道")}";
@@ -614,7 +614,7 @@ public sealed partial class AudioView : UserControl
                         LoudnessCheck.IsChecked == true,
                         LowcutCheck.IsChecked == true,
                         EqCheck.IsChecked == true,
-                        outFmt, 192, null,
+                        outFmt, 320, null,   // MP3 用 320k 高品质(源 AAC 256k 时不再降档;WAV/FLAC 无损,此值忽略)
                         new Progress<(int pct, string msg)>(t =>
                         {
                             AudioProgress.Value = t.pct;
