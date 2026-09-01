@@ -35,7 +35,8 @@ public static class AudioEnhanceService
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, InferenceSession> _sessions = new();
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
 
-    /// <summary>分离音频。input=任意音频(程序内先用 ffmpeg 转成 44.1k stereo wav);输出所选轨 wav。</summary>
+    /// <summary>分离音频。input=任意音频(程序内先用 ffmpeg 转成 44.1k stereo wav);输出所选轨 wav。
+    /// target:0人声 1伴奏 2鼓 3贝斯 4其他 5重混 6分离(输出 人声+伴奏 两文件)。</summary>
     public static async Task SeparateAsync(string inputWav, string outputWav, int target,
         int gpuId = -1, IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default)
     {
@@ -117,7 +118,8 @@ public static class AudioEnhanceService
             gate.Release();
 
             // 归一化权重 + 选轨输出
-            var sel = new float[N_CHANNELS, total];
+            int outCount = target == 6 ? 2 : 1;   // 分离=2 个(人声+伴奏),其余 1 个
+            var sel = new float[outCount, N_CHANNELS, total];
             for (int c = 0; c < N_CHANNELS; c++)
                 for (int s = 0; s < total; s++)
                 {
@@ -126,17 +128,51 @@ public static class AudioEnhanceService
                     float b = outBuf[1, c, s] / w;   // drums
                     float d = outBuf[2, c, s] / w;   // bass
                     float o = outBuf[3, c, s] / w;   // other
-                    sel[c, s] = target switch
+                    if (target == 6)
                     {
-                        0 => a,                       // 人声
-                        1 => b + d + o,               // 伴奏(去人声)
-                        2 => b,                       // 鼓
-                        3 => d,                       // 贝斯
-                        4 => o,                       // 其他
-                        _ => a + b + d + o,           // 人声+伴奏(重混=近似原曲,增强后)
-                    };
+                        sel[0, c, s] = a;                 // 人声
+                        sel[1, c, s] = b + d + o;         // 伴奏(去人声)
+                    }
+                    else
+                    {
+                        sel[0, c, s] = target switch
+                        {
+                            0 => a,                       // 人声
+                            1 => b + d + o,               // 伴奏(去人声)
+                            2 => b,                       // 鼓
+                            3 => d,                       // 贝斯
+                            4 => o,                       // 其他
+                            _ => a + b + d + o,           // 人声+伴奏(重混=近似原曲,增强后)
+                        };
+                    }
                 }
-            WriteWav(outputWav, sel, total);
+            if (target == 6)
+            {
+                // 分离:输出 2 个文件(人声/伴奏,从 outputWav 派生文件名)
+                var dir = System.IO.Path.GetDirectoryName(outputWav) ?? ".";
+                var baseName = System.IO.Path.GetFileNameWithoutExtension(outputWav);
+                var ext = System.IO.Path.GetExtension(outputWav);
+                var vocals = System.IO.Path.Combine(dir, baseName + "_人声" + ext);
+                var accomp = System.IO.Path.Combine(dir, baseName + "_伴奏" + ext);
+                var v = new float[N_CHANNELS, total];
+                var a2 = new float[N_CHANNELS, total];
+                for (int c = 0; c < N_CHANNELS; c++)
+                    for (int s = 0; s < total; s++)
+                    {
+                        v[c, s] = sel[0, c, s];
+                        a2[c, s] = sel[1, c, s];
+                    }
+                WriteWav(vocals, v, total);
+                WriteWav(accomp, a2, total);
+            }
+            else
+            {
+                var only = new float[N_CHANNELS, total];
+                for (int c = 0; c < N_CHANNELS; c++)
+                    for (int s = 0; s < total; s++)
+                        only[c, s] = sel[0, c, s];
+                WriteWav(outputWav, only, total);
+            }
         }
         finally
         {

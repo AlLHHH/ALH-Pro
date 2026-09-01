@@ -55,11 +55,12 @@
 
                     <!-- AI 分离(神经网络):独立板块,拆人声/伴奏 -->
                     <TextBlock Text="AI 分离(人声 / 伴奏)" Style="{StaticResource SectionTitle}"/>
-                    <RadioButtons x:Name="DemucsRadios" SelectedIndex="0" ToolTipService.ToolTip="神经网络分离(Demucs):提取人声/去人声(伴奏)/重混增强——适合音乐(卡拉OK、提取清唱、重混更干净)"
+                    <RadioButtons x:Name="DemucsRadios" SelectedIndex="0" ToolTipService.ToolTip="神经网络分离(Demucs):提取人声/去人声(伴奏)/分离导出两文件/重混增强——适合音乐(卡拉OK、提取清唱、分轨、重混更干净)"
                                   SelectionChanged="Options_Changed">
                         <RadioButton Content="关"/>
                         <RadioButton Content="提取人声"/>
                         <RadioButton Content="去人声(卡拉OK伴奏)"/>
+                        <RadioButton Content="分离(导出人声+伴奏两个文件)"/>
                         <RadioButton Content="重混增强(保留整体,更干净)"/>
                     </RadioButtons>
 
