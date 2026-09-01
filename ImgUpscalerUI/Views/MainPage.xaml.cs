@@ -449,6 +449,33 @@ public sealed partial class MainPage : Page
     private void SkipRestBtn_Click(object sender, RoutedEventArgs e)
         => SafeRender.CurrentRestCts?.Cancel();
 
+    /// <summary>显示"第三方组件与许可声明":读取随包 THIRD_PARTY_NOTICES.txt(缺失时提示),
+    /// 可复制全文(合规:所有第三方 MIT/Apache/BSD/GPL/CC 均已声明来源与协议)。</summary>
+    private void ShowThirdPartyNotices()
+    {
+        string text;
+        try
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, "THIRD_PARTY_NOTICES.txt");
+            text = File.Exists(path) ? File.ReadAllText(path) : "未找到 THIRD_PARTY_NOTICES.txt(程序目录)。";
+        }
+        catch (Exception ex) { text = "读取许可声明失败: " + ex.Message; }
+        var dlg = new ContentDialog
+        {
+            Title = "第三方组件与许可声明",
+            Content = new ScrollViewer
+            {
+                MaxHeight = 480,
+                VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
+                Content = new TextBlock { Text = text, FontSize = 11, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap },
+            },
+            PrimaryButtonText = "关闭",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = this.XamlRoot,
+        };
+        try { _ = dlg.ShowAsync(); } catch { }
+    }
+
     private void About_Click(object sender, RoutedEventArgs e)
     {
         var content = new StackPanel { Spacing = 8 };
@@ -512,6 +539,17 @@ public sealed partial class MainPage : Page
         updateRow.Children.Add(updateBtn);
         updateRow.Children.Add(updateResult);
         content.Children.Add(updateRow);
+
+        // 第三方组件与许可声明:点击查看 THIRD_PARTY_NOTICES.txt(随包分发,合规要求)
+        var licenseLink = new Microsoft.UI.Xaml.Controls.HyperlinkButton
+        {
+            Content = "第三方组件与许可声明",
+            FontSize = 11,
+            Padding = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 0),
+            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
+        };
+        licenseLink.Click += (_, _) => ShowThirdPartyNotices();
+        content.Children.Add(licenseLink);
 
         // 作者 + 头像(头像文件:程序目录 avatar.jpg;缺失时自动生成默认头像,名字始终显示)
         var authorRow = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 16 };
