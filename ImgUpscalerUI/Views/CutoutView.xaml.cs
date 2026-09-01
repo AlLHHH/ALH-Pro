@@ -731,7 +731,9 @@ public sealed partial class CutoutView : UserControl
             TaskLogText.Text = "";
             Log($"开始抠图任务:共 {total} 张,设备={(CutoutGpuId >= 0 ? $"GPU {CutoutGpuId}" : "CPU")}");
             if (CutoutGpuId < 0)
-                Log("⚠ 抠图默认用 CPU(DirectML GPU 会占满显卡导致界面抖动);如需 GPU 提速,在左下「设置→计算设备」选 GPU 并关闭「抠图流畅模式」。");
+                Log("⚠ 当前用 CPU 软算(快不了但绝对流畅);如需 GPU 提速,在左下「设置→计算设备」选 GPU 并关闭「抠图流畅模式」。");
+            else
+                Log("✅ GPU 加速(DirectML):已加推理节流,若界面仍抖动可在设置开「抠图流畅模式」切回 CPU。");
             Log($"输出目录:{outDir}");
             for (int i = 0; i < total; i++)
             {
