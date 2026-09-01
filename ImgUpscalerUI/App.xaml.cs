@@ -369,6 +369,11 @@ namespace ALHPro
                 tb.ButtonPressedForegroundColor = fg;
                 tb.ButtonInactiveBackgroundColor = btnBg;
                 tb.ButtonInactiveForegroundColor = Windows.UI.Color.FromArgb(255, 180, 186, 198);
+                // 关键:强制深色主题(系统默认主题可能是浅色 → 最小化/快照动画期间系统用浅色标题栏→ 顶部变白)
+                // PreferredTheme=Dark 告诉系统"这是深色应用",最小化动画也用深色标题栏。
+                try { window.AppWindow.TitleBar.PreferredTheme = Microsoft.UI.Windowing.TitleBarTheme.Dark; } catch { }
+                // 应用级主题也强制深色(与背景/正文一致)
+                try { ((FrameworkElement)window.Content).RequestedTheme = ElementTheme.Dark; } catch { }
             }
             catch { }
 
