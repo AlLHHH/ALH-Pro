@@ -253,6 +253,81 @@ public static class AudioService
         }
     }
 
+    /// <summary>AI 超分:人声/伴奏两轨【分别】优化(均衡+压缩)后重新混音+限幅。
+    /// 为什么分轨:人声提升不会把乐器底噪一起放大,伴奏补低频也不会压人声——这就是"AI 重制"的意义。
+    /// level:1=柔和 2=标准 3=强力。输入:44.1k 立体声 WAV(由 Demucs 分离产出);输出:44.1k 立体声 WAV。</summary>
+    public static async Task RemasterAsync(string vocalsWav, string accompWav, string outputWav, int level,
+        IProgress<(int pct, string msg)>? progress, CancellationToken ct = default)
+    {
+        DurSec = 0;
+        try { DurSec = Probe(vocalsWav).DurationSec; } catch { }
+        // 人声链:亮度/咬字提升(3.5kHz 人声清晰区 + 9kHz 空气感)+ 轻压缩
+        // 伴奏链:去低频闷声(highpass 30Hz)+ 暖度(120Hz)+ 高频点缀(8k)+ 轻压缩
+        string vChain, aChain;
+        if (level == 1)   // 柔和
+        {
+            vChain = "equalizer=f=3500:t=q:w=1:g=1.5,acompressor=threshold=0.08:ratio=2:attack=20:release=200";
+            aChain = "highpass=f=30,equalizer=f=120:t=q:w=1:g=1.5,equalizer=f=8000:t=q:w=1:g=1,acompressor=threshold=0.09:ratio=1.8:attack=25:release=220";
+        }
+        else if (level == 2)   // 标准
+        {
+            vChain = "equalizer=f=3500:t=q:w=1:g=2.5,equalizer=f=9000:t=q:w=1:g=1.2,acompressor=threshold=0.08:ratio=2.5:attack=15:release=180";
+            aChain = "highpass=f=30,equalizer=f=120:t=q:w=1:g=2,equalizer=f=8000:t=q:w=0.8:g=1.5,acompressor=threshold=0.08:ratio=2:attack=20:release=200";
+        }
+        else   // 强力
+        {
+            vChain = "equalizer=f=3500:t=q:w=1:g=4,equalizer=f=9000:t=q:w=1:g=2,acompressor=threshold=0.09:ratio=3:attack=12:release=160";
+            aChain = "highpass=f=34,equalizer=f=120:t=q:w=1:g=3,equalizer=f=9000:t=q:w=0.8:g=2,acompressor=threshold=0.08:ratio=2.2:attack=18:release=190";
+        }
+        // amix normalize=0:直接求和(不自动减半音量);末尾限幅防削波
+        var fc = $"[0:a]{vChain}[v];[1:a]{aChain}[a];[v][a]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[out]";
+        var psi = NewFfmpegPsi(FfmpegPath, $"-y -i \"{vocalsWav}\" -i \"{accompWav}\" -filter_complex \"{fc}\" -map \"[out]\" -ar 44100 -ac 2 -c:a pcm_s16le -progress pipe:1 -nostats \"{outputWav}\"");
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        psi.StandardOutputEncoding = Encoding.UTF8;
+        using var p = Process.Start(psi);
+        if (p == null) throw new InvalidOperationException("无法启动 ffmpeg");
+        App.ActiveProcesses.Register(p);
+        try
+        {
+            var lineTask = Task.Run(() =>
+            {
+                string? line;
+                while ((line = p.StandardOutput.ReadLine()) != null)
+                {
+                    var m = System.Text.RegularExpressions.Regex.Match(line, @"out_time_us=(\d+)");
+                    if (!m.Success)
+                        m = System.Text.RegularExpressions.Regex.Match(line, @"out_time_ms=(\d+)");
+                    if (m.Success)
+                    {
+                        double sec = double.Parse(m.Groups[1].Value) / 1_000_000.0;
+                        int pct = (int)Math.Min(99, sec / (DurSec > 0 ? DurSec : 1) * 100);
+                        progress?.Report((pct, $"重新混音中 {sec:0.#}s"));
+                    }
+                }
+            });
+            var errTask = p.StandardError.ReadToEndAsync();
+            while (!p.HasExited && !ct.IsCancellationRequested) await Task.Delay(100, ct).ConfigureAwait(false);
+            if (ct.IsCancellationRequested)
+            {
+                try { p.Kill(entireProcessTree: true); } catch { }
+                throw new OperationCanceledException();
+            }
+            await Task.WhenAll(lineTask, errTask).ConfigureAwait(false);
+            if (p.ExitCode != 0)
+            {
+                var errTail = await errTask.ConfigureAwait(false);
+                if (errTail.Length > 400) errTail = errTail[^400..];
+                throw new InvalidOperationException($"ffmpeg 混音失败(exit {p.ExitCode}):\n{errTail}");
+            }
+            progress?.Report((100, "混音完成"));
+        }
+        finally
+        {
+            App.ActiveProcesses.Unregister(p.Id);
+        }
+    }
+
     /// <summary>任意音频 → 44.1kHz 立体声 16-bit WAV(Demucs 模型输入要求)。</summary>
     public static async Task ConvertToWav44kAsync(string input, string outputWav)
     {
