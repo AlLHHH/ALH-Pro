@@ -772,16 +772,20 @@ public sealed partial class UpscaleView : UserControl
                         _progressSegStart = preDenoise ? 0.4 : 0.0;
                         _progressSegEnd = 0.97;   // 给最后"画质增强"留 3%(否则超分就满 100%)
                         progress.Report((0, $"正在处理 {item.Name}..."));
-                        // 智能自检选择:照片模式 + 50系(Blackwell,ncnn-Vulkan 会崩) + ONNX 模型存在
+                        // 智能自检选择:照片模式 + 50系/无独显(Blackwell,ncnn-Vulkan 会崩) + ONNX 模型存在
                         // → 走 ONNX 版(不走 Vulkan,稳定);否则 ncnn GPU(非 50 系更快更成熟)。
-                        // 自检结果写日志+进度,用户一眼看懂走了哪条路。
-                        bool useOnnx = engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan();
-                        if (useOnnx)
+                        // Real-ESRGAN 与 Real-CUGAN 都支持 ONNX 兜底(50系动漫素材也能 GPU 稳定跑)。
+                        string? onnxPath = null;
+                        if ((engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan()))
+                            onnxPath = EsrganOnnxService.FindModel();
+                        else if (engine == "realcugan" && EngineService.ShouldUseOnnxCugan())
+                            onnxPath = EsrganOnnxService.FindCuganModel();
+                        if (onnxPath != null)
                         {
                             Log("✅ 自检:已按当前显卡自动改用稳定引擎(直接处理,无需设置)");
                             progress.Report((0, "✅ 自检完毕:用稳定引擎处理..."));
                             await EsrganOnnxService.UpscaleAsync(srcPath, outPath, scale,
-                                gpuId, progress, ct);
+                                gpuId, progress, ct, onnxPath);
                         }
                         else
                         {

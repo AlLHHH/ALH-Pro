@@ -1154,17 +1154,22 @@ public static class VideoService
                                 File.Copy(upFiles[i], Path.Combine(batchIn, Path.GetFileName(upFiles[i])), true);
                             progress?.Report((45 + (int)(45.0 * start / total),
                                 $"超分 已处理 {start} 帧 / 共 {total} 帧(批次 {start / batchSize + 1}/{batches})..."));
-                            // 视频超分:50系/无独显 + Real-ESRGAN + ONNX 模型在 → 走 ONNX 逐帧(不走会崩的 ncnn-vulkan)
+                            // 视频超分:50系/无独显 + Real-ESRGAN/Real-CUGAN + ONNX 模型在 → 走 ONNX 逐帧(不走会崩的 ncnn-vulkan)
+                            string? onnxModelPath = null;
                             if (engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan())
+                                onnxModelPath = null;   // Real-ESRGAN 自动查找
+                            else if (engine == "realcugan" && EngineService.ShouldUseOnnxCugan())
+                                onnxModelPath = EsrganOnnxService.FindCuganModel();
+                            if (onnxModelPath != null || (engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan()))
                             {
                                 if (start == 0)   // 仅首批写自检日志(视频批多,避免刷屏)
                                 {
-                                    AppLogger.Info("✅ 自检:视频超分已按当前显卡自动改用稳定引擎(直接处理,无需设置)");
+                                    AppLogger.Info($"✅ 自检:视频超分({engine})已按当前显卡自动改用稳定引擎(直接处理,无需设置)");
                                 }
                                 progress?.Report((45 + (int)(45.0 * start / total),
                                     $"超分(稳定引擎) 批次 {start / batchSize + 1}/{batches}..."));
                                 await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
-                                    upGpu, progress, ct);
+                                    upGpu, progress, ct, onnxModelPath);
                             }
                             else
                             {
