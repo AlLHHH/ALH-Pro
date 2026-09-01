@@ -38,15 +38,19 @@
         <PackageReference Include="System.Drawing.Common" Version="8.0.7" />
     </ItemGroup>
 
-    <!-- ===== 关键:VC++ 运行库 + D3D 编译器(自包含部署必须手动带上)=====
+    <!-- ===== 关键:VC++ 运行库(自包含部署必须手动带上)=====
          Windows App SDK 自包含模式(SelfContained=true)不自动携带 VC++ 运行库,
          缺 msvcp140.dll 的干净电脑启动即闪退(转圈后无窗口)。
-         微软许可允许再分发;从仓库 assets\runtime 复制,任何人 clone 后都可构建。 -->
+         微软许可允许再分发;从仓库 assets\runtime 复制,任何人 clone 后都可构建。
+         ⚠ vcruntime140_threads.dll 必须带:新版组件依赖它导出
+         __std_parallel_algorithms_hw_threads;缺它报"无法定位程序输入点"(真机实测)。
+         ⚠ 不带 d3dcompiler_47.dll:它是 Windows 10/11 系统自带 DLL,系统版本已含所需符号;
+         随包带反而会"程序目录旧文件覆盖系统新版"引发"无法定位程序输入点"报错(真机实测)。 -->
     <ItemGroup>
         <None Include="..\assets\runtime\msvcp140.dll" Link="msvcp140.dll" CopyToOutputDirectory="PreserveNewest" />
         <None Include="..\assets\runtime\vcruntime140.dll" Link="vcruntime140.dll" CopyToOutputDirectory="PreserveNewest" />
         <None Include="..\assets\runtime\vcruntime140_1.dll" Link="vcruntime140_1.dll" CopyToOutputDirectory="PreserveNewest" />
-        <None Include="..\assets\runtime\d3dcompiler_47.dll" Link="d3dcompiler_47.dll" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="..\assets\runtime\vcruntime140_threads.dll" Link="vcruntime140_threads.dll" CopyToOutputDirectory="PreserveNewest" />
     </ItemGroup>
 
     <!-- 窗口顶栏图标:复制到输出目录供 AppWindow.SetIcon 使用 -->
