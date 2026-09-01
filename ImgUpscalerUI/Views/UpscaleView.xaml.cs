@@ -305,22 +305,22 @@ public sealed partial class UpscaleView : UserControl
             }
             else SpeedHint.Visibility = Visibility.Collapsed;
         }
-        // 50 系兼容提醒(黄色同一提示区,优先于耗时提示;处理前让用户知道:
-        // Real-CUGAN(2022 ncnn)在 Blackwell 无法 GPU → 建议换 waifu2x;照片模式已自动 ONNX)
-        if (ToolGrid.Items.Count > 0 && !_running && EngineService.IsBlackwellGpu())
+        // 引擎兼容自检(黄色同一提示区,优先于耗时提示;不限 50 系——任何 GPU 弱/不可用设备都提示):
+        // Real-CUGAN(2022 ncnn)在 Blackwell/Vulkan 不可用设备无法 GPU → 建议换 waifu2x;照片模式已自动 ONNX
+        if (ToolGrid.Items.Count > 0 && !_running)
         {
             if (ModeRadios.SelectedIndex == 0)
             {
                 var idx = Math.Clamp(ModelCombo.SelectedIndex, 0, EngineService.AnimeModels.Length - 1);
-                if (EngineService.AnimeModels[idx].Engine == "realcugan")
+                if (EngineService.AnimeModels[idx].Engine == "realcugan" && EngineService.OldNcnnGpuRisky())
                 {
-                    SpeedHint.Text = "⚠ RTX 50 系:Real-CUGAN(2022 版)无法用 GPU,建议改用「waifu2x」(官方新版,兼容 50 系)";
+                    SpeedHint.Text = "⚠ 该设备与 Real-CUGAN(2022 版)不兼容,建议改用「waifu2x」(官方新版,更稳定)";
                     SpeedHint.Visibility = Visibility.Visible;
                 }
             }
-            else
+            else if (EngineService.ShouldUseOnnxEsrgan())
             {
-                SpeedHint.Text = "✅ RTX 50 系:照片模式已自动用 ONNX 版 Real-ESRGAN(兼容,稳定)";
+                SpeedHint.Text = "✅ 已自动用 ONNX 版 Real-ESRGAN(兼容当前显卡,稳定)";
                 SpeedHint.Visibility = Visibility.Visible;
             }
         }
@@ -778,17 +778,17 @@ public sealed partial class UpscaleView : UserControl
                         bool useOnnx = engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan();
                         if (useOnnx)
                         {
-                            Log("✅ 自检:检测到 RTX 50 系(Blackwell),Real-ESRGAN 自动改用 ONNX 路线(DirectML GPU,兼容 50 系,不走 Vulkan)");
-                            progress.Report((0, "✅ 自检完毕:50 系 → 用 ONNX 版 Real-ESRGAN(兼容稳定)..."));
+                            Log("✅ 自检:Real-ESRGAN 自动改用 ONNX 路线(DirectML GPU,兼容当前显卡,Vulkan 旧引擎会崩)");
+                            progress.Report((0, "✅ 自检完毕:Real-ESRGAN 用 ONNX 版(兼容稳定)..."));
                             await EsrganOnnxService.UpscaleAsync(srcPath, outPath, scale,
                                 gpuId, progress, ct);
                         }
                         else
                         {
-                            if (engine == "realesrgan" && EngineService.IsBlackwellGpu())
-                                Log("⚠ 自检:检测到 RTX 50 系但未找到 ONNX 模型(engines\\rembg\\RealESRGAN_x4plus.onnx),回退 ncnn 引擎(50 系可能失败,建议补模型)");
+                            if (engine == "realesrgan" && EngineService.OldNcnnGpuRisky())
+                                Log("⚠ 自检:当前显卡与 ncnn 老引擎不兼容且未找到 ONNX 模型(engines\\rembg\\RealESRGAN_x4plus.onnx),回退 ncnn(可能失败,建议补模型或改用 waifu2x)");
                             else
-                                Log($"✅ 自检完毕:{(engine == "realesrgan" ? "非 50 系,用 ncnn GPU 引擎(快)" : "常规引擎")}");
+                                Log($"✅ 自检完毕:{(engine == "realesrgan" ? "ncnn GPU 引擎可用(快)" : "常规引擎")}");
                             await EngineService.UpscaleAsync(srcPath, outPath, engine,
                                 model, scale, noise, gpuId, tta, progress, ct,
                                 // 分块放大提速:图片超分逐块启动引擎,512 块=启动占约 2/3 时间;
