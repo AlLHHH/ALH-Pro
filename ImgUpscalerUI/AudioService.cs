@@ -328,13 +328,17 @@ public static class AudioService
         }
     }
 
-    /// <summary>若干 44.1k 立体声 WAV 混合成一个(等量求和,限幅防削波)。1 个时直接复制;0 个抛错。
-    /// 用于"自定义组合"多轨合成——各轨来自同一次 AI 分轨,无相位问题。</summary>
+    /// <summary>若干 44.1k 立体声 WAV 混合成一个(按各自音量求和,限幅防削波)。0 个抛错。
+    /// gains:各轨音量倍率(1.0=原音量,0.5=减半,2.0=加倍;null=全部原音量)——"自定义组合"独立调人声/伴奏音量用。
+    /// 单轨且音量=1.0 时直接复制;单轨带音量也走滤镜(音量同样生效)。</summary>
     public static async Task MixWavsAsync(System.Collections.Generic.List<string> inputs, string outputWav,
-        IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default)
+        IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default,
+        IList<double>? gains = null)
     {
         if (inputs.Count == 0) throw new ArgumentException("没有可混合的轨道");
-        if (inputs.Count == 1)
+        double G(int i) => gains != null && i < gains.Count ? Math.Clamp(gains[i], 0, 4) : 1.0;
+        string gs(double v) => v.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+        if (inputs.Count == 1 && Math.Abs(G(0) - 1.0) < 0.001)
         {
             System.IO.File.Copy(inputs[0], outputWav, true);
             progress?.Report((100, "完成"));
@@ -343,8 +347,20 @@ public static class AudioService
         DurSec = 0;
         try { DurSec = Probe(inputs[0]).DurationSec; } catch { }
         var ins = string.Concat(inputs.Select(f => $"-i \"{f}\" "));
-        var labels = string.Concat(Enumerable.Range(0, inputs.Count).Select(i => $"[{i}:a]"));
-        var fc = $"{labels}amix=inputs={inputs.Count}:duration=first:normalize=0,alimiter=limit=0.98[out]";
+        string fc;
+        if (inputs.Count == 1)
+        {
+            // 单轨带音量:volume 滤镜直接生效
+            fc = $"[0:a]volume={gs(G(0))}[out]";
+        }
+        else
+        {
+            // 各轨先按音量缩放,再等量求和(不自动减半),末尾限幅防削波
+            fc = string.Concat(Enumerable.Range(0, inputs.Count)
+                    .Select(i => $"[{i}:a]volume={gs(G(i))}[v{i}];"))
+                + string.Concat(Enumerable.Range(0, inputs.Count).Select(i => $"[v{i}]"))
+                + $"amix=inputs={inputs.Count}:duration=first:normalize=0,alimiter=limit=0.98[out]";
+        }
         var psi = NewFfmpegPsi(FfmpegPath, $"-y {ins}-filter_complex \"{fc}\" -map \"[out]\" -ar 44100 -ac 2 -c:a pcm_s16le -progress pipe:1 -nostats \"{outputWav}\"");
         psi.RedirectStandardOutput = true;
         psi.RedirectStandardError = true;
