@@ -4,7 +4,7 @@
 ; 用法:
 ;   1. 先构建发布版(确保 发布版\ 目录是最新,含软件+引擎,模型可缺省);
 ;   2. 确认 [Files] 里 发布版\* 没有打包模型(模型 1.38GB 不要进安装包本体);
-;   3. 将本文件放入仓库根,用 Inno Setup 编译 → ALHPro_v1.1.0_Setup.exe(约 1.2GB);
+;   3. 将本文件放入仓库根,用 Inno Setup 编译 → ALHPro_v1.1.2_Setup.exe(约 900MB);
 ;   4. 模型包(models_v1.0.zip, 1.38GB)单独上传 GitHub Release 附件(与 ModelsUrl 同版本)。
 ;
 ; 安装时「选择附加任务」页勾选「下载并安装模型包(来自 GitHub)」:
@@ -12,7 +12,7 @@
 ;   不勾选 = 之后手动下载模型包,解压到 程序目录\engines\rembg\ 即可。
 
 #define MyAppName "ALH Pro"
-#define MyAppVersion "1.1.1"
+#define MyAppVersion "1.1.2"
 #define MyAppExeName "ALHPro.exe"
 ; GitHub Release 模型包直链(与 Release 附件名必须一致;仓库=AlLHHH/ALH-Pro)
 #define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.0/models_v1.0.zip"
@@ -53,7 +53,7 @@ RestartApplications=no
 Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
 [Tasks]
-Name: "downloadmodels"; Description: "下载并安装模型包(约 1.6GB,来自 GitHub)"; GroupDescription: "模型包:"; Flags: unchecked
+Name: "downloadmodels"; Description: "下载并安装模型包(约 1.4GB,来自 GitHub)"; GroupDescription: "模型包:"; Flags: unchecked
 
 [Files]
 ; 发布版 = 软件 + 引擎(不含模型)。模型不在安装包内,保持体积 ~900MB
@@ -85,7 +85,7 @@ begin
   Result := True;
   try
     // 进度页
-    Page := CreateDownloadPage('下载模型包', '正在从 GitHub 下载模型包(约 1.6GB),请保持网络连接;之后解压约需几分钟,进度条"不动"是解压中,请耐心等待...', nil);
+    Page := CreateDownloadPage('下载模型包', '正在从 GitHub 下载模型包(约 1.4GB),请保持网络连接;之后解压约需几分钟,进度条"不动"是解压中,请耐心等待...', nil);
     try
       Page.Show;
       try
@@ -120,7 +120,7 @@ begin
     begin
       MsgBox('模型包解压失败/卡住。' + #13#10#13#10 +
         '请手动解压:下载 models_v1.0.zip → 解压到 程序目录\engines\rembg\(' + #13#10 +
-        '提示:1.6GB 解压需几分钟,期间进度条看似"卡住"是正常解压中,请耐心等待;' + #13#10 +
+        '提示:1.4GB 解压需几分钟,期间进度条看似"卡住"是正常解压中,请耐心等待;' + #13#10 +
         '若 10 分钟无进展,取消后用系统资源管理器解压更快)。', mbError, MB_OK);
       Result := False;
       Exit;
