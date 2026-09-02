@@ -56,11 +56,11 @@ public sealed partial class MainPage : Page
                 }
                 catch { }
             }
-            // 新版本更新弹窗:版本变化(或首次安装)后启动弹一次;左侧可翻往期版本,底部"来自作者的话"
+            // 新版本更新弹窗:版本变化(或首次安装)后启动弹一次(同一"更新日志"结构,作者的话在最顶部)
             try
             {
                 if (AppSettings.LastShownVersion != UpdateChecker.CurrentVersion)
-                    _ = ShowUpdatePopupAsync();
+                    _ = ShowUpdateLogAsync(fromStartup: true);
             }
             catch { }
             // 引擎可用性:仅缺失时提示,正常就绪不刷屏
@@ -288,10 +288,10 @@ public sealed partial class MainPage : Page
         ShowView("tutorial");
     }
 
-    /// <summary>左侧边栏「更新日志」:各版本更新内容(往期历史)。</summary>
+    /// <summary>左侧边栏「更新日志」:各版本更新内容(往期历史),作者的话在最顶部。</summary>
     private void UpdateLog_Click(object sender, RoutedEventArgs e)
     {
-        try { _ = ShowUpdateHistoryAsync(); } catch { }
+        try { _ = ShowUpdateLogAsync(fromStartup: false); } catch { }
     }
 
     /// <summary>启动声明已同意的标记文件(仅首次显示弹窗)。</summary>
@@ -355,51 +355,20 @@ public sealed partial class MainPage : Page
             "若您在使用过程中受益,欢迎通过赞赏给予一点支持,帮助项目走得更远。感谢每一份善意的理解和信任。",
     };
 
-    /// <summary>新版本更新弹窗(每次更新后首次启动弹一次):只显示【当前版本】更新内容 + 作者的话(简洁);
-    /// 历史版本在左侧边栏「更新日志」里查看。关闭后记录版本号,下次升级才会再弹。</summary>
-    private async Task ShowUpdatePopupAsync(bool force = false)
+    /// <summary>更新日志(唯一结构):最顶部"来自作者的话" + 左侧版本列表(当前+往期) + 右侧内容。
+    /// fromStartup=true = 升级后首次启动展示(按钮「开始使用」,记录版本号,下次升级才再弹);
+    /// 平时从左侧边栏「更新日志」/关于页打开(按钮「关闭」)。</summary>
+    private async Task ShowUpdateLogAsync(bool fromStartup)
     {
-        if (_updatePopupShown && !force) return;
-        _updatePopupShown = true;
+        if (!fromStartup && _updatePopupShown) { /* 手动打开不受限 */ }
+        if (fromStartup)
+        {
+            if (_updatePopupShown) return;
+            _updatePopupShown = true;
+        }
         try
         {
             var ver = UpdateChecker.CurrentVersion;
-            var entries = BuildUpdateEntries();
-            var notesBox = new TextBlock { FontSize = 12, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Text = entries[0].notes };
-            var full = new StackPanel { Spacing = 10 };
-            full.Children.Add(new ScrollViewer
-            {
-                Content = notesBox,
-                MaxHeight = 420,
-                VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
-            });
-            full.Children.Add(new Border
-            {
-                Height = 1,
-                Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
-            });
-            full.Children.Add(AuthorWords());
-
-            var dlg = new ContentDialog
-            {
-                Title = $"更新说明 · ALH Pro v{ver}",
-                Content = full,
-                PrimaryButtonText = "开始使用",
-                DefaultButton = ContentDialogButton.Primary,
-                XamlRoot = this.XamlRoot,
-            };
-            await dlg.ShowAsync();
-            AppSettings.LastShownVersion = ver;
-            AppSettings.Save();
-        }
-        catch { /* 弹窗失败不影响使用 */ }
-    }
-
-    /// <summary>更新日志对话框(左侧边栏「更新日志」/关于页入口):左侧选版本,右侧看内容(往期历史全部可翻)。</summary>
-    private async Task ShowUpdateHistoryAsync()
-    {
-        try
-        {
             var entries = BuildUpdateEntries();
             if (entries.Count == 0) return;
             var listBox = new ListView
@@ -420,7 +389,7 @@ public sealed partial class MainPage : Page
             var scroll = new ScrollViewer
             {
                 Content = notesBox,
-                MaxHeight = 420,
+                MaxHeight = 400,
                 VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
             };
             var grid = new Grid { ColumnSpacing = 12 };
@@ -431,16 +400,39 @@ public sealed partial class MainPage : Page
             Grid.SetColumn(scroll, 1);
             grid.Children.Add(scroll);
 
+            // 一个结构:最顶部作者的话 → 分隔线 → 版本列表+内容
+            var full = new StackPanel { Spacing = 10 };
+            full.Children.Add(AuthorWords());
+            full.Children.Add(new Border
+            {
+                Height = 1,
+                Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+            });
+            full.Children.Add(grid);
+
             var dlg = new ContentDialog
             {
-                Title = $"更新日志 · ALH Pro",
-                Content = grid,
-                CloseButtonText = "关闭",
+                Title = "更新日志 · ALH Pro",
+                Content = full,
                 XamlRoot = this.XamlRoot,
             };
+            if (fromStartup)
+            {
+                dlg.PrimaryButtonText = "开始使用";
+                dlg.DefaultButton = ContentDialogButton.Primary;
+            }
+            else
+            {
+                dlg.CloseButtonText = "关闭";
+            }
             await dlg.ShowAsync();
+            if (fromStartup)
+            {
+                AppSettings.LastShownVersion = ver;
+                AppSettings.Save();
+            }
         }
-        catch { }
+        catch { /* 弹窗失败不影响使用 */ }
     }
 
     /// <summary>欢迎弹窗(所有设备第一次启动只弹一次,合并两件事):
@@ -684,8 +676,8 @@ public sealed partial class MainPage : Page
         };
         notesLink.Click += (_, _) =>
         {
-            // 更新日志(历史版本可翻):与"更新说明弹窗"数据同源,随时可重看
-            try { _ = ShowUpdateHistoryAsync(); } catch { }
+            // 更新日志(历史版本可翻,作者的话在最顶部)
+            try { _ = ShowUpdateLogAsync(fromStartup: false); } catch { }
         };
         content.Children.Add(notesLink);
         // 手动检查更新:点击后显示结果;成功展示"已最新/发现新版本",失败才提示(启动静默检查不打扰)
