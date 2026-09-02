@@ -41,50 +41,35 @@
                 <ListView x:Name="NavList" Grid.Row="1" SelectionChanged="NavList_SelectionChanged"
                           Background="Transparent" BorderThickness="0">
                     <ListViewItem x:Name="NavUpscale" Tag="upscale" Padding="14,10">
-                        <StackPanel Orientation="Horizontal" Spacing="9">
-                            <FontIcon Glyph="&#xE8B9;" FontSize="14"/>
-                            <TextBlock Text="图片放大" FontSize="13"/>
-                        </StackPanel>
+                        <TextBlock Text="图片放大" FontSize="13"/>
                     </ListViewItem>
                     <ListViewItem x:Name="NavCutout" Tag="cutout" Padding="14,10">
-                        <StackPanel Orientation="Horizontal" Spacing="9">
-                            <FontIcon Glyph="&#xE16B;" FontSize="14"/>
-                            <TextBlock Text="AI 抠图" FontSize="13"/>
-                        </StackPanel>
+                        <TextBlock Text="AI 抠图" FontSize="13"/>
                     </ListViewItem>
                     <ListViewItem x:Name="NavVideo" Tag="video" Padding="14,10">
-                        <StackPanel Orientation="Horizontal" Spacing="9">
-                            <FontIcon Glyph="&#xE714;" FontSize="14"/>
-                            <TextBlock Text="视频处理" FontSize="13"/>
-                        </StackPanel>
+                        <TextBlock Text="视频处理" FontSize="13"/>
                     </ListViewItem>
                     <ListViewItem x:Name="NavAudio" Tag="audio" Padding="14,10">
-                        <StackPanel Orientation="Horizontal" Spacing="9">
-                            <FontIcon Glyph="&#xE8D6;" FontSize="14"/>
-                            <TextBlock Text="音频处理" FontSize="13"/>
-                        </StackPanel>
+                        <TextBlock Text="音频处理" FontSize="13"/>
                     </ListViewItem>
                 </ListView>
 
-                <!-- 底部署名 + 诊断日志 + 关于 -->
+                <!-- 底部署名 + 常用入口 + 关于 -->
                 <StackPanel Grid.Row="2" Padding="14,12" Spacing="6">
                     <TextBlock Text="AlL.H" FontSize="16" FontWeight="SemiBold"
                                Foreground="#E8ECF2"/>
-                    <Button Content="☕ 请作者喝咖啡" Click="CoffeeCard_Click" HorizontalAlignment="Stretch"
+                    <Button Content="请作者喝咖啡" Click="CoffeeCard_Click" HorizontalAlignment="Stretch"
                             Padding="0,5" FontSize="11" Margin="0,2,0,0"
                             ToolTipService.ToolTip="完全自愿:请作者喝一杯咖啡(软件无广告/无账号)"/>
-                    <Button Content="💬 ALH Pro 社区" Click="Community_Click" HorizontalAlignment="Stretch"
+                    <Button Content="ALH Pro 社区" Click="Community_Click" HorizontalAlignment="Stretch"
                             Padding="0,5" FontSize="11" Margin="0,2,0,0"
                             ToolTipService.ToolTip="官方交流社区:使用问题 / 功能建议 / 处理效果交流"/>
-                    <Button Content="📖 使用教程" Click="Tutorial_Click" HorizontalAlignment="Stretch"
+                    <Button Content="使用教程" Click="Tutorial_Click" HorizontalAlignment="Stretch"
                             Padding="0,5" FontSize="11" Margin="0,2,0,0"
                             ToolTipService.ToolTip="图文操作说明:每个功能怎么用、参数什么时候调、常见问题处理"/>
-                    <Button Content="📜 更新日志" Click="UpdateLog_Click" HorizontalAlignment="Stretch"
-                            Padding="0,5" FontSize="11" Margin="0,2,0,0"
-                            ToolTipService.ToolTip="各版本更新内容(往期历史)"/>
                     <Button Content="设置" Click="Settings_Click" HorizontalAlignment="Stretch"
                             Padding="0,5" FontSize="11" Margin="0,2,0,0"
-                            ToolTipService.ToolTip="设置:诊断日志等"/>
+                            ToolTipService.ToolTip="设置:计算设备、诊断日志等"/>
                     <Button Content="关于" Click="About_Click" HorizontalAlignment="Stretch"
                             Padding="0,5" FontSize="11" Margin="0,2,0,0"/>
                 </StackPanel>
@@ -148,7 +133,7 @@
                                ToolTipService.ToolTip="单击查看日志详情"/>
                     <TextBlock x:Name="RestHint" Grid.Column="1" FontSize="11"
                                FontWeight="SemiBold" Margin="16,0,0,0" Visibility="Collapsed"
-                               Foreground="#E8A33D" Text="😴 休息中"
+                               Foreground="#E8A33D" Text="休息中"
                                ToolTipService.ToolTip="设备降温休息中"/>
                     <Button x:Name="SkipRestBtn" Grid.Column="2" Content="跳过休息"
                             Margin="10,0,0,0" Padding="16,4" FontSize="12"

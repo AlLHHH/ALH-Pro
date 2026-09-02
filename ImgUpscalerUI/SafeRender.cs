@@ -493,7 +493,7 @@ public static class SafeRender
                 var intervalTxt = RestIntervalMin < 1
                     ? $"{(int)Math.Round(RestIntervalMin * 60)} 秒"
                     : $"{RestIntervalMin:0.#} 分钟";
-                progress?.Report((pct, $"😴 已连续处理 {intervalTxt},休息 {RestDurationMin} 分钟给设备降温(点底部「跳过休息」可继续)..."));
+                progress?.Report((pct, $"已连续处理 {intervalTxt},休息 {RestDurationMin} 分钟给设备降温(点底部「跳过休息」可继续)..."));
                 await RestAsync(pct, TimeSpan.FromMinutes(RestDurationMin), null, progress, ct);
             }
         }
