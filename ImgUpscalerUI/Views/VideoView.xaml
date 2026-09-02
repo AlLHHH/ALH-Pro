@@ -796,8 +796,9 @@
                     <Button x:Name="ClearDoneBtn" Grid.Column="3" Content="清除已完成" FontSize="12"
                             Padding="10,5" IsEnabled="False" Click="ClearDoneBtn_Click"
                             ToolTipService.ToolTip="清除所有已完成(灰)的项目"/>
-                    <TextBlock Grid.Column="4" Text="双击视频预览 · 拖动时间线裁剪" FontSize="11"
-                               Opacity="0.5" VerticalAlignment="Center" HorizontalAlignment="Right"/>
+                    <TextBlock Grid.Column="4" Text="支持: MP4 / MKV / MOV / WebM / AVI · 双击预览 · 拖动裁剪" FontSize="11"
+                               Opacity="0.5" VerticalAlignment="Center" HorizontalAlignment="Right"
+                               TextTrimming="CharacterEllipsis"/>
                 </Grid>
                 <!-- 视频列表(支持鼠标框选多选,与图片放大一致) -->
                 <Grid x:Name="VideoGridHost" Grid.Row="2"
@@ -903,7 +904,7 @@
                               HorizontalAlignment="Center"/>
                     <TextBlock Text="拖入项目" HorizontalAlignment="Center"
                                FontSize="15" Opacity="0.6"/>
-                    <TextBlock Text="MP4 / MKV / MOV / WebM" HorizontalAlignment="Center"
+                    <TextBlock Text="MP4 / MKV / MOV / WebM / AVI" HorizontalAlignment="Center"
                                Style="{StaticResource HintText}"/>
                     <TextBlock x:Name="CompStatus" HorizontalAlignment="Center"
                                FontSize="11" Opacity="0.5" TextWrapping="Wrap"
