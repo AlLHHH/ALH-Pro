@@ -789,7 +789,7 @@ public sealed partial class MainPage : Page
         // 「请作者喝咖啡」:与左下角入口同一打赏卡片(赞赏码大图 + 爱发电主页)
         var rewardBtn = new Button
         {
-            Content = "☕ 请作者喝咖啡",
+            Content = "请作者喝咖啡",
             FontSize = 12,
             Padding = new Microsoft.UI.Xaml.Thickness(14, 6, 14, 6),
             HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
@@ -852,7 +852,7 @@ public sealed partial class MainPage : Page
         {
             var docLink = new HyperlinkButton
             {
-                Content = "📄 完整许可声明(THIRD_PARTY_NOTICES.txt)",
+                Content = "完整许可声明(THIRD_PARTY_NOTICES.txt)",
                 FontSize = 11,
                 Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 76, 141, 255)),
             };
@@ -2003,7 +2003,7 @@ public sealed partial class MainPage : Page
             },
         };
         content.Children.Add(ifdLink);
-        ShowCardPopup(content, "☕ 请作者喝一杯咖啡", 640);
+        ShowCardPopup(content, "请作者喝一杯咖啡", 640);
     }
 
     /// <summary>左下角状态栏单击 → 弹窗放大查看诊断日志(尾部)。</summary>
