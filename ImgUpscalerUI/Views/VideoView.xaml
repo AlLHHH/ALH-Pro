@@ -29,6 +29,17 @@
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
+                    <!-- 一键推荐配置:治"不会选/选错模型导致效果不佳" -->
+                    <TextBlock Text="推荐配置(一键)" Style="{StaticResource SectionTitle}"/>
+                    <StackPanel Spacing="6">
+                        <Button Content="动漫补帧(waifu2x + 智能去重 + 补帧2x)" FontSize="11" Padding="10,5"
+                                HorizontalAlignment="Stretch" Click="PresetAnime_Click"/>
+                        <Button Content="真人视频(Real-ESRGAN + 2x,更快可改1x)" FontSize="11" Padding="10,5"
+                                HorizontalAlignment="Stretch" Click="PresetReal_Click"/>
+                        <Button Content="快速预览(低配:1x超分缩回+兼容模式)" FontSize="11" Padding="10,5"
+                                HorizontalAlignment="Stretch" Click="PresetFast_Click"/>
+                    </StackPanel>
+
                     <TextBlock Text="视频超分" Style="{StaticResource SectionTitle}"/>
                     <CheckBox x:Name="UpscaleToggle" Content="启用超分(逐帧放大)" ToolTipService.ToolTip="逐帧 AI 放大画面"
                               IsChecked="True" Checked="Options_Changed" Unchecked="Options_Changed"/>

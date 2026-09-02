@@ -1580,6 +1580,70 @@ public sealed partial class MainPage : Page
         openDirBtn.Click += (_, _) => AppLogger.OpenInExplorer();
         btnRow.Children.Add(openBtn);
         btnRow.Children.Add(openDirBtn);
+        // 导出诊断包:日志 + 设备信息 + 设置,打成一个 zip——发作者即可快速定位(解决"用户不会找日志"问题)
+        var exportBtn = new Button { Content = "导出诊断包(zip)", FontSize = 12, Padding = new Microsoft.UI.Xaml.Thickness(12, 6, 12, 6) };
+        exportBtn.Click += async (_, _) =>
+        {
+            try
+            {
+                var picker = new Windows.Storage.Pickers.FileSavePicker();
+                var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
+                WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+                picker.FileTypeChoices.Add("ZIP 压缩包", new System.Collections.Generic.List<string> { ".zip" });
+                picker.SuggestedFileName = $"ALHPro_Diag_{DateTime.Now:yyyyMMdd_HHmm}";
+                var file = await picker.PickSaveFileAsync();
+                if (file == null) return;
+                var tmpDir = System.IO.Path.Combine(ALHPro.EngineService.TempRoot, $"alh_diag_{Guid.NewGuid():N}");
+                System.IO.Directory.CreateDirectory(tmpDir);
+                try
+                {
+                    try { System.IO.File.Copy(AppLogger.LogFile, System.IO.Path.Combine(tmpDir, "diagnostic.log"), true); } catch { }
+                    var info = new System.Text.StringBuilder();
+                    info.AppendLine($"ALH Pro 诊断包 {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                    info.AppendLine($"版本: v{UpdateChecker.CurrentVersion} · 构建 {File.GetLastWriteTime(typeof(MainPage).Assembly.Location):MM-dd HH:mm}");
+                    info.AppendLine($"系统: {Environment.OSVersion} · {(Environment.Is64BitOperatingSystem ? "64 位" : "32 位")}");
+                    try { info.AppendLine($"硬件: {SafeRender.CpuName} · 显存 {SafeRender.TotalVramGB:0.#}GB / 内存 {SafeRender.TotalRamGB:0.#}GB"); } catch { }
+                    try { foreach (var n in GpuInfo.GetAdapterNames()) info.AppendLine("GPU: " + n); } catch { }
+                    try { foreach (var v in GpuInfo.GetDriverVersions()) info.AppendLine("驱动: " + v); } catch { }
+                    info.AppendLine("计算设备设置: GPU " + AppSettings.GpuIndex);
+                    try { info.AppendLine("Vulkan 自检报告:\n" + AppSettings.VulkanReport); } catch { }
+                    info.AppendLine("临时文件目录: " + ALHPro.EngineService.TempRoot);
+                    System.IO.File.WriteAllText(System.IO.Path.Combine(tmpDir, "设备信息.txt"), info.ToString());
+                    // 设置文件全部带上(均为本地参数,无隐私)
+                    try
+                    {
+                        var settingsDir = System.IO.Path.GetDirectoryName(ParaPaths.SettingsFile("app-settings.json"));
+                        if (settingsDir != null && System.IO.Directory.Exists(settingsDir))
+                            foreach (var s in System.IO.Directory.EnumerateFiles(settingsDir, "*.json"))
+                                System.IO.File.Copy(s, System.IO.Path.Combine(tmpDir, System.IO.Path.GetFileName(s)), true);
+                    }
+                    catch { }
+                    using (var z = System.IO.Compression.ZipFile.Open(file.Path, System.IO.Compression.ZipArchiveMode.Create))
+                    {
+                        foreach (var f in System.IO.Directory.EnumerateFiles(tmpDir))
+                            System.IO.Compression.ZipFileExtensions.CreateEntryFromFile(z, f, System.IO.Path.GetFileName(f));
+                    }
+                    var okDlg = new ContentDialog
+                    {
+                        Title = "诊断包已导出",
+                        Content = new TextBlock
+                        {
+                            Text = $"已保存:\n{file.Path}\n\n把此文件发给作者即可快速定位问题。",
+                            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                        },
+                        CloseButtonText = "好的",
+                        XamlRoot = this.XamlRoot,
+                    };
+                    await okDlg.ShowAsync();
+                }
+                finally
+                {
+                    try { System.IO.Directory.Delete(tmpDir, true); } catch { }
+                }
+            }
+            catch (Exception ex) { AppLogger.Info("导出诊断包失败: " + ex.Message); }
+        };
+        btnRow.Children.Add(exportBtn);
         content.Children.Add(btnRow);
 
         // 位置 + 当前大小
