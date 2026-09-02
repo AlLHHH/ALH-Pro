@@ -49,11 +49,37 @@ public static partial class EngineService
     }
 
     /// <summary>waifu2x 是否应走 ONNX 路线:仅在 无独显/Vulkan 不可用时(此时只能 CPU,而 waifu2x ncnn CPU 模式有 bug 会崩)。
-    /// 50 系 waifu2x 20250915 新版引擎兼容 Blackwell,无需 ONNX;普通 GPU 走 ncnn 更快。</summary>
+    /// 50 系 waifu2x 20250915 新版引擎兼容 Blackwell,无需 ONNX;普通 GPU 走 ncnn 更快。
+    /// (50 系引擎到底行不行,由 IsWaifu2xNcnnUsableAsync 真机探测兜底——见下方。)</summary>
     public static bool ShouldUseOnnxWaifu2x()
     {
         if (EsrganOnnxService.FindWaifu2xModel() == null) return false;
         return !IsBlackwellGpu() && OldNcnnGpuRisky();   // 无独显才需要(50系 waifu2x 引擎本身兼容)
+    }
+
+    /// <summary>waifu2x ncnn 引擎在【本机】GPU 上是否可用(50 系安全网):
+    /// 1×1 小图实测一次(5 秒超时,崩/无输出 = 不可用)并缓存(进程内,不重复探测)。
+    /// 不可用 → 调用方改走 ONNX(waifu2x ONNX 模型稳定,DirectML/CPU 都行)。
+    /// 非 50 系不探测(直接 true):普通卡上引擎成熟,免得每启动多花 0.5 秒。</summary>
+    private static bool? _waifu2xNcnnUsable;
+    private static int _waifu2xNcnnProbeGpu = int.MinValue;
+    private static readonly object _waifu2xProbeLock = new();
+
+    public static async Task<bool> IsWaifu2xNcnnUsableAsync(int gpuId, CancellationToken ct)
+    {
+        if (!IsBlackwellGpu()) return true;
+        lock (_waifu2xProbeLock)
+        {
+            if (_waifu2xNcnnUsable.HasValue && _waifu2xNcnnProbeGpu == gpuId)
+                return _waifu2xNcnnUsable.Value;
+        }
+        bool ok = await IsEngineGpuUsableAsync("waifu2x", gpuId, ct).ConfigureAwait(false);
+        lock (_waifu2xProbeLock)
+        {
+            _waifu2xNcnnUsable = ok;
+            _waifu2xNcnnProbeGpu = gpuId;
+        }
+        return ok;
     }
 
     /// <summary>旧 ncnn 引擎(2022 版,realcugan/realesrgan ncnn)在 GPU 上可能不可用的设备:

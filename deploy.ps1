@@ -16,6 +16,7 @@ $dst = Join-Path $root '发布版'
 Write-Host "==> 1/3 发布(Release 独立版)..."
 Push-Location (Join-Path $root 'ImgUpscalerUI')
 try { dotnet publish ImgUpscalerUI.csproj -c Release -p:Platform=x64 -v q --nologo | Out-String | Write-Host } finally { Pop-Location }
+if ($LASTEXITCODE -ne 0) { throw "dotnet publish 失败(exit $LASTEXITCODE)——已中止,未同步(请检查编译错误)" }
 if (-not (Test-Path (Join-Path $pub 'coreclr.dll'))) { throw "发布输出缺少 coreclr.dll(非独立版)——已中止,未同步" }
 if (-not (Test-Path (Join-Path $pub 'hostfxr.dll'))) { throw "发布输出缺少 hostfxr.dll(非独立版)——已中止,未同步" }
 
