@@ -76,8 +76,9 @@ public static class GpuInfo
     }
 
     /// <summary>核显识别(跳过):Intel UHD/Iris/HD Graphics 与新版"Intel(R) Graphics"命名、AMD Radeon(TM) Graphics 核显。</summary>
-    private static bool IsIntegrated(string n)
+    public static bool IsIntegratedGPU(string n)
     {
+        if (string.IsNullOrEmpty(n)) return true;
         if (n.Contains("AMD Radeon(TM) Graphics", StringComparison.OrdinalIgnoreCase)) return true;
         if (!n.Contains("Intel", StringComparison.OrdinalIgnoreCase)) return false;
         return n.Contains("UHD", StringComparison.OrdinalIgnoreCase)
@@ -87,6 +88,22 @@ public static class GpuInfo
             || n.Contains("Intel(R) Iris", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>设备优先级分数(越大越该用):核显=0(不选),NVIDIA=4,AMD 独显=3,Intel Arc=2,其他独显=1。</summary>
+    public static int ScoreDeviceName(string n)
+    {
+        if (string.IsNullOrEmpty(n) || IsIntegratedGPU(n)) return 0;
+        if (n.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("GeForce", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("RTX", StringComparison.OrdinalIgnoreCase))
+            return 4;
+        if (n.Contains("AMD", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("Radeon", StringComparison.OrdinalIgnoreCase))
+            return 3;
+        if (n.Contains("Arc", StringComparison.OrdinalIgnoreCase))
+            return 2;
+        return 1;
+    }
+
     /// <summary>推荐索引(优先独显;独显内 NVIDIA &gt; AMD &gt; Intel Arc;全核显/未知时推荐 0)。</summary>
     public static int GetRecommendedIndex(List<string> names)
     {
@@ -94,18 +111,8 @@ public static class GpuInfo
         for (int i = 0; i < names.Count; i++)
         {
             var n = names[i];
-            if (IsIntegrated(n)) continue;
-            int score = 0;
-            if (n.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase)
-                || n.Contains("GeForce", StringComparison.OrdinalIgnoreCase)
-                || n.Contains("RTX", StringComparison.OrdinalIgnoreCase))
-                score = 4;
-            else if (n.Contains("AMD", StringComparison.OrdinalIgnoreCase)
-                || n.Contains("Radeon", StringComparison.OrdinalIgnoreCase))
-                score = 3;
-            else if (n.Contains("Arc", StringComparison.OrdinalIgnoreCase))
-                score = 2;
-            else score = 1;
+            int score = ScoreDeviceName(n);
+            if (score <= 0) continue;
             if (score > bestScore) { bestScore = score; bestIdx = i; }
         }
         return bestIdx >= 0 ? bestIdx : (names.Count > 0 ? 0 : -1);

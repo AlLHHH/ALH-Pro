@@ -140,6 +140,31 @@ public static partial class EngineService
     /// <summary>旧 rife 模型(anime/HD/UHD/v2.3,ncnn 2022 权重)在 Blackwell 上不稳(其余卡正常)。</summary>
     public static bool OldRifeModelRisky() => IsBlackwellGpu();
 
+    /// <summary>【实测验证】推荐 GPU:引擎枚举的设备按优先级(NVIDIA&gt;AMD 独显&gt;Arc&gt;其他,核显排除)
+    /// 逐个做 1×1 真机探测,返回第一个【实际可用】的引擎编号;-1=全部不可用。
+    /// 不只按名字推荐——名字对但驱动/编号/引擎支持有问题时,实测能拦住(真机:RTX5060 三卡机选中 Intel 核显)。</summary>
+    public static async Task<int> FindBestWorkingGpuAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var devs = VulkanCheck.Devices;
+            if (devs == null || devs.Count == 0) return -1;
+            var ordered = devs
+                .Select(d => new { d.Id, d.Name, Score = GpuInfo.ScoreDeviceName(d.Name) })
+                .Where(x => x.Score > 0)
+                .OrderByDescending(x => x.Score).ThenBy(x => x.Id)
+                .Take(4);   // 最多探测 4 台(多卡机 3~4 张封顶,速度可控)
+            foreach (var d in ordered)
+            {
+                bool ok = await IsEngineGpuUsableAsync("waifu2x", d.Id, ct).ConfigureAwait(false);
+                AppLogger.Info(d.Id + ": " + d.Name + " → " + (ok ? "1×1 可用" : "不可用"));
+                if (ok) return d.Id;
+            }
+            return -1;
+        }
+        catch { return -1; }
+    }
+
     /// <summary>临时文件根目录(所有页面/引擎的临时帧、中间文件统一放这里)。
     /// 优先级:①设置里用户自定义(需存在且可写,否则自动回退)②剩余空间最大的本地盘 ③系统 %TEMP%。
     /// 清理:任务完成自动删;软件启动会清理残留(imgup_*/alh_* 前缀,绝不碰用户文件)。</summary>
