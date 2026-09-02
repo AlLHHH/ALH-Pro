@@ -146,6 +146,16 @@ public static class EsrganOnnxService
         using var src = new System.Drawing.Bitmap(input);
         int sw = src.Width, sh = src.Height;
         int ow = (int)Math.Round(sw * scale), oh = (int)Math.Round(sh * scale);
+        bool hasAlpha = src.PixelFormat.HasFlag(System.Drawing.Imaging.PixelFormat.Alpha)
+            || src.PixelFormat == System.Drawing.Imaging.PixelFormat.Format32bppArgb;
+
+        if (hasAlpha)
+        {
+            // ===== 透明底保护:ONNX 只处理 RGB(alpha 会丢/脏),这里分离处理 =====
+            // ① 提取 alpha 通道(缩放后恢复用) ② RGB 填白(防透明区超分成脏色) ③ 超分 ④ 恢复 alpha
+            RunCoreAlphaSafe(src, output, scale, modelPath, gpuId, progress, ct, TileFor(sw, sh), 32);
+            return;
+        }
 
         // ===== 分块保护(实测:GPU 整帧喂 1080p → DirectML OOM 崩溃;CPU 慢到 210s/帧)=====
         // 输入超 512 就切成块(带 32px 重叠羽化拼回):GPU 每块 0.3~0.5s,1080p 也稳;速度数倍提升。
@@ -164,6 +174,90 @@ public static class EsrganOnnxService
             SaveScaled(tileBmp, output, ow, oh);
         else
             tileBmp.Save(output, System.Drawing.Imaging.ImageFormat.Png);
+        progress?.Report((100, "完成"));
+    }
+
+    private static int TileFor(int w, int h) => Math.Max(w, h) > 512 ? 512 : Math.Max(w, h);
+
+    /// <summary>透明底保护:提取 alpha → RGB 填白 → 超分 → 恢复 alpha(输出 32bpp Argb)。</summary>
+    private static void RunCoreAlphaSafe(System.Drawing.Bitmap src, string output, double scale, string modelPath,
+        int gpuId, IProgress<(int pct, string msg)>? progress, CancellationToken ct, int tile, int overlap)
+    {
+        int sw = src.Width, sh = src.Height;
+        int ow = (int)Math.Round(sw * scale), oh = (int)Math.Round(sh * scale);
+        // 提取 alpha(经图像缩放,带插值,透明边缘柔和)
+        using var alphaBmp = new System.Drawing.Bitmap(sw, sh, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using (var g = System.Drawing.Graphics.FromImage(alphaBmp))
+        {
+            g.Clear(System.Drawing.Color.Transparent);
+            g.DrawImage(src, 0, 0);
+        }
+        // RGB 填白(透明区 → 白,防 ONNX 把透明区超分成黑边/脏色)
+        using var rgbSrc = new System.Drawing.Bitmap(sw, sh, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+        using (var g = System.Drawing.Graphics.FromImage(rgbSrc))
+        {
+            g.Clear(System.Drawing.Color.White);
+            g.DrawImage(src, 0, 0);
+        }
+        // 超分 RGB(临时文件)
+        var tmpRgb = Path.Combine(Path.GetTempPath(), $"alh_alpha_{Guid.NewGuid():N}.png");
+        try
+        {
+            if (sw > tile || sh > tile)
+                RunCoreTiled(rgbSrc, tmpRgb, scale, modelPath, gpuId, null, ct, tile, overlap);
+            else
+            {
+                using var tileBmp = RunTile(rgbSrc, modelPath, gpuId, ct);
+                if (Math.Abs(tileBmp.Width - ow) > 1 || Math.Abs(tileBmp.Height - oh) > 1)
+                    SaveScaled(tileBmp, tmpRgb, ow, oh);
+                else
+                    tileBmp.Save(tmpRgb, System.Drawing.Imaging.ImageFormat.Png);
+            }
+            // 输出 32bpp:超分 RGB + 缩放后的 alpha(高效:LockBits 指针写 BGRA,不用逐像素 SetPixel)
+            using var outBmp = new System.Drawing.Bitmap(ow, oh, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using var rgbFull = new System.Drawing.Bitmap(tmpRgb);
+            using var scaledAlpha = new System.Drawing.Bitmap(alphaBmp, ow, oh);   // 缩放 alpha(带插值)
+            unsafe
+            {
+                var rect = new System.Drawing.Rectangle(0, 0, ow, oh);
+                var dstData = outBmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.WriteOnly,
+                    System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                var rgbData = rgbFull.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadOnly,
+                    System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+                var aData = scaledAlpha.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadOnly,
+                    System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                try
+                {
+                    byte* dst = (byte*)dstData.Scan0;
+                    byte* rgb = (byte*)rgbData.Scan0;
+                    byte* alpha = (byte*)aData.Scan0;
+                    for (int y = 0; y < oh; y++)
+                    {
+                        byte* dRow = dst + y * dstData.Stride;
+                        byte* rRow = rgb + y * rgbData.Stride;
+                        byte* aRow = alpha + y * aData.Stride;
+                        for (int x = 0; x < ow; x++)
+                        {
+                            dRow[x * 4] = rRow[x * 3];         // B
+                            dRow[x * 4 + 1] = rRow[x * 3 + 1]; // G
+                            dRow[x * 4 + 2] = rRow[x * 3 + 2]; // R
+                            dRow[x * 4 + 3] = aRow[x * 4 + 3]; // A(从缩放 alpha 取)
+                        }
+                    }
+                }
+                finally
+                {
+                    outBmp.UnlockBits(dstData);
+                    rgbFull.UnlockBits(rgbData);
+                    scaledAlpha.UnlockBits(aData);
+                }
+            }
+            outBmp.Save(output, System.Drawing.Imaging.ImageFormat.Png);
+        }
+        finally
+        {
+            try { File.Delete(tmpRgb); } catch { }
+        }
         progress?.Report((100, "完成"));
     }
 
