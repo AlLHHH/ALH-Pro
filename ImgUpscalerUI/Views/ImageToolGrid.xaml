@@ -68,10 +68,7 @@
             </Grid.ColumnDefinitions>
             <TextBlock Text="图片列表" VerticalAlignment="Center" FontSize="13"
                        FontWeight="SemiBold" Opacity="0.8"/>
-            <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="10" Opacity="0.45"
-                       Text="支持: PNG / JPG / JPEG / BMP / TIF / TIFF / GIF / WebP / HEIC"
-                       TextTrimming="CharacterEllipsis" Margin="8,0,0,0"/>
-            <!-- ListCount 移到格式提示后,共用列1 -->
+            <!-- ListCount(文件数)右侧对齐,占列1 -->
             <TextBlock x:Name="ListCount" Grid.Column="1" VerticalAlignment="Center"
                        FontSize="11" Opacity="0.4" HorizontalAlignment="Right"
                        Margin="0,0,16,0"/>
