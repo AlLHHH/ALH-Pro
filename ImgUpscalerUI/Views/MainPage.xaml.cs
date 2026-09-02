@@ -297,6 +297,8 @@ public sealed partial class MainPage : Page
     /// <summary>启动声明已同意的标记文件(仅首次显示弹窗)。</summary>
     private static string BetaAcceptedFile => ParaPaths.SettingsFile("beta-accepted.txt");
 
+    private sealed class HistEntry { public string v { get; set; } = ""; public string title { get; set; } = ""; public string notes { get; set; } = ""; }
+
     /// <summary>清洗 Markdown 痕迹再显示(更新说明是 .md 写的,弹窗不露 ##/**/====/--- 等符号)。</summary>
     private static string CleanNotes(string t)
     {
@@ -318,11 +320,54 @@ public sealed partial class MainPage : Page
 
     private bool _updatePopupShown;
 
-    /// <summary>更新日志(独立窗口,尺寸可控):作者的话置顶卡片 + 左侧版本列表 + 右侧内容。
-    /// fromStartup=true = 升级后首次启动(底部「开始使用」,记录版本号,下次升级才再弹);
-    /// 平时由左侧边栏/关于页打开(底部「关闭」)。</summary>
+    /// <summary>读取当前版本 + 往期历史(清洗 Markdown)。</summary>
+    private System.Collections.Generic.List<(string v, string title, string notes)> BuildUpdateEntries()
+    {
+        var entries = new System.Collections.Generic.List<(string v, string title, string notes)>();
+        string curNotes = "未找到更新说明(RELEASE_NOTES.md 缺失)。";
+        var notesPath = Path.Combine(AppContext.BaseDirectory, "RELEASE_NOTES.md");
+        try { if (File.Exists(notesPath)) curNotes = File.ReadAllText(notesPath); } catch { }
+        curNotes = CleanNotes(curNotes);
+        entries.Add(($"v{UpdateChecker.CurrentVersion}", "当前版本(新)", curNotes));
+        var histPath = Path.Combine(AppContext.BaseDirectory, "release_history.json");
+        try
+        {
+            if (File.Exists(histPath))
+            {
+                var hist = System.Text.Json.JsonSerializer.Deserialize<System.Collections.Generic.List<HistEntry>>(File.ReadAllText(histPath));
+                if (hist != null)
+                    foreach (var h in hist)
+                        if (!entries.Any(en => en.v == "v" + h.v))
+                            entries.Add(("v" + h.v, h.title, CleanNotes(h.notes)));
+            }
+        }
+        catch { }
+        return entries;
+    }
+
+    /// <summary>安全取主题画笔(资源不存在时透明,不崩)。</summary>
+    private static Microsoft.UI.Xaml.Media.Brush SafeBrush(string key)
+    {
+        try { return (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[key]; }
+        catch { return new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(18, 255, 255, 255)); }
+    }
+
+    private static TextBlock AuthorWords() => new()
+    {
+        FontSize = 12,
+        Opacity = 0.85,
+        TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+        Text = "来自作者的话\n软件当前仍处于早期开发阶段,功能方向与工程稳定性仍在持续完善中。尽管有开源模型提供底层能力支撑," +
+            "但上层的调用适配、性能优化与长期维护,依然面临较大的工程挑战。作为个人发起的公益项目,我将在力所能及的范围内持续改进。" +
+            "若您在使用过程中受益,欢迎通过赞赏给予一点支持,帮助项目走得更远。感谢每一份善意的理解和信任。",
+    };
+
+    /// <summary>更新日志(唯一结构):最顶部"来自作者的话" + 左侧版本列表(当前+往期) + 右侧内容。
+    /// fromStartup=true = 升级后首次启动展示(按钮「开始使用」,记录版本号,下次升级才再弹);
+    /// 平时从左侧边栏「更新日志」/关于页打开(按钮「关闭」)。</summary>
     private async Task ShowUpdateLogAsync(bool fromStartup)
     {
+        if (!fromStartup && _updatePopupShown) { /* 手动打开不受限 */ }
         if (fromStartup)
         {
             if (_updatePopupShown) return;
@@ -330,10 +375,81 @@ public sealed partial class MainPage : Page
         }
         try
         {
-            var w = new Views.UpdateLogWindow(fromStartup);
-            w.Activate();
+            var ver = UpdateChecker.CurrentVersion;
+            var entries = BuildUpdateEntries();
+            if (entries.Count == 0) return;
+            var listBox = new ListView
+            {
+                Width = 228,
+                SelectionMode = ListViewSelectionMode.Single,
+                VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Top,
+            };
+            foreach (var en in entries)
+                listBox.Items.Add(new TextBlock { Text = $"{en.v} · {en.title}", FontSize = 12, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, TextTrimming = Microsoft.UI.Xaml.TextTrimming.CharacterEllipsis, MaxWidth = 210, Margin = new Microsoft.UI.Xaml.Thickness(0, 4, 0, 4) });
+            var notesBox = new TextBlock { FontSize = 13, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Text = entries[0].notes };
+            listBox.SelectionChanged += (_, _) =>
+            {
+                int i = listBox.SelectedIndex;
+                if (i >= 0 && i < entries.Count) notesBox.Text = entries[i].notes;
+            };
+            listBox.SelectedIndex = 0;   // 默认当前版本
+            var scroll = new ScrollViewer
+            {
+                Content = notesBox,
+                MaxHeight = 400,
+                VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
+            };
+            var grid = new Grid { ColumnSpacing = 12 };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(228) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
+            Grid.SetColumn(listBox, 0);
+            grid.Children.Add(listBox);
+            Grid.SetColumn(scroll, 1);
+            grid.Children.Add(scroll);
+
+            // 一个结构:最顶部作者的话(卡片) → 分隔线 → 版本列表+内容
+            var full = new StackPanel { Spacing = 10 };
+            var authorCard = new Border
+            {
+                CornerRadius = new Microsoft.UI.Xaml.CornerRadius(8),
+                Padding = new Microsoft.UI.Xaml.Thickness(12, 10, 12, 10),
+                Background = SafeBrush("AppPanelBrush"),
+            };
+            authorCard.Child = AuthorWords();
+            full.Children.Add(authorCard);
+            full.Children.Add(new Border
+            {
+                Height = 1,
+                Background = SafeBrush("AppBorderBrush"),
+            });
+            full.Children.Add(grid);
+
+            var dlg = new ContentDialog
+            {
+                Title = "更新日志 · ALH Pro",
+                Content = full,
+                XamlRoot = this.XamlRoot,
+                // WinUI 默认最大 548px——不设宽度正文会被压成窄条,这里放宽
+                MinWidth = 860,
+                MaxWidth = 980,
+            };
+            if (fromStartup)
+            {
+                dlg.PrimaryButtonText = "开始使用";
+                dlg.DefaultButton = ContentDialogButton.Primary;
+            }
+            else
+            {
+                dlg.CloseButtonText = "关闭";
+            }
+            await dlg.ShowAsync();
+            if (fromStartup)
+            {
+                AppSettings.LastShownVersion = ver;
+                AppSettings.Save();
+            }
         }
-        catch { }
+        catch { /* 弹窗失败不影响使用 */ }
     }
 
     /// <summary>欢迎弹窗(所有设备第一次启动只弹一次,合并两件事):
