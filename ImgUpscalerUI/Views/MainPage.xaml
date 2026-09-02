@@ -79,6 +79,9 @@
                     <Button Content="📖 使用教程" Click="Tutorial_Click" HorizontalAlignment="Stretch"
                             Padding="0,5" FontSize="11" Margin="0,2,0,0"
                             ToolTipService.ToolTip="图文操作说明:每个功能怎么用、参数什么时候调、常见问题处理"/>
+                    <Button Content="📜 更新日志" Click="UpdateLog_Click" HorizontalAlignment="Stretch"
+                            Padding="0,5" FontSize="11" Margin="0,2,0,0"
+                            ToolTipService.ToolTip="各版本更新内容(往期历史)"/>
                     <Button Content="设置" Click="Settings_Click" HorizontalAlignment="Stretch"
                             Padding="0,5" FontSize="11" Margin="0,2,0,0"
                             ToolTipService.ToolTip="设置:诊断日志等"/>

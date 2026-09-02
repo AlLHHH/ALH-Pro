@@ -288,6 +288,12 @@ public sealed partial class MainPage : Page
         ShowView("tutorial");
     }
 
+    /// <summary>左侧边栏「更新日志」:各版本更新内容(往期历史)。</summary>
+    private void UpdateLog_Click(object sender, RoutedEventArgs e)
+    {
+        try { _ = ShowUpdateHistoryAsync(); } catch { }
+    }
+
     /// <summary>启动声明已同意的标记文件(仅首次显示弹窗)。</summary>
     private static string BetaAcceptedFile => ParaPaths.SettingsFile("beta-accepted.txt");
 
@@ -314,8 +320,43 @@ public sealed partial class MainPage : Page
 
     private bool _updatePopupShown;
 
-    /// <summary>新版本更新弹窗(每次更新后首次启动弹一次):左侧可选版本(当前+往期),右侧更新内容,
-    /// 底部固定"来自作者的话"。关闭后记录版本号,下次升级才会再弹。</summary>
+    /// <summary>读取当前版本 + 往期历史(清洗 Markdown)。</summary>
+    private System.Collections.Generic.List<(string v, string title, string notes)> BuildUpdateEntries()
+    {
+        var entries = new System.Collections.Generic.List<(string v, string title, string notes)>();
+        string curNotes = "未找到更新说明(RELEASE_NOTES.md 缺失)。";
+        var notesPath = Path.Combine(AppContext.BaseDirectory, "RELEASE_NOTES.md");
+        try { if (File.Exists(notesPath)) curNotes = File.ReadAllText(notesPath); } catch { }
+        curNotes = CleanNotes(curNotes);
+        entries.Add(($"v{UpdateChecker.CurrentVersion}", "当前版本(新)", curNotes));
+        var histPath = Path.Combine(AppContext.BaseDirectory, "release_history.json");
+        try
+        {
+            if (File.Exists(histPath))
+            {
+                var hist = System.Text.Json.JsonSerializer.Deserialize<System.Collections.Generic.List<HistEntry>>(File.ReadAllText(histPath));
+                if (hist != null)
+                    foreach (var h in hist)
+                        if (!entries.Any(en => en.v == "v" + h.v))
+                            entries.Add(("v" + h.v, h.title, CleanNotes(h.notes)));
+            }
+        }
+        catch { }
+        return entries;
+    }
+
+    private static TextBlock AuthorWords() => new()
+    {
+        FontSize = 12,
+        Opacity = 0.85,
+        TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+        Text = "来自作者的话\n软件当前仍处于早期开发阶段,功能方向与工程稳定性仍在持续完善中。尽管有开源模型提供底层能力支撑," +
+            "但上层的调用适配、性能优化与长期维护,依然面临较大的工程挑战。作为个人发起的公益项目,我将在力所能及的范围内持续改进。" +
+            "若您在使用过程中受益,欢迎通过赞赏给予一点支持,帮助项目走得更远。感谢每一份善意的理解和信任。",
+    };
+
+    /// <summary>新版本更新弹窗(每次更新后首次启动弹一次):只显示【当前版本】更新内容 + 作者的话(简洁);
+    /// 历史版本在左侧边栏「更新日志」里查看。关闭后记录版本号,下次升级才会再弹。</summary>
     private async Task ShowUpdatePopupAsync(bool force = false)
     {
         if (_updatePopupShown && !force) return;
@@ -323,77 +364,21 @@ public sealed partial class MainPage : Page
         try
         {
             var ver = UpdateChecker.CurrentVersion;
-            var entries = new System.Collections.Generic.List<(string v, string title, string notes)>();
-            string curNotes = "未找到更新说明(RELEASE_NOTES.md 缺失)。";
-            var notesPath = Path.Combine(AppContext.BaseDirectory, "RELEASE_NOTES.md");
-            try { if (File.Exists(notesPath)) curNotes = File.ReadAllText(notesPath); } catch { }
-            curNotes = CleanNotes(curNotes);
-            entries.Add(($"v{ver}", "当前版本(新)", curNotes));
-            var histPath = Path.Combine(AppContext.BaseDirectory, "release_history.json");
-            try
-            {
-                if (File.Exists(histPath))
-                {
-                    var hist = System.Text.Json.JsonSerializer.Deserialize<System.Collections.Generic.List<HistEntry>>(File.ReadAllText(histPath));
-                    if (hist != null)
-                        foreach (var h in hist)
-                            if (!entries.Any(en => en.v == "v" + h.v))
-                                entries.Add(("v" + h.v, h.title, CleanNotes(h.notes)));
-                }
-            }
-            catch { }
-
-            // 左侧版本列表(列宽固定,文字不溢出,不再被右侧面板盖住)
-            var listBox = new ListView
-            {
-                Width = 228,
-                SelectionMode = ListViewSelectionMode.Single,
-                VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Top,
-            };
-            foreach (var en in entries)
-                listBox.Items.Add(new TextBlock { Text = $"{en.v} · {en.title}", FontSize = 11, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, TextTrimming = Microsoft.UI.Xaml.TextTrimming.CharacterEllipsis, MaxWidth = 210, Margin = new Microsoft.UI.Xaml.Thickness(0, 4, 0, 4) });
-            // 右侧更新内容
+            var entries = BuildUpdateEntries();
             var notesBox = new TextBlock { FontSize = 12, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Text = entries[0].notes };
-            listBox.SelectionChanged += (_, _) =>
-            {
-                int i = listBox.SelectedIndex;
-                if (i >= 0 && i < entries.Count) notesBox.Text = entries[i].notes;
-            };
-            listBox.SelectedIndex = 0;   // 默认选中当前版本
-            var scroll = new ScrollViewer
+            var full = new StackPanel { Spacing = 10 };
+            full.Children.Add(new ScrollViewer
             {
                 Content = notesBox,
-                MaxHeight = 380,
-                MinWidth = 380,
+                MaxHeight = 420,
                 VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
-                Margin = new Microsoft.UI.Xaml.Thickness(2, 0, 0, 0),
-            };
-            var grid = new Grid { ColumnSpacing = 10 };
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(228) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
-            Grid.SetColumn(listBox, 0);
-            grid.Children.Add(listBox);
-            Grid.SetColumn(scroll, 1);
-            grid.Children.Add(scroll);
-
-            // 底部:来自作者的话(每次更新弹窗都显示)
-            var author = new TextBlock
-            {
-                FontSize = 12,
-                Opacity = 0.85,
-                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-                Text = "来自作者的话\n软件当前仍处于早期开发阶段,功能方向与工程稳定性仍在持续完善中。尽管有开源模型提供底层能力支撑," +
-                    "但上层的调用适配、性能优化与长期维护,依然面临较大的工程挑战。作为个人发起的公益项目,我将在力所能及的范围内持续改进。" +
-                    "若您在使用过程中受益,欢迎通过赞赏给予一点支持,帮助项目走得更远。感谢每一份善意的理解和信任。",
-            };
-            var full = new StackPanel { Spacing = 10 };
-            full.Children.Add(grid);
+            });
             full.Children.Add(new Border
             {
                 Height = 1,
                 Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
             });
-            full.Children.Add(author);
+            full.Children.Add(AuthorWords());
 
             var dlg = new ContentDialog
             {
@@ -402,13 +387,60 @@ public sealed partial class MainPage : Page
                 PrimaryButtonText = "开始使用",
                 DefaultButton = ContentDialogButton.Primary,
                 XamlRoot = this.XamlRoot,
-                MinWidth = 640,
             };
             await dlg.ShowAsync();
             AppSettings.LastShownVersion = ver;
             AppSettings.Save();
         }
         catch { /* 弹窗失败不影响使用 */ }
+    }
+
+    /// <summary>更新日志对话框(左侧边栏「更新日志」/关于页入口):左侧选版本,右侧看内容(往期历史全部可翻)。</summary>
+    private async Task ShowUpdateHistoryAsync()
+    {
+        try
+        {
+            var entries = BuildUpdateEntries();
+            if (entries.Count == 0) return;
+            var listBox = new ListView
+            {
+                Width = 228,
+                SelectionMode = ListViewSelectionMode.Single,
+                VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Top,
+            };
+            foreach (var en in entries)
+                listBox.Items.Add(new TextBlock { Text = $"{en.v} · {en.title}", FontSize = 11, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, TextTrimming = Microsoft.UI.Xaml.TextTrimming.CharacterEllipsis, MaxWidth = 210, Margin = new Microsoft.UI.Xaml.Thickness(0, 4, 0, 4) });
+            var notesBox = new TextBlock { FontSize = 12, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Text = entries[0].notes };
+            listBox.SelectionChanged += (_, _) =>
+            {
+                int i = listBox.SelectedIndex;
+                if (i >= 0 && i < entries.Count) notesBox.Text = entries[i].notes;
+            };
+            listBox.SelectedIndex = 0;   // 默认当前版本
+            var scroll = new ScrollViewer
+            {
+                Content = notesBox,
+                MaxHeight = 420,
+                VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
+            };
+            var grid = new Grid { ColumnSpacing = 12 };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(228) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
+            Grid.SetColumn(listBox, 0);
+            grid.Children.Add(listBox);
+            Grid.SetColumn(scroll, 1);
+            grid.Children.Add(scroll);
+
+            var dlg = new ContentDialog
+            {
+                Title = $"更新日志 · ALH Pro",
+                Content = grid,
+                CloseButtonText = "关闭",
+                XamlRoot = this.XamlRoot,
+            };
+            await dlg.ShowAsync();
+        }
+        catch { }
     }
 
     /// <summary>欢迎弹窗(所有设备第一次启动只弹一次,合并两件事):
@@ -652,8 +684,8 @@ public sealed partial class MainPage : Page
         };
         notesLink.Click += (_, _) =>
         {
-            // 与"新版本更新弹窗"同一界面:左侧历史版本 + 右侧更新内容 + 作者的话(随时可重看)
-            try { _ = ShowUpdatePopupAsync(force: true); } catch { }
+            // 更新日志(历史版本可翻):与"更新说明弹窗"数据同源,随时可重看
+            try { _ = ShowUpdateHistoryAsync(); } catch { }
         };
         content.Children.Add(notesLink);
         // 手动检查更新:点击后显示结果;成功展示"已最新/发现新版本",失败才提示(启动静默检查不打扰)
