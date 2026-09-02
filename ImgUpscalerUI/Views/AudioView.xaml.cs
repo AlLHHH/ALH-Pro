@@ -18,7 +18,8 @@ public sealed partial class AudioView : UserControl
     /// <summary>音频页设置(超分/降噪/AI分离/响亮/低切/清晰/输出格式),存 %LOCALAPPDATA%\ALHPro\settings\audio-settings.json。</summary>
     public class AudioSettings
     {
-        public int Sr { get; set; } = 0;           // 0关 1柔和 2标准 3强力(AI 超分)
+        public int Sr { get; set; } = 0;           // 0关 1柔和 2标准 3强力(AI 音质增强)
+        public bool Srs { get; set; }              // 真超分辨率(低采样率源→48k)
         public int Denoise { get; set; } = 0;        // 0关 1弱 2中 3强
         public int Demucs { get; set; } = 0;         // 0关 1人声 2去人声 3分离
         public bool Loudness { get; set; }
@@ -133,6 +134,7 @@ public sealed partial class AudioView : UserControl
             var d = System.Text.Json.JsonSerializer.Deserialize<AudioSettings>(File.ReadAllText(SettingsFile));
             if (d is null) return;
             SrRadios.SelectedIndex = Math.Clamp(d.Sr, 0, 3);
+            if (SrsCheck != null) SrsCheck.IsChecked = d.Srs;
             DenoiseRadios.SelectedIndex = Math.Clamp(d.Denoise, 0, 3);
             DemucsRadios.SelectedIndex = Math.Clamp(d.Demucs, 0, 3);
             LoudnessCheck.IsChecked = d.Loudness;
@@ -152,6 +154,7 @@ public sealed partial class AudioView : UserControl
                 System.Text.Json.JsonSerializer.Serialize(new AudioSettings
                 {
                     Sr = SrRadios.SelectedIndex,
+                    Srs = SrsCheck?.IsChecked == true,
                     Denoise = DenoiseRadios.SelectedIndex,
                     Demucs = DemucsRadios.SelectedIndex,
                     Loudness = LoudnessCheck.IsChecked == true,
@@ -688,13 +691,49 @@ public sealed partial class AudioView : UserControl
                         AudioProgress.Value = t.pct;
                         AudioStatus.Text = t.msg;
                     });
-                    // ==== AI(超分/分离):先转 44.1k stereo wav → 【一次分轨】 → 分离/超分各取所需 ====
+                    // ==== AI(超分/分离/真超分):先转 44.1k stereo wav → 【一次分轨】 → 分离/超分/超分各取所需 ====
                     int demucsSel = DemucsRadios.SelectedIndex;   // 0=关 1=人声 2=去人声 3=分离(两文件) 4=自定义组合
-                    int srSel = SrRadios.SelectedIndex;           // 0=关 1=柔和 2=标准 3=强力(AI 超分)
-                    bool needAI = demucsSel > 0 || srSel > 0;
+                    int srSel = SrRadios.SelectedIndex;           // 0=关 1=柔和 2=标准 3=强力(AI 音质增强)
+                    bool doSrs = SrsCheck?.IsChecked == true && LavaSrService.Available();
+                    bool needAI = demucsSel > 0 || srSel > 0 || doSrs;
                     double trS = item.TrimStart > 0.1 ? item.TrimStart : 0;
                     double trE = (item.TrimEnd > 0.1 && item.DurationSec > 0.2) ? item.TrimEnd : 0;
-                    if (!needAI)
+                    if (doSrs && demucsSel == 0 && srSel == 0)
+                    {
+                        // 真超分辨率(独立通道):源低采样率 → 48k → 降噪/音色 → 输出格式
+                        Log("真超分:检测源采样率,准备 AI 扩展至 48kHz...");
+                        var probe = AudioService.Probe(item.Path);
+                        bool lowRate = probe.SampleRate < 44000;
+                        if (!lowRate)
+                        {
+                            Log($"⚠ 源已是 {probe.SampleRate}Hz(全频带),真超分仅对低采样率源(8k/16k/22k/32k)有效——已改用普通增强");
+                            // 走下方普通增强
+                            await AudioService.EnhanceAsync(item.Path, outPath,
+                                DenoiseRadios.SelectedIndex, LoudnessCheck.IsChecked == true,
+                                LowcutCheck.IsChecked == true, EqCheck.IsChecked == true,
+                                outFmt, 320, null, prog, _cts.Token, trS, trE);
+                        }
+                        else
+                        {
+                            Log($"🔄 真超分: {probe.SampleRate}Hz → 48kHz(补高频,AI 扩展)...");
+                            var srsWav = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                                $"alh_srs_{Guid.NewGuid():N}.wav");
+                            await AudioService.ConvertToWavSameRateAsync(item.Path, srsWav);
+                            var outWav = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                                $"alh_srs_out_{Guid.NewGuid():N}.wav");
+                            var srBytes = await LavaSrService.UpscaleWavAsync(srsWav, probe.SampleRate, prog, _cts.Token);
+                            System.IO.File.WriteAllBytes(outWav, srBytes);
+                            Log("真超分完成(48kHz),应用降噪/音色调整并转换 " + ext + " ...");
+                            await AudioService.EnhanceAsync(outWav, outPath,
+                                DenoiseRadios.SelectedIndex, LoudnessCheck.IsChecked == true,
+                                LowcutCheck.IsChecked == true, EqCheck.IsChecked == true,
+                                outFmt, 320, null, prog, _cts.Token, trS, trE);
+                            sepOutputs.Add(outPath);
+                            try { System.IO.File.Delete(srsWav); } catch { }
+                            try { System.IO.File.Delete(outWav); } catch { }
+                        }
+                    }
+                    else if (!needAI)
                     {
                         // 普通增强(无 AI):降噪/音色调整/裁剪 → 输出格式
                         await AudioService.EnhanceAsync(item.Path, outPath,
