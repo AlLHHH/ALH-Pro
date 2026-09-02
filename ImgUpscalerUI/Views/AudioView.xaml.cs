@@ -123,6 +123,19 @@ public sealed partial class AudioView : UserControl
         if (CustomMixPanel != null)
             CustomMixPanel.Visibility = DemucsRadios.SelectedIndex == 4
                 ? Visibility.Visible : Visibility.Collapsed;
+        // 真超分(低采样率源)与「AI 音质增强(44.1k)」互斥:勾真超分 → 音质增强禁选(避免输出被 44.1k 覆盖)
+        bool srs = SrsCheck?.IsChecked == true;
+        if (SrRadios != null)
+        {
+            SrRadios.IsEnabled = !srs;
+            if (srs && SrRadios.SelectedIndex > 0) SrRadios.SelectedIndex = 0;   // 强制回"关"
+        }
+        if (SrsHint != null)
+        {
+            SrsHint.Text = srs
+                ? "真超分与「音质增强」二选一(已自动切换;若源是 44.1k 全频带,真超分无效,请取消真超分)"
+                : (LavaSrService.Available() ? "仅低采样率源(8k/16k/22k/32k)有效;44.1k 音乐已全频带,请用上方「音质增强」" : "真超分模型未安装(需 engines/lavasr),仅低采样率源有效");
+        }
         SaveSettings();
     }
 
@@ -691,10 +704,11 @@ public sealed partial class AudioView : UserControl
                         AudioProgress.Value = t.pct;
                         AudioStatus.Text = t.msg;
                     });
-                    // ==== AI(超分/分离/真超分):先转 44.1k stereo wav → 【一次分轨】 → 分离/超分/超分各取所需 ====
+                    // ==== AI(真超分/音质增强/分离):互斥——真超分(低采样率源)与音质增强(44.1k)二选一 ====
                     int demucsSel = DemucsRadios.SelectedIndex;   // 0=关 1=人声 2=去人声 3=分离(两文件) 4=自定义组合
                     int srSel = SrRadios.SelectedIndex;           // 0=关 1=柔和 2=标准 3=强力(AI 音质增强)
                     bool doSrs = SrsCheck?.IsChecked == true && LavaSrService.Available();
+                    if (doSrs) srSel = 0;   // 真超分与音质增强互斥(否则音质增强输出会覆盖回 44.1k)
                     bool needAI = demucsSel > 0 || srSel > 0 || doSrs;
                     double trS = item.TrimStart > 0.1 ? item.TrimStart : 0;
                     double trE = (item.TrimEnd > 0.1 && item.DurationSec > 0.2) ? item.TrimEnd : 0;
