@@ -437,6 +437,42 @@ public sealed partial class VideoView : UserControl
         SetDenoiseUi(DenoiseToggle.IsChecked == true);
     }
 
+    // ---------- 一键推荐配置(治"不会选/选错模型导致效果不佳") ----------
+    private void PresetAnime_Click(object sender, RoutedEventArgs e) => ApplyPreset(
+        "动漫补帧:waifu2x 2x + 智能去重 + RIFE v4.13 补帧 2x",
+        up: true, engine: 0, scale: 2, dedupOn: true, dedupModel: 0, interp: true, interpScale: 0, fast: false);
+
+    private void PresetReal_Click(object sender, RoutedEventArgs e) => ApplyPreset(
+        "真人视频:Real-ESRGAN 2x(不补帧;想要更流畅再勾补帧)",
+        up: true, engine: 1, scale: 2, dedupOn: false, dedupModel: 0, interp: false, interpScale: 0, fast: false);
+
+    private void PresetFast_Click(object sender, RoutedEventArgs e) => ApplyPreset(
+        "快速预览:waifu2x 1x 超分(只提清晰不变大)+ 兼容模式",
+        up: true, engine: 0, scale: 0, dedupOn: false, dedupModel: 0, interp: false, interpScale: 0, fast: true);
+
+    /// <summary>应用推荐配置(控件事件会自动触发联动刷新;engine:0=waifu2x 1=realesrgan;scale:0=1x超分 2=2x)。</summary>
+    private void ApplyPreset(string desc, bool up, int engine, int scale, bool dedupOn, int dedupModel, bool interp, int interpScale, bool fast)
+    {
+        try
+        {
+            UpscaleToggle.IsChecked = up;
+            VideoEngineRadios.SelectedIndex = Math.Clamp(engine, 0, 1);
+            VideoScaleRadios.SelectedIndex = Math.Clamp(scale, 0, 4);
+            DedupCheck.IsChecked = dedupOn;
+            DedupModelCombo.SelectedIndex = Math.Clamp(dedupModel, 0, 2);
+            InterpToggle.IsChecked = interp;
+            InterpModelCombo.SelectedIndex = 0;          // 通用画质 v4.13(推荐)
+            InterpScaleRadios.SelectedIndex = Math.Clamp(interpScale, 0, 5);
+            FastModeCheck.IsChecked = fast;
+            TtaCheck.IsChecked = false;
+            TargetFpsCheck.IsChecked = false;
+            UpdateOptions();
+            Log("✅ 已应用推荐配置:" + desc);
+            AppLogger.Info("已应用推荐配置: " + desc);
+        }
+        catch (Exception ex) { Log("⚠ 应用推荐配置失败:" + ex.Message); }
+    }
+
     // 当前计算设备(全局设置):-1 = CPU;≥0 = GPU 编号(超出枚举数按 CPU 处理)
     private int CurrentGpuId
         => AppSettings.GpuIndex >= 0 && AppSettings.GpuIndex < _gpuCount ? AppSettings.GpuIndex : -1;
