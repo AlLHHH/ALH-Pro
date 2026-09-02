@@ -113,7 +113,8 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                            <TextBlock Text="🆕" FontSize="14" VerticalAlignment="Center"/>
+                            <Image Source="ms-appx:///Assets/ALHPro_icon.png" Width="18" Height="18"
+                                   VerticalAlignment="Center" Stretch="Uniform"/>
                             <TextBlock x:Name="UpdateBarText" FontSize="12" VerticalAlignment="Center"
                                        TextTrimming="CharacterEllipsis" TextWrapping="Wrap"/>
                         </StackPanel>
