@@ -319,22 +319,27 @@ public static class VulkanCheck
         return sb.ToString().TrimEnd('\n');
     }
 
-    /// <summary>结果写缓存(下次启动直接显示,不再重测)。</summary>
+    /// <summary>结果写缓存(下次启动直接显示,不再重测;记录版本号,升级自动作废)。</summary>
     private static void Cache()
     {
         try
         {
             AppSettings.VulkanReport = Report;
             AppSettings.VulkanCheckDone = true;
+            AppSettings.VulkanReportVersion = UpdateChecker.CurrentVersion;
             AppSettings.Save();
         }
         catch { }
     }
 
-    /// <summary>首次启动时读取缓存(若有),进程内直接用;没有则后台跑一次。</summary>
+    /// <summary>首次启动时读取缓存(若有),进程内直接用;没有则后台跑一次。
+    /// 版本升级时自动作废旧缓存重测(修复/新增报告内容要能生效,老用户也能看到)。</summary>
     public static void LoadOrRun()
     {
-        if (AppSettings.VulkanCheckDone && !string.IsNullOrEmpty(AppSettings.VulkanReport))
+        string ver = UpdateChecker.CurrentVersion;
+        // 缓存版本与当前版本一致才复用;不一致(升级了)→ 重测
+        if (AppSettings.VulkanCheckDone && !string.IsNullOrEmpty(AppSettings.VulkanReport)
+            && (AppSettings.VulkanReportVersion == ver || AppSettings.VulkanReportVersion == ""))
         {
             Done = true;
             GpuAvailable = !AppSettings.VulkanReport.Contains("未检测到可用的 GPU", StringComparison.Ordinal);
@@ -352,6 +357,7 @@ public static class VulkanCheck
     {
         AppSettings.VulkanCheckDone = false;
         AppSettings.VulkanReport = "";
+        AppSettings.VulkanReportVersion = "";
         try { AppSettings.Save(); } catch { }
         Done = false;
         Devices.Clear();
