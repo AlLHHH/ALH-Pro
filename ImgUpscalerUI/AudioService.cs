@@ -405,6 +405,19 @@ public static class AudioService
             throw new InvalidOperationException("转换为 44.1kHz WAV 失败");
     }
 
+    /// <summary>任意音频 → 保持原采样率的 16-bit 单声道 WAV(真超分辨率输入用:不能先转 44.1k,否则丢失源高频信息)。</summary>
+    public static async Task ConvertToWavSameRateAsync(string input, string outputWav)
+    {
+        var psi = NewFfmpegPsi(FfmpegPath, $"-y -i \"{input}\" -ac 1 -c:a pcm_s16le \"{outputWav}\"");
+        psi.RedirectStandardError = true;
+        using var p = Process.Start(psi);
+        if (p == null) throw new InvalidOperationException("无法启动 ffmpeg");
+        var err = p.StandardError.ReadToEndAsync();
+        await p.WaitForExitAsync();
+        if (p.ExitCode != 0 || !File.Exists(outputWav) || new FileInfo(outputWav).Length < 100)
+            throw new InvalidOperationException("转换 WAV 失败(保持采样率)");
+    }
+
     /// <summary>44.1kHz WAV → 目标格式(0=MP3 320k 1=WAV 2=FLAC)。</summary>
     public static async Task ConvertWavToAsync(string inputWav, string output, int outFmt)
     {

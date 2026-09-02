@@ -28,8 +28,8 @@
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
-                    <!-- AI 超分:分轨后逐轨优化再重混,最优先 -->
-                    <TextBlock Text="AI 超分(音质增强)" Style="{StaticResource SectionTitle}"/>
+                    <!-- AI 音质增强:分轨后逐轨优化再重混,最优先 -->
+                    <TextBlock Text="AI 音质增强(44.1k 音乐)" Style="{StaticResource SectionTitle}"/>
                     <RadioButtons x:Name="SrRadios" SelectedIndex="0" ToolTipService.ToolTip="AI 分轨后分别优化人声/伴奏再重新混音:咬字更清晰、伴奏更有层次(CPU 较慢,约 1.5 分钟/分钟音频)"
                                   SelectionChanged="Options_Changed">
                         <RadioButton Content="关"/>
@@ -37,6 +37,15 @@
                         <RadioButton Content="标准"/>
                         <RadioButton Content="强力"/>
                     </RadioButtons>
+
+                    <!-- 真超分辨率:仅低采样率源(8k/16k/22k/32k 电话/老录音)有效,升至 48kHz -->
+                    <CheckBox x:Name="SrsCheck"
+                              Content="真超分辨率(低采样率源 → 48kHz)"
+                              IsChecked="False"
+                              ToolTipService.ToolTip="电话/老录音等低采样率音频(8k/16k/22k/32k):AI 补出缺失高频并升级到 48kHz,听得见的变清晰;44.1k 音乐已全频带,无需此功能(用上方「音质增强」即可)"
+                              Checked="Options_Changed" Unchecked="Options_Changed"/>
+                    <TextBlock x:Name="SrsHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
+                               FontSize="11" Opacity="0.6"/>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
