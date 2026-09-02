@@ -28,7 +28,7 @@
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
-                    <!-- 板块1:超分(真超分辨率,独立;与其他板块可同时勾选) -->
+                    <!-- 板块1:超分(真超分辨率,效果;与其他板块可同时勾选,作用到最终输出) -->
                     <TextBlock Text="超分" Style="{StaticResource SectionTitle}"/>
                     <CheckBox x:Name="SrsCheck"
                               Content="真超分辨率(低采样率源 → 48kHz)"
@@ -40,7 +40,7 @@
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
-                    <!-- 板块2:增强(音质增强,独立;与超分/分离可同时勾选) -->
+                    <!-- 板块2:增强(音质增强,效果;与超分/分离可同时勾选,作用到最终输出) -->
                     <TextBlock Text="增强" Style="{StaticResource SectionTitle}"/>
                     <RadioButtons x:Name="SrRadios" SelectedIndex="0" ToolTipService.ToolTip="AI 分轨后分别优化人声/伴奏再重新混音:咬字更清晰、伴奏更有层次(CPU 较慢,约 1.5 分钟/分钟音频)"
                                   SelectionChanged="Options_Changed">
@@ -49,7 +49,7 @@
                         <RadioButton Content="标准"/>
                         <RadioButton Content="强力"/>
                     </RadioButtons>
-                    <TextBlock Text="人声/伴奏分别优化后重混;与其他板块同时勾选时,各自输出独立文件"
+                    <TextBlock Text="效果:勾选后作用到最终输出(不单独出文件);不勾「AI分离」时才单独输出一个「_增强」文件"
                                Style="{StaticResource HintText}" TextWrapping="Wrap" FontSize="11" Opacity="0.6"/>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
@@ -120,11 +120,6 @@
                                        Width="34" TextAlignment="Right" VerticalAlignment="Center"/>
                         </Grid>
 
-                        <RadioButtons x:Name="CmModeRadios" SelectedIndex="0" SelectionChanged="Options_Changed">
-                            <RadioButton Content="混合成一个文件"/>
-                            <RadioButton Content="分别导出每个轨道"/>
-                            <RadioButton Content="混合 + 分别导出"/>
-                        </RadioButtons>
                         <TextBlock x:Name="CmHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
                                    FontSize="11" Opacity="0.6"/>
                     </StackPanel>
