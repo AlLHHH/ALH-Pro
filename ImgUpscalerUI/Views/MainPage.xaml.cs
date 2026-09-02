@@ -355,7 +355,8 @@ public sealed partial class MainPage : Page
     private static TextBlock AuthorWords() => new()
     {
         FontSize = 12,
-        Opacity = 0.85,
+        Opacity = 0.95,
+        Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 245, 197, 66)), // 金黄(作者的话)
         TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         Text = "来自作者的话\n软件当前仍处于早期开发阶段,功能方向与工程稳定性仍在持续完善中。尽管有开源模型提供底层能力支撑," +
             "但上层的调用适配、性能优化与长期维护,依然面临较大的工程挑战。作为个人发起的公益项目,我将在力所能及的范围内持续改进。" +
