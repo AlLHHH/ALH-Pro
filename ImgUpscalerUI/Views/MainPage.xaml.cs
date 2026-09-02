@@ -1676,7 +1676,7 @@ public sealed partial class MainPage : Page
         });
         content.Children.Add(new TextBlock
         {
-            Text = "日志会记录你的操作和报错(含原因)。出问题时,把这个日志文件发给作者即可快速定位。",
+            Text = "日志会记录你的操作和报错(含原因)。出问题时,点下方「导出诊断包(zip)」把诊断包发给作者,即可快速定位。",
             FontSize = 12, Opacity = 0.75, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
 
@@ -1734,11 +1734,14 @@ public sealed partial class MainPage : Page
                                 System.IO.File.Copy(s, System.IO.Path.Combine(tmpDir, System.IO.Path.GetFileName(s)), true);
                     }
                     catch { }
-                    using (var z = System.IO.Compression.ZipFile.Open(file.Path, System.IO.Compression.ZipArchiveMode.Create))
+                    // 先在临时目录完整写好 zip(句柄关闭后再复制进保存位置)——避免"边写边读"导致压缩包损坏
+                    var tmpZip = System.IO.Path.Combine(tmpDir, "ALHPro_Diag.zip");
+                    using (var z = System.IO.Compression.ZipFile.Open(tmpZip, System.IO.Compression.ZipArchiveMode.Create))
                     {
                         foreach (var f in System.IO.Directory.EnumerateFiles(tmpDir))
                             System.IO.Compression.ZipFileExtensions.CreateEntryFromFile(z, f, System.IO.Path.GetFileName(f));
                     }
+                    System.IO.File.Copy(tmpZip, file.Path, overwrite: true);
                     var okDlg = new ContentDialog
                     {
                         Title = "诊断包已导出",

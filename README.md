@@ -43,7 +43,7 @@
 
 **普通用户(不碰代码):**
 
-1. 打开 Releases 页面 → 点 **Assets** 里的 `ALHPro_v1.1.1_Setup.exe` 下载(约 900MB);
+1. 打开 Releases 页面 → 点 **Assets** 里的 `ALHPro_v1.1.2_Setup.exe` 下载(约 900MB);
 2. 双击安装,一路"下一步"即可;
 3. 要用 AI 抠图:安装到"选择附加任务"一步勾选「下载并安装模型包」(约 1.4GB,可选);
 4. 启动 → 左侧选择功能 → 添加素材 → 调整参数 → 开始处理。
@@ -61,7 +61,7 @@
 **直链(复制粘贴用):**
 
 ```
-安装包: https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.1/ALHPro_v1.1.1_Setup.exe
+安装包: https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.2/ALHPro_v1.1.2_Setup.exe
 模型包: https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.0/models_v1.0.zip
 ```
 
