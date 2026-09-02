@@ -48,6 +48,14 @@ public static partial class EngineService
         return IsBlackwellGpu() || OldNcnnGpuRisky();
     }
 
+    /// <summary>waifu2x 是否应走 ONNX 路线:仅在 无独显/Vulkan 不可用时(此时只能 CPU,而 waifu2x ncnn CPU 模式有 bug 会崩)。
+    /// 50 系 waifu2x 20250915 新版引擎兼容 Blackwell,无需 ONNX;普通 GPU 走 ncnn 更快。</summary>
+    public static bool ShouldUseOnnxWaifu2x()
+    {
+        if (EsrganOnnxService.FindWaifu2xModel() == null) return false;
+        return !IsBlackwellGpu() && OldNcnnGpuRisky();   // 无独显才需要(50系 waifu2x 引擎本身兼容)
+    }
+
     /// <summary>旧 ncnn 引擎(2022 版,realcugan/realesrgan ncnn)在 GPU 上可能不可用的设备:
     /// ①RTX 50 系(Blackwell,ncnn-Vulkan vkQueueSubmit 崩,全局已知)②Vulkan 不可用/无独显(只能 CPU,而 CPU 也崩)。
     /// 用于全设备兼容自检提示(不限 50 系)。</summary>
