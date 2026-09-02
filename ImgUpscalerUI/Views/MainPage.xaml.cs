@@ -463,7 +463,7 @@ public sealed partial class MainPage : Page
         catch (Exception ex) { text = "读取更新详情失败: " + ex.Message; }
         var dlg = new ContentDialog
         {
-            Title = "更新详情 · ALH Pro v1.1.0",
+            Title = "更新详情 · ALH Pro v" + UpdateChecker.CurrentVersion,
             Content = new ScrollViewer
             {
                 MaxHeight = 520,
@@ -490,14 +490,14 @@ public sealed partial class MainPage : Page
         });
         content.Children.Add(new TextBlock
         {
-            Text = $"版本 v{UpdateChecker.CurrentVersion}(1.1.0) · 构建 {File.GetLastWriteTime(typeof(MainPage).Assembly.Location):MM-dd HH:mm}",
+            Text = $"版本 v{UpdateChecker.CurrentVersion} · 构建 {File.GetLastWriteTime(typeof(MainPage).Assembly.Location):MM-dd HH:mm}",
             FontSize = 12,
             Opacity = 0.7,
         });
         // 更新详情:查看当前版本更新了什么(读取随包 RELEASE_NOTES.md)
         var notesLink = new Microsoft.UI.Xaml.Controls.HyperlinkButton
         {
-            Content = "查看更新详情(v1.1.0)",
+            Content = "查看更新详情(v" + UpdateChecker.CurrentVersion + ")",
             FontSize = 11,
             Padding = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 0),
             HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
