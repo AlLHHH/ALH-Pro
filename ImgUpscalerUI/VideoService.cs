@@ -1107,16 +1107,34 @@ public static class VideoService
                 // 50 系/AMD/Intel/老驱动等:当前引擎在 GPU 上跑 1×1 图如果能出图 → GPU 放心用;
                 // 不能 → 直接改 CPU,并提示用户(不再等引擎启动失败/黑帧降级,省时间)。
                 int upGpu = gpuId;
+                bool waifuOnnx = false;   // 50系 waifu2x ncnn 不可用 → 整段视频改走 ONNX(安全网)
                 if (gpuId >= 0)
                 {
                     progress?.Report((45, $"正在检测超分 GPU 兼容性(最长 5 秒)..."));
                     bool usable = await EngineService.IsEngineGpuUsableAsync(engine, gpuId, ct).ConfigureAwait(false);
                     if (!usable)
                     {
-                        AppLogger.Warn($"⚠ 超分引擎 {engine} GPU 探测失败,改用 CPU(视频超分会慢,但不会卡死白等)");
-                        progress?.Report((45, $"⚠ 超分引擎 {engine} 无法用 GPU,自动改用 CPU 计算(较慢但稳定)..."));
-                        upGpu = -1;
+                        if (engine == "waifu2x" && EngineService.IsBlackwellGpu())
+                        {
+                            // waifu2x 在 50 系:ncnn CPU 模式同样会崩(实测 exit -1073741819)——
+                            // 不能像其他引擎那样"降 CPU",而是整段改走 ONNX 稳定版(DirectML/CPU 都行)
+                            waifuOnnx = true;
+                            AppLogger.Warn($"⚠ waifu2x 引擎在 50 系 GPU 上不可用,自动改走 ONNX 稳定版(整段视频,兼容模式)");
+                            progress?.Report((45, $"⚠ waifu2x 无法用 GPU,自动改用稳定引擎(ONNX,整段视频)..."));
+                        }
+                        else
+                        {
+                            AppLogger.Warn($"⚠ 超分引擎 {engine} GPU 探测失败,改用 CPU(视频超分会慢,但不会卡死白等)");
+                            progress?.Report((45, $"⚠ 超分引擎 {engine} 无法用 GPU,自动改用 CPU 计算(较慢但稳定)..."));
+                            upGpu = -1;
+                        }
                     }
+                }
+                else if (engine == "waifu2x" && EngineService.IsBlackwellGpu())
+                {
+                    // 用户选了 CPU(-g -1):50 系 waifu2x 的 ncnn CPU 模式有崩溃 bug → 直接整段走 ONNX 更稳
+                    waifuOnnx = true;
+                    AppLogger.Warn("⚠ 50系 waifu2x:CPU(-g -1)模式有崩溃 bug,自动改走 ONNX 稳定版");
                 }
                 // 分批目录批处理超分 + 并行 2 批(video2x 式多 worker):
                 // 一次引擎启动处理一批帧,避免每帧启动引擎;批间并行提高 GPU 利用率
@@ -1162,7 +1180,7 @@ public static class VideoService
                                     : EsrganOnnxService.FindModel();
                             else if (engine == "realcugan" && EngineService.ShouldUseOnnxCugan())
                                 onnxModelPath = EsrganOnnxService.FindCuganModel();
-                            else if (engine == "waifu2x" && EngineService.ShouldUseOnnxWaifu2x())
+                            else if (engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx))
                                 onnxModelPath = EsrganOnnxService.FindWaifu2xModel();
                             if (onnxModelPath != null)
                             {

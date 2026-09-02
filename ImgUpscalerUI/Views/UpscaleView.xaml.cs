@@ -787,7 +787,9 @@ public sealed partial class UpscaleView : UserControl
                                 : EsrganOnnxService.FindModel();
                         else if (engine == "realcugan" && EngineService.ShouldUseOnnxCugan())
                             onnxPath = EsrganOnnxService.FindCuganModel();
-                        else if (engine == "waifu2x" && EngineService.ShouldUseOnnxWaifu2x())
+                        else if (engine == "waifu2x"
+                            && (EngineService.ShouldUseOnnxWaifu2x()
+                                || !await EngineService.IsWaifu2xNcnnUsableAsync(gpuId, ct)))
                             onnxPath = EsrganOnnxService.FindWaifu2xModel();
                         if (onnxPath != null)
                         {
