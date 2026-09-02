@@ -16,11 +16,13 @@ namespace ALHPro;
 public static partial class EngineService
 {
     /// <summary>是否 RTX 50 系(Blackwell)显卡:从 VulkanCheck/GPU 枚举名字判断。
-    /// 50 系上 2022 版 ncnn 引擎(Vulkan)会崩 —— 需换 ONNX 路线(不走 Vulkan)。</summary>
+    /// 50 系上 2022 版 ncnn 引擎(Vulkan)会崩 —— 需换 ONNX 路线(不走 Vulkan)。
+    /// 测试钩子:环境变量 ALH_FORCE_BLACKWELL=1 时强制视为 50 系(开发/诊断用,正常用户不生效)。</summary>
     public static bool IsBlackwellGpu()
     {
         try
         {
+            if (Environment.GetEnvironmentVariable("ALH_FORCE_BLACKWELL") == "1") return true;
             var names = new System.Collections.Generic.List<string>();
             try { names.AddRange(VulkanCheck.Devices.Select(d => d.Name)); } catch { }
             try { names.AddRange(GpuInfo.GetAdapterNames()); } catch { }
