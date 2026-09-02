@@ -28,8 +28,20 @@
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
-                    <!-- AI 音质增强:分轨后逐轨优化再重混,最优先 -->
-                    <TextBlock Text="AI 音质增强(44.1k 音乐)" Style="{StaticResource SectionTitle}"/>
+                    <!-- 板块1:超分(真超分辨率,独立;与其他板块可同时勾选) -->
+                    <TextBlock Text="超分" Style="{StaticResource SectionTitle}"/>
+                    <CheckBox x:Name="SrsCheck"
+                              Content="真超分辨率(低采样率源 → 48kHz)"
+                              IsChecked="False"
+                              ToolTipService.ToolTip="电话/老录音等低采样率音频(8k/16k/22k/32k):AI 补出缺失高频并升级到 48kHz,听得见的变清晰;44.1k 音乐已全频带,会自动跳过(不报错)"
+                              Checked="Options_Changed" Unchecked="Options_Changed"/>
+                    <TextBlock x:Name="SrsHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
+                               FontSize="11" Opacity="0.6"/>
+
+                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
+
+                    <!-- 板块2:增强(音质增强,独立;与超分/分离可同时勾选) -->
+                    <TextBlock Text="增强" Style="{StaticResource SectionTitle}"/>
                     <RadioButtons x:Name="SrRadios" SelectedIndex="0" ToolTipService.ToolTip="AI 分轨后分别优化人声/伴奏再重新混音:咬字更清晰、伴奏更有层次(CPU 较慢,约 1.5 分钟/分钟音频)"
                                   SelectionChanged="Options_Changed">
                         <RadioButton Content="关"/>
@@ -37,19 +49,12 @@
                         <RadioButton Content="标准"/>
                         <RadioButton Content="强力"/>
                     </RadioButtons>
-
-                    <!-- 真超分辨率:仅低采样率源(8k/16k/22k/32k 电话/老录音)有效,升至 48kHz -->
-                    <CheckBox x:Name="SrsCheck"
-                              Content="真超分辨率(低采样率源 → 48kHz)"
-                              IsChecked="False"
-                              ToolTipService.ToolTip="电话/老录音等低采样率音频(8k/16k/22k/32k):AI 补出缺失高频并升级到 48kHz,听得见的变清晰;44.1k 音乐已全频带,无需此功能(用上方「音质增强」即可)"
-                              Checked="Options_Changed" Unchecked="Options_Changed"/>
-                    <TextBlock x:Name="SrsHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
-                               FontSize="11" Opacity="0.6"/>
+                    <TextBlock Text="人声/伴奏分别优化后重混;与其他板块同时勾选时,各自输出独立文件"
+                               Style="{StaticResource HintText}" TextWrapping="Wrap" FontSize="11" Opacity="0.6"/>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
-                    <!-- AI 分离(神经网络):独立板块,拆人声/伴奏 -->
+                    <!-- 板块3:AI 分离(神经网络):拆人声/伴奏;勾选自定义组合时 支持多轨同时输出+各自调音量 -->
                     <TextBlock Text="AI 分离(人声 / 伴奏)" Style="{StaticResource SectionTitle}"/>
                     <RadioButtons x:Name="DemucsRadios" SelectedIndex="0" ToolTipService.ToolTip="神经网络分离(Demucs):提取人声/去人声(伴奏)/分离导出两文件——需分轨时用(CPU 较慢,一首歌约几至十几分钟)"
                                   SelectionChanged="Options_Changed">
@@ -57,15 +62,71 @@
                         <RadioButton Content="提取人声"/>
                         <RadioButton Content="去人声(卡拉OK伴奏)"/>
                         <RadioButton Content="分离(导出人声+伴奏两个文件)"/>
-                        <RadioButton Content="自定义组合(选下面轨道)"/>
+                        <RadioButton Content="自定义组合(选轨道+调音量)"/>
                     </RadioButtons>
 
-                    <!-- 自定义组合:勾选要保留的轨(人声=轨3,伴奏=轨0,其他1/2) -->
-                    <StackPanel x:Name="CustomMixPanel" Visibility="Collapsed" Margin="24,2,0,8" Spacing="2">
-                        <CheckBox x:Name="CmVocals" Content="人声" Checked="Options_Changed" Unchecked="Options_Changed"/>
-                        <CheckBox x:Name="CmAcc" Content="伴奏" Checked="Options_Changed" Unchecked="Options_Changed"/>
-                        <CheckBox x:Name="CmOther1" Content="其他 1(部分歌内含鼓/贝斯)" Checked="Options_Changed" Unchecked="Options_Changed"/>
-                        <CheckBox x:Name="CmOther2" Content="其他 2(同上)" Checked="Options_Changed" Unchecked="Options_Changed"/>
+                    <!-- 自定义组合:勾选要输出的轨(可多选=同时输出)+ 每轨音量(0~200%)+ 输出方式 -->
+                    <StackPanel x:Name="CustomMixPanel" Visibility="Collapsed" Margin="24,2,0,8" Spacing="4">
+                        <Grid ColumnSpacing="6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox x:Name="CmVocals" Grid.Column="0" Content="人声" VerticalAlignment="Center"
+                                      Checked="Options_Changed" Unchecked="Options_Changed"/>
+                            <Slider x:Name="CmVolV" Grid.Column="1" Minimum="0" Maximum="200" Value="100"
+                                    StepFrequency="5" VerticalAlignment="Center" ValueChanged="CmVol_ValueChanged"/>
+                            <TextBlock x:Name="CmVolVText" Grid.Column="2" Text="100%" FontSize="10" Opacity="0.7"
+                                       Width="34" TextAlignment="Right" VerticalAlignment="Center"/>
+                        </Grid>
+                        <Grid ColumnSpacing="6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox x:Name="CmAcc" Grid.Column="0" Content="伴奏" VerticalAlignment="Center"
+                                      Checked="Options_Changed" Unchecked="Options_Changed"/>
+                            <Slider x:Name="CmVolA" Grid.Column="1" Minimum="0" Maximum="200" Value="100"
+                                    StepFrequency="5" VerticalAlignment="Center" ValueChanged="CmVol_ValueChanged"/>
+                            <TextBlock x:Name="CmVolAText" Grid.Column="2" Text="100%" FontSize="10" Opacity="0.7"
+                                       Width="34" TextAlignment="Right" VerticalAlignment="Center"/>
+                        </Grid>
+                        <Grid ColumnSpacing="6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox x:Name="CmOther1" Grid.Column="0" Content="其他 1(部分歌内含鼓/贝斯)" VerticalAlignment="Center"
+                                      Checked="Options_Changed" Unchecked="Options_Changed"/>
+                            <Slider x:Name="CmVolO1" Grid.Column="1" Minimum="0" Maximum="200" Value="100"
+                                    StepFrequency="5" VerticalAlignment="Center" ValueChanged="CmVol_ValueChanged"/>
+                            <TextBlock x:Name="CmVolO1Text" Grid.Column="2" Text="100%" FontSize="10" Opacity="0.7"
+                                       Width="34" TextAlignment="Right" VerticalAlignment="Center"/>
+                        </Grid>
+                        <Grid ColumnSpacing="6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox x:Name="CmOther2" Grid.Column="0" Content="其他 2(同上)" VerticalAlignment="Center"
+                                      Checked="Options_Changed" Unchecked="Options_Changed"/>
+                            <Slider x:Name="CmVolO2" Grid.Column="1" Minimum="0" Maximum="200" Value="100"
+                                    StepFrequency="5" VerticalAlignment="Center" ValueChanged="CmVol_ValueChanged"/>
+                            <TextBlock x:Name="CmVolO2Text" Grid.Column="2" Text="100%" FontSize="10" Opacity="0.7"
+                                       Width="34" TextAlignment="Right" VerticalAlignment="Center"/>
+                        </Grid>
+
+                        <RadioButtons x:Name="CmModeRadios" SelectedIndex="0" SelectionChanged="Options_Changed">
+                            <RadioButton Content="混合成一个文件"/>
+                            <RadioButton Content="分别导出每个轨道"/>
+                            <RadioButton Content="混合 + 分别导出"/>
+                        </RadioButtons>
+                        <TextBlock x:Name="CmHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
+                                   FontSize="11" Opacity="0.6"/>
                     </StackPanel>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
