@@ -1466,19 +1466,39 @@ public sealed partial class MainPage : Page
         });
         content.Children.Add(new TextBlock
         {
-            Text = "处理中的临时帧/中间文件保存在这里,任务完成后自动清理,软件启动时也会清理残留(只动 imgup_*/alh_* 前缀,不碰你的任何文件)。\n默认「自动」:选剩余空间最大的磁盘(大任务最不容易爆盘)。",
+            Text = "任务完成自动清理,启动也会清理残留(只清理本软件临时文件)。",
             FontSize = 12, Opacity = 0.75, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
-        var tmpPathText = new TextBlock { FontSize = 10, Opacity = 0.55, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap };
-        void RefreshTmpText()
+        var tmpRadios = new RadioButtons
         {
-            var cur = EngineService.TempRoot;
-            tmpPathText.Text = "当前使用:" + (string.IsNullOrWhiteSpace(AppSettings.TempDir) ? "自动 · " + cur : cur);
+            Items =
+            {
+                new RadioButton { Content = "自动(推荐,选剩余空间最大的盘)" },
+                new RadioButton { Content = "指定位置" },
+            },
+        };
+        var tmpPathText = new TextBlock { FontSize = 10, Opacity = 0.55, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap };
+        var tmpPickBtn = new Button { Content = "浏览...", FontSize = 12, Padding = new Microsoft.UI.Xaml.Thickness(12, 6, 12, 6) };
+        var tmpCleanBtn = new Button { Content = "立即清理残留", FontSize = 12, Padding = new Microsoft.UI.Xaml.Thickness(12, 6, 12, 6) };
+
+        void RefreshTmpUi()
+        {
+            bool custom = !string.IsNullOrWhiteSpace(AppSettings.TempDir);
+            tmpRadios.SelectedIndex = custom ? 1 : 0;
+            tmpPathText.Text = "当前使用:" + (custom ? AppSettings.TempDir : "自动 · " + EngineService.TempRoot);
         }
-        RefreshTmpText();
-        content.Children.Add(tmpPathText);
-        var tmpRow = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 8 };
-        var tmpPickBtn = new Button { Content = "选择文件夹...", FontSize = 12, Padding = new Microsoft.UI.Xaml.Thickness(12, 6, 12, 6) };
+        RefreshTmpUi();
+        tmpRadios.SelectionChanged += (_, _) =>
+        {
+            // 选「自动」= 清掉自定义(选「指定位置」由「浏览...」填路径)
+            if (tmpRadios.SelectedIndex == 0 && !string.IsNullOrWhiteSpace(AppSettings.TempDir))
+            {
+                AppSettings.TempDir = "";
+                AppSettings.Save();
+                RefreshTmpUi();
+                AppLogger.Info("临时文件目录已恢复自动(剩余空间最大的盘)");
+            }
+        };
         tmpPickBtn.Click += async (_, _) =>
         {
             try
@@ -1492,40 +1512,39 @@ public sealed partial class MainPage : Page
                 {
                     AppSettings.TempDir = folder.Path;
                     AppSettings.Save();
-                    RefreshTmpText();
+                    RefreshTmpUi();
                     AppLogger.Info($"临时文件目录已设为: {folder.Path}");
                 }
             }
             catch (Exception ex) { AppLogger.Info("选择临时目录失败: " + ex.Message); }
         };
-        var tmpAutoBtn = new Button { Content = "恢复自动", FontSize = 12, Padding = new Microsoft.UI.Xaml.Thickness(12, 6, 12, 6) };
-        tmpAutoBtn.Click += (_, _) =>
-        {
-            AppSettings.TempDir = "";
-            AppSettings.Save();
-            RefreshTmpText();
-            AppLogger.Info("临时文件目录已恢复自动(剩余空间最大的盘)");
-        };
-        var tmpCleanBtn = new Button { Content = "立即清理残留", FontSize = 12, Padding = new Microsoft.UI.Xaml.Thickness(12, 6, 12, 6) };
-        tmpCleanBtn.Click += (_, _) =>
+        tmpCleanBtn.Click += async (_, _) =>
         {
             try
             {
-                App.CleanupTempDirs();
-                AppLogger.Info("已清理临时文件残留");
+                var (dirs, files, bytes) = App.CleanupTempDirs();
+                AppLogger.Info($"已清理临时文件残留:目录 {dirs} 个、文件 {files} 个,释放 {bytes / 1048576.0:0.#} MB");
+                var dlg = new ContentDialog
+                {
+                    Title = "清理完成",
+                    Content = new TextBlock
+                    {
+                        Text = $"已清理:目录 {dirs} 个 · 文件 {files} 个,释放 {bytes / 1048576.0:0.#} MB\n当前临时位置:{(string.IsNullOrWhiteSpace(AppSettings.TempDir) ? "自动" : AppSettings.TempDir)}",
+                        TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                    },
+                    CloseButtonText = "好的",
+                    XamlRoot = this.XamlRoot,
+                };
+                await dlg.ShowAsync();
             }
             catch { }
-            RefreshTmpText();
         };
-        tmpRow.Children.Add(tmpPickBtn);
-        tmpRow.Children.Add(tmpAutoBtn);
-        tmpRow.Children.Add(tmpCleanBtn);
-        content.Children.Add(tmpRow);
-        content.Children.Add(new TextBlock
-        {
-            Text = "⚠ 请勿把这里设为系统盘(C:)——大任务的临时文件可能占 30GB+,系统盘满会导致软件/电脑异常。",
-            FontSize = 11, Opacity = 0.5, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-        });
+        content.Children.Add(tmpRadios);
+        content.Children.Add(tmpPathText);
+        var tmpBtnRow = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 8 };
+        tmpBtnRow.Children.Add(tmpPickBtn);
+        tmpBtnRow.Children.Add(tmpCleanBtn);
+        content.Children.Add(tmpBtnRow);
 
         // ================= 诊断日志(放在最下面) =================
         content.Children.Add(new Border
