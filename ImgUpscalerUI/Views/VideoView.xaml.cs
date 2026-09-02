@@ -2836,14 +2836,16 @@ public sealed partial class VideoView : UserControl
         // ===== 超分引擎 GPU 兼容探测(全设备,不猜型号) =====
         // 任何显卡(50系/AMD/Intel/老驱动)只要当前引擎 realesrgan 在 GPU 上跑不通,
         // 处理前提示:「好的」→ 换 waifu2x(兼容最快);「仍然继续」→ 保持(处理中自动降级其他GPU→CPU)
+        // ⚠ 此处【禁止】ConfigureAwait(false):探测后还要接着读下面一大段 UI 控件(参数快照),
+        //   留在后台线程会抛 0x8001010E(已真机复现:选 Real-ESRGAN 视频必崩)——await 不带
+        //   ConfigureAwait(false),让方法自然地回到 UI 线程;内部改 SelectedIndex 的 DispatcherQueue
+        //   兜底保留(双保险,即使未来路径变化也不跨线程改控件)。
         if (up && VideoEngineRadios.SelectedIndex == 1)
         {
-            bool usable = await EngineService.IsEngineGpuUsableAsync("realesrgan", gpuId, cts.Token).ConfigureAwait(false);
+            bool usable = await EngineService.IsEngineGpuUsableAsync("realesrgan", gpuId, cts.Token);
             if (!usable)
             {
-                var useWaifu = await AskBlackwellCompatibleAsync("Real-ESRGAN").ConfigureAwait(false);
-                // 关键:IsEngineGpuUsableAsync 内部 ConfigureAwait(false),回来后线程已非 UI 线程,
-                // 直接改 RadioButtons.SelectedIndex 会抛 0x8001010E(跨线程访问)→ 用 DispatcherQueue 回 UI 线程。
+                var useWaifu = await AskBlackwellCompatibleAsync("Real-ESRGAN");
                 var tcs = new System.Threading.Tasks.TaskCompletionSource();
                 _ = DispatcherQueue.TryEnqueue(() =>
                 {
@@ -2854,7 +2856,7 @@ public sealed partial class VideoView : UserControl
                     }
                     finally { tcs.TrySetResult(); }
                 });
-                await tcs.Task.ConfigureAwait(false);
+                await tcs.Task;
             }
         }
         // ===== 参数快照(关键):处理中切换界面【不影响本批】——以下全部在开始时一次性读取,

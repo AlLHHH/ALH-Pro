@@ -1223,13 +1223,42 @@ public static class VideoService
                                 progress?.Report((45 + (int)(45.0 * start / total),
                                     $"⚠ 检测到黑帧(批次 {start}~{end - 1},GPU 输出异常),该批改用 CPU 重处理..." + StageElapsed()));
                                 AppLogger.Info($"降级:批次 {start}~{end - 1} 输出黑帧(ncnn-vulkan GPU 队列异常),已用 CPU 重处理该批");
-                                await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
-                                    upScale, 0, -1, false, progress, ct,
-                                    SafeRender.GetTileSize() / (fastMode ? 2 : 1),
-                                    watchStage: "超分",
-                                    globalBaseFrames: start, globalTotalFrames: total);
-                                foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
-                                    File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
+                                try
+                                {
+                                    await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
+                                        upScale, 0, -1, false, progress, ct,
+                                        SafeRender.GetTileSize() / (fastMode ? 2 : 1),
+                                        watchStage: "超分",
+                                        globalBaseFrames: start, globalTotalFrames: total);
+                                    foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
+                                        File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
+                                }
+                                catch { }
+                                // CPU 重试仍黑(或 CPU 模式不可用被内部回退 GPU,结果还是黑)→ 整批改走 ONNX 稳定引擎
+                                if (batchOutDirHasBlack(batchOut))
+                                {
+                                    string? onnxB = engine == "realesrgan"
+                                        ? (model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
+                                            ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())
+                                            : EsrganOnnxService.FindModel())
+                                        : engine == "waifu2x" ? EsrganOnnxService.FindWaifu2xModel() : null;
+                                    if (onnxB != null)
+                                    {
+                                        progress?.Report((45 + (int)(45.0 * start / total),
+                                            $"⚠ 该批黑块且 CPU 修复无效,自动改用 ONNX 稳定引擎..." + StageElapsed()));
+                                        AppLogger.Info($"降级:批次 {start}~{end - 1} 黑块+CPU 无效,改用 ONNX({Path.GetFileNameWithoutExtension(onnxB)})");
+                                        try { Directory.Delete(batchOut, true); } catch { }
+                                        Directory.CreateDirectory(batchOut);
+                                        await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
+                                            -2, progress, ct, onnxB);   // -2 = 自动选设备(大帧 GPU/小帧 CPU)
+                                        foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
+                                            File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
+                                    }
+                                    else
+                                    {
+                                        throw new InvalidOperationException("BLACKOUT_NEED_ONNX:该批 GPU 黑块且 CPU 修复无效(无可用 ONNX 模型)");
+                                    }
+                                }
                             }
                             Interlocked.Add(ref doneFrames, end - start);
                             progress?.Report((45 + (int)(45.0 * doneFrames / total),

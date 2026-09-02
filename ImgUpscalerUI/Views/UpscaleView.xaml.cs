@@ -809,7 +809,26 @@ public sealed partial class UpscaleView : UserControl
                     }
                     catch (Exception ex)
                     {
-                        if (!retried)
+                        // 黑块修复:ncnn GPU 持续黑块且 CPU 模式不可用(真机:RTX 2080 等) → 整张改用 ONNX 稳定引擎
+                        if (!retried && ex.Message.Contains("BLACKOUT_NEED_ONNX", StringComparison.OrdinalIgnoreCase))
+                        {
+                            retried = true;
+                            string? onnxRetry = engine == "waifu2x" ? EsrganOnnxService.FindWaifu2xModel()
+                                : (model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
+                                    ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())
+                                    : EsrganOnnxService.FindModel());
+                            if (onnxRetry != null)
+                            {
+                                try
+                                {
+                                    Log("  ⚠ 黑块修复:该显卡 ncnn 引擎黑块且 CPU 不可用,自动改用 ONNX 稳定引擎重试...");
+                                    await EsrganOnnxService.UpscaleAsync(converted ?? item.Path, outPath, scale, -2, progress, ct, onnxRetry);
+                                    succeeded = true;
+                                }
+                                catch { }
+                            }
+                        }
+                        if (!retried && !succeeded)
                         {
                             retried = true;
                             try
@@ -821,13 +840,16 @@ public sealed partial class UpscaleView : UserControl
                             }
                             catch { /* 转码也失败,走失败流程 */ }
                         }
-                        // 失败时清理本次已生成的不完整输出,避免"失败却有文件"的误解
-                        try { if (File.Exists(outPath)) File.Delete(outPath); } catch { }
-                        AppLogger.Error($"图片处理失败: {item.Name}", ex);
-                        Log($"  ✗ 失败:{ex.Message}(不完整输出已清理)");
-                        item.StatusText = "✗ 失败";
-                        failCount++;
-                        break;
+                        if (!succeeded)
+                        {
+                            // 失败时清理本次已生成的不完整输出,避免"失败却有文件"的误解
+                            try { if (File.Exists(outPath)) File.Delete(outPath); } catch { }
+                            AppLogger.Error($"图片处理失败: {item.Name}", ex);
+                            Log($"  ✗ 失败:{ex.Message}(不完整输出已清理)");
+                            item.StatusText = "✗ 失败";
+                            failCount++;
+                            break;
+                        }
                     }
                     finally
                     {

@@ -1156,12 +1156,28 @@ public static partial class EngineService
                 double took = Math.Max(1.0, tileWatch.Elapsed.TotalSeconds);
                 _tileEstAvg = _tileEstAvg > 1 ? 0.7 * _tileEstAvg + 0.3 * took : took;
             }
-            // 黑帧防御:单块偶发 vkQueueSubmit 失败→全黑(退出码仍 0)。检测到黑块即用 CPU 软解重处理该块。
+            // 黑帧防御:单块偶发 vkQueueSubmit 失败→全黑(退出码仍 0)。检测到黑块即用 CPU 软解重处理该块;
+            // CPU 结果仍黑 / CPU 不可用 → 抛"转 ONNX"信号(上层改用 ONNX 稳定引擎,不再反复 GPU 黑块死循环)。
             if (gpuId >= 0 && File.Exists(of) && IsBlackPng(of))
             {
                 progress?.Report((89, "⚠ 检测到该块超分变黑(GPU 队列异常),改用 CPU 软解重处理..."));
                 AppLogger.Info("⚠ 检测到该块超分变黑(GPU 队列异常),改用 CPU 软解重处理...");
-                await UpOneTileAsync(tf, of, engine, model, scale, noise, -1, tta, progress, ct, tileSize).ConfigureAwait(false);
+                try
+                {
+                    await UpOneTileAsync(tf, of, engine, model, scale, noise, -1, tta, progress, ct, tileSize).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // CPU 重试抛错(引擎 CPU 路径不稳定/部分驱动 invalid gpu device)→ 转 ONNX,不重试 GPU(还是黑)
+                    try { File.Delete(of); } catch { }
+                    throw new InvalidOperationException("BLACKOUT_NEED_ONNX:GPU 黑块且 CPU 模式不可用,转用 ONNX 稳定引擎");
+                }
+                // CPU 重试"成功"但输出仍黑(内部回退 GPU 又算一次,结果还是黑)→ 同样转 ONNX
+                if (File.Exists(of) && IsBlackPng(of))
+                {
+                    try { File.Delete(of); } catch { }
+                    throw new InvalidOperationException("BLACKOUT_NEED_ONNX:GPU 持续黑块(CPU 修复无效),转用 ONNX 稳定引擎");
+                }
             }
             done++;
             progress?.Report((5 + (int)(85.0 * done / totalTiles), $"超分 已处理 {done}/{totalTiles} 块..."));
