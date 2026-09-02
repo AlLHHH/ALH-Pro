@@ -66,57 +66,57 @@
                     </RadioButtons>
 
                     <!-- 自定义组合:勾选要输出的轨(可多选=同时输出)+ 每轨音量(0~200%)+ 输出方式 -->
-                    <StackPanel x:Name="CustomMixPanel" Visibility="Collapsed" Margin="24,2,0,8" Spacing="4">
-                        <Grid ColumnSpacing="6">
+                    <StackPanel x:Name="CustomMixPanel" Visibility="Collapsed" Margin="24,2,0,8" Spacing="2">
+                        <!-- 人声 -->
+                        <CheckBox x:Name="CmVocals" Content="人声" Checked="Options_Changed" Unchecked="Options_Changed"
+                                  ToolTipService.ToolTip="歌手的嗓音"/>
+                        <Grid ColumnSpacing="6" Margin="22,0,0,4">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <CheckBox x:Name="CmVocals" Grid.Column="0" Content="人声" VerticalAlignment="Center"
-                                      Checked="Options_Changed" Unchecked="Options_Changed"/>
-                            <Slider x:Name="CmVolV" Grid.Column="1" Minimum="0" Maximum="200" Value="100"
+                            <Slider x:Name="CmVolV" Grid.Column="0" Minimum="0" Maximum="200" Value="100"
                                     StepFrequency="5" VerticalAlignment="Center" ValueChanged="CmVol_ValueChanged"/>
-                            <TextBlock x:Name="CmVolVText" Grid.Column="2" Text="100%" FontSize="10" Opacity="0.7"
+                            <TextBlock x:Name="CmVolVText" Grid.Column="1" Text="100%" FontSize="10" Opacity="0.7"
                                        Width="34" TextAlignment="Right" VerticalAlignment="Center"/>
                         </Grid>
-                        <Grid ColumnSpacing="6">
+                        <!-- 伴奏 -->
+                        <CheckBox x:Name="CmAcc" Content="伴奏(含鼓/贝斯等全部乐器)" Checked="Options_Changed" Unchecked="Options_Changed"
+                                  ToolTipService.ToolTip="原曲去掉人声 = 全部乐器(鼓/贝斯/吉他/键盘都在里面)"/>
+                        <Grid ColumnSpacing="6" Margin="22,0,0,4">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <CheckBox x:Name="CmAcc" Grid.Column="0" Content="伴奏" VerticalAlignment="Center"
-                                      Checked="Options_Changed" Unchecked="Options_Changed"/>
-                            <Slider x:Name="CmVolA" Grid.Column="1" Minimum="0" Maximum="200" Value="100"
+                            <Slider x:Name="CmVolA" Grid.Column="0" Minimum="0" Maximum="200" Value="100"
                                     StepFrequency="5" VerticalAlignment="Center" ValueChanged="CmVol_ValueChanged"/>
-                            <TextBlock x:Name="CmVolAText" Grid.Column="2" Text="100%" FontSize="10" Opacity="0.7"
+                            <TextBlock x:Name="CmVolAText" Grid.Column="1" Text="100%" FontSize="10" Opacity="0.7"
                                        Width="34" TextAlignment="Right" VerticalAlignment="Center"/>
                         </Grid>
-                        <Grid ColumnSpacing="6">
+                        <!-- 其他1 -->
+                        <CheckBox x:Name="CmOther1" Content="其他 1(细分)" Checked="Options_Changed" Unchecked="Options_Changed"
+                                  ToolTipService.ToolTip="从伴奏里再拆出来的一堆(官方标注=鼓/贝斯之一,实听未确认具体对应);单独勾=单独提取,和伴奏同勾会重复叠加"/>
+                        <Grid ColumnSpacing="6" Margin="22,0,0,4">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <CheckBox x:Name="CmOther1" Grid.Column="0" Content="其他 1(部分歌内含鼓/贝斯)" VerticalAlignment="Center"
-                                      Checked="Options_Changed" Unchecked="Options_Changed"/>
-                            <Slider x:Name="CmVolO1" Grid.Column="1" Minimum="0" Maximum="200" Value="100"
+                            <Slider x:Name="CmVolO1" Grid.Column="0" Minimum="0" Maximum="200" Value="100"
                                     StepFrequency="5" VerticalAlignment="Center" ValueChanged="CmVol_ValueChanged"/>
-                            <TextBlock x:Name="CmVolO1Text" Grid.Column="2" Text="100%" FontSize="10" Opacity="0.7"
+                            <TextBlock x:Name="CmVolO1Text" Grid.Column="1" Text="100%" FontSize="10" Opacity="0.7"
                                        Width="34" TextAlignment="Right" VerticalAlignment="Center"/>
                         </Grid>
-                        <Grid ColumnSpacing="6">
+                        <!-- 其他2 -->
+                        <CheckBox x:Name="CmOther2" Content="其他 2(细分)" Checked="Options_Changed" Unchecked="Options_Changed"
+                                  ToolTipService.ToolTip="同上(另一堆细分);单独勾=单独提取,和伴奏同勾会重复叠加"/>
+                        <Grid ColumnSpacing="6" Margin="22,0,0,4">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <CheckBox x:Name="CmOther2" Grid.Column="0" Content="其他 2(同上)" VerticalAlignment="Center"
-                                      Checked="Options_Changed" Unchecked="Options_Changed"/>
-                            <Slider x:Name="CmVolO2" Grid.Column="1" Minimum="0" Maximum="200" Value="100"
+                            <Slider x:Name="CmVolO2" Grid.Column="0" Minimum="0" Maximum="200" Value="100"
                                     StepFrequency="5" VerticalAlignment="Center" ValueChanged="CmVol_ValueChanged"/>
-                            <TextBlock x:Name="CmVolO2Text" Grid.Column="2" Text="100%" FontSize="10" Opacity="0.7"
+                            <TextBlock x:Name="CmVolO2Text" Grid.Column="1" Text="100%" FontSize="10" Opacity="0.7"
                                        Width="34" TextAlignment="Right" VerticalAlignment="Center"/>
                         </Grid>
 

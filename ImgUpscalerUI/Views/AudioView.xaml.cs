@@ -138,15 +138,20 @@ public sealed partial class AudioView : UserControl
                     ? "仅低采样率源(8k/16k/22k/32k)有效;44.1k 音乐已全频带,无需超分(用下方「增强」)"
                     : "超分模型未安装(需 engines/lavasr),仅低采样率源有效");
         }
-        // 自定义输出方式提示
+        // 自定义输出方式提示(含"伴奏已含其他 + 同勾叠加"提醒)
         if (CmHint != null && CustomMixPanel != null && CustomMixPanel.Visibility == Visibility.Visible)
         {
-            CmHint.Text = CmModeRadios.SelectedIndex switch
+            var mode = CmModeRadios.SelectedIndex switch
             {
                 0 => "勾选多轨 → 混合成一个文件(按各自音量比例合成)",
                 1 => "勾选几轨就同时导出几个文件(音量滑块对其同样生效)",
                 _ => "混合文件 + 各轨文件同时导出(一次跑完)",
             };
+            bool accC = CmAcc.IsChecked == true;
+            bool subC = CmOther1.IsChecked == true || CmOther2.IsChecked == true;
+            CmHint.Text = accC && subC
+                ? mode + " ⚠ 伴奏=去掉人声的全部音乐(鼓/贝斯都在里面),同时勾「其他」= 那部分被算了两次,音量会变大;想单独提取某一块,只勾那个即可"
+                : mode + (accC ? "(伴奏已含鼓/贝斯等全部乐器)" : "");
         }
         SaveSettings();
     }

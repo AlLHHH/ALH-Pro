@@ -20,6 +20,9 @@ if (-not (Test-Path (Join-Path $pub 'coreclr.dll'))) { throw "发布输出缺少
 if (-not (Test-Path (Join-Path $pub 'hostfxr.dll'))) { throw "发布输出缺少 hostfxr.dll(非独立版)——已中止,未同步" }
 
 Write-Host "==> 2/3 同步到 发布版\(排除 engines)..."
+# 先结束正在运行的 ALHPro(否则 ALHPro.exe 被锁,robocopy 无限重试等待→卡死)
+Get-Process ALHPro -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 2
 robocopy $pub $dst /E /XD engines /NFL /NDL /NJH /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy 失败(exit $LASTEXITCODE)" }
 
@@ -29,11 +32,11 @@ Start-Sleep -Seconds 10
 $pr = Get-Process -Id $p.Id -ErrorAction SilentlyContinue
 if ($pr -and $pr.MainWindowTitle -like 'ALH Pro*') {
     Write-Host "✅ 启动正常,窗口标题: $($pr.MainWindowTitle)"
-    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
 } elseif ($pr) {
-    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
     throw "进程活着但窗口标题异常:'$($pr.MainWindowTitle)'——可能弹了错误对话框,请检查"
 } else {
     throw "进程未存活——启动失败"
 }
+# 收尾:无论哪种情况,清掉本次验证启动的实例(按名杀,防残留锁文件)
+Get-Process ALHPro -ErrorAction SilentlyContinue | Stop-Process -Force
 Write-Host "完成。发布版已可双击运行。"
