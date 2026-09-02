@@ -589,6 +589,10 @@ public sealed partial class CutoutView : UserControl
         picker.FileTypeFilter.Add(".jpeg");
         picker.FileTypeFilter.Add(".webp");
         picker.FileTypeFilter.Add(".bmp");
+        picker.FileTypeFilter.Add(".tif");
+        picker.FileTypeFilter.Add(".tiff");
+        picker.FileTypeFilter.Add(".heic");
+        picker.FileTypeFilter.Add(".heif");
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
         WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
         var files = await picker.PickMultipleFilesAsync();

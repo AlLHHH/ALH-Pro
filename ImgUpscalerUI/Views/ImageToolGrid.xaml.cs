@@ -83,12 +83,23 @@ public sealed partial class ImageToolGrid : UserControl
         foreach (var p in paths)
         {
             var path = p;
-            // WebP 引擎无法解码,自动转码为 PNG(存应用私有目录,启动自动清理)
-            if (Path.GetExtension(path).Equals(".webp", StringComparison.OrdinalIgnoreCase))
+            // WebP/HEIC/HEIF 引擎(System.Drawing)不支持 → WinRT 自动转码为 PNG(存应用私有目录,启动自动清理)
+            var ext = Path.GetExtension(path);
+            if (ext.Equals(".webp", StringComparison.OrdinalIgnoreCase)
+                || ext.Equals(".heic", StringComparison.OrdinalIgnoreCase)
+                || ext.Equals(".heif", StringComparison.OrdinalIgnoreCase))
             {
                 try
                 {
-                    path = await ConvertWebpToPngAsync(path);
+                    var converted = await ConvertToPngAsync(path);
+                    if (converted == null)
+                    {
+                        // HEIC 转码失败(系统缺 HEIF 解码器)——跳过并提示,不假装成功
+                        if (ext.Equals(".heic", StringComparison.OrdinalIgnoreCase) || ext.Equals(".heif", StringComparison.OrdinalIgnoreCase))
+                            AppLogger.Warn($"⚠ HEIC/HEIF 导入失败({Path.GetFileName(p)}):系统缺 HEIF 图像扩展(Windows 商店免费安装),已跳过");
+                        continue;
+                    }
+                    path = converted;
                 }
                 catch { continue; }   // 转码失败(文件损坏等)跳过
             }
@@ -123,26 +134,36 @@ public sealed partial class ImageToolGrid : UserControl
         UpdateListState();
     }
 
-    /// <summary>用 WinRT 图像解码器把 WebP 转码为 PNG(引擎不支持 WebP)。</summary>
-    private static async Task<string> ConvertWebpToPngAsync(string webpPath)
+    /// <summary>用 WinRT 图像解码器把引擎/System.Drawing 不支持的格式(WebP/HEIC/HEIF)转码为 PNG。
+    /// 转码失败(文件损坏/系统缺解码器)返回 null,调用方跳过该项。</summary>
+    private static async Task<string?> ConvertToPngAsync(string path)
     {
-        var outPath = UpscaleView.UniquePath(CroppedStorage.Dir,
-            Path.GetFileNameWithoutExtension(webpPath) + ".png");
-        var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(webpPath);
-        using var stream = await file.OpenReadAsync();
-        var decoder = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(stream);
-        var pixels = await decoder.GetPixelDataAsync();
-        using var memStream = new Windows.Storage.Streams.InMemoryRandomAccessStream();
-        var encoder = await Windows.Graphics.Imaging.BitmapEncoder.CreateAsync(
-            Windows.Graphics.Imaging.BitmapEncoder.PngEncoderId, memStream);
-        encoder.SetPixelData(decoder.BitmapPixelFormat, decoder.BitmapAlphaMode,
-            decoder.PixelWidth, decoder.PixelHeight, decoder.DpiX, decoder.DpiY,
-            pixels.DetachPixelData());
-        await encoder.FlushAsync();
-        memStream.Seek(0);
-        using var fs = File.Create(outPath);
-        await memStream.AsStreamForRead().CopyToAsync(fs);
-        return outPath;
+        try
+        {
+            var outPath = UpscaleView.UniquePath(CroppedStorage.Dir,
+                Path.GetFileNameWithoutExtension(path) + ".png");
+            var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(path);
+            using var stream = await file.OpenReadAsync();
+            var decoder = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(stream);
+            var pixels = await decoder.GetPixelDataAsync();
+            using var memStream = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+            var encoder = await Windows.Graphics.Imaging.BitmapEncoder.CreateAsync(
+                Windows.Graphics.Imaging.BitmapEncoder.PngEncoderId, memStream);
+            encoder.SetPixelData(decoder.BitmapPixelFormat, decoder.BitmapAlphaMode,
+                decoder.PixelWidth, decoder.PixelHeight, decoder.DpiX, decoder.DpiY,
+                pixels.DetachPixelData());
+            await encoder.FlushAsync();
+            memStream.Seek(0);
+            using var fs = File.Create(outPath);
+            await memStream.AsStreamForRead().CopyToAsync(fs);
+            return outPath;
+        }
+        catch
+        {
+            // WebP 大多数 Win10/11 可解;HEIC 需系统 "HEIF 图像扩展"(默认未装,Windows 商店免费)——
+            // 装不了系统没法解,如实跳过并提示(不假装成功)
+            return null;
+        }
     }
 
     /// <summary>处理进行中:锁定删除/清空/改名等列表操作(防止处理中删掉正在处理的项)。</summary>
