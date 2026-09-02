@@ -121,9 +121,12 @@ namespace ALHPro
             }
         }
 
-        /// <summary>清理临时文件残留(系统 %TEMP% 与用户自定义临时目录,imgup_*/alh_* 前缀,绝不碰用户文件)。</summary>
-        internal static void CleanupTempDirs()
+        /// <summary>清理临时文件残留(系统 %TEMP% 与用户自定义临时目录,imgup_*/alh_* 前缀,绝不碰用户文件)。
+        /// 返回 (删除目录数, 删除文件数, 释放字节数),供"立即清理"反馈。</summary>
+        internal static (int dirs, int files, long bytes) CleanupTempDirs()
         {
+            int dirs = 0, files = 0;
+            long bytes = 0;
             var roots = new System.Collections.Generic.List<string> { Path.GetTempPath() };
             try { var cfg = AppSettings.TempDir; if (!string.IsNullOrWhiteSpace(cfg) && Directory.Exists(cfg)) roots.Add(cfg); } catch { }
             foreach (var root in roots)
@@ -132,23 +135,38 @@ namespace ALHPro
                 {
                     foreach (var d in Directory.EnumerateDirectories(root, "imgup*"))
                     {
-                        try { Directory.Delete(d, true); } catch { /* 占用中忽略,下次再清 */ }
+                        try { dirs++; bytes += DirSize(d); Directory.Delete(d, true); } catch { /* 占用中忽略,下次再清 */ }
                     }
                     foreach (var d in Directory.EnumerateDirectories(root, "alh_*"))
                     {
-                        try { Directory.Delete(d, true); } catch { /* 占用中忽略,下次再清 */ }
+                        try { dirs++; bytes += DirSize(d); Directory.Delete(d, true); } catch { /* 占用中忽略,下次再清 */ }
                     }
                     foreach (var f in Directory.EnumerateFiles(root, "alh_*.wav"))
                     {
-                        try { File.Delete(f); } catch { }
+                        try { var fi = new FileInfo(f); bytes += fi.Length; File.Delete(f); files++; } catch { }
                     }
                     foreach (var f in Directory.EnumerateFiles(root, ".alh_pro_w.tmp"))
                     {
-                        try { File.Delete(f); } catch { }
+                        try { var fi = new FileInfo(f); bytes += fi.Length; File.Delete(f); files++; } catch { }
                     }
                 }
                 catch { }
             }
+            return (dirs, files, bytes);
+        }
+
+        private static long DirSize(string dir)
+        {
+            long sum = 0;
+            try
+            {
+                foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+                {
+                    try { sum += new FileInfo(f).Length; } catch { }
+                }
+            }
+            catch { }
+            return sum;
         }
 
         [DllImport("dwmapi.dll")]
