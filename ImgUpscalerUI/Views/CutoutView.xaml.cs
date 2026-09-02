@@ -435,7 +435,7 @@ public sealed partial class CutoutView : UserControl
             if (ff == null || item.PixelWidth <= 0) return false;
             // 1) 生成与原图同尺寸的棋盘格 PNG
             int w = Math.Min(4096, item.PixelWidth), h = Math.Min(4096, item.PixelHeight);
-            var chessPath = Path.Combine(Path.GetTempPath(), $"imgup_chess_{Guid.NewGuid():N}.png");
+            var chessPath = Path.Combine(EngineService.TempRoot, $"imgup_chess_{Guid.NewGuid():N}.png");
             EngineService.RegisterTempFile(chessPath);
             await Task.Run(() =>
             {
@@ -504,7 +504,7 @@ public sealed partial class CutoutView : UserControl
         try
         {
             var modelKey = CutoutService.Models[Math.Clamp(ModelCombo.SelectedIndex, 0, CutoutService.Models.Length - 1)].Key;
-            var maskPath = Path.Combine(Path.GetTempPath(), $"imgup_mask_{Guid.NewGuid():N}.png");
+            var maskPath = Path.Combine(EngineService.TempRoot, $"imgup_mask_{Guid.NewGuid():N}.png");
             EngineService.RegisterTempFile(maskPath);   // 注册:退出时统一清理,防 temp 累积
             _lastMaskPath = maskPath;
             MaskPreviewBtn.IsEnabled = false;
@@ -516,7 +516,7 @@ public sealed partial class CutoutView : UserControl
                 (int)FeatherSlider.Value, (int)EdgeSlider.Value,
                 (int)MorphSlider.Value, AutoThresholdCheck.IsChecked == true);
             // 彩色预览:原图×蒙版(主体彩、背景透明)+ 棋盘格直接合成进图(棋盘=图片像素,绝不偏位)
-            var colorPath = Path.Combine(Path.GetTempPath(), $"imgup_mask_color_{Guid.NewGuid():N}.png");
+            var colorPath = Path.Combine(EngineService.TempRoot, $"imgup_mask_color_{Guid.NewGuid():N}.png");
             EngineService.RegisterTempFile(colorPath);
             bool colorOk = await ComposeColorPreviewAsync(item, maskPath, colorPath);
             try { PreviewImage.Source = new BitmapImage(new Uri(colorOk ? colorPath : maskPath)); } catch { }
@@ -775,7 +775,7 @@ public sealed partial class CutoutView : UserControl
                     }
                     if (preDenoise)
                     {
-                        tmpDenoise = Path.Combine(Path.GetTempPath(), $"imgup_cut_denoise_{Guid.NewGuid():N}.png");
+                        tmpDenoise = Path.Combine(EngineService.TempRoot, $"imgup_cut_denoise_{Guid.NewGuid():N}.png");
                         progress.Report((0, $"预处理降噪 {item.Name}..."));
                         Log($"  预处理降噪(waifu2x 1x,强度{"弱中强"[preDenoiseLevel - 1]})...");
                         await EngineService.UpscaleAsync(srcPath, tmpDenoise, "waifu2x",
@@ -784,7 +784,7 @@ public sealed partial class CutoutView : UserControl
                     }
                     if (preUpscale)
                     {
-                        tmpUp = Path.Combine(Path.GetTempPath(), $"imgup_cut_up_{Guid.NewGuid():N}.png");
+                        tmpUp = Path.Combine(EngineService.TempRoot, $"imgup_cut_up_{Guid.NewGuid():N}.png");
                         progress.Report((0, $"预处理超分 {item.Name}..."));
                         Log("  预处理超分(waifu2x 2x)...");
                         await EngineService.UpscaleAsync(srcPath, tmpUp, "waifu2x",

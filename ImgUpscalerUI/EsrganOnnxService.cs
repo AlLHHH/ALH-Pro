@@ -187,7 +187,7 @@ public static class EsrganOnnxService
             g.DrawImage(src, 0, 0);
         }
         // 超分 RGB(临时文件)
-        var tmpRgb = Path.Combine(Path.GetTempPath(), $"alh_alpha_{Guid.NewGuid():N}.png");
+        var tmpRgb = Path.Combine(EngineService.TempRoot, $"alh_alpha_{Guid.NewGuid():N}.png");
         try
         {
             if (sw > tile || sh > tile)

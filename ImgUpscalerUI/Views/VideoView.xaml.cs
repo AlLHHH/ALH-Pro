@@ -1777,7 +1777,7 @@ public sealed partial class VideoView : UserControl
         {
             var ffmpeg = VideoService.FfmpegPath;
             if (ffmpeg == null) return;
-            var tmp = Path.Combine(Path.GetTempPath(), $"imgup_thumb_{Guid.NewGuid():N}.jpg");
+            var tmp = Path.Combine(EngineService.TempRoot, $"imgup_thumb_{Guid.NewGuid():N}.jpg");
             // 进程启动/等待放后台线程(ffmpeg 取缩略图慢/卡时不冻结 UI)
             await Task.Run(() =>
             {

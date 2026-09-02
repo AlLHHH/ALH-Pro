@@ -22,6 +22,10 @@ public static class AppSettings
     /// <summary>自检报告对应的软件版本(升级后自动作废旧缓存重测,报告修复才能生效)。</summary>
     public static string VulkanReportVersion { get; set; } = "";
 
+    /// <summary>临时文件保存位置(设置里可改;空=自动选剩余空间最大的盘)。
+    /// 处理中的临时帧/中间文件放这里,任务完成自动清理,启动也会清理残留(imgup_*/alh_* 前缀)。</summary>
+    public static string TempDir { get; set; } = "";
+
     private static string FilePath => ParaPaths.SettingsFile("app-settings.json");
 
     public static void Load()
@@ -48,6 +52,7 @@ public static class AppSettings
             VulkanCheckDone = d.VulkanCheckDone;
             VulkanReport = d.VulkanReport ?? "";
             VulkanReportVersion = d.VulkanReportVersion ?? "";
+            TempDir = d.TempDir ?? "";
         }
         catch { /* 读取失败用默认值 */ }
     }
@@ -70,6 +75,7 @@ public static class AppSettings
                         VulkanCheckDone = VulkanCheckDone,
                         VulkanReport = VulkanReport,
                         VulkanReportVersion = VulkanReportVersion,
+                        TempDir = TempDir,
                     }));
             }
             catch { /* 保存失败忽略 */ }
@@ -83,5 +89,6 @@ public static class AppSettings
         public bool VulkanCheckDone { get; set; }
         public string VulkanReport { get; set; } = "";
         public string VulkanReportVersion { get; set; } = "";
+        public string TempDir { get; set; } = "";
     }
 }

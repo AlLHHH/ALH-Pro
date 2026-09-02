@@ -140,6 +140,54 @@ public static partial class EngineService
     /// <summary>旧 rife 模型(anime/HD/UHD/v2.3,ncnn 2022 权重)在 Blackwell 上不稳(其余卡正常)。</summary>
     public static bool OldRifeModelRisky() => IsBlackwellGpu();
 
+    /// <summary>临时文件根目录(所有页面/引擎的临时帧、中间文件统一放这里)。
+    /// 优先级:①设置里用户自定义(需存在且可写,否则自动回退)②剩余空间最大的本地盘 ③系统 %TEMP%。
+    /// 清理:任务完成自动删;软件启动会清理残留(imgup_*/alh_* 前缀,绝不碰用户文件)。</summary>
+    public static string TempRoot
+    {
+        get
+        {
+            var cfg = AppSettings.TempDir;
+            if (!string.IsNullOrWhiteSpace(cfg))
+            {
+                try
+                {
+                    if (Directory.Exists(cfg))
+                    {
+                        var probe = Path.Combine(cfg, ".alh_pro_w.tmp");
+                        File.WriteAllText(probe, "x");
+                        File.Delete(probe);
+                        return cfg;
+                    }
+                }
+                catch { }
+                AppLogger.Warn($"⚠ 设置的临时目录不可用: {cfg} —— 已自动回退(剩余空间最大的盘)");
+            }
+            // 自动:剩余空间最大的本地盘(8x 补帧+超分峰值可达 30GB+,避免系统盘被写爆)
+            string best = null!;
+            long bestFree = -1;
+            try
+            {
+                foreach (var d in System.IO.DriveInfo.GetDrives())
+                {
+                    try
+                    {
+                        if (d.DriveType != System.IO.DriveType.Fixed || !d.IsReady) continue;
+                        if (d.AvailableFreeSpace > bestFree)
+                        {
+                            bestFree = d.AvailableFreeSpace;
+                            best = d.RootDirectory.FullName;
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            if (best == null || bestFree <= 0) best = Path.GetPathRoot(Path.GetTempPath())!;
+            return best;
+        }
+    }
+
     // 引擎根目录:优先 exe 旁 engines/ 目录;否则从当前目录向上逐级搜索(覆盖源码布局/输出目录)
     public static string EnginesDir
     {
@@ -262,7 +310,7 @@ public static partial class EngineService
                 {
                     if (pi.Id == 0x0112 && pi.Value is { Length: > 0 } && pi.Value[0] is 6 or 8 or 3)
                     {
-                        var outPath = Path.Combine(Path.GetTempPath(), $"imgup_exif_{Guid.NewGuid():N}.png");
+                        var outPath = Path.Combine(EngineService.TempRoot, $"imgup_exif_{Guid.NewGuid():N}.png");
                         RegisterTempFile(outPath);   // 注册待清理
                         using var bmp = new System.Drawing.Bitmap(input);
                         switch (pi.Value[0])
@@ -492,8 +540,8 @@ public static partial class EngineService
             };
             if (exe == null) return false;
             // 生成 1×1 测试图
-            var inPng = Path.Combine(Path.GetTempPath(), $"eng_probe_{Guid.NewGuid():N}.png");
-            var outPng = Path.Combine(Path.GetTempPath(), $"eng_probe_out_{Guid.NewGuid():N}.png");
+            var inPng = Path.Combine(EngineService.TempRoot, $"eng_probe_{Guid.NewGuid():N}.png");
+            var outPng = Path.Combine(EngineService.TempRoot, $"eng_probe_out_{Guid.NewGuid():N}.png");
             try
             {
                 using (var bmp = new System.Drawing.Bitmap(1, 1))
@@ -564,7 +612,7 @@ public static partial class EngineService
         try
         {
             if (gpuId < 0 || rifeExe == null) return false;
-            var tmp = Path.Combine(Path.GetTempPath(), $"rife_probe_{Guid.NewGuid():N}");
+            var tmp = Path.Combine(EngineService.TempRoot, $"rife_probe_{Guid.NewGuid():N}");
             Directory.CreateDirectory(tmp);
             var a = Path.Combine(tmp, "a.png");
             var b = Path.Combine(tmp, "b.png");
@@ -1080,7 +1128,7 @@ public static partial class EngineService
         int tileSize)
     {
         const int overlap = 256;   // 相邻块重叠像素(越大过渡越平滑;真实照片纹理/渐变对块边界极敏感,加大到 256 让每块有更充足共享上下文,几乎无痕)
-        var tmpDir = Path.Combine(Path.GetTempPath(), $"imgup_tiles_{Guid.NewGuid():N}");
+        var tmpDir = Path.Combine(EngineService.TempRoot, $"imgup_tiles_{Guid.NewGuid():N}");
         var inDir = Path.Combine(tmpDir, "in");
         var outDir = Path.Combine(tmpDir, "out");
         Directory.CreateDirectory(inDir);
@@ -1623,7 +1671,7 @@ public static partial class EngineService
         progress?.Report((100, "画质增强:完成"));
 
         // 只保存一次(临时文件放 temp 目录,避免输出目录出现临时文件)
-        var tmpSave = Path.Combine(Path.GetTempPath(), $"imgup_enh_{Guid.NewGuid():N}.png");
+        var tmpSave = Path.Combine(EngineService.TempRoot, $"imgup_enh_{Guid.NewGuid():N}.png");
         try
         {
             if (path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
@@ -2054,7 +2102,7 @@ public static partial class EngineService
     /// </summary>
     public static async Task<string> ConvertToStandardPngAsync(string input)
     {
-        var outPath = Path.Combine(Path.GetTempPath(), $"imgup_conv_{Guid.NewGuid():N}.png");
+        var outPath = Path.Combine(EngineService.TempRoot, $"imgup_conv_{Guid.NewGuid():N}.png");
         var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(input);
         using var stream = await file.OpenReadAsync();
         var decoder = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(stream);
@@ -2092,7 +2140,7 @@ public static partial class EngineService
     /// 源 Bitmap 持有文件句柄,须先释放再覆盖,故先写临时文件。</summary>
     public static void ResizeImageTo(string path, string outputPath, int width, int height)
     {
-        var tmp = Path.Combine(Path.GetTempPath(), $"imgup_resize_{Guid.NewGuid():N}.png");
+        var tmp = Path.Combine(EngineService.TempRoot, $"imgup_resize_{Guid.NewGuid():N}.png");
         try
         {
             using (var src = new System.Drawing.Bitmap(path))
@@ -2121,7 +2169,7 @@ public static partial class EngineService
     /// 注意:源 Bitmap 持有文件句柄,须先释放再覆盖,故先写临时文件。</summary>
     private static void ResizeImage(string path, string outputPath, double factor)
     {
-        var tmp = Path.Combine(Path.GetTempPath(), $"imgup_resize_{Guid.NewGuid():N}.png");
+        var tmp = Path.Combine(EngineService.TempRoot, $"imgup_resize_{Guid.NewGuid():N}.png");
         try
         {
             using (var src = new System.Drawing.Bitmap(path))
@@ -2166,7 +2214,7 @@ public static partial class EngineService
         IProgress<(int pct, string msg)>? progress = null,
         CancellationToken ct = default)
     {
-        var tmp = Path.Combine(Path.GetTempPath(), $"imgup_crop_{Guid.NewGuid():N}.png");
+        var tmp = Path.Combine(EngineService.TempRoot, $"imgup_crop_{Guid.NewGuid():N}.png");
         try
         {
             progress?.Report((0, "裁剪选区..."));

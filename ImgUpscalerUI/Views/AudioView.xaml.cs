@@ -773,8 +773,8 @@ public sealed partial class AudioView : UserControl
                         {
                             Log($"🔄 超分: {srcRate}Hz → 48kHz(AI 补高频)...");
                             AudioStatus.Text = $"超分中(补高频 → 48kHz): {item.Name}...";
-                            var rawWav = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"alh_src_{Guid.NewGuid():N}.wav");
-                            srsWav = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"alh_srs_{Guid.NewGuid():N}.wav");
+                            var rawWav = System.IO.Path.Combine(EngineService.TempRoot, $"alh_src_{Guid.NewGuid():N}.wav");
+                            srsWav = System.IO.Path.Combine(EngineService.TempRoot, $"alh_srs_{Guid.NewGuid():N}.wav");
                             await AudioService.ConvertToWavSameRateAsync(item.Path, rawWav);
                             var srBytes = await LavaSrService.UpscaleWavAsync(rawWav, srcRate, prog, _cts.Token);
                             System.IO.File.WriteAllBytes(srsWav, srBytes);
@@ -790,14 +790,14 @@ public sealed partial class AudioView : UserControl
                     bool didAi = false;
                     if (wantSep || wantRemaster)
                     {
-                        var tmpWav = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"alh_demucs_{Guid.NewGuid():N}.wav");
+                        var tmpWav = System.IO.Path.Combine(EngineService.TempRoot, $"alh_demucs_{Guid.NewGuid():N}.wav");
                         Log("转为 44.1kHz 立体声 WAV...");
                         AudioStatus.Text = $"正在准备: {item.Name}(转为 44.1kHz 立体声)...";
                         await AudioService.ConvertToWav44kAsync(srsApplied ? srsWav! : item.Path, tmpWav);
                         Log("⚠ AI 分轨处理中(CPU 较慢:约 1.5 分钟/分钟音频,请耐心等待;也可先处理音频后离开页面)");
                         AudioStatus.Text = $"AI 分离中(CPU 较慢): {item.Name}...";
                         // 【一次分轨】输出 4 轨(人声=轨3,伴奏=原曲−人声,其他1/2=轨1/2)——增强和分离共用,不重复推理
-                        var aiDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"alh_ai_{Guid.NewGuid():N}");
+                        var aiDir = System.IO.Path.Combine(EngineService.TempRoot, $"alh_ai_{Guid.NewGuid():N}");
                         System.IO.Directory.CreateDirectory(aiDir);
                         var stemBase = System.IO.Path.Combine(aiDir, "stems");
                         await AudioEnhanceService.SeparateAsync(tmpWav, stemBase + ".wav", 7,

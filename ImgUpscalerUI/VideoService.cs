@@ -2313,32 +2313,9 @@ public static class VideoService
         });
     }
 
-    /// <summary>选择剩余空间最大的本地磁盘作为临时目录根(默认 %TEMP% 所在盘)。
+    /// <summary>临时目录根:用户自定义(设置里可改,不可写自动回退)优先,否则剩余空间最大的本地盘。
     /// 8x 补帧 + 超分临时帧可达 30GB+,系统盘剩余不足时自动换盘,避免"处理到一半爆盘"。</summary>
-    public static string PickTempRoot()
-    {
-        string best = null!;
-        long bestFree = -1;
-        try
-        {
-            foreach (var d in System.IO.DriveInfo.GetDrives())
-            {
-                try
-                {
-                    if (d.DriveType != System.IO.DriveType.Fixed || !d.IsReady) continue;
-                    if (d.AvailableFreeSpace > bestFree)
-                    {
-                        bestFree = d.AvailableFreeSpace;
-                        best = d.RootDirectory.FullName;
-                    }
-                }
-                catch { }
-            }
-        }
-        catch { }
-        if (best == null || bestFree <= 0) best = Path.GetPathRoot(Path.GetTempPath())!;
-        return best;
-    }
+    public static string PickTempRoot() => EngineService.TempRoot;
 
     /// <summary>探测视频时长(秒)。</summary>
     public static async Task<double> ProbeDurationSeconds(string videoPath)
@@ -2503,7 +2480,7 @@ public static class VideoService
         foreach (var enc in new[] { "h264_nvenc", "h264_amf", "h264_qsv", "hevc_nvenc", "hevc_amf", "hevc_qsv" })
         {
             if (ct.IsCancellationRequested) return;   // 用户取消/任务中止:探测立即收手(不再不可取消卡住)
-            var tmp = Path.Combine(Path.GetTempPath(), $"imgup_encprobe_{enc}_{Guid.NewGuid():N}.mp4");
+            var tmp = Path.Combine(EngineService.TempRoot, $"imgup_encprobe_{enc}_{Guid.NewGuid():N}.mp4");
             try
             {
                 await RunAsync(ffmpeg,
@@ -2870,7 +2847,7 @@ public static class VideoService
     /// <summary>轻量预估:每 N 帧抽 1 + 缩到 160 宽灰度,算相邻帧差,估算"重复占比% + 内容帧率"。快速,只做预览(标"预估")。</summary>
     private static async Task<DupProfile> ProbeDupLightAsync(string ffmpeg, string videoPath, CancellationToken ct)
     {
-        var dir = Path.Combine(Path.GetTempPath(), $"imgup_duplight_{Guid.NewGuid():N}");
+        var dir = Path.Combine(EngineService.TempRoot, $"imgup_duplight_{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
         try
         {
@@ -2911,7 +2888,7 @@ public static class VideoService
     private static async Task<DupProfile> AnalyzeDupAsync(string ffmpeg, string videoPath,
         int dedupMode, double dedupAnimeThr, int dedupSmartMode, bool motionComp, bool dedupOnlyTrueHold, CancellationToken ct)
     {
-        var dir = Path.Combine(Path.GetTempPath(), $"imgup_dupanalyze_{Guid.NewGuid():N}");
+        var dir = Path.Combine(EngineService.TempRoot, $"imgup_dupanalyze_{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
         try
         {
@@ -2983,7 +2960,7 @@ public static class VideoService
             double dur = await ProbeDurationSeconds(videoPath);
             double total = Math.Max(4, Math.Round(dur * Math.Max(1, srcFps)));
             int step = Math.Max(1, (int)Math.Round(total / 120.0));
-            var raw = Path.Combine(Path.GetTempPath(), $"imgup_rhythm_{Guid.NewGuid():N}.raw");
+            var raw = Path.Combine(EngineService.TempRoot, $"imgup_rhythm_{Guid.NewGuid():N}.raw");
             try
             {
                 await RunAsync(ffmpeg,
@@ -3618,7 +3595,7 @@ public static class VideoService
                 .OrderBy(g => g.d)
                 .GroupBy(g => g.d)
                 .ToList();
-            var workTmp = Path.Combine(Path.GetTempPath(), "imgup_tempo_layers", Guid.NewGuid().ToString("N"));
+            var workTmp = Path.Combine(EngineService.TempRoot, "imgup_tempo_layers", Guid.NewGuid().ToString("N"));
             tempoTempDirs.Add(workTmp);
             foreach (var group in depthGroups)
             {
