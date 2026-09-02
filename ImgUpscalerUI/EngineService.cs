@@ -49,17 +49,19 @@ public static partial class EngineService
         return !IsBlackwellGpu() && OldNcnnGpuRisky();   // 无独显才需要(50系 waifu2x 引擎本身兼容)
     }
 
-    /// <summary>waifu2x ncnn 引擎在【本机】GPU 上是否可用(50 系安全网):
+    /// <summary>waifu2x ncnn 引擎在【本机】GPU 上是否可用(风险设备安全网):
     /// 1×1 小图实测一次(5 秒超时,崩/无输出 = 不可用)并缓存(进程内,不重复探测)。
     /// 不可用 → 调用方改走 ONNX(waifu2x ONNX 模型稳定,DirectML/CPU 都行)。
-    /// 非 50 系不探测(直接 true):普通卡上引擎成熟,免得每启动多花 0.5 秒。</summary>
+    /// 触发条件:①RTX 50 系(Blackwell)②存在 AMD/Intel 显卡(驱动差异大、含核显共享显存机型,真机兜底)。
+    /// 纯 NVIDIA 成熟环境不探测(零开销,行为不变)。</summary>
     private static bool? _waifu2xNcnnUsable;
     private static int _waifu2xNcnnProbeGpu = int.MinValue;
     private static readonly object _waifu2xProbeLock = new();
+    private static bool? _nonNvidiaCache;
 
     public static async Task<bool> IsWaifu2xNcnnUsableAsync(int gpuId, CancellationToken ct)
     {
-        if (!IsBlackwellGpu()) return true;
+        if (!IsBlackwellGpu() && !HasNonNvidiaGpu()) return true;
         lock (_waifu2xProbeLock)
         {
             if (_waifu2xNcnnUsable.HasValue && _waifu2xNcnnProbeGpu == gpuId)
@@ -72,6 +74,54 @@ public static partial class EngineService
             _waifu2xNcnnProbeGpu = gpuId;
         }
         return ok;
+    }
+
+    /// <summary>是否存在非 NVIDIA 显卡(AMD/Intel,含核显):驱动差异大,需要真机探测兜底。</summary>
+    private static bool HasNonNvidiaGpu()
+    {
+        if (_nonNvidiaCache.HasValue) return _nonNvidiaCache.Value;
+        try
+        {
+            var names = new System.Collections.Generic.List<string>();
+            try { names.AddRange(VulkanCheck.Devices.Select(d => d.Name)); } catch { }
+            try { names.AddRange(GpuInfo.GetAdapterNames()); } catch { }
+            bool hasNv = names.Any(n => n.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase)
+                || n.Contains("GeForce", StringComparison.OrdinalIgnoreCase));
+            bool hasOther = names.Any(n =>
+                n.Contains("AMD", StringComparison.OrdinalIgnoreCase)
+                || n.Contains("Radeon", StringComparison.OrdinalIgnoreCase)
+                || n.Contains("Intel", StringComparison.OrdinalIgnoreCase)
+                || n.Contains("Arc", StringComparison.OrdinalIgnoreCase));
+            _nonNvidiaCache = hasOther || (!hasNv && names.Count > 0);
+        }
+        catch { _nonNvidiaCache = false; }
+        return _nonNvidiaCache.Value;
+    }
+
+    /// <summary>ncnn 引擎的 -g 编号 → DirectML 设备号。
+    /// 双卡机(AMD 核显 + NVIDIA 独显 / Intel 核显 + 独显等)上,Vulkan 引擎枚举顺序与 DirectML(DXGI)
+    /// 枚举顺序【可能不同】——直接拿 ncnn 编号喂 DirectML 会跑错卡(甚至编号越界失败降级 CPU)。
+    /// 按显卡名字匹配(引擎枚举名 → 注册表序≈DXGI 序),匹配不到用原编号(DML 失败会自动降 CPU,不挂)。</summary>
+    public static int ToDmlDevice(int engineGpu)
+    {
+        try
+        {
+            if (engineGpu < 0) return engineGpu;
+            var devs = VulkanCheck.Devices;
+            if (devs.Count <= 1) return engineGpu;   // 单卡:无歧义
+            var want = devs.FirstOrDefault(d => d.Id == engineGpu);
+            if (string.IsNullOrWhiteSpace(want.Name)) return engineGpu;
+            var names = GpuInfo.GetAdapterNames();
+            for (int i = 0; i < names.Count; i++)
+            {
+                if (names[i].Equals(want.Name, StringComparison.OrdinalIgnoreCase)
+                    || names[i].Contains(want.Name, StringComparison.OrdinalIgnoreCase)
+                    || want.Name.Contains(names[i], StringComparison.OrdinalIgnoreCase))
+                    return i;
+            }
+            return engineGpu;
+        }
+        catch { return engineGpu; }
     }
 
     /// <summary>旧 ncnn 引擎(2022 版,realesrgan ncnn)在 GPU 上可能不可用的设备:

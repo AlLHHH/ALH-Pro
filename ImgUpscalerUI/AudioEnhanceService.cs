@@ -63,7 +63,7 @@ public static class AudioEnhanceService
         var opts0 = new SessionOptions();
         if (gpuId >= 0)
         {
-            try { opts0.AppendExecutionProvider_DML(gpuId); } catch { /* DirectML 不可用回退 CPU */ }
+            try { opts0.AppendExecutionProvider_DML(EngineService.ToDmlDevice(gpuId)); } catch { /* DirectML 不可用回退 CPU */ }
         }
         using var session = new InferenceSession(modelPath, opts0);
 
