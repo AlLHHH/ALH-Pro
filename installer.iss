@@ -61,6 +61,13 @@ Name: "downloadmodels"; Description: "下载并安装模型包(约 1.6GB,来自 
 ; 否则安装包 ~4.2GB 超过 GitHub Release 单文件 2GB 上限
 Source: "发布版\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "engines\rembg\*.onnx,models_v1.0\*"
 
+[InstallDelete]
+; v1.0 升级清理:Real-CUGAN 已从 v1.1.0 起移除(许可不明),旧引擎目录不再需要(约 200MB+),
+; 避免升级后留一堆无用文件;其余文件一概不动(设置/记录在 %LOCALAPPDATA%,用户文件不删)。
+Type: filesandordirs; Name: "{app}\engines\realcugan"
+Type: files; Name: "{app}\d3dcompiler_47.dll"
+Type: files; Name: "{app}\D3DCOMPILER_47.dll"
+
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
