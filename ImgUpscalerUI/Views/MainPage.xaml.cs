@@ -20,6 +20,11 @@ public sealed partial class MainPage : Page
         this.InitializeComponent();
         AppSettings.Load();      // 应用级开关(自动删除已完成项目等)
         SafeRender.Load();       // 加载"安全渲染"墙配置(自动/自定义)
+        // 正版校验(轻量防篡改):官方包带 OFFICIAL.txt(版本标记);缺失/不符 → 警告一次(不阻止使用,不坑正版)
+        if (!OfficialCheck.Verify())
+        {
+            AppLogger.Warn("⚠ 正版校验:未检测到官方发布标记(OFFICIAL.txt)——此副本可能为修改/二次打包版,请从 GitHub 官方渠道获取(不阻止使用)");
+        }
         // 休息提示 + 显眼的「跳过休息」按钮:显示在窗口底部状态栏右侧(任务处理中休息降温时)
         SafeRender.RestUiChanged += resting =>
         {
@@ -301,8 +306,12 @@ public sealed partial class MainPage : Page
                     {
                         Text = $"本程序为「ALH Pro v{UpdateChecker.CurrentVersion}」正式版:\n\n" +
                             "· 图片超分 / AI 抠图 / 视频超分补帧去重,全部本地处理;\n" +
-                            "· 处理前建议备份重要素材;\n" +
+                            "· 处理前建议备份重要素材(AI 处理可能有边缘瑕疵);\n" +
                             "· 引擎/模型版权归各自作者所有,详见 README 与许可声明。\n\n" +
+                            "【免责声明】本软件为免费工具,仅用于个人合法用途。请勿用于侵权/违法用途;\n" +
+                            "处理结果仅供参考,重要素材请务必自行备份,作者不承担由此产生的任何损失。\n\n" +
+                            "【正版声明】本软件仅通过 GitHub(AlLHHH/ALH-Pro)官方发布;\n" +
+                            "请勿使用来路不明的修改/破解版本(可能有安全风险)。\n\n" +
                             "首次启动会进行一次本机设备自检,以下结果来自当前电脑:",
                         TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
                         FontSize = 12,
@@ -623,9 +632,10 @@ public sealed partial class MainPage : Page
         var modelLinks = new (string name, string desc, string url)[]
         {
             ("waifu2x", "naoaki + nihui/ncnn", "https://github.com/nagadomi/waifu2x"),
-            ("Real-ESRGAN", "Xintao Wang 等 + nihui/ncnn", "https://github.com/xinntao/Real-ESRGAN"),
-            ("Real-CUGAN", "bilibili 哔哩哔哩", "https://github.com/bilibili/ailab"),
-            ("RIFE", "Zhewei Huang 等 + nihui/ncnn", "https://github.com/hzwer/arXiv2020-RIFE"),
+            ("Real-ESRGAN(含 ONNX)", "Xintao Wang 等 + nihui/ncnn", "https://github.com/xinntao/Real-ESRGAN"),
+            ("Real-CUGAN(含 ONNX)", "bilibili 哔哩哔哩", "https://github.com/bilibili/ailab"),
+            ("waifu2x(含 ONNX)", "nagadomi/nunif", "https://github.com/nagadomi/waifu2x"),
+            ("RIFE(含 ONNX)", "Zhewei Huang 等 + nihui/ncnn", "https://github.com/hzwer/arXiv2020-RIFE"),
             ("U²-Net", "Qin 等", "https://github.com/xuebinqin/U-2-Net"),
             ("ISNet", "Xuebin Qin 等", "https://github.com/xuebinqin/DIS"),
             ("BiRefNet", "ZhengPeng7(BiRefNet)", "https://github.com/ZhengPeng7/BiRefNet"),
@@ -634,7 +644,7 @@ public sealed partial class MainPage : Page
             ("ONNX Runtime", "Microsoft", "https://github.com/microsoft/onnxruntime"),
             ("Windows App SDK / WinUI 3", "Microsoft", "https://github.com/microsoft/WindowsAppSDK"),
             (".NET 8", "Microsoft", "https://github.com/dotnet/runtime"),
-            ("Real-ESRGAN 兼容版(照片超分)", "fernandotonon / xinntao", "https://huggingface.co/fernandotonon/QtMeshEditor-realesrgan-onnx"),
+            ("ONNX 转换模型(waifu2x/动漫动画)", "deepghs / tidus2102", "https://huggingface.co"),
             ("Apollo(音乐修复,计划)", "清华大学 / 腾讯 AI Lab", "https://github.com/JusperLee/Apollo"),
         };
         foreach (var (name, desc, url) in modelLinks)
