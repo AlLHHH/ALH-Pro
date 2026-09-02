@@ -1,6 +1,6 @@
 # ALH Pro
 
-图片/视频 AI 增强工具(本地运行),支持:图片超分、AI 抠图、视频超分、视频补帧、视频去重。
+图片/视频/音频 AI 增强工具(本地运行),支持:图片超分、AI 抠图、视频超分、视频补帧、视频去重、音频分离/增强/真超分。
 
 **所有处理在本机完成,不上传、不收集任何用户数据。** 全程中文界面。
 
@@ -90,7 +90,7 @@ dotnet build ImgUpscalerUI/ImgUpscalerUI.csproj -c Release -p:Platform=x64
 
 - 本软件本体:**MIT License**(见 `LICENSE`);
 - 第三方引擎/模型许可明细与源码链接见 **`THIRD_PARTY_NOTICES.txt`**;
-- **Real-CUGAN**:模型版权归哔哩哔哩 (bilibili),MIT License,见其仓库;
+- **Real-CUGAN**:模型版权归哔哩哔哩 (bilibili) 所有,官方仓库**未附明确开源许可**(默认"保留所有权利");本软件仅将其作为可选引擎,**个人使用无碍**,任何商业使用或大规模分发前请自行向 bilibili 核实授权;
 - **FFmpeg**:随附构建为 GPL v3(BtbN 构建),本软件以独立子进程方式调用(未链接);
 - 图片/视频素材处理全部在本机完成。
 

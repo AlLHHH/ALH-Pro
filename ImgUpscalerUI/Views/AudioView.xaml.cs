@@ -715,6 +715,8 @@ public sealed partial class AudioView : UserControl
         _running = true;
         _cts = new CancellationTokenSource();
         UpdateRunState();
+        AudioProgress.Value = 0;
+        AudioStatus.Text = $"正在开始处理 {_items.Count} 个音频...";
         int total = _items.Count, done = 0, fail = 0;
         try
         {
@@ -723,6 +725,7 @@ public sealed partial class AudioView : UserControl
                 if (_cts.IsCancellationRequested) break;
                 Log($"处理中: {item.Name}");
                 StatusChanged?.Invoke($"音频处理 {done + 1}/{total}: {item.Name}");
+                AudioStatus.Text = $"正在开始处理: {item.Name}...";
                 try
                 {
                     var outFmt = FmtRadios.SelectedIndex;   // 0=MP3 1=WAV 2=FLAC
@@ -769,6 +772,7 @@ public sealed partial class AudioView : UserControl
                         else
                         {
                             Log($"🔄 超分: {srcRate}Hz → 48kHz(AI 补高频)...");
+                            AudioStatus.Text = $"超分中(补高频 → 48kHz): {item.Name}...";
                             var rawWav = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"alh_src_{Guid.NewGuid():N}.wav");
                             srsWav = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"alh_srs_{Guid.NewGuid():N}.wav");
                             await AudioService.ConvertToWavSameRateAsync(item.Path, rawWav);
@@ -788,8 +792,10 @@ public sealed partial class AudioView : UserControl
                     {
                         var tmpWav = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"alh_demucs_{Guid.NewGuid():N}.wav");
                         Log("转为 44.1kHz 立体声 WAV...");
+                        AudioStatus.Text = $"正在准备: {item.Name}(转为 44.1kHz 立体声)...";
                         await AudioService.ConvertToWav44kAsync(srsApplied ? srsWav! : item.Path, tmpWav);
                         Log("⚠ AI 分轨处理中(CPU 较慢:约 1.5 分钟/分钟音频,请耐心等待;也可先处理音频后离开页面)");
+                        AudioStatus.Text = $"AI 分离中(CPU 较慢): {item.Name}...";
                         // 【一次分轨】输出 4 轨(人声=轨3,伴奏=原曲−人声,其他1/2=轨1/2)——增强和分离共用,不重复推理
                         var aiDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"alh_ai_{Guid.NewGuid():N}");
                         System.IO.Directory.CreateDirectory(aiDir);
@@ -808,6 +814,7 @@ public sealed partial class AudioView : UserControl
                             {
                                 var p = UniquePath(srcDir, srcBase + "_人声" + ext);
                                 Log("AI 分离完成(人声)" + (wantRemaster ? ",应用增强(人声优化)" : "") + ",应用降噪/音色调整并转换 " + ext + "(" + aiOutRate + "Hz) ...");
+                                AudioStatus.Text = "分离完成,转换输出(人声)...";
                                 var src = vWav;
                                 if (wantRemaster)
                                 {
@@ -823,6 +830,7 @@ public sealed partial class AudioView : UserControl
                             {
                                 var p = UniquePath(srcDir, srcBase + "_伴奏" + ext);
                                 Log("AI 分离完成(伴奏)" + (wantRemaster ? ",应用增强(伴奏优化)" : "") + ",应用降噪/音色调整并转换 " + ext + "(" + aiOutRate + "Hz) ...");
+                                AudioStatus.Text = "分离完成,转换输出(伴奏)...";
                                 var src = aWav;
                                 if (wantRemaster)
                                 {
@@ -839,6 +847,7 @@ public sealed partial class AudioView : UserControl
                                 var sepDir = System.IO.Path.Combine(srcDir, srcBase + "_分离");
                                 System.IO.Directory.CreateDirectory(sepDir);
                                 Log("AI 分离完成(两文件)" + (wantRemaster ? ",应用增强(人声/伴奏分别优化)" : "") + ",应用降噪/音色调整并转换 " + ext + "(" + aiOutRate + "Hz) ...");
+                                AudioStatus.Text = "分离完成,转换输出(人声+伴奏 两个文件)...";
                                 var fv = UniquePath(sepDir, "人声" + ext);
                                 var fa = UniquePath(sepDir, "伴奏" + ext);
                                 var sv = vWav;
@@ -878,6 +887,7 @@ public sealed partial class AudioView : UserControl
                                 var sel = new System.Collections.Generic.List<(string path, double gain, string nm)>();
                                 for (int i = 0; i < 4; i++) if ((mask & (1 << i)) != 0) sel.Add(stems[i]);
                                 Log("AI 分离完成(自定义组合):调音量" + (wantRemaster ? "+增强(人声/伴奏分别优化)" : "") + ",混合所选轨道...");
+                                AudioStatus.Text = "分离完成,按音量混合中...";
                                 // 每轨:音量滑块 → (增强)人声链/伴奏链优化 → 求和限幅 → 1 个文件
                                 var work = new System.Collections.Generic.List<string>();
                                 foreach (var s in sel)
@@ -907,6 +917,7 @@ public sealed partial class AudioView : UserControl
                         {
                             // 无分离:增强 = 整曲(人声/伴奏分别优化后重混),只出 1 个「_增强」文件(超分作为效果已在上游)
                             Log("增强:人声/伴奏分别优化,重新混音...");
+                            AudioStatus.Text = $"增强中(人声/伴奏优化重混): {item.Name}...";
                             var mixWav = System.IO.Path.Combine(aiDir, "remix.wav");
                             await AudioService.RemasterAsync(vWav, aWav, mixWav, srSel, prog, _cts.Token);
                             var enOut = UniquePath(srcDir, srcBase + "_增强" + ext);
@@ -926,6 +937,7 @@ public sealed partial class AudioView : UserControl
                     {
                         var srsOut = UniquePath(srcDir, srcBase + "_超分" + ext);
                         Log("超分输出:应用降噪/音色调整并转换 " + ext + "(48000Hz) ...");
+                        AudioStatus.Text = $"超分完成,转换输出: {item.Name}...";
                         await AudioService.EnhanceAsync(srsWav!, srsOut, denoiseSel, loudSel, lowcutSel, eqSel,
                             outFmt, 320, null, prog, _cts.Token, trS, trE, aiOutRate);
                         sepOutputs.Add(srsOut);
@@ -973,6 +985,9 @@ public sealed partial class AudioView : UserControl
             _cts = null;
             UpdateRunState();
             Log($"任务结束:成功 {done},失败 {fail},共 {total}");
+            AudioStatus.Text = done > 0 && fail == 0
+                ? $"✅ 完成:成功 {done} 个" + (fail > 0 ? "" : "")
+                : $"⚠ 完成:成功 {done},失败 {fail}";
             StatusChanged?.Invoke($"音频处理完成:成功 {done} 失败 {fail}");
             try
             {
