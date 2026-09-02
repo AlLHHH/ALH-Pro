@@ -59,8 +59,8 @@ public static class VulkanCheck
                 return;
             }
             // 生成 1×1 测试图(纯色 PNG)
-            var testPng = Path.Combine(Path.GetTempPath(), $"imgup_vk_{Guid.NewGuid():N}.png");
-            var outPng = Path.Combine(Path.GetTempPath(), $"imgup_vkout_{Guid.NewGuid():N}.png");
+            var testPng = Path.Combine(EngineService.TempRoot, $"imgup_vk_{Guid.NewGuid():N}.png");
+            var outPng = Path.Combine(EngineService.TempRoot, $"imgup_vkout_{Guid.NewGuid():N}.png");
             try
             {
                 using (var bmp = new System.Drawing.Bitmap(1, 1))

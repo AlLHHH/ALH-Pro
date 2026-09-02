@@ -121,18 +121,34 @@ namespace ALHPro
             }
         }
 
-        /// <summary>清理本应用的临时目录(%TEMP%\imgup_*:拆帧/超分/降噪/编码探测等,中断/关闭时残留)。</summary>
-        private static void CleanupTempDirs()
+        /// <summary>清理临时文件残留(系统 %TEMP% 与用户自定义临时目录,imgup_*/alh_* 前缀,绝不碰用户文件)。</summary>
+        internal static void CleanupTempDirs()
         {
-            try
+            var roots = new System.Collections.Generic.List<string> { Path.GetTempPath() };
+            try { var cfg = AppSettings.TempDir; if (!string.IsNullOrWhiteSpace(cfg) && Directory.Exists(cfg)) roots.Add(cfg); } catch { }
+            foreach (var root in roots)
             {
-                var temp = Path.GetTempPath();
-                foreach (var d in Directory.EnumerateDirectories(temp, "imgup*"))
+                try
                 {
-                    try { Directory.Delete(d, true); } catch { /* 占用中忽略,下次再清 */ }
+                    foreach (var d in Directory.EnumerateDirectories(root, "imgup*"))
+                    {
+                        try { Directory.Delete(d, true); } catch { /* 占用中忽略,下次再清 */ }
+                    }
+                    foreach (var d in Directory.EnumerateDirectories(root, "alh_*"))
+                    {
+                        try { Directory.Delete(d, true); } catch { /* 占用中忽略,下次再清 */ }
+                    }
+                    foreach (var f in Directory.EnumerateFiles(root, "alh_*.wav"))
+                    {
+                        try { File.Delete(f); } catch { }
+                    }
+                    foreach (var f in Directory.EnumerateFiles(root, ".alh_pro_w.tmp"))
+                    {
+                        try { File.Delete(f); } catch { }
+                    }
                 }
+                catch { }
             }
-            catch { }
         }
 
         [DllImport("dwmapi.dll")]

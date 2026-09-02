@@ -754,7 +754,7 @@ public sealed partial class UpscaleView : UserControl
                         // 照片预处理降噪:waifu2x cunet 模型 1x 降噪(自带 1x 降噪模型)
                         if (preDenoise)
                         {
-                            tmpDenoise = Path.Combine(Path.GetTempPath(),
+                            tmpDenoise = Path.Combine(EngineService.TempRoot,
                                 $"imgup_denoise_{Guid.NewGuid():N}.png");
                             _progressSegStart = 0.0;
                             _progressSegEnd = 0.4;
