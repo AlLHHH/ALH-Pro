@@ -758,29 +758,37 @@ public sealed partial class AudioView : UserControl
                     bool lowcutSel = LowcutCheck.IsChecked == true;
                     bool eqSel = EqCheck.IsChecked == true;
 
+                    // 源采样率探测(AI 板块需要;分离/增强在 44.1k 完成,最终输出回到源率)
+                    int srcRate = 0;
+                    if (doSrs || wantSep || wantRemaster)
+                    {
+                        try { srcRate = AudioService.Probe(item.Path).SampleRate; } catch { srcRate = 0; }
+                    }
+
                     // ---- ① 超分(独立):低采样率源 → 48kHz;44.1k 全频带源自动跳过 ----
                     string? srsWav = null;
                     bool srsApplied = false;
                     if (doSrs)
                     {
-                        var probe = AudioService.Probe(item.Path);
-                        if (probe.SampleRate >= 44000)
+                        if (srcRate >= 44000 || srcRate <= 0)
                         {
-                            Log($"⚠ 源已是 {probe.SampleRate}Hz(全频带),超分仅对低采样率源(8k/16k/22k/32k)有效——已跳过超分");
+                            Log($"⚠ 源已是 {srcRate}Hz(全频带),超分仅对低采样率源(8k/16k/22k/32k)有效——已跳过超分");
                         }
                         else
                         {
-                            Log($"🔄 超分: {probe.SampleRate}Hz → 48kHz(AI 补高频)...");
+                            Log($"🔄 超分: {srcRate}Hz → 48kHz(AI 补高频)...");
                             var rawWav = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"alh_src_{Guid.NewGuid():N}.wav");
                             srsWav = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"alh_srs_{Guid.NewGuid():N}.wav");
                             await AudioService.ConvertToWavSameRateAsync(item.Path, rawWav);
-                            var srBytes = await LavaSrService.UpscaleWavAsync(rawWav, probe.SampleRate, prog, _cts.Token);
+                            var srBytes = await LavaSrService.UpscaleWavAsync(rawWav, srcRate, prog, _cts.Token);
                             System.IO.File.WriteAllBytes(srsWav, srBytes);
                             try { System.IO.File.Delete(rawWav); } catch { }
                             srsApplied = true;
                             Log("✅ 超分完成 → 48kHz");
                         }
                     }
+                    // 分离/增强最终输出采样率:超分生效→48k;源≥44.1k 保持源率(48k 源处理后仍是 48k);仅低采样率源才用 44.1k
+                    int aiOutRate = srsApplied ? 48000 : (srcRate >= 44100 ? srcRate : 44100);
 
                     // ---- ② 增强 / AI 分离:共用一次分轨(超分生效时,分轨用超分后的 48k 源,频带更宽) ----
                     bool didAi = false;
@@ -807,30 +815,30 @@ public sealed partial class AudioView : UserControl
                             if (demucsSel == 1)   // 提取人声
                             {
                                 var p = UniquePath(srcDir, srcBase + "_人声" + ext);
-                                Log("AI 分离完成(人声),应用降噪/音色调整并转换 " + ext + " ...");
+                                Log("AI 分离完成(人声),应用降噪/音色调整并转换 " + ext + "(" + aiOutRate + "Hz) ...");
                                 await AudioService.EnhanceAsync(vWav, p, denoiseSel, loudSel, lowcutSel, eqSel,
-                                    outFmt, 320, null, prog, _cts.Token, trS, trE);
+                                    outFmt, 320, null, prog, _cts.Token, trS, trE, aiOutRate);
                                 sepOutputs.Add(p);
                             }
                             else if (demucsSel == 2)   // 去人声(卡拉OK伴奏)
                             {
                                 var p = UniquePath(srcDir, srcBase + "_伴奏" + ext);
-                                Log("AI 分离完成(伴奏),应用降噪/音色调整并转换 " + ext + " ...");
+                                Log("AI 分离完成(伴奏),应用降噪/音色调整并转换 " + ext + "(" + aiOutRate + "Hz) ...");
                                 await AudioService.EnhanceAsync(aWav, p, denoiseSel, loudSel, lowcutSel, eqSel,
-                                    outFmt, 320, null, prog, _cts.Token, trS, trE);
+                                    outFmt, 320, null, prog, _cts.Token, trS, trE, aiOutRate);
                                 sepOutputs.Add(p);
                             }
                             else if (demucsSel == 3)   // 分离两文件 → "音频名_分离"文件夹
                             {
                                 var sepDir = System.IO.Path.Combine(srcDir, srcBase + "_分离");
                                 System.IO.Directory.CreateDirectory(sepDir);
-                                Log("AI 分离完成(两文件),应用降噪/音色调整并转换 " + ext + " ...");
+                                Log("AI 分离完成(两文件),应用降噪/音色调整并转换 " + ext + "(" + aiOutRate + "Hz) ...");
                                 var fv = UniquePath(sepDir, "人声" + ext);
                                 var fa = UniquePath(sepDir, "伴奏" + ext);
                                 await AudioService.EnhanceAsync(vWav, fv, denoiseSel, loudSel, lowcutSel, eqSel,
-                                    outFmt, 320, null, prog, _cts.Token, trS, trE);
+                                    outFmt, 320, null, prog, _cts.Token, trS, trE, aiOutRate);
                                 await AudioService.EnhanceAsync(aWav, fa, denoiseSel, loudSel, lowcutSel, eqSel,
-                                    outFmt, 320, null, prog, _cts.Token, trS, trE);
+                                    outFmt, 320, null, prog, _cts.Token, trS, trE, aiOutRate);
                                 sepOutputs.Add(fv);
                                 sepOutputs.Add(fa);
                             }
@@ -860,9 +868,9 @@ public sealed partial class AudioView : UserControl
                                     await AudioService.MixWavsAsync(sel.Select(s => s.path).ToList(), mixWav,
                                         prog, _cts.Token, sel.Select(s => s.gain).ToArray());
                                     var mixOut = UniquePath(srcDir, srcBase + "_自定义" + ext);
-                                    Log("应用降噪/音色调整并转换 " + ext + " ...");
+                                    Log("应用降噪/音色调整并转换 " + ext + "(" + aiOutRate + "Hz) ...");
                                     await AudioService.EnhanceAsync(mixWav, mixOut, denoiseSel, loudSel, lowcutSel, eqSel,
-                                        outFmt, 320, null, prog, _cts.Token, trS, trE);
+                                        outFmt, 320, null, prog, _cts.Token, trS, trE, aiOutRate);
                                     sepOutputs.Add(mixOut);
                                 }
                                 // 分别导出:勾选几轨就同时输出几个文件(音量同样生效)
@@ -876,9 +884,9 @@ public sealed partial class AudioView : UserControl
                                         await AudioService.MixWavsAsync(new System.Collections.Generic.List<string> { s.path },
                                             sw, prog, _cts.Token, new double[] { s.gain });
                                         var f = UniquePath(cDir, s.nm + ext);
-                                        Log($"自定义组合:导出 {s.nm}(音量 {(int)(s.gain * 100)}%)...");
+                                        Log($"自定义组合:导出 {s.nm}(音量 {(int)(s.gain * 100)}%,{aiOutRate}Hz)...");
                                         await AudioService.EnhanceAsync(sw, f, denoiseSel, loudSel, lowcutSel, eqSel,
-                                            outFmt, 320, null, prog, _cts.Token, trS, trE);
+                                            outFmt, 320, null, prog, _cts.Token, trS, trE, aiOutRate);
                                         sepOutputs.Add(f);
                                     }
                                 }
@@ -891,9 +899,9 @@ public sealed partial class AudioView : UserControl
                             var mixWav = System.IO.Path.Combine(aiDir, "remix.wav");
                             await AudioService.RemasterAsync(vWav, aWav, mixWav, srSel, prog, _cts.Token);
                             var enOut = UniquePath(srcDir, srcBase + "_增强" + ext);
-                            Log("增强完成,应用降噪/音色调整并转换 " + ext + " ...");
+                            Log("增强完成,应用降噪/音色调整并转换 " + ext + "(" + aiOutRate + "Hz) ...");
                             await AudioService.EnhanceAsync(mixWav, enOut, denoiseSel, loudSel, lowcutSel, eqSel,
-                                outFmt, 320, null, prog, _cts.Token, trS, trE);
+                                outFmt, 320, null, prog, _cts.Token, trS, trE, aiOutRate);
                             sepOutputs.Add(enOut);
                         }
                         // 清理临时文件
@@ -906,9 +914,9 @@ public sealed partial class AudioView : UserControl
                     if (srsApplied)
                     {
                         var srsOut = UniquePath(srcDir, srcBase + "_超分" + ext);
-                        Log("超分输出:应用降噪/音色调整并转换 " + ext + " ...");
+                        Log("超分输出:应用降噪/音色调整并转换 " + ext + "(48000Hz) ...");
                         await AudioService.EnhanceAsync(srsWav!, srsOut, denoiseSel, loudSel, lowcutSel, eqSel,
-                            outFmt, 320, null, prog, _cts.Token, trS, trE);
+                            outFmt, 320, null, prog, _cts.Token, trS, trE, aiOutRate);
                         sepOutputs.Add(srsOut);
                         try { System.IO.File.Delete(srsWav!); } catch { }
                     }

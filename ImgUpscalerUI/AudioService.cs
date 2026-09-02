@@ -152,16 +152,19 @@ public static class AudioService
     public static async Task EnhanceAsync(string input, string output, int denoise, bool loudness,
         bool lowcut, bool eq, int outFmt, int mp3BitrateKbps, double? outDir,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct,
-        double trimStart = 0, double trimEnd = 0)
+        double trimStart = 0, double trimEnd = 0, int outRate = 0)
     {
         // 总时长(进度百分比基准;失败给 0=只显示秒数)
         DurSec = 0;
         try { DurSec = Probe(input).DurationSec; } catch { }
         // 保留原采样率:loudnorm 内部按 192k 处理、输出会变 48k(实测 44100→48000=降频),
         // 滤镜链末尾 aresample=原采样率 强制还原;失败则跟随输出默认(不崩)。
+        // outRate > 0 = 强制输出采样率(如:AI 分离/增强在 44.1k 完成,源是 48k 时输出回 48k)。
         double srcRate = 0;
         try { srcRate = Probe(input).SampleRate; } catch { }
-        var keepRate = srcRate > 0 ? $"aresample={srcRate.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}" : "";
+        var keepRate = outRate > 0
+            ? $"aresample={outRate.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}"
+            : (srcRate > 0 ? $"aresample={srcRate.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}" : "");
         var filters = new System.Collections.Generic.List<string>();
         // 1) 降噪(afftdn FFT 降噪:经实测定于此 ffmpeg 构建有效;原 anlmdn 在此构建无效果——已替换)
         // denoise:0=关 1=弱 2=中 3=强
