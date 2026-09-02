@@ -61,6 +61,7 @@
         <None Include="README.md" Link="README.md" CopyToOutputDirectory="PreserveNewest"/>
         <None Include="THIRD_PARTY_NOTICES.txt" Link="THIRD_PARTY_NOTICES.txt" CopyToOutputDirectory="PreserveNewest"/>
         <None Include="..\RELEASE_NOTES.md" Link="RELEASE_NOTES.md" CopyToOutputDirectory="PreserveNewest"/>
+        <None Include="..\release_history.json" Link="release_history.json" CopyToOutputDirectory="PreserveNewest"/>
         <!-- 使用教程:打包到输出目录,软件内教程页读取渲染(替换此文件即可更新教程,无需重编译) -->
         <None Include="..\使用教程.md" Link="使用教程.md" CopyToOutputDirectory="PreserveNewest"/>
         <!-- 标题栏/应用内图标:由 icon.ico 提取的 PNG(ffmpeg 转换)。BitmapImage 不支持 .ico,用 PNG 加载 -->

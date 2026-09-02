@@ -56,6 +56,13 @@ public sealed partial class MainPage : Page
                 }
                 catch { }
             }
+            // 新版本更新弹窗:版本变化(或首次安装)后启动弹一次;左侧可翻往期版本,底部"来自作者的话"
+            try
+            {
+                if (AppSettings.LastShownVersion != UpdateChecker.CurrentVersion)
+                    _ = ShowUpdatePopupAsync();
+            }
+            catch { }
             // 引擎可用性:仅缺失时提示,正常就绪不刷屏
             var ok = EngineService.CheckEngines(out var missing);
             StatusText.Text = ok ? "就绪" : "引擎缺失: " + missing;
@@ -282,6 +289,95 @@ public sealed partial class MainPage : Page
 
     /// <summary>启动声明已同意的标记文件(仅首次显示弹窗)。</summary>
     private static string BetaAcceptedFile => ParaPaths.SettingsFile("beta-accepted.txt");
+
+    private sealed class HistEntry { public string v { get; set; } = ""; public string title { get; set; } = ""; public string notes { get; set; } = ""; }
+
+    private bool _updatePopupShown;
+
+    /// <summary>新版本更新弹窗(每次更新后首次启动弹一次):左侧可选版本(当前+往期),右侧更新内容,
+    /// 底部固定"来自作者的话"。关闭后记录版本号,下次升级才会再弹。</summary>
+    private async Task ShowUpdatePopupAsync()
+    {
+        if (_updatePopupShown) return;
+        _updatePopupShown = true;
+        try
+        {
+            var ver = UpdateChecker.CurrentVersion;
+            var entries = new System.Collections.Generic.List<(string v, string title, string notes)>();
+            string curNotes = "未找到更新说明(RELEASE_NOTES.md 缺失)。";
+            var notesPath = Path.Combine(AppContext.BaseDirectory, "RELEASE_NOTES.md");
+            try { if (File.Exists(notesPath)) curNotes = File.ReadAllText(notesPath); } catch { }
+            entries.Add(($"v{ver}", "当前版本(新)", curNotes));
+            var histPath = Path.Combine(AppContext.BaseDirectory, "release_history.json");
+            try
+            {
+                if (File.Exists(histPath))
+                {
+                    var hist = System.Text.Json.JsonSerializer.Deserialize<System.Collections.Generic.List<HistEntry>>(File.ReadAllText(histPath));
+                    if (hist != null)
+                        foreach (var h in hist)
+                            if (!entries.Any(en => en.v == "v" + h.v))
+                                entries.Add(("v" + h.v, h.title, h.notes));
+                }
+            }
+            catch { }
+
+            // 左侧版本列表
+            var listBox = new ListView
+            {
+                Width = 210,
+                SelectionMode = ListViewSelectionMode.Single,
+            };
+            foreach (var en in entries)
+                listBox.Items.Add(new TextBlock { Text = $"{en.v} · {en.title}", FontSize = 12, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Margin = new Microsoft.UI.Xaml.Thickness(0, 6, 0, 6) });
+            // 右侧更新内容
+            var notesBox = new TextBlock { FontSize = 12, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Text = entries[0].notes };
+            listBox.SelectionChanged += (_, _) =>
+            {
+                int i = listBox.SelectedIndex;
+                if (i >= 0 && i < entries.Count) notesBox.Text = entries[i].notes;
+            };
+            listBox.SelectedIndex = 0;   // 默认选中当前版本
+            var grid = new Grid { ColumnSpacing = 12 };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
+            grid.Children.Add(listBox);
+            grid.Children.Add(new ScrollViewer { Content = notesBox, MaxHeight = 380, VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto });
+
+            // 底部:来自作者的话(每次更新弹窗都显示)
+            var author = new TextBlock
+            {
+                FontSize = 12,
+                Opacity = 0.85,
+                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                Text = "来自作者的话\n软件当前仍处于早期开发阶段,功能方向与工程稳定性仍在持续完善中。尽管有开源模型提供底层能力支撑," +
+                    "但上层的调用适配、性能优化与长期维护,依然面临较大的工程挑战。作为个人发起的公益项目,我将在力所能及的范围内持续改进。" +
+                    "若您在使用过程中受益,欢迎通过赞赏给予一点支持,帮助项目走得更远。感谢每一份善意的理解和信任。",
+            };
+            var full = new StackPanel { Spacing = 10 };
+            full.Children.Add(grid);
+            full.Children.Add(new Border
+            {
+                Height = 1,
+                Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+            });
+            full.Children.Add(author);
+
+            var dlg = new ContentDialog
+            {
+                Title = $"更新说明 · ALH Pro v{ver}",
+                Content = full,
+                PrimaryButtonText = "开始使用",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = this.XamlRoot,
+                MinWidth = 640,
+            };
+            await dlg.ShowAsync();
+            AppSettings.LastShownVersion = ver;
+            AppSettings.Save();
+        }
+        catch { /* 弹窗失败不影响使用 */ }
+    }
 
     /// <summary>欢迎弹窗(所有设备第一次启动只弹一次,合并两件事):
     /// 1) 正式版启动说明(简短无内测措辞);2) 设备自检报告(低配/高配都显示,检测完自动更新)。
