@@ -26,7 +26,6 @@ public sealed partial class AudioView : UserControl
         public double VolA { get; set; } = 100;      // 自定义组合:伴奏音量 %
         public double VolO1 { get; set; } = 100;
         public double VolO2 { get; set; } = 100;
-        public int CmMode { get; set; }              // 自定义输出:0=混合 1=分别导出 2=都要
         public bool Loudness { get; set; }
         public bool Lowcut { get; set; }
         public bool Eq { get; set; }
@@ -128,30 +127,25 @@ public sealed partial class AudioView : UserControl
         if (CustomMixPanel != null)
             CustomMixPanel.Visibility = DemucsRadios.SelectedIndex == 4
                 ? Visibility.Visible : Visibility.Collapsed;
-        // 超分提示:独立板块,与增强/分离可同时勾选(不再互斥)
+        // 超分提示:效果——勾选后作用到最终输出(不单独出文件)
         bool srs = SrsCheck?.IsChecked == true;
         if (SrsHint != null)
         {
             SrsHint.Text = srs
-                ? "已勾选:低采样率源(8k/16k/22k/32k)将升级到 48kHz 并输出「_超分」文件;44.1k 全频带源会自动跳过"
+                ? "已勾选:低采样率源(8k/16k/22k/32k)将升级到 48kHz,效果作用到最终输出;44.1k 全频带源会自动跳过"
                 : (LavaSrService.Available()
                     ? "仅低采样率源(8k/16k/22k/32k)有效;44.1k 音乐已全频带,无需超分(用下方「增强」)"
                     : "超分模型未安装(需 engines/lavasr),仅低采样率源有效");
         }
-        // 自定义输出方式提示(含"伴奏已含其他 + 同勾叠加"提醒)
+        // 自定义组合提示:最终只输出 1 个混合文件(按音量);超分/增强作为效果并入
         if (CmHint != null && CustomMixPanel != null && CustomMixPanel.Visibility == Visibility.Visible)
         {
-            var mode = CmModeRadios.SelectedIndex switch
-            {
-                0 => "勾选多轨 → 混合成一个文件(按各自音量比例合成)",
-                1 => "勾选几轨就同时导出几个文件(音量滑块对其同样生效)",
-                _ => "混合文件 + 各轨文件同时导出(一次跑完)",
-            };
             bool accC = CmAcc.IsChecked == true;
             bool subC = CmOther1.IsChecked == true || CmOther2.IsChecked == true;
-            CmHint.Text = accC && subC
-                ? mode + " ⚠ 伴奏=去掉人声的全部音乐(鼓/贝斯都在里面),同时勾「其他」= 那部分被算了两次,音量会变大;想单独提取某一块,只勾那个即可"
-                : mode + (accC ? "(伴奏已含鼓/贝斯等全部乐器)" : "");
+            CmHint.Text = "按各轨音量混合,最终输出 1 个「_自定义」文件(勾选的超分/增强一并作用)"
+                + (accC && subC
+                    ? "\n⚠ 伴奏=去掉人声的全部音乐(鼓/贝斯都在里面),同时勾「其他」= 那部分被算了两次;想单独提取某一块,只勾那个即可"
+                    : (accC ? "\n(伴奏已含鼓/贝斯等全部乐器)" : ""));
         }
         SaveSettings();
     }
@@ -183,7 +177,6 @@ public sealed partial class AudioView : UserControl
             if (CmVolA != null) CmVolA.Value = Math.Clamp(d.VolA, 0, 200);
             if (CmVolO1 != null) CmVolO1.Value = Math.Clamp(d.VolO1, 0, 200);
             if (CmVolO2 != null) CmVolO2.Value = Math.Clamp(d.VolO2, 0, 200);
-            if (CmModeRadios != null) CmModeRadios.SelectedIndex = Math.Clamp(d.CmMode, 0, 2);
             LoudnessCheck.IsChecked = d.Loudness;
             LowcutCheck.IsChecked = d.Lowcut;
             EqCheck.IsChecked = d.Eq;
@@ -208,7 +201,6 @@ public sealed partial class AudioView : UserControl
                     VolA = CmVolA?.Value ?? 100,
                     VolO1 = CmVolO1?.Value ?? 100,
                     VolO2 = CmVolO2?.Value ?? 100,
-                    CmMode = CmModeRadios?.SelectedIndex ?? 0,
                     Loudness = LoudnessCheck.IsChecked == true,
                     Lowcut = LowcutCheck.IsChecked == true,
                     Eq = EqCheck.IsChecked == true,
@@ -809,42 +801,67 @@ public sealed partial class AudioView : UserControl
                         var o1Wav = stemBase + "_其他1.wav";
                         var o2Wav = stemBase + "_其他2.wav";
 
-                        // ②a AI 分离输出(同样应用降噪/音色调整/裁剪)
+                        // ===== 最终输出:链式——超分(上游已作用)/增强(效果并入),最终文件只由「AI分离」决定 =====
                         if (wantSep)
                         {
-                            if (demucsSel == 1)   // 提取人声
+                            if (demucsSel == 1)   // 提取人声(增强并入:人声链优化)
                             {
                                 var p = UniquePath(srcDir, srcBase + "_人声" + ext);
-                                Log("AI 分离完成(人声),应用降噪/音色调整并转换 " + ext + "(" + aiOutRate + "Hz) ...");
-                                await AudioService.EnhanceAsync(vWav, p, denoiseSel, loudSel, lowcutSel, eqSel,
+                                Log("AI 分离完成(人声)" + (wantRemaster ? ",应用增强(人声优化)" : "") + ",应用降噪/音色调整并转换 " + ext + "(" + aiOutRate + "Hz) ...");
+                                var src = vWav;
+                                if (wantRemaster)
+                                {
+                                    var sw = System.IO.Path.Combine(aiDir, "opt_v.wav");
+                                    await AudioService.OptimizeStemAsync(vWav, sw, true, srSel, prog, _cts.Token);
+                                    src = sw;
+                                }
+                                await AudioService.EnhanceAsync(src, p, denoiseSel, loudSel, lowcutSel, eqSel,
                                     outFmt, 320, null, prog, _cts.Token, trS, trE, aiOutRate);
                                 sepOutputs.Add(p);
                             }
-                            else if (demucsSel == 2)   // 去人声(卡拉OK伴奏)
+                            else if (demucsSel == 2)   // 去人声(卡拉OK伴奏)(增强并入:伴奏链优化)
                             {
                                 var p = UniquePath(srcDir, srcBase + "_伴奏" + ext);
-                                Log("AI 分离完成(伴奏),应用降噪/音色调整并转换 " + ext + "(" + aiOutRate + "Hz) ...");
-                                await AudioService.EnhanceAsync(aWav, p, denoiseSel, loudSel, lowcutSel, eqSel,
+                                Log("AI 分离完成(伴奏)" + (wantRemaster ? ",应用增强(伴奏优化)" : "") + ",应用降噪/音色调整并转换 " + ext + "(" + aiOutRate + "Hz) ...");
+                                var src = aWav;
+                                if (wantRemaster)
+                                {
+                                    var sw = System.IO.Path.Combine(aiDir, "opt_a.wav");
+                                    await AudioService.OptimizeStemAsync(aWav, sw, false, srSel, prog, _cts.Token);
+                                    src = sw;
+                                }
+                                await AudioService.EnhanceAsync(src, p, denoiseSel, loudSel, lowcutSel, eqSel,
                                     outFmt, 320, null, prog, _cts.Token, trS, trE, aiOutRate);
                                 sepOutputs.Add(p);
                             }
-                            else if (demucsSel == 3)   // 分离两文件 → "音频名_分离"文件夹
+                            else if (demucsSel == 3)   // 分离两文件 → "音频名_分离"文件夹(人声/伴奏各走各的优化链)
                             {
                                 var sepDir = System.IO.Path.Combine(srcDir, srcBase + "_分离");
                                 System.IO.Directory.CreateDirectory(sepDir);
-                                Log("AI 分离完成(两文件),应用降噪/音色调整并转换 " + ext + "(" + aiOutRate + "Hz) ...");
+                                Log("AI 分离完成(两文件)" + (wantRemaster ? ",应用增强(人声/伴奏分别优化)" : "") + ",应用降噪/音色调整并转换 " + ext + "(" + aiOutRate + "Hz) ...");
                                 var fv = UniquePath(sepDir, "人声" + ext);
                                 var fa = UniquePath(sepDir, "伴奏" + ext);
-                                await AudioService.EnhanceAsync(vWav, fv, denoiseSel, loudSel, lowcutSel, eqSel,
+                                var sv = vWav;
+                                var sa = aWav;
+                                if (wantRemaster)
+                                {
+                                    var ov = System.IO.Path.Combine(aiDir, "opt_v.wav");
+                                    var oa = System.IO.Path.Combine(aiDir, "opt_a.wav");
+                                    await AudioService.OptimizeStemAsync(vWav, ov, true, srSel, prog, _cts.Token);
+                                    await AudioService.OptimizeStemAsync(aWav, oa, false, srSel, prog, _cts.Token);
+                                    sv = ov;
+                                    sa = oa;
+                                }
+                                await AudioService.EnhanceAsync(sv, fv, denoiseSel, loudSel, lowcutSel, eqSel,
                                     outFmt, 320, null, prog, _cts.Token, trS, trE, aiOutRate);
-                                await AudioService.EnhanceAsync(aWav, fa, denoiseSel, loudSel, lowcutSel, eqSel,
+                                await AudioService.EnhanceAsync(sa, fa, denoiseSel, loudSel, lowcutSel, eqSel,
                                     outFmt, 320, null, prog, _cts.Token, trS, trE, aiOutRate);
                                 sepOutputs.Add(fv);
                                 sepOutputs.Add(fa);
                             }
-                            else   // demucsSel == 4 自定义组合:多轨同时输出 + 每轨独立音量(0~200%)
+                            else   // demucsSel == 4 自定义组合:按各轨音量混合成 1 个文件(超分/增强作为效果并入)
                             {
-                                // 勾选要输出的轨(bitmask 1=人声 2=伴奏 4=其他1 8=其他2),可多选 = 同时输出
+                                // 勾选要输出的轨(bitmask 1=人声 2=伴奏 4=其他1 8=其他2)
                                 int mask = 0;
                                 if (CmVocals.IsChecked == true) mask |= 1;
                                 if (CmAcc.IsChecked == true) mask |= 2;
@@ -860,41 +877,35 @@ public sealed partial class AudioView : UserControl
                                 };
                                 var sel = new System.Collections.Generic.List<(string path, double gain, string nm)>();
                                 for (int i = 0; i < 4; i++) if ((mask & (1 << i)) != 0) sel.Add(stems[i]);
-                                Log("AI 分离完成(自定义组合),按音量比例处理所选轨道...");
-                                // 混合成一个文件(按各轨音量合成)
-                                if (CmModeRadios.SelectedIndex != 1)
+                                Log("AI 分离完成(自定义组合):调音量" + (wantRemaster ? "+增强(人声/伴奏分别优化)" : "") + ",混合所选轨道...");
+                                // 每轨:音量滑块 → (增强)人声链/伴奏链优化 → 求和限幅 → 1 个文件
+                                var work = new System.Collections.Generic.List<string>();
+                                foreach (var s in sel)
                                 {
-                                    var mixWav = System.IO.Path.Combine(aiDir, "custom.wav");
-                                    await AudioService.MixWavsAsync(sel.Select(s => s.path).ToList(), mixWav,
-                                        prog, _cts.Token, sel.Select(s => s.gain).ToArray());
-                                    var mixOut = UniquePath(srcDir, srcBase + "_自定义" + ext);
-                                    Log("应用降噪/音色调整并转换 " + ext + "(" + aiOutRate + "Hz) ...");
-                                    await AudioService.EnhanceAsync(mixWav, mixOut, denoiseSel, loudSel, lowcutSel, eqSel,
-                                        outFmt, 320, null, prog, _cts.Token, trS, trE, aiOutRate);
-                                    sepOutputs.Add(mixOut);
-                                }
-                                // 分别导出:勾选几轨就同时输出几个文件(音量同样生效)
-                                if (CmModeRadios.SelectedIndex != 0)
-                                {
-                                    var cDir = System.IO.Path.Combine(srcDir, srcBase + "_自定义");
-                                    System.IO.Directory.CreateDirectory(cDir);
-                                    foreach (var s in sel)
+                                    var gWav = System.IO.Path.Combine(aiDir, "stem_g_" + s.nm + ".wav");
+                                    await AudioService.MixWavsAsync(new System.Collections.Generic.List<string> { s.path },
+                                        gWav, prog, _cts.Token, new double[] { s.gain });
+                                    var cur = gWav;
+                                    if (wantRemaster)
                                     {
-                                        var sw = System.IO.Path.Combine(aiDir, "stem_" + s.nm + ".wav");
-                                        await AudioService.MixWavsAsync(new System.Collections.Generic.List<string> { s.path },
-                                            sw, prog, _cts.Token, new double[] { s.gain });
-                                        var f = UniquePath(cDir, s.nm + ext);
-                                        Log($"自定义组合:导出 {s.nm}(音量 {(int)(s.gain * 100)}%,{aiOutRate}Hz)...");
-                                        await AudioService.EnhanceAsync(sw, f, denoiseSel, loudSel, lowcutSel, eqSel,
-                                            outFmt, 320, null, prog, _cts.Token, trS, trE, aiOutRate);
-                                        sepOutputs.Add(f);
+                                        var oWav = System.IO.Path.Combine(aiDir, "stem_o_" + s.nm + ".wav");
+                                        await AudioService.OptimizeStemAsync(gWav, oWav, s.nm == "人声", srSel, prog, _cts.Token);
+                                        cur = oWav;
                                     }
+                                    work.Add(cur);
                                 }
+                                var mixWav = System.IO.Path.Combine(aiDir, "custom.wav");
+                                await AudioService.MixWavsAsync(work, mixWav, prog, _cts.Token, null);
+                                var mixOut = UniquePath(srcDir, srcBase + "_自定义" + ext);
+                                Log("应用降噪/音色调整并转换 " + ext + "(" + aiOutRate + "Hz) ...");
+                                await AudioService.EnhanceAsync(mixWav, mixOut, denoiseSel, loudSel, lowcutSel, eqSel,
+                                    outFmt, 320, null, prog, _cts.Token, trS, trE, aiOutRate);
+                                sepOutputs.Add(mixOut);
                             }
                         }
-                        // ②b 增强输出(人声/伴奏分别优化后重混;与超分/分离可同时勾选)
-                        if (wantRemaster)
+                        else if (wantRemaster)
                         {
+                            // 无分离:增强 = 整曲(人声/伴奏分别优化后重混),只出 1 个「_增强」文件(超分作为效果已在上游)
                             Log("增强:人声/伴奏分别优化,重新混音...");
                             var mixWav = System.IO.Path.Combine(aiDir, "remix.wav");
                             await AudioService.RemasterAsync(vWav, aWav, mixWav, srSel, prog, _cts.Token);
@@ -910,14 +921,17 @@ public sealed partial class AudioView : UserControl
                         didAi = true;
                     }
 
-                    // ---- ③ 超分输出(48kHz 独立文件,不与增强互相覆盖) ----
-                    if (srsApplied)
+                    // ---- ③ 超分只在"单独勾选"时输出「_超分」文件;与分离/增强一起时作为效果并入不单独出 ----
+                    if (srsApplied && !wantSep && !wantRemaster)
                     {
                         var srsOut = UniquePath(srcDir, srcBase + "_超分" + ext);
                         Log("超分输出:应用降噪/音色调整并转换 " + ext + "(48000Hz) ...");
                         await AudioService.EnhanceAsync(srsWav!, srsOut, denoiseSel, loudSel, lowcutSel, eqSel,
                             outFmt, 320, null, prog, _cts.Token, trS, trE, aiOutRate);
                         sepOutputs.Add(srsOut);
+                    }
+                    if (srsApplied)
+                    {
                         try { System.IO.File.Delete(srsWav!); } catch { }
                     }
 
