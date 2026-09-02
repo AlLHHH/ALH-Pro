@@ -20,11 +20,6 @@ public sealed partial class MainPage : Page
         this.InitializeComponent();
         AppSettings.Load();      // 应用级开关(自动删除已完成项目等)
         SafeRender.Load();       // 加载"安全渲染"墙配置(自动/自定义)
-        // 正版校验(轻量防篡改):官方包带 OFFICIAL.txt(版本标记);缺失/不符 → 警告一次(不阻止使用,不坑正版)
-        if (!OfficialCheck.Verify())
-        {
-            AppLogger.Warn("⚠ 正版校验:未检测到官方发布标记(OFFICIAL.txt)——此副本可能为修改/二次打包版,请从 GitHub 官方渠道获取(不阻止使用)");
-        }
         // 休息提示 + 显眼的「跳过休息」按钮:显示在窗口底部状态栏右侧(任务处理中休息降温时)
         SafeRender.RestUiChanged += resting =>
         {
@@ -310,8 +305,6 @@ public sealed partial class MainPage : Page
                             "· 引擎/模型版权归各自作者所有,详见 README 与许可声明。\n\n" +
                             "【免责声明】本软件为免费工具,仅用于个人合法用途。请勿用于侵权/违法用途;\n" +
                             "处理结果仅供参考,重要素材请务必自行备份,作者不承担由此产生的任何损失。\n\n" +
-                            "【正版声明】本软件仅通过 GitHub(AlLHHH/ALH-Pro)官方发布;\n" +
-                            "请勿使用来路不明的修改/破解版本(可能有安全风险)。\n\n" +
                             "首次启动会进行一次本机设备自检,以下结果来自当前电脑:",
                         TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
                         FontSize = 12,
