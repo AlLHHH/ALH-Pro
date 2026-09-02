@@ -68,8 +68,13 @@
             </Grid.ColumnDefinitions>
             <TextBlock Text="图片列表" VerticalAlignment="Center" FontSize="13"
                        FontWeight="SemiBold" Opacity="0.8"/>
+            <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="10" Opacity="0.45"
+                       Text="支持: PNG / JPG / JPEG / BMP / TIF / TIFF / GIF / WebP / HEIC"
+                       TextTrimming="CharacterEllipsis" Margin="8,0,0,0"/>
+            <!-- ListCount 移到格式提示后,共用列1 -->
             <TextBlock x:Name="ListCount" Grid.Column="1" VerticalAlignment="Center"
-                       FontSize="11" Opacity="0.4"/>
+                       FontSize="11" Opacity="0.4" HorizontalAlignment="Right"
+                       Margin="0,0,16,0"/>
             <Button x:Name="ClearSelBtn" Grid.Column="2" Content="取消选择"
                     IsEnabled="False" Click="ClearSelBtn_Click" Margin="0,0,8,0"/>
             <Button x:Name="BatchRenameBtn" Grid.Column="3" Content="批量改名"
@@ -235,7 +240,7 @@
                            FontSize="14" Opacity="0.5"/>
                 <TextBlock Text="鼠标拖拽可框选多张" HorizontalAlignment="Center"
                            FontSize="11" Opacity="0.35"/>
-                <TextBlock Text="PNG / JPG / WebP / BMP" HorizontalAlignment="Center"
+                <TextBlock Text="PNG / JPG / JPEG / BMP / TIF / TIFF / GIF / WebP / HEIC" HorizontalAlignment="Center"
                            Style="{StaticResource HintText}"/>
             </StackPanel>
         </Grid>
