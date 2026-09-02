@@ -26,6 +26,9 @@ public static class AppSettings
     /// 处理中的临时帧/中间文件放这里,任务完成自动清理,启动也会清理残留(imgup_*/alh_* 前缀)。</summary>
     public static string TempDir { get; set; } = "";
 
+    /// <summary>已展示过更新弹窗的版本("每次更新后首次启动弹一次";空=首次安装也弹)。</summary>
+    public static string LastShownVersion { get; set; } = "";
+
     private static string FilePath => ParaPaths.SettingsFile("app-settings.json");
 
     public static void Load()
@@ -53,6 +56,7 @@ public static class AppSettings
             VulkanReport = d.VulkanReport ?? "";
             VulkanReportVersion = d.VulkanReportVersion ?? "";
             TempDir = d.TempDir ?? "";
+            LastShownVersion = d.LastShownVersion ?? "";
         }
         catch { /* 读取失败用默认值 */ }
     }
@@ -76,6 +80,7 @@ public static class AppSettings
                         VulkanReport = VulkanReport,
                         VulkanReportVersion = VulkanReportVersion,
                         TempDir = TempDir,
+                        LastShownVersion = LastShownVersion,
                     }));
             }
             catch { /* 保存失败忽略 */ }
@@ -90,5 +95,6 @@ public static class AppSettings
         public string VulkanReport { get; set; } = "";
         public string VulkanReportVersion { get; set; } = "";
         public string TempDir { get; set; } = "";
+        public string LastShownVersion { get; set; } = "";
     }
 }
