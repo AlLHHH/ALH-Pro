@@ -266,6 +266,13 @@ public static class AudioEnhanceService
                 for (int s = 0; s < samples; s++)
                     for (int c = 0; c < channels; c++)
                         mix[c, s] = br.ReadInt16() / 32768f;
+                // 立体声保护:Demucs 需双声道;单声道输入复制到双声道(避免越界崩溃)
+                if (channels == 1)
+                {
+                    var stereo = new float[2, samples];
+                    for (int s = 0; s < samples; s++) { stereo[0, s] = mix[0, s]; stereo[1, s] = mix[0, s]; }
+                    return (stereo, samples);
+                }
                 return (mix, samples);
             }
             fs.Seek(size + (size % 2), SeekOrigin.Current);
