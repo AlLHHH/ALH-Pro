@@ -68,7 +68,7 @@ public sealed partial class MainPage : Page
             // 自动弹一次友好提示;强机不弹(结果随时可在「设置 → 计算设备」查看),弹过也不再重复弹。
             // 【新增】真引擎自检:每次启动都后台跑一次(waifu2x 引擎枚举 Vulkan 设备),结果=日志+状态栏
             // (之前 RunOnce 只在设置页手动触发,启动从未自检过)。
-            _ = Task.Run(() =>
+            _ = Task.Run(async () =>
             {
                 try
                 {
@@ -94,13 +94,42 @@ public sealed partial class MainPage : Page
                              && !VulkanCheck.Devices.Any(d => d.Id == AppSettings.GpuIndex))
                     {
                         // 用户当前编号不在引擎实际枚举列表 → 编号错位(注册表顺序≠Vulkan 顺序),自动纠正
-                        // 纠正目标:独立显卡(跳过核显,避免纠正成 Intel/AMD 核显)
-                        int rec = VulkanCheck.Devices.FirstOrDefault(d => IsDiscreteGpu(d.Name)).Id;
-                        if (!VulkanCheck.Devices.Any(d => d.Id == rec)) rec = VulkanCheck.Devices[0].Id;
-                        AppLogger.Info($"编号纠正:当前设备 {AppSettings.GpuIndex} 不在引擎实际枚举列表 {string.Join(",", VulkanCheck.Devices.Select(d => d.Id + ":" + d.Name))},已自动改为引擎识别 {rec}");
-                        AppSettings.GpuIndex = rec;
-                        try { AppSettings.Save(); } catch { }
-                        autoMsg = $"已自动纠正设备编号 → GPU {rec}(引擎实际识别)";
+                        // 纠正:按优先级逐个 1×1 实测,选第一个能用的独显(不只看名字,真机验证)
+                        int best = await EngineService.FindBestWorkingGpuAsync();
+                        if (best >= 0)
+                        {
+                            var nm = VulkanCheck.Devices.FirstOrDefault(d => d.Id == best).Name;
+                            AppLogger.Info($"编号纠正:当前设备 {AppSettings.GpuIndex} 不在引擎实际枚举列表 {string.Join(",", VulkanCheck.Devices.Select(d => d.Id + ":" + d.Name))}," +
+                                $"已按实测可用自动改为 GPU {best}({nm})");
+                            AppSettings.GpuIndex = best;
+                            try { AppSettings.Save(); } catch { }
+                            autoMsg = $"已自动纠正设备编号 → GPU {best}(实测可用)";
+                        }
+                        else
+                        {
+                            AppLogger.Info("⚠ 编号纠正:引擎枚举设备均未通过 1×1 实测,保持当前选择(处理中会自动降级)");
+                        }
+                    }
+                    else if (VulkanCheck.Devices.Count > 0 && AppSettings.GpuIndex >= 0
+                             && VulkanCheck.Devices.Any(d => d.Id == AppSettings.GpuIndex)
+                             && GpuInfo.IsIntegratedGPU(VulkanCheck.Devices.First(d => d.Id == AppSettings.GpuIndex).Name))
+                    {
+                        // 当前选中了核显(Intel/AMD 集成显卡,性能差且可能不适用部分引擎)
+                        // → 按优先级实测,自动切到第一个能用的独显(真机:RTX5060 三卡机曾误选 Intel)
+                        int best = await EngineService.FindBestWorkingGpuAsync();
+                        if (best >= 0 && best != AppSettings.GpuIndex)
+                        {
+                            var oldN = VulkanCheck.Devices.First(d => d.Id == AppSettings.GpuIndex).Name;
+                            var newN = VulkanCheck.Devices.First(d => d.Id == best).Name;
+                            AppLogger.Info($"自动切换:当前设备 {oldN}(核显)→ 实测可用独显 GPU {best}({newN})");
+                            AppSettings.GpuIndex = best;
+                            try { AppSettings.Save(); } catch { }
+                            autoMsg = $"已自动切换到独显 → GPU {best}(实测可用)";
+                        }
+                        else if (best < 0)
+                        {
+                            AppLogger.Info("⚠ 独显实测均不可用,继续使用当前核显(处理中会自动降级)");
+                        }
                     }
                     if (autoMsg != null) AppLogger.Info("🚀 " + autoMsg);
                     string finalMsg = autoMsg ?? "就绪";
@@ -146,17 +175,8 @@ public sealed partial class MainPage : Page
         catch { return (labels, -1); }
     }
 
-    /// <summary>判断是否独立显卡(非 Intel/AMD 核显):按名称特征,与 GpuInfo.GetRecommendedIndex 一致。</summary>
-    private static bool IsDiscreteGpu(string name)
-    {
-        if (string.IsNullOrEmpty(name)) return false;
-        var isI = name.Contains("Intel", StringComparison.OrdinalIgnoreCase)
-            && (name.Contains("UHD", StringComparison.OrdinalIgnoreCase)
-                || name.Contains("Iris", StringComparison.OrdinalIgnoreCase)
-                || name.Contains("HD Graphics", StringComparison.OrdinalIgnoreCase));
-        var isA = name.Contains("AMD Radeon(TM) Graphics", StringComparison.OrdinalIgnoreCase);
-        return !isI && !isA;
-    }
+    /// <summary>判断是否独立显卡(非 Intel/AMD 核显):与 GpuInfo.ScoreDeviceName 同一套特征(含新版 "Intel(R) Graphics" 核显名)。</summary>
+    private static bool IsDiscreteGpu(string name) => !GpuInfo.IsIntegratedGPU(name);
 
     private void NavList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
