@@ -266,7 +266,7 @@ public static class CutoutService
             var opts = new SessionOptions();
             if (gpuId >= 0)
             {
-                try { opts.AppendExecutionProvider_DML(gpuId); }
+                try { opts.AppendExecutionProvider_DML(EngineService.ToDmlDevice(gpuId)); }
                 catch { /* DirectML 不可用时回退 CPU */ }
             }
             return new InferenceSession(modelPath, opts);

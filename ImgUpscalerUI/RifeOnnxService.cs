@@ -39,7 +39,7 @@ public static class RifeOnnxService
                 var opts = new SessionOptions();
                 if (gpuId >= 0)
                 {
-                    try { opts.AppendExecutionProvider_DML(gpuId); }
+                    try { opts.AppendExecutionProvider_DML(EngineService.ToDmlDevice(gpuId)); }
                     catch { /* DirectML 不可用回退 CPU */ }
                 }
                 _session = new InferenceSession(FindModel()!, opts);
