@@ -314,7 +314,37 @@ public static class VideoService
             !outputVideo.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase))
             outputVideo += ".mp4";
 
-        var workDir = Path.Combine(Path.GetTempPath(), $"imgup_video_{Guid.NewGuid():N}");
+        // ===== C3:临时盘预检——选剩余空间最大的盘做临时目录;预估需求不足则提前中止(不跑到一半爆盘) =====
+        double durSec = 0;
+        try
+        {
+            durSec = (trimEnd ?? await ProbeDurationSeconds(inputVideo)) - (trimStart ?? 0);
+            if (durSec <= 0) durSec = await ProbeDurationSeconds(inputVideo);
+        }
+        catch { }
+        double estFps = 30;
+        try { if (double.TryParse(ProbeFps(inputVideo), System.Globalization.NumberStyles.Float, inv, out var pf) && pf > 0) estFps = pf; } catch { }
+        long framesEst = (long)Math.Ceiling(Math.Max(1.0, durSec * estFps));
+        if (frameInterp) framesEst = (long)(framesEst * interpScale + 128);
+        if (doUpscale) framesEst = (long)(framesEst * (upscaleShrink1x ? 2.0 : Math.Max(1.0, scale)) + 128);
+        double needGB = framesEst * 3.0 * 1.6 / 1048576.0;   // 1080p 帧 PNG≈3MB,安全余量 1.6 倍
+        string tempRoot = PickTempRoot();
+        var workDir = Path.Combine(tempRoot, $"imgup_video_{Guid.NewGuid():N}");
+        try
+        {
+            var drive = new System.IO.DriveInfo(tempRoot);
+            if (drive.AvailableFreeSpace < needGB)
+                throw new InvalidOperationException(
+                    $"临时磁盘空间不足:{tempRoot} 仅剩 {drive.AvailableFreeSpace / (1024 << 20):0}GB,本任务预计需要约 {needGB:0}GB(补帧放大后的临时帧占用大)。" +
+                    "请清理磁盘、降低补帧倍率/超分倍率,或把视频放到其它盘后再处理。");
+            if (drive.AvailableFreeSpace < 35L * 1024 * 1024 * 1024)
+            {
+                progress?.Report((0, $"临时盘 {tempRoot} 剩余 {drive.AvailableFreeSpace / (1024 << 20):0}GB,任务预计 {needGB:0}GB——高负荷时请留意,空间不足会失败(已自动选了剩余最大的盘)"));
+                AppLogger.Info($"⚠ 临时盘 {tempRoot} 剩余 {drive.AvailableFreeSpace / (1024 << 20):0}GB,预计需要 {needGB:0}GB(已自动选剩余最大的盘)");
+            }
+        }
+        catch (InvalidOperationException) { throw; }
+        catch { }
         var framesIn = Path.Combine(workDir, "frames_in");
         var framesOut = Path.Combine(workDir, "frames_out");
         var framesFinal = Path.Combine(workDir, "frames_final");
@@ -324,24 +354,6 @@ public static class VideoService
 
         try
         {
-            // C3:临时磁盘空间检查(不足 2GB 直接提示;8x+TTA 补帧每帧几 MB,512 帧可超 30GB)
-            try
-            {
-                var drive = new System.IO.DriveInfo(Path.GetPathRoot(workDir)!);
-                if (drive.AvailableFreeSpace < 2L * 1024 * 1024 * 1024)
-                {
-                    progress?.Report((0, $"⚠ 临时盘({workDir[..3]})剩余 {drive.AvailableFreeSpace / (1024 << 20):0}GB,可能不够,建议清理磁盘"));
-                    AppLogger.Info($"⚠ 临时盘({workDir[..3]})剩余 {drive.AvailableFreeSpace / (1024 << 20):0}GB,可能不够,建议清理磁盘");
-                }
-                // 38GB 级:补帧(8x+TTA)加超分可能临时占用 30GB+,剩余不足 35GB 提醒"高负荷可能不够"
-                else if (drive.AvailableFreeSpace < 35L * 1024 * 1024 * 1024)
-                {
-                    progress?.Report((0, $"临时盘({workDir[..3]})剩余 {drive.AvailableFreeSpace / (1024 << 20):0}GB — 8x 补帧+超分临时文件较多,若提示空间不足请清理或改输出到其它盘"));
-                    AppLogger.Info($"临时盘({workDir[..3]})剩余 {drive.AvailableFreeSpace / (1024 << 20):0}GB — 高负荷(补帧8x+超分)可能占 30GB+,建议清理磁盘");
-                }
-            }
-            catch { }
-
             // 1) 输入帧率:用户指定优先,否则 ffprobe 探测,再兜底 30
             var probed = ProbeFps(inputVideo);
             double probedFps = 0;
@@ -1224,12 +1236,13 @@ public static class VideoService
                                 $"超分 已处理 {doneFrames} 帧 / 共 {total} 帧"));
                             if (fastMode)
                             {
-                                // 快速模式:批后立即释放临时帧 + 强制 GC,内存峰值降到最低(弱设备不内存墙)
-                                try { Directory.Delete(batchIn, true); } catch { }
-                                try { Directory.Delete(batchOut, true); } catch { }
+                                // 快速模式:强制 GC,内存峰值降到最低(弱设备不内存墙)
                                 GC.Collect();
                                 GC.WaitForPendingFinalizers();
                             }
+                            // 批次完成即释放临时帧(所有模式:大幅降低磁盘峰值,防"爆盘"失败)
+                            try { Directory.Delete(batchIn, true); } catch { }
+                            try { Directory.Delete(batchOut, true); } catch { }
                         }
                         finally
                         {
@@ -2269,6 +2282,33 @@ public static class VideoService
             }
             catch { return ""; }
         });
+    }
+
+    /// <summary>选择剩余空间最大的本地磁盘作为临时目录根(默认 %TEMP% 所在盘)。
+    /// 8x 补帧 + 超分临时帧可达 30GB+,系统盘剩余不足时自动换盘,避免"处理到一半爆盘"。</summary>
+    public static string PickTempRoot()
+    {
+        string best = null!;
+        long bestFree = -1;
+        try
+        {
+            foreach (var d in System.IO.DriveInfo.GetDrives())
+            {
+                try
+                {
+                    if (d.DriveType != System.IO.DriveType.Fixed || !d.IsReady) continue;
+                    if (d.AvailableFreeSpace > bestFree)
+                    {
+                        bestFree = d.AvailableFreeSpace;
+                        best = d.RootDirectory.FullName;
+                    }
+                }
+                catch { }
+            }
+        }
+        catch { }
+        if (best == null || bestFree <= 0) best = Path.GetPathRoot(Path.GetTempPath())!;
+        return best;
     }
 
     /// <summary>探测视频时长(秒)。</summary>
