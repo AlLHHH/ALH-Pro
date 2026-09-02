@@ -772,12 +772,15 @@ public sealed partial class UpscaleView : UserControl
                         // → 走 ONNX 版(不走 Vulkan,稳定);否则 ncnn GPU(非 50 系更快更成熟)。
                         // Real-ESRGAN / waifu2x 都支持 ONNX 兜底(50系/无独显也能稳定跑)。
                         string? onnxPath = null;
-                        if (engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan())
+                        // 手动选 CPU(-1)时:waifu2x/realesrgan 的 ncnn CPU 模式在部分机器崩(实测 exit -1/-1073741819)→ 直接 ONNX(CPU 同样稳定,画质一致)
+                        if (engine == "realesrgan"
+                            && (EngineService.ShouldUseOnnxEsrgan() || (gpuId < 0 && EsrganOnnxService.FindModel() != null)))
                             onnxPath = model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
                                 ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())   // 动漫动画:优先动画模型,无则通用
                                 : EsrganOnnxService.FindModel();
                         else if (engine == "waifu2x"
                             && (EngineService.ShouldUseOnnxWaifu2x()
+                                || gpuId < 0
                                 || !await EngineService.IsWaifu2xNcnnUsableAsync(gpuId, ct)))
                             onnxPath = EsrganOnnxService.FindWaifu2xModel();
                         if (onnxPath != null)

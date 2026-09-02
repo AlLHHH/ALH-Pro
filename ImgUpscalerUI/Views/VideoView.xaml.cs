@@ -473,6 +473,29 @@ public sealed partial class VideoView : UserControl
         catch (Exception ex) { Log("⚠ 应用推荐配置失败:" + ex.Message); }
     }
 
+    /// <summary>当前计算设备是否为核显(名字识别:Intel UHD/Iris/*Intel(R) Graphics* / AMD Radeon(TM) Graphics)。</summary>
+    private bool CurrentIsIntegratedGpu()
+    {
+        try
+        {
+            var idx = CurrentGpuId;
+            if (idx < 0) return false;   // CPU 模式,不算核显
+            var names = GpuInfo.GetAdapterNames();
+            if (idx < names.Count)
+            {
+                var n = names[idx];
+                if (n.Contains("AMD Radeon(TM) Graphics", StringComparison.OrdinalIgnoreCase)) return true;
+                return n.Contains("Intel", StringComparison.OrdinalIgnoreCase)
+                    && (n.Contains("UHD", StringComparison.OrdinalIgnoreCase)
+                        || n.Contains("Iris", StringComparison.OrdinalIgnoreCase)
+                        || n.Contains("HD Graphics", StringComparison.OrdinalIgnoreCase)
+                        || n.Contains("Intel(R) Graphics", StringComparison.OrdinalIgnoreCase));
+            }
+        }
+        catch { }
+        return false;
+    }
+
     // 当前计算设备(全局设置):-1 = CPU;≥0 = GPU 编号(超出枚举数按 CPU 处理)
     private int CurrentGpuId
         => AppSettings.GpuIndex >= 0 && AppSettings.GpuIndex < _gpuCount ? AppSettings.GpuIndex : -1;
@@ -564,7 +587,12 @@ public sealed partial class VideoView : UserControl
             {
                 CompatHintPanel.Visibility = Visibility.Visible;
                 if (CompatHint != null) CompatHint.Text = compatMsg;
-                AppLogger.Info(compatMsg);
+                // 日志只记一次(提示条本身常显;避免切页面/点控件反复刷屏日志)
+                if (!_compatWarnLogged)
+                {
+                    _compatWarnLogged = true;
+                    AppLogger.Info(compatMsg);
+                }
             }
             else
             {
@@ -572,7 +600,11 @@ public sealed partial class VideoView : UserControl
                 if (weak && CompatHint != null)
                 {
                     CompatHint.Text = $"⚠ 检测到设备配置较低({SafeRender.WeakDeviceReason}),建议勾选「兼容模式」防止爆显存/卡顿。";
-                    AppLogger.Info($"⚠ 检测到设备配置较低({SafeRender.WeakDeviceReason}),建议勾选「兼容模式」防止爆显存/卡顿");
+                    if (!_compatWarnLogged)
+                    {
+                        _compatWarnLogged = true;
+                        AppLogger.Info($"⚠ 检测到设备配置较低({SafeRender.WeakDeviceReason}),建议勾选「兼容模式」防止爆显存/卡顿");
+                    }
                 }
             }
         }
@@ -2251,6 +2283,7 @@ public sealed partial class VideoView : UserControl
     private int _lastFpsMode = -1;   // 记录上次帧率模式:切到"单独调整"时自动进入逐条编辑
     private int _lastDedupModel = -1;   // 去重模式切换检测(自动设定推荐阈值用)
     private bool _midRunWarned;         // 处理中改参数只提示一次(本批按快照执行)
+    private static bool _compatWarnLogged;   // 兼容提示日志只写一次(提示条常显,日志不刷屏)
 
     private void FpsIndividualBtn_Click(object sender, RoutedEventArgs e)
     {
@@ -2716,6 +2749,33 @@ public sealed partial class VideoView : UserControl
         if (SafeRender.Profile == SafeRender.DeviceProfile.UltraLow || !ALHPro.VulkanCheck.GpuAvailable)
         {
             Log("⚠ 无 GPU/弱设备:视频超分/补帧将用 CPU 计算,可能非常慢。建议(可选):降低输出分辨率、补帧用 2x、先跑几秒的小片段、或勾选「兼容模式」。");
+        }
+        // ===== 高倍率补帧预警:核显/小显存跑 4x 及以上大概率极慢或失败(不拦,知情即可) =====
+        if (interp)
+        {
+            bool weakGpu = SafeRender.Profile == SafeRender.DeviceProfile.UltraLow
+                || CurrentIsIntegratedGpu() || SafeRender.TotalVramGB < 8;
+            bool highRate = InterpScaleRadios.SelectedIndex >= 2;   // 0=2x 1=3x 2=4x 3=8x...
+            bool highTarget = TargetFpsCheck.IsChecked == true
+                && double.TryParse(TargetFpsBox.Text, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var tf2) && tf2 >= 90;
+            if (weakGpu && (highRate || highTarget))
+            {
+                var dlg = new ContentDialog
+                {
+                    Title = "高倍率补帧提醒",
+                    Content = new TextBlock
+                    {
+                        Text = "当前设备偏弱(核显/显存不足 8GB),高倍率补帧(4x 及以上)可能极慢甚至失败。\n建议:补帧倍率改 2x,或勾选「兼容模式」后先跑几秒小片段试试。",
+                        TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                    },
+                    PrimaryButtonText = "知道了,开始",
+                    CloseButtonText = "我先改参数",
+                    DefaultButton = ContentDialogButton.Primary,
+                    XamlRoot = this.XamlRoot,
+                };
+                try { var r = await dlg.ShowAsync(); if (r != ContentDialogResult.Primary) return; } catch { }
+            }
         }
         // ===== RTX 50 系 + 旧引擎(realesrgan,2022 版 ncnn)提前提示 =====
         // 50 系上 real 引擎可能降级 CPU;waifu2x(官方 20250915 版)兼容。让用户知情,而非跑起来才发现掉速。

@@ -1184,9 +1184,19 @@ public static class VideoService
                                 File.Copy(upFiles[i], Path.Combine(batchIn, Path.GetFileName(upFiles[i])), true);
                             progress?.Report((45 + (int)(45.0 * start / total),
                                 $"超分 已处理 {start} 帧 / 共 {total} 帧(批次 {start / batchSize + 1}/{batches})..."));
-                            // 视频超分:50系/无独显 + Real-ESRGAN/waifu2x + ONNX 模型在 → 走 ONNX 逐帧(不走会崩的 ncnn-vulkan)
+                            // 视频超分:50系/无独显/手动CPU + Real-ESRGAN/waifu2x + ONNX 模型在 → 走 ONNX 逐帧(不走会崩的 ncnn-vulkan)
                             string? onnxModelPath = null;
-                            if (engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan())
+                            if (upGpu < 0)
+                            {
+                                // 手动选 CPU:waifu2x/realesrgan 的 ncnn CPU 模式在部分机器崩(实测 exit -1/-1073741819)→ 直接 ONNX
+                                if (engine == "realesrgan")
+                                    onnxModelPath = model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
+                                        ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())
+                                        : EsrganOnnxService.FindModel();
+                                else if (engine == "waifu2x")
+                                    onnxModelPath = EsrganOnnxService.FindWaifu2xModel();
+                            }
+                            else if (engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan())
                                 onnxModelPath = model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
                                     ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())
                                     : EsrganOnnxService.FindModel();
