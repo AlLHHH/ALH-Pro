@@ -119,7 +119,8 @@ public static class EsrganOnnxService
     }
 
     /// <summary>ONNX 目录批处理(视频逐帧超分用):遍历 inputDir 的 PNG,逐帧 UpscaleAsync 输出到 outputDir。
-    /// 供视频超分在 50 系/无独显设备走 ONNX(不走会崩的 ncnn-vulkan)。modelPath=null 用 Real-ESRGAN。</summary>
+    /// 供视频超分在 50 系/无独显设备走 ONNX(不走会崩的 ncnn-vulkan)。modelPath=null 用 Real-ESRGAN。
+    /// 串行单路(实测 CPU 并发需每 worker 固定会话,否则每次切线程重建 session 反而慢 3 倍——保持简单可靠)。</summary>
     public static async Task UpscaleDirAsync(string inputDir, string outputDir, double scale,
         int gpuId = -1, IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default,
         string? modelPath = null)
@@ -135,7 +136,7 @@ public static class EsrganOnnxService
             ct.ThrowIfCancellationRequested();
             var outPath = Path.Combine(outputDir, Path.GetFileName(files[i]));
             await UpscaleAsync(files[i], outPath, scale, auto ? -2 : gpuId, null, ct, modelPath).ConfigureAwait(false);
-            progress?.Report(((int)((double)(i + 1) / files.Length * 100),
+            progress?.Report(((int)((i + 1) * 100.0 / files.Length),
                 $"超分 {i + 1}/{files.Length} 帧({Path.GetFileName(files[i])})"));
         }
     }
