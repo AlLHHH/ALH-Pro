@@ -29,18 +29,26 @@ public static class LavaSrService
         return d != null && File.Exists(Path.Combine(d, "backbone.onnx")) && File.Exists(Path.Combine(d, "spec_head.onnx"));
     }
 
-    /// <summary>超分一个 WAV(读 16-bit PCM,任意采样率)→ 48kHz 输出。inputSampleRate 需已知。</summary>
+    /// <summary>超分一个 WAV(16-bit PCM,单/双声道,任意采样率)→ 48kHz 输出。inputSampleRate 需已知。</summary>
     public static async Task<byte[]> UpscaleWavAsync(string inputWav, int inputSampleRate,
         IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default)
     {
-        var (wave, sr) = ReadWav16(inputWav);
-        if (sr != inputSampleRate) sr = inputSampleRate;
+        var (chans, nCh, wavSr) = ReadWav16(inputWav);
+        if (wavSr != inputSampleRate) inputSampleRate = wavSr;   // WAV 头为准(调用方传入仅作兜底)
         progress?.Report((5, "音频超分:准备(重采样)..."));
         return await Task.Run(() =>
         {
             var (backbone, head, melFb) = EnsureSessions();
-            float[] merged = RunCore(wave, sr, backbone, head, melFb, progress, ct);
-            return WriteWav16(merged, OUT_SR);
+            // 逐声道处理(LavaSR 单声道带宽扩展;声道独立,无相位关联问题)
+            var outCh = new float[nCh][];
+            for (int c = 0; c < nCh; c++)
+                outCh[c] = RunCore(chans[c], inputSampleRate, backbone, head, melFb, progress, ct);
+            int n = outCh[0].Length;
+            var inter = new float[n * nCh];
+            for (int i = 0; i < n; i++)
+                for (int c = 0; c < nCh; c++)
+                    inter[i * nCh + c] = outCh[c][i];
+            return WriteWav16(inter, nCh, OUT_SR);
         }, ct);
     }
 
@@ -122,45 +130,66 @@ public static class LavaSrService
         return AudioSrsDsp.ResamplePoly(merged, 48000, ENH_SR);
     }
 
-    // ---------- WAV 读写(16-bit PCM) ----------
-    static (float[], int) ReadWav16(string path)
+    // ---------- WAV 读写(16-bit PCM,支持单/双声道,按 WAV 头正确解交错) ----------
+    static (float[][] chans, int nCh, int sr) ReadWav16(string path)
     {
         using var br = new BinaryReader(File.OpenRead(path));
         br.ReadChars(4); br.ReadInt32(); br.ReadChars(4);
+        int ch = 0, sr = 0, bits = 0;
+        long dataOff = -1, dataLen = 0;
         while (br.BaseStream.Position < br.BaseStream.Length)
         {
             string id = new string(br.ReadChars(4));
             int size = br.ReadInt32();
             if (id == "fmt ")
             {
-                br.ReadInt16(); int ch = br.ReadInt16(); int sr = br.ReadInt32();
-                br.ReadInt32(); br.ReadInt16(); int bits = br.ReadInt16();
+                br.ReadInt16();      // PCM
+                ch = br.ReadInt16();
+                sr = br.ReadInt32();
+                br.ReadInt32();      // byte rate
+                br.ReadInt16();      // block align
+                bits = br.ReadInt16();
                 if (size > 16) br.BaseStream.Seek(size - 16, SeekOrigin.Current);
-                if (id == "data") break;
-                continue;
             }
-            if (id == "data")
+            else if (id == "data")
             {
-                int samples = size / 2 / 2;   // 假设 stereo 16bit
-                var mix = new float[samples];
-                for (int s = 0; s < samples; s++) { mix[s] = br.ReadInt16() / 32768f; br.ReadInt16(); }
-                return (mix, 0);
+                dataOff = br.BaseStream.Position;
+                dataLen = size;
+                break;
             }
-            br.BaseStream.Seek(size + (size % 2), SeekOrigin.Current);
+            else br.BaseStream.Seek(size + (size % 2), SeekOrigin.Current);
         }
-        throw new InvalidDataException("WAV 读取失败");
+        if (ch is not (1 or 2) || bits != 16 || dataOff < 0)
+            throw new InvalidDataException($"LavaSR 只接受 16-bit 单/双声道 WAV(当前 ch={ch}, bits={bits})");
+        int samples = (int)(dataLen / (2 * ch));
+        br.BaseStream.Seek(dataOff, SeekOrigin.Begin);
+        if (ch == 1)
+        {
+            var m = new float[samples];
+            for (int s = 0; s < samples; s++) m[s] = br.ReadInt16() / 32768f;
+            return (new[] { m }, 1, sr);
+        }
+        var l = new float[samples];
+        var r = new float[samples];
+        for (int s = 0; s < samples; s++)
+        {
+            l[s] = br.ReadInt16() / 32768f;
+            r[s] = br.ReadInt16() / 32768f;
+        }
+        return (new[] { l, r }, 2, sr);
     }
 
-    static byte[] WriteWav16(float[] mono, int sr)
+    static byte[] WriteWav16(float[] interleaved, int ch, int sr)
     {
         using var ms = new MemoryStream();
         using var bw = new BinaryWriter(ms);
-        int dataSize = mono.Length * 2;
+        int n = interleaved.Length / ch;
+        int dataSize = n * ch * 2;
         bw.Write("RIFF"u8); bw.Write(36 + dataSize); bw.Write("WAVE"u8);
-        bw.Write("fmt "u8); bw.Write(16); bw.Write((short)1); bw.Write((short)1);
-        bw.Write(sr); bw.Write(sr * 2); bw.Write((short)2); bw.Write((short)16);
+        bw.Write("fmt "u8); bw.Write(16); bw.Write((short)1); bw.Write((short)ch);
+        bw.Write(sr); bw.Write(sr * ch * 2); bw.Write((short)(ch * 2)); bw.Write((short)16);
         bw.Write("data"u8); bw.Write(dataSize);
-        foreach (var v in mono) bw.Write((short)(Math.Clamp(v, -1f, 1f) * 32767f));
+        foreach (var v in interleaved) bw.Write((short)(Math.Clamp(v, -1f, 1f) * 32767f));
         bw.Flush();
         return ms.ToArray();
     }
