@@ -316,9 +316,9 @@ public sealed partial class MainPage : Page
 
     /// <summary>新版本更新弹窗(每次更新后首次启动弹一次):左侧可选版本(当前+往期),右侧更新内容,
     /// 底部固定"来自作者的话"。关闭后记录版本号,下次升级才会再弹。</summary>
-    private async Task ShowUpdatePopupAsync()
+    private async Task ShowUpdatePopupAsync(bool force = false)
     {
-        if (_updatePopupShown) return;
+        if (_updatePopupShown && !force) return;
         _updatePopupShown = true;
         try
         {
@@ -360,18 +360,21 @@ public sealed partial class MainPage : Page
                 if (i >= 0 && i < entries.Count) notesBox.Text = entries[i].notes;
             };
             listBox.SelectedIndex = 0;   // 默认选中当前版本
-            var grid = new Grid { ColumnSpacing = 10 };
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(228) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
-            grid.Children.Add(listBox);
-            grid.Children.Add(new ScrollViewer
+            var scroll = new ScrollViewer
             {
                 Content = notesBox,
                 MaxHeight = 380,
                 MinWidth = 380,
                 VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
                 Margin = new Microsoft.UI.Xaml.Thickness(2, 0, 0, 0),
-            });
+            };
+            var grid = new Grid { ColumnSpacing = 10 };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(228) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
+            Grid.SetColumn(listBox, 0);
+            grid.Children.Add(listBox);
+            Grid.SetColumn(scroll, 1);
+            grid.Children.Add(scroll);
 
             // 底部:来自作者的话(每次更新弹窗都显示)
             var author = new TextBlock
@@ -647,7 +650,11 @@ public sealed partial class MainPage : Page
             Padding = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 0),
             HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
         };
-        notesLink.Click += (_, _) => ShowReleaseNotes();
+        notesLink.Click += (_, _) =>
+        {
+            // 与"新版本更新弹窗"同一界面:左侧历史版本 + 右侧更新内容 + 作者的话(随时可重看)
+            try { _ = ShowUpdatePopupAsync(force: true); } catch { }
+        };
         content.Children.Add(notesLink);
         // 手动检查更新:点击后显示结果;成功展示"已最新/发现新版本",失败才提示(启动静默检查不打扰)
         var updateRow = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 10 };
