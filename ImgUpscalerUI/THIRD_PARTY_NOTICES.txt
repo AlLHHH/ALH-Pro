@@ -117,4 +117,4 @@ GPLv3:    https://www.gnu.org/licenses/gpl-3.0.txt
 
 本软件所有处理在本机完成,不上传、不收集任何用户数据;
 软件可能联网检查 GitHub 更新(素材处理始终在本机)。
-作者:AlL.H  ·  AI 协作:DeepSeek
+作者:AlL.H

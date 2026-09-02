@@ -77,6 +77,17 @@ namespace ALHPro
                     }
                 }
                 catch { }
+
+                // 启动兼容性守护:程序根目录若有 d3dcompiler_47.dll(旧版/第三方塞入),
+                // 会覆盖系统 DLL → 启动报"无法定位程序输入点 _std_parallel_algorithms_hw_threads"
+                // (本软件有意不随包分发此 DLL,系统自带新版;残留旧文件需删除)
+                try
+                {
+                    var oldDx = Path.Combine(AppContext.BaseDirectory, "d3dcompiler_47.dll");
+                    if (File.Exists(oldDx))
+                        AppLogger.Warn("⚠ 检测到程序目录存在 d3dcompiler_47.dll(该 DLL 由系统自带最新版,程序目录的旧文件会冲突,导致部分机器启动报'无法定位程序输入点')——建议删除此文件后重启程序(本软件无需此文件)");
+                }
+                catch { }
             }
             catch (Exception ex) { AppLogger.Error("系统诊断记录失败", ex); }
         }

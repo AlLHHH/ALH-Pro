@@ -94,7 +94,6 @@ dotnet build ImgUpscalerUI.csproj -c Release -p:Platform=x64
 ## ⚖️ 版权与免责声明(重要)
 
 - **Real-CUGAN 已移除**:因其官方仓库未附明确开源许可(默认"保留所有权利",且无授权联系渠道),v1.1.0 起不再随软件分发该引擎与模型,超分仅保留 MIT/BSD-3 许可的 waifu2x 与 Real-ESRGAN。
-- **DeepSeek**:本软件标注「AI 协作开发」所用鲸鱼图标为 DeepSeek 商标,仅作**归属标注**(描述性使用);商标归 DeepSeek 所有,与 DeepSeek 无官方关联。
 - **FFmpeg**:随附构建为 GPL v2+(含 libx264),本软件以**独立子进程**方式调用(未链接)。分发时保留本声明与源码链接:https://ffmpeg.org/download.html
 - 其余组件(waifu2x-ncnn-vulkan、Real-ESRGAN-ncnn-vulkan、RIFE-ncnn-vulkan、U²-Net、IS-Net、BiRefNet、rembg、HT-Demucs、LavaSR、超分/补帧 ONNX 模型、ONNX Runtime、Windows App SDK、.NET)许可明细见 **`THIRD_PARTY_NOTICES.txt`**(随发布版分发)。
 
@@ -104,4 +103,4 @@ dotnet build ImgUpscalerUI.csproj -c Release -p:Platform=x64
 
 ---
 
-作者:AlL.H · 免费公益 · AI 协作开发:DeepSeek
+作者:AlL.H · 免费公益
