@@ -88,9 +88,10 @@ public sealed partial class MainPage : Page
                     {
                         if (AppSettings.GpuIndex >= 0)
                         {
+                            // 仅本次会话切 CPU:【不写入设置文件】——驱动抽风/临时枚举失败时,
+                            // 不会把用户选好的 GPU 覆盖掉;显卡恢复后下次启动自动回到用户选的设备
                             AppSettings.GpuIndex = -1;
-                            try { AppSettings.Save(); } catch { }
-                            autoMsg = "已自动适配:未检测到可用 GPU → 处理设备已切为 CPU(设置中可改回)";
+                            autoMsg = "已自动适配(仅本次):未检测到可用 GPU → 本次处理设备已切为 CPU;你的设置未改动,显卡恢复正常后重启软件自动恢复";
                         }
                         else
                         {
