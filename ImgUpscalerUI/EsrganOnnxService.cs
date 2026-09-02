@@ -42,6 +42,36 @@ public static class EsrganOnnxService
         return null;
     }
 
+    /// <summary>waifu2x ONNX 模型路径(engines/waifu2x/ waifu2x-cunet2x.onnx;nagadomi/nunif 官方导出)。
+    /// 注意:该模型输入名为 x(不是 input)——用于核显/无独显设备(waifu2x ncnn CPU 模式有 bug 会崩)。</summary>
+    public static string? FindWaifu2xModel()
+    {
+        var root = Path.Combine(EngineService.EnginesDir, "waifu2x");
+        foreach (var f in new[] { "waifu2x-cunet2x.onnx", "waifu2x_cunet2x.onnx" })
+        {
+            foreach (var found in Directory.EnumerateFiles(root, f, SearchOption.AllDirectories))
+                return found;
+            var direct = Path.Combine(root, f);
+            if (File.Exists(direct)) return direct;
+        }
+        return null;
+    }
+
+    /// <summary>动漫动画模型 ONNX(engines/realesrgan/ realesr-animevideov3.onnx;2.4MB)。
+    /// 50系无独显走 ONNX 时也保持"动漫动画"画质(而非退到 x4plus 通用画质)。</summary>
+    public static string? FindAnimeVideoModel()
+    {
+        var root = Path.Combine(EngineService.EnginesDir, "realesrgan");
+        foreach (var f in new[] { "realesr-animevideov3.onnx", "RealESR-AnimeVideo-v3_x4.onnx" })
+        {
+            foreach (var found in Directory.EnumerateFiles(root, f, SearchOption.AllDirectories))
+                return found;
+            var direct = Path.Combine(root, f);
+            if (File.Exists(direct)) return direct;
+        }
+        return null;
+    }
+
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, int), InferenceSession> _sessions = new();
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, int), SemaphoreSlim> _locks = new();
 
@@ -194,13 +224,17 @@ public static class EsrganOnnxService
         progress?.Report((100, "完成"));
     }
 
-    /// <summary>单块推理(返回 4x 结果位图)。会话按 (modelPath,gpuId) 缓存;GPU 失败自动 CPU 重试。</summary>
+    /// <summary>单块推理(返回 4x 结果位图)。会话按 (modelPath,gpuId) 缓存;GPU 失败自动 CPU 重试。
+    /// waifu2x 模型(文件名含 waifu2x)输入名为 x(非 input),其余模型为 input。</summary>
     private static System.Drawing.Bitmap RunTile(System.Drawing.Bitmap src, string modelPath, int gpuId, CancellationToken ct)
     {
         int inW = src.Width, inH = src.Height;
         var pixels = new float[1 * 3 * inH * inW];
         FillPixelArray(src, pixels, inW, inH);
         var inputTensor = new DenseTensor<float>(pixels, new[] { 1, 3, inH, inW });
+
+        // waifu2x 模型输入名是 x(实测 ONNX 元数据);其余(esrgan/cugan/animevideo)是 input
+        string inputName = modelPath.Contains("waifu2x", StringComparison.OrdinalIgnoreCase) ? "x" : "input";
 
         InferenceSession session;
         var key = (modelPath, gpuId);
@@ -221,7 +255,7 @@ public static class EsrganOnnxService
         }
         finally { gate.Release(); }
 
-        var inputs = new[] { NamedOnnxValue.CreateFromTensor("input", inputTensor) };
+        var inputs = new[] { NamedOnnxValue.CreateFromTensor(inputName, inputTensor) };
         IDisposableReadOnlyCollection<DisposableNamedOnnxValue>? results = null;
         try
         {

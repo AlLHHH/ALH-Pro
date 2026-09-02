@@ -774,12 +774,16 @@ public sealed partial class UpscaleView : UserControl
                         progress.Report((0, $"正在处理 {item.Name}..."));
                         // 智能自检选择:照片模式 + 50系/无独显(Blackwell,ncnn-Vulkan 会崩) + ONNX 模型存在
                         // → 走 ONNX 版(不走 Vulkan,稳定);否则 ncnn GPU(非 50 系更快更成熟)。
-                        // Real-ESRGAN 与 Real-CUGAN 都支持 ONNX 兜底(50系动漫素材也能 GPU 稳定跑)。
+                        // Real-ESRGAN / Real-CUGAN / waifu2x 都支持 ONNX 兜底(50系/无独显也能稳定跑)。
                         string? onnxPath = null;
-                        if ((engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan()))
-                            onnxPath = EsrganOnnxService.FindModel();
+                        if (engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan())
+                            onnxPath = model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
+                                ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())   // 动漫动画:优先动画模型,无则通用
+                                : EsrganOnnxService.FindModel();
                         else if (engine == "realcugan" && EngineService.ShouldUseOnnxCugan())
                             onnxPath = EsrganOnnxService.FindCuganModel();
+                        else if (engine == "waifu2x" && EngineService.ShouldUseOnnxWaifu2x())
+                            onnxPath = EsrganOnnxService.FindWaifu2xModel();
                         if (onnxPath != null)
                         {
                             Log("✅ 自检:已按当前显卡自动改用稳定引擎(直接处理,无需设置)");
