@@ -362,12 +362,12 @@ public sealed partial class MainPage : Page
             "若您在使用过程中受益,欢迎通过赞赏给予一点支持,帮助项目走得更远。感谢每一份善意的理解和信任。",
     };
 
-    /// <summary>更新日志(唯一结构):最顶部"来自作者的话" + 左侧版本列表(当前+往期) + 右侧内容。
-    /// fromStartup=true = 升级后首次启动展示(按钮「开始使用」,记录版本号,下次升级才再弹);
-    /// 平时从左侧边栏「更新日志」/关于页打开(按钮「关闭」)。</summary>
+    /// <summary>更新说明:作者的话 + 更新内容。
+    /// fromStartup=true(升级后首次弹):只显示【当前版本】内容,无版本列表——简洁弹窗;
+    /// 从左侧边栏「更新日志」打开:附加版本列表(往期历史可翻)。
+    /// 注意:不修改 ContentDialog 的任何尺寸/位置属性——就是尺寸改动导致的偏位,默认即居中。</summary>
     private async Task ShowUpdateLogAsync(bool fromStartup)
     {
-        if (!fromStartup && _updatePopupShown) { /* 手动打开不受限 */ }
         if (fromStartup)
         {
             if (_updatePopupShown) return;
@@ -378,60 +378,71 @@ public sealed partial class MainPage : Page
             var ver = UpdateChecker.CurrentVersion;
             var entries = BuildUpdateEntries();
             if (entries.Count == 0) return;
-            var listBox = new ListView
-            {
-                Width = 228,
-                SelectionMode = ListViewSelectionMode.Single,
-                VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Top,
-            };
-            foreach (var en in entries)
-                listBox.Items.Add(new TextBlock { Text = $"{en.v} · {en.title}", FontSize = 12, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, TextTrimming = Microsoft.UI.Xaml.TextTrimming.CharacterEllipsis, MaxWidth = 210, Margin = new Microsoft.UI.Xaml.Thickness(0, 4, 0, 4) });
-            var notesBox = new TextBlock { FontSize = 13, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Text = entries[0].notes };
-            listBox.SelectionChanged += (_, _) =>
-            {
-                int i = listBox.SelectedIndex;
-                if (i >= 0 && i < entries.Count) notesBox.Text = entries[i].notes;
-            };
-            listBox.SelectedIndex = 0;   // 默认当前版本
-            var scroll = new ScrollViewer
-            {
-                Content = notesBox,
-                MaxHeight = 400,
-                VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
-            };
-            var grid = new Grid { ColumnSpacing = 12 };
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(228) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
-            Grid.SetColumn(listBox, 0);
-            grid.Children.Add(listBox);
-            Grid.SetColumn(scroll, 1);
-            grid.Children.Add(scroll);
 
-            // 一个结构:最顶部作者的话(卡片) → 分隔线 → 版本列表+内容
             var full = new StackPanel { Spacing = 10 };
-            var authorCard = new Border
+            full.Children.Add(new Border
             {
                 CornerRadius = new Microsoft.UI.Xaml.CornerRadius(8),
                 Padding = new Microsoft.UI.Xaml.Thickness(12, 10, 12, 10),
                 Background = SafeBrush("AppPanelBrush"),
-            };
-            authorCard.Child = AuthorWords();
-            full.Children.Add(authorCard);
+                Child = AuthorWords(),
+            });
             full.Children.Add(new Border
             {
                 Height = 1,
                 Background = SafeBrush("AppBorderBrush"),
             });
-            full.Children.Add(grid);
 
+            if (fromStartup)
+            {
+                // 弹窗:只显示当前版本内容(无列表)
+                full.Children.Add(new ScrollViewer
+                {
+                    Content = new TextBlock { FontSize = 12.5, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Text = entries[0].notes },
+                    MaxHeight = 340,
+                    VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
+                });
+            }
+            else
+            {
+                // 更新日志:作者的话 + 版本列表 + 内容(往期可翻)
+                var listBox = new ListView
+                {
+                    Width = 224,
+                    SelectionMode = ListViewSelectionMode.Single,
+                    VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Top,
+                };
+                foreach (var en in entries)
+                    listBox.Items.Add(new TextBlock { Text = $"{en.v} · {en.title}", FontSize = 12, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, TextTrimming = Microsoft.UI.Xaml.TextTrimming.CharacterEllipsis, MaxWidth = 206, Margin = new Microsoft.UI.Xaml.Thickness(0, 4, 0, 4) });
+                var notesBox = new TextBlock { FontSize = 13, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Text = entries[0].notes };
+                listBox.SelectionChanged += (_, _) =>
+                {
+                    int i = listBox.SelectedIndex;
+                    if (i >= 0 && i < entries.Count) notesBox.Text = entries[i].notes;
+                };
+                listBox.SelectedIndex = 0;
+                var scroll = new ScrollViewer
+                {
+                    Content = notesBox,
+                    MaxHeight = 380,
+                    VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
+                };
+                var grid = new Grid { ColumnSpacing = 12 };
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(224) });
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
+                Grid.SetColumn(listBox, 0);
+                grid.Children.Add(listBox);
+                Grid.SetColumn(scroll, 1);
+                grid.Children.Add(scroll);
+                full.Children.Add(grid);
+            }
+
+            // 默认尺寸(不改大小/位置,系统自动居中)
             var dlg = new ContentDialog
             {
-                Title = "更新日志 · ALH Pro",
+                Title = fromStartup ? $"更新说明 · ALH Pro v{ver}" : "更新日志 · ALH Pro",
                 Content = full,
                 XamlRoot = this.XamlRoot,
-                // WinUI 默认最大 548px——不设宽度正文会被压成窄条,这里放宽
-                MinWidth = 860,
-                MaxWidth = 980,
             };
             if (fromStartup)
             {
