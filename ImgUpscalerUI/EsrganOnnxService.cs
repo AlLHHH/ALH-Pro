@@ -14,14 +14,24 @@ namespace ALHPro;
 
 public static class EsrganOnnxService
 {
-    /// <summary>ONNX 模型路径(engines/rembg/ 下或独立):先找 engines/esrgan-*/RealESRGAN_x4plus.onnx。</summary>
+    /// <summary>ONNX 超分模型路径:搜索 engines/rembg + engines/realesrgan + 程序根目录。
+    /// (RealESRGAN_x4plus.onnx 已放 realesrgan 引擎目录——安装器排除 engines\rembg\*.onnx 是为 1.4GB 抠图模型,
+    /// 超分 ONNX 模型不能只放 rembg 目录,否则安装版机器永远缺失,黑块降级 ONNX 会直接失败:真机 v1.1.1 已复现)</summary>
     public static string? FindModel()
     {
+        var roots = new[]
+        {
+            Path.Combine(EngineService.EnginesDir, "rembg"),
+            Path.Combine(EngineService.EnginesDir, "realesrgan"),
+        };
         foreach (var f in new[] { "RealESRGAN_x4plus.onnx", "realesrgan-x4plus.onnx" })
         {
-            var root = Path.Combine(EngineService.EnginesDir, "rembg");
-            foreach (var found in Directory.EnumerateFiles(root, f, SearchOption.AllDirectories))
-                return found;
+            foreach (var root in roots)
+            {
+                if (!Directory.Exists(root)) continue;
+                foreach (var found in Directory.EnumerateFiles(root, f, SearchOption.AllDirectories))
+                    return found;
+            }
             var direct = Path.Combine(EngineService.EnginesDir, f);
             if (File.Exists(direct)) return direct;
         }
