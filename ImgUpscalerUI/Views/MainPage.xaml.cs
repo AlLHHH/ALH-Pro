@@ -328,7 +328,7 @@ public sealed partial class MainPage : Page
         var notesPath = Path.Combine(AppContext.BaseDirectory, "RELEASE_NOTES.md");
         try { if (File.Exists(notesPath)) curNotes = File.ReadAllText(notesPath); } catch { }
         curNotes = CleanNotes(curNotes);
-        entries.Add(($"v{UpdateChecker.CurrentVersion}", "当前版本(新)", curNotes));
+        entries.Add(($"v{UpdateChecker.CurrentVersion}", "当前版本", curNotes));
         var histPath = Path.Combine(AppContext.BaseDirectory, "release_history.json");
         try
         {
