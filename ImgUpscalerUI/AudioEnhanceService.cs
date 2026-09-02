@@ -25,9 +25,15 @@ public static class AudioEnhanceService
     public static string? FindModel()
     {
         var root = Path.Combine(EngineService.EnginesDir, "demucs");
+        // 优先"人声微调版"(htdemucs_ft_vocals):专门优化人声提取更干净 → 伴奏=原曲−人声 残差更小
+        // 实测:标准版伴奏残留人声(分离误差),ft_vocals 版明显改善。缺失时回退标准 htdemucs。
         if (Directory.Exists(root))
+        {
+            foreach (var f in Directory.EnumerateFiles(root, "htdemucs_ft_vocals*.onnx", SearchOption.AllDirectories))
+                return f;
             foreach (var f in Directory.EnumerateFiles(root, "htdemucs*.onnx", SearchOption.AllDirectories))
                 return f;
+        }
         var direct = Path.Combine(EngineService.EnginesDir, "htdemucs.onnx");
         return File.Exists(direct) ? direct : null;
     }
