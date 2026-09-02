@@ -345,6 +345,13 @@ public sealed partial class MainPage : Page
         return entries;
     }
 
+    /// <summary>安全取主题画笔(资源不存在时透明,不崩)。</summary>
+    private static Microsoft.UI.Xaml.Media.Brush SafeBrush(string key)
+    {
+        try { return (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[key]; }
+        catch { return new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(18, 255, 255, 255)); }
+    }
+
     private static TextBlock AuthorWords() => new()
     {
         FontSize = 12,
@@ -378,8 +385,8 @@ public sealed partial class MainPage : Page
                 VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Top,
             };
             foreach (var en in entries)
-                listBox.Items.Add(new TextBlock { Text = $"{en.v} · {en.title}", FontSize = 11, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, TextTrimming = Microsoft.UI.Xaml.TextTrimming.CharacterEllipsis, MaxWidth = 210, Margin = new Microsoft.UI.Xaml.Thickness(0, 4, 0, 4) });
-            var notesBox = new TextBlock { FontSize = 12, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Text = entries[0].notes };
+                listBox.Items.Add(new TextBlock { Text = $"{en.v} · {en.title}", FontSize = 12, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, TextTrimming = Microsoft.UI.Xaml.TextTrimming.CharacterEllipsis, MaxWidth = 210, Margin = new Microsoft.UI.Xaml.Thickness(0, 4, 0, 4) });
+            var notesBox = new TextBlock { FontSize = 13, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Text = entries[0].notes };
             listBox.SelectionChanged += (_, _) =>
             {
                 int i = listBox.SelectedIndex;
@@ -400,13 +407,20 @@ public sealed partial class MainPage : Page
             Grid.SetColumn(scroll, 1);
             grid.Children.Add(scroll);
 
-            // 一个结构:最顶部作者的话 → 分隔线 → 版本列表+内容
+            // 一个结构:最顶部作者的话(卡片) → 分隔线 → 版本列表+内容
             var full = new StackPanel { Spacing = 10 };
-            full.Children.Add(AuthorWords());
+            var authorCard = new Border
+            {
+                CornerRadius = new Microsoft.UI.Xaml.CornerRadius(8),
+                Padding = new Microsoft.UI.Xaml.Thickness(12, 10, 12, 10),
+                Background = SafeBrush("AppPanelBrush"),
+            };
+            authorCard.Child = AuthorWords();
+            full.Children.Add(authorCard);
             full.Children.Add(new Border
             {
                 Height = 1,
-                Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+                Background = SafeBrush("AppBorderBrush"),
             });
             full.Children.Add(grid);
 
@@ -415,6 +429,9 @@ public sealed partial class MainPage : Page
                 Title = "更新日志 · ALH Pro",
                 Content = full,
                 XamlRoot = this.XamlRoot,
+                // WinUI 默认最大 548px——不设宽度正文会被压成窄条,这里放宽
+                MinWidth = 860,
+                MaxWidth = 980,
             };
             if (fromStartup)
             {
