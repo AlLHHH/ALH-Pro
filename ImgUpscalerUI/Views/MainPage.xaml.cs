@@ -405,36 +405,28 @@ public sealed partial class MainPage : Page
             }
             else
             {
-                // 更新日志:作者的话 + 版本列表 + 内容(往期可翻)
-                var listBox = new ListView
+                // 更新日志:作者的话 + 顶部版本下拉(全宽) + 正文全宽(无左右分栏,不再挤压/裁剪)
+                var verCombo = new ComboBox
                 {
-                    Width = 224,
-                    SelectionMode = ListViewSelectionMode.Single,
-                    VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Top,
+                    FontSize = 13,
+                    HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch,
                 };
                 foreach (var en in entries)
-                    listBox.Items.Add(new TextBlock { Text = $"{en.v} · {en.title}", FontSize = 12, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, TextTrimming = Microsoft.UI.Xaml.TextTrimming.CharacterEllipsis, MaxWidth = 206, Margin = new Microsoft.UI.Xaml.Thickness(0, 4, 0, 4) });
+                    verCombo.Items.Add(new ComboBoxItem { Content = $"{en.v} · {en.title}" });
                 var notesBox = new TextBlock { FontSize = 13, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Text = entries[0].notes };
-                listBox.SelectionChanged += (_, _) =>
+                verCombo.SelectionChanged += (_, _) =>
                 {
-                    int i = listBox.SelectedIndex;
+                    int i = verCombo.SelectedIndex;
                     if (i >= 0 && i < entries.Count) notesBox.Text = entries[i].notes;
                 };
-                listBox.SelectedIndex = 0;
-                var scroll = new ScrollViewer
+                verCombo.SelectedIndex = 0;
+                full.Children.Add(verCombo);
+                full.Children.Add(new ScrollViewer
                 {
                     Content = notesBox,
-                    MaxHeight = 380,
+                    MaxHeight = 400,
                     VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
-                };
-                var grid = new Grid { ColumnSpacing = 12 };
-                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(224) });
-                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
-                Grid.SetColumn(listBox, 0);
-                grid.Children.Add(listBox);
-                Grid.SetColumn(scroll, 1);
-                grid.Children.Add(scroll);
-                full.Children.Add(grid);
+                });
             }
 
             // 默认尺寸(不改大小/位置,系统自动居中)
