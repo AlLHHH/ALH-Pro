@@ -292,6 +292,25 @@ public sealed partial class MainPage : Page
 
     private sealed class HistEntry { public string v { get; set; } = ""; public string title { get; set; } = ""; public string notes { get; set; } = ""; }
 
+    /// <summary>清洗 Markdown 痕迹再显示(更新说明是 .md 写的,弹窗不露 ##/**/====/--- 等符号)。</summary>
+    private static string CleanNotes(string t)
+    {
+        if (string.IsNullOrEmpty(t)) return t;
+        var sb = new System.Text.StringBuilder();
+        foreach (var raw in t.Split('\n'))
+        {
+            var l = raw.Trim();
+            if (l.Length == 0) { sb.AppendLine(); continue; }
+            // 分隔线(==== / ----)整行丢弃
+            if (l.All(c => c == '=' || c == '-' || c == '#' || c == ' ')) continue;
+            l = l.Replace("## ", "").Replace("### ", "").Replace("**【", "【").Replace("】**", "】")
+                 .Replace("**", "").Replace("`", "").Replace("❕", "").Replace("🎉", "").Trim();
+            if (l.Length == 0) continue;
+            sb.AppendLine(l);
+        }
+        return sb.ToString().TrimEnd();
+    }
+
     private bool _updatePopupShown;
 
     /// <summary>新版本更新弹窗(每次更新后首次启动弹一次):左侧可选版本(当前+往期),右侧更新内容,
@@ -307,6 +326,7 @@ public sealed partial class MainPage : Page
             string curNotes = "未找到更新说明(RELEASE_NOTES.md 缺失)。";
             var notesPath = Path.Combine(AppContext.BaseDirectory, "RELEASE_NOTES.md");
             try { if (File.Exists(notesPath)) curNotes = File.ReadAllText(notesPath); } catch { }
+            curNotes = CleanNotes(curNotes);
             entries.Add(($"v{ver}", "当前版本(新)", curNotes));
             var histPath = Path.Combine(AppContext.BaseDirectory, "release_history.json");
             try
@@ -317,19 +337,20 @@ public sealed partial class MainPage : Page
                     if (hist != null)
                         foreach (var h in hist)
                             if (!entries.Any(en => en.v == "v" + h.v))
-                                entries.Add(("v" + h.v, h.title, h.notes));
+                                entries.Add(("v" + h.v, h.title, CleanNotes(h.notes)));
                 }
             }
             catch { }
 
-            // 左侧版本列表
+            // 左侧版本列表(列宽固定,文字不溢出,不再被右侧面板盖住)
             var listBox = new ListView
             {
-                Width = 210,
+                Width = 228,
                 SelectionMode = ListViewSelectionMode.Single,
+                VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Top,
             };
             foreach (var en in entries)
-                listBox.Items.Add(new TextBlock { Text = $"{en.v} · {en.title}", FontSize = 12, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Margin = new Microsoft.UI.Xaml.Thickness(0, 6, 0, 6) });
+                listBox.Items.Add(new TextBlock { Text = $"{en.v} · {en.title}", FontSize = 11, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, TextTrimming = Microsoft.UI.Xaml.TextTrimming.CharacterEllipsis, MaxWidth = 210, Margin = new Microsoft.UI.Xaml.Thickness(0, 4, 0, 4) });
             // 右侧更新内容
             var notesBox = new TextBlock { FontSize = 12, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, Text = entries[0].notes };
             listBox.SelectionChanged += (_, _) =>
@@ -338,11 +359,18 @@ public sealed partial class MainPage : Page
                 if (i >= 0 && i < entries.Count) notesBox.Text = entries[i].notes;
             };
             listBox.SelectedIndex = 0;   // 默认选中当前版本
-            var grid = new Grid { ColumnSpacing = 12 };
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
+            var grid = new Grid { ColumnSpacing = 10 };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(228) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
             grid.Children.Add(listBox);
-            grid.Children.Add(new ScrollViewer { Content = notesBox, MaxHeight = 380, VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto });
+            grid.Children.Add(new ScrollViewer
+            {
+                Content = notesBox,
+                MaxHeight = 380,
+                MinWidth = 380,
+                VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
+                Margin = new Microsoft.UI.Xaml.Thickness(2, 0, 0, 0),
+            });
 
             // 底部:来自作者的话(每次更新弹窗都显示)
             var author = new TextBlock
@@ -574,7 +602,7 @@ public sealed partial class MainPage : Page
         try
         {
             var path = Path.Combine(AppContext.BaseDirectory, "RELEASE_NOTES.md");
-            text = File.Exists(path) ? File.ReadAllText(path) : "未找到 RELEASE_NOTES.md(程序目录)。";
+            text = File.Exists(path) ? CleanNotes(File.ReadAllText(path)) : "未找到 RELEASE_NOTES.md(程序目录)。";
         }
         catch (Exception ex) { text = "读取更新详情失败: " + ex.Message; }
         var dlg = new ContentDialog
