@@ -510,15 +510,14 @@ public sealed partial class VideoView : UserControl
         if (CompatHintPanel != null)
         {
             bool weak = SafeRender.IsWeakDevice && FastModeCheck.IsChecked != true;
-            // 引擎兼容自检优先(不限 50 系):旧 ncnn 引擎(realcugan/realesrgan 2022)在
+            // 引擎兼容自检优先(不限 50 系):旧 ncnn 引擎(realesrgan 2022)在
             // Blackwell/Vulkan 不可用设备上 GPU 崩 → 建议 waifu2x;rife 老模型在 Blackwell 不稳 → 建议 v4.13/v4.6
             string? compatMsg = null;
             bool upOn = UpscaleToggle.IsChecked == true;
             bool interpOn = InterpToggle.IsChecked == true;
-            if (upOn && VideoEngineRadios.SelectedIndex is 1 or 2 && EngineService.OldNcnnGpuRisky())
+            if (upOn && VideoEngineRadios.SelectedIndex == 1 && EngineService.OldNcnnGpuRisky())
             {
-                var oldEngineLabel = VideoEngineRadios.SelectedIndex == 1 ? "Real-CUGAN" : "Real-ESRGAN";
-                compatMsg = $"⚠ 当前显卡与「{oldEngineLabel}」(2022 版)不兼容,建议改用「waifu2x」(官方新版,更稳定)";
+                compatMsg = $"⚠ 当前显卡与「Real-ESRGAN」(2022 版)不兼容,建议改用「waifu2x」(官方新版,更稳定)";
             }
             else if (interpOn && InterpModelCombo.SelectedIndex is 3 or 4 or 5 or 6 && EngineService.OldRifeModelRisky())
             {
@@ -754,7 +753,7 @@ public sealed partial class VideoView : UserControl
             _ => "1x~2x 速度较快;倍率越高越慢、显存占用越大。1.5x/3x 内部按引擎支持倍数处理",
         };
         // 超分倍率可用性:waifu2x 模型权重虽为 2x,但引擎实测 -s 3/-s 4 用级联输出正常、不崩,已放开;
-        // Real-CUGAN/Real-ESRGAN 都有对应权重(或级联兜底),全亮
+        // Real-ESRGAN 有对应权重,全亮
         SetScaleRadioEnabled(VScale3xRadio, true);
         SetScaleRadioEnabled(VScale4xRadio, true);
         InterpModelCombo.IsEnabled = interp;
@@ -1233,7 +1232,9 @@ public sealed partial class VideoView : UserControl
             if (d.Remember)
             {
                 UpscaleToggle.IsChecked = d.Up;
-                if (d.Engine is >= 0 and <= 2) VideoEngineRadios.SelectedIndex = d.Engine;
+                // 兼容旧设置:旧值 2(Real-CUGAN,已移除)→ 1(Real-ESRGAN);0=waifu2x 1=Real-ESRGAN
+                if (d.Engine == 2) VideoEngineRadios.SelectedIndex = 1;
+                else if (d.Engine is >= 0 and <= 1) VideoEngineRadios.SelectedIndex = d.Engine;
                 if (d.Scale is >= 0 and <= 6)
                     VideoScaleRadios.SelectedIndex = d.Scale switch
                     {
@@ -2665,8 +2666,7 @@ public sealed partial class VideoView : UserControl
             {
                 int eng = VideoEngineRadios.SelectedIndex;
                 if (eng == 0 && EngineService.FindWaifu2x() is null) missing.Add("waifu2x 引擎");
-                if (eng == 1 && EngineService.FindRealCUGAN() is null) missing.Add("Real-CUGAN 引擎");
-                if (eng == 2 && EngineService.FindRealESRGAN() is null) missing.Add("Real-ESRGAN 引擎");
+                if (eng == 1 && EngineService.FindRealESRGAN() is null) missing.Add("Real-ESRGAN 引擎");
             }
             if (interp && VideoService.RifePath is null) missing.Add("RIFE 补帧引擎");
             if (VideoService.FfmpegPath is null) missing.Add("ffmpeg");
@@ -2681,13 +2681,12 @@ public sealed partial class VideoView : UserControl
         {
             Log("⚠ 无 GPU/弱设备:视频超分/补帧将用 CPU 计算,可能非常慢。建议(可选):降低输出分辨率、补帧用 2x、先跑几秒的小片段、或勾选「兼容模式」。");
         }
-        // ===== RTX 50 系 + 旧引擎(realcugan/realesrgan,2022 版 ncnn)提前提示 =====
+        // ===== RTX 50 系 + 旧引擎(realesrgan,2022 版 ncnn)提前提示 =====
         // 50 系上 real 引擎可能降级 CPU;waifu2x(官方 20250915 版)兼容。让用户知情,而非跑起来才发现掉速。
         // 探测(超分前 1×1 实测)仍会兜底;这里只是提前告知+给选择。
-        if (up && IsBlackwellGpu() && VideoEngineRadios.SelectedIndex is 1 or 2)
+        if (up && IsBlackwellGpu() && VideoEngineRadios.SelectedIndex == 1)
         {
-            var oldEngineLabel = VideoEngineRadios.SelectedIndex == 1 ? "Real-CUGAN" : "Real-ESRGAN";
-            if (await AskBlackwellOldEngineAsync(oldEngineLabel))
+            if (await AskBlackwellOldEngineAsync("Real-ESRGAN"))
                 VideoEngineRadios.SelectedIndex = 0;   // 好,换成 waifu2x(兼容 50 系,且最快)
         }
         // 自定义码率:选了该项但没填/填了非法值 → 提示并拦截(避免按"自动"悄悄处理)
@@ -2746,7 +2745,6 @@ public sealed partial class VideoView : UserControl
         var (engine, model) = VideoEngineRadios.SelectedIndex switch
         {
             0 => ("waifu2x", "models-cunet"),
-            1 => ("realcugan", "models-pro"),
             _ => ("realesrgan", "realesrgan-x4plus"),
         };
         // 倍率:0=1x超分(2x放大后缩回) 1=1.5x 2=2x 3=3x 4=4x 5=自定义分辨率
@@ -2836,16 +2834,14 @@ public sealed partial class VideoView : UserControl
         _midRunWarned = false;
         var gpuId = CurrentGpuId;
         // ===== 超分引擎 GPU 兼容探测(全设备,不猜型号) =====
-        // 任何显卡(50系/AMD/Intel/老驱动)只要当前引擎 realcugan/realesrgan 在 GPU 上跑不通,
+        // 任何显卡(50系/AMD/Intel/老驱动)只要当前引擎 realesrgan 在 GPU 上跑不通,
         // 处理前提示:「好的」→ 换 waifu2x(兼容最快);「仍然继续」→ 保持(处理中自动降级其他GPU→CPU)
-        if (up && VideoEngineRadios.SelectedIndex is 1 or 2)
+        if (up && VideoEngineRadios.SelectedIndex == 1)
         {
-            var engineName = VideoEngineRadios.SelectedIndex switch { 1 => "realcugan", _ => "realesrgan" };
-            bool usable = await EngineService.IsEngineGpuUsableAsync(engineName, gpuId, cts.Token).ConfigureAwait(false);
+            bool usable = await EngineService.IsEngineGpuUsableAsync("realesrgan", gpuId, cts.Token).ConfigureAwait(false);
             if (!usable)
             {
-                var engineLabel = VideoEngineRadios.SelectedIndex == 1 ? "Real-CUGAN" : "Real-ESRGAN";
-                var useWaifu = await AskBlackwellCompatibleAsync(engineLabel).ConfigureAwait(false);
+                var useWaifu = await AskBlackwellCompatibleAsync("Real-ESRGAN").ConfigureAwait(false);
                 // 关键:IsEngineGpuUsableAsync 内部 ConfigureAwait(false),回来后线程已非 UI 线程,
                 // 直接改 RadioButtons.SelectedIndex 会抛 0x8001010E(跨线程访问)→ 用 DispatcherQueue 回 UI 线程。
                 var tcs = new System.Threading.Tasks.TaskCompletionSource();

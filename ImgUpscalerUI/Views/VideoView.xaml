@@ -34,10 +34,9 @@
                               IsChecked="True" Checked="Options_Changed" Unchecked="Options_Changed"/>
 
                     <TextBlock Text="超分引擎" Style="{StaticResource SectionTitle}"/>
-                    <RadioButtons x:Name="VideoEngineRadios" SelectedIndex="0" ToolTipService.ToolTip="超分引擎:waifu2x 最快(经典动漫)/ Real-CUGAN 画质更好(动漫) / Real-ESRGAN 写实照片"
+                    <RadioButtons x:Name="VideoEngineRadios" SelectedIndex="0" ToolTipService.ToolTip="超分引擎:waifu2x 最快(经典动漫)/ Real-ESRGAN 写实照片"
                                   SelectionChanged="Combo_Changed">
                         <RadioButton Content="经典动漫 waifu2x (最快)"/>
-                        <RadioButton Content="动漫 Real-CUGAN (画质好)"/>
                         <RadioButton Content="通用 Real-ESRGAN (写实)"/>
                     </RadioButtons>
 

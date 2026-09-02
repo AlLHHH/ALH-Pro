@@ -3,9 +3,9 @@
 ;
 ; 用法:
 ;   1. 先构建发布版(确保 发布版\ 目录是最新,含软件+引擎,模型可缺省);
-;   2. 确认 [Files] 里 发布版\* 没有打包模型(模型 1.65GB 不要进安装包本体);
-;   3. 将本文件放入仓库根,用 Inno Setup 编译 → ALHPro_v1.1.0_Setup.exe(约 900MB);
-;   4. 模型包(models_v1.0.zip, 1.65GB)单独上传 GitHub Release 附件。
+;   2. 确认 [Files] 里 发布版\* 没有打包模型(模型 1.38GB 不要进安装包本体);
+;   3. 将本文件放入仓库根,用 Inno Setup 编译 → ALHPro_v1.1.0_Setup.exe(约 1.2GB);
+;   4. 模型包(models_v1.0.zip, 1.38GB)单独上传 GitHub Release 附件(与 ModelsUrl 同版本)。
 ;
 ; 安装时「选择附加任务」页勾选「下载并安装模型包(来自 GitHub)」:
 ;   安装完成即从 GitHub 下载模型包并解压到 程序目录\engines\rembg\(扁平结构:6 个 .onnx 直接展开),
@@ -15,7 +15,7 @@
 #define MyAppVersion "1.1.0"
 #define MyAppExeName "ALHPro.exe"
 ; GitHub Release 模型包直链(与 Release 附件名必须一致;仓库=AlLHHH/ALH-Pro)
-#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.0/models_v1.0.zip"
+#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.0/models_v1.0.zip"
 #define ModelsFile "models_v1.0.zip"
 
 [Setup]

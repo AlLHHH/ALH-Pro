@@ -20,16 +20,7 @@ ALH Pro — 第三方组件许可声明
          BSD 3-Clause License(模型与算法,xinntao)
    版权: nihui(2021)/ Xintao Wang 等(2021)
 
-3. Real-CUGAN-ncnn-vulkan(超分引擎,动漫)
-   项目: https://github.com/bilibili/ailab/Real-CUGAN
-         https://github.com/nihui/realcugan-ncnn-vulkan
-   许可: MIT License(引擎包装层,nihui)
-         ⚠ 模型权重(Real-CUGAN,bilibili 官方仓库)未附明确开源许可,
-           按默认"保留所有权利"对待。本软件仅将其作为可选引擎,供个人使用;
-           任何商业使用或大规模分发前,请自行向 bilibili(aiLAB)核实授权。
-   版权: nihui(2019)/ bilibili(2022)
-
-4. RIFE-ncnn-vulkan(视频补帧引擎)
+3. RIFE-ncnn-vulkan(视频补帧引擎)
    项目: https://github.com/hzwer/arXiv2020-RIFE
          https://github.com/nihui/rife-ncnn-vulkan
    许可: MIT License(RIFE 算法,Copyright Megvii Inc.)
@@ -37,29 +28,29 @@ ALH Pro — 第三方组件许可声明
          BSD 3-Clause(ncnn 运行时)
    版权: Zhewei Huang 等(2022)/ nihui(2020)
 
-5. U²-Net(抠图模型)
+4. U²-Net(抠图模型)
    论文: U²-Net: Going Deeper with Nested U-Structure
           for Salient Object Detection
    项目: https://github.com/xuebinqin/U-2-Net
    许可: Apache License 2.0
    版权: Xuebin Qin 等(2020)
 
-6. ISNet / DIS(抠图模型)
+5. ISNet / DIS(抠图模型)
    项目: https://github.com/xuebinqin/DIS
    许可: Apache License 2.0
    版权: Xuebin Qin 等(2021)
 
-7. BiRefNet(抠图模型,完整版/精简版)
+6. BiRefNet(抠图模型,完整版/精简版)
    项目: https://github.com/ZhengPeng7/BiRefNet
    许可: MIT License
    版权: Zheng Peng 等(2024)
 
-8. rembg(ONNX 模型封装与转换工具)
+7. rembg(ONNX 模型封装与转换工具)
    项目: https://github.com/danielgatis/rembg
    许可: MIT License(工具本身;模型按其各自上游许可分发)
    版权: Daniel Gatis(2020)
 
-9. FFmpeg(视频拆帧/合成/裁剪/检测/音频滤镜)
+8. FFmpeg(视频拆帧/合成/裁剪/检测/音频滤镜)
    项目: https://ffmpeg.org
    构建: BtbN(https://github.com/BtbN/FFmpeg-Builds,gpl 变体)
    许可: GNU GPL version 3(构建启用 --enable-gpl --enable-version3)
@@ -70,17 +61,17 @@ ALH Pro — 第三方组件许可声明
          依 GPLv3 第 6 条提供对应源码获取途径。
    版权: FFmpeg 开发团队
 
-10. Microsoft ONNX Runtime(抠图/超分/补帧/音频 AI 推理)
+9. Microsoft ONNX Runtime(抠图/超分/补帧/音频 AI 推理)
     项目: https://github.com/microsoft/onnxruntime
     许可: MIT License
     版权: Microsoft Corporation
 
-11. Windows App SDK / WinUI 3 / Windows UI Library
+10. Windows App SDK / WinUI 3 / Windows UI Library
     项目: https://github.com/microsoft/WindowsAppSDK
     许可: MIT License
     版权: Microsoft Corporation
 
-12. .NET 8
+11. .NET 8
     项目: https://github.com/dotnet/runtime
     许可: MIT License
     版权: Microsoft Corporation
@@ -88,7 +79,7 @@ ALH Pro — 第三方组件许可声明
 --------------------------------------------------
 【音频 AI 模型】
 
-13. HT-Demucs(音乐源分离:人声/伴奏/其他)
+12. HT-Demucs(音乐源分离:人声/伴奏/其他)
     算法项目: https://github.com/adefossez/demucs
     模型: htdemucs.onnx / htdemucs_ft_vocals.onnx(人声微调版,官方 fine-tune)
     ONNX 导出: https://github.com/StemSplitio/htdemucs-onnx
@@ -96,7 +87,7 @@ ALH Pro — 第三方组件许可声明
     版权: adefossez / Meta AI(2022)/(StemSplitio 2024)
     说明: 伴奏轨 = 原曲 − 人声(残差);ft_vocals 为人声微调版本。
 
-14. LavaSR(音频真超分辨率:低采样率源 → 48kHz)
+13. LavaSR(音频真超分辨率:低采样率源 → 48kHz)
     项目: LavaSR(Sharma 等,Interspeech 2026;
          官网 https://sharma-kunal.github.io/LavaSR/ )
     模型: backbone.onnx / spec_head.onnx / denoiser_core.onnx(可选)
@@ -105,15 +96,14 @@ ALH Pro — 第三方组件许可声明
     说明: 本软件中 LavaSR 的 DSP 管线(STFT/mel/ISTFT/
          Linkwitz-Riley 合并)为原创 C# 实现。
 
-15. RIFE 补帧 ONNX 模型(rife49.onnx)
+14. RIFE 补帧 ONNX 模型(rife49.onnx)
     算法: RIFE(https://github.com/hzwer/arXiv2020-RIFE,MIT)
     ONNX 导出: https://github.com/yuvraj108c/rife-onnx(MIT)
     版权: yuvraj108c(2024)/ Megvii Inc.
 
-16. 超分 ONNX 模型(50 系显卡/无独显设备的稳定路线)
+15. 超分 ONNX 模型(50 系显卡/无独显设备的稳定路线)
     - RealESRGAN_x4plus.onnx / realesr-animevideov3.onnx
       → 上游 Real-ESRGAN(xinntao,BSD 3-Clause)
-    - realcugan-x4.onnx → 上游 Real-CUGAN(bilibili,见第 3 条许可说明)
     - waifu2x-cunet2x.onnx → 上游 waifu2x(nagadomi,MIT)
     由社区 ONNX 转换项目导出(deepghs / tidus2102 系列转换项目,MIT);
     各模型权重版权归上游作者,许可按上游条目执行。

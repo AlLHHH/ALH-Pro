@@ -79,8 +79,8 @@ public static class VideoService
         }
         if (up && scale > 1.001)
         {
-            // 超分逐帧成本:1080p 单帧 waifu2x≈0.18s / realcugan≈0.3s / realesrgan≈0.45s,按面积缩放
-            double per = engine switch { "waifu2x" => 0.18, "realesrgan" => 0.45, _ => 0.3 };
+            // 超分逐帧成本:1080p 单帧 waifu2x≈0.18s / realesrgan≈0.45s,按面积缩放
+            double per = engine switch { "waifu2x" => 0.18, _ => 0.45 };
             per *= areaN * Math.Max(0.5, scale / 1.0);
             s += frames * per;
         }
@@ -196,7 +196,7 @@ public static class VideoService
     /// <summary>
     /// 视频处理主流程(超分 / 补帧 独立开关,可任意组合)。
     /// </summary>
-    /// <param name="engine">图片超分引擎:waifu2x | realcugan | realesrgan。</param>
+    /// <param name="engine">图片超分引擎:waifu2x | realesrgan。</param>
     /// <param name="model">引擎模型参数。</param>
     /// <param name="scale">放大倍数(1/1.5/2/3/4;非整数倍用引擎就近倍数+高保真缩放)。</param>
     /// <param name="doUpscale">是否逐帧超分。</param>
@@ -1172,14 +1172,12 @@ public static class VideoService
                                 File.Copy(upFiles[i], Path.Combine(batchIn, Path.GetFileName(upFiles[i])), true);
                             progress?.Report((45 + (int)(45.0 * start / total),
                                 $"超分 已处理 {start} 帧 / 共 {total} 帧(批次 {start / batchSize + 1}/{batches})..."));
-                            // 视频超分:50系/无独显 + Real-ESRGAN/Real-CUGAN/waifu2x + ONNX 模型在 → 走 ONNX 逐帧(不走会崩的 ncnn-vulkan)
+                            // 视频超分:50系/无独显 + Real-ESRGAN/waifu2x + ONNX 模型在 → 走 ONNX 逐帧(不走会崩的 ncnn-vulkan)
                             string? onnxModelPath = null;
                             if (engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan())
                                 onnxModelPath = model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
                                     ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())
                                     : EsrganOnnxService.FindModel();
-                            else if (engine == "realcugan" && EngineService.ShouldUseOnnxCugan())
-                                onnxModelPath = EsrganOnnxService.FindCuganModel();
                             else if (engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx))
                                 onnxModelPath = EsrganOnnxService.FindWaifu2xModel();
                             if (onnxModelPath != null)

@@ -40,14 +40,6 @@ public static partial class EngineService
         return IsBlackwellGpu() || OldNcnnGpuRisky();
     }
 
-    /// <summary>Real-CUGAN 是否应走 ONNX 路线:50系/无独显(Vulkan 不可用)→ ONNX(与 Real-ESRGAN 同策略)。
-    /// CUGAN 官方引擎停在 2022 版(与 waifu2x 20250915 不同),50系上无可靠 GPU 路 → ONNX 兜底。</summary>
-    public static bool ShouldUseOnnxCugan()
-    {
-        if (EsrganOnnxService.FindCuganModel() == null) return false;
-        return IsBlackwellGpu() || OldNcnnGpuRisky();
-    }
-
     /// <summary>waifu2x 是否应走 ONNX 路线:仅在 无独显/Vulkan 不可用时(此时只能 CPU,而 waifu2x ncnn CPU 模式有 bug 会崩)。
     /// 50 系 waifu2x 20250915 新版引擎兼容 Blackwell,无需 ONNX;普通 GPU 走 ncnn 更快。
     /// (50 系引擎到底行不行,由 IsWaifu2xNcnnUsableAsync 真机探测兜底——见下方。)</summary>
@@ -82,7 +74,7 @@ public static partial class EngineService
         return ok;
     }
 
-    /// <summary>旧 ncnn 引擎(2022 版,realcugan/realesrgan ncnn)在 GPU 上可能不可用的设备:
+    /// <summary>旧 ncnn 引擎(2022 版,realesrgan ncnn)在 GPU 上可能不可用的设备:
     /// ①RTX 50 系(Blackwell,ncnn-Vulkan vkQueueSubmit 崩,全局已知)②Vulkan 不可用/无独显(只能 CPU,而 CPU 也崩)。
     /// 用于全设备兼容自检提示(不限 50 系)。</summary>
     public static bool OldNcnnGpuRisky()
@@ -117,14 +109,11 @@ public static partial class EngineService
         }
     }
 
-    /// <summary>动漫模式可选模型(跨引擎:waifu2x / Real-CUGAN)。</summary>
+    /// <summary>动漫模式可选模型(waifu2x 系,全部 MIT 许可)。</summary>
     public static readonly (string Label, string Engine, string Model)[] AnimeModels =
     {
         ("waifu2x · 通用 (cunet)", "waifu2x", "models-cunet"),
         ("waifu2x · 动漫插画 (upconv_7_anime)", "waifu2x", "models-upconv_7_anime_style_art_rgb"),
-        ("Real-CUGAN · 专业 (pro)", "realcugan", "models-pro"),
-        ("Real-CUGAN · 语义增强 (se)", "realcugan", "models-se"),
-        ("Real-CUGAN · 无降噪 (nose)", "realcugan", "models-nose"),
     };
 
     // 注意:预处理降噪用 cunet(models-cunet 自带 1x 降噪模型 noise_model.bin);
@@ -153,7 +142,6 @@ public static partial class EngineService
 
     public static string? FindWaifu2x() => FindExe("waifu2x", "waifu2x-ncnn-vulkan.exe");
     public static string? FindRealESRGAN() => FindExe("realesrgan", "realesrgan-ncnn-vulkan.exe");
-    public static string? FindRealCUGAN() => FindExe("realcugan", "realcugan-ncnn-vulkan.exe");
 
     public static string? FindU2NetModel()
     {
@@ -185,7 +173,6 @@ public static partial class EngineService
         var list = new System.Collections.Generic.List<string>();
         if (FindWaifu2x() is null) list.Add("waifu2x");
         if (FindRealESRGAN() is null) list.Add("realesrgan");
-        if (FindRealCUGAN() is null) list.Add("realcugan");
         if (VideoService.FfmpegPath is null) list.Add("ffmpeg");
         if (VideoService.RifePath is null) list.Add("rife");
         // 抠图模型:检查默认使用的高精度模型(缺了它,默认抠图不可用)
@@ -450,7 +437,6 @@ public static partial class EngineService
             string? exe = engine switch
             {
                 "waifu2x" => FindWaifu2x(),
-                "realcugan" => FindRealCUGAN(),
                 "realesrgan" => FindRealESRGAN(),
                 _ => null,
             };
@@ -465,20 +451,8 @@ public static partial class EngineService
                     bmp.SetPixel(0, 0, System.Drawing.Color.Red);
                     bmp.Save(inPng, System.Drawing.Imaging.ImageFormat.Png);
                 }
-                // 引擎参数:waifu2x/realesrgan 用 -s 2(2x 模型);realcugan 用 -s 2 + 真实模型目录
-                // (realcugan 必须带 -m 正确模型名,否则探测失败误报"GPU不可用"→白白转CPU)
-                string args;
-                if (engine == "realcugan")
-                {
-                    var exeDir = Path.GetDirectoryName(exe) ?? ".";
-                    var md = Directory.EnumerateDirectories(exeDir, "models-*").OrderBy(d => d).FirstOrDefault();
-                    if (md == null) return false;   // 无模型可测:不探测(调用方按可用处理)
-                    args = $"-i \"{inPng}\" -o \"{outPng}\" -s 2 -m \"{Path.GetFileName(md)}\" -g {gpuId}";
-                }
-                else
-                {
-                    args = $"-i \"{inPng}\" -o \"{outPng}\" -s 2 -g {gpuId}";
-                }
+                // 引擎参数:统一 -s 2(2x 模型)
+                var args = $"-i \"{inPng}\" -o \"{outPng}\" -s 2 -g {gpuId}";
                 var psi = new ProcessStartInfo
                 {
                     FileName = exe,
@@ -871,8 +845,8 @@ public static partial class EngineService
     }
 
     /// <summary>放大单张图。</summary>
-    /// <param name="engine">引擎:waifu2x | realcugan | realesrgan。</param>
-    /// <param name="model">模型:waifu2x/realcugan 为模型目录名,realesrgan 为模型名。</param>
+    /// <param name="engine">引擎:waifu2x | realesrgan。</param>
+    /// <param name="model">模型:waifu2x 为模型目录名,realesrgan 为模型名。</param>
     /// <param name="gpuId">GPU 编号;-1 = CPU。</param>
     public static async Task<string> UpscaleAsync(
         string input, string output, string engine, string model,
@@ -897,7 +871,7 @@ public static partial class EngineService
 
         // 1x 超分(2x 放大后缩回):内部先按"可用上限倍率"超分,再把结果精确缩回 1x,画质比直接 1x 更好。
         // 注意:照片模型 realesrgan-x4plus 只有 4x 权重(-s 2 会拿 4x 模型硬缩=模糊/伪影),
-        // 故 realesrgan 的 1x 超分中间倍率用 4x(4x→缩 0.25=原尺寸);waifu2x/realcugan 用 2x。
+        // 故 realesrgan 的 1x 超分中间倍率用 4x(4x→缩 0.25=原尺寸);waifu2x 用 2x。
         if (upscaleShrink1x && scale <= 1.001)
         {
             int upper = engine == "realesrgan" ? 4 : 2;
@@ -967,71 +941,8 @@ public static partial class EngineService
         }
         if (engine == "realcugan")
         {
-            // realcugan 无 1x 模型:1x 时不超分,直接复制原图(避免 2x 再缩回浪费算力)
-            if (scale <= 1.001)
-            {
-                File.Copy(input, output, overwrite: true);
-                return output;
-            }
-            var exe = FindRealCUGAN() ?? throw new FileNotFoundException("未找到 Real-CUGAN 引擎");
-            var exeDir = Path.GetDirectoryName(exe)!;
-            var modelDir = Path.Combine(exeDir, model);
-            if (!Directory.Exists(modelDir))
-                throw new FileNotFoundException("未找到 Real-CUGAN 模型目录: " + modelDir);
-            // 相对路径(引擎会拼接到 exe 目录,绝对路径会出错)
-            var modelArg = Path.GetRelativePath(exeDir, modelDir);
-            var baseArgs = $"-t {tileSize} -g {gpuId} -m \"{modelArg}\"{SafeRender.GetEngineThreadArgs()}";
-            // realcugan 权重可能不齐(models-nose 只有 up2x;models-pro 有 up2x/up3x):
-            // 按目录里实际权重决定引擎倍率,缺失时降级到可用倍率,再用缩放/级联补足
-            bool hasUp2 = Directory.EnumerateFiles(modelDir, "up2x*.param").Any();
-            bool hasUp3 = Directory.EnumerateFiles(modelDir, "up3x*.param").Any();
-            bool hasUp4 = Directory.EnumerateFiles(modelDir, "up4x*.param").Any();
-            if (!hasUp2)
-                throw new InvalidOperationException("Real-CUGAN 模型目录缺少 2x 权重: " + modelDir);
-            // 目标 > 2.5x:优先 4x(有权重),其次 3x(有权重),否则 2x 级联两次
-            bool cascade = false;
-            int engineScale;
-            if (scale > 2.5 && hasUp4) engineScale = 4;
-            else if (scale > 2.5 && hasUp3) engineScale = 3;
-            else if (scale > 2.5) { engineScale = 2; cascade = true; }
-            else engineScale = 2;
-            if (cascade)
-            {
-                // 2x 级联替代 3x/4x(实际放大 4 倍,再缩放到目标)
-                progress?.Report((0, "Real-CUGAN:模型无 3x/4x 权重,使用 2x 级联..."));
-                var n2 = PickRealcuganNoise(modelDir, "up2x");
-                var tmp = output + ".step1.png";
-                try
-                {
-                    try { File.Delete(tmp); } catch { }
-                    await RunEngFallbackGpuAsync(exe, $"-i \"{input}\" -o \"{tmp}\" -s 2 -n {n2} {baseArgs}", progress, ct).ConfigureAwait(false);
-                    EnsureFinalOutput(tmp);
-                    await RunEngFallbackGpuAsync(exe, $"-i \"{tmp}\" -o \"{output}\" -s 2 -n {n2} {baseArgs}", progress, ct).ConfigureAwait(false);
-                    EnsureFinalOutput(output, jpgQuality, pngCompress);
-                    if (Math.Abs(4.0 - scale) > 0.001)
-                    {
-                        progress?.Report((96, $"输出 {scale:0.##}x(2x 级联放大后精确调整)..."));
-                        await Task.Run(() => ResizeImage(output, output, scale / 4.0), ct).ConfigureAwait(false);
-                    }
-                }
-                finally
-                {
-                    try { File.Delete(tmp); } catch { /* 清理失败忽略 */ }
-                }
-                return output;
-            }
-            var nSel = PickRealcuganNoise(modelDir, $"up{engineScale}x");
-            var args = $"-i \"{input}\" -o \"{output}\" -s {engineScale} -n {nSel} {baseArgs}";
-            progress?.Report((0, "启动 Real-CUGAN 引擎..."));
-            await RunEngFallbackGpuAsync(exe, args, progress, ct).ConfigureAwait(false);
-            EnsureFinalOutput(output, jpgQuality, pngCompress);
-            if (Math.Abs(engineScale - scale) > 0.001)
-            {
-                progress?.Report((96, $"输出 {scale:0.##}x(引擎 {engineScale}x 放大后精确调整)..."));
-                await Task.Run(() => ResizeImage(output, output, scale / engineScale), ct)
-                    .ConfigureAwait(false);
-            }
-            return output;
+            // realcugan 已整体移除(许可不明,见 THIRD_PARTY_NOTICES):兜底为 waifu2x
+            throw new InvalidOperationException("Real-CUGAN 已移除(许可不明),请改用 waifu2x 或 Real-ESRGAN");
         }
         else
         {
@@ -1088,43 +999,8 @@ public static partial class EngineService
         }
         else if (engine == "realcugan")
         {
-            var exe = FindRealCUGAN() ?? throw new FileNotFoundException("未找到 Real-CUGAN 引擎");
-            var exeDir = Path.GetDirectoryName(exe)!;
-            var modelDir = Path.Combine(exeDir, model);
-            if (!Directory.Exists(modelDir))
-                throw new FileNotFoundException("未找到 Real-CUGAN 模型目录: " + modelDir);
-            bool hasUp3 = Directory.EnumerateFiles(modelDir, "up3x*.param").Any();
-            bool hasUp4 = Directory.EnumerateFiles(modelDir, "up4x*.param").Any();
-            int engineScale; bool cascade = false;
-            if (scale > 2.5 && hasUp4) engineScale = 4;
-            else if (scale > 2.5 && hasUp3) engineScale = 3;
-            else if (scale > 2.5) { engineScale = 2; cascade = true; }
-            else engineScale = 2;
-            var modelArg = Path.GetRelativePath(exeDir, modelDir);
-            if (cascade)
-            {
-                var n2 = PickRealcuganNoise(modelDir, "up2x");
-                var tmp = output + ".s1.png";
-                try
-                {
-                    try { File.Delete(tmp); } catch { }
-                    await RunEngFallbackGpuAsync(exe, $"-i \"{input}\" -o \"{tmp}\" -s 2 -n {n2} -t {tileSize} -g {gpuId} -m \"{modelArg}\"{SafeRender.GetEngineThreadArgs()}" + (tta ? " -x" : ""), progress, ct).ConfigureAwait(false);
-                    EnsureFinalOutput(tmp);
-                    await RunEngFallbackGpuAsync(exe, $"-i \"{tmp}\" -o \"{output}\" -s 2 -n {n2} -t {tileSize} -g {gpuId} -m \"{modelArg}\"{SafeRender.GetEngineThreadArgs()}" + (tta ? " -x" : ""), progress, ct).ConfigureAwait(false);
-                    EnsureFinalOutput(output);
-                    if (Math.Abs(4.0 - scale) > 0.001)
-                        await Task.Run(() => ResizeImage(output, output, scale / 4.0), ct).ConfigureAwait(false);
-                }
-                finally { try { File.Delete(tmp); } catch { } }
-            }
-            else
-            {
-                var nSel = PickRealcuganNoise(modelDir, $"up{engineScale}x");
-                await RunEngFallbackGpuAsync(exe, $"-i \"{input}\" -o \"{output}\" -s {engineScale} -n {nSel} -t {tileSize} -g {gpuId} -m \"{modelArg}\"{SafeRender.GetEngineThreadArgs()}" + (tta ? " -x" : ""), progress, ct).ConfigureAwait(false);
-                EnsureFinalOutput(output);
-                if (Math.Abs(engineScale - scale) > 0.001)
-                    await Task.Run(() => ResizeImage(output, output, scale / engineScale), ct).ConfigureAwait(false);
-            }
+            // realcugan 已整体移除(许可不明,见 THIRD_PARTY_NOTICES):兜底为 waifu2x
+            throw new InvalidOperationException("Real-CUGAN 已移除(许可不明),请改用 waifu2x 或 Real-ESRGAN");
         }
         else
         {
@@ -1134,7 +1010,7 @@ public static partial class EngineService
             // -m 显式模型目录(models),-n 模型名(=realesrgan-x4plus)——显式写全,不依赖引擎默认/工作目录
             var args = $"-i \"{input}\" -o \"{output}\" -s {engineScale} -m models -n {model} " +
                 $"-t {tileSize} -g {gpuId}{SafeRender.GetEngineThreadArgs()}";
-            // 实测:realesrgan(2022 版)加 -x(TTA)会卡死(120秒无输出,引擎兼容问题)——禁用,仅 waifu2x/realcugan 新版支持 TTA;
+            // 实测:realesrgan(2022 版)加 -x(TTA)会卡死(120秒无输出,引擎兼容问题)——禁用,仅 waifu2x 新版支持 TTA;
             // 50 系适配升级新版引擎后如支持再放开。
             await RunEngFallbackGpuAsync(exe, args, progress, ct).ConfigureAwait(false);
             EnsureFinalOutput(output);
@@ -1456,11 +1332,9 @@ public static partial class EngineService
                 || s.Contains("memory", StringComparison.OrdinalIgnoreCase);
         }
 
-        // 引擎实际执行的倍数:waifu2x 取最大 2 的幂;realcugan 在分支内按目录权重调整;realesrgan 就近取不小于目标的整数
+        // 引擎实际执行的倍数:waifu2x 取最大 2 的幂;realesrgan 就近取不小于目标的整数
         int engineScale;
-        bool realcuganCascade = false;
         if (engine == "waifu2x") engineScale = CeilPowerOfTwo(scale);
-        else if (engine == "realcugan") engineScale = 2;
         else engineScale = Math.Clamp((int)Math.Ceiling(scale), 1, 4);
 
         if (engine == "waifu2x")
@@ -1486,41 +1360,8 @@ public static partial class EngineService
         }
         else if (engine == "realcugan")
         {
-            // realcugan 无 1x 模型:1x 不超分,直接复制帧
-            if (scale <= 1.001)
-            {
-                foreach (var f in Directory.EnumerateFiles(inputDir))
-                    File.Copy(f, Path.Combine(outputDir, Path.GetFileName(f)), true);
-                return;
-            }
-            var exe = FindRealCUGAN() ?? throw new FileNotFoundException("未找到 Real-CUGAN 引擎");
-            var modelDir = Path.Combine(Path.GetDirectoryName(exe)!, model);
-            if (!Directory.Exists(modelDir))
-                throw new FileNotFoundException("未找到 Real-CUGAN 模型目录: " + modelDir);
-            // 按目录实际权重决定引擎倍率(models-nose 只有 up2x;models-pro 有 up2x/up3x):缺失时降级
-            bool hasUp2 = Directory.EnumerateFiles(modelDir, "up2x*.param").Any();
-            bool hasUp3 = Directory.EnumerateFiles(modelDir, "up3x*.param").Any();
-            bool hasUp4 = Directory.EnumerateFiles(modelDir, "up4x*.param").Any();
-            if (!hasUp2)
-                throw new InvalidOperationException("Real-CUGAN 模型目录缺少 2x 权重: " + modelDir);
-            if (scale > 2.5 && hasUp4) engineScale = 4;
-            else if (scale > 2.5 && hasUp3) engineScale = 3;
-            else if (scale > 2.5) { engineScale = 2; realcuganCascade = true; }
-            if (realcuganCascade)
-            {
-                // 无 3x/4x 权重:2x 级联(实际 4 倍,再缩放到目标)
-                progress?.Report((5, "Real-CUGAN:模型无 3x/4x 权重,使用 2x 级联..."));
-                var n2 = PickRealcuganNoise(modelDir, "up2x");
-                // 级联两遍写同一目录:第二遍轮询从已有帧数起步,进度消息会快速到满,外层批进度仍单调
-                await RunEngAsync(exe, t => $"-i \"{inputDir}\" -o \"{outputDir}\" -s 2 -n {n2} -t {t} -g {gpuId} -m \"{modelDir}\"{SafeRender.GetEngineThreadArgs()}" + (tta ? " -x" : "")).ConfigureAwait(false);
-                await RunEngAsync(exe, t => $"-i \"{outputDir}\" -o \"{outputDir}\" -s 2 -n {n2} -t {t} -g {gpuId} -m \"{modelDir}\"{SafeRender.GetEngineThreadArgs()}" + (tta ? " -x" : "")).ConfigureAwait(false);
-                engineScale = 4;
-            }
-            else
-            {
-                var nSel = PickRealcuganNoise(modelDir, $"up{engineScale}x");
-                await RunEngAsync(exe, t => $"-i \"{inputDir}\" -o \"{outputDir}\" -s {engineScale} -n {nSel} -t {t} -g {gpuId} -m \"{modelDir}\"{SafeRender.GetEngineThreadArgs()}" + (tta ? " -x" : "")).ConfigureAwait(false);
-            }
+            // realcugan 已整体移除(许可不明,见 THIRD_PARTY_NOTICES):兜底为 waifu2x
+            throw new InvalidOperationException("Real-CUGAN 已移除(许可不明),请改用 waifu2x 或 Real-ESRGAN");
         }
         else
         {
@@ -2179,19 +2020,6 @@ public static partial class EngineService
         int p = 1;
         while (p < n) p *= 2;
         return p;
-    }
-
-    /// <summary>
-    /// 选择 Real-CUGAN 模型变体对应的 -n 参数(实测:0=no-denoise,-1=conservative,3=denoise3x;
-    /// 与 README 直觉相反,引擎 -n -1 反而找 upXx-conservative)。
-    /// 按目录实际权重选择:no-denoise → conservative → denoise3x。
-    /// </summary>
-    private static int PickRealcuganNoise(string modelDir, string scalePrefix)
-    {
-        if (File.Exists(Path.Combine(modelDir, scalePrefix + "-no-denoise.param"))) return 0;
-        if (File.Exists(Path.Combine(modelDir, scalePrefix + "-conservative.param"))) return -1;
-        if (File.Exists(Path.Combine(modelDir, scalePrefix + "-denoise3x.param"))) return 3;
-        throw new InvalidOperationException("Real-CUGAN 模型目录缺少可用权重: " + modelDir);
     }
 
     /// <summary>把图片高保真缩放到精确尺寸后写回 outputPath(保持 PNG 格式)。

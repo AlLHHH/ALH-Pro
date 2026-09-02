@@ -28,20 +28,6 @@ public static class EsrganOnnxService
         return null;
     }
 
-    /// <summary>Real-CUGAN ONNX 模型路径(engines/realcugan/ realcugan-x4.onnx;社区导出,BSD 许可)。</summary>
-    public static string? FindCuganModel()
-    {
-        var root = Path.Combine(EngineService.EnginesDir, "realcugan");
-        foreach (var f in new[] { "realcugan-x4.onnx", "4x-cugan-pretrain.onnx", "RealCUGAN_x4.onnx" })
-        {
-            foreach (var found in Directory.EnumerateFiles(root, f, SearchOption.AllDirectories))
-                return found;
-            var direct = Path.Combine(root, f);
-            if (File.Exists(direct)) return direct;
-        }
-        return null;
-    }
-
     /// <summary>waifu2x ONNX 模型路径(engines/waifu2x/ waifu2x-cunet2x.onnx;nagadomi/nunif 官方导出)。
     /// 注意:该模型输入名为 x(不是 input)——用于核显/无独显设备(waifu2x ncnn CPU 模式有 bug 会崩)。</summary>
     public static string? FindWaifu2xModel()
@@ -94,7 +80,7 @@ public static class EsrganOnnxService
     }
 
     /// <summary>ONNX 超分一张图(4x)。scale=目标倍数(4x 原生;2x 也走 4x 再缩回)。
-    /// modelPath: 指定模型(Real-CUGAN 等);null = Real-ESRGAN 自动查找。
+    /// modelPath: 指定模型;null = Real-ESRGAN 自动查找。
     /// gpuId 传入 -2 表示"自动"(按输入大小选设备);其余按传入值。</summary>
     public static async Task UpscaleAsync(string input, string output, double scale,
         int gpuId = -1, IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default,
