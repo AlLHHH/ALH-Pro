@@ -75,20 +75,40 @@ public static class GpuInfo
         return versions;
     }
 
-    /// <summary>推荐索引:第一块独立显卡(跳过 Intel/AMD 核显);全核显或未知时推荐 0。</summary>
+    /// <summary>核显识别(跳过):Intel UHD/Iris/HD Graphics 与新版"Intel(R) Graphics"命名、AMD Radeon(TM) Graphics 核显。</summary>
+    private static bool IsIntegrated(string n)
+    {
+        if (n.Contains("AMD Radeon(TM) Graphics", StringComparison.OrdinalIgnoreCase)) return true;
+        if (!n.Contains("Intel", StringComparison.OrdinalIgnoreCase)) return false;
+        return n.Contains("UHD", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("Iris", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("HD Graphics", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("Intel(R) Graphics", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("Intel(R) Iris", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>推荐索引(优先独显;独显内 NVIDIA &gt; AMD &gt; Intel Arc;全核显/未知时推荐 0)。</summary>
     public static int GetRecommendedIndex(List<string> names)
     {
+        int bestIdx = -1, bestScore = -1;
         for (int i = 0; i < names.Count; i++)
         {
             var n = names[i];
-            var isI = n.Contains("Intel", StringComparison.OrdinalIgnoreCase)
-                && (n.Contains("UHD", StringComparison.OrdinalIgnoreCase)
-                    || n.Contains("Iris", StringComparison.OrdinalIgnoreCase)
-                    || n.Contains("HD Graphics", StringComparison.OrdinalIgnoreCase));
-            var isA = n.Contains("AMD Radeon(TM) Graphics", StringComparison.OrdinalIgnoreCase);
-            if (!isI && !isA) return i;
+            if (IsIntegrated(n)) continue;
+            int score = 0;
+            if (n.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase)
+                || n.Contains("GeForce", StringComparison.OrdinalIgnoreCase)
+                || n.Contains("RTX", StringComparison.OrdinalIgnoreCase))
+                score = 4;
+            else if (n.Contains("AMD", StringComparison.OrdinalIgnoreCase)
+                || n.Contains("Radeon", StringComparison.OrdinalIgnoreCase))
+                score = 3;
+            else if (n.Contains("Arc", StringComparison.OrdinalIgnoreCase))
+                score = 2;
+            else score = 1;
+            if (score > bestScore) { bestScore = score; bestIdx = i; }
         }
-        return names.Count > 0 ? 0 : -1;
+        return bestIdx >= 0 ? bestIdx : (names.Count > 0 ? 0 : -1);
     }
 
     /// <summary>生成下拉标签列表("GPU N · 型号",推荐项带标记)与推荐索引。</summary>

@@ -58,15 +58,26 @@ public static class VulkanCheck
                 Cache();
                 return;
             }
-            // 生成 1×1 测试图(纯色 PNG)
+            // 生成 1×1 测试图(纯色 PNG):优先 GDI+;个别系统 GDI+ 抛异常(真机:0x800A01FF
+            // "A generic error occurred in GDI+")会影响测试图生成——用内置 PNG 兜底,不因此误判"无 GPU"。
             var testPng = Path.Combine(EngineService.TempRoot, $"imgup_vk_{Guid.NewGuid():N}.png");
             var outPng = Path.Combine(EngineService.TempRoot, $"imgup_vkout_{Guid.NewGuid():N}.png");
             try
             {
-                using (var bmp = new System.Drawing.Bitmap(1, 1))
+                try
                 {
-                    bmp.SetPixel(0, 0, System.Drawing.Color.Red);
-                    bmp.Save(testPng, System.Drawing.Imaging.ImageFormat.Png);
+                    using (var bmp = new System.Drawing.Bitmap(1, 1))
+                    {
+                        bmp.SetPixel(0, 0, System.Drawing.Color.Red);
+                        bmp.Save(testPng, System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                }
+                catch
+                {
+                    // GDI+ 异常兜底:内置 1×1 PNG(base64,与 GDI+ 无关,引擎照样能解码)
+                    AppLogger.Warn("⚠ GPU 自检:GDI+ 生成测试图失败,已用内置测试图兜底(不影响检测)");
+                    File.WriteAllBytes(testPng, Convert.FromBase64String(
+                        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="));
                 }
                 // 引擎启动会打印 Vulkan 设备列表(形如 "[0 NVIDIA GeForce RTX 4060 Laptop GPU]  queueC=..."),
                 // 解析出引擎实际识别的 GPU(编号+名称),比注册表顺序更真实。
