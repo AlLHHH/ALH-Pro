@@ -60,6 +60,16 @@ public static class EsrganOnnxService
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, int), InferenceSession> _sessions = new();
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, int), SemaphoreSlim> _locks = new();
+    private static bool _dmlWarned;
+
+    /// <summary>DirectML 不可用时的一次性明确提示(避免"静默掉 CPU → 慢几倍 → 以为不能用")。
+    /// 常见于 RTX 50 系(Blackwell)但驱动较旧、或 AMD/Intel 驱动不完整。</summary>
+    private static void WarnDmlUnavailable(string detail)
+    {
+        if (_dmlWarned) return;
+        _dmlWarned = true;
+        AppLogger.Warn($"⚠ GPU 加速(DirectML)不可用 — {detail}。已自动改用 CPU(稳定但慢数倍),建议更新显卡驱动(50 系需较新驱动)后重启软件再试。");
+    }
 
     /// <summary>按输入尺寸选择 ONNX 推理设备:大图(>256px)→ DirectML GPU(快,实测 512→2048 快 7.7 倍);
     /// 小图 → CPU(小任务 GPU 启动开销 > 算力收益,实测 96px GPU 反而慢 13 倍)。
@@ -329,7 +339,7 @@ public static class EsrganOnnxService
                 if (gpuId >= 0)
                 {
                     try { opts.AppendExecutionProvider_DML(EngineService.ToDmlDevice(gpuId)); }
-                    catch { /* DirectML 不可用回退 CPU */ }
+                    catch (Exception dmlEx) { WarnDmlUnavailable("创建 GPU 会话失败: " + dmlEx.Message.Split('\n')[0]); }
                 }
                 return new InferenceSession(modelPath, opts);
             });
@@ -349,6 +359,7 @@ public static class EsrganOnnxService
             catch (Exception ex) when (gpuId >= 0)
             {
                 // DirectML 失败 → 换 CPU 会话重试(缓存独立 CPU 会话;与 GPU 会话互不干扰)
+                WarnDmlUnavailable("推理失败: " + ex.Message.Split('\n')[0]);
                 var cpuKey = (modelPath, -1);
                 var cpuGate = _locks.GetOrAdd(cpuKey, _ => new SemaphoreSlim(1, 1));
                 cpuGate.Wait();
