@@ -4,7 +4,7 @@
 
 **所有处理在本机完成,不上传、不收集任何用户数据。** 全程中文界面。
 
-- 引擎:waifu2x / Real-ESRGAN / Real-CUGAN / RIFE(基于 nihui/ncnn)、U²-Net / ISNet / BiRefNet(基于 ONNX Runtime)、FFmpeg
+- 引擎:waifu2x / Real-ESRGAN / RIFE(基于 nihui/ncnn)、U²-Net / ISNet / BiRefNet(基于 ONNX Runtime)、FFmpeg
 - 系统要求:Windows 10/11 x64(无 GPU 也可用,自动降级 CPU)
 
 ---
@@ -12,7 +12,7 @@
 ## ✨ 功能
 
 ### 图片放大
-- AI 超分:动漫插画(waifu2x / Real-CUGAN)与真实照片(Real-ESRGAN),1x~4x 倍率,支持 1x 超分(2x 后缩回,只提清晰度)
+- AI 超分:动漫插画(waifu2x)与真实照片(Real-ESRGAN),1x~4x 倍率,支持 1x 超分(2x 后缩回,只提清晰度)
 - 降噪(弱/中/强)、照片模式预处理降噪
 - 后处理:去雾、减少杂色、锐化、清晰、钝化蒙版、保留细节、细节增强、去模糊、边缘增强、边缘抗锯齿
 - 批量处理,输出 JPG / PNG,多图自动分子文件夹
@@ -23,7 +23,7 @@
 - 彩色预览(原图 × 蒙版,棋盘格 = 透明区域),按住查看原图
 
 ### 视频处理
-- **视频超分**:动漫(Real-CUGAN)/ 通用(Real-ESRGAN)/ 经典动漫(waifu2x),1x~4x 或自定义分辨率
+- **视频超分**:经典动漫(waifu2x)/ 写实通用(Real-ESRGAN),1x~4x 或自定义分辨率
 - **补帧 (RIFE)**:v4.13 / v4.6 / v4.26 / 动漫 / 高清 / 超高清 / 经典兼容,输出帧率 = 原帧率 × 倍率
 - **去除重复帧(动漫必备)**:智能检测(自动估节奏)/ 动漫模式(去一拍二/三/四)/ 手动模式(内容帧率采样 / 帧差+SSIM / 重复帧检测 / 画面变化阈值),支持相位自动对齐
 - 去重后规则:输出帧率 = 内容帧率 × 补帧倍率,时长 = 源时长(尾帧恒保留)
@@ -35,7 +35,7 @@
 - 显存 / 内存 / CPU 墙按本机配置自动调节;分块 / 批大小自适应;处理时降低进程优先级;设备降温休息(可调间隔)
 
 ### 设备适配
-- 启动时自动检测 GPU:有独显自动启用(无 GPU 自动切 CPU);**RTX 50 系(Blackwell)**:waifu2x / RIFE 补帧可正常用 GPU;Real-CUGAN / Real-ESRGAN(旧版 ncnn)若遇兼容问题会自动改用其它 GPU,再不行则 CPU——处理开始前会提示换用 waifu2x(最快),输出不受影响
+- 启动时自动检测 GPU:有独显自动启用(无 GPU 自动切 CPU);**RTX 50 系(Blackwell)**:waifu2x / RIFE 补帧可正常用 GPU;Real-ESRGAN(旧版 ncnn)若遇兼容问题会自动改用其它 GPU,再不行则 CPU——处理开始前会提示换用 waifu2x(最快),输出不受影响
 
 ---
 
@@ -43,7 +43,7 @@
 
 **普通用户(不碰代码):**
 
-1. 打开 Releases 页面 → 点 **Assets** 里的 `ALHPro_v1.0_Setup.exe` 下载(约 630MB);
+1. 打开 Releases 页面 → 点 **Assets** 里的 `ALHPro_v1.1.0_Setup.exe` 下载(约 1.2GB);
 2. 双击安装,一路"下一步"即可;
 3. 要用 AI 抠图:安装到"选择附加任务"一步勾选「下载并安装模型包」(约 1.4GB,可选);
 4. 启动 → 左侧选择功能 → 添加素材 → 调整参数 → 开始处理。
@@ -61,15 +61,15 @@
 **直链(复制粘贴用):**
 
 ```
-安装包: https://github.com/AlLHHH/ALH-Pro/releases/download/v1.0/ALHPro_v1.0_Setup.exe
-模型包: https://github.com/AlLHHH/ALH-Pro/releases/download/v1.0/models_v1.0.zip
+安装包: https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.0/ALHPro_v1.1.0_Setup.exe
+模型包: https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.0/models_v1.0.zip
 ```
 
 > 下载只需要这一下访问 GitHub;安装完软件**离线可用**,之后不需要加速器。
 
 **开发者(拿源码构建):**
 
-1. 把 `engines\` 目录(waifu2x / realcugan / realesrgan / rife / ffmpeg / rembg)放进程序目录;
+1. 把 `engines\` 目录(waifu2x / realesrgan / rife / ffmpeg / rembg)放进程序目录;
 2. `dotnet build ImgUpscalerUI/ImgUpscalerUI.csproj -c Release -p:Platform=x64`(见下方构建)。
 
 **动漫素材推荐**:启用去重(智能检测/动漫模式)→ 补帧(RIFE v4.13)。
@@ -90,7 +90,6 @@ dotnet build ImgUpscalerUI/ImgUpscalerUI.csproj -c Release -p:Platform=x64
 
 - 本软件本体:**MIT License**(见 `LICENSE`);
 - 第三方引擎/模型许可明细与源码链接见 **`THIRD_PARTY_NOTICES.txt`**;
-- **Real-CUGAN**:模型版权归哔哩哔哩 (bilibili) 所有,官方仓库**未附明确开源许可**(默认"保留所有权利");本软件仅将其作为可选引擎,**个人使用无碍**,任何商业使用或大规模分发前请自行向 bilibili 核实授权;
 - **FFmpeg**:随附构建为 GPL v3(BtbN 构建),本软件以独立子进程方式调用(未链接);
 - 图片/视频素材处理全部在本机完成。
 

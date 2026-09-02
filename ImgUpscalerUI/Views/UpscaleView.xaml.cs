@@ -306,19 +306,10 @@ public sealed partial class UpscaleView : UserControl
             else SpeedHint.Visibility = Visibility.Collapsed;
         }
         // 引擎兼容自检(黄色同一提示区,优先于耗时提示;不限 50 系——任何 GPU 弱/不可用设备都提示):
-        // Real-CUGAN(2022 ncnn)在 Blackwell/Vulkan 不可用设备无法 GPU → 建议换 waifu2x;照片模式已自动 ONNX
+        // 照片模式 Real-ESRGAN(2022 ncnn)在 Blackwell/Vulkan 不可用设备无法 GPU → 已自动 ONNX;动漫 waifu2x 官方新版稳定
         if (ToolGrid.Items.Count > 0 && !_running)
         {
-            if (ModeRadios.SelectedIndex == 0)
-            {
-                var idx = Math.Clamp(ModelCombo.SelectedIndex, 0, EngineService.AnimeModels.Length - 1);
-                if (EngineService.AnimeModels[idx].Engine == "realcugan" && EngineService.OldNcnnGpuRisky())
-                {
-                    SpeedHint.Text = "⚠ 该设备与 Real-CUGAN(2022 版)不兼容,建议改用「waifu2x」(官方新版,更稳定)";
-                    SpeedHint.Visibility = Visibility.Visible;
-                }
-            }
-            else if (EngineService.ShouldUseOnnxEsrgan())
+            if (ModeRadios.SelectedIndex != 0 && EngineService.ShouldUseOnnxEsrgan())
             {
                 SpeedHint.Text = "✅ 已按此显卡自动选用稳定引擎处理(无需其他设置)";
                 SpeedHint.Visibility = Visibility.Visible;
@@ -331,7 +322,7 @@ public sealed partial class UpscaleView : UserControl
 
     /// <summary>按当前模型刷新放大倍数可用性(引擎/模型原生权重决定):
     /// waifu2x 模型权重虽为 2x,但引擎实测 -s 3/-s 4 用级联(2x 跑两遍)输出正常、不崩溃,
-    /// 故 3x/4x 已放开;Real-ESRGAN/Real-CUGAN 均有对应权重(或级联兜底),全亮。</summary>
+    /// 故 3x/4x 已放开;Real-ESRGAN 有对应权重,全亮。</summary>
     private void UpdateScaleAvailability()
     {
         if (Scale3xRadio == null || Scale4xRadio == null) return;
@@ -779,14 +770,12 @@ public sealed partial class UpscaleView : UserControl
                         progress.Report((0, $"正在处理 {item.Name}..."));
                         // 智能自检选择:照片模式 + 50系/无独显(Blackwell,ncnn-Vulkan 会崩) + ONNX 模型存在
                         // → 走 ONNX 版(不走 Vulkan,稳定);否则 ncnn GPU(非 50 系更快更成熟)。
-                        // Real-ESRGAN / Real-CUGAN / waifu2x 都支持 ONNX 兜底(50系/无独显也能稳定跑)。
+                        // Real-ESRGAN / waifu2x 都支持 ONNX 兜底(50系/无独显也能稳定跑)。
                         string? onnxPath = null;
                         if (engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan())
                             onnxPath = model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
                                 ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())   // 动漫动画:优先动画模型,无则通用
                                 : EsrganOnnxService.FindModel();
-                        else if (engine == "realcugan" && EngineService.ShouldUseOnnxCugan())
-                            onnxPath = EsrganOnnxService.FindCuganModel();
                         else if (engine == "waifu2x"
                             && (EngineService.ShouldUseOnnxWaifu2x()
                                 || !await EngineService.IsWaifu2xNcnnUsableAsync(gpuId, ct)))
@@ -1054,7 +1043,6 @@ public sealed partial class UpscaleView : UserControl
     public static string ModelShort(string key) => key switch
     {
         "realesrgan" => "esrgan",
-        "realcugan" => "cugan",
         "isnet-general-use" => "isnet",
         "rife-v4.13" => "rife413",
         "rife-v4.26" => "rife426",

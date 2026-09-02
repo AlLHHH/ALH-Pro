@@ -9,7 +9,7 @@
 ## ✨ 功能
 
 ### 🖼 图片
-- AI 超分(动漫/通用,1x~4x,waifu2x / Real-CUGAN / Real-ESRGAN)
+- AI 超分(动漫/通用,1x~4x,waifu2x / Real-ESRGAN)
 - 画质增强:去雾、减少杂色、锐化、清晰、钝化蒙版、保留细节、细节增强、去模糊、边缘增强、边缘抗锯齿
 - 抠图(IS-Net / U²-Net,支持主体框选 + 智能涂抹、Ctrl+Z、橡皮擦)
 
@@ -28,7 +28,7 @@
 ## 🚀 快速开始
 
 1. 下载最新发布版(含全部引擎)或按下方「构建」自行编译;
-2. 若单独下载引擎:把 `waifu2x / realcugan / realesrgan / rife / ffmpeg` 放进程序目录的 `engines\` 下;
+2. 若单独下载引擎:把 `waifu2x / realesrgan / rife / ffmpeg` 放进程序目录的 `engines\` 下;
 3. 打开程序 → 添加素材 → 选模式 → 开始处理。
 
 **动漫素材推荐组合**:启用去重 → 动漫模式 + 强度「中」→ 勾选「动漫插值优化」→ 补帧模型 `rife-v4.6`。
@@ -63,11 +63,10 @@
 
 **验证装好了**:打开软件 → AI 抠图页 → 左上角若**没有**黄色"⚠ 未找到抠图模型"提示条 = 装好了;若还有提示,就是没放对位置(见上面结构)。
 
-### 引擎 exe(waifu2x/realesrgan/realcugan/rife/ffmpeg)
+### 引擎 exe(waifu2x/realesrgan/rife/ffmpeg)
 官方发布版已自带;仅当你**手动下载引擎包**时,按 Release 说明解压,确保程序目录是:
 ```
 程序目录\engines\waifu2x\...        (引擎 exe + 模型目录)
-程序目录\engines\realcugan\...
 程序目录\engines\realesrgan\...
 程序目录\engines\rife\...
 程序目录\engines\ffmpeg\ffmpeg.exe
@@ -77,7 +76,7 @@
 ### 50 系显卡(Blackwell)特别说明
 - 图片超分:左下调「算法」选 **真实照片** → 软件自动用稳定引擎(无需操作);选 **动漫插画** → 模型用 `waifu2x`。
 - 视频超分:引擎选 `waifu2x`。
-- 视频补帧:模型选 `通用画质 v4.13 / v4.6`;不要用 `Real-CUGAN`、`Real-ESRGAN`(旧版)或 `rife 老模型`(这些在 50 系会崩,软件会黄字提示你换)。
+- 视频补帧:模型选 `通用画质 v4.13 / v4.6`;不要用 `Real-ESRGAN`(旧版)或 `rife 老模型`(这些在 50 系会崩,软件会黄字提示你换)。
 - 无独显(纯 CPU):超分选真实照片/waifu2x(慢但稳),补帧选 v4.13/v4.6(自动用 CPU)。
 
 ---
@@ -94,10 +93,10 @@ dotnet build ImgUpscalerUI.csproj -c Release -p:Platform=x64
 
 ## ⚖️ 版权与免责声明(重要)
 
-- **Real-CUGAN**:模型版权归 **哔哩哔哩 (bilibili)** 所有,官方仓库**未附明确开源许可**(默认保留所有权利)。本软件仅将其作为可选引擎,**个人使用无碍**;任何**商业使用或大规模分发前,请自行向 bilibili 核实授权**。
+- **Real-CUGAN 已移除**:因其官方仓库未附明确开源许可(默认"保留所有权利",且无授权联系渠道),v1.1.0 起不再随软件分发该引擎与模型,超分仅保留 MIT/BSD-3 许可的 waifu2x 与 Real-ESRGAN。
 - **DeepSeek**:本软件标注「AI 协作开发」所用鲸鱼图标为 DeepSeek 商标,仅作**归属标注**(描述性使用);商标归 DeepSeek 所有,与 DeepSeek 无官方关联。
 - **FFmpeg**:随附构建为 GPL v2+(含 libx264),本软件以**独立子进程**方式调用(未链接)。分发时保留本声明与源码链接:https://ffmpeg.org/download.html
-- 其余组件(waifu2x-ncnn-vulkan、Real-ESRGAN-ncnn-vulkan、RIFE-ncnn-vulkan、U²-Net、IS-Net、BiRefNet、rembg、ONNX Runtime、Windows App SDK、.NET)许可明细见 **`THIRD_PARTY_NOTICES.txt`**(随发布版分发)。
+- 其余组件(waifu2x-ncnn-vulkan、Real-ESRGAN-ncnn-vulkan、RIFE-ncnn-vulkan、U²-Net、IS-Net、BiRefNet、rembg、HT-Demucs、LavaSR、超分/补帧 ONNX 模型、ONNX Runtime、Windows App SDK、.NET)许可明细见 **`THIRD_PARTY_NOTICES.txt`**(随发布版分发)。
 
 ## 📄 许可
 

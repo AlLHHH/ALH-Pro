@@ -43,7 +43,7 @@
                         <TextBlock Text="waifu2x 模型" Style="{StaticResource SectionTitle}"/>
                         <ComboBox x:Name="ModelCombo" HorizontalAlignment="Stretch"
                                   SelectedIndex="0"
-                                  ToolTipService.ToolTip="模型:cunet=通用;upconv_7_anime=动漫插画;Real-CUGAN pro/se/nose=专业/语义增强/无降噪"/>
+                                  ToolTipService.ToolTip="模型:cunet=通用;upconv_7_anime=动漫插画"/>
                     </StackPanel>
 
                     <TextBlock Text="放大倍数" Style="{StaticResource SectionTitle}"/>

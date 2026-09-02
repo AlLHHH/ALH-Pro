@@ -610,7 +610,7 @@ public sealed partial class MainPage : Page
         // 功能
         content.Children.Add(new TextBlock
         {
-            Text = "功能:图片超分(waifu2x / Real-ESRGAN / Real-CUGAN)、AI 抠图、视频超分 + 光流补帧、\n智能去重、转场识别、批量处理、音频增强。",
+            Text = "功能:图片超分(waifu2x / Real-ESRGAN)、AI 抠图、视频超分 + 光流补帧、\n智能去重、转场识别、批量处理、音频增强。",
             FontSize = 12,
             TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
@@ -626,7 +626,6 @@ public sealed partial class MainPage : Page
         {
             ("waifu2x", "naoaki + nihui/ncnn", "https://github.com/nagadomi/waifu2x"),
             ("Real-ESRGAN(含 ONNX)", "Xintao Wang 等 + nihui/ncnn", "https://github.com/xinntao/Real-ESRGAN"),
-            ("Real-CUGAN(含 ONNX)", "bilibili 哔哩哔哩", "https://github.com/bilibili/ailab"),
             ("waifu2x(含 ONNX)", "nagadomi/nunif", "https://github.com/nagadomi/waifu2x"),
             ("RIFE(含 ONNX)", "Zhewei Huang 等 + nihui/ncnn", "https://github.com/hzwer/arXiv2020-RIFE"),
             ("U²-Net", "Qin 等", "https://github.com/xuebinqin/U-2-Net"),

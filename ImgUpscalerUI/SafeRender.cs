@@ -215,7 +215,7 @@ public static class SafeRender
 
     // ---------- 由墙推出的运行参数 ----------
     /// <summary>分块大小(像素):墙越小分块越小,单次引擎峰值显存越低。
-    /// 本机实测(8000×6000 大图):tile 320≈0.8GB / 400≈1.2GB / 512≈1.9GB(waifu2x 4x 与 realcugan 2x 一致),
+    /// 本机实测(8000×6000 大图):tile 320≈0.8GB / 400≈1.2GB / 512≈1.9GB(waifu2x 4x 与 realesrgan 2x 一致),
     /// 按 2 倍余量反推映射(引擎+TTA+系统余量)。大显存放宽到 768/1024:块越大分块越少、接缝越少,
     /// 真实照片/大图质量更好(代价:单块峰值显存高,仍按 512≈1.9GB 线性推算留余量)。</summary>
     public static int GetTileSize()
