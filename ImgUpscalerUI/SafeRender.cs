@@ -488,15 +488,15 @@ public static class SafeRender
         usable = Math.Max(1, usable);
         // 开关2:计算线程按并发路数分摊(多路时每实例更少线程,不超订)
         int conc = Math.Max(1, GetVideoConcurrency());
-        // 【重构·提速】ncnn-vulkan 的 compute 线程(官方向导:"GPU hungry 就加大线程数以更快处理",
-        // 小图 4:4:4 / 大图 2:2:2)。之前被 EffectiveCpuLevel=2 固定压到 ~2~4,高核机实际只用了少数核喂 GPU,
-        // 导致 GPU 超分偏慢。这里按可用核数用满(仍除以并发路数,不超订),多核机显著提速 GPU 超分。
-        // load/save 保持 1:save>1 会触发 ncnn-vulkan vkQueueSubmit 失败(黑帧,项目实测坑)。
+        // 【回到保守】compute 线程用保守的"可用核/2/并发路数"(原版值)——实测把 compute 加大到"用满核数"
+        // 会让 ncnn-vulkan 在部分 N 卡(GTX/RTX)上多线程 Vulkan 提交队列竞争 → vkQueueSubmit 失败 → 黑帧。
+        // compute 过大正是"ncnn 之前没问题、后来黑帧"的根因(见 c001a03 引入的激进改法),这里回退保守。
+        // load/save 保持 1:save>1 同样会触发 vkQueueSubmit 失败(黑帧)。
         int compute = EffectiveCpuLevel switch
         {
-            1 => Math.Max(1, Math.Min(2, usable / conc)),   // 低档(≤4核):够用即可
-            2 => Math.Clamp(usable / (SplitCores ? conc : 1), 2, 6),  // 中档:用满可用核
-            _ => Math.Clamp(usable / (SplitCores ? conc : 1), 4, 8),  // 高档:更满
+            1 => 1,
+            2 => Math.Clamp(usable / 2 / (SplitCores ? conc : 1), 2, 4),   // 中档:÷2,封顶4(原版)
+            _ => Math.Clamp(usable / 2 / (SplitCores ? conc : 1), 4, 8),   // 高档:÷2,封顶8(原版)
         };
         int load = 1;
         int save = 1;                            // 恒 1:防 ncnn-vulkan save 并发触发 GPU 队列失败(黑帧)
