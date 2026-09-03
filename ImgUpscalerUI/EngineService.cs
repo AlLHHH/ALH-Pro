@@ -509,6 +509,7 @@ public static partial class EngineService
         }, null, 60000, 60000);
 
         // 等待退出;取消时杀掉进程树
+        string? killReason = null;
         while (!p.HasExited)
         {
             if (ct.IsCancellationRequested)
@@ -517,14 +518,19 @@ public static partial class EngineService
                 break;
             }
             if (killRequested)
-                throw new InvalidOperationException($"引擎无进展(已强制终止): {stage} — 建议改用 GPU 或降低倍率/分辨率后重试");
+            {
+                killReason = $"引擎无进展(已强制终止): {stage} — 建议改用 GPU 或降低倍率/分辨率后重试";
+                break;
+            }
             await Task.Delay(100).ConfigureAwait(false);
         }
+        // 清理永远执行(即使强制终止/kill 也释放看门狗定时器与轮询任务,不留泄漏)
         await Task.WhenAll(drainOut, drainErr).ConfigureAwait(false);
         watchdog.Dispose();
         watchCts.Cancel();
         try { await watchTask.ConfigureAwait(false); } catch (OperationCanceledException) { }
         App.ActiveProcesses.Unregister(p.Id);
+        if (killReason != null) throw new InvalidOperationException(killReason);
 
         string tail;
         lock (lockObj) { tail = log.ToString().Trim(); }
@@ -1484,12 +1490,18 @@ public static partial class EngineService
                 throw new FileNotFoundException("未找到 waifu2x 模型目录: " + modelDir);
             if (engineScale == 1)
             {
-                bool has1x = Directory.EnumerateFiles(modelDir, "noise*_model.param")
-                        .Any(f => !Path.GetFileName(f).Contains("_scale", StringComparison.Ordinal))
-                    || File.Exists(Path.Combine(modelDir, "scale1.0x_model.param"));
-                if (!has1x)
-                    throw new InvalidOperationException(
-                        $"模型 {model} 不支持 1x(缺少 1x 权重),请选择 2x 及以上倍数");
+                // 与单图路径完全一致:-s 1 在部分机型段错误崩溃,不再直连;
+                // 不降噪时直接复制原图,降噪则用 2x 降噪模型处理后缩回 1x(画质更好)
+                if (noise < 0)
+                {
+                    foreach (var f in Directory.EnumerateFiles(inputDir, "*.png"))
+                    {
+                        var dest = Path.Combine(outputDir, Path.GetFileName(f));
+                        File.Copy(f, dest, overwrite: true);
+                    }
+                    return;
+                }
+                engineScale = 2;
             }
             var args = $"-i \"{inputDir}\" -o \"{outputDir}\" -s {engineScale} -n {noise} " +
                 $"-t {tileSize} -g {gpuId} -m \"{modelDir}\"{SafeRender.GetEngineThreadArgs()}";

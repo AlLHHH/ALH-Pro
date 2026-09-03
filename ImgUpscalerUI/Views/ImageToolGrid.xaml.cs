@@ -787,7 +787,10 @@ public sealed partial class ImageToolGrid : UserControl
             CropInfoText.Text = "正在裁剪...";
             await Task.Run(() =>
             {
-                using var src = new System.Drawing.Bitmap(item.Path);
+                // EXIF 方向对齐:预览(WIC)按 EXIF 旋转显示,系统绘图库不应用——
+                // 旋转 6/8 的竖拍照片若不先转正,裁剪会切到旋转 90° 的错误区域
+                using var raw = new System.Drawing.Bitmap(item.Path);
+                using var src = ApplyExifOrientation(raw);
                 using var cropped = src.Clone(
                     new System.Drawing.Rectangle(x, y, w, h), src.PixelFormat);
                 cropped.Save(newPath, System.Drawing.Imaging.ImageFormat.Png);
@@ -812,6 +815,30 @@ public sealed partial class ImageToolGrid : UserControl
         {
             _cropItem = null;
         }
+    }
+
+    /// <summary>EXIF 方向 6/8(旋转 90°)转正后返回新图;其余方向无操作返回原实例(调用方 using 双释放安全)。
+    /// 预览(WIC)按 EXIF 显示,裁剪必须用同一坐标系,否则竖拍照片裁错区域。</summary>
+    private static System.Drawing.Bitmap ApplyExifOrientation(System.Drawing.Bitmap src)
+    {
+        int orient = 1;
+        try
+        {
+            foreach (System.Drawing.Imaging.PropertyItem pi in src.PropertyItems)
+            {
+                if (pi.Id == 0x0112 && pi.Value is { Length: > 0 }) { orient = pi.Value[0]; break; }
+            }
+        }
+        catch { }
+        if (orient is not (6 or 8)) return src;
+        var outB = new System.Drawing.Bitmap(src.Height, src.Width, src.PixelFormat);
+        using (var g = System.Drawing.Graphics.FromImage(outB))
+        {
+            if (orient == 6) { g.TranslateTransform(0, outB.Height); g.RotateTransform(90); }   // 顺时针 90°
+            else { g.TranslateTransform(outB.Width, 0); g.RotateTransform(-90); }              // 逆时针 90°
+            g.DrawImage(src, 0, 0);
+        }
+        return outB;
     }
 
     // ---------- 拖拽添加 ----------

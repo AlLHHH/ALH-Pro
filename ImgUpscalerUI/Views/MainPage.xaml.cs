@@ -1813,6 +1813,8 @@ public sealed partial class MainPage : Page
                         if (settingsDir != null && System.IO.Directory.Exists(settingsDir))
                             foreach (var s in System.IO.Directory.EnumerateFiles(settingsDir, "*.json"))
                                 System.IO.File.Copy(s, System.IO.Path.Combine(tmpDir, System.IO.Path.GetFileName(s)), true);
+                        // 日志清理配置(log-settings.json)在 ALHPro\ 根,不在 settings\ —— 单独带上,排查"日志被清理"需要它
+                        try { System.IO.File.Copy(ALHPro.AppLogger.LogSettingsFile, System.IO.Path.Combine(tmpDir, "log-settings.json"), true); } catch { }
                     }
                     catch { }
                     // 先在临时目录完整写好 zip(句柄关闭后再复制进保存位置)——避免"边写边读"导致压缩包损坏
