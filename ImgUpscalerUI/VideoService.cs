@@ -1187,95 +1187,14 @@ public static class VideoService
                                 File.Copy(upFiles[i], Path.Combine(batchIn, Path.GetFileName(upFiles[i])), true);
                             progress?.Report((45 + (int)(45.0 * start / total),
                                 $"超分 已处理 {start} 帧 / 共 {total} 帧(批次 {start / batchSize + 1}/{batches})..."));
-                            // 视频超分:50系/无独显/手动CPU + Real-ESRGAN/waifu2x + ONNX 模型在 → 走 ONNX 逐帧(不走会崩的 ncnn-vulkan)
-                            string? onnxModelPath = null;
-                            if (upGpu < 0)
-                            {
-                                // 手动选 CPU:waifu2x/realesrgan 的 ncnn CPU 模式在部分机器崩(实测 exit -1/-1073741819)→ 直接 ONNX
-                                if (engine == "realesrgan")
-                                    onnxModelPath = model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
-                                        ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())
-                                        : EsrganOnnxService.FindModel();
-                                else if (engine == "waifu2x")
-                                    onnxModelPath = EsrganOnnxService.FindWaifu2xModel();
-                            }
-                            else if (engine == "realesrgan"
-                                && (EngineService.ShouldUseOnnxEsrgan() || EngineService.IsNvidiaGpu()))
-                                onnxModelPath = model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
-                                    ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())
-                                    : EsrganOnnxService.FindModel();
-                            else if (engine == "waifu2x"
-                                && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx || EngineService.IsNvidiaGpu()))
-                                onnxModelPath = EsrganOnnxService.FindWaifu2xModel();
-                            if (onnxModelPath != null)
-                            {
-                                if (start == 0)   // 仅首批写自检日志(视频批多,避免刷屏)
-                                {
-                                    AppLogger.Info($"✅ 自检:视频超分({engine})已按当前显卡自动改用稳定引擎(直接处理,无需设置)");
-                                }
-                                progress?.Report((45 + (int)(45.0 * start / total),
-                                    $"超分(稳定引擎) 批次 {start / batchSize + 1}/{batches}..."));
-                                await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
-                                    upGpu < 0 ? -1 : -2, progress, ct, onnxModelPath,
-                                    start, total);   // 用户选 CPU 则强制 CPU,否则按帧大小自动选设备;传全局帧→逐帧显示"第 N/共 M 帧"
-                            }
-                            else
-                            {
-                                await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
-                                    upScale, 0, upGpu, false, progress, ct,
-                                    SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1),   // 显卡家族感知分块(视频超分专用);快速模式再减半(显存占用约降 4 倍)
-                                    watchStage: "超分",   // 逐帧汇报(像补帧一样显示"超分 第 N 帧 / 共 M 帧")
-                                    globalBaseFrames: start, globalTotalFrames: total);   // 百分比按全局帧数算,预计时间才准
-                            }
+                            // 视频超分:直接走 ncnn-Vulkan 引擎(不做 ONNX 切换/黑帧保护/降级链——那些复杂逻辑拖慢且易卡)
+                            await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
+                                upScale, 0, upGpu, false, progress, ct,
+                                SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1),
+                                watchStage: "超分",
+                                globalBaseFrames: start, globalTotalFrames: total);
                             foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
                                 File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
-                            // 黑帧防御:ncnn-vulkan 偶发 vkQueueSubmit 失败 → 输出全黑帧(退出码 0 不报错)。
-                            // 检测到黑帧即用 CPU 重处理该批(引擎线程参数已改 save=1 降低概率,这里兜底:
-                            // 万一还是黑,CPU 软解不依赖 GPU 队列,绝不出黑帧)。
-                            // 兜底防误杀:若【源帧】本来就近全黑(视频黑场/淡入淡出),输出黑是素材本身,
-                            // 不是 GPU 故障——跳过降级,不浪费 CPU 重算。
-                            if (batchOutDirHasBlack(batchOut) && !DirNearBlack(batchIn))
-                            {
-                                progress?.Report((45 + (int)(45.0 * start / total),
-                                    $"⚠ 检测到黑帧(批次 {start}~{end - 1},GPU 输出异常),该批改用 CPU 重处理..." + StageElapsed()));
-                                AppLogger.Info($"降级:批次 {start}~{end - 1} 输出黑帧(ncnn-vulkan GPU 队列异常),已用 CPU 重处理该批");
-                                try
-                                {
-                                    await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
-                                        upScale, 0, -1, false, progress, ct,
-                                        SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1),
-                                        watchStage: "超分",
-                                        globalBaseFrames: start, globalTotalFrames: total);
-                                    foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
-                                        File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
-                                }
-                                catch { }
-                                // CPU 重试仍黑(或 CPU 模式不可用被内部回退 GPU,结果还是黑)→ 整批改走 ONNX 稳定引擎
-                                if (batchOutDirHasBlack(batchOut))
-                                {
-                                    string? onnxB = engine == "realesrgan"
-                                        ? (model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
-                                            ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())
-                                            : EsrganOnnxService.FindModel())
-                                        : engine == "waifu2x" ? EsrganOnnxService.FindWaifu2xModel() : null;
-                                    if (onnxB != null)
-                                    {
-                                        progress?.Report((45 + (int)(45.0 * start / total),
-                                            $"⚠ 该批黑块且 CPU 修复无效,自动改用 ONNX 稳定引擎..." + StageElapsed()));
-                                        AppLogger.Info($"降级:批次 {start}~{end - 1} 黑块+CPU 无效,改用 ONNX({Path.GetFileNameWithoutExtension(onnxB)})");
-                                        try { Directory.Delete(batchOut, true); } catch { }
-                                        Directory.CreateDirectory(batchOut);
-                                        await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
-                                            upGpu < 0 ? -1 : -2, progress, ct, onnxB);   // 用户选 CPU 则强制 CPU
-                                        foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
-                                            File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
-                                    }
-                                    else
-                                    {
-                                        throw new InvalidOperationException("BLACKOUT_NEED_ONNX:该批 GPU 黑块且 CPU 修复无效(无可用 ONNX 模型)");
-                                    }
-                                }
-                            }
                             Interlocked.Add(ref doneFrames, end - start);
                             progress?.Report((45 + (int)(45.0 * doneFrames / total),
                                 $"超分 已处理 {doneFrames} 帧 / 共 {total} 帧"));
