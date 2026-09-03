@@ -38,8 +38,16 @@ public static class AudioEnhanceService
         return File.Exists(direct) ? direct : null;
     }
 
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, InferenceSession> _sessions = new();
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
+    // 【修复】会话/设备缓存(替换原来无用的 _sessions/_locks):
+    // _dmlBad: 记录 DirectML 失败的设备号(进程内),避免每个分块都反复重试 GPU → 灾难级慢;
+    // _cpuSession: 复用的 CPU 会话(DML 失败/纯 CPU 时用),避免每个分块都新建 158MB 模型 → 同样灾难级慢;
+    // _gpuSession: 按 gpuId 复用的 GPU 会话(避免每批新建,但音频单次任务并发低,仍加锁保护)。
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, bool> _dmlBad = new();
+    private static InferenceSession? _cpuSession;
+    private static string? _cpuSessionPath;
+    private static readonly object _sessionLock = new();
+    private static InferenceSession? _gpuSession;
+    private static int _gpuSessionId = int.MinValue;
 
     /// <summary>分离音频。input=任意音频(程序内先用 ffmpeg 转成 44.1k stereo wav);输出所选轨 wav。
     /// target:0人声 1伴奏 2鼓 3贝斯 4其他 5重混 6分离(输出 人声+伴奏 两文件)。
@@ -57,15 +65,34 @@ public static class AudioEnhanceService
     private static void RunCore(string inputWav, string outputWav, int target, string modelPath, int gpuId,
         float vocalStrength, IProgress<(int pct, string msg)>? progress, CancellationToken ct)
     {
-        var key = (modelPath, gpuId);
-        // 分离是用户单次操作,无需并发;且全局 gate.Wait() 在后台线程 + UI 上下文下可能死锁(实测 CPU 0 增量)。
-        // 直接每次新建 session(不复用 gate/缓存)——简单可靠,158MB 模型加载约 2~5 秒,可接受。
-        var opts0 = new SessionOptions();
-        if (gpuId >= 0)
+        // 【修复】复用会话(原先每次/每批都新建 158MB 模型,慢且 DML 失败时每分块重建):
+        // 优先复用 GPU 会话;若该设备已标记 DML 失败,则复用 CPU 会话。音频单次任务并发低,用锁串行化创建。
+        InferenceSession session;
+        lock (_sessionLock)
         {
-            try { opts0.AppendExecutionProvider_DML(EngineService.ToDmlDevice(gpuId)); } catch { /* DirectML 不可用回退 CPU */ }
+            if (gpuId >= 0 && !_dmlBad.ContainsKey(gpuId))
+            {
+                if (_gpuSession == null || _gpuSessionId != gpuId)
+                {
+                    _gpuSession?.Dispose();
+                    var opts = new SessionOptions();
+                    try { opts.AppendExecutionProvider_DML(EngineService.ToDmlDevice(gpuId)); } catch { /* DML 不可用回退 CPU */ }
+                    _gpuSession = new InferenceSession(modelPath, opts);
+                    _gpuSessionId = gpuId;
+                }
+                session = _gpuSession;
+            }
+            else
+            {
+                if (_cpuSession == null || _cpuSessionPath != modelPath)
+                {
+                    _cpuSession?.Dispose();
+                    _cpuSession = new InferenceSession(modelPath, new SessionOptions());
+                    _cpuSessionPath = modelPath;
+                }
+                session = _cpuSession;
+            }
         }
-        using var session = new InferenceSession(modelPath, opts0);
 
             // 读取 WAV(44.1k stereo float32)
             var (mix, samples) = ReadWav(inputWav);
@@ -102,10 +129,22 @@ public static class AudioEnhanceService
                 }
                 catch (Exception ex) when (gpuId >= 0)
                 {
-                    // DirectML 失败 → 改用 CPU 重试(兼容);新建 CPU session(原复用已删)
-                    progress?.Report((0, "⚠ GPU 推理失败,改用 CPU 重试..."));
-                    using var cpuSession = new InferenceSession(modelPath, new SessionOptions());
-                    results = cpuSession.Run(new[] { NamedOnnxValue.CreateFromTensor("mix", tensor) });
+                    // 【修复】DirectML 失败 → 标记该设备不再用 GPU,改用【复用的 CPU 会话】重试(不再每分块新建 158MB 模型、
+                    // 不再每块反复重试 GPU=灾难级慢)。后续分块直接走 CPU。
+                    AppLogger.Info($"⚠ 音频分离 GPU 推理失败({ex.Message.Split('\n')[0]}),标记该 GPU 不可用,改用 CPU 会话");
+                    _dmlBad[gpuId] = true;
+                    InferenceSession cpuS;
+                    lock (_sessionLock)
+                    {
+                        if (_cpuSession == null || _cpuSessionPath != modelPath)
+                        {
+                            _cpuSession?.Dispose();
+                            _cpuSession = new InferenceSession(modelPath, new SessionOptions());
+                            _cpuSessionPath = modelPath;
+                        }
+                        cpuS = _cpuSession;
+                    }
+                    results = cpuS.Run(new[] { NamedOnnxValue.CreateFromTensor("mix", tensor) });
                 }
                 using (results)
                 {

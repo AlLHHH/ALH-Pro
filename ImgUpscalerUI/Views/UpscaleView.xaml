@@ -32,15 +32,15 @@
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
-                    <TextBlock Text="算法" Style="{StaticResource SectionTitle}"/>
+                    <TextBlock Text="超分引擎" Style="{StaticResource SectionTitle}"/>
                     <RadioButtons x:Name="ModeRadios" SelectedIndex="0"
                                   ToolTipService.ToolTip="算法模式:动漫插画用 waifu2x;真实照片用 Real-ESRGAN">
-                        <RadioButton Content="动漫插画"/>
-                        <RadioButton Content="真实照片"/>
+                        <RadioButton Content="waifu2x"/>
+                        <RadioButton Content="Real-ESRGAN"/>
                     </RadioButtons>
 
                     <StackPanel x:Name="ModelPanel" Spacing="6">
-                        <TextBlock x:Name="ModelLabel" Text="waifu2x 模型" Style="{StaticResource SectionTitle}"/>
+                        <TextBlock x:Name="ModelLabel" Text="超分模型" Style="{StaticResource SectionTitle}"/>
                         <ComboBox x:Name="ModelCombo" HorizontalAlignment="Stretch"
                                   SelectedIndex="0"
                                   ToolTipService.ToolTip="超分模型(动漫:waifu2x;照片:Real-ESRGAN)"/>
@@ -91,10 +91,6 @@
                             </ComboBox>
                         </StackPanel>
                     </StackPanel>
-
-                    <TextBlock Text="高级" Style="{StaticResource SectionTitle}"/>
-                    <CheckBox x:Name="TtaCheck" Content="高质量(更慢更清晰)"
-                              ToolTipService.ToolTip="高质量:反复推演,细节更稳更清晰,但速度明显变慢(约 2~3 倍)。默认关闭;要极致画质可开启"/>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
@@ -231,6 +227,16 @@
                             <TextBlock x:Name="AaValue" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
+                    </StackPanel>
+
+                    <!-- 高质量(TTA):默认折叠,展开才有(与视频页「高级参数」一致的交互) -->
+                    <Button x:Name="HighQualityToggleBtn" Content="高质量 ▾" HorizontalAlignment="Stretch"
+                            Click="HighQualityToggleBtn_Click"
+                            ToolTipService.ToolTip="高质量:反复推演,细节更稳更清晰。⚠ 开启后会严重增加导出时间(约 2~3 倍)"/>
+                    <StackPanel x:Name="HighQualityPanel" Spacing="8" Margin="0,8,0,4" Visibility="Collapsed">
+                        <CheckBox x:Name="TtaCheck" Content="开启高质量(反复推演,更清晰)"
+                                  ToolTipService.ToolTip="高质量:反复推演,细节更稳更清晰。⚠ 开启后会严重增加导出时间(约 2~3 倍)"/>
+                        <TextBlock Text="⚠ 开启后会严重增加导出时间" Style="{StaticResource HintText}" TextWrapping="Wrap"/>
                     </StackPanel>
 
                     <!-- 记住上次参数:放在高级区末尾(增强滑块之后),与参数记忆语义贴近 -->

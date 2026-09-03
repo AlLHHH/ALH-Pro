@@ -36,28 +36,28 @@
                     <TextBlock Text="超分引擎" Style="{StaticResource SectionTitle}"/>
                     <RadioButtons x:Name="VideoEngineRadios" SelectedIndex="0" ToolTipService.ToolTip="超分引擎:waifu2x 最快(经典动漫)/ Real-ESRGAN 写实照片"
                                   SelectionChanged="Combo_Changed">
-                        <RadioButton Content="经典动漫 waifu2x (最快)"/>
-                        <RadioButton Content="通用 Real-ESRGAN (写实)"/>
+                        <RadioButton Content="waifu2x"/>
+                        <RadioButton Content="Real-ESRGAN"/>
                     </RadioButtons>
-                    <ComboBox x:Name="VideoWaifu2xModelCombo" ToolTipService.ToolTip="waifu2x 模型"
+                    <TextBlock x:Name="VideoModelLabel" Text="超分模型" Style="{StaticResource SectionTitle}"/>
+                    <ComboBox x:Name="VideoWaifu2xModelCombo" ToolTipService.ToolTip="waifu2x 模型(动漫/通用/现实)"
                               SelectionChanged="Combo_Changed">
-                        <ComboBoxItem Content="models-cunet（24MB · 中）" Tag="models-cunet"/>
-                        <ComboBoxItem Content="models-upconv_7_anime_style_art_rgb（5MB · 快）" Tag="models-upconv_7_anime_style_art_rgb"/>
-                        <ComboBoxItem Content="models-upconv_7_photo（5MB · 快）" Tag="models-upconv_7_photo"/>
+                        <ComboBoxItem Content="通用 · models-cunet（24MB · 中）" Tag="models-cunet"/>
+                        <ComboBoxItem Content="动漫 · models-upconv_7_anime_style_art_rgb（5MB · 快）" Tag="models-upconv_7_anime_style_art_rgb"/>
+                        <ComboBoxItem Content="现实 · models-upconv_7_photo（5MB · 快）" Tag="models-upconv_7_photo"/>
                     </ComboBox>
                     <ComboBox x:Name="VideoEsrganModelCombo" Visibility="Collapsed"
-                              ToolTipService.ToolTip="Real-ESRGAN 模型"
+                              ToolTipService.ToolTip="Real-ESRGAN 模型(动漫/通用)"
                               SelectionChanged="Combo_Changed">
-                        <ComboBoxItem Content="realesr-animevideov3（4MB · 快）" Tag="realesr-animevideov3"/>
-                        <ComboBoxItem Content="realesrgan-x4plus-anime（9MB · 中）" Tag="realesrgan-x4plus-anime"/>
-                        <ComboBoxItem Content="realesrgan-x4plus（41MB · 慢）" Tag="realesrgan-x4plus"/>
+                        <ComboBoxItem Content="动漫 · realesr-animevideov3（4MB · 快）" Tag="realesr-animevideov3"/>
+                        <ComboBoxItem Content="动漫 · realesrgan-x4plus-anime（9MB · 中）" Tag="realesrgan-x4plus-anime"/>
+                        <ComboBoxItem Content="通用 · realesrgan-x4plus（41MB · 慢）" Tag="realesrgan-x4plus"/>
                     </ComboBox>
 
                     <TextBlock Text="放大倍数" Style="{StaticResource SectionTitle}"/>
-                    <RadioButtons x:Name="VideoScaleRadios" SelectedIndex="2" ToolTipService.ToolTip="输出放大倍数(1.5x/3x 内部按引擎支持倍数处理)"
+                    <RadioButtons x:Name="VideoScaleRadios" SelectedIndex="1" ToolTipService.ToolTip="输出放大倍数(3x 内部按引擎支持倍数处理)"
                                   SelectionChanged="Combo_Changed">
                         <RadioButton x:Name="VScale1xRadio" Content="1x 超分（2x 放大后缩回）"/>
-                        <RadioButton x:Name="VScale15xRadio" Content="1.5x（2x 放大后缩回）"/>
                         <RadioButton x:Name="VScale2xRadio" Content="2x"/>
                         <RadioButton x:Name="VScale3xRadio" Content="3x"/>
                         <RadioButton x:Name="VScale4xRadio" Content="4x"/>
@@ -623,8 +623,9 @@
                                         Click="ResetTimeStepBtn_Click"
                                         ToolTipService.ToolTip="时间步恢复默认 0.5"/>
                             </Grid>
-                            <CheckBox x:Name="TtaCheck" Content="高质量(减少运动伪影,更慢)" ToolTipService.ToolTip="高质量(TTA):反复推演减少补帧的跳步/扭曲伪影。代价约慢 5~7 倍。默认关闭(追求速度);画质优先可手动开启"
+                            <CheckBox x:Name="TtaCheck" Content="开启高质量(减少运动伪影,更清晰)" ToolTipService.ToolTip="高质量(TTA):反复推演减少补帧的跳步/扭曲伪影。⚠ 开启后会严重增加导出时间(约慢 5~7 倍)。默认关闭(追求速度);画质优先可手动开启"
                                       Checked="Options_Changed" Unchecked="Options_Changed"/>
+                            <TextBlock Text="⚠ 开启后会严重增加导出时间" Style="{StaticResource HintText}" TextWrapping="Wrap"/>
                         </StackPanel>
 
                     <TextBlock x:Name="InterpHint" Style="{StaticResource HintText}"
@@ -718,6 +719,21 @@
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
                     <TextBlock x:Name="FastModeHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
                                Text="给配置较低/没独显的电脑用的:自动降低显存占用、防止爆显存,画质和功能基本不受影响"/>
+
+                    <!-- 参数预设:整套超分/后处理/补帧/去重参数快照,一键保存/应用 -->
+                    <TextBlock Text="参数预设" Style="{StaticResource SectionTitle}"/>
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Button Grid.Column="0" Content="使用预设" Click="OpenPresetWindowBtn_Click"
+                                HorizontalAlignment="Stretch"
+                                ToolTipService.ToolTip="打开预设列表:点选应用、删除、排序"/>
+                        <Button Grid.Column="1" Content="保存预设" Click="SavePresetBtn_Click"
+                                HorizontalAlignment="Stretch"
+                                ToolTipService.ToolTip="把当前全部视频参数保存为一个预设(上限 100 个)"/>
+                    </Grid>
 
                     <!-- 操作按钮:上一排「开始处理」(占满变宽),中间「暂停/恢复」,最下方「停止」 -->
                     <StackPanel Spacing="8">

@@ -1,4 +1,4 @@
-﻿# ALH Pro 发布版部署脚本(唯一正确姿势,请勿手动 robocopy Debug 输出!)
+# ALH Pro 发布版部署脚本(唯一正确姿势,请勿手动 robocopy Debug 输出!)
 # 用法(在仓库根目录):powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 # 作用:
 #   1. dotnet publish -c Release -p:Platform=x64  → bin\Release\...\win-x64\publish
@@ -19,6 +19,10 @@ try { dotnet publish ImgUpscalerUI.csproj -c Release -p:Platform=x64 -v q --nolo
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish 失败(exit $LASTEXITCODE)——已中止,未同步(请检查编译错误)" }
 if (-not (Test-Path (Join-Path $pub 'coreclr.dll'))) { throw "发布输出缺少 coreclr.dll(非独立版)——已中止,未同步" }
 if (-not (Test-Path (Join-Path $pub 'hostfxr.dll'))) { throw "发布输出缺少 hostfxr.dll(非独立版)——已中止,未同步" }
+# 【修复】校验 WinAppSDK 自包含组件(此前只查 .NET,若 WinAppSDK 组件缺失,应用能装但打不开,脚本却报成功)
+foreach ($wa in @('Microsoft.WindowsAppRuntime.dll','Microsoft.UI.Xaml.dll','Microsoft.WindowsAppRuntime.Bootstrap.dll','Microsoft.Graphics.Display.dll')) {
+    if (-not (Test-Path (Join-Path $pub $wa))) { throw "发布输出缺少 WinAppSDK 组件 $wa(自包含未完整)——已中止,未同步" }
+}
 
 Write-Host "==> 2/3 同步到 发布版\(排除 engines)..."
 # 先结束正在运行的 ALHPro(否则 ALHPro.exe 被锁,robocopy 无限重试等待→卡死)

@@ -423,6 +423,7 @@ public sealed partial class VideoView : UserControl
         FormatCombo.SelectedIndex = 0;
         CodecCombo.SelectedIndex = 0;   // 默认 H.264(必须在 InitializeComponent 后设置,否则解析期触发事件崩页面)
         LoadSettings();
+        EnsureBuiltinPresets();   // 确保自带预设(画质通用增强)存在
         UpdateOptions();
         UpdateDropHint();
         // 视频降噪联动:未勾选「启用视频降噪」时,强度置灰禁用
@@ -785,17 +786,16 @@ public sealed partial class VideoView : UserControl
 
         VideoEngineRadios.IsEnabled = up;
         VideoScaleRadios.IsEnabled = up;
-        // 自定义分辨率面板 + 倍率后果提示(随选择动态变化);索引:0=1x超分 1=1.5x 2=2x 3=3x 4=4x 5=自定义
+        // 自定义分辨率面板 + 倍率后果提示(随选择动态变化);索引:0=1x超分 1=2x 2=3x 3=4x 4=自定义
         var scaleIdx = VideoScaleRadios.SelectedIndex;
-        CustomSizePanel.Visibility = up && scaleIdx == 5 ? Visibility.Visible : Visibility.Collapsed;
+        CustomSizePanel.Visibility = up && scaleIdx == 4 ? Visibility.Visible : Visibility.Collapsed;
         ScaleHint.Text = scaleIdx switch
         {
             0 => "1x 超分:先 2x 超分再缩回原尺寸,画质比直接放大更好,速度比 2x 略慢",
-            3 => "⚠ 3x:耗时约 2 倍,高分辨率源明显变慢,建议 1080p 以下源使用",
-            4 => "⚠ 4x:耗时约 4 倍,显存占用高,4K 源可能卡顿甚至爆显存,建议先试 2x",
-            5 => "自定义输出分辨率:内部按 2x 超分,再精确缩放到指定宽×高(适合统一输出规格)",
-            1 => "1.5x:引擎无原生 1.5 倍,先 2x 放大再精确缩回 1.5x,画质更好",
-            _ => "1x~2x 速度较快;倍率越高越慢、显存占用越大。1.5x/3x 内部按引擎支持倍数处理",
+            2 => "⚠ 3x:耗时约 2 倍,高分辨率源明显变慢,建议 1080p 以下源使用",
+            3 => "⚠ 4x:耗时约 4 倍,显存占用高,4K 源可能卡顿甚至爆显存,建议先试 2x",
+            4 => "自定义输出分辨率:内部按 2x 超分,再精确缩放到指定宽×高(适合统一输出规格)",
+            _ => "1x~2x 速度较快;倍率越高越慢、显存占用越大。3x 内部按引擎支持倍数处理",
         };
         // 超分倍率可用性:waifu2x 模型权重虽为 2x,但引擎实测 -s 3/-s 4 用级联输出正常、不崩,已放开;
         // Real-ESRGAN 有对应权重,全亮
@@ -1015,7 +1015,7 @@ public sealed partial class VideoView : UserControl
         _suppressEvents = true;
         UpscaleToggle.IsChecked = true;
         VideoEngineRadios.SelectedIndex = 0;
-        VideoScaleRadios.SelectedIndex = 2;   // 默认 2x
+        VideoScaleRadios.SelectedIndex = 1;   // 默认 2x
         CustomWidthBox.Text = "1920";
         CustomHeightBox.Text = "1080";
         InterpToggle.IsChecked = false;
@@ -1200,7 +1200,9 @@ public sealed partial class VideoView : UserControl
         public int Scale { get; set; } = 1;
         public int Gpu { get; set; }
         public bool Interp { get; set; }
-        public int Model { get; set; }
+        public int Model { get; set; }         // 补帧模型索引(InterpModelCombo)
+        public int UpWaifu2xModel { get; set; }   // 视频超分 waifu2x 模型索引(VideoWaifu2xModelCombo)
+        public int UpEsrganModel { get; set; }    // 视频超分 Real-ESRGAN 模型索引(VideoEsrganModelCombo)
         public int InterpScale { get; set; }
         public bool Target { get; set; }
         public string TargetFps { get; set; } = "";
@@ -1263,6 +1265,85 @@ public sealed partial class VideoView : UserControl
 
     private static string SettingsFile => ParaPaths.SettingsFile("video-settings.json");
 
+    // ---------- 参数预设 ----------
+    /// <summary>一个视频参数预设:命名 + 保存时间 + 一套 VideoSettings 快照。上限 100 个。</summary>
+    private sealed class VideoPreset
+    {
+        public string Name { get; set; } = "";
+        public string SavedAt { get; set; } = "";
+        public VideoSettings Params { get; set; } = new();
+    }
+
+    /// <summary>预设文件路径(%LOCALAPPDATA%\ALHPro\settings\video-presets.json)。</summary>
+    private static string PresetFile => ParaPaths.SettingsFile("video-presets.json");
+
+    /// <summary>读取全部预设(按创建时间排序;坏项跳过)。失败/空返回空列表。</summary>
+    private static List<VideoPreset> LoadPresets()
+    {
+        try
+        {
+            if (!File.Exists(PresetFile)) return new();
+            var list = System.Text.Json.JsonSerializer.Deserialize<List<VideoPreset>>(File.ReadAllText(PresetFile));
+            return list ?? new();
+        }
+        catch { return new(); }   // 文件损坏/无法反序列化 → 视为空,不崩溃
+    }
+
+    /// <summary>把预设列表写盘。空列表则删除文件。</summary>
+    private static void SavePresets(List<VideoPreset> list)
+    {
+        try
+        {
+            if (list.Count == 0) { if (File.Exists(PresetFile)) File.Delete(PresetFile); return; }
+            Directory.CreateDirectory(Path.GetDirectoryName(PresetFile)!);
+            File.WriteAllText(PresetFile, System.Text.Json.JsonSerializer.Serialize(list));
+        }
+        catch { }
+    }
+
+    /// <summary>内置预设的默认名字。程序自带一个「画质通用增强」:首启自动创建,用户可删可改。</summary>
+    private const string BuiltinPresetName = "画质通用增强";
+    private const int MaxPresets = 100;   // 上限 100 个预设
+
+    /// <summary>确保内置预设存在:若预设列表里没有「画质通用增强」,则用一套通用画质增强默认参数创建一份。</summary>
+    private void EnsureBuiltinPresets()
+    {
+        try
+        {
+            var list = LoadPresets();
+            if (list.Any(x => x.Name == BuiltinPresetName)) return;
+            // 通用画质增强默认:超分 2x(waifu2x 通用)→ 适度后处理 → 不补帧/不转场
+            var p = new VideoPreset
+            {
+                Name = BuiltinPresetName,
+                SavedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm") + " · 内置",
+                Params = new VideoSettings
+                {
+                    Remember = false,
+                    Up = true,
+                    Engine = 0,            // waifu2x
+                    Scale = 1,             // 2x
+                    Interp = false,        // 不补帧
+                    DedupOn = false,       // 不去重
+                    PostSharpen = 25,      // 锐化(适度)
+                    PostClarity = 15,      // 清晰(适度)
+                    PostDetail = 30,       // 保留细节(适度)
+                    PostDenoise = 10,      // 去杂色(轻)
+                    Quality = 0,           // 码率自动
+                    Format = 0,            // MP4
+                    Codec = 0,             // H.264
+                    FastMode = false,
+                    Mute = false,
+                    VideoDenoiseOn = false,
+                },
+            };
+            list.Insert(0, p);   // 放在最前
+            SavePresets(list);
+            AppLogger.Info("[内置预设] 已创建「画质通用增强」(一套通用画质增强默认参数,可在界面调整)");
+        }
+        catch { }
+    }
+
     private void LoadSettings()
     {
         try
@@ -1274,183 +1355,527 @@ public sealed partial class VideoView : UserControl
             AppLogger.Info($"[记忆] 视频设置加载: Quality={d.Quality}, Format={d.Format}, Codec={d.Codec}, Remember={d.Remember}, 文件时间={File.GetLastWriteTime(SettingsFile):HH:mm:ss}");
             _suppressEvents = true;
             VideoRememberCheck.IsChecked = d.Remember;
-            if (d.Remember)
-            {
-                UpscaleToggle.IsChecked = d.Up;
-                // 兼容旧设置:旧值 2(Real-CUGAN,已移除)→ 1(Real-ESRGAN);0=waifu2x 1=Real-ESRGAN
-                if (d.Engine == 2) VideoEngineRadios.SelectedIndex = 1;
-                else if (d.Engine is >= 0 and <= 1) VideoEngineRadios.SelectedIndex = d.Engine;
-                if (d.Scale is >= 0 and <= 6)
-                    VideoScaleRadios.SelectedIndex = d.Scale switch
-                    {
-                        0 => 0,   // 旧"不放大"没有了 → 1x 超分
-                        1 => 0,   // 旧 1x超分
-                        2 => 1,   // 1.5x
-                        3 => 2,   // 2x
-                        4 => 3,   // 3x
-                        5 => 4,   // 4x
-                        6 => 5,   // 自定义
-                        _ => 2,
-                    };
-                if (!string.IsNullOrWhiteSpace(d.CustomW)) CustomWidthBox.Text = d.CustomW;
-                if (!string.IsNullOrWhiteSpace(d.CustomH)) CustomHeightBox.Text = d.CustomH;
-                if (d.PostSharpen is >= 0 and <= 100) SharpenSlider.Value = d.PostSharpen;
-                if (d.PostClarity is >= 0 and <= 100) ClaritySlider.Value = d.PostClarity;
-                if (d.PostUsm is >= 0 and <= 100) UsmSlider.Value = d.PostUsm;
-                if (d.PostDetail is >= 0 and <= 100) DetailSlider.Value = d.PostDetail;
-                if (d.PostDeblur is >= 0 and <= 100) DeblurSlider.Value = d.PostDeblur;
-                if (d.PostFlicker is >= 0 and <= 100) FlickerSlider.Value = d.PostFlicker;
-                if (d.PostDenoise is >= 0 and <= 100) PostDenoiseSlider.Value = d.PostDenoise;
-                if (d.PostAa is >= 0 and <= 100) PostAaSlider.Value = d.PostAa;
-                if (d.Jello is >= 0 and <= 3) JelloCombo.SelectedIndex = d.Jello;
-                if (d.MotionBlur is >= 0 and <= 3) MotionBlurCombo.SelectedIndex = d.MotionBlur;
-                DeShakeCheck.IsChecked = d.DeShake;
-                if (d.Quality is >= 0 and <= 5) QualityCombo.SelectedIndex = d.Quality;
-                if (d.BitrateMbps > 0) BitrateBox.Text = d.BitrateMbps.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
-                if (d.Codec is >= 0 and <= 1) CodecCombo.SelectedIndex = d.Codec;
-                if (d.Format is 0 or 1) FormatCombo.SelectedIndex = d.Format;   // 修复:此前 Load 硬编码 0,封装格式记不住
-                FastModeCheck.IsChecked = d.FastMode;
-                // 计算设备已在全局设置(AppSettings),页面不再恢复旧 Gpu 值
-                MuteCheck.IsChecked = d.Mute;
-                DenoiseToggle.IsChecked = d.VideoDenoiseOn;
-                if (d.VideoDenoiseStrong is >= 0 and <= 2) DenoiseStrongRadios.SelectedIndex = d.VideoDenoiseStrong;
-                InterpToggle.IsChecked = d.Interp;
-                if (d.Model is >= 0 && d.Model < InterpModelCombo.Items.Count) InterpModelCombo.SelectedIndex = d.Model;
-                if (d.InterpScale is >= 0 and <= 3) InterpScaleRadios.SelectedIndex = d.InterpScale;
-                TargetFpsCheck.IsChecked = d.Target;
-                if (!string.IsNullOrWhiteSpace(d.TargetFps)) TargetFpsBox.Text = d.TargetFps;
-                if (d.VfrMode is 0 or 1) VfrModeRadios.SelectedIndex = d.VfrMode;
-                if (d.VfrExpanded)
-                {
-                    VfrPanel.Visibility = Visibility.Visible;
-                    VfrToggleBtn.Content = "可变帧率保护 ▴";
-                }
-                if (d.FpsBase is 0 or 1) FpsBaseCombo.SelectedIndex = d.FpsBase;
-                if (d.FpsMode is 0 or 1 or 2) FpsModeRadios.SelectedIndex = d.FpsMode;
-                if (d.FpsOffset is >= -20 and <= 0) FpsOffsetSlider.Value = d.FpsOffset;
-                if (d.FpsExpanded)
-                {
-                    FpsPanel.Visibility = Visibility.Visible;
-                    FpsToggleBtn.Content = "视频帧率 ▴";
-                }
-                if (d.DedupOn) DedupCheck.IsChecked = true;
-                if (d.DedupModel is >= 0 and <= 5)
-                {
-                    // 版本兼容:新版仅 3 档(0智能 1动漫 2手动);旧版 7 档(0智能 1动漫 2标准 3温和 4敏感 5手动)。
-                    // 关键修复:新版"手动=2"必须原样恢复(旧代码把 2 当"旧标准"→映射成动漫 → 手动记不住);
-                    // 用"有无算法/内容帧率"区分新手动与旧标准(旧标准不带这些)。
-                    DedupModelCombo.SelectedIndex = d.DedupModel switch
-                    {
-                        0 => 0,
-                        1 => 1,
-                        2 => (d.DedupAlgo > 0 || d.ContentFps > 0) ? 2 : 1,   // 新手动(带算法/内容帧率)=2;旧"标准"→动漫
-                        _ => 2,                                              // 旧 5手动/3温和/4敏感 → 新手动
-                    };
-                }
-                if (d.DedupAnime is >= 0 and <= 6)
-                {
-                    // 旧版档位(0=拍二 1=拍三 2=混合 3=半拍二 4=全动画 5-6=拍四五)映射到新版
-                    // (0=拍二 1=拍三 2=混合 3=半拍二 4=拍四)
-                    DedupAnimeCombo.SelectedIndex = d.DedupAnime switch { 1 => 1, 2 => 2, 3 => 3, 4 => 4, 5 => 4, 6 => 4, _ => 0 };
-                }
-                if (d.DedupSmart is 0 or 1 or 2) DedupSmartCombo.SelectedIndex = d.DedupSmart;
-                if (d.DedupAlgo is >= 0 and <= 3) DedupAlgoCombo.SelectedIndex = _algoCoreToUi[d.DedupAlgo];
-                if (d.DedupHi is >= 4 and <= 24) DedupHiSlider.Value = d.DedupHi;
-                if (d.DedupLo is >= 2 and <= 10) DedupLoSlider.Value = d.DedupLo;
-                if (d.DedupFrac is >= 0.1 and <= 0.6) DedupFracSlider.Value = d.DedupFrac;
-                if (d.DedupSadThr is >= 0.5 and <= 10) DedupSadSlider.Value = d.DedupSadThr;
-                if (d.DedupSsimThr is >= 0.9 and <= 0.999) DedupSsimSlider.Value = d.DedupSsimThr;
-                ManualProtectSmallMotionCheck.IsChecked = d.ManualProtectSmallMotion;
-                var pa = d.DedupPhaseAlign;
-                DedupPhaseAlignAnimeCheck.IsChecked = pa;
-                DedupPhaseAlignManualCheck.IsChecked = pa;
-                if (d.ContentFps is >= 1 and <= 120)
-                    ContentFpsBox.Text = d.ContentFps.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
-                if (d.DedupThr is >= 0.001 and <= 0.5) DedupSceneSlider.Value = d.DedupThr;
-                SceneCheck.IsChecked = d.Scene;
-                if (d.SceneThr is >= 0 and <= 1) SceneSlider.Value = d.SceneThr;
-                if (d.TimeStep is >= 0.05 and <= 0.95) TimeStepSlider.Value = d.TimeStep;
-                TtaCheck.IsChecked = d.Tta;
-                if (!string.IsNullOrWhiteSpace(d.OutDir) && Directory.Exists(d.OutDir))
-                {
-                    OutFileBox.Text = d.OutDir;
-                    _customOutDir = d.OutDir;
-                }
-            }
+            if (d.Remember) ApplyVideoParams(d);
             _suppressEvents = false;
             UpdateOptions();   // 恢复后刷新 UI 状态(自定义分辨率面板显隐/提示/滑条数值等)
         }
         catch { _suppressEvents = false; }
     }
 
+    /// <summary>把一份 VideoSettings 快照应用到当前页面 UI(校验范围后赋值,避免越界)。
+    /// 供「记住上次参数加载」(d.Remember)与「应用参数预设」共用。
+    /// 调用方负责用 _suppressEvents 抑制事件回写(避免应用过程中触发 SaveSettings)。</summary>
+    private void ApplyVideoParams(VideoSettings d)
+    {
+        UpscaleToggle.IsChecked = d.Up;
+        // 兼容旧设置:旧值 2(Real-CUGAN,已移除)→ 1(Real-ESRGAN);0=waifu2x 1=Real-ESRGAN
+        if (d.Engine == 2) VideoEngineRadios.SelectedIndex = 1;
+        else if (d.Engine is >= 0 and <= 1) VideoEngineRadios.SelectedIndex = d.Engine;
+        if (d.Scale is >= 0 and <= 4)
+            VideoScaleRadios.SelectedIndex = d.Scale;   // 预设存的是当前真实倍率索引(0=1x,1=2x,2=3x,3=4x,4=自定义)
+        if (!string.IsNullOrWhiteSpace(d.CustomW)) CustomWidthBox.Text = d.CustomW;
+        if (!string.IsNullOrWhiteSpace(d.CustomH)) CustomHeightBox.Text = d.CustomH;
+        if (d.PostSharpen is >= 0 and <= 100) SharpenSlider.Value = d.PostSharpen;
+        if (d.PostClarity is >= 0 and <= 100) ClaritySlider.Value = d.PostClarity;
+        if (d.PostUsm is >= 0 and <= 100) UsmSlider.Value = d.PostUsm;
+        if (d.PostDetail is >= 0 and <= 100) DetailSlider.Value = d.PostDetail;
+        if (d.PostDeblur is >= 0 and <= 100) DeblurSlider.Value = d.PostDeblur;
+        if (d.PostFlicker is >= 0 and <= 100) FlickerSlider.Value = d.PostFlicker;
+        if (d.PostDenoise is >= 0 and <= 100) PostDenoiseSlider.Value = d.PostDenoise;
+        if (d.PostAa is >= 0 and <= 100) PostAaSlider.Value = d.PostAa;
+        if (d.Jello is >= 0 and <= 3) JelloCombo.SelectedIndex = d.Jello;
+        if (d.MotionBlur is >= 0 and <= 3) MotionBlurCombo.SelectedIndex = d.MotionBlur;
+        DeShakeCheck.IsChecked = d.DeShake;
+        if (d.Quality is >= 0 and <= 5) QualityCombo.SelectedIndex = d.Quality;
+        if (d.BitrateMbps > 0) BitrateBox.Text = d.BitrateMbps.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+        if (d.Codec is >= 0 and <= 1) CodecCombo.SelectedIndex = d.Codec;
+        if (d.Format is 0 or 1) FormatCombo.SelectedIndex = d.Format;
+        FastModeCheck.IsChecked = d.FastMode;
+        MuteCheck.IsChecked = d.Mute;
+        DenoiseToggle.IsChecked = d.VideoDenoiseOn;
+        if (d.VideoDenoiseStrong is >= 0 and <= 2) DenoiseStrongRadios.SelectedIndex = d.VideoDenoiseStrong;
+        InterpToggle.IsChecked = d.Interp;
+        if (d.Model is >= 0 && d.Model < InterpModelCombo.Items.Count) InterpModelCombo.SelectedIndex = d.Model;
+        // 恢复超分模型(waifu2x / Real-ESRGAN,各自按引擎下拉索引,越界回退 0)
+        if (VideoWaifu2xModelCombo.Items.Count > 0 && d.UpWaifu2xModel is >= 0 && d.UpWaifu2xModel < VideoWaifu2xModelCombo.Items.Count)
+            VideoWaifu2xModelCombo.SelectedIndex = d.UpWaifu2xModel;
+        else VideoWaifu2xModelCombo.SelectedIndex = 0;
+        if (VideoEsrganModelCombo.Items.Count > 0 && d.UpEsrganModel is >= 0 && d.UpEsrganModel < VideoEsrganModelCombo.Items.Count)
+            VideoEsrganModelCombo.SelectedIndex = d.UpEsrganModel;
+        else VideoEsrganModelCombo.SelectedIndex = 0;
+        if (d.InterpScale is >= 0 and <= 3) InterpScaleRadios.SelectedIndex = d.InterpScale;
+        TargetFpsCheck.IsChecked = d.Target;
+        if (!string.IsNullOrWhiteSpace(d.TargetFps)) TargetFpsBox.Text = d.TargetFps;
+        if (d.VfrMode is 0 or 1) VfrModeRadios.SelectedIndex = d.VfrMode;
+        VfrPanel.Visibility = d.VfrExpanded ? Visibility.Visible : Visibility.Collapsed;
+        VfrToggleBtn.Content = d.VfrExpanded ? "可变帧率保护 ▴" : "可变帧率保护 ▾";
+        if (d.FpsBase is 0 or 1) FpsBaseCombo.SelectedIndex = d.FpsBase;
+        if (d.FpsMode is 0 or 1 or 2) FpsModeRadios.SelectedIndex = d.FpsMode;
+        if (d.FpsOffset is >= -20 and <= 0) FpsOffsetSlider.Value = d.FpsOffset;
+        FpsPanel.Visibility = d.FpsExpanded ? Visibility.Visible : Visibility.Collapsed;
+        FpsToggleBtn.Content = d.FpsExpanded ? "视频帧率 ▴" : "视频帧率 ▾";
+        DedupCheck.IsChecked = d.DedupOn;   // 预设里去重开关,勾/不勾都要设置(否则关的预设不会取消勾选)
+        if (d.DedupModel is >= 0 and <= 5)
+            DedupModelCombo.SelectedIndex = d.DedupModel;   // 预设存当前去重模式索引,直接赋
+        if (d.DedupAnime is >= 0 and <= 6)
+            DedupAnimeCombo.SelectedIndex = d.DedupAnime;   // 预设存当前档位索引,直接赋
+        if (d.DedupSmart is 0 or 1 or 2) DedupSmartCombo.SelectedIndex = d.DedupSmart;
+        if (d.DedupAlgo is >= 0 and <= 3) DedupAlgoCombo.SelectedIndex = _algoCoreToUi[d.DedupAlgo];
+        if (d.DedupHi is >= 4 and <= 24) DedupHiSlider.Value = d.DedupHi;
+        if (d.DedupLo is >= 2 and <= 10) DedupLoSlider.Value = d.DedupLo;
+        if (d.DedupFrac is >= 0.1 and <= 0.6) DedupFracSlider.Value = d.DedupFrac;
+        if (d.DedupSadThr is >= 0.5 and <= 10) DedupSadSlider.Value = d.DedupSadThr;
+        if (d.DedupSsimThr is >= 0.9 and <= 0.999) DedupSsimSlider.Value = d.DedupSsimThr;
+        ManualProtectSmallMotionCheck.IsChecked = d.ManualProtectSmallMotion;
+        var pa = d.DedupPhaseAlign;
+        DedupPhaseAlignAnimeCheck.IsChecked = pa;
+        DedupPhaseAlignManualCheck.IsChecked = pa;
+        if (d.ContentFps is >= 1 and <= 120)
+            ContentFpsBox.Text = d.ContentFps.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+        if (d.DedupThr is >= 0.001 and <= 0.5) DedupSceneSlider.Value = d.DedupThr;
+        SceneCheck.IsChecked = d.Scene;
+        if (d.SceneThr is >= 0 and <= 1) SceneSlider.Value = d.SceneThr;
+        if (d.TimeStep is >= 0.05 and <= 0.95) TimeStepSlider.Value = d.TimeStep;
+        TtaCheck.IsChecked = d.Tta;
+        if (!string.IsNullOrWhiteSpace(d.OutDir) && Directory.Exists(d.OutDir))
+        {
+            OutFileBox.Text = d.OutDir;
+            _customOutDir = d.OutDir;
+        }
+    }
+
+    // ---------- 参数预设 UI 逻辑 ----------
+    /// <summary>把当前页面全部参数存为一个预设(命名对话框;上限 100)。</summary>
+    private async void SavePresetBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var list = LoadPresets();
+        if (list.Count >= MaxPresets)
+        {
+            AppLogger.UserAction("视频:存为预设被拒(已达上限 100)");
+            await ShowPresetHintAsync($"已达上限 {MaxPresets} 个预设,请先删除部分预设再新建。");
+            return;
+        }
+        // 命名对话框(带默认名"预设 N")
+        string defaultName = "预设 " + (list.Count + 1);
+        var box = new TextBox { Text = defaultName, PlaceholderText = "给它起个名字(如:动漫 4x 补帧优)" };
+        var dlg = new ContentDialog
+        {
+            Title = "保存为预设",
+            Content = new StackPanel
+            {
+                Spacing = 10,
+                Children = {
+                    new TextBlock { Text = "记录当前全部处理参数(超分/后处理/补帧/去重/码率/格式等,不含输出路径)。", TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap },
+                    box,
+                },
+            },
+            PrimaryButtonText = "保存",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = this.XamlRoot,
+        };
+        try { if (await dlg.ShowAsync() != ContentDialogResult.Primary) return; } catch { return; }
+        string name = box.Text.Trim();
+        if (name.Length == 0) name = defaultName;
+        var preset = new VideoPreset
+        {
+            Name = name,
+            SavedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm"),
+            Params = CollectVideoParams(),
+        };
+        list.Add(preset);
+        SavePresets(list);
+        AppLogger.UserAction($"视频:存为预设「{name}」(共 {list.Count} 个)");
+        await ShowPresetHintAsync($"已保存预设「{name}」。点「使用预设」可查看、应用、删除。");
+    }
+
+    /// <summary>打开预设窗口:一个独立弹窗,可滚动列表选择预设(点选高亮)、排序、应用、删除。
+    /// 注意:ContentDialog 不能嵌套显示,应用/删除的确认与反馈都先关闭本窗口再弹(避免同窗口冲突)。</summary>
+    private async void OpenPresetWindowBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var list = LoadPresets();
+        if (list.Count == 0)
+        {
+            await ShowPresetHintAsync("还没有任何预设。先点「保存预设」保存一个。");
+            return;
+        }
+        string? pendingDel = null;   // 行内删除二次确认:记录待确认的预设名(非 null = 已点一次删除)
+        // 排序下拉
+        var sortCombo = new ComboBox { HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch };
+        sortCombo.Items.Add("按创建时间(默认)");
+        sortCombo.Items.Add("按名字 A→Z");
+        sortCombo.Items.Add("按最近修改");
+        sortCombo.SelectedIndex = 0;
+        var topBar = new Grid { ColumnSpacing = 8 };
+        topBar.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
+        topBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
+        topBar.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
+        topBar.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
+        var sortLabel = new TextBlock { Text = "排序:", VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
+        var exportBtn = new Button { Content = "导出", FontSize = 12, Padding = new Microsoft.UI.Xaml.Thickness(10, 4, 10, 4) };
+        var importBtn = new Button { Content = "导入", FontSize = 12, Padding = new Microsoft.UI.Xaml.Thickness(10, 4, 10, 4) };
+        Grid.SetColumn(sortLabel, 0); Grid.SetColumn(sortCombo, 1); Grid.SetColumn(exportBtn, 2); Grid.SetColumn(importBtn, 3);
+        topBar.Children.Add(sortLabel); topBar.Children.Add(sortCombo); topBar.Children.Add(exportBtn); topBar.Children.Add(importBtn);
+
+        // 预设列表:用 ListView 系统原生选中高亮(保留 WinUI3 自带蓝色选中标识);
+        // 不重设 ItemContainerStyle(否则会丢掉系统原生选中视觉),item 内容自己控制 padding
+        var listView = new ListView { SelectionMode = Microsoft.UI.Xaml.Controls.ListViewSelectionMode.Single, MaxHeight = 360 };
+
+        // 底部按钮:左「关闭」(灰) 右「应用预设」(蓝),自己控制位置/颜色(不用系统按钮,避免位置反转)
+        var closeBtn = new Button { Content = "关闭", HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch };
+        var applyBtn = new Button
+        {
+            Content = "应用预设",
+            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch,
+            Style = (Microsoft.UI.Xaml.Style)App.Current.Resources["AccentButtonStyle"],
+        };
+        var bottomBar = new Grid { ColumnSpacing = 8 };
+        bottomBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
+        bottomBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
+        Grid.SetColumn(closeBtn, 0); Grid.SetColumn(applyBtn, 1);
+        bottomBar.Children.Add(closeBtn); bottomBar.Children.Add(applyBtn);
+
+        var inner = new StackPanel { Spacing = 12 };
+        inner.Children.Add(topBar);
+        inner.Children.Add(listView);
+        inner.Children.Add(bottomBar);
+
+        // 系统按钮留空(自定义按钮接管)
+        ContentDialog dlg = new()
+        {
+            Title = "选项",
+            Content = inner,
+            CloseButtonText = "",
+            XamlRoot = this.XamlRoot,
+        };
+
+        // 刷新列表:每行=预设名(撑满)+ 最右小删除图标;行间分隔线(放在 item 内底部);悬停看摘要(限宽换行)
+        void RebuildList()
+        {
+            var cur = LoadPresets();
+            switch (sortCombo.SelectedIndex)
+            {
+                case 1: cur = cur.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList(); break;
+                case 2: cur = cur.OrderByDescending(x => x.SavedAt, StringComparer.OrdinalIgnoreCase).ToList(); break;
+            }
+            listView.Items.Clear();
+            for (int i = 0; i < cur.Count; i++)
+            {
+                var itemPanel = new StackPanel { Padding = new Microsoft.UI.Xaml.Thickness(12, 8, 4, 8) };
+                // 行:预设名(撑满)+ 最右小删除图标
+                var row = new Grid();
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
+                var name = new TextBlock { Text = cur[i].Name, FontSize = 14, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
+                var tipText = new TextBlock { Text = BuildPresetSummary(cur[i]), TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, MaxWidth = 300 };
+                ToolTipService.SetToolTip(name, tipText);
+                Grid.SetColumn(name, 0);
+                var delBtn = new Button
+                {
+                    Content = "\uE74D",
+                    FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe MDL2 Assets"),
+                    FontSize = 12,
+                    Background = null,
+                    BorderThickness = new Microsoft.UI.Xaml.Thickness(0),
+                    Padding = new Microsoft.UI.Xaml.Thickness(6, 2, 6, 2),
+                    VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+                    MinWidth = 0,
+                };
+                ToolTipService.SetToolTip(delBtn, "删除该预设");
+                Grid.SetColumn(delBtn, 1);
+                var presetName = cur[i].Name;
+                delBtn.Click += (_, _) =>
+                {
+                    // 行内二次确认:第一次点变红「确认?」,再点才删;点别处由 RebuildList 清确认态
+                    if (pendingDel != presetName)
+                    {
+                        pendingDel = presetName;
+                        delBtn.Content = "确认?";
+                        delBtn.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77));   // 红
+                        delBtn.FontSize = 12;
+                        ToolTipService.SetToolTip(delBtn, "再点一次确认删除");
+                        return;
+                    }
+                    var latest = LoadPresets();
+                    var hit = latest.FirstOrDefault(x => x.Name == presetName);
+                    if (hit != null) { latest.Remove(hit); SavePresets(latest); }
+                    AppLogger.UserAction($"视频:删除预设「{presetName}」");
+                    pendingDel = null;
+                    if (latest.Count == 0) { try { dlg.Hide(); } catch { } return; }   // 删光 → 关窗
+                    RebuildList();   // 删除后刷新列表,停留在预设界面
+                };
+                row.Children.Add(name);
+                row.Children.Add(delBtn);
+                itemPanel.Children.Add(row);
+                // 行间分隔线(非最后一行):放在 item 底部,与高亮边界对齐
+                if (i < cur.Count - 1)
+                    itemPanel.Children.Add(new Microsoft.UI.Xaml.Shapes.Rectangle { Height = 1, Fill = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 40, 44, 52)), Margin = new Microsoft.UI.Xaml.Thickness(0, 6, 0, 0) });
+                listView.Items.Add(itemPanel);
+            }
+        }
+        RebuildList();
+        sortCombo.SelectionChanged += (_, _) => RebuildList();
+
+        // 「应用预设」(右蓝):应用选中的预设后正常关窗
+        applyBtn.Click += (_, _) =>
+        {
+            int s = listView.SelectedIndex;
+            if (s < 0) return;
+            var cur = LoadPresets();
+            int idx = ResolveSortedIndex(sortCombo.SelectedIndex, s, cur);
+            if (idx >= 0 && idx < cur.Count) ApplyPreset(cur[idx]);
+            try { dlg.Hide(); } catch { }
+        };
+        // 「关闭」(左灰):直接关窗
+        closeBtn.Click += (_, _) => { try { dlg.Hide(); } catch { } };
+        // 导出:选中某条导该条,否则导出全部
+        exportBtn.Click += async (_, _) =>
+        {
+            int s = listView.SelectedIndex;
+            var cur = LoadPresets();
+            List<VideoPreset> toExport;
+            if (s >= 0 && s < cur.Count)
+            {
+                int idx = ResolveSortedIndex(sortCombo.SelectedIndex, s, cur);
+                if (idx < 0 || idx >= cur.Count) return;
+                toExport = new List<VideoPreset> { cur[idx] };
+            }
+            else toExport = cur;   // 未选中 → 导出全部
+            await ExportPresetsAsync(toExport, s >= 0);
+        };
+        // 导入:选文件导入,【不关窗】留在预设界面,刷新列表(导入后的新项出现在列表里即反馈)
+        importBtn.Click += async (_, _) =>
+        {
+            int n = await ImportPresetsAsync();
+            pendingDel = null;
+            RebuildList();
+        };
+        try { await dlg.ShowAsync(); } catch { }
+    }
+
+    /// <summary>把"排序后列表的显示下标"映射回原始预设下标(listView 显示序 = 排序后的 list,故直接用 showIdx)。</summary>
+    private static int ResolveSortedIndex(int sortIdx, int showIdx, List<VideoPreset> sorted)
+        => showIdx;
+
+    /// <summary>导出预设为一个 .alhpreset 文件(JSON 数组)。导出内容只含处理参数,不含输出路径/设备。</summary>
+    private async Task ExportPresetsAsync(List<VideoPreset> presets, bool onlyOne)
+    {
+        if (presets.Count == 0) return;   // 无内容直接返回(窗口保持)
+        var picker = new FileSavePicker();
+        picker.FileTypeChoices.Add("ALH Pro 预设", new List<string> { ".alhpreset" });
+        picker.SuggestedFileName = onlyOne ? presets[0].Name : "ALHPro_预设导出";
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+        var file = await picker.PickSaveFileAsync();
+        if (file == null) return;
+        try
+        {
+            // 只保留要导出的处理参数(外层 VideoPreset 存 Name/SavedAt/Params;Params 已不含输出路径/设备)
+            var json = System.Text.Json.JsonSerializer.Serialize(presets);
+            await File.WriteAllTextAsync(file.Path, json);
+            AppLogger.UserAction($"视频:导出 {presets.Count} 个预设到 {file.Path}");
+        }
+        catch (Exception ex) { AppLogger.Warn("导出预设失败:" + ex.Message); }
+    }
+
+    /// <summary>导入 .alhpreset 文件(JSON 数组),合并到已有预设(重名自动加后缀;超上限 100 只取前 100)。返回导入数量。</summary>
+    private async Task<int> ImportPresetsAsync()
+    {
+        var picker = new FileOpenPicker();
+        picker.FileTypeFilter.Add(".alhpreset");
+        picker.FileTypeFilter.Add(".json");
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+        var file = await picker.PickSingleFileAsync();
+        if (file == null) return 0;
+        try
+        {
+            var json = await File.ReadAllTextAsync(file.Path);
+            var imported = System.Text.Json.JsonSerializer.Deserialize<List<VideoPreset>>(json) ?? new List<VideoPreset>();
+            if (imported.Count == 0) { AppLogger.Warn("导入预设:文件无内容"); return 0; }
+            var existing = LoadPresets();
+            int added = 0;
+            foreach (var p in imported)
+            {
+                if (existing.Count >= MaxPresets) break;
+                // 去重:同名加后缀 " (2)", " (3)"...
+                var name = p.Name;
+                int n = 2;
+                while (existing.Any(x => x.Name == name)) { name = $"{p.Name} ({n})"; n++; }
+                p.Name = name;
+                if (p.SavedAt.Length == 0) p.SavedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
+                existing.Add(p);
+                added++;
+            }
+            SavePresets(existing);
+            AppLogger.UserAction($"视频:导入 {added} 个预设(来自 {file.Path})");
+            return added;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn("导入预设失败(格式不对):" + ex.Message);
+            return 0;
+        }
+    }
+
+    /// <summary>应用一份预设:把快照套回当前页面(抑制事件回写),并给出应用反馈。</summary>
+    private async void ApplyPreset(VideoPreset preset)
+    {
+        try
+        {
+            _suppressEvents = true;
+            ApplyVideoParams(preset.Params);
+            _suppressEvents = false;
+            UpdateOptions();
+            OnOptionChanged();   // 再触发一次完整联动:超分/补帧/引擎面板与模型下拉刷新,确保超分开关等真正生效
+            Log($"已应用预设「{preset.Name}」");
+            AppLogger.UserAction($"视频:应用预设「{preset.Name}」");
+            await ShowPresetHintAsync($"已应用预设「{preset.Name}」——超分/后处理/补帧/去重等参数已按该预设套用。");
+        }
+        catch { _suppressEvents = false; }
+    }
+
+    /// <summary>生成预设参数摘要(悬停提示):引擎/倍率/补帧/去重/后处理/码率等,多行文本。</summary>
+    private static string BuildPresetSummary(VideoPreset p)
+    {
+        var d = p.Params;
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"「{p.Name}」({p.SavedAt})");
+        sb.AppendLine("超分: " + (d.Up
+            ? $"{(d.Engine == 1 ? "Real-ESRGAN" : "waifu2x")} · 倍率 {d.Scale switch { 0 => "1x", 1 => "2x", 2 => "3x", 3 => "4x", _ => "自定义" }} · 模型 {(d.Engine == 1 ? UpEsrganModelName(d.UpEsrganModel) : UpWaifu2xModelName(d.UpWaifu2xModel))}"
+            : "关闭"));
+        sb.AppendLine("补帧: " + (d.Interp
+            ? $"{(d.Model < 0 ? "?" : InterpModelName(d.Model))} · {d.InterpScale}x{(d.Tta ? " · TTA" : "")}"
+            : "关闭"));
+        sb.AppendLine("去重: " + (d.DedupOn ? $"{(d.DedupModel == 0 ? "智能" : d.DedupModel == 1 ? "动漫" : "手动")}" : "关闭"));
+        sb.AppendLine("后处理: " +
+            $"锐化{d.PostSharpen} 清晰{d.PostClarity} 钝化蒙版{d.PostUsm} 保留细节{d.PostDetail} " +
+            $"去模糊{d.PostDeblur} 去频闪{d.PostFlicker} 去杂色{d.PostDenoise} 边缘抗锯齿{d.PostAa}");
+        sb.AppendLine("码率: " + (d.Quality == 5 ? $"自定义 {d.BitrateMbps:0.#}Mbps" : d.Quality switch { 0 => "自动", 1 => "低", 2 => "中", 3 => "高", 4 => "极高", _ => "?" }));
+        sb.AppendLine("格式: " + (d.Format == 1 ? "MKV" : "MP4") + " · " + (d.Codec == 1 ? "H.265" : "H.264"));
+        if (d.FastMode) sb.AppendLine("兼容模式: 开");
+        if (d.VideoDenoiseOn) sb.AppendLine("视频降噪: 开");
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string InterpModelName(int idx) => idx switch
+    {
+        0 => "通用最新(v4.13)", 1 => "通用(v4.6)", 2 => "通用再新(v4.26)",
+        3 => "动漫专用", 4 => "高清", 5 => "超高清", _ => "?",
+    };
+
+    // 视频超分模型下拉选项文本(与 VideoView.xaml 里 ComboBoxItem.Content 一致)
+    private static string[] UpWaifu2xModelNames = { "通用·cunet", "动漫·upconv_7_anime", "现实·upconv_7_photo" };
+    private static string[] UpEsrganModelNames = { "动漫·animevideov3", "动漫·x4plus-anime", "通用·x4plus" };
+    private static string UpWaifu2xModelName(int idx) => idx >= 0 && idx < UpWaifu2xModelNames.Length ? UpWaifu2xModelNames[idx] : "通用·cunet";
+    private static string UpEsrganModelName(int idx) => idx >= 0 && idx < UpEsrganModelNames.Length ? UpEsrganModelNames[idx] : "动漫·animevideov3";
+
+    /// <summary>删除确认对话框:点「删除」返回 true。</summary>
+    private async Task<bool> ConfirmDeletePresetAsync(string name)
+    {
+        var dlg = new ContentDialog
+        {
+            Title = "删除预设",
+            Content = new TextBlock { Text = $"确定删除预设「{name}」吗?此操作不可恢复。", TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap },
+            PrimaryButtonText = "删除",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = this.XamlRoot,
+        };
+        try { return await dlg.ShowAsync() == ContentDialogResult.Primary; }
+        catch { return false; }
+    }
+
+    /// <summary>轻量提示对话框(占位/上限/保存成功等)。</summary>
+    private async Task ShowPresetHintAsync(string msg)
+    {
+        var dlg = new ContentDialog
+        {
+            Title = "参数预设",
+            Content = new TextBlock { Text = msg, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap },
+            CloseButtonText = "知道了",
+            XamlRoot = this.XamlRoot,
+        };
+        try { await dlg.ShowAsync(); } catch { }
+    }
+
     private void SaveSettings()
     {
         try
         {
-            var d = new VideoSettings
-            {
-                Remember = VideoRememberCheck.IsChecked == true,
-                Up = UpscaleToggle.IsChecked == true,
-                Engine = VideoEngineRadios.SelectedIndex,
-                Scale = VideoScaleRadios.SelectedIndex,
-                Gpu = AppSettings.GpuIndex,
-                Interp = InterpToggle.IsChecked == true,
-                Model = InterpModelCombo.SelectedIndex,
-                InterpScale = InterpScaleRadios.SelectedIndex,
-                Target = TargetFpsCheck.IsChecked == true,
-                TargetFps = TargetFpsBox.Text,
-                VfrMode = VfrModeRadios.SelectedIndex,
-                VfrExpanded = VfrPanel.Visibility == Visibility.Visible,
-                FpsBase = FpsBaseCombo.SelectedIndex,
-                FpsMode = FpsModeRadios.SelectedIndex,
-                FpsOffset = FpsOffsetSlider.Value,
-                FpsExpanded = FpsPanel.Visibility == Visibility.Visible,
-                DedupOn = DedupCheck.IsChecked == true,
-                DedupModel = DedupModelCombo.SelectedIndex,
-                DedupAnime = DedupAnimeCombo.SelectedIndex,
-                DedupSmart = DedupSmartCombo.SelectedIndex,
-                DedupAlgo = _algoUiToCore[Math.Clamp(DedupAlgoCombo.SelectedIndex, 0, _algoUiToCore.Length - 1)],   // 存核心语义(0=重复帧检测 1=变化阈值 2=帧差+SSIM 3=内容帧率采样)
-                DedupHi = (int)DedupHiSlider.Value,
-                DedupLo = (int)DedupLoSlider.Value,
-                DedupFrac = DedupFracSlider.Value,
-                DedupSadThr = DedupSadSlider.Value,
-                DedupSsimThr = DedupSsimSlider.Value,
-                ManualProtectSmallMotion = ManualProtectSmallMotionCheck.IsChecked == true,
-                DedupPhaseAlign = DedupPhaseAlignManualCheck.IsChecked == true,
-                ContentFps = double.TryParse(ContentFpsBox.Text, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out var cfv) && cfv > 0 ? cfv : 0,
-                DedupThr = DedupSceneSlider.Value,
-                Scene = SceneCheck.IsChecked == true,
-                SceneThr = SceneSlider.Value,
-                TimeStep = TimeStepSlider.Value,
-                Tta = TtaCheck.IsChecked == true,
-                OutDir = _customOutDir ?? "",
-                CustomW = CustomWidthBox.Text,
-                CustomH = CustomHeightBox.Text,
-                PostSharpen = (int)SharpenSlider.Value,
-                PostClarity = (int)ClaritySlider.Value,
-                PostUsm = (int)UsmSlider.Value,
-                PostDetail = (int)DetailSlider.Value,
-                PostDeblur = (int)DeblurSlider.Value,
-                PostFlicker = (int)FlickerSlider.Value,
-                PostDenoise = (int)PostDenoiseSlider.Value,
-                PostAa = (int)PostAaSlider.Value,
-                Jello = JelloCombo.SelectedIndex,
-                MotionBlur = MotionBlurCombo.SelectedIndex,
-                DeShake = DeShakeCheck.IsChecked == true,
-                Quality = QualityCombo.SelectedIndex,
-                BitrateMbps = QualityCombo.SelectedIndex == 5 ? ParseBitrate() : 0,
-                Codec = CodecCombo.SelectedIndex,
-                Format = FormatCombo.SelectedIndex,
-                FastMode = FastModeCheck.IsChecked == true,
-                Mute = MuteCheck.IsChecked == true,
-                VideoDenoiseOn = DenoiseToggle.IsChecked == true,
-                VideoDenoiseStrong = DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex : -1,
-            };
+            var d = CollectVideoParams();
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile)!);
             File.WriteAllText(SettingsFile, System.Text.Json.JsonSerializer.Serialize(d));
         }
         catch { }
+    }
+
+    /// <summary>从当前页面 UI 收集全部视频处理参数为 VideoSettings 快照。
+    /// 供「记住上次参数」与「保存为预设」共用(参数预设=用户主动命名保存的同一份快照)。</summary>
+    private VideoSettings CollectVideoParams()
+    {
+        return new VideoSettings
+        {
+            Remember = VideoRememberCheck.IsChecked == true,
+            Up = UpscaleToggle.IsChecked == true,
+            Engine = VideoEngineRadios.SelectedIndex,
+            Scale = VideoScaleRadios.SelectedIndex,
+            Gpu = AppSettings.GpuIndex,
+            Interp = InterpToggle.IsChecked == true,
+            Model = InterpModelCombo.SelectedIndex,
+            UpWaifu2xModel = VideoWaifu2xModelCombo.SelectedIndex,   // 超分 waifu2x 模型
+            UpEsrganModel = VideoEsrganModelCombo.SelectedIndex,    // 超分 Real-ESRGAN 模型
+            InterpScale = InterpScaleRadios.SelectedIndex,
+            Target = TargetFpsCheck.IsChecked == true,
+            TargetFps = TargetFpsBox.Text,
+            VfrMode = VfrModeRadios.SelectedIndex,
+            VfrExpanded = VfrPanel.Visibility == Visibility.Visible,
+            FpsBase = FpsBaseCombo.SelectedIndex,
+            FpsMode = FpsModeRadios.SelectedIndex,
+            FpsOffset = FpsOffsetSlider.Value,
+            FpsExpanded = FpsPanel.Visibility == Visibility.Visible,
+            DedupOn = DedupCheck.IsChecked == true,
+            DedupModel = DedupModelCombo.SelectedIndex,
+            DedupAnime = DedupAnimeCombo.SelectedIndex,
+            DedupSmart = DedupSmartCombo.SelectedIndex,
+            DedupAlgo = _algoUiToCore[Math.Clamp(DedupAlgoCombo.SelectedIndex, 0, _algoUiToCore.Length - 1)],   // 存核心语义(0=重复帧检测 1=变化阈值 2=帧差+SSIM 3=内容帧率采样)
+            DedupHi = (int)DedupHiSlider.Value,
+            DedupLo = (int)DedupLoSlider.Value,
+            DedupFrac = DedupFracSlider.Value,
+            DedupSadThr = DedupSadSlider.Value,
+            DedupSsimThr = DedupSsimSlider.Value,
+            ManualProtectSmallMotion = ManualProtectSmallMotionCheck.IsChecked == true,
+            DedupPhaseAlign = DedupPhaseAlignManualCheck.IsChecked == true,
+            ContentFps = double.TryParse(ContentFpsBox.Text, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var cfv) && cfv > 0 ? cfv : 0,
+            DedupThr = DedupSceneSlider.Value,
+            Scene = SceneCheck.IsChecked == true,
+            SceneThr = SceneSlider.Value,
+            TimeStep = TimeStepSlider.Value,
+            Tta = TtaCheck.IsChecked == true,
+            OutDir = _customOutDir ?? "",
+            CustomW = CustomWidthBox.Text,
+            CustomH = CustomHeightBox.Text,
+            PostSharpen = (int)SharpenSlider.Value,
+            PostClarity = (int)ClaritySlider.Value,
+            PostUsm = (int)UsmSlider.Value,
+            PostDetail = (int)DetailSlider.Value,
+            PostDeblur = (int)DeblurSlider.Value,
+            PostFlicker = (int)FlickerSlider.Value,
+            PostDenoise = (int)PostDenoiseSlider.Value,
+            PostAa = (int)PostAaSlider.Value,
+            Jello = JelloCombo.SelectedIndex,
+            MotionBlur = MotionBlurCombo.SelectedIndex,
+            DeShake = DeShakeCheck.IsChecked == true,
+            Quality = QualityCombo.SelectedIndex,
+            BitrateMbps = QualityCombo.SelectedIndex == 5 ? ParseBitrate() : 0,
+            Codec = CodecCombo.SelectedIndex,
+            Format = FormatCombo.SelectedIndex,
+            FastMode = FastModeCheck.IsChecked == true,
+            Mute = MuteCheck.IsChecked == true,
+            VideoDenoiseOn = DenoiseToggle.IsChecked == true,
+            VideoDenoiseStrong = DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex : -1,
+        };
     }
 
     /// <summary>按元素缓存当前展开/收起 Storyboard,开始新动画前先停旧的(避免两个动画抢 Height 导致顿)。</summary>
@@ -2829,14 +3254,13 @@ public sealed partial class VideoView : UserControl
             // Real-ESRGAN:从模型下拉 Tag 读模型名(默认 realesr-animevideov3)
             _ => ("realesrgan", SelModel(VideoEsrganModelCombo, "realesr-animevideov3")),
         };
-        // 倍率:0=1x超分(2x放大后缩回) 1=1.5x 2=2x 3=3x 4=4x 5=自定义分辨率
+        // 倍率:0=1x超分(2x放大后缩回) 1=2x 2=3x 3=4x 4=自定义分辨率
         bool upscaleShrink1x = false;
         var scale = VideoScaleRadios.SelectedIndex switch
         {
-            1 => 1.5,
-            2 => 2,
-            3 => 3,
-            4 => 4,
+            1 => 2,
+            2 => 3,
+            3 => 4,
             _ => 1,
         };
         int? outWidth = null, outHeight = null;
@@ -2846,7 +3270,7 @@ public sealed partial class VideoView : UserControl
             // 1x超分:输出尺寸不变,但内部先 2x 超分再缩回 1x(画质比直接放大更好)
             upscaleShrink1x = true;
         }
-        else if (VideoScaleRadios.SelectedIndex == 5)
+        else if (VideoScaleRadios.SelectedIndex == 4)
         {
             scale = 2;   // 自定义:内部按 2x 超分,再缩放到指定尺寸
             var cwOk = int.TryParse(CustomWidthBox.Text, out var cw) && cw > 0;

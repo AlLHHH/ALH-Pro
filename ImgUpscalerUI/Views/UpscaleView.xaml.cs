@@ -45,13 +45,13 @@ public sealed partial class UpscaleView : UserControl
         _gpuCount = GpuInfo.GetAdapterNames().Count;
         RefreshQualityCombo();   // 输出码率档位:按当前格式(PNG/JPG)填充对应选项
 
-        // 模式联动:动漫=waifu2x 模型,照片=Real-ESRGAN 模型,均可选(ModelPanel 标题随模式变)
+        // 模式联动:动漫=waifu2x 模型,照片=Real-ESRGAN 模型,均可选(标题固定「超分模型」)
         ModeRadios.SelectionChanged += (_, _) =>
         {
             var isAnime = ModeRadios.SelectedIndex == 0;
+            AppLogger.UserAction($"图片:切换算法 → {(isAnime ? "waifu2x" : "Real-ESRGAN")}");
             ModelCombo.IsEnabled = true;
             NoiseCombo.IsEnabled = isAnime;   // Real-ESRGAN 不支持降噪,照片模式禁用
-            if (ModelLabel != null) ModelLabel.Text = isAnime ? "waifu2x 模型" : "Real-ESRGAN 模型";
             ModelPanel.Opacity = 1.0;
             NoisePanel.Opacity = isAnime ? 1.0 : 0.5;
             NoiseHint.Visibility = isAnime ? Visibility.Collapsed : Visibility.Visible;
@@ -79,7 +79,11 @@ public sealed partial class UpscaleView : UserControl
             ModelCombo.SelectedIndex = (saved >= 0 && saved < ModelCombo.Items.Count) ? saved : 0;
         }
         // 模型下拉变化同样刷新倍率可用性
-        ModelCombo.SelectionChanged += (_, _) => UpdateScaleAvailability();
+        ModelCombo.SelectionChanged += (_, _) =>
+        {
+            AppLogger.UserAction($"图片:选择模型 → {(ModelCombo.SelectedItem as ComboBoxItem)?.Content}");
+            UpdateScaleAvailability();
+        };
         // 增强滑块数值显示(各自独立,可叠加)
         DetailSlider.ValueChanged += (_, e) => DetailValue.Text = ((int)e.NewValue).ToString();
         SharpenSlider.ValueChanged += (_, e) => SharpenValue.Text = ((int)e.NewValue).ToString();
@@ -380,6 +384,7 @@ public sealed partial class UpscaleView : UserControl
     // 暂停:处理完当前项后停在下一项之前;暂停期间可删除未处理的项目
     private void PauseBtn_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("图片:点击「暂停」");
         if (!_running || _paused) return;
         _paused = true;
         _resumeTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -393,6 +398,7 @@ public sealed partial class UpscaleView : UserControl
     // 恢复:立即放行(解冻进程 + 放行等待的循环)
     private void ResumeBtn_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("图片:点击「恢复」");
         if (!_running || !_paused) return;
         _paused = false;
         VideoService.ResumeActiveProcess();   // 解冻:从冻结点继续,不重算
@@ -444,6 +450,7 @@ public sealed partial class UpscaleView : UserControl
     /// <summary>增强重置:恢复默认(无任何添加)。</summary>
     private void EnhanceResetBtn_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("图片:点击「重置」增强参数");
         // 重置为默认:锐化 0,保留细节 50,其余 0
         SharpenSlider.Value = 0;
         DetailSlider.Value = 50;
@@ -455,6 +462,14 @@ public sealed partial class UpscaleView : UserControl
         DenoiseSlider.Value = 0;
         AaSlider.Value = 0;
         DehazeSlider.Value = 0;
+    }
+
+    /// <summary>高质量(TTA)折叠展开:默认收起,点按钮展开(与视频页「高级参数」交互一致)。</summary>
+    private void HighQualityToggleBtn_Click(object sender, RoutedEventArgs e)
+    {
+        bool show = HighQualityPanel.Visibility != Visibility.Visible;
+        HighQualityPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        HighQualityToggleBtn.Content = show ? "高质量 ▴" : "高质量 ▾";
     }
 
     /// <summary>追加一行日志(带时间戳),自动滚动到底部,超限自动清理最旧部分。</summary>
@@ -488,7 +503,10 @@ public sealed partial class UpscaleView : UserControl
     }
 
     private void PreviewClose_Click(object sender, RoutedEventArgs e)
-        => PreviewOverlay.Visibility = Visibility.Collapsed;
+    {
+        AppLogger.UserAction("图片:关闭预览");
+        PreviewOverlay.Visibility = Visibility.Collapsed;
+    }
 
     // ---------- 选择 ----------
     public void PickImage() => PickBtn_Click(this, new RoutedEventArgs());
@@ -496,6 +514,7 @@ public sealed partial class UpscaleView : UserControl
 
     private async void PickBtn_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("图片:点击「添加图片」");
         var picker = new FileOpenPicker();
         picker.FileTypeFilter.Add(".png");
         picker.FileTypeFilter.Add(".jpg");
@@ -519,6 +538,7 @@ public sealed partial class UpscaleView : UserControl
 
     private async void BrowseOut_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("图片:选择输出文件夹");
         var picker = new FolderPicker();
         picker.FileTypeFilter.Add("*");
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
@@ -602,6 +622,7 @@ public sealed partial class UpscaleView : UserControl
 
     private async void RunBtn_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("图片:点击「开始处理」");
         // 只处理选中的项(勾选后):否则处理全部
         bool onlySelected = SelectedOnlyCheck.IsChecked == true;
         var items = (onlySelected ? ToolGrid.SelectedItems : ToolGrid.Items).ToArray();
@@ -798,9 +819,7 @@ public sealed partial class UpscaleView : UserControl
                         // 手动选 CPU(-1)时:waifu2x/realesrgan 的 ncnn CPU 模式在部分机器崩(实测 exit -1/-1073741819)→ 直接 ONNX(CPU 同样稳定,画质一致)
                         if (engine == "realesrgan"
                             && (EngineService.ShouldUseOnnxEsrgan() || (gpuId < 0 && EsrganOnnxService.FindModel() != null)))
-                            onnxPath = model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
-                                ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())   // 动漫动画:优先动画模型,无则通用
-                                : EsrganOnnxService.FindModel();
+                            onnxPath = EsrganOnnxService.ResolveEsrganOnnxPath(model);
                         else if (engine == "waifu2x"
                             && (EngineService.ShouldUseOnnxWaifu2x()
                                 || gpuId < 0
@@ -840,9 +859,7 @@ public sealed partial class UpscaleView : UserControl
                         {
                             retried = true;
                             string? onnxRetry = engine == "waifu2x" ? EsrganOnnxService.FindWaifu2xModel()
-                                : (model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
-                                    ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())
-                                    : EsrganOnnxService.FindModel());
+                                : EsrganOnnxService.ResolveEsrganOnnxPath(model);
                             if (onnxRetry != null)
                             {
                                 try
@@ -1020,6 +1037,7 @@ public sealed partial class UpscaleView : UserControl
 
     private void CancelBtn_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("图片:点击「强制结束」");
         // 「强制结束」始终停止当前任务(包括休息中);跳过休息请用底部右侧专属「跳过休息」按钮
         TaskStatus.Text = "正在停止...";
         Log("用户点击「强制结束」,正在停止任务");
