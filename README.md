@@ -77,11 +77,10 @@
 
 **完整版(含模型)下载——国内用户推荐:**
 
-安装包不含 AI 抠图模型(1.4GB);嫌下载/安装模型麻烦的,直接下载**完整版整包**(约 2.5GB,含全部引擎+模型,解压到任意位置双击即用):
+安装包不含 AI 抠图模型(1.4GB);嫌下载/安装模型麻烦的,直接下载**完整版**(约 2.4GB,含全部引擎+模型,双击安装,装完所有功能直接可用):
 
-- 百度网盘:**[点此下载 ALHPro_v1.1.2_完整版_Setup.exe](网盘链接发布后填入)**
+- **百度网盘(推荐,国内最快):[点此下载 ALHPro_v1.1.2_完整版_Setup.exe](https://pan.baidu.com/s/1_heewIWeoPpWQKPJv9blew?pwd=yxfd) 提取码:`yxfd`**
 - 社区群 / 夸克 / 123 网盘镜像:见软件内「ALH Pro 社区」
-- GitHub 直链(能访问 GitHub 时):[ALHPro_v1.1.2_完整版_Setup.exe](https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.2/ALHPro_v1.1.2_Full_Setup.exe)
 
 > 🕐 **首次打开要等 1~2 分钟?正常!** 安装包有 2.4GB,Windows 安全软件首次会完整扫描它(期间双击后暂时没反应,不是卡死)。**等第一次扫描完成后再打开就快了**。
 

@@ -81,8 +81,11 @@ public sealed partial class MainPage : Page
                 {
                     VulkanCheck.RunOnce();
                     bool gpuOk = VulkanCheck.GpuAvailable;
-                    // 多卡机:后台实测 DirectML 设备(名字匹配失败时 ToDmlDevice 的兜底;不阻塞启动)
-                    if (VulkanCheck.Devices.Count > 1 && ALHPro.EsrganOnnxService.FindModel() != null)
+                    // 【分发给所有用户】无条件实测 DirectML 设备,让 PickDevice 用真实 DML 结果而非 Vulkan 判定。
+                    // 之前仅"多卡机"探测——单卡机(最常见)不探测,导致 PickDevice 退回 Vulkan 判定,
+                    // 在"DirectML 可用但 Vulkan 检测失败"的机器上把 ONNX 超分/视频超分静默拖回 CPU(CPU 在跑)。
+                    // 探测极轻(逐号尝试建会话,失败记录 _dmlFirstOk=-1),无 GPU/纯 CPU 机器安全:探测全失败 → 走 CPU。
+                    if (ALHPro.EsrganOnnxService.FindModel() != null)
                     {
                         try { await ALHPro.EsrganOnnxService.EnsureDmlProbeAsync(); } catch { }
                     }
