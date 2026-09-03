@@ -95,6 +95,8 @@ public static class EsrganOnnxService
             if (!VulkanCheck.GpuAvailable && !EngineService.IsBlackwellGpu()) return -1;
         }
         catch { }
+        // 用户显式选了 CPU(GpuIndex<0):必须尊重(不按尺寸拉回 GPU)——GPU 有问题的机器正是这么选的
+        if (AppSettings.GpuIndex < 0) return -1;
         int gpu = AppSettings.GpuIndex >= 0 ? AppSettings.GpuIndex : 0;
         return gpu;
     }

@@ -33,6 +33,12 @@
         <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetFrameworkVersion('$(TargetFramework)')) &lt; 8">win10-x86;win10-x64;win10-arm64</RuntimeIdentifiers>
     </PropertyGroup>
 
+    <!-- Release:不产 PDB(发布包小 100MB+,诊断日志靠托管堆栈文本,无需符号文件) -->
+    <PropertyGroup Condition="'$(Configuration)'=='Release'">
+        <DebugType>none</DebugType>
+        <DebugSymbols>false</DebugSymbols>
+    </PropertyGroup>
+
     <ItemGroup>
         <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.19.2" />
         <PackageReference Include="System.Drawing.Common" Version="8.0.7" />

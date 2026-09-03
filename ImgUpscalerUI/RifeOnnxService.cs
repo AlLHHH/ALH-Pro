@@ -15,8 +15,9 @@ namespace ALHPro;
 
 public static class RifeOnnxService
 {
-    static InferenceSession? _session;
-    static readonly object _lock = new();
+    // 会话按设备号缓存:首帧可能是小帧 CPU 会话,若单会话复用,后续大帧全落 CPU(慢 ~19 倍)。
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<int, InferenceSession> _sessions = new();
+    static readonly object _sessionGate = new();
 
     /// <summary>ONNX 模型路径(engines/rife/rife49.onnx;不存在返回 null = 不启用 ONNX 路线)。</summary>
     public static string? FindModel()
@@ -31,21 +32,20 @@ public static class RifeOnnxService
 
     static InferenceSession GetSession(int gpuId)
     {
-        if (_session != null) return _session;
-        lock (_lock)
+        if (_sessions.TryGetValue(gpuId, out var s) && s != null) return s;
+        lock (_sessionGate)
         {
-            if (_session == null)
+            if (_sessions.TryGetValue(gpuId, out var s2) && s2 != null) return s2;
+            var opts = new SessionOptions();
+            if (gpuId >= 0)
             {
-                var opts = new SessionOptions();
-                if (gpuId >= 0)
-                {
-                    try { opts.AppendExecutionProvider_DML(EngineService.ToDmlDevice(gpuId)); }
-                    catch { /* DirectML 不可用回退 CPU */ }
-                }
-                _session = new InferenceSession(FindModel()!, opts);
+                try { opts.AppendExecutionProvider_DML(EngineService.ToDmlDevice(gpuId)); }
+                catch { /* DirectML 不可用回退 CPU */ }
             }
+            var ses = new InferenceSession(FindModel()!, opts);
+            _sessions[gpuId] = ses;
+            return ses;
         }
-        return _session;
     }
 
     /// <summary>用 ONNX 模型在 img0 与 img1 之间插 time(0~1) 帧,输出到 outputPng。gpuId&gt;=0 走 DirectML,失败自动 CPU;
@@ -94,8 +94,8 @@ public static class RifeOnnxService
         }
         catch (Exception ex) when (gpuId >= 0)
         {
-            // DirectML 失败 → CPU 重建会话重试
-            DisposeSession();
+            // DirectML 失败 → 丢弃该设备的会话,CPU 会话重试
+            DropSession(gpuId);
             results = GetSession(-1).Run(new[]
             {
                 NamedOnnxValue.CreateFromTensor("img0", tensor0),
@@ -117,13 +117,9 @@ public static class RifeOnnxService
         }
     }
 
-    static void DisposeSession()
+    static void DropSession(int gpuId)
     {
-        lock (_lock)
-        {
-            _session?.Dispose();
-            _session = null;
-        }
+        if (_sessions.TryRemove(gpuId, out var old)) old?.Dispose();
     }
 
     // ---------- System.Drawing 工具(与电脑版 EsrganOnnxService 一致) ----------
