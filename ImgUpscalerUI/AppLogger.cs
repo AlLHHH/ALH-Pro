@@ -71,6 +71,10 @@ public static class AppLogger
     /// <summary>记录一条普通操作日志。</summary>
     public static void Info(string msg) => Write("INFO ", msg);
 
+    /// <summary>记录一条【用户界面操作】日志(带 [用户] 前缀,便于在日志里区分用户点击了什么)。
+    /// 所有页面的事件处理器都调用它,做到"用户在任何界面的操作都留痕"。</summary>
+    public static void UserAction(string msg) => Write("INFO ", "[用户] " + msg);
+
     /// <summary>记录一条警告(用户需注意的降级/兼容/探测失败等;同步写盘,必落日志)。</summary>
     public static void Warn(string msg) => Write("WARN ", msg, sync: true);
 

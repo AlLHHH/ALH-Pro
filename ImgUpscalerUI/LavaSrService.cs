@@ -98,11 +98,16 @@ public static class LavaSrService
 
         // 3) backbone → hidden → head
         var melTensor = new DenseTensor<float>(Flatten(mel), new[] { 1, NMELS, nFrames });
-        using var bOut = backbone.Run(new[] { NamedOnnxValue.CreateFromTensor(backbone.InputMetadata.Keys.First(), melTensor) });
-        var hidden = bOut.First().AsTensor<float>();   // [1,T,512]
-        var hiddenTensor = new DenseTensor<float>(hidden.ToArray(), hidden.Dimensions.ToArray());
-        progress?.Report((60, "升采样率:AI 推理(频谱头)..."));
-        using var hOut = head.Run(new[] { NamedOnnxValue.CreateFromTensor(head.InputMetadata.Keys.First(), hiddenTensor) });
+        // 【修复】共享静态会话的 Run 用 _lock 串行化(ONNX Run 非线程安全,当前顺序处理未触发,但并发会崩)
+        IDisposableReadOnlyCollection<DisposableNamedOnnxValue>? bOut, hOut;
+        lock (_lock)
+        {
+            bOut = backbone.Run(new[] { NamedOnnxValue.CreateFromTensor(backbone.InputMetadata.Keys.First(), melTensor) });
+            var hidden = bOut.First().AsTensor<float>();   // [1,T,512]
+            var hiddenTensor = new DenseTensor<float>(hidden.ToArray(), hidden.Dimensions.ToArray());
+            progress?.Report((60, "升采样率:AI 推理(频谱头)..."));
+            hOut = head.Run(new[] { NamedOnnxValue.CreateFromTensor(head.InputMetadata.Keys.First(), hiddenTensor) });
+        }
         var outArr = hOut.ToArray();
         // head 输出:real/imag 均为 [1, F=1025, T(帧数)](实测形状!)
         var realT = outArr[0].AsTensor<float>();
@@ -120,9 +125,9 @@ public static class LavaSrService
                 float im = imagT[0, k, f];
                 complexSpec[f, k] = new AudioSrsDsp.Complex(r, im);
             }
+        try { bOut?.Dispose(); hOut?.Dispose(); } catch { }   // 用完即释放(manual,避免嵌套 using 作用域问题)
         progress?.Report((75, "升采样率:ISTFT 重建..."));
         float[] enhanced = AudioSrsDsp.Istft(complexSpec, NFFT, HOP, w441.Length);
-
         // 5) Linkwitz-Riley 合并(低频保留原信号)→ 48k
         float[] merged = AudioSrsDsp.SpectralMerge(w441, enhanced, ENH_SR,
             Math.Min(sr, 16000) / 2.0, 1024);

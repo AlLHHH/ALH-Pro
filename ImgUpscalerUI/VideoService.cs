@@ -389,6 +389,13 @@ public static class VideoService
             if (trimEnd is > 0) trimArgs += $" -to {trimEnd.Value.ToString("0.###", inv)}";
             var origCountEst = (int)Math.Round(
                 ((trimEnd ?? await ProbeDurationSeconds(inputVideo)) - (trimStart ?? 0)) * inFps);
+            // 【修复】时长探测失败(返回 0)→ origCountEst=0 → 补帧 frameScale=0 会静默退化为"逐帧拷贝"且无告警。
+            // 给下限并提示,避免静默产出错误结果。
+            if (origCountEst <= 0)
+            {
+                AppLogger.Warn("⚠ 时长探测失败(0),补帧帧数估计用下限 1,避免静默退化为逐帧拷贝——若结果异常请检查视频时长");
+                origCountEst = 1;
+            }
             double effectiveFps = inFps;
             int frameCount;
             // 每帧原始时长表(去重/VFR 素材时启用):贯穿 拆帧→去重→补帧→合帧,
@@ -568,11 +575,12 @@ public static class VideoService
                         scaleVf, framesIn, progress, ct, origCountEst, vfrPassthrough);
                     if (dedup || vfrPassthrough)
                         frameDurs = await BuildFrameDurationsAsync(ffmpeg, inputVideo, trimArgs, scaleVf, ct);
-                    var dropM = DetectDupFramesWithSsim(framesIn,
+                    // 【修复】重CPU去重丢后台线程(原先同步调用会冻结UI线程);与 L685 同风格
+                    var dropM = await Task.Run(() => DetectDupFramesWithSsim(framesIn,
                         Math.Clamp(dedupSadThr, 0.5, 10.0), Math.Clamp(dedupSsimThr, 0.90, 0.999),
                         dedupProtect, dedupWindow, dedupScale, dedupBlockThr,
                         dedupSegOn ? Math.Clamp(dedupSegSsim, 0.80, 0.99) : 0, Math.Clamp(dedupSegSad, 2, 10),
-                        protectSmallMotion: manualProtectSmallMotion);   // 手动模式"微动防线"开关(默认开)
+                        protectSmallMotion: manualProtectSmallMotion), ct);   // 手动模式"微动防线"开关(默认开)
                     if (dropM.Count > 0)
                     {
                         dedupDroppedFrames.AddRange(dropM);
@@ -776,7 +784,8 @@ public static class VideoService
             if (dedup && dedupMode == 3 && dedupPanOn)
             {
                 progress?.Report((3, "去重(叠加):语义运动分析(镜头均匀移动=冗余,局部动作=保留)..."));
-                var dropPan = DetectDupFramesWithMotion(framesIn, Math.Clamp(dedupPanThr, 1, 10), progress, dedupScale, dedupProtect, dedupBlockThr, Math.Clamp(dedupPanMax, 10, 60));
+                // 【修复】重CPU运动分析丢后台线程(原先同步调用冻结UI线程)
+                var dropPan = await Task.Run(() => DetectDupFramesWithMotion(framesIn, Math.Clamp(dedupPanThr, 1, 10), progress, dedupScale, dedupProtect, dedupBlockThr, Math.Clamp(dedupPanMax, 10, 60)), ct);
                 // 末帧永远保留(同主去重:输出必须包含原视频最后一张画面)
                 if (dropPan.Count > 0 && frameCount > 0) dropPan.Remove(frameCount);
                 if (dropPan.Count > 0)
@@ -1208,16 +1217,12 @@ public static class VideoService
                             {
                                 // 手动选 CPU:waifu2x/realesrgan 的 ncnn CPU 模式在部分机器崩(实测 exit -1/-1073741819)→ 直接 ONNX
                                 if (engine == "realesrgan")
-                                    onnxModelPath = model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
-                                        ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())
-                                        : EsrganOnnxService.FindModel();
+                                    onnxModelPath = EsrganOnnxService.ResolveEsrganOnnxPath(model);
                                 else if (engine == "waifu2x")
                                     onnxModelPath = EsrganOnnxService.FindWaifu2xModel();
                             }
                             else if (engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan())
-                                onnxModelPath = model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
-                                    ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())
-                                    : EsrganOnnxService.FindModel();
+                                onnxModelPath = EsrganOnnxService.ResolveEsrganOnnxPath(model);
                             else if (engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx))
                                 onnxModelPath = EsrganOnnxService.FindWaifu2xModel();
                             if (onnxModelPath != null)
@@ -1255,9 +1260,7 @@ public static class VideoService
                                 // 现在:本机有 ONNX 模型 → 直接走 ONNX DirectML(GPU 加速,比 ncnn-CPU 快一个数量级);
                                 // 无模型/WORK 失败才降 ncnn-CPU。两套运行时独立,ncnn GPU 崩 ≠ DirectML 崩。
                                 string? onnxB = engine == "realesrgan"
-                                    ? (model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
-                                        ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())
-                                        : EsrganOnnxService.FindModel())
+                                    ? EsrganOnnxService.ResolveEsrganOnnxPath(model)
                                     : engine == "waifu2x" ? EsrganOnnxService.FindWaifu2xModel() : null;
                                 if (onnxB != null)
                                 {
@@ -2494,7 +2497,19 @@ public static class VideoService
             if (p == null) return (0, 0);
             var o = await p.StandardOutput.ReadToEndAsync();
             await p.StandardError.ReadToEndAsync();
-            await p.WaitForExitAsync().ConfigureAwait(false);
+            // 【修复】等待 ffprobe 退出加超时+取消:损坏/超大/特殊封装可能让 ffprobe 长期挂起,
+            // 原先无超时无取消 → 视频管线永久挂起、取消无效。超时或取消即杀进程树并抛错。
+            var exitTask = p.WaitForExitAsync(ct);
+            var timeoutTask = Task.Delay(TimeSpan.FromSeconds(30), ct);
+            var finished = await Task.WhenAny(exitTask, timeoutTask).ConfigureAwait(false);
+            if (finished != exitTask || !p.HasExited)
+            {
+                try { p.Kill(entireProcessTree: true); } catch { }
+                ct.ThrowIfCancellationRequested();   // 若因取消则抛取消
+                throw new InvalidOperationException("ffprobe 等待超时(读帧率/帧数),疑似损坏/超大视频——已终止");
+            }
+            // 等待真正退出,确保后续读输出完整
+            try { await exitTask.ConfigureAwait(false); } catch (OperationCanceledException) { throw; }
             var parts = o.Trim().Split(',');
             // ffprobe 实测输出顺序为: avg_frame_rate,nb_read_frames (如 "5211/250,38")——
             // 帧率在前、帧数在后;老版本可能相反,两种都兼容解析。
@@ -4372,7 +4387,15 @@ public static class VideoService
             if (p == null) return false;
             var outTask = p.StandardOutput.ReadToEndAsync();
             var errTask = p.StandardError.ReadToEndAsync();
-            await p.WaitForExitAsync();
+            // 【修复】校验进程加超时:ffprobe 曾可能挂起,加 30 秒超时,超时就杀进程树并视为无效(避免卡住)。
+            var exitTask = p.WaitForExitAsync();
+            var finished = await Task.WhenAny(exitTask, Task.Delay(TimeSpan.FromSeconds(30))).ConfigureAwait(false);
+            if (finished != exitTask || !p.HasExited)
+            {
+                try { p.Kill(entireProcessTree: true); } catch { }
+                return false;
+            }
+            await exitTask.ConfigureAwait(false);
             var outp = (await outTask).Trim();
             await errTask;
             if (p.ExitCode != 0 || !outp.Contains("video", StringComparison.OrdinalIgnoreCase)) return false;

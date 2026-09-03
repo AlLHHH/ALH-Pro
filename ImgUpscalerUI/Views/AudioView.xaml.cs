@@ -223,6 +223,7 @@ public sealed partial class AudioView : UserControl
 
     private void RemoveAudio_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("音频:点击「删除选中」");
         if (_running) { Log("处理中不能删除(可先暂停/强制结束)"); return; }
         var selected = AudioList.SelectedItems.Cast<AudioItem>().ToArray();
         if (selected.Length == 0) return;
@@ -239,6 +240,7 @@ public sealed partial class AudioView : UserControl
 
     private void ClearAudio_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("音频:点击「清空」列表");
         if (_running) { Log("处理中不能清空(可先暂停/强制结束)"); return; }
         _items.Clear();
         AudioList.Items.Clear();
@@ -250,6 +252,7 @@ public sealed partial class AudioView : UserControl
 
     private void ClearDoneAudio_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("音频:点击「清除已完成」");
         if (_running) { Log("处理中不能清除(可先暂停/强制结束)"); return; }
         var done = _items.Where(it => it.IsDone).ToArray();
         foreach (var it in done)
@@ -418,6 +421,7 @@ public sealed partial class AudioView : UserControl
     // ---------- 选择文件 ----------
     private async void PickAudioBtn_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("音频:点击「选择音频文件」");
         var picker = new FileOpenPicker();
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
         WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
@@ -507,6 +511,7 @@ public sealed partial class AudioView : UserControl
 
     private void PlayBtn_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("音频:点击预览「播放/暂停」");
         var mp = _mediaPlayer;
         if (mp == null) return;
         if (mp.PlaybackSession.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing)
@@ -532,6 +537,7 @@ public sealed partial class AudioView : UserControl
 
     private void ResetBtn_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("音频:点击「再听一次」");
         var mp = _mediaPlayer;
         if (mp == null || _previewItem == null) return;
         // 再听一次 = 从头(0:00)开始播放
@@ -704,13 +710,18 @@ public sealed partial class AudioView : UserControl
         PreviewPanel.Visibility = Visibility.Collapsed;
     }
 
-    private void PreviewCloseBtn_Click(object sender, RoutedEventArgs e) => ClosePreview();
+    private void PreviewCloseBtn_Click(object sender, RoutedEventArgs e)
+    {
+        AppLogger.UserAction("音频:关闭预览");
+        ClosePreview();
+    }
 
     // ---------- 裁剪把手(波形上拖首尾)见上方 ----------
 
     // ---------- 开始处理 ----------
     private async void RunBtn_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("音频:点击「开始处理」");
         if (_running || _items.Count == 0) return;
         _running = true;
         _cts = new CancellationTokenSource();
@@ -1020,6 +1031,7 @@ public sealed partial class AudioView : UserControl
 
     private void CancelBtn_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("音频:点击「强制结束」");
         Log("用户点击「强制结束」,正在停止...");
         _cts?.Cancel();
     }

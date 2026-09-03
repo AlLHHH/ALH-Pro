@@ -259,18 +259,24 @@ public static class CutoutService
     private static InferenceSession GetOrCreateSession(string modelPath, int gpuId)
     {
         var key = (modelPath, gpuId);
-        // 先取锁(保证并发任务互斥),再取 Session(锁内创建,避免重复加载)
+        // 【修复】用信号量锁保护"查缓存→创建→写缓存"全过程(原 GetOrAdd 的工厂在并发时会重复建会话,丢弃的未 Dispose→泄漏)。
         var gate = _sessionLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
-        return _sessionCache.GetOrAdd(key, _ =>
+        gate.Wait();
+        try
         {
+            if (_sessionCache.TryGetValue(key, out var existing) && existing != null)
+                return existing;   // 已建,直接复用
             var opts = new SessionOptions();
             if (gpuId >= 0)
             {
                 try { opts.AppendExecutionProvider_DML(EngineService.ToDmlDevice(gpuId)); }
                 catch { /* DirectML 不可用时回退 CPU */ }
             }
-            return new InferenceSession(modelPath, opts);
-        });
+            var session = new InferenceSession(modelPath, opts);
+            _sessionCache[key] = session;
+            return session;
+        }
+        finally { gate.Release(); }
     }
 
     /// <summary>串行执行 session.Run(同一模型+设备并发 Run 会冲突)。</summary>

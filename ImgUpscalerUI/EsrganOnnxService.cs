@@ -68,6 +68,18 @@ public static class EsrganOnnxService
         return null;
     }
 
+    /// <summary>按所选 Real-ESRGAN 模型名解析对应的 ONNX 模型路径:动漫模型(名字含 anime,如 animevideov3/x4plus-anime)
+    /// → 优先动漫 ONNX(保持动漫画质),无则通用;通用模型(x4plus)→ 通用 ONNX。
+    /// 视频/图片多处 ONNX 兜底共用,避免与"只认 animevideo"的旧判断不一致导致动漫画质被降级。</summary>
+    public static string? ResolveEsrganOnnxPath(string model)
+    {
+        // 动漫模型:realesr-animevideov3 与 realesrgan-x4plus-anime 均含 "anime"。
+        // 通用 realesrgan-x4plus 不含 anime(不会误判),仍走通用。
+        if (model.Contains("anime", StringComparison.OrdinalIgnoreCase))
+            return FindAnimeVideoModel() ?? FindModel();
+        return FindModel();
+    }
+
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, int), InferenceSession> _sessions = new();
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, int), SemaphoreSlim> _locks = new();
     private static bool _dmlWarned;
@@ -529,7 +541,10 @@ public static class EsrganOnnxService
                 // 并标记该设备不可用:后续帧直接 CPU,不做无谓的失败调用
                 WarnDmlUnavailable("推理失败: " + ex.Message.Split('\n')[0]);
                 _dmlBad[gpuId] = 0;
-                try { if (_sessions.TryRemove(key, out var gone)) gone.Dispose(); } catch { }
+                // 【修复】Remove+Dispose 持 key 锁(否则另一线程可能 Run 已 Dispose 的会话 → ObjectDisposed)
+                gate!.Wait();
+                try { if (_sessions.TryRemove(key, out var gone)) gone.Dispose(); }
+                finally { gate!.Release(); }
                 var cpuKey = (modelPath, -1);
                 var cpuGate = _locks.GetOrAdd(cpuKey, _ => new SemaphoreSlim(1, 1));
                 cpuGate.Wait();

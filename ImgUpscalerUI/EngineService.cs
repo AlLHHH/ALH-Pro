@@ -256,22 +256,22 @@ public static partial class EngineService
         }
     }
 
-    /// <summary>动漫模式可选模型(waifu2x 系,全部 MIT 许可)。显示名=模型名(体量 MB · 快/中/慢);取值用 Model=模型名。</summary>
+    /// <summary>动漫模式可选模型(waifu2x 系,全部 MIT 许可)。显示名=类别·模型名(体量 MB · 快/中/慢);取值用 Model=模型名。</summary>
     public static readonly (string Label, string Engine, string Model)[] AnimeModels =
     {
-        ("models-cunet（24MB · 中）", "waifu2x", "models-cunet"),
-        ("models-upconv_7_anime_style_art_rgb（5MB · 快）", "waifu2x", "models-upconv_7_anime_style_art_rgb"),
+        ("通用 · models-cunet（24MB · 中）", "waifu2x", "models-cunet"),
+        ("动漫 · models-upconv_7_anime_style_art_rgb（5MB · 快）", "waifu2x", "models-upconv_7_anime_style_art_rgb"),
     };
 
     // 注意:预处理降噪用 cunet(models-cunet 自带 1x 降噪模型 noise_model.bin);
     // upconv_7_photo/upconv_7_anime 只有 2x 降噪模型(noiseN_scale2.0x),-s 1 降噪会失败。
 
-    /// <summary>Real-ESRGAN 可选模型(照片模式)。显示名=模型名(体量 MB · 快/中/慢);取值用 Name=模型名。</summary>
+    /// <summary>Real-ESRGAN 可选模型(照片模式)。显示名=类别·模型名(体量 MB · 快/中/慢);取值用 Name=模型名。</summary>
     public static readonly (string Label, string Name)[] PhotoModels =
     {
-        ("realesr-animevideov3（4MB · 快）", "realesr-animevideov3"),
-        ("realesrgan-x4plus-anime（9MB · 中）", "realesrgan-x4plus-anime"),
-        ("realesrgan-x4plus（41MB · 慢）", "realesrgan-x4plus"),
+        ("动漫 · realesr-animevideov3（4MB · 快）", "realesr-animevideov3"),
+        ("动漫 · realesrgan-x4plus-anime（9MB · 中）", "realesrgan-x4plus-anime"),
+        ("通用 · realesrgan-x4plus（41MB · 慢）", "realesrgan-x4plus"),
     };
 
     /// <summary>分块尺寸:大图按 tile 分块超分再拼接(防显存爆)。

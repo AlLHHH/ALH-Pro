@@ -17,6 +17,7 @@ namespace ALHPro.Views;
 public sealed partial class CutoutView : UserControl
 {
     private bool _running;
+    private bool _suppressEvents;   // 构造器赋默认值/LoadSettings 期间 true,抑制 SaveSettings,防止默认值覆盖用户设置
     private string? _customOutDir;
     private CancellationTokenSource? _cts;
     private int _gpuCount;
@@ -49,12 +50,16 @@ public sealed partial class CutoutView : UserControl
         ToolGrid.ItemDoubleTapped += ToolGrid_ItemDoubleTapped;
         // 计算设备:统一在「设置」里选择(AppSettings.GpuIndex),页面不再显示下拉
         _gpuCount = GpuInfo.GetAdapterNames().Count;
+        // 【修复】构造器赋默认值期间抑制保存:否则默认值(128/64/0/0)会触发 OnParamsChanged→SaveSettings,
+        // 把默认值写盘覆盖用户之前保存的前景/背景等参数(用户"记住参数"失效的真正原因之一)。
+        _suppressEvents = true;
         // 参数默认值(在 InitializeComponent 之后设置,避免 XAML 解析期事件)
         FgSlider.Value = 128;
         BgSlider.Value = 64;
         FeatherSlider.Value = 0;
         EdgeSlider.Value = 0;
         LoadSettings();
+        _suppressEvents = false;
         UpdateOptions();
         UpdateRunState();
         // 「抠图前降噪」未勾选 → 降噪强度下拉与标签禁用并置灰(与超分页照片模式联动一致)
@@ -91,14 +96,34 @@ public sealed partial class CutoutView : UserControl
 
     // 参数滑条变化 → 刷新数值显示;记住开启时同步保存;蒙版预览显示中则自动刷新
     private void Params_Changed(object sender, RoutedEventArgs e)
-        => OnParamsChanged();
+    {
+        if (!_suppressEvents && sender is Microsoft.UI.Xaml.Controls.CheckBox cb)
+        {
+            bool on = cb.IsChecked == true;
+            string? name = null;
+            if (ReferenceEquals(cb, PreDenoiseCheck)) name = "抠图前降噪";
+            else if (ReferenceEquals(cb, PreUpscaleCheck)) name = "抠图前超分 2x";
+            else if (ReferenceEquals(cb, AutoThresholdCheck)) name = "自适应阈值";
+            if (name != null) AppLogger.UserAction($"抠图:{(on ? "开启" : "关闭")}「{name}」");
+        }
+        OnParamsChanged();
+    }
 
     // 事件参数类型各异,XBF 反射连接要求精确签名,分别提供专用处理器:
     private void ParamsSlider_Changed(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
         => OnParamsChanged();
 
     private void ParamsCombo_Changed(object sender, Microsoft.UI.Xaml.Controls.SelectionChangedEventArgs e)
-        => OnParamsChanged();
+    {
+        if (!_suppressEvents)
+        {
+            if (ReferenceEquals(sender, ModelCombo))
+                AppLogger.UserAction($"抠图:选择抠图模型 → {(ModelCombo.SelectedItem as ComboBoxItem)?.Content}");
+            else if (ReferenceEquals(sender, PreDenoiseLevelCombo))
+                AppLogger.UserAction($"抠图:切换预处理降噪强度 → {(PreDenoiseLevelCombo.SelectedItem as ComboBoxItem)?.Content}");
+        }
+        OnParamsChanged();
+    }
 
     private void OnParamsChanged()
     {
@@ -137,6 +162,7 @@ public sealed partial class CutoutView : UserControl
     // 重置为当前模型的最优参数预设
     private void ResetBtn_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("抠图:点击「重置参数」");
         var m = CutoutService.Models[Math.Clamp(ModelCombo.SelectedIndex, 0, CutoutService.Models.Length - 1)];
         FgSlider.Value = m.FgPreset;
         BgSlider.Value = m.BgPreset;
@@ -243,6 +269,7 @@ public sealed partial class CutoutView : UserControl
 
     private void SaveSettings()
     {
+        if (_suppressEvents) return;   // 【修复】构造器/加载期间抑制保存,防止默认值覆盖用户设置
         try
         {
             var d = new CutoutSettings
@@ -293,6 +320,7 @@ public sealed partial class CutoutView : UserControl
     // 暂停:处理完当前张后停在下一张之前;暂停期间可删除未处理的项目
     private void PauseBtn_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("抠图:点击「暂停」");
         if (!_running || _paused) return;
         _paused = true;
         _resumeTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -306,6 +334,7 @@ public sealed partial class CutoutView : UserControl
     // 恢复:立即放行(解冻进程 + 放行等待的循环)
     private void ResumeBtn_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("抠图:点击「恢复」");
         if (!_running || !_paused) return;
         _paused = false;
         VideoService.ResumeActiveProcess();   // 解冻:从冻结点继续,不重算
@@ -420,6 +449,7 @@ public sealed partial class CutoutView : UserControl
 
     private void PreviewClose_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("抠图:关闭预览");
         _previewItem = null;
         PreviewOverlay.Visibility = Visibility.Collapsed;
     }
@@ -478,6 +508,7 @@ public sealed partial class CutoutView : UserControl
     // AI 主体预览:显示模型识别的黑白蒙版(白=主体);再点恢复原图
     private async void MaskPreview_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("抠图:点击「抠图预览」");
         var item = _previewItem;
         if (item == null || _running) return;
         if (_maskPreviewShown)
@@ -583,6 +614,7 @@ public sealed partial class CutoutView : UserControl
 
     private async void PickBtn_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("抠图:点击「添加图片」");
         var picker = new FileOpenPicker();
         picker.FileTypeFilter.Add(".png");
         picker.FileTypeFilter.Add(".jpg");
@@ -605,6 +637,7 @@ public sealed partial class CutoutView : UserControl
 
     private async void BrowseOut_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("抠图:选择输出文件夹");
         var picker = new FolderPicker();
         picker.FileTypeFilter.Add("*");
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
@@ -629,6 +662,7 @@ public sealed partial class CutoutView : UserControl
     // ---------- 批量抠图 ----------
     private async void RunBtn_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("抠图:点击「开始处理」");
         // 只处理选中的项(勾选后):否则处理全部
         bool onlySelected = SelectedOnlyCheck.IsChecked == true;
         var items = (onlySelected ? ToolGrid.SelectedItems : ToolGrid.Items).ToArray();
@@ -928,6 +962,7 @@ public sealed partial class CutoutView : UserControl
 
     private void CancelBtn_Click(object sender, RoutedEventArgs e)
     {
+        AppLogger.UserAction("抠图:点击「强制结束」");
         // 「强制结束」始终停止当前任务(包括休息中);跳过休息请用底部右侧专属「跳过休息」按钮
         TaskStatus.Text = "正在停止...";
         Log("用户点击「强制结束」,正在停止任务");
@@ -973,6 +1008,7 @@ public sealed partial class CutoutView : UserControl
     /// <summary>模型缺失提示条「查看安装方法」:弹窗给出白话步骤(含网盘完整版说明)。</summary>
     private async void ShowModelHelp_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
     {
+        AppLogger.UserAction("抠图:点击「查看安装方法」(模型缺失帮助)");
         var txt = new TextBlock
         {
             FontSize = 12,
