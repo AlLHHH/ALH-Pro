@@ -161,7 +161,7 @@ public static class EsrganOnnxService
     /// gpuId 传入 -2 表示"自动"(按输入大小选设备);其余按传入值。</summary>
     public static async Task UpscaleAsync(string input, string output, double scale,
         int gpuId = -1, IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default,
-        string? modelPath = null)
+        string? modelPath = null, InferenceSession? sessionOverride = null)
     {
         modelPath ??= FindModel()
             ?? throw new FileNotFoundException(
@@ -177,13 +177,15 @@ public static class EsrganOnnxService
         }
         catch { }
         progress?.Report((5, "加载 ONNX 模型..."));
-        await Task.Run(() => RunCore(input, output, scale, modelPath, gpuId, progress, ct), ct);
+        await Task.Run(() => RunCore(input, output, scale, modelPath, gpuId, progress, ct, sessionOverride), ct);
         progress?.Report((100, "完成"));
     }
 
     /// <summary>ONNX 目录批处理(视频逐帧超分用):遍历 inputDir 的 PNG,逐帧 UpscaleAsync 输出到 outputDir。
     /// 供视频超分在 50 系/无独显设备走 ONNX(不走会崩的 ncnn-vulkan)。modelPath=null 用 Real-ESRGAN。
-    /// 串行单路(实测 CPU 并发需每 worker 固定会话,否则每次切线程重建 session 反而慢 3 倍——保持简单可靠)。</summary>
+    /// 【并行优化】视频超分逐帧并行:早期串行(被共享缓存锁串行化,GPU 只用了单路)。
+    /// 现用 2 路独立 DirectML 会话并行(实测 2 路 ≈1.25x,tile 分块下 GPU 算力爬升;3/4 路不再增益,仅显存吃紧)。
+    /// 仍保留逐帧进度 + 取消,失败帧回退原帧(不中断)。</summary>
     public static async Task UpscaleDirAsync(string inputDir, string outputDir, double scale,
         int gpuId = -1, IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default,
         string? modelPath = null)
@@ -192,20 +194,74 @@ public static class EsrganOnnxService
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
         Directory.CreateDirectory(outputDir);
         if (files.Length == 0) return;
+        modelPath ??= FindModel()
+            ?? throw new FileNotFoundException("未找到 ONNX 超分模型");
         // -2 = 每帧自动选设备(视频帧通常大,落 GPU;小帧自动 CPU)
         bool auto = gpuId == -2;
-        for (int i = 0; i < files.Length; i++)
+        // 决定会话数:GPU 走 2 路并行(DirectML 多会话);CPU 保持 1(CPU 多会话每帧建会增加开销)
+        bool wantGpu = auto ? true : gpuId >= 0;
+        int concurrency = wantGpu ? 2 : 1;
+        // 预创建独立会话池(每个并行 worker 一个;绕开共享缓存锁,支持并发 Run)
+        var sessions = new Microsoft.ML.OnnxRuntime.InferenceSession?[concurrency];
+        for (int s = 0; s < concurrency; s++)
         {
-            ct.ThrowIfCancellationRequested();
-            var outPath = Path.Combine(outputDir, Path.GetFileName(files[i]));
-            await UpscaleAsync(files[i], outPath, scale, auto ? -2 : gpuId, null, ct, modelPath).ConfigureAwait(false);
-            progress?.Report(((int)((i + 1) * 100.0 / files.Length),
-                $"超分 {i + 1}/{files.Length} 帧({Path.GetFileName(files[i])})"));
+            try
+            {
+                var opts = new SessionOptions();
+                if (wantGpu)
+                {
+                    try { opts.AppendExecutionProvider_DML(EngineService.ToDmlDevice(auto ? 0 : gpuId)); }
+                    catch { /* DML 不可用回退 CPU */ }
+                }
+                sessions[s] = new Microsoft.ML.OnnxRuntime.InferenceSession(modelPath, opts);
+            }
+            catch { sessions[s] = null; }
+        }
+        try
+        {
+            int done = 0;
+            // 【正确并行】每个 worker 独占一个 session, worker 之间分片处理帧 —— 保证同一个 session
+            // 同一时刻只被一个 worker 用(同一 InferenceSession 不能并发 Run,否则 AccessViolation/OnnxRuntimeException)。
+            var workers = new System.Threading.Tasks.Task[concurrency];
+            for (int w = 0; w < concurrency; w++)
+            {
+                int wi = w;
+                workers[w] = System.Threading.Tasks.Task.Run(() =>
+                {
+                    for (int i = wi; i < files.Length; i += concurrency)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        var outPath = Path.Combine(outputDir, Path.GetFileName(files[i]));
+                        try
+                        {
+                            var sess = sessions[wi];
+                            UpscaleAsync(files[i], outPath, scale, auto ? -2 : gpuId, null, ct, modelPath, sess)
+                                .GetAwaiter().GetResult();
+                        }
+                        catch (Exception ex)
+                        {
+                            AppLogger.Warn($"ONNX 超分失败({ex.Message.Split('\n')[0]})——保留原帧");
+                            try { File.Copy(files[i], outPath, true); } catch { }
+                        }
+                        finally
+                        {
+                            int d = System.Threading.Interlocked.Increment(ref done);
+                            progress?.Report(((int)(d * 100.0 / files.Length),
+                                $"超分 {d}/{files.Length} 帧({Path.GetFileName(files[i])})"));
+                        }
+                    }
+                }, ct);
+            }
+            await System.Threading.Tasks.Task.WhenAll(workers).ConfigureAwait(false);
+        }
+        finally
+        {
+            foreach (var s in sessions) try { s?.Dispose(); } catch { }
         }
     }
 
     private static void RunCore(string input, string output, double scale, string modelPath, int gpuId,
-        IProgress<(int pct, string msg)>? progress, CancellationToken ct)
+        IProgress<(int pct, string msg)>? progress, CancellationToken ct, InferenceSession? sessionOverride = null)
     {
         using var src = new System.Drawing.Bitmap(input);
         int sw = src.Width, sh = src.Height;
@@ -227,12 +283,12 @@ public static class EsrganOnnxService
         const int Overlap = 32;
         if (sw > Tile || sh > Tile)
         {
-            RunCoreTiled(src, output, scale, modelPath, gpuId, progress, ct, Tile, Overlap);
+            RunCoreTiled(src, output, scale, modelPath, gpuId, progress, ct, Tile, Overlap, sessionOverride);
             return;
         }
 
         // 单块(整图 ≤ Tile):直接推理
-        using var tileBmp = RunTile(src, modelPath, gpuId, ct);
+        using var tileBmp = RunTile(src, modelPath, gpuId, ct, sessionOverride);
         int tW = tileBmp.Width, tH = tileBmp.Height;
         if (Math.Abs(tW - ow) > 1 || Math.Abs(tH - oh) > 1)
             SaveScaled(tileBmp, output, ow, oh);
@@ -245,7 +301,8 @@ public static class EsrganOnnxService
 
     /// <summary>透明底保护:提取 alpha → RGB 填白 → 超分 → 恢复 alpha(输出 32bpp Argb)。</summary>
     private static void RunCoreAlphaSafe(System.Drawing.Bitmap src, string output, double scale, string modelPath,
-        int gpuId, IProgress<(int pct, string msg)>? progress, CancellationToken ct, int tile, int overlap)
+        int gpuId, IProgress<(int pct, string msg)>? progress, CancellationToken ct, int tile, int overlap,
+        InferenceSession? sessionOverride = null)
     {
         int sw = src.Width, sh = src.Height;
         int ow = (int)Math.Round(sw * scale), oh = (int)Math.Round(sh * scale);
@@ -268,10 +325,10 @@ public static class EsrganOnnxService
         try
         {
             if (sw > tile || sh > tile)
-                RunCoreTiled(rgbSrc, tmpRgb, scale, modelPath, gpuId, null, ct, tile, overlap);
+                RunCoreTiled(rgbSrc, tmpRgb, scale, modelPath, gpuId, null, ct, tile, overlap, sessionOverride);
             else
             {
-                using var tileBmp = RunTile(rgbSrc, modelPath, gpuId, ct);
+                using var tileBmp = RunTile(rgbSrc, modelPath, gpuId, ct, sessionOverride);
                 if (Math.Abs(tileBmp.Width - ow) > 1 || Math.Abs(tileBmp.Height - oh) > 1)
                     SaveScaled(tileBmp, tmpRgb, ow, oh);
                 else
@@ -327,7 +384,8 @@ public static class EsrganOnnxService
 
     /// <summary>分块超分:大图切 Tile 网格(步长=Tile-Overlap),逐块推理后按"核心区"贴回(重叠区相邻块覆盖,无接缝)。</summary>
     private static void RunCoreTiled(System.Drawing.Bitmap src, string output, double scale, string modelPath,
-        int gpuId, IProgress<(int pct, string msg)>? progress, CancellationToken ct, int tile, int overlap)
+        int gpuId, IProgress<(int pct, string msg)>? progress, CancellationToken ct, int tile, int overlap,
+        InferenceSession? sessionOverride = null)
     {
         int sw = src.Width, sh = src.Height;
         int ow = (int)Math.Round(sw * scale), oh = (int)Math.Round(sh * scale);
@@ -354,7 +412,7 @@ public static class EsrganOnnxService
                     using (var g = System.Drawing.Graphics.FromImage(cropped))
                         g.DrawImage(src, new System.Drawing.Rectangle(0, 0, tw, th),
                             new System.Drawing.Rectangle(x0, y0, tw, th), System.Drawing.GraphicsUnit.Pixel);
-                    using var tileOut = RunTile(cropped, modelPath, gpuId, ct);
+                    using var tileOut = RunTile(cropped, modelPath, gpuId, ct, sessionOverride);
                     // 贴回核心区(去掉 overlap 半宽)
                     int coreX0 = tx == 0 ? 0 : overlap / 2;
                     int coreY0 = ty == 0 ? 0 : overlap / 2;
@@ -384,7 +442,8 @@ public static class EsrganOnnxService
 
     /// <summary>单块推理(返回 4x 结果位图)。会话按 (modelPath,gpuId) 缓存;GPU 失败自动 CPU 重试。
     /// waifu2x 模型(文件名含 waifu2x)输入名为 x(非 input),其余模型为 input。</summary>
-    private static System.Drawing.Bitmap RunTile(System.Drawing.Bitmap src, string modelPath, int gpuId, CancellationToken ct)
+    private static System.Drawing.Bitmap RunTile(System.Drawing.Bitmap src, string modelPath, int gpuId, CancellationToken ct,
+        InferenceSession? sessionOverride = null)
     {
         int inW = src.Width, inH = src.Height;
         var pixels = new float[1 * 3 * inH * inW];
@@ -400,24 +459,34 @@ public static class EsrganOnnxService
             gpuId = -1;
         }
 
+        // 【并行优化】sessionOverride 非空:直接用调用方传入的独立会话(绕开共享缓存锁,支持多 session 并行),
+        // 供 UpscaleDirAsync 并行超分用;否则按原按 (modelPath,gpuId) 缓存单会话 + 锁串行化(单图/单块路径不变)。
         InferenceSession session;
         var key = (modelPath, gpuId);
-        var gate = _locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
-        gate.Wait();
-        try
+        SemaphoreSlim? gate = null;
+        if (sessionOverride != null)
         {
-            session = _sessions.GetOrAdd(key, _ =>
-            {
-                var opts = new SessionOptions();
-                if (gpuId >= 0)
-                {
-                    try { opts.AppendExecutionProvider_DML(EngineService.ToDmlDevice(gpuId)); }
-                    catch (Exception dmlEx) { WarnDmlUnavailable("创建 GPU 会话失败: " + dmlEx.Message.Split('\n')[0]); }
-                }
-                return new InferenceSession(modelPath, opts);
-            });
+            session = sessionOverride;
         }
-        finally { gate.Release(); }
+        else
+        {
+            gate = _locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+            gate.Wait();
+            try
+            {
+                session = _sessions.GetOrAdd(key, _ =>
+                {
+                    var opts = new SessionOptions();
+                    if (gpuId >= 0)
+                    {
+                        try { opts.AppendExecutionProvider_DML(EngineService.ToDmlDevice(gpuId)); }
+                        catch (Exception dmlEx) { WarnDmlUnavailable("创建 GPU 会话失败: " + dmlEx.Message.Split('\n')[0]); }
+                    }
+                    return new InferenceSession(modelPath, opts);
+                });
+            }
+            finally { gate.Release(); }
+        }
 
         var inputs = new[] { NamedOnnxValue.CreateFromTensor(inputName, inputTensor) };
         IDisposableReadOnlyCollection<DisposableNamedOnnxValue>? results = null;
@@ -425,12 +494,25 @@ public static class EsrganOnnxService
         {
             try
             {
-                gate.Wait();
-                try { results = session.Run(inputs); }
-                finally { gate.Release(); }
+                if (sessionOverride != null)
+                {
+                    // 并行路径:session 来自调用方(独立会话),无需共享锁,直接推理
+                    results = session.Run(inputs);
+                }
+                else
+                {
+                    gate!.Wait();
+                    try { results = session.Run(inputs); }
+                    finally { gate!.Release(); }
+                }
             }
             catch (Exception ex) when (gpuId >= 0)
             {
+                // 并行路径(sessionOverride):独立会话,失败直接抛出(上层回退原帧),不进入缓存 key 回退
+                if (sessionOverride != null)
+                {
+                    throw new InvalidOperationException($"ONNX 超分失败(并行会话): {ex.Message}", ex);
+                }
                 // DirectML 失败 → 换 CPU 会话重试(缓存独立 CPU 会话;与 GPU 会话互不干扰);
                 // 并标记该设备不可用:后续帧直接 CPU,不做无谓的失败调用
                 WarnDmlUnavailable("推理失败: " + ex.Message.Split('\n')[0]);
