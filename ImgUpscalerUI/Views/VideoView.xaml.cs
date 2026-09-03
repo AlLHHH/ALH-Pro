@@ -1573,9 +1573,10 @@ public sealed partial class VideoView : UserControl
                 var presetName = cur[i].Name;
                 if (pendingDel == presetName)
                 {
-                    // 确认态:明确文字 + 对勾(确认)/叉(取消)
+                    // 确认态:预设名被覆盖为「确定要删除此预设吗?」,右侧放 ✓(确认)/✕(取消)
+                    name.Text = "确定要删除此预设吗?";
+                    name.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77));
                     var confirmSpan = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 6, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
-                    var confirmText = new TextBlock { Text = "确定要删除此预设吗?", FontSize = 12, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
                     var okBtn = new Button { Content = "✓", FontSize = 14, Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 0, 168, 0)), MinWidth = 0, Padding = new Microsoft.UI.Xaml.Thickness(6, 2, 6, 2), Background = null, BorderThickness = new Microsoft.UI.Xaml.Thickness(0) };
                     var cancelBtn = new Button { Content = "✕", FontSize = 14, Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77)), MinWidth = 0, Padding = new Microsoft.UI.Xaml.Thickness(6, 2, 6, 2), Background = null, BorderThickness = new Microsoft.UI.Xaml.Thickness(0) };
                     ToolTipService.SetToolTip(okBtn, "确认删除");
@@ -1591,17 +1592,18 @@ public sealed partial class VideoView : UserControl
                         RebuildList();
                     };
                     cancelBtn.Click += (_, _) => { pendingDel = null; RebuildList(); };
-                    confirmSpan.Children.Add(confirmText); confirmSpan.Children.Add(okBtn); confirmSpan.Children.Add(cancelBtn);
+                    confirmSpan.Children.Add(okBtn); confirmSpan.Children.Add(cancelBtn);
                     Grid.SetColumn(confirmSpan, 1);
                     row.Children.Add(confirmSpan);
                 }
                 else
                 {
-                    // 普通态:删除小按钮(用文字"删"避免图标字体乱码;点一下进入确认态)
+                    // 普通态:垃圾桶图标(点一下进入确认态)
                     var delBtn = new Button
                     {
-                        Content = "删",
-                        FontSize = 12,
+                        Content = "\uE74D",
+                        FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe MDL2 Assets"),
+                        FontSize = 13,
                         Background = null,
                         BorderThickness = new Microsoft.UI.Xaml.Thickness(0),
                         Padding = new Microsoft.UI.Xaml.Thickness(6, 2, 6, 2),
