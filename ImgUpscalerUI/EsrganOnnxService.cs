@@ -188,7 +188,7 @@ public static class EsrganOnnxService
     /// 仍保留逐帧进度 + 取消,失败帧回退原帧(不中断)。</summary>
     public static async Task UpscaleDirAsync(string inputDir, string outputDir, double scale,
         int gpuId = -1, IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default,
-        string? modelPath = null)
+        string? modelPath = null, int globalBaseFrames = 0, int globalTotalFrames = 0)
     {
         var files = Directory.EnumerateFiles(inputDir, "*.png")
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -201,6 +201,8 @@ public static class EsrganOnnxService
         // 决定会话数:GPU 走 2 路并行(DirectML 多会话);CPU 保持 1(CPU 多会话每帧建会增加开销)
         bool wantGpu = auto ? true : gpuId >= 0;
         int concurrency = wantGpu ? 2 : 1;
+        // 逐帧进度用【全局帧】(跨批次累计),显示"超分 第 N 帧 / 共 M 帧",百分比按全局帧算
+        bool global = globalTotalFrames > 0;
         // 预创建独立会话池(每个并行 worker 一个;绕开共享缓存锁,支持并发 Run)
         var sessions = new Microsoft.ML.OnnxRuntime.InferenceSession?[concurrency];
         for (int s = 0; s < concurrency; s++)
@@ -246,8 +248,18 @@ public static class EsrganOnnxService
                         finally
                         {
                             int d = System.Threading.Interlocked.Increment(ref done);
-                            progress?.Report(((int)(d * 100.0 / files.Length),
-                                $"超分 {d}/{files.Length} 帧({Path.GetFileName(files[i])})"));
+                            if (global)
+                            {
+                                // 全局逐帧进度:当前帧全局号 = globalBase(本批起始) + d(本批已完成)
+                                int globalDone = globalBaseFrames + d;
+                                int pct = (int)Math.Clamp(globalDone * 100.0 / globalTotalFrames, 0, 100);
+                                progress?.Report((pct, $"超分 第 {globalDone} 帧 / 共 {globalTotalFrames} 帧"));
+                            }
+                            else
+                            {
+                                int pct = (int)(d * 100.0 / files.Length);
+                                progress?.Report((pct, $"超分 {d}/{files.Length} 帧({Path.GetFileName(files[i])})"));
+                            }
                         }
                     }
                 }, ct);
