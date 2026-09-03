@@ -272,7 +272,7 @@ public static partial class EngineService
         ("通用 (x4plus)", "realesrgan-x4plus"),
     };
 
-    /// <summary>分块尺寸:大图按 tile 分块超分再拼接(video2X 同款,防显存爆)。
+    /// <summary>分块尺寸:大图按 tile 分块超分再拼接(防显存爆)。
     /// 默认值由「安全渲染」墙(SafeRender.GetTileSize)自动决定,不再写死。</summary>
 
     private static string? FindExe(string engineName, string exeName)
@@ -876,7 +876,7 @@ public static partial class EngineService
     /// <summary>自研"任意时刻插帧"核心(M1):对单帧对 (A,B) 用 RIFE 二分级联生成 2^depth-1 个等距中间帧
     /// (位置 j/2^depth, j=1..2^depth-1),输出到 outDir/interp_{000}.png 起(顺序=时间位置)。
     /// 原理:一次 RIFE 只能插 0.5;按二叉子树逐层对"需要的子帧对"再做 0.5 插补,即可得到任意 dyadic 时刻。
-    /// 不依赖任何第三方任意 t 接口,纯自有引擎实现(对标 SVFI 任意时刻插帧,独立实现)。
+    /// 不依赖任何第三方任意 t 接口,纯自有引擎实现(任意时刻插帧,独立实现)。
     /// 注意(M1):逐节点调用(每节点一次引擎进程);后续 M2 用"层内目录模式批处理"压开销。</summary>
     public static async Task InterpPairMultiFrameAsync(string rifeExe, string imgA, string imgB,
         int depth, string outDir, int gpuId, CancellationToken ct)
