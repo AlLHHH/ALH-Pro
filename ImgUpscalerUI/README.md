@@ -55,7 +55,7 @@
 
 **方式 B · 手动下载**:
 1. 打开 GitHub Release 页:https://github.com/AlLHHH/ALH-Pro/releases
-2. 找到最新版本的 **`models_v1.0.zip`**(约 1.4GB)下载(国内打不开 GitHub → 用加速器/镜像,或找软件群/网盘分享)
+2. 找到最新版本的 **`models_v1.0.zip`**(约 1.4GB)下载(国内打不开 GitHub → 用加速器/镜像;或直接下载上方百度网盘「完整版」,已含全部模型)
 3. **解压到程序目录** `engines\rembg\` 文件夹下:
    ```
    程序目录\
