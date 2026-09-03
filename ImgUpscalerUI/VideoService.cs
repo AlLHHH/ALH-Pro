@@ -1898,16 +1898,6 @@ public static class VideoService
 
             if (gpuNow >= 0)
             {
-                // ===== 【聚焦N卡】补帧优先走 ONNX(DirectML):ncnn-Vulkan 在 N 卡上偶发 vkAllocateMemory/黑帧,
-                // 走 ONNX(DirectML)更稳(分块,D3D12 无 vkAllocateMemory),速度相当。50系/无独显本就走 ONNX。
-                if (EngineService.IsNvidiaGpu() && RifeOnnxService.Available()
-                    && TryGetRifeOnnxFrames(args, out var onnxSegIn2, out var onnxOut2, out var onnxTarget2))
-                {
-                    AppLogger.Info($"✅ 补帧改走 ONNX 路线(rife49.onnx,DirectML→CPU)——N 卡 ncnn-Vulkan 稳定性优化,DirectML 更稳");
-                    await RifeOnnxInterpDirAsync(onnxSegIn2!, onnxOut2!, onnxTarget2, -2, watchTotal, watchDir).ConfigureAwait(false);
-                }
-                else
-                {
                 // ① 当前用户选的 GPU;② 其他 GPU(VulkanCheck 枚举到的另一张,如核显失败切独显);③ CPU
                 int? alt = null;
                 try
@@ -1921,7 +1911,6 @@ public static class VideoService
                     await TryGpuAsync(gpuNow, alt).ConfigureAwait(false);
                 else
                     await TryGpuAsync(gpuNow, null).ConfigureAwait(false);   // 单卡:失败黑帧直接 CPU
-                }
             }
             else
             {
@@ -1963,6 +1952,8 @@ public static class VideoService
         async Task RifeOnnxInterpDirAsync(string sIn, string oDir, int target, int gpuId,
             int watchTotal, string? watchDir)
         {
+            // 【修复】ONNX 补帧缺进度汇报/取消检查,UI 会显示"0/X 卡住",取消也无效(同步循环)。
+            // 现改为逐对汇报进度(映射到补帧阶段 10~45%)并响应取消;watchTotal 为阶段帧数(如 214)。
             await Task.Run(() =>
             {
                 Directory.CreateDirectory(oDir);
@@ -1974,15 +1965,18 @@ public static class VideoService
                 int pairs = srcCount - 1;
                 if (pairs <= 0) return;
 
+                int totalOut = Math.Max(1, target);   // 预估输出帧数(用于进度)
                 int idx = 1;
                 for (int p = 0; p < pairs; p++)
                 {
+                    ct.ThrowIfCancellationRequested();
                     CopyFrame(files[p], Path.Combine(oDir, $"frame_{idx:D6}.png"));
                     idx++;
                     int mids = Math.Max(0, (target - 1) / pairs - 1);
                     if (p < (target - 1) % pairs) mids++;
                     for (int t = 1; t <= mids; t++)
                     {
+                        ct.ThrowIfCancellationRequested();
                         float time = t / (float)(mids + 1);
                         var outF = Path.Combine(oDir, $"frame_{idx:D6}.png");
                         try { RifeOnnxService.Interp(files[p], files[p + 1], time, outF, gpuId); idx++; }
@@ -1992,9 +1986,17 @@ public static class VideoService
                             CopyFrame(files[p], outF);
                             idx++;
                         }
+                        // 进度:补帧阶段 10~45%,按已产帧数估算
+                        try
+                        {
+                            int pct = Math.Clamp(10 + idx * 35 / Math.Max(1, totalOut), 10, 45);
+                            progress?.Report((pct, $"补帧(ONNX) 第 {idx}/{totalOut} 帧"));
+                        }
+                        catch { }
                     }
                 }
                 CopyFrame(files[^1], Path.Combine(oDir, $"frame_{idx:D6}.png"));
+                try { progress?.Report((45, $"补帧(ONNX)完成:{idx} 帧")); } catch { }
             }).ConfigureAwait(false);
         }
 
