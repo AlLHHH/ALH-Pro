@@ -47,9 +47,8 @@
                     </StackPanel>
 
                     <TextBlock Text="放大倍数" Style="{StaticResource SectionTitle}"/>
-                    <RadioButtons x:Name="ScaleRadios" SelectedIndex="2"
-                                  ToolTipService.ToolTip="放大倍数:输出尺寸 = 原图 × 倍数(不放大=原尺寸;1x 超分=先 2x 超分再缩回原尺寸,画质更好)">
-                        <RadioButton x:Name="ScaleNoUpscaleRadio" Content="不放大 (1x)"/>
+                    <RadioButtons x:Name="ScaleRadios" SelectedIndex="1"
+                                  ToolTipService.ToolTip="放大倍数:输出尺寸 = 原图 × 倍数(1x 超分 = 先 2x 超分再缩回原尺寸,画质更好)">
                         <RadioButton x:Name="Scale1xRadio" Content="1x 超分（2x 放大后缩回）"/>
                         <RadioButton x:Name="Scale2xRadio" Content="2x"/>
                         <RadioButton x:Name="Scale3xRadio" Content="3x"/>

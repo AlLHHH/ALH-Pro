@@ -151,7 +151,11 @@ public sealed partial class UpscaleView : UserControl
             if (d.Mode is >= 0 and <= 1) ModeRadios.SelectedIndex = d.Mode;
             if (d.W2xModel is >= 0 && d.W2xModel < ModelCombo.Items.Count)
                 ModelCombo.SelectedIndex = d.W2xModel;
-            if (d.Scale is >= 0 and <= 4) ScaleRadios.SelectedIndex = d.Scale;
+            if (d.Scale is >= 0 and <= 4)
+            {
+                // 旧版(含「不放大 1x」五项)映射:0(不放大)→0(1x超分),1(1x超分)→0,2(2x)→1,3(3x)→2,4(4x)→3
+                ScaleRadios.SelectedIndex = d.Scale == 0 ? 0 : Math.Min(d.Scale - 1, 3);
+            }
             if (d.Noise is >= 0 and <= 3) NoiseCombo.SelectedIndex = d.Noise;
             TtaCheck.IsChecked = d.Tta;
             SelectedOnlyCheck.IsChecked = d.SelectedOnly;
@@ -292,7 +296,7 @@ public sealed partial class UpscaleView : UserControl
         {
             var slow = new System.Collections.Generic.List<string>();
             if (TtaCheck.IsChecked == true) slow.Add("高质量 TTA");
-            if (ScaleRadios.SelectedIndex >= 3) slow.Add($"高倍率({ScaleRadios.SelectedIndex switch { 3 => "3x", _ => "4x" }})");
+            if (ScaleRadios.SelectedIndex >= 2) slow.Add($"高倍率({ScaleRadios.SelectedIndex switch { 2 => "3x", _ => "4x" }})");
             bool enh = (int)SharpenSlider.Value > 0 || (int)DetailEnhanceSlider.Value > 0
                 || (int)DenoiseSlider.Value > 0 || (int)AaSlider.Value > 0 || (int)DehazeSlider.Value > 0
                 || (int)EdgeSlider.Value > 0;
@@ -537,7 +541,7 @@ public sealed partial class UpscaleView : UserControl
             engine = "realesrgan";
             model = "realesrgan-x4plus";
         }
-        var scale = ScaleRadios.SelectedIndex switch { 0 => 1, 1 => 2, _ => ScaleRadios.SelectedIndex };
+        var scale = ScaleRadios.SelectedIndex switch { 0 => 2, _ => ScaleRadios.SelectedIndex };   // 0=1x超分→2x 放大(区域放大不做缩回)
         var noise = NoiseCombo.SelectedIndex == 0 ? -1 : NoiseCombo.SelectedIndex - 1;   // 0=不降噪,1/2/3=弱/中/强(映射到 -n 0/1/2,整体偏轻避免揉成一团)
         var tta = TtaCheck.IsChecked == true;
         var gpuId = CurrentGpuId;
@@ -652,8 +656,8 @@ public sealed partial class UpscaleView : UserControl
             engine = "realesrgan";
             model = "realesrgan-x4plus";   // 照片模式固定通用模型
         }
-        bool upscaleShrink1x = ScaleRadios.SelectedIndex == 1;   // 1x 超分(2x 放大后缩回)
-        var scale = ScaleRadios.SelectedIndex switch { 2 => 2, 3 => 3, 4 => 4, _ => 1 };
+        bool upscaleShrink1x = ScaleRadios.SelectedIndex == 0;   // 1x 超分(2x 放大后缩回)
+        var scale = ScaleRadios.SelectedIndex switch { 1 => 2, 2 => 3, 3 => 4, _ => 2 };   // 0=1x超分→先 2x 再缩回
         var noise = NoiseCombo.SelectedIndex == 0 ? -1 : NoiseCombo.SelectedIndex - 1;   // 0=不降噪,1/2/3=弱/中/强(映射到 -n 0/1/2,整体偏轻避免揉成一团)
         var tta = TtaCheck.IsChecked == true;
         var gpuId = CurrentGpuId;
