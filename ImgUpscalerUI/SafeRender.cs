@@ -229,6 +229,48 @@ public static class SafeRender
         return 768;                // 12GB+:768(≈4.3GB/块),16GB 级仍安全;封顶防 TTA×2 爆显存
     }
 
+    /// <summary>视频逐帧超分专用分块大小【显卡家族感知】:不同显卡家族的 ncnn-Vulkan 稳定性/显存表现不同,
+    /// 一刀切 GetTileSize 会让 1660Ti/20系(小显存)和 50系(Blackwell)、A卡(驱动差异)用同一参数,适配差。
+    /// 各家族取舍(基于权威 ncnn 引擎参数 + 项目历史黑帧/爆显存实测):
+    /// - Blackwell(RTX50):ncnn-Vulkan 易崩,偏保守 tile,且主路径走 ONNX
+    /// - NVIDIA Turing(20系/1660Ti/1060,6~8G):中等 tile,快且不炸显存
+    /// - AMD 独显(驱动差异大):保守 tile,配合 ONNX 兜底
+    /// - 大显存(12G+):放大 tile 提速(块少、接缝少、质量更好)
+    /// 引擎侧仍保留 OOM 自动降级分块重试(EngineService.vkAllocateMemory→减半),本值只是起始保守上限。</summary>
+    public static int GetVideoTileSize()
+    {
+        double v = EffectiveVramGB;
+        bool blackwell = false, amd = false, nvidia = false;
+        try
+        {
+            blackwell = ALHPro.EngineService.IsBlackwellGpu();
+            if (VulkanCheck.Devices.Count > 0)
+            {
+                var n = VulkanCheck.Devices[0].Name ?? "";
+                nvidia = n.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase) || n.Contains("GeForce", StringComparison.OrdinalIgnoreCase);
+                amd = n.Contains("AMD", StringComparison.OrdinalIgnoreCase) || n.Contains("Radeon", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        catch { }
+        // 显存是硬约束:小显存一律保守(爆显存→黑帧/崩溃比慢更糟)
+        if (v < 4) return 256;
+        // 50系/AMD:驱动/稳定性风险,保守(主路径走 ONNX,此处只是 ncnn 兜底)
+        if (blackwell) return v >= 10 ? 640 : 512;
+        if (amd) return v >= 10 ? 640 : 512;
+        // NVIDIA 常规(Turing 等):按显存取中间值,快且安全;大显存放大提速
+        if (nvidia)
+        {
+            if (v >= 12) return 768;
+            if (v >= 8) return 640;
+            if (v >= 6) return 512;
+            return 384;
+        }
+        // 未知/其他:沿用按显存的通用保守值
+        if (v <= 6) return 512;
+        if (v <= 10) return 640;
+        return 768;
+    }
+
     /// <summary>视频逐帧超分的批大小(帧):看【空闲】资源——空余内存 >8G 且 空余显存 >4G 开 240(最快);
     /// 空余不足按档回退(小批 = 内存/显存峰值低,稳)。判定用"当前空闲"而非名义值:
     /// 名义 32G 但开着浏览器+剪辑器的机器,空余可能只剩 4G → 该小批。</summary>
@@ -446,14 +488,18 @@ public static class SafeRender
         usable = Math.Max(1, usable);
         // 开关2:计算线程按并发路数分摊(多路时每实例更少线程,不超订)
         int conc = Math.Max(1, GetVideoConcurrency());
+        // 【重构·提速】ncnn-vulkan 的 compute 线程(官方向导:"GPU hungry 就加大线程数以更快处理",
+        // 小图 4:4:4 / 大图 2:2:2)。之前被 EffectiveCpuLevel=2 固定压到 ~2~4,高核机实际只用了少数核喂 GPU,
+        // 导致 GPU 超分偏慢。这里按可用核数用满(仍除以并发路数,不超订),多核机显著提速 GPU 超分。
+        // load/save 保持 1:save>1 会触发 ncnn-vulkan vkQueueSubmit 失败(黑帧,项目实测坑)。
         int compute = EffectiveCpuLevel switch
         {
-            1 => 1,
-            2 => Math.Clamp(usable / 2 / (SplitCores ? conc : 1), 2, 4),
-            _ => Math.Clamp(usable / 2 / (SplitCores ? conc : 1), 4, 8),
+            1 => Math.Max(1, Math.Min(2, usable / conc)),   // 低档(≤4核):够用即可
+            2 => Math.Clamp(usable / (SplitCores ? conc : 1), 2, 6),  // 中档:用满可用核
+            _ => Math.Clamp(usable / (SplitCores ? conc : 1), 4, 8),  // 高档:更满
         };
-        int save = 1;                            // 恒 1:防 ncnn-vulkan save 并发触发 GPU 队列失败(黑帧)
         int load = 1;
+        int save = 1;                            // 恒 1:防 ncnn-vulkan save 并发触发 GPU 队列失败(黑帧)
         return $" -j {load}:{compute}:{save}";
     }
 

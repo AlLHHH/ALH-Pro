@@ -1199,11 +1199,13 @@ public static class VideoService
                                 else if (engine == "waifu2x")
                                     onnxModelPath = EsrganOnnxService.FindWaifu2xModel();
                             }
-                            else if (engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan())
+                            else if (engine == "realesrgan"
+                                && (EngineService.ShouldUseOnnxEsrgan() || EngineService.IsNvidiaGpu()))
                                 onnxModelPath = model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
                                     ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())
                                     : EsrganOnnxService.FindModel();
-                            else if (engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx))
+                            else if (engine == "waifu2x"
+                                && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx || EngineService.IsNvidiaGpu()))
                                 onnxModelPath = EsrganOnnxService.FindWaifu2xModel();
                             if (onnxModelPath != null)
                             {
@@ -1220,7 +1222,7 @@ public static class VideoService
                             {
                                 await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
                                     upScale, 0, upGpu, false, progress, ct,
-                                    SafeRender.GetTileSize() / (fastMode ? 2 : 1),   // 分块按"安全渲染"墙;快速模式再减半(显存占用约降 4 倍)
+                                    SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1),   // 显卡家族感知分块(视频超分专用);快速模式再减半(显存占用约降 4 倍)
                                     watchStage: "超分",   // 逐帧汇报(像补帧一样显示"超分 第 N 帧 / 共 M 帧")
                                     globalBaseFrames: start, globalTotalFrames: total);   // 百分比按全局帧数算,预计时间才准
                             }
@@ -1240,7 +1242,7 @@ public static class VideoService
                                 {
                                     await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
                                         upScale, 0, -1, false, progress, ct,
-                                        SafeRender.GetTileSize() / (fastMode ? 2 : 1),
+                                        SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1),
                                         watchStage: "超分",
                                         globalBaseFrames: start, globalTotalFrames: total);
                                     foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
@@ -1896,6 +1898,16 @@ public static class VideoService
 
             if (gpuNow >= 0)
             {
+                // ===== 【聚焦N卡】补帧优先走 ONNX(DirectML):ncnn-Vulkan 在 N 卡上偶发 vkAllocateMemory/黑帧,
+                // 走 ONNX(DirectML)更稳(分块,D3D12 无 vkAllocateMemory),速度相当。50系/无独显本就走 ONNX。
+                if (EngineService.IsNvidiaGpu() && RifeOnnxService.Available()
+                    && TryGetRifeOnnxFrames(args, out var onnxSegIn2, out var onnxOut2, out var onnxTarget2))
+                {
+                    AppLogger.Info($"✅ 补帧改走 ONNX 路线(rife49.onnx,DirectML→CPU)——N 卡 ncnn-Vulkan 稳定性优化,DirectML 更稳");
+                    await RifeOnnxInterpDirAsync(onnxSegIn2!, onnxOut2!, onnxTarget2, -2, watchTotal, watchDir).ConfigureAwait(false);
+                }
+                else
+                {
                 // ① 当前用户选的 GPU;② 其他 GPU(VulkanCheck 枚举到的另一张,如核显失败切独显);③ CPU
                 int? alt = null;
                 try
@@ -1909,6 +1921,7 @@ public static class VideoService
                     await TryGpuAsync(gpuNow, alt).ConfigureAwait(false);
                 else
                     await TryGpuAsync(gpuNow, null).ConfigureAwait(false);   // 单卡:失败黑帧直接 CPU
+                }
             }
             else
             {

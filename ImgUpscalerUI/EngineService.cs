@@ -76,6 +76,26 @@ public static partial class EngineService
         return ok;
     }
 
+    /// <summary>当前计算设备是否为 NVIDIA 显卡(ncnn-Vulkan 在这类卡上偶发 vkAllocateMemory/黑帧,
+    /// 故 N 卡走更稳定的 ONNX+DirectML;AMD/Intel 不预判,保持原 ncnn 或 ONNX 兜底逻辑)。
+    /// 综合引擎枚举(VulkanCheck.Devices)与注册表适配器名判断;取不到时按"非 N 卡"保守处理。</summary>
+    public static bool IsNvidiaGpu()
+    {
+        try
+        {
+            var names = new System.Collections.Generic.List<string>();
+            try { names.AddRange(VulkanCheck.Devices.Select(d => d.Name)); } catch { }
+            try { names.AddRange(GpuInfo.GetAdapterNames()); } catch { }
+            if (names.Count == 0) return false;
+            // 只要任一设备是 NVIDIA/GeForce/RTX/GTX → 认为是 N 卡环境
+            return names.Any(n => n.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase)
+                || n.Contains("GeForce", StringComparison.OrdinalIgnoreCase)
+                || n.Contains("RTX", StringComparison.OrdinalIgnoreCase)
+                || n.Contains("GTX", StringComparison.OrdinalIgnoreCase));
+        }
+        catch { return false; }
+    }
+
     /// <summary>是否存在非 NVIDIA 显卡(AMD/Intel,含核显):驱动差异大,需要真机探测兜底。</summary>
     private static bool HasNonNvidiaGpu()
     {
