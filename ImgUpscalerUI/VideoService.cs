@@ -1,5 +1,5 @@
 // VideoService.cs — 视频超分 + 补帧
-// 原理(video2X 同款):ffmpeg 拆帧 → 逐帧图片超分 → (可选) RIFE 补帧 → ffmpeg 合帧+音频
+// 原理:ffmpeg 拆帧 → 逐帧图片超分 → (可选) RIFE 补帧 → ffmpeg 合帧+音频
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -882,7 +882,7 @@ public static class VideoService
             // 故去重删过帧时也用「每帧真实时长表」重定时:输出 VFR 时间轴=原视频节奏,补帧只负责填运动、不改变时间。
             bool preserveRhythm = vfrPassthrough || (dedup && frameDurs != null && frameDurs.Count == frameCount);
 
-            // 3) 补帧(可选):RIFE 在原始分辨率上插值(video2X 同款顺序:先补帧后超分,
+            // 3) 补帧(可选):RIFE 在原始分辨率上插值(先补帧后超分,
             //    避免在大图上补帧造成 9 倍开销);转场识别时按转场点分段,段内插值、转场处不插
             var frameFiles = Directory.EnumerateFiles(framesIn, "*.png")
                 .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -1149,7 +1149,7 @@ public static class VideoService
                     waifuOnnx = true;
                     AppLogger.Warn("⚠ 50系 waifu2x:CPU(-g -1)模式有崩溃 bug,自动改走 ONNX 稳定版");
                 }
-                // 分批目录批处理超分 + 并行 2 批(video2x 式多 worker):
+                // 分批目录批处理超分 + 并行 2 批(多 worker):
                 // 一次引擎启动处理一批帧,避免每帧启动引擎;批间并行提高 GPU 利用率
                 var upInput = framesFinal;
                 var upOutput = Path.Combine(workDir, "upscaled");
