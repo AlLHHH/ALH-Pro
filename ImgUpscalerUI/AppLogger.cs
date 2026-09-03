@@ -36,13 +36,16 @@ public static class AppLogger
     /// <summary>日志目录(LocalAppData\ALHPro)。</summary>
     public static string LogDir => Path.GetDirectoryName(LogFile)!;
 
+    /// <summary>日志清理配置路径(诊断包需要带上,排查"日志被清理/丢失")。</summary>
+    public static string LogSettingsFile => Path.Combine(LogDir, "log-settings.json");
+
     // 清理配置
     public static bool CleanByTime { get => _settings.CleanByTime; set => _settings.CleanByTime = value; }
     public static int KeepDays { get => _settings.KeepDays; set => _settings.KeepDays = Math.Clamp(value, 1, 30); }
     public static bool CleanBySize { get => _settings.CleanBySize; set => _settings.CleanBySize = value; }
     public static int MaxSizeMb { get => _settings.MaxSizeMb; set => _settings.MaxSizeMb = Math.Clamp(value, 1, 20); }
 
-    private static string SettingsFile => Path.Combine(LogDir, "log-settings.json");
+    private static string SettingsFile => LogSettingsFile;
 
     /// <summary>读取清理配置(启动时调用,失败用默认值)。</summary>
     public static void LoadConfig()
@@ -119,16 +122,16 @@ public static class AppLogger
     {
         try
         {
-            if (!File.Exists(LogFile)) return;
-            var bytes = File.ReadAllBytes(LogFile);
-            // UTF-8 BOM = EF BB BF;无 BOM 且含非 ASCII 字节才转(纯 ASCII 文件不需要)
-            if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) return;
-            bool hasNonAscii = false;
-            foreach (var b in bytes) { if (b > 127) { hasNonAscii = true; break; } }
-            if (!hasNonAscii) return;
-            var text = new UTF8Encoding(false).GetString(bytes);   // 旧文件本来就是 UTF-8 无 BOM 写的
             lock (Lock)
             {
+                if (!File.Exists(LogFile)) return;
+                var bytes = File.ReadAllBytes(LogFile);
+                // UTF-8 BOM = EF BB BF;无 BOM 且含非 ASCII 字节才转(纯 ASCII 文件不需要)
+                if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) return;
+                bool hasNonAscii = false;
+                foreach (var b in bytes) { if (b > 127) { hasNonAscii = true; break; } }
+                if (!hasNonAscii) return;
+                var text = new UTF8Encoding(false).GetString(bytes);   // 旧文件本来就是 UTF-8 无 BOM 写的
                 File.WriteAllText(LogFile, text, new UTF8Encoding(true));
             }
         }
@@ -144,44 +147,48 @@ public static class AppLogger
     {
         try
         {
-            if (!File.Exists(LogFile)) return;
-            var lines = File.ReadAllLines(LogFile);
-            if (lines.Length == 0) return;
-
-            var now = DateTime.Now;
-            var kept = new List<string>(lines.Length);
-
-            // 时间清理
-            var cutoff = now.AddDays(-KeepDays);
-            foreach (var line in lines)
+            // 与 Write(后台追加)互斥:同一把锁内读改写整文件,否则启动后清理与并发追加会丢行/写坏
+            lock (Lock)
             {
-                if (CleanByTime && TryParseTime(line, out var t) && t < cutoff) continue;
-                kept.Add(line);
-            }
+                if (!File.Exists(LogFile)) return;
+                var lines = File.ReadAllLines(LogFile);
+                if (lines.Length == 0) return;
 
-            // 大小清理:超限只留最新部分
-            if (CleanBySize && MaxSizeMb > 0)
-            {
-                long limit = (long)MaxSizeMb * 1024 * 1024;
-                long total = 0;
-                foreach (var l in kept) total += l.Length + 2;
-                if (total > limit)
+                var now = DateTime.Now;
+                var kept = new List<string>(lines.Length);
+
+                // 时间清理
+                var cutoff = now.AddDays(-KeepDays);
+                foreach (var line in lines)
                 {
-                    var newest = new List<string>();
-                    long acc = 0;
-                    for (int i = kept.Count - 1; i >= 0; i--)
-                    {
-                        acc += kept[i].Length + 2;
-                        newest.Add(kept[i]);
-                        if (acc >= limit) break;
-                    }
-                    newest.Reverse();
-                    kept = newest;
+                    if (CleanByTime && TryParseTime(line, out var t) && t < cutoff) continue;
+                    kept.Add(line);
                 }
-            }
 
-            if (kept.Count != lines.Length)
-                File.WriteAllLines(LogFile, kept, new UTF8Encoding(true));
+                // 大小清理:超限只留最新部分
+                if (CleanBySize && MaxSizeMb > 0)
+                {
+                    long limit = (long)MaxSizeMb * 1024 * 1024;
+                    long total = 0;
+                    foreach (var l in kept) total += l.Length + 2;
+                    if (total > limit)
+                    {
+                        var newest = new List<string>();
+                        long acc = 0;
+                        for (int i = kept.Count - 1; i >= 0; i--)
+                        {
+                            acc += kept[i].Length + 2;
+                            newest.Add(kept[i]);
+                            if (acc >= limit) break;
+                        }
+                        newest.Reverse();
+                        kept = newest;
+                    }
+                }
+
+                if (kept.Count != lines.Length)
+                    File.WriteAllLines(LogFile, kept, new UTF8Encoding(true));
+            }
         }
         catch { /* 清理失败忽略 */ }
     }

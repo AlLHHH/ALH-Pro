@@ -58,7 +58,17 @@ public static class AudioService
             if (!needShort) return path;
             var sb = new System.Text.StringBuilder(512);
             uint r = GetShortPathName(path, sb, 512);
-            return r > 0 ? sb.ToString() : path;
+            if (r > 0) return sb.ToString();
+            // 输出文件往往【还没创建】,GetShortPathName 对不存在的路径会失败 → 缩短父目录(必然存在)再拼文件名
+            var dir = Path.GetDirectoryName(path);
+            var name = Path.GetFileName(path);
+            if (!string.IsNullOrEmpty(dir) && !string.IsNullOrEmpty(name))
+            {
+                var sb2 = new System.Text.StringBuilder(512);
+                uint rd = GetShortPathName(dir, sb2, 512);
+                if (rd > 0) return Path.Combine(sb2.ToString(), name);
+            }
+            return path;
         }
         catch { return path; }
     }

@@ -242,7 +242,7 @@ public static class CutoutService
         return ProcessMask(mask, src.Width, src.Height,
             fgThreshold, bgThreshold, featherRadius, edgeStrength,
             selX, selY, selW, selH, scribbles, tolerance, brushRadius, maxSpread,
-            morphStrength, autoThreshold, src);
+            morphStrength, autoThreshold, src, ct);
     }
 
     /// <summary>Session 缓存(同一模型+设备复用):避免重复加载 ONNX 模型。
@@ -436,7 +436,7 @@ public static class CutoutService
         int? selX = null, int? selY = null, int? selW = null, int? selH = null,
         IReadOnlyList<CutoutScribble>? scribbles = null, int tolerance = 30, double? brushRadius = null,
         double maxSpread = 0, int morphStrength = 0, bool autoThreshold = false,
-        System.Drawing.Bitmap? srcForColor = null)
+        System.Drawing.Bitmap? srcForColor = null, CancellationToken ct = default)
     {
         int mh = mask.GetLength(0), mw = mask.GetLength(1);
 
@@ -471,7 +471,7 @@ public static class CutoutService
                     for (int y = 0; y < mh; y++)
                         for (int x = 0; x < mw; x++)
                             m[y * mw + x] = mask[y, x] >= fg ? (byte)1 : (byte)0;
-                    MorphBinary(m, mw, mh, morphStrength);
+                    MorphBinary(m, mw, mh, morphStrength, ct);
                     for (int y = 0; y < mh; y++)
                     {
                         byte* row = msPtr + y * msData.Stride;
@@ -542,6 +542,7 @@ public static class CutoutService
         {
             for (int i = 0; i < alpha.Length; i++)
             {
+                if ((i & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
                 float v = alpha[i];
                 if (v <= bg) alpha[i] = 0f;
                 else if (v >= fg) alpha[i] = 1f;
@@ -560,6 +561,7 @@ public static class CutoutService
             {
                 for (int y = 0; y < h; y++)
                 {
+                    if ((y & 0x3F) == 0) ct.ThrowIfCancellationRequested();
                     int row = y * w;
                     for (int x = 0; x < w; x++)
                     {
@@ -576,7 +578,7 @@ public static class CutoutService
         // 3.6) 智能涂抹:绿色(保留)区域强制前景、红色(删除)区域强制背景,
         // 并按颜色相近度向周边扩散(用户涂到的物体整体被识别;冲突时以用户为准)
         if (scribbles is { Count: > 0 } && srcForColor != null)
-            ApplyScribbles(alpha, srcForColor, w, h, scribbles, tolerance, brushRadius, maxSpread);
+            ApplyScribbles(alpha, srcForColor, w, h, scribbles, tolerance, brushRadius, maxSpread, ct);
 
         // 4) 边缘羽化:对 alpha 做 box blur(滑动窗口,与半径无关的 O(N))
         if (featherRadius > 0)
@@ -614,8 +616,13 @@ public static class CutoutService
     /// 后涂优先:同区域先绿后红(或反之)以后画为准(用画笔序号 order 判定)。
     /// </summary>
     private static void ApplyScribbles(float[] alpha, System.Drawing.Bitmap src, int w, int h,
-        IReadOnlyList<CutoutScribble> scribbles, int tolerance, double? brushRadius, double maxSpread)
+        IReadOnlyList<CutoutScribble> scribbles, int tolerance, double? brushRadius, double maxSpread,
+        CancellationToken ct = default)
     {
+        // 像素上限保护:涂抹需要 全图 Lab(3×w×h×4B)+ 泛洪队列等,48MP 会逼近 2GB(普通 8G 机必崩)
+        if ((long)w * h > 24_000_000)
+            throw new InvalidOperationException(
+                $"图片像素过多({w}×{h} ≈ {w * h / 1_000_000:0.#}MP),智能涂抹内存需求过大 — 请先用「图片放大」页缩小图片(或换小图)后再涂抹");
         // 笔刷半径(图片像素,浮点保留精度——不要截断成 int,否则图片放大显示时半径被砍到 1px,涂了没作用)
         double brushR = brushRadius is > 0 ? Math.Clamp(brushRadius.Value, 1, Math.Max(w, h))
             : Math.Max(3, (int)(Math.Min(w, h) * 0.03));
@@ -633,12 +640,15 @@ public static class CutoutService
             {
                 var ptr = (byte*)data.Scan0.ToPointer();
                 for (int y = 0; y < h; y++)
+                {
                     for (int x = 0; x < w; x++)
                     {
                         int i = (y * w + x) * 4;
                         int j = y * stride + x * 4;
                         px[i] = ptr[j]; px[i + 1] = ptr[j + 1]; px[i + 2] = ptr[j + 2];
                     }
+                    if ((y & 0x3F) == 0) ct.ThrowIfCancellationRequested();
+                }
             }
         }
         finally
@@ -650,12 +660,14 @@ public static class CutoutService
         double thr = 8.0 + tolerance / 100.0 * 32.0;
         double thrSq = thr * thr;
 
-        // 1) RGB → Lab(全图一次)
-        double[] l = new double[w*h], a = new double[w*h], bb = new double[w*h];
-        for (int i = 0; i < w*h; i++)
+        // 1) RGB → Lab(全图一次;float 存储,精度足够且省一半内存)
+        var l = new float[w * h]; var a = new float[w * h]; var bb = new float[w * h];
+        for (int i = 0; i < w * h; i++)
         {
-            int R = px[i*4+2], G = px[i*4+1], B = px[i*4];
-            RgbToLab(R, G, B, out l[i], out a[i], out bb[i]);
+            if ((i & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
+            int R = px[i * 4 + 2], G = px[i * 4 + 1], B = px[i * 4];
+            RgbToLab(R, G, B, out double L, out double A, out double oB);
+            l[i] = (float)L; a[i] = (float)A; bb[i] = (float)oB;
         }
 
         // 3) 每笔的编号与类型(用于"后涂优先")。参考色不取整笔平均——一笔跨多种颜色时,
@@ -733,8 +745,10 @@ public static class CutoutService
         // 距离上限:泛洪步进 dist 超过 maxSpread 即停(曼哈顿距离近似),防止同色渐变区域铺满全图。
         const double adjThrSq = 15.0 * 15.0;
         double spreadCap = maxSpread > 0 ? maxSpread : double.MaxValue;
+        long visited = 0;
         while (queue.Count > 0)
         {
+            if ((++visited & 0x0FFF) == 0) ct.ThrowIfCancellationRequested();   // 每 4096 次出队检查取消
             var (cx, cy, rl2, ra2, rb2, wv, ord, dist) = queue.Dequeue();
             int cidx = cy * w + cx;
             for (int d = 0; d < 4; d++)
@@ -762,6 +776,7 @@ public static class CutoutService
         // 应用:保留→alpha=1,删除→alpha=0(彻底)
         for (int i = 0; i < w * h; i++)
         {
+            if ((i & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
             if (want[i] == 1) alpha[i] = 1f;
             else if (want[i] == 2) alpha[i] = 0f;
         }
@@ -939,14 +954,17 @@ public static class CutoutService
 
     /// <summary>蒙版二元形态学清洗:开运算(去背景小噪点岛)+ 轻微腐蚀(去背景边缘残余)。
     /// strength 0~100 映射到腐蚀半径(保护细节:上限小)。输入字节 0/1,原地写回。</summary>
-    private static void MorphBinary(byte[] m, int mw, int mh, int strength)
+    private static void MorphBinary(byte[] m, int mw, int mh, int strength, CancellationToken ct = default)
     {
         int erode = Math.Clamp((int)Math.Round(strength / 100.0 * 3), 1, 3);   // 开运算半径(去噪点岛)
         int shave = Math.Clamp((int)Math.Round(strength / 100.0 * 2), 1, 2);   // 额外轻微腐蚀(去边缘残余)
         // 开运算:腐蚀 erode → 膨胀 erode,去掉背景里的小前景噪点岛
+        ct.ThrowIfCancellationRequested();
         var tmp = ErodeBinary(m, mw, mh, erode);
+        ct.ThrowIfCancellationRequested();
         var opened = DilateBinary(tmp, mw, mh, erode);
         // 轻微腐蚀:再腐蚀 shave,把边缘残留的背景"外壳"剥掉(同时略收细主体边)
+        ct.ThrowIfCancellationRequested();
         var final = ErodeBinary(opened, mw, mh, shave);
         Array.Copy(final, m, m.Length);
     }
