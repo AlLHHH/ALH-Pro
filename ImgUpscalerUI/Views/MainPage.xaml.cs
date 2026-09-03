@@ -81,6 +81,11 @@ public sealed partial class MainPage : Page
                 {
                     VulkanCheck.RunOnce();
                     bool gpuOk = VulkanCheck.GpuAvailable;
+                    // 多卡机:后台实测 DirectML 设备(名字匹配失败时 ToDmlDevice 的兜底;不阻塞启动)
+                    if (VulkanCheck.Devices.Count > 1 && ALHPro.EsrganOnnxService.FindModel() != null)
+                    {
+                        try { await ALHPro.EsrganOnnxService.EnsureDmlProbeAsync(); } catch { }
+                    }
                     AppLogger.Info("Vulkan 自检:" + (gpuOk ? "GPU 引擎可用(Vulkan 设备枚举成功)" : "GPU 引擎不可用(未枚举到 Vulkan 设备),建议设置中选 CPU") + VulkanCheck.Report);
                     // ===== 智能联动(自检结果 → 自动适配,日志+状态栏可见,不弹窗)=====
                     string? autoMsg = null;

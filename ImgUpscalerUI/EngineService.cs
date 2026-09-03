@@ -119,6 +119,10 @@ public static partial class EngineService
                     || want.Name.Contains(names[i], StringComparison.OrdinalIgnoreCase))
                     return i;
             }
+            // 名字匹配失败(罕见:枚举差异/截断):用启动时实测的第一个可用 DirectML 设备兜底(绝不越界/跑错误设备);
+            // 探测未完成时仍按原编号(与旧行为一致,运行期失败还有 _dmlBad 标记二次兜底)。
+            var dmlOk = EsrganOnnxService.DmlFallbackOk;
+            if (dmlOk >= 0) return dmlOk;
             return engineGpu;
         }
         catch { return engineGpu; }
