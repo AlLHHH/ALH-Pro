@@ -27,7 +27,7 @@ Start-Sleep -Seconds 2
 robocopy $pub $dst /E /XD engines /XF DirectML.Debug.dll DirectML.Debug.pdb DirectML.pdb ALHPro.pdb onnxruntime.lib "*.obj" /NFL /NDL /NJH /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy 失败(exit $LASTEXITCODE)" }
 # 清理历史残留(开发脚本/旧 exe/备份),确保发布目录干净
-$junk = @('_ttracks.cs','_ttracks.csproj','ALHPro_old_20260901_2127.exe','d3dcompiler_47.dll.bak')
+$junk = @('_ttracks.cs','_ttracks.csproj','ALHPro_old_20260901_2127.exe','d3dcompiler_47.dll.bak','ALHPro.pdb','DirectML.pdb','DirectML.Debug.dll','DirectML.Debug.pdb','onnxruntime.lib')
 foreach ($j in $junk) { $p = Join-Path $dst $j; if (Test-Path $p) { Remove-Item $p -Force -ErrorAction SilentlyContinue } }
 foreach ($d in @('bin','obj')) { $p = Join-Path $dst $d; if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue } }
 
