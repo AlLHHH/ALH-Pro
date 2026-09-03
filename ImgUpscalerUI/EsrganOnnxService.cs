@@ -128,16 +128,32 @@ public static class EsrganOnnxService
         if (!wantsGpu) return -1;
         int maxSide = Math.Max(width, height);
         if (maxSide <= 256) return -1;   // 小图:CPU 更快(不折腾 GPU)
+        // 用户显式选了 CPU(GpuIndex<0):必须尊重(不按尺寸拉回 GPU)——GPU 有问题的机器正是这么选的
+        if (AppSettings.GpuIndex < 0) return -1;
+        // 【修复】判定 DirectML 是否可用:用"直接调用 DirectML 建会话"的实测结果(EnsureDmlProbeAsync → _dmlFirstOk),
+        // 而不是用 VulkanCheck.GpuAvailable——Vulkan 与 DirectML 是两套完全不同的运行时,
+        // 之前用 Vulkan 判定会在"DirectML 可用但 Vulkan 检测失败(无 Vulkan runtime/驱动缺/某 GPU Vulkan 支持不全)"
+        // 的机器上误判为不可用,把 ONNX 超分/视频超分静默拖回 CPU(表现为:用户选了 GPU,实际 CPU 在跑)。
+        // 探测结果有效(已完成)且确认无任何 DirectML 设备时才降 CPU;探测进行中/成功时走 GPU。
+        if (_dmlProbeState == 2)
+        {
+            if (_dmlFirstOk < 0)
+            {
+                WarnDmlUnavailable("DirectML 无可用设备(启动自检/探测失败)");
+                return -1;
+            }
+            // 有可用 DirectML 设备:优先用户选的 GpuIndex,否则用实测可用的第一个(避免越界/误判)
+            int gpu = AppSettings.GpuIndex >= 0 ? AppSettings.GpuIndex : _dmlFirstOk;
+            return gpu;
+        }
         try
         {
-            // DirectML 不可用(无独显/驱动缺)时降 CPU;可用则 GPU
+            // 探测尚未完成(启动后极短暂窗口):保守判断,避免因 Vulkan 误判而否定 GPU
             if (!VulkanCheck.GpuAvailable && !EngineService.IsBlackwellGpu()) return -1;
         }
         catch { }
-        // 用户显式选了 CPU(GpuIndex<0):必须尊重(不按尺寸拉回 GPU)——GPU 有问题的机器正是这么选的
-        if (AppSettings.GpuIndex < 0) return -1;
-        int gpu = AppSettings.GpuIndex >= 0 ? AppSettings.GpuIndex : 0;
-        return gpu;
+        int fallback = AppSettings.GpuIndex >= 0 ? AppSettings.GpuIndex : 0;
+        return fallback;
     }
 
     /// <summary>ONNX 超分一张图(4x)。scale=目标倍数(4x 原生;2x 也走 4x 再缩回)。

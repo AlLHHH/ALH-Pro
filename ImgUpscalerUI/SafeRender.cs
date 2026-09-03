@@ -251,11 +251,13 @@ public static class SafeRender
     {
         // 弱机一律单批(GPU 算力节流);Balanced 最多 2 路;只有 High 才允许 3 路。
         if (Profile is DeviceProfile.UltraLow or DeviceProfile.Low) return 1;
-        // 开关2(SplitCores):非 High 一律单批(避免多路挤同一批核超订)
-        if (SplitCores && Profile != DeviceProfile.High) return 1;
         double r = EffectiveRamGB;
         double v = EffectiveVramGB;
         int cores = CpuCoreCount;
+        // 【分发给所有用户】放宽"SplitCores 非 High 一律单批":之前一刀切把满足 2 路资源条件
+        // (16G 内存/6G 显存/≥8核) 的中端机也卡成单路,浪费算力。改为"资源够才多路",条件仍保守:
+        // two 要求 内存≥16G、有效显存≥6G、空闲显存≥3G、核数≥8,缺一就单路——不会让低端机爆显存/吃满 CPU。
+        // SplitCores 只影响多路时的线程分配,不再一刀切压制路数。
         // 2 路:显存 ≥6G 空闲 ≥3G、内存 ≥16G、核数 ≥8
         bool two = r >= 16 && v >= 6 && FreeVramGB >= 3 && cores >= 8;
         // 3 路:仅 High 且更宽裕才上(空闲显存 ≥8G、内存 ≥24G、核数 ≥16)
@@ -369,24 +371,37 @@ public static class SafeRender
     }
 
     /// <summary>采样系统整体 CPU 使用率(0~1,GetSystemTimes 双采样,非阻塞由调用方控制)。
-    /// 失败返回 0(视为空闲)。</summary>
+    /// 失败返回 0(视为空闲)。【分发给所有用户】改为多次采样取平均:
+    /// 之前单次 250ms 采样易撞上瞬时满载(后台程序/前后任务残留)而误判"系统 100%",
+    /// 导致软件被降档到极低 CPU 上限,变慢。取平均能过滤瞬时抖动,读数更接近真实持续负载。</summary>
     private static double SampleSystemCpuLoad()
     {
-        if (!GetSystemTimes(out var idle0, out var ker0, out var user0)) return 0;
-        System.Threading.Thread.Sleep(250);
-        if (!GetSystemTimes(out var idle1, out var ker1, out var user1)) return 0;
-        long idle = idle1.ToMilliseconds() - idle0.ToMilliseconds();
-        long total = (ker1.ToMilliseconds() - ker0.ToMilliseconds()) + (user1.ToMilliseconds() - user0.ToMilliseconds());
-        if (total <= 0) return 0;
-        return Math.Clamp(1.0 - idle / total, 0, 1);
+        const int samples = 3;
+        double sum = 0; int ok = 0;
+        for (int s = 0; s < samples; s++)
+        {
+            if (!GetSystemTimes(out var idle0, out var ker0, out var user0)) break;
+            System.Threading.Thread.Sleep(200);
+            if (!GetSystemTimes(out var idle1, out var ker1, out var user1)) break;
+            long idle = idle1.ToMilliseconds() - idle0.ToMilliseconds();
+            long total = (ker1.ToMilliseconds() - ker0.ToMilliseconds()) + (user1.ToMilliseconds() - user0.ToMilliseconds());
+            if (total > 0) { sum += Math.Clamp(1.0 - idle / total, 0, 1); ok++; }
+            if (ok == 0 && s == samples - 1) break;
+        }
+        return ok > 0 ? sum / ok : 0;
     }
 
     private static double GetEffectiveCpuCapPctRaw(double sysUsed)
     {
-        if (sysUsed > 0.85) return 8;
-        if (sysUsed > 0.70) return 15;
-        if (sysUsed > 0.50) return 40;
-        if (sysUsed > 0.30) return 65;
+        // 【分发给所有用户】放宽"防整机过载"下限,但保留让位机制:
+        // 之前 >85%→8% 会把软件压到只让 1~2 核,在"DirectML 可用但 CPU 上限被误判"的机器上
+        // 让 ffmpeg 读 PNG/编码、AI 超分的 CPU 部分都骤降,表现为"明显比同类慢"。
+        // 改为更宽松的分档:即使系统被其他软件占满,也保证软件至少有几个核能干活。
+        // 兼顾:高压档仍明显让位(35%),正常空闲档给满(85%)。
+        if (sysUsed > 0.85) return 35;
+        if (sysUsed > 0.70) return 50;
+        if (sysUsed > 0.50) return 65;
+        if (sysUsed > 0.30) return 75;
         return 85;
     }
 
