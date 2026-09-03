@@ -42,7 +42,7 @@
 
                     <!-- 板块2:增强(音质增强,效果;与超分/分离可同时勾选,作用到最终输出) -->
                     <TextBlock Text="增强" Style="{StaticResource SectionTitle}"/>
-                    <RadioButtons x:Name="SrRadios" SelectedIndex="0" ToolTipService.ToolTip="AI 分轨后分别优化人声/伴奏再重新混音:咬字更清晰、伴奏更有层次(CPU 较慢,约 1.5 分钟/分钟音频)"
+                    <RadioButtons x:Name="SrRadios" SelectedIndex="0" ToolTipService.ToolTip="AI 分轨后分别优化人声/伴奏再重新混音:咬字更清晰、伴奏更有层次(优先显卡加速,无显卡时 CPU 较慢,约 1.5 分钟/分钟音频)"
                                   SelectionChanged="Options_Changed">
                         <RadioButton Content="关"/>
                         <RadioButton Content="柔和(推荐)"/>
@@ -56,7 +56,7 @@
 
                     <!-- 板块3:AI 分离(神经网络):拆人声/伴奏;勾选自定义组合时 支持多轨同时输出+各自调音量 -->
                     <TextBlock Text="AI 分离(人声 / 伴奏)" Style="{StaticResource SectionTitle}"/>
-                    <RadioButtons x:Name="DemucsRadios" SelectedIndex="0" ToolTipService.ToolTip="神经网络分离(Demucs):提取人声/去人声(伴奏)/分离导出两文件——需分轨时用(CPU 较慢,一首歌约几至十几分钟)"
+                    <RadioButtons x:Name="DemucsRadios" SelectedIndex="0" ToolTipService.ToolTip="神经网络分离(Demucs):提取人声/去人声(伴奏)/分离导出两文件——需分轨时用(优先显卡加速,无显卡时 CPU 较慢,一首歌约几至十几分钟)"
                                   SelectionChanged="Options_Changed">
                         <RadioButton Content="关"/>
                         <RadioButton Content="提取人声"/>

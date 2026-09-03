@@ -288,7 +288,7 @@ public sealed partial class MainPage : Page
         ShowView("tutorial");
     }
 
-    /// <summary>左侧边栏「更新日志」:各版本更新内容(往期历史),作者的话在最顶部。</summary>
+    /// <summary>更新日志入口(当前由「关于 → 查看更新详情」调用;侧边栏入口已按用户要求移除)。</summary>
     private void UpdateLog_Click(object sender, RoutedEventArgs e)
     {
         try { _ = ShowUpdateLogAsync(fromStartup: false); } catch { }
@@ -365,7 +365,7 @@ public sealed partial class MainPage : Page
 
     /// <summary>更新说明:作者的话 + 更新内容。
     /// fromStartup=true(升级后首次弹):只显示【当前版本】内容,无版本列表——简洁弹窗;
-    /// 从左侧边栏「更新日志」打开:附加版本列表(往期历史可翻)。
+    /// 从「关于 → 查看更新详情」打开:附加版本下拉(往期历史可翻)。
     /// 注意:不修改 ContentDialog 的任何尺寸/位置属性——就是尺寸改动导致的偏位,默认即居中。</summary>
     private async Task ShowUpdateLogAsync(bool fromStartup)
     {
@@ -1176,7 +1176,7 @@ public sealed partial class MainPage : Page
         content.Children.Add(gpuCombo);
         content.Children.Add(new TextBlock
         {
-            Text = "三个功能(图片放大 / AI 抠图 / 视频处理)统一使用这里选的计算设备。编号顺序可能与引擎实际识别的设备不一致(Windows 顺序 ≠ 引擎顺序):若选某编号处理崩/慢,换其它编号实测,日志「引擎启动...设备 -g X」会显示所选编号。无独显的电脑建议选 CPU(软件计算)。注意:AI 抠图已强制使用 CPU(GPU 推理会占满显卡导致整机卡),此处设置对抠图不生效。",
+            Text = "四个功能(图片放大 / 视频处理 / 音频处理 / AI 抠图)统一使用这里选的计算设备。编号顺序可能与引擎实际识别的设备不一致(Windows 顺序 ≠ 引擎顺序):若选某编号处理崩/慢,换其它编号实测,日志「引擎启动...设备 -g X」会显示所选编号。无独显的电脑建议选 CPU(软件计算)。音频超分/分离/增强会优先用这里选的显卡(DirectML)加速,没有显卡时自动用 CPU。注意:AI 抠图已强制使用 CPU(GPU 推理会占满显卡导致整机卡),此处设置对抠图不生效。",
             FontSize = 10, Opacity = 0.5,
             TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
