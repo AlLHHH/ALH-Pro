@@ -29,17 +29,6 @@
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
-                    <!-- 一键推荐配置:治"不会选/选错模型导致效果不佳" -->
-                    <TextBlock Text="推荐配置(一键)" Style="{StaticResource SectionTitle}"/>
-                    <StackPanel Spacing="6">
-                        <Button Content="动漫补帧(waifu2x + 智能去重 + 补帧2x)" FontSize="11" Padding="10,5"
-                                HorizontalAlignment="Stretch" Click="PresetAnime_Click"/>
-                        <Button Content="真人视频(Real-ESRGAN + 2x,更快可改1x)" FontSize="11" Padding="10,5"
-                                HorizontalAlignment="Stretch" Click="PresetReal_Click"/>
-                        <Button Content="快速预览(低配:1x超分缩回+兼容模式)" FontSize="11" Padding="10,5"
-                                HorizontalAlignment="Stretch" Click="PresetFast_Click"/>
-                    </StackPanel>
-
                     <TextBlock Text="视频超分" Style="{StaticResource SectionTitle}"/>
                     <CheckBox x:Name="UpscaleToggle" Content="启用超分(逐帧放大)" ToolTipService.ToolTip="逐帧 AI 放大画面"
                               IsChecked="True" Checked="Options_Changed" Unchecked="Options_Changed"/>
@@ -50,6 +39,19 @@
                         <RadioButton Content="经典动漫 waifu2x (最快)"/>
                         <RadioButton Content="通用 Real-ESRGAN (写实)"/>
                     </RadioButtons>
+                    <ComboBox x:Name="VideoWaifu2xModelCombo" ToolTipService.ToolTip="waifu2x 模型"
+                              SelectionChanged="Combo_Changed">
+                        <ComboBoxItem Content="models-cunet（24MB · 中）" Tag="models-cunet"/>
+                        <ComboBoxItem Content="models-upconv_7_anime_style_art_rgb（5MB · 快）" Tag="models-upconv_7_anime_style_art_rgb"/>
+                        <ComboBoxItem Content="models-upconv_7_photo（5MB · 快）" Tag="models-upconv_7_photo"/>
+                    </ComboBox>
+                    <ComboBox x:Name="VideoEsrganModelCombo" Visibility="Collapsed"
+                              ToolTipService.ToolTip="Real-ESRGAN 模型"
+                              SelectionChanged="Combo_Changed">
+                        <ComboBoxItem Content="realesr-animevideov3（4MB · 快）" Tag="realesr-animevideov3"/>
+                        <ComboBoxItem Content="realesrgan-x4plus-anime（9MB · 中）" Tag="realesrgan-x4plus-anime"/>
+                        <ComboBoxItem Content="realesrgan-x4plus（41MB · 慢）" Tag="realesrgan-x4plus"/>
+                    </ComboBox>
 
                     <TextBlock Text="放大倍数" Style="{StaticResource SectionTitle}"/>
                     <RadioButtons x:Name="VideoScaleRadios" SelectedIndex="2" ToolTipService.ToolTip="输出放大倍数(1.5x/3x 内部按引擎支持倍数处理)"

@@ -437,42 +437,6 @@ public sealed partial class VideoView : UserControl
         SetDenoiseUi(DenoiseToggle.IsChecked == true);
     }
 
-    // ---------- 一键推荐配置(治"不会选/选错模型导致效果不佳") ----------
-    private void PresetAnime_Click(object sender, RoutedEventArgs e) => ApplyPreset(
-        "动漫补帧:waifu2x 2x + 智能去重 + RIFE v4.13 补帧 2x",
-        up: true, engine: 0, scale: 2, dedupOn: true, dedupModel: 0, interp: true, interpScale: 0, fast: false);
-
-    private void PresetReal_Click(object sender, RoutedEventArgs e) => ApplyPreset(
-        "真人视频:Real-ESRGAN 2x(不补帧;想要更流畅再勾补帧)",
-        up: true, engine: 1, scale: 2, dedupOn: false, dedupModel: 0, interp: false, interpScale: 0, fast: false);
-
-    private void PresetFast_Click(object sender, RoutedEventArgs e) => ApplyPreset(
-        "快速预览:waifu2x 1x 超分(只提清晰不变大)+ 兼容模式",
-        up: true, engine: 0, scale: 0, dedupOn: false, dedupModel: 0, interp: false, interpScale: 0, fast: true);
-
-    /// <summary>应用推荐配置(控件事件会自动触发联动刷新;engine:0=waifu2x 1=realesrgan;scale:0=1x超分 2=2x)。</summary>
-    private void ApplyPreset(string desc, bool up, int engine, int scale, bool dedupOn, int dedupModel, bool interp, int interpScale, bool fast)
-    {
-        try
-        {
-            UpscaleToggle.IsChecked = up;
-            VideoEngineRadios.SelectedIndex = Math.Clamp(engine, 0, 1);
-            VideoScaleRadios.SelectedIndex = Math.Clamp(scale, 0, 4);
-            DedupCheck.IsChecked = dedupOn;
-            DedupModelCombo.SelectedIndex = Math.Clamp(dedupModel, 0, 2);
-            InterpToggle.IsChecked = interp;
-            InterpModelCombo.SelectedIndex = 0;          // 通用画质 v4.13(推荐)
-            InterpScaleRadios.SelectedIndex = Math.Clamp(interpScale, 0, 5);
-            FastModeCheck.IsChecked = fast;
-            TtaCheck.IsChecked = false;
-            TargetFpsCheck.IsChecked = false;
-            UpdateOptions();
-            Log("✅ 已应用推荐配置:" + desc);
-            AppLogger.Info("已应用推荐配置: " + desc);
-        }
-        catch (Exception ex) { Log("⚠ 应用推荐配置失败:" + ex.Message); }
-    }
-
     /// <summary>当前计算设备是否为核显(名字识别:Intel UHD/Iris/*Intel(R) Graphics* / AMD Radeon(TM) Graphics)。</summary>
     private bool CurrentIsIntegratedGpu()
     {
@@ -752,7 +716,20 @@ public sealed partial class VideoView : UserControl
         }
         UpdateOptions();
         UpdateAnimeFpsHint();   // 动漫档位变化 → 刷新"内容帧率≈X fps"提示
+        UpdateVideoModelVisibility();   // 引擎切换 → 显示/隐藏对应引擎的模型下拉
         ScheduleSave();   // 参数记忆:变化后防抖写盘
+    }
+
+    /// <summary>选 waifu2x 显示 waifu2x 模型下拉,选 Real-ESRGAN 显示其模型下拉;并确保默认选中首个模型。</summary>
+    private void UpdateVideoModelVisibility()
+    {
+        if (VideoWaifu2xModelCombo == null || VideoEsrganModelCombo == null) return;
+        bool waifu2x = VideoEngineRadios.SelectedIndex == 0;
+        VideoWaifu2xModelCombo.Visibility = waifu2x ? Visibility.Visible : Visibility.Collapsed;
+        VideoEsrganModelCombo.Visibility = waifu2x ? Visibility.Collapsed : Visibility.Visible;
+        // 确保各下拉有默认选中项(首次/恢复时)
+        if (VideoWaifu2xModelCombo.SelectedIndex < 0) VideoWaifu2xModelCombo.SelectedIndex = 0;
+        if (VideoEsrganModelCombo.SelectedIndex < 0) VideoEsrganModelCombo.SelectedIndex = 0;
     }
 
     /// <summary>动漫去重档位 → 内容帧率提示:内容帧率 = 输入帧率 ÷ 拍N(31:0→2, 3, 2.5, 1.6, 4)。</summary>
@@ -2838,10 +2815,19 @@ public sealed partial class VideoView : UserControl
         UpdateListButtons();   // 处理中锁死右侧列表的删除/清空按钮(暂停时解锁删除)
         VideoProgress.Value = 0;
 
+        // 从下拉 Tag 取模型名(Content 含体量/快慢展示,Tag 才是纯模型名)
+        string SelModel(ComboBox cb, string fallback)
+        {
+            var it = cb.SelectedItem as ComboBoxItem;
+            var tag = it?.Tag as string;
+            return !string.IsNullOrEmpty(tag) ? tag : fallback;
+        }
         var (engine, model) = VideoEngineRadios.SelectedIndex switch
         {
-            0 => ("waifu2x", "models-cunet"),
-            _ => ("realesrgan", "realesrgan-x4plus"),
+            // waifu2x:从模型下拉 Tag 读模型名(默认 models-cunet)
+            0 => ("waifu2x", SelModel(VideoWaifu2xModelCombo, "models-cunet")),
+            // Real-ESRGAN:从模型下拉 Tag 读模型名(默认 realesr-animevideov3)
+            _ => ("realesrgan", SelModel(VideoEsrganModelCombo, "realesr-animevideov3")),
         };
         // 倍率:0=1x超分(2x放大后缩回) 1=1.5x 2=2x 3=3x 4=4x 5=自定义分辨率
         bool upscaleShrink1x = false;

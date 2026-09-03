@@ -15,11 +15,11 @@ namespace ALHPro.Views;
 
 public sealed partial class AudioView : UserControl
 {
-    /// <summary>音频页设置(超分/降噪/AI分离/响亮/低切/清晰/输出格式),存 %LOCALAPPDATA%\ALHPro\settings\audio-settings.json。</summary>
+    /// <summary>音频页设置(升采样率/降噪/AI分离/响亮/低切/清晰/输出格式),存 %LOCALAPPDATA%\ALHPro\settings\audio-settings.json。</summary>
     public class AudioSettings
     {
         public int Sr { get; set; } = 0;           // 0关 1柔和 2标准 3强力(增强:人声/伴奏分别优化重混)
-        public bool Srs { get; set; }              // 超分(真超分辨率,低采样率源→48k)
+        public bool Srs { get; set; }              // 采样率修复(AI 升采样率,低采样率源→48k)
         public int Denoise { get; set; } = 0;        // 0关 1弱 2中 3强
         public int Demucs { get; set; } = 0;         // 0关 1人声 2去人声 3分离 4自定义组合
         public double VolV { get; set; } = 100;      // 自定义组合:人声音量 %
@@ -127,22 +127,22 @@ public sealed partial class AudioView : UserControl
         if (CustomMixPanel != null)
             CustomMixPanel.Visibility = DemucsRadios.SelectedIndex == 4
                 ? Visibility.Visible : Visibility.Collapsed;
-        // 超分提示:效果——勾选后作用到最终输出(不单独出文件)
+        // 升采样率提示:效果——勾选后作用到最终输出(不单独出文件)
         bool srs = SrsCheck?.IsChecked == true;
         if (SrsHint != null)
         {
             SrsHint.Text = srs
                 ? "已勾选:低采样率源(8k/16k/22k/32k)将升级到 48kHz,效果作用到最终输出;44.1k 全频带源会自动跳过"
                 : (LavaSrService.Available()
-                    ? "仅低采样率源(8k/16k/22k/32k)有效;44.1k 音乐已全频带,无需超分(用下方「增强」)"
-                    : "超分模型未安装(需 engines/lavasr),仅低采样率源有效");
+                    ? "仅低采样率源(8k/16k/22k/32k)有效;44.1k 音乐已全频带,无需升采样率(用下方「增强」)"
+                    : "升采样率模型未安装(需 engines/lavasr),仅低采样率源有效");
         }
-        // 自定义组合提示:最终只输出 1 个混合文件(按音量);超分/增强作为效果并入
+        // 自定义组合提示:最终只输出 1 个混合文件(按音量);升采样率/增强作为效果并入
         if (CmHint != null && CustomMixPanel != null && CustomMixPanel.Visibility == Visibility.Visible)
         {
             bool accC = CmAcc.IsChecked == true;
             bool subC = CmOther1.IsChecked == true || CmOther2.IsChecked == true;
-            CmHint.Text = "按各轨音量混合,最终输出 1 个「_自定义」文件(勾选的超分/增强一并作用)"
+            CmHint.Text = "按各轨音量混合,最终输出 1 个「_自定义」文件(勾选的升采样率/增强一并作用)"
                 + (accC && subC
                     ? "\n⚠ 伴奏=去掉人声的全部音乐(鼓/贝斯都在里面),同时勾「其他」= 那部分被算了两次;想单独提取某一块,只勾那个即可"
                     : (accC ? "\n(伴奏已含鼓/贝斯等全部乐器)" : ""));
@@ -738,7 +738,7 @@ public sealed partial class AudioView : UserControl
                         AudioProgress.Value = t.pct;
                         AudioStatus.Text = t.msg;
                     });
-                    // ==== 板块独立:超分 / 增强 / AI 分离 可同时勾选,各自输出独立文件 ====
+                    // ==== 板块独立:升采样率 / 增强 / AI 分离 可同时勾选,各自输出独立文件 ====
                     int demucsSel = DemucsRadios.SelectedIndex;   // 0=关 1=人声 2=去人声 3=分离(两文件) 4=自定义组合
                     int srSel = SrRadios.SelectedIndex;           // 0=关 1=柔和 2=标准 3=强力(增强)
                     bool doSrs = SrsCheck?.IsChecked == true && LavaSrService.Available();
@@ -760,19 +760,19 @@ public sealed partial class AudioView : UserControl
                         try { srcRate = AudioService.Probe(item.Path).SampleRate; } catch { srcRate = 0; }
                     }
 
-                    // ---- ① 超分(独立):低采样率源 → 48kHz;44.1k 全频带源自动跳过 ----
+                    // ---- ① 升采样率(独立):低采样率源 → 48kHz;44.1k 全频带源自动跳过 ----
                     string? srsWav = null;
                     bool srsApplied = false;
                     if (doSrs)
                     {
                         if (srcRate >= 44000 || srcRate <= 0)
                         {
-                            Log($"⚠ 源已是 {srcRate}Hz(全频带),超分仅对低采样率源(8k/16k/22k/32k)有效——已跳过超分");
+                            Log($"⚠ 源已是 {srcRate}Hz(全频带),升采样率仅对低采样率源(8k/16k/22k/32k)有效——已跳过");
                         }
                         else
                         {
-                            Log($"🔄 超分: {srcRate}Hz → 48kHz(AI 补高频)...");
-                            AudioStatus.Text = $"超分中(补高频 → 48kHz): {item.Name}...";
+                            Log($"🔄 升采样率: {srcRate}Hz → 48kHz(AI 补高频)...");
+                            AudioStatus.Text = $"升采样率中(补高频 → 48kHz): {item.Name}...";
                             var rawWav = System.IO.Path.Combine(EngineService.TempRoot, $"alh_src_{Guid.NewGuid():N}.wav");
                             srsWav = System.IO.Path.Combine(EngineService.TempRoot, $"alh_srs_{Guid.NewGuid():N}.wav");
                             await AudioService.ConvertToWavSameRateAsync(item.Path, rawWav);
@@ -780,13 +780,13 @@ public sealed partial class AudioView : UserControl
                             System.IO.File.WriteAllBytes(srsWav, srBytes);
                             try { System.IO.File.Delete(rawWav); } catch { }
                             srsApplied = true;
-                            Log("✅ 超分完成 → 48kHz");
+                            Log("✅ 升采样率完成 → 48kHz");
                         }
                     }
-                    // 分离/增强最终输出采样率:超分生效→48k;源≥44.1k 保持源率(48k 源处理后仍是 48k);仅低采样率源才用 44.1k
+                    // 分离/增强最终输出采样率:升采样率生效→48k;源≥44.1k 保持源率(48k 源处理后仍是 48k);仅低采样率源才用 44.1k
                     int aiOutRate = srsApplied ? 48000 : (srcRate >= 44100 ? srcRate : 44100);
 
-                    // ---- ② 增强 / AI 分离:共用一次分轨(超分生效时,分轨用超分后的 48k 源,频带更宽) ----
+                    // ---- ② 增强 / AI 分离:共用一次分轨(升采样率生效时,分轨用升采样率后的 48k 源,频带更宽) ----
                     bool didAi = false;
                     if (wantSep || wantRemaster)
                     {
@@ -808,7 +808,7 @@ public sealed partial class AudioView : UserControl
                         var o1Wav = stemBase + "_其他1.wav";
                         var o2Wav = stemBase + "_其他2.wav";
 
-                        // ===== 最终输出:链式——超分(上游已作用)/增强(效果并入),最终文件只由「AI分离」决定 =====
+                        // ===== 最终输出:链式——升采样率(上游已作用)/增强(效果并入),最终文件只由「AI分离」决定 =====
                         if (wantSep)
                         {
                             if (demucsSel == 1)   // 提取人声(增强并入:人声链优化)
@@ -869,7 +869,7 @@ public sealed partial class AudioView : UserControl
                                 sepOutputs.Add(fv);
                                 sepOutputs.Add(fa);
                             }
-                            else   // demucsSel == 4 自定义组合:按各轨音量混合成 1 个文件(超分/增强作为效果并入)
+                            else   // demucsSel == 4 自定义组合:按各轨音量混合成 1 个文件(升采样率/增强作为效果并入)
                             {
                                 // 勾选要输出的轨(bitmask 1=人声 2=伴奏 4=其他1 8=其他2)
                                 int mask = 0;
@@ -916,7 +916,7 @@ public sealed partial class AudioView : UserControl
                         }
                         else if (wantRemaster)
                         {
-                            // 无分离:增强 = 整曲(人声/伴奏分别优化后重混),只出 1 个「_增强」文件(超分作为效果已在上游)
+                            // 无分离:增强 = 整曲(人声/伴奏分别优化后重混),只出 1 个「_增强」文件(升采样率作为效果已在上游)
                             Log("增强:人声/伴奏分别优化,重新混音...");
                             AudioStatus.Text = $"增强中(人声/伴奏优化重混): {item.Name}...";
                             var mixWav = System.IO.Path.Combine(aiDir, "remix.wav");
@@ -933,12 +933,12 @@ public sealed partial class AudioView : UserControl
                         didAi = true;
                     }
 
-                    // ---- ③ 超分只在"单独勾选"时输出「_超分」文件;与分离/增强一起时作为效果并入不单独出 ----
+                    // ---- ③ 升采样率只在"单独勾选"时输出「_升采样率」文件;与分离/增强一起时作为效果并入不单独出 ----
                     if (srsApplied && !wantSep && !wantRemaster)
                     {
-                        var srsOut = UniquePath(srcDir, srcBase + "_超分" + ext);
-                        Log("超分输出:应用降噪/音色调整并转换 " + ext + "(48000Hz) ...");
-                        AudioStatus.Text = $"超分完成,转换输出: {item.Name}...";
+                        var srsOut = UniquePath(srcDir, srcBase + "_升采样率" + ext);
+                        Log("升采样率输出:应用降噪/音色调整并转换 " + ext + "(48000Hz) ...");
+                        AudioStatus.Text = $"升采样率完成,转换输出: {item.Name}...";
                         await AudioService.EnhanceAsync(srsWav!, srsOut, denoiseSel, loudSel, lowcutSel, eqSel,
                             outFmt, 320, null, prog, _cts.Token, trS, trE, aiOutRate);
                         sepOutputs.Add(srsOut);

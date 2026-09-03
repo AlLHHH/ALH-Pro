@@ -197,12 +197,62 @@ public static class VulkanCheck
                 if (int.TryParse(m.Groups[1].Value, out var id))
                 {
                     var name = m.Groups[2].Value.Trim();
-                    if (name.Length > 0 && !devices.Exists(d => d.Name == name))
+                    // 加固:过滤虚拟显示适配器/远程虚拟显卡(OrayIddDriver/GameViewer/基本显示 等),
+                    // 它们无 Vulkan 计算能力,某些场景引擎可能枚举到,但绝不能当作"可用的计算卡"推荐。
+                    // 用与 GpuInfo 相同的虚拟设备关键字过滤,保证与注册表枚举口径一致。
+                    if (name.Length > 0 && !devices.Exists(d => d.Name == name) && !GpuInfo.IsVirtual(name))
                         devices.Add((id, name));
                 }
             }
         }
         catch { }
+    }
+
+    /// <summary>识别 NVIDIA 显卡架构类别(用于针对性报告,而非笼统"N卡")。
+    /// 基于型号字符串判断:50系=Blackwell,40系=Ada,30系=Ampere,20/16系=Turing,
+    /// GTX 6/7/8/9/10系=老GTX,Quadro/RTX A/TITAN=专业卡。未知(Tesla/其他)返回 "unknown"。</summary>
+    private static string NvidiaArch(string name)
+    {
+        if (name.Contains("Quadro", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("TITAN", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("RTX A", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Tesla", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("A[0-9]{2,4}", StringComparison.OrdinalIgnoreCase))
+            return "pro";
+        if (Regex.IsMatch(name, @"RTX\s*5[0-9]{2}", RegexOptions.IgnoreCase)) return "blackwell";   // 50系
+        if (Regex.IsMatch(name, @"RTX\s*4[0-9]{2}", RegexOptions.IgnoreCase)) return "ada";         // 40系
+        if (Regex.IsMatch(name, @"RTX\s*3[0-9]{2}", RegexOptions.IgnoreCase)) return "ampere";     // 30系
+        if (Regex.IsMatch(name, @"RTX\s*2[0-9]{2}", RegexOptions.IgnoreCase)) return "turing";     // 20系
+        if (Regex.IsMatch(name, @"GTX\s*16[0-9]{2}", RegexOptions.IgnoreCase)) return "turing";    // 16系(图灵)
+        if (Regex.IsMatch(name, @"GTX\s*(6|7|8|9|10)[0-9]{2}", RegexOptions.IgnoreCase)) return "oldgtx";  // 老GTX
+        if (name.Contains("GeForce", StringComparison.OrdinalIgnoreCase)) return "nvidia";          // 其他GeForce
+        return "unknown";
+    }
+
+    /// <summary>识别设备类型(用于报告:独显/核显/无独显)。返回 "nvidia"|"amd"|"intel_igpu"|"intel_arc"|"other"。</summary>
+    private static string CardKind(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "other";
+        if (name.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("GeForce", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Quadro", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("TITAN", StringComparison.OrdinalIgnoreCase))
+            return "nvidia";
+        if (name.Contains("Radeon", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("AMD", StringComparison.OrdinalIgnoreCase))
+        {
+            // AMD 核显:无独显型号(Graphics 结尾/无 RX 数字)或 APU 核显(680M/780M 等)
+            if (name.Contains("Radeon Graphics", StringComparison.OrdinalIgnoreCase)
+                || Regex.IsMatch(name, @"Radeon(\(TM\))?\s*(?:[3-9]\d{2}M|1\d{2}M)", RegexOptions.IgnoreCase))
+                return "amd_igpu";
+            return "amd";
+        }
+        if (name.Contains("Intel", StringComparison.OrdinalIgnoreCase))
+        {
+            if (name.Contains("Arc", StringComparison.OrdinalIgnoreCase)) return "intel_arc";
+            return "intel_igpu";   // UHD/Iris/HD Graphics 一律核显
+        }
+        return "other";
     }
 
     /// <summary>生成设备自检报告(正规书面格式,无图标):逐项说明本机 GPU/显存/内存/CPU,
@@ -277,7 +327,7 @@ public static class VulkanCheck
         else
             sb.Append("建议:使用 CPU(软件计算)处理;图片放大与抠图可用,视频处理会明显变慢\n");
 
-        // 注意(此设备可能遇到的问题)
+        // ===== 注意(按本机真实设备生成,不套模板)=====
         sb.Append("注意:");
         var notes = new System.Collections.Generic.List<string>();
         if (!string.IsNullOrEmpty(err)) notes.Add("检测异常可能由显卡驱动不支持 Vulkan 引起,请更新驱动后重新检测");
@@ -286,41 +336,81 @@ public static class VulkanCheck
             notes.Add("未检测到 GPU 加速,视频超分与补帧耗时会很长,建议先用小片段测试");
             notes.Add("若安装有独立显卡却显示不可用,请更新显卡驱动(需支持 Vulkan)或检查显卡是否被禁用");
         }
-        if (hasAmd) notes.Add("AMD 显卡个别驱动版本存在兼容问题(黑屏/崩溃),若遇到请更新驱动或改用 CPU");
-        // 只有真的检测到旧型号 N 卡(GTX 600/700/900 系)才提示;新卡(20系+)不打扰
-        if (hasNvidia)
+
+        // 统计本机真实卡:独显(品牌+架构)/核显
+        var allNames = new System.Collections.Generic.List<string>();
+        foreach (var (_, n) in devices) if (!allNames.Contains(n)) allNames.Add(n);
+        foreach (var n in regNames) if (!allNames.Contains(n)) allNames.Add(n);
+        bool amdDedicated = false, intelArc = false, intelIgpu = false, amdIgpu = false;
+        string? nvArch = null;   // 主 N 卡架构
+        foreach (var n in allNames)
         {
-            bool oldNv = GpuInfo.GetAdapterNames()?.Any(n => n.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase)
-                && System.Text.RegularExpressions.Regex.IsMatch(n, @"GTX\s*(6|7|8|9)\d{2}", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) == true;
-            if (oldNv)
-                notes.Add("较老的 NVIDIA 型号(GTX 600/700/900 系)可能不支持 GPU 加速,遇到报错请改用 CPU");
+            switch (CardKind(n))
+            {
+                case "amd": amdDedicated = true; break;
+                case "amd_igpu": amdIgpu = true; break;
+                case "intel_arc": intelArc = true; break;
+                case "intel_igpu": intelIgpu = true; break;
+            }
+            if (CardKind(n) == "nvidia")
+            {
+                var arch = NvidiaArch(n);
+                if (arch == "unknown" || nvArch == null) nvArch ??= arch;   // 优先记录已知架构
+                if (arch != "unknown") nvArch = arch;
+            }
         }
-        if (hasIntel && !hasAmd && !hasNvidia)
+
+        if (nvArch == "blackwell")
+            notes.Add("RTX 50 系(Blackwell):ncnn-Vulkan 在新驱动上有已知崩溃风险,软件已自动改用 ONNX DirectML 稳定路线,无需手动设置");
+        else if (nvArch == "ada")
+            notes.Add("RTX 40 系(Ada):主流架构,驱动成熟,ncnn-Vulkan 直接加速,稳定");
+        else if (nvArch == "ampere")
+            notes.Add("RTX 30 系(Ampere):性能与稳定性均衡,ncnn-Vulkan 加速顺畅");
+        else if (nvArch == "turing")
+            notes.Add("RTX 20/16 系(Turing):支持 GPU 加速,显存较小时处理大图会自动降低分块");
+        else if (nvArch == "oldgtx")
+            notes.Add("较老的 NVIDIA 型号(GTX 600/700/900 系)可能不支持完整 GPU 加速,遇到报错请改用 CPU");
+        else if (nvArch == "pro")
+            notes.Add("专业卡(Quadro/RTX A/TITAN):GPU 加速可用,显存通常较大,适合高倍率大图");
+
+        if (amdDedicated)
+            notes.Add("AMD 独显:Vulkan 驱动差异较大,若处理中出现黑屏/崩溃会自动改用 ONNX DirectML 或 CPU,无需手动设置");
+        if (amdIgpu || (intelIgpu && !amdDedicated))
             notes.Add("核显使用共享内存,处理大图或高倍率时可能显存不足,建议勾选「快速模式」或改用 CPU");
+        if (intelArc)
+            notes.Add("Intel Arc 独显:支持 GPU 加速,驱动较新时稳定;个别旧驱动需更新后再试");
+
         if (gpuOk && notes.Count == 0)
             notes.Add("若处理中出现黑屏或崩溃,可尝试更新显卡驱动,或在计算设备中选择 CPU");
         if (notes.Count == 0) notes.Add("各项功能均可正常使用");
         sb.Append(string.Join(";", notes)).Append('\n');
 
-        // ===== 各模型在本机的兼容性(按当前代码路由逻辑如实展示,不夸不贬)=====
+        // ===== 各模型在本机的兼容性(按真实路由如实展示:走 ncnn 还是 ONNX、GPU 还是 CPU)=====
         sb.Append("模型兼容性:").Append('\n');
         bool blackwell = EngineService.IsBlackwellGpu();
-        bool onnxEsrgan = EngineService.ShouldUseOnnxEsrgan();   // 50系/Vulkan不可用 → ONNX
+        bool onnxEsrgan = EngineService.ShouldUseOnnxEsrgan();   // 50系/Vulkan不可用 → ONNX(DML 加速)
+        bool onnxWaifu = EngineService.ShouldUseOnnxWaifu2x();
         bool onnxRife = RifeOnnxService.Available();
 
-        // 图片超分
-        sb.Append("· 图片超分(Real-ESRGAN):").Append(onnxEsrgan ? "显卡加速,稳定\n"
-            : "GPU 加速,速度快,稳定\n");
-        // 视频超分
-        sb.Append("· 视频超分(Real-ESRGAN):").Append(onnxEsrgan ? "显卡加速,稳定\n"
-            : "GPU 加速,速度快;异常时自动改用 CPU\n");
-        // 补帧
-        sb.Append("· 视频补帧(RIFE):").Append(onnxRife ? "稳定(已自动选用合适引擎)\n"
-            : blackwell ? "稳定(已自动适配,较慢)\n"
-            : "GPU 加速,流畅稳定\n");
-        // 抠图
-        sb.Append("· AI 抠图:CPU 计算,速度快,任何显卡均稳定\n");
-        // 音频
+        // 图片/视频超分:走 ONNX(DirectML 显卡加速)还是 ncnn(直接 GPU)还是 CPU
+        string esrganPic = onnxEsrgan ? "走 ONNX DirectML(显卡加速,稳定)"
+            : (gpuOk ? "ncnn-Vulkan 直接 GPU,加速,稳定" : "CPU 软算,慢但稳");
+        string esrganVid = onnxEsrgan ? "走 ONNX DirectML(显卡加速,稳定)"
+            : (gpuOk ? "ncnn-Vulkan GPU 加速,快速;异常自动降级" : "CPU 软算,较慢但稳");
+
+        sb.Append("· 图片超分(Real-ESRGAN):").Append(esrganPic).Append('\n');
+        sb.Append("· 视频超分(Real-ESRGAN):").Append(esrganVid).Append('\n');
+        // waifu2x:Blackwell 走 ONNX,普通 GPU 走 ncnn(Vulkan)
+        if (blackwell || onnxWaifu)
+            sb.Append("· 动漫超分(waifu2x):走 ONNX DirectML(显卡加速,稳定)\n");
+        else
+            sb.Append("· 动漫超分(waifu2x):").Append(gpuOk ? "ncnn-Vulkan GPU 加速,快速流畅\n" : "CPU 软算,慢但稳\n");
+        // 补帧:有 ONNX 模型走 ONNX;否则 ncnn
+        sb.Append("· 视频补帧(RIFE):").Append(onnxRife ? "走 ONNX DirectML(稳定,GPU 加速)\n"
+            : (blackwell ? "已自动适配稳定引擎(较慢)\n"
+            : (gpuOk ? "ncnn-Vulkan GPU 加速,流畅稳定\n" : "CPU 软算,较慢但稳\n")));
+        // 抠图/音频:CPU 恒定(无需 GPU)
+        sb.Append("· AI 抠图:").Append(gpuOk ? "CPU 计算(强制),速度快,任何显卡均稳定\n" : "CPU 计算,可用,速度一般\n");
         sb.Append("· 音频处理:CPU 计算,任何设备均稳定\n");
 
         return sb.ToString().TrimEnd('\n');

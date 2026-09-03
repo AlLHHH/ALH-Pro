@@ -1094,6 +1094,15 @@ public static class VideoService
                     ? new System.Collections.Generic.List<double>(frameDurs) : null;
                 progress?.Report((45, $"帧准备完成({frameFiles.Length} 帧)"));
             }
+            // ===== 临时文件控制:补帧/帧准备完成后,源帧(framesIn)不再需要,立即删除释放磁盘 =====
+            // (长视频 + 高倍率补帧时 framesIn 可占几十 GB;及时清,避免累积到 100+GB)
+            try
+            {
+                int delCnt = 0;
+                foreach (var f in Directory.EnumerateFiles(framesIn, "*.png")) { File.Delete(f); delCnt++; }
+                AppLogger.Info($"[临时清理] 已释放源帧目录 framesIn({delCnt} 帧),后续超分/合帧不再需要");
+            }
+            catch { /* 清理失败忽略,不中断 */ }
 
             // 4) 超分(可选):批处理在补帧后的帧上进行;1x 时直接剔除(不超分,帧原样使用)
             //    1x超分(2x放大后缩回):内部按 2x 超分,再缩回原始尺寸,输出仍是 1x
@@ -1121,6 +1130,7 @@ public static class VideoService
                 // 不能 → 直接改 CPU,并提示用户(不再等引擎启动失败/黑帧降级,省时间)。
                 int upGpu = gpuId;
                 bool waifuOnnx = false;   // 50系 waifu2x ncnn 不可用 → 整段视频改走 ONNX(安全网)
+                bool upOnnxDml = false;   // 探测失败/不可用 → 走 ONNX 时用 DirectML GPU(-2 自动)而非强制 CPU(-1)
                 if (gpuId >= 0)
                 {
                     progress?.Report((45, $"正在检测超分 GPU 兼容性(最长 5 秒)..."));
@@ -1132,14 +1142,19 @@ public static class VideoService
                             // waifu2x 在 50 系:ncnn CPU 模式同样会崩(实测 exit -1073741819)——
                             // 不能像其他引擎那样"降 CPU",而是整段改走 ONNX 稳定版(DirectML/CPU 都行)
                             waifuOnnx = true;
+                            upOnnxDml = true;
                             AppLogger.Warn($"⚠ waifu2x 引擎在 50 系 GPU 上不可用,自动改走 ONNX 稳定版(整段视频,兼容模式)");
                             progress?.Report((45, $"⚠ waifu2x 无法用 GPU,自动改用稳定引擎(ONNX,整段视频)..."));
                         }
                         else
                         {
-                            AppLogger.Warn($"⚠ 超分引擎 {engine} GPU 探测失败,改用 CPU(视频超分会慢,但不会卡死白等)");
-                            progress?.Report((45, $"⚠ 超分引擎 {engine} 无法用 GPU,自动改用 CPU 计算(较慢但稳定)..."));
-                            upGpu = -1;
+                            // ncnn GPU 不可用:不急着掉最慢的 ncnn-CPU —— 先试 ONNX DirectML(与 ncnn-Vulkan
+                            // 是两套完全独立运行时,这些卡 DirectML 往往能正常 GPU 加速);ONNX 失败才自动掉 CPU。
+                            AppLogger.Warn($"⚠ 超分引擎 {engine} GPU 探测失败,自动改用 ONNX DirectML GPU(比 ncnn-CPU 快一个数量级)");
+                            progress?.Report((45, $"⚠ 超分引擎 {engine} 无法用 ncnn GPU,自动改用 ONNX 稳定引擎(DirectML GPU)..."));
+                            upGpu = -1;          // 触发下方 ONNX 分支
+                            upOnnxDml = true;    // 且用 DirectML GPU(-2 自动选设备),而非强制 CPU
+                            waifuOnnx = engine == "waifu2x" ? true : waifuOnnx;   // waifu2x 探测失败同样走 ONNX
                         }
                     }
                 }
@@ -1214,8 +1229,8 @@ public static class VideoService
                                 progress?.Report((45 + (int)(45.0 * start / total),
                                     $"超分(稳定引擎) 批次 {start / batchSize + 1}/{batches}..."));
                                 await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
-                                    upGpu < 0 ? -1 : -2, progress, ct, onnxModelPath,
-                                    start, total);   // 用户选 CPU 则强制 CPU,否则按帧大小自动选设备;传全局帧→逐帧显示"第 N/共 M 帧"
+                                    upGpu < 0 ? (upOnnxDml ? -2 : -1) : -2, progress, ct, onnxModelPath,
+                                    start, total);   // 用户主动选 CPU(-1)强制 CPU;探测失败(upOnnxDml)用 -2=DirectML GPU 自动;正常 GPU 也 -2 自适应
                             }
                             else
                             {
@@ -1234,44 +1249,62 @@ public static class VideoService
                             // 不是 GPU 故障——跳过降级,不浪费 CPU 重算。
                             if (batchOutDirHasBlack(batchOut) && !DirNearBlack(batchIn))
                             {
-                                progress?.Report((45 + (int)(45.0 * start / total),
-                                    $"⚠ 检测到黑帧(批次 {start}~{end - 1},GPU 输出异常),该批改用 CPU 重处理..." + StageElapsed()));
-                                AppLogger.Info($"降级:批次 {start}~{end - 1} 输出黑帧(ncnn-vulkan GPU 队列异常),已用 CPU 重处理该批");
-                                try
+                                // ===== 黑帧降级改进 =====
+                                // ncnn-vulkan 偶发 vkQueueSubmit 失败 → 输出全黑帧。原逻辑先走最慢的 ncnn-CPU 重处理,
+                                // 仍黑才走 ONNX DirectML —— 白白绕一圈最慢路径。
+                                // 现在:本机有 ONNX 模型 → 直接走 ONNX DirectML(GPU 加速,比 ncnn-CPU 快一个数量级);
+                                // 无模型/WORK 失败才降 ncnn-CPU。两套运行时独立,ncnn GPU 崩 ≠ DirectML 崩。
+                                string? onnxB = engine == "realesrgan"
+                                    ? (model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
+                                        ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())
+                                        : EsrganOnnxService.FindModel())
+                                    : engine == "waifu2x" ? EsrganOnnxService.FindWaifu2xModel() : null;
+                                if (onnxB != null)
                                 {
-                                    await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
-                                        upScale, 0, -1, false, progress, ct,
-                                        SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1),
-                                        watchStage: "超分",
-                                        globalBaseFrames: start, globalTotalFrames: total);
+                                    progress?.Report((45 + (int)(45.0 * start / total),
+                                        $"⚠ 检测到黑帧(批次 {start}~{end - 1},GPU 输出异常),该批改用 ONNX DirectML 引擎重处理..." + StageElapsed()));
+                                    AppLogger.Info($"降级:批次 {start}~{end - 1} 输出黑帧(ncnn-vulkan GPU 队列异常),改用 ONNX DirectML({Path.GetFileNameWithoutExtension(onnxB)})");
+                                    try { Directory.Delete(batchOut, true); } catch { }
+                                    Directory.CreateDirectory(batchOut);
+                                    await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
+                                        upOnnxDml ? -2 : (upGpu < 0 ? -1 : -2), progress, ct, onnxB,
+                                        start, total);   // 探测失败/黑帧 → DeepSeek-2(DirectML GPU 自动);主动选 CPU → -1
                                     foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
                                         File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
-                                }
-                                catch { }
-                                // CPU 重试仍黑(或 CPU 模式不可用被内部回退 GPU,结果还是黑)→ 整批改走 ONNX 稳定引擎
-                                if (batchOutDirHasBlack(batchOut))
-                                {
-                                    string? onnxB = engine == "realesrgan"
-                                        ? (model.Contains("animevideo", StringComparison.OrdinalIgnoreCase)
-                                            ? (EsrganOnnxService.FindAnimeVideoModel() ?? EsrganOnnxService.FindModel())
-                                            : EsrganOnnxService.FindModel())
-                                        : engine == "waifu2x" ? EsrganOnnxService.FindWaifu2xModel() : null;
-                                    if (onnxB != null)
+                                    // ONNX(DirectML)重处理仍黑(该卡 DirectML 也异常)→ 再用 ncnn-CPU 兜底(慢但绝不出黑)
+                                    if (batchOutDirHasBlack(batchOut))
                                     {
                                         progress?.Report((45 + (int)(45.0 * start / total),
-                                            $"⚠ 该批黑块且 CPU 修复无效,自动改用 ONNX 稳定引擎..." + StageElapsed()));
-                                        AppLogger.Info($"降级:批次 {start}~{end - 1} 黑块+CPU 无效,改用 ONNX({Path.GetFileNameWithoutExtension(onnxB)})");
+                                            $"⚠ ONNX DirectML 仍黑(批次 {start}~{end - 1}),该批改用 CPU 兜底..." + StageElapsed()));
+                                        AppLogger.Info($"降级:批次 {start}~{end - 1} ONNX(DirectML)仍黑,改用 ncnn-CPU 兜底");
                                         try { Directory.Delete(batchOut, true); } catch { }
                                         Directory.CreateDirectory(batchOut);
-                                        await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
-                                            upGpu < 0 ? -1 : -2, progress, ct, onnxB);   // 用户选 CPU 则强制 CPU
+                                        await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
+                                            upScale, 0, -1, false, progress, ct,
+                                            SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1),
+                                            watchStage: "超分",
+                                            globalBaseFrames: start, globalTotalFrames: total);
                                         foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
                                             File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
                                     }
-                                    else
+                                }
+                                else
+                                {
+                                    // 无 ONNX 模型:黑帧直接 ncnn-CPU 兜底(Catch 吞失败,避免中断)
+                                    progress?.Report((45 + (int)(45.0 * start / total),
+                                        $"⚠ 检测到黑帧(批次 {start}~{end - 1},GPU 输出异常),该批改用 CPU 重处理..." + StageElapsed()));
+                                    AppLogger.Info($"降级:批次 {start}~{end - 1} 输出黑帧(ncnn-vulkan GPU 队列异常),无 ONNX 模型,已用 ncnn-CPU 重处理该批");
+                                    try
                                     {
-                                        throw new InvalidOperationException("BLACKOUT_NEED_ONNX:该批 GPU 黑块且 CPU 修复无效(无可用 ONNX 模型)");
+                                        await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
+                                            upScale, 0, -1, false, progress, ct,
+                                            SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1),
+                                            watchStage: "超分",
+                                            globalBaseFrames: start, globalTotalFrames: total);
+                                        foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
+                                            File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
                                     }
+                                    catch { }
                                 }
                             }
                             Interlocked.Add(ref doneFrames, end - start);
@@ -1287,6 +1320,30 @@ public static class VideoService
                             try { Directory.Delete(batchIn, true); } catch { }
                             try { Directory.Delete(batchOut, true); } catch { }
                         }
+                        catch (OperationCanceledException) { throw; }
+                        catch (Exception batchEx)
+                        {
+                            // ===== 超分批次失败加固 =====
+                            // realesrgan/waifu2x ncnn-vulkan 在长时间运行会中途 AccessViolation 崩溃(exit -1073741819),
+                            // 原逻辑无外层 catch → 异常冒泡 → await Task.WhenAll(tasks) 抛错 → 整个超分阶段/任务失败
+                            // ("成功 0,失败 1")。现在:引擎崩溃/异常时【该批帧直接回退原帧】,不中断整个任务——
+                            // 视频仍能出,只是这批帧未超分(画质略低),绝不"整段视频全丢"。
+                            // 取消异常不吞(仍走取消);
+                            string head = batchEx.Message.Split('\n')[0];
+                            if (head.Length > 90) head = head[..90];
+                            AppLogger.Warn($"⚠ 超分批次 {start}~{end - 1} 失败({head})——该批回退原帧,继续(不中断任务)");
+                            progress?.Report((45 + (int)(45.0 * start / total),
+                                $"⚠ 超分批次 {start}~{end - 1} 异常({head}),该批回退原帧,继续处理..."));
+                            // 清空本批半成品,回退原帧(未超分帧直接复用源帧;batchOut 临时目录由任务收尾统一清理)
+                            for (int i = start; i < end; i++)
+                            {
+                                try { File.Copy(upFiles[i], Path.Combine(upOutput, Path.GetFileName(upFiles[i])), true); }
+                                catch { }
+                            }
+                            Interlocked.Add(ref doneFrames, end - start);
+                            progress?.Report((45 + (int)(45.0 * doneFrames / total),
+                                $"超分 已处理 {doneFrames} 帧 / 共 {total} 帧(部分回退原帧)"));
+                        }
                         finally
                         {
                             sem.Release();
@@ -1301,6 +1358,14 @@ public static class VideoService
                     throw;
                 }
                 await Task.WhenAll(tasks);
+                // ===== 临时文件控制:超分完成后,补帧帧(upInput,即原 framesFinal)已用完,删除释放磁盘 =====
+                // (8x 补帧+超分后补帧帧体积巨大,及时清,避免超分帧+补帧帧同时占盘)
+                try
+                {
+                    foreach (var f in Directory.EnumerateFiles(upInput, "*.png")) File.Delete(f);
+                    AppLogger.Info($"[临时清理] 已释放补帧帧目录 upInput({upFiles.Length} 帧),后续合帧用超分帧");
+                }
+                catch { /* 清理失败忽略 */ }
                 framesFinal = upOutput;   // 合帧使用超分后的帧
                 // 1x超分:2x超分后缩回原始尺寸(画质比直接 1x 更好)
                 if (upscaleShrink1x && origW is > 0 && origH is > 0)
@@ -1848,10 +1913,28 @@ public static class VideoService
         if (!Directory.Exists(Path.Combine(rifeDir, interpModel)))
             throw new InvalidOperationException($"未找到补帧模型目录:{Path.Combine(rifeDir, interpModel)} — 请检查 engines/rife 下的模型文件夹(如 rife-v4.13)");
 
-        // GPU 失败自动降级:当前 GPU → 其他 GPU(多卡机:核显失败切独显)→ CPU(与超分同策略)
+        // GPU 失败自动降级:当前 GPU → 其他 GPU(多卡机:核显失败切独显)→ ONNX DirectML → CPU(与超分同策略,但优先 ONNX)
         async Task RunRifeAsync(string args, int gpuNow, int watchTotal, string? watchDir)
         {
-            // 尝试一张 GPU;失败/黑帧时传入 alt 走"换卡,再不行 CPU"链
+            // ===== 补帧降级改进 =====
+            // GPU(ncnn-vulkan)失败/黑帧时,原逻辑直接降最慢的 ncnn-CPU。而 ONNX DirectML 是独立运行时,
+            // 50 系/AMD/老卡这些"ncnn GPU 崩"的设备 DirectML 往往能正常 GPU 加速 —— 先走 ONNX 而非直接 CPU。
+            // 仅当 ONNX 不可用/失败才降 ncnn-CPU。
+            async Task TryCpuOrOnnxAsync()
+            {
+                // 有 ONNX 模型 + 能解析帧参数 → 先走 ONNX DirectML(-2 自动选设备)
+                if (RifeOnnxService.Available() && TryGetRifeOnnxFrames(args, out var onnxIn, out var onnxOut, out var onnxTarget))
+                {
+                    AppLogger.Info($"✅ 补帧降级:GPU 不可用,先改走 ONNX DirectML(rife49.onnx,DirectML→CPU)再回落");
+                    progress?.Report((0, "⚠ 补帧 GPU 不可用,改用 ONNX 稳定模型(DirectML GPU)重算..."));
+                    await RifeOnnxInterpDirAsync(onnxIn!, onnxOut!, onnxTarget, -2, watchTotal, watchDir).ConfigureAwait(false);
+                    return;
+                }
+                // 无 ONNX 模型:直接 ncnn-CPU
+                var cpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g -1");
+                await RunAsync(rife, cpuArgs, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
+            }
+            // 尝试一张 GPU;失败/黑帧时传入 alt 走"换卡,再不行 ONNX→CPU"链
             async Task TryGpuAsync(int g, int? altGpu)
             {
                 try
@@ -1869,29 +1952,23 @@ public static class VideoService
                         // 防误杀:段【源帧】(segIn)本来就近黑(素材黑场/淡入淡出)→ 输出黑正常,不降级
                         if (anyBlack && !DirNearBlack(segIn))
                         {
-                            AppLogger.Info($"⚠ 降级:补帧 GPU {g} 输出黑帧(GPU 队列异常),{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 CPU")}重算该段");
-                            progress?.Report((0, $"⚠ 补帧 GPU {g} 输出黑帧,{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 CPU 重算该段,约 {EstimateCpuTime(segLen, watchTotal)} 分钟...")}"));
+                            AppLogger.Info($"⚠ 降级:补帧 GPU {g} 输出黑帧(GPU 队列异常),{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 ONNX/CPU")}重算该段");
+                            progress?.Report((0, $"⚠ 补帧 GPU {g} 输出黑帧,{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 ONNX 稳定模型重算该段...")}"));
                             if (altGpu.HasValue)
-                                await TryGpuAsync(altGpu.Value, null).ConfigureAwait(false);   // 只再降一级:换卡后失败直接 CPU
+                                await TryGpuAsync(altGpu.Value, null).ConfigureAwait(false);   // 只再降一级:换卡后失败再走 ONNX→CPU
                             else
-                            {
-                                var cpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g -1");
-                                await RunAsync(rife, cpuArgs, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
-                            }
+                                await TryCpuOrOnnxAsync().ConfigureAwait(false);   // 无卡可换:先 ONNX DirectML,再 ncnn-CPU
                         }
                     }
                 }
                 catch (InvalidOperationException ex) when (g >= 0)
                 {
-                    AppLogger.Info($"⚠ 降级:补帧 GPU {g} 失败({ex.Message.Split('\n')[0]}),{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 CPU")}重算");
-                    progress?.Report((0, $"⚠ 补帧 GPU {g} 失败,{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 CPU")}重算..."));
+                    AppLogger.Info($"⚠ 降级:补帧 GPU {g} 失败({ex.Message.Split('\n')[0]}),{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 ONNX/CPU")}重算");
+                    progress?.Report((0, $"⚠ 补帧 GPU {g} 失败,{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 ONNX 稳定模型重算...")}"));
                     if (altGpu.HasValue)
                         await TryGpuAsync(altGpu.Value, null).ConfigureAwait(false);
                     else
-                    {
-                        var cpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g -1");
-                        await RunAsync(rife, cpuArgs, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
-                    }
+                        await TryCpuOrOnnxAsync().ConfigureAwait(false);   // 无卡可换:先 ONNX DirectML,再 ncnn-CPU
                 }
             }
 
@@ -2059,6 +2136,9 @@ public static class VideoService
                     await RunRifeAsync(
                         $"-i \"{finalOut}\" -o \"{curOut}\" -f \"frame_%06d.png\" -m {interpModel} -g {gpuArg}{ttaArgs}{SafeRender.GetEngineThreadArgs()}",
                         gpuId, outLen, curOut);
+                    // 临时文件控制:上一级级联输出(旧 finalOut)已被这一级吃完,删除释放磁盘(级联高倍率时中间级非常大)
+                    if (finalOut != segIn)
+                    { try { Directory.Delete(finalOut, true); } catch { } }
                     finalOut = curOut;
                     inLen = outLen;
                 }

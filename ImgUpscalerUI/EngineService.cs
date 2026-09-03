@@ -256,20 +256,22 @@ public static partial class EngineService
         }
     }
 
-    /// <summary>动漫模式可选模型(waifu2x 系,全部 MIT 许可)。</summary>
+    /// <summary>动漫模式可选模型(waifu2x 系,全部 MIT 许可)。显示名=模型名(体量 MB · 快/中/慢);取值用 Model=模型名。</summary>
     public static readonly (string Label, string Engine, string Model)[] AnimeModels =
     {
-        ("waifu2x · 通用 (cunet)", "waifu2x", "models-cunet"),
-        ("waifu2x · 动漫插画 (upconv_7_anime)", "waifu2x", "models-upconv_7_anime_style_art_rgb"),
+        ("models-cunet（24MB · 中）", "waifu2x", "models-cunet"),
+        ("models-upconv_7_anime_style_art_rgb（5MB · 快）", "waifu2x", "models-upconv_7_anime_style_art_rgb"),
     };
 
     // 注意:预处理降噪用 cunet(models-cunet 自带 1x 降噪模型 noise_model.bin);
     // upconv_7_photo/upconv_7_anime 只有 2x 降噪模型(noiseN_scale2.0x),-s 1 降噪会失败。
 
-    /// <summary>Real-ESRGAN 可选模型(照片模式专用,只开放通用模型)。</summary>
+    /// <summary>Real-ESRGAN 可选模型(照片模式)。显示名=模型名(体量 MB · 快/中/慢);取值用 Name=模型名。</summary>
     public static readonly (string Label, string Name)[] PhotoModels =
     {
-        ("通用 (x4plus)", "realesrgan-x4plus"),
+        ("realesr-animevideov3（4MB · 快）", "realesr-animevideov3"),
+        ("realesrgan-x4plus-anime（9MB · 中）", "realesrgan-x4plus-anime"),
+        ("realesrgan-x4plus（41MB · 慢）", "realesrgan-x4plus"),
     };
 
     /// <summary>分块尺寸:大图按 tile 分块超分再拼接(防显存爆)。
@@ -389,8 +391,7 @@ public static partial class EngineService
     // 引擎"无进展看门狗":时间戳已改为 RunAsync 每次调用私有(局部变量 lastOutTicks/lastFrameTicks,
     // 闭包捕获)——原全局静态已被并发任务"喂狗"导致看门狗失效,已废弃(无引用)。
     // (引擎崩溃=进程退出→RunAsync 抛异常→降级链接管,不依赖看门狗;看门狗兜底"引擎 hang 不退出的情况")
-    // 分块处理中"单块平均耗时"(秒,EMA 平滑):用于块内心跳估算当前块进度(让进度条平滑前进)
-    private static double _tileEstAvg = 0;
+    // 分块处理已改为"一次目录批量启动引擎"(UnscaleTiledAsync),不再逐块启动,故不再需要单块平均耗时心跳字段。
 
     /// <summary>启动引擎子进程,实时读取输出并解析进度,支持取消(杀进程树)。返回引擎日志尾部。</summary>
     private static async Task<string> RunAsync(string exe, string args,
@@ -1043,13 +1044,17 @@ public static partial class EngineService
         }
 
         // 大图分块决策:超过引擎安全块尺寸 → 手动带重叠分块,保证每块"单块整处理、无内部子块接缝"。
-        // (引擎内部 -t 分块/自动 tile 会在真实照片上切出"方正拼贴"接缝;App 手动分块 + overlap 羽化 + 单块 -t 才无痕)
+        // (引擎内部 -t 分块/自动 tile 会在真实照片上切出"方正拼贴"接缝;App 手动分块 + overlap 羽化 + 单块 -t 0 才无痕)
+        // 【提速优化】分块阈值用"安全块×3"(而非安全块):每块单独启动引擎开销大(实测 2000×2000 分块≈36.7s ,
+        // 整图直跑≈25.9s,分块反而慢 40%)。能整图直跑(显存够)的图就不分块,省去反复启动引擎。
+        // 实测 4060 8GB 整图直跑到 4000×4000 仍正常;阈值 = tileSize(≈1280)×3 = 3840,留足安全余量。
         if (allowTiling && scale > 1.001)
         {
             int iw = 0, ih = 0;
             try { using (var probe = new System.Drawing.Bitmap(input)) { iw = probe.Width; ih = probe.Height; } }
             catch { /* 探不到尺寸就走单张路径,由引擎报错 */ }
-            if (iw > tileSize || ih > tileSize)
+            int safeWholeTile = Math.Max(tileSize * 3, tileSize);   // 整图直跑安全上限(能整跑就不分块,省启动开销)
+            if (iw > safeWholeTile || ih > safeWholeTile)
                 // 分块拼接(SetPixel 羽化 + 合成 + 保存)很吃 CPU,放后台线程,避免卡 UI
                 return await Task.Run(() => UpscaleTiledAsync(input, output, engine, model,
                     scale, noise, gpuId, tta, progress, ct, tileSize)).ConfigureAwait(false);
@@ -1077,7 +1082,7 @@ public static partial class EngineService
             // -m 用相对引擎目录的路径(部分引擎会把传入路径再次拼接到 exe 目录,绝对路径会出错)
             var modelArg = Path.GetRelativePath(exeDir, modelDir);
             var args = $"-i \"{input}\" -o \"{output}\" -s {engineScale} -n {noise} " +
-                $"-t {tileSize} -g {gpuId} -m \"{modelArg}\"{SafeRender.GetEngineThreadArgs()}";
+                $"-t 0 -g {gpuId} -m \"{modelArg}\"{SafeRender.GetEngineThreadArgs()}";
             if (tta) args += " -x";
             progress?.Report((0, "启动 waifu2x 引擎..."));
             // 诊断:记录实际使用的引擎与设备编号(-g;日志一看便知是在用 GPU 还是 CPU)
@@ -1110,7 +1115,7 @@ public static partial class EngineService
             // 统一用 4x 放大后高保真缩回(用户指令:3x=4x 处理完缩到 3x;比 -s 2/-s 3 硬缩更清晰、不依赖缺失权重)
             int engineScale = 4;
             var args = $"-i \"{input}\" -o \"{output}\" -s {engineScale} -n {model} " +
-                $"-t {tileSize} -g {gpuId}{SafeRender.GetEngineThreadArgs()}";
+                $"-t 0 -g {gpuId}{SafeRender.GetEngineThreadArgs()}";
             if (tta) args += " -x";
             progress?.Report((0, "启动 Real-ESRGAN 引擎..."));
             await RunEngFallbackGpuAsync(exe, args, progress, ct).ConfigureAwait(false);
@@ -1125,9 +1130,9 @@ public static partial class EngineService
         }
     }
 
-    /// <summary>逐块单文件超分:一块(≤tile)用"单文件 + -t tileSize"整块处理(引擎不再内部切块→无接缝)。
-    /// 关键:引擎"目录批量 + -t tileSize"会 vkQueueSubmit 失败→全黑;"-t 0"又会在块内自动再切子块→接缝;
-    /// 实测只有"单文件 + -t tileSize"能干净整块无接缝,故逐块各自调用。</summary>
+    /// <summary>逐块单文件超分:一块(≤tile)用"单文件 + -t 0"整块处理(引擎不内部切块→无接缝、无黑帧)。
+    /// 关键:引擎"目录批量 + -t tileSize"会 vkQueueSubmit 失败→全黑;引擎内部 tiling(-t 带数值)也出接缝;
+    /// 实测"单文件 + -t 0"整块直算最干净(无接缝、无黑帧),故逐块各自调用,由 App 羽化拼接。</summary>
     private static async Task UpOneTileAsync(string input, string output, string engine, string model,
         double scale, int noise, int gpuId, bool tta,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct, int tileSize)
@@ -1143,7 +1148,7 @@ public static partial class EngineService
             int engineScale = CeilPowerOfTwo(scale);
             var modelArg = Path.GetRelativePath(exeDir, modelDir);
             var args = $"-i \"{input}\" -o \"{output}\" -s {engineScale} -n {noise} " +
-                $"-t {tileSize} -g {gpuId} -m \"{modelArg}\"{SafeRender.GetEngineThreadArgs()}";
+                $"-t 0 -g {gpuId} -m \"{modelArg}\"{SafeRender.GetEngineThreadArgs()}";
             if (tta) args += " -x";
             await RunEngFallbackGpuAsync(exe, args, progress, ct).ConfigureAwait(false);
             EnsureFinalOutput(output);
@@ -1162,7 +1167,7 @@ public static partial class EngineService
             int engineScale = 4;
             // -m 显式模型目录(models),-n 模型名(=realesrgan-x4plus)——显式写全,不依赖引擎默认/工作目录
             var args = $"-i \"{input}\" -o \"{output}\" -s {engineScale} -m models -n {model} " +
-                $"-t {tileSize} -g {gpuId}{SafeRender.GetEngineThreadArgs()}";
+                $"-t 0 -g {gpuId}{SafeRender.GetEngineThreadArgs()}";
             // 实测:realesrgan(2022 版)加 -x(TTA)会卡死(120秒无输出,引擎兼容问题)——禁用,仅 waifu2x 新版支持 TTA;
             // 50 系适配升级新版引擎后如支持再放开。
             await RunEngFallbackGpuAsync(exe, args, progress, ct).ConfigureAwait(false);
@@ -1218,72 +1223,65 @@ public static partial class EngineService
                 }
         }
 
-        // 2) 逐块单文件放大(每块都 <= tile,且以 -t tileSize 单块整处理 → 无内部子块接缝)。
-        //    关键:引擎"目录批量 + -t tileSize"会 vkQueueSubmit 失败→全黑;"-t 0"又会在块内自动再切子块→接缝。
-        //    实测只有"单文件 + -t tileSize"能干净整块无接缝,故逐块调用。
-        progress?.Report((5, $"超分 已处理 0/{totalTiles} 块..."));
-        var orderedTiles = Directory.EnumerateFiles(inDir, "*.png")
-            .OrderBy(f => f, StringComparer.Ordinal).ToList();
-        int done = 0;
-        foreach (var tf in orderedTiles)
+        // 2) 一次目录批量启动引擎处理所有块(-t 0:引擎不内部 tiling → 无接缝/黑帧;且省去逐块启动引擎的开销)。
+        //    实测"目录批量 + -t 0"一次启动可正常处理全部块(无黑帧/无接缝),而逐块启动每块都要 3~6 秒启动开销,
+        //    块多时会显著拖慢(用户反馈"一块一块重新启动引擎太慢")。这里一次喂整个块目录给引擎。
+        progress?.Report((5, $"超分 处理 {totalTiles} 块(一次启动引擎)..."));
+        int engineScale2;
+        if (engine == "waifu2x")
         {
-            ct.ThrowIfCancellationRequested();
-            // 块开始即报进度(引擎启动 3~6 秒内界面不空转):"超分 第 X/64 块(引擎启动/处理中)..."
-            // 块处理期间(10~60 秒)无任何上报 → 进度条/文字静止;这里加【块内心跳】:
-            // 每 1 秒上报一次"块内进度%"(按已用时间/该块预计耗时 估算),让进度条平滑前进而不是死等。
-            var tileWatch = System.Diagnostics.Stopwatch.StartNew();
-            // 该块预计耗时:总耗时按"已处理块平均耗时"估算(前 3 块后);无历史用 30s 兜底
-            double estTile = _tileEstAvg > 1 ? _tileEstAvg : 30.0;
-            using var tileHearth = new System.Threading.Timer(_ =>
+            var exe = FindWaifu2x() ?? throw new FileNotFoundException("未找到 waifu2x 引擎");
+            var exeDir = Path.GetDirectoryName(exe)!;
+            var modelDir = Path.Combine(exeDir, model);
+            if (!Directory.Exists(modelDir))
+                throw new FileNotFoundException("未找到 waifu2x 模型目录: " + modelDir);
+            var modelArg = Path.GetRelativePath(exeDir, modelDir);
+            engineScale2 = CeilPowerOfTwo(scale);
+            var args = $"-i \"{inDir}\" -o \"{outDir}\" -s {engineScale2} -n {noise} " +
+                $"-t 0 -g {gpuId} -m \"{modelArg}\"{SafeRender.GetEngineThreadArgs()}" + (tta ? " -x" : "");
+            await RunEngFallbackGpuAsync(exe, args, progress, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            var exe = FindRealESRGAN() ?? throw new FileNotFoundException("未找到 Real-ESRGAN 引擎");
+            engineScale2 = 4;
+            var args = $"-i \"{inDir}\" -o \"{outDir}\" -s {engineScale2} -m models -n {model} " +
+                $"-t 0 -g {gpuId}{SafeRender.GetEngineThreadArgs()}";
+            await RunEngFallbackGpuAsync(exe, args, progress, ct).ConfigureAwait(false);
+        }
+        // 目录批量完成后,非原生倍数(如 3x)统一缩回(引擎输出 engineScale2 倍,缩回用户 scale 倍)
+        if (Math.Abs(engineScale2 - scale) > 0.001)
+        {
+            progress?.Report((88, $"输出 {scale:0.##}x(引擎 {engineScale2}x 放大后精确调整)..."));
+            foreach (var f in Directory.EnumerateFiles(outDir, "*.png"))
+                await Task.Run(() => ResizeImage(f, f, scale / engineScale2), ct).ConfigureAwait(false);
+        }
+        // 黑帧防御:目录批量中任一块 vkQueueSubmit 失败→全黑(退出码仍 0)。有黑块则逐块用 CPU 软解重处理该块;
+        // CPU 仍黑/不可用 → 抛"转 ONNX"信号(上层改用 ONNX 稳定引擎,不再反复 GPU 黑块死循环)。
+        if (gpuId >= 0 && HasBlackPng(outDir))
+        {
+            progress?.Report((89, "⚠ 检测到超分输出黑帧(GPU 队列异常),改用 CPU 软解重处理受影响块..."));
+            AppLogger.Info("⚠ 目录批量超分检测到黑块(GPU 队列异常),改用 CPU 软解重处理");
+            foreach (var tf in Directory.EnumerateFiles(inDir, "*.png"))
             {
-                try
+                ct.ThrowIfCancellationRequested();
+                var of = Path.Combine(outDir, Path.GetFileName(tf));
+                if (!File.Exists(of) || IsBlackPng(of))
                 {
-                    double frac = Math.Min(0.97, tileWatch.Elapsed.TotalSeconds / estTile);
-                    // 进度 = 已处理块数 + 当前块估算比例(只影响 UI 平滑,不改变真实完成判断)
-                    progress?.Report((5 + (int)(85.0 * (done + frac) / totalTiles),
-                        $"超分 第 {done + 1}/{totalTiles} 块(引擎处理中 {tileWatch.Elapsed.TotalSeconds:0}s)..."));
-                }
-                catch { }
-            }, null, 1000, 1000);
-            progress?.Report((5 + (int)(85.0 * done / totalTiles), $"超分 第 {done + 1}/{totalTiles} 块(引擎启动/处理中)..."));
-            var of = Path.Combine(outDir, Path.GetFileName(tf));
-            try
-            {
-                await UpOneTileAsync(tf, of, engine, model, scale, noise, gpuId, tta, progress, ct, tileSize).ConfigureAwait(false);
-            }
-            finally
-            {
-                tileHearth.Dispose();
-                tileWatch.Stop();
-                // 更新块平均耗时(EMA:0.3 当前/0.7 历史)
-                double took = Math.Max(1.0, tileWatch.Elapsed.TotalSeconds);
-                _tileEstAvg = _tileEstAvg > 1 ? 0.7 * _tileEstAvg + 0.3 * took : took;
-            }
-            // 黑帧防御:单块偶发 vkQueueSubmit 失败→全黑(退出码仍 0)。检测到黑块即用 CPU 软解重处理该块;
-            // CPU 结果仍黑 / CPU 不可用 → 抛"转 ONNX"信号(上层改用 ONNX 稳定引擎,不再反复 GPU 黑块死循环)。
-            if (gpuId >= 0 && File.Exists(of) && IsBlackPng(of))
-            {
-                progress?.Report((89, "⚠ 检测到该块超分变黑(GPU 队列异常),改用 CPU 软解重处理..."));
-                AppLogger.Info("⚠ 检测到该块超分变黑(GPU 队列异常),改用 CPU 软解重处理...");
-                try
-                {
-                    await UpOneTileAsync(tf, of, engine, model, scale, noise, -1, tta, progress, ct, tileSize).ConfigureAwait(false);
-                }
-                catch
-                {
-                    // CPU 重试抛错(引擎 CPU 路径不稳定/部分驱动 invalid gpu device)→ 转 ONNX,不重试 GPU(还是黑)
-                    try { File.Delete(of); } catch { }
-                    throw new InvalidOperationException("BLACKOUT_NEED_ONNX:GPU 黑块且 CPU 模式不可用,转用 ONNX 稳定引擎");
-                }
-                // CPU 重试"成功"但输出仍黑(内部回退 GPU 又算一次,结果还是黑)→ 同样转 ONNX
-                if (File.Exists(of) && IsBlackPng(of))
-                {
-                    try { File.Delete(of); } catch { }
-                    throw new InvalidOperationException("BLACKOUT_NEED_ONNX:GPU 持续黑块(CPU 修复无效),转用 ONNX 稳定引擎");
+                    if (File.Exists(of)) try { File.Delete(of); } catch { }
+                    try { await UpOneTileAsync(tf, of, engine, model, scale, noise, -1, tta, progress, ct, tileSize).ConfigureAwait(false); }
+                    catch
+                    {
+                        try { File.Delete(of); } catch { }
+                        throw new InvalidOperationException("BLACKOUT_NEED_ONNX:GPU 黑块且 CPU 模式不可用,转用 ONNX 稳定引擎");
+                    }
+                    if (File.Exists(of) && IsBlackPng(of))
+                    {
+                        try { File.Delete(of); } catch { }
+                        throw new InvalidOperationException("BLACKOUT_NEED_ONNX:GPU 持续黑块(CPU 修复无效),转用 ONNX 稳定引擎");
+                    }
                 }
             }
-            done++;
-            progress?.Report((5 + (int)(85.0 * done / totalTiles), $"超分 已处理 {done}/{totalTiles} 块..."));
         }
         progress?.Report((90, $"超分 完成({totalTiles} 块)"));
 
@@ -1527,11 +1525,8 @@ public static partial class EngineService
                 }
                 engineScale = 2;
             }
-            var args = $"-i \"{inputDir}\" -o \"{outputDir}\" -s {engineScale} -n {noise} " +
-                $"-t {tileSize} -g {gpuId} -m \"{modelDir}\"{SafeRender.GetEngineThreadArgs()}";
-            if (tta) args += " -x";
             await RunEngAsync(exe, t => $"-i \"{inputDir}\" -o \"{outputDir}\" -s {engineScale} -n {noise} " +
-                $"-t {t} -g {gpuId} -m \"{modelDir}\"{SafeRender.GetEngineThreadArgs()}" + (tta ? " -x" : "")).ConfigureAwait(false);
+                $"-t 0 -g {gpuId} -m \"{modelDir}\"{SafeRender.GetEngineThreadArgs()}" + (tta ? " -x" : "")).ConfigureAwait(false);
         }
         else if (engine == "realcugan")
         {
@@ -1542,8 +1537,10 @@ public static partial class EngineService
         {
             var exe = FindRealESRGAN() ?? throw new FileNotFoundException("未找到 Real-ESRGAN 引擎");
             // 同单张路径:显式 -m models -n 模型名(缺 -m 会找不到模型加载失败);TTA(-x)在 2022 老引擎上会卡死,故不传
+            // -t 0:关闭引擎内部 tiling(实测引擎 tiling 在这类卡上 vkQueueSubmit failed → 黑帧/接缝)。
+            // 视频帧整帧直算(OOM 时 RunEngAsync 自动降级重试/减 tile),避免逐帧"一块一块"。
             await RunEngAsync(exe, t => $"-i \"{inputDir}\" -o \"{outputDir}\" -s {engineScale} -m models -n {model} " +
-                $"-t {t} -g {gpuId}{SafeRender.GetEngineThreadArgs()}").ConfigureAwait(false);
+                $"-t 0 -g {gpuId}{SafeRender.GetEngineThreadArgs()}").ConfigureAwait(false);
         }
 
         // 非引擎原生倍数:批量缩放到目标倍数

@@ -29,13 +29,13 @@ public static class LavaSrService
         return d != null && File.Exists(Path.Combine(d, "backbone.onnx")) && File.Exists(Path.Combine(d, "spec_head.onnx"));
     }
 
-    /// <summary>超分一个 WAV(16-bit PCM,单/双声道,任意采样率)→ 48kHz 输出。inputSampleRate 需已知。</summary>
+    /// <summary>升采样率一个 WAV(16-bit PCM,单/双声道,任意采样率)→ 48kHz 输出。inputSampleRate 需已知。</summary>
     public static async Task<byte[]> UpscaleWavAsync(string inputWav, int inputSampleRate,
         IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default)
     {
         var (chans, nCh, wavSr) = ReadWav16(inputWav);
         if (wavSr != inputSampleRate) inputSampleRate = wavSr;   // WAV 头为准(调用方传入仅作兜底)
-        progress?.Report((5, "音频超分:准备(重采样)..."));
+        progress?.Report((5, "升采样率:准备(重采样)..."));
         return await Task.Run(() =>
         {
             var (backbone, head, melFb) = EnsureSessions();
@@ -75,7 +75,7 @@ public static class LavaSrService
         // 16k→44.1k:先 44100(up) 后 16000(down) 的 resample_poly 等价:up=44100/g, down=16000/g
         int g = Gcd(44100, 16000);
         float[] w441 = AudioSrsDsp.ResamplePoly(w16, 44100 / g, 16000 / g);
-        progress?.Report((20, "音频超分:STFT 频谱..."));
+        progress?.Report((20, "升采样率:STFT 频谱..."));
         ct.ThrowIfCancellationRequested();
 
         // 2) STFT(2048/512, hann) → |mag| → mel(80) → log
@@ -93,7 +93,7 @@ public static class LavaSrService
                 }
                 mel[0, m, f] = (float)Math.Log(Math.Max(acc, 1e-5));
             }
-        progress?.Report((40, "音频超分:AI 推理(backbone)..."));
+        progress?.Report((40, "升采样率:AI 推理(backbone)..."));
         ct.ThrowIfCancellationRequested();
 
         // 3) backbone → hidden → head
@@ -101,7 +101,7 @@ public static class LavaSrService
         using var bOut = backbone.Run(new[] { NamedOnnxValue.CreateFromTensor(backbone.InputMetadata.Keys.First(), melTensor) });
         var hidden = bOut.First().AsTensor<float>();   // [1,T,512]
         var hiddenTensor = new DenseTensor<float>(hidden.ToArray(), hidden.Dimensions.ToArray());
-        progress?.Report((60, "音频超分:AI 推理(频谱头)..."));
+        progress?.Report((60, "升采样率:AI 推理(频谱头)..."));
         using var hOut = head.Run(new[] { NamedOnnxValue.CreateFromTensor(head.InputMetadata.Keys.First(), hiddenTensor) });
         var outArr = hOut.ToArray();
         // head 输出:real/imag 均为 [1, F=1025, T(帧数)](实测形状!)
@@ -120,13 +120,13 @@ public static class LavaSrService
                 float im = imagT[0, k, f];
                 complexSpec[f, k] = new AudioSrsDsp.Complex(r, im);
             }
-        progress?.Report((75, "音频超分:ISTFT 重建..."));
+        progress?.Report((75, "升采样率:ISTFT 重建..."));
         float[] enhanced = AudioSrsDsp.Istft(complexSpec, NFFT, HOP, w441.Length);
 
         // 5) Linkwitz-Riley 合并(低频保留原信号)→ 48k
         float[] merged = AudioSrsDsp.SpectralMerge(w441, enhanced, ENH_SR,
             Math.Min(sr, 16000) / 2.0, 1024);
-        progress?.Report((90, "音频超分:输出 48kHz..."));
+        progress?.Report((90, "升采样率:输出 48kHz..."));
         return AudioSrsDsp.ResamplePoly(merged, 48000, ENH_SR);
     }
 
