@@ -38,35 +38,46 @@ public sealed partial class UpscaleView : UserControl
     {
         this.InitializeComponent();
         NoiseCombo.SelectedIndex = 0;
-        foreach (var m in EngineService.AnimeModels)
-            ModelCombo.Items.Add(new ComboBoxItem { Content = m.Label });
+        // ModelCombo 按模式动态填充:动漫=waifu2x 模型,照片=Real-ESRGAN 模型(选项显示模型名)
+        PopulateModelCombo(isAnime: true);
         ModelCombo.SelectedIndex = 0;
         // 计算设备:统一在「设置」里选择(AppSettings.GpuIndex),页面不再显示下拉
         _gpuCount = GpuInfo.GetAdapterNames().Count;
         RefreshQualityCombo();   // 输出码率档位:按当前格式(PNG/JPG)填充对应选项
 
-        // 模式联动:不支持的控件禁用并淡下去 + 提示,另给照片模式弥补选项
+        // 模式联动:动漫=waifu2x 模型,照片=Real-ESRGAN 模型,均可选(ModelPanel 标题随模式变)
         ModeRadios.SelectionChanged += (_, _) =>
         {
             var isAnime = ModeRadios.SelectedIndex == 0;
-            ModelCombo.IsEnabled = isAnime;
-            NoiseCombo.IsEnabled = isAnime;
-            ModelPanel.Opacity = isAnime ? 1.0 : 0.5;
+            ModelCombo.IsEnabled = true;
+            NoiseCombo.IsEnabled = isAnime;   // Real-ESRGAN 不支持降噪,照片模式禁用
+            if (ModelLabel != null) ModelLabel.Text = isAnime ? "waifu2x 模型" : "Real-ESRGAN 模型";
+            ModelPanel.Opacity = 1.0;
             NoisePanel.Opacity = isAnime ? 1.0 : 0.5;
             NoiseHint.Visibility = isAnime ? Visibility.Collapsed : Visibility.Visible;
             PhotoDenoisePanel.Visibility = isAnime ? Visibility.Collapsed : Visibility.Visible;
             if (!isAnime)
-            {
-                ToolTipService.SetToolTip(ModelCombo, "waifu2x 模型仅动漫模式可用");
                 ToolTipService.SetToolTip(NoiseCombo, "Real-ESRGAN 不支持降噪,请用下方「预处理降噪」");
-            }
             else
-            {
-                ToolTipService.SetToolTip(ModelCombo, null);
                 ToolTipService.SetToolTip(NoiseCombo, null);
-            }
+            PopulateModelCombo(isAnime);
             UpdateScaleAvailability();   // 模型变化 → 倍率支持变化(如 waifu2x 无 4x 权重)
         };
+
+        // 按模式填充模型下拉(选项显示模型名)
+        void PopulateModelCombo(bool isAnime)
+        {
+            var saved = ModelCombo.SelectedIndex;
+            ModelCombo.Items.Clear();
+            if (isAnime)
+                foreach (var m in EngineService.AnimeModels)
+                    ModelCombo.Items.Add(new ComboBoxItem { Content = m.Label });   // Label=模型名
+            else
+                foreach (var m in EngineService.PhotoModels)
+                    ModelCombo.Items.Add(new ComboBoxItem { Content = m.Label });   // Label=模型名
+            // 尽量保留上次选中(跨模式按新列表 index 兜底);否则默认第一个
+            ModelCombo.SelectedIndex = (saved >= 0 && saved < ModelCombo.Items.Count) ? saved : 0;
+        }
         // 模型下拉变化同样刷新倍率可用性
         ModelCombo.SelectionChanged += (_, _) => UpdateScaleAvailability();
         // 增强滑块数值显示(各自独立,可叠加)
@@ -139,7 +150,13 @@ public sealed partial class UpscaleView : UserControl
     {
         try
         {
-            if (!File.Exists(SettingsFile)) return;
+            if (!File.Exists(SettingsFile))
+            {
+                // 首次使用(无设置文件):必须放行保存(_settingsLoaded=true),否则用户第一次改参数就被
+                // 下方 SaveSettings 的 !_settingsLoaded 守卫挡住 → 图片页永远记不住、文件永不创建(实测 upscale-settings.json 缺失)
+                _settingsLoaded = true;
+                return;
+            }
             var d = System.Text.Json.JsonSerializer.Deserialize<UpscaleSettings>(
                 File.ReadAllText(SettingsFile));
             if (d is null) return;
@@ -539,7 +556,8 @@ public sealed partial class UpscaleView : UserControl
         else
         {
             engine = "realesrgan";
-            model = "realesrgan-x4plus";
+            // 照片模式:按 ModelCombo 选的 Real-ESRGAN 模型(0=animevideov3 1=x4plus-anime 2=x4plus)
+            model = EngineService.PhotoModels[Math.Clamp(ModelCombo.SelectedIndex, 0, EngineService.PhotoModels.Length - 1)].Name;
         }
         var scale = ScaleRadios.SelectedIndex switch { 0 => 2, _ => ScaleRadios.SelectedIndex };   // 0=1x超分→2x 放大(区域放大不做缩回)
         var noise = NoiseCombo.SelectedIndex == 0 ? -1 : NoiseCombo.SelectedIndex - 1;   // 0=不降噪,1/2/3=弱/中/强(映射到 -n 0/1/2,整体偏轻避免揉成一团)
@@ -654,7 +672,8 @@ public sealed partial class UpscaleView : UserControl
         else
         {
             engine = "realesrgan";
-            model = "realesrgan-x4plus";   // 照片模式固定通用模型
+            // 照片模式:按 ModelCombo 选的 Real-ESRGAN 模型(0=animevideov3 1=x4plus-anime 2=x4plus)
+            model = EngineService.PhotoModels[Math.Clamp(ModelCombo.SelectedIndex, 0, EngineService.PhotoModels.Length - 1)].Name;
         }
         bool upscaleShrink1x = ScaleRadios.SelectedIndex == 0;   // 1x 超分(2x 放大后缩回)
         var scale = ScaleRadios.SelectedIndex switch { 1 => 2, 2 => 3, 3 => 4, _ => 2 };   // 0=1x超分→先 2x 再缩回

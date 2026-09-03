@@ -146,7 +146,7 @@ public static class GpuInfo
         return (labels, rec);
     }
 
-    private static bool IsVirtual(string name)
+    internal static bool IsVirtual(string name)
     {
         foreach (var kw in VirtualKeywords)
         {

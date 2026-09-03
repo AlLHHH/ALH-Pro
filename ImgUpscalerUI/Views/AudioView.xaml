@@ -28,10 +28,10 @@
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
-                    <!-- 板块1:超分(真超分辨率,效果;与其他板块可同时勾选,作用到最终输出) -->
-                    <TextBlock Text="超分" Style="{StaticResource SectionTitle}"/>
+                    <!-- 板块1:采样率修复(AI 升采样率,效果;与其他板块可同时勾选,作用到最终输出) -->
+                    <TextBlock Text="采样率修复" Style="{StaticResource SectionTitle}"/>
                     <CheckBox x:Name="SrsCheck"
-                              Content="真超分辨率(低采样率源 → 48kHz)"
+                              Content="AI 升采样率(低采样率源 → 48kHz)"
                               IsChecked="False"
                               ToolTipService.ToolTip="电话/老录音等低采样率音频(8k/16k/22k/32k):AI 补出缺失高频并升级到 48kHz,听得见的变清晰;44.1k 音乐已全频带,会自动跳过(不报错)"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
@@ -40,7 +40,7 @@
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
-                    <!-- 板块2:增强(音质增强,效果;与超分/分离可同时勾选,作用到最终输出) -->
+                    <!-- 板块2:增强(音质增强,效果;与升采样率/分离可同时勾选,作用到最终输出) -->
                     <TextBlock Text="增强" Style="{StaticResource SectionTitle}"/>
                     <RadioButtons x:Name="SrRadios" SelectedIndex="0" ToolTipService.ToolTip="AI 分轨后分别优化人声/伴奏再重新混音:咬字更清晰、伴奏更有层次(优先显卡加速,无显卡时 CPU 较慢,约 1.5 分钟/分钟音频)"
                                   SelectionChanged="Options_Changed">

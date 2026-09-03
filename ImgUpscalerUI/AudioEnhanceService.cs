@@ -197,7 +197,7 @@ public static class AudioEnhanceService
             }
             else if (target == 7)
             {
-                // 全轨:输出 4 个文件(人声/伴奏/其他1/其他2)——一次推理供"分离+超分"共用,免两次分轨
+                // 全轨:输出 4 个文件(人声/伴奏/其他1/其他2)——一次推理供"分离+升采样率"共用,免两次分轨
                 var dir = System.IO.Path.GetDirectoryName(outputWav) ?? ".";
                 var baseName = System.IO.Path.GetFileNameWithoutExtension(outputWav);
                 var ext = System.IO.Path.GetExtension(outputWav);

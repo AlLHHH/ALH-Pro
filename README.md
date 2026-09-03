@@ -30,10 +30,9 @@
 - 视频降噪(非局部均值)、后处理、果冻修复、光流调整、转场识别
 - 批量管理:完成置灰、重新激活、拖拽排序、只处理选中、完成后自动删除
 - 输出:MP4 / MKV,H.264 / H.265,码率可调,静音导出
-- 「推荐配置」一键:动漫补帧 / 真人视频 / 快速预览
 
 ### 音频处理
-- **真超分辨率**:电话/老录音等低采样率源(8k/16k/22k/32k)→ 48kHz,AI 补全高频
+- **AI 升采样率**:电话/老录音等低采样率源(8k/16k/22k/32k)→ 48kHz,AI 补全高频
 - **增强**:人声/伴奏分别优化后重混,咬字更清晰、层次更好
 - **AI 分离 (Demucs)**:提取人声 / 去人声(卡拉OK)/ 分离导出两文件 / 自定义组合(多轨同时输出 + 各自音量 0~200%)
 - 降噪(弱/中/强)、响度归一、低切、清晰增强,输出 WAV / FLAC / MP3,波形预览 + 首尾裁剪
@@ -46,13 +45,32 @@
 - **RTX 50 系(Blackwell)**:已自动适配——图片/视频超分与补帧自动选择稳定引擎,页面有明确提示(如「已按此显卡自动选用稳定引擎处理」),无需设置
 - 老驱动(2021 年以前)的 30/20/16 系与 AMD 显卡:引擎可能起不来 → 软件自动降级(慢但稳),**更新显卡驱动后重启即恢复 GPU 加速**
 
+### 显卡兼容性
+> **图例**:🟢 稳定加速 ｜ 🟡 能用但可能降级 ｜ 🔶 慢(CPU) ｜ **?** 存疑·可能不能用 ｜ **✗** 不能使用
+>
+> **说明**:「画质增强 / 去重 / 转场识别 / 果冻修复 / 降噪」为纯 CPU 处理,任何显卡相同,不随显卡变化;「音频增强/分离(Demucs)」用显卡(DirectML)加速,无显卡自动 CPU;「音频升采样率(LavaSR)」目前用 CPU;「AI 抠图」固定 CPU(避免占满显卡导致整机卡)。
+
+| 显卡 | 图片超分 | 视频超分 | 视频补帧 | 画质增强 | AI抠图 | 去重 | 转场 | 果冻修复 | 音频升采样 | 音频增强/分离 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| RTX 40系 / 30系 | 🟢 | 🟢 | 🟢 | CPU | CPU | CPU | CPU | CPU | 🔶 | 🟢 |
+| RTX 50系(Blackwell) | 🟡 | 🟡 | 🟡 | CPU | CPU | CPU | CPU | CPU | 🔶 | 🟢 |
+| RTX 20系 | 🟡 | 🟡 | 🟢 | CPU | CPU | CPU | CPU | CPU | 🔶 | 🟢 |
+| GTX 16系 | 🟢 | 🟢 | 🟢 | CPU | CPU | CPU | CPU | CPU | 🔶 | 🟢 |
+| GTX 10系 | 🟡 | 🟡 | 🟢 | CPU | CPU | CPU | CPU | CPU | 🔶 | 🟢 |
+| GTX 6/7/8/9系 | ? | ? | ? | CPU | CPU | CPU | CPU | CPU | 🔶 | ? |
+| AMD 独显(较新) | 🟡 | 🟡 | 🟡 | CPU | CPU | CPU | CPU | CPU | 🔶 | 🟡 |
+| AMD 老卡 | ? | ? | ? | CPU | CPU | CPU | CPU | CPU | 🔶 | ? |
+| Intel Arc | 🟡 | 🟡 | 🟡 | CPU | CPU | CPU | CPU | CPU | 🔶 | 🟡 |
+| 核显(Intel / AMD) | 🔶 | 🔶 | 🔶 | CPU | CPU | CPU | CPU | CPU | 🔶 | 🔶 |
+| 无独显(纯CPU) | 🔶 | 🔶 | 🔶 | CPU | CPU | CPU | CPU | CPU | 🔶 | 🔶 |
+
 ---
 
 ## 🚀 快速开始
 
 **普通用户(不碰代码):**
 
-1. 打开 Releases 页面 → 点 **Assets** 里的 `ALHPro_v1.1.2_Setup.exe` 下载(约 900MB);
+1. 打开 Releases 页面 → 点 **Assets** 里的 `ALHPro_v1.1.3_Setup.exe` 下载(约 900MB);
 2. 双击安装,一路"下一步"即可;
 3. 要用 AI 抠图:安装到"选择附加任务"一步勾选「下载并安装模型包」(约 1.4GB,可选);
 4. 启动 → 左侧选择功能(图片放大 / AI 抠图 / 视频处理 / 音频处理) → 添加素材 → 调整参数 → 开始处理。
@@ -70,8 +88,8 @@
 **直链(复制粘贴用):**
 
 ```
-安装包: https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.2/ALHPro_v1.1.2_Setup.exe
-模型包: https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.2/models_v1.0.zip
+安装包: https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.3/ALHPro_v1.1.3_Setup.exe
+模型包: https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.3/models_v1.0.zip
 完整版(含模型,解压即用,网盘): 见下方「完整版下载」(国内用户推荐)
 ```
 
@@ -79,7 +97,7 @@
 
 安装包不含 AI 抠图模型(1.4GB);嫌下载/安装模型麻烦的,直接下载**完整版**(约 2.4GB,含全部引擎+模型,双击安装,装完所有功能直接可用):
 
-- **百度网盘(推荐,国内最快):[点此下载 ALHPro_v1.1.2_完整版_Setup.exe](https://pan.baidu.com/s/1_heewIWeoPpWQKPJv9blew?pwd=yxfd) 提取码:`yxfd`**
+- **百度网盘(推荐,国内最快):[点此下载 ALHPro_v1.1.3_完整版_Setup.exe](https://pan.baidu.com/s/1_heewIWeoPpWQKPJv9blew?pwd=yxfd) 提取码:`yxfd`**
 
 > 🕐 **首次打开要等 1~2 分钟?正常!** 安装包有 2.4GB,Windows 安全软件首次会完整扫描它(期间双击后暂时没反应,不是卡死)。**等第一次扫描完成后再打开就快了**。
 

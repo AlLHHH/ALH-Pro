@@ -501,8 +501,8 @@ public static class AudioService
             throw new InvalidOperationException("转换为 44.1kHz WAV 失败");
     }
 
-    /// <summary>任意音频 → 保持原采样率的 16-bit 单声道 WAV(真超分辨率输入用:不能先转 44.1k,否则丢失源高频信息)。</summary>
-    /// <summary>任意音频 → 同采样率 立体声 16-bit WAV(真超分输入:LavaSR 逐声道处理,保持声道数)。</summary>
+    /// <summary>任意音频 → 保持原采样率的 16-bit 单声道 WAV(升采样率输入用:不能先转 44.1k,否则丢失源高频信息)。</summary>
+    /// <summary>任意音频 → 同采样率 立体声 16-bit WAV(升采样率输入:LavaSR 逐声道处理,保持声道数)。</summary>
     public static async Task ConvertToWavSameRateAsync(string input, string outputWav)
     {
         var psi = NewFfmpegPsi(FfmpegPath, $"-y -i \"{input}\" -ac 2 -c:a pcm_s16le \"{outputWav}\"");

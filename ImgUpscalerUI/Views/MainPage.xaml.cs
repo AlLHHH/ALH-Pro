@@ -162,10 +162,13 @@ public sealed partial class MainPage : Page
     }
 
     /// <summary>生成设备下拉标签与推荐编号:优先【引擎实际枚举】(VulkanCheck.Devices,含引擎真实 -g 编号),
-    /// 引擎未枚举时退回注册表顺序。引擎枚举才是用户真正能用的设备,避免"注册表选GPU1实际用GPU0"错位。</summary>
-    private static (System.Collections.Generic.List<string> labels, int recommended) BuildGpuLabels()
+    /// 引擎未枚举时退回注册表顺序。引擎枚举才是用户真正能用的设备,避免"注册表选GPU1实际用GPU0"错位。
+    /// 返回 (labels, recommended, ids):ids[i] = 第 i 个下拉项对应的【引擎真实 -g 编号】(可能≠i,必须用它传给引擎)。
+    /// </summary>
+    private static (System.Collections.Generic.List<string> labels, int recommended, System.Collections.Generic.List<int> ids) BuildGpuLabels()
     {
         var labels = new System.Collections.Generic.List<string>();
+        var ids = new System.Collections.Generic.List<int>();
         try
         {
             // 引擎枚举(VulkanCheck 启动时用 waifu2x 引擎跑过,Devices = 引擎真实 -g 编号表)
@@ -176,19 +179,20 @@ public sealed partial class MainPage : Page
                 for (int i = 0; i < devs.Count; i++)
                 {
                     var d = devs[i];
-                    string mark = i == 0 ? "" : "";
-                    labels.Add($"GPU {d.Id} · {d.Name}{mark}");
+                    labels.Add($"GPU {d.Id} · {d.Name}");
+                    ids.Add(d.Id);   // 记录下拉项 i 对应的【引擎真实 -g 编号】(可能≠i)
                     // 推荐:非 Intel/AMD 核显的第一张(通常就是独立 NVIDIA)
                     if (recommended < 0 && IsDiscreteGpu(d.Name)) recommended = d.Id;
                 }
                 if (recommended < 0) recommended = devs[0].Id;   // 全核显/未知:第一张
-                return (labels, recommended);
+                return (labels, recommended, ids);
             }
-            // 引擎未枚举(检测没跑成):退回注册表顺序(旧逻辑)
+            // 引擎未枚举(检测没跑成):退回注册表顺序(旧逻辑,id=索引)
             var (regLabels, regRec) = GpuInfo.BuildLabels();
-            return (regLabels, regRec);
+            for (int i = 0; i < regLabels.Count; i++) ids.Add(i);
+            return (regLabels, regRec, ids);
         }
-        catch { return (labels, -1); }
+        catch { return (labels, -1, ids); }
     }
 
     /// <summary>判断是否独立显卡(非 Intel/AMD 核显):与 GpuInfo.ScoreDeviceName 同一套特征(含新版 "Intel(R) Graphics" 核显名)。</summary>
@@ -389,6 +393,11 @@ public sealed partial class MainPage : Page
             if (entries.Count == 0) return;
 
             var full = new StackPanel { Spacing = 10 };
+            // 柔和入场动画:淡入 + 轻微上移,避免"直接从协议弹窗后蹦出来"的突兀感
+            full.Transitions.Add(new Microsoft.UI.Xaml.Media.Animation.EntranceThemeTransition
+            {
+                IsStaggeringEnabled = false,   // 一次整体淡入,不逐项错峰(更平稳)
+            });
             full.Children.Add(new Border
             {
                 CornerRadius = new Microsoft.UI.Xaml.CornerRadius(8),
@@ -471,14 +480,6 @@ public sealed partial class MainPage : Page
     {
         int remain = 3;
         bool agreed = false;
-        var agreeBtn = new Button
-        {
-            Content = $"开始使用 ({remain})",
-            IsEnabled = false,
-            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Right,
-            Margin = new Microsoft.UI.Xaml.Thickness(0, 10, 0, 0),
-        };
-        agreeBtn.Click += (_, _) => { agreed = true; _betaNoticeDlg.Hide(); };
 
         // 设备自检报告区:检测中占位,完成后渲染完整报告
         var reportBlock = new TextBlock
@@ -487,12 +488,15 @@ public sealed partial class MainPage : Page
             FontSize = 11,
             Opacity = 0.9,
         };
+        // 统一用 ContentDialog 原生按钮(Primary=同意并继续 / Close=退出程序),并排在最底部,布局整齐不割裂。
         var dlg = new ContentDialog
         {
             Title = "欢迎使用 ALH Pro",
             XamlRoot = this.XamlRoot,
+            PrimaryButtonText = "同意并继续",
             CloseButtonText = "退出程序",
-            DefaultButton = ContentDialogButton.None,
+            IsPrimaryButtonEnabled = false,   // 倒计时结束才可点
+            DefaultButton = ContentDialogButton.Primary,
             Content = new StackPanel
             {
                 Spacing = 8,
@@ -501,11 +505,9 @@ public sealed partial class MainPage : Page
                     new TextBlock
                     {
                         Text = $"本程序为「ALH Pro v{UpdateChecker.CurrentVersion}」正式版:\n\n" +
-                            "· 图片超分 / AI 抠图 / 视频超分补帧去重,全部本地处理;\n" +
-                            "· 处理前建议备份重要素材(AI 处理可能有边缘瑕疵);\n" +
-                            "· 引擎/模型版权归各自作者所有,详见 README 与许可声明。\n\n" +
-                            "【免责声明】本软件为免费工具,仅用于个人合法用途。请勿用于侵权/违法用途;\n" +
-                            "处理结果仅供参考,重要素材请务必自行备份,作者不承担由此产生的任何损失。\n\n" +
+                            "· 图片超分 / AI 抠图 / 视频超分补帧去重,全部本地处理,不上传任何数据;\n" +
+                            "· 处理前建议备份重要素材(AI 处理可能有边缘瑕疵)。\n\n" +
+                            UserAgreementText() + "\n\n" +
                             "首次启动会进行一次本机设备自检,以下结果来自当前电脑:",
                         TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
                         FontSize = 12,
@@ -517,11 +519,11 @@ public sealed partial class MainPage : Page
                         Margin = new Microsoft.UI.Xaml.Thickness(0, 2, 0, 2),
                     },
                     reportBlock,
-                    agreeBtn,
                 },
             },
         };
-        _betaNoticeDlg = dlg;   // 供按钮关闭
+        dlg.PrimaryButtonClick += (_, _) => agreed = true;
+        _betaNoticeDlg = dlg;   // 供强制关闭(取消时)
 
         // 渲染自检结果(完成=完整报告;未完成=占位)
         void RenderReport()
@@ -554,7 +556,7 @@ public sealed partial class MainPage : Page
         };
         checkTimer.Start();
 
-        // 按钮倒计时(3 秒)
+        // 按钮倒计时(3 秒):期间「同意并继续」禁用并显示剩余秒数,结束才可点(布局统一用原生按钮,底部并排)
         var timer = DispatcherQueue.CreateTimer();
         timer.Interval = TimeSpan.FromSeconds(1);
         timer.IsRepeating = true;
@@ -563,13 +565,13 @@ public sealed partial class MainPage : Page
             remain--;
             if (remain > 0)
             {
-                agreeBtn.Content = $"开始使用 ({remain})";
+                dlg.PrimaryButtonText = $"同意并继续 ({remain})";
             }
             else
             {
                 timer.Stop();
-                agreeBtn.Content = "开始使用";
-                agreeBtn.IsEnabled = true;
+                dlg.PrimaryButtonText = "同意并继续";
+                dlg.IsPrimaryButtonEnabled = true;
             }
         };
         timer.Start();
@@ -678,6 +680,39 @@ public sealed partial class MainPage : Page
         try { _ = dlg.ShowAsync(); } catch { }
     }
 
+    /// <summary>用户协议全文(首次启动弹窗 + 「关于」页共用,保证两处一致)。</summary>
+    private static string UserAgreementText() =>
+        "【用户协议】\n" +
+        "1. 本软件为免费工具,仅用于个人合法用途,请勿用于侵权、违法或有损他人权益的用途;\n" +
+        "2. 处理结果仅供参考,重要素材请务必自行备份,因使用本软件造成的任何损失由使用者自行承担;\n" +
+        "3. 引擎/模型版权归各自作者所有,详见 README 与许可声明;请勿去除版权信息或用于商业倒卖;\n" +
+        "4. 本软件所有处理在本机完成,不上传、不收集任何用户数据。\n" +
+        "5. 您已阅读并同意本协议后,方可继续使用本软件;若不同意,请退出程序。";
+
+    /// <summary>「关于」页查看用户协议(独立弹窗,可滚动看全)。</summary>
+    private void ShowUserAgreement()
+    {
+        var dlg = new ContentDialog
+        {
+            Title = "用户协议 · ALH Pro",
+            Content = new ScrollViewer
+            {
+                MaxHeight = 520,
+                VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
+                Content = new TextBlock
+                {
+                    Text = "以下为《用户协议》全文,您在首次启动时已阅读并同意,现向您展示以便随时回顾:\n\n" + UserAgreementText(),
+                    FontSize = 12,
+                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                },
+            },
+            PrimaryButtonText = "关闭",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = this.XamlRoot,
+        };
+        try { _ = dlg.ShowAsync(); } catch { }
+    }
+
     private void About_Click(object sender, RoutedEventArgs e)
     {
         var content = new StackPanel { Spacing = 8 };
@@ -709,6 +744,16 @@ public sealed partial class MainPage : Page
             try { _ = ShowUpdateLogAsync(fromStartup: false); } catch { }
         };
         content.Children.Add(notesLink);
+        // 用户协议:首次启动已同意,此处可随时回看(与启动弹窗共用同一份文本)
+        var agreementLink = new Microsoft.UI.Xaml.Controls.HyperlinkButton
+        {
+            Content = "查看用户协议",
+            FontSize = 11,
+            Padding = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 0),
+            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
+        };
+        agreementLink.Click += (_, _) => { try { ShowUserAgreement(); } catch { } };
+        content.Children.Add(agreementLink);
         // 手动检查更新:点击后显示结果;成功展示"已最新/发现新版本",失败才提示(启动静默检查不打扰)
         var updateRow = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 10 };
         var updateBtn = new Button
@@ -1156,7 +1201,7 @@ public sealed partial class MainPage : Page
         // ===== 设备列表以【引擎实际枚举】为准(VulkanCheck.Devices,带引擎真实 -g 编号)=====
         // 注册表顺序≠引擎 -g 编号(实测:注册表[0 Intel][1 NVIDIA],引擎[1 NVIDIA][2 Intel])——
         // 用注册表顺序生成下拉会让用户选错卡。VulkanCheck 跑过 waifu2x 引擎枚举,是真实的设备表。
-        var (gpuLabels, gpuRec) = BuildGpuLabels();
+        var (gpuLabels, gpuRec, gpuIds) = BuildGpuLabels();
         int gpuCount = gpuLabels.Count;
         if (gpuLabels.Count > 0)
         {
@@ -1168,23 +1213,26 @@ public sealed partial class MainPage : Page
             // 枚举失败:仍提供 GPU 0/1 选项
             gpuCombo.Items.Add(new ComboBoxItem { Content = "GPU 0" });
             gpuCombo.Items.Add(new ComboBoxItem { Content = "GPU 1" });
-            gpuCount = 2;
+            gpuCount = 2; gpuIds.Add(0); gpuIds.Add(1);
         }
         gpuCombo.Items.Add(new ComboBoxItem { Content = "CPU (软件计算)" });
-        // 当前全局选择:-1=CPU(末项);≥0=GPU 编号(引擎枚举的编号)
-        gpuCombo.SelectedIndex = AppSettings.GpuIndex >= 0 && AppSettings.GpuIndex < gpuCount
-            ? AppSettings.GpuIndex : gpuCount;
+        // 当前全局选择:-1=CPU(末项);≥0=引擎真实 -g 编号(gpuIds 反查下拉索引)
+        gpuCombo.SelectedIndex = AppSettings.GpuIndex >= 0
+            ? (gpuIds.IndexOf(AppSettings.GpuIndex))   // 引擎编号 → 下拉索引
+            : gpuCount;
+        if (gpuCombo.SelectedIndex < 0) gpuCombo.SelectedIndex = gpuCount;   // 找不到匹配 → 兜底 CPU
         gpuCombo.SelectionChanged += (_, _) =>
         {
-            // 末项=CPU
-            AppSettings.GpuIndex = gpuCombo.SelectedIndex >= gpuCount ? -1 : gpuCombo.SelectedIndex;
+            // 末项=CPU;否则记【引擎真实 -g 编号】(gpuIds[selectedIndex]),不是列表索引,防止"选独显跑核显"错位
+            AppSettings.GpuIndex = gpuCombo.SelectedIndex >= gpuCount ? -1
+                : (gpuCombo.SelectedIndex >= 0 && gpuCombo.SelectedIndex < gpuIds.Count ? gpuIds[gpuCombo.SelectedIndex] : 0);
             AppSettings.Save();
             AppLogger.Info($"计算设备已设为:{gpuCombo.SelectedItem?.ToString()}");
         };
         content.Children.Add(gpuCombo);
         content.Children.Add(new TextBlock
         {
-            Text = "四个功能(图片放大 / 视频处理 / 音频处理 / AI 抠图)统一使用这里选的计算设备。编号顺序可能与引擎实际识别的设备不一致(Windows 顺序 ≠ 引擎顺序):若选某编号处理崩/慢,换其它编号实测,日志「引擎启动...设备 -g X」会显示所选编号。无独显的电脑建议选 CPU(软件计算)。音频超分/分离/增强会优先用这里选的显卡(DirectML)加速,没有显卡时自动用 CPU。注意:AI 抠图已强制使用 CPU(GPU 推理会占满显卡导致整机卡),此处设置对抠图不生效。",
+            Text = "四个功能(图片放大 / 视频处理 / 音频处理 / AI 抠图)统一使用这里选的计算设备。编号顺序可能与引擎实际识别的设备不一致(Windows 顺序 ≠ 引擎顺序):若选某编号处理崩/慢,换其它编号实测,日志「引擎启动...设备 -g X」会显示所选编号。无独显的电脑建议选 CPU(软件计算)。音频增强/分离(Demucs)会优先用这里选的显卡(DirectML)加速,没有显卡时自动用 CPU;音频升采样率(LavaSR)目前用 CPU 计算(暂不支持显卡)。注意:AI 抠图已强制使用 CPU(GPU 推理会占满显卡导致整机卡),此处设置对抠图不生效。",
             FontSize = 10, Opacity = 0.5,
             TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
