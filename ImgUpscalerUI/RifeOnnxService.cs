@@ -80,6 +80,31 @@ public static class RifeOnnxService
             throw new InvalidOperationException("两帧尺寸不一致,无法补帧");
 
         int w = bmp0.Width, h = bmp0.Height;
+        try
+        {
+            // GPU + 大帧:DirectML 显存有限,整帧 4K 会 OOM → 分块插帧(带边缘余量,无接缝)
+            const int Tile = 512;
+            if (gpuId >= 0 && (w > Tile || h > Tile))
+            {
+                RunTiled(session, bmp0, bmp1, time, outputPng, w, h);
+                return;
+            }
+            RunSingle(session, bmp0, bmp1, time, outputPng, w, h, gpuId);
+        }
+        catch (Exception ex) when (gpuId >= 0)
+        {
+            // DirectML 失败/分块失败 → 标记设备不可用 + CPU 整帧重试(稳定优先,绝不出黑帧/半帧)
+            AppLogger.Warn($"RIFE ONNX DirectML 失败,已改 CPU 整帧重算: {ex.Message.Split('\n')[0]}");
+            _dmlBad[gpuId] = 0;
+            DropSession(gpuId);
+            RunSingle(GetSession(-1), bmp0, bmp1, time, outputPng, w, h, -1);
+        }
+    }
+
+    /// <summary>整帧推理(CPU 或小帧 GPU)。失败时 GPU 自动降 CPU 重试并标记设备不可用。</summary>
+    static void RunSingle(InferenceSession session, Bitmap bmp0, Bitmap bmp1, float time, string outputPng,
+        int w, int h, int gpuId)
+    {
         var t0 = ToTensor(bmp0);
         var t1 = ToTensor(bmp1);
         var tensor0 = new DenseTensor<float>(t0, new[] { 1, 3, h, w });
@@ -120,6 +145,97 @@ public static class RifeOnnxService
                 pixels[i] = outTensor.GetValue(i);
             SavePng(FromTensor(pixels, ow, oh), outputPng);
         }
+    }
+
+    /// <summary>分块插帧:512×512 块 + 边缘余量(M=16)防接缝;块尺寸取 4 的倍数(RIFE 输入要求),越界用边缘像素填充。</summary>
+    static void RunTiled(InferenceSession session, Bitmap bmp0, Bitmap bmp1, float time, string outputPng,
+        int w, int h)
+    {
+        const int Tile = 512;
+        const int M = 16;
+        using var outBmp = new Bitmap(w, h, PixelFormat.Format24bppRgb);
+        var rect = new Rectangle(0, 0, w, h);
+        var data = outBmp.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb);
+        try
+        {
+            unsafe
+            {
+                var ptr = (byte*)data.Scan0.ToPointer();
+                for (int ty = 0; ty < h; ty += Tile)
+                {
+                    for (int tx = 0; tx < w; tx += Tile)
+                    {
+                        int tw = Math.Min(Tile, w - tx);
+                        int th = Math.Min(Tile, h - ty);
+                        int sx0 = Math.Max(0, tx - M), sy0 = Math.Max(0, ty - M);
+                        int bw = Math.Min(w, tx + tw + M) - sx0;
+                        int bh = Math.Min(h, ty + th + M) - sy0;
+                        int pw = (bw + 3) & ~3, ph = (bh + 3) & ~3;   // 向上取 4 的倍数
+                        var t0 = ToTensorRect(bmp0, sx0, sy0, pw, ph);
+                        var t1 = ToTensorRect(bmp1, sx0, sy0, pw, ph);
+                        var tensor0 = new DenseTensor<float>(t0, new[] { 1, 3, ph, pw });
+                        var tensor1 = new DenseTensor<float>(t1, new[] { 1, 3, ph, pw });
+                        var ts = new DenseTensor<float>(new[] { time }, new[] { 1 });
+                        using var results = session.Run(new[]
+                        {
+                            NamedOnnxValue.CreateFromTensor("img0", tensor0),
+                            NamedOnnxValue.CreateFromTensor("img1", tensor1),
+                            NamedOnnxValue.CreateFromTensor("timestep", ts),
+                        });
+                        var outT = results.First().AsTensor<float>();
+                        // 只写块有效中心区(丢弃边缘余量,防接缝)
+                        int ox = tx - sx0, oy = ty - sy0;
+                        for (int yy = 0; yy < th; yy++)
+                        {
+                            byte* row = ptr + (ty + yy) * data.Stride + tx * 3;
+                            for (int xx = 0; xx < tw; xx++)
+                            {
+                                float r = outT[0, 0, oy + yy, ox + xx];
+                                float g2 = outT[0, 1, oy + yy, ox + xx];
+                                float b2 = outT[0, 2, oy + yy, ox + xx];
+                                row[xx * 3] = (byte)Math.Clamp((int)Math.Round(b2 * 255f), 0, 255);
+                                row[xx * 3 + 1] = (byte)Math.Clamp((int)Math.Round(g2 * 255f), 0, 255);
+                                row[xx * 3 + 2] = (byte)Math.Clamp((int)Math.Round(r * 255f), 0, 255);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        finally { outBmp.UnlockBits(data); }
+        SavePng(outBmp, outputPng);
+    }
+
+    /// <summary>按区域读像素(偏移 + 越界边缘填充;写满 pw×ph 张量,供 RIFE 分块使用)。</summary>
+    static float[] ToTensorRect(Bitmap src, int ox, int oy, int pw, int ph)
+    {
+        int w = src.Width, h = src.Height;
+        var pixels = new float[3 * ph * pw];
+        var rect = new Rectangle(0, 0, w, h);
+        var data = src.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+        try
+        {
+            unsafe
+            {
+                byte* basePtr = (byte*)data.Scan0.ToPointer();
+                int plane = pw * ph;
+                for (int yy = 0; yy < ph; yy++)
+                {
+                    int sy = Math.Min(oy + yy, h - 1);
+                    for (int xx = 0; xx < pw; xx++)
+                    {
+                        int sx = Math.Min(ox + xx, w - 1);
+                        byte* px = basePtr + sy * data.Stride + sx * 3;
+                        int idx = yy * pw + xx;
+                        pixels[idx] = px[2] / 255f;               // R
+                        pixels[plane + idx] = px[1] / 255f;      // G
+                        pixels[plane * 2 + idx] = px[0] / 255f;  // B
+                    }
+                }
+            }
+        }
+        finally { src.UnlockBits(data); }
+        return pixels;
     }
 
     static void DropSession(int gpuId)
