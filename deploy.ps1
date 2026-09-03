@@ -1,4 +1,4 @@
-# ALH Pro 发布版部署脚本(唯一正确姿势,请勿手动 robocopy Debug 输出!)
+﻿# ALH Pro 发布版部署脚本(唯一正确姿势,请勿手动 robocopy Debug 输出!)
 # 用法(在仓库根目录):powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 # 作用:
 #   1. dotnet publish -c Release -p:Platform=x64  → bin\Release\...\win-x64\publish
