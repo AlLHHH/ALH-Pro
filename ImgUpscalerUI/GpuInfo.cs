@@ -75,11 +75,26 @@ public static class GpuInfo
         return versions;
     }
 
-    /// <summary>核显识别(跳过):Intel UHD/Iris/HD Graphics 与新版"Intel(R) Graphics"命名、AMD Radeon(TM) Graphics 核显。</summary>
+    /// <summary>核显识别(跳过):Intel UHD/Iris/HD Graphics 与新版"Intel(R) Graphics"命名、AMD Radeon(TM) Graphics 核显。
+    /// AMD 核显名覆盖:无型号 "Radeon Graphics / Radeon(TM) Graphics"、APU 核显 "680M/780M/480M..."、
+    /// Vega 核显 "Vega 3~11"("RX Vega 56/64" 是独显,排除);独显均为 RX 5/6/7xxx、Radeon Pro 等,不受影响。</summary>
     public static bool IsIntegratedGPU(string n)
     {
         if (string.IsNullOrEmpty(n)) return true;
-        if (n.Contains("AMD Radeon(TM) Graphics", StringComparison.OrdinalIgnoreCase)) return true;
+        if (n.Contains("AMD", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("Radeon", StringComparison.OrdinalIgnoreCase))
+        {
+            if (n.Contains("Radeon(TM) Graphics", StringComparison.OrdinalIgnoreCase)) return true;
+            if (n.Contains("Radeon Graphics", StringComparison.OrdinalIgnoreCase)) return true;
+            // APU 核显:如 Radeon(TM) 680M / 780M / 480M ...(RX 独显不含 "M" 后缀型号)
+            if (System.Text.RegularExpressions.Regex.IsMatch(n,
+                @"Radeon(\(TM\))?\s*(?:[3-9]\d{2}M|1\d{2}M)", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                return true;
+            // Vega 核显:Vega 3/5/6/7/8/9/10/11(RX Vega 56/64 独显,排除)
+            if (System.Text.RegularExpressions.Regex.IsMatch(n,
+                @"Vega\s*(?:3|4|5|6|7|8|9|10|11)(?!\s*(?:56|64))", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                return true;
+        }
         if (!n.Contains("Intel", StringComparison.OrdinalIgnoreCase)) return false;
         return n.Contains("UHD", StringComparison.OrdinalIgnoreCase)
             || n.Contains("Iris", StringComparison.OrdinalIgnoreCase)
