@@ -70,7 +70,7 @@
 
 **普通用户(不碰代码):**
 
-1. 打开 Releases 页面 → 点 **Assets** 里的 `ALHPro_v1.1.3_Setup.exe` 下载(约 900MB);
+1. 打开 Releases 页面 → 点 **Assets** 里的**最新版安装包**下载(约 900MB);
 2. 双击安装,一路"下一步"即可;
 3. 要用 AI 抠图:安装到"选择附加任务"一步勾选「下载并安装模型包」(约 1.4GB,可选);
 4. 启动 → 左侧选择功能(图片放大 / AI 抠图 / 视频处理 / 音频处理) → 添加素材 → 调整参数 → 开始处理。
@@ -82,22 +82,13 @@
 | 场景 | 方法 |
 |---|---|
 | 网页直连慢/断 | 用**加速镜像**:在下载链接前加 `https://ghproxy.com/` 前缀(即 `https://ghproxy.com/https://github.com/...`,免费不用注册) |
-| 想稳定快速 | **复制直链挂到下载器**:打开迅雷/IDM/Motrix → 新建任务 → 粘贴直链 → 多线程下载,支持断点续传 |
 | 镜像也慢 | 换 `https://ghproxy.net/`、`https://gh-proxy.com/` 等镜像前缀再试;或错峰(早/深夜快) |
-
-**直链(复制粘贴用):**
-
-```
-安装包: https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.3/ALHPro_v1.1.3_Setup.exe
-模型包: https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.3/models_v1.0.zip
-完整版(含模型,解压即用,网盘): 见下方「完整版下载」(国内用户推荐)
-```
 
 **完整版(含模型)下载——国内用户推荐:**
 
 安装包不含 AI 抠图模型(1.4GB);嫌下载/安装模型麻烦的,直接下载**完整版**(约 2.4GB,含全部引擎+模型,双击安装,装完所有功能直接可用):
 
-- **百度网盘(推荐,国内最快):[点此下载 ALHPro_v1.1.3_完整版_Setup.exe](https://pan.baidu.com/s/1_heewIWeoPpWQKPJv9blew?pwd=yxfd) 提取码:`yxfd`**
+- **百度网盘(推荐,国内最快):[点此下载完整版安装包](https://pan.baidu.com/s/1_heewIWeoPpWQKPJv9blew?pwd=yxfd) 提取码:`yxfd`**
 
 > 🕐 **首次打开要等 1~2 分钟?正常!** 安装包有 2.4GB,Windows 安全软件首次会完整扫描它(期间双击后暂时没反应,不是卡死)。**等第一次扫描完成后再打开就快了**。
 
