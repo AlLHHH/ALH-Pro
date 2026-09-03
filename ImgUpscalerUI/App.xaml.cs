@@ -16,6 +16,7 @@ namespace ALHPro
 
         /// <summary>主窗口引用(供 FileOpenPicker 初始化等使用)。</summary>
         public static Window? MainWindow { get; private set; }
+        private static bool _fatalDialogShown;   // 全局异常提示只弹一次(防刷屏)
         private static System.Threading.Mutex? _singleInstance;   // 单实例锁(Mutex,进程存活期间持有;退出自动释放)
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
@@ -275,7 +276,8 @@ namespace ALHPro
         public App()
         {
             this.InitializeComponent();
-            // 全局未处理异常:记录到诊断日志并阻止崩溃(便于定位问题)
+            // 全局未处理异常:记录到诊断日志并阻止崩溃(便于定位问题)。
+            // 关键:窗口已就绪时给用户一个可见提示(否则"空白窗继续跑"用户不知发生什么)。
             UnhandledException += (_, e) =>
             {
                 try
@@ -284,6 +286,27 @@ namespace ALHPro
                     var extra = "";
                     try { extra = $" HRESULT=0x{ex.HResult:X8}"; } catch { }
                     AppLogger.Error($"未处理异常{extra}", ex);
+                    if (!_fatalDialogShown)
+                    {
+                        _fatalDialogShown = true;
+                        if (MainWindow?.Content is Microsoft.UI.Xaml.FrameworkElement fe && fe.XamlRoot != null)
+                        {
+                            _ = fe.DispatcherQueue.TryEnqueue(async () =>
+                            {
+                                try
+                                {
+                                    await new Microsoft.UI.Xaml.Controls.ContentDialog
+                                    {
+                                        Title = "程序遇到问题",
+                                        Content = $"运行中发生异常:\n{ex.Message}\n\n已记录到诊断日志(设置 → 诊断日志),可导出诊断包反馈。",
+                                        CloseButtonText = "知道了",
+                                        XamlRoot = fe.XamlRoot,
+                                    }.ShowAsync();
+                                }
+                                catch { }
+                            });
+                        }
+                    }
                 }
                 catch { }
                 e.Handled = true;
@@ -556,6 +579,16 @@ namespace ALHPro
             // 页面加载失败(XAML 解析/构造异常,如之前视频页 ContextFlyout 崩溃):
             // 记录完整堆栈,不裸抛(裸抛=直接闪退,用户毫无头绪)
             try { AppLogger.Error($"页面加载失败:{e.SourcePageType?.FullName ?? "?"} HRESULT=0x{e.Exception?.HResult:X8}", e.Exception); } catch { }
+            var root = MainWindow?.Content?.XamlRoot;   // Navigate 可能在 Activate 前执行,XamlRoot 可能为 null
+            if (root == null)
+            {
+                try
+                {
+                    AppLogger.Warn($"页面加载失败(窗口未就绪,未弹窗提示,仅日志):{e.SourcePageType?.FullName}");
+                }
+                catch { }
+                return;
+            }
             try
             {
                 var dlg = new Microsoft.UI.Xaml.Controls.ContentDialog
@@ -563,7 +596,7 @@ namespace ALHPro
                     Title = "页面加载失败",
                     Content = $"无法加载页面 {e.SourcePageType?.FullName}\n已记录到诊断日志,请重启应用重试。\n\n{e.Exception?.Message}",
                     CloseButtonText = "确定",
-                    XamlRoot = MainWindow?.Content?.XamlRoot,
+                    XamlRoot = root,
                 };
                 _ = dlg.ShowAsync();
             }

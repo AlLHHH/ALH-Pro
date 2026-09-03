@@ -327,13 +327,14 @@ public static class VideoService
         long framesEst = (long)Math.Ceiling(Math.Max(1.0, durSec * estFps));
         if (frameInterp) framesEst = (long)(framesEst * interpScale + 128);
         if (doUpscale) framesEst = (long)(framesEst * (upscaleShrink1x ? 2.0 : Math.Max(1.0, scale)) + 128);
-        double needGB = framesEst * 3.0 * 1.6 / 1048576.0;   // 1080p 帧 PNG≈3MB,安全余量 1.6 倍
+        double needBytes = framesEst * 3.0 * 1024.0 * 1024.0 * 1.6;   // 1080p 帧 PNG≈3MB,安全余量 1.6 倍(与 AvailableFreeSpace 同单位:字节)
+        double needGB = needBytes / (1024.0 * 1024.0 * 1024.0);
         string tempRoot = PickTempRoot();
         var workDir = Path.Combine(tempRoot, $"imgup_video_{Guid.NewGuid():N}");
         try
         {
             var drive = new System.IO.DriveInfo(tempRoot);
-            if (drive.AvailableFreeSpace < needGB)
+            if (drive.AvailableFreeSpace < needBytes)
                 throw new InvalidOperationException(
                     $"临时磁盘空间不足:{tempRoot} 仅剩 {drive.AvailableFreeSpace / (1024 << 20):0}GB,本任务预计需要约 {needGB:0}GB(补帧放大后的临时帧占用大)。" +
                     "请清理磁盘、降低补帧倍率/超分倍率,或把视频放到其它盘后再处理。");
@@ -1163,6 +1164,8 @@ public static class VideoService
                 using var sem = new SemaphoreSlim(fastMode ? 1 : SafeRender.GetVideoConcurrency());   // 快速模式:单批防显存竞争
                 int doneFrames = 0;
                 var tasks = new System.Collections.Generic.List<Task>();
+                try
+                {
                 for (int b = 0; b < total; b += batchSize)
                 {
                     ct.ThrowIfCancellationRequested();
@@ -1211,7 +1214,7 @@ public static class VideoService
                                 progress?.Report((45 + (int)(45.0 * start / total),
                                     $"超分(稳定引擎) 批次 {start / batchSize + 1}/{batches}..."));
                                 await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
-                                    -2, progress, ct, onnxModelPath);   // -2 = 自动选设备(大帧 GPU/小帧 CPU)
+                                    upGpu < 0 ? -1 : -2, progress, ct, onnxModelPath);   // 用户选 CPU 则强制 CPU,否则按帧大小自动选设备
                             }
                             else
                             {
@@ -1260,7 +1263,7 @@ public static class VideoService
                                         try { Directory.Delete(batchOut, true); } catch { }
                                         Directory.CreateDirectory(batchOut);
                                         await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
-                                            -2, progress, ct, onnxB);   // -2 = 自动选设备(大帧 GPU/小帧 CPU)
+                                            upGpu < 0 ? -1 : -2, progress, ct, onnxB);   // 用户选 CPU 则强制 CPU
                                         foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
                                             File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
                                     }
@@ -1288,6 +1291,13 @@ public static class VideoService
                             sem.Release();
                         }
                     }, ct));
+                }
+                }
+                catch (OperationCanceledException)
+                {
+                    // 取消:等已启动的批任务退出(它们携带 ct,很快收尾),避免与 finally 删 workDir 竞态
+                    try { await Task.WhenAll(tasks); } catch { }
+                    throw;
                 }
                 await Task.WhenAll(tasks);
                 framesFinal = upOutput;   // 合帧使用超分后的帧

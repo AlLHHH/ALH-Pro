@@ -792,7 +792,7 @@ public sealed partial class UpscaleView : UserControl
                             Log("✅ 自检:已按当前显卡自动改用稳定引擎(直接处理,无需设置)");
                             progress.Report((0, "✅ 自检完毕:用稳定引擎处理..."));
                             await EsrganOnnxService.UpscaleAsync(srcPath, outPath, scale,
-                                -2, progress, ct, onnxPath);   // -2 = 按图大小自动选设备(大图 GPU/小图 CPU)
+                                gpuId < 0 ? -1 : -2, progress, ct, onnxPath);   // 用户选 CPU(-1)则强制 CPU;否则按图大小自动选设备
                         }
                         else
                         {
@@ -829,7 +829,7 @@ public sealed partial class UpscaleView : UserControl
                                 try
                                 {
                                     Log("  ⚠ 黑块修复:该显卡 ncnn 引擎黑块且 CPU 不可用,自动改用 ONNX 稳定引擎重试...");
-                                    await EsrganOnnxService.UpscaleAsync(converted ?? item.Path, outPath, scale, -2, progress, ct, onnxRetry);
+                                    await EsrganOnnxService.UpscaleAsync(converted ?? item.Path, outPath, scale, gpuId < 0 ? -1 : -2, progress, ct, onnxRetry);
                                     succeeded = true;
                                 }
                                 catch { }
@@ -898,6 +898,7 @@ public sealed partial class UpscaleView : UserControl
                         await Task.Run(() => EngineService.EnhanceImage(outPath, sharpen, detail, clarity, deblur, usm, edge, detailEnhance, progress, denoise: denoise, aa: aa, dehaze: dehaze,
                             jpgQuality: imgQ / 100f, pngCompress: pngCompress), ct);
                     }
+                    catch (OperationCanceledException) { throw; }   // 取消必须继续传播(否则被标"✓ 完成")
                     catch (Exception ex)
                     {
                         // 单张增强失败不中断整批(如文件被占用)

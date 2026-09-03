@@ -638,6 +638,13 @@ public sealed partial class CutoutView : UserControl
             return;
         }
         if (items.Length == 0 || _running) return;
+        // 模型缺失前置校验:必须在 _running=true 之前——否则 return 会绕过 finally,界面锁死(只能重启)
+        var cutModel = CutoutService.GetModel(CutoutService.Models[Math.Clamp(ModelCombo.SelectedIndex, 0, CutoutService.Models.Length - 1)].Key);
+        if (EngineService.FindCutoutModel(cutModel.FileName) == null)
+        {
+            await ShowErrorAsync($"未找到抠图模型「{cutModel.Label}」({cutModel.FileName}) — 请安装/恢复模型包(解压到程序目录的 engines\\rembg\\models\\ 文件夹),或换用其它已安装的模型");
+            return;
+        }
         _running = true;
         _paused = false;
         _resumeTcs = null;
@@ -670,14 +677,7 @@ public sealed partial class CutoutView : UserControl
 
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
-        // 抠图参数:模型 + 前后景阈值 + 羽化 + 边缘增强 + 预处理 + 主体框选
-        var cutModel = CutoutService.GetModel(CutoutService.Models[Math.Clamp(ModelCombo.SelectedIndex, 0, CutoutService.Models.Length - 1)].Key);
-        // 模型缺失前置校验:文件不存在立即明确报错(不再逐张失败后弹"完成 0 张"掩盖原因)
-        if (EngineService.FindCutoutModel(cutModel.FileName) == null)
-        {
-            await ShowErrorAsync($"未找到抠图模型「{cutModel.Label}」({cutModel.FileName}) — 请安装/恢复模型包(解压到程序目录的 engines\\rembg\\models\\ 文件夹),或换用其它已安装的模型");
-            return;
-        }
+        // 抠图参数:模型 + 前后景阈值 + 羽化 + 边缘增强 + 预处理 + 主体框选(模型前置校验已在 _running 前完成)
         var modelKey = cutModel.Key;
         var fgThreshold = (int)FgSlider.Value;
         var bgThreshold = (int)BgSlider.Value;

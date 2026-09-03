@@ -70,6 +70,11 @@ public static class AudioEnhanceService
             // 读取 WAV(44.1k stereo float32)
             var (mix, samples) = ReadWav(inputWav);
             int total = samples;
+            // 内存预估(4 轨输出缓冲/选择/拷贝等 ≈ 80B/采样):超阈值提前明确报错,避免整进程 OOM
+            double estMB = total * 80.0 / (1024.0 * 1024.0);
+            if (estMB > 2500)
+                throw new InvalidOperationException(
+                    $"音频过长({(double)total / SAMPLE_RATE / 60.0:0.##} 分钟),AI 分离内存需求约 {estMB / 1024.0:0.#}GB,可能超出本机内存 — 请用波形两端裁剪缩短后再试,或分段处理。");
             int overlap = N_SAMPLES / 4;
             int stride = N_SAMPLES - overlap;
             int nChunks = Math.Max(1, (total + stride - 1) / stride);

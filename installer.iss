@@ -22,9 +22,11 @@
 AppId={{8F3A2C1E-5D4B-4C6A-9E7F-2A3B4C5D6E7F}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-; 窗口标题/卸载名:默认"AppName 版本 AppVersion",改为简洁的 "ALH Pro v1.1.0"
+; 窗口标题/卸载名:默认"AppName 版本 AppVersion",改为简洁的 "ALH Pro v{#MyAppVersion}"
 AppVerName=ALH Pro v{#MyAppVersion}
 AppPublisher=AlL.H
+; 最低系统:Win10 1809(与 TargetPlatformMinVersion 一致);比这更旧的装完必崩,直接拦下
+MinVersion=10.0.17763
 ; 默认安装到【用户程序目录】(C:\Users\用户名\AppData\Local\Programs\ALH Pro):
 ; 理由:①PrivilegesRequired=lowest(不请求管理员权限)却装到 Program Files 会写不进去/失败——
 ;         普通用户的 Program Files 是只读的(实测坑);②用户目录天然可写,模型包/缓存/引擎都无忧;
@@ -57,9 +59,9 @@ Name: "downloadmodels"; Description: "下载并安装模型包(约 1.4GB,来自 
 
 [Files]
 ; 发布版 = 软件 + 引擎(不含模型)。模型不在安装包内,保持体积 ~900MB
-; Excludes:排除抠图模型(engines\rembg\*.onnx 1.65GB)与发布版里的解压副本(models_v1.0\),
-; 否则安装包 ~4.2GB 超过 GitHub Release 单文件 2GB 上限
-Source: "发布版\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "engines\rembg\*.onnx,models_v1.0\*"
+; Excludes:排除抠图模型(engines\rembg\*.onnx 1.65GB)、发布版里的解压副本(models_v1.0\)、
+; 以及开发残留/调试产物(_ttracks 脚本、旧 exe、pdb/lib/bak、DirectML.Debug)——否则体积膨胀且泄露源码痕迹
+Source: "发布版\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "engines\rembg\*.onnx,models_v1.0\*,_ttracks*,bin\*,obj\*,*.pdb,*.lib,*.bak,ALHPro_old*,DirectML.Debug.*,d3dcompiler_47.dll.bak,onnxruntime.lib"
 
 [InstallDelete]
 ; v1.0 升级清理:Real-CUGAN 已从 v1.1.0 起移除(许可不明),旧引擎目录不再需要(约 200MB+),

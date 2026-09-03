@@ -794,14 +794,15 @@ public sealed partial class AudioView : UserControl
                         Log("转为 44.1kHz 立体声 WAV...");
                         AudioStatus.Text = $"正在准备: {item.Name}(转为 44.1kHz 立体声)...";
                         await AudioService.ConvertToWav44kAsync(srsApplied ? srsWav! : item.Path, tmpWav);
-                        Log("⚠ AI 分轨处理中(CPU 较慢:约 1.5 分钟/分钟音频,请耐心等待;也可先处理音频后离开页面)");
-                        AudioStatus.Text = $"AI 分离中(CPU 较慢): {item.Name}...";
+                        bool aiGpu = AppSettings.GpuIndex >= 0;   // 设置里选了显卡 → DML 加速;选了 CPU/无显卡 → CPU
+                        Log(aiGpu ? "AI 分轨处理中(显卡加速,请耐心等待...)" : "AI 分轨处理中(CPU 较慢:约 1.5 分钟/分钟音频,可先离开本页处理其它任务)");
+                        AudioStatus.Text = aiGpu ? "AI 分离中(显卡加速): ..." : $"AI 分离中(CPU 较慢): {item.Name}...";
                         // 【一次分轨】输出 4 轨(人声=轨3,伴奏=原曲−人声,其他1/2=轨1/2)——增强和分离共用,不重复推理
                         var aiDir = System.IO.Path.Combine(EngineService.TempRoot, $"alh_ai_{Guid.NewGuid():N}");
                         System.IO.Directory.CreateDirectory(aiDir);
                         var stemBase = System.IO.Path.Combine(aiDir, "stems");
                         await AudioEnhanceService.SeparateAsync(tmpWav, stemBase + ".wav", 7,
-                            -1, 100f, prog, _cts.Token);   // target 7 = 全 4 轨文件
+                            aiGpu ? AppSettings.GpuIndex : -1, 100f, prog, _cts.Token);   // 选卡则 DML,否则 CPU
                         var vWav = stemBase + "_人声.wav";
                         var aWav = stemBase + "_伴奏.wav";
                         var o1Wav = stemBase + "_其他1.wav";
