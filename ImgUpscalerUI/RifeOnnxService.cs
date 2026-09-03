@@ -18,6 +18,8 @@ public static class RifeOnnxService
     // 会话按设备号缓存:首帧可能是小帧 CPU 会话,若单会话复用,后续大帧全落 CPU(慢 ~19 倍)。
     static readonly System.Collections.Concurrent.ConcurrentDictionary<int, InferenceSession> _sessions = new();
     static readonly object _sessionGate = new();
+    /// <summary>已确认运行期失败的 DirectML 设备:后续帧直接 CPU(不再每对帧失败一次)。</summary>
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte> _dmlBad = new();
 
     /// <summary>ONNX 模型路径(engines/rife/rife49.onnx;不存在返回 null = 不启用 ONNX 路线)。</summary>
     public static string? FindModel()
@@ -53,6 +55,8 @@ public static class RifeOnnxService
     public static void Interp(string img0, string img1, float time, string outputPng, int gpuId = -1)
     {
         var model = FindModel() ?? throw new FileNotFoundException("未找到 rife49.onnx(ONNX 补帧模型)");
+        // 运行期已确认失败的 DirectML 设备:直接 CPU(每对帧不再重复失败调用)
+        if (gpuId >= 0 && _dmlBad.ContainsKey(gpuId)) gpuId = -1;
         // -2 = 自动选设备
         if (gpuId == -2)
         {
@@ -94,7 +98,8 @@ public static class RifeOnnxService
         }
         catch (Exception ex) when (gpuId >= 0)
         {
-            // DirectML 失败 → 丢弃该设备的会话,CPU 会话重试
+            // DirectML 失败 → 丢弃该设备的会话,CPU 会话重试;标记设备不可用(后续帧直接 CPU)
+            _dmlBad[gpuId] = 0;
             DropSession(gpuId);
             results = GetSession(-1).Run(new[]
             {

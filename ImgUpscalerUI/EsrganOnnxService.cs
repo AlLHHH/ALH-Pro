@@ -71,6 +71,45 @@ public static class EsrganOnnxService
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, int), InferenceSession> _sessions = new();
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, int), SemaphoreSlim> _locks = new();
     private static bool _dmlWarned;
+    /// <summary>已确认不可用的 DirectML 设备(运行期失败):后续直接走 CPU,不再每帧/tile 重复一次失败调用。</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte> _dmlBad = new();
+
+    // ---- DirectML 设备实测(名字匹配失败时的兜底;启动时后台探测一次)----
+    private static int _dmlProbeState;   // 0=未做 1=进行中 2=完成
+    private static int _dmlFirstOk = -1; // 第一个能创建 DirectML 会话的设备号
+
+    /// <summary>后台探测 DML 设备 0..3 哪些能用(建会话成功即算可用;设备不可用/驱动缺会抛)。
+    /// 结果供 EngineService.ToDmlDevice 在"名字匹配失败"时兜底(不越界、不跑错误设备)。
+    /// 幂等;未完成/全失败返回 -1(调用方维持原行为)。</summary>
+    public static async Task<int> EnsureDmlProbeAsync(CancellationToken ct = default)
+    {
+        if (Interlocked.CompareExchange(ref _dmlProbeState, 1, 0) != 0)
+            return _dmlFirstOk;   // 已在做或被别人做过
+        try
+        {
+            var model = FindModel();
+            if (model == null) return _dmlFirstOk;
+            for (int i = 0; i < 4; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    var opts = new SessionOptions();
+                    opts.AppendExecutionProvider_DML(i);
+                    using var s = new InferenceSession(model, opts);   // DML 设备创建失败 → 抛 → 该号不可用
+                    if (_dmlFirstOk < 0) _dmlFirstOk = i;
+                }
+                catch { }
+            }
+        }
+        catch { }
+        finally { Volatile.Write(ref _dmlProbeState, 2); }
+        await Task.CompletedTask;   // 保持 async 签名(调用方统一 await;探测本身同步,已在后台任务中跑)
+        return _dmlFirstOk;
+    }
+
+    /// <summary>实测可用的 DirectML 设备兜底号(-1=未探测/全部不可用)。</summary>
+    public static int DmlFallbackOk => _dmlFirstOk;
 
     /// <summary>DirectML 不可用时的一次性明确提示(避免"静默掉 CPU → 慢几倍 → 以为不能用")。
     /// 常见于 RTX 50 系(Blackwell)但驱动较旧、或 AMD/Intel 驱动不完整。</summary>
@@ -339,6 +378,12 @@ public static class EsrganOnnxService
         // waifu2x 模型输入名是 x(实测 ONNX 元数据);其余(esrgan/cugan/animevideo)是 input
         string inputName = modelPath.Contains("waifu2x", StringComparison.OrdinalIgnoreCase) ? "x" : "input";
 
+        // 运行期已确认失败的 DirectML 设备:直接 CPU(该设备会话已丢弃,不再重复失败调用)
+        if (gpuId >= 0 && _dmlBad.ContainsKey(gpuId))
+        {
+            gpuId = -1;
+        }
+
         InferenceSession session;
         var key = (modelPath, gpuId);
         var gate = _locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
@@ -370,8 +415,11 @@ public static class EsrganOnnxService
             }
             catch (Exception ex) when (gpuId >= 0)
             {
-                // DirectML 失败 → 换 CPU 会话重试(缓存独立 CPU 会话;与 GPU 会话互不干扰)
+                // DirectML 失败 → 换 CPU 会话重试(缓存独立 CPU 会话;与 GPU 会话互不干扰);
+                // 并标记该设备不可用:后续帧直接 CPU,不做无谓的失败调用
                 WarnDmlUnavailable("推理失败: " + ex.Message.Split('\n')[0]);
+                _dmlBad[gpuId] = 0;
+                try { if (_sessions.TryRemove(key, out var gone)) gone.Dispose(); } catch { }
                 var cpuKey = (modelPath, -1);
                 var cpuGate = _locks.GetOrAdd(cpuKey, _ => new SemaphoreSlim(1, 1));
                 cpuGate.Wait();
