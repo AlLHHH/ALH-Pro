@@ -15,8 +15,9 @@
 #define MyAppVersion "1.1.2"
 #define MyAppExeName "ALHPro.exe"
 ; GitHub Release 模型包直链(与 Release 附件名必须一致;仓库=AlLHHH/ALH-Pro)
-#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.0/models_v1.0.zip"
+#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.2/models_v1.0.zip"
 #define ModelsFile "models_v1.0.zip"
+; 完整版(含模型,网盘/整包)说明:安装完成后可到软件内「使用教程」或 GitHub 说明页找完整版直链
 
 [Setup]
 AppId={{8F3A2C1E-5D4B-4C6A-9E7F-2A3B4C5D6E7F}
@@ -55,7 +56,7 @@ RestartApplications=no
 Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
 [Tasks]
-Name: "downloadmodels"; Description: "下载并安装模型包(约 1.4GB,来自 GitHub)"; GroupDescription: "模型包:"; Flags: unchecked
+Name: "downloadmodels"; Description: "下载并安装模型包(约 1.4GB,来自 GitHub;国内网络易断,建议装完用软件内教程/网盘完整版补装)"; GroupDescription: "模型包:"; Flags: unchecked
 
 [Files]
 ; 发布版 = 软件 + 引擎(不含模型)。模型不在安装包内,保持体积 ~900MB
@@ -85,9 +86,17 @@ var
   Extracted: Boolean;
 begin
   Result := True;
+  // 下载前确认(1.4GB 慢/易断,用户知情可跳过 → 安装本身不受影响,避免"卡住停止不了")
+  if MsgBox('即将从 GitHub 下载模型包(约 1.4GB,视网络 10~60 分钟,国内直连可能失败)。' + #13#10 + #13#10 +
+            '点「是」开始下载(失败或中途取消的话,软件本身已经装好,可稍后用网盘完整版或手动补装);' + #13#10 +
+            '点「否」跳过模型(以后想装:软件内「使用教程」有详细步骤)。', mbConfirmation, MB_YESNO) <> IDYES then
+  begin
+    Result := True;
+    Exit;
+  end;
   try
     // 进度页
-    Page := CreateDownloadPage('下载模型包', '正在从 GitHub 下载模型包(约 1.4GB),请保持网络连接;之后解压约需几分钟,进度条"不动"是解压中,请耐心等待...', nil);
+    Page := CreateDownloadPage('下载模型包', '正在从 GitHub 下载模型包(约 1.4GB),请保持网络连接;之后解压约需 3~10 分钟,进度条"不动"是解压中,请耐心等待...', nil);
     try
       Page.Show;
       try
@@ -107,9 +116,9 @@ begin
     begin
       MsgBox('模型包下载失败。' + #13#10#13#10 +
         '可能原因:网络不稳定 / GitHub 国内直连慢或被限制。' + #13#10 +
-        '建议:1) 使用加速器或 GitHub 镜像(如 gh.ddlc.top / hf-mirror)后重试;' + #13#10 +
-        '2) 直接在 GitHub Release 页面下载 models_v1.0.zip(浏览器或下载工具更稳);' + #13#10 +
-        '3) 解压到 程序目录\engines\rembg\ 即可(软件自动识别)。', mbError, MB_OK);
+        '建议:1) 用加速器或 GitHub 镜像重试;' + #13#10 +
+        '2) 询问社区拿「完整版(含模型)」网盘链接,或下载 models_v1.0.zip 手动解压;' + #13#10 +
+        '3) 手动解压到 程序目录\engines\rembg\ 即可(软件内「使用教程」有详细步骤)。', mbError, MB_OK);
       Result := False;
       Exit;
     end;

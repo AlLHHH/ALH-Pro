@@ -71,8 +71,17 @@
 
 ```
 安装包: https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.2/ALHPro_v1.1.2_Setup.exe
-模型包: https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.0/models_v1.0.zip
+模型包: https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.2/models_v1.0.zip
+完整版(含模型,解压即用,网盘): 见下方「完整版下载」(国内用户推荐)
 ```
+
+**完整版(含模型)下载——国内用户推荐:**
+
+安装包不含 AI 抠图模型(1.4GB);嫌下载/安装模型麻烦的,直接下载**完整版整包**(约 2.5GB,含全部引擎+模型,解压到任意位置双击即用):
+
+- 百度网盘:**[点此下载 ALHPro_v1.1.2_完整版_含模型.zip](网盘链接发布后填入)**
+- 社区群 / 夸克 / 123 网盘镜像:见软件内「ALH Pro 社区」
+- GitHub 直链(能访问 GitHub 时):[ALHPro_v1.1.2_完整版_含模型.zip](https://github.com/AlLHHH/ALH-Pro/releases/download/v1.1.2/ALHPro_v1.1.2_完整版_含模型.zip)(2.5GB,超过 2GB 可能被 GitHub 拒收,以网盘为准)
 
 > 下载只需要这一下访问 GitHub;安装完软件**离线可用**,之后不需要加速器。
 

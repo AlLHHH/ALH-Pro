@@ -34,11 +34,13 @@
                     <Border x:Name="ModelMissingBar" Visibility="Collapsed" CornerRadius="6" Padding="10,8"
                             Background="#2AE8A33D" BorderBrush="#66E8A33D" BorderThickness="1">
                         <StackPanel Spacing="4">
-                            <TextBlock Text="⚠ 未找到抠图模型" FontSize="12" FontWeight="SemiBold"
+                            <TextBlock Text="未找到抠图模型" FontSize="12" FontWeight="SemiBold"
                                        Foreground="#E8A33D"/>
                             <TextBlock x:Name="ModelMissingText" FontSize="11" Opacity="0.9"
                                        TextWrapping="Wrap" Foreground="#E8ECF2"
-                                       Text="安装时勾选「下载并安装模型包」;或到 GitHub Release 页下载 models_v1.0.zip,解压到程序目录的 engines\rembg\ 文件夹(6 个 .onnx 平铺,不要再套一层 models)"/>
+                                       Text="安装软件时勾选「下载并安装模型包」;或下载 models_v1.0.zip(含中文安装说明),解压到程序目录的 engines\rembg\ 文件夹(6 个 .onnx 平铺,不要再多套一层文件夹)"/>
+                            <HyperlinkButton Content="查看安装方法(图文步骤)" FontSize="11" Padding="0"
+                                             Click="ShowModelHelp_Click"/>
                         </StackPanel>
                     </Border>
 

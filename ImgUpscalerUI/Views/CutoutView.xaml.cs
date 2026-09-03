@@ -81,7 +81,7 @@ public sealed partial class CutoutView : UserControl
             bool missing = EngineService.FindCutoutModel(m.FileName) == null;
             ModelMissingBar.Visibility = missing ? Visibility.Visible : Visibility.Collapsed;
             if (missing)
-                ModelMissingText.Text = $"未找到「{m.Label}」({m.FileName}) — 安装时勾选「下载并安装模型包」;或到 GitHub Release 页下载 models_v1.0.zip,解压到程序目录的 engines\\rembg\\ 文件夹(6 个 .onnx 直接放这,不要建 models 子文件夹);也可换用其它已安装的模型";
+                ModelMissingText.Text = $"未找到「{m.Label}」({m.FileName}) — 安装时勾选「下载并安装模型包」;或下载 models_v1.0.zip(含中文安装说明),解压到程序目录的 engines\\rembg\\ 文件夹(6 个 .onnx 直接放这,不要多套一层文件夹);也可换用其它已安装的模型";
         }
         catch
         {
@@ -642,7 +642,7 @@ public sealed partial class CutoutView : UserControl
         var cutModel = CutoutService.GetModel(CutoutService.Models[Math.Clamp(ModelCombo.SelectedIndex, 0, CutoutService.Models.Length - 1)].Key);
         if (EngineService.FindCutoutModel(cutModel.FileName) == null)
         {
-            await ShowErrorAsync($"未找到抠图模型「{cutModel.Label}」({cutModel.FileName}) — 请安装/恢复模型包(解压到程序目录的 engines\\rembg\\models\\ 文件夹),或换用其它已安装的模型");
+            await ShowErrorAsync($"未找到抠图模型「{cutModel.Label}」({cutModel.FileName}) — 请安装/恢复模型包:下载 models_v1.0.zip,解压到程序目录的 engines\\rembg\\ 文件夹(6 个 .onnx 直接放这,不要多套一层文件夹);或换用其它已安装的模型");
             return;
         }
         _running = true;
@@ -965,6 +965,35 @@ public sealed partial class CutoutView : UserControl
             Title = "处理失败",
             Content = new TextBlock { Text = msg, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap },
             CloseButtonText = "关闭",
+            XamlRoot = this.XamlRoot,
+        };
+        await dlg.ShowAsync();
+    }
+
+    /// <summary>模型缺失提示条「查看安装方法」:弹窗给出白话步骤(含网盘完整版说明)。</summary>
+    private async void ShowModelHelp_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        var txt = new TextBlock
+        {
+            FontSize = 12,
+            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+            LineHeight = 20,
+            Text =
+                "步骤(不会装就按这个来):\n\n" +
+                "① 找到 ALH Pro 装在哪:默认 C:\\Users\\你的用户名\\AppData\\Local\\Programs\\ALH Pro\n" +
+                "　 (或桌面右键「ALH Pro」图标 → 打开文件所在位置)\n\n" +
+                "② 打开里面的 engines 文件夹,再打开 rembg 文件夹\n" +
+                "　 (没有就自己新建,名字必须叫 engines 和 rembg)\n\n" +
+                "③ 把 models_v1.0.zip 解压到 rembg 文件夹里,里面直接放\n" +
+                "　 6 个 .onnx 文件(不要多套一层文件夹)\n\n" +
+                "④ 回来这个页面,上方黄色提示消失 = 成功\n\n" +
+                "嫌麻烦?问社区要「完整版(含模型)」网盘链接——那是解压即用的整包。",
+        };
+        var dlg = new ContentDialog
+        {
+            Title = "抠图模型怎么装",
+            Content = txt,
+            CloseButtonText = "知道了",
             XamlRoot = this.XamlRoot,
         };
         await dlg.ShowAsync();
