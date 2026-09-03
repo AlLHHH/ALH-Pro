@@ -1216,7 +1216,8 @@ public static class VideoService
                                 progress?.Report((45 + (int)(45.0 * start / total),
                                     $"超分(稳定引擎) 批次 {start / batchSize + 1}/{batches}..."));
                                 await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
-                                    upGpu < 0 ? -1 : -2, progress, ct, onnxModelPath);   // 用户选 CPU 则强制 CPU,否则按帧大小自动选设备
+                                    upGpu < 0 ? -1 : -2, progress, ct, onnxModelPath,
+                                    start, total);   // 用户选 CPU 则强制 CPU,否则按帧大小自动选设备;传全局帧→逐帧显示"第 N/共 M 帧"
                             }
                             else
                             {
