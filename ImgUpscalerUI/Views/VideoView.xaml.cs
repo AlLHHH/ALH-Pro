@@ -1566,46 +1566,56 @@ public sealed partial class VideoView : UserControl
                 var row = new Grid();
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
+                // 行右侧:普通态=删除按钮;确认态=「确定删除?」+ ✓/✕
                 var name = new TextBlock { Text = cur[i].Name, FontSize = 14, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
                 var tipText = new TextBlock { Text = BuildPresetSummary(cur[i]), TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, MaxWidth = 300 };
                 ToolTipService.SetToolTip(name, tipText);
-                Grid.SetColumn(name, 0);
-                var delBtn = new Button
-                {
-                    Content = "\uE74D",
-                    FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe MDL2 Assets"),
-                    FontSize = 12,
-                    Background = null,
-                    BorderThickness = new Microsoft.UI.Xaml.Thickness(0),
-                    Padding = new Microsoft.UI.Xaml.Thickness(6, 2, 6, 2),
-                    VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
-                    MinWidth = 0,
-                };
-                ToolTipService.SetToolTip(delBtn, "删除该预设");
-                Grid.SetColumn(delBtn, 1);
                 var presetName = cur[i].Name;
-                delBtn.Click += (_, _) =>
+                if (pendingDel == presetName)
                 {
-                    // 行内二次确认:第一次点变红「确认?」,再点才删;点别处由 RebuildList 清确认态
-                    if (pendingDel != presetName)
+                    // 确认态:明确文字 + 对勾(确认)/叉(取消)
+                    var confirmSpan = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 6, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
+                    var confirmText = new TextBlock { Text = "确定要删除此预设吗?", FontSize = 12, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
+                    var okBtn = new Button { Content = "✓", FontSize = 14, Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 0, 168, 0)), MinWidth = 0, Padding = new Microsoft.UI.Xaml.Thickness(6, 2, 6, 2), Background = null, BorderThickness = new Microsoft.UI.Xaml.Thickness(0) };
+                    var cancelBtn = new Button { Content = "✕", FontSize = 14, Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77)), MinWidth = 0, Padding = new Microsoft.UI.Xaml.Thickness(6, 2, 6, 2), Background = null, BorderThickness = new Microsoft.UI.Xaml.Thickness(0) };
+                    ToolTipService.SetToolTip(okBtn, "确认删除");
+                    ToolTipService.SetToolTip(cancelBtn, "取消");
+                    okBtn.Click += (_, _) =>
                     {
-                        pendingDel = presetName;
-                        delBtn.Content = "确认?";
-                        delBtn.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77));   // 红
-                        delBtn.FontSize = 12;
-                        ToolTipService.SetToolTip(delBtn, "再点一次确认删除");
-                        return;
-                    }
-                    var latest = LoadPresets();
-                    var hit = latest.FirstOrDefault(x => x.Name == presetName);
-                    if (hit != null) { latest.Remove(hit); SavePresets(latest); }
-                    AppLogger.UserAction($"视频:删除预设「{presetName}」");
-                    pendingDel = null;
-                    if (latest.Count == 0) { try { dlg.Hide(); } catch { } return; }   // 删光 → 关窗
-                    RebuildList();   // 删除后刷新列表,停留在预设界面
-                };
+                        var latest = LoadPresets();
+                        var hit = latest.FirstOrDefault(x => x.Name == presetName);
+                        if (hit != null) { latest.Remove(hit); SavePresets(latest); }
+                        AppLogger.UserAction($"视频:删除预设「{presetName}」");
+                        pendingDel = null;
+                        if (latest.Count == 0) { try { dlg.Hide(); } catch { } return; }
+                        RebuildList();
+                    };
+                    cancelBtn.Click += (_, _) => { pendingDel = null; RebuildList(); };
+                    confirmSpan.Children.Add(confirmText); confirmSpan.Children.Add(okBtn); confirmSpan.Children.Add(cancelBtn);
+                    Grid.SetColumn(confirmSpan, 1);
+                    row.Children.Add(confirmSpan);
+                }
+                else
+                {
+                    // 普通态:删除小按钮(用文字"删"避免图标字体乱码;点一下进入确认态)
+                    var delBtn = new Button
+                    {
+                        Content = "删",
+                        FontSize = 12,
+                        Background = null,
+                        BorderThickness = new Microsoft.UI.Xaml.Thickness(0),
+                        Padding = new Microsoft.UI.Xaml.Thickness(6, 2, 6, 2),
+                        VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+                        MinWidth = 0,
+                    };
+                    delBtn.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77));
+                    ToolTipService.SetToolTip(delBtn, "删除该预设");
+                    Grid.SetColumn(delBtn, 1);
+                    delBtn.Click += (_, _) => { pendingDel = presetName; RebuildList(); };
+                    row.Children.Add(delBtn);
+                }
                 row.Children.Add(name);
-                row.Children.Add(delBtn);
+                Grid.SetColumn(name, 0);
                 itemPanel.Children.Add(row);
                 // 行间分隔线(非最后一行):放在 item 底部,与高亮边界对齐
                 if (i < cur.Count - 1)
