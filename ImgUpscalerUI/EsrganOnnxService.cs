@@ -471,21 +471,25 @@ public static class EsrganOnnxService
         InferenceSession? sessionOverride = null)
     {
         int inW = src.Width, inH = src.Height;
-        // 【修复 448x449 BroadcastIterator】waifu2x-cunet2x ONNX 模型要求输入宽高必须为偶数且 ≥38,
+        // 【修复 448x449 BroadcastIterator + 分块网格缝】waifu2x-cunet2x ONNX 模型要求输入宽高必须为偶数且 ≥38,
         // 否则内部 Add 节点广播轴错配直接崩溃(真机 CPU 无 Vulkan/50系走 ONNX 已复现)。
-        // 分块主区块 512 无碍,但奇/小图(如 448x449)或边缘小块会炸。
-        // 这里把输入垫到安全尺寸(右/下边缘复制),输出由上层 SaveScaled/贴回按 ow,oh 缩放,视觉无感。
+        // 同时该模型输出有固定内裁(实测 out = 2*in - 72,等价于每边裁 18px),导致分块贴回时按 2*in 假设错位,
+        // 产生"一块一块"的网格缝(ncnn 引擎内部自会补齐,仅 ONNX 路径踩坑)。
+        // 这里给输入【四周各垫 18px(边缘复制)】:模型输出恰好 = 2*内容、无偏移 → 与 RunCoreTiled 的
+        // x0*scale 定位吻合,网格缝消除。尺寸仍需偶数 ≥38(垫后若为奇数,右下再补 1px)。
         System.Drawing.Bitmap? padSrc = null;
         if (modelPath.Contains("waifu2x", StringComparison.OrdinalIgnoreCase))
         {
-            int pw = inW, ph = inH;
+            const int PF = 18;   // waifu2x 模型固定内裁:每边 18px(P 实测吻合,见 _verify_pad.py)
+            int pw = inW + PF * 2;
+            int ph = inH + PF * 2;
             if ((pw & 1) == 1) pw++;
             if ((ph & 1) == 1) ph++;
             if (pw < 38) pw = 38;
             if (ph < 38) ph = 38;
             if (pw != inW || ph != inH)
             {
-                padSrc = PadEdgeReplicate(src, pw, ph);
+                padSrc = PadEdgeReplicateSym(src, pw, ph, PF);
                 inW = pw; inH = ph;
             }
         }
@@ -642,6 +646,51 @@ public static class EsrganOnnxService
             // 右下角:复制最右下像素
             if (pw > sw && ph > sh)
                 g.DrawImage(src, new System.Drawing.Rectangle(sw, sh, pw - sw, ph - sh),
+                    new System.Drawing.Rectangle(sw - 1, sh - 1, 1, 1), System.Drawing.GraphicsUnit.Pixel);
+        }
+        return dst;
+    }
+
+    /// <summary>把位图【四周各垫 pad 像素】并做边缘复制(不是拉伸):上下左右多余的用最边缘行列补,
+    /// 使模型输出恰好为内容尺寸的整数倍、无偏移(waifu2x cunet 内裁 18px/边,故需对称垫)。
+    /// 内容锚定在 (pad,pad);若某边还需补足偶数/最小,调用方已把多出部分计入 pw/ph,由右侧/下侧带吸收。</summary>
+    private static System.Drawing.Bitmap PadEdgeReplicateSym(System.Drawing.Bitmap src, int pw, int ph, int pad)
+    {
+        int sw = src.Width, sh = src.Height;
+        if (sw == pw && sh == ph) return (System.Drawing.Bitmap)src.Clone();
+        var dst = new System.Drawing.Bitmap(pw, ph, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+        using (var g = System.Drawing.Graphics.FromImage(dst))
+        {
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+            // 内容放 (pad,pad) 处(左上锚定)
+            g.DrawImage(src, new System.Drawing.Rectangle(pad, pad, sw, sh),
+                new System.Drawing.Rectangle(0, 0, sw, sh), System.Drawing.GraphicsUnit.Pixel);
+            // 四周用最边缘行列复制填充
+            int leftW = Math.Min(pad, pw - sw), rightW = pw - pad - sw;
+            int topH = Math.Min(pad, ph - sh), botH = ph - pad - sh;
+            if (leftW > 0)
+                g.DrawImage(src, new System.Drawing.Rectangle(0, pad, leftW, sh),
+                    new System.Drawing.Rectangle(0, 0, 1, sh), System.Drawing.GraphicsUnit.Pixel);
+            if (rightW > 0)
+                g.DrawImage(src, new System.Drawing.Rectangle(pad + sw, pad, rightW, sh),
+                    new System.Drawing.Rectangle(sw - 1, 0, 1, sh), System.Drawing.GraphicsUnit.Pixel);
+            if (topH > 0)
+                g.DrawImage(src, new System.Drawing.Rectangle(pad, 0, sw, topH),
+                    new System.Drawing.Rectangle(0, 0, sw, 1), System.Drawing.GraphicsUnit.Pixel);
+            if (botH > 0)
+                g.DrawImage(src, new System.Drawing.Rectangle(pad, pad + sh, sw, botH),
+                    new System.Drawing.Rectangle(0, sh - 1, sw, 1), System.Drawing.GraphicsUnit.Pixel);
+            if (leftW > 0 && topH > 0)
+                g.DrawImage(src, new System.Drawing.Rectangle(0, 0, leftW, topH),
+                    new System.Drawing.Rectangle(0, 0, 1, 1), System.Drawing.GraphicsUnit.Pixel);
+            if (rightW > 0 && topH > 0)
+                g.DrawImage(src, new System.Drawing.Rectangle(pad + sw, 0, rightW, topH),
+                    new System.Drawing.Rectangle(sw - 1, 0, 1, 1), System.Drawing.GraphicsUnit.Pixel);
+            if (leftW > 0 && botH > 0)
+                g.DrawImage(src, new System.Drawing.Rectangle(0, pad + sh, leftW, botH),
+                    new System.Drawing.Rectangle(0, sh - 1, 1, 1), System.Drawing.GraphicsUnit.Pixel);
+            if (rightW > 0 && botH > 0)
+                g.DrawImage(src, new System.Drawing.Rectangle(pad + sw, pad + sh, rightW, botH),
                     new System.Drawing.Rectangle(sw - 1, sh - 1, 1, 1), System.Drawing.GraphicsUnit.Pixel);
         }
         return dst;
