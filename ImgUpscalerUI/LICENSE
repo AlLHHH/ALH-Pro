@@ -1,21 +1,27 @@
-MIT License
+ALH Pro 自用授权声明(个人免费版)
+================================
 
-Copyright (c) 2026 AlL.H
+ALH Pro 软件(以下简称"本软件")由 AlL.H 开发。
+界面、代码、文档等原创部分,版权归 AlL.H 所有,保留所有权利(All Rights Reserved)。
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+【免费授权范围(允许)】
+- 个人 / 非商业用途:可免费下载、安装、使用本软件。
+- 用于个人学习、研究、日常图片 / 视频 / 音频处理。
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+【禁止(未经 AlL.H 书面许可)】
+- 复制、修改、再分发:以任何形式重新打包、改名、发布、上传到第三方渠道。
+- 商业用途:售卖、出租、捆绑销售、用于任何盈利性项目。
+- 去除或篡改软件内的署名、版权声明、开源组件许可声明。
+- 反向工程本软件后用于再分发。
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+【第三方开源组件】
+本软件集成的引擎与模型(如 waifu2x、Real-ESRGAN、RIFE、U²-Net、ISNet、BiRefNet、rembg、ffmpeg、
+ONNX Runtime、Windows App SDK 等)版权归各原作者所有,遵循各自开源许可(MIT / BSD 等),
+详见随软件的 THIRD_PARTY_NOTICES.txt。
+本授权仅约束本软件自身原创部分,不影响上述开源组件的原有许可。
+
+【免责声明】
+本软件按"现状"(AS-IS)提供,不附带任何明示或默示的担保(含适销性、特定用途适用性、不侵权)。
+作者不对因使用本软件产生的任何直接或间接损失负责。
+
+© 2026 AlL.H. 保留所有权利。
