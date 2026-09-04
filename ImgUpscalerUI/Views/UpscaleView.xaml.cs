@@ -494,7 +494,10 @@ public sealed partial class UpscaleView : UserControl
             else toExport = cur;
             var picker = new FileSavePicker();
             picker.FileTypeChoices.Add("ALH Pro 图片预设", new List<string> { ImgPresetExt });
-            picker.SuggestedFileName = "ALHPro_图片预设";
+            // 导出文件名带预设名:单个=该预设名;全部=第一个预设名+"等N个"。清洗非法文件名字符(\/:*?"<>|)
+            picker.SuggestedFileName = toExport.Count == 1
+                ? SafePresetFileName(toExport[0].Name)
+                : SafePresetFileName(toExport[0].Name) + $"等{toExport.Count}个";
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
             WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
             var file = await picker.PickSaveFileAsync();
@@ -542,6 +545,16 @@ public sealed partial class UpscaleView : UserControl
             catch (Exception ex) { AppLogger.Warn("导入图片预设失败(格式不对):" + ex.Message); }
         };
         await dlg.ShowAsync();
+    }
+
+    /// <summary>预设名 → 安全文件名:去掉 Windows 文件名非法字符(\/:*?"<>|)及首尾空格,空则给默认名。</summary>
+    internal static string SafePresetFileName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "预设";
+        var bad = Path.GetInvalidFileNameChars();
+        var sb = new System.Text.StringBuilder();
+        foreach (var c in name.Trim()) sb.Append(Array.IndexOf(bad, c) >= 0 ? '_' : c);
+        return sb.Length == 0 ? "预设" : sb.ToString();
     }
 
     private async Task ShowPresetHintAsync(string msg)
