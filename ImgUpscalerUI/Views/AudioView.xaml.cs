@@ -18,6 +18,7 @@ public sealed partial class AudioView : UserControl
     /// <summary>音频页设置(升采样率/降噪/AI分离/响亮/低切/清晰/输出格式),存 %LOCALAPPDATA%\ALHPro\settings\audio-settings.json。</summary>
     public class AudioSettings
     {
+        public bool Remember { get; set; } = true;   // 记住上次参数:true=启动时自动恢复
         public int Sr { get; set; } = 0;           // 0关 1柔和 2标准 3强力(增强:人声/伴奏分别优化重混)
         public bool Srs { get; set; }              // 采样率修复(AI 升采样率,低采样率源→48k)
         public int Denoise { get; set; } = 0;        // 0关 1弱 2中 3强
@@ -34,6 +35,7 @@ public sealed partial class AudioView : UserControl
 
     private static string SettingsFile => ParaPaths.SettingsFile("audio-settings.json");
     private System.Collections.Generic.List<string> _allOutputs = new();   // 本次任务输出文件(完成弹窗用)
+    private bool _suppressSave;   // 加载/重置期间抑制写盘,避免默认值被中途覆盖写回
 
     /// <summary>唯一化输出路径:同名时自动加 (1)/(2)... 不覆盖(与图片/视频页一致)。</summary>
     public static string UniquePath(string dir, string fileName)
@@ -147,7 +149,7 @@ public sealed partial class AudioView : UserControl
                     ? "\n⚠ 伴奏=去掉人声的全部音乐(鼓/贝斯都在里面),同时勾「其他」= 那部分被算了两次;想单独提取某一块,只勾那个即可"
                     : (accC ? "\n(伴奏已含鼓/贝斯等全部乐器)" : ""));
         }
-        SaveSettings();
+        if (!_suppressSave) SaveSettings();
     }
 
     /// <summary>自定义组合:轨道音量滑块(0~200%,100%=原音量)。</summary>
@@ -159,16 +161,23 @@ public sealed partial class AudioView : UserControl
         else if (ReferenceEquals(sender, CmVolO1)) t = CmVolO1Text;
         else if (ReferenceEquals(sender, CmVolO2)) t = CmVolO2Text;
         if (t != null) t.Text = $"{(int)e.NewValue}%";
-        SaveSettings();
+        if (!_suppressSave) SaveSettings();
     }
 
     private void LoadSettings()
     {
+        _suppressSave = true;   // 恢复期间不写盘,避免默认值被覆盖写回
         try
         {
             if (!File.Exists(SettingsFile)) return;
             var d = System.Text.Json.JsonSerializer.Deserialize<AudioSettings>(File.ReadAllText(SettingsFile));
             if (d is null) return;
+            if (RememberAudioCheck != null) RememberAudioCheck.IsChecked = d.Remember;
+            if (!d.Remember)
+            {
+                // 未勾「记住上次」:不应用保存的参数,控件保持 XAML 默认值
+                return;
+            }
             SrRadios.SelectedIndex = Math.Clamp(d.Sr, 0, 3);
             if (SrsCheck != null) SrsCheck.IsChecked = d.Srs;
             DenoiseRadios.SelectedIndex = Math.Clamp(d.Denoise, 0, 3);
@@ -183,6 +192,35 @@ public sealed partial class AudioView : UserControl
             FmtRadios.SelectedIndex = Math.Clamp(d.OutputFmt, 0, 2);
         }
         catch { /* 读取失败用默认 */ }
+        finally { _suppressSave = false; }
+    }
+
+    /// <summary>「记住上次」勾选状态变化:立即写盘(勾上=下次恢复;取消=下次用默认)。加载期间抑制。</summary>
+    private void RememberAudio_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_suppressSave) return;
+        SaveSettings();
+    }
+
+    /// <summary>重置所有参数:恢复全部默认(采样率/增强/AI分离/降噪/音色/输出格式)。</summary>
+    private void ResetAllAudioBtn_Click(object sender, RoutedEventArgs e)
+    {
+        _suppressSave = true;
+        SrRadios.SelectedIndex = 0;
+        if (SrsCheck != null) SrsCheck.IsChecked = false;
+        DenoiseRadios.SelectedIndex = 0;
+        DemucsRadios.SelectedIndex = 0;
+        if (CmVolV != null) CmVolV.Value = 100;
+        if (CmVolA != null) CmVolA.Value = 100;
+        if (CmVolO1 != null) CmVolO1.Value = 100;
+        if (CmVolO2 != null) CmVolO2.Value = 100;
+        LoudnessCheck.IsChecked = false;
+        LowcutCheck.IsChecked = false;
+        EqCheck.IsChecked = false;
+        FmtRadios.SelectedIndex = 0;
+        _suppressSave = false;
+        Options_Changed(this, new RoutedEventArgs());   // 刷新自定义组合面板/提示并写盘
+        Log("已重置所有音频参数为默认值");
     }
 
     private void SaveSettings()
@@ -193,6 +231,7 @@ public sealed partial class AudioView : UserControl
             System.IO.File.WriteAllText(SettingsFile,
                 System.Text.Json.JsonSerializer.Serialize(new AudioSettings
                 {
+                    Remember = RememberAudioCheck?.IsChecked == true,
                     Sr = SrRadios.SelectedIndex,
                     Srs = SrsCheck?.IsChecked == true,
                     Denoise = DenoiseRadios.SelectedIndex,

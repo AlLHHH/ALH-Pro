@@ -159,6 +159,24 @@
                         <RadioButton Content="FLAC (无损)"/>
                     </RadioButtons>
 
+                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
+
+                    <!-- 参数管理:重置所有参数 / 记住上次(与视频/图片页同布局) -->
+                    <TextBlock Text="参数管理" Style="{StaticResource SectionTitle}"/>
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="ResetAllAudioBtn" Grid.Column="0" Content="重置所有参数"
+                                ToolTipService.ToolTip="恢复全部默认参数(采样率/增强/AI分离/降噪/音色/输出格式)"
+                                HorizontalAlignment="Stretch" Click="ResetAllAudioBtn_Click"/>
+                        <CheckBox x:Name="RememberAudioCheck" Grid.Column="1" Content="记住上次" IsChecked="True"
+                                  ToolTipService.ToolTip="记住处理参数,下次启动自动恢复"
+                                  VerticalAlignment="Center"
+                                  Checked="RememberAudio_Changed" Unchecked="RememberAudio_Changed"/>
+                    </Grid>
+
                     <TextBlock Text="控制" Style="{StaticResource SectionTitle}"/>
                     <Button x:Name="RunBtn" Content="开始处理" HorizontalAlignment="Stretch"
                             Style="{StaticResource AccentButtonStyle}" IsEnabled="False" Click="RunBtn_Click"/>
