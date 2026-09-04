@@ -1,4 +1,4 @@
-; ALH Pro 安装脚本 (Inno Setup 6.3+)
+﻿; ALH Pro 安装脚本 (Inno Setup 6.3+)
 ; ⚠ 需要 Inno Setup 6.3 或更高版本(首次版本(2021)起支持 DownloadTemporaryFile / CreateDownloadPage)
 ;
 ; 用法:
