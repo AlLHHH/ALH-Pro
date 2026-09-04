@@ -4418,7 +4418,7 @@ public static class VideoService
             int k = (int)Math.Max(100, bitrateKbps);
             return encoder switch
             {
-                "h264_nvenc" or "hevc_nvenc" => $"-c:v {encoder} -preset p4 -rc vbr -cq 18 -b:v {k}K -maxrate {k}K -bufsize {k * 2}K -pix_fmt yuv420p",
+                "h264_nvenc" or "hevc_nvenc" => $"-c:v {encoder} -preset p6 -rc vbr -cq 18 -b:v {k}K -maxrate {k}K -bufsize {k * 2}K -pix_fmt yuv420p",
                 "h264_amf" or "hevc_amf" => $"-c:v {encoder} -quality quality -rc cbr -b:v {k}K -pix_fmt nv12",
                 "h264_qsv" or "hevc_qsv" => $"-c:v {encoder} -b:v {k}K -pix_fmt yuv420p",
                 "libx265" => $"-c:v libx265 -preset veryfast -b:v {k}K -maxrate {k}K -bufsize {k * 2}K -pix_fmt yuv420p -x265-params threads={th}",
@@ -4427,10 +4427,10 @@ public static class VideoService
         }
         return encoder switch
         {
-            "h264_nvenc" => $"-c:v h264_nvenc -preset p4 -cq {q} -pix_fmt yuv420p",
+            "h264_nvenc" => $"-c:v h264_nvenc -preset p6 -cq {q} -pix_fmt yuv420p",
             "h264_amf" => $"-c:v h264_amf -quality quality -rc cqp -qp_i {q} -qp_p {q} -pix_fmt nv12",   // AMF 必须给 NV12,否则黑屏
             "h264_qsv" => $"-c:v h264_qsv -global_quality {q} -pix_fmt yuv420p",
-            "hevc_nvenc" => $"-c:v hevc_nvenc -preset p4 -cq {q} -pix_fmt yuv420p",
+            "hevc_nvenc" => $"-c:v hevc_nvenc -preset p6 -cq {q} -pix_fmt yuv420p",
             "hevc_amf" => $"-c:v hevc_amf -quality quality -rc cqp -qp_i {q} -qp_p {q} -pix_fmt nv12",
             "hevc_qsv" => $"-c:v hevc_qsv -global_quality {q} -pix_fmt yuv420p",
             "libx265" => $"-c:v libx265 -preset veryfast -crf {q} -pix_fmt yuv420p -x265-params threads={th}",
