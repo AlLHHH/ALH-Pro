@@ -472,7 +472,7 @@ public sealed partial class UpscaleView : UserControl
                 if (exportMode)
                 {
                     // 导出多选模式:右侧显示【复选框】(勾选要导出的预设),替代垃圾桶。默认全选。
-                    var cb = new Microsoft.UI.Xaml.Controls.CheckBox { VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center, IsChecked = true };
+                    var cb = new Microsoft.UI.Xaml.Controls.CheckBox { VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center, IsChecked = false };
                     exportChecks.Add((cur[i], cb));
                     var rowEx = new Grid(); rowEx.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) }); rowEx.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
                     rowEx.Children.Add(name); Grid.SetColumn(name, 0); rowEx.Children.Add(cb); Grid.SetColumn(cb, 1); listView.Items.Add(rowEx);
