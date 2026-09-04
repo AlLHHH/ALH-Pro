@@ -1121,7 +1121,10 @@ public sealed partial class UpscaleView : UserControl
                 var baseName = !string.IsNullOrWhiteSpace(item.CustomName)
                     ? item.CustomName
                     : Path.GetFileNameWithoutExtension(item.Path) + $"_超分{scale}x_{ModelShort(engine)}";
-                var outPath = UniquePath(outDir, baseName + outExt);
+                // 【修复 半成品提前出现】超分/增强先写【临时路径】,整张真正完成后再原子改名到最终文件名。
+                // 否则超分完成、增强进行中时,输出目录已出现未增强的版本(用户看到"还没处理完就生成了")。
+                var finalOut = UniquePath(outDir, baseName + outExt);   // 最终文件名(防重名)
+                var outPath = Path.Combine(EngineService.TempRoot, $"imgup_proc_{Guid.NewGuid():N}{outExt}");   // 处理用临时路径
 
                 string srcPath = item.Path;
                 string? tmpDenoise = null;
@@ -1280,6 +1283,9 @@ public sealed partial class UpscaleView : UserControl
                         Log($"  ⚠ 增强失败(已跳过):{ex.Message}");
                     }
                 }
+                // 整张处理完成(超分+增强都结束)后,才原子移动到输出目录的最终文件名 → 目录只在真正完成时出现成品
+                try { File.Move(outPath, finalOut, true); outPath = finalOut; }
+                catch { /* move 失败(文件被占用等):保留临时路径,继续按当前 outPath 处理 */ }
                 // 输出信息:分辨率 / 大小
                 item.Info = await Task.Run(() =>
                 {
