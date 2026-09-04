@@ -1121,6 +1121,9 @@ public static class VideoService
             }
             else if (doUpscale)
             {
+                // 【进度动态分段】超分起点随"是否补帧"调整:补帧时超分从45爬(补帧占10-45);
+                // 不补帧时从15爬(拆帧后直接超分,不空跳到45,进度条不"猛地拉一大截")。
+                int upBase = frameInterp ? 45 : 15;
                 // 1x超分:记录原始帧尺寸(拆帧/补帧后的帧尺寸),供 2x 超分后缩回
                 int? origW = null, origH = null;
                 if (upscaleShrink1x)
@@ -1194,7 +1197,7 @@ public static class VideoService
                 {
                     ct.ThrowIfCancellationRequested();
                     // 处理过程也做降温休息检查(单个长视频也能中途休息;按批检查,高频批时开销极小)
-                    await SafeRender.RestIfDueAsync(45 + (int)(45.0 * b / Math.Max(1, total)), progress, ct);
+                    await SafeRender.RestIfDueAsync(upBase + (int)((90 - upBase) * b / Math.Max(1, total)), progress, ct);
                     if (pauseWait != null) await pauseWait();   // 暂停:当前超分批跑完即停(几秒~十几秒)
                     int start = b;
                     int end = Math.Min(total, b + batchSize);
@@ -1209,7 +1212,7 @@ public static class VideoService
                             Directory.CreateDirectory(batchOut);
                             for (int i = start; i < end; i++)
                                 File.Copy(upFiles[i], Path.Combine(batchIn, Path.GetFileName(upFiles[i])), true);
-                            progress?.Report((45 + (int)(45.0 * start / total),
+                            progress?.Report((upBase + (int)((90 - upBase) * start / total),
                                 $"超分 已处理 {start} 帧 / 共 {total} 帧(批次 {start / batchSize + 1}/{batches})..."));
                             // 视频超分:50系/无独显/手动CPU + Real-ESRGAN/waifu2x + ONNX 模型在 → 走 ONNX 逐帧(不走会崩的 ncnn-vulkan)
                             string? onnxModelPath = null;
@@ -1231,7 +1234,7 @@ public static class VideoService
                                 {
                                     AppLogger.Info($"✅ 自检:视频超分({engine})已按当前显卡自动改用稳定引擎(直接处理,无需设置)");
                                 }
-                                progress?.Report((45 + (int)(45.0 * start / total),
+                                progress?.Report((upBase + (int)((90 - upBase) * start / total),
                                     $"超分(稳定引擎) 批次 {start / batchSize + 1}/{batches}..."));
                                 await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
                                     upGpu < 0 ? (upOnnxDml ? -2 : -1) : -2, progress, ct, onnxModelPath,
@@ -1264,7 +1267,7 @@ public static class VideoService
                                     : engine == "waifu2x" ? EsrganOnnxService.FindWaifu2xModel() : null;
                                 if (onnxB != null)
                                 {
-                                    progress?.Report((45 + (int)(45.0 * start / total),
+                                    progress?.Report((upBase + (int)((90 - upBase) * start / total),
                                         $"⚠ 检测到黑帧(批次 {start}~{end - 1},GPU 输出异常),该批改用 ONNX DirectML 引擎重处理..." + StageElapsed()));
                                     AppLogger.Info($"降级:批次 {start}~{end - 1} 输出黑帧(ncnn-vulkan GPU 队列异常),改用 ONNX DirectML({Path.GetFileNameWithoutExtension(onnxB)})");
                                     try { Directory.Delete(batchOut, true); } catch { }
@@ -1277,7 +1280,7 @@ public static class VideoService
                                     // ONNX(DirectML)重处理仍黑(该卡 DirectML 也异常)→ 再用 ncnn-CPU 兜底(慢但绝不出黑)
                                     if (batchOutDirHasBlack(batchOut))
                                     {
-                                        progress?.Report((45 + (int)(45.0 * start / total),
+                                        progress?.Report((upBase + (int)((90 - upBase) * start / total),
                                             $"⚠ ONNX DirectML 仍黑(批次 {start}~{end - 1}),该批改用 CPU 兜底..." + StageElapsed()));
                                         AppLogger.Info($"降级:批次 {start}~{end - 1} ONNX(DirectML)仍黑,改用 ncnn-CPU 兜底");
                                         try { Directory.Delete(batchOut, true); } catch { }
@@ -1294,7 +1297,7 @@ public static class VideoService
                                 else
                                 {
                                     // 无 ONNX 模型:黑帧直接 ncnn-CPU 兜底(Catch 吞失败,避免中断)
-                                    progress?.Report((45 + (int)(45.0 * start / total),
+                                    progress?.Report((upBase + (int)((90 - upBase) * start / total),
                                         $"⚠ 检测到黑帧(批次 {start}~{end - 1},GPU 输出异常),该批改用 CPU 重处理..." + StageElapsed()));
                                     AppLogger.Info($"降级:批次 {start}~{end - 1} 输出黑帧(ncnn-vulkan GPU 队列异常),无 ONNX 模型,已用 ncnn-CPU 重处理该批");
                                     try
@@ -1311,7 +1314,7 @@ public static class VideoService
                                 }
                             }
                             Interlocked.Add(ref doneFrames, end - start);
-                            progress?.Report((45 + (int)(45.0 * doneFrames / total),
+                            progress?.Report((upBase + (int)((90 - upBase) * doneFrames / total),
                                 $"超分 已处理 {doneFrames} 帧 / 共 {total} 帧"));
                             if (fastMode)
                             {
@@ -1335,7 +1338,7 @@ public static class VideoService
                             string head = batchEx.Message.Split('\n')[0];
                             if (head.Length > 90) head = head[..90];
                             AppLogger.Warn($"⚠ 超分批次 {start}~{end - 1} 失败({head})——该批回退原帧,继续(不中断任务)");
-                            progress?.Report((45 + (int)(45.0 * start / total),
+                            progress?.Report((upBase + (int)((90 - upBase) * start / total),
                                 $"⚠ 超分批次 {start}~{end - 1} 异常({head}),该批回退原帧,继续处理..."));
                             // 清空本批半成品,回退原帧(未超分帧直接复用源帧;batchOut 临时目录由任务收尾统一清理)
                             for (int i = start; i < end; i++)
@@ -1344,7 +1347,7 @@ public static class VideoService
                                 catch { }
                             }
                             Interlocked.Add(ref doneFrames, end - start);
-                            progress?.Report((45 + (int)(45.0 * doneFrames / total),
+                            progress?.Report((upBase + (int)((90 - upBase) * doneFrames / total),
                                 $"超分 已处理 {doneFrames} 帧 / 共 {total} 帧(部分回退原帧)"));
                         }
                         finally
