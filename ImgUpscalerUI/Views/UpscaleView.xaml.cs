@@ -738,6 +738,40 @@ public sealed partial class UpscaleView : UserControl
         DehazeSlider.Value = 0;
     }
 
+    /// <summary>图片页「重置所有参数」:恢复全部默认(算法/模型/倍率/降噪/TTA/格式/增强/预处理降噪)。</summary>
+    private void ImgResetBtn_Click(object sender, RoutedEventArgs e)
+    {
+        AppLogger.UserAction("图片:点击「重置所有参数」");
+        _suppressEvents = true;
+        try
+        {
+            ModeRadios.SelectedIndex = 0;          // 动漫(waifu2x)
+            ModelCombo.SelectedIndex = 0;
+            ScaleRadios.SelectedIndex = 0;         // 1x超分
+            NoiseCombo.SelectedIndex = 0;
+            TtaCheck.IsChecked = false;
+            FmtCombo.SelectedIndex = 0;            // JPG
+            RefreshQualityCombo();
+            ImgQualityCombo.SelectedIndex = 2;     // 默认(推荐)
+            PreDenoiseCheck.IsChecked = false;
+            DenoiseLevelCombo.SelectedIndex = 0;
+            // 增强滑块
+            SharpenSlider.Value = 0;
+            DetailSlider.Value = 50;
+            DetailEnhanceSlider.Value = 0;
+            ClaritySlider.Value = 0;
+            DeblurSlider.Value = 0;
+            UsmSlider.Value = 0;
+            EdgeSlider.Value = 0;
+            DenoiseSlider.Value = 0;
+            AaSlider.Value = 0;
+            DehazeSlider.Value = 0;
+        }
+        finally { _suppressEvents = false; }
+        SaveSettings();
+        Log("已重置所有参数为默认值");
+    }
+
     /// <summary>高级(TTA)折叠展开:默认收起,点按钮展开(与视频页「高级参数」交互一致)。</summary>
     private void HighQualityToggleBtn_Click(object sender, RoutedEventArgs e)
     {
