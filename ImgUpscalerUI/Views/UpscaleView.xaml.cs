@@ -316,7 +316,7 @@ public sealed partial class UpscaleView : UserControl
         if (SpeedHint != null)
         {
             var slow = new System.Collections.Generic.List<string>();
-            if (TtaCheck.IsChecked == true) slow.Add("高质量 TTA");
+            if (TtaCheck.IsChecked == true) slow.Add("高级 TTA");
             if (ScaleRadios.SelectedIndex >= 2) slow.Add($"高倍率({ScaleRadios.SelectedIndex switch { 2 => "3x", _ => "4x" }})");
             bool enh = (int)SharpenSlider.Value > 0 || (int)DetailEnhanceSlider.Value > 0
                 || (int)DenoiseSlider.Value > 0 || (int)AaSlider.Value > 0 || (int)DehazeSlider.Value > 0

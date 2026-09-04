@@ -99,7 +99,7 @@
                             Click="HighQualityToggleBtn_Click"
                             ToolTipService.ToolTip="高级:反复推演,细节更稳更清晰。⚠ 开启后会严重增加导出时间(约 2~3 倍)"/>
                     <StackPanel x:Name="HighQualityPanel" Spacing="8" Margin="0,8,0,4" Visibility="Collapsed">
-                        <CheckBox x:Name="TtaCheck" Content="开启高质量(反复推演,更清晰)"
+                        <CheckBox x:Name="TtaCheck" Content="开启高级增强(反复推演,更清晰)"
                                   ToolTipService.ToolTip="高级:反复推演,细节更稳更清晰。⚠ 开启后会严重增加导出时间(约 2~3 倍)"/>
                         <TextBlock Text="⚠ 开启后会严重增加导出时间" Style="{StaticResource HintText}" TextWrapping="Wrap"/>
                     </StackPanel>
@@ -119,7 +119,7 @@
                                 ToolTipService.ToolTip="把所有增强参数恢复默认"/>
                     </Grid>
                     <StackPanel Spacing="2">
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="去雾:去除画面灰蒙蒙(雾霾/逆光发灰),提对比增饱和,画面通透">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="去雾:暗通道先验去雾,去除雾霾/逆光灰蒙,还原通透色彩(对真雾霾/灰蒙蒙图效果好)">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -179,7 +179,7 @@
                             <TextBlock x:Name="UsmValue" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="保留细节:自适应锐化,平坦区不动,噪点少">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="保留细节:局部对比度增强,提升细节立体感,不动整体影调(比「锐化」更自然)">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -191,7 +191,7 @@
                             <TextBlock x:Name="DetailValue" Grid.Column="2" Text="50" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="细节增强:强力拉出毛发/纹理等细小细节(比「保留细节」更猛,可能略放大噪点)">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="细节增强:高通提取毛发/纹理等微细节(温和,不易放大噪点)">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -203,7 +203,7 @@
                             <TextBlock x:Name="DetailEnhanceValue" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="去模糊:减轻轻微模糊/对焦不实(过大会发灰)">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="去模糊:理查森-露西反卷积,真正复原轻微运动/对焦模糊(过大可能出振铃/发灰)">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
