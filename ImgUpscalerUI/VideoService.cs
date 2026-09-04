@@ -2150,11 +2150,10 @@ public static class VideoService
         {
             if (IsV4Model(interpModel))
             {
-                // v4 架构:支持 -n 自定义目标帧数 + -s 时间步。
+                // v4 架构:支持 -n 自定义目标帧数(时间步 -s 在目录模式下被引擎忽略,已撤掉该功能)。
                 // B 方案(原帧率×倍率):全局目标 = (原帧数-1)×倍率+1(末段由主流程传入 globalTarget 补足),
                 // 保证 Σ各段 = 全局目标、最后锚点帧落在最后一帧,输出帧率=原帧率×倍率、时长=原、不变速。
                 var inv = System.Globalization.CultureInfo.InvariantCulture;
-                var ts = timeStep is > 0 and <= 1 ? timeStep.Value.ToString("0.##", inv) : "0.5";
                 int targetFrames;
                 // 关键修复(源码验证):rife -n 是【整个序列的总目标帧数】,目录模式下 -s 被忽略、时间步按帧索引均分;
                 // -n 必须是输入帧数的【整数倍】,否则帧间距不均匀 → "全程轻微漏帧/judder"(用户实测症状)。
@@ -2172,10 +2171,8 @@ public static class VideoService
                 }
                 finalOut = Path.Combine(workDir, $"seg_{start}_{end}_out");
                 Directory.CreateDirectory(finalOut);
-                // 【修复 时间步 no-op】ts 早已算出却从未写入命令(目录模式下引擎可能忽略 -s,但显式传入是正确意图;
-                // 若引擎/版本支持则真正生效)。此前 0.05/0.5/0.95 输出完全相同。
                 await RunRifeAsync(
-                    $"-i \"{segIn}\" -o \"{finalOut}\" -n {targetFrames} -f \"frame_%06d.png\" -m {interpModel} -g {gpuArg} -s {ts}{ttaArgs}{SafeRender.GetEngineThreadArgs()}",
+                    $"-i \"{segIn}\" -o \"{finalOut}\" -n {targetFrames} -f \"frame_%06d.png\" -m {interpModel} -g {gpuArg}{ttaArgs}{SafeRender.GetEngineThreadArgs()}",
                     gpuId, targetFrames, finalOut);
             }
             else

@@ -69,15 +69,13 @@ public static class EsrganOnnxService
     }
 
     /// <summary>按所选 Real-ESRGAN 模型名解析对应的 ONNX 模型路径:动漫模型(名字含 anime,如 animevideov3/x4plus-anime)
-    /// → 优先动漫 ONNX(保持动漫画质),无则通用;通用模型(x4plus)→ 通用 ONNX。
-    /// 视频/图片多处 ONNX 兜底共用,避免与"只认 animevideo"的旧判断不一致导致动漫画质被降级。</summary>
+    /// → 优先动漫 ONNX(保持动漫画质),无则通用;通用模型(x4plus)→ 通用 ONNX,若无通用 ONNX 则回退动漫 ONNX
+    /// (风险设备上"能用"优先于"画质精确",避免硬走会崩的 ncnn-GPU)。</summary>
     public static string? ResolveEsrganOnnxPath(string model)
     {
-        // 动漫模型:realesr-animevideov3 与 realesrgan-x4plus-anime 均含 "anime"。
-        // 通用 realesrgan-x4plus 不含 anime(不会误判),仍走通用。
         if (model.Contains("anime", StringComparison.OrdinalIgnoreCase))
             return FindAnimeVideoModel() ?? FindModel();
-        return FindModel();
+        return FindModel() ?? FindAnimeVideoModel();
     }
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, int), InferenceSession> _sessions = new();

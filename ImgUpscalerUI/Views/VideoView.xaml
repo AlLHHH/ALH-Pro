@@ -578,22 +578,6 @@
                             ToolTipService.ToolTip="进阶参数,一般不用动"/>
                     <StackPanel x:Name="AdvancedPanel" Spacing="10" Margin="0,8,0,4" Visibility="Collapsed">
                             <TextBlock Text="光流调整" Style="{StaticResource SectionTitle}"/>
-                            <Grid ColumnSpacing="8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="时间步" VerticalAlignment="Center" FontSize="12"/>
-                                <Slider x:Name="TimeStepSlider" ToolTipService.ToolTip="时间步:0.5=中间帧居中;调大更偏向下一帧,可缓解果冻(仅「通用画质」模型生效)" Grid.Column="1" Minimum="0.05" Maximum="0.95"
-                                        StepFrequency="0.05" ValueChanged="Slider_Changed"/>
-                                <TextBlock x:Name="TimeStepVal" Grid.Column="2" Text="0.50" MinWidth="36"
-                                           HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
-                                <Button Grid.Column="3" Content="重置" FontSize="10" Padding="10,4"
-                                        Click="ResetTimeStepBtn_Click"
-                                        ToolTipService.ToolTip="时间步恢复默认 0.5"/>
-                            </Grid>
                             <CheckBox x:Name="TtaCheck" Content="开启高质量(减少运动伪影,更清晰)" ToolTipService.ToolTip="高质量(TTA):反复推演减少补帧的跳步/扭曲伪影。⚠ 开启后会严重增加导出时间(约慢 5~7 倍)。默认关闭(追求速度);画质优先可手动开启"
                                       Checked="Options_Changed" Unchecked="Options_Changed"/>
                             <TextBlock Text="⚠ 开启后会严重增加导出时间" Style="{StaticResource HintText}" TextWrapping="Wrap"/>
