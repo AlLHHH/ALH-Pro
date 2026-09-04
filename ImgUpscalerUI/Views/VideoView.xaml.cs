@@ -2860,14 +2860,24 @@ public sealed partial class VideoView : UserControl
                     ow = (int)Math.Round(sw * mult); oh = (int)Math.Round(sh * mult);
                 }
             }
-            // 帧率:优先目标帧率框;否则 源帧率×(是否补帧 ? 补帧倍率 : 1)
+            // 帧率:优先目标帧率框;否则 源帧率×(补帧倍率)。
             double? srcFps = null;
             try { if (double.TryParse(VideoService.ProbeFps(it.Path), NumberStyles.Float, inv, out var pf) && pf > 0) srcFps = pf; } catch { }
             double? targetFps = (TargetFpsCheck.IsChecked == true
                 && double.TryParse(TargetFpsBox.Text, NumberStyles.Float, inv, out var tf) && tf > 0) ? tf : null;
             bool interp = InterpToggle.IsChecked == true;
             int interpScale = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, _ => 2 };
-            double outFps = targetFps ?? ((srcFps ?? 0) * (interp ? interpScale : 1));
+            // 帧率基准:0=真实时间轴(源帧率×倍率) 1=匀速(内容帧率×倍率)。匀速模式用内容帧率,不是源帧率。
+            bool uniform = FpsBaseCombo.SelectedIndex == 1;
+            double baseFps = srcFps ?? 0;
+            if (uniform)
+            {
+                // 内容帧率:优先用视频项已估算的 ContentFps(去重后),否则手动 ContentFpsBox,再回退源帧率
+                if (it.ContentFps > 0.5) baseFps = it.ContentFps;
+                else if (double.TryParse(ContentFpsBox.Text, NumberStyles.Float, inv, out var cf) && cf > 0) baseFps = cf;
+                else if (srcFps is > 0) baseFps = srcFps.Value;
+            }
+            double outFps = targetFps ?? (baseFps * (interp ? interpScale : 1));
             // 组装文本
             var parts = new System.Collections.Generic.List<string>();
             if (ow > 0 && oh > 0)
@@ -2875,7 +2885,12 @@ public sealed partial class VideoView : UserControl
             else if (sw > 0 && sh > 0)
                 parts.Add($"输出: 保持 {sw}×{sh}");
             if (outFps > 0)
-                parts.Add($"{outFps:0.##}fps{(targetFps != null ? "(指定)" : interp ? $"({interpScale}x补帧)" : "")}");
+            {
+                var fpsNote = targetFps != null ? "(指定)" : uniform
+                    ? $"({interpScale}x补帧·匀速)"
+                    : interp ? $"({interpScale}x补帧)" : "";
+                parts.Add($"{outFps:0.##}fps{fpsNote}");
+            }
             if (parts.Count == 0)
             {
                 VideoOutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
