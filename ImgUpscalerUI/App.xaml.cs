@@ -235,6 +235,24 @@ namespace ALHPro
         [DllImport("user32.dll")]
         private static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, MonitorEnumProc lpfnEnum, IntPtr dwData);
 
+        // 【修复 最小化/恢复时顶部变白、标题栏三键偏移】PreferredTheme 不能可靠地让系统标题栏始终深色
+        // (最小化动画/恢复瞬间系统仍可能用浅色标题栏 → 顶部闪白)。DWM 沉浸式深色属性(attribute 20,
+        // Win10 2004+/Win11 通用,WinUI3 底层就走这条)直接强制标题栏与三键用深色,跨版本可靠。
+        // (DwmSetWindowAttribute 已在下方声明,复用即可)
+        private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+
+        /// <summary>强制窗口标题栏深色(背景 + 最小化/最大化/关闭三键)。失败无碍,忽略。</summary>
+        private static void ForceDarkTitleBar(IntPtr hwnd)
+        {
+            try
+            {
+                int dark = 1;
+                int hr = DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref dark, sizeof(int));
+                if (hr != 0) AppLogger.Info($"标题栏深色: DwmSetWindowAttribute 返回 0x{hr:X8}");
+            }
+            catch { }
+        }
+
         // WM_SHOWWINDOW 钩子(与 WinUIEx 同款):窗口显示流程开始的瞬间应用保存的窗口状态。
         // 实测:Activate 前 SetWindowPlacement 会被系统显示流程重排(窗口被居中),而 WM_SHOWWINDOW
         // 时机正好在窗口可见之前,应用后窗口一呈现就是正确位置/大小/最大化状态。
@@ -462,6 +480,8 @@ namespace ALHPro
                 try { window.AppWindow.TitleBar.PreferredTheme = Microsoft.UI.Windowing.TitleBarTheme.Dark; } catch { }
                 // 应用级主题也强制深色(与背景/正文一致)
                 try { ((FrameworkElement)window.Content).RequestedTheme = ElementTheme.Dark; } catch { }
+                // 强制系统标题栏+F3键深色:PreferredTheme 之外再走 DWM 属性,修最小化/恢复时顶部闪白、三键偏移
+                ForceDarkTitleBar(WinRT.Interop.WindowNative.GetWindowHandle(window));
             }
             catch { }
 

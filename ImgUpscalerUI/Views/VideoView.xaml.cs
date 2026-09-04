@@ -1661,7 +1661,7 @@ public sealed partial class VideoView : UserControl
                         var cb = new Microsoft.UI.Xaml.Controls.CheckBox
                         {
                             VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
-                            IsChecked = true,   // 默认全选,便于"勾选导出"
+                            IsChecked = false,   // 默认不选,由用户勾选要导出的预设
                         };
                         exportChecks.Add((cur[i], cb));
                         Grid.SetColumn(cb, 1);
