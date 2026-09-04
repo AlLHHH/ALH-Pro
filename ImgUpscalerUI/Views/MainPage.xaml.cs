@@ -821,32 +821,24 @@ public sealed partial class MainPage : Page
             if (hasNew)
             {
                 updateResult.Inlines.Clear();
-                var hyper = new Microsoft.UI.Xaml.Documents.Hyperlink
+                updateResult.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = $"发现新版本 {tag} · " });
+                // GitHub下载(跳 GitHub Release 页)
+                var ghLink = new Microsoft.UI.Xaml.Documents.Hyperlink
                 {
                     NavigateUri = new Uri(UpdateChecker.ReleasePageUrl),
                     UnderlineStyle = Microsoft.UI.Xaml.Documents.UnderlineStyle.Single,
                 };
-                hyper.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = $"发现新版本 {tag},点此打开下载页" });
-                updateResult.Inlines.Add(hyper);
-                // 网盘完整版下载(紧跟"发现新版本",点击跳转百度网盘;国内最快/含模型)
-                var netDiskLink = new Microsoft.UI.Xaml.Controls.HyperlinkButton
+                ghLink.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "GitHub下载" });
+                updateResult.Inlines.Add(ghLink);
+                updateResult.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "   " });
+                // 网盘下载(跳百度网盘)
+                var ndLink = new Microsoft.UI.Xaml.Documents.Hyperlink
                 {
-                    Content = "网盘下载完整版(含全部引擎+模型,国内最快)",
-                    FontSize = 11,
-                    Padding = new Microsoft.UI.Xaml.Thickness(0, 2, 0, 0),
-                    HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
+                    NavigateUri = new Uri(NetDiskUrl),
+                    UnderlineStyle = Microsoft.UI.Xaml.Documents.UnderlineStyle.Single,
                 };
-                netDiskLink.Click += (_, _) => OpenNetDisk();
-                content.Children.Add(netDiskLink);
-                // 操作指引(追加在网盘链接下方;动态插入 content)
-                var guide = new TextBlock
-                {
-                    FontSize = 10,
-                    Opacity = 0.65,
-                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-                    Text = $"怎么更新:\n1. 点上方链接打开 GitHub Release 页面;打不开就用加速器/镜像,或找软件群/网盘获取安装包。\n2. 下载「ALHPro_v{tag.TrimStart('v')}_Setup.exe」(安装包;别下源码 zip)。\n3. 双击安装,等完成即可——设置/记录都保留,可手动卸载旧版。",
-                };
-                content.Children.Add(guide);
+                ndLink.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "网盘下载" });
+                updateResult.Inlines.Add(ndLink);
             }
             else
             {
