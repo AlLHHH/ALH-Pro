@@ -32,6 +32,9 @@ public static class VideoService
     }
 
     public static string? FfmpegPath => FindInEngines("ffmpeg", "ffmpeg.exe");
+    /// <summary>备用 ffmpeg(如 8.x,用于 50 系/Blackwell NVENC 硬编在旧 7.1 上失败时的兜底)。
+    /// 放 engines/ffmpeg8/ 目录;默认不存在则返回 null,完全不影响现有逻辑。</summary>
+    public static string? BackupFfmpegPath => FindInEngines("ffmpeg8", "ffmpeg.exe");
     public static string? RifePath => FindInEngines("rife", "rife-ncnn-vulkan.exe");
 
     /// <summary>组件状态(界面显示用)。</summary>
@@ -1745,7 +1748,9 @@ public static class VideoService
                     // 硬件编码失败(驱动/不支持)或输出损坏:
                     // ① 先【去掉 -preset 用默认档】再试一次 GPU —— 很多 50 系(Blackwell)报 exit -22 就是某个 preset 参数被拒,
                     //    去掉 preset 就能打开硬件编码;避免直接掉进慢几十倍的 CPU 软编。
-                    // ② 仍失败才回退 CPU(限线程,不跑满 CPU);用户选 H.265 回退 libx265,否则 libx264。
+                    // ② 仍失败 → 若存在【备用 ffmpeg(engines/ffmpeg8/,如 8.x)】,用备用 ffmpeg 的 NVENC 再试一次
+                    //    (新版 ffmpeg 对 Blackwell 适配更全,可能旧 7.1 打不开的 NVENC 它能打开)。
+                    // ③ 仍失败才回退 CPU(限线程,不跑满 CPU);用户选 H.265 回退 libx265,否则 libx264。
                     bool retriedNoPreset = false;
                     if (encoder.StartsWith("h264_nvenc", StringComparison.OrdinalIgnoreCase)
                         || encoder.StartsWith("hevc_nvenc", StringComparison.OrdinalIgnoreCase))
@@ -1766,9 +1771,29 @@ public static class VideoService
                             AppLogger.Info($"⚠ 硬件编码({encoder})去掉 -preset 仍失败(原因:{ex2.Message.Split('\n')[0]})");
                         }
                     }
-                    if (retriedNoPreset)
+                    bool backupOk = false;
+                    if (!retriedNoPreset && BackupFfmpegPath != null)
                     {
-                        // 成功走默认档 GPU,不需要回退 CPU(继续下面校验/改名)
+                        // 用备用 ffmpeg(8.x)硬编再试(主 ffmpeg 打不开的 NVENC,新版可能打开)
+                        try
+                        {
+                            var bak = BackupFfmpegPath;
+                            AppLogger.Info($"⚠ 主 ffmpeg 硬编({encoder})仍失败,改用备用 ffmpeg({Path.GetFileName(Path.GetDirectoryName(bak))})再试 GPU...");
+                            await RunAsync(bak, muxBase + muxArgs, progress, ct, "编码", encTotal).ConfigureAwait(false);
+                            if (await ValidateVideoFileAsync(outTmp))
+                            {
+                                backupOk = true;
+                                AppLogger.Info($"✅ 备用 ffmpeg 硬编({encoder})成功(GPU 硬编)");
+                            }
+                        }
+                        catch (Exception ex3)
+                        {
+                            AppLogger.Info($"⚠ 备用 ffmpeg 硬编({encoder})仍失败(原因:{ex3.Message.Split('\n')[0]})");
+                        }
+                    }
+                    if (retriedNoPreset || backupOk)
+                    {
+                        // 成功走 GPU(主 ffmpeg 默认档,或备用 ffmpeg),不需要回退 CPU(继续下面校验/改名)
                     }
                     else
                     {

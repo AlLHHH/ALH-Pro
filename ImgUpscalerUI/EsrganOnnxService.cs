@@ -471,8 +471,26 @@ public static class EsrganOnnxService
         InferenceSession? sessionOverride = null)
     {
         int inW = src.Width, inH = src.Height;
+        // 【修复 448x449 BroadcastIterator】waifu2x-cunet2x ONNX 模型要求输入宽高必须为偶数且 ≥38,
+        // 否则内部 Add 节点广播轴错配直接崩溃(真机 CPU 无 Vulkan/50系走 ONNX 已复现)。
+        // 分块主区块 512 无碍,但奇/小图(如 448x449)或边缘小块会炸。
+        // 这里把输入垫到安全尺寸(右/下边缘复制),输出由上层 SaveScaled/贴回按 ow,oh 缩放,视觉无感。
+        System.Drawing.Bitmap? padSrc = null;
+        if (modelPath.Contains("waifu2x", StringComparison.OrdinalIgnoreCase))
+        {
+            int pw = inW, ph = inH;
+            if ((pw & 1) == 1) pw++;
+            if ((ph & 1) == 1) ph++;
+            if (pw < 38) pw = 38;
+            if (ph < 38) ph = 38;
+            if (pw != inW || ph != inH)
+            {
+                padSrc = PadEdgeReplicate(src, pw, ph);
+                inW = pw; inH = ph;
+            }
+        }
         var pixels = new float[1 * 3 * inH * inW];
-        FillPixelArray(src, pixels, inW, inH);
+        FillPixelArray(padSrc ?? src, pixels, inW, inH);
         var inputTensor = new DenseTensor<float>(pixels, new[] { 1, 3, inH, inW });
 
         // waifu2x 模型输入名是 x(实测 ONNX 元数据);其余(esrgan/cugan/animevideo)是 input
@@ -595,9 +613,38 @@ public static class EsrganOnnxService
         }
         finally
         {
+            padSrc?.Dispose();
             if (results != null)
                 foreach (var r in results) r.Dispose();
         }
+    }
+
+    /// <summary>把位图垫到指定尺寸并做边缘复制(不是拉伸):多余行/列用最边缘像素补,确保模型输入对齐。</summary>
+    private static System.Drawing.Bitmap PadEdgeReplicate(System.Drawing.Bitmap src, int pw, int ph)
+    {
+        int sw = src.Width, sh = src.Height;
+        if (sw == pw && sh == ph) return (System.Drawing.Bitmap)src.Clone();
+        var dst = new System.Drawing.Bitmap(pw, ph, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+        using (var g = System.Drawing.Graphics.FromImage(dst))
+        {
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+            // 先画原图(左上角)
+            g.DrawImage(src, new System.Drawing.Rectangle(0, 0, sw, sh),
+                new System.Drawing.Rectangle(0, 0, sw, sh), System.Drawing.GraphicsUnit.Pixel);
+            // 右侧多余列:复制最右列
+            if (pw > sw)
+                g.DrawImage(src, new System.Drawing.Rectangle(sw, 0, pw - sw, sh),
+                    new System.Drawing.Rectangle(sw - 1, 0, 1, sh), System.Drawing.GraphicsUnit.Pixel);
+            // 底部多余行:复制最下行
+            if (ph > sh)
+                g.DrawImage(src, new System.Drawing.Rectangle(0, sh, sw, ph - sh),
+                    new System.Drawing.Rectangle(0, sh - 1, sw, 1), System.Drawing.GraphicsUnit.Pixel);
+            // 右下角:复制最右下像素
+            if (pw > sw && ph > sh)
+                g.DrawImage(src, new System.Drawing.Rectangle(sw, sh, pw - sw, ph - sh),
+                    new System.Drawing.Rectangle(sw - 1, sh - 1, 1, 1), System.Drawing.GraphicsUnit.Pixel);
+        }
+        return dst;
     }
 
     private static void FillPixelArray(System.Drawing.Bitmap src, float[] tensor, int w, int h)
