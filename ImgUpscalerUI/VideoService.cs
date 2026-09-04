@@ -1742,16 +1742,45 @@ public static class VideoService
                 }
                 catch (Exception ex) when (encoder != "libx264" && encoder != "libx265")
                 {
-                    // 硬件编码失败(驱动/不支持)或输出损坏时回退轻量 CPU 编码(限线程,不跑满 CPU);
-                    // 用户选 H.265 时回退到 libx265,否则回退 libx264
-                    BrokenHwEncoders.Add(encoder);
-                    var cpuEncoder = encoder.StartsWith("hevc", StringComparison.OrdinalIgnoreCase) ? "libx265" : "libx264";
-                    AppLogger.Info($"降级:硬件编码({encoder})不可用(原因:{ex.Message}),改用 CPU 编码({cpuEncoder})");
-                    progress?.Report((96, $"⚠ 硬件编码({encoder})不可用,改用轻量 CPU 编码({cpuEncoder});原因:{ex.Message}"));
-                    AppLogger.Info($"⚠ 硬件编码({encoder})不可用,改用轻量 CPU 编码({cpuEncoder});原因:{ex.Message}");
-                    await RunAsync(ffmpeg,
-                        muxBase + $"{videoMap}{audioPart} {EncoderArgs(cpuEncoder, quality, bitrateKbps)} {vfArg}{fastFlag} \"{outTmp}\"",
-                        progress, ct, "编码", encTotal);
+                    // 硬件编码失败(驱动/不支持)或输出损坏:
+                    // ① 先【去掉 -preset 用默认档】再试一次 GPU —— 很多 50 系(Blackwell)报 exit -22 就是某个 preset 参数被拒,
+                    //    去掉 preset 就能打开硬件编码;避免直接掉进慢几十倍的 CPU 软编。
+                    // ② 仍失败才回退 CPU(限线程,不跑满 CPU);用户选 H.265 回退 libx265,否则 libx264。
+                    bool retriedNoPreset = false;
+                    if (encoder.StartsWith("h264_nvenc", StringComparison.OrdinalIgnoreCase)
+                        || encoder.StartsWith("hevc_nvenc", StringComparison.OrdinalIgnoreCase))
+                    {
+                        try
+                        {
+                            var noPresetArgs = System.Text.RegularExpressions.Regex.Replace(muxArgs, @"\s+-preset\s+\w+", "");
+                            AppLogger.Info($"⚠ 硬件编码({encoder})失败,去掉 -preset 用默认档再试一次 GPU...");
+                            await RunAsync(ffmpeg, muxBase + noPresetArgs, progress, ct, "编码", encTotal).ConfigureAwait(false);
+                            if (await ValidateVideoFileAsync(outTmp))
+                            {
+                                retriedNoPreset = true;   // 用默认档 GPU 成功了
+                                AppLogger.Info($"✅ 硬件编码({encoder})去掉 -preset 后成功(默认档 GPU 硬编)");
+                            }
+                        }
+                        catch (Exception ex2)
+                        {
+                            AppLogger.Info($"⚠ 硬件编码({encoder})去掉 -preset 仍失败(原因:{ex2.Message.Split('\n')[0]})");
+                        }
+                    }
+                    if (retriedNoPreset)
+                    {
+                        // 成功走默认档 GPU,不需要回退 CPU(继续下面校验/改名)
+                    }
+                    else
+                    {
+                        // 回退 CPU
+                        BrokenHwEncoders.Add(encoder);
+                        var cpuEncoder = encoder.StartsWith("hevc", StringComparison.OrdinalIgnoreCase) ? "libx265" : "libx264";
+                        AppLogger.Info($"降级:硬件编码({encoder})不可用(原因:{ex.Message}),改用 CPU 编码({cpuEncoder})");
+                        progress?.Report((96, $"⚠ 硬件编码({encoder})不可用,改用轻量 CPU 编码({cpuEncoder});原因:{ex.Message}"));
+                        await RunAsync(ffmpeg,
+                            muxBase + $"{videoMap}{audioPart} {EncoderArgs(cpuEncoder, quality, bitrateKbps)} {vfArg}{fastFlag} \"{outTmp}\"",
+                            progress, ct, "编码", encTotal);
+                    }
                 }
                 if (!await ValidateVideoFileAsync(outTmp))
                     throw new InvalidOperationException("视频合成失败:输出文件无效(无法被解码)");
