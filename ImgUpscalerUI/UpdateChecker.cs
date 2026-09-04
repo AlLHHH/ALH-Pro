@@ -36,6 +36,13 @@ public static class UpdateChecker
     /// <summary>检查结果:null=全部端点失败(网络/超时/接口异常);HasNew=true 有新版。</summary>
     public static async Task<(bool HasNew, string LatestTag, string LatestVersion)?> CheckAsync()
     {
+        // 【测试开关】ALH_FORCE_UPDATE=1:强制模拟"检测到新版本"(不联网),用于本机测试更新弹窗/检查更新页面的网盘链接。
+        // 正常用户不设置此变量,无任何影响。
+        if (Environment.GetEnvironmentVariable("ALH_FORCE_UPDATE") == "1")
+        {
+            AppLogger.Info("[更新] 测试模式:强制视为有新版本(ALH_FORCE_UPDATE=1)");
+            return (true, "v9.9.9-test", "9.9.9");
+        }
         foreach (var url in Endpoints)
         {
             try

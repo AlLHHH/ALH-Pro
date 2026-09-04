@@ -108,8 +108,9 @@
                                        TextTrimming="CharacterEllipsis" TextWrapping="Wrap"/>
                         </StackPanel>
                         <Button x:Name="UpdateBarNetDiskBtn" Grid.Column="1" Content="网盘下载" FontSize="12"
-                                Padding="14,4" Margin="10,0,8,0" Click="UpdateBarNetDisk_Click"/>
-                        <Button x:Name="UpdateBarGoBtn" Grid.Column="2" Content="去下载" FontSize="12"
+                                Padding="14,4" Margin="10,0,8,0" Click="UpdateBarNetDisk_Click"
+                                Background="Transparent" BorderBrush="#55FFFFFF"/>
+                        <Button x:Name="UpdateBarGoBtn" Grid.Column="2" Content="GitHub下载" FontSize="12"
                                 Padding="14,4" Margin="0,0,8,0" Style="{StaticResource AccentButtonStyle}"
                                 Click="UpdateBarGo_Click"/>
                         <Button Grid.Column="3" Content="✕" FontSize="12" Padding="10,4"

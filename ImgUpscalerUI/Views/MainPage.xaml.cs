@@ -212,9 +212,12 @@ public sealed partial class MainPage : Page
         var r = await UpdateChecker.CheckAsync().ConfigureAwait(false);
         if (r is not { HasNew: true }) return;   // 失败/已最新 → 无感
         var (_, tag, _) = r.Value;
-        // 延迟 10 分钟再提示(给作者留上传时间),期间若已关窗/取消则跳过
-        try { await System.Threading.Tasks.Task.Delay(TimeSpan.FromMinutes(10)).ConfigureAwait(false); }
-        catch { return; }
+        // 延迟 10 分钟再提示(给作者留上传时间);【测试模式 ALH_FORCE_UPDATE=1 跳过延迟,立即显示】
+        if (Environment.GetEnvironmentVariable("ALH_FORCE_UPDATE") != "1")
+        {
+            try { await System.Threading.Tasks.Task.Delay(TimeSpan.FromMinutes(10)).ConfigureAwait(false); }
+            catch { return; }
+        }
         DispatcherQueue.TryEnqueue(() => ShowUpdateBar(tag));
     }
 
@@ -825,16 +828,7 @@ public sealed partial class MainPage : Page
                 };
                 hyper.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = $"发现新版本 {tag},点此打开下载页" });
                 updateResult.Inlines.Add(hyper);
-                // 操作指引(追加在 updateResult 下方;动态插入 content)
-                var guide = new TextBlock
-                {
-                    FontSize = 10,
-                    Opacity = 0.65,
-                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-                    Text = $"怎么更新:\n1. 点上方链接打开 GitHub Release 页面;打不开就用加速器/镜像,或找软件群/网盘获取安装包。\n2. 下载「ALHPro_v{tag.TrimStart('v')}_Setup.exe」(安装包;别下源码 zip)。\n3. 双击安装,等完成即可——设置/记录都保留,可手动卸载旧版。",
-                };
-                content.Children.Add(guide);
-                // 网盘完整版下载(点击跳转百度网盘;国内最快/含模型)
+                // 网盘完整版下载(紧跟"发现新版本",点击跳转百度网盘;国内最快/含模型)
                 var netDiskLink = new Microsoft.UI.Xaml.Controls.HyperlinkButton
                 {
                     Content = "网盘下载完整版(含全部引擎+模型,国内最快)",
@@ -844,6 +838,15 @@ public sealed partial class MainPage : Page
                 };
                 netDiskLink.Click += (_, _) => OpenNetDisk();
                 content.Children.Add(netDiskLink);
+                // 操作指引(追加在网盘链接下方;动态插入 content)
+                var guide = new TextBlock
+                {
+                    FontSize = 10,
+                    Opacity = 0.65,
+                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                    Text = $"怎么更新:\n1. 点上方链接打开 GitHub Release 页面;打不开就用加速器/镜像,或找软件群/网盘获取安装包。\n2. 下载「ALHPro_v{tag.TrimStart('v')}_Setup.exe」(安装包;别下源码 zip)。\n3. 双击安装,等完成即可——设置/记录都保留,可手动卸载旧版。",
+                };
+                content.Children.Add(guide);
             }
             else
             {
