@@ -1007,6 +1007,7 @@ public sealed partial class VideoView : UserControl
         if (interp && m == 3 && InterpModelCombo.SelectedIndex is 3 or 4 or 5 or 6)
             InterpHint.Text += "\n⚠ 3x 补帧需要 v4 架构模型,请选择 通用画质最新 (RIFE v4.13) 或 通用画质 (RIFE v4.6)";
         UpdateRunState();
+        _ = RefreshVideoOutSpec();   // 超分/补帧/目标帧率变化时刷新左下角输出规格
     }
 
     // 重置为默认参数
@@ -2815,6 +2816,76 @@ public sealed partial class VideoView : UserControl
         {
             VideoInfo.Text = "未选择视频";
         }
+        _ = RefreshVideoOutSpec();
+    }
+
+    /// <summary>左下角「输出规格」提示:未处理时显示将输出的分辨率+帧率(随超分/补帧/目标帧率实时更新)。
+    /// 处理中/音频页/无视频时隐藏。帧率 = 源帧率×补帧倍率(或用户指定目标帧率)。</summary>
+    private async System.Threading.Tasks.Task RefreshVideoOutSpec()
+    {
+        try
+        {
+            var inv = CultureInfo.InvariantCulture;
+            if (_running)
+            {
+                VideoOutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                return;
+            }
+            // 取选中项第一;无选中取列表第一
+            var sel = VideoList.SelectedItems.Cast<VideoItem>().LastOrDefault();
+            VideoItem? it = sel ?? (_videos.Count > 0 ? _videos[0] : null);
+            if (it == null)
+            {
+                VideoOutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                return;
+            }
+            // 源分辨率(失败给 0,显示时省略)
+            int sw = 0, sh = 0;
+            try { (sw, sh) = await VideoService.ProbeSizeAsync(it.Path); } catch { }
+            // 输出分辨率:0=1x缩回 1=2x 2=3x 3=4x 4=自定义
+            bool shrink1x = VideoScaleRadios.SelectedIndex == 0;
+            bool customRes = VideoScaleRadios.SelectedIndex == 4;
+            double mult = VideoScaleRadios.SelectedIndex switch { 1 => 2.0, 2 => 3.0, 3 => 4.0, _ => 1.0 };
+            var up = UpscaleToggle.IsChecked == true;
+            int ow = sw, oh = sh;
+            if (up)
+            {
+                if (customRes)
+                {
+                    int.TryParse(CustomWidthBox.Text, out var cw); int.TryParse(CustomHeightBox.Text, out var ch);
+                    if (cw > 0 && ch > 0) { ow = cw; oh = ch; }
+                }
+                else if (!shrink1x)
+                {
+                    ow = (int)Math.Round(sw * mult); oh = (int)Math.Round(sh * mult);
+                }
+            }
+            // 帧率:优先目标帧率框;否则 源帧率×(是否补帧 ? 补帧倍率 : 1)
+            double? srcFps = null;
+            try { if (double.TryParse(VideoService.ProbeFps(it.Path), NumberStyles.Float, inv, out var pf) && pf > 0) srcFps = pf; } catch { }
+            double? targetFps = (TargetFpsCheck.IsChecked == true
+                && double.TryParse(TargetFpsBox.Text, NumberStyles.Float, inv, out var tf) && tf > 0) ? tf : null;
+            bool interp = InterpToggle.IsChecked == true;
+            int interpScale = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, _ => 2 };
+            double outFps = targetFps ?? ((srcFps ?? 0) * (interp ? interpScale : 1));
+            // 组装文本
+            var parts = new System.Collections.Generic.List<string>();
+            if (ow > 0 && oh > 0)
+                parts.Add($"输出: {ow}×{oh}{(sw > 0 && sh > 0 ? $"(源 {sw}×{sh})" : "")}");
+            else if (sw > 0 && sh > 0)
+                parts.Add($"输出: 保持 {sw}×{sh}");
+            if (outFps > 0)
+                parts.Add($"{outFps:0.##}fps{(targetFps != null ? "(指定)" : interp ? $"({interpScale}x补帧)" : "")}");
+            if (parts.Count == 0)
+            {
+                VideoOutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                return;
+            }
+            var scaleLabel = shrink1x ? "1x缩回" : customRes ? "自定义" : $"{mult:0.##}x";
+            VideoOutSpecText.Text = string.Join(" · ", parts) + $" · {scaleLabel}";
+            VideoOutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+        }
+        catch { VideoOutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed; }
     }
 
     // ---------- 预览播放 ----------

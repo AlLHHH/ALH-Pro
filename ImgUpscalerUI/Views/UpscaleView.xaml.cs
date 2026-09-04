@@ -123,7 +123,7 @@ public sealed partial class UpscaleView : UserControl
         // 控件变化时保存
         ModeRadios.SelectionChanged += (_, _) => SaveSettings();
         ModelCombo.SelectionChanged += (_, _) => SaveSettings();
-        ScaleRadios.SelectionChanged += (_, _) => SaveSettings();
+        ScaleRadios.SelectionChanged += (_, _) => { SaveSettings(); RefreshOutSpec(); };
         NoiseCombo.SelectionChanged += (_, _) => SaveSettings();
         TtaCheck.Checked += (_, _) => SaveSettings();
         TtaCheck.Unchecked += (_, _) => SaveSettings();
@@ -490,6 +490,36 @@ public sealed partial class UpscaleView : UserControl
     private void ToolGrid_SelectionChanged(System.Collections.Generic.IReadOnlyList<ImageItem> items)
     {
         // 单击/框选只改变选中状态,预览由双击打开
+        RefreshOutSpec();
+    }
+
+    /// <summary>左下角「输出规格」提示:未处理时显示当前选中项将输出的分辨率(随倍率/选中项实时更新)。
+    /// 处理中/无选中时隐藏,避免与进度状态混在一起。</summary>
+    private void RefreshOutSpec()
+    {
+        try
+        {
+            if (_running) { OutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed; return; }
+            // 无效倍率:1x 超分(2x放大后缩回)= 输出不变;2x/3x/4x 对应倍率
+            bool shrink1x = ScaleRadios.SelectedIndex == 0;
+            double mult = ScaleRadios.SelectedIndex switch { 1 => 2.0, 2 => 3.0, 3 => 4.0, _ => 1.0 };
+            // 取选中项的第一张(无选中则取列表第一张)
+            ImageItem? it = null;
+            if (ToolGrid.SelectedItems.Count > 0) it = ToolGrid.SelectedItems[0];
+            else if (ToolGrid.Items.Count > 0) it = ToolGrid.Items[0];
+            if (it == null || it.PixelWidth <= 0 || it.PixelHeight <= 0)
+            {
+                OutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                return;
+            }
+            int ow = (int)Math.Round(it.PixelWidth * mult);
+            int oh = (int)Math.Round(it.PixelHeight * mult);
+            // 1x 超分:缩回原尺寸
+            if (shrink1x) { ow = it.PixelWidth; oh = it.PixelHeight; }
+            OutSpecText.Text = $"输出: {ow}×{oh}px(源 {it.PixelWidth}×{it.PixelHeight},{mult:0}x)";
+            OutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+        }
+        catch { OutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed; }
     }
 
     private void ToolGrid_ItemDoubleTapped(ImageItem item)
@@ -533,6 +563,7 @@ public sealed partial class UpscaleView : UserControl
         {
             await ToolGrid.AddImagesAsync(files.Select(f => f.Path));
             Log($"添加了 {files.Count} 张图片到列表");
+            RefreshOutSpec();
         }
     }
 

@@ -781,6 +781,9 @@
                     <ProgressBar x:Name="VideoProgress" Minimum="0" Maximum="100" Value="0"/>
                     <TextBlock x:Name="VideoStatus" Style="{StaticResource HintText}"
                                TextTrimming="CharacterEllipsis"/>
+                    <!-- 输出规格提示:未处理时显示将输出的分辨率+帧率(随超分/补帧/目标帧率实时更新) -->
+                    <TextBlock x:Name="VideoOutSpecText" FontSize="11" Opacity="0.75"
+                               TextWrapping="Wrap" Visibility="Collapsed"/>
 
                     <Border Background="{StaticResource AppBgBrush}"
                             BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
