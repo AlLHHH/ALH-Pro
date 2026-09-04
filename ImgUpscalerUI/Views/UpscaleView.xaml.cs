@@ -412,6 +412,8 @@ public sealed partial class UpscaleView : UserControl
         var list = LoadImgPresets();
         if (list.Count == 0) { await ShowPresetHintAsync("还没有任何图片预设。先点「保存预设」保存一个。"); return; }
         string? pendingDel = null;
+        bool exportMode = false;   // 导出多选模式:true=行显示复选框(勾选导出),false=垃圾桶
+        var exportChecks = new System.Collections.Generic.List<(UpscalePreset p, Microsoft.UI.Xaml.Controls.CheckBox cb)>();
         var sortCombo = new ComboBox { HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch };
         sortCombo.Items.Add("按创建时间(默认)"); sortCombo.Items.Add("按名字 A→Z"); sortCombo.Items.Add("按最近修改");
         sortCombo.SelectedIndex = 0;
@@ -433,6 +435,22 @@ public sealed partial class UpscaleView : UserControl
         bottomBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
         Grid.SetColumn(closeBtn, 0); Grid.SetColumn(applyBtn, 1);
         bottomBar.Children.Add(closeBtn); bottomBar.Children.Add(applyBtn);
+
+        // 底部按钮随模式切换:普通态=[关闭|应用预设],导出态=[取消|确定导出]
+        void SetBottomMode()
+        {
+            if (exportMode)
+            {
+                closeBtn.Content = "取消";
+                applyBtn.Content = "确定导出";
+            }
+            else
+            {
+                closeBtn.Content = "关闭";
+                applyBtn.Content = "应用预设";
+            }
+        }
+
         var inner = new StackPanel { Spacing = 12 };
         inner.Children.Add(topBar); inner.Children.Add(listView); inner.Children.Add(bottomBar);
         ContentDialog dlg = new() { Title = "图片预设", Content = inner, CloseButtonText = "", XamlRoot = this.XamlRoot };
@@ -440,6 +458,7 @@ public sealed partial class UpscaleView : UserControl
         void RebuildList()
         {
             var cur = LoadImgPresets();
+            exportChecks.Clear();   // 每次重建都清空勾选记录(会随行重建重新填充)
             switch (sortCombo.SelectedIndex)
             {
                 case 1: cur = cur.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList(); break;
@@ -450,6 +469,15 @@ public sealed partial class UpscaleView : UserControl
             {
                 var presetName = cur[i].Name;
                 var name = new TextBlock { Text = presetName, FontSize = 14, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
+                if (exportMode)
+                {
+                    // 导出多选模式:右侧显示【复选框】(勾选要导出的预设),替代垃圾桶。默认全选。
+                    var cb = new Microsoft.UI.Xaml.Controls.CheckBox { VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center, IsChecked = true };
+                    exportChecks.Add((cur[i], cb));
+                    var rowEx = new Grid(); rowEx.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) }); rowEx.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
+                    rowEx.Children.Add(name); Grid.SetColumn(name, 0); rowEx.Children.Add(cb); Grid.SetColumn(cb, 1); listView.Items.Add(rowEx);
+                    continue;
+                }
                 var delBtn = new Button { Content = "\uE74D", FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe MDL2 Assets"), FontSize = 13, Background = null, BorderThickness = new Microsoft.UI.Xaml.Thickness(0), Padding = new Microsoft.UI.Xaml.Thickness(6, 2, 6, 2), VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center, MinWidth = 0, Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77)) };
                 ToolTipService.SetToolTip(delBtn, "删除该预设");
                 if (pendingDel == presetName)
@@ -471,30 +499,12 @@ public sealed partial class UpscaleView : UserControl
         }
         RebuildList();
         sortCombo.SelectionChanged += (_, _) => RebuildList();
-        applyBtn.Click += (_, _) =>
+        // 导出指定预设为 .alhimg 文件(JSON 数组)。文件名带预设名(单个=该预设名;多个=第一个+"等N个")
+        async Task ExportPresetsAsync(List<UpscalePreset> toExport)
         {
-            int s = listView.SelectedIndex; if (s < 0) return;
-            var cur = LoadImgPresets(); var byName = sortCombo.SelectedIndex == 1 ? cur.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList()
-                : sortCombo.SelectedIndex == 2 ? cur.OrderByDescending(x => x.SavedAt, StringComparer.OrdinalIgnoreCase).ToList() : cur;
-            if (s < byName.Count) { ApplyImgSettings(byName[s].Params); SaveSettings(); }
-            try { dlg.Hide(); } catch { }
-        };
-        closeBtn.Click += (_, _) => { try { dlg.Hide(); } catch { } };
-        exportBtn.Click += async (_, _) =>
-        {
-            int s = listView.SelectedIndex; var cur = LoadImgPresets();
-            List<UpscalePreset> toExport;
-            if (s >= 0 && s < cur.Count)
-            {
-                var byName = sortCombo.SelectedIndex == 1 ? cur.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList()
-                    : sortCombo.SelectedIndex == 2 ? cur.OrderByDescending(x => x.SavedAt, StringComparer.OrdinalIgnoreCase).ToList() : cur;
-                if (s < byName.Count) toExport = new List<UpscalePreset> { byName[s] };
-                else return;
-            }
-            else toExport = cur;
+            if (toExport.Count == 0) return;
             var picker = new FileSavePicker();
             picker.FileTypeChoices.Add("ALH Pro 图片预设", new List<string> { ImgPresetExt });
-            // 导出文件名带预设名:单个=该预设名;全部=第一个预设名+"等N个"。清洗非法文件名字符(\/:*?"<>|)
             picker.SuggestedFileName = toExport.Count == 1
                 ? SafePresetFileName(toExport[0].Name)
                 : SafePresetFileName(toExport[0].Name) + $"等{toExport.Count}个";
@@ -504,6 +514,35 @@ public sealed partial class UpscaleView : UserControl
             if (file == null) return;
             try { await System.IO.File.WriteAllTextAsync(file.Path, System.Text.Json.JsonSerializer.Serialize(toExport)); AppLogger.UserAction($"图片:导出 {toExport.Count} 个预设到 {file.Path}"); }
             catch (Exception ex) { AppLogger.Warn("导出图片预设失败:" + ex.Message); }
+        }
+
+        // 「应用预设」(右蓝):普通态=应用选中的预设后正常关窗;导出态=「确定导出」收集勾选导出后退回普通态
+        applyBtn.Click += async (_, _) =>
+        {
+            if (exportMode)
+            {
+                var selected = exportChecks.Where(x => x.cb.IsChecked == true).Select(x => x.p).ToList();
+                if (selected.Count == 0) { await ShowPresetHintAsync("还没勾选任何预设。先勾选要导出的预设,再点「确定导出」。"); return; }
+                await ExportPresetsAsync(selected);
+                exportMode = false; pendingDel = null; SetBottomMode(); RebuildList();
+                return;
+            }
+            int s = listView.SelectedIndex; if (s < 0) return;
+            var cur = LoadImgPresets(); var byName = sortCombo.SelectedIndex == 1 ? cur.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList()
+                : sortCombo.SelectedIndex == 2 ? cur.OrderByDescending(x => x.SavedAt, StringComparer.OrdinalIgnoreCase).ToList() : cur;
+            if (s < byName.Count) { ApplyImgSettings(byName[s].Params); SaveSettings(); }
+            try { dlg.Hide(); } catch { }
+        };
+        // 「关闭」(左灰):普通态=直接关窗;导出态=取消导出,退回普通态
+        closeBtn.Click += (_, _) =>
+        {
+            if (exportMode) { exportMode = false; pendingDel = null; SetBottomMode(); RebuildList(); return; }
+            try { dlg.Hide(); } catch { }
+        };
+        // 导出:进入多选模式(行显示复选框),底部按钮切「取消/确定导出」
+        exportBtn.Click += (_, _) =>
+        {
+            exportMode = true; pendingDel = null; SetBottomMode(); RebuildList();
         };
         importBtn.Click += async (_, _) =>
         {
