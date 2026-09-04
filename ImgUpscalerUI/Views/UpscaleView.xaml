@@ -246,6 +246,21 @@
                               IsChecked="True"
                               ToolTipService.ToolTip="记住:算法模式、waifu2x 模型、放大倍数、降噪级别、TTA、输出格式、输出目录、保留细节、锐化、预处理降噪及其强度"/>
 
+                    <!-- 参数预设:整套图片超分参数快照,一键保存/应用(与视频页预设区分,导出为 .alhimg) -->
+                    <TextBlock Text="参数预设" Style="{StaticResource SectionTitle}"/>
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Button Grid.Column="0" Content="使用预设" Click="OpenPresetWindowBtn_Click"
+                                HorizontalAlignment="Stretch" Style="{StaticResource AccentButtonStyle}"
+                                ToolTipService.ToolTip="打开图片预设列表:点选应用、删除、导出/导入"/>
+                        <Button Grid.Column="1" Content="保存预设" Click="SavePresetBtn_Click"
+                                HorizontalAlignment="Stretch" Style="{StaticResource AccentButtonStyle}"
+                                ToolTipService.ToolTip="把当前图片参数保存为一个预设(上限 100 个)"/>
+                    </Grid>
+
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
                     <TextBlock Text="输出" Style="{StaticResource SectionTitle}"/>
