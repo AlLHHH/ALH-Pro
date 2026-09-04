@@ -1914,13 +1914,15 @@ public sealed partial class MainPage : Page
                     }
                     catch { }
                     // 先在临时目录完整写好 zip(句柄关闭后再复制进保存位置)——避免"边写边读"导致压缩包损坏
-                    var tmpZip = System.IO.Path.Combine(tmpDir, "ALHPro_Diag.zip");
+                    // 注意:zip 必须放在 tmpDir【之外】,否则 EnumerateFiles(tmpDir) 会把"正在写的 zip 自己"也打进去 → 0字节/损坏
+                    var tmpZip = System.IO.Path.Combine(ALHPro.EngineService.TempRoot, $"alh_diag_{Guid.NewGuid():N}.zip");
                     using (var z = System.IO.Compression.ZipFile.Open(tmpZip, System.IO.Compression.ZipArchiveMode.Create))
                     {
                         foreach (var f in System.IO.Directory.EnumerateFiles(tmpDir))
                             System.IO.Compression.ZipFileExtensions.CreateEntryFromFile(z, f, System.IO.Path.GetFileName(f));
                     }
                     System.IO.File.Copy(tmpZip, file.Path, overwrite: true);
+                    try { System.IO.File.Delete(tmpZip); } catch { }
                     var okDlg = new ContentDialog
                     {
                         Title = "诊断包已导出",
