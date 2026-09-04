@@ -2262,7 +2262,12 @@ public static partial class EngineService
     {
         int w = bmp.Width, h = bmp.Height;
         if (w < 3 || h < 3) return;
+        // 【超大图保护】RL 反卷积迭代多次+3通道,内存/耗时随像素数线性增长。
+        // >400 万像素(约2000×2000)时降低迭代,>900 万像素(约4K)时改用简单 unsharp 兜底(避免内存峰值/超长耗时)。
+        long px = (long)w * h;
         int iter = Math.Max(3, Math.Min(10, (int)Math.Round(strength / 100.0 * 9) + 2));
+        if (px > 9_000_000) { ApplyUnsharpInMemory(bmp, strength / 100.0 * 1.5, 2, 6); return; }
+        if (px > 4_000_000) iter = Math.Max(2, iter - 3);   // 大图收敛快,减迭代防卡太久
         int kernelR = strength >= 60 ? 2 : 1;   // 强度大 → 更大模糊核(对应更严重的模糊)
         // 预计算归一化一维高斯核(对称可分离):RL 用可分离卷积大幅提速(二维→两次一维)
         int ksz = kernelR * 2 + 1;
