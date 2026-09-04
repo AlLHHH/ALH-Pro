@@ -724,7 +724,7 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <Button x:Name="VideoResetBtn" Grid.Column="0" Content="重置参数" ToolTipService.ToolTip="恢复默认参数"
+                        <Button x:Name="VideoResetBtn" Grid.Column="0" Content="重置所有参数" ToolTipService.ToolTip="恢复全部默认参数(超分/补帧/去重/后处理/输出/编码等)"
                                 HorizontalAlignment="Stretch" Click="VideoResetBtn_Click"/>
                         <CheckBox x:Name="VideoRememberCheck" Grid.Column="1" Content="记住上次" IsChecked="True" ToolTipService.ToolTip="记住处理参数(不含输入帧率),下次启动自动恢复"
                                   VerticalAlignment="Center"
