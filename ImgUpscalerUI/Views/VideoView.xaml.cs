@@ -1700,7 +1700,9 @@ public sealed partial class VideoView : UserControl
         {
             int n = await ImportPresetsAsync();
             pendingDel = null;
+            if (n < 0) return;   // 格式校验失败:方法内已弹提示,不再刷新列表
             RebuildList();
+            if (n > 0) await ShowPresetHintAsync($"已导入 {n} 个视频预设。");
         };
         try { await dlg.ShowAsync(); } catch { }
     }
@@ -1740,9 +1742,25 @@ public sealed partial class VideoView : UserControl
         WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
         var file = await picker.PickSingleFileAsync();
         if (file == null) return 0;
+        // 【格式校验】视频预设必须是 .alhpreset(或内容含视频专属字段)。若误选图片预设(.alhimg),
+        // 公开字段(如 Scale/Tta)会错读成视频参数且不报错——必须显式校验并明确提示,绝不静默混入。
+        if (!file.FileType.Equals(".alhpreset", StringComparison.OrdinalIgnoreCase))
+        {
+            await ShowPresetHintAsync("文件不是视频预设格式。请导入「ALH Pro 视频预设」(.alhpreset)文件;图片预设(.alhimg)请在图片页导入。");
+            return -1;
+        }
         try
         {
             var json = await File.ReadAllTextAsync(file.Path);
+            // 再校验内容确实含视频专属字段(Up/Interp 等),防"后缀对但内容是图片预设"的伪装
+            bool isVideo = json.Contains("\"Up\"", StringComparison.Ordinal)
+                || json.Contains("\"Interp\"", StringComparison.Ordinal)
+                || json.Contains("\"DedupOn\"", StringComparison.Ordinal);
+            if (!isVideo)
+            {
+                await ShowPresetHintAsync("文件内容不是视频预设(可能是图片预设或已损坏)。请导入视频预设(.alhpreset)文件。");
+                return -1;
+            }
             var imported = System.Text.Json.JsonSerializer.Deserialize<List<VideoPreset>>(json) ?? new List<VideoPreset>();
             if (imported.Count == 0) { AppLogger.Warn("导入预设:文件无内容"); return 0; }
             var existing = LoadPresets();
