@@ -1,4 +1,4 @@
-﻿; ALH Pro 安装脚本 (Inno Setup 6.3+)
+; ALH Pro 安装脚本 (Inno Setup 6.3+)
 ; ⚠ 需要 Inno Setup 6.3 或更高版本(首次版本(2021)起支持 DownloadTemporaryFile / CreateDownloadPage)
 ;
 ; 用法:
@@ -33,6 +33,11 @@ MinVersion=10.0.17763
 ;         普通用户的 Program Files 是只读的(实测坑);②用户目录天然可写,模型包/缓存/引擎都无忧;
 ;         ③卸载/升级无需管理员。若用户主动选择其它目录(如 Program Files)则按需请求权限。
 DefaultDirName={userpf}\ALH Pro
+; 记住上次安装位置(默认值本就是 yes,这里显式声明):固定 AppId 时再次安装会自动用上次目录,
+; 无需用户重新选择——配合覆盖安装,升级/重装更顺畅
+UsePreviousAppDir=yes
+; 允许覆盖安装/升级:固定 AppId 识别为同一应用;文件用 ignoreversion 无条件覆盖旧版本;
+; 已有安装时 Inno 自动复用该 AppId 指向的目录并执行升级(同 AppId 即覆盖)
 DefaultGroupName=ALH Pro
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/max
