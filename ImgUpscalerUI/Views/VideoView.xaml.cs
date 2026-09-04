@@ -1302,17 +1302,18 @@ public sealed partial class VideoView : UserControl
         catch { }
     }
 
-    /// <summary>内置预设的默认名字。程序自带一个「画质通用增强」:首启自动创建,用户可删可改。</summary>
-    private const string BuiltinPresetName = "画质通用增强";
+    /// <summary>官方内置预设:「通用画质增强 不含补帧」。程序自带,首启自动创建,标记为官方(摘要显示"官方"、不显示日期);用户可删可改。</summary>
+    private const string BuiltinPresetName = "通用画质增强 不含补帧";
     private const int MaxPresets = 100;   // 上限 100 个预设
 
-    /// <summary>确保内置预设存在:若预设列表里没有「画质通用增强」,则用一套通用画质增强默认参数创建一份。</summary>
+    /// <summary>确保官方内置预设存在:若列表里没有「通用画质增强 不含补帧」,则用官方默认参数创建一份(标记官方);
+    /// 已有同名则标记为官方(把用户保存的同款变成官方)。绝不覆盖/删除用户已有预设。</summary>
     private void EnsureBuiltinPresets()
     {
         try
         {
             var list = LoadPresets();
-            // 若已存在「画质通用增强」(可能是用户保存过/旧版内置),把它标记为官方预设
+            // 若已存在同名(用户保存过),把它标记为官方预设
             var existing = list.FirstOrDefault(x => x.Name == BuiltinPresetName);
             if (existing != null)
             {
@@ -1320,11 +1321,11 @@ public sealed partial class VideoView : UserControl
                 {
                     existing.IsOfficial = true;
                     SavePresets(list);
-                    AppLogger.Info("[内置预设] 已将「画质通用增强」标记为官方预设");
+                    AppLogger.Info("[内置预设] 已将「通用画质增强 不含补帧」标记为官方预设");
                 }
                 return;
             }
-            // 通用画质增强默认:超分 2x(waifu2x 通用)→ 适度后处理 → 不补帧/不转场
+            // 官方内置默认参数(来自作者定稿:超分 2x waifu2x + 适度后处理,补帧/去重关闭)
             var p = new VideoPreset
             {
                 Name = BuiltinPresetName,
@@ -1334,20 +1335,64 @@ public sealed partial class VideoView : UserControl
                 {
                     Remember = false,
                     Up = true,
-                    Engine = 0,            // waifu2x
-                    Scale = 1,             // 2x
-                    Interp = false,        // 不补帧
-                    DedupOn = false,       // 不去重
-                    PostSharpen = 25,      // 锐化(适度)
-                    PostClarity = 15,      // 清晰(适度)
-                    PostDetail = 30,       // 保留细节(适度)
-                    PostDenoise = 10,      // 去杂色(轻)
-                    Quality = 0,           // 码率自动
-                    Format = 0,            // MP4
-                    Codec = 0,             // H.264
+                    Engine = 0,              // waifu2x
+                    Scale = 1,               // 2x
+                    Gpu = 0,
+                    Interp = false,          // 不补帧
+                    Model = 0,
+                    UpWaifu2xModel = 0,
+                    UpEsrganModel = 0,
+                    InterpScale = 0,
+                    Target = false,
+                    TargetFps = "",
+                    VfrMode = 0,
+                    VfrExpanded = false,
+                    FpsBase = 0,
+                    FpsMode = 0,
+                    FpsOffset = 0,
+                    FpsExpanded = true,
+                    DedupOn = false,         // 不去重
+                    DedupModel = 0,
+                    DedupAnime = 0,
+                    DedupSmart = 0,
+                    DedupThr = 0.01,
+                    Scene = false,
+                    SceneThr = 0.3,
+                    TimeStep = 0.5,
+                    Tta = false,
+                    OutDir = "",
+                    CustomW = "1920",
+                    CustomH = "1080",
+                    DedupAlgo = 0,
+                    DedupHi = 12,
+                    DedupLo = 5,
+                    DedupFrac = 0.33,
+                    DedupSadThr = 3,
+                    DedupSsimThr = 0.97,
+                    ContentFps = 0,
+                    DedupMotionComp = true,
+                    DedupOnlyTrueHold = true,
+                    ManualProtectSmallMotion = true,
+                    DedupPhaseAlign = true,
+                    PostSharpen = 25,
+                    PostClarity = 15,
+                    PostUsm = 20,
+                    PostDetail = 30,
+                    PostDeblur = 15,
+                    PostFlicker = 0,
+                    PostDenoise = 10,
+                    PostAa = 30,
+                    Jello = 0,
+                    MotionBlur = 0,
+                    DeShake = false,
+                    Quality = 0,             // 码率自动
+                    BitrateMbps = 0,
+                    Codec = 0,               // H.264
+                    Format = 0,              // MP4
                     FastMode = false,
                     Mute = false,
                     VideoDenoiseOn = false,
+                    VideoDenoiseStrong = -1,
                 },
             };
             list.Insert(0, p);   // 放在最前
