@@ -778,6 +778,29 @@ public static partial class EngineService
             string head = ex.Message.Split('\n')[0];
             if (head.Length > 90) head = head[..90];
 
+            // 【OOM 减半分块】GPU 显存不足且当前 -t > 64:先把分块减半在 GPU 上重试(显存降到约 1/4,能留在 GPU 上跑),
+            // 而非直接落 CPU(慢得多)。多次 OOM 再走下方 其他GPU→CPU 降级链。
+            if (LooksLikeOom(ex))
+            {
+                var tMatch = System.Text.RegularExpressions.Regex.Match(args, @"-t\s+(\d+)");
+                if (tMatch.Success && int.TryParse(tMatch.Groups[1].Value, out var tCur) && tCur > 64)
+                {
+                    int tHalved = Math.Max(64, tCur / 2);
+                    var oomArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-t\s+\d+", $"-t {tHalved}");
+                    AppLogger.Info($"⚠ 显存不足,分块 {tCur}→{tHalved} 在 GPU 上重试...");
+                    progress?.Report((0, $"⚠ 显存不足,自动降低分块 {tCur}→{tHalved} 重试(更快更稳)..."));
+                    try
+                    {
+                        await RunAsync(exe, oomArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
+                        return;
+                    }
+                    catch (InvalidOperationException oomEx)
+                    {
+                        AppLogger.Info($"⚠ 降低分块后仍显存不足({oomEx.Message.Split('\n')[0]}),继续降级...");
+                    }
+                }
+            }
+
             int curGpu = 0;
             try
             {
@@ -844,6 +867,18 @@ public static partial class EngineService
     {
         var m = System.Text.RegularExpressions.Regex.Match(msg, @"exit (-?\d+)");
         return m.Success ? m.Groups[1].Value : "?";
+    }
+
+    /// <summary>判断引擎失败是否为显存不足(OOM):vkAllocateMemory / out of memory / vk:: / memory 等关键字。
+    /// 用于在掉 CPU 之前先"减半分块"留在 GPU 上重试。</summary>
+    private static bool LooksLikeOom(Exception ex)
+    {
+        var s = ex.Message ?? "";
+        return s.Contains("vkAllocateMemory", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("out of memory", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("vk::", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("memory insufficient", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("out of device memory", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>GPU 显示名(降级日志用):从 VulkanCheck 枚举取;取不到回退 "GPU {id}"。</summary>

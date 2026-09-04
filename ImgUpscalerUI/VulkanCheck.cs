@@ -400,8 +400,9 @@ public static class VulkanCheck
 
         sb.Append("· 图片超分(Real-ESRGAN):").Append(esrganPic).Append('\n');
         sb.Append("· 视频超分(Real-ESRGAN):").Append(esrganVid).Append('\n');
-        // waifu2x:Blackwell 走 ONNX,普通 GPU 走 ncnn(Vulkan)
-        if (blackwell || onnxWaifu)
+        // waifu2x:仅无独显(ShouldUseOnnxWaifu2x)走 ONNX;否则一律 ncnn——新版 waifu2x 引擎本身兼容 Blackwell,
+        // 故 50 系(有独显)也用 ncnn 直跑,不走 ONNX(报表此前误写"Blackwell waifu2x→ONNX",已修正)
+        if (onnxWaifu)
             sb.Append("· 动漫超分(waifu2x):走 ONNX DirectML(显卡加速,稳定)\n");
         else
             sb.Append("· 动漫超分(waifu2x):").Append(gpuOk ? "ncnn-Vulkan GPU 加速,快速流畅\n" : "CPU 软算,慢但稳\n");
