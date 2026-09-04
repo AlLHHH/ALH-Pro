@@ -1350,6 +1350,19 @@ public sealed partial class VideoView : UserControl
             Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
             FastMode = false, Mute = false, VideoDenoiseOn = true, VideoDenoiseStrong = 1,
         })),
+        ( "去重补帧4x", new Func<VideoSettings>(() => new VideoSettings
+        {
+            Remember = true, Up = false, Engine = 0, Scale = 1, Gpu = 0,
+            Interp = true, Model = 0, UpWaifu2xModel = 0, UpEsrganModel = 0, InterpScale = 2,
+            Target = false, TargetFps = "", VfrMode = 0, VfrExpanded = false, FpsBase = 0, FpsMode = 0, FpsOffset = 0, FpsExpanded = false,
+            DedupOn = true, DedupModel = 0, DedupAnime = 0, DedupSmart = 1, DedupThr = 0.01,
+            Scene = false, SceneThr = 0.3, TimeStep = 0.5, Tta = false, OutDir = "", CustomW = "1920", CustomH = "1080",
+            DedupAlgo = 3, DedupHi = 12, DedupLo = 5, DedupFrac = 0.33, DedupSadThr = 3, DedupSsimThr = 0.97, ContentFps = 0,
+            DedupMotionComp = true, DedupOnlyTrueHold = true, ManualProtectSmallMotion = true, DedupPhaseAlign = true,
+            PostSharpen = 0, PostClarity = 0, PostUsm = 0, PostDetail = 0, PostDeblur = 0, PostFlicker = 0, PostDenoise = 0, PostAa = 0,
+            Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
+            FastMode = false, Mute = false, VideoDenoiseOn = false, VideoDenoiseStrong = -1,
+        })),
     };
 
     /// <summary>确保每个官方内置预设存在:缺失则用官方默认创建(标记官方);已有同名则标记为官方(把用户保存的同款变成官方)。

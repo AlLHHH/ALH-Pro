@@ -45,6 +45,7 @@ public sealed partial class UpscaleView : UserControl
         // 计算设备:统一在「设置」里选择(AppSettings.GpuIndex),页面不再显示下拉
         _gpuCount = GpuInfo.GetAdapterNames().Count;
         RefreshQualityCombo();   // 输出码率档位:按当前格式(PNG/JPG)填充对应选项
+        EnsureBuiltinImgPresets();   // 确保自带图片预设存在(官方预设)
 
         // 模式联动:动漫=waifu2x 模型,照片=Real-ESRGAN 模型,均可选(标题固定「超分模型」)
         ModeRadios.SelectionChanged += (_, _) =>
@@ -311,6 +312,7 @@ public sealed partial class UpscaleView : UserControl
     {
         public string Name { get; set; } = "";
         public string SavedAt { get; set; } = "";
+        public bool IsOfficial { get; set; }   // 官方预设(程序内置):悬停显示"官方"、无删除日期;用户预设=普通条目
         public UpscaleSettings Params { get; set; } = new();
     }
 
@@ -337,6 +339,61 @@ public sealed partial class UpscaleView : UserControl
             if (list.Count == 0) { if (File.Exists(ImgPresetFile)) File.Delete(ImgPresetFile); return; }
             Directory.CreateDirectory(Path.GetDirectoryName(ImgPresetFile)!);
             File.WriteAllText(ImgPresetFile, System.Text.Json.JsonSerializer.Serialize(list));
+        }
+        catch { }
+    }
+
+    /// <summary>官方内置图片预设定义(名字 + 一套默认参数)。以后要加官方预设,在这里加一项即可,下次更新自动带上。</summary>
+    private static (string Name, Func<UpscaleSettings> Make)[] BuiltinImgPresets() => new[]
+    {
+        ( "通用变清晰", new Func<UpscaleSettings>(() => new UpscaleSettings
+        {
+            Remember = true, Mode = 0, W2xModel = 0, Scale = 1, Noise = 2, Tta = false, SelectedOnly = false,
+            Fmt = 0, Detail = 50, Sharpen = 10, Clarity = 15, Deblur = 35, Usm = 20, Edge = 5, DetailEnhance = 10,
+            Denoise = 20, Aa = 40, Dehaze = 5, ImgQualityMode = 2, ImgQualityCustom = 92, ImgQuality = 92,
+            PreDenoise = true, DenoiseLevel = 0, OutDir = "",
+        })),
+        ( "清晰MAX", new Func<UpscaleSettings>(() => new UpscaleSettings
+        {
+            Remember = true, Mode = 1, W2xModel = 2, Scale = 3, Noise = 3, Tta = false, SelectedOnly = false,
+            Fmt = 0, Detail = 40, Sharpen = 20, Clarity = 25, Deblur = 35, Usm = 30, Edge = 30, DetailEnhance = 20,
+            Denoise = 35, Aa = 65, Dehaze = 5, ImgQualityMode = 2, ImgQualityCustom = 92, ImgQuality = 92,
+            PreDenoise = true, DenoiseLevel = 2, OutDir = "",
+        })),
+    };
+
+    /// <summary>确保每个官方内置图片预设存在:缺失则用官方默认创建(标记官方);已有同名则标记为官方(把用户保存的同款变成官方)。
+    /// 绝不覆盖/删除用户已有预设。以后加官方预设只需在 BuiltinImgPresets() 加一项。</summary>
+    private void EnsureBuiltinImgPresets()
+    {
+        try
+        {
+            var list = LoadImgPresets();
+            bool changed = false;
+            foreach (var (name, make) in BuiltinImgPresets())
+            {
+                var existing = list.FirstOrDefault(x => x.Name == name);
+                if (existing != null)
+                {
+                    if (!existing.IsOfficial) { existing.IsOfficial = true; changed = true; }
+                    continue;
+                }
+                var p = new UpscalePreset
+                {
+                    Name = name,
+                    SavedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm") + " · 内置",
+                    IsOfficial = true,
+                    Params = make(),
+                };
+                list.Insert(0, p);
+                changed = true;
+                AppLogger.Info($"[内置预设] 已创建官方图片预设「{name}」");
+            }
+            if (changed)
+            {
+                SaveImgPresets(list);
+                AppLogger.Info("[内置预设] 官方图片预设检查完成(缺失已补/同名已标记官方,用户预设未动)");
+            }
         }
         catch { }
     }
@@ -468,7 +525,7 @@ public sealed partial class UpscaleView : UserControl
             for (int i = 0; i < cur.Count; i++)
             {
                 var presetName = cur[i].Name;
-                var name = new TextBlock { Text = presetName, FontSize = 14, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
+                var name = new TextBlock { Text = cur[i].Name + (cur[i].IsOfficial ? "  [官方]" : ""), FontSize = 14, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
                 if (exportMode)
                 {
                     // 导出多选模式:右侧显示【复选框】(勾选要导出的预设),替代垃圾桶。默认全选。
