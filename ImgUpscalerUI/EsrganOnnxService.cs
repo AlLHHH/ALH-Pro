@@ -407,7 +407,13 @@ public static class EsrganOnnxService
         progress?.Report((100, "完成"));
     }
 
-    /// <summary>分块超分:大图切 Tile 网格(步长=Tile-Overlap),逐块推理后按"核心区"贴回(重叠区相邻块覆盖,无接缝)。</summary>
+    /// <summary>分块超分:大图切 Tile 网格(步长=Tile-Overlap),逐块推理后按"邻块左/上边缘 smoothstep 羽化"贴回。
+    /// 关键两点(消除"一块一块"拼贴接缝):
+    /// ①【倍率对齐】模型固有倍率 modelScale(waifu2x=2,其余=4)与用户 scale 不一致时(如 esrgan 4x 模型做 2x/3x、
+    ///    waifu2x 2x 模型做 4x),先把每块缩放到目标倍率 scale——否则按 x0*scale 定位会错位成"马赛克拼贴";
+    /// ②【羽化融合】相邻块的左/上边缘用 smoothstep 权重交叉混合(而非硬复制贴回),消除块边界的"硬切换"接缝。
+    /// 这是 ncnn 路径(UpscaleTiledAsync)早已采用的正确做法;此前 ONNX 路径只有硬复制且倍率错位,故 50 系/无独显
+    ///    (走 ONNX)大图/视频帧会出现明显拼贴接缝。</summary>
     private static void RunCoreTiled(System.Drawing.Bitmap src, string output, double scale, string modelPath,
         int gpuId, IProgress<(int pct, string msg)>? progress, CancellationToken ct, int tile, int overlap,
         InferenceSession? sessionOverride = null)
@@ -416,53 +422,122 @@ public static class EsrganOnnxService
         int ow = (int)Math.Round(sw * scale), oh = (int)Math.Round(sh * scale);
         using var outBmp = new System.Drawing.Bitmap(ow, oh, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
         using (var g = System.Drawing.Graphics.FromImage(outBmp))
-            g.Clear(System.Drawing.Color.Black);
+            g.Clear(System.Drawing.Color.FromArgb(255, 18, 18, 18));   // 中性底色,防右/下细缝显黑
 
         int stride = tile - overlap;
         int cols = (sw + stride - 1) / stride;
         int rows = (sh + stride - 1) / stride;
         int total = cols * rows;
-        progress?.Report((5, $"大图分块: {cols}×{rows}={total} 块(超分 4x,自动分块防爆显存)..."));
+        progress?.Report((5, $"大图分块: {cols}×{rows}={total} 块(超分 {scale:0.##}x,自动分块防爆显存)..."));
 
-        int done = 0;
-        for (int ty = 0; ty < rows; ty++)
+        int modelScale = modelPath.Contains("waifu2x", StringComparison.OrdinalIgnoreCase) ? 2 : 4;
+        // 重叠区羽化宽度(输出像素),留 2px 余量保证淡入区落在真实重叠内
+        int ovFade = Math.Max(1, (int)Math.Round(overlap * scale) - 2);
+
+        var rect = new System.Drawing.Rectangle(0, 0, ow, oh);
+        var cData = outBmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadWrite,
+            System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+        try
         {
-            for (int tx = 0; tx < cols; tx++)
+            unsafe
             {
-                ct.ThrowIfCancellationRequested();
-                int x0 = tx * stride, y0 = ty * stride;
-                int tw = Math.Min(tile, sw - x0), th = Math.Min(tile, sh - y0);
-                using (var cropped = new System.Drawing.Bitmap(tw, th, System.Drawing.Imaging.PixelFormat.Format24bppRgb))
+                byte* cP0 = (byte*)cData.Scan0.ToPointer();
+                int cStride = cData.Stride;
+                int done = 0;
+                for (int ty = 0; ty < rows; ty++)
                 {
-                    using (var g = System.Drawing.Graphics.FromImage(cropped))
-                        g.DrawImage(src, new System.Drawing.Rectangle(0, 0, tw, th),
-                            new System.Drawing.Rectangle(x0, y0, tw, th), System.Drawing.GraphicsUnit.Pixel);
-                    using var tileOut = RunTile(cropped, modelPath, gpuId, ct, sessionOverride);
-                    // 贴回核心区(去掉 overlap 半宽)
-                    int coreX0 = tx == 0 ? 0 : overlap / 2;
-                    int coreY0 = ty == 0 ? 0 : overlap / 2;
-                    int coreW = Math.Min(tileOut.Width - coreX0, ow - (int)(x0 * scale) - coreX0);
-                    int coreH = Math.Min(tileOut.Height - coreY0, oh - (int)(y0 * scale) - coreY0);
-                    if (coreW > 0 && coreH > 0)
+                    for (int tx = 0; tx < cols; tx++)
                     {
-                        using (var g = System.Drawing.Graphics.FromImage(outBmp))
-                            g.DrawImage(tileOut,
-                                new System.Drawing.Rectangle((int)(x0 * scale) + coreX0, (int)(y0 * scale) + coreY0, coreW, coreH),
-                                new System.Drawing.Rectangle(coreX0, coreY0, coreW, coreH),
-                                System.Drawing.GraphicsUnit.Pixel);
+                        ct.ThrowIfCancellationRequested();
+                        int x0 = tx * stride, y0 = ty * stride;
+                        int tw = Math.Min(tile, sw - x0), th = Math.Min(tile, sh - y0);
+                        using (var cropped = new System.Drawing.Bitmap(tw, th, System.Drawing.Imaging.PixelFormat.Format24bppRgb))
+                        {
+                            using (var g = System.Drawing.Graphics.FromImage(cropped))
+                                g.DrawImage(src, new System.Drawing.Rectangle(0, 0, tw, th),
+                                    new System.Drawing.Rectangle(x0, y0, tw, th), System.Drawing.GraphicsUnit.Pixel);
+                            using var tileOut = RunTile(cropped, modelPath, gpuId, ct, sessionOverride);
+                            // ①缩放到目标倍率:模型固有倍率 != 用户 scale 时先 resize(显式 24bpp,保证 LockBits 格式)
+                            var tileFinal = tileOut;
+                            if (Math.Abs(modelScale - scale) > 0.001)
+                            {
+                                int dw = Math.Max(1, (int)Math.Round(tw * scale));
+                                int dh = Math.Max(1, (int)Math.Round(th * scale));
+                                if (Math.Abs(dw - tileOut.Width) > 1 || Math.Abs(dh - tileOut.Height) > 1)
+                                {
+                                    var rs = new System.Drawing.Bitmap(dw, dh, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+                                    using (var gg = System.Drawing.Graphics.FromImage(rs))
+                                        gg.DrawImage(tileOut, 0, 0, dw, dh);
+                                    tileFinal = rs;
+                                }
+                            }
+                            int dx = (int)Math.Round(x0 * scale), dy = (int)Math.Round(y0 * scale);
+                            int twd = tileFinal.Width, thd = tileFinal.Height;
+                            var tRect = new System.Drawing.Rectangle(0, 0, twd, thd);
+                            var tData = tileFinal.LockBits(tRect, System.Drawing.Imaging.ImageLockMode.ReadOnly,
+                                System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+                            try
+                            {
+                                byte* tP0 = (byte*)tData.Scan0.ToPointer();
+                                int tStride = tData.Stride;
+                                for (int py = 0; py < thd; py++)
+                                {
+                                    int cy = dy + py;
+                                    if (cy >= oh) break;
+                                    byte* tRow = tP0 + py * tStride;
+                                    byte* cRow = cP0 + cy * cStride;
+                                    // ②smoothstep 淡入:左/上边缘 0→1,避免硬切换接缝
+                                    double wy = (ty > 0 && py < ovFade) ? SmoothStep((double)(py + 1) / ovFade) : 1.0;
+                                    for (int px = 0; px < twd; px++)
+                                    {
+                                        int cx = dx + px;
+                                        if (cx >= ow) break;
+                                        double wx = (tx > 0 && px < ovFade) ? SmoothStep((double)(px + 1) / ovFade) : 1.0;
+                                        double w = wx * wy;
+                                        int ti = px * 3, ci = cx * 3;
+                                        if (w >= 1.0)
+                                        {
+                                            cRow[ci] = tRow[ti];
+                                            cRow[ci + 1] = tRow[ti + 1];
+                                            cRow[ci + 2] = tRow[ti + 2];
+                                        }
+                                        else
+                                        {
+                                            double iw = 1.0 - w;
+                                            cRow[ci] = (byte)(cRow[ci] * iw + tRow[ti] * w);
+                                            cRow[ci + 1] = (byte)(cRow[ci + 1] * iw + tRow[ti + 1] * w);
+                                            cRow[ci + 2] = (byte)(cRow[ci + 2] * iw + tRow[ti + 2] * w);
+                                        }
+                                    }
+                                }
+                            }
+                            finally
+                            {
+                                tileFinal.UnlockBits(tData);
+                                if (!ReferenceEquals(tileFinal, tileOut)) tileFinal.Dispose();
+                            }
+                        }
+                        done++;
+                        progress?.Report((5 + (int)(85.0 * done / total), $"AI 超分 已处理 {done}/{total} 块..."));
                     }
                 }
-                done++;
-                progress?.Report((5 + (int)(85.0 * done / total), $"AI 超分 已处理 {done}/{total} 块..."));
             }
         }
+        finally { outBmp.UnlockBits(cData); }
 
-        // 缩放到目标(模型 4x;要 2x/3x 时缩回)
+        // 兜底:舍入致输出尺寸与 ow/oh 略有出入时精确缩放回去
         if (Math.Abs(ow - outBmp.Width) > 1 || Math.Abs(oh - outBmp.Height) > 1)
             SaveScaled(outBmp, output, ow, oh);
         else
             outBmp.Save(output, System.Drawing.Imaging.ImageFormat.Png);
         progress?.Report((100, "完成"));
+    }
+
+    /// <summary>smoothstep(0→1):平滑缓入,避免线性交叉的"硬线",让跨块淡入更无痕(与 ncnn 路径一致)。</summary>
+    private static double SmoothStep(double t)
+    {
+        t = Math.Clamp(t, 0.0, 1.0);
+        return t * t * (3.0 - 2.0 * t);
     }
 
     /// <summary>单块推理(返回 4x 结果位图)。会话按 (modelPath,gpuId) 缓存;GPU 失败自动 CPU 重试。

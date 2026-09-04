@@ -1255,8 +1255,16 @@ public sealed partial class UpscaleView : UserControl
                             _progressSegEnd = 0.4;
                             progress.Report((0, "预处理降噪..."));
                             Log("  预处理降噪(waifu2x 1x)...");
-                            await EngineService.UpscaleAsync(srcPath, tmpDenoise, "waifu2x",
-                                "models-cunet", 1, denoiseLevel, gpuId, false, progress, ct);
+                            // 预处理降噪也走设备路由:高风险设备(ncnn 不可用)→ ONNX 稳定引擎;否则 ncnn(带降噪档)
+                            bool preOnnx = gpuId < 0
+                                || EngineService.ShouldUseOnnxWaifu2x()
+                                || !await EngineService.IsWaifu2xNcnnUsableAsync(gpuId, ct);
+                            if (preOnnx && EsrganOnnxService.FindWaifu2xModel() != null)
+                                await EsrganOnnxService.UpscaleAsync(srcPath, tmpDenoise, 1,
+                                    gpuId < 0 ? -1 : -2, progress, ct, EsrganOnnxService.FindWaifu2xModel());
+                            else
+                                await EngineService.UpscaleAsync(srcPath, tmpDenoise, "waifu2x",
+                                    "models-cunet", 1, denoiseLevel, gpuId, false, progress, ct);
                             srcPath = tmpDenoise;
                         }
 
