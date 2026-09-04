@@ -836,6 +836,9 @@ public sealed partial class VideoView : UserControl
         DeShakeCheck.IsEnabled = interp;
         MotionBlurCombo.Opacity = interp ? 1.0 : 0.5;
         DeShakeCheck.Opacity = interp ? 1.0 : 0.5;
+        // 果冻修复开启时提示「会增加导出时间」(运动模糊最慢):任一开启即显示
+        JellySlowHint.Visibility = interp && (MotionBlurCombo.SelectedIndex > 0 || DeShakeCheck.IsChecked == true)
+            ? Visibility.Visible : Visibility.Collapsed;
         // 视频帧率:三选一(0=各视频默认帧率 1=帧率偏移 2=单独调整)仅【多视频】才展开选择;
         // 单视频只直接改「输入帧率」框,不出现那 3 个模式选项(那是多视频才有意义的"批量"概念)。
         int fpsMode = FpsModeRadios.SelectedIndex;

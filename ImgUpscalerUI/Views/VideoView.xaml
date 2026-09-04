@@ -569,6 +569,9 @@
                     </Grid>
                     <CheckBox x:Name="DeShakeCheck" Content="画面去抖" ToolTipService.ToolTip="画面去抖:轻量稳定画面,减少手持拍摄的晃动"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
+                    <TextBlock x:Name="JellySlowHint" Visibility="Collapsed"
+                               Text="⚠ 果冻修复为 CPU 逐帧滤镜,会明显增加导出时间(运动模糊最慢,画面去抖较轻)。视觉要求不高时建议关闭。"
+                               Foreground="#E8A33D" FontSize="11" TextWrapping="Wrap"/>
 
                     <Button x:Name="AdvancedToggleBtn" Content="高级参数 ▾" HorizontalAlignment="Stretch"
                             Click="AdvancedToggleBtn_Click"
