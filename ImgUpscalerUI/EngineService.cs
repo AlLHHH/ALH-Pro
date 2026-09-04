@@ -33,10 +33,13 @@ public static partial class EngineService
 
     /// <summary>照片超分(Real-ESRGAN)是否应走 ONNX 路线:
     /// ①Blackwell(ncnn-Vulkan 崩)②无独显/Vulkan 不可用(只能 CPU,而 ncnn CPU 也崩)—— 都走 ONNX(DML/CPU 稳)。
-    /// 非风险设备(常规 GPU)默认 ncnn(GPU 更快),避免无谓切换。</summary>
+    /// 非风险设备(常规 GPU)默认 ncnn(GPU 更快),避免无谓切换。
+    /// 【修复】只要【任一】Real-ESRGAN ONNX 模型存在(通用 x4plus 或 动漫 animevideo)即可走 ONNX;
+    /// 此前只认 x4plus,导致 Blackwell/风险设备上"仅有动漫 ONNX"时仍误判不走 ONNX → 走会崩的 ncnn-GPU。</summary>
     public static bool ShouldUseOnnxEsrgan()
     {
-        if (EsrganOnnxService.FindModel() == null) return false;
+        if (EsrganOnnxService.FindModel() == null && EsrganOnnxService.FindAnimeVideoModel() == null)
+            return false;
         return IsBlackwellGpu() || OldNcnnGpuRisky();
     }
 

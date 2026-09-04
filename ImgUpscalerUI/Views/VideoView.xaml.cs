@@ -418,7 +418,6 @@ public sealed partial class VideoView : UserControl
         DedupSsimSlider.Value = 0.97;  // 手动-帧差+SSIM:SSIM 阈值
         DedupAlgoCombo.SelectedIndex = 0;
         SceneSlider.Value = 0.3;
-        TimeStepSlider.Value = 0.5;
         QualityCombo.SelectedIndex = 0;
         FormatCombo.SelectedIndex = 0;
         CodecCombo.SelectedIndex = 0;   // 默认 H.264(必须在 InitializeComponent 后设置,否则解析期触发事件崩页面)
@@ -900,9 +899,6 @@ public sealed partial class VideoView : UserControl
         DedupAnimeRow.Visibility = dedup && dedupModel == 1 ? Visibility.Visible : Visibility.Collapsed;
         // 智能策略:仅智能模式显示(均衡/激进/保守)
         DedupSmartRow.Visibility = dedup && dedupModel == 0 ? Visibility.Visible : Visibility.Collapsed;
-        // 时间步(仅 v4 模型):其它模型置灰(级联无时间步概念)
-        TimeStepSlider.IsEnabled = interp && v4Model;
-        TimeStepSlider.Opacity = interp && v4Model ? 1.0 : 0.5;
         // 去重手动面板:仅"手动模式"展开显示,其他模式收起隐藏(带动画)
         AnimateShowHide(DedupManualPanel, dedup && dedupModel == 2);
         // 内容帧率采样:手动模式(dedupModel==2)默认算法(UI 第 1 项,核心语义 3)时显示(行在手动面板内,随面板带动画)
@@ -929,8 +925,6 @@ public sealed partial class VideoView : UserControl
         }
         SceneCheck.IsEnabled = interp;
         SceneSlider.IsEnabled = scene;
-        TimeStepSlider.IsEnabled = interp && v4Model;   // 时间步仅 v4 模型(rife-v4.6)支持:其它模型置灰
-        TimeStepSlider.Opacity = interp && v4Model ? 1.0 : 0.5;
         // 快速模式:忽略 TTA(置灰提示)
         var fast = FastModeCheck.IsChecked == true;
         TtaCheck.IsEnabled = interp && !fast;
@@ -953,7 +947,6 @@ public sealed partial class VideoView : UserControl
         DedupSadVal.Text = DedupSadSlider.Value.ToString("0.0", CultureInfo.InvariantCulture);
         DedupSsimVal.Text = DedupSsimSlider.Value.ToString("0.000", CultureInfo.InvariantCulture);
         SceneVal.Text = SceneSlider.Value.ToString("0.00", CultureInfo.InvariantCulture);
-        TimeStepVal.Text = TimeStepSlider.Value.ToString("0.00", CultureInfo.InvariantCulture);
 
         // 视频调整数值
         SharpenVal.Text = SharpenSlider.Value.ToString("0");
@@ -1045,7 +1038,6 @@ public sealed partial class VideoView : UserControl
         FpsOffsetSlider.Value = 0;
         SceneCheck.IsChecked = false;
         SceneSlider.Value = 0.3;
-        TimeStepSlider.Value = 0.5;
         TtaCheck.IsChecked = false;
         SharpenSlider.Value = 0;
         ClaritySlider.Value = 0;
@@ -1137,15 +1129,6 @@ public sealed partial class VideoView : UserControl
     {
         _suppressEvents = true;
         SceneSlider.Value = 0.3;
-        _suppressEvents = false;
-        UpdateOptions();
-        SaveSettings();
-    }
-
-    private void ResetTimeStepBtn_Click(object sender, RoutedEventArgs e)
-    {
-        _suppressEvents = true;
-        TimeStepSlider.Value = 0.5;
         _suppressEvents = false;
         UpdateOptions();
         SaveSettings();
@@ -1379,13 +1362,6 @@ public sealed partial class VideoView : UserControl
                 if (existing != null)
                 {
                     if (!existing.IsOfficial) { existing.IsOfficial = true; changed = true; }
-                    // 官方预设时间步统一 0.5:若旧官方预设存过非 0.5 的时间步(如早期 bug 存成 0.05),强制归位
-                    if (existing.IsOfficial && existing.Params.TimeStep != 0.5)
-                    {
-                        existing.Params.TimeStep = 0.5;
-                        changed = true;
-                        AppLogger.Info($"[内置预设] 官方预设「{name}」时间步修正为 0.5");
-                    }
                     continue;
                 }
                 // 缺失 → 用官方默认参数创建,标记官方,排在已有预设之前(官方靠前)
@@ -1501,7 +1477,6 @@ public sealed partial class VideoView : UserControl
         // 转场阈值:旧/非法设置(如字段缺失反序列化为 0)回退默认 0.3。阈值 0 会被处理端当作"不检测转场"(见 VideoService sceneThreshold is > 0),导致勾选转场识别却无效果。
         SceneSlider.Value = d.SceneThr is > 0 and <= 1 ? d.SceneThr : 0.3;
         // 时间步:旧/非法设置回退默认 0.5(滑条最小 0.05,字段缺失会停在 0.05,与默认/重置 0.5 不一致)。
-        TimeStepSlider.Value = d.TimeStep is >= 0.05 and <= 0.95 ? d.TimeStep : 0.5;
         TtaCheck.IsChecked = d.Tta;
         if (!string.IsNullOrWhiteSpace(d.OutDir) && Directory.Exists(d.OutDir))
         {
@@ -2005,7 +1980,6 @@ public sealed partial class VideoView : UserControl
             DedupThr = DedupSceneSlider.Value,
             Scene = SceneCheck.IsChecked == true,
             SceneThr = SceneSlider.Value,
-            TimeStep = TimeStepSlider.Value,
             Tta = TtaCheck.IsChecked == true,
             OutDir = _customOutDir ?? "",
             CustomW = CustomWidthBox.Text,
@@ -3570,7 +3544,7 @@ public sealed partial class VideoView : UserControl
         var dedupAnimeThr = 0.0;   // 动漫模式已改为"一拍N"预设,SSIM 强度档已废弃
         var dedupThreshold = DedupSceneSlider.Value;   // 手动-scene 阈值(其他算法忽略)
         double? sceneThreshold = SceneCheck.IsChecked == true && interp ? SceneSlider.Value : null;
-        double? timeStep = interp ? TimeStepSlider.Value : null;
+        double? timeStep = null;   // 时间步功能已移除(引擎目录模式下 -s 无效),补帧用引擎默认时间步
         var tta = TtaCheck.IsChecked == true;
         if (!interp && TargetFpsCheck.IsChecked == true) targetFps = null;
 
