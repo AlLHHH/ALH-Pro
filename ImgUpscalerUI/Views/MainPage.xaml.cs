@@ -1018,6 +1018,29 @@ public sealed partial class MainPage : Page
             }
         }
 
+        // ===== 版权声明 =====
+        content.Children.Add(new Border
+        {
+            Height = 1,
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+        });
+        var copyright = new TextBlock
+        {
+            FontSize = 11,
+            Opacity = 0.85,
+            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+        };
+        copyright.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
+        {
+            Text = "© 2026 AlL.H. 保留所有权利。",
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        });
+        copyright.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
+        {
+            Text = "「ALH Pro」软件界面与代码版权归 AlL.H 所有,免费公益、个人自用;未经作者书面许可,禁止商用、再次分发或篡改。开源模型与引擎版权归各原作者所有(见上方致谢与许可声明),仅作为本软件底层能力使用,请勿移除版权信息。",
+        });
+        content.Children.Add(copyright);
+
         // 关于弹窗:全屏遮罩 + 中央圆角卡片(水平垂直精确居中)
         var popup = new Microsoft.UI.Xaml.Controls.Primitives.Popup { XamlRoot = this.XamlRoot };
         var overlay = new Grid
