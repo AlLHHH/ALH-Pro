@@ -1271,6 +1271,7 @@ public sealed partial class VideoView : UserControl
     {
         public string Name { get; set; } = "";
         public string SavedAt { get; set; } = "";
+        public bool IsOfficial { get; set; }   // 官方预设(程序内置):悬停显示"官方"、不显示日期时间;用户预设=普通条目
         public VideoSettings Params { get; set; } = new();
     }
 
@@ -1311,12 +1312,24 @@ public sealed partial class VideoView : UserControl
         try
         {
             var list = LoadPresets();
-            if (list.Any(x => x.Name == BuiltinPresetName)) return;
+            // 若已存在「画质通用增强」(可能是用户保存过/旧版内置),把它标记为官方预设
+            var existing = list.FirstOrDefault(x => x.Name == BuiltinPresetName);
+            if (existing != null)
+            {
+                if (!existing.IsOfficial)
+                {
+                    existing.IsOfficial = true;
+                    SavePresets(list);
+                    AppLogger.Info("[内置预设] 已将「画质通用增强」标记为官方预设");
+                }
+                return;
+            }
             // 通用画质增强默认:超分 2x(waifu2x 通用)→ 适度后处理 → 不补帧/不转场
             var p = new VideoPreset
             {
                 Name = BuiltinPresetName,
                 SavedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm") + " · 内置",
+                IsOfficial = true,
                 Params = new VideoSettings
                 {
                     Remember = false,
@@ -1567,7 +1580,7 @@ public sealed partial class VideoView : UserControl
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
                 // 行右侧:普通态=删除按钮;确认态=「确定删除?」+ ✓/✕
-                var name = new TextBlock { Text = cur[i].Name, FontSize = 14, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
+                var name = new TextBlock { Text = cur[i].Name + (cur[i].IsOfficial ? "  [官方]" : ""), FontSize = 14, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
                 var tipText = new TextBlock { Text = BuildPresetSummary(cur[i]), TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, MaxWidth = 300 };
                 ToolTipService.SetToolTip(name, tipText);
                 var presetName = cur[i].Name;
@@ -1752,7 +1765,10 @@ public sealed partial class VideoView : UserControl
     {
         var d = p.Params;
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine($"「{p.Name}」({p.SavedAt})");
+        // 官方预设:显示「官方」标记、不显示日期时间;用户自建预设显示保存时间
+        sb.AppendLine(p.IsOfficial
+            ? $"「{p.Name}」[官方]"
+            : $"「{p.Name}」({p.SavedAt})");
         sb.AppendLine("超分: " + (d.Up
             ? $"{(d.Engine == 1 ? "Real-ESRGAN" : "waifu2x")} · 倍率 {d.Scale switch { 0 => "1x", 1 => "2x", 2 => "3x", 3 => "4x", _ => "自定义" }} · 模型 {(d.Engine == 1 ? UpEsrganModelName(d.UpEsrganModel) : UpWaifu2xModelName(d.UpWaifu2xModel))}"
             : "关闭"));
