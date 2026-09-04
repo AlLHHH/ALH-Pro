@@ -19,6 +19,7 @@ public sealed partial class UpscaleView : UserControl
     private int _gpuCount;   // 枚举到的 GPU 数量(用于 gpuId 计算)
     private int _lastJpgQuality = 2;   // 上次 JPG 模式选中的码率档(0-4):切到 PNG 时把"无损"占位替换,保存时保留 JPG 真实档
     private bool _settingsLoaded;      // LoadSettings 完成后才允许保存(防构造期默认值覆盖用户设置)——修复"记不住格式"的守卫
+    private bool _suppressEvents;      // 应用预设/加载时抑制控件事件触发 SaveSettings(防覆盖)
 
     // ---- 暂停/恢复:暂停后停在下一张之前,可删除"未处理"的项目 ----
     private bool _paused;
@@ -234,7 +235,8 @@ public sealed partial class UpscaleView : UserControl
     {
         // 加载完成前禁止保存:构造期任何控件默认赋值可能触发事件→用默认值覆盖用户设置
         // (实测日志:启动时"进入页面→保存Fmt=0→加载Fmt=0"——保存抢先于加载,把用户 PNG(1) 覆盖回 JPG(0))
-        if (!_settingsLoaded) return;
+        // 应用预设期间(_suppressEvents)也禁止保存:避免中途部分状态写盘,由 ApplyImgSettings 末尾统一保存
+        if (!_settingsLoaded || _suppressEvents) return;
         try
         {
             var d = new UpscaleSettings
@@ -274,6 +276,262 @@ public sealed partial class UpscaleView : UserControl
             AppLogger.Info($"[记忆] 图片设置保存: Fmt={d.Fmt}, ImgQualityMode={d.ImgQualityMode}, QualityCombo.Sel={ImgQualityCombo.SelectedIndex}, _lastJpgQuality={_lastJpgQuality}, 时间={DateTime.Now:HH:mm:ss}");
         }
         catch { /* 保存失败忽略 */ }
+    }
+
+    /// <summary>把当前页面参数收集为一个快照(供「保存预设」复用;不含输出目录等位置偏好)。</summary>
+    private UpscaleSettings CollectSettings() => new()
+    {
+        Mode = ModeRadios.SelectedIndex,
+        W2xModel = ModelCombo.SelectedIndex,
+        Scale = ScaleRadios.SelectedIndex,
+        Noise = NoiseCombo.SelectedIndex,
+        Tta = TtaCheck.IsChecked == true,
+        Fmt = FmtCombo.SelectedIndex,
+        Detail = (int)DetailSlider.Value,
+        Sharpen = (int)SharpenSlider.Value,
+        Clarity = (int)ClaritySlider.Value,
+        Deblur = (int)DeblurSlider.Value,
+        Usm = (int)UsmSlider.Value,
+        Edge = (int)EdgeSlider.Value,
+        DetailEnhance = (int)DetailEnhanceSlider.Value,
+        Denoise = (int)DenoiseSlider.Value,
+        Aa = (int)AaSlider.Value,
+        Dehaze = (int)DehazeSlider.Value,
+        ImgQualityMode = FmtCombo.SelectedIndex == 0
+            ? (ImgQualityCombo.SelectedIndex is >= 0 and <= 4 ? ImgQualityCombo.SelectedIndex : _lastJpgQuality)
+            : _lastJpgQuality,
+        ImgQualityCustom = ParseImgQualityCustom(),
+        PreDenoise = PreDenoiseCheck.IsChecked == true,
+        DenoiseLevel = DenoiseLevelCombo.SelectedIndex,
+    };
+
+    // ---------- 参数预设(图片) ----------
+    /// <summary>一个图片参数预设:命名 + 保存时间 + 一套 UpscaleSettings 快照。上限 100 个。</summary>
+    private sealed class UpscalePreset
+    {
+        public string Name { get; set; } = "";
+        public string SavedAt { get; set; } = "";
+        public UpscaleSettings Params { get; set; } = new();
+    }
+
+    /// <summary>图片预设文件(file=img-presets.json);导出/导入用 .alhimg 后缀(与视频页 .alhpreset 区分)。</summary>
+    private static string ImgPresetFile => ParaPaths.SettingsFile("img-presets.json");
+    private const int MaxImgPresets = 100;
+    private const string ImgPresetExt = ".alhimg";
+
+    private static List<UpscalePreset> LoadImgPresets()
+    {
+        try
+        {
+            if (!File.Exists(ImgPresetFile)) return new();
+            return System.Text.Json.JsonSerializer.Deserialize<List<UpscalePreset>>(File.ReadAllText(ImgPresetFile))
+                ?? new();
+        }
+        catch { return new(); }
+    }
+
+    private static void SaveImgPresets(List<UpscalePreset> list)
+    {
+        try
+        {
+            if (list.Count == 0) { if (File.Exists(ImgPresetFile)) File.Delete(ImgPresetFile); return; }
+            Directory.CreateDirectory(Path.GetDirectoryName(ImgPresetFile)!);
+            File.WriteAllText(ImgPresetFile, System.Text.Json.JsonSerializer.Serialize(list));
+        }
+        catch { }
+    }
+
+    /// <summary>把一套图片参数快照套回当前页面(抑制事件回调写盘)。</summary>
+    private void ApplyImgSettings(UpscaleSettings d)
+    {
+        _suppressEvents = true;
+        try
+        {
+            if (d.Mode is >= 0 and <= 1) ModeRadios.SelectedIndex = d.Mode;
+            if (d.W2xModel is >= 0 && d.W2xModel < ModelCombo.Items.Count) ModelCombo.SelectedIndex = d.W2xModel;
+            if (d.Scale is >= 0 and <= 4) ScaleRadios.SelectedIndex = d.Scale == 0 ? 0 : Math.Min(d.Scale - 1, 3);
+            if (d.Noise is >= 0 and <= 3) NoiseCombo.SelectedIndex = d.Noise;
+            TtaCheck.IsChecked = d.Tta;
+            if (d.Fmt is >= 0 and <= 1) FmtCombo.SelectedIndex = d.Fmt;
+            RefreshQualityCombo();
+            if (FmtCombo.SelectedIndex == 0)
+            {
+                if (d.ImgQualityMode is >= 0 and <= 4) ImgQualityCombo.SelectedIndex = d.ImgQualityMode;
+                else ImgQualityCombo.SelectedIndex = 2;
+            }
+            if (d.Detail is >= 0 and <= 100) DetailSlider.Value = d.Detail;
+            if (d.Sharpen is >= 0 and <= 100) SharpenSlider.Value = d.Sharpen;
+            if (d.Clarity is >= 0 and <= 100) ClaritySlider.Value = d.Clarity;
+            if (d.Deblur is >= 0 and <= 100) DeblurSlider.Value = d.Deblur;
+            if (d.Usm is >= 0 and <= 100) UsmSlider.Value = d.Usm;
+            if (d.Edge is >= 0 and <= 100) EdgeSlider.Value = d.Edge;
+            if (d.DetailEnhance is >= 0 and <= 100) DetailEnhanceSlider.Value = d.DetailEnhance;
+            if (d.Denoise is >= 0 and <= 100) DenoiseSlider.Value = d.Denoise;
+            if (d.Aa is >= 0 and <= 100) AaSlider.Value = d.Aa;
+            if (d.Dehaze is >= 0 and <= 100) DehazeSlider.Value = d.Dehaze;
+            PreDenoiseCheck.IsChecked = d.PreDenoise;
+            if (d.DenoiseLevel is >= 0 and <= 2) DenoiseLevelCombo.SelectedIndex = d.DenoiseLevel;
+        }
+        finally { _suppressEvents = false; }
+    }
+
+    /// <summary>把当前图片参数保存为一个预设(命名对话框;上限 100)。</summary>
+    private async void SavePresetBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var list = LoadImgPresets();
+        if (list.Count >= MaxImgPresets)
+        {
+            await ShowPresetHintAsync($"已达上限 {MaxImgPresets} 个预设,请先删除部分预设再新建。");
+            return;
+        }
+        string defaultName = "预设 " + (list.Count + 1);
+        var box = new TextBox { Text = defaultName };
+        box.SelectAll();
+        var dlgContent = new StackPanel { Spacing = 8 };
+        dlgContent.Children.Add(new TextBlock { Text = "给这个图片预设起个名字:", FontSize = 12 });
+        dlgContent.Children.Add(box);
+        var dlg = new ContentDialog
+        {
+            Title = "保存为预设",
+            Content = dlgContent,
+            PrimaryButtonText = "保存",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = this.XamlRoot,
+        };
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+        string name = string.IsNullOrWhiteSpace(box.Text) ? defaultName : box.Text.Trim();
+        list.Add(new UpscalePreset { Name = name, SavedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), Params = CollectSettings() });
+        SaveImgPresets(list);
+        await ShowPresetHintAsync($"已保存预设「{name}」。点「使用预设」可查看、应用、删除。");
+    }
+
+    /// <summary>打开图片预设窗口:列表选择、应用、删除、排序、导出/导入(.alhimg)。</summary>
+    private async void OpenPresetWindowBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var list = LoadImgPresets();
+        if (list.Count == 0) { await ShowPresetHintAsync("还没有任何图片预设。先点「保存预设」保存一个。"); return; }
+        string? pendingDel = null;
+        var sortCombo = new ComboBox { HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch };
+        sortCombo.Items.Add("按创建时间(默认)"); sortCombo.Items.Add("按名字 A→Z"); sortCombo.Items.Add("按最近修改");
+        sortCombo.SelectedIndex = 0;
+        var exportBtn = new Button { Content = "导出", FontSize = 12, Padding = new Microsoft.UI.Xaml.Thickness(10, 4, 10, 4) };
+        var importBtn = new Button { Content = "导入", FontSize = 12, Padding = new Microsoft.UI.Xaml.Thickness(10, 4, 10, 4) };
+        var topBar = new Grid { ColumnSpacing = 8 };
+        topBar.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
+        topBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
+        topBar.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
+        topBar.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
+        var sortLabel = new TextBlock { Text = "排序:", VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
+        Grid.SetColumn(sortLabel, 0); Grid.SetColumn(sortCombo, 1); Grid.SetColumn(exportBtn, 2); Grid.SetColumn(importBtn, 3);
+        topBar.Children.Add(sortLabel); topBar.Children.Add(sortCombo); topBar.Children.Add(exportBtn); topBar.Children.Add(importBtn);
+        var listView = new ListView { SelectionMode = Microsoft.UI.Xaml.Controls.ListViewSelectionMode.Single, MaxHeight = 360 };
+        var closeBtn = new Button { Content = "关闭", HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch };
+        var applyBtn = new Button { Content = "应用预设", HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch, Style = (Microsoft.UI.Xaml.Style)App.Current.Resources["AccentButtonStyle"] };
+        var bottomBar = new Grid { ColumnSpacing = 8 };
+        bottomBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
+        bottomBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
+        Grid.SetColumn(closeBtn, 0); Grid.SetColumn(applyBtn, 1);
+        bottomBar.Children.Add(closeBtn); bottomBar.Children.Add(applyBtn);
+        var inner = new StackPanel { Spacing = 12 };
+        inner.Children.Add(topBar); inner.Children.Add(listView); inner.Children.Add(bottomBar);
+        ContentDialog dlg = new() { Title = "图片预设", Content = inner, CloseButtonText = "", XamlRoot = this.XamlRoot };
+
+        void RebuildList()
+        {
+            var cur = LoadImgPresets();
+            switch (sortCombo.SelectedIndex)
+            {
+                case 1: cur = cur.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList(); break;
+                case 2: cur = cur.OrderByDescending(x => x.SavedAt, StringComparer.OrdinalIgnoreCase).ToList(); break;
+            }
+            listView.Items.Clear();
+            for (int i = 0; i < cur.Count; i++)
+            {
+                var presetName = cur[i].Name;
+                var name = new TextBlock { Text = presetName, FontSize = 14, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
+                var delBtn = new Button { Content = "\uE74D", FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe MDL2 Assets"), FontSize = 13, Background = null, BorderThickness = new Microsoft.UI.Xaml.Thickness(0), Padding = new Microsoft.UI.Xaml.Thickness(6, 2, 6, 2), VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center, MinWidth = 0, Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77)) };
+                ToolTipService.SetToolTip(delBtn, "删除该预设");
+                if (pendingDel == presetName)
+                {
+                    name.Text = "确定要删除此预设吗?"; name.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77));
+                    var span = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 6, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
+                    var ok = new Button { Content = "✓", FontSize = 14, Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 0, 168, 0)), MinWidth = 0, Padding = new Microsoft.UI.Xaml.Thickness(6, 2, 6, 2), Background = null, BorderThickness = new Microsoft.UI.Xaml.Thickness(0) };
+                    var cancel = new Button { Content = "✕", FontSize = 14, Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77)), MinWidth = 0, Padding = new Microsoft.UI.Xaml.Thickness(6, 2, 6, 2), Background = null, BorderThickness = new Microsoft.UI.Xaml.Thickness(0) };
+                    ok.Click += (_, _) => { var latest = LoadImgPresets(); var hit = latest.FirstOrDefault(x => x.Name == presetName); if (hit != null) { latest.Remove(hit); SaveImgPresets(latest); } pendingDel = null; if (latest.Count == 0) { try { dlg.Hide(); } catch { } return; } RebuildList(); };
+                    cancel.Click += (_, _) => { pendingDel = null; RebuildList(); };
+                    span.Children.Add(ok); span.Children.Add(cancel);
+                    var rowG = new Grid(); rowG.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) }); rowG.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
+                    rowG.Children.Add(name); Grid.SetColumn(name, 0); rowG.Children.Add(span); Grid.SetColumn(span, 1); listView.Items.Add(rowG); continue;
+                }
+                delBtn.Click += (_, _) => { pendingDel = presetName; RebuildList(); };
+                var row = new Grid(); row.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) }); row.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
+                row.Children.Add(name); Grid.SetColumn(name, 0); row.Children.Add(delBtn); Grid.SetColumn(delBtn, 1); listView.Items.Add(row);
+            }
+        }
+        RebuildList();
+        sortCombo.SelectionChanged += (_, _) => RebuildList();
+        applyBtn.Click += (_, _) =>
+        {
+            int s = listView.SelectedIndex; if (s < 0) return;
+            var cur = LoadImgPresets(); var byName = sortCombo.SelectedIndex == 1 ? cur.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList()
+                : sortCombo.SelectedIndex == 2 ? cur.OrderByDescending(x => x.SavedAt, StringComparer.OrdinalIgnoreCase).ToList() : cur;
+            if (s < byName.Count) { ApplyImgSettings(byName[s].Params); SaveSettings(); }
+            try { dlg.Hide(); } catch { }
+        };
+        closeBtn.Click += (_, _) => { try { dlg.Hide(); } catch { } };
+        exportBtn.Click += async (_, _) =>
+        {
+            int s = listView.SelectedIndex; var cur = LoadImgPresets();
+            List<UpscalePreset> toExport;
+            if (s >= 0 && s < cur.Count)
+            {
+                var byName = sortCombo.SelectedIndex == 1 ? cur.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList()
+                    : sortCombo.SelectedIndex == 2 ? cur.OrderByDescending(x => x.SavedAt, StringComparer.OrdinalIgnoreCase).ToList() : cur;
+                if (s < byName.Count) toExport = new List<UpscalePreset> { byName[s] };
+                else return;
+            }
+            else toExport = cur;
+            var picker = new FileSavePicker();
+            picker.FileTypeChoices.Add("ALH Pro 图片预设", new List<string> { ImgPresetExt });
+            picker.SuggestedFileName = "ALHPro_图片预设";
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+            var file = await picker.PickSaveFileAsync();
+            if (file == null) return;
+            try { await System.IO.File.WriteAllTextAsync(file.Path, System.Text.Json.JsonSerializer.Serialize(toExport)); AppLogger.UserAction($"图片:导出 {toExport.Count} 个预设到 {file.Path}"); }
+            catch (Exception ex) { AppLogger.Warn("导出图片预设失败:" + ex.Message); }
+        };
+        importBtn.Click += async (_, _) =>
+        {
+            var picker = new FileOpenPicker();
+            picker.FileTypeFilter.Add(".json"); picker.FileTypeFilter.Add(ImgPresetExt);
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+            var file = await picker.PickSingleFileAsync();
+            if (file == null) return;
+            try
+            {
+                var imported = System.Text.Json.JsonSerializer.Deserialize<List<UpscalePreset>>(await System.IO.File.ReadAllTextAsync(file.Path)) ?? new();
+                var existing = LoadImgPresets(); int added = 0;
+                foreach (var p in imported)
+                {
+                    if (existing.Count >= MaxImgPresets) break;
+                    var nm = p.Name; int k = 1;
+                    while (existing.Any(x => x.Name == nm)) nm = $"{p.Name} ({++k})";
+                    p.Name = nm; existing.Add(p); added++;
+                }
+                SaveImgPresets(existing); RebuildList(); await ShowPresetHintAsync($"已导入 {added} 个图片预设。");
+            }
+            catch (Exception ex) { AppLogger.Warn("导入图片预设失败(格式不对):" + ex.Message); }
+        };
+        await dlg.ShowAsync();
+    }
+
+    private async Task ShowPresetHintAsync(string msg)
+    {
+        var dlg = new ContentDialog { Title = "参数预设", Content = new TextBlock { Text = msg, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap }, CloseButtonText = "知道了", XamlRoot = this.XamlRoot };
+        await dlg.ShowAsync();
     }
 
     private sealed class UpscaleSettings
