@@ -1055,10 +1055,21 @@ public sealed partial class VideoView : UserControl
         if (BitrateRow != null) BitrateRow.Visibility = Visibility.Collapsed;
         FormatCombo.SelectedIndex = 0;
         FastModeCheck.IsChecked = false;
+        // 补全剩余参数(真正"重置所有"):视频降噪/后处理杂色/抗锯齿/去频闪/VFR/去重智能/微动防线/静音
+        DenoiseToggle.IsChecked = false;
+        DenoiseStrongRadios.SelectedIndex = 0;
+        FlickerSlider.Value = 0;
+        PostDenoiseSlider.Value = 0;
+        PostAaSlider.Value = 0;
+        VfrModeRadios.SelectedIndex = 0;
+        DedupSmartCombo.SelectedIndex = 0;
+        ManualProtectSmallMotionCheck.IsChecked = true;
+        MuteCheck.IsChecked = false;
+        if (AllFpsBox != null) AllFpsBox.Text = "30";   // 多视频输入帧率框
         _suppressEvents = false;
         UpdateOptions();
         SaveSettings();
-        Log("已重置为默认参数");
+        Log("已重置所有参数为默认值");
     }
 
     // 只重置视频调整(后处理)参数
