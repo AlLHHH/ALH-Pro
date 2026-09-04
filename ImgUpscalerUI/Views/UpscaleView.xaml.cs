@@ -1299,9 +1299,10 @@ public sealed partial class UpscaleView : UserControl
                                 Log($"✅ 自检完毕:{(engine == "realesrgan" ? "ncnn GPU 引擎可用(快)" : "常规引擎")}");
                             await EngineService.UpscaleAsync(srcPath, outPath, engine,
                                 model, scale, noise, gpuId, tta, progress, ct,
-                                // 分块放大提速:图片超分逐块启动引擎,512 块=启动占约 2/3 时间;
-                                // 1024 起步(块数约 1/4)省启动;显存不足由引擎自动降分块重试兜底,不会崩。
-                                tileSize: SafeRender.GetTileSize() * 2,
+                                // 分块放大提速:分块大小用「安全渲染」墙(按显存自适应),不翻倍——
+                                // 翻倍(GetTileSize()*2)会让小显存卡(6~8GB)OOM 掉 CPU,且用整图直跑的 `-t` 内部分块有接缝风险;
+                                // 用安全墙后,更大图会走 App 自定义分块(重叠+羽化,无接缝),更稳。
+                                tileSize: SafeRender.GetTileSize(),
                                 upscaleShrink1x: upscaleShrink1x,
                                 jpgQuality: imgQ / 100f, pngCompress: pngCompress);
                         }
