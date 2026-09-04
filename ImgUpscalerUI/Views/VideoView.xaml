@@ -728,10 +728,10 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <Button Grid.Column="0" Content="使用预设" Click="OpenPresetWindowBtn_Click"
-                                HorizontalAlignment="Stretch"
+                                HorizontalAlignment="Stretch" Style="{StaticResource AccentButtonStyle}"
                                 ToolTipService.ToolTip="打开预设列表:点选应用、删除、排序"/>
                         <Button Grid.Column="1" Content="保存预设" Click="SavePresetBtn_Click"
-                                HorizontalAlignment="Stretch"
+                                HorizontalAlignment="Stretch" Style="{StaticResource AccentButtonStyle}"
                                 ToolTipService.ToolTip="把当前全部视频参数保存为一个预设(上限 100 个)"/>
                     </Grid>
 
