@@ -200,7 +200,7 @@ public static class EsrganOnnxService
     /// 仍保留逐帧进度 + 取消,失败帧回退原帧(不中断)。</summary>
     public static async Task UpscaleDirAsync(string inputDir, string outputDir, double scale,
         int gpuId = -1, IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default,
-        string? modelPath = null, int globalBaseFrames = 0, int globalTotalFrames = 0)
+        string? modelPath = null, int globalBaseFrames = 0, int globalTotalFrames = 0, Func<Task>? pauseWait = null)
     {
         var files = Directory.EnumerateFiles(inputDir, "*.png")
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -240,11 +240,12 @@ public static class EsrganOnnxService
             for (int w = 0; w < concurrency; w++)
             {
                 int wi = w;
-                workers[w] = System.Threading.Tasks.Task.Run(() =>
+                workers[w] = System.Threading.Tasks.Task.Run(async () =>
                 {
                     for (int i = wi; i < files.Length; i += concurrency)
                     {
                         ct.ThrowIfCancellationRequested();
+                        if (pauseWait != null) await pauseWait();   // 暂停:当前帧跑完即停(ONNX/CPU 也能暂停)
                         var outPath = Path.Combine(outputDir, Path.GetFileName(files[i]));
                         try
                         {

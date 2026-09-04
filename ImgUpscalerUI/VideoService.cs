@@ -1235,7 +1235,7 @@ public static class VideoService
                                     $"超分(稳定引擎) 批次 {start / batchSize + 1}/{batches}..."));
                                 await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
                                     upGpu < 0 ? (upOnnxDml ? -2 : -1) : -2, progress, ct, onnxModelPath,
-                                    start, total);   // 用户主动选 CPU(-1)强制 CPU;探测失败(upOnnxDml)用 -2=DirectML GPU 自动;正常 GPU 也 -2 自适应
+                                    start, total, pauseWait);   // 用户主动选 CPU(-1)强制 CPU;探测失败(upOnnxDml)用 -2=DirectML GPU 自动;正常 GPU 也 -2 自适应;pauseWait=ONNX/CPU 也能暂停
                             }
                             else
                             {
@@ -1271,7 +1271,7 @@ public static class VideoService
                                     Directory.CreateDirectory(batchOut);
                                     await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
                                         upOnnxDml ? -2 : (upGpu < 0 ? -1 : -2), progress, ct, onnxB,
-                                        start, total);   // 探测失败/黑帧 → DeepSeek-2(DirectML GPU 自动);主动选 CPU → -1
+                                        start, total, pauseWait);   // 探测失败/黑帧 → DeepSeek-2(DirectML GPU 自动);主动选 CPU → -1;pauseWait=ONNX/CPU 也能暂停
                                     foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
                                         File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
                                     // ONNX(DirectML)重处理仍黑(该卡 DirectML 也异常)→ 再用 ncnn-CPU 兜底(慢但绝不出黑)
