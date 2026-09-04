@@ -312,23 +312,6 @@
                                    VerticalAlignment="Center" Text=""/>
                     </Grid>
 
-                    <!-- 补帧输出帧率基准(单独放这里,不混进「视频帧率」面板) -->
-                    <Grid ColumnSpacing="8" Margin="0,4,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="补帧输出帧率基准" VerticalAlignment="Center" FontSize="12"
-                                   ToolTipService.ToolTip="两种补帧方式,鼠标悬停每个选项看它的效果和可能问题。默认推荐「真实时间轴插值」。"/>
-                        <ComboBox x:Name="FpsBaseCombo" Grid.Column="1" HorizontalAlignment="Stretch"
-                                  SelectedIndex="0" SelectionChanged="Combo_Changed">
-                            <ComboBoxItem Content="真实时间轴插值 (推荐)"
-                                          ToolTipService.ToolTip="最忠实:每个画面该出现的位置、停顿时间都跟原片完全对齐,再用 AI 补出缺失的中间帧,看起来就是原片直接变流畅了。&#10;&#10;【可能问题】① 对长时间真正静止的背景,可能被当成「缓慢移动」处理,那段会像缓慢蠕动;② 依赖去重能把每段实际停留时长认对,极度抖动/杂乱素材会判断不准。"/>
-                            <ComboBoxItem Content="匀速帧速率插值"
-                                          ToolTipService.ToolTip="所有动作按相同速度均匀补帧,视觉最顺滑、速度最快(通常单次插值完成)。&#10;&#10;【可能问题】① 不保留定格节奏,动画「同一张画停几帧」的感觉会消失;② 画面出现的时间点跟原片不完全一致,若要逐帧对接原片可能对不上。"/>
-                        </ComboBox>
-                    </Grid>
-
                     <!-- 可变帧率(VFR)保护:默认自动检测(加入列表时后台探测),是 VFR 素材就自动按原节奏
                          拆帧+按原始时间轴输出(防时快时慢);普通素材无影响,用户无须手动开启 -->
                     <Button x:Name="VfrToggleBtn" Content="可变帧率保护 ▾" HorizontalAlignment="Stretch"
@@ -626,6 +609,18 @@
                             <CheckBox x:Name="TtaCheck" Content="开启高质量(减少运动伪影,更清晰)" ToolTipService.ToolTip="高质量(TTA):反复推演减少补帧的跳步/扭曲伪影。⚠ 开启后会严重增加导出时间(约慢 5~7 倍)。默认关闭(追求速度);画质优先可手动开启"
                                       Checked="Options_Changed" Unchecked="Options_Changed"/>
                             <TextBlock Text="⚠ 开启后会严重增加导出时间" Style="{StaticResource HintText}" TextWrapping="Wrap"/>
+
+                            <!-- 补帧输出帧率基准:放「高级参数」里,并提供黄色提示(不改默认推荐就是安全的) -->
+                            <TextBlock Text="补帧输出帧率基准" Style="{StaticResource SectionTitle}"/>
+                            <ComboBox x:Name="FpsBaseCombo" HorizontalAlignment="Stretch"
+                                      SelectedIndex="0" SelectionChanged="Combo_Changed">
+                                <ComboBoxItem Content="真实时间轴插值 (推荐)"
+                                              ToolTipService.ToolTip="最忠实:每个画面该出现的位置、停顿时间都跟原片完全对齐,再用 AI 补出缺失的中间帧,看起来就是原片直接变流畅了。&#10;&#10;【可能问题】① 对长时间真正静止的背景,可能被当成「缓慢移动」处理,那段会像缓慢蠕动;② 依赖去重能把每段实际停留时长认对,极度抖动/杂乱素材会判断不准。"/>
+                                <ComboBoxItem Content="匀速帧速率插值"
+                                              ToolTipService.ToolTip="所有动作按相同速度均匀补帧,视觉最顺滑、速度最快(通常单次插值完成)。&#10;&#10;【可能问题】① 不保留定格节奏,动画「同一张画停几帧」的感觉会消失;② 画面出现的时间点跟原片不完全一致,若要逐帧对接原片可能对不上。"/>
+                            </ComboBox>
+                            <TextBlock Text="⚠ 默认推荐「真实时间轴插值」。在您不了解另一个(匀速)模式的情况下,不建议使用,以免输出节奏与原片不一致。"
+                                       Foreground="#E8A33D" FontSize="11" TextWrapping="Wrap"/>
                         </StackPanel>
 
                     <TextBlock x:Name="InterpHint" Style="{StaticResource HintText}"
