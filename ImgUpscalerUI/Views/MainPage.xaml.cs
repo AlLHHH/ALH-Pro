@@ -834,6 +834,16 @@ public sealed partial class MainPage : Page
                     Text = $"怎么更新:\n1. 点上方链接打开 GitHub Release 页面;打不开就用加速器/镜像,或找软件群/网盘获取安装包。\n2. 下载「ALHPro_v{tag.TrimStart('v')}_Setup.exe」(安装包;别下源码 zip)。\n3. 双击安装,等完成即可——设置/记录都保留,可手动卸载旧版。",
                 };
                 content.Children.Add(guide);
+                // 网盘完整版下载(点击跳转百度网盘;国内最快/含模型)
+                var netDiskLink = new Microsoft.UI.Xaml.Controls.HyperlinkButton
+                {
+                    Content = "网盘下载完整版(含全部引擎+模型,国内最快)",
+                    FontSize = 11,
+                    Padding = new Microsoft.UI.Xaml.Thickness(0, 2, 0, 0),
+                    HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
+                };
+                netDiskLink.Click += (_, _) => OpenNetDisk();
+                content.Children.Add(netDiskLink);
             }
             else
             {
