@@ -3229,7 +3229,7 @@ public sealed partial class VideoView : UserControl
         if (interp)
         {
             bool weakGpu = SafeRender.Profile == SafeRender.DeviceProfile.UltraLow
-                || CurrentIsIntegratedGpu() || SafeRender.TotalVramGB < 8;
+                || CurrentIsIntegratedGpu() || SafeRender.TotalVramGB < 6.5;   // 放宽:<8 → <6.5,避免 8GB 4060 误判为弱
             bool highRate = InterpScaleRadios.SelectedIndex >= 2;   // 0=2x 1=3x 2=4x 3=8x...
             bool highTarget = TargetFpsCheck.IsChecked == true
                 && double.TryParse(TargetFpsBox.Text, System.Globalization.NumberStyles.Float,
@@ -3241,7 +3241,9 @@ public sealed partial class VideoView : UserControl
                     Title = "高倍率补帧提醒",
                     Content = new TextBlock
                     {
-                        Text = "当前设备偏弱(核显/显存不足 8GB),高倍率补帧(4x 及以上)可能极慢甚至失败。\n建议:补帧倍率改 2x,或勾选「兼容模式」后先跑几秒小片段试试。",
+                        Text = CurrentIsIntegratedGpu()
+                            ? "当前用核显(共享内存),高倍率补帧(4x 及以上)可能极慢甚至失败。\n建议:补帧倍率改 2x,或勾选「兼容模式」后先跑几秒小片段试试。"
+                            : $"当前设备偏弱(显存仅 {SafeRender.TotalVramGB:0.#}GB),高倍率补帧(4x 及以上)可能极慢甚至失败。\n建议:补帧倍率改 2x,或勾选「兼容模式」后先跑几秒小片段试试。",
                         TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
                     },
                     PrimaryButtonText = "知道了,开始",
