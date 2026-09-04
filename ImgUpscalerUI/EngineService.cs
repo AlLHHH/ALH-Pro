@@ -2201,19 +2201,38 @@ public static partial class EngineService
         var tmp = Path.Combine(EngineService.TempRoot, $"imgup_resize_{Guid.NewGuid():N}.png");
         try
         {
-            using (var src = new System.Drawing.Bitmap(path))
+            int w = Math.Max(1, width);
+            int h = Math.Max(1, height);
+            try
             {
-                int w = Math.Max(1, width);
-                int h = Math.Max(1, height);
-                using var dst = new System.Drawing.Bitmap(w, h);
-                using (var g = System.Drawing.Graphics.FromImage(dst))
+                using (var src = new System.Drawing.Bitmap(path))
                 {
-                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                    g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
-                    g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
-                    g.DrawImage(src, 0, 0, w, h);
+                    using var dst = new System.Drawing.Bitmap(w, h);
+                    using (var g = System.Drawing.Graphics.FromImage(dst))
+                    {
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                        g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                        g.DrawImage(src, 0, 0, w, h);
+                    }
+                    dst.Save(tmp, System.Drawing.Imaging.ImageFormat.Png);
                 }
-                dst.Save(tmp, System.Drawing.Imaging.ImageFormat.Png);
+            }
+            catch (Exception ex)
+            {
+                // 【兜底】源帧损坏/0字节/非图像(引擎偶发写出坏帧或磁盘不足截断)→ GDI+ 读源抛
+                // "Parameter is not valid"。此时【不能删帧/不跳过】——合帧用 frame_%06d.png 按编号连续读,
+                // 缺帧会造成编号断档 → ffmpeg 提前停止/输出截断,比一帧坏更糟。
+                // 改为生成一张同尺寸深灰占位帧覆盖原路径,保持编号连续、可解码,合帧不中断。
+                string head = ex.Message.Split('\n')[0];
+                if (head.Length > 70) head = head[..70];
+                AppLogger.Warn($"⚠ 缩回:源帧损坏({Path.GetFileName(path)})——{head};已用同尺寸占位帧替代,合帧不中断");
+                using var ph = new System.Drawing.Bitmap(w, h);
+                using (var g = System.Drawing.Graphics.FromImage(ph))
+                {
+                    g.Clear(System.Drawing.Color.FromArgb(24, 24, 24));   // 深灰,avoid 黑帧被误判为损坏
+                }
+                ph.Save(tmp, System.Drawing.Imaging.ImageFormat.Png);
             }
             File.Copy(tmp, outputPath, overwrite: true);
         }

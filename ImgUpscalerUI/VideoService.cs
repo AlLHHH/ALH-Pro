@@ -1389,6 +1389,8 @@ public static class VideoService
                         ct.ThrowIfCancellationRequested();
                         shTasks.Add(Task.Run(() =>
                         {
+                            // ResizeImageTo 内部已兜底:源帧损坏时生成同尺寸占位帧,保持 frame_%06d 编号连续、
+                            // 可解码,合帧不中断(不删帧/不跳过,否则编号断档会截断输出)。
                             EngineService.ResizeImageTo(f, f, origW.Value, origH.Value);
                             int d = Interlocked.Increment(ref doneSh);
                             if (d % 20 == 0 || d == shFiles.Length)
@@ -1414,6 +1416,7 @@ public static class VideoService
                     ct.ThrowIfCancellationRequested();
                     resTasks.Add(Task.Run(() =>
                     {
+                        // ResizeImageTo 内部已兜底:坏帧→同尺寸占位帧,保持编号连续可解码,合帧不中断。
                         EngineService.ResizeImageTo(f, f, outWidth.Value, outHeight.Value);
                         int d = Interlocked.Increment(ref doneRes);
                         if (d % 20 == 0 || d == resFiles.Length)
