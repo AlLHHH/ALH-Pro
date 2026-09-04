@@ -1379,6 +1379,13 @@ public sealed partial class VideoView : UserControl
                 if (existing != null)
                 {
                     if (!existing.IsOfficial) { existing.IsOfficial = true; changed = true; }
+                    // 官方预设时间步统一 0.5:若旧官方预设存过非 0.5 的时间步(如早期 bug 存成 0.05),强制归位
+                    if (existing.IsOfficial && existing.Params.TimeStep != 0.5)
+                    {
+                        existing.Params.TimeStep = 0.5;
+                        changed = true;
+                        AppLogger.Info($"[内置预设] 官方预设「{name}」时间步修正为 0.5");
+                    }
                     continue;
                 }
                 // 缺失 → 用官方默认参数创建,标记官方,排在已有预设之前(官方靠前)
