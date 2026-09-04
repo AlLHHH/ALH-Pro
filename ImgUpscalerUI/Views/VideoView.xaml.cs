@@ -1717,7 +1717,10 @@ public sealed partial class VideoView : UserControl
         if (presets.Count == 0) return;   // 无内容直接返回(窗口保持)
         var picker = new FileSavePicker();
         picker.FileTypeChoices.Add("ALH Pro 预设", new List<string> { ".alhpreset" });
-        picker.SuggestedFileName = onlyOne ? presets[0].Name : "ALHPro_预设导出";
+        // 导出文件名带预设名:单个=该预设名;全部=第一个预设名+"等N个"。清洗非法文件名字符(\/:*?"<>|)
+        picker.SuggestedFileName = presets.Count == 1
+            ? UpscaleView.SafePresetFileName(presets[0].Name)
+            : UpscaleView.SafePresetFileName(presets[0].Name) + $"等{presets.Count}个";
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
         WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
         var file = await picker.PickSaveFileAsync();
