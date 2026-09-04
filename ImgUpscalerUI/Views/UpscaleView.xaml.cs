@@ -510,9 +510,25 @@ public sealed partial class UpscaleView : UserControl
             WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
             var file = await picker.PickSingleFileAsync();
             if (file == null) return;
+            // 【格式校验】图片预设必须是 .alhimg(或内容含图片专属字段)。若用户误选了视频预设(.alhpreset),
+            // 公开字段(如 Scale)会错读成图片参数且不报错——必须显式校验并明确提示,绝不静默混入。
+            if (!file.FileType.Equals(ImgPresetExt, StringComparison.OrdinalIgnoreCase))
+            {
+                await ShowPresetHintAsync("文件不是图片预设格式。请导入「ALH Pro 图片预设」(.alhimg)文件;视频预设(.alhpreset)请在视频页导入。");
+                return;
+            }
             try
             {
-                var imported = System.Text.Json.JsonSerializer.Deserialize<List<UpscalePreset>>(await System.IO.File.ReadAllTextAsync(file.Path)) ?? new();
+                var json = await System.IO.File.ReadAllTextAsync(file.Path);
+                // 再校验内容确实含图片专属字段(W2xModel/PreDenoise 等),防"后缀对但内容是视频预设"的伪装
+                bool isImage = json.Contains("\"W2xModel\"", StringComparison.Ordinal)
+                    || json.Contains("\"PreDenoise\"", StringComparison.Ordinal);
+                if (!isImage)
+                {
+                    await ShowPresetHintAsync("文件内容不是图片预设(可能是视频预设或已损坏)。请导入图片预设(.alhimg)文件。");
+                    return;
+                }
+                var imported = System.Text.Json.JsonSerializer.Deserialize<List<UpscalePreset>>(json) ?? new();
                 var existing = LoadImgPresets(); int added = 0;
                 foreach (var p in imported)
                 {
