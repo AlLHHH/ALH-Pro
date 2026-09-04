@@ -470,21 +470,6 @@ public sealed partial class MainPage : Page
                 });
             }
 
-            // 网盘完整版下载按钮(点击跳转百度网盘;完整版含全部引擎+模型,省去手动装模型)
-            full.Children.Add(new Border
-            {
-                Height = 1,
-                Background = SafeBrush("AppBorderBrush"),
-                Margin = new Microsoft.UI.Xaml.Thickness(0, 4, 0, 8),
-            });
-            var netDiskBtn = new Button
-            {
-                Content = "点我下载完整版(百度网盘,含全部引擎+模型)",
-                HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch,
-            };
-            netDiskBtn.Click += (_, _) => OpenNetDisk();
-            full.Children.Add(netDiskBtn);
-
             // 默认尺寸(不改大小/位置,系统自动居中)
             var dlg = new ContentDialog
             {
