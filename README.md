@@ -1,4 +1,4 @@
-# ALH Pro
+﻿# ALH Pro
 
 图片/视频/音频 AI 增强工具(本地运行),支持:图片超分、AI 抠图、视频超分、视频补帧、视频去重、音频分离/增强/真超分。
 
@@ -52,17 +52,17 @@
 
 | 显卡 | 图片超分 | 视频超分 | 视频补帧 | 画质增强 | AI抠图 | 去重 | 转场 | 果冻修复 | 音频升采样 | 音频增强/分离 |
 |---|---|---|---|---|---|---|---|---|---|---|
-| RTX 40系 / 30系 | 🟢 | 🟢 | 🟢 | CPU | CPU | CPU | CPU | CPU | 🔶 | 🟢 |
-| RTX 50系(Blackwell) | 🟡 | 🟡 | 🟡 | CPU | CPU | CPU | CPU | CPU | 🔶 | 🟢 |
-| RTX 20系 | 🟡 | 🟡 | 🟢 | CPU | CPU | CPU | CPU | CPU | 🔶 | 🟢 |
-| GTX 16系 | 🟢 | 🟢 | 🟢 | CPU | CPU | CPU | CPU | CPU | 🔶 | 🟢 |
-| GTX 10系 | 🟡 | 🟡 | 🟢 | CPU | CPU | CPU | CPU | CPU | 🔶 | 🟢 |
-| GTX 6/7/8/9系 | ? | ? | ? | CPU | CPU | CPU | CPU | CPU | 🔶 | ? |
-| AMD 独显(较新) | 🟡 | 🟡 | 🟡 | CPU | CPU | CPU | CPU | CPU | 🔶 | 🟡 |
-| AMD 老卡 | ? | ? | ? | CPU | CPU | CPU | CPU | CPU | 🔶 | ? |
-| Intel Arc | 🟡 | 🟡 | 🟡 | CPU | CPU | CPU | CPU | CPU | 🔶 | 🟡 |
-| 核显(Intel / AMD) | 🔶 | 🔶 | 🔶 | CPU | CPU | CPU | CPU | CPU | 🔶 | 🔶 |
-| 无独显(纯CPU) | 🔶 | 🔶 | 🔶 | CPU | CPU | CPU | CPU | CPU | 🔶 | 🔶 |
+| RTX 40系 / 30系 | 🟢 | 🟢 | 🟢 | CPU | CPU | CPU | CPU | CPU | CPU | 🟢 |
+| RTX 50系(Blackwell) | 🟡 | 🟡 | 🟡 | CPU | CPU | CPU | CPU | CPU | CPU | 🟢 |
+| RTX 20系 | 🟡 | 🟡 | 🟢 | CPU | CPU | CPU | CPU | CPU | CPU | 🟢 |
+| GTX 16系 | 🟢 | 🟢 | 🟢 | CPU | CPU | CPU | CPU | CPU | CPU | 🟢 |
+| GTX 10系 | 🟡 | 🟡 | 🟢 | CPU | CPU | CPU | CPU | CPU | CPU | 🟢 |
+| GTX 6/7/8/9系 | ? | ? | ? | CPU | CPU | CPU | CPU | CPU | CPU | ? |
+| AMD 独显(较新) | 🟡 | 🟡 | 🟡 | CPU | CPU | CPU | CPU | CPU | CPU | 🟡 |
+| AMD 老卡 | ? | ? | ? | CPU | CPU | CPU | CPU | CPU | CPU | ? |
+| Intel Arc | 🟡 | 🟡 | 🟡 | CPU | CPU | CPU | CPU | CPU | CPU | 🟡 |
+| 核显(Intel / AMD) | 🔶 | 🔶 | 🔶 | CPU | CPU | CPU | CPU | CPU | CPU | 🔶 |
+| 无独显(纯CPU) | 🔶 | 🔶 | 🔶 | CPU | CPU | CPU | CPU | CPU | CPU | 🔶 |
 
 ---
 
