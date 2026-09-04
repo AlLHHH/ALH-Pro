@@ -520,7 +520,6 @@ public sealed partial class VideoView : UserControl
                 || (int)DetailSlider.Value > 0 || (int)DeblurSlider.Value > 0
                 || FlickerSlider.Value > 0 || PostDenoiseSlider.Value > 0 || PostAaSlider.Value > 0)
                 slow.Add("后处理");
-            if (interp && JelloCombo.SelectedIndex > 0) slow.Add("减少果冻");
             if (interp && MotionBlurCombo.SelectedIndex > 0) slow.Add("运动模糊");
             if (interp && DeShakeCheck.IsChecked == true) slow.Add("画面去抖");
             if (slow.Count > 0 && anyWork && !_running)
@@ -786,6 +785,12 @@ public sealed partial class VideoView : UserControl
 
         VideoEngineRadios.IsEnabled = up;
         VideoScaleRadios.IsEnabled = up;
+        // 超分模型:未启用超分时一并置灰(与引擎/倍率一致,避免"没开超分还能选模型"的困惑)
+        VideoModelLabel.Opacity = up ? 1.0 : 0.5;
+        VideoWaifu2xModelCombo.IsEnabled = up;
+        VideoWaifu2xModelCombo.Opacity = up ? 1.0 : 0.5;
+        VideoEsrganModelCombo.IsEnabled = up;
+        VideoEsrganModelCombo.Opacity = up ? 1.0 : 0.5;
         // 自定义分辨率面板 + 倍率后果提示(随选择动态变化);索引:0=1x超分 1=2x 2=3x 3=4x 4=自定义
         var scaleIdx = VideoScaleRadios.SelectedIndex;
         CustomSizePanel.Visibility = up && scaleIdx == 4 ? Visibility.Visible : Visibility.Collapsed;
@@ -895,8 +900,6 @@ public sealed partial class VideoView : UserControl
         // 时间步(仅 v4 模型):其它模型置灰(级联无时间步概念)
         TimeStepSlider.IsEnabled = interp && v4Model;
         TimeStepSlider.Opacity = interp && v4Model ? 1.0 : 0.5;
-        JelloCombo.IsEnabled = interp;
-        JelloCombo.Opacity = interp ? 1.0 : 0.5;
         // 去重手动面板:仅"手动模式"展开显示,其他模式收起隐藏(带动画)
         AnimateShowHide(DedupManualPanel, dedup && dedupModel == 2);
         // 内容帧率采样:手动模式(dedupModel==2)默认算法(UI 第 1 项,核心语义 3)时显示(行在手动面板内,随面板带动画)
@@ -1046,7 +1049,6 @@ public sealed partial class VideoView : UserControl
         UsmSlider.Value = 0;
         DetailSlider.Value = 0;
         DeblurSlider.Value = 0;
-        JelloCombo.SelectedIndex = 0;
         MotionBlurCombo.SelectedIndex = 0;
         DeShakeCheck.IsChecked = false;
         QualityCombo.SelectedIndex = 0;
@@ -1423,7 +1425,6 @@ public sealed partial class VideoView : UserControl
         if (d.PostFlicker is >= 0 and <= 100) FlickerSlider.Value = d.PostFlicker;
         if (d.PostDenoise is >= 0 and <= 100) PostDenoiseSlider.Value = d.PostDenoise;
         if (d.PostAa is >= 0 and <= 100) PostAaSlider.Value = d.PostAa;
-        if (d.Jello is >= 0 and <= 3) JelloCombo.SelectedIndex = d.Jello;
         if (d.MotionBlur is >= 0 and <= 3) MotionBlurCombo.SelectedIndex = d.MotionBlur;
         DeShakeCheck.IsChecked = d.DeShake;
         if (d.Quality is >= 0 and <= 5) QualityCombo.SelectedIndex = d.Quality;
@@ -1474,8 +1475,10 @@ public sealed partial class VideoView : UserControl
             ContentFpsBox.Text = d.ContentFps.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
         if (d.DedupThr is >= 0.001 and <= 0.5) DedupSceneSlider.Value = d.DedupThr;
         SceneCheck.IsChecked = d.Scene;
-        if (d.SceneThr is >= 0 and <= 1) SceneSlider.Value = d.SceneThr;
-        if (d.TimeStep is >= 0.05 and <= 0.95) TimeStepSlider.Value = d.TimeStep;
+        // 转场阈值:旧/非法设置(如字段缺失反序列化为 0)回退默认 0.3。阈值 0 会被处理端当作"不检测转场"(见 VideoService sceneThreshold is > 0),导致勾选转场识别却无效果。
+        SceneSlider.Value = d.SceneThr is > 0 and <= 1 ? d.SceneThr : 0.3;
+        // 时间步:旧/非法设置回退默认 0.5(滑条最小 0.05,字段缺失会停在 0.05,与默认/重置 0.5 不一致)。
+        TimeStepSlider.Value = d.TimeStep is >= 0.05 and <= 0.95 ? d.TimeStep : 0.5;
         TtaCheck.IsChecked = d.Tta;
         if (!string.IsNullOrWhiteSpace(d.OutDir) && Directory.Exists(d.OutDir))
         {
@@ -1992,7 +1995,6 @@ public sealed partial class VideoView : UserControl
             PostFlicker = (int)FlickerSlider.Value,
             PostDenoise = (int)PostDenoiseSlider.Value,
             PostAa = (int)PostAaSlider.Value,
-            Jello = JelloCombo.SelectedIndex,
             MotionBlur = MotionBlurCombo.SelectedIndex,
             DeShake = DeShakeCheck.IsChecked == true,
             Quality = QualityCombo.SelectedIndex,
@@ -3589,7 +3591,6 @@ public sealed partial class VideoView : UserControl
         var fpsBaseNow = new[] { 2, 1 }[Math.Clamp(FpsBaseCombo.SelectedIndex, 0, 1)];
         var outExtNow = FormatCombo.SelectedIndex == 1 ? ".mkv" : ".mp4";
         var muteNow = MuteCheck.IsChecked == true;
-        var jelloNow = JelloCombo.SelectedIndex;
         var mblurNow = MotionBlurCombo.SelectedIndex;
         var deshakeNow = DeShakeCheck.IsChecked == true;
         var vdenoiseNow = DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex + 1 : 0;
@@ -3884,9 +3885,8 @@ public sealed partial class VideoView : UserControl
         if ((int)PostDenoiseSlider.Value > 0) postList.Add($"去杂色{(int)PostDenoiseSlider.Value}");
         if ((int)PostAaSlider.Value > 0) postList.Add($"边缘抗锯齿{(int)PostAaSlider.Value}");
         if (postList.Count > 0) Log("后处理:" + string.Join(",", postList));
-        // 果冻修复三件套(CPU 逐帧滤镜,单独记录便于诊断耗时)
+        // 果冻修复(运动模糊/画面去抖,CPU 逐帧滤镜,单独记录便于诊断耗时)
         var jelloParts = new System.Collections.Generic.List<string>();
-        if (JelloCombo.SelectedIndex > 0) jelloParts.Add($"减少果冻{"弱中强"[JelloCombo.SelectedIndex - 1]}");
         if (MotionBlurCombo.SelectedIndex > 0) jelloParts.Add($"运动模糊{"弱中强"[MotionBlurCombo.SelectedIndex - 1]}");
         if (DeShakeCheck.IsChecked == true) jelloParts.Add("画面去抖");
         if (jelloParts.Count > 0) Log("果冻修复:" + string.Join(",", jelloParts) + "(CPU 逐帧滤镜,耗时随分辨率/帧数增加)");
@@ -3985,7 +3985,6 @@ public sealed partial class VideoView : UserControl
                         postDenoise: postDN,
                         postAa: postAA,
                         mute: muteNow,
-                        postJello: jelloNow,
                         postMotionBlur: mblurNow,
                         postDeshake: deshakeNow,
                         videoDenoise: vdenoiseNow,

@@ -225,7 +225,6 @@ public static class VideoService
     /// <param name="postDeblur">后处理·去模糊 0-100(0=关;smartblur 大半径反锐化)。</param>
     /// <param name="fastMode">快速模式(弱设备):tile 减半降显存、单批处理防爆显存、忽略 TTA。</param>
     /// <param name="upscaleShrink1x">1x超分:内部按 2x 超分后缩回原始尺寸(输出仍是 1x,画质更好)。</param>
-    /// <param name="postJello">果冻修复·减少果冻 0=关 1=弱 2=中 3=强(dejudder + 时间平滑)。</param>
     /// <param name="postMotionBlur">果冻修复·运动模糊 0=关 1=弱 2=中 3=强(tmix 混合帧数递增)。</param>
     /// <param name="postDeshake">果冻修复·画面去抖(deshake 轻量稳定)。</param>
     public static async Task<string> ProcessVideoAsync(
@@ -240,7 +239,7 @@ public static class VideoService
         CancellationToken ct = default,
         int postSharpen = 0, int postClarity = 0, int postUsm = 0,
         int postDetail = 0, int postDeblur = 0,
-        int postJello = 0, int postMotionBlur = 0, bool postDeshake = false,
+        int postMotionBlur = 0, bool postDeshake = false,
         int videoDenoise = 0, int quality = 0, bool fastMode = false, bool upscaleShrink1x = false,
         int dedupAlgo = 0, int dedupHi = 12, int dedupLo = 5, double dedupFrac = 0.33,
         double dedupSadThr = 3.0, double dedupSsimThr = 0.97,
@@ -1483,10 +1482,6 @@ public static class VideoService
             if (postFilter != null) preParts.Add(postFilter);
             // 视频降噪(空间+时间,去噪点/闪烁/压缩噪点),放最前:先降噪再锐化
             if (videoDenoise >= 1) preParts.Insert(0, VideoDenoiseFilter(videoDenoise));
-            // 减少果冻:弱=dejudder;中/强=dejudder+时间平滑(tmix);运动模糊开启时果冻不再追加 tmix
-            if (postJello >= 1) preParts.Add("dejudder");
-            if (postJello >= 2 && postMotionBlur == 0) preParts.Add("tmix=frames=2");
-            if (postJello >= 3 && postMotionBlur == 0) preParts.Add("tmix=frames=3");
             if (postDeshake) postParts.Add("deshake");                      // 画面去抖:轻量稳定
             if (frameInterp && targetFps is > 0)
             {
