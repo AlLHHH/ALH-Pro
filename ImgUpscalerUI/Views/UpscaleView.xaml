@@ -94,6 +94,18 @@
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
+                    <!-- 高级(TTA):单独一组,与下面的「增强」后处理隔开,默认折叠 -->
+                    <Button x:Name="HighQualityToggleBtn" Content="高级 ▾" HorizontalAlignment="Stretch"
+                            Click="HighQualityToggleBtn_Click"
+                            ToolTipService.ToolTip="高级:反复推演,细节更稳更清晰。⚠ 开启后会严重增加导出时间(约 2~3 倍)"/>
+                    <StackPanel x:Name="HighQualityPanel" Spacing="8" Margin="0,8,0,4" Visibility="Collapsed">
+                        <CheckBox x:Name="TtaCheck" Content="开启高质量(反复推演,更清晰)"
+                                  ToolTipService.ToolTip="高级:反复推演,细节更稳更清晰。⚠ 开启后会严重增加导出时间(约 2~3 倍)"/>
+                        <TextBlock Text="⚠ 开启后会严重增加导出时间" Style="{StaticResource HintText}" TextWrapping="Wrap"/>
+                    </StackPanel>
+
+                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
+
                     <!-- 增强:与视频页后处理一致(紧凑滑块行,只留一个总重置) -->
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -227,16 +239,6 @@
                             <TextBlock x:Name="AaValue" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                    </StackPanel>
-
-                    <!-- 高质量(TTA):默认折叠,展开才有(与视频页「高级参数」一致的交互) -->
-                    <Button x:Name="HighQualityToggleBtn" Content="高质量 ▾" HorizontalAlignment="Stretch"
-                            Click="HighQualityToggleBtn_Click"
-                            ToolTipService.ToolTip="高质量:反复推演,细节更稳更清晰。⚠ 开启后会严重增加导出时间(约 2~3 倍)"/>
-                    <StackPanel x:Name="HighQualityPanel" Spacing="8" Margin="0,8,0,4" Visibility="Collapsed">
-                        <CheckBox x:Name="TtaCheck" Content="开启高质量(反复推演,更清晰)"
-                                  ToolTipService.ToolTip="高质量:反复推演,细节更稳更清晰。⚠ 开启后会严重增加导出时间(约 2~3 倍)"/>
-                        <TextBlock Text="⚠ 开启后会严重增加导出时间" Style="{StaticResource HintText}" TextWrapping="Wrap"/>
                     </StackPanel>
 
                     <!-- 记住上次参数:放在高级区末尾(增强滑块之后),与参数记忆语义贴近 -->

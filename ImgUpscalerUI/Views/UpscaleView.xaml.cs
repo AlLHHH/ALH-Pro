@@ -464,12 +464,12 @@ public sealed partial class UpscaleView : UserControl
         DehazeSlider.Value = 0;
     }
 
-    /// <summary>高质量(TTA)折叠展开:默认收起,点按钮展开(与视频页「高级参数」交互一致)。</summary>
+    /// <summary>高级(TTA)折叠展开:默认收起,点按钮展开(与视频页「高级参数」交互一致)。</summary>
     private void HighQualityToggleBtn_Click(object sender, RoutedEventArgs e)
     {
         bool show = HighQualityPanel.Visibility != Visibility.Visible;
         HighQualityPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        HighQualityToggleBtn.Content = show ? "高质量 ▴" : "高质量 ▾";
+        HighQualityToggleBtn.Content = show ? "高级 ▴" : "高级 ▾";
     }
 
     /// <summary>追加一行日志(带时间戳),自动滚动到底部,超限自动清理最旧部分。</summary>
