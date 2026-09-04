@@ -205,6 +205,26 @@ namespace ALHPro
         [DllImport("user32.dll")]
         private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);   // 单实例:最小化还原
 
+        [DllImport("user32.dll")]
+        private static extern uint GetDpiForWindow(IntPtr hWnd);   // 当前窗口 DPI(PerMonitorV2)
+
+        [DllImport("user32.dll")]
+        private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint dwFlags);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MONITORINFO
+        {
+            public int cbSize;
+            public WP_RECT rcMonitor;
+            public WP_RECT rcWork;
+            public uint dwFlags;
+        }
+
+        private const uint MONITOR_DEFAULTTONEAREST = 2;
+
         private static void Win32_SafeShowWindow(IntPtr hWnd)
         {
             try { ShowWindow(hWnd, 9 /*SW_RESTORE*/); } catch { }
@@ -519,6 +539,11 @@ namespace ALHPro
                         wp.showCmd = SW_SHOWNORMAL;
 
                     wp.length = Marshal.SizeOf<WINDOWPLACEMENT>();
+                    // 【修复 信息被压/缩放不对】恢复的物理尺寸可能来自不同 DPI(100%→125%)或不同分辨率屏:
+                    // ① 按当前窗口 DPI 换算,保证【逻辑尺寸】与上次一致(不会在高 DPI 屏上被压小);
+                    // ② 钳制到当前显示器工作区内(不会超出屏幕/跑到屏外)。最大化状态不调整(系统自动铺满)。
+                    if (wp.showCmd != SW_SHOWMAXIMIZED)
+                        ClampWindowPlacementToWorkArea(hwnd, ref wp);
                     bool ok = SetWindowPlacement(hwnd, ref wp);
                     _lastPlacement = wp; _hasPlacement = true;
                     AppLogger.Info($"窗口状态: 恢复 {wp.rcNormalPosition.L},{wp.rcNormalPosition.T} {wp.rcNormalPosition.R - wp.rcNormalPosition.L}x{wp.rcNormalPosition.B - wp.rcNormalPosition.T} showCmd={wp.showCmd} => {ok}");
@@ -526,6 +551,51 @@ namespace ALHPro
                 finally { Marshal.FreeHGlobal(buf); }
             }
             catch (Exception ex) { AppLogger.Info("窗口状态: 恢复失败: " + ex.Message); }
+        }
+
+        /// <summary>把窗口放置钳制到当前显示器工作区,并按 DPI 保证最小逻辑尺寸。
+        /// rcNormalPosition 是物理像素。若用户上次在 100% DPI 存了窗口大小,这次在 125% DPI 恢复:
+        /// 物理尺寸不变 → 逻辑尺寸变小 → 内容被压。这里把【逻辑尺寸】保持在一个合理下限(1150×720),
+        /// 避免界面信息被压缩/显示不全,同时确保窗口不超出屏幕工作区。</summary>
+        private static void ClampWindowPlacementToWorkArea(IntPtr hwnd, ref WINDOWPLACEMENT wp)
+        {
+            try
+            {
+                uint dpi = GetDpiForWindow(hwnd); if (dpi == 0) dpi = 96;
+                double scale = dpi / 96.0;
+                // 建议最小逻辑尺寸(防止界面被压小)
+                double minLogicW = 1150, minLogicH = 720;
+                // 当前物理尺寸 → 逻辑尺寸
+                double logicW = (wp.rcNormalPosition.R - wp.rcNormalPosition.L) / scale;
+                double logicH = (wp.rcNormalPosition.B - wp.rcNormalPosition.T) / scale;
+                if (logicW < minLogicW) logicW = minLogicW;
+                if (logicH < minLogicH) logicH = minLogicH;
+                int wantW = (int)Math.Round(logicW * scale);
+                int wantH = (int)Math.Round(logicH * scale);
+
+                // 最近显示器工作区(物理像素)
+                var mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+                GetMonitorInfo(mon, ref mi);
+                int waW = mi.rcWork.R - mi.rcWork.L;
+                int waH = mi.rcWork.B - mi.rcWork.T;
+                if (waW <= 0 || waH <= 0) return;   // 无有效工作区,跳过
+                // 尺寸钳制:下限=逻辑最小(换算成物理)但不超过工作区;上限=工作区
+                int physMinW = (int)Math.Round(minLogicW * scale);
+                int physMinH = (int)Math.Round(minLogicH * scale);
+                int finalW = Math.Min(waW, Math.Max(wantW, Math.Min(physMinW, waW)));
+                int finalH = Math.Min(waH, Math.Max(wantH, Math.Min(physMinH, waH)));
+
+                // 保持左上角在屏幕内(平移到工作区内),避免恢复到屏外
+                int x = wp.rcNormalPosition.L, y = wp.rcNormalPosition.T;
+                if (x < mi.rcWork.L) x = mi.rcWork.L;
+                if (y < mi.rcWork.T) y = mi.rcWork.T;
+                if (x + finalW > mi.rcWork.R) x = Math.Max(mi.rcWork.L, mi.rcWork.R - finalW);
+                if (y + finalH > mi.rcWork.B) y = Math.Max(mi.rcWork.T, mi.rcWork.B - finalH);
+
+                wp.rcNormalPosition = new WP_RECT { L = x, T = y, R = x + finalW, B = y + finalH };
+            }
+            catch { /* 钳制失败保持原值 */ }
         }
 
         /// <summary>防抖定时器落盘:实时取当前窗口放置(更新缓存)+ 显示器指纹,写入文件。</summary>
