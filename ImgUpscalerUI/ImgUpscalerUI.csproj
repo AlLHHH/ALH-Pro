@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="UTF-8" ?>
+<?xml version="1.0" encoding="UTF-8" ?>
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
@@ -20,6 +20,11 @@
         <RootNamespace>ALHPro</RootNamespace>
         <AssemblyName>ALHPro</AssemblyName>
         <Version>1.2.0</Version>
+        <!-- 汇编元数据:文件属性里显示的作者/版权(版权保护的第一步:署名清晰、可追责) -->
+        <Authors>AlL.H</Authors>
+        <Company>AlL.H</Company>
+        <Product>ALH Pro</Product>
+        <Copyright>© 2026 AlL.H. 保留所有权利。</Copyright>
 
         <!-- App Options -->
         <UseRidGraph>true</UseRidGraph>
