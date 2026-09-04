@@ -2172,8 +2172,10 @@ public static class VideoService
                 }
                 finalOut = Path.Combine(workDir, $"seg_{start}_{end}_out");
                 Directory.CreateDirectory(finalOut);
+                // 【修复 时间步 no-op】ts 早已算出却从未写入命令(目录模式下引擎可能忽略 -s,但显式传入是正确意图;
+                // 若引擎/版本支持则真正生效)。此前 0.05/0.5/0.95 输出完全相同。
                 await RunRifeAsync(
-                    $"-i \"{segIn}\" -o \"{finalOut}\" -n {targetFrames} -f \"frame_%06d.png\" -m {interpModel} -g {gpuArg}{ttaArgs}{SafeRender.GetEngineThreadArgs()}",
+                    $"-i \"{segIn}\" -o \"{finalOut}\" -n {targetFrames} -f \"frame_%06d.png\" -m {interpModel} -g {gpuArg} -s {ts}{ttaArgs}{SafeRender.GetEngineThreadArgs()}",
                     gpuId, targetFrames, finalOut);
             }
             else
