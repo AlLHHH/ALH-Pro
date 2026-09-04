@@ -1540,7 +1540,8 @@ public sealed partial class VideoView : UserControl
             return;
         }
         string? pendingDel = null;   // 行内删除二次确认:记录待确认的预设名(非 null = 已点一次删除)
-        // 排序下拉
+        bool exportMode = false;     // 导出多选模式:true=行显示复选框(勾选导出),false=垃圾桶
+        var exportChecks = new System.Collections.Generic.List<(VideoPreset p, Microsoft.UI.Xaml.Controls.CheckBox cb)>();
         var sortCombo = new ComboBox { HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch };
         sortCombo.Items.Add("按创建时间(默认)");
         sortCombo.Items.Add("按名字 A→Z");
@@ -1575,6 +1576,21 @@ public sealed partial class VideoView : UserControl
         Grid.SetColumn(closeBtn, 0); Grid.SetColumn(applyBtn, 1);
         bottomBar.Children.Add(closeBtn); bottomBar.Children.Add(applyBtn);
 
+        // 底部按钮随模式切换:普通态=[关闭|应用预设],导出态=[取消|确定导出]
+        void SetBottomMode()
+        {
+            if (exportMode)
+            {
+                closeBtn.Content = "取消";
+                applyBtn.Content = "确定导出";
+            }
+            else
+            {
+                closeBtn.Content = "关闭";
+                applyBtn.Content = "应用预设";
+            }
+        }
+
         var inner = new StackPanel { Spacing = 12 };
         inner.Children.Add(topBar);
         inner.Children.Add(listView);
@@ -1593,6 +1609,7 @@ public sealed partial class VideoView : UserControl
         void RebuildList()
         {
             var cur = LoadPresets();
+            exportChecks.Clear();   // 每次重建都清空勾选记录(会随行重建重新填充)
             switch (sortCombo.SelectedIndex)
             {
                 case 1: cur = cur.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList(); break;
@@ -1638,23 +1655,38 @@ public sealed partial class VideoView : UserControl
                 }
                 else
                 {
-                    // 普通态:垃圾桶图标(点一下进入确认态)
-                    var delBtn = new Button
+                    if (exportMode)
                     {
-                        Content = "\uE74D",
-                        FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe MDL2 Assets"),
-                        FontSize = 13,
-                        Background = null,
-                        BorderThickness = new Microsoft.UI.Xaml.Thickness(0),
-                        Padding = new Microsoft.UI.Xaml.Thickness(6, 2, 6, 2),
-                        VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
-                        MinWidth = 0,
-                    };
-                    delBtn.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77));
-                    ToolTipService.SetToolTip(delBtn, "删除该预设");
-                    Grid.SetColumn(delBtn, 1);
-                    delBtn.Click += (_, _) => { pendingDel = presetName; RebuildList(); };
-                    row.Children.Add(delBtn);
+                        // 导出多选模式:右侧显示【复选框】(勾选要导出的预设),替代垃圾桶
+                        var cb = new Microsoft.UI.Xaml.Controls.CheckBox
+                        {
+                            VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+                            IsChecked = true,   // 默认全选,便于"勾选导出"
+                        };
+                        exportChecks.Add((cur[i], cb));
+                        Grid.SetColumn(cb, 1);
+                        row.Children.Add(cb);
+                    }
+                    else
+                    {
+                        // 普通态:垃圾桶图标(点一下进入确认态)
+                        var delBtn = new Button
+                        {
+                            Content = "\uE74D",
+                            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe MDL2 Assets"),
+                            FontSize = 13,
+                            Background = null,
+                            BorderThickness = new Microsoft.UI.Xaml.Thickness(0),
+                            Padding = new Microsoft.UI.Xaml.Thickness(6, 2, 6, 2),
+                            VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+                            MinWidth = 0,
+                        };
+                        delBtn.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77));
+                        ToolTipService.SetToolTip(delBtn, "删除该预设");
+                        Grid.SetColumn(delBtn, 1);
+                        delBtn.Click += (_, _) => { pendingDel = presetName; RebuildList(); };
+                        row.Children.Add(delBtn);
+                    }
                 }
                 row.Children.Add(name);
                 Grid.SetColumn(name, 0);
@@ -1669,8 +1701,24 @@ public sealed partial class VideoView : UserControl
         sortCombo.SelectionChanged += (_, _) => RebuildList();
 
         // 「应用预设」(右蓝):应用选中的预设后正常关窗
-        applyBtn.Click += (_, _) =>
+        applyBtn.Click += async (_, _) =>
         {
+            if (exportMode)
+            {
+                // 「确定导出」:收集勾选的预设导出,然后退回普通态
+                var selected = exportChecks.Where(x => x.cb.IsChecked == true).Select(x => x.p).ToList();
+                if (selected.Count == 0)
+                {
+                    await ShowPresetHintAsync("还没勾选任何预设。先勾选要导出的预设,再点「确定导出」。");
+                    return;
+                }
+                await ExportPresetsAsync(selected, selected.Count == 1);
+                exportMode = false;
+                pendingDel = null;
+                SetBottomMode();
+                RebuildList();
+                return;
+            }
             int s = listView.SelectedIndex;
             if (s < 0) return;
             var cur = LoadPresets();
@@ -1678,22 +1726,26 @@ public sealed partial class VideoView : UserControl
             if (idx >= 0 && idx < cur.Count) ApplyPreset(cur[idx]);
             try { dlg.Hide(); } catch { }
         };
-        // 「关闭」(左灰):直接关窗
-        closeBtn.Click += (_, _) => { try { dlg.Hide(); } catch { } };
-        // 导出:选中某条导该条,否则导出全部
-        exportBtn.Click += async (_, _) =>
+        // 「关闭」(左灰):普通态=直接关窗;导出态=取消导出,退回普通态
+        closeBtn.Click += (_, _) =>
         {
-            int s = listView.SelectedIndex;
-            var cur = LoadPresets();
-            List<VideoPreset> toExport;
-            if (s >= 0 && s < cur.Count)
+            if (exportMode)
             {
-                int idx = ResolveSortedIndex(sortCombo.SelectedIndex, s, cur);
-                if (idx < 0 || idx >= cur.Count) return;
-                toExport = new List<VideoPreset> { cur[idx] };
+                exportMode = false;
+                pendingDel = null;
+                SetBottomMode();
+                RebuildList();
+                return;
             }
-            else toExport = cur;   // 未选中 → 导出全部
-            await ExportPresetsAsync(toExport, s >= 0);
+            try { dlg.Hide(); } catch { }
+        };
+        // 导出:进入多选模式(行显示复选框),底部按钮切「取消/确定导出」
+        exportBtn.Click += (_, _) =>
+        {
+            exportMode = true;
+            pendingDel = null;
+            SetBottomMode();
+            RebuildList();
         };
         // 导入:选文件导入,【不关窗】留在预设界面,刷新列表(导入后的新项出现在列表里即反馈)
         importBtn.Click += async (_, _) =>
