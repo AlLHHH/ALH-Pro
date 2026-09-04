@@ -557,21 +557,6 @@
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="减少果冻" VerticalAlignment="Center" FontSize="12"
-                                   ToolTipService.ToolTip="减少补帧产生的果冻(画面扭曲抖动);弱=只去抖动,中/强=再叠加时间平滑"/>
-                        <ComboBox x:Name="JelloCombo" Grid.Column="1" HorizontalAlignment="Stretch"
-                                  SelectedIndex="0" SelectionChanged="Combo_Changed">
-                            <ComboBoxItem Content="关"/>
-                            <ComboBoxItem Content="弱"/>
-                            <ComboBoxItem Content="中"/>
-                            <ComboBoxItem Content="强"/>
-                        </ComboBox>
-                    </Grid>
-                    <Grid ColumnSpacing="8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
                         <TextBlock Text="运动模糊（果冻部分）" VerticalAlignment="Center" FontSize="12"
                                    ToolTipService.ToolTip="给补帧产生的「果冻」(快速运动处的画面扭曲)加上真实的运动模糊,把它盖掉、让运动更自然。只在果冻强的地方生效,静止画面不受影响;弱/中/强 = 效果越强、越慢"/>
                         <ComboBox x:Name="MotionBlurCombo" Grid.Column="1" HorizontalAlignment="Stretch"
