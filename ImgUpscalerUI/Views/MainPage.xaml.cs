@@ -1779,11 +1779,14 @@ public sealed partial class MainPage : Page
             bool custom = !string.IsNullOrWhiteSpace(AppSettings.TempDir);
             tmpRadios.SelectedIndex = custom ? 1 : 0;
             tmpPathText.Text = "当前使用:" + (custom ? AppSettings.TempDir : "自动 · " + EngineService.TempRoot);
+            // 【需求】「浏览...」只在选中「指定位置」时显示;自动时隐藏,避免误点
+            tmpPickBtn.Visibility = tmpRadios.SelectedIndex == 1 ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
         }
         RefreshTmpUi();
         tmpRadios.SelectionChanged += (_, _) =>
         {
             // 选「自动」= 清掉自定义(选「指定位置」由「浏览...」填路径)
+            tmpPickBtn.Visibility = tmpRadios.SelectedIndex == 1 ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
             if (tmpRadios.SelectedIndex == 0 && !string.IsNullOrWhiteSpace(AppSettings.TempDir))
             {
                 AppSettings.TempDir = "";
