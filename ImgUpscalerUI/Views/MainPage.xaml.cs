@@ -205,12 +205,16 @@ public sealed partial class MainPage : Page
     }
 
     // ---------- 更新检查 ----------
-    /// <summary>启动静默检查:有新版本才显示提示条;失败/已最新不打扰。</summary>
+    /// <summary>启动静默检查:有新版本才显示提示条;失败/已最新不打扰。
+    /// 【延迟10分钟】打标签后作者还要上传安装包,立即弹会下载到未传完的包 → 延迟10分钟再提示。</summary>
     private async Task CheckUpdateSilentAsync()
     {
         var r = await UpdateChecker.CheckAsync().ConfigureAwait(false);
         if (r is not { HasNew: true }) return;   // 失败/已最新 → 无感
         var (_, tag, _) = r.Value;
+        // 延迟 10 分钟再提示(给作者留上传时间),期间若已关窗/取消则跳过
+        try { await System.Threading.Tasks.Task.Delay(TimeSpan.FromMinutes(10)).ConfigureAwait(false); }
+        catch { return; }
         DispatcherQueue.TryEnqueue(() => ShowUpdateBar(tag));
     }
 
@@ -229,6 +233,12 @@ public sealed partial class MainPage : Page
 
     private void UpdateBarClose_Click(object sender, RoutedEventArgs e)
         => UpdateBar.Visibility = Visibility.Collapsed;
+
+    private void UpdateBarNetDisk_Click(object sender, RoutedEventArgs e)
+    {
+        OpenNetDisk();
+        UpdateBar.Visibility = Visibility.Collapsed;
+    }
 
     private void ShowView(string tag)
     {
@@ -379,6 +389,16 @@ public sealed partial class MainPage : Page
     /// fromStartup=true(升级后首次弹):只显示【当前版本】内容,无版本列表——简洁弹窗;
     /// 从「关于 → 查看更新详情」打开:附加版本下拉(往期历史可翻)。
     /// 注意:不修改 ContentDialog 的任何尺寸/位置属性——就是尺寸改动导致的偏位,默认即居中。</summary>
+    /// <summary>百度网盘完整版下载页(含模型,解压即用)。更新弹窗/提示条点击跳转。</summary>
+    private const string NetDiskUrl = "https://pan.baidu.com/s/1_heewIWeoPpWQKPJv9blew?pwd=yxfd";
+
+    /// <summary>打开百度网盘下载页(用默认浏览器)。</summary>
+    private void OpenNetDisk()
+    {
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(NetDiskUrl) { UseShellExecute = true }); }
+        catch { /* 打开失败忽略 */ }
+    }
+
     private async Task ShowUpdateLogAsync(bool fromStartup)
     {
         if (fromStartup)
@@ -446,6 +466,21 @@ public sealed partial class MainPage : Page
                     VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
                 });
             }
+
+            // 网盘完整版下载按钮(点击跳转百度网盘;完整版含全部引擎+模型,省去手动装模型)
+            full.Children.Add(new Border
+            {
+                Height = 1,
+                Background = SafeBrush("AppBorderBrush"),
+                Margin = new Microsoft.UI.Xaml.Thickness(0, 4, 0, 8),
+            });
+            var netDiskBtn = new Button
+            {
+                Content = "点我下载完整版(百度网盘,含全部引擎+模型)",
+                HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch,
+            };
+            netDiskBtn.Click += (_, _) => OpenNetDisk();
+            full.Children.Add(netDiskBtn);
 
             // 默认尺寸(不改大小/位置,系统自动居中)
             var dlg = new ContentDialog
