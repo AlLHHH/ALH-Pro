@@ -1,8 +1,10 @@
-﻿# ALH Pro
+# ALH Pro
 
 图片/视频/音频 AI 增强工具(本地运行),支持:图片超分、AI 抠图、视频超分、视频补帧、视频去重、音频分离/增强/真超分。
 
 **所有处理在本机完成,不上传、不收集任何用户数据。** 全程中文界面。
+
+**© 2026 AlL.H. 保留所有权利。** 免费公益、个人自用;未经作者书面许可,禁止商用、再次分发或篡改(详见随软件 LICENSE)。开源引擎与模型版权归各原作者所有(见 THIRD_PARTY_NOTICES.txt)。
 
 - 引擎:waifu2x / Real-ESRGAN / RIFE(基于 nihui/ncnn)、U²-Net / ISNet / BiRefNet(基于 ONNX Runtime)、FFmpeg
 - 系统要求:Windows 10/11 x64(无 GPU 也可用,自动降级 CPU)
