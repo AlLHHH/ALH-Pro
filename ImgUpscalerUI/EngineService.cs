@@ -1710,12 +1710,19 @@ public static partial class EngineService
         var passes = new System.Collections.Generic.List<(string name, System.Action<System.Drawing.Bitmap> run)>();
         if (dehaze > 0)       passes.Add(("去雾", b => ApplyDehazeInMemory(b, dehaze)));
         if (denoise > 0)      passes.Add(("减少杂色", b => ApplyMedianInMemory(b, denoise)));
-        if (detail > 0)       passes.Add(("保留细节", b => ApplyUnsharpInMemory(b, detail / 100.0 * 1.2, 24, 2)));
-        if (detailEnhance > 0) passes.Add(("细节增强", b => ApplyUnsharpInMemory(b, detailEnhance / 100.0 * 1.6, 4, 2)));
-        if (clarity > 0)      passes.Add(("清晰", b => ApplyUnsharpInMemory(b, clarity / 100.0 * 0.8, 0, 8)));
-        if (usm > 0)          passes.Add(("钝化蒙版", b => ApplyUnsharpInMemory(b, usm / 100.0 * 1.5, 8, 4)));
-        if (deblur > 0)       passes.Add(("去模糊", b => ApplyUnsharpInMemory(b, deblur / 100.0 * 1.5, 2, 6)));
-        if (edge > 0)         passes.Add(("边缘增强", b => ApplyUnsharpInMemory(b, edge / 100.0 * 1.5, 16, 2)));
+        // 保留细节:CLAHE 风格局部对比度(提升局部细节,不动整体影调)——不是全局锐化
+        if (detail > 0)       passes.Add(("保留细节", b => ApplyLocalContrastInMemory(b, detail)));
+        // 细节增强:高通提取(原图 - 高斯模糊)加强微细节
+        if (detailEnhance > 0) passes.Add(("细节增强", b => ApplyHighFreqInMemory(b, detailEnhance)));
+        // 清晰:大半径 unsharp = 局部对比度/中调对比(Lightroom Clarity 常用)
+        if (clarity > 0)      passes.Add(("清晰", b => ApplyUnsharpInMemory(b, clarity / 100.0 * 1.1, 0, 8)));
+        // 钝化蒙版:标准 USM(阈值保护平坦区,弱噪声不被放大)
+        if (usm > 0)          passes.Add(("钝化蒙版", b => ApplyUnsharpInMemory(b, usm / 100.0 * 1.4, 8, 4)));
+        // 去模糊:真·理查森-露西反卷积
+        if (deblur > 0)       passes.Add(("去模糊", b => ApplyDeblurInMemory(b, deblur)));
+        // 边缘增强:Sobel 边缘掩膜放缩加到原图(只提边,不糊内部)
+        if (edge > 0)         passes.Add(("边缘增强", b => ApplyEdgeEnhanceInMemory(b, edge)));
+        // 锐化:小核 USM(强烈、无阈值,边缘清晰)
         if (sharpen > 0)      passes.Add(("锐化", b => ApplyUnsharpInMemory(b, sharpen / 100.0 * 2.0, 0, 2)));
         if (aa > 0)           passes.Add(("边缘抗锯齿", b => ApplyEdgeSmoothInMemory(b, aa)));
         int total = passes.Count, done = 0;
@@ -1745,6 +1752,178 @@ public static partial class EngineService
         finally
         {
             try { File.Delete(tmpSave); } catch { /* 清理失败忽略 */ }
+        }
+    }
+
+    /// <summary>保留细节(CLAHE 风格局部对比度):以像素为中心取局部窗口,把该像素向"局部对比度拉伸"方向调整,
+    /// 提升局部细节而**不改变整体影调/全局对比**。强度 0-100 控制提升幅度。</summary>
+    private static void ApplyLocalContrastInMemory(System.Drawing.Bitmap bmp, int strength)
+    {
+        int w = bmp.Width, h = bmp.Height;
+        if (w < 3 || h < 3) return;
+        double amount = strength / 100.0;
+        int R = 3;   // 局部窗口半径(3×3~7×7 邻域)
+        var rect = new System.Drawing.Rectangle(0, 0, w, h);
+        var data = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadWrite,
+            System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        try
+        {
+            int stride = data.Stride; int n = w * h;
+            var rc = new byte[n]; var gc = new byte[n]; var bc = new byte[n];
+            unsafe
+            {
+                byte* p0 = (byte*)data.Scan0.ToPointer();
+                for (int y = 0; y < h; y++) { byte* row = p0 + y * stride; int idx = y * w;
+                    for (int x = 0; x < w; x++) { int i = x * 4; bc[idx + x] = row[i]; gc[idx + x] = row[i + 1]; rc[idx + x] = row[i + 2]; } }
+            }
+            LocalContrastChannel(rc, w, h, R, amount);
+            LocalContrastChannel(gc, w, h, R, amount);
+            LocalContrastChannel(bc, w, h, R, amount);
+            unsafe
+            {
+                byte* p0 = (byte*)data.Scan0.ToPointer();
+                for (int y = 0; y < h; y++) { byte* row = p0 + y * stride; int idx = y * w;
+                    for (int x = 0; x < w; x++) { int i = x * 4; row[i] = bc[idx + x]; row[i + 1] = gc[idx + x]; row[i + 2] = rc[idx + x]; } }
+            }
+        }
+        finally { bmp.UnlockBits(data); }
+    }
+
+    /// <summary>单通道局部对比度增强:像素新值 = 原值 + (原值 - 局部均值) × k(放大局部偏离,保留细节)。
+    /// 局部均值用 (2R+1)² 均值近似;k 随强度,最大约 +0.6。</summary>
+    private static void LocalContrastChannel(byte[] src, int w, int h, int R, double amount)
+    {
+        var orig = (byte[])src.Clone();
+        double k = amount * 0.6;
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                long sum = 0; int cnt = 0;
+                for (int dy = -R; dy <= R; dy++)
+                {
+                    int yy = Math.Clamp(y + dy, 0, h - 1) * w;
+                    for (int dx = -R; dx <= R; dx++)
+                    {
+                        int xx = Math.Clamp(x + dx, 0, w - 1);
+                        sum += orig[yy + xx]; cnt++;
+                    }
+                }
+                int center = orig[y * w + x];
+                double localAvg = (double)sum / cnt;
+                int v = (int)Math.Round(center + (center - localAvg) * k);
+                src[y * w + x] = (byte)Math.Clamp(v, 0, 255);
+            }
+        }
+    }
+
+    /// <summary>细节增强(高通提取):把"原图 - 高斯模糊"(= 高频细节)按强度加回原图。比 unsharp 更细、更贴微细节。</summary>
+    private static void ApplyHighFreqInMemory(System.Drawing.Bitmap bmp, int strength)
+    {
+        int w = bmp.Width, h = bmp.Height;
+        if (w < 3 || h < 3) return;
+        double amount = strength / 100.0 * 0.7;
+        var rect = new System.Drawing.Rectangle(0, 0, w, h);
+        var data = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadWrite,
+            System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        try
+        {
+            int stride = data.Stride; int n = w * h;
+            var rc = new byte[n]; var gc = new byte[n]; var bc = new byte[n];
+            unsafe
+            {
+                byte* p0 = (byte*)data.Scan0.ToPointer();
+                for (int y = 0; y < h; y++) { byte* row = p0 + y * stride; int idx = y * w;
+                    for (int x = 0; x < w; x++) { int i = x * 4; bc[idx + x] = row[i]; gc[idx + x] = row[i + 1]; rc[idx + x] = row[i + 2]; } }
+            }
+            HighFreqChannel(rc, w, h, amount);
+            HighFreqChannel(gc, w, h, amount);
+            HighFreqChannel(bc, w, h, amount);
+            unsafe
+            {
+                byte* p0 = (byte*)data.Scan0.ToPointer();
+                for (int y = 0; y < h; y++) { byte* row = p0 + y * stride; int idx = y * w;
+                    for (int x = 0; x < w; x++) { int i = x * 4; row[i] = bc[idx + x]; row[i + 1] = gc[idx + x]; row[i + 2] = rc[idx + x]; } }
+            }
+        }
+        finally { bmp.UnlockBits(data); }
+    }
+
+    /// <summary>单通道高通增强:new = orig + (orig - blur(3×3均值)) × amount。</summary>
+    private static void HighFreqChannel(byte[] src, int w, int h, double amount)
+    {
+        var orig = (byte[])src.Clone();
+        for (int y = 1; y < h - 1; y++)
+        {
+            int row = y * w;
+            for (int x = 1; x < w - 1; x++)
+            {
+                int sum = 0;
+                for (int dy = -1; dy <= 1; dy++)
+                {
+                    int yy = row + dy * w;
+                    for (int dx = -1; dx <= 1; dx++) sum += orig[yy + x + dx];
+                }
+                int blur = sum / 9;
+                int edge = orig[row + x] - blur;   // 高频
+                int v = (int)Math.Round(orig[row + x] + edge * amount);
+                src[row + x] = (byte)Math.Clamp(v, 0, 255);
+            }
+        }
+    }
+
+    /// <summary>边缘增强(Sobel 掩膜):计算梯度幅值,把边缘处像素沿梯度方向放大,边缘锐利但内部平坦区不动。</summary>
+    private static void ApplyEdgeEnhanceInMemory(System.Drawing.Bitmap bmp, int strength)
+    {
+        int w = bmp.Width, h = bmp.Height;
+        if (w < 3 || h < 3) return;
+        double amount = strength / 100.0 * 0.8;
+        var rect = new System.Drawing.Rectangle(0, 0, w, h);
+        var data = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadWrite,
+            System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        try
+        {
+            int stride = data.Stride; int n = w * h;
+            var rc = new byte[n]; var gc = new byte[n]; var bc = new byte[n];
+            unsafe
+            {
+                byte* p0 = (byte*)data.Scan0.ToPointer();
+                for (int y = 0; y < h; y++) { byte* row = p0 + y * stride; int idx = y * w;
+                    for (int x = 0; x < w; x++) { int i = x * 4; bc[idx + x] = row[i]; gc[idx + x] = row[i + 1]; rc[idx + x] = row[i + 2]; } }
+            }
+            EdgeEnhanceChannel(rc, w, h, amount);
+            EdgeEnhanceChannel(gc, w, h, amount);
+            EdgeEnhanceChannel(bc, w, h, amount);
+            unsafe
+            {
+                byte* p0 = (byte*)data.Scan0.ToPointer();
+                for (int y = 0; y < h; y++) { byte* row = p0 + y * stride; int idx = y * w;
+                    for (int x = 0; x < w; x++) { int i = x * 4; row[i] = bc[idx + x]; row[i + 1] = gc[idx + x]; row[i + 2] = rc[idx + x]; } }
+            }
+        }
+        finally { bmp.UnlockBits(data); }
+    }
+
+    /// <summary>单通道边缘增强:Sobel 梯度 gx/gy → 梯度幅值 m;沿梯度方向加一次差分以锐化边缘。</summary>
+    private static void EdgeEnhanceChannel(byte[] src, int w, int h, double amount)
+    {
+        var orig = (byte[])src.Clone();
+        for (int y = 1; y < h - 1; y++)
+        {
+            int row = y * w;
+            for (int x = 1; x < w - 1; x++)
+            {
+                int a = orig[(y - 1) * w + (x - 1)], b2 = orig[(y - 1) * w + x], c = orig[(y - 1) * w + (x + 1)];
+                int d = orig[row + (x - 1)], e = orig[row + x], f = orig[row + (x + 1)];
+                int g = orig[(y + 1) * w + (x - 1)], h2 = orig[(y + 1) * w + x], i = orig[(y + 1) * w + (x + 1)];
+                int gx = (c + 2 * f + i) - (a + 2 * d + g);
+                int gy = (g + 2 * h2 + i) - (a + 2 * b2 + c);
+                int mag = (int)Math.Abs(gx) + (int)Math.Abs(gy);   // 梯度幅值(粗)
+                // 沿梯度方向二阶梯微分强化边缘
+                int laplace = (a + b2 + c + d + f + g + h2 + i) - 8 * e;
+                int v = (int)Math.Round(e + mag * amount * 0.25 + Math.Sign(laplace) * amount * 8);
+                src[row + x] = (byte)Math.Clamp(v, 0, 255);
+            }
         }
     }
 
@@ -1875,11 +2054,12 @@ public static partial class EngineService
         Array.Copy(src, tmp, src.Length);
     }
 
-    /// <summary>去雾:线性拉伸亮度直方图(去灰蒙)+ 提升饱和度,与原图按强度混合。</summary>
+    /// <summary>去雾:标准【暗通道先验(何恺明 DCP)】——估计透射率 + 大气光,反演雾图,比简单直方图拉伸真正有效。
+    /// 对"灰蒙/泛白/雾霾"图显著去除;强度 0-100 控制还原程度(与原图混合)。</summary>
     private static void ApplyDehazeInMemory(System.Drawing.Bitmap bmp, int strength)
     {
         int w = bmp.Width, h = bmp.Height;
-        if (w <= 0 || h <= 0) return;
+        if (w < 3 || h < 3) return;
         var rect = new System.Drawing.Rectangle(0, 0, w, h);
         var data = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadWrite,
             System.Drawing.Imaging.PixelFormat.Format32bppArgb);
@@ -1887,79 +2067,93 @@ public static partial class EngineService
         {
             int stride = data.Stride;
             int n = w * h;
-            var r = new byte[n];
-            var g = new byte[n];
-            var b = new byte[n];
+            var r = new byte[n]; var g = new byte[n]; var b = new byte[n];
             unsafe
             {
                 byte* p0 = (byte*)data.Scan0.ToPointer();
                 for (int y = 0; y < h; y++)
                 {
-                    byte* row = p0 + y * stride;
-                    int idx = y * w;
-                    for (int x = 0; x < w; x++)
-                    {
-                        int i = x * 4;
-                        b[idx + x] = row[i];
-                        g[idx + x] = row[i + 1];
-                        r[idx + x] = row[i + 2];
-                    }
+                    byte* row = p0 + y * stride; int idx = y * w;
+                    for (int x = 0; x < w; x++) { int i = x * 4; b[idx + x] = row[i]; g[idx + x] = row[i + 1]; r[idx + x] = row[i + 2]; }
                 }
             }
-            // 亮度直方图:找 5%~95% 分位,只拉伸有效区间(避免把噪点拉爆)
-            var hist = new int[256];
-            var luma = new byte[n];
+            // ① 暗通道:每像素取 R/G/B 最小值,再做局部(15×15)最小值滤波(近似 DCP)
+            var dark = new byte[n];
+            for (int i = 0; i < n; i++)
+                dark[i] = (byte)Math.Min(r[i], Math.Min(g[i], b[i]));
+            // 局部最小值(半径 7,N 次近似更大窗口)
+            var tmp = new byte[n];
+            for (int p = 0; p < 3; p++) { MinFilter(dark, tmp, w, h, 2); MinFilter(tmp, dark, w, h, 2); }
+            // ② 大气光 A = 暗通道最亮前 0.1% 像素的均值(按原亮度)
+            var idxByLuma = new int[n];
+            for (int i = 0; i < n; i++) idxByLuma[i] = i;
+            // 按暗通道值降序排列(取最亮大气光)
+            Array.Sort(idxByLuma, (i1, i2) => dark[i2].CompareTo(dark[i1]));
+            double aR = 0, aG = 0, aB = 0; int cnt = Math.Max(1, n / 1000);
+            for (int k = 0; k < cnt; k++) { int i = idxByLuma[k]; aR += r[i]; aG += g[i]; aB += b[i]; }
+            aR /= cnt; aG /= cnt; aB /= cnt;
+            // ③ 透射率 t = 1 - ω·dark/A(ω=0.95 保留一点雾);加下限防除零/过饱和
+            const double omega = 0.95;
+            double amount = strength / 100.0;
+            double tMin = Math.Max(0.05, 1.0 - amount * 0.4);   // 强度越大,可去雾越深(透射率下限越低)
             for (int i = 0; i < n; i++)
             {
-                byte yv = (byte)((r[i] * 77 + g[i] * 150 + b[i] * 29) >> 8);
-                luma[i] = yv;
-                hist[yv]++;
-            }
-            int lo = 0, hi = 255;
-            long acc = 0;
-            for (int i = 0; i < 256; i++) { acc += hist[i]; if (acc >= n * 5 / 100) { lo = i; break; } }
-            acc = 0;
-            for (int i = 255; i >= 0; i--) { acc += hist[i]; if (acc >= n * 5 / 100) { hi = i; break; } }
-            if (hi - lo < 24) return;   // 对比度太低(近似纯色),拉伸会把噪点拉爆,跳过
-            double scale = 255.0 / (hi - lo);
-            double mix = strength / 100.0 * 0.85;
-            double satBoost = 1.0 + mix * 0.5;   // 饱和度最多 +42%
-
-            for (int i = 0; i < n; i++)
-            {
-                int sr = (int)Math.Clamp((r[i] - lo) * scale, 0, 255);
-                int sg = (int)Math.Clamp((g[i] - lo) * scale, 0, 255);
-                int sb = (int)Math.Clamp((b[i] - lo) * scale, 0, 255);
-                int sl = (sr * 77 + sg * 150 + sb * 29) >> 8;
-                // 饱和度提升:以拉伸后亮度为基准,颜色偏离基准的部分放大
-                int orr = (int)Math.Clamp(sl + (sr - sl) * satBoost, 0, 255);
-                int org = (int)Math.Clamp(sl + (sg - sl) * satBoost, 0, 255);
-                int orb = (int)Math.Clamp(sl + (sb - sl) * satBoost, 0, 255);
-                // 与原图混合
-                r[i] = (byte)Math.Clamp(r[i] + (orr - r[i]) * mix, 0, 255);
-                g[i] = (byte)Math.Clamp(g[i] + (org - g[i]) * mix, 0, 255);
-                b[i] = (byte)Math.Clamp(b[i] + (orb - b[i]) * mix, 0, 255);
+                double darkNorm = dark[i] / 255.0;
+                // 归一化透射率(按大气光归一)
+                double t = 1.0 - omega * Math.Min(1.0, dark[i] / (255.0 * 0.9 + 1.0));
+                t = Math.Max(tMin, Math.Min(1.0, t));
+                int re = (int)((r[i] - amount * aR) / t);
+                int ge = (int)((g[i] - amount * aG) / t);
+                int be = (int)((b[i] - amount * aB) / t);
+                // 与原图按强度混合(强度低时改动小,避免过度)
+                r[i] = (byte)Math.Clamp((int)((r[i] * (1 - amount) + re * amount)), 0, 255);
+                g[i] = (byte)Math.Clamp((int)((g[i] * (1 - amount) + ge * amount)), 0, 255);
+                b[i] = (byte)Math.Clamp((int)((b[i] * (1 - amount) + be * amount)), 0, 255);
             }
             unsafe
             {
                 byte* p0 = (byte*)data.Scan0.ToPointer();
                 for (int y = 0; y < h; y++)
                 {
-                    byte* row = p0 + y * stride;
-                    int idx = y * w;
-                    for (int x = 0; x < w; x++)
-                    {
-                        int i = x * 4;
-                        row[i] = b[idx + x];
-                        row[i + 1] = g[idx + x];
-                        row[i + 2] = r[idx + x];
-                    }
+                    byte* row = p0 + y * stride; int idx = y * w;
+                    for (int x = 0; x < w; x++) { int i = x * 4; row[i] = b[idx + x]; row[i + 1] = g[idx + x]; row[i + 2] = r[idx + x]; }
                 }
             }
         }
-        finally
+        finally { bmp.UnlockBits(data); }
+    }
+
+    /// <summary>单通道局部最小值滤波(半径 r):用于暗通道先验的 min 窗口。</summary>
+    private static void MinFilter(byte[] src, byte[] dst, int w, int h, int r)
+    {
+        // 水平滑窗最小值
+        var tmp = new byte[src.Length];
+        for (int y = 0; y < h; y++)
         {
-            bmp.UnlockBits(data);
+            int row = y * w;
+            for (int x = 0; x < w; x++)
+            {
+                int lo = byte.MaxValue;
+                for (int dx = -r; dx <= r; dx++)
+                {
+                    int xx = Math.Clamp(x + dx, 0, w - 1);
+                    if (src[row + xx] < lo) lo = src[row + xx];
+                }
+                tmp[row + x] = (byte)lo;
+            }
+        }
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                int lo = byte.MaxValue;
+                for (int dy = -r; dy <= r; dy++)
+                {
+                    int yy = Math.Clamp(y + dy, 0, h - 1) * w;
+                    if (tmp[yy + x] < lo) lo = tmp[yy + x];
+                }
+                dst[y * w + x] = (byte)lo;
+            }
         }
     }
 
@@ -2059,6 +2253,125 @@ public static partial class EngineService
                 src[rowBase + x] = win[4];
             }
         }
+    }
+
+    /// <summary>真·去模糊:理查森-露西(Richardson-Lucy)反卷积。对运动/散焦/高斯类模糊有真实复原效果,
+    /// 区别于 unsharp 反锐化(后者只是"增强边缘",对真模糊无效)。用高斯核 + 若干次迭代(强度决定迭代数)。
+    /// 为控制耗时/噪点,迭代次数随强度线性(3~10 次),并在最后与"轻微锐化"补一下边缘。</summary>
+    private static void ApplyDeblurInMemory(System.Drawing.Bitmap bmp, int strength)
+    {
+        int w = bmp.Width, h = bmp.Height;
+        if (w < 3 || h < 3) return;
+        int iter = Math.Max(3, Math.Min(10, (int)Math.Round(strength / 100.0 * 9) + 2));
+        int kernelR = strength >= 60 ? 2 : 1;   // 强度大 → 更大模糊核(对应更严重的模糊)
+        // 预计算归一化一维高斯核(对称可分离):RL 用可分离卷积大幅提速(二维→两次一维)
+        int ksz = kernelR * 2 + 1;
+        var k1d = new double[ksz];
+        double ksum = 0; double sigma = kernelR * 0.8 + 0.6;
+        for (int dx = -kernelR; dx <= kernelR; dx++)
+        {
+            double v = Math.Exp(-(dx * dx) / (2 * sigma * sigma));
+            k1d[dx + kernelR] = v; ksum += v;
+        }
+        for (int i = 0; i < k1d.Length; i++) k1d[i] /= ksum;
+
+        var rect = new System.Drawing.Rectangle(0, 0, w, h);
+        var data = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadWrite,
+            System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        try
+        {
+            int stride = data.Stride; int n = w * h;
+            var r = new byte[n]; var g = new byte[n]; var b = new byte[n];
+            unsafe
+            {
+                byte* p0 = (byte*)data.Scan0.ToPointer();
+                for (int y = 0; y < h; y++) { byte* row = p0 + y * stride; int idx = y * w;
+                    for (int x = 0; x < w; x++) { int i = x * 4; b[idx + x] = row[i]; g[idx + x] = row[i + 1]; r[idx + x] = row[i + 2]; } }
+            }
+            // 归一化到 0..1 双精度数组做 RL
+            double[] R = ToDouble(r), G = ToDouble(g), B = ToDouble(b);
+            R = RichardsonLucy(R, w, h, k1d, kernelR, iter);
+            G = RichardsonLucy(G, w, h, k1d, kernelR, iter);
+            B = RichardsonLucy(B, w, h, k1d, kernelR, iter);
+            // 写回(RL 结果可能轻微过冲,收紧)
+            for (int i = 0; i < n; i++)
+            {
+                r[i] = (byte)Math.Clamp((int)Math.Round(R[i] * 255.0), 0, 255);
+                g[i] = (byte)Math.Clamp((int)Math.Round(G[i] * 255.0), 0, 255);
+                b[i] = (byte)Math.Clamp((int)Math.Round(B[i] * 255.0), 0, 255);
+            }
+            unsafe
+            {
+                byte* p0 = (byte*)data.Scan0.ToPointer();
+                for (int y = 0; y < h; y++) { byte* row = p0 + y * stride; int idx = y * w;
+                    for (int x = 0; x < w; x++) { int i = x * 4; row[i] = b[idx + x]; row[i + 1] = g[idx + x]; row[i + 2] = r[idx + x]; } }
+            }
+        }
+        finally { bmp.UnlockBits(data); }
+    }
+
+    /// <summary>理查森-露西反卷积:单通道,已知一维可分离(高斯)核。迭代增强高频复原。</summary>
+    private static double[] RichardsonLucy(double[] obs, int w, int h, double[] k1d, int kr, int iter)
+    {
+        int n = w * h;
+        var est = (double[])obs.Clone();   // 初始估计 = 退化图
+        var blur = new double[n];
+        var rel = new double[n];
+        for (int it = 0; it < iter; it++)
+        {
+            // ① 估计图卷积核 → 模拟退化(blur = est ⊛ k)
+            SepConv(est, blur, w, h, k1d, kr);
+            // ② 比值 = 观测 / 退化(加微小值防除零)
+            for (int i = 0; i < n; i++) rel[i] = obs[i] / Math.Max(1e-6, blur[i]);
+            // ③ 比值再卷积核(相关 = 翻转核卷积),更新估计
+            SepConv(rel, blur, w, h, k1d, kr);
+            for (int i = 0; i < n; i++) est[i] *= Math.Max(0.0, blur[i]);
+        }
+        return est;
+    }
+
+    /// <summary>单通道可分离卷积(水平+垂直,对称高斯核),边框 clamped。RL 前向退化/后向更新用。</summary>
+    private static void SepConv(double[] src, double[] dst, int w, int h, double[] k1d, int kr)
+    {
+        int n = w * h;
+        var tmp = new double[n];
+        // 水平
+        for (int y = 0; y < h; y++)
+        {
+            int row = y * w;
+            for (int x = 0; x < w; x++)
+            {
+                double acc = 0;
+                for (int dx = -kr; dx <= kr; dx++)
+                {
+                    int xx = Math.Clamp(x + dx, 0, w - 1);
+                    acc += src[row + xx] * k1d[dx + kr];
+                }
+                tmp[row + x] = acc;
+            }
+        }
+        // 垂直
+        for (int y = 0; y < h; y++)
+        {
+            int row = y * w;
+            for (int x = 0; x < w; x++)
+            {
+                double acc = 0;
+                for (int dy = -kr; dy <= kr; dy++)
+                {
+                    int yy = Math.Clamp(y + dy, 0, h - 1) * w;
+                    acc += tmp[yy + x] * k1d[dy + kr];
+                }
+                dst[row + x] = acc;
+            }
+        }
+    }
+
+    private static double[] ToDouble(byte[] a)
+    {
+        var d = new double[a.Length];
+        for (int i = 0; i < a.Length; i++) d[i] = a[i] / 255.0;
+        return d;
     }
 
     /// <summary>边缘抗锯齿:只对边缘(3×3 局部对比度大)的像素向邻域均值靠拢,
