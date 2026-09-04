@@ -631,18 +631,6 @@
                     <TextBlock x:Name="InterpHint" Style="{StaticResource HintText}"
                                TextWrapping="Wrap"/>
 
-                    <Grid ColumnSpacing="8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <Button x:Name="VideoResetBtn" Grid.Column="0" Content="重置参数" ToolTipService.ToolTip="恢复默认参数"
-                                HorizontalAlignment="Stretch" Click="VideoResetBtn_Click"/>
-                        <CheckBox x:Name="VideoRememberCheck" Grid.Column="1" Content="记住上次" IsChecked="True" ToolTipService.ToolTip="记住处理参数(不含输入帧率),下次启动自动恢复"
-                                  VerticalAlignment="Center"
-                                  Checked="Remember_Changed" Unchecked="Remember_Changed"/>
-                    </Grid>
-
                     <TextBlock Text="输出" Style="{StaticResource SectionTitle}"/>
                     <TextBox x:Name="OutFileBox" PlaceholderText="默认与源视频同目录"
                              IsSpellCheckEnabled="False" TextChanged="OutFileBox_TextChanged"/>
@@ -733,6 +721,19 @@
                         <Button Grid.Column="1" Content="保存预设" Click="SavePresetBtn_Click"
                                 HorizontalAlignment="Stretch" Style="{StaticResource AccentButtonStyle}"
                                 ToolTipService.ToolTip="把当前全部视频参数保存为一个预设(上限 100 个)"/>
+                    </Grid>
+
+                    <!-- 重置参数 / 记住上次:与参数预设放一起(参数管理) -->
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="VideoResetBtn" Grid.Column="0" Content="重置参数" ToolTipService.ToolTip="恢复默认参数"
+                                HorizontalAlignment="Stretch" Click="VideoResetBtn_Click"/>
+                        <CheckBox x:Name="VideoRememberCheck" Grid.Column="1" Content="记住上次" IsChecked="True" ToolTipService.ToolTip="记住处理参数(不含输入帧率),下次启动自动恢复"
+                                  VerticalAlignment="Center"
+                                  Checked="Remember_Changed" Unchecked="Remember_Changed"/>
                     </Grid>
 
                     <!-- 操作按钮:上一排「开始处理」(占满变宽),中间「暂停/恢复」,最下方「停止」 -->
