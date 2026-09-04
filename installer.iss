@@ -1,10 +1,10 @@
-﻿; ALH Pro 安装脚本 (Inno Setup 6.3+)
+; ALH Pro 安装脚本 (Inno Setup 6.3+)
 ; ⚠ 需要 Inno Setup 6.3 或更高版本(首次版本(2021)起支持 DownloadTemporaryFile / CreateDownloadPage)
 ;
 ; 用法:
 ;   1. 先构建发布版(确保 发布版\ 目录是最新,含软件+引擎,模型可缺省);
 ;   2. 确认 [Files] 里 发布版\* 没有打包模型(模型 1.38GB 不要进安装包本体);
-;   3. 将本文件放入仓库根,用 Inno Setup 编译 → ALHPro_v1.1.2_Setup.exe(约 900MB);
+;   3. 将本文件放入仓库根,用 Inno Setup 编译 → ALHPro_v1.2.0_Setup.exe(约 900MB);
 ;   4. 模型包(models_v1.0.zip, 1.38GB)单独上传 GitHub Release 附件(与 ModelsUrl 同版本)。
 ;
 ; 安装时「选择附加任务」页勾选「下载并安装模型包(来自 GitHub)」:
