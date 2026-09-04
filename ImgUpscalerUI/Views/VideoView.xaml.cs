@@ -1302,102 +1302,72 @@ public sealed partial class VideoView : UserControl
         catch { }
     }
 
-    /// <summary>官方内置预设:「通用画质增强 不含补帧」。程序自带,首启自动创建,标记为官方(摘要显示"官方"、不显示日期);用户可删可改。</summary>
-    private const string BuiltinPresetName = "通用画质增强 不含补帧";
     private const int MaxPresets = 100;   // 上限 100 个预设
 
-    /// <summary>确保官方内置预设存在:若列表里没有「通用画质增强 不含补帧」,则用官方默认参数创建一份(标记官方);
-    /// 已有同名则标记为官方(把用户保存的同款变成官方)。绝不覆盖/删除用户已有预设。</summary>
+    /// <summary>官方内置预设定义(名字 + 一套默认参数)。以后要加官方预设,在这里加一项即可,下次更新自动带上。</summary>
+    private static (string Name, Func<VideoSettings> Make)[] BuiltinPresets() => new[]
+    {
+        ( "通用画质增强 不含补帧", new Func<VideoSettings>(() => new VideoSettings
+        {
+            Remember = false, Up = true, Engine = 0, Scale = 1, Gpu = 0,
+            Interp = false, Model = 0, UpWaifu2xModel = 0, UpEsrganModel = 0, InterpScale = 0,
+            Target = false, TargetFps = "", VfrMode = 0, VfrExpanded = false, FpsBase = 0, FpsMode = 0, FpsOffset = 0, FpsExpanded = true,
+            DedupOn = false, DedupModel = 0, DedupAnime = 0, DedupSmart = 0, DedupThr = 0.01,
+            Scene = false, SceneThr = 0.3, TimeStep = 0.5, Tta = false, OutDir = "", CustomW = "1920", CustomH = "1080",
+            DedupAlgo = 0, DedupHi = 12, DedupLo = 5, DedupFrac = 0.33, DedupSadThr = 3, DedupSsimThr = 0.97, ContentFps = 0,
+            DedupMotionComp = true, DedupOnlyTrueHold = true, ManualProtectSmallMotion = true, DedupPhaseAlign = true,
+            PostSharpen = 25, PostClarity = 15, PostUsm = 20, PostDetail = 30, PostDeblur = 15, PostFlicker = 0, PostDenoise = 10, PostAa = 30,
+            Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
+            FastMode = false, Mute = false, VideoDenoiseOn = false, VideoDenoiseStrong = -1,
+        })),
+        ( "动漫通用", new Func<VideoSettings>(() => new VideoSettings
+        {
+            Remember = true, Up = true, Engine = 0, Scale = 1, Gpu = 0,
+            Interp = true, Model = 0, UpWaifu2xModel = 1, UpEsrganModel = 0, InterpScale = 2,
+            Target = false, TargetFps = "", VfrMode = 0, VfrExpanded = false, FpsBase = 0, FpsMode = 0, FpsOffset = 0, FpsExpanded = true,
+            DedupOn = true, DedupModel = 0, DedupAnime = 0, DedupSmart = 0, DedupThr = 0.01,
+            Scene = false, SceneThr = 0.3, TimeStep = 0.5, Tta = false, OutDir = "", CustomW = "1920", CustomH = "1080",
+            DedupAlgo = 3, DedupHi = 12, DedupLo = 5, DedupFrac = 0.33, DedupSadThr = 3, DedupSsimThr = 0.97, ContentFps = 0,
+            DedupMotionComp = true, DedupOnlyTrueHold = true, ManualProtectSmallMotion = true, DedupPhaseAlign = true,
+            PostSharpen = 20, PostClarity = 20, PostUsm = 20, PostDetail = 30, PostDeblur = 20, PostFlicker = 5, PostDenoise = 10, PostAa = 50,
+            Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
+            FastMode = false, Mute = false, VideoDenoiseOn = true, VideoDenoiseStrong = 1,
+        })),
+    };
+
+    /// <summary>确保每个官方内置预设存在:缺失则用官方默认创建(标记官方);已有同名则标记为官方(把用户保存的同款变成官方)。
+    /// 绝不覆盖/删除用户已有预设。以后加官方预设只需在 BuiltinPresets() 加一项。</summary>
     private void EnsureBuiltinPresets()
     {
         try
         {
             var list = LoadPresets();
-            // 若已存在同名(用户保存过),把它标记为官方预设
-            var existing = list.FirstOrDefault(x => x.Name == BuiltinPresetName);
-            if (existing != null)
+            bool changed = false;
+            foreach (var (name, make) in BuiltinPresets())
             {
-                if (!existing.IsOfficial)
+                var existing = list.FirstOrDefault(x => x.Name == name);
+                if (existing != null)
                 {
-                    existing.IsOfficial = true;
-                    SavePresets(list);
-                    AppLogger.Info("[内置预设] 已将「通用画质增强 不含补帧」标记为官方预设");
+                    if (!existing.IsOfficial) { existing.IsOfficial = true; changed = true; }
+                    continue;
                 }
-                return;
-            }
-            // 官方内置默认参数(来自作者定稿:超分 2x waifu2x + 适度后处理,补帧/去重关闭)
-            var p = new VideoPreset
-            {
-                Name = BuiltinPresetName,
-                SavedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm") + " · 内置",
-                IsOfficial = true,
-                Params = new VideoSettings
+                // 缺失 → 用官方默认参数创建,标记官方,排在已有预设之前(官方靠前)
+                var p = new VideoPreset
                 {
-                    Remember = false,
-                    Up = true,
-                    Engine = 0,              // waifu2x
-                    Scale = 1,               // 2x
-                    Gpu = 0,
-                    Interp = false,          // 不补帧
-                    Model = 0,
-                    UpWaifu2xModel = 0,
-                    UpEsrganModel = 0,
-                    InterpScale = 0,
-                    Target = false,
-                    TargetFps = "",
-                    VfrMode = 0,
-                    VfrExpanded = false,
-                    FpsBase = 0,
-                    FpsMode = 0,
-                    FpsOffset = 0,
-                    FpsExpanded = true,
-                    DedupOn = false,         // 不去重
-                    DedupModel = 0,
-                    DedupAnime = 0,
-                    DedupSmart = 0,
-                    DedupThr = 0.01,
-                    Scene = false,
-                    SceneThr = 0.3,
-                    TimeStep = 0.5,
-                    Tta = false,
-                    OutDir = "",
-                    CustomW = "1920",
-                    CustomH = "1080",
-                    DedupAlgo = 0,
-                    DedupHi = 12,
-                    DedupLo = 5,
-                    DedupFrac = 0.33,
-                    DedupSadThr = 3,
-                    DedupSsimThr = 0.97,
-                    ContentFps = 0,
-                    DedupMotionComp = true,
-                    DedupOnlyTrueHold = true,
-                    ManualProtectSmallMotion = true,
-                    DedupPhaseAlign = true,
-                    PostSharpen = 25,
-                    PostClarity = 15,
-                    PostUsm = 20,
-                    PostDetail = 30,
-                    PostDeblur = 15,
-                    PostFlicker = 0,
-                    PostDenoise = 10,
-                    PostAa = 30,
-                    Jello = 0,
-                    MotionBlur = 0,
-                    DeShake = false,
-                    Quality = 0,             // 码率自动
-                    BitrateMbps = 0,
-                    Codec = 0,               // H.264
-                    Format = 0,              // MP4
-                    FastMode = false,
-                    Mute = false,
-                    VideoDenoiseOn = false,
-                    VideoDenoiseStrong = -1,
-                },
-            };
-            list.Insert(0, p);   // 放在最前
-            SavePresets(list);
-            AppLogger.Info("[内置预设] 已创建「画质通用增强」(一套通用画质增强默认参数,可在界面调整)");
+                    Name = name,
+                    SavedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm") + " · 内置",
+                    IsOfficial = true,
+                    Params = make(),
+                };
+                list.Insert(0, p);
+                changed = true;
+                AppLogger.Info($"[内置预设] 已创建官方预设「{name}」");
+            }
+            if (changed)
+            {
+                SavePresets(list);
+                AppLogger.Info("[内置预设] 官方预设检查完成(缺失已补/同名已标记官方,用户预设未动)");
+            }
         }
         catch { }
     }
