@@ -977,7 +977,7 @@ public static partial class EngineService
                 {
                     int tHalved = Math.Max(64, tCur / 2);
                     var oomArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-t\s+\d+", $"-t {tHalved}");
-                    AppLogger.Info($"⚠ 显存不足,分块 {tCur}→{tHalved} 在 GPU 上重试...");
+                    AppLogger.Warn($"⚠ 显存不足,分块 {tCur}→{tHalved} 在 GPU 上重试(不是卡死,是自动降分块)...");
                     progress?.Report((0, $"⚠ 显存不足,自动降低分块 {tCur}→{tHalved} 重试(更快更稳)..."));
                     try
                     {
