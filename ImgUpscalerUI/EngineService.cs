@@ -216,6 +216,7 @@ public static partial class EngineService
                         var probe = Path.Combine(cfg, ".alh_pro_w.tmp");
                         File.WriteAllText(probe, "x");
                         File.Delete(probe);
+                        RecordTempRoot(cfg);
                         return cfg;
                     }
                 }
@@ -243,8 +244,48 @@ public static partial class EngineService
             }
             catch { }
             if (best == null || bestFree <= 0) best = Path.GetPathRoot(Path.GetTempPath())!;
+            RecordTempRoot(best);
             return best;
         }
+    }
+
+    // ===== 记录"用过的临时根目录",供启动清理扫旧路径残留 =====
+    // 【修复 换盘/换路径后残留】自动指定路径可能落在任意"剩余最大固定盘"根目录;若下次自动选到别的盘/用户改了自定义路径,
+    // 上次用的盘/目录里的 imgup_*/alh_* 残留不会被 CleanupTempDirs 扫到(只扫 %TEMP%+当前路径)→ 累积成几十上百 G。
+    // 这里把每个实际用过的临时根目录持久化下来,启动清理时一并扫描。
+    private static readonly System.Collections.Generic.HashSet<string> _usedTempRoots = new(System.StringComparer.OrdinalIgnoreCase);
+    private static readonly object _rootsLock = new();
+    private static bool _rootsLoaded;
+    private static string TempRootsFile => ParaPaths.SettingsFile("temp-roots.json");
+    private static void LoadUsedTempRoots()
+    {
+        if (_rootsLoaded) return;
+        _rootsLoaded = true;
+        try
+        {
+            if (File.Exists(TempRootsFile))
+                foreach (var line in File.ReadAllLines(TempRootsFile))
+                    if (!string.IsNullOrWhiteSpace(line)) _usedTempRoots.Add(line.Trim());
+        }
+        catch { }
+    }
+    /// <summary>记录本软件用过的一个临时根目录(自动选的盘 / 自定义路径),供启动清理旧路径残留。幂等,新增才落盘。</summary>
+    public static void RecordTempRoot(string root)
+    {
+        if (string.IsNullOrWhiteSpace(root)) return;
+        LoadUsedTempRoots();
+        lock (_rootsLock)
+        {
+            if (_usedTempRoots.Add(root))
+            {
+                try { File.WriteAllLines(TempRootsFile, _usedTempRoots); } catch { }
+            }
+        }
+    }
+    /// <summary>本软件用过的全部临时根目录(含已换掉的旧路径)。</summary>
+    public static System.Collections.Generic.IEnumerable<string> UsedTempRoots
+    {
+        get { LoadUsedTempRoots(); return _usedTempRoots; }
     }
 
     // 引擎根目录:优先 exe 旁 engines/ 目录;否则从当前目录向上逐级搜索(覆盖源码布局/输出目录)
