@@ -105,10 +105,15 @@ public static class RifeOnnxService
     static void RunSingle(InferenceSession session, Bitmap bmp0, Bitmap bmp1, float time, string outputPng,
         int w, int h, int gpuId)
     {
-        var t0 = ToTensor(bmp0);
-        var t1 = ToTensor(bmp1);
-        var tensor0 = new DenseTensor<float>(t0, new[] { 1, 3, h, w });
-        var tensor1 = new DenseTensor<float>(t1, new[] { 1, 3, h, w });
+        // 【修复 补帧没效果】RIFE ONNX 输入要求宽高为 4 的倍数。原整帧路径直接把 w/h 喂进模型,
+        // 非 4 倍数的帧会抛形状错误 → 上层 catch 后静默复制左端点 → 该帧不插帧(看起来"没效果")。
+        // 与分块路径一致:先补到 4 的倍数(用边缘像素复制),推理后再裁回原尺寸。
+        int pw = (w + 3) & ~3, ph = (h + 3) & ~3;
+        bool padded = pw != w || ph != h;
+        var t0 = padded ? ToTensorRect(bmp0, 0, 0, pw, ph) : ToTensor(bmp0);
+        var t1 = padded ? ToTensorRect(bmp1, 0, 0, pw, ph) : ToTensor(bmp1);
+        var tensor0 = new DenseTensor<float>(t0, new[] { 1, 3, ph, pw });
+        var tensor1 = new DenseTensor<float>(t1, new[] { 1, 3, ph, pw });
         var ts = new DenseTensor<float>(new[] { time }, new[] { 1 });
 
         IDisposableReadOnlyCollection<DisposableNamedOnnxValue>? results = null;
@@ -145,7 +150,14 @@ public static class RifeOnnxService
             var pixels = new float[3 * oh * ow];
             for (int i = 0; i < pixels.Length; i++)
                 pixels[i] = outTensor.GetValue(i);
-            SavePng(FromTensor(pixels, ow, oh), outputPng);
+            using var full = FromTensor(pixels, ow, oh);
+            if (padded && ow >= w && oh >= h)
+            {
+                using var cropped = full.Clone(new Rectangle(0, 0, w, h), PixelFormat.Format24bppRgb);
+                SavePng(cropped, outputPng);
+            }
+            else
+                SavePng(full, outputPng);
         }
     }
 

@@ -262,8 +262,19 @@ public static class EsrganOnnxService
                         }
                         catch (Exception ex)
                         {
-                            AppLogger.Warn($"ONNX 超分失败({ex.Message.Split('\n')[0]})——保留原帧");
-                            try { File.Copy(files[i], outPath, true); } catch { }
+                            // 【修复 ONNX 降级质量】失败时不要直接写"原始尺寸原帧"(会混进上采样帧,尺寸不一导致
+                            // 合帧黑帧/报错)。先用 CPU 重试该帧(仍输出上采样尺寸);CPU 也失败才回退原帧并记录帧号。
+                            AppLogger.Warn($"ONNX 超分失败({ex.Message.Split('\n')[0]})——改用 CPU 超分该帧重试");
+                            try
+                            {
+                                UpscaleAsync(files[i], outPath, scale, -1, null, ct, modelPath, null)
+                                    .GetAwaiter().GetResult();
+                            }
+                            catch (Exception ex2)
+                            {
+                                AppLogger.Warn($"CPU 超分该帧仍失败({ex2.Message.Split('\n')[0]})——保留原帧({files[i]})");
+                                try { File.Copy(files[i], outPath, true); } catch { }
+                            }
                         }
                         finally
                         {
@@ -305,14 +316,14 @@ public static class EsrganOnnxService
         {
             // ===== 透明底保护:ONNX 只处理 RGB(alpha 会丢/脏),这里分离处理 =====
             // ① 提取 alpha 通道(缩放后恢复用) ② RGB 填白(防透明区超分成脏色) ③ 超分 ④ 恢复 alpha
-            RunCoreAlphaSafe(src, output, scale, modelPath, gpuId, progress, ct, TileFor(sw, sh), 32);
+            RunCoreAlphaSafe(src, output, scale, modelPath, gpuId, progress, ct, TileFor(sw, sh), 64);
             return;
         }
 
         // ===== 分块保护(实测:GPU 整帧喂 1080p → DirectML OOM 崩溃;CPU 慢到 210s/帧)=====
         // 输入超 512 就切成块(带 32px 重叠羽化拼回):GPU 每块 0.3~0.5s,1080p 也稳;速度数倍提升。
         const int Tile = 512;
-        const int Overlap = 32;
+        const int Overlap = 64;   // 32→64:分块共享上下文更多,接缝过渡带更宽、高纹理更难看出"分块"(代价:边缘计算略增)
         if (sw > Tile || sh > Tile)
         {
             RunCoreTiled(src, output, scale, modelPath, gpuId, progress, ct, Tile, Overlap, sessionOverride);
