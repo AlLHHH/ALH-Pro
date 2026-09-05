@@ -165,8 +165,8 @@
                     </StackPanel>
                     <ProgressRing x:Name="SelfCheckProgress" IsActive="False" Width="46" Height="46"
                                   HorizontalAlignment="Center" Margin="0,6,0,0"/>
-                    <!-- 报告区:可滚动,避免长报告把「确定」按钮挤出可视区 -->
-                    <ScrollViewer x:Name="SelfCheckScroll" MaxHeight="340" Visibility="Collapsed"
+                    <!-- 报告区:固定高度(超出可滚动),「确定」按钮始终贴在它下边、位置稳定 -->
+                    <ScrollViewer x:Name="SelfCheckScroll" Height="340" Visibility="Collapsed"
                                   VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel x:Name="SelfCheckReport" Spacing="3"/>
                     </ScrollViewer>
