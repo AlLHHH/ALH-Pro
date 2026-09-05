@@ -2231,6 +2231,17 @@ public sealed partial class MainPage : Page
                     try { info.AppendLine($"硬件: {SafeRender.CpuName} · 显存 {SafeRender.TotalVramGB:0.#}GB / 内存 {SafeRender.TotalRamGB:0.#}GB"); } catch { }
                     try { foreach (var n in GpuInfo.GetAdapterNames()) info.AppendLine("GPU: " + n); } catch { }
                     try { foreach (var v in GpuInfo.GetDriverVersions()) info.AppendLine("驱动: " + v); } catch { }
+                    try
+                    {
+                        info.AppendLine("引擎: waifu2x=" + (EngineService.FindWaifu2x() != null) +
+                            ", realesrgan=" + (EngineService.FindRealESRGAN() != null) +
+                            ", ffmpeg=" + (ALHPro.VideoService.FfmpegPath != null) +
+                            ", rife=" + (ALHPro.VideoService.RifePath != null));
+                        info.AppendLine("模型: 超分ONNX=" + (ALHPro.EsrganOnnxService.FindModel() != null) +
+                            ", 动漫ONNX=" + (ALHPro.EsrganOnnxService.FindWaifu2xModel() != null) +
+                            ", 补帧ONNX=" + (ALHPro.RifeOnnxService.Available()));
+                    }
+                    catch { }
                     info.AppendLine("计算设备设置: GPU " + AppSettings.GpuIndex);
                     try { info.AppendLine("Vulkan 自检报告:\n" + AppSettings.VulkanReport); } catch { }
                     info.AppendLine("临时文件目录: " + ALHPro.EngineService.TempRoot);

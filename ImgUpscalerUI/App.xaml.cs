@@ -332,6 +332,7 @@ namespace ALHPro
                     var extra = "";
                     try { extra = $" HRESULT=0x{ex.HResult:X8}"; } catch { }
                     AppLogger.Error($"未处理异常{extra}", ex);
+                    WriteCrashDiagnostic(ex);   // 崩溃时也把版本/系统/驱动/GPU/引擎/堆栈写到磁盘,崩溃后仍可拿到
                     if (!_fatalDialogShown)
                     {
                         _fatalDialogShown = true;
@@ -375,6 +376,47 @@ namespace ALHPro
                 catch { }
                 e.SetObserved();
             };
+        }
+
+        /// <summary>崩溃时把 版本/系统/驱动/GPU/引擎/异常堆栈 写到磁盘(即使软件崩了也能拿到这份诊断)。</summary>
+        private static void WriteCrashDiagnostic(Exception? ex)
+        {
+            try
+            {
+                var dir = System.IO.Path.GetDirectoryName(AppLogger.LogFile) ?? System.AppContext.BaseDirectory;
+                var path = System.IO.Path.Combine(dir, $"崩溃诊断_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"ALH Pro 崩溃诊断 {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                sb.AppendLine($"版本: v{UpdateChecker.CurrentVersion}");
+                sb.AppendLine($"系统: {Environment.OSVersion} · {(Environment.Is64BitOperatingSystem ? "64 位" : "32 位")}");
+                try { sb.AppendLine($"硬件: {SafeRender.CpuName} · 显存 {SafeRender.TotalVramGB:0.#}GB / 内存 {SafeRender.TotalRamGB:0.#}GB"); } catch { }
+                try { foreach (var n in GpuInfo.GetAdapterNames()) sb.AppendLine("GPU: " + n); } catch { }
+                try { foreach (var v in GpuInfo.GetDriverVersions()) sb.AppendLine("驱动: " + v); } catch { }
+                sb.AppendLine("计算设备: GPU " + AppSettings.GpuIndex);
+                try
+                {
+                    sb.AppendLine("引擎: waifu2x=" + (EngineService.FindWaifu2x() != null) +
+                        ", realesrgan=" + (EngineService.FindRealESRGAN() != null) +
+                        ", ffmpeg=" + (VideoService.FfmpegPath != null) +
+                        ", rife=" + (VideoService.RifePath != null));
+                }
+                catch { }
+                try
+                {
+                    sb.AppendLine("模型: 超分ONNX=" + (EsrganOnnxService.FindModel() != null) +
+                        ", 动漫ONNX=" + (EsrganOnnxService.FindWaifu2xModel() != null) +
+                        ", 补帧ONNX=" + (RifeOnnxService.Available()));
+                }
+                catch { }
+                if (ex != null)
+                {
+                    sb.AppendLine("异常: " + ex.GetType().FullName + " (" + ex.Message + ")");
+                    sb.AppendLine(ex.ToString());
+                }
+                System.IO.File.WriteAllText(path, sb.ToString());
+                AppLogger.Info("崩溃诊断已写入: " + path);
+            }
+            catch { }
         }
 
         protected override void OnLaunched(LaunchActivatedEventArgs e)
