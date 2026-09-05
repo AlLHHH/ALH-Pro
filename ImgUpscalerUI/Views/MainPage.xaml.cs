@@ -103,6 +103,7 @@ public sealed partial class MainPage : Page
                     MarkSelfCheckStep(2, selfBest >= 0);    // ③ 识别最佳独显
                     MarkSelfCheckStep(3, selfBest >= 0);    // ④ 核验可用性
                     MarkSelfCheckStep(5, ok);               // ⑥ 超分/补帧引擎齐全
+                    MarkSelfCheckStep(6, CheckFunctions().All(f => f.ok));   // ⑦ 各功能模型
                     if (selfBest >= 0 && AppSettings.GpuIndex != selfBest)
                     {
                         AppSettings.GpuIndex = selfBest;
@@ -208,6 +209,7 @@ public sealed partial class MainPage : Page
         "核验所选设备是否可用",
         "检测 DirectML / ONNX 加速",
         "检查超分 / 补帧引擎",
+        "检查各功能模型",
     };
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, TextBlock> SelfCheckRows = new();
@@ -301,9 +303,39 @@ public sealed partial class MainPage : Page
             catch { }
             sb.Append("DirectML / ONNX 加速: ").Append(ALHPro.EsrganOnnxService.DmlFallbackOk >= 0 ? "可用" : "不可用").Append('\n');
             sb.Append("超分 / 补帧引擎: ").Append(enginesOk ? "齐全" : "缺失").Append('\n');
+            sb.Append('\n').Append("功能自检").Append('\n');
+            foreach (var (name, okk) in CheckFunctions())
+                sb.Append("· ").Append(name).Append(": ").Append(okk ? "可用" : "不可用").Append('\n');
         }
         catch { }
         return sb.ToString().TrimEnd('\n');
+    }
+
+    /// <summary>各功能自检:按「引擎 exe + 模型」是否齐全判断该功能是否可用(文件存在性检查,快)。</summary>
+    private static (string name, bool ok)[] CheckFunctions()
+    {
+        var list = new System.Collections.Generic.List<(string, bool)>();
+        try
+        {
+            bool reExe = EngineService.FindRealESRGAN() != null;
+            bool wfExe = EngineService.FindWaifu2x() != null;
+            bool ff = VideoService.FfmpegPath != null;
+            bool rifeExe = VideoService.RifePath != null;
+            bool reModel = ALHPro.EsrganOnnxService.FindModel() != null;
+            bool waifuModel = ALHPro.EsrganOnnxService.FindWaifu2xModel() != null;
+            bool rifeOnnx = ALHPro.RifeOnnxService.Available();
+            bool audioModel = ALHPro.AudioEnhanceService.FindModel() != null;
+            bool lavasr = ALHPro.LavaSrService.Available();
+            list.Add(("图片放大", (reExe && reModel) || (wfExe && waifuModel)));
+            list.Add(("动漫放大", wfExe && (waifuModel || reModel)));
+            list.Add(("视频超分", ff && (reExe || reModel)));
+            list.Add(("视频补帧", rifeExe && (rifeOnnx || rifeExe)));
+            list.Add(("AI 抠图", EngineService.CheckEngines(out _)));   // 含 rembg 抠图模型
+            list.Add(("音频增强", audioModel));
+            list.Add(("音频升采样", lavasr));
+        }
+        catch { }
+        return list.ToArray();
     }
 
     /// <summary>生成设备下拉标签与推荐编号:优先【引擎实际枚举】(VulkanCheck.Devices,含引擎真实 -g 编号),
