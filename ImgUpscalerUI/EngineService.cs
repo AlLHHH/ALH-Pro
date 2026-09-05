@@ -130,8 +130,9 @@ public static partial class EngineService
 
     /// <summary>ncnn 引擎的 -g 编号 → DirectML 设备号。
     /// 双卡机(AMD 核显 + NVIDIA 独显 / Intel 核显 + 独显等)上,Vulkan 引擎枚举顺序与 DirectML(DXGI)
-    /// 枚举顺序【可能不同】——直接拿 ncnn 编号喂 DirectML 会跑错卡(甚至编号越界失败降级 CPU)。
-    /// 按显卡名字匹配(引擎枚举名 → 注册表序≈DXGI 序),匹配不到用原编号(DML 失败会自动降 CPU,不挂)。</summary>
+    /// 枚举顺序【可能不同】——直接拿 ncnn 编号喂 DirectML 会跑错卡。
+    /// 【修复】按 DXGI 真枚举(名匹配)得到正确 DirectML 设备号;DXGI 不可用时回退注册表名匹配;
+    /// 匹配不到宁可落 CPU(明确日志),不静默跑核显。</summary>
     public static int ToDmlDevice(int engineGpu)
     {
         try
@@ -141,21 +142,102 @@ public static partial class EngineService
             if (devs.Count <= 1) return engineGpu;   // 单卡:无歧义
             var want = devs.FirstOrDefault(d => d.Id == engineGpu);
             if (string.IsNullOrWhiteSpace(want.Name)) return engineGpu;
-            var names = GpuInfo.GetAdapterNames();
-            for (int i = 0; i < names.Count; i++)
+            // ① DXGI 真枚举:名匹配 → DirectML 设备号(顺序=DXGI,与注册表可能不同)
+            try
             {
-                if (names[i].Equals(want.Name, StringComparison.OrdinalIgnoreCase)
-                    || names[i].Contains(want.Name, StringComparison.OrdinalIgnoreCase)
-                    || want.Name.Contains(names[i], StringComparison.OrdinalIgnoreCase))
-                    return i;
+                foreach (var (idx, name, _) in TryEnumerateDxgiAdapters())
+                    if (name.Equals(want.Name, StringComparison.OrdinalIgnoreCase)
+                        || name.Contains(want.Name, StringComparison.OrdinalIgnoreCase)
+                        || want.Name.Contains(name, StringComparison.OrdinalIgnoreCase))
+                        return idx;
             }
-            // 名字匹配失败(罕见:枚举差异/截断):【勿静默落到 _dmlFirstOk】——Hybrid 机(核显+独显)上
-            // _dmlFirstOk 通常=核显(索引0),会让"用户选 NVIDIA 却跑核显"。改为落 CPU + 明确日志,
-            // 宁可慢也不跑错卡。真正修复需按 DXGI/DML 真实枚举按名/LUID 匹配(下次会话做)。
-            AppLogger.Warn($"⚠ 设备映射:引擎编号 {engineGpu} 未在 DirectML/注册表匹配到同名显卡;为避免静默跑核显,本次已改用 CPU(软件计算)。可用引擎设备={string.Join(",", devs.Select(d => d.Id + ":" + d.Name))}");
-            return -1;   // CPU(软件计算),不跑错卡
+            catch { }
+            // ② DXGI 不可用(罕见):回退注册表名匹配(≈DXGI 序)
+            try
+            {
+                var names = GpuInfo.GetAdapterNames();
+                for (int i = 0; i < names.Count; i++)
+                    if (names[i].Equals(want.Name, StringComparison.OrdinalIgnoreCase)
+                        || names[i].Contains(want.Name, StringComparison.OrdinalIgnoreCase)
+                        || want.Name.Contains(names[i], StringComparison.OrdinalIgnoreCase))
+                        return i;
+            }
+            catch { }
+            // ③ 匹配不到:落 CPU(宁可慢不跑错卡)
+            AppLogger.Warn($"⚠ 设备映射:引擎编号 {engineGpu} 未匹配到同名 DirectML 设备;为避免静默跑核显,本次已改用 CPU(软件计算)。可用引擎设备={string.Join(",", devs.Select(d => d.Id + ":" + d.Name))}");
+            return -1;
         }
         catch { return engineGpu; }
+    }
+
+    // ===== DXGI 真枚举:显卡名 → DXGI/DirectML 设备号(替代按注册表顺序猜,双卡机上注册表序≠DXGI 序会选错卡) =====
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private struct DXGI_ADAPTER_DESC1
+    {
+        [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.ByValArray, SizeConst = 128, ArraySubType = System.Runtime.InteropServices.UnmanagedType.U2)]
+        public char[] Description;
+        public uint VendorId, DeviceId, SubSysId, Revision;
+        public long DedicatedVideoMemory, DedicatedSystemMemory, SharedSystemMemory;
+        public long AdapterLuid;
+        public uint Flags;
+    }
+    [System.Runtime.InteropServices.ComImport, System.Runtime.InteropServices.Guid("29038f61-3839-4626-91fd-086879011a05"), System.Runtime.InteropServices.InterfaceType(System.Runtime.InteropServices.ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IDXGIAdapter1
+    {
+        [System.Runtime.InteropServices.PreserveSig] int SetPrivateData(System.Guid Name, uint DataSize, System.IntPtr data);
+        [System.Runtime.InteropServices.PreserveSig] int SetPrivateDataInterface(System.Guid Name, System.IntPtr data);
+        [System.Runtime.InteropServices.PreserveSig] int GetPrivateData(System.Guid Name, ref uint DataSize, System.IntPtr data);
+        [System.Runtime.InteropServices.PreserveSig] int GetParent(ref System.Guid riid, out System.IntPtr ppParent);
+        [System.Runtime.InteropServices.PreserveSig] int GetDesc(out DXGI_ADAPTER_DESC1 pDesc);
+        [System.Runtime.InteropServices.PreserveSig] int EnumOutputs(uint Output, out System.IntPtr ppOutput);
+        [System.Runtime.InteropServices.PreserveSig] int GetDesc1(out DXGI_ADAPTER_DESC1 pDesc);
+        [System.Runtime.InteropServices.PreserveSig] int GetDevice(ref System.Guid riid, out System.IntPtr ppDevice);
+    }
+    [System.Runtime.InteropServices.ComImport, System.Runtime.InteropServices.Guid("770aae78-f26f-4dba-a829-253c83d1b387"), System.Runtime.InteropServices.InterfaceType(System.Runtime.InteropServices.ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IDXGIFactory1
+    {
+        [System.Runtime.InteropServices.PreserveSig] int SetPrivateData(System.Guid Name, uint DataSize, System.IntPtr data);
+        [System.Runtime.InteropServices.PreserveSig] int SetPrivateDataInterface(System.Guid Name, System.IntPtr data);
+        [System.Runtime.InteropServices.PreserveSig] int GetPrivateData(System.Guid Name, ref uint DataSize, System.IntPtr data);
+        [System.Runtime.InteropServices.PreserveSig] int GetParent(ref System.Guid riid, out System.IntPtr ppParent);
+        [System.Runtime.InteropServices.PreserveSig] int EnumAdapters(uint Adapter, out System.IntPtr ppAdapter);
+        [System.Runtime.InteropServices.PreserveSig] int MakeWindowAssociation(System.IntPtr hwnd, uint flags);
+        [System.Runtime.InteropServices.PreserveSig] int GetWindowAssociation(out System.IntPtr phwnd);
+        [System.Runtime.InteropServices.PreserveSig] int EnumAdapters1(uint Adapter, out IDXGIAdapter1 ppAdapter);
+        [System.Runtime.InteropServices.PreserveSig] int IsCurrent();
+    }
+    [System.Runtime.InteropServices.DllImport("dxgi.dll")]
+    private static extern int CreateDXGIFactory1(ref System.Guid riid, out System.IntPtr ppFactory);
+
+    /// <summary>枚举 DXGI 适配器(顺序 = DirectML 设备号)。返回 (索引, 名字, LUID)。失败/无卡返回空。</summary>
+    private static System.Collections.Generic.List<(int Index, string Name, long Luid)> TryEnumerateDxgiAdapters()
+    {
+        var list = new System.Collections.Generic.List<(int, string, long)>();
+        try
+        {
+            var riid = new System.Guid("770aae78-f26f-4dba-a829-253c83d1b387");   // IDXGIFactory1
+            if (CreateDXGIFactory1(ref riid, out var factoryPtr) != 0 || factoryPtr == IntPtr.Zero) return list;
+            var factory = (IDXGIFactory1)System.Runtime.InteropServices.Marshal.GetObjectForIUnknown(factoryPtr);
+            try
+            {
+                for (uint i = 0; ; i++)
+                {
+                    if (factory.EnumAdapters1(i, out var adapter) != 0 || adapter == null) break;
+                    try
+                    {
+                        if (adapter.GetDesc1(out var desc) == 0)
+                        {
+                            var name = desc.Description != null ? new string(desc.Description).TrimEnd('\0', ' ') : "";
+                            if (name.Length > 0) list.Add(((int)i, name, desc.AdapterLuid));
+                        }
+                    }
+                    finally { System.Runtime.InteropServices.Marshal.ReleaseComObject(adapter); }
+                }
+            }
+            finally { System.Runtime.InteropServices.Marshal.ReleaseComObject(factory); }
+        }
+        catch { }
+        return list;
     }
 
     /// <summary>旧 ncnn 引擎(2022 版,realesrgan ncnn)在 GPU 上可能不可用的设备:
