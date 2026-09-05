@@ -1554,7 +1554,10 @@ public static partial class EngineService
                 // 不降噪时直接复制原图,降噪则用 2x 降噪模型处理后缩回 1x(画质更好)
                 if (noise < 0)
                 {
-                    foreach (var f in Directory.EnumerateFiles(inputDir, "*.png"))
+                    foreach (var f in Directory.EnumerateFiles(inputDir, "*.*")
+                        .Where(x => x.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+                                 || x.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+                                 || x.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)))
                     {
                         var dest = Path.Combine(outputDir, Path.GetFileName(f));
                         File.Copy(f, dest, overwrite: true);
@@ -1654,8 +1657,9 @@ public static partial class EngineService
         }
     }
 
-    /// <summary>把 PNG 转成 JPG(按质量),写入 jpgPath。</summary>
-    private static void ConvertPngToJpg(string pngPath, string jpgPath, float quality = 0.92f)
+    /// <summary>把 PNG 转成 JPG(按质量),写入 jpgPath。
+    /// 按内容解码(SourceBitmap 按魔数识别),故也接受 .png 名但实际为 JPG 字节的文件;供视频流水线「引擎输出转 JPG」复用。</summary>
+    public static void ConvertPngToJpg(string pngPath, string jpgPath, float quality = 0.92f)
     {
         using var img = new System.Drawing.Bitmap(pngPath);
         SaveJpegViaWinRT(img, jpgPath, quality);
@@ -2555,6 +2559,9 @@ public static partial class EngineService
     public static void ResizeImageTo(string path, string outputPath, int width, int height)
     {
         var tmp = Path.Combine(EngineService.TempRoot, $"imgup_resize_{Guid.NewGuid():N}.png");
+        // 按目标扩展名保存:JPG 目标用 WinRT 编码(否则 PNG 字节装进 .jpg 文件,格式契约被破坏,且 System.Drawing JPG 会色偏)
+        bool isJpg = outputPath.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
+                     outputPath.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase);
         try
         {
             int w = Math.Max(1, width);
@@ -2571,7 +2578,8 @@ public static partial class EngineService
                         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
                         g.DrawImage(src, 0, 0, w, h);
                     }
-                    dst.Save(tmp, System.Drawing.Imaging.ImageFormat.Png);
+                    if (isJpg) SaveJpegViaWinRT(dst, outputPath);
+                    else dst.Save(tmp, System.Drawing.Imaging.ImageFormat.Png);
                 }
             }
             catch (Exception ex)
@@ -2588,9 +2596,10 @@ public static partial class EngineService
                 {
                     g.Clear(System.Drawing.Color.FromArgb(24, 24, 24));   // 深灰,avoid 黑帧被误判为损坏
                 }
-                ph.Save(tmp, System.Drawing.Imaging.ImageFormat.Png);
+                if (isJpg) SaveJpegViaWinRT(ph, outputPath);
+                else ph.Save(tmp, System.Drawing.Imaging.ImageFormat.Png);
             }
-            File.Copy(tmp, outputPath, overwrite: true);
+            if (!isJpg) File.Copy(tmp, outputPath, overwrite: true);
         }
         finally
         {

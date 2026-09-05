@@ -200,7 +200,10 @@ public static class EsrganOnnxService
         int gpuId = -1, IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default,
         string? modelPath = null, int globalBaseFrames = 0, int globalTotalFrames = 0, Func<Task>? pauseWait = null)
     {
-        var files = Directory.EnumerateFiles(inputDir, "*.png")
+        var files = Directory.EnumerateFiles(inputDir, "*.*")
+            .Where(f => f.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+                     || f.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+                     || f.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
         Directory.CreateDirectory(outputDir);
         if (files.Length == 0) return;
@@ -244,7 +247,7 @@ public static class EsrganOnnxService
                     {
                         ct.ThrowIfCancellationRequested();
                         if (pauseWait != null) await pauseWait();   // 暂停:当前帧跑完即停(ONNX/CPU 也能暂停)
-                        var outPath = Path.Combine(outputDir, Path.GetFileName(files[i]));
+                        var outPath = Path.Combine(outputDir, Path.ChangeExtension(Path.GetFileName(files[i]), ".png"));
                         try
                         {
                             var sess = sessions[wi];

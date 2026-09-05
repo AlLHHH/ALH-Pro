@@ -546,7 +546,7 @@ public static class VideoService
                         frameDurs = await BuildFrameDurationsAsync(ffmpeg, inputVideo, trimArgs, scaleVf, ct);
                     // 智能 = 删"肉眼不变"帧(自适应阈值,删后帧帧都有可见变化 → 补帧后全动帧=连续感)
                     var dropA = await Task.Run(() => DetectDupFramesAdaptive(framesIn, progress, 16, dedupSmartMode, motionCompDedup), ct);
-                    var allA = Directory.EnumerateFiles(framesIn, "*.png")
+                    var allA = Directory.EnumerateFiles(framesIn, "*.jpg")
                         .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
                     var dropSetA = new System.Collections.Generic.HashSet<int>(dropA);
                     if (dropSetA.Remove(allA.Length))   // 尾帧恒保留:结尾画面组绝不因去重而丢(88889999 的 9)
@@ -562,10 +562,10 @@ public static class VideoService
                         {
                             if (dropSetA.Contains(n + 1)) { try { File.Delete(allA[n]); } catch { } continue; }
                             idxA++;
-                            File.Move(allA[n], Path.Combine(framesIn, $"frame_{idxA:D6}.png"), true);
+                            File.Move(allA[n], Path.Combine(framesIn, $"frame_{idxA:D6}.jpg"), true);
                         }
                     }
-                    frameCount = Directory.EnumerateFiles(framesIn, "*.png").Count();
+                    frameCount = Directory.EnumerateFiles(framesIn, "*.jpg").Count();
                     effectiveFps = inFps * frameCount / Math.Max(1, origCountEst);
                     // 保留帧源号(1-based,升序):"补缺"用它把内容帧放回源时间轴
                     tempoSrcIdx = new System.Collections.Generic.List<int>();
@@ -594,7 +594,7 @@ public static class VideoService
                     if (dropM.Count > 0)
                     {
                         dedupDroppedFrames.AddRange(dropM);
-                        var allM = Directory.EnumerateFiles(framesIn, "*.png")
+                        var allM = Directory.EnumerateFiles(framesIn, "*.jpg")
                             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
                         // 尾帧恒保留(与智能分支同判据):结尾画面组绝不因去重而丢;
                         // 否则保留帧轴到不了源末帧 → 补回提前截止(时长缩水)+ 下游越界。
@@ -609,7 +609,7 @@ public static class VideoService
                         {
                             if (dropM.Contains(n + 1)) { try { File.Delete(allM[n]); } catch { } continue; }
                             idxM++;
-                            File.Move(allM[n], Path.Combine(framesIn, $"frame_{idxM:D6}.png"), true);
+                            File.Move(allM[n], Path.Combine(framesIn, $"frame_{idxM:D6}.jpg"), true);
                         }
                         // 保留帧源号(0-based,升序):帧差+SSIM 也走补回判定(非等距→补回生成,节奏精确;
                         // 否则每对统一 round 帧数,间隔不等时产生"停-跳-停"——用户实测卡)。
@@ -617,7 +617,7 @@ public static class VideoService
                         for (int n = 1; n <= allM.Length; n++)
                             if (!dropM.Contains(n)) tempoSrcIdx.Add(n - 1);
                     }
-                    frameCount = Directory.EnumerateFiles(framesIn, "*.png").Count();
+                    frameCount = Directory.EnumerateFiles(framesIn, "*.jpg").Count();
                 }
                 else if (dedupMode == 3)
                 {
@@ -707,7 +707,7 @@ public static class VideoService
                     if (drop.Count > 0)
                     {
                         dedupDroppedFrames.AddRange(drop);
-                        var allFiles = Directory.EnumerateFiles(framesIn, "*.png")
+                        var allFiles = Directory.EnumerateFiles(framesIn, "*.jpg")
                             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
                         if (frameDurs != null) MergeDurations(frameDurs, drop, allFiles.Length);
                         int idx = 0;
@@ -716,10 +716,10 @@ public static class VideoService
                             if (drop.Contains(n + 1)) { try { File.Delete(allFiles[n]); } catch { } continue; }
                             idx++;
                             File.Move(allFiles[n],
-                                Path.Combine(framesIn, $"frame_{idx:D6}.png"), true);
+                                Path.Combine(framesIn, $"frame_{idx:D6}.jpg"), true);
                         }
                     }
-                    frameCount = Directory.EnumerateFiles(framesIn, "*.png").Count();
+                    frameCount = Directory.EnumerateFiles(framesIn, "*.jpg").Count();
                 }
                 if (!allowFewFrames) EnsureDedupResultSane(frameCount, origCountEst);
                 if (frameCount == 0)
@@ -801,7 +801,7 @@ public static class VideoService
                 if (dropPan.Count > 0)
                 {
                     dedupDroppedFrames.AddRange(dropPan);
-                    var allPan = Directory.EnumerateFiles(framesIn, "*.png")
+                    var allPan = Directory.EnumerateFiles(framesIn, "*.jpg")
                         .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
                     if (frameDurs != null) MergeDurations(frameDurs, dropPan, allPan.Length);
                     int idxPan = 0;
@@ -809,10 +809,10 @@ public static class VideoService
                     {
                         if (dropPan.Contains(n + 1)) { try { File.Delete(allPan[n]); } catch { } continue; }
                         idxPan++;
-                        File.Move(allPan[n], Path.Combine(framesIn, $"frame_{idxPan:D6}.png"), true);
+                        File.Move(allPan[n], Path.Combine(framesIn, $"frame_{idxPan:D6}.jpg"), true);
                     }
                 }
-                frameCount = Directory.EnumerateFiles(framesIn, "*.png").Count();
+                frameCount = Directory.EnumerateFiles(framesIn, "*.jpg").Count();
                 if (!allowFewFrames) EnsureDedupResultSane(frameCount, origCountEst);
                 if (frameCount == 0)
                     throw new InvalidOperationException("去重后无有效帧,请降低去重强度或关闭去重");
@@ -836,7 +836,7 @@ public static class VideoService
                 {
                     int removedTotal = havePerFrame ? dedupDroppedFrames.Count : removedTotalAll;
                     var allFrameCount = havePerFrame
-                        ? Directory.EnumerateFiles(framesIn, "*.png").Count() + removedTotal
+                        ? Directory.EnumerateFiles(framesIn, "*.jpg").Count() + removedTotal
                         : origCountEst;
                     string locNote;
                     if (havePerFrame)
@@ -903,7 +903,7 @@ public static class VideoService
 
             // 3) 补帧(可选):RIFE 在原始分辨率上插值(先补帧后超分,
             //    避免在大图上补帧造成 9 倍开销);转场识别时按转场点分段,段内插值、转场处不插
-            var frameFiles = Directory.EnumerateFiles(framesIn, "*.png")
+            var frameFiles = Directory.EnumerateFiles(framesIn, "*.jpg")
                 .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
             // 最终帧时长表(合帧用):有原始时长表时,补帧按"每源帧展开"填充,否则 null → 固定帧率输出
             System.Collections.Generic.List<double>? finalDurs = null;
@@ -955,10 +955,10 @@ public static class VideoService
                         double srcDur = (trimEnd ?? await ProbeDurationSeconds(inputVideo)) - (trimStart ?? 0);
                         var resR = await RunTempoResampleAsync(rife, framesIn, framesFinal, frameCount,
                             inFps, tempoSrcIdx, 1, inFps, gpuId, srcDur, interpModel, tta, progress, ct);
-                        foreach (var f in Directory.EnumerateFiles(framesIn, "*.png")) File.Delete(f);
-                        foreach (var f in Directory.EnumerateFiles(framesFinal, "*.png"))
+                        foreach (var f in Directory.EnumerateFiles(framesIn, "*.jpg")) File.Delete(f);
+                        foreach (var f in Directory.EnumerateFiles(framesFinal, "*.jpg"))
                             File.Copy(f, Path.Combine(framesIn, Path.GetFileName(f)), true);
-                        foreach (var f in Directory.EnumerateFiles(framesFinal, "*.png")) File.Delete(f);
+                        foreach (var f in Directory.EnumerateFiles(framesFinal, "*.jpg")) File.Delete(f);
                         frameCount = resR.frameCount;
                         effectiveFps = inFps;
                         frameDurs = null;   // 补回 = 源轴 CFR 序列,旧时长表(按删帧合并)已失效,必须清(否则帧数已变,下游按旧表越界)
@@ -982,7 +982,7 @@ public static class VideoService
                     try
                     {
                         var lines = await RunCaptureAsync(ffmpeg,
-                            $"-y -framerate 1 -i \"{Path.Combine(framesIn, "frame_%06d.png")}\" " +
+                            $"-y -framerate 1 -i \"{Path.Combine(framesIn, "frame_%06d.jpg")}\" " +
                             $"-vf \"select='gt(scene,{th})',metadata=print\" -f rawvideo NUL",
                             ct);
                         foreach (var line in lines)
@@ -1118,10 +1118,15 @@ public static class VideoService
             try
             {
                 int delCnt = 0;
-                foreach (var f in Directory.EnumerateFiles(framesIn, "*.png")) { File.Delete(f); delCnt++; }
+                foreach (var f in Directory.EnumerateFiles(framesIn, "*.jpg")) { File.Delete(f); delCnt++; }
                 AppLogger.Info($"[临时清理] 已释放源帧目录 framesIn({delCnt} 帧),后续超分/合帧不再需要");
             }
             catch { /* 清理失败忽略,不中断 */ }
+
+            // ===== 统一 JPG:帧准备/补帧完成后,把 framesFinal 从引擎 PNG 重编码成 JPG(降临时盘)=====
+            // 下游超分(读 framesFinal)/缩放/对齐/合帧统一读 .jpg;引擎 I/O 仍按各自 .png 契约(读取处不改)。
+            // 目录已是 JPG(未补帧,直接复制 framesIn)则空跑。
+            ReencodeDirPngToJpg(framesFinal);
 
             // 4) 超分(可选):批处理在补帧后的帧上进行;1x 时直接剔除(不超分,帧原样使用)
             //    1x超分(2x放大后缩回):内部按 2x 超分,再缩回原始尺寸,输出仍是 1x
@@ -1138,7 +1143,7 @@ public static class VideoService
                 int? origW = null, origH = null;
                 if (upscaleShrink1x)
                 {
-                    var firstFrame = Directory.EnumerateFiles(framesFinal, "*.png")
+                    var firstFrame = Directory.EnumerateFiles(framesFinal, "*.jpg")
                         .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).FirstOrDefault();
                     if (firstFrame != null)
                     {
@@ -1191,7 +1196,7 @@ public static class VideoService
                 var upInput = framesFinal;
                 var upOutput = Path.Combine(workDir, "upscaled");
                 Directory.CreateDirectory(upOutput);
-                var upFiles = Directory.EnumerateFiles(upInput, "*.png")
+                var upFiles = Directory.EnumerateFiles(upInput, "*.jpg")
                     .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
                 // 批大小/并发按"安全渲染"墙自适应(内存/显存墙越小越保守)
                 int batchSize = SafeRender.GetVideoBatchSize();
@@ -1378,7 +1383,7 @@ public static class VideoService
                 // (8x 补帧+超分后补帧帧体积巨大,及时清,避免超分帧+补帧帧同时占盘)
                 try
                 {
-                    foreach (var f in Directory.EnumerateFiles(upInput, "*.png")) File.Delete(f);
+                    foreach (var f in Directory.EnumerateFiles(upInput, "*.jpg")) File.Delete(f);
                     AppLogger.Info($"[临时清理] 已释放补帧帧目录 upInput({upFiles.Length} 帧),后续合帧用超分帧");
                 }
                 catch { /* 清理失败忽略 */ }
@@ -1386,7 +1391,7 @@ public static class VideoService
                 // 1x超分:2x超分后缩回原始尺寸(画质比直接 1x 更好)
                 if (upscaleShrink1x && origW is > 0 && origH is > 0)
                 {
-                    var shFiles = Directory.EnumerateFiles(framesFinal, "*.png")
+                    var shFiles = EnumerateFrameFiles(framesFinal)
                         .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
                     int doneSh = 0;
                     var shTasks = new System.Collections.Generic.List<Task>();
@@ -1414,7 +1419,7 @@ public static class VideoService
             if (outWidth is > 0 && outHeight is > 0)
             {
                 progress?.Report((92, $"缩放到自定义分辨率 {outWidth}×{outHeight}..."));
-                var resFiles = Directory.EnumerateFiles(framesFinal, "*.png")
+                var resFiles = EnumerateFrameFiles(framesFinal)
                     .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
                 int doneRes = 0;
                 var resTasks = new System.Collections.Generic.List<Task>();
@@ -1433,6 +1438,11 @@ public static class VideoService
                 }
                 await Task.WhenAll(resTasks);
             }
+
+            // ===== 统一 JPG(降 200 多 G 的核心):把 framesFinal 剩余 PNG(超分放大后的大帧)重编码成 JPG =====
+            // 放在帧数对齐之前、缩放之后。超分后的 4K PNG 单帧 10~20MB,转 JPG 后仅 ~1~2MB;
+            // 引擎(超分/补帧)的 PNG 输出在此统一收束成 JPG,下游帧数对齐/合帧只读 .jpg。
+            ReencodeDirPngToJpg(framesFinal);
 
             // 5) 合帧 + 音频
             // 输出基准帧率:
@@ -1543,7 +1553,7 @@ public static class VideoService
                     : (inFpsOverride is > 0 && probedFps > 0 && Math.Abs(inFpsOverride.Value - probedFps) / probedFps > 0.01
                         ? frameCount : trueFrames);
                 long expected = (long)Math.Round((double)(expBase - 1) * interpScale) + 1;
-                var seq = Directory.EnumerateFiles(framesFinal, "*.png")
+                var seq = Directory.EnumerateFiles(framesFinal, "*.jpg")
                     .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
                 if (seq.Length > 0 && seq.Length != expected)
                 {
@@ -1551,14 +1561,14 @@ public static class VideoService
                     {
                         var last = seq[seq.Length - 1];
                         for (long i = seq.Length; i < expected; i++)
-                            File.Copy(last, Path.Combine(framesFinal, $"frame_{i + 1:D6}.png"), true);
+                            File.Copy(last, Path.Combine(framesFinal, $"frame_{i + 1:D6}.jpg"), true);
                         AppLogger.Info($"帧数对齐:输出 {seq.Length} 帧 < 预期 {expected},末帧补足 {expected - seq.Length} 帧(防吞尾)");
                     }
                     else
                     {
                         for (long i = expected; i < seq.Length; i++)
                         {
-                            try { File.Delete(Path.Combine(framesFinal, $"frame_{i + 1:D6}.png")); } catch { }
+                            try { File.Delete(Path.Combine(framesFinal, $"frame_{i + 1:D6}.jpg")); } catch { }
                         }
                     }
                 }
@@ -1574,7 +1584,7 @@ public static class VideoService
             // 不复制"尾帧定格"(7 帧一样的观感差);播放器在末帧停留=与源尾帧容积一致,内容速度不变。 =====
             if (frameInterp && outFps > 0.01 && !vfrPassthrough && frameDurs == null)
             {
-                var seqA = Directory.EnumerateFiles(framesFinal, "*.png")
+                var seqA = Directory.EnumerateFiles(framesFinal, "*.jpg")
                     .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
                 if (seqA.Count > 0)
                 {
@@ -1600,14 +1610,14 @@ public static class VideoService
                         AppLogger.Info($"帧数对齐(时长=源):裁尾 {dropN} 帧");
                     }
                 }
-                int finalN = Directory.EnumerateFiles(framesFinal, "*.png").Count();
+                int finalN = Directory.EnumerateFiles(framesFinal, "*.jpg").Count();
                 AppLogger.Info($"补帧诊断: 去重后 {frameCount} 帧,输出 {finalN} 帧,interpScale={interpScale},finalDurs={(finalDurs != null ? finalDurs.Count : -1)}");
             }
             // 只有"内容时间轴不均匀(真 VFR 素材 或 去重删过帧)+ 需要保护"才用 setpts 保留原始节奏(输出 VFR);
             // 普通 CFR 素材(未去重)一律均匀输出(原×倍率)——避免 setpts 精度问题引入抖动。
             if (targetFps == null && preserveRhythm)
             {
-                int finalFileCount = Directory.EnumerateFiles(framesFinal, "*.png").Count();
+                int finalFileCount = Directory.EnumerateFiles(framesFinal, "*.jpg").Count();
                 if (finalDurs == null || finalDurs.Count == 0)
                 {
                     finalDurs = new System.Collections.Generic.List<double>();
@@ -1677,7 +1687,7 @@ public static class VideoService
                     progress?.Report((96, $"内容帧率仅 {effectiveFps:0.##} fps,当前输出 {outFps:0.##} fps 可能仍卡,建议补帧 {suggest:0}x"));
             }
             progress?.Report((96, $"ffmpeg 合成视频({outFps.ToString("0.##", inv)} fps)..."));
-            var framePattern = Path.Combine(framesFinal, "frame_%06d.png");
+            var framePattern = Path.Combine(framesFinal, "frame_%06d.jpg");
             // 6 位小数:83.376 这类非整数帧率用 0.## 会被量化成 83.38,长视频会累积微小漂移(10 分钟约 9ms)
             // 【帧率保险】编码标称帧率 = 实际帧数 ÷ 源时长(而非公式估 baseFps):公式在某分支
             // (内容帧率模式+v4 模型等)可能算错导致输出标称=内容帧率(用户实测:补帧2x输出标称50fps
@@ -1685,7 +1695,7 @@ public static class VideoService
             var frBase = baseFps;
             try
             {
-                int fcFinal = Directory.EnumerateFiles(framesFinal, "*.png").Count();
+                int fcFinal = Directory.EnumerateFiles(framesFinal, "*.jpg").Count();
                 if (fcFinal > 1 && muxDur > 0.01)
                 {
                     double realFps = (fcFinal - 1) / muxDur;
@@ -1735,7 +1745,7 @@ public static class VideoService
             var muxArgs = $"{videoMap}{audioPart} {encArgs} {vfArg}{fastFlag} \"{outTmp}\"";
             var muxBase = $"-y {muxInput} {trimArgs} -i \"{inputVideo}\" ";
             // 编码阶段整体进度 96→100 随 ffmpeg 编码帧数推进(否则卡 96%,结尾预计时间虚高失真)
-            int encTotal = Math.Max(1, Directory.EnumerateFiles(framesFinal, "*.png").Count());
+            int encTotal = Math.Max(1, Directory.EnumerateFiles(framesFinal, "*.jpg").Count());
             if (pauseWait != null) await pauseWait();   // 暂停:编码开始前停(已生成的帧不浪费)
             try
             {
@@ -1972,7 +1982,7 @@ public static class VideoService
         var segIn = Path.Combine(workDir, $"seg_{start}_{end}_in");
         Directory.CreateDirectory(segIn);
         for (int i = start; i < end; i++)
-            File.Copy(Path.Combine(framesOut, $"frame_{i + 1:D6}.png"), Path.Combine(segIn, $"frame_{i - start + 1:D6}.png"), true);
+            File.Copy(Path.Combine(framesOut, $"frame_{i + 1:D6}.jpg"), Path.Combine(segIn, $"frame_{i - start + 1:D6}.jpg"), true);
 
         // 模型目录前置校验:缺失立即明确报错(而不是等下半天引擎报 stderr 尾部的晦涩错误)
         var rifeDir = Path.GetDirectoryName(rife) ?? ".";
@@ -2099,7 +2109,7 @@ public static class VideoService
             await Task.Run(() =>
             {
                 Directory.CreateDirectory(oDir);
-                var files = Directory.EnumerateFiles(sIn, "frame_*.png")
+                var files = Directory.EnumerateFiles(sIn, "frame_*.jpg")
                     .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
                 if (files.Count < 2) return;
 
@@ -2173,8 +2183,8 @@ public static class VideoService
                     // 尾部插值修正:追加末帧副本(锚点 +1,目标帧数 +倍率),
                     // 让最后一段(如源 37→38)得到真实插值,而不是被 RIFE 复制成末帧冻结;
                     // 副本段产生的冻结帧会在合帧"帧数对齐"时被裁掉。
-                    File.Copy(Path.Combine(segIn, $"frame_{segLen:D6}.png"),
-                              Path.Combine(segIn, $"frame_{segLen + 1:D6}.png"), true);
+                    File.Copy(Path.Combine(segIn, $"frame_{segLen:D6}.jpg"),
+                              Path.Combine(segIn, $"frame_{segLen + 1:D6}.jpg"), true);
                     targetFrames += interpScale;
                 }
                 finalOut = Path.Combine(workDir, $"seg_{start}_{end}_out");
@@ -2214,7 +2224,7 @@ public static class VideoService
             // 单帧段:直接复制,不插值
             finalOut = Path.Combine(workDir, $"seg_{start}_{end}_out");
             Directory.CreateDirectory(finalOut);
-            File.Copy(Path.Combine(segIn, "frame_000001.png"), Path.Combine(finalOut, "frame_000001.png"), true);
+            File.Copy(Path.Combine(segIn, "frame_000001.jpg"), Path.Combine(finalOut, "frame_000001.png"), true);
         }
 
         var files = Directory.EnumerateFiles(finalOut, "*.png")
@@ -2384,7 +2394,7 @@ public static class VideoService
     {
         try
         {
-            foreach (var f in Directory.EnumerateFiles(dir, "*.png"))
+            foreach (var f in EnumerateFrameFiles(dir))
             {
                 using var bmp = new System.Drawing.Bitmap(f);
                 int step = Math.Max(4, Math.Min(bmp.Width, bmp.Height) / 32);
@@ -2768,11 +2778,38 @@ public static class VideoService
 
     /// <summary>拆帧(优先 GPU 硬解 d3d11va,失败自动回退软解):既省 CPU 又提速。
     /// vfExpr=滤镜表达式(如 scale...);返回实际拆出的帧数。</summary>
+    // ===== 视频中间帧统一 JPG(降临时盘)=====
+    // 流水线所有中间帧(ffmpeg 拆帧 / 超分后 / 缩放后)统一存为 .jpg;引擎(realesrgan/rife-ncnn)的
+    // PNG 输出在应用侧取回后立即重编码成 JPG 再交下游。引擎 I/O 读取仍保持各自 .png 契约(读取处不改)。
+    // 仅列帧(枚举 .png/.jpg 均可),供"格式随路径变化"的读取点使用(去重/缩放/黑帧守卫)。
+    private static System.Collections.Generic.IEnumerable<string> EnumerateFrameFiles(string dir)
+        => Directory.EnumerateFiles(dir, "*.*").Where(f =>
+            f.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+            f.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
+            f.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase));
+
+    // 把 dir 里的 .png 帧重编码成同名 .jpg(应用侧统一 JPG,降低临时盘)。目录已是 JPG/无 PNG 则空跑。
+    // 单帧重编码失败时保留原帧内容(复制改名),保证帧号连续可解码、合帧不中断。
+    private static void ReencodeDirPngToJpg(string dir)
+    {
+        foreach (var png in Directory.EnumerateFiles(dir, "*.png").ToArray())
+        {
+            var jpg = Path.ChangeExtension(png, ".jpg");
+            try { EngineService.ConvertPngToJpg(png, jpg); }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"⚠ 帧转 JPG 失败({Path.GetFileName(png)}):{ex.Message.Split('\n')[0]}——保留原帧内容");
+                try { File.Copy(png, jpg, true); } catch { }
+            }
+            try { File.Delete(png); } catch { }
+        }
+    }
+
     private static async Task<int> ExtractFramesCoreAsync(string ffmpeg, string inputVideo, string trimArgs,
         string vfExpr, string framesDir, IProgress<(int pct, string msg)>? progress, CancellationToken ct,
         int origCountEst, bool vfrPts = false)
     {
-        var pattern = Path.Combine(framesDir, "frame_%06d.png");
+        var pattern = Path.Combine(framesDir, "frame_%06d.jpg");
         // VFR(可变帧率)素材:拆帧加 -fps_mode passthrough 保留每帧真实时间戳,不按平均帧率丢弃/复制帧,
         // 避免时间轴失真(变速感)。仅在用户开启「可变帧率素材」时生效;CFR 素材不需要,默认关闭。
         string fpsMode = vfrPts ? " -fps_mode passthrough" : "";
@@ -2784,21 +2821,21 @@ public static class VideoService
             try
             {
                 await RunAsync(ffmpeg,
-                    $"-y {trimArgs} -hwaccel d3d11va -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{vfExpr}\" -qscale:v 1 \"{pattern}\"",
+                    $"-y {trimArgs} -hwaccel d3d11va -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{vfExpr}\" -qscale:v 2 \"{pattern}\"",
                     progress, ct, "拆帧", origCountEst);
-                int n = Directory.EnumerateFiles(framesDir, "*.png").Count();
+                int n = Directory.EnumerateFiles(framesDir, "*.jpg").Count();
                 if (n > 0) return n;
                 _hwDecodeBroken = true;   // 硬解输出 0 帧 → 视为不可用
             }
             catch { _hwDecodeBroken = true; }   // 硬解失败 → 标记坏,回退软解
             // 清理硬解可能留下的残缺帧
-            foreach (var f in Directory.EnumerateFiles(framesDir, "*.png"))
+            foreach (var f in Directory.EnumerateFiles(framesDir, "*.jpg"))
             { try { File.Delete(f); } catch { } }
         }
         await RunAsync(ffmpeg,
-            $"-y {trimArgs} -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{vfExpr}\" -qscale:v 1 \"{pattern}\"",
+            $"-y {trimArgs} -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{vfExpr}\" -qscale:v 2 \"{pattern}\"",
             progress, ct, "拆帧", origCountEst);
-        return Directory.EnumerateFiles(framesDir, "*.png").Count();
+        return Directory.EnumerateFiles(framesDir, "*.jpg").Count();
     }
 
     /// <summary>
@@ -2923,7 +2960,7 @@ public static class VideoService
         double segSsim = 0, double segSad = 5, bool motionComp = true, bool protectSmallMotion = true)
     {
         var drop = new System.Collections.Generic.HashSet<int>();
-        var files = Directory.EnumerateFiles(framesDir, "*.png")
+        var files = EnumerateFrameFiles(framesDir)
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
         if (files.Length < 2) return drop;
         window = Math.Clamp(window, 2, 12);
@@ -3426,7 +3463,7 @@ public static class VideoService
         try
         {
             var lines = await RunCaptureAsync(ffmpeg,
-                $"-y -framerate 1 -i \"{Path.Combine(framesIn, "frame_%06d.png")}\" " +
+                $"-y -framerate 1 -i \"{Path.Combine(framesIn, "frame_%06d.jpg")}\" " +
                 $"-vf \"select='gt(scene,0.3)',metadata=print\" -f rawvideo NUL", ct);
             foreach (var l in lines)
             {
@@ -3457,7 +3494,7 @@ public static class VideoService
         double userInterval, double userTol, double autoConf,
         IProgress<(int pct, string msg)>? progress, bool forceGrid = false, bool phaseAlign = true)
     {
-        var files = Directory.EnumerateFiles(framesIn, "*.png")
+        var files = Directory.EnumerateFiles(framesIn, "*.jpg")
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
         var keep = new System.Collections.Generic.HashSet<int>();
         int used = 0;
@@ -3633,7 +3670,7 @@ public static class VideoService
                 {
                     idx++;
                     if (idx != n + 1)
-                        File.Move(files[n], Path.Combine(framesIn, $"frame_{idx:D6}.png"), true);
+                        File.Move(files[n], Path.Combine(framesIn, $"frame_{idx:D6}.jpg"), true);
                 }
                 else
                 {
@@ -3641,7 +3678,7 @@ public static class VideoService
                 }
             }
         }
-        int keptCount = Directory.EnumerateFiles(framesIn, "*.png").Count();
+        int keptCount = Directory.EnumerateFiles(framesIn, "*.jpg").Count();
         double eff = keptCount > 0 && frameCount > 0 ? inFps * keptCount / frameCount : inFps;
         string note = keptCount >= frameCount
             ? $"未发现可压缩冗余(原样保留),有效帧率 {eff:0.##} fps"
@@ -3712,7 +3749,7 @@ public static class VideoService
         int gpuId, double srcDur, string interpModel, bool tta,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct)
     {
-        var files = Directory.EnumerateFiles(framesIn, "*.png")
+        var files = Directory.EnumerateFiles(framesIn, "*.jpg")
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
         int n = files.Length;
         if (n < 2)
@@ -3871,10 +3908,18 @@ public static class VideoService
                 try { if (EngineService.IsBlackPng(f)) { progress?.Report((40, "⚠ 补回输出含黑帧(GPU 队列异常),建议改用 CPU 设备或调小分块重试")); AppLogger.Info("⚠ 补回层批输出含黑帧(GPU 队列异常)— 建议改用 CPU 设备或调小分块后重试"); break; } } catch { }
             }
         }
-        // 输出:按 j 顺序写帧(帧号连续)
+        // 输出:按 j 顺序写帧(帧号连续)。统一重编码成 JPG(源帧已是 JPG,层批中间帧为引擎 PNG),配合下游 framesIn=JPG。
         int written = 0;
         for (int j = 0; j < outN; j++)
-            File.Copy(slotSrc[j], Path.Combine(framesFinal, $"frame_{++written:D6}.png"), true);
+        {
+            var dst = Path.Combine(framesFinal, $"frame_{++written:D6}.jpg");
+            try { EngineService.ConvertPngToJpg(slotSrc[j], dst); }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"⚠ 补回输出转 JPG 失败({Path.GetFileName(slotSrc[j])}):{ex.Message.Split('\n')[0]}——复制原帧内容");
+                try { File.Copy(slotSrc[j], dst, true); } catch { }
+            }
+        }
         // 输出写完才允许清理临时目录
         foreach (var d in tempoTempDirs) { try { Directory.Delete(d, true); } catch { } }
         double fps = written > 1 ? (written - 1) / T : F;
@@ -3892,7 +3937,7 @@ public static class VideoService
         IProgress<(int pct, string msg)>? progress, int scale = 16, int smartMode = 0, bool motionComp = true)
     {
         var drop = new System.Collections.Generic.HashSet<int>();
-        var files = Directory.EnumerateFiles(framesDir, "*.png")
+        var files = EnumerateFrameFiles(framesDir)
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
         if (files.Length < 2) return drop;
         // 第一遍:采样帧灰度,算相邻对统计标量(逐段报告,检测不会像卡死)
@@ -4003,7 +4048,7 @@ public static class VideoService
         double maxDiffThr = 20)
     {
         var drop = new System.Collections.Generic.HashSet<int>();
-        var files = Directory.EnumerateFiles(framesDir, "*.png")
+        var files = EnumerateFrameFiles(framesDir)
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
         if (files.Length < 2) return drop;
         var prev = SampleGray(files[0], scale, out var sw, out var sh);
