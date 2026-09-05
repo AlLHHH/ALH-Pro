@@ -822,6 +822,8 @@ public static partial class EngineService
                     g.Clear(System.Drawing.Color.White);
                     bmp.Save(b, System.Drawing.Imaging.ImageFormat.Png);
                 }
+                // 【放宽+重试】原 5 秒超时对首次运行(编译着色器)太紧,正常独显被误判→整段补帧被切 ONNX/CPU。
+                // 改 10 秒;失败再重试一次(再失败才判不可用),避免瞬时抽风误判。
                 var psi = new ProcessStartInfo
                 {
                     FileName = rifeExe,
@@ -832,31 +834,38 @@ public static partial class EngineService
                     RedirectStandardError = true,
                     WorkingDirectory = Path.GetDirectoryName(rifeExe) ?? ".",
                 };
-                using var p = Process.Start(psi);
-                if (p == null) return false;
-                using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                waitCts.CancelAfter(TimeSpan.FromSeconds(5));   // 单对插帧正常 1~2 秒;5 秒无果=引擎 hang(用户要求≤5秒)
-                try
+                for (int attempt = 1; attempt <= 2; attempt++)
                 {
-                    await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
-                    bool ok = p.ExitCode == 0 && File.Exists(o) && new FileInfo(o).Length > 0;
-                    if (ok)
-                        AppLogger.Info($"[探测] RIFE {model} GPU(-g {gpuId})可用(1~2 秒出帧)");
-                    else
-                        AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId})不可用(exit={p.ExitCode}/无输出)——将自动改用 CPU 补帧");
-                    return ok;
+                    try { if (File.Exists(o)) File.Delete(o); } catch { }
+                    using var p = Process.Start(psi);
+                    if (p == null) return false;
+                    using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    waitCts.CancelAfter(TimeSpan.FromSeconds(10));
+                    try
+                    {
+                        await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
+                        bool ok = p.ExitCode == 0 && File.Exists(o) && new FileInfo(o).Length > 0;
+                        if (ok)
+                        {
+                            AppLogger.Info($"[探测] RIFE {model} GPU(-g {gpuId})可用(1~2 秒出帧)");
+                            return true;
+                        }
+                        AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId})第 {attempt} 次不可用(exit={p.ExitCode}/无输出)" + (attempt < 2 ? ",重试一次..." : "——将自动改用 CPU/ONNX 补帧"));
+                    }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                    {
+                        AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId}) {10} 秒无响应(疑似 hang)" + (attempt < 2 ? ",重试一次..." : ",按不可用处理"));
+                        try { p.Kill(entireProcessTree: true); } catch { }
+                        if (attempt < 2) continue;   // 超时也算一次,给下一次机会(可能只是启动慢)
+                        return false;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        try { p.Kill(entireProcessTree: true); } catch { }
+                        throw;
+                    }
                 }
-                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-                {
-                    AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId}) 5 秒无响应(疑似 hang)——按不可用处理,已终止探测");
-                    try { p.Kill(entireProcessTree: true); } catch { }
-                    return false;
-                }
-                catch (OperationCanceledException)
-                {
-                    try { p.Kill(entireProcessTree: true); } catch { }
-                    throw;
-                }
+                return false;
             }
             finally
             {

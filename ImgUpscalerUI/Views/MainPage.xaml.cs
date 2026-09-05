@@ -75,9 +75,8 @@ public sealed partial class MainPage : Page
             // 自动弹一次友好提示;强机不弹(结果随时可在「设置 → 计算设备」查看),弹过也不再重复弹。
             // 【新增】真引擎自检:每次启动都后台跑一次(waifu2x 引擎枚举 Vulkan 设备),结果=日志+状态栏
             // (之前 RunOnce 只在设置页手动触发,启动从未自检过)。
-            // 首次启动 / 版本更新后:显示启动自检遮罩(自检通过前遮挡主界面),其余启动静默跑
-            bool needFullCheck = !AppSettings.VulkanCheckDone
-                || AppSettings.VulkanReportVersion != UpdateChecker.CurrentVersion;
+            // 用户要求:每次启动都显示自检弹窗(顺带自检、选最佳独显)
+            bool needFullCheck = true;
             if (needFullCheck) ShowSelfCheckOverlay();
             var selfCheckTask = Task.Run(async () =>
             {
@@ -94,6 +93,15 @@ public sealed partial class MainPage : Page
                         try { await ALHPro.EsrganOnnxService.EnsureDmlProbeAsync(); } catch { }
                     }
                     AppLogger.Info("Vulkan 自检:" + (gpuOk ? "GPU 引擎可用(Vulkan 设备枚举成功)" : "GPU 引擎不可用(未枚举到 Vulkan 设备),建议设置中选 CPU") + VulkanCheck.Report);
+                    // 【推荐项 = 自检最好的独显】无条件按 1×1 实测选最佳,保证默认/推荐项就是自检最佳的卡
+                    // (避免仅按型号打分选到"名字对但实际不可用"的卡)。
+                    int selfBest = await EngineService.FindBestWorkingGpuAsync();
+                    if (selfBest >= 0 && AppSettings.GpuIndex != selfBest)
+                    {
+                        AppSettings.GpuIndex = selfBest;
+                        try { AppSettings.Save(); } catch { }
+                        AppLogger.Info($"已按启动自检选择最佳独显 → GPU {selfBest}({GpuInfo.GetEngineDeviceName(selfBest)})");
+                    }
                     // ===== 智能联动(自检结果 → 自动适配,日志+状态栏可见,不弹窗)=====
                     string? autoMsg = null;
                     if (!gpuOk)
