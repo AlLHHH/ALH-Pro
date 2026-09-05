@@ -306,9 +306,32 @@ public sealed partial class MainPage : Page
             sb.Append('\n').Append("功能自检").Append('\n');
             foreach (var (name, okk) in CheckFunctions())
                 sb.Append("· ").Append(name).Append(": ").Append(okk ? "可用" : "不可用").Append('\n');
+            sb.Append('\n').Append("引擎 / 模型").Append('\n');
+            foreach (var (name, present) in EngineHealth())
+                sb.Append("· ").Append(name).Append(": ").Append(present ? "已安装" : "缺失").Append('\n');
         }
         catch { }
         return sb.ToString().TrimEnd('\n');
+    }
+
+    /// <summary>引擎与模型安装状态(自检可执行化:缺啥一目了然,配合「打开引擎目录」补齐)。</summary>
+    private static (string name, bool present)[] EngineHealth()
+    {
+        var list = new System.Collections.Generic.List<(string, bool)>();
+        try
+        {
+            list.Add(("waifu2x 引擎", EngineService.FindWaifu2x() != null));
+            list.Add(("realesrgan 引擎", EngineService.FindRealESRGAN() != null));
+            list.Add(("ffmpeg 引擎", VideoService.FfmpegPath != null));
+            list.Add(("rife 引擎", VideoService.RifePath != null));
+            list.Add(("超分模型 ONNX", ALHPro.EsrganOnnxService.FindModel() != null));
+            list.Add(("动漫模型 waifu2x", ALHPro.EsrganOnnxService.FindWaifu2xModel() != null));
+            list.Add(("补帧模型 ONNX", ALHPro.RifeOnnxService.Available()));
+            list.Add(("抠图模型 rembg", EngineService.CheckEngines(out _)));
+            list.Add(("音频模型 Demucs", ALHPro.AudioEnhanceService.FindModel() != null));
+        }
+        catch { }
+        return list.ToArray();
     }
 
     /// <summary>各功能自检:按「引擎 exe + 模型」是否齐全判断该功能是否可用(文件存在性检查,快)。</summary>
@@ -1558,6 +1581,28 @@ public sealed partial class MainPage : Page
             }
         };
         content.Children.Add(recheckBtn);
+        // 「打开引擎目录」:自检报告缺失项时,一键到 engines/ 目录查看/补充引擎与模型(自检可执行化)
+        var openEngBtn = new Button
+        {
+            Content = "打开引擎目录",
+            FontSize = 11,
+            Padding = new Microsoft.UI.Xaml.Thickness(12, 4, 12, 4),
+            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
+            Margin = new Microsoft.UI.Xaml.Thickness(0, 4, 0, 0),
+        };
+        openEngBtn.Click += (_, _) =>
+        {
+            try
+            {
+                var dir = System.IO.Path.Combine(System.AppContext.BaseDirectory, "engines");
+                if (System.IO.Directory.Exists(dir))
+                    System.Diagnostics.Process.Start("explorer.exe", "\"" + dir + "\"");
+                else
+                    AppLogger.Warn("未找到引擎目录: " + dir);
+            }
+            catch { }
+        };
+        content.Children.Add(openEngBtn);
         content.Children.Add(new Border
         {
             Height = 1,
