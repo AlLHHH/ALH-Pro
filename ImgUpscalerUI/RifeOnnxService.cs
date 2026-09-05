@@ -305,6 +305,11 @@ public static class RifeOnnxService
 
     static Bitmap FromTensor(float[] t, int w, int h)
     {
+        // 数值防御(源头不黑):模型输出若含 NaN/Inf(数值溢出/除0)→ 该帧已损坏,直接抛出让调用方回退源帧,
+        // 避免 (int)NaN=0 → 全黑帧 写进输出。正常帧无 NaN,仅一次数组扫描,开销远小于推理。
+        for (int i = 0; i < t.Length; i++)
+            if (float.IsNaN(t[i]) || float.IsInfinity(t[i]))
+                throw new InvalidOperationException("ONNX 输出含 NaN/Inf(数值异常),该帧补帧结果无效");
         var bmp = new Bitmap(w, h, PixelFormat.Format24bppRgb);
         var rect = new Rectangle(0, 0, w, h);
         var data = bmp.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb);
