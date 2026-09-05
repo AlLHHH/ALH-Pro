@@ -129,6 +129,11 @@ namespace ALHPro
             int dirs = 0, files = 0;
             long bytes = 0;
             var roots = new System.Collections.Generic.List<string> { Path.GetTempPath() };
+            // 【修复 换盘/换路径后残留】自动指定路径可能落在任意"剩余最大固定盘"根目录;换盘/换自定义路径后旧盘旧目录的
+            // imgup_*/alh_* 残留不会被扫到 → 把所有固定盘根目录 + 本软件历史用过的临时根目录一并加入扫描
+            // (imgup_*/alh_* 前缀唯一,绝不碰用户文件;扫描顺序:固定盘根 → 历史根 → 当前自定义 → 当前自动)。
+            try { foreach (var d in System.IO.DriveInfo.GetDrives()) if (d.DriveType == System.IO.DriveType.Fixed && d.IsReady) { var r = d.RootDirectory.FullName; if (!roots.Contains(r)) roots.Add(r); } } catch { }
+            try { foreach (var r in ALHPro.EngineService.UsedTempRoots) if (!string.IsNullOrWhiteSpace(r) && Directory.Exists(r) && !roots.Contains(r)) roots.Add(r); } catch { }
             try { var cfg = AppSettings.TempDir; if (!string.IsNullOrWhiteSpace(cfg) && Directory.Exists(cfg)) roots.Add(cfg); } catch { }
             // 【修复 崩溃/强杀后残留 200 多 G】TempRoot 会自动选"剩余最大盘",可能与 %TEMP% 不同盘——
             // 处理中途被防火墙杀/未响应强杀后,workDir(imgup_video_*) 残留在本盘不会被上面清到,累积成 200 多 G。

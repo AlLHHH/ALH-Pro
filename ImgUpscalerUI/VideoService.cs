@@ -2837,9 +2837,8 @@ public static class VideoService
 
     // 把 dir 里的 .png 帧重编码成同名 .jpg(应用侧统一 JPG,降低临时盘)。目录已是 JPG/无 PNG 则空跑。
     // 单帧重编码失败时保留原帧内容(复制改名),保证帧号连续可解码、合帧不中断。
-    // 【降临时盘】中间帧 JPG 质量:0.96(近无损)→0.85(画质仍高,单帧体积约降 45%),
-    // 长视频 + 高倍率超分时临时盘可再降近一半。中间帧最终会再被合帧编码,0.85 已足够。
-    private const float VideoFrameJpgQuality = 0.85f;
+    // 中间帧 JPG 质量保持 0.96(近无损,画质优先;不降低以免影响最终成片效果)。
+    private const float VideoFrameJpgQuality = 0.96f;
     private static void ReencodeDirPngToJpg(string dir)
     {
         foreach (var png in Directory.EnumerateFiles(dir, "*.png").ToArray())
