@@ -2391,10 +2391,16 @@ public sealed partial class MainPage : Page
         catch { }
     }
 
-    /// <summary>供图片/视频等视图在"处理完成"弹窗点确定后调用(30%概率弹赞助,2小时冷却)。</summary>
+    /// <summary>供图片/视频等视图在"处理完成"弹窗点确定后调用(30%概率弹赞助,2小时冷却)。
+    /// 注意:window.Content 是 Frame,MainPage 是 Navigate 进去的,必须经 Frame 取,否则拿不到。</summary>
     public static void MaybeShowSponsorPrompt()
     {
-        try { _ = (App.MainWindow.Content as MainPage)?.ShowSponsorPromptAsync(); } catch { }
+        try
+        {
+            if (App.MainWindow?.Content is Microsoft.UI.Xaml.Controls.Frame f && f.Content is MainPage mp)
+                _ = mp.ShowSponsorPromptAsync();
+        }
+        catch { }
     }
 
     private void SponsorCoffee_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
