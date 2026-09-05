@@ -176,5 +176,28 @@
                 </StackPanel>
             </Border>
         </Grid>
+
+        <!-- 请作者喝咖啡 赞助提示遮罩:导出诊断包成功后 30% 概率出现;画面变暗指向赞助入口 -->
+        <Grid x:Name="SponsorOverlay" Grid.ColumnSpan="2"
+              Background="#D8000000" Visibility="Collapsed" IsHitTestVisible="True">
+            <Border Background="{StaticResource AppPanelBrush}" BorderBrush="{StaticResource AppBorderBrush}"
+                    BorderThickness="1" CornerRadius="14" Padding="36,30" MaxWidth="460"
+                    HorizontalAlignment="Center" VerticalAlignment="Center">
+                <StackPanel Spacing="14" Width="390">
+                    <TextBlock Text="觉得 ALH Pro 好用?" FontSize="22" FontWeight="SemiBold"
+                               Foreground="#E8ECF2" HorizontalAlignment="Center"/>
+                    <TextBlock Text="请作者喝杯咖啡赞助哦~ 赞助的钱会支持作者把软件更新、修复做得更好 😊"
+                               FontSize="13" Opacity="0.85" TextWrapping="Wrap" HorizontalAlignment="Center"/>
+                    <TextBlock Text="你的支持是作者持续优化的最大动力。"
+                               FontSize="11" Opacity="0.55" TextWrapping="Wrap" HorizontalAlignment="Center"/>
+                    <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center" Margin="0,6,0,0">
+                        <Button Content="请作者喝咖啡" Style="{StaticResource AccentButtonStyle}"
+                                Padding="20,8" Click="SponsorCoffee_Click"/>
+                        <Button Content="暂不支持" Padding="20,8"
+                                Click="SponsorClose_Click"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 </Page>
