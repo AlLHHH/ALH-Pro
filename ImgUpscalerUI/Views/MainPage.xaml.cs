@@ -1034,6 +1034,52 @@ public sealed partial class MainPage : Page
         try { _ = dlg.ShowAsync(); } catch { }
     }
 
+    /// <summary>「关于」页查看《声明》(免责 / 打赏 / 版权许可 / 第三方软件)。</summary>
+    private void ShowUserDeclarations()
+    {
+        var dlg = new ContentDialog
+        {
+            Title = "声明 · ALH Pro",
+            Content = new ScrollViewer
+            {
+                MaxHeight = 560,
+                VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
+                Content = new TextBlock
+                {
+                    Text = DeclarationText(),
+                    FontSize = 12,
+                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                    LineHeight = 20,
+                },
+            },
+            CloseButtonText = "关闭",
+            XamlRoot = this.XamlRoot,
+        };
+        try { _ = dlg.ShowAsync(); } catch { }
+    }
+
+    /// <summary>《声明》全文(与仓库根 声明.md 一致,此处内嵌供关于页展示)。</summary>
+    private static string DeclarationText() =>
+        "一、免责声明\n" +
+        "1. 本软件以\"现状\"(AS IS)提供,不附带任何明示或默示担保(含适销性、特定用途、不侵权)。\n" +
+        "2. 作者不对本软件的可用性、准确性、完整性、稳定性或安全性作出承诺。\n" +
+        "3. 作者不对因使用本软件产生的任何直接、间接、附带或后果性损失负责(数据丢失损坏、设备/显卡异常、意外结果、操作不当致素材损坏等)。\n" +
+        "4. 请自行评估并承担使用风险;处理重要素材前务必备份原文件。\n" +
+        "5. 本软件集成的第三方开源引擎、模型与组件的稳定性与许可,由其各自作者负责。\n" +
+        "6. 以上条款在您所在地法律法规允许的最大范围内适用。\n\n" +
+        "二、打赏声明\n" +
+        "1. 本软件免费、无广告、无账号、无数据上传;打赏完全自愿,不影响任何功能。\n" +
+        "2. 打赏仅用于支持作者持续更新、修复与维护软件(覆盖设备、带宽、时间成本)。\n" +
+        "3. 打赏不构成购买,不提供特权或额外功能;打赏后不支持退还。\n" +
+        "4. 请理性打赏、量力而行;未成年人请在监护人同意下操作。\n" +
+        "5. 打赏即表示已阅读并同意本条。\n\n" +
+        "三、版权与许可\n" +
+        "1. 本软件版权归作者所有;未经许可不得商业倒卖或为营利再分发,不得移除版权/许可信息。\n" +
+        "2. 本软件基于若干开源软件构建,受各自开源许可约束(见 THIRD_PARTY_NOTICES.txt)。\n\n" +
+        "四、第三方软件\n" +
+        "本软件集成 FFmpeg、Real-ESRGAN、waifu2x-ncnn、RIFE、ONNX Runtime、BiRefNet、Demucs、LavaSR 等开源引擎/模型;其版权、许可与免责见随软件附带的 THIRD_PARTY_NOTICES.txt 及各项目主页。\n\n" +
+        "以上声明最终解释权归作者所有,并随版本更新而可能调整。";
+
     private void About_Click(object sender, RoutedEventArgs e)
     {
         var content = new StackPanel { Spacing = 8 };
@@ -1075,6 +1121,16 @@ public sealed partial class MainPage : Page
         };
         agreementLink.Click += (_, _) => { try { ShowUserAgreement(); } catch { } };
         content.Children.Add(agreementLink);
+        // 声明(免责/打赏/版权/第三方):随时可看
+        var declLink = new Microsoft.UI.Xaml.Controls.HyperlinkButton
+        {
+            Content = "查看声明(免责 / 打赏 / 版权)",
+            FontSize = 11,
+            Padding = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 0),
+            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
+        };
+        declLink.Click += (_, _) => { try { ShowUserDeclarations(); } catch { } };
+        content.Children.Add(declLink);
         // 手动检查更新:点击后显示结果;成功展示"已最新/发现新版本",失败才提示(启动静默检查不打扰)
         var updateRow = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 10 };
         var updateBtn = new Button
@@ -2381,10 +2437,10 @@ public sealed partial class MainPage : Page
     {
         try
         {
-            // 冷却:上次关闭后 2 小时内不再弹(MainPage 测试:临时去掉以便连测;上线改回)
-            // if (DateTime.Now - AppSettings.SponsorPromptTime < TimeSpan.FromHours(2)) return;
-            // 30% 概率(作者感谢但不打扰)—— 测试期临时 100% 触发,上线改回 0.30
-            if (new Random().NextDouble() >= 1.0) return;
+            // 冷却:上次关闭后 2 小时内不再弹(上线参数)
+            if (DateTime.Now - AppSettings.SponsorPromptTime < TimeSpan.FromHours(2)) return;
+            // 30% 概率(作者感谢但不打扰,上线参数)
+            if (new Random().NextDouble() >= 0.30) return;
             await Task.Delay(300);   // 让完成弹窗关闭后画面稳定再显示
             SponsorOverlay.Visibility = Visibility.Visible;
         }
