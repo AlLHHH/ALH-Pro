@@ -130,6 +130,9 @@ namespace ALHPro
             long bytes = 0;
             var roots = new System.Collections.Generic.List<string> { Path.GetTempPath() };
             try { var cfg = AppSettings.TempDir; if (!string.IsNullOrWhiteSpace(cfg) && Directory.Exists(cfg)) roots.Add(cfg); } catch { }
+            // 【修复 崩溃/强杀后残留 200 多 G】TempRoot 会自动选"剩余最大盘",可能与 %TEMP% 不同盘——
+            // 处理中途被防火墙杀/未响应强杀后,workDir(imgup_video_*) 残留在本盘不会被上面清到,累积成 200 多 G。
+            try { var tr = EngineService.TempRoot; if (!string.IsNullOrWhiteSpace(tr) && Directory.Exists(tr) && !roots.Contains(tr)) roots.Add(tr); } catch { }
             foreach (var root in roots)
             {
                 try

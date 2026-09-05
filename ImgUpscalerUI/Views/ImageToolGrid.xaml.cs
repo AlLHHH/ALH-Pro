@@ -114,18 +114,26 @@ public sealed partial class ImageToolGrid : UserControl
             };
             try
             {
-                using var b = new System.Drawing.Bitmap(path);
-                item.PixelWidth = b.Width;
-                item.PixelHeight = b.Height;
-                // 手机照片 EXIF 旋转修正:预览按旋转后方向显示,尺寸基准必须一致(否则框选/涂抹坐标错位)
-                foreach (System.Drawing.Imaging.PropertyItem pi in b.PropertyItems)
+                // 【修复 加图卡死】System.Drawing.Bitmap 是全图同步解码,在 UI 线程执行会逐张卡顿(大图+多张=未响应)。
+                // 移到后台线程读尺寸/EXIF,主线程只做轻量赋值。
+                int pw = 0, ph = 0;
+                await Task.Run(() =>
                 {
-                    if (pi.Id == 0x0112 && pi.Value is { Length: > 0 } && pi.Value[0] is 6 or 8)
+                    using var b = new System.Drawing.Bitmap(path);
+                    pw = b.Width;
+                    ph = b.Height;
+                    // 手机照片 EXIF 旋转修正:预览按旋转后方向显示,尺寸基准必须一致(否则框选/涂抹坐标错位)
+                    foreach (System.Drawing.Imaging.PropertyItem pi in b.PropertyItems)
                     {
-                        (item.PixelWidth, item.PixelHeight) = (item.PixelHeight, item.PixelWidth);
-                        break;
+                        if (pi.Id == 0x0112 && pi.Value is { Length: > 0 } && pi.Value[0] is 6 or 8)
+                        {
+                            (pw, ph) = (ph, pw);
+                            break;
+                        }
                     }
-                }
+                });
+                item.PixelWidth = pw;
+                item.PixelHeight = ph;
             }
             catch { }
             try { item.Thumb = new BitmapImage(new Uri(path)); } catch (Exception) { }

@@ -326,10 +326,18 @@ public static class VideoService
         catch { }
         double estFps = 30;
         try { if (double.TryParse(ProbeFps(inputVideo), System.Globalization.NumberStyles.Float, inv, out var pf) && pf > 0) estFps = pf; } catch { }
-        long framesEst = (long)Math.Ceiling(Math.Max(1.0, durSec * estFps));
-        if (frameInterp) framesEst = (long)(framesEst * interpScale + 128);
-        if (doUpscale) framesEst = (long)(framesEst * (upscaleShrink1x ? 2.0 : Math.Max(1.0, scale)) + 128);
-        double needBytes = framesEst * 3.0 * 1024.0 * 1024.0 * 1.6;   // 1080p 帧 PNG≈3MB,安全余量 1.6 倍(与 AvailableFreeSpace 同单位:字节)
+        long baseFrames = (long)Math.Ceiling(Math.Max(1.0, durSec * estFps));
+        // 【修复 长视频 200 多 G】临时帧峰值估算改【分辨率感知】:固定 3MB(1080p)对高分辨率/放大后的帧严重低估,
+        // 导致"预计只需 X GB"但实际跑出 200 多 G(放大后 4K PNG 帧 10~20MB/张,全量并存用于合帧)。
+        // 峰值帧数 = 补帧后帧数(放大不减帧数,只增单帧大小);单帧大小按 源分辨率 × 放大倍率² 估算。
+        (int srcW, int srcH) = await ProbeSizeAsync(inputVideo);
+        double srcFrameMB = 3.0 * ((double)srcW * srcH) / (1920.0 * 1080.0);   // 1080p≈3MB,按面积线性
+        if (srcFrameMB < 0.8) srcFrameMB = 0.8;
+        double outMult = doUpscale ? (upscaleShrink1x ? 2.0 : Math.Max(1.0, scale)) : 1.0;
+        double outFrameMB = srcFrameMB * outMult * outMult * 0.6;   // 放大后单帧:像素×outMult²,PNG 对 AI 内容压缩好,×0.6 折中
+        if (outFrameMB < 0.8) outFrameMB = 0.8;
+        long peakFrames = frameInterp ? (long)Math.Ceiling((double)baseFrames * interpScale) : baseFrames;   // 峰值帧数=放大后帧数
+        double needBytes = peakFrames * outFrameMB * 1024.0 * 1024.0 * 1.6;   // 与 AvailableFreeSpace 同单位:字节
         double needGB = needBytes / (1024.0 * 1024.0 * 1024.0);
         string tempRoot = PickTempRoot();
         var workDir = Path.Combine(tempRoot, $"imgup_video_{Guid.NewGuid():N}");

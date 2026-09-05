@@ -330,6 +330,7 @@ public sealed partial class VideoView : UserControl
     private static extern bool EnumDisplaySettingsW(string lpszDeviceName, int iModeNum, ref DEVMODEW lpDevMode);
     private readonly System.Collections.Generic.List<string> _failReasons = new();   // 本次任务每个失败项 + 原因(供完成弹窗展示)
     private bool _running;
+    private long _lastUiTick;   // 进度回调节流:100ms 内只刷一次界面(防长视频每帧报告淹没 UI 线程)
     private CancellationTokenSource? _cts;
     private string? _customOutDir;
     private bool _suppressEvents;
@@ -2158,7 +2159,7 @@ public sealed partial class VideoView : UserControl
                 Path = p,
                 Name = Path.GetFileName(p),
                 BaseInfo = info,
-                FpsProbe = VideoService.ProbeFps(p) ?? "",
+                FpsProbe = await Task.Run(() => VideoService.ProbeFps(p) ?? ""),   // 后台跑 ffprobe,避免逐文件卡 UI 线程
                 Thumb = null,
             };
             _videos.Add(item);
@@ -2183,7 +2184,7 @@ public sealed partial class VideoView : UserControl
     {
         try
         {
-            item.FpsProbe = VideoService.ProbeFps(item.Path) ?? "";
+            item.FpsProbe = await Task.Run(() => VideoService.ProbeFps(item.Path) ?? "");
             _ = LoadItemDurationAsync(item);
             _ = ProbeVfrAsync(item);
             _ = ProbeDupAsync(item);
@@ -3677,6 +3678,11 @@ public sealed partial class VideoView : UserControl
         double idleSeconds = 0;
         var progress = new Progress<(int pct, string msg)>(t =>
         {
+            // ===== 节流(修复长视频"未响应"):补帧/超分每帧都 Report,Progress<T> 不合并、
+            // 每个回调都跑重活(正则+字符串+O(N²) 计数+日志重建),100k+ 帧会把 UI 线程塞死。
+            // 100ms 内只刷一次界面(约 10 次/秒,足够平滑),但最后 99% 总处理(收尾不漏)。
+            if (t.pct < 99.0 && Environment.TickCount64 - _lastUiTick < 100) return;
+            _lastUiTick = Environment.TickCount64;
             // ===== 平滑进度:阶段内用"帧/块计数比"连续换算(修复整数取整的一顿一顿) =====
             // 消息如"超分 已处理 29/64 块"(视频超分按块报)、"补帧 第 N 帧 / 共 M 帧";
             // 换算区间与 VideoService.StageProgressPct 一致(拆帧2-5/补帧10-45/超分45-90/编码96-100),
@@ -3758,8 +3764,9 @@ public sealed partial class VideoView : UserControl
             }
             // 整体进度 = (已完成数 + 当前视频内部进度) / 当前剩余总数;
             // 暂停删除未处理项后,已完成数不变、剩余变少 → 进度条直接跳变更新
-            int done = items.Count(it => IsItemDone(it) && _videos.Contains(it));
-            int active = items.Count(it => _videos.Contains(it) && !IsItemDone(it));
+            // items 就是本批要处理的视频(items ⊆ _videos),故去掉 && _videos.Contains(否则每帧 O(N²),卡死)。
+            int done = items.Count(IsItemDone);
+            int active = items.Count(it => !IsItemDone(it));
             var overall = done + active > 0
                 ? Math.Min(100.0, (done + pctFine / 100.0) / (done + active) * 100.0)
                 : pctFine;
@@ -3785,7 +3792,7 @@ public sealed partial class VideoView : UserControl
                 }
                 var workElapsed = (now - taskStart).TotalSeconds - idleSeconds;
                 // ETA 专用单调进度:分母固定=总视频数(完成/切换不回退,杜绝 100→50 的回退闪动),封顶 99.9
-                int doneAll = items.Count(it => IsItemDone(it) && _videos.Contains(it));
+                int doneAll = items.Count(IsItemDone);
                 double etaProgress = Math.Min(99.9,
                     (doneAll + t.pct / 100.0) / Math.Max(1, items.Length) * 100.0);
                 double initRemain = etaInitTotal - workElapsed;   // 初始估算的剩余(偏保守,线性递减)
