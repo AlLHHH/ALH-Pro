@@ -61,6 +61,9 @@ public static partial class EngineService
     private static int _waifu2xNcnnProbeGpu = int.MinValue;
     private static readonly object _waifu2xProbeLock = new();
     private static bool? _nonNvidiaCache;
+    /// <summary>本会话内确认"ncnn CPU(-g -1)模式崩溃"(exit -1073741819 内存访问违规)后置位:
+    /// 之后所有引擎的 CPU 兜底直接跳过,改为 GPU 0 重算,避免反复崩溃拖慢/卡住(双卡机/部分机型实测)。</summary>
+    private static bool _ncnnCpuBroken;
 
     public static async Task<bool> IsWaifu2xNcnnUsableAsync(int gpuId, CancellationToken ct)
     {
@@ -746,15 +749,24 @@ public static partial class EngineService
         int watchBase = 0, int watchGlobalTotal = 0)
     {
         bool usesGpu = System.Text.RegularExpressions.Regex.IsMatch(args, @"-g\s+[0-9]+");
+        string runArgs = args;
+        // CPU(-g -1)本会话已确认崩溃(exit -1073741819):直接改用 GPU 0 重算,不再尝试 CPU,避免反复崩溃拖慢/卡住
+        if (!usesGpu && _ncnnCpuBroken)
+        {
+            runArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g 0");
+            AppLogger.Info($"⚠ 本会话已确认 ncnn CPU(-g -1)模式崩溃,跳过 CPU,自动改用 GPU 0({GpuName(0)}) 重算");
+            progress?.Report((0, $"⚠ ncnn CPU 模式崩溃,自动改用 GPU 0({GpuName(0)}) 重算..."));
+        }
         try
         {
-            await RunAsync(exe, args, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
+            await RunAsync(exe, runArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
             return;
         }
         catch (InvalidOperationException ex) when (!usesGpu)
         {
             // CPU(-g -1)初始模式:这批 ncnn 引擎的 CPU 模式有 bug(实测 waifu2x 20250915
             // -g -1 直接 exit -1073741819 内存访问违规)→ 反向试 GPU 0,再失败抛指引异常
+            _ncnnCpuBroken = true;   // 记录本会话 CPU 崩溃,后续跳过 CPU
             string head = ex.Message.Split('\n')[0];
             if (head.Length > 90) head = head[..90];
             string gpu0Name = GpuName(0);
@@ -1671,59 +1683,84 @@ public static partial class EngineService
     /// <summary>
     /// 用 WinRT 编码器写 JPG(颜色准确)。System.Drawing 的 JPG 编码会把颜色严重偏掉
     /// (红→黄绿、蓝→黑),故 JPG 输出统一走这里。阻塞 WinRT 异步(MTA 线程池完成,不会死锁)。
-    /// </summary>
+    /// 【兼容修复】部分机型/后台线程上 WinRT BitmapEncoder 会抛 HRESULT(空消息)→ 此前每帧转 JPG 失败
+    /// 被替换成深灰占位帧 → 输出整片冻结。现改为 WinRT 失败时回退 System.Drawing(转 24bppRgb 规避色偏),
+    /// 保证永远输出真实画面,不再出现占位/冻结帧;并记录 HRESULT 供排查。</summary>
     private static void SaveJpegViaWinRT(System.Drawing.Bitmap bmp, string jpgPath, float quality = 0.92f)
     {
         int w = bmp.Width, h = bmp.Height;
-        // 转成 32bppArgb 再取像素(System.Drawing 内存布局为 BGRA,需转成 RGBA 给 WinRT)
-        using var argb = new System.Drawing.Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        using (var g = System.Drawing.Graphics.FromImage(argb))
-            g.DrawImage(bmp, 0, 0, w, h);
-        var rect = new System.Drawing.Rectangle(0, 0, w, h);
-        var data = argb.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadOnly,
-            System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        byte[] rgba;
         try
         {
-            rgba = new byte[w * h * 4];
-            unsafe
+            // 转成 32bppArgb 再取像素(System.Drawing 内存布局为 BGRA,需转成 RGBA 给 WinRT)
+            using var argb = new System.Drawing.Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (var g = System.Drawing.Graphics.FromImage(argb))
+                g.DrawImage(bmp, 0, 0, w, h);
+            var rect = new System.Drawing.Rectangle(0, 0, w, h);
+            var data = argb.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadOnly,
+                System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            byte[] rgba;
+            try
             {
-                byte* p0 = (byte*)data.Scan0.ToPointer();
-                for (int y = 0; y < h; y++)
+                rgba = new byte[w * h * 4];
+                unsafe
                 {
-                    byte* row = p0 + y * data.Stride;
-                    int oy = y * w;
-                    for (int x = 0; x < w; x++)
+                    byte* p0 = (byte*)data.Scan0.ToPointer();
+                    for (int y = 0; y < h; y++)
                     {
-                        int i = x * 4;
-                        int o = (oy + x) * 4;
-                        rgba[o] = row[i + 2];     // R (内存 BGRA)
-                        rgba[o + 1] = row[i + 1]; // G
-                        rgba[o + 2] = row[i];     // B
-                        rgba[o + 3] = 255;        // A
+                        byte* row = p0 + y * data.Stride;
+                        int oy = y * w;
+                        for (int x = 0; x < w; x++)
+                        {
+                            int i = x * 4;
+                            int o = (oy + x) * 4;
+                            rgba[o] = row[i + 2];     // R (内存 BGRA)
+                            rgba[o + 1] = row[i + 1]; // G
+                            rgba[o + 2] = row[i];     // B
+                            rgba[o + 3] = 255;        // A
+                        }
                     }
                 }
             }
-        }
-        finally
-        {
-            argb.UnlockBits(data);
-        }
+            finally
+            {
+                argb.UnlockBits(data);
+            }
 
-        var mem = new Windows.Storage.Streams.InMemoryRandomAccessStream();
-        var encoder = Windows.Graphics.Imaging.BitmapEncoder.CreateAsync(
-            Windows.Graphics.Imaging.BitmapEncoder.JpegEncoderId, mem).GetAwaiter().GetResult();
-        var props = new Windows.Graphics.Imaging.BitmapPropertySet();
-        props.Add("ImageQuality", new Windows.Graphics.Imaging.BitmapTypedValue(
-            Math.Clamp(quality, 0.1f, 1.0f), Windows.Foundation.PropertyType.Single));
-        encoder.BitmapProperties.SetPropertiesAsync(props).GetAwaiter().GetResult();
-        encoder.SetPixelData(Windows.Graphics.Imaging.BitmapPixelFormat.Rgba8,
-            Windows.Graphics.Imaging.BitmapAlphaMode.Ignore,
-            (uint)w, (uint)h, 96, 96, rgba);
-        encoder.FlushAsync().GetAwaiter().GetResult();
-        mem.Seek(0);
-        using var fs = File.Create(jpgPath);
-        mem.AsStreamForRead().CopyTo(fs);
+            var mem = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+            var encoder = Windows.Graphics.Imaging.BitmapEncoder.CreateAsync(
+                Windows.Graphics.Imaging.BitmapEncoder.JpegEncoderId, mem).GetAwaiter().GetResult();
+            var props = new Windows.Graphics.Imaging.BitmapPropertySet();
+            props.Add("ImageQuality", new Windows.Graphics.Imaging.BitmapTypedValue(
+                Math.Clamp(quality, 0.1f, 1.0f), Windows.Foundation.PropertyType.Single));
+            encoder.BitmapProperties.SetPropertiesAsync(props).GetAwaiter().GetResult();
+            encoder.SetPixelData(Windows.Graphics.Imaging.BitmapPixelFormat.Rgba8,
+                Windows.Graphics.Imaging.BitmapAlphaMode.Ignore,
+                (uint)w, (uint)h, 96, 96, rgba);
+            encoder.FlushAsync().GetAwaiter().GetResult();
+            mem.Seek(0);
+            using var fs = File.Create(jpgPath);
+            mem.AsStreamForRead().CopyTo(fs);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"⚠ WinRT JPG 编码失败({ex.GetType().Name},HRESULT=0x{ex.HResult:X8})——回退 System.Drawing(已转 24bppRgb 规避色偏),避免占位/冻结帧;\n   {ex.Message?.Split('\n')[0]}");
+            SaveJpegViaGdi(bmp, jpgPath, quality);
+        }
+    }
+
+    /// <summary>System.Drawing 编码 JPG 的回退路径:转成无 alpha 的 24bppRgb 再编码,规避 GDI+ 对 ARGB 的色偏。</summary>
+    private static void SaveJpegViaGdi(System.Drawing.Bitmap bmp, string jpgPath, float quality = 0.92f)
+    {
+        using var rgb = new System.Drawing.Bitmap(bmp.Width, bmp.Height, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+        using (var g = System.Drawing.Graphics.FromImage(rgb))
+            g.DrawImage(bmp, 0, 0, bmp.Width, bmp.Height);
+        var codec = System.Drawing.Imaging.ImageCodecInfo.GetImageEncoders()
+            .FirstOrDefault(c => c.FormatID == System.Drawing.Imaging.ImageFormat.Jpeg.Guid);
+        if (codec == null) { rgb.Save(jpgPath, System.Drawing.Imaging.ImageFormat.Jpeg); return; }
+        using var enc = new System.Drawing.Imaging.EncoderParameters(1);
+        enc.Param[0] = new System.Drawing.Imaging.EncoderParameter(
+            System.Drawing.Imaging.Encoder.Quality, (long)Math.Round(Math.Clamp(quality, 0.1f, 1.0f) * 100.0));
+        rgb.Save(jpgPath, codec, enc);
     }
 
     /// <summary>PNG 无损保存并指定压缩级别(0-9:低=快/文件大,高=慢/文件小;不影响画质)。</summary>
