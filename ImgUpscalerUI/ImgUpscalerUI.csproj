@@ -19,7 +19,7 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <RootNamespace>ALHPro</RootNamespace>
         <AssemblyName>ALHPro</AssemblyName>
-        <Version>1.2.1</Version>
+        <Version>1.3.0</Version>
         <!-- 汇编元数据:文件属性里显示的作者/版权(版权保护的第一步:署名清晰、可追责) -->
         <Authors>AlL.H</Authors>
         <Company>AlL.H</Company>
