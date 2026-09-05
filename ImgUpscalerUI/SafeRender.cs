@@ -618,9 +618,9 @@ public static class SafeRender
 
     private static bool? _weak;
     private static string? _weakReason;
-    /// <summary>真弱设备(无GPU/显存&lt;6/内存&lt;8/核数≤4) → 显示黄字提示。</summary>
+    /// <summary>真弱设备(无GPU/核显/显存&lt;6/内存&lt;8/核数≤4) → 显示黄字提示。</summary>
     public static bool IsWeakDevice => _weak ??= ComputeWeakDevice();
-    /// <summary>弱设备原因文案(如 "未检测到可用 GPU(Vulkan)、内存 8GB")。</summary>
+    /// <summary>弱设备原因文案(如 "未检测到可用 GPU(Vulkan)、显存 8GB")。</summary>
     public static string WeakDeviceReason => _weakReason ??= ComputeWeakReason();
 
     private static bool ComputeWeakDevice()
@@ -633,7 +633,18 @@ public static class SafeRender
             bool smallVram = TotalVramGB < 6;
             bool smallRam = TotalRamGB < 8;
             bool fewCores = CpuCoreCount <= 4;
-            return noGpu || smallVram || smallRam || fewCores;
+            // 【裸设备·核显】核显共享显存(报告值可能虚高但实际慢),也要算弱设备(否则核显机被当"显存够"而不提示)
+            bool igpu = false;
+            try
+            {
+                if (ALHPro.VulkanCheck.Devices.Count > 0)
+                    igpu = ALHPro.VulkanCheck.Devices.Any(d => GpuInfo.IsIntegratedGPU(d.Name));
+                else
+                    foreach (var n in GpuInfo.GetAdapterNames())
+                        if (GpuInfo.IsIntegratedGPU(n)) { igpu = true; break; }
+            }
+            catch { }
+            return noGpu || smallVram || smallRam || fewCores || igpu;
         }
         catch { return false; }
     }
@@ -646,6 +657,17 @@ public static class SafeRender
             if (TotalVramGB < 6) list.Add($"显存仅 {TotalVramGB:0.#}GB");
             if (TotalRamGB < 8) list.Add($"内存 {TotalRamGB:0.#}GB");
             if (CpuCoreCount <= 4) list.Add("核心数较少");
+            try
+            {
+                bool igpu = false;
+                if (ALHPro.VulkanCheck.Devices.Count > 0)
+                    igpu = ALHPro.VulkanCheck.Devices.Any(d => GpuInfo.IsIntegratedGPU(d.Name));
+                else
+                    foreach (var n in GpuInfo.GetAdapterNames())
+                        if (GpuInfo.IsIntegratedGPU(n)) { igpu = true; break; }
+                if (igpu) list.Add("核显(共享显存,较慢)");
+            }
+            catch { }
         }
         catch { }
         return string.Join("、", list);
