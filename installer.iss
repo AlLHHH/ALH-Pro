@@ -12,10 +12,10 @@
 ;   不勾选 = 之后手动下载模型包,解压到 程序目录\engines\rembg\ 即可。
 
 #define MyAppName "ALH Pro"
-#define MyAppVersion "1.3.0"
+#define MyAppVersion "1.2.2"
 #define MyAppExeName "ALHPro.exe"
 ; GitHub Release 模型包直链(与 Release 附件名必须一致;仓库=AlLHHH/ALH-Pro)
-#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.3.0/models_v1.0.zip"
+#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.2.2/models_v1.0.zip"
 #define ModelsFile "models_v1.0.zip"
 ; 完整版(含模型,网盘/整包)说明:安装完成后可到软件内「使用教程」或 GitHub 说明页找完整版直链
 
