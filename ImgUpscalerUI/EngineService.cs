@@ -1559,7 +1559,10 @@ public static partial class EngineService
                                  || x.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
                                  || x.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)))
                     {
-                        var dest = Path.Combine(outputDir, Path.GetFileName(f));
+                        // 【一致性】视频侧读批输出用 "*.png":若输入是 .jpg,复制到 .png 名(字节供 GDI+/ffmpeg 嗅探,
+                        // 可解码),避免"视频读 *.png 却因输入是 .jpg 而得到 0 帧"。1x 无降噪分支在视频正常路径不触发,
+                        // 这里统一成 .png 只是保持一致。
+                        var dest = Path.Combine(outputDir, Path.GetFileNameWithoutExtension(f) + ".png");
                         File.Copy(f, dest, overwrite: true);
                     }
                     return;
