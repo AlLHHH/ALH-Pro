@@ -1775,7 +1775,21 @@ public static class VideoService
                 }
                 catch (Exception ex) when (encoder != "libx264" && encoder != "libx265")
                 {
-                    // 硬件编码失败(驱动/不支持)或输出损坏:
+                    // 硬件编码失败(驱动/不支持)或输出损坏
+                    // 【驱动过旧】:ffmpeg nvenc 需新版 NV 驱动(≥610.00/nvenc API 13.1),用户驱动旧 → 重试 no-preset / 备用
+                    // ffmpeg 必然同样失败 → 直接标记坏 + 回退 CPU,不白跑 GPU,并提示更新显卡驱动。
+                    if (IsNvencDriverTooOld(ex.Message))
+                    {
+                        var cpuEnc = encoder.StartsWith("hevc", StringComparison.OrdinalIgnoreCase) ? "libx265" : "libx264";
+                        BrokenHwEncoders.Add(encoder);
+                        AppLogger.Warn($"⚠ 硬件编码({encoder})不可用(显卡驱动过旧:需更新 NVIDIA 驱动到 610+,当前驱动 nvenc 版本过低)——改用轻量 CPU 编码({cpuEnc})");
+                        progress?.Report((96, $"⚠ 硬件编码({encoder})不可用(显卡驱动过旧),改用轻量 CPU 编码({cpuEnc})..."));
+                        await RunAsync(ffmpeg,
+                            muxBase + $"{videoMap}{audioPart} {EncoderArgs(cpuEnc, quality, bitrateKbps)} {vfArg}{fastFlag} \"{outTmp}\"",
+                            progress, ct, "编码", encTotal);
+                    }
+                    else
+                    {
                     // ① 先【去掉 -preset 用默认档】再试一次 GPU —— 很多 50 系(Blackwell)报 exit -22 就是某个 preset 参数被拒,
                     //    去掉 preset 就能打开硬件编码;避免直接掉进慢几十倍的 CPU 软编。
                     // ② 仍失败 → 若存在【备用 ffmpeg(engines/ffmpeg8/,如 8.x)】,用备用 ffmpeg 的 NVENC 再试一次
@@ -1835,6 +1849,7 @@ public static class VideoService
                         await RunAsync(ffmpeg,
                             muxBase + $"{videoMap}{audioPart} {EncoderArgs(cpuEncoder, quality, bitrateKbps)} {vfArg}{fastFlag} \"{outTmp}\"",
                             progress, ct, "编码", encTotal);
+                    }
                     }
                 }
                 if (!await ValidateVideoFileAsync(outTmp))
@@ -2715,6 +2730,18 @@ public static class VideoService
                 ? "可用 [" + string.Join(", ", WorkingHwEncoders) + "]"
                 : "全部不可用(将用 CPU 软编)"));
         }
+    }
+
+    /// <summary>硬件编码是否因【显卡驱动过旧】而不可用(ffmpeg 的 nvenc 需较新版 NVIDIA 驱动 ≥610.00 / nvenc API 13.1;
+    /// 用户驱动旧则报 "Driver does not support the required nvenc API version" / "minimum required Nvidia driver ... 610.00")。
+    /// 这类失败重试 no-preset / 备用 ffmpeg 必然同样失败 → 直接回退 CPU 并标记坏,省时且避免反复报错。</summary>
+    private static bool IsNvencDriverTooOld(string msg)
+    {
+        if (string.IsNullOrEmpty(msg)) return false;
+        return msg.Contains("nvenc API version", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("minimum required Nvidia driver", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("Driver does not support the required nvenc", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("610.00", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>按"实测可用"自适应选视频压缩编码器:优先厂商匹配的硬编,其次任一可用硬编,最后 libx264。
