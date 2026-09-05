@@ -661,10 +661,12 @@ public static partial class EngineService
                     catch { }
                     double vram = 0;
                     try { vram = SafeRender.TotalVramGB; } catch { }
+                    // 【按设备档次自适应看门狗】高分辨率/高倍率的大帧单帧处理可能接近或超过 1 分钟,
+                    // 原强独显 1 分钟零输出/3 分钟无帧会误杀"慢但正常"。放宽:强独显 2/6 分钟,弱独显 4/8 分钟,CPU/核显 8/10 分钟。
                     long noOutLimitTicks, stallLimitTicks;
                     if (cpu || igpu) { noOutLimitTicks = TimeSpan.FromMinutes(8).Ticks; stallLimitTicks = TimeSpan.FromMinutes(10).Ticks; }
-                    else if (vram >= 6) { noOutLimitTicks = TimeSpan.FromMinutes(1).Ticks; stallLimitTicks = TimeSpan.FromMinutes(3).Ticks; }
-                    else { noOutLimitTicks = TimeSpan.FromMinutes(3).Ticks; stallLimitTicks = TimeSpan.FromMinutes(6).Ticks; }
+                    else if (vram >= 6) { noOutLimitTicks = TimeSpan.FromMinutes(2).Ticks; stallLimitTicks = TimeSpan.FromMinutes(6).Ticks; }
+                    else { noOutLimitTicks = TimeSpan.FromMinutes(4).Ticks; stallLimitTicks = TimeSpan.FromMinutes(8).Ticks; }
                     long sinceOut = DateTime.Now.Ticks - lastOutTicks;
                     long sinceFrame = DateTime.Now.Ticks - lastFrameTicks;
                     // ① 启动超时:30 秒零输出 + 进程还在(而非立即失败退出)
