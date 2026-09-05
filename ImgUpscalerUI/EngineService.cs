@@ -977,36 +977,14 @@ public static partial class EngineService
                 }
             }
 
-            // ② CPU
-            AppLogger.Info($"⚠ 降级:GPU 引擎失败({head});CPU 模式在此引擎不稳定,自动改用 CPU 重算");
-            progress?.Report((0, $"⚠ GPU 引擎失败({head}),自动改用 CPU 重算..."));
-            var cpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g -1");
-            try
-            {
-                await RunAsync(exe, cpuArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
-            }
-            catch (InvalidOperationException cpuEx)
-            {
-                // ③ CPU 也崩(老式 ncnn 引擎 CPU 模式 bug):反向再试 GPU 0
-                if (curGpu != 0)
-                {
-                    string g0Name = GpuName(0);
-                    AppLogger.Info($"⚠ CPU 模式也失败,回退重试 GPU 0({g0Name})...");
-                    progress?.Report((0, $"⚠ CPU 模式也失败,回退重试 GPU 0({g0Name})..."));
-                    await RunAsync(exe,
-                        System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g 0"),
-                        progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
-                }
-                else
-                {
-                    throw new InvalidOperationException(
-                        $"超分引擎在 GPU 和 CPU 模式都不行(exit {ExtractExit(cpuEx.Message)}):\n" +
-                        $"这多半是引擎版本与显卡不兼容(如 RTX 50 系 + 旧版 ncnn-vulkan)。\n" +
-                        $"建议:①换用 waifu2x 引擎(官方新版支持 50 系/Blackwell);" +
-                        "②或到 https://github.com/nihui/waifu2x-ncnn-vulkan/releases 下载最新版替换 engines/waifu2x/ 下的文件。" +
-                        $"\n--\n{cpuEx.Message}");
-                }
-            }
+            // ② 【原则 A:任何情况不自动转 CPU】当前及其它 GPU 都失败 → 直接报错给可行建议,而非默默跑慢速 CPU。
+            // 超分/补帧在 CPU 上慢到不可接受;只有用户在设置里【手动选 CPU】才走 CPU(见上方 !usesGpu 分支,那里保留)。
+            throw new InvalidOperationException(
+                $"超分引擎在当前及其它 GPU 上均失败(exit {ExtractExit(ex.Message)}):\n" +
+                $"这多半是引擎与显卡/驱动不兼容(如 RTX 50 系 + 旧版 ncnn-vulkan 的已知崩溃)。\n" +
+                $"建议:①换用 waifu2x 引擎(官方新版支持 50 系/Blackwell);②更新 NVIDIA 显卡驱动;" +
+                $"③或到 https://github.com/nihui/waifu2x-ncnn-vulkan/releases 下载最新版替换 engines/waifu2x/ 下的文件。" +
+                $"\n(已按「不自动转 CPU」设置停止,避免慢速超分;确需 CPU 请在设置中手动选择)\n--\n{ex.Message}");
         }
     }
 
