@@ -2798,8 +2798,18 @@ public static class VideoService
             try { EngineService.ConvertPngToJpg(png, jpg); }
             catch (Exception ex)
             {
-                AppLogger.Warn($"⚠ 帧转 JPG 失败({Path.GetFileName(png)}):{ex.Message.Split('\n')[0]}——保留原帧内容");
-                try { File.Copy(png, jpg, true); } catch { }
+                AppLogger.Warn($"⚠ 帧转 JPG 失败({Path.GetFileName(png)}):{ex.Message.Split('\n')[0]}——用同尺寸占位帧替代,保持编号连续可解码");
+                // 优先生成同尺寸深灰占位(可解码、编号不断);尺寸读不出(彻底损坏)才退回复制原名(尽力保编号连续)
+                int pw = 0, ph = 0;
+                try { using (var b = new System.Drawing.Bitmap(png)) { pw = b.Width; ph = b.Height; } } catch { }
+                if (pw > 0 && ph > 0)
+                {
+                    using var phb = new System.Drawing.Bitmap(pw, ph);
+                    using (var g = System.Drawing.Graphics.FromImage(phb)) g.Clear(System.Drawing.Color.FromArgb(24, 24, 24));
+                    phb.Save(jpg, System.Drawing.Imaging.ImageFormat.Jpeg);   // 纯灰占位,System.Drawing JPG 无色偏问题
+                }
+                else
+                    try { File.Copy(png, jpg, true); } catch { }
             }
             try { File.Delete(png); } catch { }
         }
