@@ -213,7 +213,8 @@ public static class EsrganOnnxService
         bool auto = gpuId == -2;
         // 决定会话数:GPU 走 2 路并行(DirectML 多会话);CPU 保持 1(CPU 多会话每帧建会增加开销)
         bool wantGpu = auto ? true : gpuId >= 0;
-        int concurrency = wantGpu ? 2 : 1;
+        // 大显存(12G+)ONNX 逐帧超分用 3 路并行(5070 Ti 等更有算力,多活能让 GPU 更饱和);小显存保持 2,避免爆显存
+        int concurrency = wantGpu ? (SafeRender.EffectiveVramGB >= 12 ? 3 : 2) : 1;
         // 逐帧进度用【全局帧】(跨批次累计),显示"超分 第 N 帧 / 共 M 帧",百分比按全局帧算
         bool global = globalTotalFrames > 0;
         // 预创建独立会话池(每个并行 worker 一个;绕开共享缓存锁,支持并发 Run)
@@ -340,7 +341,14 @@ public static class EsrganOnnxService
         progress?.Report((100, "完成"));
     }
 
-    private static int TileFor(int w, int h) => Math.Max(w, h) > 512 ? 512 : Math.Max(w, h);
+    private static int TileFor(int w, int h)
+    {
+        int max = Math.Max(w, h);
+        // 显存自适应分块(与 ncnn 同口径):大显存卡(12G+,如 5070 Ti)用更大的块(最多 768,块少→GPU 吃得饱→更快),
+        // 小显存沿用保守值(512);小图(≤512)直接用原尺寸、无需分块。
+        if (max <= 512) return Math.Max(64, max);
+        return Math.Max(512, SafeRender.GetTileSize());
+    }
 
     /// <summary>透明底保护:提取 alpha → RGB 填白 → 超分 → 恢复 alpha(输出 32bpp Argb)。</summary>
     private static void RunCoreAlphaSafe(System.Drawing.Bitmap src, string output, double scale, string modelPath,
