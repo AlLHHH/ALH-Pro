@@ -636,10 +636,14 @@ public static partial class EngineService
                 {
                     if (killRequested || p.HasExited) return;
                     bool cpu = args.Contains("-g -1", StringComparison.Ordinal);
-                    // 【收紧看门狗】GPU 引擎 3 分钟零输出 / 5 分钟无帧即判停滞杀降级(GPU 正常秒级出活,3-5 分钟零进展=真卡死,
-                    // 原 8/10 分钟太慢,用户要白等很久);CPU 保留宽容(CPU 天生慢,单 4K 帧可达数分钟,不能误杀)。
-                    long noOutLimitTicks = TimeSpan.FromMinutes(cpu ? 12 : 3).Ticks;
-                    long stallLimitTicks = TimeSpan.FromMinutes(cpu ? 10 : 5).Ticks;
+                    // 【按设备档次自适应看门狗】真机 1 分钟不动就该判问题,但弱机/CPU 天生慢不能误杀:
+                    // 强独显(显存≥6G)→ 1 分钟零输出/3 分钟无帧即杀;弱独显/核显(<6G)→ 3/6 分钟;CPU → 8/10 分钟。
+                    double vram = 0;
+                    try { vram = SafeRender.TotalVramGB; } catch { }
+                    long noOutLimitTicks, stallLimitTicks;
+                    if (cpu) { noOutLimitTicks = TimeSpan.FromMinutes(8).Ticks; stallLimitTicks = TimeSpan.FromMinutes(10).Ticks; }
+                    else if (vram >= 6) { noOutLimitTicks = TimeSpan.FromMinutes(1).Ticks; stallLimitTicks = TimeSpan.FromMinutes(3).Ticks; }
+                    else { noOutLimitTicks = TimeSpan.FromMinutes(3).Ticks; stallLimitTicks = TimeSpan.FromMinutes(6).Ticks; }
                     long sinceOut = DateTime.Now.Ticks - lastOutTicks;
                     long sinceFrame = DateTime.Now.Ticks - lastFrameTicks;
                     // ① 启动超时:30 秒零输出 + 进程还在(而非立即失败退出)
@@ -660,7 +664,7 @@ public static partial class EngineService
                     else if (sinceFrame > stallLimitTicks)
                     {
                         killRequested = true;
-                        AppLogger.Info($"看门狗:引擎 ({stage}) 10 分钟未完成一帧(计算过慢或停滞),强制终止——建议改用 GPU/调低倍率/调小分辨率");
+                        AppLogger.Info($"看门狗:引擎 ({stage}) {stallLimitTicks / TimeSpan.TicksPerMinute} 分钟未完成一帧(计算过慢或停滞),强制终止——建议改用 GPU/调低倍率/调小分辨率");
                         try { p.Kill(entireProcessTree: true); } catch { }
                     }
                 }
