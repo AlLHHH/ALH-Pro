@@ -1454,8 +1454,19 @@ public static partial class EngineService
         // CPU 仍黑/不可用 → 抛"转 ONNX"信号(上层改用 ONNX 稳定引擎,不再反复 GPU 黑块死循环)。
         if (gpuId >= 0 && HasBlackPng(outDir))
         {
+            // 【改进】有 ONNX 模型时【先】走 ONNX DirectML(GPU 加速、独立运行时,ncnn-GPU 崩≠DirectML 崩),
+            // 而非先走最慢的 ncnn-CPU 逐块重算——与视频超分黑帧降级(ONNX→CPU 顺序)一致。
+            // 仅当该引擎/模型无 ONNX 版(如某些 waifu2x 模型)才退回 ncnn-CPU 逐块兜底。
+            string? onnxModel = engine is "realesrgan" ? EsrganOnnxService.ResolveEsrganOnnxPath(model)
+                : engine is "waifu2x" ? EsrganOnnxService.FindWaifu2xModel() : null;
+            if (onnxModel != null)
+            {
+                progress?.Report((89, "⚠ 检测到超分输出黑帧(GPU 队列异常),改用 ONNX 稳定引擎重算整图..."));
+                AppLogger.Info("⚠ 目录批量超分检测到黑块(GPU 队列异常),改用 ONNX 稳定引擎重算整图");
+                throw new InvalidOperationException("BLACKOUT_NEED_ONNX:GPU 黑块,转用 ONNX 稳定引擎");
+            }
             progress?.Report((89, "⚠ 检测到超分输出黑帧(GPU 队列异常),改用 CPU 软解重处理受影响块..."));
-            AppLogger.Info("⚠ 目录批量超分检测到黑块(GPU 队列异常),改用 CPU 软解重处理");
+            AppLogger.Info("⚠ 目录批量超分检测到黑块(GPU 队列异常),不同引擎/模型无 ONNX 版,改用 CPU 软解重处理");
             foreach (var tf in Directory.EnumerateFiles(inDir, "*.png"))
             {
                 ct.ThrowIfCancellationRequested();
