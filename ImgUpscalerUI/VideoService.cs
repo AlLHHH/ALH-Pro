@@ -1023,6 +1023,8 @@ public static class VideoService
 
                 // 3b) 分段补帧(输入 framesIn,输出 framesFinal)
                 progress?.Report((10, $"RIFE 补帧({interpScale}x,源 {frameCount} 帧 → 输出 {(long)Math.Round((double)((frameCount - 1) * interpScale)) + 1} 帧,模型 {interpModel})..."));
+                if (interpScale >= 4)
+                    AppLogger.Warn($"⚠ 高倍率补帧({interpScale}x):输出帧数是源 {interpScale} 倍,处理耗时会明显变长,属正常,请耐心等待(非卡死)");
                 // ===== RIFE GPU 探测(50 系等可能静默 hang,不预检白等 8 分钟)=====
                 // 实测 2 帧插 1 帧能否 GPU 出图;不能 → 本视频补帧改用 CPU(慢但确定能跑),日志+进度提示。
                 int interpGpu = gpuId;
