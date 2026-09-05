@@ -2383,8 +2383,8 @@ public sealed partial class MainPage : Page
         {
             // 冷却:上次关闭后 2 小时内不再弹
             if (DateTime.Now - AppSettings.SponsorPromptTime < TimeSpan.FromHours(2)) return;
-            // 30% 概率(作者感谢但不打扰)
-            if (new Random().NextDouble() >= 0.30) return;
+            // 30% 概率(作者感谢但不打扰)—— 测试期临时改 100% 触发,测试完改回 0.30
+            if (new Random().NextDouble() >= 1.0) return;
             await Task.Delay(300);   // 让完成弹窗关闭后画面稳定再显示
             SponsorOverlay.Visibility = Visibility.Visible;
         }
