@@ -82,9 +82,10 @@ public sealed partial class MainPage : Page
             {
                 try
                 {
-                    VulkanCheck.RunOnce();
+                    // 确保设备表已填充:若从缓存加载(Devices 空)会导致自检/选卡误判"无 GPU",真跑一次枚举
+                    if (VulkanCheck.Devices.Count == 0) VulkanCheck.ReProbe(); else VulkanCheck.RunOnce();
                     bool gpuOk = VulkanCheck.GpuAvailable;
-                    MarkSelfCheckStep(0, gpuOk);            // ① 检测显卡
+                    MarkSelfCheckStep(0, gpuOk || GpuInfo.GetAdapterNames().Count > 0);   // ① 检测显卡(注册表现实存在则算有 GPU)
                     MarkSelfCheckStep(1, true);             // ② 显存/驱动/内存/CPU(RunOnce 报告已含)
                     // 【分发给所有用户】无条件实测 DirectML 设备,让 PickDevice 用真实 DML 结果而非 Vulkan 判定。
                     // 之前仅"多卡机"探测——单卡机(最常见)不探测,导致 PickDevice 退回 Vulkan 判定,
@@ -279,7 +280,13 @@ public sealed partial class MainPage : Page
             if (VulkanCheck.Devices.Count > 0)
                 sb.Append("计算设备: ").Append(string.Join(" / ", VulkanCheck.Devices.Select(d => "GPU " + d.Id + " · " + d.Name))).Append('\n');
             else
-                sb.Append("计算设备: 未检测到可用的 GPU").Append('\n');
+            {
+                var rec = GpuInfo.GetAdapterNames();
+                if (rec.Count > 0)
+                    sb.Append("计算设备: ").Append(string.Join(" / ", rec.Select((n, i) => "GPU " + i + " · " + n))).Append('\n');
+                else
+                    sb.Append("计算设备: 未检测到可用的 GPU").Append('\n');
+            }
             int chosen = AppSettings.GpuIndex;
             if (chosen >= 0 && !string.IsNullOrWhiteSpace(GpuInfo.GetEngineDeviceName(chosen)))
                 sb.Append("推荐计算设备: GPU ").Append(chosen).Append(" · ").Append(GpuInfo.GetEngineDeviceName(chosen)).Append('\n');
