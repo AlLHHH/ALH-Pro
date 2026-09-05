@@ -253,6 +253,7 @@ public sealed partial class MainPage : Page
             // 全部打勾后停 1 秒,让用户看清"检查完成"再切换到报告
             await Task.Delay(1000);
             SelfCheckProgress.IsActive = false;
+            SelfCheckProgress.Visibility = Visibility.Collapsed;   // 报告阶段收起转圈,避免留白
             SelfCheckItems.Visibility = Visibility.Collapsed;
             SelfCheckHint.Visibility = Visibility.Collapsed;
             SelfCheckTitle.Text = "本机设备自检";
