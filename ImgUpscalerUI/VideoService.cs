@@ -376,7 +376,8 @@ public static class VideoService
             else inFps = probedFps > 0 ? probedFps : 30.0;
             progress?.Report((1, $"输入帧率:{inFps.ToString("0.##", inv)} fps"));
             // ===== 超限提示:分辨率/帧率过大易出问题,给 3 种黄色警告 =====
-            bool resBig = srcW > 3840 || srcH > 2160;          // 超过 4K
+            // 用总像素判定"超4K"(3840×2160≈829万像素):竖版4K(2160×3840)不算超,4096×2160(DCI 4K)才算,分档更准
+            bool resBig = (long)srcW * srcH > 3840L * 2160L;
             bool fpsBig = inFps > 240;
             if (resBig && fpsBig)
                 AppLogger.Warn($"⚠ 视频分辨率({srcW}×{srcH})超过 4K 且帧率({inFps.ToString("0.##", inv)}fps)超过 240——处理可能非常慢或易出错,建议先降低分辨率/帧率,或用小片段测试。");
