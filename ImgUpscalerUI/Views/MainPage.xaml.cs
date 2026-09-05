@@ -247,6 +247,8 @@ public sealed partial class MainPage : Page
     {
         try
         {
+            // 全部打勾后停 1 秒,让用户看清"检查完成"再切换到报告
+            await Task.Delay(1000);
             SelfCheckProgress.IsActive = false;
             SelfCheckItems.Visibility = Visibility.Collapsed;
             SelfCheckHint.Visibility = Visibility.Collapsed;
