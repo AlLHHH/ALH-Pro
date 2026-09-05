@@ -193,7 +193,7 @@ public sealed partial class MainPage : Page
                 }
             });
             await selfCheckTask;
-            if (needFullCheck) await FinishSelfCheckOverlayAsync();
+            if (needFullCheck) await FinishSelfCheckOverlayAsync(ok);
             // 更新检查:后台静默(有新版才弹提示条;失败/无网/已最新均无感)
             _ = CheckUpdateSilentAsync();
         };
@@ -242,16 +242,59 @@ public sealed partial class MainPage : Page
         catch { }
     }
 
-    /// <summary>自检完成:停转圈,短暂停留后隐藏,解除遮挡。</summary>
-    private async Task FinishSelfCheckOverlayAsync()
+    /// <summary>自检完成:显示正式报告 + 「确定」按钮;用户点击后才放行(不再自动隐藏)。</summary>
+    private async Task FinishSelfCheckOverlayAsync(bool enginesOk)
     {
         try
         {
             SelfCheckProgress.IsActive = false;
-            await Task.Delay(700);   // 让用户看到完成结果再放行
-            SelfCheckOverlay.Visibility = Visibility.Collapsed;
+            SelfCheckItems.Visibility = Visibility.Collapsed;
+            SelfCheckHint.Visibility = Visibility.Collapsed;
+            SelfCheckTitle.Text = "本机设备自检";
+            SelfCheckReport.Text = BuildSelfCheckReport(enginesOk);
+            AppSettings.SelfCheckReport = SelfCheckReport.Text;
+            try { AppSettings.Save(); } catch { }
+            SelfCheckReport.Visibility = Visibility.Visible;
+            SelfCheckOkBtn.Visibility = Visibility.Visible;
+            await Task.CompletedTask;
+        }
+        catch { SelfCheckOverlay.Visibility = Visibility.Collapsed; }
+    }
+
+    private void SelfCheckOk_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        try { SelfCheckOverlay.Visibility = Visibility.Collapsed; } catch { }
+    }
+
+    /// <summary>自检报告(正式措辞,无口水词、无括号小提示;与设置页共用同一文本)。</summary>
+    private string BuildSelfCheckReport(bool enginesOk)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var sb = new System.Text.StringBuilder();
+        sb.Append("本机自检报告").Append('\n').Append('\n');
+        try
+        {
+            if (VulkanCheck.Devices.Count > 0)
+                sb.Append("计算设备: ").Append(string.Join(" / ", VulkanCheck.Devices.Select(d => "GPU " + d.Id + " · " + d.Name))).Append('\n');
+            else
+                sb.Append("计算设备: 未检测到可用的 GPU").Append('\n');
+            int chosen = AppSettings.GpuIndex;
+            if (chosen >= 0 && !string.IsNullOrWhiteSpace(GpuInfo.GetEngineDeviceName(chosen)))
+                sb.Append("推荐计算设备: GPU ").Append(chosen).Append(" · ").Append(GpuInfo.GetEngineDeviceName(chosen)).Append('\n');
+            try { sb.Append("显存: ").Append(SafeRender.TotalVramGB.ToString("0.#", inv)).Append(" GB / 可用 ").Append(SafeRender.FreeVramGB.ToString("0.#", inv)).Append(" GB").Append('\n'); } catch { }
+            try { sb.Append("系统内存: ").Append(SafeRender.TotalRamGB.ToString("0.#", inv)).Append(" GB").Append('\n'); } catch { }
+            try { sb.Append("处理器: ").Append(SafeRender.CpuName).Append(" · ").Append(SafeRender.CpuCoreCount).Append(" 核").Append('\n'); } catch { }
+            try
+            {
+                var drv = GpuInfo.GetDriverVersions();
+                if (drv.Count > 0 && !string.IsNullOrWhiteSpace(drv[0])) sb.Append("显卡驱动: ").Append(drv[0]).Append('\n');
+            }
+            catch { }
+            sb.Append("DirectML / ONNX 加速: ").Append(ALHPro.EsrganOnnxService.DmlFallbackOk >= 0 ? "可用" : "不可用").Append('\n');
+            sb.Append("超分 / 补帧引擎: ").Append(enginesOk ? "齐全" : "缺失").Append('\n');
         }
         catch { }
+        return sb.ToString().TrimEnd('\n');
     }
 
     /// <summary>生成设备下拉标签与推荐编号:优先【引擎实际枚举】(VulkanCheck.Devices,含引擎真实 -g 编号),
@@ -1410,13 +1453,15 @@ public sealed partial class MainPage : Page
             FontSize = 10, Opacity = 0.5,
             TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
-        // 本机 GPU 加速自检报告(首次启动实测,常驻显示:告诉用户当前设备状态 + 会有什么问题)
+        // 本机自检报告(正式措辞,常驻显示;优先正式版,老版本无则退回友好报告)
         TextBlock? reportText = null;
-        if (AppSettings.VulkanCheckDone && !string.IsNullOrEmpty(AppSettings.VulkanReport))
+        string selfReport = AppSettings.SelfCheckReport;
+        if (string.IsNullOrEmpty(selfReport) && AppSettings.VulkanCheckDone) selfReport = AppSettings.VulkanReport;
+        if (!string.IsNullOrEmpty(selfReport))
         {
             reportText = new TextBlock
             {
-                Text = AppSettings.VulkanReport,
+                Text = selfReport,
                 FontSize = 11,
                 TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
                 IsTextSelectionEnabled = true,   // 可复制分享给作者排查

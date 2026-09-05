@@ -19,6 +19,9 @@ public static class AppSettings
     /// <summary>首次 Vulkan 自检的友好报告文本(设置界面「计算设备」区常驻显示)。</summary>
     public static string VulkanReport { get; set; } = "";
 
+    /// <summary>启动自检完成后的正式报告文本(设置界面「计算设备」区常驻显示)。</summary>
+    public static string SelfCheckReport { get; set; } = "";
+
     /// <summary>自检报告对应的软件版本(升级后自动作废旧缓存重测,报告修复才能生效)。</summary>
     public static string VulkanReportVersion { get; set; } = "";
 
@@ -49,6 +52,7 @@ public static class AppSettings
             GpuIndex = d.GpuIndex;
             VulkanCheckDone = d.VulkanCheckDone;
             VulkanReport = d.VulkanReport ?? "";
+            SelfCheckReport = d.SelfCheckReport ?? "";
             VulkanReportVersion = d.VulkanReportVersion ?? "";
             TempDir = d.TempDir ?? "";
             LastShownVersion = d.LastShownVersion ?? "";
@@ -73,6 +77,7 @@ public static class AppSettings
                         GpuIndex = GpuIndex,
                         VulkanCheckDone = VulkanCheckDone,
                         VulkanReport = VulkanReport,
+                        SelfCheckReport = SelfCheckReport,
                         VulkanReportVersion = VulkanReportVersion,
                         TempDir = TempDir,
                         LastShownVersion = LastShownVersion,
@@ -88,6 +93,7 @@ public static class AppSettings
         public int GpuIndex { get; set; } = 0;
         public bool VulkanCheckDone { get; set; }
         public string VulkanReport { get; set; } = "";
+        public string SelfCheckReport { get; set; } = "";
         public string VulkanReportVersion { get; set; } = "";
         public string TempDir { get; set; } = "";
         public string LastShownVersion { get; set; } = "";
