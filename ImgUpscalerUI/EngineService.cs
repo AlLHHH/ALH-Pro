@@ -1659,7 +1659,7 @@ public static partial class EngineService
 
     /// <summary>把 PNG 转成 JPG(按质量),写入 jpgPath。
     /// 按内容解码(SourceBitmap 按魔数识别),故也接受 .png 名但实际为 JPG 字节的文件;供视频流水线「引擎输出转 JPG」复用。</summary>
-    public static void ConvertPngToJpg(string pngPath, string jpgPath, float quality = 0.92f)
+    public static void ConvertPngToJpg(string pngPath, string jpgPath, float quality = 0.96f)
     {
         using var img = new System.Drawing.Bitmap(pngPath);
         SaveJpegViaWinRT(img, jpgPath, quality);
@@ -2555,10 +2555,12 @@ public static partial class EngineService
     }
 
     /// <summary>把图片高保真缩放到精确尺寸后写回 outputPath(保持 PNG 格式)。
-    /// 源 Bitmap 持有文件句柄,须先释放再覆盖,故先写临时文件。</summary>
+    /// 源 Bitmap 持有文件句柄,须先释放再覆盖,故先写临时文件(先写临时、src 释放后再覆盖目标)。</summary>
     public static void ResizeImageTo(string path, string outputPath, int width, int height)
     {
-        var tmp = Path.Combine(EngineService.TempRoot, $"imgup_resize_{Guid.NewGuid():N}.png");
+        var guid = Guid.NewGuid().ToString("N");
+        var tmp = Path.Combine(EngineService.TempRoot, $"imgup_resize_{guid}.png");
+        var tmpJpg = Path.Combine(EngineService.TempRoot, $"imgup_resize_{guid}.jpg");
         // 按目标扩展名保存:JPG 目标用 WinRT 编码(否则 PNG 字节装进 .jpg 文件,格式契约被破坏,且 System.Drawing JPG 会色偏)
         bool isJpg = outputPath.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
                      outputPath.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase);
@@ -2578,16 +2580,19 @@ public static partial class EngineService
                         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
                         g.DrawImage(src, 0, 0, w, h);
                     }
-                    if (isJpg) SaveJpegViaWinRT(dst, outputPath);
+                    // 【修复 全黑帧】JPG 分支此前直接写 outputPath——视频流水线里 outputPath==path,而 src Bitmap 仍持有该文件句柄,
+                    // File.Create 触发共享冲突 → 走 catch → 每帧都被换成深灰占位。改成也先写临时文件,src 释放后再覆盖目标。
+                    if (isJpg) SaveJpegViaWinRT(dst, tmpJpg);
                     else dst.Save(tmp, System.Drawing.Imaging.ImageFormat.Png);
                 }
+                // 此处 src/dst 已释放,可安全覆盖目标
+                if (isJpg) File.Move(tmpJpg, outputPath, overwrite: true);
+                else File.Copy(tmp, outputPath, overwrite: true);
             }
             catch (Exception ex)
             {
                 // 【兜底】源帧损坏/0字节/非图像(引擎偶发写出坏帧或磁盘不足截断)→ GDI+ 读源抛
-                // "Parameter is not valid"。此时【不能删帧/不跳过】——合帧用 frame_%06d.png 按编号连续读,
-                // 缺帧会造成编号断档 → ffmpeg 提前停止/输出截断,比一帧坏更糟。
-                // 改为生成一张同尺寸深灰占位帧覆盖原路径,保持编号连续、可解码,合帧不中断。
+                // "Parameter is not valid"。此时【不能删帧/不跳过】——合帧按编号连续读,缺帧会造成编号断档 → ffmpeg 提前停止/输出截断。
                 string head = ex.Message.Split('\n')[0];
                 if (head.Length > 70) head = head[..70];
                 AppLogger.Warn($"⚠ 缩回:源帧损坏({Path.GetFileName(path)})——{head};已用同尺寸占位帧替代,合帧不中断");
@@ -2596,14 +2601,16 @@ public static partial class EngineService
                 {
                     g.Clear(System.Drawing.Color.FromArgb(24, 24, 24));   // 深灰,avoid 黑帧被误判为损坏
                 }
-                if (isJpg) SaveJpegViaWinRT(ph, outputPath);
+                if (isJpg) SaveJpegViaWinRT(ph, tmpJpg);
                 else ph.Save(tmp, System.Drawing.Imaging.ImageFormat.Png);
+                if (isJpg) File.Move(tmpJpg, outputPath, overwrite: true);
+                else File.Copy(tmp, outputPath, overwrite: true);
             }
-            if (!isJpg) File.Copy(tmp, outputPath, overwrite: true);
         }
         finally
         {
             try { File.Delete(tmp); } catch { /* 清理失败忽略 */ }
+            try { File.Delete(tmpJpg); } catch { /* 清理失败忽略 */ }
         }
     }
 
