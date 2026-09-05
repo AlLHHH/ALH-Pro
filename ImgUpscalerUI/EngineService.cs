@@ -283,7 +283,11 @@ public static partial class EngineService
             {
                 bool ok = await IsEngineGpuUsableAsync("waifu2x", d.Id, ct).ConfigureAwait(false);
                 AppLogger.Info(d.Id + ": " + d.Name + "(核显) → " + (ok ? "1×1 可用(兜底)" : "不可用"));
-                if (ok) return d.Id;
+                if (ok)
+                {
+                    AppLogger.Warn($"⚠ 独显均不可用,已降级使用核显: GPU {d.Id}({d.Name})——处理会明显变慢,建议更新显卡驱动(需支持 Vulkan)后重试。");
+                    return d.Id;
+                }
             }
             return -1;
         }

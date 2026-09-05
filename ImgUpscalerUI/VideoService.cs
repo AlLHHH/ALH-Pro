@@ -375,6 +375,15 @@ public static class VideoService
             if (inFpsOverride is > 0) inFps = inFpsOverride.Value;
             else inFps = probedFps > 0 ? probedFps : 30.0;
             progress?.Report((1, $"输入帧率:{inFps.ToString("0.##", inv)} fps"));
+            // ===== 超限提示:分辨率/帧率过大易出问题,给 3 种黄色警告 =====
+            bool resBig = srcW > 3840 || srcH > 2160;          // 超过 4K
+            bool fpsBig = inFps > 240;
+            if (resBig && fpsBig)
+                AppLogger.Warn($"⚠ 视频分辨率({srcW}×{srcH})超过 4K 且帧率({inFps.ToString("0.##", inv)}fps)超过 240——处理可能非常慢或易出错,建议先降低分辨率/帧率,或用小片段测试。");
+            else if (resBig)
+                AppLogger.Warn($"⚠ 视频分辨率({srcW}×{srcH})超过 4K(3840×2160)——处理可能非常慢或易出错,建议先降低分辨率/倍率,或用小片段测试。");
+            else if (fpsBig)
+                AppLogger.Warn($"⚠ 视频帧率({inFps.ToString("0.##", inv)}fps)超过 240——处理可能非常慢或易出错,建议先降低帧率或用小片段测试。");
             // ===== 参数摘要(完整生效参数,处理开始即打印,对照排查) =====
             string dedupDesc = dedupMode switch
             {
