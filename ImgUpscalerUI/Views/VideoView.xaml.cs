@@ -1413,8 +1413,9 @@ public sealed partial class VideoView : UserControl
         // 兼容旧设置:旧值 2(Real-CUGAN,已移除)→ 1(Real-ESRGAN);0=waifu2x 1=Real-ESRGAN
         if (d.Engine == 2) VideoEngineRadios.SelectedIndex = 1;
         else if (d.Engine is >= 0 and <= 1) VideoEngineRadios.SelectedIndex = d.Engine;
-        if (d.Scale is >= 0 and <= 4)
-            VideoScaleRadios.SelectedIndex = d.Scale;   // 预设存的是当前真实倍率索引(0=1x,1=2x,2=3x,3=4x,4=自定义)
+        // 放大倍数索引已去掉「自定义分辨率」(4),旧设置里的 4 归到 2x(索引1),其余 0~3 照搬
+        if (d.Scale is >= 0 and <= 3) VideoScaleRadios.SelectedIndex = d.Scale;
+        else if (d.Scale == 4) VideoScaleRadios.SelectedIndex = 1;   // 旧「自定义分辨率」→ 2x
         if (!string.IsNullOrWhiteSpace(d.CustomW)) CustomWidthBox.Text = d.CustomW;
         if (!string.IsNullOrWhiteSpace(d.CustomH)) CustomHeightBox.Text = d.CustomH;
         if (d.PostSharpen is >= 0 and <= 100) SharpenSlider.Value = d.PostSharpen;
