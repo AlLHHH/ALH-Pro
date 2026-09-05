@@ -1307,6 +1307,13 @@ public static class VideoService
                                             globalBaseFrames: start, globalTotalFrames: total);
                                         foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
                                             File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
+                                        // 兜底:CPU 兜底仍黑(或 CPU 崩后 GPU0 重算仍黑)→ 该批回退原帧,绝不把黑帧写进输出
+                                        if (batchOutDirHasBlack(batchOut))
+                                        {
+                                            AppLogger.Info($"降级:批次 {start}~{end - 1} 经 GPU/ONNX/CPU 仍黑,该批回退原帧(不输出黑帧)");
+                                            for (int i = start; i < end; i++)
+                                                try { File.Copy(upFiles[i], Path.Combine(upOutput, Path.GetFileName(upFiles[i])), true); } catch { }
+                                        }
                                     }
                                 }
                                 else
@@ -1324,6 +1331,13 @@ public static class VideoService
                                             globalBaseFrames: start, globalTotalFrames: total);
                                         foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
                                             File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
+                                        // 兜底:CPU 兜底仍黑 → 该批回退原帧,绝不把黑帧写进输出
+                                        if (batchOutDirHasBlack(batchOut))
+                                        {
+                                            AppLogger.Info($"降级:批次 {start}~{end - 1} 经 GPU/CPU 仍黑,该批回退原帧(不输出黑帧)");
+                                            for (int i = start; i < end; i++)
+                                                try { File.Copy(upFiles[i], Path.Combine(upOutput, Path.GetFileName(upFiles[i])), true); } catch { }
+                                        }
                                     }
                                     catch { }
                                 }

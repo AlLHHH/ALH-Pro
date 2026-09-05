@@ -140,6 +140,8 @@ public static class RifeOnnxService
             if (dims.Length != 4 || dims[1] != 3)
                 throw new InvalidOperationException($"ONNX 输出形状异常: {string.Join("x", dims.ToArray())}");
             int oh = dims[2], ow = dims[3];
+            if (oh <= 0 || ow <= 0 || oh > 16384 || ow > 16384)
+                throw new InvalidOperationException($"ONNX 输出尺寸异常({ow}x{oh}),模型输出异常,无法落图");
             var pixels = new float[3 * oh * ow];
             for (int i = 0; i < pixels.Length; i++)
                 pixels[i] = outTensor.GetValue(i);
@@ -247,12 +249,19 @@ public static class RifeOnnxService
 
     static Bitmap LoadBitmap(string path)
     {
-        using var probe = new Bitmap(path);
-        // 复制为 24bpp(保证 LockBits 像素格式稳定;System.Drawing 读取的默认格式可移植性差)
-        var dst = new Bitmap(probe.Width, probe.Height, PixelFormat.Format24bppRgb);
-        using var g = Graphics.FromImage(dst);
-        g.DrawImage(probe, 0, 0, probe.Width, probe.Height);
-        return dst;
+        Bitmap probe;
+        try { probe = new Bitmap(path); }
+        catch (Exception ex) { throw new InvalidOperationException($"补帧输入帧无法解码:{Path.GetFileName(path)}——{ex.Message}", ex); }
+        using (probe)
+        {
+            if (probe.Width <= 0 || probe.Height <= 0)
+                throw new InvalidOperationException($"补帧输入帧尺寸异常(0×0):{Path.GetFileName(path)}");
+            // 复制为 24bpp(保证 LockBits 像素格式稳定;System.Drawing 读取的默认格式可移植性差)
+            var dst = new Bitmap(probe.Width, probe.Height, PixelFormat.Format24bppRgb);
+            using var g = Graphics.FromImage(dst);
+            g.DrawImage(probe, 0, 0, probe.Width, probe.Height);
+            return dst;
+        }
     }
 
     static float[] ToTensor(Bitmap src)
