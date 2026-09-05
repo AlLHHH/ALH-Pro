@@ -164,6 +164,8 @@ public sealed partial class MainPage : Page
                         }
                     }
                     if (autoMsg != null) AppLogger.Info("🚀 " + autoMsg);
+                    // 兼容性自检:对"旧版/精简系统、无独显、AMD/Intel 显卡"给出黄字提示,便于用户知道为何慢/为何走 CPU
+                    LogCompatibilityWarnings();
                     string finalMsg = autoMsg ?? "就绪";
                     DispatcherQueue.TryEnqueue(() => { StatusText.Text = finalMsg; });
                 }
@@ -213,6 +215,39 @@ public sealed partial class MainPage : Page
 
     /// <summary>判断是否独立显卡(非 Intel/AMD 核显):与 GpuInfo.ScoreDeviceName 同一套特征(含新版 "Intel(R) Graphics" 核显名)。</summary>
     private static bool IsDiscreteGpu(string name) => !GpuInfo.IsIntegratedGPU(name);
+
+    /// <summary>启动兼容性自检:对"旧版/精简系统、无独显、AMD/Intel 显卡(走 ONNX/CPU 兜底)"给出黄字提示,
+    /// 让用户一眼知道"为何慢 / 为何走 CPU / 该更新驱动"。全程只提示、不阻断。</summary>
+    private static void LogCompatibilityWarnings()
+    {
+        try
+        {
+            // ① Windows 10 旧版/精简版(可能缺运行库/WinRT 依赖,导致引擎/启动问题)
+            try
+            {
+                var v = Environment.OSVersion.Version;
+                if (v.Major == 10 && v.Minor == 0 && v.Build > 0 && v.Build < 19041)
+                    AppLogger.Warn("⚠ 系统版本较旧(旧版/精简版 Win10):可能缺少运行库/WinRT 依赖,若启动异常请升级到 Win10 22H2 或 Win11。");
+            }
+            catch { }
+            // ② 是否有独立显卡(纯核显 → 视频处理会很慢)
+            bool hasDedicated = false;
+            var devs = ALHPro.VulkanCheck.Devices;
+            foreach (var d in devs) if (!ALHPro.GpuInfo.IsIntegratedGPU(d.Name)) { hasDedicated = true; break; }
+            if (devs.Count > 0 && !hasDedicated)
+                AppLogger.Warn("⚠ 未检测到独立显卡(纯核显/核显):视频超分/补帧会明显变慢,建议用 CPU 或勾选「快速模式」。");
+            // ③ 存在 AMD/Intel 显卡(非 NVIDIA)→ 相关引擎走 ONNX/CPU 兜底,速度较慢(黄字提醒)
+            foreach (var d in devs)
+            {
+                var n = d.Name;
+                if (n.Contains("AMD", StringComparison.OrdinalIgnoreCase)
+                    || n.Contains("Radeon", StringComparison.OrdinalIgnoreCase)
+                    || n.Contains("Intel", StringComparison.OrdinalIgnoreCase))
+                    AppLogger.Warn($"⚠ 检测到 {n}:部分引擎(超分/补帧)可能走 ONNX/CPU 兜底,速度会偏慢;建议优先选 NVIDIA 独显。");
+            }
+        }
+        catch { }
+    }
 
     private void NavList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
