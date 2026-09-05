@@ -633,15 +633,17 @@ public static class SafeRender
             bool smallVram = TotalVramGB < 6;
             bool smallRam = TotalRamGB < 8;
             bool fewCores = CpuCoreCount <= 4;
-            // 【裸设备·核显】核显共享显存(报告值可能虚高但实际慢),也要算弱设备(否则核显机被当"显存够"而不提示)
+            // 【裸设备·核显】只有【没有独显】才算弱(仅核显/无GPU);混合本(核显+独显)不算——否则会误判强机为弱设备
             bool igpu = false;
             try
             {
+                bool hasDiscrete = false;
                 if (ALHPro.VulkanCheck.Devices.Count > 0)
-                    igpu = ALHPro.VulkanCheck.Devices.Any(d => GpuInfo.IsIntegratedGPU(d.Name));
+                    hasDiscrete = ALHPro.VulkanCheck.Devices.Any(d => GpuInfo.ScoreDeviceName(d.Name) > 0);
                 else
                     foreach (var n in GpuInfo.GetAdapterNames())
-                        if (GpuInfo.IsIntegratedGPU(n)) { igpu = true; break; }
+                        if (GpuInfo.ScoreDeviceName(n) > 0) { hasDiscrete = true; break; }
+                igpu = !hasDiscrete;   // 无独显 → 只有核显/无 GPU → 弱
             }
             catch { }
             return noGpu || smallVram || smallRam || fewCores || igpu;
@@ -659,13 +661,13 @@ public static class SafeRender
             if (CpuCoreCount <= 4) list.Add("核心数较少");
             try
             {
-                bool igpu = false;
+                bool hasDiscrete = false;
                 if (ALHPro.VulkanCheck.Devices.Count > 0)
-                    igpu = ALHPro.VulkanCheck.Devices.Any(d => GpuInfo.IsIntegratedGPU(d.Name));
+                    hasDiscrete = ALHPro.VulkanCheck.Devices.Any(d => GpuInfo.ScoreDeviceName(d.Name) > 0);
                 else
                     foreach (var n in GpuInfo.GetAdapterNames())
-                        if (GpuInfo.IsIntegratedGPU(n)) { igpu = true; break; }
-                if (igpu) list.Add("核显(共享显存,较慢)");
+                        if (GpuInfo.ScoreDeviceName(n) > 0) { hasDiscrete = true; break; }
+                if (!hasDiscrete) list.Add("核显(共享显存,较慢)");
             }
             catch { }
         }
