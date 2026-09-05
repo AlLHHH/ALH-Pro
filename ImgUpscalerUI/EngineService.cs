@@ -649,12 +649,20 @@ public static partial class EngineService
                 {
                     if (killRequested || p.HasExited) return;
                     bool cpu = args.Contains("-g -1", StringComparison.Ordinal);
-                    // 【按设备档次自适应看门狗】真机 1 分钟不动就该判问题,但弱机/CPU 天生慢不能误杀:
-                    // 强独显(显存≥6G)→ 1 分钟零输出/3 分钟无帧即杀;弱独显/核显(<6G)→ 3/6 分钟;CPU → 8/10 分钟。
+                    // 【识别核显】核显共享显存(报告值常高达8~16G)但实际很慢,不能按"≥6G=强卡"给1分钟看门狗
+                    // (否则处理大帧>1分钟零输出会被误杀)。核显也按 CPU/慢机宽容。
+                    bool igpu = false;
+                    try
+                    {
+                        var gm = System.Text.RegularExpressions.Regex.Match(args, @"-g\s+(\-?\d+)");
+                        if (gm.Success && int.TryParse(gm.Groups[1].Value, out var gi) && gi >= 0)
+                            igpu = GpuInfo.IsIntegratedGPU(GpuInfo.GetEngineDeviceName(gi));
+                    }
+                    catch { }
                     double vram = 0;
                     try { vram = SafeRender.TotalVramGB; } catch { }
                     long noOutLimitTicks, stallLimitTicks;
-                    if (cpu) { noOutLimitTicks = TimeSpan.FromMinutes(8).Ticks; stallLimitTicks = TimeSpan.FromMinutes(10).Ticks; }
+                    if (cpu || igpu) { noOutLimitTicks = TimeSpan.FromMinutes(8).Ticks; stallLimitTicks = TimeSpan.FromMinutes(10).Ticks; }
                     else if (vram >= 6) { noOutLimitTicks = TimeSpan.FromMinutes(1).Ticks; stallLimitTicks = TimeSpan.FromMinutes(3).Ticks; }
                     else { noOutLimitTicks = TimeSpan.FromMinutes(3).Ticks; stallLimitTicks = TimeSpan.FromMinutes(6).Ticks; }
                     long sinceOut = DateTime.Now.Ticks - lastOutTicks;
