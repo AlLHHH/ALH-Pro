@@ -1302,54 +1302,25 @@ public static class VideoService
                                         start, total, pauseWait);   // 探测失败/黑帧 → DeepSeek-2(DirectML GPU 自动);主动选 CPU → -1;pauseWait=ONNX/CPU 也能暂停
                                     foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
                                         File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
-                                    // ONNX(DirectML)重处理仍黑(该卡 DirectML 也异常)→ 再用 ncnn-CPU 兜底(慢但绝不出黑)
+                                    // ONNX(DirectML)重处理仍黑(该卡 DirectML 也异常)→ 直接回退原帧。
+                                    // 【绝不跑慢速 CPU】超分 CPU 兜底要跑到天荒地老,这不是可接受的降级目标。
                                     if (batchOutDirHasBlack(batchOut))
                                     {
                                         progress?.Report((upBase + (int)((90 - upBase) * start / total),
-                                            $"⚠ ONNX DirectML 仍黑(批次 {start}~{end - 1}),该批改用 CPU 兜底..." + StageElapsed()));
-                                        AppLogger.Info($"降级:批次 {start}~{end - 1} ONNX(DirectML)仍黑,改用 ncnn-CPU 兜底");
-                                        try { Directory.Delete(batchOut, true); } catch { }
-                                        Directory.CreateDirectory(batchOut);
-                                        await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
-                                            upScale, 0, -1, false, progress, ct,
-                                            SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1),
-                                            watchStage: "超分",
-                                            globalBaseFrames: start, globalTotalFrames: total);
-                                        foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
-                                            File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
-                                        // 兜底:CPU 兜底仍黑(或 CPU 崩后 GPU0 重算仍黑)→ 该批回退原帧,绝不把黑帧写进输出
-                                        if (batchOutDirHasBlack(batchOut))
-                                        {
-                                            AppLogger.Info($"降级:批次 {start}~{end - 1} 经 GPU/ONNX/CPU 仍黑,该批回退原帧(不输出黑帧)");
-                                            for (int i = start; i < end; i++)
-                                                try { File.Copy(upFiles[i], Path.Combine(upOutput, Path.GetFileName(upFiles[i])), true); } catch { }
-                                        }
+                                            $"⚠ ONNX DirectML 仍黑(批次 {start}~{end - 1}),该批回退原帧(不跑慢速 CPU)..." + StageElapsed()));
+                                        AppLogger.Info($"降级:批次 {start}~{end - 1} ONNX(DirectML)仍黑,回退原帧(不跑慢速 CPU)");
+                                        for (int i = start; i < end; i++)
+                                            try { File.Copy(upFiles[i], Path.Combine(upOutput, Path.GetFileName(upFiles[i])), true); } catch { }
                                     }
                                 }
                                 else
                                 {
-                                    // 无 ONNX 模型:黑帧直接 ncnn-CPU 兜底(Catch 吞失败,避免中断)
+                                    // 无 ONNX 模型:黑帧【不跑慢速 CPU】,直接回退原帧(瞬时完成,绝不把黑帧写进输出)
                                     progress?.Report((upBase + (int)((90 - upBase) * start / total),
-                                        $"⚠ 检测到黑帧(批次 {start}~{end - 1},GPU 输出异常),该批改用 CPU 重处理..." + StageElapsed()));
-                                    AppLogger.Info($"降级:批次 {start}~{end - 1} 输出黑帧(ncnn-vulkan GPU 队列异常),无 ONNX 模型,已用 ncnn-CPU 重处理该批");
-                                    try
-                                    {
-                                        await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
-                                            upScale, 0, -1, false, progress, ct,
-                                            SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1),
-                                            watchStage: "超分",
-                                            globalBaseFrames: start, globalTotalFrames: total);
-                                        foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
-                                            File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
-                                        // 兜底:CPU 兜底仍黑 → 该批回退原帧,绝不把黑帧写进输出
-                                        if (batchOutDirHasBlack(batchOut))
-                                        {
-                                            AppLogger.Info($"降级:批次 {start}~{end - 1} 经 GPU/CPU 仍黑,该批回退原帧(不输出黑帧)");
-                                            for (int i = start; i < end; i++)
-                                                try { File.Copy(upFiles[i], Path.Combine(upOutput, Path.GetFileName(upFiles[i])), true); } catch { }
-                                        }
-                                    }
-                                    catch { }
+                                        $"⚠ 检测到黑帧(批次 {start}~{end - 1},GPU 输出异常),该批回退原帧(无 ONNX 模型,不跑慢速 CPU)..." + StageElapsed()));
+                                    AppLogger.Info($"降级:批次 {start}~{end - 1} 输出黑帧(ncnn-vulkan GPU 队列异常),无 ONNX 模型,回退原帧(不跑慢速 CPU)");
+                                    for (int i = start; i < end; i++)
+                                        try { File.Copy(upFiles[i], Path.Combine(upOutput, Path.GetFileName(upFiles[i])), true); } catch { }
                                 }
                             }
                             Interlocked.Add(ref doneFrames, end - start);
