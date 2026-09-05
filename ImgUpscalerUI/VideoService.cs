@@ -1317,7 +1317,7 @@ public static class VideoService
                                 {
                                     progress?.Report((upBase + (int)((90 - upBase) * start / total),
                                         $"⚠ 检测到黑帧(批次 {start}~{end - 1},GPU 输出异常),该批改用 ONNX DirectML 引擎重处理..." + StageElapsed()));
-                                    AppLogger.Info($"降级:批次 {start}~{end - 1} 输出黑帧(ncnn-vulkan GPU 队列异常),改用 ONNX DirectML({Path.GetFileNameWithoutExtension(onnxB)})");
+                                    AppLogger.Warn($"⚠ 批次 {start}~{end - 1} 输出黑帧(ncnn-vulkan GPU 队列异常)——改用 ONNX DirectML({Path.GetFileNameWithoutExtension(onnxB)}) 重跑该批");
                                     try { Directory.Delete(batchOut, true); } catch { }
                                     Directory.CreateDirectory(batchOut);
                                     await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
@@ -1331,7 +1331,7 @@ public static class VideoService
                                     {
                                         progress?.Report((upBase + (int)((90 - upBase) * start / total),
                                             $"⚠ ONNX DirectML 仍黑(批次 {start}~{end - 1}),该批回退原帧(不跑慢速 CPU)..." + StageElapsed()));
-                                        AppLogger.Info($"降级:批次 {start}~{end - 1} ONNX(DirectML)仍黑,回退原帧(不跑慢速 CPU)");
+                                        AppLogger.Warn($"⚠ 批次 {start}~{end - 1} ONNX(DirectML)重跑仍黑——该批回退源帧(已尽力重跑,仍无法得非黑);若反复出现请更新显卡驱动");
                                         for (int i = start; i < end; i++)
                                             try { File.Copy(upFiles[i], Path.Combine(upOutput, Path.GetFileName(upFiles[i])), true); } catch { }
                                     }
@@ -1341,7 +1341,7 @@ public static class VideoService
                                     // 无 ONNX 模型:黑帧【不跑慢速 CPU】,直接回退原帧(瞬时完成,绝不把黑帧写进输出)
                                     progress?.Report((upBase + (int)((90 - upBase) * start / total),
                                         $"⚠ 检测到黑帧(批次 {start}~{end - 1},GPU 输出异常),该批回退原帧(无 ONNX 模型,不跑慢速 CPU)..." + StageElapsed()));
-                                    AppLogger.Info($"降级:批次 {start}~{end - 1} 输出黑帧(ncnn-vulkan GPU 队列异常),无 ONNX 模型,回退原帧(不跑慢速 CPU)");
+                                    AppLogger.Warn($"⚠ 批次 {start}~{end - 1} 输出黑帧(GPU 队列异常),无 ONNX 模型——该批回退源帧(若反复出现请更新显卡驱动)");
                                     for (int i = start; i < end; i++)
                                         try { File.Copy(upFiles[i], Path.Combine(upOutput, Path.GetFileName(upFiles[i])), true); } catch { }
                                 }
