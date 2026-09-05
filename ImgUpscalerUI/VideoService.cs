@@ -342,6 +342,9 @@ public static class VideoService
         double needBytes = peakFrames * outFrameMB * 1024.0 * 1024.0 * 1.6;   // 与 AvailableFreeSpace 同单位:字节
         double needGB = needBytes / (1024.0 * 1024.0 * 1024.0);
         string tempRoot = PickTempRoot();
+        // 【长视频明确提示】处理前主动显示临时空间预估,让用户知道"预计需要 X GB"(不只磁盘紧张时才提示)
+        progress?.Report((0, $"临时空间预估:本任务预计需要约 {needGB:0.#} GB(补帧/超分临时帧),临时目录 {tempRoot}"));
+        AppLogger.Info($"临时空间预估:约需 {needGB:0.#} GB(源 {srcW}×{srcH},补帧 {interpScale}x,超分 {scale}x),临时目录 {tempRoot}");
         var workDir = Path.Combine(tempRoot, $"imgup_video_{Guid.NewGuid():N}");
         try
         {
