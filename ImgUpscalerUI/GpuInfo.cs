@@ -146,6 +146,64 @@ public static class GpuInfo
         return (labels, rec);
     }
 
+    /// <summary>引擎真实枚举的显卡名(按引擎 -g 编号取)。无引擎枚举时回退注册表按索引取。
+    /// 供"引擎 id 作为索引"的边界使用——不能直接用注册表顺序索引(AMD 核显+NVIDIA 独显双卡机上两者顺序相反)。</summary>
+    public static string GetEngineDeviceName(int engineId)
+    {
+        if (engineId < 0) return "";
+        try
+        {
+            var d = VulkanCheck.Devices.FirstOrDefault(x => x.Id == engineId);
+            if (!string.IsNullOrWhiteSpace(d.Name)) return d.Name;
+        }
+        catch { }
+        try
+        {
+            var names = GetAdapterNames();
+            if (engineId < names.Count) return names[engineId];
+        }
+        catch { }
+        return "";
+    }
+
+    /// <summary>引擎真实枚举的 GPU 数量(0=未枚举/无 GPU);供"引擎 id 是否越界"判定用。
+    /// 与 GetEngineDeviceName 同源(VulkanCheck.Devices),不再用注册表数量去比对引擎 id。</summary>
+    public static int EngineDeviceCount
+    {
+        get
+        {
+            try { if (VulkanCheck.Devices.Count > 0) return VulkanCheck.Devices.Count; } catch { }
+            return GetAdapterNames().Count;
+        }
+    }
+
+    /// <summary>推荐的计算设备【引擎 -g 编号】:与 BuildGpuLabels 口径一致——得分最高的非核显;否则第一张。
+    /// 供首次启动默认/自动适配用(不再把"注册表推荐索引"当作引擎 id,双卡机上两者编号可能相反)。</summary>
+    public static int GetRecommendedEngineId()
+    {
+        try
+        {
+            var devs = VulkanCheck.Devices;
+            if (devs.Count > 0)
+            {
+                int best = -1, bestScore = -1;
+                foreach (var d in devs)
+                {
+                    int s = ScoreDeviceName(d.Name);
+                    if (s > bestScore) { bestScore = s; best = d.Id; }
+                }
+                return best >= 0 ? best : devs[0].Id;
+            }
+        }
+        catch { }
+        try
+        {
+            int rec = GetRecommendedIndex(GetAdapterNames());
+            return rec >= 0 ? rec : 0;
+        }
+        catch { return 0; }
+    }
+
     internal static bool IsVirtual(string name)
     {
         foreach (var kw in VirtualKeywords)
