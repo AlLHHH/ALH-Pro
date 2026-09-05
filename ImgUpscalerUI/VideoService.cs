@@ -1749,13 +1749,14 @@ public static class VideoService
             // MP4 加 faststart 便于流式播放;MKV 不需要
             var fastFlag = outputVideo.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)
                 ? " -movflags +faststart" : "";
-            // 音频(恢复原逻辑):MP4 容器不支持 vorbis/opus/flac 等编码,自动转 aac;MKV 原样拷贝;
-            // 静音=不映射音轨(无音轨输出)
+            // 音频:MP4 容器不支持 vorbis/opus/flac 等编码 → 自动转 aac(仅当源码不是可复制的编码);MKV 原样拷贝,
+            // 保留无损/环绕音轨(flac/dts/opus 等不再被压成有损 aac)。静音=不映射音轨(无音轨输出)。
             var audioArgs = "-c:a copy";
             if (!mute && outputVideo.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
             {
                 var acodec = await ProbeAudioCodec(inputVideo);
-                if (acodec.Length > 0 && acodec is not ("aac" or "mp3" or "ac3" or "eac3"))
+                // MP4 容器:仅 aac/mp3/ac3/eac3 可原样复制;其它(含探不出/未知)一律转 aac 保兼容
+                if (acodec is not ("aac" or "mp3" or "ac3" or "eac3"))
                     audioArgs = "-c:a aac";
             }
             // 先写临时文件,合帧真正完成并校验通过后再原子改名成最终文件名:
@@ -1771,7 +1772,7 @@ public static class VideoService
             // 比 N/SR/TB 重排更贴合视频时间轴,减少"音画不同步")。
             var audioPart = mute ? "" : $" -map 1:a:0? {audioArgs}";
             if (!mute && muxDur > 0.01)
-                audioPart += $" -af \"atrim=duration={muxDur.ToString("0.######", inv)},asetpts=PTS-STARTPTS\" -c:a aac";
+                audioPart += $" -t \"{muxDur.ToString("0.######", inv)}\"";
             var muxArgs = $"{videoMap}{audioPart} {encArgs} {vfArg}{fastFlag} \"{outTmp}\"";
             var muxBase = $"-y {muxInput} {trimArgs} -i \"{inputVideo}\" ";
             // 编码阶段整体进度 96→100 随 ffmpeg 编码帧数推进(否则卡 96%,结尾预计时间虚高失真)
@@ -2830,8 +2831,24 @@ public static class VideoService
     /// <summary>本会话已知会失败的硬件编码器(如 nvenc 驱动过老),避免每次先白跑一次硬件编码再回退。</summary>
     private static readonly System.Collections.Generic.HashSet<string> BrokenHwEncoders = new();
 
-    /// <summary>本会话 GPU 硬解(d3d11va)已验证不可用:后续拆帧直接软解,不再每次白试一次。</summary>
-    private static bool _hwDecodeBroken;
+    /// <summary>本会话各视频编码 GPU 硬解(d3d11va)已验证不可用的集合(按编码器区分,如 h264/hevc/av1)。
+    /// 某一种编码硬解不了(如旧卡硬解 AV1)只禁用该编码,其它编码仍优先硬解,不再"一次失败、全会话软解"。</summary>
+    private static readonly System.Collections.Generic.HashSet<string> _hwDecodeBrokenCodecs = new();
+
+    /// <summary>探测输入视频的编码器名(如 h264/hevc/av1),用于区分硬解可用性;失败/探不出返回 ""。</summary>
+    private static async Task<string> ProbeVideoCodecName(string ffmpeg, string video)
+    {
+        try
+        {
+            string? dir = Path.GetDirectoryName(ffmpeg);
+            string? fp = dir != null ? Path.Combine(dir, "ffprobe.exe") : null;
+            if (fp == null || !File.Exists(fp)) return "";
+            var lines = await RunCaptureAsync(fp,
+                $"-v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 \"{video}\"", default);
+            return lines.Count > 0 ? lines[0].Trim() : "";
+        }
+        catch { return ""; }
+    }
 
     /// <summary>拆帧(优先 GPU 硬解 d3d11va,失败自动回退软解):既省 CPU 又提速。
     /// vfExpr=滤镜表达式(如 scale...);返回实际拆出的帧数。</summary>
@@ -2924,8 +2941,9 @@ public static class VideoService
         string fpsMode = vfrPts ? " -fps_mode passthrough" : "";
         // 开关2(分线程):拆帧限流,避免抢系统核(仅开启时生效)
         string threadsArg = SafeRender.SplitCores ? $" -threads {Math.Max(2, SafeRender.CpuCoreCount - 2)}" : "";
-        // 硬解优先(仅当本会话没验证过坏);坏过一次就永久软解,不再白跑
-        if (!_hwDecodeBroken)
+        // 硬解优先(仅当该编码本会话没验证过坏);某编码坏过一次就对该编码软解,其它编码仍试硬解
+        string hwCodec = await ProbeVideoCodecName(ffmpeg, inputVideo);
+        if (!_hwDecodeBrokenCodecs.Contains(hwCodec))
         {
             try
             {
@@ -2934,9 +2952,9 @@ public static class VideoService
                     progress, ct, "拆帧", origCountEst);
                 int n = Directory.EnumerateFiles(framesDir, "*.jpg").Count();
                 if (n > 0) return n;
-                _hwDecodeBroken = true;   // 硬解输出 0 帧 → 视为不可用
+                _hwDecodeBrokenCodecs.Add(hwCodec);   // 硬解输出 0 帧 → 该编码视为不可用
             }
-            catch { _hwDecodeBroken = true; }   // 硬解失败 → 标记坏,回退软解
+            catch { _hwDecodeBrokenCodecs.Add(hwCodec); }   // 硬解失败 → 该编码标记坏,回退软解
             // 清理硬解可能留下的残缺帧
             foreach (var f in Directory.EnumerateFiles(framesDir, "*.jpg"))
             { try { File.Delete(f); } catch { } }
