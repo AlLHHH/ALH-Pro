@@ -791,10 +791,16 @@ public static partial class EngineService
                     await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
                     // 判定:退出码 0 且输出文件存在(引擎正常出图)
                     bool ok = p.ExitCode == 0 && File.Exists(outPng) && new FileInfo(outPng).Length > 0;
+                    // 【黑帧自检】引擎输出存在但全黑(静默黑帧 bug,如旧 ncnn on 50系/AMD 驱动异常)→ 该设备视为不可用,
+                    // 立即改用其它卡/ONNX;否则黑帧设备会被误判"可用",后续补帧/超分一路黑。
                     if (ok)
-                        AppLogger.Info($"[探测] 引擎 {engine} GPU(-g {gpuId})可用(1×1 图出图)");
+                    {
+                        try { if (IsBlackPng(outPng)) { ok = false; } } catch { }
+                    }
+                    if (ok)
+                        AppLogger.Info($"[探测] 引擎 {engine} GPU(-g {gpuId})可用(1×1 图出图,非黑)");
                     else
-                        AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId})不可用(exit={p.ExitCode}/无输出)——将自动改用 CPU");
+                        AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId})不可用(exit={p.ExitCode}/无输出/{outPng},可能黑帧)——将自动改用其它设备或 ONNX");
                     return ok;
                 }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested)
