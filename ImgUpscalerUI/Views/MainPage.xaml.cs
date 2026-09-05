@@ -256,14 +256,72 @@ public sealed partial class MainPage : Page
             SelfCheckItems.Visibility = Visibility.Collapsed;
             SelfCheckHint.Visibility = Visibility.Collapsed;
             SelfCheckTitle.Text = "本机设备自检";
-            SelfCheckReport.Text = BuildSelfCheckReport(enginesOk);
-            AppSettings.SelfCheckReport = SelfCheckReport.Text;
+            PopulateSelfCheckReport(enginesOk);
+            AppSettings.SelfCheckReport = BuildSelfCheckReport(enginesOk);   // 设置页共用同一文本
             try { AppSettings.Save(); } catch { }
-            SelfCheckReport.Visibility = Visibility.Visible;
+            SelfCheckScroll.Visibility = Visibility.Visible;
             SelfCheckOkBtn.Visibility = Visibility.Visible;
             await Task.CompletedTask;
         }
         catch { SelfCheckOverlay.Visibility = Visibility.Collapsed; }
+    }
+
+    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush CheckGreen =
+        new(Windows.UI.Color.FromArgb(255, 108, 200, 118));
+    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush CheckRed =
+        new(Windows.UI.Color.FromArgb(255, 226, 92, 92));
+
+    /// <summary>把报告渲染成可着色条目(功能/引擎模型按可用与否 绿/红)。</summary>
+    private void PopulateSelfCheckReport(bool enginesOk)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        SelfCheckReport.Children.Clear();
+        var devs = VulkanCheck.Devices.Count > 0
+            ? string.Join(" / ", VulkanCheck.Devices.Select(d => "GPU " + d.Id + " · " + d.Name))
+            : (GpuInfo.GetAdapterNames().Count > 0
+                ? string.Join(" / ", GpuInfo.GetAdapterNames().Select((n, i) => "GPU " + i + " · " + n))
+                : "未检测到可用的 GPU");
+        AddReportLine("计算设备", devs, null);
+        int chosen = AppSettings.GpuIndex;
+        if (chosen >= 0 && !string.IsNullOrWhiteSpace(GpuInfo.GetEngineDeviceName(chosen)))
+            AddReportLine("推荐计算设备", "GPU " + chosen + " · " + GpuInfo.GetEngineDeviceName(chosen), null);
+        try { AddReportLine("显存", SafeRender.TotalVramGB.ToString("0.#", inv) + " GB / 可用 " + SafeRender.FreeVramGB.ToString("0.#", inv) + " GB", null); } catch { }
+        try { AddReportLine("系统内存", SafeRender.TotalRamGB.ToString("0.#", inv) + " GB", null); } catch { }
+        try { AddReportLine("处理器", SafeRender.CpuName + " · " + SafeRender.CpuCoreCount + " 核", null); } catch { }
+        try { var drv = GpuInfo.GetDriverVersions(); if (drv.Count > 0 && !string.IsNullOrWhiteSpace(drv[0])) AddReportLine("显卡驱动", drv[0], null); } catch { }
+        bool dml = ALHPro.EsrganOnnxService.DmlFallbackOk >= 0;
+        AddReportLine("DirectML / ONNX 加速", dml ? "可用" : "不可用", dml);
+        AddReportLine("超分 / 补帧引擎", enginesOk ? "齐全" : "缺失", enginesOk);
+        AddReportSection("功能自检");
+        foreach (var (name, okk) in CheckFunctions())
+            AddReportLine(null, "· " + name + "  " + (okk ? "可用" : "不可用"), okk);
+        AddReportSection("引擎 / 模型");
+        foreach (var (name, present) in EngineHealth())
+            AddReportLine(null, "· " + name + "  " + (present ? "已安装" : "缺失"), present);
+    }
+
+    private void AddReportLine(string? label, string value, bool? ok)
+    {
+        var tb = new TextBlock
+        {
+            Text = label != null ? label + ": " + value : value,
+            FontSize = 12,
+            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+        };
+        if (ok == true) tb.Foreground = CheckGreen;
+        else if (ok == false) tb.Foreground = CheckRed;
+        SelfCheckReport.Children.Add(tb);
+    }
+
+    private void AddReportSection(string title)
+    {
+        SelfCheckReport.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Margin = new Microsoft.UI.Xaml.Thickness(0, 8, 0, 0),
+        });
     }
 
     private void SelfCheckOk_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
