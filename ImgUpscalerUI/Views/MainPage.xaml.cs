@@ -2279,6 +2279,7 @@ public sealed partial class MainPage : Page
                         XamlRoot = this.XamlRoot,
                     };
                     await okDlg.ShowAsync();
+                    _ = ShowSponsorPromptAsync();   // 导出成功且点"确定"后,30% 概率弹赞助提示(冷却2小时)
                 }
                 finally
                 {
@@ -2375,6 +2376,36 @@ public sealed partial class MainPage : Page
 
     /// <summary>左下角「☕ 请作者喝咖啡」→ 打赏卡片弹窗(赞赏码图片 + 打赏平台链接)。</summary>
     private void CoffeeCard_Click(object sender, RoutedEventArgs e) => ShowCoffeeCard();
+
+    /// <summary>导出诊断包成功并点「确定」后:30% 概率弹出"请作者喝咖啡"赞助提示;关闭后 2 小时内不再触发。</summary>
+    private async Task ShowSponsorPromptAsync()
+    {
+        try
+        {
+            // 冷却:上次关闭后 2 小时内不再弹
+            if (DateTime.Now - AppSettings.SponsorPromptTime < TimeSpan.FromHours(2)) return;
+            // 30% 概率(作者感谢但不打扰)
+            if (new Random().NextDouble() >= 0.30) return;
+            await Task.Delay(300);   // 让确定弹窗关闭后画面稳定再显示
+            SponsorOverlay.Visibility = Visibility.Visible;
+        }
+        catch { }
+    }
+
+    private void SponsorCoffee_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        try { SponsorOverlay.Visibility = Visibility.Collapsed; } catch { }
+        AppSettings.SponsorPromptTime = DateTime.Now;   // 触发后 2 小时冷却
+        try { AppSettings.Save(); } catch { }
+        ShowCoffeeCard();
+    }
+
+    private void SponsorClose_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        try { SponsorOverlay.Visibility = Visibility.Collapsed; } catch { }
+        AppSettings.SponsorPromptTime = DateTime.Now;   // 关闭后 2 小时冷却
+        try { AppSettings.Save(); } catch { }
+    }
 
     /// <summary>左下角「💬 ALH Pro 社区」→ 打开爱发电电圈(官方交流社区)。</summary>
     private void Community_Click(object sender, RoutedEventArgs e)

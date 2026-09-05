@@ -22,6 +22,9 @@ public static class AppSettings
     /// <summary>启动自检完成后的正式报告文本(设置界面「计算设备」区常驻显示)。</summary>
     public static string SelfCheckReport { get; set; } = "";
 
+    /// <summary>上次关闭"请作者喝咖啡"赞助提示的时间(冷却:2 小时内不再触发)。</summary>
+    public static DateTime SponsorPromptTime { get; set; } = DateTime.MinValue;
+
     /// <summary>自检报告对应的软件版本(升级后自动作废旧缓存重测,报告修复才能生效)。</summary>
     public static string VulkanReportVersion { get; set; } = "";
 
@@ -53,6 +56,7 @@ public static class AppSettings
             VulkanCheckDone = d.VulkanCheckDone;
             VulkanReport = d.VulkanReport ?? "";
             SelfCheckReport = d.SelfCheckReport ?? "";
+            SponsorPromptTime = d.SponsorPromptTime == default ? DateTime.MinValue : d.SponsorPromptTime;
             VulkanReportVersion = d.VulkanReportVersion ?? "";
             TempDir = d.TempDir ?? "";
             LastShownVersion = d.LastShownVersion ?? "";
@@ -78,6 +82,7 @@ public static class AppSettings
                         VulkanCheckDone = VulkanCheckDone,
                         VulkanReport = VulkanReport,
                         SelfCheckReport = SelfCheckReport,
+                        SponsorPromptTime = SponsorPromptTime,
                         VulkanReportVersion = VulkanReportVersion,
                         TempDir = TempDir,
                         LastShownVersion = LastShownVersion,
@@ -94,6 +99,7 @@ public static class AppSettings
         public bool VulkanCheckDone { get; set; }
         public string VulkanReport { get; set; } = "";
         public string SelfCheckReport { get; set; } = "";
+        public DateTime SponsorPromptTime { get; set; } = DateTime.MinValue;
         public string VulkanReportVersion { get; set; } = "";
         public string TempDir { get; set; } = "";
         public string LastShownVersion { get; set; } = "";
