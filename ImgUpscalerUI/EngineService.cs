@@ -636,8 +636,10 @@ public static partial class EngineService
                 {
                     if (killRequested || p.HasExited) return;
                     bool cpu = args.Contains("-g -1", StringComparison.Ordinal);
-                    long noOutLimitTicks = TimeSpan.FromMinutes(cpu ? 20 : 8).Ticks;
-                    long stallLimitTicks = TimeSpan.FromMinutes(10).Ticks;
+                    // 【收紧看门狗】GPU 引擎 3 分钟零输出 / 5 分钟无帧即判停滞杀降级(GPU 正常秒级出活,3-5 分钟零进展=真卡死,
+                    // 原 8/10 分钟太慢,用户要白等很久);CPU 保留宽容(CPU 天生慢,单 4K 帧可达数分钟,不能误杀)。
+                    long noOutLimitTicks = TimeSpan.FromMinutes(cpu ? 12 : 3).Ticks;
+                    long stallLimitTicks = TimeSpan.FromMinutes(cpu ? 10 : 5).Ticks;
                     long sinceOut = DateTime.Now.Ticks - lastOutTicks;
                     long sinceFrame = DateTime.Now.Ticks - lastFrameTicks;
                     // ① 启动超时:30 秒零输出 + 进程还在(而非立即失败退出)
@@ -664,7 +666,7 @@ public static partial class EngineService
                 }
             }
             catch { }
-        }, null, 60000, 60000);
+        }, null, 30000, 30000);   // 每 30 秒检查一次(原 60 秒,降级更及时)
 
         // 等待退出;取消时杀掉进程树
         string? killReason = null;
