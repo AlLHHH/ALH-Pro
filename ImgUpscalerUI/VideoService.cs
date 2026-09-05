@@ -1274,9 +1274,9 @@ public static class VideoService
                                 else if (engine == "waifu2x")
                                     onnxModelPath = EsrganOnnxService.FindWaifu2xModel();
                             }
-                            else if (engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan())
+                            else if (engine == "realesrgan" && (EngineService.ShouldUseOnnxEsrgan() || (fastMode && !EngineService.IsNvidiaGpu())))
                                 onnxModelPath = EsrganOnnxService.ResolveEsrganOnnxPath(model);
-                            else if (engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx))
+                            else if (engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx || (fastMode && !EngineService.IsNvidiaGpu())))
                                 onnxModelPath = EsrganOnnxService.FindWaifu2xModel();
                             if (onnxModelPath != null)
                             {
