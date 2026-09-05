@@ -65,6 +65,10 @@ public static partial class EngineService
     /// 之后所有引擎的 CPU 兜底直接跳过,改为 GPU 0 重算,避免反复崩溃拖慢/卡住(双卡机/部分机型实测)。</summary>
     private static bool _ncnnCpuBroken;
 
+    /// <summary>本会话内确认"WinRT BitmapEncoder 编码 JPG 不可用"(视频/后台线程上系统性抛 HRESULT,空消息)
+    /// 后置位:后续帧直接走 System.Drawing(转 24bppRgb),不再逐帧尝试 WinRT + 逐帧刷失败日志。</summary>
+    private static bool _winrtJpegBroken;
+
     public static async Task<bool> IsWaifu2xNcnnUsableAsync(int gpuId, CancellationToken ct)
     {
         if (!IsBlackwellGpu() && !HasNonNvidiaGpu()) return true;
@@ -1689,6 +1693,8 @@ public static partial class EngineService
     private static void SaveJpegViaWinRT(System.Drawing.Bitmap bmp, string jpgPath, float quality = 0.92f)
     {
         int w = bmp.Width, h = bmp.Height;
+        if (!_winrtJpegBroken)
+        {
         try
         {
             // 转成 32bppArgb 再取像素(System.Drawing 内存布局为 BGRA,需转成 RGBA 给 WinRT)
@@ -1740,11 +1746,15 @@ public static partial class EngineService
             mem.Seek(0);
             using var fs = File.Create(jpgPath);
             mem.AsStreamForRead().CopyTo(fs);
+            return;   // WinRT 成功即返回
         }
         catch (Exception ex)
         {
-            AppLogger.Warn($"⚠ WinRT JPG 编码失败({ex.GetType().Name},HRESULT=0x{ex.HResult:X8})——回退 System.Drawing(已转 24bppRgb 规避色偏),避免占位/冻结帧;\n   {ex.Message?.Split('\n')[0]}");
-            SaveJpegViaGdi(bmp, jpgPath, quality);
+            _winrtJpegBroken = true;
+            AppLogger.Warn($"⚠ WinRT JPG 编码不可用({ex.GetType().Name},HRESULT=0x{ex.HResult:X8})——本会话改成 System.Drawing(转 24bppRgb)编码,避免占位/冻结帧;{ex.Message?.Split('\n')[0]}");
+        }
+        // WinRT 不可用/已确认坏 → System.Drawing 兜底(真实画面,不再占位/冻结)
+        SaveJpegViaGdi(bmp, jpgPath, quality);
         }
     }
 
