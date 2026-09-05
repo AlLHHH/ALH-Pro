@@ -1025,13 +1025,23 @@ public static class VideoService
                 int interpGpu = gpuId;
                 if (gpuId >= 0)
                 {
-                    progress?.Report((10, $"正在检测补帧 GPU 兼容性(最长 5 秒)..."));
-                    bool rifeOk = await EngineService.IsRifeGpuUsableAsync(rife, interpModel, gpuId, ct).ConfigureAwait(false);
-                    if (!rifeOk)
+                    // Blackwell(50系)ncnn-RIFE 已知会 hang/崩,不必探测——直接走 ONNX(否则探测要白等 10~20 秒)
+                    if (EngineService.IsBlackwellGpu())
                     {
-                        AppLogger.Warn($"⚠ RIFE {interpModel} GPU 探测失败,改用 CPU 补帧(慢但不会挂起白等)");
-                        progress?.Report((10, $"⚠ RIFE 无法用 GPU,自动改用 CPU 补帧(较慢但稳定)..."));
-                        interpGpu = -1;   // 本视频后续补帧 API 全部 CPU(InterpSegmentAsync 传入)
+                        AppLogger.Info("⚠ 50系(Blackwell)ncnn 补帧引擎会 hang,直接改用 ONNX 补帧路线");
+                        progress?.Report((10, "⚠ 50系 ncnn 补帧不稳,直接改用 ONNX 补帧..."));
+                        interpGpu = -1;
+                    }
+                    else
+                    {
+                        progress?.Report((10, $"正在检测补帧 GPU 兼容性(最长约 10 秒,失败重试一次)..."));
+                        bool rifeOk = await EngineService.IsRifeGpuUsableAsync(rife, interpModel, gpuId, ct).ConfigureAwait(false);
+                        if (!rifeOk)
+                        {
+                            AppLogger.Warn($"⚠ RIFE {interpModel} GPU 探测失败,改用 CPU 补帧(慢但不会挂起白等)");
+                            progress?.Report((10, $"⚠ RIFE 无法用 GPU,自动改用 CPU 补帧(较慢但稳定)..."));
+                            interpGpu = -1;   // 本视频后续补帧 API 全部 CPU(InterpSegmentAsync 传入)
+                        }
                     }
                 }
                 var segStart = 0;

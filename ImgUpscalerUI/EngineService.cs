@@ -881,10 +881,9 @@ public static partial class EngineService
                     }
                     catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                     {
-                        AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId}) {10} 秒无响应(疑似 hang)" + (attempt < 2 ? ",重试一次..." : ",按不可用处理"));
+                        AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId}) {10} 秒无响应(疑似 hang),按不可用处理");
                         try { p.Kill(entireProcessTree: true); } catch { }
-                        if (attempt < 2) continue;   // 超时也算一次,给下一次机会(可能只是启动慢)
-                        return false;
+                        return false;   // 超时=真 hang,不重试(重试只会再白等 10 秒);仅快速失败(非超时)才走重试
                     }
                     catch (OperationCanceledException)
                     {
