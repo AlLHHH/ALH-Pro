@@ -84,6 +84,8 @@ public sealed partial class MainPage : Page
                 {
                     VulkanCheck.RunOnce();
                     bool gpuOk = VulkanCheck.GpuAvailable;
+                    MarkSelfCheckStep(0, gpuOk);            // ① 检测显卡
+                    MarkSelfCheckStep(1, true);             // ② 显存/驱动/内存/CPU(RunOnce 报告已含)
                     // 【分发给所有用户】无条件实测 DirectML 设备,让 PickDevice 用真实 DML 结果而非 Vulkan 判定。
                     // 之前仅"多卡机"探测——单卡机(最常见)不探测,导致 PickDevice 退回 Vulkan 判定,
                     // 在"DirectML 可用但 Vulkan 检测失败"的机器上把 ONNX 超分/视频超分静默拖回 CPU(CPU 在跑)。
@@ -92,10 +94,14 @@ public sealed partial class MainPage : Page
                     {
                         try { await ALHPro.EsrganOnnxService.EnsureDmlProbeAsync(); } catch { }
                     }
+                    MarkSelfCheckStep(4, ALHPro.EsrganOnnxService.FindModel() == null || ALHPro.EsrganOnnxService.DmlFallbackOk >= 0);   // ⑤ DirectML
                     AppLogger.Info("Vulkan 自检:" + (gpuOk ? "GPU 引擎可用(Vulkan 设备枚举成功)" : "GPU 引擎不可用(未枚举到 Vulkan 设备),建议设置中选 CPU") + VulkanCheck.Report);
                     // 【推荐项 = 自检最好的独显】无条件按 1×1 实测选最佳,保证默认/推荐项就是自检最佳的卡
                     // (避免仅按型号打分选到"名字对但实际不可用"的卡)。
                     int selfBest = await EngineService.FindBestWorkingGpuAsync();
+                    MarkSelfCheckStep(2, selfBest >= 0);    // ③ 识别最佳独显
+                    MarkSelfCheckStep(3, selfBest >= 0);    // ④ 核验可用性
+                    MarkSelfCheckStep(5, ok);               // ⑥ 超分/补帧引擎齐全
                     if (selfBest >= 0 && AppSettings.GpuIndex != selfBest)
                     {
                         AppSettings.GpuIndex = selfBest;
@@ -196,20 +202,27 @@ public sealed partial class MainPage : Page
     private static readonly string[] SelfCheckStepTexts =
     {
         "检测显卡与计算设备",
+        "读取显存 / 驱动 / 内存 / CPU",
         "识别并选择最佳独显",
         "核验所选设备是否可用",
-        "读取显存 / 驱动 / 内存",
+        "检测 DirectML / ONNX 加速",
+        "检查超分 / 补帧引擎",
     };
 
-    /// <summary>启动自检遮罩:首次/更新后显示自检名单,自检完成前遮挡主界面(不可误操作)。</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, TextBlock> SelfCheckRows = new();
+
+    /// <summary>启动自检遮罩:每次启动显示自检名单,自检完成前遮挡主界面(不可误操作)。</summary>
     private void ShowSelfCheckOverlay()
     {
         try
         {
             SelfCheckItems.Children.Clear();
-            foreach (var s in SelfCheckStepTexts)
+            SelfCheckRows.Clear();
+            for (int i = 0; i < SelfCheckStepTexts.Length; i++)
             {
-                SelfCheckItems.Children.Add(new TextBlock { Text = "◌  " + s, FontSize = 13, Opacity = 0.85 });
+                var tb = new TextBlock { Text = "◌  " + SelfCheckStepTexts[i], FontSize = 13, Opacity = 0.85 };
+                SelfCheckRows[i] = tb;
+                SelfCheckItems.Children.Add(tb);
             }
             SelfCheckProgress.IsActive = true;
             SelfCheckOverlay.Visibility = Visibility.Visible;
@@ -217,19 +230,25 @@ public sealed partial class MainPage : Page
         catch { }
     }
 
-    /// <summary>自检完成:把每项标为完成(绿色对勾),短暂停留后隐藏,解除遮挡。</summary>
+    /// <summary>更新某一自检项状态(打勾✓/打叉✗)。可在后台线程调用(自动切到 UI 线程)。</summary>
+    private void MarkSelfCheckStep(int idx, bool ok)
+    {
+        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(() => MarkSelfCheckStep(idx, ok)); return; }
+        try
+        {
+            if (idx >= 0 && SelfCheckRows.TryGetValue(idx, out var tb))
+                tb.Text = (ok ? "✓  " : "✗  ") + SelfCheckStepTexts[idx];
+        }
+        catch { }
+    }
+
+    /// <summary>自检完成:停转圈,短暂停留后隐藏,解除遮挡。</summary>
     private async Task FinishSelfCheckOverlayAsync()
     {
         try
         {
-            int i = 0;
-            foreach (var child in SelfCheckItems.Children)
-            {
-                if (child is TextBlock tb && i < SelfCheckStepTexts.Length)
-                    tb.Text = "✓  " + SelfCheckStepTexts[i++];
-            }
             SelfCheckProgress.IsActive = false;
-            await Task.Delay(600);   // 让用户看到"完成"状态再放行
+            await Task.Delay(700);   // 让用户看到完成结果再放行
             SelfCheckOverlay.Visibility = Visibility.Collapsed;
         }
         catch { }
