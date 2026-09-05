@@ -409,7 +409,7 @@ public sealed partial class VideoView : UserControl
         ScreenFpsHint.IsHitTestVisible = false;
         UpdateComponentStatus();
         // 计算设备:统一在「设置」里选择(AppSettings.GpuIndex),页面不再显示下拉
-        _gpuCount = GpuInfo.GetAdapterNames().Count;
+        _gpuCount = GpuInfo.EngineDeviceCount;
         // 参数默认值(InitializeComponent 后设置,避免 XAML 解析期事件)
         DedupHiSlider.Value = 12;      // 手动-重复帧检测:默认=动漫模式参数(研究校准值)
         DedupLoSlider.Value = 5;
@@ -438,24 +438,17 @@ public sealed partial class VideoView : UserControl
         SetDenoiseUi(DenoiseToggle.IsChecked == true);
     }
 
-    /// <summary>当前计算设备是否为核显(名字识别:Intel UHD/Iris/*Intel(R) Graphics* / AMD Radeon(TM) Graphics)。</summary>
+    /// <summary>当前计算设备是否为核显(名字识别:Intel UHD/Iris/*Intel(R) Graphics* / AMD Radeon(TM) Graphics)。
+    /// 用引擎真实枚举按 -g 编号取名字(不能用注册表顺序索引——AMD 核显+NVIDIA 独显双卡机上两者顺序相反)。</summary>
     private bool CurrentIsIntegratedGpu()
     {
         try
         {
             var idx = CurrentGpuId;
             if (idx < 0) return false;   // CPU 模式,不算核显
-            var names = GpuInfo.GetAdapterNames();
-            if (idx < names.Count)
-            {
-                var n = names[idx];
-                if (n.Contains("AMD Radeon(TM) Graphics", StringComparison.OrdinalIgnoreCase)) return true;
-                return n.Contains("Intel", StringComparison.OrdinalIgnoreCase)
-                    && (n.Contains("UHD", StringComparison.OrdinalIgnoreCase)
-                        || n.Contains("Iris", StringComparison.OrdinalIgnoreCase)
-                        || n.Contains("HD Graphics", StringComparison.OrdinalIgnoreCase)
-                        || n.Contains("Intel(R) Graphics", StringComparison.OrdinalIgnoreCase));
-            }
+            var n = GpuInfo.GetEngineDeviceName(idx);
+            if (n.Length == 0) return false;
+            return GpuInfo.IsIntegratedGPU(n);
         }
         catch { }
         return false;
@@ -3843,9 +3836,9 @@ public sealed partial class VideoView : UserControl
         _failReasons.Clear();   // 本次任务的失败原因,清空重来
         var outputFiles = new System.Collections.Generic.List<string>();   // 本次成功生成的输出文件(弹窗高亮用)
         VideoLogText.Text = "";
-        // GPU 型号(与引擎 -g 编号对应;注册表轻量读取)
+        // GPU 型号(按引擎真实 -g 编号取;不能用注册表标签按引擎 id 索引——双卡机上顺序相反)
         string gpuName = "";
-        try { var (gpuLabels, _) = GpuInfo.BuildLabels(); if (gpuLabels.Count > 0) gpuName = gpuLabels[Math.Min(Math.Max(gpuId, 0), gpuLabels.Count - 1)]; } catch { }
+        try { gpuName = GpuInfo.GetEngineDeviceName(gpuId); } catch { }
         string devStr = gpuId >= 0 ? (gpuName.Length > 0 ? gpuName : $"GPU {gpuId}") : "CPU (软件计算)";
         Log($"开始处理:共 {items.Length} 个视频,计算设备:{devStr}");
         Log($"输出设置:编码格式={(CodecCombo.SelectedIndex == 1 ? "H.265" : "H.264")},封装={(FormatCombo.SelectedIndex == 1 ? "MKV" : "MP4")}," +

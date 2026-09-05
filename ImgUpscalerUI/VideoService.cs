@@ -2707,11 +2707,11 @@ public static class VideoService
     /// codecPref:0=自动(H.264 优先) 1=强制 H.264 2=优先 H.265(hevc,更省空间,老设备可能播不了)。</summary>
     private static string PickVideoEncoder(int gpuId, int codecPref = 0)
     {
-        var gpus = GpuInfo.GetAdapterNames();
+        // 按引擎真实 -g 编号取显卡名选硬件编码器;不能用注册表顺序索引(AMD 核显+NVIDIA 独显双卡机上顺序相反)。
+        var name = GpuInfo.GetEngineDeviceName(gpuId);
         string h264Vendor = "", hevcVendor = "";
-        if (gpuId >= 0 && gpuId < gpus.Count)
+        if (gpuId >= 0 && name.Length > 0)
         {
-            var name = gpus[gpuId];
             bool nv = name.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase);
             bool amd = name.Contains("AMD", StringComparison.OrdinalIgnoreCase) || name.Contains("Radeon", StringComparison.OrdinalIgnoreCase);
             bool intel = name.Contains("Intel", StringComparison.OrdinalIgnoreCase);

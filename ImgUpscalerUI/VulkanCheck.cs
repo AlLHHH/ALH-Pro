@@ -99,6 +99,11 @@ public static class VulkanCheck
                 }
                 // 引擎枚举到 Vulkan 设备即认为有 GPU(编号对错是另一回事,用户可在设置里换)
                 GpuAvailable = devices.Count > 0;
+                // 【修复】把引擎真实枚举的设备表同步到静态 Devices。之前只写入局部 devices(供报告),
+                // 静态 Devices 恒为空 → MainPage 的 BuildGpuLabels 回退到注册表顺序;在 AMD 核显+NVIDIA 独显
+                // 双卡机上,注册表顺序与引擎真实 -g 编号颠倒(“GPU 1 · NVIDIA”实际跑核显)。同步后下拉/报告/引擎一致。
+                Devices.Clear();
+                if (devices.Count > 0) Devices.AddRange(devices);
                 Report = BuildReport(GpuAvailable, devices, "");
             }
             finally

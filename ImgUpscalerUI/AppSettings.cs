@@ -39,13 +39,8 @@ public static class AppSettings
             {
                 // 首次启动:自动采用推荐 GPU(跳过 Intel/AMD 核显选独立显卡),不再默认 0(核显)。
                 // 此前默认 0 会让"软件推荐 NVIDIA 但实际用核显"——补帧/超分极慢,用户以为卡死。
-                try
-                {
-                    var names = GpuInfo.GetAdapterNames();
-                    int rec = GpuInfo.GetRecommendedIndex(names);
-                    if (rec >= 0) GpuIndex = rec;
-                }
-                catch { }
+                // 用引擎推荐编号(VulkanCheck.Devices,按 -g 编号),不用注册表索引(双卡机上两者编号可能相反)。
+                try { GpuIndex = GpuInfo.GetRecommendedEngineId(); } catch { }
                 return;
             }
             var d = System.Text.Json.JsonSerializer.Deserialize<Data>(File.ReadAllText(FilePath));

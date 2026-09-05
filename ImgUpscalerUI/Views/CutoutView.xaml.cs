@@ -49,7 +49,7 @@ public sealed partial class CutoutView : UserControl
         };
         ToolGrid.ItemDoubleTapped += ToolGrid_ItemDoubleTapped;
         // 计算设备:统一在「设置」里选择(AppSettings.GpuIndex),页面不再显示下拉
-        _gpuCount = GpuInfo.GetAdapterNames().Count;
+        _gpuCount = GpuInfo.EngineDeviceCount;
         // 【修复】构造器赋默认值期间抑制保存:否则默认值(128/64/0/0)会触发 OnParamsChanged→SaveSettings,
         // 把默认值写盘覆盖用户之前保存的前景/背景等参数(用户"记住参数"失效的真正原因之一)。
         _suppressEvents = true;

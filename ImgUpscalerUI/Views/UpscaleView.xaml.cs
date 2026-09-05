@@ -43,7 +43,7 @@ public sealed partial class UpscaleView : UserControl
         PopulateModelCombo(isAnime: true);
         ModelCombo.SelectedIndex = 0;
         // 计算设备:统一在「设置」里选择(AppSettings.GpuIndex),页面不再显示下拉
-        _gpuCount = GpuInfo.GetAdapterNames().Count;
+        _gpuCount = GpuInfo.EngineDeviceCount;
         RefreshQualityCombo();   // 输出码率档位:按当前格式(PNG/JPG)填充对应选项
         EnsureBuiltinImgPresets();   // 确保自带图片预设存在(官方预设)
 
