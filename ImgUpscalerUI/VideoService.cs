@@ -2175,6 +2175,12 @@ public static class VideoService
                             CopyFrame(files[p], outF);
                             idx++;
                         }
+                        // 【黑帧防御】ONNX/DirectML 偶发静默输出全黑(不退场、不抛异常)→ 源不黑则回退该帧,绝不把黑帧写进输出
+                        if (File.Exists(outF) && EngineService.IsBlackPng(outF) && !EngineService.IsBlackPng(files[p]))
+                        {
+                            CopyFrame(files[p], outF);
+                            AppLogger.Warn($"⚠ ONNX 补帧第 {idx} 帧输出黑帧(DirectML 异常),已回退复制该对源帧");
+                        }
                         // 进度:补帧阶段 10~45%,按已产帧数估算
                         try
                         {
