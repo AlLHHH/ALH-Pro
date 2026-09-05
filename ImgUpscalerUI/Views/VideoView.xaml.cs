@@ -4189,6 +4189,7 @@ public sealed partial class VideoView : UserControl
         if (dlg.XamlRoot == null) return;
         if (await dlg.ShowAsync() == ContentDialogResult.Primary)
             ProcessStartHelper.OpenSelect(outputFiles.Count > 0 ? outputFiles : new System.Collections.Generic.List<string> { dir });
+        MainPage.MaybeShowSponsorPrompt();   // 处理完成弹窗关闭后:30% 概率弹"请作者喝咖啡"(2小时冷却)
     }
 
     private void CancelBtn_Click(object sender, RoutedEventArgs e)

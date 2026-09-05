@@ -2279,7 +2279,6 @@ public sealed partial class MainPage : Page
                         XamlRoot = this.XamlRoot,
                     };
                     await okDlg.ShowAsync();
-                    _ = ShowSponsorPromptAsync();   // 导出成功且点"确定"后,30% 概率弹赞助提示(冷却2小时)
                 }
                 finally
                 {
@@ -2378,7 +2377,7 @@ public sealed partial class MainPage : Page
     private void CoffeeCard_Click(object sender, RoutedEventArgs e) => ShowCoffeeCard();
 
     /// <summary>导出诊断包成功并点「确定」后:30% 概率弹出"请作者喝咖啡"赞助提示;关闭后 2 小时内不再触发。</summary>
-    private async Task ShowSponsorPromptAsync()
+    public async Task ShowSponsorPromptAsync()
     {
         try
         {
@@ -2386,10 +2385,16 @@ public sealed partial class MainPage : Page
             if (DateTime.Now - AppSettings.SponsorPromptTime < TimeSpan.FromHours(2)) return;
             // 30% 概率(作者感谢但不打扰)
             if (new Random().NextDouble() >= 0.30) return;
-            await Task.Delay(300);   // 让确定弹窗关闭后画面稳定再显示
+            await Task.Delay(300);   // 让完成弹窗关闭后画面稳定再显示
             SponsorOverlay.Visibility = Visibility.Visible;
         }
         catch { }
+    }
+
+    /// <summary>供图片/视频等视图在"处理完成"弹窗点确定后调用(30%概率弹赞助,2小时冷却)。</summary>
+    public static void MaybeShowSponsorPrompt()
+    {
+        try { _ = (App.MainWindow.Content as MainPage)?.ShowSponsorPromptAsync(); } catch { }
     }
 
     private void SponsorCoffee_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
