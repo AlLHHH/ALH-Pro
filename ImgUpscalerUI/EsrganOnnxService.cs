@@ -225,7 +225,13 @@ public static class EsrganOnnxService
                 var opts = new SessionOptions();
                 if (wantGpu)
                 {
-                    try { opts.AppendExecutionProvider_DML(EngineService.ToDmlDevice(auto ? 0 : gpuId)); }
+                    // 【修复 用户落到核显】auto(-2)此前硬编码设备 0:混合显卡(AMD/Intel 核显+独显)机上
+                    // Vulkan 设备 0 往往是核显,视频超分会静默跑核显(慢).改成用启动自检已纠偏的
+                    // AppSettings.GpuIndex(=实测可用的独显 ncnn 编号),经 ToDmlDevice 名匹配映射到正确 DirectML 卡.
+                    int dmDevice = auto
+                        ? (AppSettings.GpuIndex >= 0 ? EngineService.ToDmlDevice(AppSettings.GpuIndex) : EsrganOnnxService.DmlFallbackOk)
+                        : EngineService.ToDmlDevice(gpuId);
+                    try { opts.AppendExecutionProvider_DML(dmDevice); }
                     catch { /* DML 不可用回退 CPU */ }
                 }
                 sessions[s] = new Microsoft.ML.OnnxRuntime.InferenceSession(modelPath, opts);
