@@ -147,5 +147,26 @@
                 </Grid>
             </Border>
         </Grid>
+
+        <!-- 启动自检遮罩:首次启动 / 版本更新后才显示;自检完成前遮挡主界面,避免用户在未完成设备适配时误操作 -->
+        <Grid x:Name="SelfCheckOverlay" Grid.ColumnSpan="2"
+              Background="#CC0C1016" Visibility="Collapsed" IsHitTestVisible="True">
+            <Border Background="{StaticResource AppPanelBrush}" BorderBrush="{StaticResource AppBorderBrush}"
+                    BorderThickness="1" CornerRadius="14" Padding="36,28" MaxWidth="540" MaxHeight="560"
+                    HorizontalAlignment="Center" VerticalAlignment="Center">
+                <StackPanel Spacing="14" Width="430">
+                    <TextBlock Text="正在初始化本机设备…" FontSize="20" FontWeight="SemiBold"
+                               Foreground="#E8ECF2" HorizontalAlignment="Center"/>
+                    <TextBlock x:Name="SelfCheckHint" FontSize="12" Opacity="0.7"
+                               TextWrapping="Wrap" HorizontalAlignment="Center"
+                               Text="首次启动 / 版本更新后需完成一次本机自检,用于挑选合适的计算设备并核验其可用性,请稍候。"/>
+                    <StackPanel x:Name="SelfCheckItems" Spacing="9" Margin="0,8,0,0">
+                        <!-- 每一行:自检项名称 + 状态(代码动态填充) -->
+                    </StackPanel>
+                    <ProgressRing x:Name="SelfCheckProgress" IsActive="False" Width="46" Height="46"
+                                  HorizontalAlignment="Center" Margin="0,6,0,0"/>
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 </Page>

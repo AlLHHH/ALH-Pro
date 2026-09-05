@@ -75,7 +75,11 @@ public sealed partial class MainPage : Page
             // 自动弹一次友好提示;强机不弹(结果随时可在「设置 → 计算设备」查看),弹过也不再重复弹。
             // 【新增】真引擎自检:每次启动都后台跑一次(waifu2x 引擎枚举 Vulkan 设备),结果=日志+状态栏
             // (之前 RunOnce 只在设置页手动触发,启动从未自检过)。
-            _ = Task.Run(async () =>
+            // 首次启动 / 版本更新后:显示启动自检遮罩(自检通过前遮挡主界面),其余启动静默跑
+            bool needFullCheck = !AppSettings.VulkanCheckDone
+                || AppSettings.VulkanReportVersion != UpdateChecker.CurrentVersion;
+            if (needFullCheck) ShowSelfCheckOverlay();
+            var selfCheckTask = Task.Run(async () =>
             {
                 try
                 {
@@ -174,9 +178,53 @@ public sealed partial class MainPage : Page
                     AppLogger.Info("Vulkan 自检异常: " + ex.Message);
                 }
             });
+            await selfCheckTask;
+            if (needFullCheck) await FinishSelfCheckOverlayAsync();
             // 更新检查:后台静默(有新版才弹提示条;失败/无网/已最新均无感)
             _ = CheckUpdateSilentAsync();
         };
+    }
+
+    private static readonly string[] SelfCheckStepTexts =
+    {
+        "检测显卡与计算设备",
+        "识别并选择最佳独显",
+        "核验所选设备是否可用",
+        "读取显存 / 驱动 / 内存",
+    };
+
+    /// <summary>启动自检遮罩:首次/更新后显示自检名单,自检完成前遮挡主界面(不可误操作)。</summary>
+    private void ShowSelfCheckOverlay()
+    {
+        try
+        {
+            SelfCheckItems.Children.Clear();
+            foreach (var s in SelfCheckStepTexts)
+            {
+                SelfCheckItems.Children.Add(new TextBlock { Text = "◌  " + s, FontSize = 13, Opacity = 0.85 });
+            }
+            SelfCheckProgress.IsActive = true;
+            SelfCheckOverlay.Visibility = Visibility.Visible;
+        }
+        catch { }
+    }
+
+    /// <summary>自检完成:把每项标为完成(绿色对勾),短暂停留后隐藏,解除遮挡。</summary>
+    private async Task FinishSelfCheckOverlayAsync()
+    {
+        try
+        {
+            int i = 0;
+            foreach (var child in SelfCheckItems.Children)
+            {
+                if (child is TextBlock tb && i < SelfCheckStepTexts.Length)
+                    tb.Text = "✓  " + SelfCheckStepTexts[i++];
+            }
+            SelfCheckProgress.IsActive = false;
+            await Task.Delay(600);   // 让用户看到"完成"状态再放行
+            SelfCheckOverlay.Visibility = Visibility.Collapsed;
+        }
+        catch { }
     }
 
     /// <summary>生成设备下拉标签与推荐编号:优先【引擎实际枚举】(VulkanCheck.Devices,含引擎真实 -g 编号),
