@@ -423,6 +423,14 @@ public static class VideoService
                 scaleVf = $"fps={inFps.ToString("0.###", inv)},{scaleVf}";
                 progress?.Report((2, $"输入帧率覆盖为 {inFps:0.##} fps(探测 {probedFps:0.##}),拆帧按覆盖帧率抽帧/补帧"));
             }
+            // ===== HDR / 广色域适配:源为 HDR(PQ/HLG)或宽色域(≠BT.709)→ 拆帧时转成 BT.709 SDR(避免偏色/掉信息),黄字提示 =====
+            (string? hdrDesc, string? hdrVf) = await ProbeHdrToSdrAsync(inputVideo);
+            if (hdrVf != null)
+            {
+                scaleVf = $"{scaleVf},{hdrVf}";
+                AppLogger.Warn($"⚠ 检测到 HDR/广色域源({hdrDesc}):已自动转成 BT.709 标准 SDR 输出(避免偏色/掉信息)。");
+                progress?.Report((2, $"⚠ 检测到 HDR/广色域源,输出已转标准 SDR(避免偏色)"));
+            }
             // 去重统计报告收集:记录各算法判定为重复而被删的帧号(1-based,相对删帧前的序列),
             // 供最终生成"哪个时间段重复最多"的报告;mpdecimate/scene 直接在拆帧滤镜里丢帧,
             // 拿不到逐帧号,只统计数量(origCountEst - frameCount)。
@@ -2864,6 +2872,46 @@ public static class VideoService
             }
             try { File.Delete(png); } catch { }
         }
+    }
+
+    /// <summary>
+    /// 探测源视频色彩空间(ffprobe)。若为 HDR(PQ-HLG)或宽色域(≠BT.709),返回源描述 + 转 BT.709 标准 SDR 的滤镜链,
+    /// 用于拆帧阶段提前转换,避免输出偏色/掉信息。保守:任一关键字段未知(unknown)时不做转换(避免 zscale "no path" 报错),
+    /// 返回 (null,null)。任何探测/解析失败同样返回 (null,null),不阻断流程。
+    /// </summary>
+    private static async Task<(string? desc, string? vf)> ProbeHdrToSdrAsync(string video)
+    {
+        try
+        {
+            string? ffmpegDir = FfmpegPath != null ? Path.GetDirectoryName(FfmpegPath) : null;
+            string? ffprobe = ffmpegDir != null ? Path.Combine(ffmpegDir, "ffprobe.exe") : null;
+            if (ffprobe == null || !File.Exists(ffprobe)) return (null, null);
+            var lines = await RunCaptureAsync(ffprobe,
+                $"-v error -select_streams v:0 -show_entries stream=color_space,color_primaries,color_transfer " +
+                $"-of csv=p=0 \"{video}\"", default);
+            var s = string.Concat(lines).Trim();
+            var p = s.Split(',').Select(x => x.Trim()).ToArray();
+            string space = p.Length > 0 ? p[0] : "";
+            string prim = p.Length > 1 ? p[1] : "";
+            string trc = p.Length > 2 ? p[2] : "";
+            bool isHdr = trc.Contains("smpte2084", StringComparison.OrdinalIgnoreCase)
+                      || trc.Contains("arib-std-b67", StringComparison.OrdinalIgnoreCase);
+            bool primKnown = prim.Length > 0 && !prim.Equals("unknown", StringComparison.OrdinalIgnoreCase);
+            bool spaceKnown = space.Length > 0 && !space.Equals("unknown", StringComparison.OrdinalIgnoreCase);
+            bool trcKnown = trc.Length > 0 && !trc.Equals("unknown", StringComparison.OrdinalIgnoreCase);
+            bool widePrim = primKnown && !prim.Equals("bt709", StringComparison.OrdinalIgnoreCase);
+            bool wideSpace = spaceKnown && !space.Equals("bt709", StringComparison.OrdinalIgnoreCase);
+            if (!isHdr && !widePrim && !wideSpace) return (null, null);
+            // 安全:任一关键字段未知 → 不做转换。zscale 需要明确的输入色域/传递/矩阵,缺一即报
+            // "no path between colorspaces"(Generic error in an external library),拆帧 0 帧。宁可放过,不可转坏。
+            if (!primKnown || !spaceKnown || !trcKnown) return (null, null);
+            string desc = $"色域={space}/{prim}/{trc}";
+            string vf = isHdr
+                ? "zscale=t=linear:npl=100,tonemap=hable:desat=0,zscale=p=bt709:t=bt709:m=bt709:r=tv,format=yuv420p"
+                : "zscale=p=bt709:t=bt709:m=bt709:r=tv,format=yuv420p";
+            return (desc, vf);
+        }
+        catch { return (null, null); }
     }
 
     private static async Task<int> ExtractFramesCoreAsync(string ffmpeg, string inputVideo, string trimArgs,
