@@ -1362,17 +1362,17 @@ public sealed partial class MainPage : Page
             gpuCombo.Items.Add(new ComboBoxItem { Content = "GPU 1" });
             gpuCount = 2; gpuIds.Add(0); gpuIds.Add(1);
         }
-        gpuCombo.Items.Add(new ComboBoxItem { Content = "CPU (软件计算)" });
-        // 当前全局选择:-1=CPU(末项);≥0=引擎真实 -g 编号(gpuIds 反查下拉索引)
-        gpuCombo.SelectedIndex = AppSettings.GpuIndex >= 0
-            ? (gpuIds.IndexOf(AppSettings.GpuIndex))   // 引擎编号 → 下拉索引
-            : gpuCount;
-        if (gpuCombo.SelectedIndex < 0) gpuCombo.SelectedIndex = gpuCount;   // 找不到匹配 → 兜底 CPU
+        // 【不再提供 CPU 选项】原则:始终用显卡(推荐或其它),不主动/自动转 CPU。默认选中推荐项。
+        // 引擎枚举 gpuIds 至少含 GPU 0/1 兜底,故下拉恒有 GPU 可选(彻底无 GPU 时按原则 A 会报错而非跑 CPU)。
+        int recIdx = gpuRec >= 0 && gpuRec < gpuIds.Count ? gpuRec : 0;
+        int sel = AppSettings.GpuIndex >= 0 ? gpuIds.IndexOf(AppSettings.GpuIndex) : -1;
+        gpuCombo.SelectedIndex = sel >= 0 ? sel : recIdx;
+        if (gpuCombo.SelectedIndex < 0) gpuCombo.SelectedIndex = 0;
         gpuCombo.SelectionChanged += (_, _) =>
         {
-            // 末项=CPU;否则记【引擎真实 -g 编号】(gpuIds[selectedIndex]),不是列表索引,防止"选独显跑核显"错位
-            AppSettings.GpuIndex = gpuCombo.SelectedIndex >= gpuCount ? -1
-                : (gpuCombo.SelectedIndex >= 0 && gpuCombo.SelectedIndex < gpuIds.Count ? gpuIds[gpuCombo.SelectedIndex] : 0);
+            // 记【引擎真实 -g 编号】(gpuIds[selectedIndex]),不是列表索引,防止"选独显跑核显"错位;无匹配→推荐/0
+            AppSettings.GpuIndex = (gpuCombo.SelectedIndex >= 0 && gpuCombo.SelectedIndex < gpuIds.Count)
+                ? gpuIds[gpuCombo.SelectedIndex] : 0;
             AppSettings.Save();
             AppLogger.Info($"计算设备已设为:{gpuCombo.SelectedItem?.ToString()}");
         };
