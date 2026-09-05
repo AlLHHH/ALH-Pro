@@ -105,11 +105,16 @@ public sealed partial class MainPage : Page
                     MarkSelfCheckStep(3, selfBest >= 0);    // ④ 核验可用性
                     MarkSelfCheckStep(5, ok);               // ⑥ 超分/补帧引擎齐全
                     MarkSelfCheckStep(6, CheckFunctions().All(f => f.ok));   // ⑦ 各功能模型
-                    if (selfBest >= 0 && AppSettings.GpuIndex != selfBest)
+                    // 【尊重手动选卡】仅当当前选择无效(不在引擎列表)或为核显时,才按自检最佳的独显纠正;
+                    // 用户手动选的有效独显绝不覆盖(避免每次启动都被改回"自检最佳",也避免误降级到核显)。
+                    bool curValid = AppSettings.GpuIndex >= 0 && VulkanCheck.Devices.Any(d => d.Id == AppSettings.GpuIndex);
+                    bool curIgpu = AppSettings.GpuIndex >= 0
+                        && GpuInfo.IsIntegratedGPU(GpuInfo.GetEngineDeviceName(AppSettings.GpuIndex));
+                    if (selfBest >= 0 && (!curValid || curIgpu) && AppSettings.GpuIndex != selfBest)
                     {
                         AppSettings.GpuIndex = selfBest;
                         try { AppSettings.Save(); } catch { }
-                        AppLogger.Info($"已按启动自检选择最佳独显 → GPU {selfBest}({GpuInfo.GetEngineDeviceName(selfBest)})");
+                        AppLogger.Info($"已按启动自检纠正设备 → GPU {selfBest}({GpuInfo.GetEngineDeviceName(selfBest)})");
                     }
                     // ===== 智能联动(自检结果 → 自动适配,日志+状态栏可见,不弹窗)=====
                     string? autoMsg = null;
