@@ -646,14 +646,19 @@ public static partial class EngineService
                 _ => null,
             };
             if (exe == null) return false;
-            // 生成 1×1 测试图
+            // 生成 320×240 测试图(原 1×1 会假通过:部分引擎能跑 1×1,但在真实帧尺寸上因分块/显存/驱动崩)
             var inPng = Path.Combine(EngineService.TempRoot, $"eng_probe_{Guid.NewGuid():N}.png");
             var outPng = Path.Combine(EngineService.TempRoot, $"eng_probe_out_{Guid.NewGuid():N}.png");
             try
             {
-                using (var bmp = new System.Drawing.Bitmap(1, 1))
+                using (var bmp = new System.Drawing.Bitmap(320, 240))
                 {
-                    bmp.SetPixel(0, 0, System.Drawing.Color.Red);
+                    using (var g = System.Drawing.Graphics.FromImage(bmp))
+                    {
+                        g.Clear(System.Drawing.Color.Red);
+                        using var brush = new System.Drawing.SolidBrush(System.Drawing.Color.White);
+                        g.FillRectangle(brush, 0, 0, 160, 120);   // 有明暗变化,更接近真实帧
+                    }
                     bmp.Save(inPng, System.Drawing.Imaging.ImageFormat.Png);
                 }
                 // 引擎参数:统一 -s 2(2x 模型)
@@ -726,8 +731,8 @@ public static partial class EngineService
             var o = Path.Combine(tmp, "out.png");
             try
             {
-                // 两帧:黑→白(有显著运动,引擎必然尝试插帧)
-                using (var bmp = new System.Drawing.Bitmap(64, 64))
+                // 两帧:黑→白(有显著运动,引擎必然尝试插帧)。用 320×240 真实尺寸(原 64×64 太小,部分引擎在小尺寸能跑、真帧上崩)。
+                using (var bmp = new System.Drawing.Bitmap(320, 240))
                 {
                     using var g = System.Drawing.Graphics.FromImage(bmp);
                     g.Clear(System.Drawing.Color.Black);

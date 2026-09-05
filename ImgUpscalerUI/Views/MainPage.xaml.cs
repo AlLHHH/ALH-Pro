@@ -94,16 +94,32 @@ public sealed partial class MainPage : Page
                     string? autoMsg = null;
                     if (!gpuOk)
                     {
+                        // 【修复 探测偶发失败误切 CPU】Vulkan 自检可能一次性抽风/引擎启动慢,被误判为"无 GPU"→
+                        // 直接把用户选好的 GPU 切到 CPU(速度掉一个数量级)。若用户已选了 GPU,先【重试一次探测】确认,
+                        // 确认仍无 GPU 才降级;重试成功则保留用户当前设备。
                         if (AppSettings.GpuIndex >= 0)
                         {
-                            // 仅本次会话切 CPU:【不写入设置文件】——驱动抽风/临时枚举失败时,
-                            // 不会把用户选好的 GPU 覆盖掉;显卡恢复后下次启动自动回到用户选的设备
-                            AppSettings.GpuIndex = -1;
-                            autoMsg = "已自动适配(仅本次):未检测到可用 GPU → 本次处理设备已切为 CPU;你的设置未改动,显卡恢复正常后重启软件自动恢复";
+                            try { ALHPro.VulkanCheck.ReProbe(); } catch { }
+                            gpuOk = ALHPro.VulkanCheck.GpuAvailable;
+                            if (gpuOk)
+                            {
+                                AppLogger.Info("Vulkan 自检重试:确认 GPU 可用,保留当前设备 GPU " + AppSettings.GpuIndex);
+                                autoMsg = null;
+                            }
                         }
-                        else
+                        if (!gpuOk)
                         {
-                            autoMsg = "未检测到可用 GPU → 处理设备=CPU(软件计算)";
+                            if (AppSettings.GpuIndex >= 0)
+                            {
+                                // 仅本次会话切 CPU:【不写入设置文件】——驱动抽风/临时枚举失败时,
+                                // 不会把用户选好的 GPU 覆盖掉;显卡恢复后下次启动自动回到用户选的设备
+                                AppSettings.GpuIndex = -1;
+                                autoMsg = "已自动适配(仅本次):未检测到可用 GPU → 本次处理设备已切为 CPU;你的设置未改动,显卡恢复正常后重启软件自动恢复";
+                            }
+                            else
+                            {
+                                autoMsg = "未检测到可用 GPU → 处理设备=CPU(软件计算)";
+                            }
                         }
                     }
                     else if (VulkanCheck.Devices.Count > 0 && AppSettings.GpuIndex >= 0

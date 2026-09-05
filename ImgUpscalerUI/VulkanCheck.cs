@@ -470,4 +470,11 @@ public static class VulkanCheck
             try { Completed?.Invoke(); } catch { }
         });
     }
+
+    /// <summary>轻量重试一次探测(Vulkan 自检偶发抽风/引擎启动慢被误判为无 GPU 时,用于确认后再降级)。
+    /// 不清 AppSettings 缓存(避免覆盖用户已保存的报告/选择),仅重新枚举设备一次。</summary>
+    public static void ReProbe()
+    {
+        try { Done = false; RunOnce(); } catch { }
+    }
 }
