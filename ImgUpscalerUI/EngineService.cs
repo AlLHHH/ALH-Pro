@@ -265,6 +265,7 @@ public static partial class EngineService
         {
             var devs = VulkanCheck.Devices;
             if (devs == null || devs.Count == 0) return -1;
+            // ① 优先独显(NVIDIA>AMD独显>Arc>其他,核显得分0不首选)
             var ordered = devs
                 .Select(d => new { d.Id, d.Name, Score = GpuInfo.ScoreDeviceName(d.Name) })
                 .Where(x => x.Score > 0)
@@ -274,6 +275,14 @@ public static partial class EngineService
             {
                 bool ok = await IsEngineGpuUsableAsync("waifu2x", d.Id, ct).ConfigureAwait(false);
                 AppLogger.Info(d.Id + ": " + d.Name + " → " + (ok ? "1×1 可用" : "不可用"));
+                if (ok) return d.Id;
+            }
+            // ② 独显全不可用 → 核显作"底牌"兜底(核显也是计算设备,能用就用,总比报错强)
+            var igpu = devs.Where(d => GpuInfo.ScoreDeviceName(d.Name) == 0).OrderBy(d => d.Id).Take(2);
+            foreach (var d in igpu)
+            {
+                bool ok = await IsEngineGpuUsableAsync("waifu2x", d.Id, ct).ConfigureAwait(false);
+                AppLogger.Info(d.Id + ": " + d.Name + "(核显) → " + (ok ? "1×1 可用(兜底)" : "不可用"));
                 if (ok) return d.Id;
             }
             return -1;
