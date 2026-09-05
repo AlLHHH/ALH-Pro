@@ -98,24 +98,31 @@ public sealed partial class MainPage : Page
                     }
                     MarkSelfCheckStep(4, ALHPro.EsrganOnnxService.FindModel() == null || ALHPro.EsrganOnnxService.DmlFallbackOk >= 0);   // ⑤ DirectML
                     AppLogger.Info("Vulkan 自检:" + (gpuOk ? "GPU 引擎可用(Vulkan 设备枚举成功)" : "GPU 引擎不可用(未枚举到 Vulkan 设备),建议设置中选 CPU") + VulkanCheck.Report);
-                    // 【推荐项 = 自检最好的独显】无条件按 1×1 实测选最佳,保证默认/推荐项就是自检最佳的卡
-                    // (避免仅按型号打分选到"名字对但实际不可用"的卡)。
-                    int selfBest = await EngineService.FindBestWorkingGpuAsync();
-                    MarkSelfCheckStep(2, selfBest >= 0);    // ③ 识别最佳独显
-                    MarkSelfCheckStep(3, selfBest >= 0);    // ④ 核验可用性
-                    MarkSelfCheckStep(5, ok);               // ⑥ 超分/补帧引擎齐全
-                    MarkSelfCheckStep(6, CheckFunctions().All(f => f.ok));   // ⑦ 各功能模型
-                    // 【尊重手动选卡】仅当当前选择无效(不在引擎列表)或为核显时,才按自检最佳的独显纠正;
-                    // 用户手动选的有效独显绝不覆盖(避免每次启动都被改回"自检最佳",也避免误降级到核显)。
+                    // 【推荐项 = 自检最好的独显】仅当 需要全检(首次/更新) 或 当前设备无效/核显 时才按 1×1 实测重探测;
+                    // 否则(已有有效独显、非首次启动)→ 跳过重探测,不每次启动都白跑 GPU(~1-2秒)。
                     bool curValid = AppSettings.GpuIndex >= 0 && VulkanCheck.Devices.Any(d => d.Id == AppSettings.GpuIndex);
                     bool curIgpu = AppSettings.GpuIndex >= 0
                         && GpuInfo.IsIntegratedGPU(GpuInfo.GetEngineDeviceName(AppSettings.GpuIndex));
-                    if (selfBest >= 0 && (!curValid || curIgpu) && AppSettings.GpuIndex != selfBest)
+                    if (needFullCheck || !curValid || curIgpu)
                     {
-                        AppSettings.GpuIndex = selfBest;
-                        try { AppSettings.Save(); } catch { }
-                        AppLogger.Info($"已按启动自检纠正设备 → GPU {selfBest}({GpuInfo.GetEngineDeviceName(selfBest)})");
+                        int selfBest = await EngineService.FindBestWorkingGpuAsync();
+                        MarkSelfCheckStep(2, selfBest >= 0);    // ③ 识别最佳独显
+                        MarkSelfCheckStep(3, selfBest >= 0);    // ④ 核验可用性
+                        // 【尊重手动选卡】仅当当前选择无效(不在列表)或为核显时,才按自检最佳的独显纠正;手动选的有效独显不覆盖
+                        if (selfBest >= 0 && (!curValid || curIgpu) && AppSettings.GpuIndex != selfBest)
+                        {
+                            AppSettings.GpuIndex = selfBest;
+                            try { AppSettings.Save(); } catch { }
+                            AppLogger.Info($"已按启动自检纠正设备 → GPU {selfBest}({GpuInfo.GetEngineDeviceName(selfBest)})");
+                        }
                     }
+                    else
+                    {
+                        MarkSelfCheckStep(2, true);   // 已有有效独显,无需重探测
+                        MarkSelfCheckStep(3, true);
+                    }
+                    MarkSelfCheckStep(5, ok);               // ⑥ 超分/补帧引擎齐全
+                    MarkSelfCheckStep(6, CheckFunctions().All(f => f.ok));   // ⑦ 各功能模型
                     // ===== 智能联动(自检结果 → 自动适配,日志+状态栏可见,不弹窗)=====
                     string? autoMsg = null;
                     if (!gpuOk)
