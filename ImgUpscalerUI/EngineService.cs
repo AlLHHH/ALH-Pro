@@ -142,11 +142,11 @@ public static partial class EngineService
                     || want.Name.Contains(names[i], StringComparison.OrdinalIgnoreCase))
                     return i;
             }
-            // 名字匹配失败(罕见:枚举差异/截断):用启动时实测的第一个可用 DirectML 设备兜底(绝不越界/跑错误设备);
-            // 探测未完成时仍按原编号(与旧行为一致,运行期失败还有 _dmlBad 标记二次兜底)。
-            var dmlOk = EsrganOnnxService.DmlFallbackOk;
-            if (dmlOk >= 0) return dmlOk;
-            return engineGpu;
+            // 名字匹配失败(罕见:枚举差异/截断):【勿静默落到 _dmlFirstOk】——Hybrid 机(核显+独显)上
+            // _dmlFirstOk 通常=核显(索引0),会让"用户选 NVIDIA 却跑核显"。改为落 CPU + 明确日志,
+            // 宁可慢也不跑错卡。真正修复需按 DXGI/DML 真实枚举按名/LUID 匹配(下次会话做)。
+            AppLogger.Warn($"⚠ 设备映射:引擎编号 {engineGpu} 未在 DirectML/注册表匹配到同名显卡;为避免静默跑核显,本次已改用 CPU(软件计算)。可用引擎设备={string.Join(",", devs.Select(d => d.Id + ":" + d.Name))}");
+            return -1;   // CPU(软件计算),不跑错卡
         }
         catch { return engineGpu; }
     }
