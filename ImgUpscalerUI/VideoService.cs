@@ -1759,9 +1759,11 @@ public static class VideoService
             // 静音:只用视频流(-an);否则映射音频
             // 不用 -shortest/-t(会截视频尾帧)。音频可能比画面长(容器含尾帧容积,如素材1 音频1.82 vs 画面1.7751),
             // 把音频裁剪到画面时长(atrim,只裁不补),避免 MP4 duration 被音频顶长导致"结尾停帧"。
+            // 音画同步:音频裁剪到画面时长(atrim)+ 把起始时间归零用 PTS-STARTPTS(保留源音频原生时间/间隔,
+            // 比 N/SR/TB 重排更贴合视频时间轴,减少"音画不同步")。
             var audioPart = mute ? "" : $" -map 1:a:0? {audioArgs}";
             if (!mute && muxDur > 0.01)
-                audioPart += $" -af \"atrim=duration={muxDur.ToString("0.######", inv)},asetpts=N/SR/TB\" -c:a aac";
+                audioPart += $" -af \"atrim=duration={muxDur.ToString("0.######", inv)},asetpts=PTS-STARTPTS\" -c:a aac";
             var muxArgs = $"{videoMap}{audioPart} {encArgs} {vfArg}{fastFlag} \"{outTmp}\"";
             var muxBase = $"-y {muxInput} {trimArgs} -i \"{inputVideo}\" ";
             // 编码阶段整体进度 96→100 随 ffmpeg 编码帧数推进(否则卡 96%,结尾预计时间虚高失真)
