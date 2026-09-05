@@ -83,20 +83,23 @@ public sealed partial class ImageToolGrid : UserControl
         foreach (var p in paths)
         {
             var path = p;
-            // WebP/HEIC/HEIF 引擎(System.Drawing)不支持 → WinRT 自动转码为 PNG(存应用私有目录,启动自动清理)
+            // WebP/HEIC/HEIF/AVIF 引擎(System.Drawing)不支持 → WinRT 自动转码为 PNG(存应用私有目录,启动自动清理)
             var ext = Path.GetExtension(path);
             if (ext.Equals(".webp", StringComparison.OrdinalIgnoreCase)
                 || ext.Equals(".heic", StringComparison.OrdinalIgnoreCase)
-                || ext.Equals(".heif", StringComparison.OrdinalIgnoreCase))
+                || ext.Equals(".heif", StringComparison.OrdinalIgnoreCase)
+                || ext.Equals(".avif", StringComparison.OrdinalIgnoreCase))
             {
                 try
                 {
                     var converted = await ConvertToPngAsync(path);
                     if (converted == null)
                     {
-                        // HEIC 转码失败(系统缺 HEIF 解码器)——跳过并提示,不假装成功
+                        // HEIC/AVIF 转码失败(系统缺对应解码器)——跳过并提示,不假装成功
                         if (ext.Equals(".heic", StringComparison.OrdinalIgnoreCase) || ext.Equals(".heif", StringComparison.OrdinalIgnoreCase))
                             AppLogger.Warn($"⚠ HEIC/HEIF 导入失败({Path.GetFileName(p)}):系统缺 HEIF 图像扩展(Windows 商店免费安装),已跳过");
+                        else if (ext.Equals(".avif", StringComparison.OrdinalIgnoreCase))
+                            AppLogger.Warn($"⚠ AVIF 导入失败({Path.GetFileName(p)}):系统缺 AV1 图像扩展(Windows 商店免费安装),已跳过");
                         continue;
                     }
                     path = converted;
@@ -851,7 +854,8 @@ public sealed partial class ImageToolGrid : UserControl
 
     // ---------- 拖拽添加 ----------
     public static bool IsImageExt(string ext)
-        => ext.ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".webp" or ".bmp";
+        => ext.ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".webp" or ".bmp"
+            or ".tif" or ".tiff" or ".heic" or ".heif" or ".avif";
 
     private void DropBorder_DragOver(object sender, DragEventArgs e)
         => e.AcceptedOperation = DataPackageOperation.Copy;

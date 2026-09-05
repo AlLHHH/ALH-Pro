@@ -972,6 +972,7 @@ public sealed partial class UpscaleView : UserControl
         picker.FileTypeFilter.Add(".tiff");
         picker.FileTypeFilter.Add(".heic");
         picker.FileTypeFilter.Add(".heif");
+        picker.FileTypeFilter.Add(".avif");
         picker.FileTypeFilter.Add(".gif");   // 选第一帧(引擎不支持动图)
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
         WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);

@@ -1379,6 +1379,18 @@ public static partial class EngineService
         int srcW, srcH;
         using (var src = new System.Drawing.Bitmap(input)) { srcW = src.Width; srcH = src.Height; }
 
+        // 【尺寸/内存保护】超大图避免最终拼整图时 OOM:GDI+ 32bpp canvas = 4 字节/像素,再加上百块 PNG。
+        // 超出安全上限直接报清晰错误并提示降倍率,而不是处理几十分钟后崩在拼图这一步(用户以为卡死/白跑)。
+        int outWg = (int)Math.Round(srcW * scale);
+        int outHg = (int)Math.Round(srcH * scale);
+        const int MaxDim = 32768;
+        const long MaxPx = 160_000_000L;   // 约 1.6 亿像素 ≈ 640MB 32bpp canvas,给 PNG/内存留余量
+        long outPx = (long)outWg * outHg;
+        if (outWg > MaxDim || outHg > MaxDim || outPx > MaxPx)
+            throw new InvalidOperationException(
+                $"图片过大:缩放后 {outWg}×{outHg} = {outPx:N0} 像素,超出安全上限(单边≤{MaxDim},总像素≤{MaxPx:N0})。" +
+                "请降低缩放倍率,或改用更大的源图处理。");
+
         // 网格:stride = tile - overlap;末尾不足 tile 的块自动收窄
         int stride = Math.Max(tileSize - overlap, 32);
         var xs = new System.Collections.Generic.List<int>();
