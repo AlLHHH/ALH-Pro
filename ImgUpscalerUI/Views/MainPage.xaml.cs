@@ -2434,8 +2434,8 @@ public sealed partial class MainPage : Page
         var content = new StackPanel { Spacing = 10 };
         content.Children.Add(new TextBlock
         {
-            Text = "打赏完全自愿,仅代表对作者的支持与认可;不代表任何交易或回报承诺,感谢!\n\n" +
-                   "⚠️ 未成年人请勿打赏;如你未满 18 岁,请先取得监护人同意。",
+            Text = "打赏全凭自愿,只是想表达对作者的一份心意与鼓励,与软件本身无关;这并非交易,也没有任何回报承诺。谢谢你愿为这份心意停留。\n\n" +
+                   "若你尚未满 18 岁,可在取得监护人同意后再考虑,感谢理解。",
             FontSize = 12, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, LineHeight = 19,
         });
         // 收款码:把图片放到「发布版\assets\coffee_qr.png」即自动显示(无需改代码)
