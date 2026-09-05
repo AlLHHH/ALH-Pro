@@ -61,7 +61,6 @@
                         <RadioButton x:Name="VScale2xRadio" Content="2x"/>
                         <RadioButton x:Name="VScale3xRadio" Content="3x"/>
                         <RadioButton x:Name="VScale4xRadio" Content="4x"/>
-                        <RadioButton Content="自定义分辨率"/>
                     </RadioButtons>
                     <TextBlock x:Name="ScaleHint" Text="1x~2x 速度较快;倍率越高越慢、显存占用越大"
                                Style="{StaticResource HintText}" TextWrapping="Wrap"/>
