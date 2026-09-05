@@ -329,13 +329,15 @@ public static class VideoService
         long baseFrames = (long)Math.Ceiling(Math.Max(1.0, durSec * estFps));
         // 【修复 长视频 200 多 G】临时帧峰值估算改【分辨率感知】:固定 3MB(1080p)对高分辨率/放大后的帧严重低估,
         // 导致"预计只需 X GB"但实际跑出 200 多 G(放大后 4K PNG 帧 10~20MB/张,全量并存用于合帧)。
-        // 峰值帧数 = 补帧后帧数(放大不减帧数,只增单帧大小);单帧大小按 源分辨率 × 放大倍率² 估算。
+        // v1.2.1 起中间帧改为 JPG(质量 0.85,单帧体积约为 PNG 的 1/3),故单帧估算按 JPG 折算;
+        // 峰值帧数 = 补帧后帧数(放大不减帧数,只增单帧大小);单帧大小按 源分辨率 × 放大倍率² 估算(JPG 压缩好,系数压低)。
         (int srcW, int srcH) = await ProbeSizeAsync(inputVideo);
-        double srcFrameMB = 3.0 * ((double)srcW * srcH) / (1920.0 * 1080.0);   // 1080p≈3MB,按面积线性
-        if (srcFrameMB < 0.8) srcFrameMB = 0.8;
+        double srcFrameMB = 1.0 * ((double)srcW * srcH) / (1920.0 * 1080.0);   // 源帧 JPG≈1MB/1080p,按面积线性
+        if (srcFrameMB < 0.5) srcFrameMB = 0.5;
         double outMult = doUpscale ? (upscaleShrink1x ? 2.0 : Math.Max(1.0, scale)) : 1.0;
-        double outFrameMB = srcFrameMB * outMult * outMult * 0.6;   // 放大后单帧:像素×outMult²,PNG 对 AI 内容压缩好,×0.6 折中
-        if (outFrameMB < 0.8) outFrameMB = 0.8;
+        // 放大后单帧(中间帧 JPG):像素×outMult²,放大内容趋于平滑,JPG 压缩好,系数压低;不低于源帧尺寸
+        double outFrameMB = Math.Max(srcFrameMB, srcFrameMB * outMult * outMult * 0.18);
+        if (outFrameMB < 0.5) outFrameMB = 0.5;
         long peakFrames = frameInterp ? (long)Math.Ceiling((double)baseFrames * interpScale) : baseFrames;   // 峰值帧数=放大后帧数
         double needBytes = peakFrames * outFrameMB * 1024.0 * 1024.0 * 1.6;   // 与 AvailableFreeSpace 同单位:字节
         double needGB = needBytes / (1024.0 * 1024.0 * 1024.0);
@@ -1381,6 +1383,10 @@ public static class VideoService
                         }
                         finally
                         {
+                            // 【降临时盘峰值】本批源帧(upFiles[start..end])已全部超分输出到 upOutput,
+                            // 补帧帧(upInput)用完即删,避免"全部补帧帧 + 全部超分帧"同时占盘(长视频高倍率时可省几十 G)。
+                            for (int i = start; i < end; i++)
+                                try { File.Delete(upFiles[i]); } catch { }
                             sem.Release();
                         }
                     }, ct));
@@ -2831,12 +2837,15 @@ public static class VideoService
 
     // 把 dir 里的 .png 帧重编码成同名 .jpg(应用侧统一 JPG,降低临时盘)。目录已是 JPG/无 PNG 则空跑。
     // 单帧重编码失败时保留原帧内容(复制改名),保证帧号连续可解码、合帧不中断。
+    // 【降临时盘】中间帧 JPG 质量:0.96(近无损)→0.85(画质仍高,单帧体积约降 45%),
+    // 长视频 + 高倍率超分时临时盘可再降近一半。中间帧最终会再被合帧编码,0.85 已足够。
+    private const float VideoFrameJpgQuality = 0.85f;
     private static void ReencodeDirPngToJpg(string dir)
     {
         foreach (var png in Directory.EnumerateFiles(dir, "*.png").ToArray())
         {
             var jpg = Path.ChangeExtension(png, ".jpg");
-            try { EngineService.ConvertPngToJpg(png, jpg); }
+            try { EngineService.ConvertPngToJpg(png, jpg, VideoFrameJpgQuality); }
             catch (Exception ex)
             {
                 AppLogger.Warn($"⚠ 帧转 JPG 失败({Path.GetFileName(png)}):{ex.Message.Split('\n')[0]}——用同尺寸占位帧替代,保持编号连续可解码");
@@ -3964,7 +3973,7 @@ public static class VideoService
         for (int j = 0; j < outN; j++)
         {
             var dst = Path.Combine(framesFinal, $"frame_{++written:D6}.jpg");
-            try { EngineService.ConvertPngToJpg(slotSrc[j], dst); }
+            try { EngineService.ConvertPngToJpg(slotSrc[j], dst, VideoFrameJpgQuality); }
             catch (Exception ex)
             {
                 AppLogger.Warn($"⚠ 补回输出转 JPG 失败({Path.GetFileName(slotSrc[j])}):{ex.Message.Split('\n')[0]}——复制原帧内容");
