@@ -2834,12 +2834,7 @@ public static partial class EngineService
 
     /// <summary>不小于 n 的最小 2 的幂(waifu2x 只接受 2 的幂倍数)。
     /// 非 2 的幂倍率(如 3x/1.5x)用「更高倍数放大再缩回」,比「低倍数放大再拉伸」更清晰(不吞画质)。</summary>
-    private static int CeilPowerOfTwo(double n)
-    {
-        int p = 1;
-        while (p < n) p *= 2;
-        return p;
-    }
+    internal static int CeilPowerOfTwo(double n) => AlhPro.Core.PathUtil.CeilPowerOfTwo(n);
 
     /// <summary>把图片高保真缩放到精确尺寸后写回 outputPath(保持 PNG 格式)。
     /// 源 Bitmap 持有文件句柄,须先释放再覆盖,故先写临时文件(先写临时、src 释放后再覆盖目标)。</summary>

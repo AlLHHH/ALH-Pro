@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
-        <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
-        <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+        <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>        <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
         <OutputType>WinExe</OutputType>
 
         <!-- WinUI 3 -->
@@ -94,6 +93,11 @@
 
     <ItemGroup>
         <None Remove="ALHPro.slnx" />
+    </ItemGroup>
+
+    <!-- 纯逻辑库:无 WinUI 依赖,可被单元测试直接引用 -->
+    <ItemGroup>
+        <ProjectReference Include="..\AlhPro.Core\AlhPro.Core.csproj" />
     </ItemGroup>
 
     <ItemGroup>
