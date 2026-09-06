@@ -108,7 +108,37 @@ ALH Pro — 第三方组件许可声明
     由社区 ONNX 转换项目导出(deepghs / tidus2102 系列转换项目,MIT);
     各模型权重版权归上游作者,许可按上游条目执行。
 
---------------------------------------------------
+---------------------------------------------------
+【模型权重来源与版权明细】
+
+A. 图片超分模型
+  - models-cunet 系 / models-upconv_7_* 系(ncnn .bin/.param)
+    算法: waifu2x(nagadomi,MIT)官网 https://github.com/nagadomi/waifu2x
+    引擎内置模型: 随 waifu2x-ncnn-vulkan 官方发行版,版权 nihui / nagadomi
+  - realesrgan-x4plus / realesr-animevideov3 系(.bin/.param)
+    算法: Real-ESRGAN(xinntao,BSD 3-Clause)https://github.com/xinntao/Real-ESRGAN
+    引擎内置模型: 随 realesrgan-ncnn-vulkan 官方发行版,版权 xinntao
+  - waifu2x-cunet2x.onnx / RealESRGAN_x4plus.onnx / realesr-animevideov3.onnx
+    由社区 ONNX 转换项目导出(deepghs / tidus2102 等,MIT),权重版权归上游作者。
+
+B. 视频补帧模型
+  - rife-anime / rife-HD / rife-UHD / rife-v2.3 / rife-v4.13 / rife-v4.26(.bin/.param)
+    算法: RIFE(Zhewei Huang 等 / Megvii Inc.,MIT)https://github.com/hzwer/arXiv2020-RIFE
+    模型: 随 rife-ncnn-vulkan 官方发行版,版权 Megvii Inc. / 原作者
+  - rife49.onnx → 算法 RIFE(MIT),ONNX 导出 yuvraj108c/rife-onnx(MIT)
+
+C. AI 抠图模型(ONNX)
+  - u2net.onnx / u2netp.onnx → U²-Net(Xuebin Qin 等,Apache 2.0)https://github.com/xuebinqin/U-2-Net
+  - isnet-anime.onnx / isnet-general-use.onnx → ISNet/DIS(Xuebin Qin 等,Apache 2.0)https://github.com/xuebinqin/DIS
+  - birefnet.onnx / birefnet-lite.onnx → BiRefNet(Zheng Peng 等,MIT)https://github.com/ZhengPeng7/BiRefNet
+    均通过 rembg(danielgatis,MIT)封装/导出,权重版权归各自上游作者。
+
+D. 音频 AI 模型(ONNX)
+  - htdemucs.onnx / htdemucs_ft_vocals.onnx → HT-Demucs(adefossez / Meta AI,MIT)
+    ONNX 导出 StemSplitio/htdemucs-onnx(MIT)
+  - backbone.onnx / spec_head.onnx / denoiser_core.onnx → LavaSR(Kunal Sharma 等,Apache 2.0)
+
+-------------------------------------------------
 附:各开源许可协议全文
 MIT:      https://opensource.org/licenses/MIT
 BSD-3:    https://opensource.org/licenses/BSD-3-Clause
