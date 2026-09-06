@@ -1105,7 +1105,7 @@ public static class VideoService
                     }
                 }
 
-                var interpCount = Directory.EnumerateFiles(framesFinal, "*.png").Count();
+                var interpCount = EnumerateFrameFiles(framesFinal).Count();   // 补帧输出可能是 png(旧)或 jpg(新边转边存),统一按两种数
                 if (interpCount == 0)
                     throw new InvalidOperationException("补帧失败,未生成插帧");
                 // 帧数对齐已移至"muxDur/outFps 已知处"(时长=源容器 × 帧率),此处不再处理(需帧率公式才能定目标)。
@@ -1286,8 +1286,14 @@ public static class VideoService
                                     watchStage: "超分",   // 逐帧汇报(像补帧一样显示"超分 第 N 帧 / 共 M 帧")
                                     globalBaseFrames: start, globalTotalFrames: total);   // 百分比按全局帧数算,预计时间才准
                             }
+                            // 【峰值优化】本批超分 PNG 立即转 JPG 再落 upOutput(不再全量 PNG 累积到最后统一转):
+                            // 超分过程中只有"当前批的 PNG"存在,upOutput 全程 JPG,峰值降 70%+。
                             foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
-                                File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
+                            {
+                                var dst = Path.Combine(upOutput, Path.ChangeExtension(Path.GetFileName(f), ".jpg"));
+                                try { EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality); }
+                                catch { try { File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true); } catch { } }
+                            }
                             // 黑帧防御:ncnn-vulkan 偶发 vkQueueSubmit 失败 → 输出全黑帧(退出码 0 不报错)。
                             // 检测到黑帧即用 CPU 重处理该批(引擎线程参数已改 save=1 降低概率,这里兜底:
                             // 万一还是黑,CPU 软解不依赖 GPU 队列,绝不出黑帧)。
@@ -1314,7 +1320,11 @@ public static class VideoService
                                         upOnnxDml ? -2 : (upGpu < 0 ? -1 : -2), progress, ct, onnxB,
                                         start, total, pauseWait);   // 探测失败/黑帧 → DeepSeek-2(DirectML GPU 自动);主动选 CPU → -1;pauseWait=ONNX/CPU 也能暂停
                                     foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
-                                        File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
+                                    {
+                                        var dst = Path.Combine(upOutput, Path.ChangeExtension(Path.GetFileName(f), ".jpg"));
+                                        try { EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality); }
+                                        catch { try { File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true); } catch { } }
+                                    }
                                     // ONNX(DirectML)重处理仍黑(该卡 DirectML 也异常)→ 直接回退原帧。
                                     // 【绝不跑慢速 CPU】超分 CPU 兜底要跑到天荒地老,这不是可接受的降级目标。
                                     if (batchOutHasDefectiveFrame(batchOut))
@@ -2266,7 +2276,13 @@ public static class VideoService
         var files = Directory.EnumerateFiles(finalOut, "*.png")
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase);
         foreach (var f in files)
-            File.Copy(f, Path.Combine(framesFinal, $"frame_{globalIdx++:D6}.png"), true);
+        {
+            // 【峰值优化】补帧 PNG 拷进 frames_final 时立即转 JPG(不再全量 PNG 累积到最后统一转):
+            // 补帧过程 frames_final 全程 JPG,峰值大幅降。文件名保持 frame_{globalIdx}.jpg 序号连续。
+            var dst = Path.Combine(framesFinal, $"frame_{globalIdx++:D6}.jpg");
+            try { EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality); }
+            catch { try { File.Copy(f, dst, true); } catch { } }
+        }
         try { Directory.Delete(segIn, true); } catch { }
         if (finalOut != segIn) { try { Directory.Delete(finalOut, true); } catch { } }
         return globalIdx;
