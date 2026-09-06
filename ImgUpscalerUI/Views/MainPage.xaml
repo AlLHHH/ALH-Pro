@@ -188,8 +188,7 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock x:Name="StatusText" FontSize="11" Opacity="0.55" Text="就绪"
-                               Tapped="StatusText_Tapped" TextTrimming="CharacterEllipsis"
-                               ToolTipService.ToolTip="单击查看日志详情"/>
+                               TextTrimming="CharacterEllipsis"/>
                     <TextBlock x:Name="RestHint" Grid.Column="1" FontSize="11"
                                FontWeight="SemiBold" Margin="16,0,0,0" Visibility="Collapsed"
                                Foreground="#E8A33D" Text="休息中"
