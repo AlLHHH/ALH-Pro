@@ -669,8 +669,9 @@ public static partial class EngineService
                     else { noOutLimitTicks = TimeSpan.FromMinutes(4).Ticks; stallLimitTicks = TimeSpan.FromMinutes(8).Ticks; }
                     long sinceOut = DateTime.Now.Ticks - lastOutTicks;
                     long sinceFrame = DateTime.Now.Ticks - lastFrameTicks;
-                    // ① 启动超时:30 秒零输出 + 进程还在(而非立即失败退出)
-                    if (!sawAnyOutput && sinceOut > TimeSpan.FromSeconds(30).Ticks)
+                    // ① 启动超时:强独显 30 秒零输出即杀;CPU/核显(慢)放宽到 90 秒(慢机加载/编译着色器更久)
+                    long startupLimitTicks = (cpu || igpu) ? TimeSpan.FromSeconds(90).Ticks : TimeSpan.FromSeconds(30).Ticks;
+                    if (!sawAnyOutput && sinceOut > startupLimitTicks)
                     {
                         killRequested = true;
                         AppLogger.Warn($"看门狗:引擎 ({stage}) 启动 30 秒无任何输出(疑似驱动/引擎挂死,常见于 50 系+旧 ncnn)——强制终止降级");
@@ -683,8 +684,9 @@ public static partial class EngineService
                         AppLogger.Info($"看门狗:引擎 ({stage}) {(cpu ? "CPU" : "GPU")} {noOutLimitTicks / TimeSpan.TicksPerMinute} 分钟无输出(疑似驱动/引擎挂死),强制终止");
                         try { p.Kill(entireProcessTree: true); } catch { }
                     }
-                    // ③ 有输出但 10 分钟未完成一帧(CPU 爬帧过慢/引擎停滞)
-                    else if (sinceFrame > stallLimitTicks)
+                    // ③ 有输出但 X 分钟未完成一帧:仅在"逐帧进度模式"(watchDir!=null,有帧完成回调刷新 lastFrameTicks)下才可靠;
+                    // stdout 模式无帧回调,lastFrameTicks 停在启动值 → sinceFrame=总耗时,会误杀"正常慢速但持续出活"的作业,故跳过
+                    else if (watchDir != null && sinceFrame > stallLimitTicks)
                     {
                         killRequested = true;
                         AppLogger.Info($"看门狗:引擎 ({stage}) {stallLimitTicks / TimeSpan.TicksPerMinute} 分钟未完成一帧(计算过慢或停滞),强制终止——建议改用 GPU/调低倍率/调小分辨率");
