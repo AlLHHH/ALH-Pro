@@ -85,29 +85,32 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
-                            <!-- 内容:图(可选) + 标题 + 正文,整体居中、对称留白;文字 Wrap 换行显示完整 -->
-                            <StackPanel Grid.Row="0" Spacing="5" Tapped="AdCardTapped">
+                            <!-- 内容:图(可选) + 标题 + 正文;顶部留白避免与右上角关闭按钮重叠;文字 Wrap 强制换行显示完整 -->
+                            <StackPanel Grid.Row="0" Spacing="5" Margin="0,6,0,0" Tapped="AdCardTapped">
                                 <!-- 图:居中、圆角、固定高度,Width 自适应不撑满;无图自动隐藏 -->
                                 <Border x:Name="AdImageFrame" CornerRadius="8" Background="#22FFFFFF"
                                         HorizontalAlignment="Center" Padding="4" Visibility="Collapsed">
                                     <Image x:Name="AdImage" Width="84" Height="84" Stretch="UniformToFill"/>
                                 </Border>
-                                <StackPanel Spacing="3" HorizontalAlignment="Stretch">
-                                    <!-- 标题行:标题 + 可选「推广」角标(有 sponsor 才显示;合规:广告可识别,不误导) -->
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <TextBlock x:Name="AdTitle" FontSize="12" FontWeight="SemiBold"
-                                                   Foreground="#E8ECF2" TextWrapping="Wrap"
-                                                   Visibility="Collapsed"/>
-                                        <Border x:Name="AdSponsorBadge" Background="#33E8A33D" CornerRadius="4"
-                                                Padding="4,1" VerticalAlignment="Top" Visibility="Collapsed">
-                                            <TextBlock x:Name="AdSponsorText" FontSize="8" Foreground="#E8B04A"
-                                                       Text="推广"/>
-                                        </Border>
-                                    </StackPanel>
-                                    <TextBlock x:Name="AdText" FontSize="10" Opacity="0.85" LineHeight="14"
-                                               Foreground="#C7CEDA" TextWrapping="Wrap"
+                                <!-- 标题行:标题 + 可选「推广」角标。用 Grid 分两列:* 列给标题=受限宽度→强制换行;Auto 列给角标。合规:广告可识别 -->
+                                <Grid HorizontalAlignment="Stretch">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="AdTitle" Grid.Column="0" FontSize="12" FontWeight="SemiBold"
+                                               Foreground="#E8ECF2" TextWrapping="Wrap" TextTrimming="None"
                                                Visibility="Collapsed"/>
-                                </StackPanel>
+                                    <Border x:Name="AdSponsorBadge" Grid.Column="1" Background="#33E8A33D"
+                                            CornerRadius="4" Padding="4,1" VerticalAlignment="Top"
+                                            Margin="6,0,0,0" Visibility="Collapsed">
+                                        <TextBlock x:Name="AdSponsorText" FontSize="8" Foreground="#E8B04A"
+                                                   Text="推广"/>
+                                    </Border>
+                                </Grid>
+                                <TextBlock x:Name="AdText" FontSize="10" Opacity="0.85" LineHeight="14"
+                                           Foreground="#C7CEDA" TextWrapping="Wrap" TextTrimming="None"
+                                           Visibility="Collapsed"/>
                             </StackPanel>
                             <!-- 上一张/下一张:独立一行、卡片最底部、最小紧凑,不挡任何内容 -->
                             <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8"
@@ -120,11 +123,11 @@
                                         Background="#1AFFFFFF" BorderThickness="0" Foreground="#AAFFFFFF"
                                         CornerRadius="6" Click="AdNext_Click" ToolTipService.ToolTip="下一张(点击或向左滑动)"/>
                             </StackPanel>
-                            <!-- 关闭按钮:贴右上角最角落、最小、半透明,不覆盖标题/图 -->
-                            <Button x:Name="AdCloseBtn" Content="✕" FontSize="9" Padding="5,1" MinWidth="0"
+                            <!-- 关闭按钮:贴右上角(在卡片内、不超出),内容顶部已留白不会压到标题 -->
+                            <Button x:Name="AdCloseBtn" Content="✕" FontSize="9" Padding="4,1" MinWidth="0"
                                     Background="#1AFFFFFF" BorderThickness="0" Foreground="#66FFFFFF"
                                     CornerRadius="6"
-                                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-8,-8,0"
+                                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,0,0,0"
                                     Click="AdClose_Click" ToolTipService.ToolTip="本次运行隐藏广告"/>
                         </Grid>
                     </Border>
