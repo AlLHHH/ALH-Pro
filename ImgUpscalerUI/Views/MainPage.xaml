@@ -207,8 +207,8 @@
                         <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                             <FontIcon x:Name="TipIcon" Glyph="&#xE946;" FontSize="11" VerticalAlignment="Center"/>
                             <TextBlock x:Name="TipText" FontSize="11" FontWeight="SemiBold"
-                                       VerticalAlignment="Center" TextWrapping="NoWrap" MaxWidth="240"
-                                       TextTrimming="CharacterEllipsis"/>
+                                       VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="420"
+                                       TextTrimming="None"/>
                         </StackPanel>
                     </Border>
                 </Grid>
