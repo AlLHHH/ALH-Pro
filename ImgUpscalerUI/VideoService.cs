@@ -2468,16 +2468,15 @@ public static class VideoService
                 {
                     using var bmp = new System.Drawing.Bitmap(f);
                     if (bmp.Width <= 0 || bmp.Height <= 0) return true;
-                    int step = Math.Max(4, Math.Min(bmp.Width, bmp.Height) / 32);
-                    int dark = 0, total = 0;
-                    for (int y = step; y < bmp.Height; y += step)
-                        for (int x = step; x < bmp.Width; x += step)
-                        {
-                            var p = bmp.GetPixel(x, y);
-                            total++;
-                            if ((int)p.R + (int)p.G + (int)p.B < 24) dark++;   // 接近全黑
-                        }
-                    if (total > 0 && dark >= total * 0.95) return true;
+                    // 采样判定逻辑抽到 AlhPro.Core.FrameInspect(纯函数,可单测):
+                    // 采样步长 + 把 ≥95% 像素 RGB 和 < 24 视为近黑(缺陷帧)。
+                    var sums = new System.Collections.Generic.List<int>();
+                    int total = AlhPro.Core.FrameInspect.ForEachSample(bmp.Width, bmp.Height, (x, y) =>
+                    {
+                        var p = bmp.GetPixel(x, y);
+                        sums.Add((int)p.R + (int)p.G + (int)p.B);
+                    });
+                    if (AlhPro.Core.FrameInspect.IsNearBlack(sums.ToArray(), total)) return true;
                 }
                 catch { return true; }   // 解码失败也算缺陷
             }

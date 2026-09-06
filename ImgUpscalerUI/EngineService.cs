@@ -1673,16 +1673,14 @@ public static partial class EngineService
             if (!File.Exists(file) || new FileInfo(file).Length == 0) return true;
             using var bmp = new System.Drawing.Bitmap(file);
             if (bmp.Width <= 0 || bmp.Height <= 0) return true;   // 尺寸非法也算缺陷
-            int step = Math.Max(4, Math.Min(bmp.Width, bmp.Height) / 32);
-            int dark = 0, total = 0;
-            for (int y = step; y < bmp.Height; y += step)
-                for (int x = step; x < bmp.Width; x += step)
-                {
-                    var p = bmp.GetPixel(x, y);
-                    total++;
-                    if ((int)p.R + (int)p.G + (int)p.B < 24) dark++;
-                }
-            return total > 0 && dark >= total * 0.95;
+            // 采样判定逻辑抽到 AlhPro.Core.FrameInspect(纯函数,可单测)
+            var sums = new System.Collections.Generic.List<int>();
+            int total = AlhPro.Core.FrameInspect.ForEachSample(bmp.Width, bmp.Height, (x, y) =>
+            {
+                var p = bmp.GetPixel(x, y);
+                sums.Add((int)p.R + (int)p.G + (int)p.B);
+            });
+            return AlhPro.Core.FrameInspect.IsNearBlack(sums.ToArray(), total);
         }
         catch { return true; }   // 解码失败也按缺陷帧处理(不静默放行)
     }
@@ -1698,16 +1696,14 @@ public static partial class EngineService
             if (!File.Exists(file) || new FileInfo(file).Length == 0) return false;   // 空/未写完:不算黑
             using var bmp = new System.Drawing.Bitmap(file);
             if (bmp.Width <= 0 || bmp.Height <= 0) return false;
-            int step = Math.Max(4, Math.Min(bmp.Width, bmp.Height) / 32);
-            int dark = 0, total = 0;
-            for (int y = step; y < bmp.Height; y += step)
-                for (int x = step; x < bmp.Width; x += step)
-                {
-                    var p = bmp.GetPixel(x, y);
-                    total++;
-                    if ((int)p.R + (int)p.G + (int)p.B < 24) dark++;
-                }
-            return total > 0 && dark >= total * 0.95;
+            // 采样判定逻辑抽到 AlhPro.Core.FrameInspect(纯函数,可单测)
+            var sums = new System.Collections.Generic.List<int>();
+            int total = AlhPro.Core.FrameInspect.ForEachSample(bmp.Width, bmp.Height, (x, y) =>
+            {
+                var p = bmp.GetPixel(x, y);
+                sums.Add((int)p.R + (int)p.G + (int)p.B);
+            });
+            return AlhPro.Core.FrameInspect.IsNearBlack(sums.ToArray(), total);
         }
         catch { return false; }   // 解码失败:不算黑,跳过(不触发降级)
     }
