@@ -3394,16 +3394,30 @@ public sealed partial class VideoView : UserControl
                     Content = new TextBlock
                     {
                         Text = CurrentIsIntegratedGpu()
-                            ? "当前用核显(共享内存),高倍率补帧(4x 及以上)可能极慢甚至失败。\n建议:补帧倍率改 2x,或勾选「兼容模式」后先跑几秒小片段试试。"
-                            : $"当前设备偏弱(显存仅 {SafeRender.TotalVramGB:0.#}GB),高倍率补帧(4x 及以上)可能极慢甚至失败。\n建议:补帧倍率改 2x,或勾选「兼容模式」后先跑几秒小片段试试。",
+                            ? "当前用核显(共享内存),高倍率补帧(4x 及以上)可能极慢甚至失败。\n建议:改 2x,或点「一键开启兼容模式」自动加大缓冲防爆显存。"
+                            : $"当前设备偏弱(显存仅 {SafeRender.TotalVramGB:0.#}GB),高倍率补帧(4x 及以上)可能因显存不足中途出错。\n建议:点「一键开启兼容模式」自动降低分块/批大小,或改 2x。",
                         TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
                     },
                     PrimaryButtonText = "知道了,开始",
+                    SecondaryButtonText = "一键开启兼容模式",   // 源头杜绝:自动降资源,避免中途显存耗尽致帧序错乱
                     CloseButtonText = "我先改参数",
                     DefaultButton = ContentDialogButton.Primary,
                     XamlRoot = this.XamlRoot,
                 };
-                try { var r = await dlg.ShowAsync(); if (r != ContentDialogResult.Primary) return; } catch { }
+                try
+                {
+                    var r = await dlg.ShowAsync();
+                    if (r == ContentDialogResult.Secondary)
+                    {
+                        // 源头杜绝:自动开启兼容模式(降分块/批大小/单批),并黄字提醒用户已生效
+                        FastModeCheck.IsChecked = true;
+                        Log("⚠ 已开启「兼容模式」(自动降低分块/批大小,防止高倍率补帧中途显存耗尽)。建议先跑几秒小片段确认稳定。");
+                        if (CompatHint != null) CompatHint.Text = "⚠ 已开启「兼容模式」:降低分块/批大小,防止高倍率补帧中途显存不足出错。";
+                        if (CompatHintPanel != null) CompatHintPanel.Visibility = Visibility.Visible;
+                    }
+                    else if (r != ContentDialogResult.Primary) return;   // 点「我先改参数」→ 停止本次
+                }
+                catch { }
             }
         }
         // ===== RTX 50 系 + 旧引擎(realesrgan,2022 版 ncnn)提前提示 =====
