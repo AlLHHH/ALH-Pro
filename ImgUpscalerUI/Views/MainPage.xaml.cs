@@ -667,12 +667,12 @@ public sealed partial class MainPage : Page
         LoadAdImage(candidates, ph, 0);
     }
 
-    /// <summary>按候选清单依次尝试加载广告图;全部失败用占位图。</summary>
+    /// <summary>按候选清单依次尝试加载广告图;全部失败则隐藏图片框(不显示大占位块),卡片只剩文字,干净。</summary>
     private void LoadAdImage(System.Collections.Generic.List<string> candidates, BitmapImage? fallback, int idx)
     {
         if (idx >= candidates.Count)
         {
-            try { AdImage.Source = fallback; } catch { }
+            try { AdImageFrame.Visibility = Visibility.Collapsed; } catch { }   // 全失败:隐藏图框,不占位
             return;
         }
         try
@@ -680,9 +680,10 @@ public sealed partial class MainPage : Page
             var bmp = new BitmapImage(new Uri(candidates[idx]));
             bmp.ImageFailed += (_, _) =>
             {
-                // 失败 → 换下一个候选(镜像);所有失败 → 占位图
+                // 失败 → 换下一个候选(镜像);所有失败 → 隐藏图框
                 DispatcherQueue.TryEnqueue(() => LoadAdImage(candidates, fallback, idx + 1));
             };
+            AdImageFrame.Visibility = Visibility.Visible;
             AdImage.Source = bmp;
         }
         catch

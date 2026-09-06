@@ -36,17 +36,28 @@ public static class AdFetcher
         catch { return url; }
     }
 
-    /// <summary>把 GitHub raw URL 转成多个国内可达镜像 URL(供图片加载做多镜像回退/dispatch)。</summary>
+    /// <summary>把 GitHub raw URL 转成多个国内可达镜像 URL(供图片加载做多镜像回退)。
+    /// raw.githubusercontent.com 国内直连常被墙/超时,不放在首选;jsDelivr 实测最稳,排最前。</summary>
     public static System.Collections.Generic.IEnumerable<string> ToMirrorUrls(string url)
     {
         var list = new System.Collections.Generic.List<string>();
         if (string.IsNullOrWhiteSpace(url)) return list;
-        list.Add(url);   // 原图
         if (url.Contains("raw.githubusercontent.com", StringComparison.OrdinalIgnoreCase))
         {
+            // 按实测可靠性排序:jsDelivr → gh-proxy → ghproxy →(最后才 raw 原图,直连最不稳)
+            try
+            {
+                var rel = url.Substring(url.IndexOf("main/ad/") + "main/".Length);
+                list.Add("https://cdn.jsdelivr.net/gh/AlLHHH/ALH-Pro@main/ad/" + rel);
+            }
+            catch { }
             list.Add("https://gh-proxy.com/" + url);
             list.Add("https://ghproxy.net/" + url);
-            list.Add("https://cdn.jsdelivr.net/gh/AlLHHH/ALH-Pro@main/" + url.Substring(url.IndexOf("main/ad/") + "main/".Length));
+            list.Add(url);   // 原图最后(大部分情况用不上)
+        }
+        else
+        {
+            list.Add(url);   // 非 raw 域名(已是其它源):原样用
         }
         return list;
     }
