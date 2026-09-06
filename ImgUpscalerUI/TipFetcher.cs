@@ -23,8 +23,18 @@ public static class TipFetcher
     /// <summary>轮播间隔:每 30 秒换下一条提示(本地轮播,不联网)。</summary>
     public static readonly TimeSpan RotateInterval = TimeSpan.FromSeconds(30);
 
-    /// <summary>最近一次缓存到的提示数组(线程安全);空=未拉到(隐藏)。</summary>
-    public static volatile TipInfo[]? Latest;
+    /// <summary>最近一次缓存到的提示数组(线程安全);启动即有默认本地兜底,网络拉取成功后再替换。</summary>
+    public static volatile TipInfo[] Latest = DefaultTips();
+
+    /// <summary>默认本地兜底提示(启动立即显示,避免首次进软件无提示;网络拉取成功后覆盖)。</summary>
+    private static TipInfo[] DefaultTips() => new[]
+    {
+        new TipInfo
+        {
+            Text = "所有处理都在本地完成,不上传、不联网",
+            Color = "#7BD88F",
+        },
+    };
 
     private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(5) };
 

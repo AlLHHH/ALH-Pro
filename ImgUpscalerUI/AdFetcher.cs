@@ -62,8 +62,27 @@ public static class AdFetcher
         return list;
     }
 
-    /// <summary>最近一次缓存到的广告卡数组(线程安全);空=未拉到(隐藏区域)。</summary>
-    public static volatile AdInfo[]? Latest;
+    /// <summary>最近一次缓存到的广告卡数组(线程安全);启动即有默认本地兜底,网络拉取成功后再替换。</summary>
+    public static volatile AdInfo[] Latest = DefaultAds();
+
+    /// <summary>默认本地兜底广告(启动立即显示,避免首次进软件无广告;网络拉取成功后覆盖)。</summary>
+    private static AdInfo[] DefaultAds() => new[]
+    {
+        new AdInfo
+        {
+            Title = "全程本地运行,隐私不联网",
+            Text = "图片放大 / 视频补帧 / AI 抠图 / 音频增强,效果全在你电脑上完成,不用上传、不怕泄露。",
+            Link = "https://github.com/AlLHHH/ALH-Pro",
+            LinkText = "去了解",
+        },
+        new AdInfo
+        {
+            Title = "音频增强 & AI 分离",
+            Text = "人声伴奏分离、升采样率、去噪,一键出成品。",
+            Link = "https://github.com/AlLHHH/ALH-Pro/releases",
+            LinkText = "去下载",
+        },
+    };
 
     private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(5) };
 
