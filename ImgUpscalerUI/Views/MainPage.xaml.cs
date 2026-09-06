@@ -656,19 +656,14 @@ public sealed partial class MainPage : Page
         }
     }
 
-    /// <summary>把远程广告图设为 AdImage;加载失败(404/网络错)自动换镜像重试,仍失败才回退本地占位图。
+    /// <summary>把远程广告图设为 AdImage;加载失败(404/网络错)自动换多个国内镜像重试,仍失败才回退本地占位图。
     /// 解决国内 GitHub raw 图被墙:图片 URL 是 raw.githubusercontent.com(作者在 adN.json 里写的),
-    /// 直连常常超时/被墙。这里先试原图,失败换 gh-proxy 镜像,再失败回退占位图(绝不裂图)。</summary>
+    /// 直连常常超时/被墙。这里先试原图,失败换 gh-proxy/ghproxy/jsDelivr 镜像,再失败回退占位图(绝不裂图)。</summary>
     private void SetAdImage(string? url)
     {
         var ph = AdPlaceholderImage();
-        // 图片走【多镜像】:原图 → gh-proxy 镜像,任一成功即用;全部失败回退占位图
-        var candidates = new System.Collections.Generic.List<string>();
-        if (!string.IsNullOrWhiteSpace(url))
-        {
-            candidates.Add(url);
-            candidates.Add(AdFetcher.ToMirrorUrl(url));   // 原图失败 → 换镜像
-        }
+        // 图片走【多镜像】:原图 → 多个国内镜像,任一成功即用;全部失败回退占位图
+        var candidates = AdFetcher.ToMirrorUrls(url ?? "").ToList();
         LoadAdImage(candidates, ph, 0);
     }
 

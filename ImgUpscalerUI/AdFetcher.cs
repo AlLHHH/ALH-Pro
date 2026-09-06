@@ -23,8 +23,8 @@ public static class AdFetcher
     /// <summary>轮播间隔:每 30 秒换下一张广告卡(本地轮播,不联网)。</summary>
     public static readonly TimeSpan RotateInterval = TimeSpan.FromSeconds(30);
 
-    /// <summary>把 raw.githubusercontent.com 的 URL 转成国内可达的 gh-proxy 镜像(解决国内 raw 被墙)。
-    /// 非 raw 域名的 URL(已是其它 CDN/镜像)原样返回。</summary>
+    /// <summary>把直连 GitHub 的 URL 转成国内可达镜像;非 GitHub raw 域名原样返回。
+    /// 解决国内 raw.githubusercontent.com 常被墙/超时。镜像列表见以下 :GitHub 加速镜像。</summary>
     public static string ToMirrorUrl(string url)
     {
         try
@@ -34,6 +34,21 @@ public static class AdFetcher
             return "https://gh-proxy.com/" + url;
         }
         catch { return url; }
+    }
+
+    /// <summary>把 GitHub raw URL 转成多个国内可达镜像 URL(供图片加载做多镜像回退/dispatch)。</summary>
+    public static System.Collections.Generic.IEnumerable<string> ToMirrorUrls(string url)
+    {
+        var list = new System.Collections.Generic.List<string>();
+        if (string.IsNullOrWhiteSpace(url)) return list;
+        list.Add(url);   // 原图
+        if (url.Contains("raw.githubusercontent.com", StringComparison.OrdinalIgnoreCase))
+        {
+            list.Add("https://gh-proxy.com/" + url);
+            list.Add("https://ghproxy.net/" + url);
+            list.Add("https://cdn.jsdelivr.net/gh/AlLHHH/ALH-Pro@main/" + url.Substring(url.IndexOf("main/ad/") + "main/".Length));
+        }
+        return list;
     }
 
     /// <summary>最近一次缓存到的广告卡数组(线程安全);空=未拉到(隐藏区域)。</summary>
@@ -70,6 +85,7 @@ public static class AdFetcher
         {
             $"https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/{file}",
             $"https://gh-proxy.com/https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/{file}",
+            $"https://ghproxy.net/https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/{file}",
             $"https://cdn.jsdelivr.net/gh/AlLHHH/ALH-Pro@main/ad/{file}",
         };
         foreach (var url in urls)
