@@ -212,6 +212,8 @@ public sealed partial class MainPage : Page
             else await MaybeShowUpdateSurveyAsync();   // 本次无自检 → 直接弹问卷(若到期/50%通过)
             // 更新检查:后台静默(有新版才弹提示条;失败/无网/已最新均无感)
             _ = CheckUpdateSilentAsync();
+            // 广告 + 弹幕动态区:启动拉一次 + 定时轮询(作者 GitHub 投放;失败静默隐藏)
+            _ = InitAdAsync();
         };
     }
 
@@ -570,6 +572,164 @@ public sealed partial class MainPage : Page
     {
         UpdateBarText.Text = $"发现新版本 {latestTag}(当前 v{UpdateChecker.CurrentVersion})";
         UpdateBar.Visibility = Visibility.Visible;
+    }
+
+    // ============ 广告 + 弹幕动态区 ============
+    private Microsoft.UI.Xaml.Media.Animation.Storyboard? _danmakuSb;
+    private int _danmakuIdx;
+    private bool _adClosedThisRun;      // 本次运行点「✕」后不再显示(不写设置)
+    private System.Threading.CancellationTokenSource? _adCts;
+
+    /// <summary>广告区本地兜底占位图路径(与收款码同款:发布版根目录 ad_placeholder.png,经 csproj CopyToOutput 拷入)。</summary>
+    private static string AdPlaceholderPath => System.IO.Path.Combine(AppContext.BaseDirectory, "ad_placeholder.png");
+
+    /// <summary>兜底占位图 BitmapImage;文件缺失也返回 null(调用方再兜底隐藏)。</summary>
+    private static BitmapImage? AdPlaceholderImage()
+    {
+        try
+        {
+            if (System.IO.File.Exists(AdPlaceholderPath))
+                return new BitmapImage(new Uri(AdPlaceholderPath));
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>启动:拉一次 + 每 10 分钟轮询(作者改 banner.json push,用户侧最长 10 分钟看到)。失败静默隐藏。</summary>
+    private async Task InitAdAsync()
+    {
+        // 用户设置里彻底关掉广告 → 直接不显示也不轮询
+        if (!AppSettings.ShowAds) return;
+        _adCts = new System.Threading.CancellationTokenSource();
+        var ct = _adCts.Token;
+        await AdFetcher.RefreshAsync().ConfigureAwait(false);   // 首次拉取
+        DispatcherQueue.TryEnqueue(RenderAds);
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await System.Threading.Tasks.Task.Delay(AdFetcher.PollInterval, ct).ConfigureAwait(false);
+                await AdFetcher.RefreshAsync().ConfigureAwait(false);
+                DispatcherQueue.TryEnqueue(RenderAds);
+            }
+            catch (OperationCanceledException) { break; }
+            catch { /* 轮询异常忽略 */ }
+        }
+    }
+
+    /// <summary>渲染广告 + 弹幕(必须在 UI 线程)。数据为 null 或用户已关/本次已关 → 隐藏。</summary>
+    public void RenderAds()
+    {
+        try
+        {
+            var data = AdFetcher.Latest;
+            if (!AppSettings.ShowAds || _adClosedThisRun || data is null)
+            {
+                AdCard.Visibility = Visibility.Collapsed;
+                StopDanmaku();
+                return;
+            }
+            // 广告:图(远程,失败/空→本地占位图)+ 标题/文案(有则显示)
+            var ph = AdPlaceholderImage();
+            var ad = data.Ad;
+            if (ad is not null)
+            {
+                if (!string.IsNullOrWhiteSpace(ad.Image))
+                {
+                    try
+                    {
+                        AdImage.Source = new BitmapImage(new Uri(ad.Image));
+                    }
+                    catch { AdImage.Source = ph; }
+                }
+                else
+                {
+                    AdImage.Source = ph;
+                }
+                AdTitle.Text = ad.Title ?? "";
+                AdTitle.Visibility = string.IsNullOrWhiteSpace(ad.Title) ? Visibility.Collapsed : Visibility.Visible;
+                AdText.Text = ad.Text ?? "";
+                AdText.Visibility = string.IsNullOrWhiteSpace(ad.Text) ? Visibility.Collapsed : Visibility.Visible;
+            }
+            else
+            {
+                AdImage.Source = ph;
+                AdTitle.Visibility = Visibility.Collapsed;
+                AdText.Visibility = Visibility.Collapsed;
+            }
+            AdCard.Visibility = Visibility.Visible;
+            // 弹幕:有才显示并开始轮播
+            if (data.Danmaku.Count > 0)
+            {
+                DanmakuText.Visibility = Visibility.Visible;
+                _danmakuIdx = 0;
+                DanmakuText.Text = data.Danmaku[0];
+                StartDanmaku();
+            }
+            else
+            {
+                DanmakuText.Visibility = Visibility.Collapsed;
+                StopDanmaku();
+            }
+        }
+        catch { AdCard.Visibility = Visibility.Collapsed; }
+    }
+
+    /// <summary>弹幕 ticker:每 5 秒轮播下一条(淡入)。</summary>
+    private void StartDanmaku()
+    {
+        StopDanmaku();
+        var data = AdFetcher.Latest;
+        if (data is null || data.Danmaku.Count == 0) return;
+        _danmakuSb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+        var anim = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+        {
+            From = 0.0,
+            To = 1.0,
+            Duration = new Duration(TimeSpan.FromMilliseconds(450)),
+        };
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(anim, DanmakuText);
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(anim, "Opacity");
+        _danmakuSb.Children.Add(anim);
+        _danmakuSb.Begin();
+        // 5 秒后换下一条(单向,不阻塞)
+        _ = RunDanmakuTickerAsync(data, _danmakuIdx);
+    }
+
+    private async Task RunDanmakuTickerAsync(AdData data, int fromIdx)
+    {
+        try
+        {
+            await System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (AdFetcher.Latest is null || !AppSettings.ShowAds || _adClosedThisRun) return;
+                _danmakuIdx = (_danmakuIdx + 1) % data.Danmaku.Count;
+                DanmakuText.Text = data.Danmaku[_danmakuIdx];
+                _danmakuSb?.Begin();   // 再淡入一次
+            });
+        }
+        catch { }
+    }
+
+    private void StopDanmaku()
+    {
+        try { _danmakuSb?.Stop(); } catch { }
+        _danmakuSb = null;
+    }
+
+    private void AdCardTapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
+    {
+        var link = AdFetcher.Latest?.Ad?.Link;
+        if (string.IsNullOrWhiteSpace(link)) return;
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(link) { UseShellExecute = true }); } catch { }
+    }
+
+    private void AdClose_Click(object sender, RoutedEventArgs e)
+    {
+        _adClosedThisRun = true;
+        AdCard.Visibility = Visibility.Collapsed;
+        StopDanmaku();
     }
 
     private void UpdateBarGo_Click(object sender, RoutedEventArgs e)
@@ -2484,6 +2644,28 @@ public sealed partial class MainPage : Page
         content.Children.Add(new TextBlock
         {
             Text = "两项清理相辅相成:满足任一条即触发。下次启动时自动清理。",
+            FontSize = 10, Opacity = 0.5, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+        });
+
+        // ================= 显示广告与弹幕(左栏底部动态区) =================
+        content.Children.Add(new Border
+        {
+            Height = 1,
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
+        });
+        var showAds = new CheckBox
+        {
+            Content = "显示广告与弹幕",
+            IsChecked = AppSettings.ShowAds,
+        };
+        ToolTipService.SetToolTip(showAds,
+            "左栏底部由作者投放的「广告 + 弹幕」动态区(从 GitHub 定时更新的文案)。关闭后整个区域不再显示;不影响软件任何功能。");
+        showAds.Checked += (_, _) => { AppSettings.ShowAds = true; AppSettings.Save(); AppLogger.Info("已开启「显示广告与弹幕」"); RenderAds(); };
+        showAds.Unchecked += (_, _) => { AppSettings.ShowAds = false; AppSettings.Save(); AppLogger.Info("已关闭「显示广告与弹幕」"); RenderAds(); };
+        content.Children.Add(showAds);
+        content.Children.Add(new TextBlock
+        {
+            Text = "作者在 GitHub 更新文案后,软件内每隔一段时间自动刷新;这里可随时彻底关闭。",
             FontSize = 10, Opacity = 0.5, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
 

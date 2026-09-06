@@ -76,6 +76,8 @@
         <None Include="..\使用教程.md" Link="使用教程.md" CopyToOutputDirectory="PreserveNewest"/>
         <!-- 标题栏/应用内图标:由 icon.ico 提取的 PNG(ffmpeg 转换)。BitmapImage 不支持 .ico,用 PNG 加载 -->
         <None Include="ALHPro_icon.png" Link="ALHPro_icon.png" CopyToOutputDirectory="PreserveNewest"/>
+        <!-- 广告区本地兜底占位图:远程广告图拉取失败/为空时显示(用路径加载,与收款码同款约定,避免裂图) -->
+        <None Include="Assets\ad_placeholder.png" Link="ad_placeholder.png" CopyToOutputDirectory="PreserveNewest"/>
     </ItemGroup>
 
     <ItemGroup>
