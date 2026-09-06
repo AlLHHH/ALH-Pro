@@ -3,5 +3,6 @@
   "text": "RTX 50 系(Blackwell)自动走 ONNX 稳定路线,不再空帧/黑帧。",
   "image": "https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/img2.jpg",
   "link": "https://github.com/AlLHHH/ALH-Pro/releases",
-  "linkText": "查看修复"
+  "linkText": "查看修复",
+  "sponsor": "ALH Pro"
 }

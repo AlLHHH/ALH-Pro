@@ -86,9 +86,17 @@
                                     <Image x:Name="AdImage" Width="96" Height="96" Stretch="UniformToFill"/>
                                 </Border>
                                 <StackPanel Spacing="3" HorizontalAlignment="Left">
-                                    <TextBlock x:Name="AdTitle" FontSize="12" FontWeight="SemiBold"
-                                               Foreground="#E8ECF2" TextWrapping="Wrap"
-                                               TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
+                                    <!-- 标题行:标题 + 可选「推广」角标(有 sponsor 才显示;合规:广告可识别,不误导) -->
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock x:Name="AdTitle" FontSize="12" FontWeight="SemiBold"
+                                                   Foreground="#E8ECF2" TextWrapping="Wrap"
+                                                   TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
+                                        <Border x:Name="AdSponsorBadge" Background="#33E8A33D" CornerRadius="4"
+                                                Padding="4,1" VerticalAlignment="Top" Visibility="Collapsed">
+                                            <TextBlock x:Name="AdSponsorText" FontSize="8" Foreground="#E8B04A"
+                                                       Text="推广"/>
+                                        </Border>
+                                    </StackPanel>
                                     <TextBlock x:Name="AdText" FontSize="10" Opacity="0.85" LineHeight="14"
                                                Foreground="#C7CEDA" TextWrapping="Wrap"
                                                TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>

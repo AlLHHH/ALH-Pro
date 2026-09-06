@@ -91,6 +91,7 @@ public static class AdFetcher
                 Image = GetString(el, "image"),
                 Link = GetString(el, "link"),
                 LinkText = GetString(el, "linkText"),
+                Sponsor = GetString(el, "sponsor"),
             };
             if (string.IsNullOrWhiteSpace(ad.Title) && string.IsNullOrWhiteSpace(ad.Text)) return null;   // 无内容视为无效
             return ad;
@@ -105,7 +106,7 @@ public static class AdFetcher
         => obj.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 }
 
-/// <summary>单张广告卡(可空字段=未提供;image 空则纯文字卡)。</summary>
+/// <summary>单张广告卡(可空字段=未提供;image 空则纯文字卡;sponsor=广告主名,有则显示「推广」角标,合规:广告可识别)。</summary>
 public sealed class AdInfo
 {
     public string? Title { get; set; }
@@ -113,4 +114,5 @@ public sealed class AdInfo
     public string? Image { get; set; }
     public string? Link { get; set; }
     public string? LinkText { get; set; }
+    public string? Sponsor { get; set; }
 }

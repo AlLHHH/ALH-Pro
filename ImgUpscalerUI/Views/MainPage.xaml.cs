@@ -677,6 +677,10 @@ public sealed partial class MainPage : Page
         AdTitle.Visibility = string.IsNullOrWhiteSpace(ad.Title) ? Visibility.Collapsed : Visibility.Visible;
         AdText.Text = ad.Text ?? "";
         AdText.Visibility = string.IsNullOrWhiteSpace(ad.Text) ? Visibility.Collapsed : Visibility.Visible;
+        // 「推广」角标:有 sponsor(广告主名)才显示;自己的软广不填 sponsor 即不显示。合规:广告可识别。
+        AdSponsorBadge.Visibility = string.IsNullOrWhiteSpace(ad.Sponsor) ? Visibility.Collapsed : Visibility.Visible;
+        if (!string.IsNullOrWhiteSpace(ad.Sponsor))
+            AdSponsorText.Text = ad.Sponsor;   // 显示广告主名(默认文案"推广"可被覆盖)
     }
 
     /// <summary>本地轮播:每 60 秒切到下一张卡(不联网,用缓存)。</summary>
@@ -1261,15 +1265,20 @@ public sealed partial class MainPage : Page
         "5. 本软件集成的第三方开源引擎、模型与组件的稳定性与许可,由其各自作者负责。\n" +
         "6. 以上条款在您所在地法律法规允许的最大范围内适用。\n\n" +
         "二、打赏声明\n" +
-        "1. 本软件免费、无广告、无账号、无数据上传;打赏完全自愿,不影响任何功能。\n" +
+        "1. 本软件免费使用;打赏完全自愿,不影响任何功能。\n" +
         "2. 打赏仅用于支持作者持续更新、修复与维护软件(覆盖设备、带宽、时间成本)。\n" +
         "3. 打赏不构成购买,不提供特权或额外功能;打赏后不支持退还。\n" +
         "4. 请理性打赏、量力而行;未成年人请在监护人同意下操作。\n" +
         "5. 打赏即表示已阅读并同意本条。\n\n" +
-        "三、版权与许可\n" +
+        "三、广告说明(合规告知)\n" +
+        "1. 本软件为免费软件,通过左侧底部「广告」区域展示合作方广告,以维持开发与维护成本。\n" +
+        "2. 广告内容由广告主提供,由作者按合规要求审核后展示;右上角「推广」角标用于标识广告性质。\n" +
+        "3. 您可随时点广告卡右上角「✕」隐藏本次,或在「设置 → 显示广告」彻底关闭;关闭不影响软件任何功能。\n" +
+        "4. 本软件不收集您的任何个人信息用于广告定向/推荐,不将您的使用数据上传给任何广告方。\n\n" +
+        "四、版权与许可\n" +
         "1. 本软件版权归作者所有;未经许可不得商业倒卖或为营利再分发,不得移除版权/许可信息。\n" +
         "2. 本软件基于若干开源软件构建,受各自开源许可约束(见 THIRD_PARTY_NOTICES.txt)。\n\n" +
-        "四、第三方软件\n" +
+        "五、第三方软件\n" +
         "本软件集成 FFmpeg、Real-ESRGAN、waifu2x-ncnn、RIFE、ONNX Runtime、BiRefNet、Demucs、LavaSR 等开源引擎/模型;其版权、许可与免责见随软件附带的 THIRD_PARTY_NOTICES.txt 及各项目主页。\n\n" +
         "以上声明最终解释权归作者所有,并随版本更新而可能调整。";
 
