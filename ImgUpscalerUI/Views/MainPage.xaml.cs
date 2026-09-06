@@ -212,9 +212,9 @@ public sealed partial class MainPage : Page
             else await MaybeShowUpdateSurveyAsync();   // 本次无自检 → 直接弹问卷(若到期/50%通过)
             // 更新检查:后台静默(有新版才弹提示条;失败/无网/已最新均无感)
             _ = CheckUpdateSilentAsync();
-            // 广告 + 弹幕动态区:启动拉一次 + 定时轮询(作者 GitHub 投放;失败静默隐藏)
+            // 左栏底部广告卡:启动立即用默认内容渲染 + 定时轮询(作者 GitHub 投放;失败静默,有默认兜底)
             _ = InitAdAsync();
-            // 右侧纯文本提示位:启动拉一次 + 定时轮询(独立 hint/ 文件夹,作者 GitHub 投放;失败静默隐藏)
+            // 状态栏常驻提示位(独立 hint/ 文件夹):启动立即用默认内容渲染 + 定时轮询;常驻不可删除
             _ = InitTipAsync();
         };
     }

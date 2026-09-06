@@ -6,11 +6,12 @@ using System.Threading.Tasks;
 namespace ALHPro;
 
 /// <summary>
-/// 「右侧提示」数据源:拉取仓库 hint/ 目录下的独立提示文件 hint1.json~hint5.json(作者编辑后 push,用户端轮询到即更新)。
+/// 「状态栏常驻提示」数据源:拉取仓库 hint/ 目录下的独立提示文件 hint1.json~hint5.json(作者编辑后 push,用户端轮询到即更新)。
 /// 与 AdFetcher 思路一致,但是独立文件夹(hint/)、独立上传、独立轮播,互不影响。
 /// 每个文件定义一条纯文本提示 {text, color, link};text 为文案,color 为文字颜色(hex,#RRGGBB 或 #AARRGGBB),link 可选(点击跳转)。
 /// 客户端本地每 30 秒轮播下一条(不联网),网络只在启动/每 10 分钟拉一次缓存。
-/// 失败(无网/超时/JSON 异常)一律静默:单文件 404/损坏跳过,全坏则隐藏右侧提示,不打扰用户。
+/// 提示为【常驻】:显示在底部状态栏最右侧,不可删除;失败(无网/超时/JSON 异常)一律静默,单文件 404/损坏跳过,
+/// 全坏才隐藏(通常用内置默认兜底,保证启动即有内容)。
 /// </summary>
 public static class TipFetcher
 {
@@ -116,7 +117,7 @@ public static class TipFetcher
         => obj.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 }
 
-/// <summary>一条右侧纯文本提示(color 可空=用默认醒目色;link 可空=不可点击)。</summary>
+/// <summary>一条状态栏常驻提示(color 可空=用默认醒目色;link 可空=不可点击)。</summary>
 public sealed class TipInfo
 {
     public string? Text { get; set; }
