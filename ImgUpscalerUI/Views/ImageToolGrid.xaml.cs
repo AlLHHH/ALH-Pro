@@ -635,12 +635,20 @@ public sealed partial class ImageToolGrid : UserControl
     }
 
     // ---------- 双击缩略图 → 大图预览 ----------
-    private void Item_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    private async void Item_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
         // 双击的是铅笔按钮(操作面板)时不打开预览
         if (IsInsidePencil(e.OriginalSource as DependencyObject)) return;
         if ((sender as FrameworkElement)?.DataContext is ImageItem item)
+        {
+            // 【处理中不可预览】任务处理中,图片/输出未就绪 → 明确提示,不尝试打开
+            if (_processing)
+            {
+                try { await ShowInfoAsync("任务处理中,暂不可预览。请等待处理完成后再双击预览。"); } catch { }
+                return;
+            }
             ItemDoubleTapped?.Invoke(item);
+        }
     }
 
     private static bool IsInsidePencil(DependencyObject? o)
