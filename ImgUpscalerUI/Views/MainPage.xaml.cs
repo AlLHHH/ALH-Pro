@@ -617,6 +617,28 @@ public sealed partial class MainPage : Page
         }
     }
 
+    /// <summary>把远程广告图设为 AdImage;加载失败(404/网络错)回退本地占位图,避免裂图。</summary>
+    private void SetAdImage(string? url)
+    {
+        var ph = AdPlaceholderImage();
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            AdImage.Source = ph;
+            return;
+        }
+        try
+        {
+            var bmp = new BitmapImage(new Uri(url));
+            bmp.ImageFailed += (_, _) =>
+            {
+                // ImageFailed 可能在后台线程回调:切回 UI 线程再改 Source
+                DispatcherQueue.TryEnqueue(() => { if (AdImage != null) AdImage.Source = ph; });
+            };
+            AdImage.Source = bmp;
+        }
+        catch { AdImage.Source = ph; }
+    }
+
     /// <summary>渲染广告 + 弹幕(必须在 UI 线程)。数据为 null 或用户已关/本次已关 → 隐藏。</summary>
     public void RenderAds()
     {
@@ -634,18 +656,7 @@ public sealed partial class MainPage : Page
             var ad = data.Ad;
             if (ad is not null)
             {
-                if (!string.IsNullOrWhiteSpace(ad.Image))
-                {
-                    try
-                    {
-                        AdImage.Source = new BitmapImage(new Uri(ad.Image));
-                    }
-                    catch { AdImage.Source = ph; }
-                }
-                else
-                {
-                    AdImage.Source = ph;
-                }
+                SetAdImage(ad.Image);
                 AdTitle.Text = ad.Title ?? "";
                 AdTitle.Visibility = string.IsNullOrWhiteSpace(ad.Title) ? Visibility.Collapsed : Visibility.Visible;
                 AdText.Text = ad.Text ?? "";
