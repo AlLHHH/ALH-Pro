@@ -88,6 +88,8 @@ public sealed partial class AudioView : UserControl
                 s.PlaybackSession.Position = TimeSpan.FromSeconds(_previewItem.TrimStart);
         };
         _playStateHandler = PlayStateChanged;
+        // 页面卸载时释放 MediaPlayer(WinRT COM 对象,持有解码/渲染管线;不释放会泄漏,页面重建即多一个实例)
+        Unloaded += (_, _) => { try { RemovePreviewHandler(); _mediaPlayer?.Dispose(); } catch { } };
         UpdateRunState();
     }
 

@@ -858,6 +858,18 @@ public static class CutoutService
     {
         var bmp = System.Drawing.Image.FromFile(input) as System.Drawing.Bitmap
             ?? throw new InvalidOperationException("无法读取图片");
+        // 【尺寸/内存保护(对齐图片超分)】超大图(>4K)全分辨率 mask/输出会 OOM——提前给清晰错误提示降级,
+        // 而不是处理中途爆内存(用户以为卡死/白跑)。
+        const int MaxDim = 16384;
+        const long MaxPx = 160_000_000L;   // 约 1.6 亿像素
+        long px = (long)bmp.Width * bmp.Height;
+        if (bmp.Width > MaxDim || bmp.Height > MaxDim || px > MaxPx)
+        {
+            bmp.Dispose();
+            throw new InvalidOperationException(
+                $"图片过大:{bmp.Width}×{bmp.Height} = {px:N0} 像素,超出 AI 抠图安全上限(单边≤{MaxDim},总像素≤{MaxPx:N0})。" +
+                "请先缩小图片再抠图。");
+        }
         ApplyExifRotation(bmp, input);
         return bmp;
     }

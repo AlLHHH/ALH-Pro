@@ -384,12 +384,16 @@ public static partial class EngineService
     private static void LoadUsedTempRoots()
     {
         if (_rootsLoaded) return;
-        _rootsLoaded = true;
         try
         {
-            if (File.Exists(TempRootsFile))
-                foreach (var line in File.ReadAllLines(TempRootsFile))
-                    if (!string.IsNullOrWhiteSpace(line)) _usedTempRoots.Add(line.Trim());
+            lock (_rootsLock)
+            {
+                if (_rootsLoaded) return;
+                _rootsLoaded = true;
+                if (File.Exists(TempRootsFile))
+                    foreach (var line in File.ReadAllLines(TempRootsFile))
+                        if (!string.IsNullOrWhiteSpace(line)) _usedTempRoots.Add(line.Trim());
+            }
         }
         catch { }
     }
@@ -406,10 +410,10 @@ public static partial class EngineService
             }
         }
     }
-    /// <summary>本软件用过的全部临时根目录(含已换掉的旧路径)。</summary>
-    public static System.Collections.Generic.IEnumerable<string> UsedTempRoots
+    /// <summary>本软件用过的全部临时根目录(含已换掉的旧路径)。返回只读快照,避免外部拿到内部可变集合。</summary>
+    public static System.Collections.Generic.IReadOnlyCollection<string> UsedTempRoots
     {
-        get { LoadUsedTempRoots(); return _usedTempRoots; }
+        get { lock (_rootsLock) { LoadUsedTempRoots(); return _usedTempRoots.ToArray(); } }
     }
 
     // 引擎根目录:优先 exe 旁 engines/ 目录;否则从当前目录向上逐级搜索(覆盖源码布局/输出目录)

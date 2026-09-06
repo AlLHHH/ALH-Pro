@@ -595,6 +595,44 @@ public sealed partial class MainPage : Page
         return null;
     }
 
+    /// <summary>启动广告后台活动:60s 轮播定时器 + 10min 网络轮询(仅当 ShowAds 开启且未在跑)。</summary>
+    private void StartAdActivity()
+    {
+        try
+        {
+            if (!AppSettings.ShowAds) return;
+            StartAdRotateTimer();
+            if (_adCts is { IsCancellationRequested: false }) return;   // 已在跑
+            _adCts = new System.Threading.CancellationTokenSource();
+            var ct = _adCts.Token;
+            _ = Task.Run(async () =>
+            {
+                await AdFetcher.RefreshAsync().ConfigureAwait(false);
+                DispatcherQueue.TryEnqueue(RenderAds);
+                while (!ct.IsCancellationRequested)
+                {
+                    try
+                    {
+                        await System.Threading.Tasks.Task.Delay(AdFetcher.PollInterval, ct).ConfigureAwait(false);
+                        await AdFetcher.RefreshAsync().ConfigureAwait(false);
+                        DispatcherQueue.TryEnqueue(RenderAds);
+                        DispatcherQueue.TryEnqueue(RotateAd);
+                    }
+                    catch (OperationCanceledException) { break; }
+                    catch { /* 轮询异常忽略 */ }
+                }
+            }, ct);
+        }
+        catch { }
+    }
+
+    /// <summary>停止广告后台活动:停 60s 轮播定时器 + Cancel 网络轮询(用户彻底关闭广告时调用)。</summary>
+    private void StopAdActivity()
+    {
+        try { _adRotateTimer?.Stop(); } catch { }
+        try { _adCts?.Cancel(); } catch { }
+    }
+
     /// <summary>启动:拉一次 + 每 10 分钟轮询(作者改 ad/adN.json push,用户侧最长 10 分钟看到新内容);本地每 60 秒轮播一张卡。</summary>
     private async Task InitAdAsync()
     {
@@ -721,6 +759,7 @@ public sealed partial class MainPage : Page
     {
         _adClosedThisRun = true;
         AdCard.Visibility = Visibility.Collapsed;
+        try { _adRotateTimer?.Stop(); } catch { }   // 本次隐藏:停轮播定时器,不再空转
     }
 
     private void UpdateBarGo_Click(object sender, RoutedEventArgs e)
@@ -2726,8 +2765,8 @@ public sealed partial class MainPage : Page
         };
         ToolTipService.SetToolTip(showAds,
             "左栏底部由作者投放的「广告」动态区(从 GitHub 定时更新,每 1 分钟轮播一张卡)。关闭后整个区域不再显示;不影响软件任何功能。");
-        showAds.Checked += (_, _) => { AppSettings.ShowAds = true; AppSettings.Save(); AppLogger.Info("已开启「显示广告」"); RenderAds(); };
-        showAds.Unchecked += (_, _) => { AppSettings.ShowAds = false; AppSettings.Save(); AppLogger.Info("已关闭「显示广告」"); RenderAds(); };
+        showAds.Checked += (_, _) => { AppSettings.ShowAds = true; AppSettings.Save(); AppLogger.Info("已开启「显示广告」"); StartAdActivity(); RenderAds(); };
+        showAds.Unchecked += (_, _) => { AppSettings.ShowAds = false; AppSettings.Save(); AppLogger.Info("已关闭「显示广告」"); StopAdActivity(); RenderAds(); };
         content.Children.Add(showAds);
         content.Children.Add(new TextBlock
         {
