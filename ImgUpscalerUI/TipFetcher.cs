@@ -15,8 +15,9 @@ namespace ALHPro;
 /// </summary>
 public static class TipFetcher
 {
-    /// <summary>提示文件列表(hint1.json~hint5.json)。</summary>
-    private static readonly string[] TipFiles = { "hint1.json", "hint2.json", "hint3.json", "hint4.json", "hint5.json" };
+    /// <summary>提示文件前缀:hint1.json、hint2.json、hint3.json……(自适应:从 hint1 开始,直到某个文件不存在才停,最多 20 个)。
+    /// 作者以后想加提示,只要在 hint/ 目录新建 hintN.json 并上传即可,无需改代码或发版。</summary>
+    private const string TipFilePrefix = "hint";
 
     /// <summary>轮询间隔:10 分钟(作者改完 push,用户侧最长 10 分钟看到新内容)。</summary>
     public static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(10);
@@ -46,13 +47,17 @@ public static class TipFetcher
         if (tips is { Length: > 0 }) Latest = tips;
     }
 
-    /// <summary>拉取并解析全部提示文件;返回有效的提示数组(跳过 404/损坏/空),全失败返回 empty(非 null),由调用方隐藏。</summary>
+    /// <summary>拉取并解析全部提示文件(自适应:从 hint1 开始,遇到不存在的文件即停,最多 20 个);
+    /// 返回有效的提示数组(跳过损坏/空),全失败返回 empty(非 null),由调用方隐藏。</summary>
     public static async Task<TipInfo[]> FetchAllAsync()
     {
         var result = new System.Collections.Generic.List<TipInfo>();
-        foreach (var file in TipFiles)
+        const int MaxFiles = 20;   // 安全上限,杜绝异常端点导致无限循环
+        for (int i = 1; i <= MaxFiles; i++)
         {
+            var file = $"{TipFilePrefix}{i}.json";
             var json = await FetchFileRawAsync(file).ConfigureAwait(false);
+            if (json is null) break;   // 404:该编号文件不存在 → 停止(后续编号也不会有)
             if (string.IsNullOrWhiteSpace(json)) continue;
             var tip = ParseTip(json);
             if (tip is not null) result.Add(tip);
@@ -61,8 +66,8 @@ public static class TipFetcher
         return result.ToArray();
     }
 
-    /// <summary>拉取单个提示文件原文(按实测可靠性排序:jsDelivr 最稳→gh-proxy→ghproxy→raw 最后;任一成功即返回;失败返回 null)。
-    /// 多镜像提高国内可达性(与广告一致:jsDelivr 最稳,故排最前)。</summary>
+    /// <summary>拉取单个提示文件原文(按实测可靠性排序:jsDelivr 最稳→gh-proxy→ghproxy→raw 最后;任一成功即返回)。
+    /// 文件确实不存在(404)→ 返回 null(供调用方停止自适应拉取);其它失败返回空串(继续尝试下一端点)。</summary>
     private static async Task<string?> FetchFileRawAsync(string file)
     {
         string[] urls =
@@ -72,6 +77,7 @@ public static class TipFetcher
             $"https://ghproxy.net/https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/hint/{file}",
             $"https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/hint/{file}",
         };
+        bool sawNotFound = false;
         foreach (var url in urls)
         {
             try
@@ -80,12 +86,17 @@ public static class TipFetcher
                 var json = await _http.GetStringAsync(url).ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(json)) return json;
             }
+            catch (HttpRequestException hre)
+            {
+                // 404 = 文件不存在:记下,若所有端点都 404 才返回 null(代表"该编号不存在,停止拉取")
+                if (hre.StatusCode == System.Net.HttpStatusCode.NotFound) { sawNotFound = true; continue; }
+            }
             catch (Exception ex)
             {
                 AppLogger.Info($"[提示] 文件 {file} 端点失败({url[..Math.Min(42, url.Length)]}...):" + ex.Message.Split('\n')[0]);
             }
         }
-        return null;
+        return sawNotFound ? null : string.Empty;   // 全端点 404 → null;否则空串(非404失败,继续尝试但不中断)
     }
 
     /// <summary>解析单个提示文件;字段缺失/异常返回 null。</summary>

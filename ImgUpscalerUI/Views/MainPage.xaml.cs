@@ -582,6 +582,7 @@ public sealed partial class MainPage : Page
     private DateTime _adHiddenUntil = DateTime.MinValue;
     private System.Threading.CancellationTokenSource? _adCts;
     private int _adRotateIdx;           // 当前轮播到第几张卡
+    private readonly System.Collections.Generic.List<int> _adRecent = new();   // 最近显示过的广告索引(用于随机轮播时避开最近4条)
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _adRotateTimer;   // 60s 本地轮播定时器
     /// <summary>广告是否因「本次点✕」而处于隐藏期(距 2 小时未到)。</summary>
     private bool AdIsHiddenNow => DateTime.Now < _adHiddenUntil;
@@ -744,12 +745,31 @@ public sealed partial class MainPage : Page
             AdSponsorText.Text = ad.Sponsor;   // 显示广告主名(默认文案"推广"可被覆盖)
     }
 
-    /// <summary>本地轮播:每 30 秒切到下一张卡(不联网,用缓存)。</summary>
+    /// <summary>从 count 个候选中随机选一个索引,避开最近 recentSpan 条(recentHistory 存最近显示过的索引,尾部=最新)。
+    /// 若候选数 ≤ recentSpan(无法避开足够多),则退化为随机;选中的索引会追加到 recentHistory(只保留 recentSpan 条)。</summary>
+    private static int PickRandomNotRecent(int count, System.Collections.Generic.List<int> recentHistory, int recentSpan)
+    {
+        if (count <= 0) return 0;
+        // 候选 = 不在最近 recentSpan 条里的索引
+        var exclude = new System.Collections.Generic.HashSet<int>();
+        int n = recentHistory.Count;
+        for (int i = Math.Max(0, n - recentSpan); i < n; i++) exclude.Add(recentHistory[i]);
+        var pool = new System.Collections.Generic.List<int>();
+        for (int i = 0; i < count; i++) if (!exclude.Contains(i)) pool.Add(i);
+        int pick;
+        if (pool.Count > 0) pick = pool[System.Random.Shared.Next(pool.Count)];
+        else pick = System.Random.Shared.Next(count);   // 全部都在冷却 → 退化随机
+        recentHistory.Add(pick);
+        if (recentHistory.Count > recentSpan) recentHistory.RemoveAt(0);   // 只保留最近 recentSpan 条
+        return pick;
+    }
+
+    /// <summary>本地轮播:每 30 秒随机切到下一张卡,并避开最近显示过的 4 张(不联网,用缓存)。</summary>
     public void RotateAd()
     {
         var ads = AdFetcher.Latest;
         if (ads is not { Length: > 0 }) return;
-        _adRotateIdx = (_adRotateIdx + 1) % ads.Length;
+        _adRotateIdx = PickRandomNotRecent(ads.Length, _adRecent, 4);
         DispatcherQueue.TryEnqueue(() =>
         {
             if (AdIsHiddenNow) return;
@@ -829,6 +849,7 @@ public sealed partial class MainPage : Page
     // ============ 状态栏常驻提示位(独立 hint/ 文件夹,与广告同逻辑但互不影响;常驻不可删除) ============
     private System.Threading.CancellationTokenSource? _tipCts;
     private int _tipRotateIdx;
+    private readonly System.Collections.Generic.List<int> _tipRecent = new();   // 最近显示过的提示索引(随机轮播时避开最近4条)
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _tipRotateTimer;   // 30s 本地轮播
 
     /// <summary>把 hex 颜色(#RRGGBB 或 #AARRGGBB)转成 WinUI SolidColorBrush;非法返回 null(调用方用默认色)。</summary>
@@ -954,12 +975,12 @@ public sealed partial class MainPage : Page
         TipIcon.Visibility = string.IsNullOrWhiteSpace(tip.Link) ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    /// <summary>本地轮播:每 30 秒切到下一提示。</summary>
+    /// <summary>本地轮播:每 30 秒随机切到下一条提示,并避开最近显示过的 4 条。</summary>
     public void RotateTip()
     {
         var tips = TipFetcher.Latest;
         if (tips is not { Length: > 0 }) return;
-        _tipRotateIdx = (_tipRotateIdx + 1) % tips.Length;
+        _tipRotateIdx = PickRandomNotRecent(tips.Length, _tipRecent, 4);
         DispatcherQueue.TryEnqueue(() =>
         {
             ShowTipAt(tips[_tipRotateIdx]);
