@@ -34,7 +34,7 @@ public static class UpdateChecker
         typeof(UpdateChecker).Assembly.GetName().Version?.ToString(3) ?? "1.0";
 
     /// <summary>检查结果:null=全部端点失败(网络/超时/接口异常);HasNew=true 有新版。</summary>
-    public static async Task<(bool HasNew, string LatestTag, string LatestVersion)?> CheckAsync()
+    public static async Task<(bool HasNew, string LatestTag, string LatestVersion)?> CheckAsync(int retries = 3)
     {
         // 【测试开关】ALH_FORCE_UPDATE=1:强制模拟"检测到新版本"(不联网),用于本机测试更新弹窗/检查更新页面的网盘链接。
         // 正常用户不设置此变量,无任何影响。
@@ -43,32 +43,44 @@ public static class UpdateChecker
             AppLogger.Info("[更新] 测试模式:强制视为有新版本(ALH_FORCE_UPDATE=1)");
             return (true, "v9.9.9-test", "9.9.9");
         }
-        foreach (var url in Endpoints)
+        // 每次启动尽力检查到"确定结果"(有新版本 / 已是最新),被墙就换端点并重试;达到 retries 轮仍无确定结果才返回 null。
+        // 断言:GitHub API 国内常被墙/超时,单轮里官方+镜像都可能失败,故多轮重试提高拿到结果的概率。
+        if (retries < 1) retries = 1;
+        for (int attempt = 1; attempt <= retries; attempt++)
         {
-            try
+            foreach (var url in Endpoints)
             {
-                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };   // 每端点 5 秒,总最长 15 秒
-                // GitHub API 强制要求 User-Agent,否则 403
-                http.DefaultRequestHeaders.UserAgent.ParseAdd($"ALHPro/{CurrentVersion}");
-                var json = await http.GetStringAsync(url).ConfigureAwait(false);
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-                // tag_name 形如 "v1.0";没有版本发布时 GitHub 返回 404(GetStringAsync 会抛异常 → 换端点)
-                string tag = root.TryGetProperty("tag_name", out var t) ? t.GetString() ?? "" : "";
-                if (string.IsNullOrWhiteSpace(tag)) return (false, "", "");
-                // 去掉 v 前缀与 -后缀(如 v1.0-beta1 → 1.0)
-                var latestStr = tag.TrimStart('v', 'V').Split('-')[0].Trim();
-                if (!Version.TryParse(latestStr, out var latest)) return (false, tag, latestStr);
-                var cur = Version.TryParse(CurrentVersion, out var c) ? c : new Version(1, 0, 0);
-                AppLogger.Info($"[更新] 检查:当前 {CurrentVersion},GitHub 最新 {tag} → {(latest > cur ? "有新版本" : "已是最新")}(端点 {url[..Math.Min(40, url.Length)]}...)");
-                return (latest > cur, tag, latestStr);
+                try
+                {
+                    using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };   // 每端点 5 秒
+                    // GitHub API 强制要求 User-Agent,否则 403
+                    http.DefaultRequestHeaders.UserAgent.ParseAdd($"ALHPro/{CurrentVersion}");
+                    var json = await http.GetStringAsync(url).ConfigureAwait(false);
+                    using var doc = JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+                    // tag_name 形如 "v1.0";没有版本发布时 GitHub 返回 404(GetStringAsync 会抛异常 → 换端点)
+                    string tag = root.TryGetProperty("tag_name", out var t) ? t.GetString() ?? "" : "";
+                    if (string.IsNullOrWhiteSpace(tag)) return (false, "", "");
+                    // 去掉 v 前缀与 -后缀(如 v1.0-beta1 → 1.0)
+                    var latestStr = tag.TrimStart('v', 'V').Split('-')[0].Trim();
+                    if (!Version.TryParse(latestStr, out var latest)) return (false, tag, latestStr);
+                    var cur = Version.TryParse(CurrentVersion, out var c) ? c : new Version(1, 0, 0);
+                    AppLogger.Info($"[更新] 检查:当前 {CurrentVersion},GitHub 最新 {tag} → {(latest > cur ? "有新版本" : "已是最新")}(端点 {url[..Math.Min(40, url.Length)]}..., 第 {attempt} 轮)");
+                    return (latest > cur, tag, latestStr);   // 拿到确定结果(有新版或已最新)立即返回
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Info($"[更新] 端点失败({url[..Math.Min(40, url.Length)]}...):" + ex.Message.Split('\n')[0]);
+                }
             }
-            catch (Exception ex)
+            // 本轮所有端点都失败(被墙/超时):小间隔后重试下一轮
+            if (attempt < retries)
             {
-                AppLogger.Info($"[更新] 端点失败({url[..Math.Min(40, url.Length)]}...):" + ex.Message.Split('\n')[0]);
+                try { await System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(4)).ConfigureAwait(false); }
+                catch { return null; }
             }
         }
-        AppLogger.Info("[更新] 检查失败(全部端点,静默)");
+        AppLogger.Info($"[更新] 检查失败(重试 {retries} 轮后仍无确定结果,网络可能被墙)");
         return null;
     }
 }
