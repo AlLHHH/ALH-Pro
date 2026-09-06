@@ -1282,6 +1282,49 @@ public sealed partial class MainPage : Page
         "本软件集成 FFmpeg、Real-ESRGAN、waifu2x-ncnn、RIFE、ONNX Runtime、BiRefNet、Demucs、LavaSR 等开源引擎/模型;其版权、许可与免责见随软件附带的 THIRD_PARTY_NOTICES.txt 及各项目主页。\n\n" +
         "以上声明最终解释权归作者所有,并随版本更新而可能调整。";
 
+    private void ShowPrivacyPolicy()
+    {
+        var dlg = new ContentDialog
+        {
+            Title = "隐私政策 · ALH Pro",
+            Content = new ScrollViewer
+            {
+                MaxHeight = 560,
+                VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
+                Content = new TextBlock
+                {
+                    Text = PrivacyPolicyText(),
+                    FontSize = 12,
+                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                    LineHeight = 20,
+                },
+            },
+            CloseButtonText = "关闭",
+            XamlRoot = this.XamlRoot,
+        };
+        try { _ = dlg.ShowAsync(); } catch { }
+    }
+
+    /// <summary>《隐私政策》全文(明确"无账号、无个人信息收集/上传";接广告/上架需此告知义务)。</summary>
+    private static string PrivacyPolicyText() =>
+        "隐私政策 · ALH Pro\n\n" +
+        "本隐私政策旨在说明 ALH Pro(以下简称\"本软件\")如何处理您的信息。本软件完全本地运行,不要求您注册账号,不收集、存储或上传您的任何个人信息。\n\n" +
+        "一、本软件收集的信息\n" +
+        "本软件不收集您的个人信息。以下说明权且作为补充:软件内所有图片/视频/音频处理均在您本机完成,处理过程中产生的临时文件在处理完成后自动清理,不会上传到任何服务器。\n\n" +
+        "二、联网行为(仅此三项,均不涉及您的个人信息)\n" +
+        "1. 检查更新:启动时访问 GitHub 接口查询是否有新版本(仅传输软件版本号,不包含任何设备或个人信息)。\n" +
+        "2. 展示广告:从 GitHub 拉取广告文案与图片用于界面展示(该过程不传输您的任何信息;广告不含个性化推荐,不读取您的设备标识或使用记录)。\n" +
+        "3. 问卷入口:您主动点击问卷链接才打开问卷星页面,由问卷星按其自身政策处理(本软件不代为提交、不读取结果)。\n\n" +
+        "三、第三方服务\n" +
+        "软件集成的开源引擎与模型(FFmpeg、Real-ESRGAN、waifu2x-ncnn、RIFE、ONNX Runtime、BiRefNet、Demucs、LavaSR 等)均为本地调用,不会向它们的作者或任何第三方传输您的数据。\n\n" +
+        "四、广告\n" +
+        "本软件为免费软件,通过界面广告位展示合作方广告以维持开发维护成本。广告由作者按合规要求审核后展示,您可点广告卡右上角「✕」隐藏本次,或在「设置 → 显示广告」彻底关闭。关闭不影响软件任何功能。\n\n" +
+        "五、您的权利\n" +
+        "由于本软件不收集您的个人信息,无需也无法向您提供查询、更正、删除个人信息的途径。您可以随时卸载本软件;卸载后本软件在您设备上不遗留任何账号数据。\n\n" +
+        "六、隐私政策更新\n" +
+        "若本政策发生变化,将随软件版本更新一并说明。如您对本政策有疑问,可通过软件内「关于 → 联系方式」渠道与作者联系。\n\n" +
+        "本政策自软件发布之日(2026-09-06)起生效。";
+
     private void About_Click(object sender, RoutedEventArgs e)
     {
         var content = new StackPanel { Spacing = 8 };
@@ -1333,6 +1376,16 @@ public sealed partial class MainPage : Page
         };
         declLink.Click += (_, _) => { try { ShowUserDeclarations(); } catch { } };
         content.Children.Add(declLink);
+        // 隐私政策:随时可看(明确"无账号、无数据收集/上传";接广告/上架需此告知义务)
+        var privacyLink = new Microsoft.UI.Xaml.Controls.HyperlinkButton
+        {
+            Content = "查看隐私政策",
+            FontSize = 11,
+            Padding = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 0),
+            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
+        };
+        privacyLink.Click += (_, _) => { try { ShowPrivacyPolicy(); } catch { } };
+        content.Children.Add(privacyLink);
         // 问卷:常驻入口(关于页随时可填)
         var surveyLink = new Microsoft.UI.Xaml.Controls.HyperlinkButton
         {
