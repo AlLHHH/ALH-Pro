@@ -94,10 +94,11 @@
                                                TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
                                 </StackPanel>
                             </StackPanel>
-                            <!-- 关闭按钮:固定在卡片右上角(悬浮,不占内容宽度) -->
+                            <!-- 关闭按钮:固定在卡片右上角(悬浮,半透明圆角底),不占内容宽度 -->
                             <Button x:Name="AdCloseBtn" Content="✕" FontSize="10" Padding="6,2"
-                                    Background="Transparent" BorderThickness="0" Foreground="#66FFFFFF"
-                                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-2,-2,0"
+                                    Background="#2EFFFFFF" BorderThickness="0" Foreground="#AAFFFFFF"
+                                    CornerRadius="8"
+                                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-3,-4,0"
                                     Click="AdClose_Click" ToolTipService.ToolTip="本次运行隐藏广告"/>
                         </Grid>
                     </Border>
