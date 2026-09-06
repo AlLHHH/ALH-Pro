@@ -1285,9 +1285,9 @@ public static class VideoService
                                 else if (engine == "waifu2x")
                                     onnxModelPath = EsrganOnnxService.FindWaifu2xModel();
                             }
-                            else if (engine == "realesrgan" && (EngineService.ShouldUseOnnxEsrgan() || ncnnUnreliable || (fastMode && !EngineService.IsNvidiaGpu())))
+                            else if (engine == "realesrgan" && (EngineService.ShouldUseOnnxEsrgan() || ncnnUnreliable || fastMode))
                                 onnxModelPath = EsrganOnnxService.ResolveEsrganOnnxPath(model);
-                            else if (engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx || ncnnUnreliable || (fastMode && !EngineService.IsNvidiaGpu())))
+                            else if (engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx || ncnnUnreliable || fastMode))
                                 onnxModelPath = EsrganOnnxService.FindWaifu2xModel();
                             if (onnxModelPath != null)
                             {
@@ -2854,14 +2854,19 @@ public static class VideoService
         {
             if (codecPref == 2)
             {
-                // H.265:优先厂商匹配的 hevc 硬编,其次任一可用 hevc 硬编,最后 libx265
-                if (hevcVendor.Length > 0 && WorkingHwEncoders.Contains(hevcVendor)) chosen = hevcVendor;
-                else if (WorkingHwEncoders.Any(e => e.StartsWith("hevc", StringComparison.OrdinalIgnoreCase)))
-                    chosen = WorkingHwEncoders.First(e => e.StartsWith("hevc", StringComparison.OrdinalIgnoreCase));
+                // H.265:优先厂商匹配的 hevc 硬编(但 qsv 降级——双卡机/集成显卡上易输出无效文件),其次任一可用 hevc 硬编,最后 libx265
+                if (hevcVendor.Length > 0 && hevcVendor != "hevc_qsv" && WorkingHwEncoders.Contains(hevcVendor)) chosen = hevcVendor;
+                else if (WorkingHwEncoders.Any(e => e.StartsWith("hevc", StringComparison.OrdinalIgnoreCase) && e != "hevc_qsv"))
+                    chosen = WorkingHwEncoders.First(e => e.StartsWith("hevc", StringComparison.OrdinalIgnoreCase) && e != "hevc_qsv");
+                else if (WorkingHwEncoders.Contains("hevc_qsv")) chosen = "hevc_qsv";
                 else chosen = "libx265";
             }
-            else if (h264Vendor.Length > 0 && WorkingHwEncoders.Contains(h264Vendor)) chosen = h264Vendor;
-            else if (WorkingHwEncoders.Count > 0) chosen = WorkingHwEncoders[0];
+            // H.264:优先厂商匹配硬编;但 qsv(Intel 集显)在双卡机上易输出无效文件(用户① RTX2070+核显实测黑屏),
+            // 故 qsv 不作为首选,仅当无任何其它可用硬编时才兜底(避免"匹配到 Intel → 选 QSV → 合成黑屏")。
+            else if (h264Vendor.Length > 0 && h264Vendor != "h264_qsv" && WorkingHwEncoders.Contains(h264Vendor)) chosen = h264Vendor;
+            else if (WorkingHwEncoders.Any(e => e.StartsWith("h264", StringComparison.OrdinalIgnoreCase) && e != "h264_qsv"))
+                chosen = WorkingHwEncoders.First(e => e.StartsWith("h264", StringComparison.OrdinalIgnoreCase) && e != "h264_qsv");
+            else if (WorkingHwEncoders.Contains("h264_qsv")) chosen = "h264_qsv";
             else chosen = "libx264";
         }
         bool isCpu = chosen is "libx264" or "libx265";
