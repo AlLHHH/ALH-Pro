@@ -2507,11 +2507,14 @@ public sealed partial class MainPage : Page
                 picker.SuggestedFileName = $"ALHPro_Diag_{DateTime.Now:yyyyMMdd_HHmm}";
                 var file = await picker.PickSaveFileAsync();
                 if (file == null) return;
-                var tmpDir = System.IO.Path.Combine(ALHPro.EngineService.TempRoot, $"alh_diag_{Guid.NewGuid():N}");
+                // 临时目录用【系统 %TEMP%】而非应用临时根:应用临时清理(启动/立即清理/退出)会扫 alh_*/imgup_*
+                // 前缀,若诊断导出目录也带 alh_diag_ 前缀,可能被并发清理扫空 → 导出 0K。放系统 %TEMP% 隔离。
+                var tmpDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"alhdiag_{Guid.NewGuid():N}");
                 System.IO.Directory.CreateDirectory(tmpDir);
                 try
                 {
-                    try { System.IO.File.Copy(AppLogger.LogFile, System.IO.Path.Combine(tmpDir, "diagnostic.log"), true); } catch { }
+                    int gathered = 0;
+                    // ① 设备信息:必写(哪怕其它都失败,诊断包也有内容,不会 0K)
                     var info = new System.Text.StringBuilder();
                     info.AppendLine($"ALH Pro 诊断包 {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
                     info.AppendLine($"版本: v{UpdateChecker.CurrentVersion} · 构建 {File.GetLastWriteTime(typeof(MainPage).Assembly.Location):MM-dd HH:mm}");
@@ -2533,28 +2536,42 @@ public sealed partial class MainPage : Page
                     info.AppendLine("计算设备设置: GPU " + AppSettings.GpuIndex);
                     try { info.AppendLine("Vulkan 自检报告:\n" + AppSettings.VulkanReport); } catch { }
                     info.AppendLine("临时文件目录: " + ALHPro.EngineService.TempRoot);
-                    System.IO.File.WriteAllText(System.IO.Path.Combine(tmpDir, "设备信息.txt"), info.ToString());
-                    // 设置文件全部带上(均为本地参数,无隐私)
+                    var infoPath = System.IO.Path.Combine(tmpDir, "设备信息.txt");
+                    System.IO.File.WriteAllText(infoPath, info.ToString());
+                    gathered++;
+                    // ② 日志(可有可无,失败不阻塞)
+                    try { System.IO.File.Copy(AppLogger.LogFile, System.IO.Path.Combine(tmpDir, "diagnostic.log"), true); gathered++; } catch { }
+                    // ③ 设置文件(均为本地参数,无隐私)
                     try
                     {
                         var settingsDir = System.IO.Path.GetDirectoryName(ParaPaths.SettingsFile("app-settings.json"));
                         if (settingsDir != null && System.IO.Directory.Exists(settingsDir))
                             foreach (var s in System.IO.Directory.EnumerateFiles(settingsDir, "*.json"))
-                                System.IO.File.Copy(s, System.IO.Path.Combine(tmpDir, System.IO.Path.GetFileName(s)), true);
-                        // 日志清理配置(log-settings.json)在 ALHPro\ 根,不在 settings\ —— 单独带上,排查"日志被清理"需要它
-                        try { System.IO.File.Copy(ALHPro.AppLogger.LogSettingsFile, System.IO.Path.Combine(tmpDir, "log-settings.json"), true); } catch { }
+                            { System.IO.File.Copy(s, System.IO.Path.Combine(tmpDir, System.IO.Path.GetFileName(s)), true); gathered++; }
+                        try { System.IO.File.Copy(ALHPro.AppLogger.LogSettingsFile, System.IO.Path.Combine(tmpDir, "log-settings.json"), true); gathered++; } catch { }
                     }
                     catch { }
-                    // 先在临时目录完整写好 zip(句柄关闭后再复制进保存位置)——避免"边写边读"导致压缩包损坏
-                    // 注意:zip 必须放在 tmpDir【之外】,否则 EnumerateFiles(tmpDir) 会把"正在写的 zip 自己"也打进去 → 0字节/损坏
-                    var tmpZip = System.IO.Path.Combine(ALHPro.EngineService.TempRoot, $"alh_diag_{Guid.NewGuid():N}.zip");
-                    using (var z = System.IO.Compression.ZipFile.Open(tmpZip, System.IO.Compression.ZipArchiveMode.Create))
+                    // ④ 打包到内存流(不落地临时 zip,避免被清理/边写边读竞态),再写入用户选的保存文件
+                    var entries = System.IO.Directory.EnumerateFiles(tmpDir).ToArray();
+                    if (entries.Length == 0)   // 全失败兜底:至少塞设备信息,绝不 0K
                     {
-                        foreach (var f in System.IO.Directory.EnumerateFiles(tmpDir))
-                            System.IO.Compression.ZipFileExtensions.CreateEntryFromFile(z, f, System.IO.Path.GetFileName(f));
+                        System.IO.File.WriteAllText(infoPath, info.ToString());
+                        entries = new[] { infoPath };
                     }
-                    System.IO.File.Copy(tmpZip, file.Path, overwrite: true);
-                    try { System.IO.File.Delete(tmpZip); } catch { }
+                    byte[] zipBytes;
+                    using (var ms = new System.IO.MemoryStream())
+                    {
+                        using (var z = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, true))
+                        {
+                            foreach (var f in entries)
+                                System.IO.Compression.ZipFileExtensions.CreateEntryFromFile(z, f, System.IO.Path.GetFileName(f));
+                        }
+                        zipBytes = ms.ToArray();
+                    }
+                    if (zipBytes.Length == 0)
+                        throw new InvalidOperationException("打包内容为空");
+                    // 经 WinRT FileIO 写入(比 File.Copy 到 file.Path 更可靠:兼容 OneDrive/网络盘等虚拟路径,且不引入 using System.IO 冲突)
+                    await Windows.Storage.FileIO.WriteBytesAsync(file, zipBytes);
                     var okDlg = new ContentDialog
                     {
                         Title = "诊断包已导出",
