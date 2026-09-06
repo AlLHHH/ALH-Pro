@@ -656,26 +656,45 @@ public sealed partial class MainPage : Page
         }
     }
 
-    /// <summary>把远程广告图设为 AdImage;加载失败(404/网络错)回退本地占位图,避免裂图。</summary>
+    /// <summary>把远程广告图设为 AdImage;加载失败(404/网络错)自动换镜像重试,仍失败才回退本地占位图。
+    /// 解决国内 GitHub raw 图被墙:图片 URL 是 raw.githubusercontent.com(作者在 adN.json 里写的),
+    /// 直连常常超时/被墙。这里先试原图,失败换 gh-proxy 镜像,再失败回退占位图(绝不裂图)。</summary>
     private void SetAdImage(string? url)
     {
         var ph = AdPlaceholderImage();
-        if (string.IsNullOrWhiteSpace(url))
+        // 图片走【多镜像】:原图 → gh-proxy 镜像,任一成功即用;全部失败回退占位图
+        var candidates = new System.Collections.Generic.List<string>();
+        if (!string.IsNullOrWhiteSpace(url))
         {
-            AdImage.Source = ph;
+            candidates.Add(url);
+            candidates.Add(AdFetcher.ToMirrorUrl(url));   // 原图失败 → 换镜像
+        }
+        LoadAdImage(candidates, ph, 0);
+    }
+
+    /// <summary>按候选清单依次尝试加载广告图;全部失败用占位图。</summary>
+    private void LoadAdImage(System.Collections.Generic.List<string> candidates, BitmapImage? fallback, int idx)
+    {
+        if (idx >= candidates.Count)
+        {
+            try { AdImage.Source = fallback; } catch { }
             return;
         }
         try
         {
-            var bmp = new BitmapImage(new Uri(url));
+            var bmp = new BitmapImage(new Uri(candidates[idx]));
             bmp.ImageFailed += (_, _) =>
             {
-                // ImageFailed 可能在后台线程回调:切回 UI 线程再改 Source
-                DispatcherQueue.TryEnqueue(() => { if (AdImage != null) AdImage.Source = ph; });
+                // 失败 → 换下一个候选(镜像);所有失败 → 占位图
+                DispatcherQueue.TryEnqueue(() => LoadAdImage(candidates, fallback, idx + 1));
             };
             AdImage.Source = bmp;
         }
-        catch { AdImage.Source = ph; }
+        catch
+        {
+            // 构造失败(URL 非法)→ 换下一个候选
+            LoadAdImage(candidates, fallback, idx + 1);
+        }
     }
 
     /// <summary>渲染当前轮播的广告卡(必须在 UI 线程)。数据为空或用户已关/本次已关 → 隐藏。</summary>

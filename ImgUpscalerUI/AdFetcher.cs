@@ -23,6 +23,19 @@ public static class AdFetcher
     /// <summary>轮播间隔:每 30 秒换下一张广告卡(本地轮播,不联网)。</summary>
     public static readonly TimeSpan RotateInterval = TimeSpan.FromSeconds(30);
 
+    /// <summary>把 raw.githubusercontent.com 的 URL 转成国内可达的 gh-proxy 镜像(解决国内 raw 被墙)。
+    /// 非 raw 域名的 URL(已是其它 CDN/镜像)原样返回。</summary>
+    public static string ToMirrorUrl(string url)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(url)) return url;
+            if (!url.Contains("raw.githubusercontent.com", StringComparison.OrdinalIgnoreCase)) return url;
+            return "https://gh-proxy.com/" + url;
+        }
+        catch { return url; }
+    }
+
     /// <summary>最近一次缓存到的广告卡数组(线程安全);空=未拉到(隐藏区域)。</summary>
     public static volatile AdInfo[]? Latest;
 
@@ -32,8 +45,7 @@ public static class AdFetcher
     public static async Task RefreshAsync()
     {
         var ads = await FetchAllAsync().ConfigureAwait(false);
-        if (ads is { Length: > 0 }) Latest = ads;
-    }
+        if (ads is { Length: > 0 }) Latest = ads;    }
 
     /// <summary>拉取并解析全部广告文件;返回有效的卡数组(跳过 404/损坏/空),全失败返回 empty(非 null),由调用方隐藏。</summary>
     public static async Task<AdInfo[]> FetchAllAsync()
@@ -50,13 +62,15 @@ public static class AdFetcher
         return result.ToArray();
     }
 
-    /// <summary>拉取单个广告文件原文(官方 + 镜像,任一成功即返回;失败返回 null)。</summary>
+    /// <summary>拉取单个广告文件原文(官方 + gh-proxy 镜像 + jsDelivr CDN,任一成功即返回;失败返回 null)。
+    /// 多镜像提高国内可达性(GitHub raw 直连常被墙,gh-proxy/jsDelivr 是国内常用通路)。</summary>
     private static async Task<string?> FetchFileRawAsync(string file)
     {
         string[] urls =
         {
             $"https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/{file}",
             $"https://gh-proxy.com/https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/{file}",
+            $"https://cdn.jsdelivr.net/gh/AlLHHH/ALH-Pro@main/ad/{file}",
         };
         foreach (var url in urls)
         {
