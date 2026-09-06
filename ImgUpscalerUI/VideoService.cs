@@ -286,6 +286,28 @@ public static class VideoService
             return s;
         }
 
+        // 【预计剩余时间 - 动态速率】按"已处理帧数 ÷ 本阶段耗时"估算剩余,并平滑(过每分钟加权),比固定百分比准。
+        // 用于超分/补帧逐帧进度:显示"预计还剩 X 分 Y 秒",而不是只有百分比或累计耗时。
+        DateTime stageStart = DateTime.UtcNow;
+        double stageElapsedSec = 0;
+        string EtaStr(long done, long total)
+        {
+            try
+            {
+                if (done <= 0 || total <= 0) return "";
+                if (done >= total) return "";
+                double elapsed = (DateTime.UtcNow - stageStart).TotalSeconds;
+                if (elapsed < 0.5) return "";
+                // 速率 = 已完成帧/耗时;剩余 = (总-已完)/速率
+                double rate = done / Math.Max(0.5, elapsed);
+                double remainSec = (total - done) / Math.Max(0.01, rate);
+                if (remainSec < 1) return "预计还剩几秒";
+                if (remainSec < 60) return $"预计还剩 {(int)remainSec} 秒";
+                return $"预计还剩 {remainSec / 60:0.#} 分钟";
+            }
+            catch { return ""; }
+        }
+
         // 手动模式新增可调判据(默认保持原行为):局部动作保护/参考帧窗口/采样粒度/变化块判线
         dedupProtect = Math.Clamp(dedupProtect, 0.05, 0.60);
         dedupWindow = Math.Clamp(dedupWindow, 2, 12);
@@ -346,17 +368,22 @@ public static class VideoService
         progress?.Report((0, $"临时空间预估:本任务预计需要约 {needGB:0.#} GB(补帧/超分临时帧),临时目录 {tempRoot}"));
         AppLogger.Info($"临时空间预估:约需 {needGB:0.#} GB(源 {srcW}×{srcH},补帧 {interpScale}x,超分 {scale}x),临时目录 {tempRoot}");
         var workDir = Path.Combine(tempRoot, $"imgup_video_{Guid.NewGuid():N}");
+        // 【长视频临时盘水位】磁盘紧张标志:预估需要 ≥ 剩余空间 45% → 降批大小(减少同屏临时帧,防爆盘)。
+        // 自动分批清理:凡批次完成即删已用帧(下方 finally),这里额外按剩余空间收紧批大小,降低峰值占用。
+        bool diskTight = false;
         try
         {
             var drive = new System.IO.DriveInfo(tempRoot);
-            if (drive.AvailableFreeSpace < needBytes)
+            double free = drive.AvailableFreeSpace;
+            if (free < needBytes)
                 throw new InvalidOperationException(
-                    $"临时磁盘空间不足:{tempRoot} 仅剩 {drive.AvailableFreeSpace / (1024 << 20):0}GB,本任务预计需要约 {needGB:0}GB(补帧放大后的临时帧占用大)。" +
+                    $"临时磁盘空间不足:{tempRoot} 仅剩 {free / (1024 << 20):0}GB,本任务预计需要约 {needGB:0}GB(补帧放大后的临时帧占用大)。" +
                     "请清理磁盘、降低补帧倍率/超分倍率,或把视频放到其它盘后再处理。");
-            if (drive.AvailableFreeSpace < 35L * 1024 * 1024 * 1024)
+            if (free < 35L * 1024 * 1024 * 1024 || free < needBytes * 2.2)
             {
-                progress?.Report((0, $"临时盘 {tempRoot} 剩余 {drive.AvailableFreeSpace / (1024 << 20):0}GB,任务预计 {needGB:0}GB——高负荷时请留意,空间不足会失败(已自动选了剩余最大的盘)"));
-                AppLogger.Info($"⚠ 临时盘 {tempRoot} 剩余 {drive.AvailableFreeSpace / (1024 << 20):0}GB,预计需要 {needGB:0}GB(已自动选剩余最大的盘)");
+                diskTight = true;
+                progress?.Report((0, $"⚠ 临时盘 {tempRoot} 剩余 {free / (1024 << 20):0}GB,任务预计 {needGB:0}GB——空间偏紧,已自动降低批大小保护(高负荷请留意,空间不足会失败)"));
+                AppLogger.Info($"⚠ 临时盘 {tempRoot} 剩余 {free / (1024 << 20):0}GB,预计需要 {needGB:0}GB——自动降低批大小(已自动选剩余最大的盘)");
             }
         }
         catch (InvalidOperationException) { throw; }
@@ -1195,28 +1222,41 @@ public static class VideoService
                 bool upOnnxDml = false;   // 探测失败/不可用 → 走 ONNX 时用 DirectML GPU(-2 自动)而非强制 CPU(-1)
                 if (gpuId >= 0)
                 {
-                    progress?.Report((45, $"正在检测超分 GPU 兼容性(最长 5 秒)..."));
-                    bool usable = await EngineService.IsEngineGpuUsableAsync(engine, gpuId, ct).ConfigureAwait(false);
-                    if (!usable)
+                    // 【50 系 + waifu2x 直接走 ONNX】:Blackwell 上 waifu2x-ncnn-vulkan 的 GPU 探测在 1×1 小图能过
+                    // (日志"1×1 图出图,非黑"),但真实分辨率会静默输出 0KB 空帧/黑帧(退出码 0 不报错)——
+                    // 这是视频超分"找不到 frame_%06d.jpg"的根源。别再探测/别碰 ncnn,整段直接走 ONNX(DirectML/CPU)。
+                    if (engine == "waifu2x" && EngineService.IsBlackwellGpu())
                     {
-                        if (engine == "waifu2x" && EngineService.IsBlackwellGpu())
+                        waifuOnnx = true;
+                        upOnnxDml = true;
+                        AppLogger.Warn($"⚠ waifu2x 在 50 系(Blackwell)上 ncnn-Vulkan 会静默出空帧/黑帧,直接改用 ONNX 稳定版(整段视频,兼容模式)");
+                        progress?.Report((45, $"⚠ waifu2x 在 50 系上自动改用稳定引擎(ONNX,整段视频)..."));
+                    }
+                    else
+                    {
+                        progress?.Report((45, $"正在检测超分 GPU 兼容性(最长 5 秒)..."));
+                        bool usable = await EngineService.IsEngineGpuUsableAsync(engine, gpuId, ct).ConfigureAwait(false);
+                        if (!usable)
                         {
-                            // waifu2x 在 50 系:ncnn CPU 模式同样会崩(实测 exit -1073741819)——
-                            // 不能像其他引擎那样"降 CPU",而是整段改走 ONNX 稳定版(DirectML/CPU 都行)
-                            waifuOnnx = true;
-                            upOnnxDml = true;
-                            AppLogger.Warn($"⚠ waifu2x 引擎在 50 系 GPU 上不可用,自动改走 ONNX 稳定版(整段视频,兼容模式)");
-                            progress?.Report((45, $"⚠ waifu2x 无法用 GPU,自动改用稳定引擎(ONNX,整段视频)..."));
-                        }
-                        else
-                        {
-                            // ncnn GPU 不可用:不急着掉最慢的 ncnn-CPU —— 先试 ONNX DirectML(与 ncnn-Vulkan
-                            // 是两套完全独立运行时,这些卡 DirectML 往往能正常 GPU 加速);ONNX 失败才自动掉 CPU。
-                            AppLogger.Warn($"⚠ 超分引擎 {engine} GPU 探测失败,自动改用 ONNX DirectML GPU(比 ncnn-CPU 快一个数量级)");
-                            progress?.Report((45, $"⚠ 超分引擎 {engine} 无法用 ncnn GPU,自动改用 ONNX 稳定引擎(DirectML GPU)..."));
-                            upGpu = -1;          // 触发下方 ONNX 分支
-                            upOnnxDml = true;    // 且用 DirectML GPU(-2 自动选设备),而非强制 CPU
-                            waifuOnnx = engine == "waifu2x" ? true : waifuOnnx;   // waifu2x 探测失败同样走 ONNX
+                            if (engine == "waifu2x" && EngineService.IsBlackwellGpu())
+                            {
+                                // waifu2x 在 50 系:ncnn CPU 模式同样会崩(实测 exit -1073741819)——
+                                // 不能像其他引擎那样"降 CPU",而是整段改走 ONNX 稳定版(DirectML/CPU 都行)
+                                waifuOnnx = true;
+                                upOnnxDml = true;
+                                AppLogger.Warn($"⚠ waifu2x 引擎在 50 系 GPU 上不可用,自动改走 ONNX 稳定版(整段视频,兼容模式)");
+                                progress?.Report((45, $"⚠ waifu2x 无法用 GPU,自动改用稳定引擎(ONNX,整段视频)..."));
+                            }
+                            else
+                            {
+                                // ncnn GPU 不可用:不急着掉最慢的 ncnn-CPU —— 先试 ONNX DirectML(与 ncnn-Vulkan
+                                // 是两套完全独立运行时,这些卡 DirectML 往往能正常 GPU 加速);ONNX 失败才自动掉 CPU。
+                                AppLogger.Warn($"⚠ 超分引擎 {engine} GPU 探测失败,自动改用 ONNX DirectML GPU(比 ncnn-CPU 快一个数量级)");
+                                progress?.Report((45, $"⚠ 超分引擎 {engine} 无法用 ncnn GPU,自动改用 ONNX 稳定引擎(DirectML GPU)..."));
+                                upGpu = -1;          // 触发下方 ONNX 分支
+                                upOnnxDml = true;    // 且用 DirectML GPU(-2 自动选设备),而非强制 CPU
+                                waifuOnnx = engine == "waifu2x" ? true : waifuOnnx;   // waifu2x 探测失败同样走 ONNX
+                            }
                         }
                     }
                 }
@@ -1236,6 +1276,7 @@ public static class VideoService
                 // 批大小/并发按"安全渲染"墙自适应(内存/显存墙越小越保守)
                 int batchSize = SafeRender.GetVideoBatchSize();
                 if (fastMode) batchSize = Math.Max(8, batchSize / 2);   // 快速模式:帧批减半,内存峰值更低(弱设备)
+                if (diskTight) batchSize = Math.Max(8, batchSize / 2);   // 临时盘偏紧:批再减半,降低同屏临时帧峰值(防爆盘)
                 var total = upFiles.Length;
                 var batches = (total + batchSize - 1) / batchSize;
                 using var sem = new SemaphoreSlim(fastMode ? 1 : SafeRender.GetVideoConcurrency());   // 快速模式:单批防显存竞争
@@ -1263,7 +1304,7 @@ public static class VideoService
                             for (int i = start; i < end; i++)
                                 File.Copy(upFiles[i], Path.Combine(batchIn, Path.GetFileName(upFiles[i])), true);
                             progress?.Report((upBase + (int)((90 - upBase) * start / total),
-                                $"超分 已处理 {start} 帧 / 共 {total} 帧(批次 {start / batchSize + 1}/{batches})..."));
+                                $"超分 已处理 {start} 帧 / 共 {total} 帧(批次 {start / batchSize + 1}/{batches}){EtaStr(start, total)}..."));
                             // 视频超分:50系/无独显/手动CPU + Real-ESRGAN/waifu2x + ONNX 模型在 → 走 ONNX 逐帧(不走会崩的 ncnn-vulkan)
                             string? onnxModelPath = null;
                             if (upGpu < 0)
@@ -1285,7 +1326,7 @@ public static class VideoService
                                     AppLogger.Info($"✅ 自检:视频超分({engine})已按当前显卡自动改用稳定引擎(直接处理,无需设置)");
                                 }
                                 progress?.Report((upBase + (int)((90 - upBase) * start / total),
-                                    $"超分(稳定引擎) 批次 {start / batchSize + 1}/{batches}..."));
+                                    $"超分(稳定引擎) 批次 {start / batchSize + 1}/{batches}{EtaStr(start, total)}..."));
                                 await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
                                     upGpu < 0 ? (upOnnxDml ? -2 : -1) : -2, progress, ct, onnxModelPath,
                                     start, total, pauseWait);   // 用户主动选 CPU(-1)强制 CPU;探测失败(upOnnxDml)用 -2=DirectML GPU 自动;正常 GPU 也 -2 自适应;pauseWait=ONNX/CPU 也能暂停
@@ -1305,7 +1346,7 @@ public static class VideoService
                             // 万一还是黑,CPU 软解不依赖 GPU 队列,绝不出黑帧)。
                             // 兜底防误杀:若【源帧】本来就近全黑(视频黑场/淡入淡出),输出黑是素材本身,
                             // 不是 GPU 故障——跳过降级,不浪费 CPU 重算。
-                            if (batchOutDirHasBlack(batchOut) && !DirNearBlack(batchIn))
+                            if (batchOutHasDefectiveFrame(batchOut) && !DirNearBlack(batchIn))
                             {
                                 // ===== 黑帧降级改进 =====
                                 // ncnn-vulkan 偶发 vkQueueSubmit 失败 → 输出全黑帧。原逻辑先走最慢的 ncnn-CPU 重处理,
@@ -1329,7 +1370,7 @@ public static class VideoService
                                         File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true);
                                     // ONNX(DirectML)重处理仍黑(该卡 DirectML 也异常)→ 直接回退原帧。
                                     // 【绝不跑慢速 CPU】超分 CPU 兜底要跑到天荒地老,这不是可接受的降级目标。
-                                    if (batchOutDirHasBlack(batchOut))
+                                    if (batchOutHasDefectiveFrame(batchOut))
                                     {
                                         progress?.Report((upBase + (int)((90 - upBase) * start / total),
                                             $"⚠ ONNX DirectML 仍黑(批次 {start}~{end - 1}),该批回退原帧(不跑慢速 CPU)..." + StageElapsed()));
@@ -2412,6 +2453,40 @@ public static class VideoService
     }
 
     /// <summary>检测目录里的 PNG 是否有全黑帧(ncnn-vulkan GPU 队列失败时输出全黑,退出码仍 0)。</summary>
+    /// <summary>检测批次输出是否含缺陷帧:全黑 / 空(0字节) / 损坏(无法解码)。
+    /// ncnn-vulkan 在 50 系/部分驱动上会静默输出 0KB 空帧或坏帧(退出码 0 不报错),
+    /// 旧黑帧检测(new Bitmap 抛异常被 catch 吞掉)会漏放行 → 空帧一路传到合帧报"找不到 frame_%06d.jpg"。
+    /// 这里把"读不出/空/非法尺寸/近全黑"统一判为缺陷,触发回退源帧或 ONNX。</summary>
+    private static bool batchOutHasDefectiveFrame(string dir)
+    {
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(dir, "*.png"))
+            {
+                if (!File.Exists(f) || new FileInfo(f).Length == 0) return true;   // 空/0字节
+                try
+                {
+                    using var bmp = new System.Drawing.Bitmap(f);
+                    if (bmp.Width <= 0 || bmp.Height <= 0) return true;
+                    int step = Math.Max(4, Math.Min(bmp.Width, bmp.Height) / 32);
+                    int dark = 0, total = 0;
+                    for (int y = step; y < bmp.Height; y += step)
+                        for (int x = step; x < bmp.Width; x += step)
+                        {
+                            var p = bmp.GetPixel(x, y);
+                            total++;
+                            if ((int)p.R + (int)p.G + (int)p.B < 24) dark++;   // 接近全黑
+                        }
+                    if (total > 0 && dark >= total * 0.95) return true;
+                }
+                catch { return true; }   // 解码失败也算缺陷
+            }
+        }
+        catch { return true; }   // 目录枚举异常 → 保守缺陷
+        return false;
+    }
+
+    /// <summary>检测目录中的 PNG 是否有全黑块(ncnn-vulkan GPU 队列失败时输出全黑,退出码仍 0)。</summary>
     private static bool batchOutDirHasBlack(string dir)
     {
         try
