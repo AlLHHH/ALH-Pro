@@ -1189,6 +1189,7 @@ public static class VideoService
                 int upGpu = gpuId;
                 bool waifuOnnx = false;   // 50系 waifu2x ncnn 不可用 → 整段视频改走 ONNX(安全网)
                 bool upOnnxDml = false;   // 探测失败/不可用 → 走 ONNX 时用 DirectML GPU(-2 自动)而非强制 CPU(-1)
+                bool ncnnUnreliable = false;   // 视频超分检测到 ncnn-Vulkan 黑帧 → 后续批次直接走 ONNX(不再每批先 ncnn 失败再降级,省极长时间)
                 if (gpuId >= 0)
                 {
                     // 【50 系 + waifu2x 直接走 ONNX】:Blackwell 上 waifu2x-ncnn-vulkan 的 GPU 探测在 1×1 小图能过
@@ -1284,9 +1285,9 @@ public static class VideoService
                                 else if (engine == "waifu2x")
                                     onnxModelPath = EsrganOnnxService.FindWaifu2xModel();
                             }
-                            else if (engine == "realesrgan" && (EngineService.ShouldUseOnnxEsrgan() || (fastMode && !EngineService.IsNvidiaGpu())))
+                            else if (engine == "realesrgan" && (EngineService.ShouldUseOnnxEsrgan() || ncnnUnreliable || (fastMode && !EngineService.IsNvidiaGpu())))
                                 onnxModelPath = EsrganOnnxService.ResolveEsrganOnnxPath(model);
-                            else if (engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx || (fastMode && !EngineService.IsNvidiaGpu())))
+                            else if (engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx || ncnnUnreliable || (fastMode && !EngineService.IsNvidiaGpu())))
                                 onnxModelPath = EsrganOnnxService.FindWaifu2xModel();
                             if (onnxModelPath != null)
                             {
@@ -1336,6 +1337,7 @@ public static class VideoService
                                     progress?.Report((upBase + (int)((90 - upBase) * start / total),
                                         $"⚠ 检测到黑帧(批次 {start}~{end - 1},GPU 输出异常),该批改用 ONNX DirectML 引擎重处理..." + StageElapsed()));
                                     AppLogger.Warn($"⚠ 批次 {start}~{end - 1} 输出黑帧(ncnn-vulkan GPU 队列异常)——改用 ONNX DirectML({Path.GetFileNameWithoutExtension(onnxB)}) 重跑该批");
+                                    ncnnUnreliable = true;   // 标记:ncnn-GPU 超分不可靠 → 后续批次直接走 ONNX,不再每批先 ncnn 失败再降级(用户② 4060 黑帧重跑 282 分钟的根因)
                                     try { Directory.Delete(batchOut, true); } catch { }
                                     Directory.CreateDirectory(batchOut);
                                     await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
@@ -2797,8 +2799,11 @@ public static class VideoService
             var tmp = Path.Combine(EngineService.TempRoot, $"imgup_encprobe_{enc}_{Guid.NewGuid():N}.mp4");
             try
             {
+                // 探测分辨率加大到 1280×720:之前 320×240 太小,部分编码器(QSV/核显硬编)小图能编出有效文件,
+                // 但真实大分辨率视频下却输出无效文件(用户① RTX2070+核显双卡机实测:qsv 探测可用,合帧却黑屏/失败)。
+                // 用接近真实输出的尺寸,让不可靠的硬编在探测期就暴露,避免"探测可用、真跑就坏"。
                 await RunAsync(ffmpeg,
-                    $"-y -f lavfi -i \"testsrc=size=320x240:rate=1:duration=0.4\" -frames:v 1 -c:v {enc} " +
+                    $"-y -f lavfi -i \"testsrc=size=1280x720:rate=1:duration=0.4\" -frames:v 1 -c:v {enc} " +
                     $"\"{tmp}\"",
                     null, ct);
                 if (File.Exists(tmp) && new FileInfo(tmp).Length > 0)
