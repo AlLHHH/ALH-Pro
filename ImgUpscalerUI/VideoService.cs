@@ -1100,8 +1100,11 @@ public static class VideoService
                             isLastSeg ? globalTarget : 0,
                             false);   // appendTailCopy = false
                         if (progress != null)
-                            progress.Report((10 + (int)(35.0 * (globalIdx - 1) / Math.Max(1, globalTarget)),
-                                $"补帧 第 {globalIdx - 1} 帧 / 共 {globalTarget} 帧(段 {segNo}/{segBounds.Count})"));
+                        {
+                            int doneNow = (int)Math.Min(globalTarget, Math.Max(0, globalIdx - 1));   // 钳制:当前帧永不超总帧(修复"第11219帧/共11099帧"溢出)
+                            progress.Report((10 + (int)(35.0 * doneNow / Math.Max(1, globalTarget)),
+                                $"补帧 第 {doneNow} 帧 / 共 {globalTarget} 帧(段 {segNo}/{segBounds.Count})"));
+                        }
                     }
                 }
 
@@ -4915,8 +4918,11 @@ public static class VideoService
                     {
                         maxFrame = fr;
                         if (totalFrames > 0 && stage.Length > 0)
-                            progress?.Report((StageProgressPct(stage, fr, totalFrames),
-                                $"{stage} 第 {fr} 帧 / 共 {totalFrames} 帧"));
+                        {
+                            int shown = Math.Min(fr, totalFrames);   // 钳制:引擎报告帧号可能超总帧,显示永不超(修复"第11219帧/共11099帧"溢出)
+                            progress?.Report((StageProgressPct(stage, shown, totalFrames),
+                                $"{stage} 第 {shown} 帧 / 共 {totalFrames} 帧"));
+                        }
                     }
                 }
                 // 引擎百分比(拆帧/补帧引擎无 frame= 时用百分比换算帧号)
