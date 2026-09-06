@@ -99,22 +99,17 @@
                                         HorizontalAlignment="Center" Padding="4" Visibility="Collapsed">
                                     <Image x:Name="AdImage" Width="84" Height="84" Stretch="UniformToFill"/>
                                 </Border>
-                                <!-- 标题行:标题 + 可选「推广」角标。用 Grid 分两列:* 列给标题=受限宽度→强制换行;Auto 列给角标。合规:广告可识别 -->
-                                <Grid HorizontalAlignment="Stretch">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock x:Name="AdTitle" Grid.Column="0" FontSize="12" FontWeight="SemiBold"
-                                               Foreground="#E8ECF2" TextWrapping="Wrap" TextTrimming="None"
-                                               Visibility="Collapsed"/>
-                                    <Border x:Name="AdSponsorBadge" Grid.Column="1" Background="#33E8A33D"
-                                            CornerRadius="4" Padding="4,1" VerticalAlignment="Top"
-                                            Margin="6,0,0,0" Visibility="Collapsed">
-                                        <TextBlock x:Name="AdSponsorText" FontSize="8" Foreground="#E8B04A"
-                                                   Text="推广"/>
-                                    </Border>
-                                </Grid>
+                                <!-- 「推广」角标:独立在标题上方一行(不与标题并排挤占宽度,永不压字);有 sponsor(广告主名)才显示,合规:广告可识别 -->
+                                <Border x:Name="AdSponsorBadge" Background="#33E8A33D"
+                                        CornerRadius="4" Padding="4,1" HorizontalAlignment="Left"
+                                        Visibility="Collapsed">
+                                    <TextBlock x:Name="AdSponsorText" FontSize="8" Foreground="#E8B04A"
+                                               Text="推广"/>
+                                </Border>
+                                <!-- 标题(全宽,强制换行,不被角标挤压) -->
+                                <TextBlock x:Name="AdTitle" FontSize="12" FontWeight="SemiBold"
+                                           Foreground="#E8ECF2" TextWrapping="Wrap" TextTrimming="None"
+                                           HorizontalAlignment="Stretch" Visibility="Collapsed"/>
                                 <TextBlock x:Name="AdText" FontSize="10" Opacity="0.85" LineHeight="14"
                                            Foreground="#C7CEDA" TextWrapping="Wrap" TextTrimming="None"
                                            Visibility="Collapsed"/>
