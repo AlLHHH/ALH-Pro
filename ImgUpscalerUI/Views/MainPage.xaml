@@ -179,31 +179,16 @@
                 </Border>
 
                 <Grid x:Name="ContentRoot" Grid.Row="1"/>
-
-                <!-- 右侧提示位(作者投放的纯文本小提示,靠主工作区最右侧悬浮;从 GitHub hint/ 定时更新,每 30 秒换一条;可点跳转) -->
-                <Border x:Name="TipStrip" Grid.Row="1" CornerRadius="8" Padding="10,6"
-                        Background="#2A10141C" BorderBrush="#33FFFFFF" BorderThickness="1"
-                        HorizontalAlignment="Right" VerticalAlignment="Center"
-                        Margin="0,0,2,0" Visibility="Collapsed" Tapped="TipStrip_Tapped">
-                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                        <FontIcon x:Name="TipIcon" Glyph="&#xE946;" FontSize="11" VerticalAlignment="Center"/>
-                        <TextBlock x:Name="TipText" FontSize="11" FontWeight="SemiBold"
-                                   VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="220"/>
-                        <Button x:Name="TipCloseBtn" Content="✕" FontSize="9" Padding="4,1" MinWidth="0"
-                                Background="Transparent" BorderThickness="0" Foreground="#88FFFFFF"
-                                CornerRadius="6" VerticalAlignment="Center"
-                                Click="TipClose_Click" ToolTipService.ToolTip="本次运行隐藏提示"/>
-                    </StackPanel>
-                </Border>
             </Grid>
 
-            <!-- 底部状态栏:左侧常规状态,右侧休息提示 + 显眼的「跳过休息」按钮(休息时出现) -->
+            <!-- 底部状态栏:左侧常规状态,右侧休息提示 + 「跳过休息」按钮 + 最右侧作者提示(提前提示;随窗口宽度自动贴右) -->
             <Border Grid.Row="1" Background="{StaticResource AppPanel2Brush}"
                     BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
                     CornerRadius="8" Margin="0,10,0,0" Padding="12,5">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
@@ -218,6 +203,22 @@
                             Style="{StaticResource AccentButtonStyle}"
                             Visibility="Collapsed" Click="SkipRestBtn_Click"
                             ToolTipService.ToolTip="立即跳过本次休息,继续处理"/>
+                    <!-- 作者提示:状态栏最右列(随窗口宽度贴右);从 GitHub hint/ 更新,每 30 秒换一条,可点跳转 -->
+                    <Border x:Name="TipStrip" Grid.Column="3" CornerRadius="8" Padding="10,5"
+                            Background="#2A10141C" BorderBrush="#33FFFFFF" BorderThickness="1"
+                            Margin="10,0,0,0" VerticalAlignment="Center"
+                            Visibility="Collapsed" Tapped="TipStrip_Tapped">
+                        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <FontIcon x:Name="TipIcon" Glyph="&#xE946;" FontSize="11" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="TipText" FontSize="11" FontWeight="SemiBold"
+                                       VerticalAlignment="Center" TextWrapping="NoWrap" MaxWidth="240"
+                                       TextTrimming="CharacterEllipsis"/>
+                            <Button x:Name="TipCloseBtn" Content="✕" FontSize="9" Padding="4,1" MinWidth="0"
+                                    Background="Transparent" BorderThickness="0" Foreground="#88FFFFFF"
+                                    CornerRadius="6" VerticalAlignment="Center"
+                                    Click="TipClose_Click" ToolTipService.ToolTip="本次运行隐藏提示"/>
+                        </StackPanel>
+                    </Border>
                 </Grid>
             </Border>
         </Grid>

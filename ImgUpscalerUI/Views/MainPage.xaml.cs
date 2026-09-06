@@ -639,15 +639,17 @@ public sealed partial class MainPage : Page
         try { _adCts?.Cancel(); } catch { }
     }
 
-    /// <summary>启动:拉一次 + 每 10 分钟轮询(作者改 ad/adN.json push,用户侧最长 10 分钟看到新内容);本地每 30 秒轮播一张卡。</summary>
+    /// <summary>启动:立即用默认内容渲染 + 每 10 分钟轮询(作者改 ad/adN.json push,用户侧最长 10 分钟看到新内容);本地每 30 秒轮播一张卡。</summary>
     private async Task InitAdAsync()
     {
         // 本次运行点「✕」或设置隐藏 → 不显示也不轮询(重启恢复)
         if (AdIsHiddenNow) return;
+        // 先用默认本地兜底立即渲染(避免首次进软件无广告),再异步拉取覆盖
+        DispatcherQueue.TryEnqueue(() => { RenderAds(); StartAdRotateTimer(); });
         _adCts = new System.Threading.CancellationTokenSource();
         var ct = _adCts.Token;
-        await AdFetcher.RefreshAsync().ConfigureAwait(false);   // 首次拉取
-        DispatcherQueue.TryEnqueue(() => { RenderAds(); StartAdRotateTimer(); });
+        await AdFetcher.RefreshAsync().ConfigureAwait(false);   // 首次拉取(替换默认)
+        DispatcherQueue.TryEnqueue(RenderAds);
         while (!ct.IsCancellationRequested)
         {
             try
@@ -902,14 +904,16 @@ public sealed partial class MainPage : Page
         catch { }
     }
 
-    /// <summary>启动:拉一次 + 每 10 分钟轮询;本地每 30 秒轮播一条。</summary>
+    /// <summary>启动:立即用默认内容渲染 + 每 10 分钟轮询;本地每 30 秒轮播一条。</summary>
     private async Task InitTipAsync()
     {
         if (TipIsHiddenNow) return;
+        // 先用默认本地兜底立即渲染(避免首次进软件无提示),再异步拉取覆盖
+        DispatcherQueue.TryEnqueue(() => { RenderTip(); StartTipRotateTimer(); });
         _tipCts = new System.Threading.CancellationTokenSource();
         var ct = _tipCts.Token;
-        await TipFetcher.RefreshAsync().ConfigureAwait(false);   // 首次拉取
-        DispatcherQueue.TryEnqueue(() => { RenderTip(); StartTipRotateTimer(); });
+        await TipFetcher.RefreshAsync().ConfigureAwait(false);   // 首次拉取(替换默认)
+        DispatcherQueue.TryEnqueue(RenderTip);
         while (!ct.IsCancellationRequested)
         {
             try
