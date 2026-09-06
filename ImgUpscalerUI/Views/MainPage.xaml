@@ -84,9 +84,16 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
-                            <!-- 内容:图(可选) + 标题 + 正文;顶部留白避免与右上角关闭按钮重叠;文字 Wrap 强制换行显示完整 -->
-                            <StackPanel Grid.Row="0" Spacing="5" Margin="0,6,0,0" Tapped="AdCardTapped">
+                            <!-- 关闭按钮:独立占最顶部一行(不挤占标题/内容),靠右、半透明、极小;点后本次运行 2 小时不显示 -->
+                            <Button x:Name="AdCloseBtn" Grid.Row="0" Content="✕" FontSize="9" Padding="4,1"
+                                    MinWidth="0" HorizontalAlignment="Right"
+                                    Background="Transparent" BorderThickness="0" Foreground="#88FFFFFF"
+                                    Margin="0,0,0,1" Click="AdClose_Click"
+                                    ToolTipService.ToolTip="本次运行 2 小时内不再显示广告"/>
+                            <!-- 内容:图(可选) + 标题 + 正文;文字 Wrap 强制换行显示完整 -->
+                            <StackPanel Grid.Row="1" Spacing="5" Tapped="AdCardTapped">
                                 <!-- 图:居中、圆角、固定高度,Width 自适应不撑满;无图自动隐藏 -->
                                 <Border x:Name="AdImageFrame" CornerRadius="8" Background="#22FFFFFF"
                                         HorizontalAlignment="Center" Padding="4" Visibility="Collapsed">
@@ -113,7 +120,7 @@
                                            Visibility="Collapsed"/>
                             </StackPanel>
                             <!-- 上一张/下一张:独立一行、卡片最底部、最小紧凑,不挡任何内容 -->
-                            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8"
+                            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8"
                                         HorizontalAlignment="Center" Margin="0,6,0,0">
                                 <Button Content="◀" FontSize="9" Padding="7,1" MinWidth="0"
                                         Background="#1AFFFFFF" BorderThickness="0" Foreground="#AAFFFFFF"
@@ -123,12 +130,6 @@
                                         Background="#1AFFFFFF" BorderThickness="0" Foreground="#AAFFFFFF"
                                         CornerRadius="6" Click="AdNext_Click" ToolTipService.ToolTip="下一张(点击或向左滑动)"/>
                             </StackPanel>
-                            <!-- 关闭按钮:贴右上角(在卡片内、不超出),内容顶部已留白不会压到标题 -->
-                            <Button x:Name="AdCloseBtn" Content="✕" FontSize="9" Padding="4,1" MinWidth="0"
-                                    Background="#1AFFFFFF" BorderThickness="0" Foreground="#66FFFFFF"
-                                    CornerRadius="6"
-                                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,0,0,0"
-                                    Click="AdClose_Click" ToolTipService.ToolTip="本次运行隐藏广告"/>
                         </Grid>
                     </Border>
                 </StackPanel>
