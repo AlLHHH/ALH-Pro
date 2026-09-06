@@ -3328,6 +3328,115 @@ public sealed partial class VideoView : UserControl
     }
 
     // ---------- 处理 ----------
+    /// <summary>「开始处理」前的诊断卡片:扫描输入视频,估算【预计占用临时盘】与【预计耗时】,
+    /// 命中硬风险(会爆盘 / 高倍率补帧+资源紧 / 弱设备走CPU)才弹卡片给出建议。用户点「取消/改参数」则不启动(返回 false)。
+    /// 复用 VideoService.Probe* 与 EstimateProcessSeconds,占盘公式与 C3 临时盘预检一致。</summary>
+    private async Task<bool> ShowPreflightDiagAsync(VideoItem[] items)
+    {
+        try
+        {
+            bool interpOn = InterpToggle.IsChecked == true;
+            bool upOn = UpscaleToggle.IsChecked == true;
+            bool dedupOn = DedupCheck.IsChecked == true;
+            int interpScale = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, _ => 2 };
+            int engIdx = VideoEngineRadios.SelectedIndex;
+            string engine = engIdx == 0 ? "waifu2x" : "realesrgan";
+            // 倍率:0=1x(2x缩回) 1=2x 2=3x 3=4x 4=自定义(内部按2x)
+            int scale = VideoScaleRadios.SelectedIndex switch { 1 => 2, 2 => 3, 3 => 4, _ => 1 };
+            bool upscaleShrink1x = VideoScaleRadios.SelectedIndex == 0;
+            if (upOn && upscaleShrink1x) scale = 2;
+            bool highRate = interpScale >= 4;   // 4x 及以上
+            double totalNeedGB = 0, totalSec = 0;
+            // 后台扫描每个视频(不卡 UI)
+            await Task.Run(async () =>
+            {
+                foreach (var it in items)
+                {
+                    try
+                    {
+                        double dur = await VideoService.ProbeDurationSeconds(it.Path).ConfigureAwait(false);
+                        if (dur <= 0) continue;
+                        double fps = 30;
+                        try { if (double.TryParse(VideoService.ProbeFps(it.Path), NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var pf) && pf > 0) fps = pf; } catch { }
+                        var (w, h) = await VideoService.ProbeSizeAsync(it.Path).ConfigureAwait(false);
+                        totalSec += VideoService.EstimateProcessSeconds(dur, fps, w, h,
+                            upOn, scale, engine, interpOn, interpScale, dedupOn, 0);
+                        // 占盘(JPG 中间帧峰值,与 C3 一致):源帧≈1MB/1080p,放大后×倍率²×0.18
+                        double srcMB = 1.0 * ((double)w * h) / (1920.0 * 1080.0); if (srcMB < 0.5) srcMB = 0.5;
+                        double outMult = upOn ? (upscaleShrink1x ? 2.0 : Math.Max(1.0, scale)) : 1.0;
+                        double outMB = Math.Max(srcMB, srcMB * outMult * outMult * 0.18); if (outMB < 0.5) outMB = 0.5;
+                        long baseFrames = (long)Math.Ceiling(Math.Max(1.0, dur * fps));
+                        long peakFrames = interpOn ? (long)Math.Ceiling((double)baseFrames * interpScale) : baseFrames;
+                        totalNeedGB += peakFrames * outMB * 1.6 / 1024.0;
+                    }
+                    catch { }
+                }
+            }).ConfigureAwait(false);
+
+            // 硬风险1:会爆盘(预计占 > 当前临时盘剩余)
+            bool diskRisk = false;
+            string needTxt = $"{totalNeedGB:0.#} GB";
+            try
+            {
+                var tempRoot = ALHPro.EngineService.TempRoot;
+                var di = new System.IO.DriveInfo(tempRoot);
+                double freeGB = di.AvailableFreeSpace / (1024.0 * 1024.0 * 1024.0);
+                if (totalNeedGB > 0 && totalNeedGB > freeGB * 0.9) diskRisk = true;
+            }
+            catch { }
+
+            bool weakGpu = SafeRender.Profile == SafeRender.DeviceProfile.UltraLow
+                || CurrentIsIntegratedGpu() || SafeRender.TotalVramGB < 6.5;
+            bool resourceRisk = interpOn && (highRate || (TargetFpsCheck.IsChecked == true
+                && double.TryParse(TargetFpsBox.Text, NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var tf) && tf >= 90))
+                && weakGpu;
+            bool weakDevice = SafeRender.IsWeakDevice && FastModeCheck.IsChecked != true;
+
+            // 无硬风险 → 不弹,直接开始
+            if (!diskRisk && !resourceRisk && !weakDevice) return true;
+
+            var lines = new System.Collections.Generic.List<string>();
+            lines.Add($"预计处理耗时:约 {totalSec / 60:0.#} 分钟");
+            lines.Add($"预计占用临时盘:约 {needTxt}");
+            if (diskRisk)
+                lines.Add("⚠ 空间不足:预计占用超过临时盘可用空间,可能中途爆盘。建议:清理磁盘 / 降低超分或补帧倍率 / 换剩余空间更大的盘。");
+            if (resourceRisk)
+                lines.Add("⚠ 高倍率补帧 + 设备偏弱:可能因显存不足中途出错。建议:点「一键开启兼容模式」自动降分块/批大小,或改用 2x。");
+            if (weakDevice)
+                lines.Add("⚠ 设备配置较低(核显/小显存/内存小),处理会明显偏慢。建议:开启「兼容模式」或先跑几秒小片段确认。");
+
+            var dlg = new ContentDialog
+            {
+                Title = "开始前诊断 · ALH Pro",
+                Content = new StackPanel
+                {
+                    Spacing = 8,
+                    Children =
+                    {
+                        new TextBlock { Text = string.Join("\n", lines), TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap },
+                        new TextBlock { Text = "运行期间可用「暂停/取消」随时停止;不会损坏源视频。", FontSize = 11, Opacity = 0.6, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap },
+                    },
+                },
+                PrimaryButtonText = "知道了,开始",
+                SecondaryButtonText = resourceRisk || weakDevice ? "一键开启兼容模式" : null,
+                CloseButtonText = "先改参数",
+                DefaultButton = Microsoft.UI.Xaml.Controls.ContentDialogButton.Primary,
+                XamlRoot = this.XamlRoot,
+            };
+            var r = await dlg.ShowAsync();
+            if (r == Microsoft.UI.Xaml.Controls.ContentDialogResult.Secondary)
+            {
+                FastModeCheck.IsChecked = true;   // 一键开启兼容模式(源头降资源)
+                Log("⚠ 已开启「兼容模式」(降低分块/批大小,处理更稳)。");
+                if (CompatHint != null) CompatHint.Text = "⚠ 已开启「兼容模式」:降低分块/批大小,处理更稳更省资源。";
+                if (CompatHintPanel != null) CompatHintPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+                return true;
+            }
+            return r == Microsoft.UI.Xaml.Controls.ContentDialogResult.Primary;
+        }
+        catch { return true; }   // 诊断出错不拦截,照常处理
+    }
+
     private async void RunBtn_Click(object sender, RoutedEventArgs e)
     {
         // 只处理选中的项(勾选后):否则处理全部未完成的(已完成/灰色的默认跳过,不重复跑;点「重新处理」可调起)
@@ -3468,6 +3577,8 @@ public sealed partial class VideoView : UserControl
             return;
         }
         VideoService.LastDedupShort = null;
+        // 开始前诊断卡片(硬风险:会爆盘/高倍率补帧+资源紧/弱设备):用户取消则不启动
+        try { if (!await ShowPreflightDiagAsync(items).ConfigureAwait(true)) return; } catch { }
         _running = true;
         _paused = false;
         _resumeTcs = null;
