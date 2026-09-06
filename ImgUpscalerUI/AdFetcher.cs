@@ -14,8 +14,9 @@ namespace ALHPro;
 /// </summary>
 public static class AdFetcher
 {
-    /// <summary>广告文件列表(ad1.json~ad5.json)。</summary>
-    private static readonly string[] AdFiles = { "ad1.json", "ad2.json", "ad3.json", "ad4.json", "ad5.json" };
+    /// <summary>广告文件前缀:ad1.json、ad2.json、ad3.json……(自适应:从 ad1 开始,直到某个文件不存在才停,最多 20 个)。
+    /// 作者以后想加广告,只要在 ad/ 目录新建 adN.json 并上传即可,无需改代码或发版。</summary>
+    private const string AdFilePrefix = "ad";
 
     /// <summary>轮询间隔:10 分钟(作者改完 push,用户侧最长 10 分钟看到新内容)。</summary>
     public static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(10);
@@ -92,13 +93,17 @@ public static class AdFetcher
         var ads = await FetchAllAsync().ConfigureAwait(false);
         if (ads is { Length: > 0 }) Latest = ads;    }
 
-    /// <summary>拉取并解析全部广告文件;返回有效的卡数组(跳过 404/损坏/空),全失败返回 empty(非 null),由调用方隐藏。</summary>
+    /// <summary>拉取并解析全部广告文件(自适应:从 ad1 开始,遇到不存在的文件即停,最多 20 个);
+    /// 返回有效的卡数组(跳过损坏/空),全失败返回 empty(非 null),由调用方隐藏。</summary>
     public static async Task<AdInfo[]> FetchAllAsync()
     {
         var result = new System.Collections.Generic.List<AdInfo>();
-        foreach (var file in AdFiles)
+        const int MaxFiles = 20;   // 安全上限,杜绝异常端点导致无限循环
+        for (int i = 1; i <= MaxFiles; i++)
         {
+            var file = $"{AdFilePrefix}{i}.json";
             var json = await FetchFileRawAsync(file).ConfigureAwait(false);
+            if (json is null) break;   // 404:该编号文件不存在 → 停止(后续编号也不会有)
             if (string.IsNullOrWhiteSpace(json)) continue;
             var ad = ParseAd(json);
             if (ad is not null) result.Add(ad);
@@ -107,8 +112,8 @@ public static class AdFetcher
         return result.ToArray();
     }
 
-    /// <summary>拉取单个广告文件原文(按实测可靠性排序:jsDelivr 最稳→gh-proxy→ghproxy→raw 最后;任一成功即返回;失败返回 null)。
-    /// 多镜像提高国内可达性(国内 raw.githubusercontent.com 直连最不稳,jsDelivr 实测最稳,故排最前)。</summary>
+    /// <summary>拉取单个广告文件原文(按实测可靠性排序:jsDelivr 最稳→gh-proxy→ghproxy→raw 最后;任一成功即返回)。
+    /// 文件确实不存在(404)→ 返回 null(供调用方停止自适应拉取);其它失败返回空串(继续尝试下一端点)。</summary>
     private static async Task<string?> FetchFileRawAsync(string file)
     {
         string[] urls =
@@ -118,6 +123,7 @@ public static class AdFetcher
             $"https://ghproxy.net/https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/{file}",
             $"https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/{file}",
         };
+        bool sawNotFound = false;
         foreach (var url in urls)
         {
             try
@@ -126,12 +132,17 @@ public static class AdFetcher
                 var json = await _http.GetStringAsync(url).ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(json)) return json;
             }
+            catch (HttpRequestException hre)
+            {
+                // 404 = 文件不存在:记下,若所有端点都 404 才返回 null(代表"该编号不存在,停止拉取")
+                if (hre.StatusCode == System.Net.HttpStatusCode.NotFound) { sawNotFound = true; continue; }
+            }
             catch (Exception ex)
             {
                 AppLogger.Info($"[广告] 文件 {file} 端点失败({url[..Math.Min(42, url.Length)]}...):" + ex.Message.Split('\n')[0]);
             }
         }
-        return null;
+        return sawNotFound ? null : string.Empty;   // 全端点 404 → null;否则空串(非404失败,继续尝试但不中断)
     }
 
     /// <summary>解析单个广告文件;字段缺失/异常返回 null。</summary>
