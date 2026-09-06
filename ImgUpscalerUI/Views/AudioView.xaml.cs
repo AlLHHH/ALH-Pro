@@ -486,7 +486,25 @@ public sealed partial class AudioView : UserControl
     private void AudioList_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
         if (e.OriginalSource is FrameworkElement fe && fe.DataContext is AudioItem item)
+        {
+            // 【处理中不可预览】任务处理中,输出未就绪/被占用 → 明确提示
+            if (_running)
+            {
+                try
+                {
+                    _ = new Microsoft.UI.Xaml.Controls.ContentDialog
+                    {
+                        Title = "处理中",
+                        Content = "音频正在处理中,暂不可预览。请等待处理完成后再双击预览。",
+                        CloseButtonText = "好的",
+                        XamlRoot = this.XamlRoot,
+                    }.ShowAsync();
+                }
+                catch { }
+                return;
+            }
             _ = ShowPreviewAsync(item);
+        }
     }
 
     private async Task ShowPreviewAsync(AudioItem it)

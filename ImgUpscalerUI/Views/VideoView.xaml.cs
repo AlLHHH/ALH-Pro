@@ -2403,7 +2403,25 @@ public sealed partial class VideoView : UserControl
     {
         // 只在「列表项」上双击才打开预览;双击空白不响应(避免误开之前选中的项)
         if (e.OriginalSource is FrameworkElement fe && fe.DataContext is VideoItem item)
+        {
+            // 【处理中不可预览】任务处理中,预览目标文件未就绪/被占用 → 明确提示,不尝试打开
+            if (_running)
+            {
+                try
+                {
+                    _ = new Microsoft.UI.Xaml.Controls.ContentDialog
+                    {
+                        Title = "处理中",
+                        Content = "视频正在处理中,暂不可预览。请等待处理完成后再双击预览。",
+                        CloseButtonText = "好的",
+                        XamlRoot = this.XamlRoot,
+                    }.ShowAsync();
+                }
+                catch { }
+                return;
+            }
             OpenPreview(item);
+        }
     }
 
     // ---------- 视频框选(与图片放大一致) ----------
