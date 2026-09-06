@@ -73,9 +73,11 @@
                     <Button Content="关于" Click="About_Click" HorizontalAlignment="Stretch"
                             Padding="0,5" FontSize="11" Margin="0,2,0,0"/>
 
-                    <!-- ============ 左栏底部「广告」动态区(作者 GitHub 投放,5 张卡本地 60s 轮播;无图则纯文字卡) ============ -->
+                    <!-- ============ 左栏底部「广告」动态区(作者 GitHub 投放,5 张卡本地 30s 轮播;可点/滑动切上下一张) ============ -->
                     <Border x:Name="AdCard" CornerRadius="10" Background="#14FFFFFF"
                             BorderBrush="#22FFFFFF" BorderThickness="1" Margin="0,6,0,0" Padding="12,10"
+                            ManipulationMode="TranslateX" ManipulationDelta="AdCard_ManipulationDelta"
+                            ManipulationCompleted="AdCard_ManipulationCompleted"
                             Visibility="Collapsed">
                         <Grid>
                             <!-- 内容:图(可选) + 标题 + 正文,整体居中、对称留白 -->
@@ -101,6 +103,17 @@
                                                Foreground="#C7CEDA" TextWrapping="Wrap"
                                                TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
                                 </StackPanel>
+                            </StackPanel>
+                            <!-- 上一张/下一张 切换按钮(点击或触屏滑动都能换) -->
+                            <StackPanel Orientation="Horizontal" Spacing="4"
+                                        HorizontalAlignment="Center" Margin="0,4,0,0">
+                                <Button Content="◀" FontSize="9" Padding="8,2"
+                                        Background="#1AFFFFFF" BorderThickness="0" Foreground="#AAFFFFFF"
+                                        CornerRadius="6" Click="AdPrev_Click" ToolTipService.ToolTip="上一张"/>
+                                <TextBlock Text="上一张 / 下一张" FontSize="8" Opacity="0.4" VerticalAlignment="Center"/>
+                                <Button Content="▶" FontSize="9" Padding="8,2"
+                                        Background="#1AFFFFFF" BorderThickness="0" Foreground="#AAFFFFFF"
+                                        CornerRadius="6" Click="AdNext_Click" ToolTipService.ToolTip="下一张"/>
                             </StackPanel>
                             <!-- 关闭按钮:固定在卡片右上角(悬浮,半透明圆角底),不占内容宽度 -->
                             <Button x:Name="AdCloseBtn" Content="✕" FontSize="10" Padding="6,2"
