@@ -107,16 +107,16 @@ public static class AdFetcher
         return result.ToArray();
     }
 
-    /// <summary>拉取单个广告文件原文(官方 + gh-proxy 镜像 + jsDelivr CDN,任一成功即返回;失败返回 null)。
-    /// 多镜像提高国内可达性(GitHub raw 直连常被墙,gh-proxy/jsDelivr 是国内常用通路)。</summary>
+    /// <summary>拉取单个广告文件原文(按实测可靠性排序:jsDelivr 最稳→gh-proxy→ghproxy→raw 最后;任一成功即返回;失败返回 null)。
+    /// 多镜像提高国内可达性(国内 raw.githubusercontent.com 直连最不稳,jsDelivr 实测最稳,故排最前)。</summary>
     private static async Task<string?> FetchFileRawAsync(string file)
     {
         string[] urls =
         {
-            $"https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/{file}",
+            $"https://cdn.jsdelivr.net/gh/AlLHHH/ALH-Pro@main/ad/{file}",
             $"https://gh-proxy.com/https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/{file}",
             $"https://ghproxy.net/https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/{file}",
-            $"https://cdn.jsdelivr.net/gh/AlLHHH/ALH-Pro@main/ad/{file}",
+            $"https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/{file}",
         };
         foreach (var url in urls)
         {
