@@ -1,0 +1,6 @@
+{
+  "_note": "自适应提示(第7条)。字段同 hint1~hint5: text=文案, color=文字颜色(#RRGGBB/#AARRGGBB), link=点击跳转(可空)。新增提示只需在 hint/ 放 hintN.json 并上传,客户端自动拉取轮播,无需发版。",
+  "text": "CPU 也能跑,只是慢一些,建议用独立显卡",
+  "color": "#8FD8E8",
+  "link": ""
+}
