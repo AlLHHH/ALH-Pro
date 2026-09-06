@@ -214,6 +214,8 @@ public sealed partial class MainPage : Page
             _ = CheckUpdateSilentAsync();
             // 广告 + 弹幕动态区:启动拉一次 + 定时轮询(作者 GitHub 投放;失败静默隐藏)
             _ = InitAdAsync();
+            // 右侧纯文本提示位:启动拉一次 + 定时轮询(独立 hint/ 文件夹,作者 GitHub 投放;失败静默隐藏)
+            _ = InitTipAsync();
         };
     }
 
@@ -575,10 +577,14 @@ public sealed partial class MainPage : Page
     }
 
     // ============ 广告动态区(5 张卡本地 60s 轮播) ============
-    private bool _adClosedThisRun;      // 本次运行点「✕」后不再显示(不写设置)
+    /// <summary>点「✕」后直到该时刻不再显示广告(内存,不写设置;重启=默认MinValue,自动恢复显示)。
+    /// 本次运行逻辑:点✕设为 Now+2 小时,期间 RenderAds/RotateAd 一律隐藏。</summary>
+    private DateTime _adHiddenUntil = DateTime.MinValue;
     private System.Threading.CancellationTokenSource? _adCts;
     private int _adRotateIdx;           // 当前轮播到第几张卡
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _adRotateTimer;   // 60s 本地轮播定时器
+    /// <summary>广告是否因「本次点✕」而处于隐藏期(距 2 小时未到)。</summary>
+    private bool AdIsHiddenNow => DateTime.Now < _adHiddenUntil;
 
     /// <summary>广告区本地兜底占位图路径(与收款码同款:发布版根目录 ad_placeholder.png,经 csproj CopyToOutput 拷入)。</summary>
     private static string AdPlaceholderPath => System.IO.Path.Combine(AppContext.BaseDirectory, "ad_placeholder.png");
@@ -595,12 +601,12 @@ public sealed partial class MainPage : Page
         return null;
     }
 
-    /// <summary>启动广告后台活动:60s 轮播定时器 + 10min 网络轮询(仅当 ShowAds 开启且未在跑)。</summary>
+    /// <summary>启动广告后台活动:60s 轮播定时器 + 10min 网络轮询(广告默认显示;本次运行点✕或设置隐藏则不显示)。</summary>
     private void StartAdActivity()
     {
         try
         {
-            if (!AppSettings.ShowAds) return;
+            if (AdIsHiddenNow) return;
             StartAdRotateTimer();
             if (_adCts is { IsCancellationRequested: false }) return;   // 已在跑
             _adCts = new System.Threading.CancellationTokenSource();
@@ -633,11 +639,11 @@ public sealed partial class MainPage : Page
         try { _adCts?.Cancel(); } catch { }
     }
 
-    /// <summary>启动:拉一次 + 每 10 分钟轮询(作者改 ad/adN.json push,用户侧最长 10 分钟看到新内容);本地每 60 秒轮播一张卡。</summary>
+    /// <summary>启动:拉一次 + 每 10 分钟轮询(作者改 ad/adN.json push,用户侧最长 10 分钟看到新内容);本地每 30 秒轮播一张卡。</summary>
     private async Task InitAdAsync()
     {
-        // 用户设置里彻底关掉广告 → 直接不显示也不轮询
-        if (!AppSettings.ShowAds) return;
+        // 本次运行点「✕」或设置隐藏 → 不显示也不轮询(重启恢复)
+        if (AdIsHiddenNow) return;
         _adCts = new System.Threading.CancellationTokenSource();
         var ct = _adCts.Token;
         await AdFetcher.RefreshAsync().ConfigureAwait(false);   // 首次拉取
@@ -699,7 +705,7 @@ public sealed partial class MainPage : Page
         try
         {
             var ads = AdFetcher.Latest;
-            if (!AppSettings.ShowAds || _adClosedThisRun || ads is not { Length: > 0 })
+            if (AdIsHiddenNow || ads is not { Length: > 0 })
             {
                 AdCard.Visibility = Visibility.Collapsed;
                 return;
@@ -744,7 +750,7 @@ public sealed partial class MainPage : Page
         _adRotateIdx = (_adRotateIdx + 1) % ads.Length;
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!AppSettings.ShowAds || _adClosedThisRun) return;
+            if (AdIsHiddenNow) return;
             ShowAdAt(ads[_adRotateIdx]);
             AdCard.Visibility = Visibility.Visible;
         });
@@ -759,7 +765,7 @@ public sealed partial class MainPage : Page
         _adRotateIdx = ((_adRotateIdx + delta) % n + n) % n;   // 支持负向(-1),并循环
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!AppSettings.ShowAds || _adClosedThisRun) return;
+            if (AdIsHiddenNow) return;
             ShowAdAt(ads[_adRotateIdx]);
             AdCard.Visibility = Visibility.Visible;
         });
@@ -812,9 +818,170 @@ public sealed partial class MainPage : Page
 
     private void AdClose_Click(object sender, RoutedEventArgs e)
     {
-        _adClosedThisRun = true;
+        // 本次运行:点「✕」后 2 小时内不再显示广告(内存记录,重启自动恢复显示)。
+        _adHiddenUntil = DateTime.Now.AddHours(2);
         AdCard.Visibility = Visibility.Collapsed;
-        try { _adRotateTimer?.Stop(); } catch { }   // 本次隐藏:停轮播定时器,不再空转
+        try { _adRotateTimer?.Stop(); } catch { }   // 隐藏期:停轮播定时器,不再空转
+    }
+
+    // ============ 右侧纯文本提示位(独立 hint/ 文件夹,与广告同逻辑但互不影响) ============
+    private DateTime _tipHiddenUntil = DateTime.MinValue;   // 点「✕」后直到该时刻不再显示(内存;重启恢复)
+    private System.Threading.CancellationTokenSource? _tipCts;
+    private int _tipRotateIdx;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _tipRotateTimer;   // 30s 本地轮播
+    private bool TipIsHiddenNow => DateTime.Now < _tipHiddenUntil;
+
+    /// <summary>把 hex 颜色(#RRGGBB 或 #AARRGGBB)转成 WinUI SolidColorBrush;非法返回 null(调用方用默认色)。</summary>
+    private static Microsoft.UI.Xaml.Media.SolidColorBrush? TryParseColor(string? hex)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(hex)) return null;
+            hex = hex.Trim().TrimStart('#');
+            if (hex.Length == 6) hex = "FF" + hex;             // #RRGGBB → #AARRGGBB
+            if (hex.Length != 8) return null;
+            byte a = Convert.ToByte(hex.Substring(0, 2), 16);
+            byte r = Convert.ToByte(hex.Substring(2, 2), 16);
+            byte g = Convert.ToByte(hex.Substring(4, 2), 16);
+            byte b = Convert.ToByte(hex.Substring(6, 2), 16);
+            return new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                Windows.UI.Color.FromArgb(a, r, g, b));
+        }
+        catch { return null; }
+    }
+
+    /// <summary>启动提示后台活动:30s 轮播定时器 + 10min 网络轮询(提示默认显示;本次运行点✕则不显示)。</summary>
+    private void StartTipActivity()
+    {
+        try
+        {
+            if (TipIsHiddenNow) return;
+            StartTipRotateTimer();
+            if (_tipCts is { IsCancellationRequested: false }) return;   // 已在跑
+            _tipCts = new System.Threading.CancellationTokenSource();
+            var ct = _tipCts.Token;
+            _ = Task.Run(async () =>
+            {
+                await TipFetcher.RefreshAsync().ConfigureAwait(false);
+                DispatcherQueue.TryEnqueue(RenderTip);
+                while (!ct.IsCancellationRequested)
+                {
+                    try
+                    {
+                        await System.Threading.Tasks.Task.Delay(TipFetcher.PollInterval, ct).ConfigureAwait(false);
+                        await TipFetcher.RefreshAsync().ConfigureAwait(false);
+                        DispatcherQueue.TryEnqueue(RenderTip);
+                        DispatcherQueue.TryEnqueue(RotateTip);
+                    }
+                    catch (OperationCanceledException) { break; }
+                    catch { /* 轮询异常忽略 */ }
+                }
+            }, ct);
+        }
+        catch { }
+    }
+
+    /// <summary>停止提示后台活动:停 30s 轮播定时器 + Cancel 网络轮询。</summary>
+    private void StopTipActivity()
+    {
+        try { _tipRotateTimer?.Stop(); } catch { }
+        try { _tipCts?.Cancel(); } catch { }
+    }
+
+    private void StartTipRotateTimer()
+    {
+        try
+        {
+            if (_tipRotateTimer != null) return;
+            _tipRotateTimer = DispatcherQueue.CreateTimer();
+            _tipRotateTimer.Interval = TipFetcher.RotateInterval;
+            _tipRotateTimer.IsRepeating = true;
+            _tipRotateTimer.Tick += (_, _) => RotateTip();
+            if (!TipIsHiddenNow) _tipRotateTimer.Start();
+        }
+        catch { }
+    }
+
+    /// <summary>启动:拉一次 + 每 10 分钟轮询;本地每 30 秒轮播一条。</summary>
+    private async Task InitTipAsync()
+    {
+        if (TipIsHiddenNow) return;
+        _tipCts = new System.Threading.CancellationTokenSource();
+        var ct = _tipCts.Token;
+        await TipFetcher.RefreshAsync().ConfigureAwait(false);   // 首次拉取
+        DispatcherQueue.TryEnqueue(() => { RenderTip(); StartTipRotateTimer(); });
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await System.Threading.Tasks.Task.Delay(TipFetcher.PollInterval, ct).ConfigureAwait(false);
+                await TipFetcher.RefreshAsync().ConfigureAwait(false);
+                DispatcherQueue.TryEnqueue(RenderTip);
+                DispatcherQueue.TryEnqueue(RotateTip);
+            }
+            catch (OperationCanceledException) { break; }
+            catch { /* 轮询异常忽略 */ }
+        }
+    }
+
+    /// <summary>渲染当前提示(必须在 UI 线程)。数据为空/已隐藏 → 隐藏。</summary>
+    public void RenderTip()
+    {
+        try
+        {
+            var tips = TipFetcher.Latest;
+            if (TipIsHiddenNow || tips is not { Length: > 0 })
+            {
+                TipStrip.Visibility = Visibility.Collapsed;
+                return;
+            }
+            int idx = _tipRotateIdx % tips.Length;
+            ShowTipAt(tips[idx]);
+            TipStrip.Visibility = Visibility.Visible;
+        }
+        catch { TipStrip.Visibility = Visibility.Collapsed; }
+    }
+
+    /// <summary>展示一条提示:设文案 + 颜色(未提供用醒目默认色);有点击跳转。</summary>
+    private void ShowTipAt(TipInfo tip)
+    {
+        TipText.Text = tip.Text ?? "";
+        TipText.Foreground = TryParseColor(tip.Color)
+            ?? new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                Windows.UI.Color.FromArgb(0xFF, 0xE8, 0xA3, 0x3D));   // 默认暖橙,醒目
+        TipText.Tag = tip.Link ?? "";   // 存跳转链接,点击时读
+        // 有链接 → 显示小箭头图标;无链接 → 隐藏,纯提示不可点
+        TipIcon.Visibility = string.IsNullOrWhiteSpace(tip.Link) ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>本地轮播:每 30 秒切到下一提示。</summary>
+    public void RotateTip()
+    {
+        var tips = TipFetcher.Latest;
+        if (tips is not { Length: > 0 }) return;
+        _tipRotateIdx = (_tipRotateIdx + 1) % tips.Length;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (TipIsHiddenNow) return;
+            ShowTipAt(tips[_tipRotateIdx]);
+            TipStrip.Visibility = Visibility.Visible;
+        });
+    }
+
+    /// <summary>点击提示条:若有链接则跳转(用 TipText.Tag 存链接)。</summary>
+    private void TipStrip_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
+    {
+        var link = TipText.Tag as string;
+        if (string.IsNullOrWhiteSpace(link)) return;
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(link) { UseShellExecute = true }); } catch { }
+    }
+
+    /// <summary>点提示「✕」:本次运行不再显示(内存记录,重启恢复)。</summary>
+    private void TipClose_Click(object sender, RoutedEventArgs e)
+    {
+        _tipHiddenUntil = DateTime.MaxValue;   // 本次运行不再显示(内存,重启恢复)
+        TipStrip.Visibility = Visibility.Collapsed;
+        try { _tipRotateTimer?.Stop(); } catch { }
     }
 
     private void UpdateBarGo_Click(object sender, RoutedEventArgs e)
@@ -2813,19 +2980,31 @@ public sealed partial class MainPage : Page
             Height = 1,
             Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
         });
+        // 广告:本次运行是否显示。去掉「永久关闭」开关,只留「本次运行不再显示」语义(重启自动恢复显示)。
         var showAds = new CheckBox
         {
-            Content = "显示广告",
-            IsChecked = AppSettings.ShowAds,
+            Content = "本次运行显示广告",
+            IsChecked = !AdIsHiddenNow,   // 未处于隐藏期=显示(默认选中)
         };
         ToolTipService.SetToolTip(showAds,
-            "左栏底部由作者投放的「广告」动态区(从 GitHub 定时更新,每 1 分钟轮播一张卡)。关闭后整个区域不再显示;不影响软件任何功能。");
-        showAds.Checked += (_, _) => { AppSettings.ShowAds = true; AppSettings.Save(); AppLogger.Info("已开启「显示广告」"); StartAdActivity(); RenderAds(); };
-        showAds.Unchecked += (_, _) => { AppSettings.ShowAds = false; AppSettings.Save(); AppLogger.Info("已关闭「显示广告」"); StopAdActivity(); RenderAds(); };
+            "左栏底部由作者投放的「广告」动态区(从 GitHub 定时更新,每 30 秒轮播一张卡)。取消勾选=本次运行不再显示(点广告卡✕也是 2 小时内不显示);重启软件自动恢复显示,不影响任何功能。");
+        showAds.Unchecked += (_, _) =>
+        {
+            _adHiddenUntil = DateTime.MaxValue;   // 本次运行不再显示(内存记录,重启恢复)
+            AppLogger.Info("本次运行已隐藏广告(设置)");
+            RenderAds();
+        };
+        showAds.Checked += (_, _) =>
+        {
+            _adHiddenUntil = DateTime.MinValue;    // 本次运行恢复显示
+            AppLogger.Info("本次运行恢复显示广告(设置)");
+            StartAdActivity();
+            RenderAds();
+        };
         content.Children.Add(showAds);
         content.Children.Add(new TextBlock
         {
-            Text = "作者在 GitHub 更新后,软件内每隔一段时间自动刷新;这里可随时彻底关闭。",
+            Text = "作者在 GitHub 更新后,软件内每隔一段时间自动刷新。「本次运行」隐藏 = 重启软件后恢复显示,不会永久关闭。",
             FontSize = 10, Opacity = 0.5, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
 
