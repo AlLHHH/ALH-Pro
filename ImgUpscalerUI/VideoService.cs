@@ -65,24 +65,25 @@ public static class VideoService
 
     /// <summary>任务开始前的总时长估算(秒):按启用的处理项 + 视频时长/帧率/分辨率粗算。
     /// 用于一开始就显示合理的预计剩余(偏保守,随时间慢慢对齐),而不是从小变大校准。
-    /// 【实测校准】同配置在 PerfMemory 有历史实测秒/帧时,用实测重算覆盖固定常数估算(越用越准),避免固定常数在弱机/强机上离谱。</summary>
+    /// 【实测校准】同配置在 PerfMemory 有历史实测秒/帧时,用实测重算覆盖固定常数估算(越用越准)。
+    /// postFx=是否启用了后处理(与记录端指纹一致,否则查不到导致校准失效)。</summary>
     public static double EstimateProcessSeconds(double duration, double fps, int w, int h,
-        bool up, double scale, string engine, bool interp, int interpScale, bool dedup, int videoDenoise)
+        bool up, double scale, string engine, bool interp, int interpScale, bool dedup, int videoDenoise,
+        bool postFx = false)
     {
         var sf = SafeRender.Profile == SafeRender.DeviceProfile.UltraLow ? 6.0 : 1.0;
         double core = AlhPro.Core.VideoPipeline.EstimateProcessSeconds(duration, fps, w, h, up, scale, engine, interp, interpScale, dedup, videoDenoise, sf);
-        // 【实测校准】查同配置历史秒/帧(1080p 基准),命中则按"帧数×实测×面积"重算;与固定估算加权(各50%),避免单次异常带偏。
+        // 【实测校准】查同配置历史秒/帧(1080p 基准),命中则按"源帧数×实测×面积"重算;与固定估算加权(各50%)。
+        // 注意:PerfMemory 记录时按【源帧数】归一(不乘补帧倍率),这里也用源帧数 src,避免补帧任务被重复放大。
         try
         {
             double areaN = Math.Max(0.25, (double)w * h / 2_073_600.0);
             int src = (int)Math.Max(1, duration * fps);
-            int frames = src;
-            if (interp && interpScale > 1) frames *= interpScale;
-            var key = PerfMemory.Fingerprint(engine, scale, 1920, 1080, interpScale, dedup, videoDenoise, false);
+            var key = PerfMemory.Fingerprint(engine, scale, 1920, 1080, interpScale, dedup, videoDenoise, postFx);
             double? p = PerfMemory.PerFrameFor(key);
             if (p is { } pf && pf > 0.001)
             {
-                double measured = frames * pf * areaN;
+                double measured = src * pf * areaN;
                 core = core * 0.5 + measured * 0.5;
             }
         }
