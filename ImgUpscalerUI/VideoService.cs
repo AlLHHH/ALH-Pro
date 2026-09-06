@@ -68,30 +68,8 @@ public static class VideoService
     public static double EstimateProcessSeconds(double duration, double fps, int w, int h,
         bool up, double scale, string engine, bool interp, int interpScale, bool dedup, int videoDenoise)
     {
-        int src = (int)Math.Max(1, duration * fps);
-        double s = src * 0.02 + 1.5;                 // 拆帧(含引擎启动)
-        if (dedup) s += Math.Max(1.5, src * 0.010);   // 去重检测(随帧数)
-        int frames = src;
-        // 补帧/超分的每帧成本按面积缩放(基准 1080p=2073600):固定常数会让 4K/大图严重低估
-        double areaN = Math.Max(0.25, (double)w * h / 2073600.0);
-        if (interp && interpScale > 1)
-        {
-            // 整段一次 RIFE 成本 ≈ 输出帧数 × 每帧(按面积)
-            s += frames * Math.Max(2, interpScale) * 0.09 * areaN;
-            frames *= interpScale;
-        }
-        if (up && scale > 1.001)
-        {
-            // 超分逐帧成本:1080p 单帧 waifu2x≈0.18s / realesrgan≈0.45s,按面积缩放
-            double per = engine switch { "waifu2x" => 0.18, _ => 0.45 };
-            per *= areaN * Math.Max(0.5, scale / 1.0);
-            s += frames * per;
-        }
-        if (videoDenoise > 0) s *= 1.05;              // 降噪滤镜
-        s += frames * 0.12;                           // 合成编码(平均)
-        // 弱机(CPU 兜底)明显更慢,放大概率系数
-        if (SafeRender.Profile == SafeRender.DeviceProfile.UltraLow) s *= 6.0;
-        return s * 1.15;                              // 略保守:从大往小对齐,不从小变大
+        var sf = SafeRender.Profile == SafeRender.DeviceProfile.UltraLow ? 6.0 : 1.0;
+        return AlhPro.Core.VideoPipeline.EstimateProcessSeconds(duration, fps, w, h, up, scale, engine, interp, interpScale, dedup, videoDenoise, sf);
     }
 
     public static string? ProbeFps(string videoPath)
@@ -3096,21 +3074,7 @@ public static class VideoService
     /// 否则会被"帧数匹配校验"整体回退成固定帧率 → 变速)。
     /// 从后往前删:删除后面的条目不影响前面索引,时长并入"前面最近的保留帧"。</summary>
     private static void MergeDurations(List<double> durs, System.Collections.Generic.IEnumerable<int> dropped, int totalCount)
-    {
-        var dropSet = dropped as System.Collections.Generic.HashSet<int>
-            ?? new System.Collections.Generic.HashSet<int>(dropped);
-        int actual = Math.Min(durs.Count, totalCount);
-        for (int i = actual - 1; i >= 0; i--)
-        {
-            int frameNo = i + 1;
-            if (!dropSet.Contains(frameNo)) continue;
-            // 找"前面最近的保留帧"(若前面连续都是被删帧则递推到更前)
-            int k = i - 1;
-            while (k >= 0 && dropSet.Contains(k + 1)) k--;
-            if (k >= 0 && k < durs.Count && k < i) durs[k] += durs[i];
-            durs.RemoveAt(i);
-        }
-    }
+        => AlhPro.Core.VideoPipeline.MergeDurations(durs, dropped, totalCount);
 
     /// <summary>
     /// 统一"去重落盘"逻辑(去重各模式共用,消除 4 处重复):
@@ -3159,35 +3123,10 @@ public static class VideoService
     /// </summary>
     private static string? BuildVfrSetptsExpr(System.Collections.Generic.List<double> durs)
     {
-        try
-        {
-            // 合并相邻相同时长成段(±1e-5 视为相同)
-            var segs = new System.Collections.Generic.List<(int s, int e, double p0, double d)>();
-            int i = 0;
-            double acc = 0;
-            while (i < durs.Count)
-            {
-                int s = i;
-                double d = durs[i];
-                while (i < durs.Count && Math.Abs(durs[i] - d) < 1e-5) i++;
-                segs.Add((s, i, acc, d));
-                acc += d * (i - s);
-            }
-            if (segs.Count == 0) return null;
-            if (segs.Count > 400) { AppLogger.Info($"VFR 时间轴段数 {segs.Count} 超过上限 400,回退 CFR(避免 setpts 命令超 Windows 命令行 32767 字符)"); return null; }   // 异常/过长:回退并提示
-            var inv = System.Globalization.CultureInfo.InvariantCulture;
-            var sb = new System.Text.StringBuilder("setpts=(");
-            bool first = true;
-            foreach (var (s, e, p0, d) in segs)
-            {
-                if (!first) sb.Append(" + ");
-                first = false;
-                sb.Append($"(lt(N\\,{e})*gte(N\\,{s})*({p0.ToString("0.######", inv)}+(N-{s})*{d.ToString("0.######", inv)}))");
-            }
-            sb.Append(")/TB");
-            return sb.ToString();
-        }
-        catch { return null; }
+        var r = AlhPro.Core.VideoPipeline.BuildVfrSetptsExpr(durs);
+        if (r == null && durs != null && durs.Count > 400)
+            AppLogger.Info($"VFR 时间轴段数 {durs.Count} 超过上限 400,回退 CFR(避免 setpts 命令超 Windows 命令行 32767 字符)");
+        return r;
     }
 
     /// <summary>帧差法(SAD)快筛 + 分块 SSIM 精确验证的动漫去重:
