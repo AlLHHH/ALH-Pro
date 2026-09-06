@@ -25,6 +25,9 @@ public static class AppSettings
     /// <summary>上次关闭"请作者喝咖啡"赞助提示的时间(冷却:2 小时内不再触发)。</summary>
     public static DateTime SponsorPromptTime { get; set; } = DateTime.MinValue;
 
+    /// <summary>已展示过"更新后问卷"的版本(每次更新后首次启动,自检完成后弹一次)。</summary>
+    public static string SurveyShownVersion { get; set; } = "";
+
     /// <summary>自检报告对应的软件版本(升级后自动作废旧缓存重测,报告修复才能生效)。</summary>
     public static string VulkanReportVersion { get; set; } = "";
 
@@ -57,6 +60,7 @@ public static class AppSettings
             VulkanReport = d.VulkanReport ?? "";
             SelfCheckReport = d.SelfCheckReport ?? "";
             SponsorPromptTime = d.SponsorPromptTime == default ? DateTime.MinValue : d.SponsorPromptTime;
+            SurveyShownVersion = d.SurveyShownVersion ?? "";
             VulkanReportVersion = d.VulkanReportVersion ?? "";
             TempDir = d.TempDir ?? "";
             LastShownVersion = d.LastShownVersion ?? "";
@@ -83,6 +87,7 @@ public static class AppSettings
                         VulkanReport = VulkanReport,
                         SelfCheckReport = SelfCheckReport,
                         SponsorPromptTime = SponsorPromptTime,
+                        SurveyShownVersion = SurveyShownVersion,
                         VulkanReportVersion = VulkanReportVersion,
                         TempDir = TempDir,
                         LastShownVersion = LastShownVersion,
@@ -100,6 +105,7 @@ public static class AppSettings
         public string VulkanReport { get; set; } = "";
         public string SelfCheckReport { get; set; } = "";
         public DateTime SponsorPromptTime { get; set; } = DateTime.MinValue;
+        public string SurveyShownVersion { get; set; } = "";
         public string VulkanReportVersion { get; set; } = "";
         public string TempDir { get; set; } = "";
         public string LastShownVersion { get; set; } = "";
