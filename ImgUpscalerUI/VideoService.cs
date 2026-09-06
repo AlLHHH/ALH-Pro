@@ -2012,6 +2012,89 @@ public static class VideoService
     /// globalTarget &gt; 0 时(末段):-n = 全局目标帧数 - 已输出帧数,保证最后锚点帧精确落在最后一帧。
     /// appendTailCopy = true(末段,非 VFR):给 RIFE 追加末帧副本,让最后一段真实插值,
     /// 避免 RIFE -n 把末帧复制成 3 帧(尾部"卡住");副本产生的冻结帧由合帧对齐裁掉。</summary>
+    /// <summary>从 RIFE 命令行参数里解析出 ONNX 补帧所需的输入目录/输出目录/目标帧数;解析失败返回 false。</summary>
+    private static bool TryGetRifeOnnxFrames(string args, out string? sIn, out string? oDir, out int target)
+    {
+        sIn = null; oDir = null; target = 0;
+        try
+        {
+            var mIn = System.Text.RegularExpressions.Regex.Match(args, @"-i\s+""([^""]+)""");
+            var mOut = System.Text.RegularExpressions.Regex.Match(args, @"-o\s+""([^""]+)""");
+            var mN = System.Text.RegularExpressions.Regex.Match(args, @"-n\s+(\d+)");
+            if (!mIn.Success || !mOut.Success || !mN.Success) return false;
+            sIn = mIn.Groups[1].Value;
+            oDir = mOut.Groups[1].Value;
+            target = int.Parse(mN.Groups[1].Value);
+            return target >= 2;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>ONNX 逐对补帧(50 系/GPU 不可用设备稳定路线):逐对插值、黑帧防御、进度汇报、响应取消。
+    /// 输入 sIn 的 frame_*.jpg,输出 oDir 的 frame_*.png;target=目标帧数。</summary>
+    private static async Task RifeOnnxInterpDirAsync(string sIn, string oDir, int target, int gpuId,
+        int watchTotal, string? watchDir, CancellationToken ct,
+        IProgress<(int pct, string msg)>? progress)
+    {
+        await Task.Run(() =>
+        {
+            Directory.CreateDirectory(oDir);
+            var files = Directory.EnumerateFiles(sIn, "frame_*.jpg")
+                .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
+            if (files.Count < 2) return;
+
+            int srcCount = files.Count;
+            int pairs = srcCount - 1;
+            if (pairs <= 0) return;
+
+            int totalOut = Math.Max(1, target);   // 预估输出帧数(用于进度)
+            int idx = 1;
+            for (int p = 0; p < pairs; p++)
+            {
+                ct.ThrowIfCancellationRequested();
+                CopyFrame(files[p], Path.Combine(oDir, $"frame_{idx:D6}.png"));
+                idx++;
+                int mids = Math.Max(0, (target - 1) / pairs - 1);
+                if (p < (target - 1) % pairs) mids++;
+                for (int t = 1; t <= mids; t++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    float time = t / (float)(mids + 1);
+                    var outF = Path.Combine(oDir, $"frame_{idx:D6}.png");
+                    try { RifeOnnxService.Interp(files[p], files[p + 1], time, outF, gpuId); idx++; }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Warn($"ONNX 补帧失败({ex.Message.Split('\n')[0]})——回退复制原帧");
+                        CopyFrame(files[p], outF);
+                        idx++;
+                    }
+                    // 【黑帧防御】ONNX/DirectML 偶发静默输出全黑(不退场、不抛异常)→ 源不黑则回退该帧,绝不把黑帧写进输出
+                    if (File.Exists(outF) && EngineService.IsBlackPng(outF) && !EngineService.IsBlackPng(files[p]))
+                    {
+                        CopyFrame(files[p], outF);
+                        AppLogger.Warn($"⚠ ONNX 补帧第 {idx} 帧输出黑帧(DirectML 异常),已回退复制该对源帧");
+                    }
+                    // 进度:补帧阶段 10~45%,按已产帧数估算
+                    try
+                    {
+                        int pct = Math.Clamp(10 + idx * 35 / Math.Max(1, totalOut), 10, 45);
+                        progress?.Report((pct, $"补帧(ONNX) 第 {idx}/{totalOut} 帧"));
+                    }
+                    catch { }
+                }
+            }
+            CopyFrame(files[^1], Path.Combine(oDir, $"frame_{idx:D6}.png"));
+            try { progress?.Report((45, $"补帧(ONNX)完成:{idx} 帧")); } catch { }
+        }).ConfigureAwait(false);
+    }
+
+    /// <summary>复制文件(失败静默忽略)。</summary>
+    private static void CopyFrame(string src, string dst)
+    {
+        try { File.Copy(src, dst, true); }
+        catch { }
+    }
+
     private static async Task<int> InterpSegmentAsync(string rife, string framesOut, string framesFinal,
         int start, int end, int interpScale, string interpModel, double? timeStep, bool tta, int gpuId, int globalIdx,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct, double frameScale = 1.0, long globalTarget = 0,
@@ -2043,7 +2126,7 @@ public static class VideoService
                 {
                     AppLogger.Info($"✅ 补帧降级:GPU 不可用,先改走 ONNX DirectML(rife49.onnx,DirectML→CPU)再回落");
                     progress?.Report((0, "⚠ 补帧 GPU 不可用,改用 ONNX 稳定模型(DirectML GPU)重算..."));
-                    await RifeOnnxInterpDirAsync(onnxIn!, onnxOut!, onnxTarget, -2, watchTotal, watchDir).ConfigureAwait(false);
+                    await RifeOnnxInterpDirAsync(onnxIn!, onnxOut!, onnxTarget, -2, watchTotal, watchDir, ct, progress).ConfigureAwait(false);
                     return;
                 }
                 // 无 ONNX 模型:直接 ncnn-CPU
@@ -2114,94 +2197,13 @@ public static class VideoService
                     AppLogger.Info($"✅ 补帧改走 ONNX 路线(rife49.onnx,DirectML→CPU)——50 系/GPU 不可用设备稳定且更快");
                     progress?.Report((0, $"补帧改用 ONNX 模型(50 系/GPU 不可用设备更稳定)..."));
                     // 传原始 gpuId:ONNX 内部 DirectML GPU 优先,失败自动 CPU(单会话加速优于 ncnn-CPU)
-                    await RifeOnnxInterpDirAsync(onnxSegIn!, onnxOut!, onnxTarget, -2, watchTotal, watchDir).ConfigureAwait(false);   // -2 = 按帧自动选设备
+                    await RifeOnnxInterpDirAsync(onnxSegIn!, onnxOut!, onnxTarget, -2, watchTotal, watchDir, ct, progress).ConfigureAwait(false);   // -2 = 按帧自动选设备
                 }
                 else
                 {
                     await RunAsync(rife, args, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
                 }
             }
-        }
-
-        // ===== ONNX 补帧辅助(局部函数,可用外层 gpuId)=====
-        bool TryGetRifeOnnxFrames(string args, out string? sIn, out string? oDir, out int target)
-        {
-            sIn = null; oDir = null; target = 0;
-            try
-            {
-                var mIn = System.Text.RegularExpressions.Regex.Match(args, @"-i\s+""([^""]+)""");
-                var mOut = System.Text.RegularExpressions.Regex.Match(args, @"-o\s+""([^""]+)""");
-                var mN = System.Text.RegularExpressions.Regex.Match(args, @"-n\s+(\d+)");
-                if (!mIn.Success || !mOut.Success || !mN.Success) return false;
-                sIn = mIn.Groups[1].Value;
-                oDir = mOut.Groups[1].Value;
-                target = int.Parse(mN.Groups[1].Value);
-                return target >= 2;
-            }
-            catch { return false; }
-        }
-
-        async Task RifeOnnxInterpDirAsync(string sIn, string oDir, int target, int gpuId,
-            int watchTotal, string? watchDir)
-        {
-            // 【修复】ONNX 补帧缺进度汇报/取消检查,UI 会显示"0/X 卡住",取消也无效(同步循环)。
-            // 现改为逐对汇报进度(映射到补帧阶段 10~45%)并响应取消;watchTotal 为阶段帧数(如 214)。
-            await Task.Run(() =>
-            {
-                Directory.CreateDirectory(oDir);
-                var files = Directory.EnumerateFiles(sIn, "frame_*.jpg")
-                    .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
-                if (files.Count < 2) return;
-
-                int srcCount = files.Count;
-                int pairs = srcCount - 1;
-                if (pairs <= 0) return;
-
-                int totalOut = Math.Max(1, target);   // 预估输出帧数(用于进度)
-                int idx = 1;
-                for (int p = 0; p < pairs; p++)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    CopyFrame(files[p], Path.Combine(oDir, $"frame_{idx:D6}.png"));
-                    idx++;
-                    int mids = Math.Max(0, (target - 1) / pairs - 1);
-                    if (p < (target - 1) % pairs) mids++;
-                    for (int t = 1; t <= mids; t++)
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        float time = t / (float)(mids + 1);
-                        var outF = Path.Combine(oDir, $"frame_{idx:D6}.png");
-                        try { RifeOnnxService.Interp(files[p], files[p + 1], time, outF, gpuId); idx++; }
-                        catch (Exception ex)
-                        {
-                            AppLogger.Warn($"ONNX 补帧失败({ex.Message.Split('\n')[0]})——回退复制原帧");
-                            CopyFrame(files[p], outF);
-                            idx++;
-                        }
-                        // 【黑帧防御】ONNX/DirectML 偶发静默输出全黑(不退场、不抛异常)→ 源不黑则回退该帧,绝不把黑帧写进输出
-                        if (File.Exists(outF) && EngineService.IsBlackPng(outF) && !EngineService.IsBlackPng(files[p]))
-                        {
-                            CopyFrame(files[p], outF);
-                            AppLogger.Warn($"⚠ ONNX 补帧第 {idx} 帧输出黑帧(DirectML 异常),已回退复制该对源帧");
-                        }
-                        // 进度:补帧阶段 10~45%,按已产帧数估算
-                        try
-                        {
-                            int pct = Math.Clamp(10 + idx * 35 / Math.Max(1, totalOut), 10, 45);
-                            progress?.Report((pct, $"补帧(ONNX) 第 {idx}/{totalOut} 帧"));
-                        }
-                        catch { }
-                    }
-                }
-                CopyFrame(files[^1], Path.Combine(oDir, $"frame_{idx:D6}.png"));
-                try { progress?.Report((45, $"补帧(ONNX)完成:{idx} 帧")); } catch { }
-            }).ConfigureAwait(false);
-        }
-
-        void CopyFrame(string src, string dst)
-        {
-            try { File.Copy(src, dst, true); }
-            catch { }
         }
 
         // TTA 开关(所有模型可用);时间步仅 v4 架构模型支持
