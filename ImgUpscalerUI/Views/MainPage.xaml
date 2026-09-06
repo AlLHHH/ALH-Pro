@@ -73,36 +73,31 @@
                     <Button Content="关于" Click="About_Click" HorizontalAlignment="Stretch"
                             Padding="0,5" FontSize="11" Margin="0,2,0,0"/>
 
-                    <!-- ============ 左栏底部「广告 + 弹幕」动态区(作者 GitHub 投放,banner.json 轮询) ============ -->
+                    <!-- ============ 左栏底部「广告」动态区(作者 GitHub 投放,5 张卡本地 60s 轮播;无图则纯文字卡) ============ -->
                     <Border x:Name="AdCard" CornerRadius="10" Background="#14FFFFFF"
                             BorderBrush="#22FFFFFF" BorderThickness="1" Margin="0,6,0,0" Padding="8,7"
                             Visibility="Collapsed">
-                        <StackPanel Spacing="5">
-                            <!-- 广告卡:图 + 文案,整卡可点跳链接,右上角 ✕ 本次关闭 -->
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Spacing="4" Tapped="AdCardTapped">
-                                    <Image x:Name="AdImage" Height="92" Stretch="UniformToFill"/>
-                                    <TextBlock x:Name="AdTitle" FontSize="12" FontWeight="SemiBold"
-                                               Foreground="#E8ECF2" TextTrimming="CharacterEllipsis"
-                                               TextWrapping="Wrap" Margin="0,2,0,0" Visibility="Collapsed"/>
-                                    <TextBlock x:Name="AdText" FontSize="10" Opacity="0.85"
-                                               Foreground="#C7CEDA" TextTrimming="CharacterEllipsis"
-                                               TextWrapping="Wrap" Visibility="Collapsed"/>
-                                </StackPanel>
-                                <Button Grid.Column="1" x:Name="AdCloseBtn" Content="✕" FontSize="10"
-                                        Padding="5,2" Background="Transparent" BorderThickness="0"
-                                        Foreground="#88FFFFFF" HorizontalAlignment="Right" VerticalAlignment="Top"
-                                        Click="AdClose_Click" ToolTipService.ToolTip="本次运行隐藏广告"/>
-                            </Grid>
-                            <!-- 弹幕 ticker:每 5 秒轮播淡入 -->
-                            <TextBlock x:Name="DanmakuText" FontSize="10" Opacity="0.8" Foreground="#B8C2CE"
-                                       TextTrimming="CharacterEllipsis" TextWrapping="Wrap" MinHeight="14"
-                                       Visibility="Collapsed"/>
-                        </StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4" Tapped="AdCardTapped">
+                                <!-- 图(有则显示;无图自动隐藏,成一纯净文字卡) -->
+                                <Image x:Name="AdImage" Height="92" Stretch="UniformToFill"
+                                       Margin="0,0,0,2" Visibility="Collapsed"/>
+                                <TextBlock x:Name="AdTitle" FontSize="12" FontWeight="SemiBold"
+                                           Foreground="#E8ECF2" TextTrimming="CharacterEllipsis"
+                                           TextWrapping="Wrap" Margin="0,2,0,0" Visibility="Collapsed"/>
+                                <TextBlock x:Name="AdText" FontSize="10" Opacity="0.85"
+                                           Foreground="#C7CEDA" TextTrimming="CharacterEllipsis"
+                                           TextWrapping="Wrap" Visibility="Collapsed"/>
+                            </StackPanel>
+                            <Button Grid.Column="1" x:Name="AdCloseBtn" Content="✕" FontSize="10"
+                                    Padding="5,2" Background="Transparent" BorderThickness="0"
+                                    Foreground="#88FFFFFF" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                    Click="AdClose_Click" ToolTipService.ToolTip="本次运行隐藏广告"/>
+                        </Grid>
                     </Border>
                 </StackPanel>
             </Grid>
