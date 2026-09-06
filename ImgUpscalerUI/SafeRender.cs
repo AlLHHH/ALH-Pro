@@ -240,35 +240,24 @@ public static class SafeRender
     public static int GetVideoTileSize()
     {
         double v = EffectiveVramGB;
-        bool blackwell = false, amd = false, nvidia = false;
+        AlhPro.Core.GpuCategory cat = AlhPro.Core.GpuCategory.Other;
         try
         {
-            blackwell = ALHPro.EngineService.IsBlackwellGpu();
+            bool blackwell = ALHPro.EngineService.IsBlackwellGpu();
             if (VulkanCheck.Devices.Count > 0)
             {
                 var n = VulkanCheck.Devices[0].Name ?? "";
-                nvidia = n.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase) || n.Contains("GeForce", StringComparison.OrdinalIgnoreCase);
-                amd = n.Contains("AMD", StringComparison.OrdinalIgnoreCase) || n.Contains("Radeon", StringComparison.OrdinalIgnoreCase);
+                bool nvidia = n.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase) || n.Contains("GeForce", StringComparison.OrdinalIgnoreCase);
+                bool amd = n.Contains("AMD", StringComparison.OrdinalIgnoreCase) || n.Contains("Radeon", StringComparison.OrdinalIgnoreCase);
+                cat = blackwell ? AlhPro.Core.GpuCategory.Blackwell
+                    : nvidia ? AlhPro.Core.GpuCategory.Nvidia
+                    : amd ? AlhPro.Core.GpuCategory.Amd
+                    : AlhPro.Core.GpuCategory.Other;
             }
         }
         catch { }
-        // 显存是硬约束:小显存一律保守(爆显存→黑帧/崩溃比慢更糟)
-        if (v < 4) return 256;
-        // 50系/AMD:驱动/稳定性风险,保守(主路径走 ONNX,此处只是 ncnn 兜底)
-        if (blackwell) return v >= 10 ? 640 : 512;
-        if (amd) return v >= 10 ? 640 : 512;
-        // NVIDIA 常规(Turing 等):按显存取中间值,快且安全;大显存放大提速
-        if (nvidia)
-        {
-            if (v >= 12) return 768;
-            if (v >= 8) return 640;
-            if (v >= 6) return 512;
-            return 384;
-        }
-        // 未知/其他:沿用按显存的通用保守值
-        if (v <= 6) return 512;
-        if (v <= 10) return 640;
-        return 768;
+        // 纯计算逻辑抽到 AlhPro.Core.RenderPolicy(可单测):显存+GPU类别 → 分块
+        return AlhPro.Core.RenderPolicy.VideoTileSize(v, cat);
     }
 
     /// <summary>视频逐帧超分的批大小(帧):看【空闲】资源——空余内存 >8G 且 空余显存 >4G 开 240(最快);
@@ -278,12 +267,8 @@ public static class SafeRender
     {
         double fr = FreeRamGB;
         double fv = FreeVramGB > 0.5 ? FreeVramGB : EffectiveVramGB * 0.6;
-        if (fr > 8 && fv > 4) return 240;          // 空余内存>8G + 空余显存>4G:240(最快)
-        if (fr <= 1.5 || fv <= 0.8) return 25;     // 极端紧张
-        if (fr <= 2.5 || fv <= 1.5) return 40;
-        if (fr <= 4 || fv <= 2.5) return 60;
-        if (fr <= 6 || fv <= 3.5) return 120;
-        return 180;                                // 中档:空余内存 6~8G 或显存 3.5~4G
+        // 纯计算逻辑抽到 AlhPro.Core.RenderPolicy(可单测):空闲内存+显存 → 批大小
+        return AlhPro.Core.RenderPolicy.VideoBatchSize(fr, fv);
     }
 
     /// <summary>视频超分的并行批数(同时几个引擎实例):按显存/内存/核数自动定。
