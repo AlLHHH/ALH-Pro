@@ -3344,6 +3344,7 @@ public sealed partial class VideoView : UserControl
             // 倍率:0=1x(2x缩回) 1=2x 2=3x 3=4x 4=自定义(内部按2x)
             int scale = VideoScaleRadios.SelectedIndex switch { 1 => 2, 2 => 3, 3 => 4, _ => 1 };
             bool upscaleShrink1x = VideoScaleRadios.SelectedIndex == 0;
+            if (VideoScaleRadios.SelectedIndex == 4) scale = 2;   // 自定义分辨率:内部按 2x 超分再缩放(与 pipeline 一致,避免占盘/耗时低估)
             if (upOn && upscaleShrink1x) scale = 2;
             bool highRate = interpScale >= 4;   // 4x 及以上
             double totalNeedGB = 0, totalSec = 0;
@@ -3439,6 +3440,8 @@ public sealed partial class VideoView : UserControl
 
     private async void RunBtn_Click(object sender, RoutedEventArgs e)
     {
+        // 防重入:处理中(含前置诊断扫描期间)禁止再次点击,避免并发启动两套处理循环
+        if (_running || _runItems != null) return;
         // 只处理选中的项(勾选后):否则处理全部未完成的(已完成/灰色的默认跳过,不重复跑;点「重新处理」可调起)
         bool onlySelected = SelectedOnlyCheck.IsChecked == true;
         var items = (onlySelected
@@ -3577,12 +3580,23 @@ public sealed partial class VideoView : UserControl
             return;
         }
         VideoService.LastDedupShort = null;
-        // 开始前诊断卡片(硬风险:会爆盘/高倍率补帧+资源紧/弱设备):用户取消则不启动
-        try { if (!await ShowPreflightDiagAsync(items).ConfigureAwait(true)) return; } catch { }
+        // 开始前诊断卡片(硬风险:会爆盘/高倍率补帧+资源紧/弱设备):用户取消则不启动。
+        // 先置 _running=true + 禁用 RunBtn,防止诊断扫描(非模态长await)期间用户再次点击并发启动。
         _running = true;
+        _runItems = items;
+        RunBtn.IsEnabled = false;
+        bool startUp = true;
+        try { startUp = await ShowPreflightDiagAsync(items).ConfigureAwait(true); }
+        catch { startUp = true; }
+        if (!startUp)
+        {
+            _running = false;
+            _runItems = null;
+            RunBtn.IsEnabled = true;   // 用户取消/改参数:恢复可点,不启动
+            return;
+        }
         _paused = false;
         _resumeTcs = null;
-        _runItems = items;
         foreach (var it in items) { it.Progress = 0; it.StatusText = ""; it.EtaText = ""; }   // 重跑时清掉上次状态
         RunBtn.IsEnabled = false;
         CancelBtn.IsEnabled = true;
@@ -3770,7 +3784,8 @@ public sealed partial class VideoView : UserControl
                 totalFramesEst += (int)Math.Max(1, dur * fps);
                 etaInitTotal += VideoService.EstimateProcessSeconds(dur, fps, w, h,
                     up, upscaleShrink1x ? 2.0 : scale, engine, interp, interpScale, dedupOn,
-                    DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex + 1 : 0);
+                    DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex + 1 : 0,
+                    postSP + postCL + postUM + postDB + postFL + postDN + postAA > 0);
             }
             catch { etaInitTotal += 60; }
         }
