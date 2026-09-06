@@ -2106,7 +2106,7 @@ public static class VideoService
                         bool anyBlack = false;
                         foreach (var f in Directory.EnumerateFiles(watchDir, "*.png").Take(4))
                         {
-                            try { if (EngineService.IsBlackPng(f)) { anyBlack = true; break; } } catch { }
+                            try { if (EngineService.IsBlackPngStrict(f)) { anyBlack = true; break; } } catch { }
                         }
                         // 防误杀:段【源帧】(segIn)本来就近黑(素材黑场/淡入淡出)→ 输出黑正常,不降级
                         if (anyBlack && !DirNearBlack(segIn))
@@ -2989,6 +2989,26 @@ public static class VideoService
                 else
                     try { File.Copy(png, jpg, true); } catch { }
             }
+            // 【校验生成的 JPG】ConvertPngToJpg 内部 WinRT 失败会转 GDI,但某些情况下(引擎输出 0 字节/坏 PNG)
+            // 可能"不抛异常却写出 0 字节或坏 JPG"。这里兜底:生成的 .jpg 若 0 字节/不可解码,用参考尺寸补一张深灰占位,
+            // 否则合帧会因这些 0 字节帧而报"找不到 frame_%06d.jpg / 输出文件无效"。
+            try
+            {
+                if (File.Exists(jpg) && new FileInfo(jpg).Length == 0)
+                {
+                    int pw = refW, ph = refH;
+                    try { using (var b = new System.Drawing.Bitmap(png)) { pw = b.Width; ph = b.Height; } } catch { }
+                    if (pw <= 0 || ph <= 0) { pw = refW; ph = refH; }
+                    if (pw > 0 && ph > 0)
+                    {
+                        using var phb = new System.Drawing.Bitmap(pw, ph);
+                        using (var g = System.Drawing.Graphics.FromImage(phb)) g.Clear(System.Drawing.Color.FromArgb(24, 24, 24));
+                        phb.Save(jpg, System.Drawing.Imaging.ImageFormat.Jpeg);
+                        AppLogger.Warn($"⚠ 帧转 JPG 输出 0 字节({Path.GetFileName(jpg)}),已用深灰占位替代(保帧号连续)");
+                    }
+                }
+            }
+            catch { }
             try { File.Delete(png); } catch { }
         }
     }

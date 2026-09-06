@@ -1683,6 +1683,31 @@ public static partial class EngineService
         catch { return true; }   // 解码失败也按缺陷帧处理(不静默放行)
     }
 
+    /// <summary>严格只判"真·近全黑"(可解码、确实 ≥95% 像素近黑)。空/0字节/未写完/解码失败的帧 → false(不算黑)。
+    /// 用于【补帧黑帧防御】抽样:那里要找的是"GPU 输出真黑帧",若把"引擎还没写完的瞬时空帧"也当成黑,
+    /// 会误触发整段补帧降级重算 → 补帧帧被清空 → upInput=0 → 超分无帧 / 合帧报"找不到 frame_%06d.jpg"。
+    /// 空/坏帧在这里应"跳过不判黑",交给后续帧完整校验处理,而不是当黑帧降级。</summary>
+    internal static bool IsBlackPngStrict(string file)
+    {
+        try
+        {
+            if (!File.Exists(file) || new FileInfo(file).Length == 0) return false;   // 空/未写完:不算黑
+            using var bmp = new System.Drawing.Bitmap(file);
+            if (bmp.Width <= 0 || bmp.Height <= 0) return false;
+            int step = Math.Max(4, Math.Min(bmp.Width, bmp.Height) / 32);
+            int dark = 0, total = 0;
+            for (int y = step; y < bmp.Height; y += step)
+                for (int x = step; x < bmp.Width; x += step)
+                {
+                    var p = bmp.GetPixel(x, y);
+                    total++;
+                    if ((int)p.R + (int)p.G + (int)p.B < 24) dark++;
+                }
+            return total > 0 && dark >= total * 0.95;
+        }
+        catch { return false; }   // 解码失败:不算黑,跳过(不触发降级)
+    }
+
     /// <summary>给分块做羽化 alpha:左/上边缘在 overlapPx 内从 0 淡入到 1(右/下保持不透明)。</summary>
     private static void ApplyFeatherAlpha(System.Drawing.Bitmap tile, int overlapPx, bool fadeLeft, bool fadeTop)
     {
