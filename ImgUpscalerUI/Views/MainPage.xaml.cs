@@ -1487,6 +1487,8 @@ public sealed partial class MainPage : Page
     }
 
     private Microsoft.UI.Xaml.Controls.Primitives.Popup? _aboutPopup;   // 关于弹窗(单例守卫)
+    private DateTime _coffeeCardOpenedAt;   // 打码界面打开时间(判断停留≥5秒)
+    private bool _coffeeViaSponsor;         // 是否从赞助提示进入打码界面
     private Microsoft.UI.Xaml.Controls.Primitives.Popup? _logPopup;     // 日志弹窗(单例守卫)
 
     /// <summary>默认启动页:-1=上次退出界面(默认) 0=图片放大 1=AI 抠图 2=视频处理。</summary>
@@ -2469,9 +2471,24 @@ public sealed partial class MainPage : Page
     private void SponsorCoffee_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
     {
         try { SponsorOverlay.Visibility = Visibility.Collapsed; } catch { }
-        AppSettings.SponsorPromptTime = DateTime.Now;   // 触发后 2 小时冷却
-        try { AppSettings.Save(); } catch { }
+        _coffeeCardOpenedAt = DateTime.Now;   // 记录打码界面打开时间(判断是否停留≥5秒)
+        _coffeeViaSponsor = true;
         ShowCoffeeCard();
+    }
+
+    /// <summary>打码界面关闭:若从赞助提示进入且停留≥5秒 → 1 天不再弹;否则 2 小时冷却。</summary>
+    private void OnCoffeeCardClosed()
+    {
+        try
+        {
+            if (!_coffeeViaSponsor) return;   // 导航栏进入的打码不影响赞助提示
+            _coffeeViaSponsor = false;
+            double sec = (DateTime.Now - _coffeeCardOpenedAt).TotalSeconds;
+            AppSettings.SponsorPromptTime = sec >= 5 ? DateTime.Now.AddDays(1) : DateTime.Now.AddHours(2);
+            try { AppSettings.Save(); } catch { }
+            if (sec >= 5) AppLogger.Info("已在打码界面停留≥5秒,赞助提示 1 天内不再弹出");
+        }
+        catch { }
     }
 
     private void SponsorClose_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
@@ -2552,7 +2569,7 @@ public sealed partial class MainPage : Page
             },
         };
         content.Children.Add(ifdLink);
-        ShowCardPopup(content, "请作者喝一杯咖啡", 640);
+        ShowCardPopup(content, "请作者喝一杯咖啡", 640, onClosed: OnCoffeeCardClosed);
     }
 
     /// <summary>左下角状态栏单击 → 弹窗放大查看诊断日志(尾部)。</summary>
@@ -2584,7 +2601,7 @@ public sealed partial class MainPage : Page
     }
 
     /// <summary>居中圆角卡片弹窗(遮罩 + 标题 + 关闭按钮 + 可滚动内容)。</summary>
-    private void ShowCardPopup(StackPanel content, string title, double width)
+    private void ShowCardPopup(StackPanel content, string title, double width, Action? onClosed = null)
     {
         var popup = new Microsoft.UI.Xaml.Controls.Primitives.Popup { XamlRoot = this.XamlRoot };
         var overlay = new Grid
@@ -2607,7 +2624,7 @@ public sealed partial class MainPage : Page
         // 用页面 SizeChanged 跟踪窗口尺寸变化(最大化/还原/全屏时能拿到更新后的尺寸,避免遮罩盖不满)
         void OnSizeChanged(object s, SizeChangedEventArgs a) => ResizeOverlay();
         this.SizeChanged += OnSizeChanged;
-        popup.Closed += (_, _) => this.SizeChanged -= OnSizeChanged;
+        popup.Closed += (_, _) => { this.SizeChanged -= OnSizeChanged; try { onClosed?.Invoke(); } catch { } };
 
         card = new Border
         {
