@@ -2376,7 +2376,7 @@ public sealed partial class VideoView : UserControl
                 var psi = new System.Diagnostics.ProcessStartInfo
                 {
                     FileName = ffmpeg,
-                    Arguments = $"-y -ss 0.5 -i \"{item.Path}\" -frames:v 1 -vf \"scale=240:-2\" -q:v 3 \"{tmp}\"",
+                    Arguments = $"-y -ss 0.5 -i \"{ALHPro.AudioService.FfmpegSafePath(item.Path)}\" -frames:v 1 -vf \"scale=240:-2\" -q:v 3 \"{ALHPro.AudioService.FfmpegSafePath(tmp)}\"",
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardError = true,
@@ -2889,7 +2889,7 @@ public sealed partial class VideoView : UserControl
         ClearDoneBtn.IsEnabled = _videos.Any(v => v.IsDone);   // 有已完成(灰)项目时才可清除
     }
 
-    private void VideoList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void VideoList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         // 多选模式:取最后点击的项作为"当前选中"
         _selected = VideoList.SelectedItems.Count > 0
@@ -2898,8 +2898,8 @@ public sealed partial class VideoView : UserControl
         if (_selected != null)
         {
             VideoInfo.Text = $"{_selected.Name}\n{_selected.Info}";
-            // 输入帧率自动 = 该视频的实际帧率
-            var fps = VideoService.ProbeFps(_selected.Path);
+            // 输入帧率自动 = 该视频的实际帧率;ffprobe 阻塞,放后台线程避免卡 UI
+            var fps = await Task.Run(() => VideoService.ProbeFps(_selected.Path));
             if (fps != null)
             {
                 _suppressEvents = true;
@@ -3639,7 +3639,7 @@ public sealed partial class VideoView : UserControl
             try
             {
                 var dur = await VideoService.ProbeDurationSeconds(it.Path);
-                var fpsS = VideoService.ProbeFps(it.Path);
+                var fpsS = await Task.Run(() => VideoService.ProbeFps(it.Path));
                 double fps = double.TryParse(fpsS, NumberStyles.Float, inv, out var pf) && pf > 0 ? pf : 30;
                 var (w, h) = await VideoService.ProbeSizeAsync(it.Path);
                 totalFramesEst += (int)Math.Max(1, dur * fps);
@@ -3657,7 +3657,7 @@ public sealed partial class VideoView : UserControl
             {
                 try
                 {
-                    var fpsS = VideoService.ProbeFps(it.Path);
+                    var fpsS = await Task.Run(() => VideoService.ProbeFps(it.Path));
                     double fps = double.TryParse(fpsS, NumberStyles.Float, inv, out var pf) && pf > 0 ? pf : 30;
                     var (w, h) = await VideoService.ProbeSizeAsync(it.Path);
                     double areaN = Math.Max(0.25, (double)w * h / 2_073_600.0);
@@ -4057,7 +4057,7 @@ public sealed partial class VideoView : UserControl
                             itemFpsNow = item.CustomFps;
                         else if (fpsMode == 1)
                         {
-                            var probe = VideoService.ProbeFps(item.Path);
+                            var probe = await Task.Run(() => VideoService.ProbeFps(item.Path));
                             itemFpsNow = double.TryParse(probe, NumberStyles.Float, inv, out var pf) && pf > 0
                                 ? Math.Max(1, pf + fpsOffset) : null;
                         }

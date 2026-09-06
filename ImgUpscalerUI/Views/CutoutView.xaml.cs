@@ -490,9 +490,9 @@ public sealed partial class CutoutView : UserControl
                 var psi = new System.Diagnostics.ProcessStartInfo
                 {
                     FileName = ff,
-                    Arguments = $"-y -v error -i \"{chessPath}\" -i \"{item.Path}\" -i \"{maskPath}\" " +
+                    Arguments = $"-y -v error -i \"{ALHPro.AudioService.FfmpegSafePath(chessPath)}\" -i \"{ALHPro.AudioService.FfmpegSafePath(item.Path)}\" -i \"{ALHPro.AudioService.FfmpegSafePath(maskPath)}\" " +
                         $"-filter_complex \"[1:v][2:v]alphamerge,format=rgba[col];[0:v][col]overlay=format=auto\" " +
-                        $"-frames:v 1 \"{colorPath}\"",
+                        $"-frames:v 1 \"{ALHPro.AudioService.FfmpegSafePath(colorPath)}\"",
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardError = true,
