@@ -20,8 +20,8 @@ public static class AdFetcher
     /// <summary>轮询间隔:10 分钟(作者改完 push,用户侧最长 10 分钟看到新内容)。</summary>
     public static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(10);
 
-    /// <summary>轮播间隔:每 60 秒换下一张广告卡(本地轮播,不联网)。</summary>
-    public static readonly TimeSpan RotateInterval = TimeSpan.FromSeconds(60);
+    /// <summary>轮播间隔:每 30 秒换下一张广告卡(本地轮播,不联网)。</summary>
+    public static readonly TimeSpan RotateInterval = TimeSpan.FromSeconds(30);
 
     /// <summary>最近一次缓存到的广告卡数组(线程安全);空=未拉到(隐藏区域)。</summary>
     public static volatile AdInfo[]? Latest;

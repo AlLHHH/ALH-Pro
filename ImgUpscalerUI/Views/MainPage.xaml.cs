@@ -721,7 +721,7 @@ public sealed partial class MainPage : Page
             AdSponsorText.Text = ad.Sponsor;   // 显示广告主名(默认文案"推广"可被覆盖)
     }
 
-    /// <summary>本地轮播:每 60 秒切到下一张卡(不联网,用缓存)。</summary>
+    /// <summary>本地轮播:每 30 秒切到下一张卡(不联网,用缓存)。</summary>
     public void RotateAd()
     {
         var ads = AdFetcher.Latest;
@@ -735,7 +735,45 @@ public sealed partial class MainPage : Page
         });
     }
 
-    /// <summary>启动本地 60 秒轮播定时器(只建一次;UI 线程定时,不联网)。</summary>
+    /// <summary>手动切到相对当前的第 delta 张(+1=下一张,-1=上一张),并重置轮播计时(避免刚手动切又被自动跳)。</summary>
+    private void GotoAd(int delta)
+    {
+        var ads = AdFetcher.Latest;
+        if (ads is not { Length: > 0 }) return;
+        int n = ads.Length;
+        _adRotateIdx = ((_adRotateIdx + delta) % n + n) % n;   // 支持负向(-1),并循环
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!AppSettings.ShowAds || _adClosedThisRun) return;
+            ShowAdAt(ads[_adRotateIdx]);
+            AdCard.Visibility = Visibility.Visible;
+        });
+        // 手动切换后重置 30s 定时器,避免几秒后又自动跳走
+        try { _adRotateTimer?.Stop(); _adRotateTimer?.Start(); } catch { }
+    }
+
+    private void AdNext_Click(object sender, RoutedEventArgs e) => GotoAd(+1);
+    private void AdPrev_Click(object sender, RoutedEventArgs e) => GotoAd(-1);
+
+    // ---- 触屏横向滑动切换上/下一张 ----
+    private double _adDragX;
+    private bool _adDragging;
+    private void AdCard_ManipulationDelta(object sender, Microsoft.UI.Xaml.Input.ManipulationDeltaRoutedEventArgs e)
+    {
+        _adDragging = true;
+        _adDragX += e.Delta.Translation.X;
+    }
+    private void AdCard_ManipulationCompleted(object sender, Microsoft.UI.Xaml.Input.ManipulationCompletedRoutedEventArgs e)
+    {
+        if (!_adDragging) return;
+        _adDragging = false;
+        // 阈值:滑过约 40px 才触发切换(避免轻点误触)
+        if (_adDragX <= -40) GotoAd(+1);          // 左滑=下一张
+        else if (_adDragX >= 40) GotoAd(-1);      // 右滑=上一张
+        _adDragX = 0;
+    }
+
+    /// <summary>启动本地 30 秒轮播定时器(只建一次;UI 线程定时,不联网)。</summary>
     private void StartAdRotateTimer()
     {
         if (_adRotateTimer != null) return;
@@ -748,6 +786,8 @@ public sealed partial class MainPage : Page
 
     private void AdCardTapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
     {
+        // 若刚发生过滑动(拖拽切换),忽略这次点击,避免"想切换却打开了链接"
+        if (_adDragging) return;
         var ads = AdFetcher.Latest;
         if (ads is not { Length: > 0 }) return;
         var link = ads[_adRotateIdx % ads.Length]?.Link;
