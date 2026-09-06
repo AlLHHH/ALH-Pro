@@ -56,11 +56,11 @@ public sealed partial class MainPage : Page
                 }
                 catch { }
             }
-            // 新版本更新弹窗:版本变化(或首次安装)后启动弹一次(同一"更新日志"结构,作者的话在最顶部)
+            // 新版本更新弹窗:版本变化(或首次安装)后启动弹一次;【串行等待】——先关掉它,再依次自检、问卷,避免 ContentDialog 叠窗
             try
             {
                 if (AppSettings.LastShownVersion != UpdateChecker.CurrentVersion)
-                    _ = ShowUpdateLogAsync(fromStartup: true);
+                    await ShowUpdateLogAsync(fromStartup: true);
             }
             catch { }
             // 引擎可用性:仅缺失时提示,正常就绪不刷屏
@@ -208,8 +208,8 @@ public sealed partial class MainPage : Page
                 }
             });
             await selfCheckTask;
-            if (needFullCheck) await FinishSelfCheckOverlayAsync(ok);
-            await MaybeShowUpdateSurveyAsync();   // 自检确定后串行:更新后首次启动才弹问卷(每版一次,同一时刻一个窗)
+            if (needFullCheck) await FinishSelfCheckOverlayAsync(ok);   // 弹自检报告+确定按钮(点确定后再弹问卷,见 SelfCheckOk_Click)
+            else await MaybeShowUpdateSurveyAsync();   // 本次无自检 → 直接弹问卷(若到期/50%通过)
             // 更新检查:后台静默(有新版才弹提示条;失败/无网/已最新均无感)
             _ = CheckUpdateSilentAsync();
         };
@@ -342,6 +342,7 @@ public sealed partial class MainPage : Page
     private void SelfCheckOk_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
     {
         try { SelfCheckOverlay.Visibility = Visibility.Collapsed; } catch { }
+        _ = MaybeShowUpdateSurveyAsync();   // 自检「确定」后再弹问卷(串行,不叠窗)
     }
 
     /// <summary>更新后问卷:自检「确定」之后串行弹。前往填写→跨版本永不再弹;关闭→下次启动 50% 概率再弹。</summary>
