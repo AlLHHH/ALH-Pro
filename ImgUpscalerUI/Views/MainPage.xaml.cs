@@ -344,21 +344,41 @@ public sealed partial class MainPage : Page
         try { SelfCheckOverlay.Visibility = Visibility.Collapsed; } catch { }
     }
 
-    /// <summary>更新后问卷:在自检「确定」之后串行弹出(同一时刻一个窗),仅"更新后首次启动"每版弹一次;
-    /// 首次安装不弹(已在欢迎+用户协议+自检展示过)。问卷内容在此方法里构建即可,展示完记为已弹。</summary>
+    /// <summary>更新后问卷:自检「确定」之后串行弹(同一时刻一个窗)。前往填写→永不再弹;关闭→下次启动 50% 概率再弹;首次安装不弹。</summary>
     private async Task MaybeShowUpdateSurveyAsync()
     {
         try
         {
             if (!File.Exists(BetaAcceptedFile)) return;   // 首次安装:不弹
-            if (AppSettings.SurveyShownVersion == UpdateChecker.CurrentVersion) return;   // 本版本已弹过
-            // >>> 在这里构建你的问卷弹窗(如 ContentDialog,内容自定)<<<
-            // 展示后:
-            AppSettings.SurveyShownVersion = UpdateChecker.CurrentVersion;   // 标记本版本已弹
+            string cur = UpdateChecker.CurrentVersion;
+            if (AppSettings.SurveyShownVersion == cur) return;   // 已"前往填写" → 永不再弹
+            // 已"关闭"过 → 下次启动 50% 概率再弹,50% 不弹
+            if (AppSettings.SurveyClosedVersion == cur && Random.Shared.NextDouble() >= 0.5) return;
+            var dlg = new Microsoft.UI.Xaml.Controls.ContentDialog
+            {
+                Title = "诚邀填写问卷",
+                Content = "您已使用 ALH Pro 一段时间,欢迎花约 1 分钟填写这份问卷,帮助作者把软件做得更好。",
+                PrimaryButtonText = "前往填写",
+                CloseButtonText = "关闭",
+                XamlRoot = this.XamlRoot,
+            };
+            var r = await dlg.ShowAsync();
+            if (r == ContentDialogResult.Primary)
+            {
+                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(SurveyUrl) { UseShellExecute = true }); } catch { }
+                AppSettings.SurveyShownVersion = cur;   // 前往填写 → 永不再弹
+            }
+            else
+            {
+                AppSettings.SurveyClosedVersion = cur;   // 关闭 → 下次启动 50% 概率再弹
+            }
             try { AppSettings.Save(); } catch { }
         }
         catch { }
     }
+
+    /// <summary>更新后问卷链接(问卷星)。</summary>
+    private const string SurveyUrl = "https://v.wjx.cn/vm/mBmsLtb.aspx#";
 
     /// <summary>自检报告(正式措辞,无口水词、无括号小提示;与设置页共用同一文本)。</summary>
     private string BuildSelfCheckReport(bool enginesOk)
@@ -1155,6 +1175,19 @@ public sealed partial class MainPage : Page
         };
         declLink.Click += (_, _) => { try { ShowUserDeclarations(); } catch { } };
         content.Children.Add(declLink);
+        // 问卷:常驻入口(关于页随时可填)
+        var surveyLink = new Microsoft.UI.Xaml.Controls.HyperlinkButton
+        {
+            Content = "填写问卷(反馈建议)",
+            FontSize = 11,
+            Padding = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 0),
+            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
+        };
+        surveyLink.Click += (_, _) =>
+        {
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(SurveyUrl) { UseShellExecute = true }); } catch { }
+        };
+        content.Children.Add(surveyLink);
         // 手动检查更新:点击后显示结果;成功展示"已最新/发现新版本",失败才提示(启动静默检查不打扰)
         var updateRow = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 10 };
         var updateBtn = new Button

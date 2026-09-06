@@ -25,8 +25,11 @@ public static class AppSettings
     /// <summary>上次关闭"请作者喝咖啡"赞助提示的时间(冷却:2 小时内不再触发)。</summary>
     public static DateTime SponsorPromptTime { get; set; } = DateTime.MinValue;
 
-    /// <summary>已展示过"更新后问卷"的版本(每次更新后首次启动,自检完成后弹一次)。</summary>
+    /// <summary>已"前往填写"过问卷的版本(该版本永不再弹)。</summary>
     public static string SurveyShownVersion { get; set; } = "";
+
+    /// <summary>已"关闭"过问卷的版本(下次启动 50% 概率再弹)。</summary>
+    public static string SurveyClosedVersion { get; set; } = "";
 
     /// <summary>自检报告对应的软件版本(升级后自动作废旧缓存重测,报告修复才能生效)。</summary>
     public static string VulkanReportVersion { get; set; } = "";
@@ -61,6 +64,7 @@ public static class AppSettings
             SelfCheckReport = d.SelfCheckReport ?? "";
             SponsorPromptTime = d.SponsorPromptTime == default ? DateTime.MinValue : d.SponsorPromptTime;
             SurveyShownVersion = d.SurveyShownVersion ?? "";
+            SurveyClosedVersion = d.SurveyClosedVersion ?? "";
             VulkanReportVersion = d.VulkanReportVersion ?? "";
             TempDir = d.TempDir ?? "";
             LastShownVersion = d.LastShownVersion ?? "";
@@ -88,6 +92,7 @@ public static class AppSettings
                         SelfCheckReport = SelfCheckReport,
                         SponsorPromptTime = SponsorPromptTime,
                         SurveyShownVersion = SurveyShownVersion,
+                        SurveyClosedVersion = SurveyClosedVersion,
                         VulkanReportVersion = VulkanReportVersion,
                         TempDir = TempDir,
                         LastShownVersion = LastShownVersion,
@@ -106,6 +111,7 @@ public static class AppSettings
         public string SelfCheckReport { get; set; } = "";
         public DateTime SponsorPromptTime { get; set; } = DateTime.MinValue;
         public string SurveyShownVersion { get; set; } = "";
+        public string SurveyClosedVersion { get; set; } = "";
         public string VulkanReportVersion { get; set; } = "";
         public string TempDir { get; set; } = "";
         public string LastShownVersion { get; set; } = "";
