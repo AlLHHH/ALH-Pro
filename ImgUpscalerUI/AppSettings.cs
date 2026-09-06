@@ -44,9 +44,6 @@ public static class AppSettings
     /// <summary>已展示过更新弹窗的版本("每次更新后首次启动弹一次";空=首次安装也弹)。</summary>
     public static string LastShownVersion { get; set; } = "";
 
-    /// <summary>是否显示左栏底部的「广告 + 弹幕」动态区(默认开;用户可在设置里彻底关掉)。</summary>
-    public static bool ShowAds { get; set; } = true;
-
     private static string FilePath => ParaPaths.SettingsFile("app-settings.json");
 
     public static void Load()
@@ -75,7 +72,6 @@ public static class AppSettings
             VulkanReportVersion = d.VulkanReportVersion ?? "";
             TempDir = d.TempDir ?? "";
             LastShownVersion = d.LastShownVersion ?? "";
-            ShowAds = d.ShowAds;
         }
         catch { /* 读取失败用默认值 */ }
     }
@@ -105,7 +101,6 @@ public static class AppSettings
                         VulkanReportVersion = VulkanReportVersion,
                         TempDir = TempDir,
                         LastShownVersion = LastShownVersion,
-                        ShowAds = ShowAds,
                     }));
             }
             catch { /* 保存失败忽略 */ }
@@ -126,6 +121,5 @@ public static class AppSettings
         public string VulkanReportVersion { get; set; } = "";
         public string TempDir { get; set; } = "";
         public string LastShownVersion { get; set; } = "";
-        public bool ShowAds { get; set; } = true;
     }
 }

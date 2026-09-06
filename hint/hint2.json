@@ -1,0 +1,6 @@
+{
+  "_note": "右侧提示文件。字段: text=显示的文案(必填,≤40字,宽约220px会自动换行); color=文字颜色(可选,十六进制 #RRGGBB 或 #AARRGGBB,如 #E8A33D 暖橙/#5B8DEF 蓝/#FFD24D 金黄;不填用默认暖橙); link=点击跳转的网址(可选,不填=纯提示不可点)。提示会每30秒轮播一条,作者在GitHub改完push后客户端最长10分钟看到。",
+  "text": "视频 50 系显卡兼容已修复,看这里",
+  "color": "#5B8DEF",
+  "link": "https://github.com/AlLHHH/ALH-Pro/releases"
+}
