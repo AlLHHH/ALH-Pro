@@ -665,13 +665,13 @@ public sealed partial class MainPage : Page
         if (!string.IsNullOrWhiteSpace(ad.Image))
         {
             SetAdImage(ad.Image);
-            AdImage.Visibility = Visibility.Visible;
+            AdImageFrame.Visibility = Visibility.Visible;
         }
         else
         {
-            // 无图 → 纯文字卡:图隐藏,标题/文案顶上
+            // 无图 → 纯文字卡:图隐藏(仅隐藏外框,不占位),标题/文案顶上
             AdImage.Source = ph;
-            AdImage.Visibility = Visibility.Collapsed;
+            AdImageFrame.Visibility = Visibility.Collapsed;
         }
         AdTitle.Text = ad.Title ?? "";
         AdTitle.Visibility = string.IsNullOrWhiteSpace(ad.Title) ? Visibility.Collapsed : Visibility.Visible;
