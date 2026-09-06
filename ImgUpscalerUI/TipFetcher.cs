@@ -61,16 +61,16 @@ public static class TipFetcher
         return result.ToArray();
     }
 
-    /// <summary>拉取单个提示文件原文(官方 + gh-proxy 镜像 + ghproxy + jsDelivr CDN,任一成功即返回;失败返回 null)。
-    /// 多镜像提高国内可达性(与广告一致:jsDelivr 最稳)。</summary>
+    /// <summary>拉取单个提示文件原文(按实测可靠性排序:jsDelivr 最稳→gh-proxy→ghproxy→raw 最后;任一成功即返回;失败返回 null)。
+    /// 多镜像提高国内可达性(与广告一致:jsDelivr 最稳,故排最前)。</summary>
     private static async Task<string?> FetchFileRawAsync(string file)
     {
         string[] urls =
         {
-            $"https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/hint/{file}",
+            $"https://cdn.jsdelivr.net/gh/AlLHHH/ALH-Pro@main/hint/{file}",
             $"https://gh-proxy.com/https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/hint/{file}",
             $"https://ghproxy.net/https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/hint/{file}",
-            $"https://cdn.jsdelivr.net/gh/AlLHHH/ALH-Pro@main/hint/{file}",
+            $"https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/hint/{file}",
         };
         foreach (var url in urls)
         {
