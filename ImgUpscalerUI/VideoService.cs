@@ -599,28 +599,19 @@ public static class VideoService
                     var allA = Directory.EnumerateFiles(framesIn, "*.jpg")
                         .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
                     var dropSetA = new System.Collections.Generic.HashSet<int>(dropA);
-                    if (dropSetA.Remove(allA.Length))   // 尾帧恒保留:结尾画面组绝不因去重而丢(88889999 的 9)
-                        AppLogger.Info("尾帧保护:智能去重判定含末帧,已强制保留(结尾画面组不丢)");
                     if (dropA.Count > 0)
                     {
                         dedupDroppedFrames.AddRange(dropA);
-                        // 注意:时长表合并必须用"已移除尾帧"的 dropSetA(与文件删除同一集合),
-                        // 否则时长表多删一条 → Count 与 frameCount 不齐 → VFR 时间轴被静默丢弃。
-                        if (frameDurs != null) MergeDurations(frameDurs, dropSetA.ToList(), allA.Length);
-                        int idxA = 0;
-                        for (int n = 0; n < allA.Length; n++)
-                        {
-                            if (dropSetA.Contains(n + 1)) { try { File.Delete(allA[n]); } catch { } continue; }
-                            idxA++;
-                            File.Move(allA[n], Path.Combine(framesIn, $"frame_{idxA:D6}.jpg"), true);
-                        }
+                        // 【统一落盘逻辑】尾帧保护 + 合并时长表 + 删帧/重命名 + 保留源序号
+                        tempoSrcIdx = ApplyDedupDrop(framesIn, allA, dropSetA, frameDurs, allA.Length);
+                    }
+                    else
+                    {
+                        tempoSrcIdx = new System.Collections.Generic.List<int>();
+                        for (int n = 1; n <= allA.Length; n++) tempoSrcIdx.Add(n - 1);
                     }
                     frameCount = Directory.EnumerateFiles(framesIn, "*.jpg").Count();
                     effectiveFps = inFps * frameCount / Math.Max(1, origCountEst);
-                    // 保留帧源号(1-based,升序):"补缺"用它把内容帧放回源时间轴
-                    tempoSrcIdx = new System.Collections.Generic.List<int>();
-                    for (int n = 1; n <= allA.Length; n++)
-                        if (!dropSetA.Contains(n)) tempoSrcIdx.Add(n - 1);
                     if (!allowFewFrames) EnsureDedupResultSane(frameCount, origCountEst);
                     progress?.Report((5, $"智能去重完成:{origCountEst}→{frameCount} 帧,内容帧率≈{effectiveFps:0.##} fps"));
                 }
@@ -648,24 +639,18 @@ public static class VideoService
                             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
                         // 尾帧恒保留(与智能分支同判据):结尾画面组绝不因去重而丢;
                         // 否则保留帧轴到不了源末帧 → 补回提前截止(时长缩水)+ 下游越界。
-                        if (dropM.Contains(allM.Length))
+                        var dropMSet = new System.Collections.Generic.HashSet<int>(dropM);
+                        if (dropM.Count > 0)
                         {
-                            dropM.Remove(allM.Length);
-                            AppLogger.Info("尾帧保护:帧差+SSIM 判定删除含末帧,已强制保留(结尾画面组不丢)");
+                            dedupDroppedFrames.AddRange(dropM);
+                            // 【统一落盘逻辑】尾帧保护 + 合并时长表 + 删帧/重命名 + 保留源序号
+                            tempoSrcIdx = ApplyDedupDrop(framesIn, allM, dropMSet, frameDurs, allM.Length);
                         }
-                        if (frameDurs != null) MergeDurations(frameDurs, dropM, allM.Length);
-                        int idxM = 0;
-                        for (int n = 0; n < allM.Length; n++)
+                        else
                         {
-                            if (dropM.Contains(n + 1)) { try { File.Delete(allM[n]); } catch { } continue; }
-                            idxM++;
-                            File.Move(allM[n], Path.Combine(framesIn, $"frame_{idxM:D6}.jpg"), true);
+                            tempoSrcIdx = new System.Collections.Generic.List<int>();
+                            for (int n = 1; n <= allM.Length; n++) tempoSrcIdx.Add(n - 1);
                         }
-                        // 保留帧源号(0-based,升序):帧差+SSIM 也走补回判定(非等距→补回生成,节奏精确;
-                        // 否则每对统一 round 帧数,间隔不等时产生"停-跳-停"——用户实测卡)。
-                        tempoSrcIdx = new System.Collections.Generic.List<int>();
-                        for (int n = 1; n <= allM.Length; n++)
-                            if (!dropM.Contains(n)) tempoSrcIdx.Add(n - 1);
                     }
                     frameCount = Directory.EnumerateFiles(framesIn, "*.jpg").Count();
                 }
@@ -753,21 +738,13 @@ public static class VideoService
                         : await Task.Run(() => DetectDupFramesWithSsim(framesIn, sadThr, ssimThr, protectRatio, 6, 16, 4, segSsim, segSad, motionCompDedup), ct);
                     // 末帧永远保留:视频最后一张画面即使与前一帧相似也必须保留,
                     // 否则输出尾部会缺失原视频末帧内容(用户看到"最后一帧不是原视频最后一帧")。
-                    if (drop.Count > 0 && frameCount > 0) drop.Remove(frameCount);
                     if (drop.Count > 0)
                     {
                         dedupDroppedFrames.AddRange(drop);
                         var allFiles = Directory.EnumerateFiles(framesIn, "*.jpg")
                             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
-                        if (frameDurs != null) MergeDurations(frameDurs, drop, allFiles.Length);
-                        int idx = 0;
-                        for (int n = 0; n < allFiles.Length; n++)
-                        {
-                            if (drop.Contains(n + 1)) { try { File.Delete(allFiles[n]); } catch { } continue; }
-                            idx++;
-                            File.Move(allFiles[n],
-                                Path.Combine(framesIn, $"frame_{idx:D6}.jpg"), true);
-                        }
+                        // 【统一落盘逻辑】尾帧保护 + 合并时长表 + 删帧/重命名 + 保留源序号
+                        ApplyDedupDrop(framesIn, allFiles, new System.Collections.Generic.HashSet<int>(drop), frameDurs, allFiles.Length);
                     }
                     frameCount = Directory.EnumerateFiles(framesIn, "*.jpg").Count();
                 }
@@ -846,21 +823,13 @@ public static class VideoService
                 progress?.Report((3, "去重(叠加):语义运动分析(镜头均匀移动=冗余,局部动作=保留)..."));
                 // 【修复】重CPU运动分析丢后台线程(原先同步调用冻结UI线程)
                 var dropPan = await Task.Run(() => DetectDupFramesWithMotion(framesIn, Math.Clamp(dedupPanThr, 1, 10), progress, dedupScale, dedupProtect, dedupBlockThr, Math.Clamp(dedupPanMax, 10, 60)), ct);
-                // 末帧永远保留(同主去重:输出必须包含原视频最后一张画面)
-                if (dropPan.Count > 0 && frameCount > 0) dropPan.Remove(frameCount);
                 if (dropPan.Count > 0)
                 {
                     dedupDroppedFrames.AddRange(dropPan);
                     var allPan = Directory.EnumerateFiles(framesIn, "*.jpg")
                         .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
-                    if (frameDurs != null) MergeDurations(frameDurs, dropPan, allPan.Length);
-                    int idxPan = 0;
-                    for (int n = 0; n < allPan.Length; n++)
-                    {
-                        if (dropPan.Contains(n + 1)) { try { File.Delete(allPan[n]); } catch { } continue; }
-                        idxPan++;
-                        File.Move(allPan[n], Path.Combine(framesIn, $"frame_{idxPan:D6}.jpg"), true);
-                    }
+                    // 【统一落盘逻辑】尾帧保护 + 合并时长表 + 删帧/重命名(该分支不构建保留源序号)
+                    ApplyDedupDrop(framesIn, allPan, new System.Collections.Generic.HashSet<int>(dropPan), frameDurs, allPan.Length);
                 }
                 frameCount = Directory.EnumerateFiles(framesIn, "*.jpg").Count();
                 if (!allowFewFrames) EnsureDedupResultSane(frameCount, origCountEst);
@@ -3141,6 +3110,36 @@ public static class VideoService
             if (k >= 0 && k < durs.Count && k < i) durs[k] += durs[i];
             durs.RemoveAt(i);
         }
+    }
+
+    /// <summary>
+    /// 统一"去重落盘"逻辑(去重各模式共用,消除 4 处重复):
+    /// ① 尾帧恒保留(结尾画面组绝不因去重而丢) ② 合并时长表(必须与被删帧同一集合,否则 Count 与帧数不齐)
+    /// ③ 删除被删帧、保留帧重命名为连续序号 ④ 返回保留帧的源序号(0-based,升序,供"补回"把内容帧放回源时间轴)。
+    /// 注:入参 drop 是 1-based 帧号集合;本方法内部会把尾帧从集合里剔除(保持已删集合不含尾帧,避免时序错位)。
+    /// </summary>
+    private static System.Collections.Generic.List<int> ApplyDedupDrop(
+        string framesIn, string[] src, System.Collections.Generic.HashSet<int> drop,
+        System.Collections.Generic.List<double>? frameDurs, int totalCount)
+    {
+        // 尾帧恒保留:结尾画面组绝不因去重而丢(88889999 的 9)
+        if (drop.Remove(totalCount))
+            AppLogger.Info("尾帧保护:去重判定含末帧,已强制保留(结尾画面组不丢)");
+        // 合并时长表:必须用"已剔除尾帧"的同一集合(否则时长表多删一条 → Count 与帧数不齐 → VFR 时间轴被丢)
+        if (frameDurs != null) MergeDurations(frameDurs, drop.ToList(), totalCount);
+        // 删除被删帧 + 保留帧重命名为连续序号
+        int idx = 0;
+        for (int n = 0; n < src.Length; n++)
+        {
+            if (drop.Contains(n + 1)) { try { File.Delete(src[n]); } catch { } continue; }
+            idx++;
+            File.Move(src[n], Path.Combine(framesIn, $"frame_{idx:D6}.jpg"), true);
+        }
+        // 保留帧源号(0-based,升序):"补回"用它把内容帧放回源时间轴
+        var kept = new System.Collections.Generic.List<int>();
+        for (int n = 1; n <= src.Length; n++)
+            if (!drop.Contains(n)) kept.Add(n - 1);
+        return kept;
     }
 
     /// <summary>时长表与最终帧文件数对齐(补帧输出数可能与展开数差 ±1,尾部均摊/裁剪即可,无视觉影响)。</summary>
