@@ -338,7 +338,28 @@ public static partial class EngineService
                 }
             }
             catch { }
-            if (best == null || bestFree <= 0) best = Path.GetPathRoot(Path.GetTempPath())!;
+            // 【修复 盘根不可写】不能直接用盘根(如 C:\)做临时目录——普通用户对盘根 Access denied,
+            // 会导致 GPU 自检/诊断导出/临时帧全部写失败(用户实测:临时目录 C:\ 但 Access to path 'C:\imgup_vk_*.png' is denied)。
+            // 统一在盘根下建一个可写子目录(如 C:\ALHProTemp 或 D:\ALHProTemp)再用;若该盘根连子目录都建不了(罕见),退回 %TEMP%。
+            if (!string.IsNullOrWhiteSpace(best))
+            {
+                var probeRoot = System.IO.Path.Combine(best.TrimEnd('\\', '/'), "ALHProTemp");
+                try
+                {
+                    System.IO.Directory.CreateDirectory(probeRoot);
+                    var probe = System.IO.Path.Combine(probeRoot, ".alh_pro_w.tmp");
+                    System.IO.File.WriteAllText(probe, "x");
+                    System.IO.File.Delete(probe);
+                    best = probeRoot;
+                }
+                catch
+                {
+                    // 盘根不可写 → 退回系统 %TEMP%(一定可写)
+                    best = System.IO.Path.GetTempPath().TrimEnd('\\', '/');
+                }
+            }
+            if (string.IsNullOrWhiteSpace(best) || bestFree <= 0)
+                best = System.IO.Path.GetTempPath().TrimEnd('\\', '/');
             RecordTempRoot(best);
             return best;
         }
