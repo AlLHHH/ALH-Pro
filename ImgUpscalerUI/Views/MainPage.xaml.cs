@@ -357,7 +357,7 @@ public sealed partial class MainPage : Page
             var dlg = new Microsoft.UI.Xaml.Controls.ContentDialog
             {
                 Title = "诚邀填写问卷",
-                Content = "您已使用 ALH Pro 一段时间,欢迎花约 1 分钟填写这份问卷,帮助作者把软件做得更好。",
+                Content = "感谢使用 ALH Pro!欢迎花约 1 分钟填写这份问卷,帮助作者把软件做得更好(新老用户都欢迎反馈)。",
                 PrimaryButtonText = "前往填写",
                 CloseButtonText = "关闭",
                 XamlRoot = this.XamlRoot,
