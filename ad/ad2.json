@@ -1,4 +1,5 @@
 {
+  "_note": "字符安全上限(实测): title≤14字, text≤40字, linkText≤6字, sponsor≤8字。超出仍会换行完整显示、只是卡片变高;别太长以免左栏过高。",
   "title": "50 系显卡兼容已修",
   "text": "RTX 50 系(Blackwell)自动走 ONNX 稳定路线,不再空帧/黑帧。",
   "image": "https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/img2.jpg",
