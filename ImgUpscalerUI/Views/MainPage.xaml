@@ -203,7 +203,7 @@
                             Style="{StaticResource AccentButtonStyle}"
                             Visibility="Collapsed" Click="SkipRestBtn_Click"
                             ToolTipService.ToolTip="立即跳过本次休息,继续处理"/>
-                    <!-- 作者提示:状态栏最右列(随窗口宽度贴右);从 GitHub hint/ 更新,每 30 秒换一条,可点跳转 -->
+                    <!-- 作者提示:状态栏最右列(随窗口宽度贴右);从 GitHub hint/ 更新,每 30 秒换一条,可点跳转;常驻不可删除 -->
                     <Border x:Name="TipStrip" Grid.Column="3" CornerRadius="8" Padding="10,5"
                             Background="#2A10141C" BorderBrush="#33FFFFFF" BorderThickness="1"
                             Margin="10,0,0,0" VerticalAlignment="Center"
@@ -213,10 +213,6 @@
                             <TextBlock x:Name="TipText" FontSize="11" FontWeight="SemiBold"
                                        VerticalAlignment="Center" TextWrapping="NoWrap" MaxWidth="240"
                                        TextTrimming="CharacterEllipsis"/>
-                            <Button x:Name="TipCloseBtn" Content="✕" FontSize="9" Padding="4,1" MinWidth="0"
-                                    Background="Transparent" BorderThickness="0" Foreground="#88FFFFFF"
-                                    CornerRadius="6" VerticalAlignment="Center"
-                                    Click="TipClose_Click" ToolTipService.ToolTip="本次运行隐藏提示"/>
                         </StackPanel>
                     </Border>
                 </Grid>
