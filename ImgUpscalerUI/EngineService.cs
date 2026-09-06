@@ -306,7 +306,15 @@ public static partial class EngineService
             {
                 try
                 {
-                    if (Directory.Exists(cfg))
+                    // 【修复 自定义临时目录指向盘根】用户可能手动把临时目录设成盘根(如 C:\)——
+                    // 盘根对普通用户 Access denied,不能直接当临时目录。这里拒绝纯盘根,并回退。
+                    var cfgRoot = Path.GetPathRoot(cfg)?.TrimEnd('\\', '/');
+                    var cfgTrim = cfg.TrimEnd('\\', '/');
+                    if (cfgTrim.Equals(cfgRoot, StringComparison.OrdinalIgnoreCase))
+                    {
+                        AppLogger.Warn($"⚠ 临时目录不能设为盘根({cfg})——已自动回退(剩余空间最大的盘)");
+                    }
+                    else if (Directory.Exists(cfg))
                     {
                         var probe = Path.Combine(cfg, ".alh_pro_w.tmp");
                         File.WriteAllText(probe, "x");
