@@ -826,12 +826,10 @@ public sealed partial class MainPage : Page
         try { _adRotateTimer?.Stop(); } catch { }   // 隐藏期:停轮播定时器,不再空转
     }
 
-    // ============ 右侧纯文本提示位(独立 hint/ 文件夹,与广告同逻辑但互不影响) ============
-    private DateTime _tipHiddenUntil = DateTime.MinValue;   // 点「✕」后直到该时刻不再显示(内存;重启恢复)
+    // ============ 状态栏常驻提示位(独立 hint/ 文件夹,与广告同逻辑但互不影响;常驻不可删除) ============
     private System.Threading.CancellationTokenSource? _tipCts;
     private int _tipRotateIdx;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _tipRotateTimer;   // 30s 本地轮播
-    private bool TipIsHiddenNow => DateTime.Now < _tipHiddenUntil;
 
     /// <summary>把 hex 颜色(#RRGGBB 或 #AARRGGBB)转成 WinUI SolidColorBrush;非法返回 null(调用方用默认色)。</summary>
     private static Microsoft.UI.Xaml.Media.SolidColorBrush? TryParseColor(string? hex)
@@ -852,12 +850,11 @@ public sealed partial class MainPage : Page
         catch { return null; }
     }
 
-    /// <summary>启动提示后台活动:30s 轮播定时器 + 10min 网络轮询(提示默认显示;本次运行点✕则不显示)。</summary>
+    /// <summary>启动提示后台活动:30s 轮播定时器 + 10min 网络轮询(提示常驻显示,不可删除)。</summary>
     private void StartTipActivity()
     {
         try
         {
-            if (TipIsHiddenNow) return;
             StartTipRotateTimer();
             if (_tipCts is { IsCancellationRequested: false }) return;   // 已在跑
             _tipCts = new System.Threading.CancellationTokenSource();
@@ -899,7 +896,7 @@ public sealed partial class MainPage : Page
             _tipRotateTimer.Interval = TipFetcher.RotateInterval;
             _tipRotateTimer.IsRepeating = true;
             _tipRotateTimer.Tick += (_, _) => RotateTip();
-            if (!TipIsHiddenNow) _tipRotateTimer.Start();
+            _tipRotateTimer.Start();
         }
         catch { }
     }
@@ -907,7 +904,6 @@ public sealed partial class MainPage : Page
     /// <summary>启动:立即用默认内容渲染 + 每 10 分钟轮询;本地每 30 秒轮播一条。</summary>
     private async Task InitTipAsync()
     {
-        if (TipIsHiddenNow) return;
         // 先用默认本地兜底立即渲染(避免首次进软件无提示),再异步拉取覆盖
         DispatcherQueue.TryEnqueue(() => { RenderTip(); StartTipRotateTimer(); });
         _tipCts = new System.Threading.CancellationTokenSource();
@@ -928,13 +924,13 @@ public sealed partial class MainPage : Page
         }
     }
 
-    /// <summary>渲染当前提示(必须在 UI 线程)。数据为空/已隐藏 → 隐藏。</summary>
+    /// <summary>渲染当前提示(必须在 UI 线程)。数据为空则隐藏(常驻:有内容就一直显示)。</summary>
     public void RenderTip()
     {
         try
         {
             var tips = TipFetcher.Latest;
-            if (TipIsHiddenNow || tips is not { Length: > 0 })
+            if (tips is not { Length: > 0 })
             {
                 TipStrip.Visibility = Visibility.Collapsed;
                 return;
@@ -966,7 +962,6 @@ public sealed partial class MainPage : Page
         _tipRotateIdx = (_tipRotateIdx + 1) % tips.Length;
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (TipIsHiddenNow) return;
             ShowTipAt(tips[_tipRotateIdx]);
             TipStrip.Visibility = Visibility.Visible;
         });
@@ -978,14 +973,6 @@ public sealed partial class MainPage : Page
         var link = TipText.Tag as string;
         if (string.IsNullOrWhiteSpace(link)) return;
         try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(link) { UseShellExecute = true }); } catch { }
-    }
-
-    /// <summary>点提示「✕」:本次运行不再显示(内存记录,重启恢复)。</summary>
-    private void TipClose_Click(object sender, RoutedEventArgs e)
-    {
-        _tipHiddenUntil = DateTime.MaxValue;   // 本次运行不再显示(内存,重启恢复)
-        TipStrip.Visibility = Visibility.Collapsed;
-        try { _tipRotateTimer?.Stop(); } catch { }
     }
 
     private void UpdateBarGo_Click(object sender, RoutedEventArgs e)
