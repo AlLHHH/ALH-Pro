@@ -2966,34 +2966,6 @@ public sealed partial class MainPage : Page
         ShowCardPopup(content, "请作者喝一杯咖啡", 640, onClosed: OnCoffeeCardClosed);
     }
 
-    /// <summary>左下角状态栏单击 → 弹窗放大查看诊断日志(尾部)。</summary>
-    private void StatusText_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
-    {
-        string text;
-        try
-        {
-            text = File.Exists(AppLogger.LogFile) ? File.ReadAllText(AppLogger.LogFile) : "(暂无日志)";
-        }
-        catch { text = "(日志读取失败)"; }
-        if (text.Length > 200000) text = text.Substring(text.Length - 200000);   // 只显示尾部,避免卡顿
-
-        var box = new TextBox
-        {
-            Text = text,
-            IsReadOnly = true,
-            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
-            FontSize = 12,
-            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-            AcceptsReturn = true,
-            MaxHeight = 540,
-        };
-        ScrollViewer.SetVerticalScrollBarVisibility(box, ScrollBarVisibility.Auto);
-        var content = new StackPanel { Spacing = 6 };
-        content.Children.Add(new TextBlock { Text = "日志内容(显示最近部分)", FontSize = 11, Opacity = 0.6 });
-        content.Children.Add(box);
-        ShowCardPopup(content, "诊断日志", 760);
-    }
-
     /// <summary>居中圆角卡片弹窗(遮罩 + 标题 + 关闭按钮 + 可滚动内容)。</summary>
     private void ShowCardPopup(StackPanel content, string title, double width, Action? onClosed = null)
     {
