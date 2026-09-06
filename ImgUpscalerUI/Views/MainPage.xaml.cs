@@ -344,16 +344,16 @@ public sealed partial class MainPage : Page
         try { SelfCheckOverlay.Visibility = Visibility.Collapsed; } catch { }
     }
 
-    /// <summary>更新后问卷:自检「确定」之后串行弹(同一时刻一个窗)。前往填写→永不再弹;关闭→下次启动 50% 概率再弹;首次安装不弹。</summary>
+    /// <summary>更新后问卷:自检「确定」之后串行弹。前往填写→跨版本永不再弹;关闭→下次启动 50% 概率再弹。</summary>
     private async Task MaybeShowUpdateSurveyAsync()
     {
         try
         {
-            if (!File.Exists(BetaAcceptedFile)) return;   // 首次安装:不弹
             string cur = UpdateChecker.CurrentVersion;
-            if (AppSettings.SurveyShownVersion == cur) return;   // 已"前往填写" → 永不再弹
-            // 已"关闭"过 → 下次启动 50% 概率再弹,50% 不弹
-            if (AppSettings.SurveyClosedVersion == cur && Random.Shared.NextDouble() >= 0.5) return;
+            // 【跨版本】填写过 → 以后任何版本都不再弹(不是只这一版)
+            if (!string.IsNullOrEmpty(AppSettings.SurveyShownVersion)) return;
+            // 关闭过 → 下次启动 50% 概率再弹(50% 不弹)
+            if (!string.IsNullOrEmpty(AppSettings.SurveyClosedVersion) && Random.Shared.NextDouble() >= 0.5) return;
             var dlg = new Microsoft.UI.Xaml.Controls.ContentDialog
             {
                 Title = "诚邀填写问卷",
@@ -366,11 +366,11 @@ public sealed partial class MainPage : Page
             if (r == ContentDialogResult.Primary)
             {
                 try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(SurveyUrl) { UseShellExecute = true }); } catch { }
-                AppSettings.SurveyShownVersion = cur;   // 前往填写 → 永不再弹
+                AppSettings.SurveyShownVersion = cur;   // 填写过 → 永久(跨版本)
             }
             else
             {
-                AppSettings.SurveyClosedVersion = cur;   // 关闭 → 下次启动 50% 概率再弹
+                AppSettings.SurveyClosedVersion = cur;   // 关闭过 → 下次启动 50%
             }
             try { AppSettings.Save(); } catch { }
         }
