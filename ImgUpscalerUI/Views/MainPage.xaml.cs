@@ -41,7 +41,7 @@ public sealed partial class MainPage : Page
         Loaded += async (_, _) =>
         {
             // 首个弹窗/检查类任务(视图已在构造时挂载)
-            // 内测声明:仅第一次启动显示;同意后记标记,以后不再弹;拒绝则退出
+            // 正式版欢迎 + 用户协议:仅第一次启动显示;同意后记标记,以后不再弹;拒绝则退出(非内测,已正式发布)
             if (!File.Exists(BetaAcceptedFile) && !await ShowBetaNoticeAsync())
             {
                 App.MainWindow.Close();
@@ -209,6 +209,7 @@ public sealed partial class MainPage : Page
             });
             await selfCheckTask;
             if (needFullCheck) await FinishSelfCheckOverlayAsync(ok);
+            await MaybeShowUpdateSurveyAsync();   // 自检确定后串行:更新后首次启动才弹问卷(每版一次,同一时刻一个窗)
             // 更新检查:后台静默(有新版才弹提示条;失败/无网/已最新均无感)
             _ = CheckUpdateSilentAsync();
         };
@@ -341,6 +342,22 @@ public sealed partial class MainPage : Page
     private void SelfCheckOk_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
     {
         try { SelfCheckOverlay.Visibility = Visibility.Collapsed; } catch { }
+    }
+
+    /// <summary>更新后问卷:在自检「确定」之后串行弹出(同一时刻一个窗),仅"更新后首次启动"每版弹一次;
+    /// 首次安装不弹(已在欢迎+用户协议+自检展示过)。问卷内容在此方法里构建即可,展示完记为已弹。</summary>
+    private async Task MaybeShowUpdateSurveyAsync()
+    {
+        try
+        {
+            if (!File.Exists(BetaAcceptedFile)) return;   // 首次安装:不弹
+            if (AppSettings.SurveyShownVersion == UpdateChecker.CurrentVersion) return;   // 本版本已弹过
+            // >>> 在这里构建你的问卷弹窗(如 ContentDialog,内容自定)<<<
+            // 展示后:
+            AppSettings.SurveyShownVersion = UpdateChecker.CurrentVersion;   // 标记本版本已弹
+            try { AppSettings.Save(); } catch { }
+        }
+        catch { }
     }
 
     /// <summary>自检报告(正式措辞,无口水词、无括号小提示;与设置页共用同一文本)。</summary>
