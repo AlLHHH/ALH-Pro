@@ -105,7 +105,7 @@
                                     </StackPanel>
                                     <TextBlock x:Name="AdText" FontSize="10" Opacity="0.85" LineHeight="14"
                                                Foreground="#C7CEDA" TextWrapping="Wrap"
-                                               TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
+                                               TextTrimming="CharacterEllipsis" MaxLines="3" Visibility="Collapsed"/>
                                 </StackPanel>
                             </StackPanel>
                             <!-- 上一张/下一张:独立一行、卡片最底部、最小紧凑,不挡任何内容 -->
