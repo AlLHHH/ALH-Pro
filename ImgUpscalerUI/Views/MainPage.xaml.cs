@@ -75,8 +75,8 @@ public sealed partial class MainPage : Page
             // 自动弹一次友好提示;强机不弹(结果随时可在「设置 → 计算设备」查看),弹过也不再重复弹。
             // 【新增】真引擎自检:每次启动都后台跑一次(waifu2x 引擎枚举 Vulkan 设备),结果=日志+状态栏
             // (之前 RunOnce 只在设置页手动触发,启动从未自检过)。
-            // 自检弹窗:仅首次启动 / 版本更新后显示(用户测试期临时改为每次启动,现改回)
-            bool needFullCheck = !AppSettings.VulkanCheckDone
+            // 自检弹窗:仅首次启动 / 版本更新后显示(用刚点过确定的标记,避免 RunOnce 竞态导致首次被跳过)
+            bool needFullCheck = !AppSettings.SelfCheckDone
                 || AppSettings.VulkanReportVersion != UpdateChecker.CurrentVersion;
             if (needFullCheck) ShowSelfCheckOverlay();
             var selfCheckTask = Task.Run(async () =>
@@ -342,6 +342,8 @@ public sealed partial class MainPage : Page
     private void SelfCheckOk_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
     {
         try { SelfCheckOverlay.Visibility = Visibility.Collapsed; } catch { }
+        AppSettings.SelfCheckDone = true;   // 自检已完成(点确定),后续非首次/更新不再弹
+        try { AppSettings.Save(); } catch { }
         _ = MaybeShowUpdateSurveyAsync();   // 自检「确定」后再弹问卷(串行,不叠窗)
     }
 

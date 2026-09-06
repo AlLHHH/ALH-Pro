@@ -25,6 +25,9 @@ public static class AppSettings
     /// <summary>上次关闭"请作者喝咖啡"赞助提示的时间(冷却:2 小时内不再触发)。</summary>
     public static DateTime SponsorPromptTime { get; set; } = DateTime.MinValue;
 
+    /// <summary>是否已完成过启动自检(点了「确定」才置真;用于消除 RunOnce 竞态,保证首次/更新必弹自检)。</summary>
+    public static bool SelfCheckDone { get; set; }
+
     /// <summary>已"前往填写"过问卷的版本(该版本永不再弹)。</summary>
     public static string SurveyShownVersion { get; set; } = "";
 
@@ -60,6 +63,7 @@ public static class AppSettings
             AutoRemoveDone = d.AutoRemoveDone;
             GpuIndex = d.GpuIndex;
             VulkanCheckDone = d.VulkanCheckDone;
+            SelfCheckDone = d.SelfCheckDone;
             VulkanReport = d.VulkanReport ?? "";
             SelfCheckReport = d.SelfCheckReport ?? "";
             SponsorPromptTime = d.SponsorPromptTime == default ? DateTime.MinValue : d.SponsorPromptTime;
@@ -88,6 +92,7 @@ public static class AppSettings
                         AutoRemoveDone = AutoRemoveDone,
                         GpuIndex = GpuIndex,
                         VulkanCheckDone = VulkanCheckDone,
+                        SelfCheckDone = SelfCheckDone,
                         VulkanReport = VulkanReport,
                         SelfCheckReport = SelfCheckReport,
                         SponsorPromptTime = SponsorPromptTime,
@@ -107,6 +112,7 @@ public static class AppSettings
         public bool AutoRemoveDone { get; set; }
         public int GpuIndex { get; set; } = 0;
         public bool VulkanCheckDone { get; set; }
+        public bool SelfCheckDone { get; set; }
         public string VulkanReport { get; set; } = "";
         public string SelfCheckReport { get; set; } = "";
         public DateTime SponsorPromptTime { get; set; } = DateTime.MinValue;
