@@ -1,0 +1,8 @@
+{
+  "_note": "自适应广告卡(第6张)。字段同 ad1~ad5: title=标题, text=正文, image=图URL(可空=纯文字卡), link=点击跳转, linkText=按钮文字, sponsor=赞助商名(有则显示黄色角标)。新增广告只需在 ad/ 放 adN.json 并上传,客户端自动拉取轮播,无需发版。",
+  "title": "AI 补帧让视频更丝滑",
+  "text": "低帧率视频开到 4 倍补帧,动作流畅不拖影。",
+  "link": "https://github.com/AlLHHH/ALH-Pro",
+  "linkText": "去了解",
+  "sponsor": "ALH Pro"
+}
