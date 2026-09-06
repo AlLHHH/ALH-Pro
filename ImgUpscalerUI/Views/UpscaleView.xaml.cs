@@ -1640,7 +1640,7 @@ public sealed partial class UpscaleView : UserControl
         var result = await dlg.ShowAsync();
         if (result == ContentDialogResult.Primary)
             ProcessStartHelper.OpenSelect(outputFiles.Count > 0 ? outputFiles : new System.Collections.Generic.List<string> { dir });
-        MainPage.MaybeShowSponsorPrompt();   // 处理完成弹窗关闭后:30% 概率弹"请作者喝咖啡"(2小时冷却)
+        if (failLately == 0) MainPage.MaybeShowSponsorPrompt();   // 仅全部导出成功才弹赞助提示(有失败不打扰)
     }
 
     private async Task ShowErrorAsync(string msg)
