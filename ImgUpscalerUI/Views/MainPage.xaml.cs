@@ -875,8 +875,7 @@ public sealed partial class MainPage : Page
                         Text = $"本程序为「ALH Pro v{UpdateChecker.CurrentVersion}」正式版:\n\n" +
                             "· 图片超分 / AI 抠图 / 视频超分补帧去重,全部本地处理,不上传任何数据;\n" +
                             "· 处理前建议备份重要素材(AI 处理可能有边缘瑕疵)。\n\n" +
-                            UserAgreementText() + "\n\n" +
-                            "首次启动会进行一次本机设备自检,以下结果来自当前电脑:",
+                            UserAgreementText(),
                         TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
                         FontSize = 12,
                     },
@@ -886,7 +885,7 @@ public sealed partial class MainPage : Page
                         Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
                         Margin = new Microsoft.UI.Xaml.Thickness(0, 2, 0, 2),
                     },
-                    reportBlock,
+                    // 设备自检不再嵌在这里(见独立完整自检弹窗),保留分隔线下无内容
                 },
             },
         };
