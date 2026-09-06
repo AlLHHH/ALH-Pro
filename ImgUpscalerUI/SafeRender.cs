@@ -197,6 +197,12 @@ public static class SafeRender
             }
         }
         catch { /* 非 NVIDIA 或未安装驱动 */ }
+        // 【兼容短板】nvidia-smi 仅 NVIDIA 可用;AMD/Intel 走这里 → 用注册表 64 位 qwMemorySize 兜底,
+        // 避免大显存 AMD/Intel 卡被低估成 8GB(低估→分块保守→慢,但准确更利于满血)。仅总量/空闲都取显卡总量近似。
+        if (field == "memory.total")
+        {
+            try { var v = ALHPro.GpuInfo.GetDiscreteVramGb(); if (v is > 0) return v.Value; } catch { }
+        }
         return fallback;
     }
 

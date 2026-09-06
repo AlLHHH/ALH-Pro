@@ -213,4 +213,60 @@ public static class GpuInfo
         }
         return false;
     }
+
+    /// <summary>
+    /// 用注册表 64 位 qwMemorySize 读每块显卡的显存(单位 GB)。比 nvidia-smi 通用:NVIDIA/AMD/Intel 都读得到,
+    /// 且是 64 位值,不受 &gt;4GB 溢出影响。虚拟适配器(无 qwMemorySize)跳过。返回数组与 GetAdapterNames 同序
+    /// (可 null=取不到)。
+    /// </summary>
+    public static List<double?> GetAdapterVramGb()
+    {
+        var result = new List<double?>();
+        try
+        {
+            using var baseKey = Registry.LocalMachine.OpenSubKey(DisplayClassKey);
+            if (baseKey == null) return result;
+            foreach (var sub in baseKey.GetSubKeyNames())
+            {
+                using var k = baseKey.OpenSubKey(sub);
+                var name = k?.GetValue("HardwareInformation.AdapterString") as string;
+                if (string.IsNullOrWhiteSpace(name)) name = k?.GetValue("DriverDesc") as string;
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                name = name.Trim();
+                if (IsVirtual(name)) continue;
+                // HardwareInformation.qwMemorySize = 64 位字节数(REG_QWORD),>4GB 不溢出(AdapterRAM 是 32 位会溢出)
+                ulong? bytes = null;
+                try
+                {
+                    var raw = k?.GetValue("HardwareInformation.qwMemorySize");
+                    if (raw is ulong u) bytes = u;
+                    else if (raw is int i && i > 0) bytes = (ulong)i;
+                    else if (raw != null) bytes = Convert.ToUInt64(raw);
+                }
+                catch { }
+                double? gb = bytes is > 0 ? bytes / 1073741824.0 : null;
+                result.Add(gb);
+            }
+        }
+        catch { }
+        return result;
+    }
+
+    /// <summary>主要独立显卡(得分最高非核显)的显存 GB;取不到返回 null。
+    /// 用于显存总量估算的通用兜底(免 nvidia-smi 依赖,AMD/Intel 大显存卡不再被低估成 8GB)。</summary>
+    public static double? GetDiscreteVramGb()
+    {
+        try
+        {
+            var names = GetAdapterNames();
+            var vrams = GetAdapterVramGb();
+            if (names.Count == 0 || vrams.Count < names.Count) return null;
+            // 取得分最高的非核显(与推荐一致);若全核显则取第一块
+            int bestIdx = GetRecommendedIndex(names);
+            if (bestIdx < 0) bestIdx = names.Count > 0 ? 0 : -1;
+            if (bestIdx < 0) return null;
+            return vrams[bestIdx];
+        }
+        catch { return null; }
+    }
 }
