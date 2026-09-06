@@ -1629,12 +1629,17 @@ public static partial class EngineService
         return false;
     }
 
-    /// <summary>检测单个 PNG 是否近全黑(95% 以上像素 RGB 和 < 24)。internal:视频补帧/层批复用(黑帧=GPU 队列异常兼容症状)。</summary>
+    /// <summary>检测单个 PNG 是否近全黑(95% 以上像素 RGB 和 < 24)。internal:视频补帧/层批复用(黑帧=GPU 队列异常兼容症状)。
+    /// 同步把"读不出的帧"(0 字节 / 空 / 损坏)视为缺陷帧返回 true —— ncnn-vulkan 在 50 系/部分驱动上会静默输出 0KB 空帧
+    /// (退出码 0 不报错),若这里返回 false,空帧会被当成正常帧放行,一路传到合帧导致"找不到 frame_%06d.jpg"。</summary>
     internal static bool IsBlackPng(string file)
     {
         try
         {
+            // 空/0 字节:必然不可解码,按缺陷帧处理(旧逻辑 new Bitmap 抛异常被 catch 吞掉返回 false,正是漏检的根源)
+            if (!File.Exists(file) || new FileInfo(file).Length == 0) return true;
             using var bmp = new System.Drawing.Bitmap(file);
+            if (bmp.Width <= 0 || bmp.Height <= 0) return true;   // 尺寸非法也算缺陷
             int step = Math.Max(4, Math.Min(bmp.Width, bmp.Height) / 32);
             int dark = 0, total = 0;
             for (int y = step; y < bmp.Height; y += step)
@@ -1646,7 +1651,7 @@ public static partial class EngineService
                 }
             return total > 0 && dark >= total * 0.95;
         }
-        catch { return false; }
+        catch { return true; }   // 解码失败也按缺陷帧处理(不静默放行)
     }
 
     /// <summary>给分块做羽化 alpha:左/上边缘在 overlapPx 内从 0 淡入到 1(右/下保持不透明)。</summary>

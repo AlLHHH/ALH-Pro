@@ -2418,7 +2418,11 @@ public static class VideoService
         {
             foreach (var f in Directory.EnumerateFiles(dir, "*.png"))
             {
+                // 空/0字节/损坏 → new Bitmap 抛异常,旧逻辑被 catch{return false} 吞掉 → 空帧漏检放行,
+                // 一路传到合帧报"找不到 frame_%06d.jpg"。这里把读不出的帧也视为缺陷帧(true),触发回退源帧/ONNX。
+                if (!File.Exists(f) || new FileInfo(f).Length == 0) return true;
                 using var bmp = new System.Drawing.Bitmap(f);
+                if (bmp.Width <= 0 || bmp.Height <= 0) return true;
                 int step = Math.Max(4, Math.Min(bmp.Width, bmp.Height) / 32);
                 int dark = 0, total = 0;
                 for (int y = step; y < bmp.Height; y += step)
@@ -2431,7 +2435,7 @@ public static class VideoService
                 if (total > 0 && dark >= total * 0.95) return true;
             }
         }
-        catch { }
+        catch { return true; }   // 目录枚举/解码异常 → 保守按缺陷帧处理
         return false;
     }
 
@@ -2870,6 +2874,25 @@ public static class VideoService
     private const float VideoFrameJpgQuality = 0.96f;
     private static void ReencodeDirPngToJpg(string dir)
     {
+        // 先扫描一遍:记录第一张可正常解码的 PNG 尺寸,作为"损坏帧占位图"的参考尺寸
+        // (ncnn-vulkan 在 50 系/部分驱动上会静默输出 0KB 空 PNG,new Bitmap 读不出尺寸 →
+        //  旧逻辑退到 File.Copy 复制 0 字节 → 合帧"找不到 frame_%06d.jpg")。
+        int refW = 0, refH = 0;
+        try
+        {
+            foreach (var cand in Directory.EnumerateFiles(dir, "*.png").ToArray())
+            {
+                try
+                {
+                    if (new FileInfo(cand).Length == 0) continue;
+                    using var b = new System.Drawing.Bitmap(cand);
+                    if (b.Width > 0 && b.Height > 0) { refW = b.Width; refH = b.Height; break; }
+                }
+                catch { }
+            }
+        }
+        catch { }
+
         foreach (var png in Directory.EnumerateFiles(dir, "*.png").ToArray())
         {
             var jpg = Path.ChangeExtension(png, ".jpg");
@@ -2877,9 +2900,11 @@ public static class VideoService
             catch (Exception ex)
             {
                 AppLogger.Warn($"⚠ 帧转 JPG 失败({Path.GetFileName(png)}):{ex.Message.Split('\n')[0]}——用同尺寸占位帧替代,保持编号连续可解码");
-                // 优先生成同尺寸深灰占位(可解码、编号不断);尺寸读不出(彻底损坏)才退回复制原名(尽力保编号连续)
+                // 优先生成同尺寸深灰占位(可解码、编号不断);尺寸读不出(彻底损坏)才用参考帧尺寸;
+                // 连参考尺寸都拿不到才退回复制原名(尽力保编号连续)
                 int pw = 0, ph = 0;
                 try { using (var b = new System.Drawing.Bitmap(png)) { pw = b.Width; ph = b.Height; } } catch { }
+                if (pw <= 0 || ph <= 0) { pw = refW; ph = refH; }
                 if (pw > 0 && ph > 0)
                 {
                     using var phb = new System.Drawing.Bitmap(pw, ph);
