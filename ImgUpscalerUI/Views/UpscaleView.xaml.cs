@@ -1261,8 +1261,9 @@ public sealed partial class UpscaleView : UserControl
                                 || EngineService.ShouldUseOnnxWaifu2x()
                                 || !await EngineService.IsWaifu2xNcnnUsableAsync(gpuId, ct);
                             if (preOnnx && EsrganOnnxService.FindWaifu2xModel() != null)
-                                await EsrganOnnxService.UpscaleAsync(srcPath, tmpDenoise, 1,
-                                    gpuId < 0 ? -1 : -2, progress, ct, EsrganOnnxService.FindWaifu2xModel());
+                                await AbandonOnCancelAsync(
+                                    EsrganOnnxService.UpscaleAsync(srcPath, tmpDenoise, 1,
+                                        gpuId < 0 ? -1 : -2, progress, CancellationToken.None, EsrganOnnxService.FindWaifu2xModel()), ct);
                             else
                                 await EngineService.UpscaleAsync(srcPath, tmpDenoise, "waifu2x",
                                     "models-cunet", 1, denoiseLevel, gpuId, false, progress, ct);
@@ -1289,8 +1290,9 @@ public sealed partial class UpscaleView : UserControl
                         {
                             Log("✅ 自检:已按当前显卡自动改用稳定引擎(直接处理,无需设置)");
                             progress.Report((0, "✅ 自检完毕:用稳定引擎处理..."));
-                            await EsrganOnnxService.UpscaleAsync(srcPath, outPath, scale,
-                                gpuId < 0 ? -1 : -2, progress, ct, onnxPath);   // 用户选 CPU(-1)则强制 CPU;否则按图大小自动选设备
+                            await AbandonOnCancelAsync(
+                                EsrganOnnxService.UpscaleAsync(srcPath, outPath, scale,
+                                    gpuId < 0 ? -1 : -2, progress, CancellationToken.None, onnxPath), ct);   // 用户选 CPU(-1)则强制 CPU;否则按图大小自动选设备
                         }
                         else
                         {
@@ -1497,6 +1499,15 @@ public sealed partial class UpscaleView : UserControl
             }
         };
         t.Start();
+    }
+
+    /// <summary>ONNX 推理无法中途打断:取消时放弃等待(孤儿推理后台几秒内自行收尾并丢弃),
+    /// 保证「强制结束」对任何图都立即响应(真正强制)。</summary>
+    private static async Task AbandonOnCancelAsync(Task t, CancellationToken ct)
+    {
+        try { await t.WaitAsync(ct); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { /* t 自己取消了,正常 */ throw; }
+        // ct 触发 → WaitAsync 抛 OCE → 传播取消;底层 t(用 None)仍在后台跑完,结果被丢弃
     }
 
     private void CancelBtn_Click(object sender, RoutedEventArgs e)
