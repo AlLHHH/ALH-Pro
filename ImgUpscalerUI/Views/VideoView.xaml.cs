@@ -2958,7 +2958,7 @@ public sealed partial class VideoView : UserControl
             }
             // 帧率:优先目标帧率框;否则 源帧率×(补帧倍率)。
             double? srcFps = null;
-            try { if (double.TryParse(VideoService.ProbeFps(it.Path), NumberStyles.Float, inv, out var pf) && pf > 0) srcFps = pf; } catch { }
+            try { if (double.TryParse(await Task.Run(() => VideoService.ProbeFps(it.Path)), NumberStyles.Float, inv, out var pf) && pf > 0) srcFps = pf; } catch { }
             double? targetFps = (TargetFpsCheck.IsChecked == true
                 && double.TryParse(TargetFpsBox.Text, NumberStyles.Float, inv, out var tf) && tf > 0) ? tf : null;
             bool interp = InterpToggle.IsChecked == true;
