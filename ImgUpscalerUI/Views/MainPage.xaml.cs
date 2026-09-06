@@ -554,22 +554,52 @@ public sealed partial class MainPage : Page
     }
 
     // ---------- 更新检查 ----------
-    /// <summary>启动静默检查:有新版本才弹更新弹窗;失败/已最新不打扰。
-    /// 【延迟10分钟】打标签后作者还要上传安装包,立即弹会下载到未传完的包 → 延迟10分钟再提示。
-    /// 若设置勾选「不再显示更新弹窗」→ 直接跳过不弹。</summary>
+    /// <summary>更新检查主循环(后台,不阻塞前台):启动立即查一次,之后每 30 分钟再查(次数少但有)。
+    /// 逻辑:
+    /// ① 设置勾选「不再显示更新弹窗」→ 全程不弹;
+    /// ② 启动时若【已记录待提示的新版】(上次查到但没等到 10 分钟/没弹)→ 立即弹,不再等;
+    /// ③ 否则检查:发现新版 → 记录 PendingUpdateTag + 【延迟10分钟】再弹(给作者留传包时间);
+    /// ④ 已最新 → 无感。</summary>
     private async Task CheckUpdateSilentAsync()
     {
-        if (AppSettings.HideUpdatePopup) return;   // 用户已在设置里勾选"不再显示更新弹窗"
-        var r = await UpdateChecker.CheckAsync().ConfigureAwait(false);
-        if (r is not { HasNew: true }) return;   // 失败/已最新 → 无感
-        var (_, tag, _) = r.Value;
-        // 延迟 10 分钟再提示(给作者留上传时间);【测试模式 ALH_FORCE_UPDATE=1 跳过延迟,立即显示】
-        if (Environment.GetEnvironmentVariable("ALH_FORCE_UPDATE") != "1")
+        while (true)
         {
-            try { await System.Threading.Tasks.Task.Delay(TimeSpan.FromMinutes(10)).ConfigureAwait(false); }
+            try
+            {
+                if (AppSettings.HideUpdatePopup) { AppSettings.PendingUpdateTag = ""; await Task.Delay(TimeSpan.FromMinutes(30)).ConfigureAwait(false); continue; }
+                // 上次已记录待提示的新版(启动直接显示,不用再等 10 分钟)
+                if (!string.IsNullOrWhiteSpace(AppSettings.PendingUpdateTag))
+                {
+                    string pendingTag = AppSettings.PendingUpdateTag;
+                    AppSettings.PendingUpdateTag = ""; AppSettings.Save();   // 已取走,弹窗成功后会标记不重复
+                    DispatcherQueue.TryEnqueue(() => ShowUpdatePopup(pendingTag));
+                }
+                else
+                {
+                    var r = await UpdateChecker.CheckAsync().ConfigureAwait(false);
+                    if (r is { HasNew: true })
+                    {
+                        var (_, tag, _) = r.Value;
+                        AppSettings.PendingUpdateTag = tag; AppSettings.Save();   // 记录:本次延迟10分钟弹;没弹到则下次启动直接弹
+                        // 延迟 10 分钟再提示(给作者留上传时间);【测试模式 ALH_FORCE_UPDATE=1 跳过延迟,立即显示】
+                        if (Environment.GetEnvironmentVariable("ALH_FORCE_UPDATE") != "1")
+                        {
+                            try { await Task.Delay(TimeSpan.FromMinutes(10)).ConfigureAwait(false); } catch { return; }
+                        }
+                        if (!string.IsNullOrWhiteSpace(AppSettings.PendingUpdateTag))
+                        {
+                            string t = AppSettings.PendingUpdateTag;
+                            AppSettings.PendingUpdateTag = ""; AppSettings.Save();
+                            DispatcherQueue.TryEnqueue(() => ShowUpdatePopup(t));
+                        }
+                    }
+                    // 已最新/失败 → 无感(不反复弹;下次周期再查)
+                }
+            }
+            catch { }
+            try { await System.Threading.Tasks.Task.Delay(TimeSpan.FromMinutes(30)).ConfigureAwait(false); }
             catch { return; }
         }
-        DispatcherQueue.TryEnqueue(() => ShowUpdatePopup(tag));
     }
 
     /// <summary>弹出「发现新版本」升级弹窗(模态,更醒目;用户点关闭 → 本次运行不再提示,下次启动仍会显示,除非设置勾选不再显示)。</summary>

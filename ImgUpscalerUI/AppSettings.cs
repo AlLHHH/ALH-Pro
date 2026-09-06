@@ -47,6 +47,9 @@ public static class AppSettings
     /// <summary>是否「不再显示更新弹窗」(设置里用户勾选;true=永久不再弹,false=每次启动有新版就弹)。</summary>
     public static bool HideUpdatePopup { get; set; }
 
+    /// <summary>已检测到但尚未提示用户的新版本 tag(如 "v1.3.1")。记录后:本次延迟10分钟弹,若没弹到,下次启动直接弹此 tag;为空=未发现新版本。</summary>
+    public static string PendingUpdateTag { get; set; } = "";
+
     private static string FilePath => ParaPaths.SettingsFile("app-settings.json");
 
     public static void Load()
@@ -76,6 +79,7 @@ public static class AppSettings
             TempDir = d.TempDir ?? "";
             LastShownVersion = d.LastShownVersion ?? "";
             HideUpdatePopup = d.HideUpdatePopup;
+            PendingUpdateTag = d.PendingUpdateTag ?? "";
         }
         catch { /* 读取失败用默认值 */ }
     }
@@ -106,6 +110,7 @@ public static class AppSettings
                         TempDir = TempDir,
                         LastShownVersion = LastShownVersion,
                         HideUpdatePopup = HideUpdatePopup,
+                        PendingUpdateTag = PendingUpdateTag,
                     }));
             }
             catch { /* 保存失败忽略 */ }
@@ -127,5 +132,6 @@ public static class AppSettings
         public string TempDir { get; set; } = "";
         public string LastShownVersion { get; set; } = "";
         public bool HideUpdatePopup { get; set; }
+        public string PendingUpdateTag { get; set; } = "";
     }
 }
