@@ -75,28 +75,29 @@
 
                     <!-- ============ 左栏底部「广告」动态区(作者 GitHub 投放,5 张卡本地 30s 轮播;可点/滑动切上下一张) ============ -->
                     <Border x:Name="AdCard" CornerRadius="10" Background="#14FFFFFF"
-                            BorderBrush="#22FFFFFF" BorderThickness="1" Margin="0,6,0,0" Padding="12,10"
+                            BorderBrush="#22FFFFFF" BorderThickness="1" Margin="0,6,0,0" Padding="12,8"
+                            HorizontalAlignment="Stretch"
                             ManipulationMode="TranslateX" ManipulationDelta="AdCard_ManipulationDelta"
                             ManipulationCompleted="AdCard_ManipulationCompleted"
                             Visibility="Collapsed">
                         <Grid>
                             <Grid.RowDefinitions>
-                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
-                            <!-- 内容:图(可选) + 标题 + 正文,整体居中、对称留白 -->
-                            <StackPanel Grid.Row="0" Spacing="6" Tapped="AdCardTapped">
+                            <!-- 内容:图(可选) + 标题 + 正文,整体居中、对称留白;文字 Wrap 换行显示完整 -->
+                            <StackPanel Grid.Row="0" Spacing="5" Tapped="AdCardTapped">
                                 <!-- 图:居中、圆角、固定高度,Width 自适应不撑满;无图自动隐藏 -->
                                 <Border x:Name="AdImageFrame" CornerRadius="8" Background="#22FFFFFF"
                                         HorizontalAlignment="Center" Padding="4" Visibility="Collapsed">
-                                    <Image x:Name="AdImage" Width="96" Height="96" Stretch="UniformToFill"/>
+                                    <Image x:Name="AdImage" Width="84" Height="84" Stretch="UniformToFill"/>
                                 </Border>
-                                <StackPanel Spacing="3" HorizontalAlignment="Left">
+                                <StackPanel Spacing="3" HorizontalAlignment="Stretch">
                                     <!-- 标题行:标题 + 可选「推广」角标(有 sponsor 才显示;合规:广告可识别,不误导) -->
                                     <StackPanel Orientation="Horizontal" Spacing="6">
                                         <TextBlock x:Name="AdTitle" FontSize="12" FontWeight="SemiBold"
                                                    Foreground="#E8ECF2" TextWrapping="Wrap"
-                                                   TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
+                                                   Visibility="Collapsed"/>
                                         <Border x:Name="AdSponsorBadge" Background="#33E8A33D" CornerRadius="4"
                                                 Padding="4,1" VerticalAlignment="Top" Visibility="Collapsed">
                                             <TextBlock x:Name="AdSponsorText" FontSize="8" Foreground="#E8B04A"
@@ -105,7 +106,7 @@
                                     </StackPanel>
                                     <TextBlock x:Name="AdText" FontSize="10" Opacity="0.85" LineHeight="14"
                                                Foreground="#C7CEDA" TextWrapping="Wrap"
-                                               TextTrimming="CharacterEllipsis" MaxLines="3" Visibility="Collapsed"/>
+                                               Visibility="Collapsed"/>
                                 </StackPanel>
                             </StackPanel>
                             <!-- 上一张/下一张:独立一行、卡片最底部、最小紧凑,不挡任何内容 -->
@@ -119,11 +120,11 @@
                                         Background="#1AFFFFFF" BorderThickness="0" Foreground="#AAFFFFFF"
                                         CornerRadius="6" Click="AdNext_Click" ToolTipService.ToolTip="下一张(点击或向左滑动)"/>
                             </StackPanel>
-                            <!-- 关闭按钮:固定在卡片右上角(悬浮,半透明圆角底),不占内容宽度 -->
-                            <Button x:Name="AdCloseBtn" Content="✕" FontSize="10" Padding="6,2"
-                                    Background="#2EFFFFFF" BorderThickness="0" Foreground="#AAFFFFFF"
-                                    CornerRadius="8"
-                                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-3,-4,0"
+                            <!-- 关闭按钮:贴右上角最角落、最小、半透明,不覆盖标题/图 -->
+                            <Button x:Name="AdCloseBtn" Content="✕" FontSize="9" Padding="5,1" MinWidth="0"
+                                    Background="#1AFFFFFF" BorderThickness="0" Foreground="#66FFFFFF"
+                                    CornerRadius="6"
+                                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-8,-8,0"
                                     Click="AdClose_Click" ToolTipService.ToolTip="本次运行隐藏广告"/>
                         </Grid>
                     </Border>
