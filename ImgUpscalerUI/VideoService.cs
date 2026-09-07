@@ -1030,6 +1030,14 @@ public static class VideoService
                         progress?.Report((10, "⚠ 50系 ncnn 补帧不稳,直接改用 ONNX 补帧..."));
                         interpGpu = -1;
                     }
+                    // AMD 独显:ncnn-Vulkan 补帧"1×1 探测能过、但整段目录输出残缺(实测 RX 6750 GRE 281 帧只出 1 帧)"。
+                    // 不必探测——直接走 ONNX(DirectML:独立运行时,AMD 上稳定),避免 ncnn 目录模式残缺/丢帧。
+                    else if (EngineService.IsAmdGpu(gpuId))
+                    {
+                        AppLogger.Info("⚠ AMD 独显 ncnn-Vulkan 补帧不可靠(目录模式易残缺/丢帧),直接改用 ONNX 补帧路线");
+                        progress?.Report((10, "⚠ AMD 显卡 ncnn 补帧不稳,改用 ONNX 稳定补帧..."));
+                        interpGpu = -1;
+                    }
                     else
                     {
                         progress?.Report((10, $"正在检测补帧 GPU 兼容性(最长约 10 秒,失败重试一次)..."));
