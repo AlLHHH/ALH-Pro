@@ -837,7 +837,7 @@ public static partial class EngineService
                 using var p = Process.Start(psi);
                 if (p == null) return false;
                 using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                waitCts.CancelAfter(TimeSpan.FromSeconds(5));   // 探测超时 5 秒(用户要求:检测不能阻塞太久)
+                waitCts.CancelAfter(TimeSpan.FromSeconds(15));   // 探测超时 15 秒(旧 5 秒对"冷启动慢的 ncnn 卡"会误报 hang,如 4060 首次加载 Vulkan 要 >5s;15s 仍能拦住真 hang)
                 try
                 {
                     await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
