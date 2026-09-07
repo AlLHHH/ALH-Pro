@@ -3736,6 +3736,9 @@ public sealed partial class VideoView : UserControl
         //   兜底保留(双保险,即使未来路径变化也不跨线程改控件)。
         if (up && VideoEngineRadios.SelectedIndex == 1)
         {
+            // 开始处理前先让用户知道"正在检测引擎兼容性"(探测最长 15 秒,避免用户以为卡住)
+            TaskSummary.Text = "正在检测 Real-ESRGAN 显卡兼容性(约 15 秒)…";
+            try { Log("正在检测 Real-ESRGAN 显卡兼容性(探测,最长约 15 秒)…"); } catch { }
             bool usable = await EngineService.IsEngineGpuUsableAsync("realesrgan", gpuId, cts.Token);
             if (!usable)
             {
