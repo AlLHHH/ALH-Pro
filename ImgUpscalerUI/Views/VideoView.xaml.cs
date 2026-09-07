@@ -334,6 +334,7 @@ public sealed partial class VideoView : UserControl
     private CancellationTokenSource? _cts;
     private string? _customOutDir;
     private bool _suppressEvents;
+    private bool _settingsLoaded;   // LoadSettings 完成后才允许保存(防构造/加载期的 -1 值污染 video-settings.json)
     private VideoItem? _selected;
     private int _gpuCount;
 
@@ -1405,18 +1406,23 @@ public sealed partial class VideoView : UserControl
     {
         try
         {
-            if (!File.Exists(SettingsFile)) return;
+            if (!File.Exists(SettingsFile))
+            {
+                _settingsLoaded = true;   // 首次使用(无文件):放行保存,否则永远记不住
+                return;
+            }
             var d = System.Text.Json.JsonSerializer.Deserialize<VideoSettings>(File.ReadAllText(SettingsFile));
-            if (d is null) return;
+            if (d is null) { _settingsLoaded = true; return; }
             // 诊断:记录设置文件读到的值与时间戳(排查"记不住码率/格式")
             AppLogger.Info($"[记忆] 视频设置加载: Quality={d.Quality}, Format={d.Format}, Codec={d.Codec}, Remember={d.Remember}, 文件时间={File.GetLastWriteTime(SettingsFile):HH:mm:ss}");
             _suppressEvents = true;
             VideoRememberCheck.IsChecked = d.Remember;
             if (d.Remember) ApplyVideoParams(d);
             _suppressEvents = false;
+            _settingsLoaded = true;   // 加载完成,此后才允许保存(防构造/加载期 -1 污染)
             UpdateOptions();   // 恢复后刷新 UI 状态(自定义分辨率面板显隐/提示/滑条数值等)
         }
-        catch { _suppressEvents = false; }
+        catch { _suppressEvents = false; _settingsLoaded = true; }
     }
 
     /// <summary>把一份 VideoSettings 快照应用到当前页面 UI(校验范围后赋值,避免越界)。
@@ -1947,6 +1953,9 @@ public sealed partial class VideoView : UserControl
 
     private void SaveSettings()
     {
+        // 加载完成前禁止保存:构造/加载期控件默认赋值或未恢复时 SelectedIndex=-1,会污染 video-settings.json
+        // (日志实测 [记忆] 视频设置加载 Quality=-1/Format=-1/Codec=-1 的根因:构造期 SaveSettings 把 -1 写盘)
+        if (!_settingsLoaded || _suppressEvents) return;
         try
         {
             var d = CollectVideoParams();
@@ -2011,10 +2020,10 @@ public sealed partial class VideoView : UserControl
             PostAa = (int)PostAaSlider.Value,
             MotionBlur = MotionBlurCombo.SelectedIndex,
             DeShake = DeShakeCheck.IsChecked == true,
-            Quality = QualityCombo.SelectedIndex,
+            Quality = QualityCombo.SelectedIndex >= 0 ? QualityCombo.SelectedIndex : 0,   // -1(未选中)兜底 0,防污染设置文件
             BitrateMbps = QualityCombo.SelectedIndex == 5 ? ParseBitrate() : 0,
-            Codec = CodecCombo.SelectedIndex,
-            Format = FormatCombo.SelectedIndex,
+            Codec = CodecCombo.SelectedIndex >= 0 ? CodecCombo.SelectedIndex : 0,
+            Format = FormatCombo.SelectedIndex >= 0 ? FormatCombo.SelectedIndex : 0,
             FastMode = FastModeCheck.IsChecked == true,
             Mute = MuteCheck.IsChecked == true,
             VideoDenoiseOn = DenoiseToggle.IsChecked == true,
