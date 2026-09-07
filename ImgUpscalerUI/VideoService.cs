@@ -1054,6 +1054,7 @@ public static class VideoService
                 if (segStart < frameCount) segBounds.Add((segStart, frameCount));
                 double frameScale = frameCount > 0 ? Math.Min(6.0, (double)origCountEst / frameCount) : 1.0;
                 bool v4Model = IsV4Model(interpModel);
+                long globalTarget = 0;   // 全局目标帧数(在补帧块内计算;提到此处供块外"帧数残缺检测"用)
                 // ===== 方案 C(真实时间轴插值/对齐丝滑):「密度还原 → 整段一次 RIFE → 帧数精确对齐」=====
                 // 整段序列喂给 RIFE,光流上下文足(估得准、不糊不扭);密度还原把各状态的真实停留时长铺回同一条
                 // CFR 网格,时长=原、不吞尾;输出帧数由下方 globalTarget=原帧数×倍率 精确对齐(与参考补帧同款结果)。
@@ -1073,7 +1074,7 @@ public static class VideoService
                     if (fpsMode == 1) frameScale = 1.0;
                     // 全局输出帧数目标 = (内容帧数-1)×倍率+1(A)或 (原帧数-1)×倍率+1(B/未去重):
                     // 末段 RIFE -n 补足,使最后锚点帧精确落在最后一帧(避免合帧裁剪吞尾帧)。
-                    long globalTarget = Math.Max(frameCount + 1,
+                    globalTarget = Math.Max(frameCount + 1,
                         (long)Math.Round((double)((fpsMode == 1 ? frameCount : origCountEst) - 1) * interpScale) + 1);
                     for (int si = 0; si < segBounds.Count; si++)
                     {
@@ -1128,6 +1129,21 @@ public static class VideoService
                 }
 
                 var interpCount = EnumerateFrameFiles(framesFinal).Count();   // 补帧输出可能是 png(旧)或 jpg(新边转边存),统一按两种数
+                // 【补帧残缺防御】补帧开启时(top/右上)若输出帧数【明显少于】目标帧数(如 AMD 6750 实测 281 帧只输出 1 帧,
+                // 目标 841)——RIFE 引擎"探测可用但实际只吐第 1 帧"的静默残缺(exit 0,产出 1 帧,恰被 0帧/黑帧判断漏过)。
+                // 低于目标一半即视为残缺 → 抛错(不再把残缺当成功,避免合帧编出无效/断帧视频)。
+                bool interpEnabled = frameInterp && interpScale > 1;
+                if (interpEnabled && globalTarget > 4 && interpCount < globalTarget * 0.5)
+                {
+                    try
+                    {
+                        AppLogger.Error($"补帧残缺诊断: 期望 {globalTarget} 帧,实际仅产出 {interpCount} 帧(interpScale={interpScale}, model={interpModel}, frameScale={frameScale:0.###}, segs={segBounds.Count}, fpsMode={fpsMode})");
+                    }
+                    catch { }
+                    throw new InvalidOperationException(
+                        $"补帧失败:原本应生成 {globalTarget} 帧,实际只生成了 {interpCount} 帧(残缺严重),已中断防止输出断帧视频。" +
+                        "这通常是显卡不兼容或需要更新显卡驱动。建议在「计算设备」里换一个 GPU,或更新显卡驱动后重试。");
+                }
                 if (interpCount == 0)
                 {
                     // 【补帧 0 帧诊断】打印关键中间值,定位"补帧失败,未生成插帧"根因:
