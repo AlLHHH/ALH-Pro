@@ -213,6 +213,9 @@
                         <ComboBoxItem Content="超高清 (RIFE UHD)"/>
                         <ComboBoxItem Content="经典兼容 (RIFE v2.3)"/>
                     </ComboBox>
+                    <!-- 补帧模型提示:随所选模型动态更新,说明推荐/各模型的问题(选 v4.13 提示推荐,选其它提示风险) -->
+                    <TextBlock x:Name="InterpModelHint" FontSize="10" Opacity="0.65" TextWrapping="Wrap"
+                               Margin="0,2,0,4" Text="通用画质 v4.13 为推荐模型(帧数精确、稳定);v4.6 较旧、动漫/高清/超高清/经典兼容为老架构,只支持 2x 级联,高倍率(3x/4x以上)与指定帧率、TTA 均不支持,建议优先用 v4.13。"/>
 
                     <Button x:Name="FpsToggleBtn" Content="视频帧率 ▾" HorizontalAlignment="Stretch"
                             Click="FpsToggleBtn_Click"
