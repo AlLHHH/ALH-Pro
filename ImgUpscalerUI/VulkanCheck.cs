@@ -326,6 +326,58 @@ public static class VulkanCheck
             System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : (double?)null;
     }
 
+    /// <summary>判断本机是否存在"不稳定/有黑帧风险"的显卡(基于多年诊断包经验):
+    /// AMD 独显(补帧间歇 1帧)、RTX 50系(Blackwell ncnn 崩)、老 GTX(6/7/8/9/10 系 Vulkan 支持不全)、纯核显(共享显存高倍易不足)。
+    /// 返回 true 且 out 给出可读提示;无则 false(可能是稳的 N 卡 20/30/40 系)。</summary>
+    private static bool HasRiskyGpu(out string msg)
+    {
+        msg = "";
+        string? risky = null;   // 记录第一个命中的风险描述
+        try
+        {
+            var names = new System.Collections.Generic.List<string>();
+            try { names.AddRange(regAllNames()); } catch { }
+            bool amdDedicated = false, intelIgpu = false;
+            string? nvArch = null;
+            foreach (var n in names)
+            {
+                switch (CardKind(n))
+                {
+                    case "amd": amdDedicated = true; break;
+                    case "amd_igpu": intelIgpu = true; break;
+                    case "intel_igpu": intelIgpu = true; break;
+                }
+                if (CardKind(n) == "nvidia")
+                {
+                    var arch = NvidiaArch(n);
+                    if (arch == "blackwell") nvArch = "blackwell";
+                    else if (arch == "oldgtx") nvArch = "oldgtx";
+                }
+            }
+            if (amdDedicated) risky = "AMD 独显补帧易间歇丢帧/黑帧";
+            else if (nvArch == "blackwell") risky = "RTX 50 系 ncnn 超分易黑帧";
+            else if (nvArch == "oldgtx") risky = "较老 GTX 系列部分 GPU 加速不支持";
+            else if (intelIgpu && !amdDedicated && !names.Any(n => CardKind(n) == "nvidia" || CardKind(n) == "amd"))
+                risky = "核显(共享显存)高倍率/大图易显存不足";
+            if (risky != null)
+            {
+                msg = risky;
+                return true;
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    /// <summary>收集本机所有 GPU 名(引擎枚举 + 注册表),供风险判断用。</summary>
+    private static System.Collections.Generic.List<string> regAllNames()
+    {
+        var list = new System.Collections.Generic.List<string>();
+        try { foreach (var (_, n) in ALHPro.VulkanCheck.Devices) if (!list.Contains(n)) list.Add(n); } catch { }
+        try { foreach (var n in GpuInfo.GetAdapterNames()) if (!list.Contains(n)) list.Add(n); } catch { }
+        return list;
+    }
+
     /// <summary>生成设备自检报告(正规书面格式,无图标):逐项说明本机 GPU/显存/内存/CPU,
     /// 末尾给「建议使用哪个设备」+「此设备可能遇到的问题」。</summary>
     private static string BuildReport(bool gpuOk, System.Collections.Generic.List<(int, string)> devices, string err)
@@ -351,6 +403,8 @@ public static class VulkanCheck
             sb.Append("结论:❌ 未检测到可用显卡(GPU):本机只能 CPU 软件计算,图片放大/抠图可用,视频超分与补帧会非常慢。建议:更新显卡驱动(需支持 Vulkan),或确认显卡未被禁用。\n");
         else if (DriverTooOld(out string driverHint))
             sb.Append("结论:⚠️ 本机显卡可用,但显卡驱动偏旧(").Append(driverHint).Append(")。较新的显卡/引擎特性可能不可用,若处理中出现黑屏/崩溃/硬编失败,建议更新显卡驱动到最新版。\n");
+        else if (HasRiskyGpu(out string riskyGpuMsg))
+            sb.Append("结论:⚠️ 当前显卡可能并不完全支持 ALH Pro 的运行(").Append(riskyGpuMsg).Append(")。部分功能(高倍率补帧/超分)可能出现黑帧/崩溃/较慢,软件已自动优先用稳定路线;若仍异常,建议更新显卡驱动、降低倍率,或改用支持的显卡。\n");
         else
             sb.Append("结论:✅ 本电脑可以运行 ALH Pro。\n");
 
