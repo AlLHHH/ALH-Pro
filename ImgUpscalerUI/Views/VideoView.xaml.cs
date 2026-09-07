@@ -454,9 +454,21 @@ public sealed partial class VideoView : UserControl
         return false;
     }
 
-    // 当前计算设备(全局设置):-1 = CPU;≥0 = GPU 编号(超出枚举数按 CPU 处理)
+    // 当前计算设备(全局设置):-1 = CPU;≥0 = GPU 编号。
+    // 【关键】用"编号是否在引擎实际设备表里"判断有效性,而非"编号<数量(GpuIndex<_gpuCount)"——
+    // 引擎 -g 编号可能是稀疏/非从 0 开始的(如注册表[0 Intel][1 NVIDIA],引擎实际编号[1 NVIDIA][2 Intel]),
+    // 此时编号 2 ≥ 设备数量 2,数量比对会把它误判为无效而掉成 CPU(-1),导致明明选了独显却报"无独显/走 CPU"。
+    // 与 MainPage 启动自检同一口径(VulkanCheck.Devices.Any(d => d.Id == GpuIndex)),真机验证有效。
     private int CurrentGpuId
-        => AppSettings.GpuIndex >= 0 && AppSettings.GpuIndex < _gpuCount ? AppSettings.GpuIndex : -1;
+    {
+        get
+        {
+            if (AppSettings.GpuIndex < 0) return -1;
+            try { if (VulkanCheck.Devices.Any(d => d.Id == AppSettings.GpuIndex)) return AppSettings.GpuIndex; }
+            catch { /* 设备表未枚举时走数量兜底 */ }
+            return AppSettings.GpuIndex < _gpuCount ? AppSettings.GpuIndex : -1;
+        }
+    }
 
     /// <summary>焦点是否在文本输入控件上(此时 Del/PasDel 应交给输入框,不触发列表删除)。</summary>
     private bool IsTextInputFocused()

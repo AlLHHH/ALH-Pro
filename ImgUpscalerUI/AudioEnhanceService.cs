@@ -57,7 +57,7 @@ public static class AudioEnhanceService
         IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default)
     {
         var modelPath = FindModel()
-            ?? throw new FileNotFoundException("未找到 HT-Demucs 模型,请放入 engines\\demucs\\htdemucs.onnx");
+            ?? throw new FileNotFoundException("缺少人声分离模型:HT-Demucs。");
         await Task.Run(() => RunCore(inputWav, outputWav, target, modelPath, gpuId, vocalStrength, progress, ct), ct);
         progress?.Report((100, "完成"));
     }

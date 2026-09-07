@@ -1138,7 +1138,8 @@ public static class VideoService
                         AppLogger.Error($"补帧 0 帧诊断: frameScale={frameScale:0.###}, origCountEst={origCountEst}, frameCount={frameCount}, interpScale={interpScale}, segs={segBounds.Count}, model={interpModel}, fpsMode={fpsMode}");
                     }
                     catch { }
-                    throw new InvalidOperationException("补帧失败,未生成插帧");
+                    throw new InvalidOperationException(
+                        "补帧失败:未生成任何画面。显卡加速、备用方案和换卡都试过了仍无输出,通常是显卡不兼容或需要更新显卡驱动。建议在「计算设备」里换一个 GPU,或更新显卡驱动后重试。");
                 }
                 // 帧数对齐已移至"muxDur/outFps 已知处"(时长=源容器 × 帧率),此处不再处理(需帧率公式才能定目标)。
                 // 注:补帧诊断(输出帧数/frameScale)也移到合帧前与实际输出帧数一并打印。
@@ -2144,30 +2145,42 @@ public static class VideoService
         // 模型目录前置校验:缺失立即明确报错(而不是等下半天引擎报 stderr 尾部的晦涩错误)
         var rifeDir = Path.GetDirectoryName(rife) ?? ".";
         if (!Directory.Exists(Path.Combine(rifeDir, interpModel)))
-            throw new InvalidOperationException($"未找到补帧模型目录:{Path.Combine(rifeDir, interpModel)} — 请检查 engines/rife 下的模型文件夹(如 rife-v4.13)");
+            throw new InvalidOperationException($"缺少补帧模型:{interpModel}。");
 
         // GPU 失败自动降级:当前 GPU → 其他 GPU(多卡机:核显失败切独显)→ ONNX DirectML → CPU(与超分同策略,但优先 ONNX)
         async Task RunRifeAsync(string args, int gpuNow, int watchTotal, string? watchDir)
         {
-            // ===== 补帧降级改进 =====
-            // GPU(ncnn-vulkan)失败/黑帧时,原逻辑直接降最慢的 ncnn-CPU。而 ONNX DirectML 是独立运行时,
-            // 50 系/AMD/老卡这些"ncnn GPU 崩"的设备 DirectML 往往能正常 GPU 加速 —— 先走 ONNX 而非直接 CPU。
-            // 仅当 ONNX 不可用/失败才降 ncnn-CPU。
-            async Task TryCpuOrOnnxAsync()
+            // ===== 补帧降级链(用户指定):独显 ncnn → ONNX(DirectML GPU)→ 换卡(另一块 GPU)→ 不落 CPU =====
+            // ncnn-CPU 太慢,不做兜底。ONNX 是独立运行时(DirectML),ncnn 崩的卡 DirectML 常能正常 GPU 加速,
+            // 故优先于换卡。ONNX 内部已做"逐对失败复制原帧 + 黑帧回退",尽力出帧,不抛异常。
+            // 换卡后失败/黑帧或 ONNX 不可用且无卡可换 → 该段报错(绝不回落慢速 CPU)。
+            async Task<bool> TryOnnxAsync()
             {
-                // 有 ONNX 模型 + 能解析帧参数 → 先走 ONNX DirectML(-2 自动选设备)
                 if (RifeOnnxService.Available() && TryGetRifeOnnxFrames(args, out var onnxIn, out var onnxOut, out var onnxTarget))
                 {
-                    AppLogger.Info($"✅ 补帧降级:GPU 不可用,先改走 ONNX DirectML(rife49.onnx,DirectML→CPU)再回落");
-                    progress?.Report((0, "⚠ 补帧 GPU 不可用,改用 ONNX 稳定模型(DirectML GPU)重算..."));
+                    AppLogger.Info("✅ 补帧降级:改用 ONNX DirectML(rife49.onnx,DirectML GPU)重算该段");
+                    progress?.Report((0, "⚠ 补帧改用 ONNX 稳定模型(DirectML GPU)重算..."));
                     await RifeOnnxInterpDirAsync(onnxIn!, onnxOut!, onnxTarget, -2, watchTotal, watchDir, ct, progress).ConfigureAwait(false);
+                    return true;
+                }
+                return false;
+            }
+            // 降级链:ONNX 优先 → 换另一块 GPU(ncnn)重跑 → 无卡可换则报错(不回落 CPU)。
+            async Task TryDegradeAsync(int? altGpu)
+            {
+                if (await TryOnnxAsync().ConfigureAwait(false)) return;   // ① 先 ONNX DirectML GPU
+                if (altGpu.HasValue)                                       // ② ONNX 不可用 → 换另一张卡(ncnn)
+                {
+                    AppLogger.Info($"⚠ ONNX 不可用,改用 GPU {altGpu.Value}(另一块显卡,不落 CPU)重算该段");
+                    progress?.Report((0, $"⚠ ONNX 不可用,改用 GPU {altGpu.Value} 重算该段(不落 CPU)..."));
+                    await TryGpuAsync(altGpu.Value, null).ConfigureAwait(false);   // 换卡后再失败不再降级
                     return;
                 }
-                // 无 ONNX 模型:直接 ncnn-CPU
-                var cpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g -1");
-                await RunAsync(rife, cpuArgs, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
+                // ③ 无卡可换、ONNX 又不可用 → 该段报错(禁用 CPU 兜底)
+                throw new InvalidOperationException(
+                    "补帧失败:没有可用的加速显卡。请在「计算设备」里选一块显卡,或确认已启用显卡加速后重试。");
             }
-            // 尝试一张 GPU;失败/黑帧时传入 alt 走"换卡,再不行 ONNX→CPU"链
+            // 尝试一块 GPU(ncnn);失败/黑帧/0帧 → 走降级链(ONNX→换卡→报错),不回落 CPU。
             async Task TryGpuAsync(int g, int? altGpu)
             {
                 try
@@ -2175,7 +2188,7 @@ public static class VideoService
                     var gArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", $"-g {g}");
                     await RunAsync(rife, gArgs, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
                     // 黑帧/0帧防御:GPU 输出全黑(vkQueueSubmit 失败但退出码 0)【或不输出任何帧(空跑,退出码 0)】
-                    // → 换卡/CPU 重跑该段。0帧正是"补帧失败,未生成插帧"的根因(RIFE exit=0 却无输出,须兜底降级)。
+                    // → 走 ONNX→换卡 降级重跑该段。0帧正是"补帧失败,未生成插帧"的根因(RIFE exit=0 却无输出,须兜底降级)。
                     if (g >= 0 && watchDir != null && Directory.Exists(watchDir))
                     {
                         bool anyBad = false;
@@ -2188,29 +2201,24 @@ public static class VideoService
                         // 防误杀:段【源帧】(segIn)本来就近黑(素材黑场/淡入淡出)→ 输出黑正常,不降级
                         if ((anyBad && !DirNearBlack(segIn)) || !anyFrame)   // 黑帧 或 0帧(空跑)都降级
                         {
-                            AppLogger.Info($"⚠ 降级:补帧 GPU {g} {(anyFrame ? "输出黑帧" : "未输出任何帧(0帧)")}(GPU 队列异常),{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 ONNX/CPU")}重算该段");
-                            progress?.Report((0, $"⚠ 补帧 GPU {g} {(anyFrame ? "输出黑帧" : "未输出帧")},{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 ONNX 稳定模型重算该段...")}"));
-                            if (altGpu.HasValue)
-                                await TryGpuAsync(altGpu.Value, null).ConfigureAwait(false);   // 只再降一级:换卡后失败再走 ONNX→CPU
-                            else
-                                await TryCpuOrOnnxAsync().ConfigureAwait(false);   // 无卡可换:先 ONNX DirectML,再 ncnn-CPU
+                            AppLogger.Info($"⚠ 降级:补帧 GPU {g} {(anyFrame ? "输出黑帧" : "未输出任何帧(0帧)")}(队列异常),走 ONNX→换卡 重算该段(不落 CPU)");
+                            progress?.Report((0, $"⚠ 补帧 GPU {g} {(anyFrame ? "输出黑帧" : "未输出帧")},改用 ONNX/换卡重算该段(不落 CPU)..."));
+                            await TryDegradeAsync(altGpu).ConfigureAwait(false);   // ONNX→换卡,不回落 CPU
                         }
                     }
                 }
                 catch (InvalidOperationException ex) when (g >= 0)
                 {
-                    AppLogger.Info($"⚠ 降级:补帧 GPU {g} 失败({ex.Message.Split('\n')[0]}),{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 ONNX/CPU")}重算");
-                    progress?.Report((0, $"⚠ 补帧 GPU {g} 失败,{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 ONNX 稳定模型重算...")}"));
-                    if (altGpu.HasValue)
-                        await TryGpuAsync(altGpu.Value, null).ConfigureAwait(false);
-                    else
-                        await TryCpuOrOnnxAsync().ConfigureAwait(false);   // 无卡可换:先 ONNX DirectML,再 ncnn-CPU
+                    AppLogger.Info($"⚠ 降级:补帧 GPU {g} 失败({ex.Message.Split('\n')[0]}),走 ONNX→换卡 重算(不落 CPU)");
+                    progress?.Report((0, $"⚠ 补帧 GPU {g} 失败,改用 ONNX/换卡重算(不落 CPU)..."));
+                    await TryDegradeAsync(altGpu).ConfigureAwait(false);   // ONNX→换卡,不回落 CPU
                 }
             }
 
             if (gpuNow >= 0)
             {
-                // ① 当前用户选的 GPU;② 其他 GPU(VulkanCheck 枚举到的另一张,如核显失败切独显);③ CPU
+                // 优先独显:只跑选定的 GPU(gpuNow)。失败/黑帧/0帧 → ONNX → 换卡 → 报错(不用 CPU)。
+                // 多卡机器给 altGpu=另一块卡;单卡给 null(无卡可换时尽快报错,不落 CPU)。
                 int? alt = null;
                 try
                 {
@@ -2219,10 +2227,7 @@ public static class VideoService
                         alt = devs.FirstOrDefault(d => d.Id != gpuNow).Id;
                 }
                 catch { }
-                if (alt.HasValue)
-                    await TryGpuAsync(gpuNow, alt).ConfigureAwait(false);
-                else
-                    await TryGpuAsync(gpuNow, null).ConfigureAwait(false);   // 单卡:失败黑帧直接 CPU
+                await TryGpuAsync(gpuNow, alt).ConfigureAwait(false);
             }
             else
             {
@@ -2238,7 +2243,10 @@ public static class VideoService
                 }
                 else
                 {
-                    await RunAsync(rife, args, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
+                    // GPU 不可用(无独显/50 系 ncnn 崩)且 ONNX 模型缺失:此前会静默降 ncnn-CPU(数小时,太慢)。
+                    // 按用户要求不落 CPU:直接报错,而不是让视频慢到像卡死。
+                    throw new InvalidOperationException(
+                        "补帧失败:没有可用的显卡加速(且未检测到补帧引擎)。请在「计算设备」里选一块显卡后重试。");
                 }
             }
         }

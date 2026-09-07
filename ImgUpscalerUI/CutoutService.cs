@@ -84,8 +84,7 @@ public static class CutoutService
     {
         var model = GetModel(modelKey);
         var modelPath = EngineService.FindCutoutModel(model.FileName)
-            ?? throw new FileNotFoundException(
-                $"未找到抠图模型 {model.FileName},请安装模型包:解压到程序目录 engines\\rembg\\ 文件夹(6 个 .onnx 平铺)");
+            ?? throw new FileNotFoundException($"缺少抠图模型:{model.FileName}。");
 
         progress?.Report((5, $"加载模型({model.Label})..."));
         return await Task.Run(() =>
@@ -119,8 +118,7 @@ public static class CutoutService
     {
         var model = GetModel(modelKey);
         var modelPath = EngineService.FindCutoutModel(model.FileName)
-            ?? throw new FileNotFoundException(
-                $"未找到抠图模型 {model.FileName},请安装模型包:解压到程序目录 engines\\rembg\\ 文件夹(6 个 .onnx 平铺)");
+            ?? throw new FileNotFoundException($"缺少抠图模型:{model.FileName}。");
 
         progress?.Report((5, $"加载模型({model.Label})..."));
         return await Task.Run(() =>

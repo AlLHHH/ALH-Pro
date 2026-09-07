@@ -1304,7 +1304,7 @@ public static partial class EngineService
             var exeDir = Path.GetDirectoryName(exe)!;
             var modelDir = Path.Combine(exeDir, model);
             if (!Directory.Exists(modelDir))
-                throw new FileNotFoundException("未找到 waifu2x 模型目录: " + modelDir);
+                throw new FileNotFoundException($"缺少 waifu2x 模型:{model}。");
             // waifu2x 只支持 2 的幂倍数(2/4/8...);非 2 的幂(如 3x/1.5x)用更高倍数放大后再缩回,画质更好(不吞画质)
             var engineScale = CeilPowerOfTwo(scale);
             // 1x:引擎 -s 1 会段错误崩溃,不再直连 -s 1。不降噪直接复制原图;降噪则用 2x 降噪模型处理后高保真缩回 1x
@@ -1382,7 +1382,7 @@ public static partial class EngineService
             var exeDir = Path.GetDirectoryName(exe)!;
             var modelDir = Path.Combine(exeDir, model);
             if (!Directory.Exists(modelDir))
-                throw new FileNotFoundException("未找到 waifu2x 模型目录: " + modelDir);
+                throw new FileNotFoundException($"缺少 waifu2x 模型:{model}。");
             int engineScale = CeilPowerOfTwo(scale);
             var modelArg = Path.GetRelativePath(exeDir, modelDir);
             var args = $"-i \"{input}\" -o \"{output}\" -s {engineScale} -n {noise} " +
@@ -1484,7 +1484,7 @@ public static partial class EngineService
             var exeDir = Path.GetDirectoryName(exe)!;
             var modelDir = Path.Combine(exeDir, model);
             if (!Directory.Exists(modelDir))
-                throw new FileNotFoundException("未找到 waifu2x 模型目录: " + modelDir);
+                throw new FileNotFoundException($"缺少 waifu2x 模型:{model}。");
             var modelArg = Path.GetRelativePath(exeDir, modelDir);
             engineScale2 = CeilPowerOfTwo(scale);
             var args = $"-i \"{inDir}\" -o \"{outDir}\" -s {engineScale2} -n {noise} " +
@@ -1796,7 +1796,7 @@ public static partial class EngineService
             var exe = FindWaifu2x() ?? throw new FileNotFoundException("未找到 waifu2x 引擎");
             var modelDir = Path.Combine(Path.GetDirectoryName(exe)!, model);
             if (!Directory.Exists(modelDir))
-                throw new FileNotFoundException("未找到 waifu2x 模型目录: " + modelDir);
+                throw new FileNotFoundException($"缺少 waifu2x 模型:{model}。");
             if (engineScale == 1)
             {
                 // 与单图路径完全一致:-s 1 在部分机型段错误崩溃,不再直连;

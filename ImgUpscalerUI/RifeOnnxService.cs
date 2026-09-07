@@ -54,7 +54,7 @@ public static class RifeOnnxService
     /// gpuId=-2 表示自动(按输入尺寸:大帧 GPU/小帧 CPU,实测小帧 CPU 反而快 19 倍)。</summary>
     public static void Interp(string img0, string img1, float time, string outputPng, int gpuId = -1)
     {
-        var model = FindModel() ?? throw new FileNotFoundException("未找到 rife49.onnx(ONNX 补帧模型)");
+        var model = FindModel() ?? throw new FileNotFoundException("缺少补帧模型:rife49.onnx");
         // 运行期已确认失败的 DirectML 设备:直接 CPU(每对帧不再重复失败调用)
         if (gpuId >= 0 && _dmlBad.ContainsKey(gpuId)) gpuId = -1;
         // -2 = 自动选设备
