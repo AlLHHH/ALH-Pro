@@ -2189,6 +2189,8 @@ public static class VideoService
                     await RunAsync(rife, gArgs, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
                     // 黑帧/0帧防御:GPU 输出全黑(vkQueueSubmit 失败但退出码 0)【或不输出任何帧(空跑,退出码 0)】
                     // → 走 ONNX→换卡 降级重跑该段。0帧正是"补帧失败,未生成插帧"的根因(RIFE exit=0 却无输出,须兜底降级)。
+                    // 补充【残缺帧数防御】:RIFE 偶发"只输出第 1 帧就 exit 0"(AMD 6750 GRE 实测 140→1 帧,间歇性)——
+                    // 此时有帧非黑帧,但帧数远少于目标,须触发降级而非当成功。
                     if (g >= 0 && watchDir != null && Directory.Exists(watchDir))
                     {
                         bool anyBad = false;
@@ -2204,6 +2206,17 @@ public static class VideoService
                             AppLogger.Info($"⚠ 降级:补帧 GPU {g} {(anyFrame ? "输出黑帧" : "未输出任何帧(0帧)")}(队列异常),走 ONNX→换卡 重算该段(不落 CPU)");
                             progress?.Report((0, $"⚠ 补帧 GPU {g} {(anyFrame ? "输出黑帧" : "未输出帧")},改用 ONNX/换卡重算该段(不落 CPU)..."));
                             await TryDegradeAsync(altGpu).ConfigureAwait(false);   // ONNX→换卡,不回落 CPU
+                        }
+                        else
+                        {
+                            // 帧数残缺检测:统计输出目录实际帧数,若远少于目标帧数(如 < 一半)判残缺 → 降级
+                            int outCount = Directory.EnumerateFiles(watchDir, "*.png").Count();
+                            if (watchTotal > 4 && outCount < watchTotal * 0.5)
+                            {
+                                AppLogger.Info($"⚠ 降级:补帧 GPU {g} 输出残缺(仅 {outCount}/{watchTotal} 帧,疑似引擎静默丢帧),走 ONNX→换卡 重算该段(不落 CPU)");
+                                progress?.Report((0, $"⚠ 补帧 GPU {g} 输出残缺({outCount}/{watchTotal} 帧),改用 ONNX/换卡重算该段..."));
+                                await TryDegradeAsync(altGpu).ConfigureAwait(false);
+                            }
                         }
                     }
                 }
