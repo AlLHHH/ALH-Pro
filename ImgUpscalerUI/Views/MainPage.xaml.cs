@@ -556,9 +556,9 @@ public sealed partial class MainPage : Page
     // ---------- 更新检查 ----------
     /// <summary>更新检查主循环(后台,不阻塞前台):启动立即查一次,之后每 30 分钟再查(次数少但有)。
     /// 逻辑:
-    /// ① 设置勾选「不再显示更新弹窗」→ 全程不弹;
-    /// ② 启动时若【已记录待提示的新版】(上次查到但没等到 10 分钟/没弹)→ 立即弹,不再等;
-    /// ③ 否则检查:发现新版 → 记录 PendingUpdateTag + 【延迟10分钟】再弹(给作者留传包时间);
+    /// ① 设置勾选「不再提示更新」→ 全程不显示;
+    /// ② 启动时若【已记录待提示的新版】(上次查到但没等到 10 分钟/没显示)→ 立即显示,不再等;
+    /// ③ 否则检查:发现新版 → 记录 PendingUpdateTag + 【延迟10分钟】再显示(给作者留传包时间);
     /// ④ 已最新 → 无感。</summary>
     private async Task CheckUpdateSilentAsync()
     {
@@ -571,8 +571,8 @@ public sealed partial class MainPage : Page
                 if (!string.IsNullOrWhiteSpace(AppSettings.PendingUpdateTag))
                 {
                     string pendingTag = AppSettings.PendingUpdateTag;
-                    AppSettings.PendingUpdateTag = ""; AppSettings.Save();   // 已取走,弹窗成功后会标记不重复
-                    DispatcherQueue.TryEnqueue(() => ShowUpdatePopup(pendingTag));
+                    AppSettings.PendingUpdateTag = ""; AppSettings.Save();   // 已取走,横幅显示成功后会标记不重复
+                    DispatcherQueue.TryEnqueue(() => ShowUpdateBar(pendingTag));
                 }
                 else
                 {
@@ -580,8 +580,8 @@ public sealed partial class MainPage : Page
                     if (r is { HasNew: true })
                     {
                         var (_, tag, _) = r.Value;
-                        AppSettings.PendingUpdateTag = tag; AppSettings.Save();   // 记录:本次延迟10分钟弹;没弹到则下次启动直接弹
-                        // 延迟 10 分钟再提示(给作者留上传时间);【测试模式 ALH_FORCE_UPDATE=1 跳过延迟,立即显示】
+                        AppSettings.PendingUpdateTag = tag; AppSettings.Save();   // 记录:本次延迟10分钟显示;没显示到则下次启动直接显示
+                        // 延迟 10 分钟再显示(给作者留上传时间);【测试模式 ALH_FORCE_UPDATE=1 跳过延迟,立即显示】
                         if (Environment.GetEnvironmentVariable("ALH_FORCE_UPDATE") != "1")
                         {
                             try { await Task.Delay(TimeSpan.FromMinutes(10)).ConfigureAwait(false); } catch { return; }
@@ -590,7 +590,7 @@ public sealed partial class MainPage : Page
                         {
                             string t = AppSettings.PendingUpdateTag;
                             AppSettings.PendingUpdateTag = ""; AppSettings.Save();
-                            DispatcherQueue.TryEnqueue(() => ShowUpdatePopup(t));
+                            DispatcherQueue.TryEnqueue(() => ShowUpdateBar(t));
                         }
                     }
                     // 已最新/失败 → 无感(不反复弹;下次周期再查)
@@ -602,59 +602,17 @@ public sealed partial class MainPage : Page
         }
     }
 
-    /// <summary>弹出「发现新版本」升级弹窗(模态,更醒目;用户点关闭 → 本次运行不再提示,下次启动仍会显示,除非设置勾选不再显示)。</summary>
-    private void ShowUpdatePopup(string latestTag)
+    /// <summary>显示顶部「发现新版本」横幅(不弹窗,温和不打断;点按钮跳转,点 ✕ 本次不再显示)。
+    /// 用户点关闭 → 本次运行不再提示,下次启动仍会显示,除非设置勾选「不再提示更新」。</summary>
+    private void ShowUpdateBar(string latestTag)
     {
         try
         {
-            if (_updatePromptShownThisRun) return;   // 本次运行已提醒过(用户本次点过关闭),不再重复弹
+            if (_updatePromptShownThisRun) return;   // 本次运行已提醒过(用户本次点过关闭),不再重复显示
             _updatePromptShownThisRun = true;
             string cur = UpdateChecker.CurrentVersion;
-            var panel = new StackPanel { Spacing = 10 };
-            panel.Children.Add(new TextBlock
-            {
-                FontSize = 13, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-                Text = $"检测到新版本 {latestTag}(当前 v{cur})。\n建议更新以获得新功能与修复。",
-            });
-            panel.Children.Add(new TextBlock
-            {
-                FontSize = 11, Opacity = 0.6, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-                Text = "更新为免费,可在 GitHub 或网盘下载安装包;更新不会丢失您的设置。",
-            });
-            var dlg = new Microsoft.UI.Xaml.Controls.ContentDialog
-            {
-                Title = "发现新版本 · ALH Pro",
-                Content = panel,
-                PrimaryButtonText = "去下载",
-                SecondaryButtonText = "网盘下载",
-                CloseButtonText = "本次不再提示",
-                DefaultButton = Microsoft.UI.Xaml.Controls.ContentDialogButton.Primary,
-            };
-            try { dlg.XamlRoot = Content.XamlRoot; } catch { }
-            // 关掉后本次运行不再重复弹(_updatePromptShownThisRun 已置 true);下次启动仍会检查(除非设置勾选不再显示)
-            _ = ShowUpdatePopupAsync(dlg);
-        }
-        catch { }
-    }
-
-    /// <summary>弹窗后根据用户点哪个按钮跳转。Primary=GitHub 下载页,Secondary=网盘,Close=本次不再提示。</summary>
-    private async Task ShowUpdatePopupAsync(Microsoft.UI.Xaml.Controls.ContentDialog dlg)
-    {
-        try
-        {
-            var result = await dlg.ShowAsync();
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                if (result == Microsoft.UI.Xaml.Controls.ContentDialogResult.Primary)
-                {
-                    try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(UpdateChecker.ReleasePageUrl) { UseShellExecute = true }); } catch { }
-                }
-                else if (result == Microsoft.UI.Xaml.Controls.ContentDialogResult.Secondary)
-                {
-                    try { OpenNetDisk(); } catch { }
-                }
-                // Close = 本次不再提示(已由 _updatePromptShownThisRun 保证不再弹)
-            });
+            UpdateBarText.Text = $"发现新版本 {latestTag}(当前 v{cur}) — 建议更新以获得新功能与修复。更新免费,可在 GitHub 或网盘下载;更新不会丢失您的设置。";
+            UpdateBar.Visibility = Visibility.Visible;
         }
         catch { }
     }
@@ -3105,16 +3063,16 @@ public sealed partial class MainPage : Page
             FontSize = 10, Opacity = 0.5, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
 
-        // 更新弹窗开关:勾选后不再弹「发现新版本」升级弹窗(用户可随时在设置里恢复)。
+        // 更新提示开关:勾选后不再显示「发现新版本」顶部横幅(用户可随时在设置里恢复)。
         var hideUpd = new CheckBox
         {
             Content = "不再提示更新",
             IsChecked = AppSettings.HideUpdatePopup,
         };
         ToolTipService.SetToolTip(hideUpd,
-            "检测到新版本时,软件会弹「发现新版本」升级提示。勾选此项后不再弹出(仅提示条/手动检查仍可用);取消勾选可恢复提醒。");
-        hideUpd.Checked += (_, _) => { AppSettings.HideUpdatePopup = true; AppSettings.Save(); AppLogger.Info("已开启「不再提示更新」(更新弹窗不再弹出)"); };
-        hideUpd.Unchecked += (_, _) => { AppSettings.HideUpdatePopup = false; AppSettings.Save(); AppLogger.Info("已关闭「不再提示更新」(恢复更新弹窗提醒)"); };
+            "检测到新版本时,软件顶部会显示「发现新版本」提示条。勾选此项后不再显示(手动检查更新仍可用);取消勾选可恢复提醒。");
+        hideUpd.Checked += (_, _) => { AppSettings.HideUpdatePopup = true; AppSettings.Save(); AppLogger.Info("已开启「不再提示更新」(更新提示条不再显示)"); };
+        hideUpd.Unchecked += (_, _) => { AppSettings.HideUpdatePopup = false; AppSettings.Save(); AppLogger.Info("已关闭「不再提示更新」(恢复更新提示条提醒)"); };
         content.Children.Add(hideUpd);
 
         ShowCardPopup(content, "设置", 560);

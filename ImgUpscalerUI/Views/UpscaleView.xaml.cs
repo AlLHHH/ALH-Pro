@@ -687,10 +687,20 @@ public sealed partial class UpscaleView : UserControl
         public string OutDir { get; set; } = "";
     }
 
-    /// <summary>当前计算设备:末项(CPU)返回 -1,其余为 GPU 编号。</summary>
-    /// <summary>当前计算设备(全局设置):-1=CPU,≥0=GPU 编号(超出枚举数按 CPU 处理)。</summary>
+    /// <summary>当前计算设备(全局设置):-1=CPU,≥0=GPU 编号。
+    /// 【关键】按"编号是否在引擎实际设备表里"判断有效性,而非"编号<数量(_gpuCount)"——
+    /// 引擎 -g 编号可能稀疏/非从 0 开始,编号≥数量会被误判为无效而掉成 -1(CPU),导致选了独显却报"无独显/走 CPU"。
+    /// 与 MainPage 启动自检同一口径(VulkanCheck.Devices.Any(d => d.Id == GpuIndex))。</summary>
     private int CurrentGpuId
-        => AppSettings.GpuIndex >= 0 && AppSettings.GpuIndex < _gpuCount ? AppSettings.GpuIndex : -1;
+    {
+        get
+        {
+            if (AppSettings.GpuIndex < 0) return -1;
+            try { if (VulkanCheck.Devices.Any(d => d.Id == AppSettings.GpuIndex)) return AppSettings.GpuIndex; }
+            catch { /* 设备表未枚举时走数量兜底 */ }
+            return AppSettings.GpuIndex < _gpuCount ? AppSettings.GpuIndex : -1;
+        }
+    }
 
     private void UpdateRunState()
     {

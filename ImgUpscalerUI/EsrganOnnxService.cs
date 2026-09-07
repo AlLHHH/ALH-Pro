@@ -174,8 +174,7 @@ public static class EsrganOnnxService
         string? modelPath = null, InferenceSession? sessionOverride = null)
     {
         modelPath ??= FindModel()
-            ?? throw new FileNotFoundException(
-                "未找到 RealESRGAN_x4plus.onnx,请放入 engines/rembg/ 目录(或程序目录)");
+            ?? throw new FileNotFoundException("缺少超分模型:RealESRGAN_x4plus.onnx。");
         // -2 = 自动选设备(按输入尺寸)
         try
         {
@@ -208,7 +207,7 @@ public static class EsrganOnnxService
         Directory.CreateDirectory(outputDir);
         if (files.Length == 0) return;
         modelPath ??= FindModel()
-            ?? throw new FileNotFoundException("未找到 ONNX 超分模型");
+            ?? throw new FileNotFoundException("缺少超分模型:RealESRGAN_x4plus.onnx。");
         // -2 = 每帧自动选设备(视频帧通常大,落 GPU;小帧自动 CPU)
         bool auto = gpuId == -2;
         // 决定会话数:GPU 走 2 路并行(DirectML 多会话);CPU 保持 1(CPU 多会话每帧建会增加开销)
