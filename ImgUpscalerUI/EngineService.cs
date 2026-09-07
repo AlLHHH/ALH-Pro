@@ -31,26 +31,8 @@ public static partial class EngineService
         catch { return false; }
     }
 
-    /// <summary>指定引擎 -g 编号的 GPU 是否为 AMD(独显/核显)。用于补帧/超分:AMD 的 ncnn-Vulkan
-    /// 目录模式不可靠(1×1 探测能过、整段输出残缺/丢帧,实测 RX 6750 GRE 281 帧只出 1 帧),
-    /// 故对其改走更稳的 ONNX(DirectML)路线。</summary>
-    public static bool IsAmdGpu(int engineGpu)
-    {
-        try
-        {
-            string? name = GpuInfo.GetEngineDeviceName(engineGpu);
-            if (!string.IsNullOrWhiteSpace(name) && (name.Contains("AMD", StringComparison.OrdinalIgnoreCase)
-                || name.Contains("Radeon", StringComparison.OrdinalIgnoreCase)))
-                return true;
-            // 设备名匹配不到(引擎未枚举/编号错位)→ 回退:任一设备是 AMD 即按 AMD 处理
-            return VulkanCheck.Devices.Any(d => d.Name.Contains("AMD", StringComparison.OrdinalIgnoreCase)
-                || d.Name.Contains("Radeon", StringComparison.OrdinalIgnoreCase));
-        }
-        catch { return false; }
-    }
-    /// 非风险设备(常规 GPU)默认 ncnn(GPU 更快),避免无谓切换。
-    /// 【修复】只要【任一】Real-ESRGAN ONNX 模型存在(通用 x4plus 或 动漫 animevideo)即可走 ONNX;
-    /// 此前只认 x4plus,导致 Blackwell/风险设备上"仅有动漫 ONNX"时仍误判不走 ONNX → 走会崩的 ncnn-GPU。</summary>
+    /// <summary>照片超分(Real-ESRGAN)是否应走 ONNX 路线:
+    /// ①Blackwell(ncnn-Vulkan 崩)②无独显/Vulkan 不可用(只能 CPU,而 ncnn CPU 也崩)—— 都走 ONNX(DML/CPU 稳)。
     public static bool ShouldUseOnnxEsrgan()
     {
         if (EsrganOnnxService.FindModel() == null && EsrganOnnxService.FindAnimeVideoModel() == null)
