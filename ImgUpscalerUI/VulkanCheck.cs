@@ -260,12 +260,77 @@ public static class VulkanCheck
         return "other";
     }
 
+    /// <summary>判断本机【主独立显卡】驱动是否过旧(会有硬件加速不可用/性能退化)。基于注册表驱动版本
+    /// (NVIDIA/AMD/Intel 都能读到)。返回 true 且 out 给出可读提示。阈值保守,避免误伤:
+    /// NVIDIA:硬编(nvenc)需 ≥610.00;AMD:Vulkan 需较新;Intel Arc:需较新。</summary>
+    private static bool DriverTooOld(out string hint)
+    {
+        hint = "";
+        try
+        {
+            var names = GpuInfo.GetAdapterNames();
+            var vers = GpuInfo.GetDriverVersions();
+            if (names.Count == 0 || names.Count != vers.Count) return false;
+            for (int i = 0; i < names.Count; i++)
+            {
+                var n = names[i];
+                var v = vers[i];
+                if (string.IsNullOrWhiteSpace(v)) continue;
+                if (n.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase))
+                {
+                    // 注册表驱动形如 32.0.15.6070 → 对外 560.70。阈值保守(仅提示很旧的驱动,避免误伤正常机器):
+                    // 真正会给 nvenc/ONNX 带来问题的老驱动,通常对外 < 460(如 2022 年前的 46x 系)。
+                    double? branch = ParseNvidiaBranch(v);
+                    if (branch.HasValue && branch.Value < 460.0)
+                    {
+                        hint = $"{n} 驱动 {branch.Value:0.00}";
+                        return true;
+                    }
+                }
+                else if (n.Contains("Radeon", StringComparison.OrdinalIgnoreCase)
+                    || n.Contains("AMD", StringComparison.OrdinalIgnoreCase))
+                {
+                    // AMD 独显:老驱动 Vulkan 兼容差,低于 23.x 提示(保守,避免误报)
+                    double? maj = ParseFirstSegment(v);
+                    if (maj.HasValue && maj.Value < 23.0)
+                    {
+                        hint = $"{n} 驱动 {v}";
+                        return true;
+                    }
+                }
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    /// <summary>NVIDIA 驱动注册表版本(如 32.0.15.6070)→ 对外分支号(如 560.70)。
+    /// 观察:32.0.15.6070→560.70、32.0.15.7283→572.83。规则:取第 4 段 ABCD → 对外 500+AB.CD(AB=前两位,CD=后两位)。</summary>
+    private static double? ParseNvidiaBranch(string ver)
+    {
+        var m = Regex.Match(ver, @"(?:^|\.)(\d{4})$");
+        if (!m.Success) return null;
+        if (!int.TryParse(m.Groups[1].Value, out var abcd) || abcd < 1000) return null;
+        // ABCD → 对外 500+AB.CD(已验证:6070→560.70,7283→572.83)
+        int ab = abcd / 100, cd = abcd % 100;
+        double branch = 500.0 + ab;
+        double minor = cd / 100.0;
+        return branch + minor;
+    }
+
+    /// <summary>取版本字符串首段数字(如 "23.3.1" → 23;AMD 老驱动判断用)。</summary>
+    private static double? ParseFirstSegment(string ver)
+    {
+        var m = Regex.Match(ver, @"(\d+(?:\.\d+)?)");
+        return m.Success && double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : (double?)null;
+    }
+
     /// <summary>生成设备自检报告(正规书面格式,无图标):逐项说明本机 GPU/显存/内存/CPU,
     /// 末尾给「建议使用哪个设备」+「此设备可能遇到的问题」。</summary>
     private static string BuildReport(bool gpuOk, System.Collections.Generic.List<(int, string)> devices, string err)
     {
         var regNames = GpuInfo.GetAdapterNames();
-        // 品牌识别(引擎识别 + 系统枚举合并)
         bool hasIntel = false, hasAmd = false, hasNvidia = false;
         void Mark(string n)
         {
@@ -278,6 +343,16 @@ public static class VulkanCheck
 
         var sb = new StringBuilder();
         sb.Append("设备自检报告").Append('\n');
+
+        // ===== 明确结论(一行,用户一眼看懂能不能用)=====
+        if (!string.IsNullOrEmpty(err))
+            sb.Append("结论:❌ 检测异常:无法确定本机能否正常运行,请更新显卡驱动后重新检测,或到窗口右下角导出诊断包反馈。\n");
+        else if (!gpuOk)
+            sb.Append("结论:❌ 未检测到可用显卡(GPU):本机只能 CPU 软件计算,图片放大/抠图可用,视频超分与补帧会非常慢。建议:更新显卡驱动(需支持 Vulkan),或确认显卡未被禁用。\n");
+        else if (DriverTooOld(out string driverHint))
+            sb.Append("结论:⚠️ 本机显卡可用,但显卡驱动偏旧(").Append(driverHint).Append(")。较新的显卡/引擎特性可能不可用,若处理中出现黑屏/崩溃/硬编失败,建议更新显卡驱动到最新版。\n");
+        else
+            sb.Append("结论:✅ 本电脑可以运行 ALH Pro。\n");
 
         // 计算设备
         if (!string.IsNullOrEmpty(err))
