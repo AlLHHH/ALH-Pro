@@ -817,6 +817,16 @@ public sealed partial class VideoView : UserControl
         Scale16xRadio.Opacity = v4Model ? 1.0 : 0.5;
         if (!v4Model && InterpScaleRadios.SelectedIndex is 1 or 4 or 5)
             InterpScaleRadios.SelectedIndex = 0;
+        // 补帧模型提示:随所选模型更新,说明推荐 / 其它模型的问题(选 v4.13 提示推荐,选其它提示局限)
+        {
+            string hint = InterpModelCombo.SelectedIndex switch
+            {
+                0 => "推荐:通用画质 v4.13(最新,支持任意帧数精确补齐,最稳).",
+                1 => "通用画质 v4.6:较旧版本,支持任意帧数补帧,但效果/稳定性略逊于 v4.13.",
+                _ => "非 v4 老架构(动漫/高清/超高清/经典兼容):仅支持 2x 级联,不支持 3x/4x 以上、指定目标帧率与「高质量 TTA」,高倍率或复杂场景可能出问题.建议优先用 v4.13.",
+            };
+            InterpModelHint.Text = hint;
+        }
         // 指定输出帧率:v2 模型(只能 2 的幂级联)无法精确实现任意目标帧率 → 置灰并提示
         TargetFpsCheck.IsEnabled = interp && v4Model;
         TargetFpsCheck.Opacity = interp && v4Model ? 1.0 : 0.5;
