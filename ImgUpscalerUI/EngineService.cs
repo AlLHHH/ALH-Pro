@@ -1910,8 +1910,11 @@ public static partial class EngineService
     /// 按内容解码(SourceBitmap 按魔数识别),故也接受 .png 名但实际为 JPG 字节的文件;供视频流水线「引擎输出转 JPG」复用。</summary>
     public static void ConvertPngToJpg(string pngPath, string jpgPath, float quality = 0.96f)
     {
+        // 视频中间帧 JPG:直接走 System.Drawing(GDI,转 24bppRgb 规避色偏),不走 WinRT——
+        // WinRT BitmapEncoder 在后台/非 UI 线程会系统性抛 HRESULT=0x88982F41(视频处理必失败),
+        // 导致每次视频处理都刷"WinRT JPG 编码不可用"日志 + 白试一次。GDI 在后台线程可靠、不刷日志。
         using var img = new System.Drawing.Bitmap(pngPath);
-        SaveJpegViaWinRT(img, jpgPath, quality);
+        SaveJpegViaGdi(img, jpgPath, quality);
     }
 
     /// <summary>
