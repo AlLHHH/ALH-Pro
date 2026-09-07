@@ -1409,20 +1409,40 @@ public sealed partial class VideoView : UserControl
             if (!File.Exists(SettingsFile))
             {
                 _settingsLoaded = true;   // 首次使用(无文件):放行保存,否则永远记不住
+                AppLogger.Warn("[记忆] 视频设置加载: 文件不存在(首次使用),放行保存");
                 return;
             }
             var d = System.Text.Json.JsonSerializer.Deserialize<VideoSettings>(File.ReadAllText(SettingsFile));
-            if (d is null) { _settingsLoaded = true; return; }
-            // 诊断:记录设置文件读到的值与时间戳(排查"记不住码率/格式")
-            AppLogger.Info($"[记忆] 视频设置加载: Quality={d.Quality}, Format={d.Format}, Codec={d.Codec}, Remember={d.Remember}, 文件时间={File.GetLastWriteTime(SettingsFile):HH:mm:ss}");
+            if (d is null) { _settingsLoaded = true; AppLogger.Warn("[记忆] 视频设置加载: 反序列化返回 null,放弃恢复"); return; }
+            AppLogger.Info($"[记忆] 视频设置加载: Remember={d.Remember}, Up={d.Up}, Engine={d.Engine}, Scale={d.Scale}, Model={d.Model}, InterpScale={d.InterpScale}, Quality={d.Quality}, Format={d.Format}, Codec={d.Codec}, 文件时间={File.GetLastWriteTime(SettingsFile):HH:mm:ss}");
             _suppressEvents = true;
             VideoRememberCheck.IsChecked = d.Remember;
-            if (d.Remember) ApplyVideoParams(d);
+            if (d.Remember)
+            {
+                try
+                {
+                    ApplyVideoParams(d);
+                    AppLogger.Info($"[记忆] 视频设置恢复完成: 界面 Engine={VideoEngineRadios.SelectedIndex}, Scale={VideoScaleRadios.SelectedIndex}, Model={InterpModelCombo.SelectedIndex}, Quality={QualityCombo.SelectedIndex}, Format={FormatCombo.SelectedIndex}, Codec={CodecCombo.SelectedIndex}");
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn($"[记忆] ApplyVideoParams 恢复中断: {ex.Message} | 堆栈 {ex.StackTrace}");
+                }
+            }
+            else
+            {
+                AppLogger.Warn("[记忆] 视频设置 Remember=False,未恢复任何参数");
+            }
             _suppressEvents = false;
             _settingsLoaded = true;   // 加载完成,此后才允许保存(防构造/加载期 -1 污染)
             UpdateOptions();   // 恢复后刷新 UI 状态(自定义分辨率面板显隐/提示/滑条数值等)
         }
-        catch { _suppressEvents = false; _settingsLoaded = true; }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"[记忆] 视频设置加载异常: {ex.Message} | {ex.StackTrace}");
+            _suppressEvents = false;
+            _settingsLoaded = true;
+        }
     }
 
     /// <summary>把一份 VideoSettings 快照应用到当前页面 UI(校验范围后赋值,避免越界)。
@@ -1466,7 +1486,7 @@ public sealed partial class VideoView : UserControl
         if (VideoEsrganModelCombo.Items.Count > 0 && d.UpEsrganModel is >= 0 && d.UpEsrganModel < VideoEsrganModelCombo.Items.Count)
             VideoEsrganModelCombo.SelectedIndex = d.UpEsrganModel;
         else VideoEsrganModelCombo.SelectedIndex = 0;
-        if (d.InterpScale is >= 0 and <= 3) InterpScaleRadios.SelectedIndex = d.InterpScale;
+        if (d.InterpScale is >= 0 and <= 5) InterpScaleRadios.SelectedIndex = d.InterpScale;   // 补帧倍率 0~5=2x/3x/4x/8x/12x/16x(旧只<=3,漏了12x/16x导致选高倍率重开回默认2x)
         TargetFpsCheck.IsChecked = d.Target;
         if (!string.IsNullOrWhiteSpace(d.TargetFps)) TargetFpsBox.Text = d.TargetFps;
         if (d.VfrMode is 0 or 1) VfrModeRadios.SelectedIndex = d.VfrMode;
@@ -1980,7 +2000,7 @@ public sealed partial class VideoView : UserControl
             Model = InterpModelCombo.SelectedIndex,
             UpWaifu2xModel = VideoWaifu2xModelCombo.SelectedIndex,   // 超分 waifu2x 模型
             UpEsrganModel = VideoEsrganModelCombo.SelectedIndex,    // 超分 Real-ESRGAN 模型
-            InterpScale = InterpScaleRadios.SelectedIndex,
+            InterpScale = InterpScaleRadios.SelectedIndex >= 0 ? InterpScaleRadios.SelectedIndex : 0,
             Target = TargetFpsCheck.IsChecked == true,
             TargetFps = TargetFpsBox.Text,
             VfrMode = VfrModeRadios.SelectedIndex,
