@@ -4306,6 +4306,30 @@ public sealed partial class VideoView : UserControl
             VideoStatus.Text = $"完成 {okCount} 个";
             var taskSpan = DateTime.Now - taskStart;
             Log($"任务结束:成功 {okCount},失败 {failCount},耗时 {(int)taskSpan.TotalMinutes}分{taskSpan.Seconds}秒,输出 {outputFiles.Count} 个文件");
+            // 写入"最近一次任务摘要"(诊断包带上,快速定位黑帧/补帧/编码等问题,不用在超长日志里翻)
+            try
+            {
+                var summary = new System.Text.StringBuilder();
+                summary.AppendLine($"ALH Pro 视频任务 {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                summary.AppendLine($"结果:成功 {okCount},失败 {failCount},耗时 {taskSpan.TotalSeconds:0.#}s,输出 {outputFiles.Count} 个");
+                foreach (var it in items)
+                {
+                    try
+                    {
+                        summary.AppendLine($"  文件: {System.IO.Path.GetFileName(it.Path)}");
+                        summary.AppendLine($"    状态: {it.StatusText}");
+                        if (it.OutputInfo != null && it.OutputInfo.Length > 0) summary.AppendLine($"    输出: {it.OutputInfo}");
+                    }
+                    catch { }
+                }
+                if (_failReasons.Count > 0)
+                {
+                    summary.AppendLine("失败原因:");
+                    foreach (var r in _failReasons) summary.AppendLine("  · " + r);
+                }
+                AppLogger.WriteTaskSummary(summary.ToString());
+            }
+            catch { }
             // 耗时经验库:全部成功才算有效样本(失败会扭曲每帧成本),记录"秒/帧"(按总面积归一)
             if (okCount > 0 && failCount == 0 && totalFramesEst > 0 && taskSpan.TotalSeconds > 10)
             {

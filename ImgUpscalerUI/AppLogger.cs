@@ -36,6 +36,21 @@ public static class AppLogger
     /// <summary>日志目录(LocalAppData\ALHPro)。</summary>
     public static string LogDir => Path.GetDirectoryName(LogFile)!;
 
+    /// <summary>最近一次视频任务摘要文件(记录该次任务的:配置 + 各阶段结果/耗时/错误,供诊断包快速定位)。</summary>
+    public static string LastTaskSummaryFile => Path.Combine(LogDir, "最近任务摘要.txt");
+
+    /// <summary>写入"最近一次视频处理任务"的摘要(覆盖式,只保留最近一次)。关键中间值/阶段结果集中一处,
+    /// 诊断包带上后,不用在超长日志里翻。失败/排障场景最有用。</summary>
+    public static void WriteTaskSummary(string content)
+    {
+        try
+        {
+            lock (Lock)
+                File.WriteAllText(LastTaskSummaryFile, content, new UTF8Encoding(true));
+        }
+        catch { /* 写失败忽略 */ }
+    }
+
     /// <summary>日志清理配置路径(诊断包需要带上,排查"日志被清理/丢失")。</summary>
     public static string LogSettingsFile => Path.Combine(LogDir, "log-settings.json");
 
