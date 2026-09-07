@@ -2174,19 +2174,22 @@ public static class VideoService
                 {
                     var gArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", $"-g {g}");
                     await RunAsync(rife, gArgs, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
-                    // 黑帧防御:GPU 输出全黑(vkQueueSubmit 失败但退出码 0)→ 换卡/CPU 重跑该段
+                    // 黑帧/0帧防御:GPU 输出全黑(vkQueueSubmit 失败但退出码 0)【或不输出任何帧(空跑,退出码 0)】
+                    // → 换卡/CPU 重跑该段。0帧正是"补帧失败,未生成插帧"的根因(RIFE exit=0 却无输出,须兜底降级)。
                     if (g >= 0 && watchDir != null && Directory.Exists(watchDir))
                     {
-                        bool anyBlack = false;
+                        bool anyBad = false;
+                        bool anyFrame = false;
                         foreach (var f in Directory.EnumerateFiles(watchDir, "*.png").Take(4))
                         {
-                            try { if (EngineService.IsBlackPngStrict(f)) { anyBlack = true; break; } } catch { }
+                            anyFrame = true;
+                            try { if (EngineService.IsBlackPngStrict(f)) { anyBad = true; break; } } catch { }
                         }
                         // 防误杀:段【源帧】(segIn)本来就近黑(素材黑场/淡入淡出)→ 输出黑正常,不降级
-                        if (anyBlack && !DirNearBlack(segIn))
+                        if ((anyBad && !DirNearBlack(segIn)) || !anyFrame)   // 黑帧 或 0帧(空跑)都降级
                         {
-                            AppLogger.Info($"⚠ 降级:补帧 GPU {g} 输出黑帧(GPU 队列异常),{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 ONNX/CPU")}重算该段");
-                            progress?.Report((0, $"⚠ 补帧 GPU {g} 输出黑帧,{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 ONNX 稳定模型重算该段...")}"));
+                            AppLogger.Info($"⚠ 降级:补帧 GPU {g} {(anyFrame ? "输出黑帧" : "未输出任何帧(0帧)")}(GPU 队列异常),{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 ONNX/CPU")}重算该段");
+                            progress?.Report((0, $"⚠ 补帧 GPU {g} {(anyFrame ? "输出黑帧" : "未输出帧")},{(altGpu.HasValue ? $"改用 GPU {altGpu.Value}" : "改用 ONNX 稳定模型重算该段...")}"));
                             if (altGpu.HasValue)
                                 await TryGpuAsync(altGpu.Value, null).ConfigureAwait(false);   // 只再降一级:换卡后失败再走 ONNX→CPU
                             else
