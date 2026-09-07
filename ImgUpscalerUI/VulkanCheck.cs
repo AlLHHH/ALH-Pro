@@ -378,6 +378,24 @@ public static class VulkanCheck
         return list;
     }
 
+    /// <summary>DirectML(ONNX 加速)是否可用:有 ONNX 超分/补帧模型 + DirectML 探测确认到可用设备。
+    /// Vulkan 与 DirectML 是两套独立运行时;Vulkan 不可用 ≠ DirectML 不可用,故用它修正"只能 CPU"误判。
+    /// 仅当 DirectML 探测【已完成且找到设备】(DmlFallbackOk>=0)才报可用,否则保守按不可用(避免误导)。</summary>
+    private static bool DmlAvailable()
+    {
+        try
+        {
+            // DirectML 探测确认有可用设备(DmlFallbackOk = _dmlFirstOk,>=0 表示找到可建 DirectML 会话的设备)
+            bool dmlDevice = ALHPro.EsrganOnnxService.DmlFallbackOk >= 0;
+            if (!dmlDevice) return false;
+            // 有 ONNX 超分/补帧模型才可能走 ONNX
+            return ALHPro.EsrganOnnxService.FindModel() != null
+                || ALHPro.EsrganOnnxService.FindWaifu2xModel() != null
+                || ALHPro.RifeOnnxService.Available();
+        }
+        catch { return false; }
+    }
+
     /// <summary>生成设备自检报告(正规书面格式,无图标):逐项说明本机 GPU/显存/内存/CPU,
     /// 末尾给「建议使用哪个设备」+「此设备可能遇到的问题」。</summary>
     private static string BuildReport(bool gpuOk, System.Collections.Generic.List<(int, string)> devices, string err)
@@ -443,6 +461,9 @@ public static class VulkanCheck
             sb.Append("可用性:GPU 加速暂不可用,建议使用 CPU(软件计算)稳妥处理\n");
         else if (gpuOk)
             sb.Append("可用性:GPU 加速可用,可正常进行图片放大、AI 抠图与视频处理\n");
+        else if (DmlAvailable())
+            // Vulkan 不可用但 DirectML 可用:超分/补帧走 ONNX(DirectML GPU),不是纯 CPU——纠正此前"只能 CPU"误判
+            sb.Append("可用性:Vulkan GPU 不可用,但 ONNX/DirectML 可用,超分与补帧走 ONNX(DirectML GPU)仍能 GPU 加速\n");
         else
             sb.Append("可用性:仅 CPU(软件计算)可用\n");
 
