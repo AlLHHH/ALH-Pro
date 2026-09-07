@@ -1129,7 +1129,17 @@ public static class VideoService
 
                 var interpCount = EnumerateFrameFiles(framesFinal).Count();   // 补帧输出可能是 png(旧)或 jpg(新边转边存),统一按两种数
                 if (interpCount == 0)
+                {
+                    // 【补帧 0 帧诊断】打印关键中间值,定位"补帧失败,未生成插帧"根因:
+                    // frameScale=origCountEst/frameCount(若 origCountEst 探测失败=0,frameScale=0 → mult=1 → 等于没补帧);
+                    // globalTarget / segBounds / 段数 等,以便下次拿到日志精确定位。
+                    try
+                    {
+                        AppLogger.Error($"补帧 0 帧诊断: frameScale={frameScale:0.###}, origCountEst={origCountEst}, frameCount={frameCount}, interpScale={interpScale}, segs={segBounds.Count}, model={interpModel}, fpsMode={fpsMode}");
+                    }
+                    catch { }
                     throw new InvalidOperationException("补帧失败,未生成插帧");
+                }
                 // 帧数对齐已移至"muxDur/outFps 已知处"(时长=源容器 × 帧率),此处不再处理(需帧率公式才能定目标)。
                 // 注:补帧诊断(输出帧数/frameScale)也移到合帧前与实际输出帧数一并打印。
                 progress?.Report((45, $"补帧完成({interpCount} 帧,含原始帧)" + StageElapsed()));
