@@ -2895,6 +2895,24 @@ public sealed partial class MainPage : Page
                     gathered++;
                     // ② 日志(可有可无,失败不阻塞)
                     try { System.IO.File.Copy(AppLogger.LogFile, System.IO.Path.Combine(tmpDir, "diagnostic.log"), true); gathered++; } catch { }
+                    // ②b 崩溃诊断文件(闪退时 WriteCrashDiagnostic 写在日志目录的 崩溃诊断_*.txt)——诊断包必须带上,
+                    //     否则闪退只有"日志停在一处",拿不到异常堆栈,定位不了。
+                    try
+                    {
+                        var logDir = System.IO.Path.GetDirectoryName(AppLogger.LogFile);
+                        if (logDir != null && System.IO.Directory.Exists(logDir))
+                            foreach (var cd in System.IO.Directory.EnumerateFiles(logDir, "崩溃诊断_*.txt"))
+                            { System.IO.File.Copy(cd, System.IO.Path.Combine(tmpDir, System.IO.Path.GetFileName(cd)), true); gathered++; }
+                    }
+                    catch { }
+                    // ②c 最近一次视频任务摘要(若存在):引擎运行配置 + 各阶段结果,避免在长日志里翻
+                    try
+                    {
+                        var lastRun = AppLogger.LastTaskSummaryFile;
+                        if (!string.IsNullOrEmpty(lastRun) && System.IO.File.Exists(lastRun))
+                        { System.IO.File.Copy(lastRun, System.IO.Path.Combine(tmpDir, "最近任务摘要.txt"), true); gathered++; }
+                    }
+                    catch { }
                     // ③ 设置文件(均为本地参数,无隐私)
                     try
                     {
