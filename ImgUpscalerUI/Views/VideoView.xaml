@@ -207,7 +207,7 @@
                               SelectedIndex="0" SelectionChanged="Combo_Changed">
                         <ComboBoxItem Content="通用画质最新 (RIFE v4.13)"/>
                         <ComboBoxItem Content="通用画质 (RIFE v4.6)"/>
-                        <ComboBoxItem Content="通用画质再新 (RIFE v4.26)"/>
+                        <ComboBoxItem Content="通用画质再新 (RIFE v4.26)" IsEnabled="False" ToolTipService.ToolTip="RIFE v4.26 引擎存在兼容性问题(TTA 会卡死),已停用;请用 v4.13"/>
                         <ComboBoxItem Content="动漫专用 (RIFE Anime)"/>
                         <ComboBoxItem Content="高清 (RIFE HD)"/>
                         <ComboBoxItem Content="超高清 (RIFE UHD)"/>

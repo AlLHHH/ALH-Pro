@@ -800,11 +800,11 @@ public sealed partial class VideoView : UserControl
         SetScaleRadioEnabled(VScale3xRadio, true);
         SetScaleRadioEnabled(VScale4xRadio, true);
         InterpModelCombo.IsEnabled = interp;
-        // 非 2 的幂倍率(3x/12x/16x)仅 v4 架构模型(通用画质 v4.13/v4.6/v4.26)支持;其余模型按 2x 级联:
-        // v2 模型选择时把这些倍率置灰,已选自动回退 2x;指定输出帧率也置灰(v2 无法精确实现非 2 幂目标帧率)
-        bool v4Model = InterpModelCombo.SelectedIndex is 0 or 1 or 2;
-        // v4.26(索引2)的 TTA(-x/-z)实测均卡死(引擎兼容问题):禁用「高质量 TTA」勾选并取消已勾选
-        bool v426TtaBroken = InterpModelCombo.SelectedIndex == 2;
+        // 非 2 的幂倍率(3x/12x/16x)仅 v4 架构模型支持;其余模型按 2x 级联(置灰+已选回退)。
+        // v4.26(索引2)已停用(引擎兼容问题,置灰不可选),不再算可用 v4 模型,按不可用处理。
+        bool v4Model = InterpModelCombo.SelectedIndex is 0 or 1;
+        // v4.26(索引2)的 TTA(-x/-z)实测均卡死(引擎兼容问题):禁用「高质量 TTA」并取消已勾选
+        bool v426TtaBroken = InterpModelCombo.SelectedIndex is 2 or 3 or 4 or 5 or 6;   // 非v4模型 TTA 亦禁用(级联模型 TTA 无效/不稳)
         TtaCheck.IsEnabled = interp && !v426TtaBroken;
         TtaCheck.Opacity = interp && !v426TtaBroken ? 1.0 : 0.5;
         if (v426TtaBroken && TtaCheck.IsChecked == true)
