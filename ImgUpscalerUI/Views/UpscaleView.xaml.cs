@@ -1208,9 +1208,10 @@ public sealed partial class UpscaleView : UserControl
             SafeRender.RefreshFreeResources();
             SafeRender.RefreshIdleCpu();   // 处理前采样系统占用→CPU 上限自适应(不卡其他软件)
             {
-                double fr = SafeRender.FreeRamGB, fv = SafeRender.FreeVramGB;
-                Log($"资源自检:空闲内存 {fr:0.#} GB / 空闲显存 {fv:0.#} GB → 分块 {SafeRender.GetTileSize()}");
-                AppLogger.Info($"图片超分资源自检:空闲内存 {fr:0.#} GB / 空闲显存 {fv:0.#} GB → 分块 {SafeRender.GetTileSize()}");
+                double fr = SafeRender.FreeRamGB;
+                // 空闲显存照实写"未实测"(仅 NVIDIA 可测),不再伪造数值误导排查
+                Log($"资源自检:空闲内存 {fr:0.#} GB / 空闲显存 {SafeRender.FreeVramText} → 分块 {SafeRender.GetTileSize()}");
+                AppLogger.Info($"图片超分资源自检:空闲内存 {fr:0.#} GB / 空闲显存 {SafeRender.FreeVramText} → 分块 {SafeRender.GetTileSize()}");
             }
             // 输出码率显示:JPG=质量数值;PNG=无损原样(固定)
             var qualityDesc = outExt == ".jpg" ? $"输出质量={imgQ}" : "输出=无损(原样)";

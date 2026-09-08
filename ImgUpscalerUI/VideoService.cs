@@ -17,6 +17,14 @@ public sealed class DedupTooStrongException : InvalidOperationException
     public DedupTooStrongException(string message) : base(message) { }
 }
 
+/// <summary>子进程长时间无任何输出(疑似驱动/解码器挂死),已被无进展看门狗强制终止。
+/// 派生自 InvalidOperationException,故现有的回退层(拆帧硬解→软解、编码器降级链)能直接接管。
+/// 与用户取消(OperationCanceledException)严格区分:停滞要走回退,取消要立刻收手。</summary>
+public sealed class EngineStallException : InvalidOperationException
+{
+    public EngineStallException(string message) : base(message) { }
+}
+
 public static class VideoService
 {
     /// <summary>引擎目录下定位可执行文件(向上搜索 engines 根)。</summary>
@@ -461,7 +469,7 @@ public static class VideoService
                 progress?.Report((2, $"输入帧率覆盖为 {inFps:0.##} fps(探测 {probedFps:0.##}),拆帧按覆盖帧率抽帧/补帧"));
             }
             // ===== HDR / 广色域适配:源为 HDR(PQ/HLG)或宽色域(≠BT.709)→ 拆帧时转成 BT.709 SDR(避免偏色/掉信息),黄字提示 =====
-            (string? hdrDesc, string? hdrVf) = await ProbeHdrToSdrAsync(inputVideo);
+            (string? hdrDesc, string? hdrVf) = await ProbeHdrToSdrAsync(inputVideo, ct);
             if (hdrVf != null)
             {
                 scaleVf = $"{scaleVf},{hdrVf}";
@@ -1322,18 +1330,27 @@ public static class VideoService
                             }
                             // 【峰值优化】本批超分 PNG 立即转 JPG 再落 upOutput(不再全量 PNG 累积到最后统一转):
                             // 超分过程中只有"当前批的 PNG"存在,upOutput 全程 JPG,峰值降 70%+。
+                            // 黑帧防御:ncnn-vulkan 偶发 vkQueueSubmit 失败 → 输出全黑帧(退出码 0 不报错)。
+                            // 判黑顺带在转 JPG 已解码的位图上做,不再为查黑把整批多解码一次。
+                            // 转不了(0KB 空帧/坏帧——ncnn 在部分驱动上静默产出,退出码仍 0)必抛异常,同样记缺陷:
+                            // 放过它们,一路传到合帧只会报"找不到 frame_%06d.jpg"。
+                            // 不可提前 break:源帧本就是黑场时会跳过降级,此时每张 JPG 都必须已落盘。
+                            bool anyFrame = false, anyDefective = false;
                             foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
                             {
+                                anyFrame = true;
                                 var dst = Path.Combine(upOutput, Path.ChangeExtension(Path.GetFileName(f), ".jpg"));
-                                try { EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality); }
-                                catch { try { File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true); } catch { } }
+                                try
+                                {
+                                    EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality, out bool isBlack);
+                                    if (isBlack) anyDefective = true;
+                                }
+                                catch { anyDefective = true; try { File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true); } catch { } }
                             }
-                            // 黑帧防御:ncnn-vulkan 偶发 vkQueueSubmit 失败 → 输出全黑帧(退出码 0 不报错)。
-                            // 检测到黑帧即用 CPU 重处理该批(引擎线程参数已改 save=1 降低概率,这里兜底:
-                            // 万一还是黑,CPU 软解不依赖 GPU 队列,绝不出黑帧)。
                             // 兜底防误杀:若【源帧】本来就近全黑(视频黑场/淡入淡出),输出黑是素材本身,
                             // 不是 GPU 故障——跳过降级,不浪费 CPU 重算。
-                            if (batchOutHasDefectiveFrame(batchOut) && !DirNearBlack(batchIn))
+                            // 空批(!anyFrame)也按缺陷处理:引擎一帧都没出必然坏了,旧检测器会静默放过。
+                            if ((anyDefective || !anyFrame) && !DirNearBlack(batchIn))
                             {
                                 // ===== 黑帧降级改进 =====
                                 // ncnn-vulkan 偶发 vkQueueSubmit 失败 → 输出全黑帧。原逻辑先走最慢的 ncnn-CPU 重处理,
@@ -1354,31 +1371,37 @@ public static class VideoService
                                     await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
                                         upOnnxDml ? -2 : (upGpu < 0 ? -1 : -2), progress, ct, onnxB,
                                         start, total, pauseWait);   // 探测失败/黑帧 → DeepSeek-2(DirectML GPU 自动);主动选 CPU → -1;pauseWait=ONNX/CPU 也能暂停
+                                    bool retryAny = false, retryDefective = false;
                                     foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
                                     {
+                                        retryAny = true;
                                         var dst = Path.Combine(upOutput, Path.ChangeExtension(Path.GetFileName(f), ".jpg"));
-                                        try { EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality); }
-                                        catch { try { File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true); } catch { } }
+                                        try
+                                        {
+                                            EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality, out bool isBlack);
+                                            if (isBlack) retryDefective = true;
+                                        }
+                                        catch { retryDefective = true; try { File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true); } catch { } }
                                     }
                                     // ONNX(DirectML)重处理仍黑(该卡 DirectML 也异常)→ 直接回退原帧。
                                     // 【绝不跑慢速 CPU】超分 CPU 兜底要跑到天荒地老,这不是可接受的降级目标。
-                                    if (batchOutHasDefectiveFrame(batchOut))
+                                    if (retryDefective || !retryAny)
                                     {
                                         progress?.Report((upBase + (int)((90 - upBase) * start / total),
                                             $"⚠ ONNX DirectML 仍黑(批次 {start}~{end - 1}),该批回退原帧(不跑慢速 CPU)..." + StageElapsed()));
                                         AppLogger.Warn($"⚠ 批次 {start}~{end - 1} ONNX(DirectML)重跑仍黑——该批回退源帧(已尽力重跑,仍无法得非黑);若反复出现请更新显卡驱动");
                                         for (int i = start; i < end; i++)
-                                            try { File.Copy(upFiles[i], Path.Combine(upOutput, Path.GetFileName(upFiles[i])), true); } catch { }
+                                            try { WriteFallbackFrame(upFiles[i], upOutput, upScale); } catch { }
                                     }
                                 }
                                 else
                                 {
-                                    // 无 ONNX 模型:黑帧【不跑慢速 CPU】,直接回退原帧(瞬时完成,绝不把黑帧写进输出)
+                                    // 无 ONNX 模型:黑帧【不跑慢速 CPU】,直接回退原帧(只做一次缩放,绝不把黑帧写进输出)
                                     progress?.Report((upBase + (int)((90 - upBase) * start / total),
                                         $"⚠ 检测到黑帧(批次 {start}~{end - 1},GPU 输出异常),该批回退原帧(无 ONNX 模型,不跑慢速 CPU)..." + StageElapsed()));
                                     AppLogger.Warn($"⚠ 批次 {start}~{end - 1} 输出黑帧(GPU 队列异常),无 ONNX 模型——该批回退源帧(若反复出现请更新显卡驱动)");
                                     for (int i = start; i < end; i++)
-                                        try { File.Copy(upFiles[i], Path.Combine(upOutput, Path.GetFileName(upFiles[i])), true); } catch { }
+                                        try { WriteFallbackFrame(upFiles[i], upOutput, upScale); } catch { }
                                 }
                             }
                             Interlocked.Add(ref doneFrames, end - start);
@@ -1408,10 +1431,10 @@ public static class VideoService
                             AppLogger.Warn($"⚠ 超分批次 {start}~{end - 1} 失败({head})——该批回退原帧,继续(不中断任务)");
                             progress?.Report((upBase + (int)((90 - upBase) * start / total),
                                 $"⚠ 超分批次 {start}~{end - 1} 异常({head}),该批回退原帧,继续处理..."));
-                            // 清空本批半成品,回退原帧(未超分帧直接复用源帧;batchOut 临时目录由任务收尾统一清理)
+                            // 清空本批半成品,回退原帧(未超分帧缩放后复用源帧;batchOut 临时目录由任务收尾统一清理)
                             for (int i = start; i < end; i++)
                             {
-                                try { File.Copy(upFiles[i], Path.Combine(upOutput, Path.GetFileName(upFiles[i])), true); }
+                                try { WriteFallbackFrame(upFiles[i], upOutput, upScale); }
                                 catch { }
                             }
                             Interlocked.Add(ref doneFrames, end - start);
@@ -1807,6 +1830,11 @@ public static class VideoService
             // 编码阶段整体进度 96→100 随 ffmpeg 编码帧数推进(否则卡 96%,结尾预计时间虚高失真)
             int encTotal = Math.Max(1, Directory.EnumerateFiles(framesFinal, "*.jpg").Count());
             if (pauseWait != null) await pauseWait();   // 暂停:编码开始前停(已生成的帧不浪费)
+            // 探测期已经把"这台机器上这个编码器要什么参数才能编"试出来了(亚秒级、1 帧);
+            // 这里直接照配方编,不再拿整片去试错。没探到配方(探测被取消/跳过)才退回主 ffmpeg + 原参数。
+            var recipe = GetHwRecipe(encoder);
+            string encFfmpeg = recipe?.Ffmpeg ?? ffmpeg;
+            string encMuxArgs = recipe?.NoPreset == true ? StripPreset(muxArgs) : muxArgs;
             try
             {
                 try
@@ -1814,89 +1842,28 @@ public static class VideoService
                     // 已知会失败的硬件编码器直接跳过,走 CPU(避免每次先白跑一次)
                     if (BrokenHwEncoders.Contains(encoder))
                         throw new InvalidOperationException("hw-encoder-known-broken");
-                    await RunAsync(ffmpeg, muxBase + muxArgs, progress, ct, "编码", encTotal);
+                    await RunAsync(encFfmpeg, muxBase + encMuxArgs, progress, ct, "编码", encTotal);
                     // 硬件编码可能留下 0 字节/损坏文件却退出 0,这里校验;无效则触发回退
                     if (!await ValidateVideoFileAsync(outTmp))
                         throw new InvalidOperationException("硬件编码输出文件无效");
                 }
                 catch (Exception ex) when (encoder != "libx264" && encoder != "libx265")
                 {
-                    // 硬件编码失败(驱动/不支持)或输出损坏
-                    // 【驱动过旧】:ffmpeg nvenc 需新版 NV 驱动(≥610.00/nvenc API 13.1),用户驱动旧 → 重试 no-preset / 备用
-                    // ffmpeg 必然同样失败 → 直接标记坏 + 回退 CPU,不白跑 GPU,并提示更新显卡驱动。
-                    if (IsNvencDriverTooOld(ex.Message))
-                    {
-                        var cpuEnc = encoder.StartsWith("hevc", StringComparison.OrdinalIgnoreCase) ? "libx265" : "libx264";
-                        BrokenHwEncoders.Add(encoder);
+                    // 【不再整片重试 GPU】"去掉 -preset"和"换备用 ffmpeg"这两个问题探测期已回答过,
+                    // 到这里还失败说明这台机器就是编不了(驱动过旧/硬件不在/输出损坏)。整片长度的重试
+                    // = 用户白等一整遍编码时间,而答案在 1 帧探测里就能拿到。直接标记坏 + 回退 CPU。
+                    BrokenHwEncoders.Add(encoder);
+                    var cpuEnc = encoder.StartsWith("hevc", StringComparison.OrdinalIgnoreCase) ? "libx265" : "libx264";
+                    // 驱动过旧单列:它是最常见且用户能自己解决的一种,提示要说清"去更新驱动"
+                    bool driverOld = IsNvencDriverTooOld(ex.Message);
+                    if (driverOld)
                         AppLogger.Warn($"⚠ 硬件编码({encoder})不可用(显卡驱动过旧:需更新 NVIDIA 驱动到 610+,当前驱动 nvenc 版本过低)——改用轻量 CPU 编码({cpuEnc})");
-                        progress?.Report((96, $"⚠ 硬件编码({encoder})不可用(显卡驱动过旧),改用轻量 CPU 编码({cpuEnc})..."));
-                        await RunAsync(ffmpeg,
-                            muxBase + $"{videoMap}{audioPart} {EncoderArgs(cpuEnc, quality, bitrateKbps)} {vfArg}{fastFlag} \"{outTmp}\"",
-                            progress, ct, "编码", encTotal);
-                    }
                     else
-                    {
-                    // ① 先【去掉 -preset 用默认档】再试一次 GPU —— 很多 50 系(Blackwell)报 exit -22 就是某个 preset 参数被拒,
-                    //    去掉 preset 就能打开硬件编码;避免直接掉进慢几十倍的 CPU 软编。
-                    // ② 仍失败 → 若存在【备用 ffmpeg(engines/ffmpeg8/,如 8.x)】,用备用 ffmpeg 的 NVENC 再试一次
-                    //    (新版 ffmpeg 对 Blackwell 适配更全,可能旧 7.1 打不开的 NVENC 它能打开)。
-                    // ③ 仍失败才回退 CPU(限线程,不跑满 CPU);用户选 H.265 回退 libx265,否则 libx264。
-                    bool retriedNoPreset = false;
-                    if (encoder.StartsWith("h264_nvenc", StringComparison.OrdinalIgnoreCase)
-                        || encoder.StartsWith("hevc_nvenc", StringComparison.OrdinalIgnoreCase))
-                    {
-                        try
-                        {
-                            var noPresetArgs = System.Text.RegularExpressions.Regex.Replace(muxArgs, @"\s+-preset\s+\w+", "");
-                            AppLogger.Info($"⚠ 硬件编码({encoder})失败,去掉 -preset 用默认档再试一次 GPU...");
-                            await RunAsync(ffmpeg, muxBase + noPresetArgs, progress, ct, "编码", encTotal).ConfigureAwait(false);
-                            if (await ValidateVideoFileAsync(outTmp))
-                            {
-                                retriedNoPreset = true;   // 用默认档 GPU 成功了
-                                AppLogger.Info($"✅ 硬件编码({encoder})去掉 -preset 后成功(默认档 GPU 硬编)");
-                            }
-                        }
-                        catch (Exception ex2)
-                        {
-                            AppLogger.Info($"⚠ 硬件编码({encoder})去掉 -preset 仍失败(原因:{ex2.Message.Split('\n')[0]})");
-                        }
-                    }
-                    bool backupOk = false;
-                    if (!retriedNoPreset && BackupFfmpegPath != null)
-                    {
-                        // 用备用 ffmpeg(8.x)硬编再试(主 ffmpeg 打不开的 NVENC,新版可能打开)
-                        try
-                        {
-                            var bak = BackupFfmpegPath;
-                            AppLogger.Info($"⚠ 主 ffmpeg 硬编({encoder})仍失败,改用备用 ffmpeg({Path.GetFileName(Path.GetDirectoryName(bak))})再试 GPU...");
-                            await RunAsync(bak, muxBase + muxArgs, progress, ct, "编码", encTotal).ConfigureAwait(false);
-                            if (await ValidateVideoFileAsync(outTmp))
-                            {
-                                backupOk = true;
-                                AppLogger.Info($"✅ 备用 ffmpeg 硬编({encoder})成功(GPU 硬编)");
-                            }
-                        }
-                        catch (Exception ex3)
-                        {
-                            AppLogger.Info($"⚠ 备用 ffmpeg 硬编({encoder})仍失败(原因:{ex3.Message.Split('\n')[0]})");
-                        }
-                    }
-                    if (retriedNoPreset || backupOk)
-                    {
-                        // 成功走 GPU(主 ffmpeg 默认档,或备用 ffmpeg),不需要回退 CPU(继续下面校验/改名)
-                    }
-                    else
-                    {
-                        // 回退 CPU
-                        BrokenHwEncoders.Add(encoder);
-                        var cpuEncoder = encoder.StartsWith("hevc", StringComparison.OrdinalIgnoreCase) ? "libx265" : "libx264";
-                        AppLogger.Info($"降级:硬件编码({encoder})不可用(原因:{ex.Message}),改用 CPU 编码({cpuEncoder})");
-                        progress?.Report((96, $"⚠ 硬件编码({encoder})不可用,改用轻量 CPU 编码({cpuEncoder});原因:{ex.Message}"));
-                        await RunAsync(ffmpeg,
-                            muxBase + $"{videoMap}{audioPart} {EncoderArgs(cpuEncoder, quality, bitrateKbps)} {vfArg}{fastFlag} \"{outTmp}\"",
-                            progress, ct, "编码", encTotal);
-                    }
-                    }
+                        AppLogger.Warn($"⚠ 硬件编码({encoder})不可用(原因:{ex.Message.Split('\n')[0]})——改用轻量 CPU 编码({cpuEnc})");
+                    progress?.Report((96, $"⚠ 硬件编码({encoder})不可用{(driverOld ? "(显卡驱动过旧)" : "")},改用轻量 CPU 编码({cpuEnc})..."));
+                    await RunAsync(ffmpeg,
+                        muxBase + $"{videoMap}{audioPart} {EncoderArgs(cpuEnc, quality, bitrateKbps)} {vfArg}{fastFlag} \"{outTmp}\"",
+                        progress, ct, "编码", encTotal);
                 }
                 if (!await ValidateVideoFileAsync(outTmp))
                     throw new InvalidOperationException("视频合成失败:输出文件无效(无法被解码)");
@@ -2475,67 +2442,6 @@ public static class VideoService
         AppLogger.Info($"方案C 累积网格插值:{n} 关键画 → {gOut - 1} 帧({totalGaps} 个动作段,F_out={outFpsSafe:0.##},CFR 对齐输出)");
     }
 
-    /// <summary>检测目录里的 PNG 是否有全黑帧(ncnn-vulkan GPU 队列失败时输出全黑,退出码仍 0)。</summary>
-    /// <summary>检测批次输出是否含缺陷帧:全黑 / 空(0字节) / 损坏(无法解码)。
-    /// ncnn-vulkan 在 50 系/部分驱动上会静默输出 0KB 空帧或坏帧(退出码 0 不报错),
-    /// 旧黑帧检测(new Bitmap 抛异常被 catch 吞掉)会漏放行 → 空帧一路传到合帧报"找不到 frame_%06d.jpg"。
-    /// 这里把"读不出/空/非法尺寸/近全黑"统一判为缺陷,触发回退源帧或 ONNX。</summary>
-    private static bool batchOutHasDefectiveFrame(string dir)
-    {
-        try
-        {
-            foreach (var f in Directory.EnumerateFiles(dir, "*.png"))
-            {
-                if (!File.Exists(f) || new FileInfo(f).Length == 0) return true;   // 空/0字节
-                try
-                {
-                    using var bmp = new System.Drawing.Bitmap(f);
-                    if (bmp.Width <= 0 || bmp.Height <= 0) return true;
-                    // 采样判定逻辑抽到 AlhPro.Core.FrameInspect(纯函数,可单测):
-                    // 采样步长 + 把 ≥95% 像素 RGB 和 < 24 视为近黑(缺陷帧)。
-                    var sums = new System.Collections.Generic.List<int>();
-                    int total = AlhPro.Core.FrameInspect.ForEachSample(bmp.Width, bmp.Height, (x, y) =>
-                    {
-                        var p = bmp.GetPixel(x, y);
-                        sums.Add((int)p.R + (int)p.G + (int)p.B);
-                    });
-                    if (AlhPro.Core.FrameInspect.IsNearBlack(sums.ToArray(), total)) return true;
-                }
-                catch { return true; }   // 解码失败也算缺陷
-            }
-        }
-        catch { return true; }   // 目录枚举异常 → 保守缺陷
-        return false;
-    }
-
-    /// <summary>检测目录中的 PNG 是否有全黑块(ncnn-vulkan GPU 队列失败时输出全黑,退出码仍 0)。</summary>
-    private static bool batchOutDirHasBlack(string dir)
-    {
-        try
-        {
-            foreach (var f in Directory.EnumerateFiles(dir, "*.png"))
-            {
-                // 空/0字节/损坏 → new Bitmap 抛异常,旧逻辑被 catch{return false} 吞掉 → 空帧漏检放行,
-                // 一路传到合帧报"找不到 frame_%06d.jpg"。这里把读不出的帧也视为缺陷帧(true),触发回退源帧/ONNX。
-                if (!File.Exists(f) || new FileInfo(f).Length == 0) return true;
-                using var bmp = new System.Drawing.Bitmap(f);
-                if (bmp.Width <= 0 || bmp.Height <= 0) return true;
-                int step = Math.Max(4, Math.Min(bmp.Width, bmp.Height) / 32);
-                int dark = 0, total = 0;
-                for (int y = step; y < bmp.Height; y += step)
-                    for (int x = step; x < bmp.Width; x += step)
-                    {
-                        var p = bmp.GetPixel(x, y);
-                        total++;
-                        if ((int)p.R + (int)p.G + (int)p.B < 24) dark++;   // 接近全黑
-                    }
-                if (total > 0 && dark >= total * 0.95) return true;
-            }
-        }
-        catch { return true; }   // 目录枚举/解码异常 → 保守按缺陷帧处理
-        return false;
-    }
-
     /// <summary>目录中【源帧】是否本来就近全黑(≥95% 像素 RGB 和 &lt; 24):
     /// 用于"黑帧防误杀"——素材本身的黑场(淡入淡出/片头黑场/夜间纯黑镜头)
     /// 输出黑是正常结果,不是 GPU 故障,不需要 CPU 重算。</summary>
@@ -2546,20 +2452,51 @@ public static class VideoService
             foreach (var f in EnumerateFrameFiles(dir))
             {
                 using var bmp = new System.Drawing.Bitmap(f);
-                int step = Math.Max(4, Math.Min(bmp.Width, bmp.Height) / 32);
-                int dark = 0, total = 0;
-                for (int y = step; y < bmp.Height; y += step)
-                    for (int x = step; x < bmp.Width; x += step)
-                    {
-                        var p = bmp.GetPixel(x, y);
-                        total++;
-                        if ((int)p.R + (int)p.G + (int)p.B < 24) dark++;
-                    }
-                if (total > 0 && dark >= total * 0.95) return true;
+                var sums = new System.Collections.Generic.List<int>();
+                int total = AlhPro.Core.FrameInspect.ForEachSample(bmp.Width, bmp.Height, (x, y) =>
+                {
+                    var p = bmp.GetPixel(x, y);
+                    sums.Add((int)p.R + (int)p.G + (int)p.B);
+                });
+                // 只要有一张源帧本来就是黑场,说明这批输出黑来自素材,不是 GPU 故障
+                if (AlhPro.Core.FrameInspect.IsNearBlack(sums.ToArray(), total)) return true;
             }
         }
         catch { }
         return false;
+    }
+
+    /// <summary>把源帧写进超分输出目录当"该批回退帧",并缩放到与同目录其他帧一致的尺寸。
+    /// 【为什么必须缩放】直接 File.Copy 会让输出目录混进两种分辨率。实测(本机 ffmpeg):
+    /// frame_%06d.jpg 序列里 64×64 与 320×240 混排 → 退出码 0、不报任何错,但容器按【第一帧】尺寸
+    /// 声明流头,混进去的那些帧在播放器里是花的。用户只看到"成片某几秒画面异常",日志里查不到原因。
+    /// 参考尺寸取目录里已写出的第一张可解码 JPG(那就是编码器要的统一尺寸);
+    /// 一张都没有(本批是首个失败批)时按 源尺寸×倍数 推。</summary>
+    private static void WriteFallbackFrame(string srcFile, string upOutputDir, double scale)
+    {
+        string dst = Path.Combine(upOutputDir, Path.GetFileName(srcFile));
+        int w = 0, h = 0;
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(upOutputDir, "*.jpg"))
+            {
+                try
+                {
+                    if (new FileInfo(f).Length == 0) continue;
+                    using var b = new System.Drawing.Bitmap(f);
+                    if (b.Width > 0 && b.Height > 0) { w = b.Width; h = b.Height; break; }
+                }
+                catch { }
+            }
+        }
+        catch { }
+        if (w <= 0 || h <= 0)
+        {
+            int mul = Math.Max(1, (int)Math.Round(scale));
+            try { using var s = new System.Drawing.Bitmap(srcFile); w = s.Width * mul; h = s.Height * mul; } catch { }
+        }
+        if (w > 0 && h > 0) { EngineService.ResizeImageTo(srcFile, dst, w, h); return; }
+        try { File.Copy(srcFile, dst, true); } catch { }   // 连尺寸都读不出:尽力保帧号连续
     }
 
     /// <summary>探测视频总帧数(时长 × 帧率,去重换算用)。</summary>
@@ -2772,6 +2709,23 @@ public static class VideoService
     private static bool _hwProbed;
     private static readonly object _hwLock = new();
 
+    /// <summary>某个硬件编码器实测可用的【调用配方】:用哪个 ffmpeg + 是否必须去掉 -preset。
+    /// 只记"哪个编码器能用"是不够的 —— 50 系上常见的失败恰恰是 -preset p4 被拒(exit -22),
+    /// 去掉 preset 就能硬编;旧 ffmpeg 打不开的 NVENC,备用 ffmpeg(8.x)能打开。
+    /// 这些组合在探测期(1 帧、亚秒级)就能试出来,不必等整片编完失败再整片重来。</summary>
+    private sealed record HwEncoderRecipe(string Ffmpeg, bool NoPreset);
+    private static readonly System.Collections.Generic.Dictionary<string, HwEncoderRecipe> HwRecipes = new();
+
+    /// <summary>去掉 -preset 档(nvenc 专用:amf 用 -quality、qsv 根本没有 -preset,替换是空操作)。</summary>
+    private static string StripPreset(string args) =>
+        System.Text.RegularExpressions.Regex.Replace(args, @"\s+-preset\s+\w+", "");
+
+    /// <summary>取探测期定下的调用配方;没探到(或已判坏)返回 null,调用方直接走 CPU。</summary>
+    private static HwEncoderRecipe? GetHwRecipe(string encoder)
+    {
+        lock (_hwLock) return HwRecipes.TryGetValue(encoder, out var r) ? r : null;
+    }
+
     /// <summary>最近一次选择的视频压缩编码器描述(供界面/日志展示,不靠猜)。</summary>
     public static string LastVideoEncoderInfo { get; private set; } = "libx264 (CPU 软编)";
 
@@ -2796,9 +2750,15 @@ public static class VideoService
     private static extern bool CloseHandle(IntPtr hObject);
     private const uint PROCESS_ALL_ACCESS = 0x001F0FFF;
 
+    /// <summary>当前是否处于"用户暂停=子进程已冻结"状态。
+    /// 冻结态与僵死态从外部无法区分(进程存活、零输出、不退出),故看门狗必须读它来喂狗,
+    /// 否则用户暂停久了会被误判挂死并杀掉任务。</summary>
+    internal static bool IsPaused;
+
     /// <summary>冻结全部当前子进程(暂停生效:进程立即停止计算,占用释放给其他程序)。仅在进程仍在运行时生效。</summary>
     internal static void SuspendActiveProcess()
     {
+        IsPaused = true;
         foreach (var p in App.ActiveProcesses.Snapshot())
         {
             if (p.HasExited) continue;
@@ -2810,6 +2770,7 @@ public static class VideoService
     /// <summary>解冻全部当前子进程(恢复继续,从冻结点接着算,不重算)。</summary>
     internal static void ResumeActiveProcess()
     {
+        IsPaused = false;
         foreach (var p in App.ActiveProcesses.Snapshot())
         {
             if (p.HasExited) continue;
@@ -2823,28 +2784,64 @@ public static class VideoService
     private static async Task EnsureHwProbeAsync(string ffmpeg, CancellationToken ct = default)
     {
         lock (_hwLock) { if (_hwProbed) return; _hwProbed = true; }
-        // 依优先级探测;能真编出一帧有效文件才算可用(驱动过老/无对应硬件会失败被跳过)。
-        // 注意:测试画面不能太小(nvenc 拒绝过小分辨率,64x64 会报 incorrect parameters),
-        // 用 320x240 这种常规尺寸才能真实反映编码器可用性。
-        // H.264 与 H.265(hevc)各探一遍,方便用户选编码格式时直接给出可用的
+        // 依优先级探测;能真编出一帧【有效】文件才算可用(驱动过老/无对应硬件会失败被跳过)。
+        // H.264 与 H.265(hevc)各探一遍,方便用户选编码格式时直接给出可用的。
         foreach (var enc in new[] { "h264_nvenc", "h264_amf", "h264_qsv", "hevc_nvenc", "hevc_amf", "hevc_qsv" })
         {
             if (ct.IsCancellationRequested) return;   // 用户取消/任务中止:探测立即收手(不再不可取消卡住)
-            var tmp = Path.Combine(EngineService.TempRoot, $"imgup_encprobe_{enc}_{Guid.NewGuid():N}.mp4");
-            try
+            // 【关键】探测参数 = 真实编码参数(EncoderArgs 里的 -preset/-pix_fmt/-cq 全带上)。
+            // 原先只给 `-c:v {enc}`,探的是"这台机器有没有这个编码器",而真实命令要问的是
+            // "这套参数在这台机器上能不能编" —— 两者不等价,差集就得靠整片重跑试出来。
+            var realArgs = EncoderArgs(enc);
+            bool nvenc = enc.Contains("nvenc", StringComparison.OrdinalIgnoreCase);
+            // 逐级放宽,第一个成功的组合就是要记的配方:
+            //   ① 主 ffmpeg + 真实参数
+            //   ② 主 ffmpeg + 去掉 -preset(50 系常见:-preset p4 被拒 exit -22,去掉就能硬编)
+            //   ③④ 备用 ffmpeg(8.x,对 Blackwell 的 NVENC 适配更全)+ 上述两种参数
+            // ②③④ 只对 nvenc 有意义:-preset 是 nvenc 独有(amf 用 -quality、qsv 没有,替换是空操作),
+            // 备用 ffmpeg 也只为更新版的 NVENC 而存在,给它探 amf/qsv 纯属白跑。
+            var attempts = new System.Collections.Generic.List<(string Ff, string Args, bool NoPreset)>
+                { (ffmpeg, realArgs, false) };
+            if (nvenc)
             {
-                // 探测分辨率加大到 1280×720:之前 320×240 太小,部分编码器(QSV/核显硬编)小图能编出有效文件,
-                // 但真实大分辨率视频下却输出无效文件(用户① RTX2070+核显双卡机实测:qsv 探测可用,合帧却黑屏/失败)。
-                // 用接近真实输出的尺寸,让不可靠的硬编在探测期就暴露,避免"探测可用、真跑就坏"。
-                await RunAsync(ffmpeg,
-                    $"-y -f lavfi -i \"testsrc=size=1280x720:rate=1:duration=0.4\" -frames:v 1 -c:v {enc} " +
-                    $"\"{tmp}\"",
-                    null, ct);
-                if (File.Exists(tmp) && new FileInfo(tmp).Length > 0)
-                    lock (_hwLock) WorkingHwEncoders.Add(enc);
+                attempts.Add((ffmpeg, StripPreset(realArgs), true));
+                var bak = BackupFfmpegPath;
+                if (bak != null)
+                {
+                    attempts.Add((bak, realArgs, false));
+                    attempts.Add((bak, StripPreset(realArgs), true));
+                }
             }
-            catch { /* 该编码器在这台机器不可用 */ }
-            finally { try { File.Delete(tmp); } catch { } }
+            foreach (var (ff, args, noPreset) in attempts)
+            {
+                if (ct.IsCancellationRequested) return;
+                var tmp = Path.Combine(EngineService.TempRoot, $"imgup_encprobe_{enc}_{Guid.NewGuid():N}.mp4");
+                try
+                {
+                    // 探测分辨率 1280×720:之前 320×240 太小,部分编码器(QSV/核显硬编)小图能编出有效文件,
+                    // 但真实大分辨率视频下却输出无效文件(用户① RTX2070+核显双卡机实测:qsv 探测可用,合帧却黑屏/失败)。
+                    // nvenc 也拒绝过小分辨率(64x64 报 incorrect parameters)。
+                    await RunAsync(ff,
+                        $"-y -f lavfi -i \"testsrc=size=1280x720:rate=1:duration=0.4\" -frames:v 1 {args} \"{tmp}\"",
+                        null, ct);
+                    // 不只看"文件非 0 字节":QSV 那类会写出非空但解不开的文件,必须真校验一遍
+                    if (await ValidateVideoFileAsync(tmp))
+                    {
+                        lock (_hwLock)
+                        {
+                            if (!WorkingHwEncoders.Contains(enc)) WorkingHwEncoders.Add(enc);
+                            HwRecipes[enc] = new HwEncoderRecipe(ff, noPreset);
+                        }
+                        if (noPreset || !ReferenceEquals(ff, ffmpeg))
+                            AppLogger.Info($"硬件编码探测:{enc} 需放宽参数才可用(" +
+                                $"{(noPreset ? "去掉 -preset" : "")}{(noPreset && !ReferenceEquals(ff, ffmpeg) ? " + " : "")}" +
+                                $"{(!ReferenceEquals(ff, ffmpeg) ? "备用 ffmpeg" : "")})");
+                        break;
+                    }
+                }
+                catch { /* 该组合在这台机器不可用,继续放宽 */ }
+                finally { try { File.Delete(tmp); } catch { } }
+            }
         }
         // 诊断:记录本机可用/不可用的硬件编码器(排查"为什么没走 GPU 编码"一眼可见)
         lock (_hwLock)
@@ -2857,7 +2854,7 @@ public static class VideoService
 
     /// <summary>硬件编码是否因【显卡驱动过旧】而不可用(ffmpeg 的 nvenc 需较新版 NVIDIA 驱动 ≥610.00 / nvenc API 13.1;
     /// 用户驱动旧则报 "Driver does not support the required nvenc API version" / "minimum required Nvidia driver ... 610.00")。
-    /// 这类失败重试 no-preset / 备用 ffmpeg 必然同样失败 → 直接回退 CPU 并标记坏,省时且避免反复报错。</summary>
+    /// 单挑出来只为提示语:这是硬编失败里唯一一种用户自己能解决的(更新驱动),笼统报"不可用"等于让他错过修复机会。</summary>
     private static bool IsNvencDriverTooOld(string msg)
     {
         if (string.IsNullOrEmpty(msg)) return false;
@@ -2947,7 +2944,7 @@ public static class VideoService
     private static readonly System.Collections.Generic.HashSet<string> _hwDecodeBrokenCodecs = new();
 
     /// <summary>探测输入视频的编码器名(如 h264/hevc/av1),用于区分硬解可用性;失败/探不出返回 ""。</summary>
-    private static async Task<string> ProbeVideoCodecName(string ffmpeg, string video)
+    private static async Task<string> ProbeVideoCodecName(string ffmpeg, string video, CancellationToken ct)
     {
         try
         {
@@ -2955,7 +2952,7 @@ public static class VideoService
             string? fp = dir != null ? Path.Combine(dir, "ffprobe.exe") : null;
             if (fp == null || !File.Exists(fp)) return "";
             var lines = await RunCaptureAsync(fp,
-                $"-v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 \"{video}\"", default);
+                $"-v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 \"{video}\"", ct);
             return lines.Count > 0 ? lines[0].Trim() : "";
         }
         catch { return ""; }
@@ -3048,7 +3045,7 @@ public static class VideoService
     /// 用于拆帧阶段提前转换,避免输出偏色/掉信息。保守:任一关键字段未知(unknown)时不做转换(避免 zscale "no path" 报错),
     /// 返回 (null,null)。任何探测/解析失败同样返回 (null,null),不阻断流程。
     /// </summary>
-    private static async Task<(string? desc, string? vf)> ProbeHdrToSdrAsync(string video)
+    private static async Task<(string? desc, string? vf)> ProbeHdrToSdrAsync(string video, CancellationToken ct)
     {
         try
         {
@@ -3057,7 +3054,7 @@ public static class VideoService
             if (ffprobe == null || !File.Exists(ffprobe)) return (null, null);
             var lines = await RunCaptureAsync(ffprobe,
                 $"-v error -select_streams v:0 -show_entries stream=color_space,color_primaries,color_transfer " +
-                $"-of csv=p=0 \"{video}\"", default);
+                $"-of csv=p=0 \"{video}\"", ct);
             var s = string.Concat(lines).Trim();
             var p = s.Split(',').Select(x => x.Trim()).ToArray();
             string space = p.Length > 0 ? p[0] : "";
@@ -3094,8 +3091,12 @@ public static class VideoService
         // 开关2(分线程):拆帧限流,避免抢系统核(仅开启时生效)
         string threadsArg = SafeRender.SplitCores ? $" -threads {Math.Max(2, SafeRender.CpuCoreCount - 2)}" : "";
         // 硬解优先(仅当该编码本会话没验证过坏);某编码坏过一次就对该编码软解,其它编码仍试硬解
-        string hwCodec = await ProbeVideoCodecName(ffmpeg, inputVideo);
-        if (!_hwDecodeBrokenCodecs.Contains(hwCodec))
+        string hwCodec = await ProbeVideoCodecName(ffmpeg, inputVideo, ct);
+        string codecName = hwCodec.Length > 0 ? hwCodec : "未知编码";
+        // 探不出编码时不碰闩锁:ProbeVideoCodecName 失败返回 "",而 "" 会被当成一个合法编码键存进
+        // 静态表(整会话从不清理),从此所有探测不出编码的视频都被迫走慢速软解 —— 一次偶发探测失败污染全局。
+        bool canLatchHw = hwCodec.Length > 0;
+        if (!canLatchHw || !_hwDecodeBrokenCodecs.Contains(hwCodec))
         {
             try
             {
@@ -3104,9 +3105,23 @@ public static class VideoService
                     progress, ct, "拆帧", origCountEst);
                 int n = Directory.EnumerateFiles(framesDir, "*.jpg").Count();
                 if (n > 0) return n;
-                _hwDecodeBrokenCodecs.Add(hwCodec);   // 硬解输出 0 帧 → 该编码视为不可用
+                if (canLatchHw) _hwDecodeBrokenCodecs.Add(hwCodec);   // 硬解输出 0 帧 → 该编码视为不可用
+                AppLogger.Warn($"拆帧:硬解(d3d11va)正常退出但一帧未出(编码 {codecName})→ 本会话该编码改走软解");
             }
-            catch { _hwDecodeBrokenCodecs.Add(hwCodec); }   // 硬解失败 → 该编码标记坏,回退软解
+            // 用户取消 ≠ 硬解坏:必须直接收手。原先 catch { } 会把取消也当成硬解失败写进
+            // _hwDecodeBrokenCodecs(静态、整个会话从不清理),害得之后所有同编码视频都被迫走慢速软解。
+            catch (OperationCanceledException) { throw; }
+            catch (EngineStallException ex)
+            {
+                // 看门狗判死:硬解被驱动挂死,进程活着却永不退出 —— 正是"用户只能手动点强制结束"的根因。
+                if (canLatchHw) _hwDecodeBrokenCodecs.Add(hwCodec);
+                AppLogger.Warn($"拆帧:硬解(d3d11va)停滞被看门狗终止(编码 {codecName})→ 自动回退软解重试。{ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                if (canLatchHw) _hwDecodeBrokenCodecs.Add(hwCodec);   // 硬解失败 → 该编码标记坏,回退软解
+                AppLogger.Warn($"拆帧:硬解(d3d11va)失败(编码 {codecName})→ 自动回退软解重试。{ex.Message}");
+            }
             // 清理硬解可能留下的残缺帧
             foreach (var f in Directory.EnumerateFiles(framesDir, "*.jpg"))
             { try { File.Delete(f); } catch { } }
@@ -4169,13 +4184,22 @@ public static class VideoService
                 throw;
             }
         }
-        // 黑帧提示(GPU 队列异常兼容症状):层批中间帧有全黑 → 提示(自动重跑整段成本高;用户可换 CPU 设备重试)
+        // 黑帧提示(GPU 队列异常兼容症状):层批中间帧有全黑 → 只提示,不自动重跑整段(成本高)。
+        // 【不再建议"改用 CPU 设备"】"补帧绝不落 CPU"是本产品的硬约定(CPU 补帧慢到用户以为卡死),
+        // 引导用户去选 CPU 等于让他自己撞进那条被明令禁止的路径。
         {
             int checkedN = 0;
             foreach (var (p, f) in pairMids.SelectMany(kv => kv.Value))
             {
                 if (++checkedN > 6) break;
-                try { if (EngineService.IsBlackPng(f)) { progress?.Report((40, "⚠ 补回输出含黑帧(GPU 队列异常),建议改用 CPU 设备或调小分块重试")); AppLogger.Info("⚠ 补回层批输出含黑帧(GPU 队列异常)— 建议改用 CPU 设备或调小分块后重试"); break; } } catch { }
+                try
+                {
+                    if (!EngineService.IsBlackPng(f)) continue;
+                    progress?.Report((40, "⚠ 补回输出含黑帧(GPU 队列异常),建议更新显卡驱动或换一张显卡后重试"));
+                    AppLogger.Info("⚠ 补回层批输出含黑帧(GPU 队列异常)— 建议更新显卡驱动/换卡后重试");
+                    break;
+                }
+                catch { }
             }
         }
         // 输出:按 j 顺序写帧(帧号连续)。统一重编码成 JPG(源帧已是 JPG,层批中间帧为引擎 PNG),配合下游 framesIn=JPG。
@@ -4892,7 +4916,12 @@ public static class VideoService
         catch { return null; }
     }
 
-    /// <summary>运行命令并返回完整输出行(供解析,如转场检测)。</summary>
+    /// <summary>运行命令并返回完整输出行(供解析,如转场检测)。
+    /// 【同样带无进展看门狗】这里跑的多是"把整片解码一遍"的探测(freezedetect / scdet / showinfo),
+    /// 挂死风险与拆帧同级;而 ProbeHdrToSdrAsync / ProbeVideoCodecName / 帧率探测三处传的是
+    /// CancellationToken.None —— 没有看门狗就是永久卡住,用户连「停止」都点不动(只能强制结束)。
+    /// 正常探测全程持续输出(metadata=print 每帧一行 + ffmpeg 自己的 frame=/speed= 统计),
+    /// 故静默阈值沿用 RunAsync 同一套(启动 90s / 运行 120s),不会误杀"慢但正常"的长片探测。</summary>
     private static async Task<List<string>> RunCaptureAsync(string exe, string args, CancellationToken ct)
     {
         var psi = new ProcessStartInfo
@@ -4908,8 +4937,47 @@ public static class VideoService
         using var p = Process.Start(psi) ?? throw new InvalidOperationException("无法启动: " + exe);
         SafeRender.ApplyProcessPriority(p);   // 处理时降优先级,防整机卡(可设置关闭)
         App.ActiveProcesses.Register(p);   // 纳入"暂停=冻结"(遍历整个注册表冻结,含并发多路)
-        var errTask = p.StandardError.ReadToEndAsync();
-        var outTask = p.StandardOutput.ReadToEndAsync();
+        var lockObj = new object();
+        bool sawAnyOutput = false;      // 是否已出现任何输出:区分"启动即挂死"与"跑了一半挂死"
+        bool killRequested = false;
+        string? killReason = null;
+        long lastLiveTicks = DateTime.Now.Ticks;
+        void OnChunk(string chunk)
+        {
+            lock (lockObj)
+            {
+                sawAnyOutput = true;
+                if (chunk.Length > 0) lastLiveTicks = DateTime.Now.Ticks;
+            }
+        }
+        // keepTail:0 = 全量保留。调用方要逐行解析(scdet 的 score、showinfo 的每帧 pts_time),
+        // 截成 8KB 尾巴会直接丢掉前面所有帧。
+        var drainOut = DrainAsync(p.StandardOutput, OnChunk, ct, keepTail: 0);
+        var drainErr = DrainAsync(p.StandardError, OnChunk, ct, keepTail: 0);
+
+        const int CheckEveryMs = 15_000;                                   // 每 15 秒巡检
+        const int StartupSilenceLimitSec = 90;                             // 启动后一直零输出:含 -ss 定位/滤镜初始化/休眠盘唤醒
+        const int RunningSilenceLimitSec = 120;                            // 已出过输出后转静默:判定挂死
+        using var watchdog = new System.Threading.Timer(_ =>
+        {
+            try
+            {
+                lock (lockObj)
+                {
+                    if (killRequested || p.HasExited) return;
+                    // 暂停=子进程已被 NtSuspendProcess 冻结,冻结态与僵死态无法区分 → 喂狗,绝不误杀
+                    if (IsPaused) { lastLiveTicks = DateTime.Now.Ticks; return; }
+                    int limitSec = sawAnyOutput ? RunningSilenceLimitSec : StartupSilenceLimitSec;
+                    if (DateTime.Now.Ticks - lastLiveTicks <= TimeSpan.FromSeconds(limitSec).Ticks) return;
+                    killRequested = true;
+                    killReason = $"探测子进程 {limitSec} 秒无任何输出(疑似解码器/驱动挂死),已强制终止";
+                    AppLogger.Warn($"看门狗:{killReason} — exe={Path.GetFileName(exe)} args={args[..Math.Min(args.Length, 120)]}");
+                    try { ResumeActiveProcess(); p.Kill(entireProcessTree: true); } catch { }   // 冻结进程 kill 可能失败,先解冻
+                }
+            }
+            catch { }
+        }, null, CheckEveryMs, CheckEveryMs);
+
         while (!p.HasExited)
         {
             if (ct.IsCancellationRequested)
@@ -4917,13 +4985,19 @@ public static class VideoService
                 try { ResumeActiveProcess(); p.Kill(entireProcessTree: true); } catch { }   // 取消前先解冻(冻结进程 kill 可能失败)
                 break;
             }
+            if (killRequested) break;   // 看门狗已判死并已杀进程,收手去抛停滞异常
             await Task.Delay(100).ConfigureAwait(false);
         }
+        // 顺序保持"先 stderr 全部行、再 stdout 全部行"(与改造前一致):调用方按行解析,换序会读错字段
+        var err = await drainErr.ConfigureAwait(false);
+        var stdout = await drainOut.ConfigureAwait(false);
+        watchdog.Dispose();
         App.ActiveProcesses.Unregister(p.Id);
-        var err = await errTask;
-        var stdout = await outTask;
         if (ct.IsCancellationRequested)
             throw new OperationCanceledException();
+        // 停滞必须排在 ExitCode 判断之前:被看门狗杀掉的进程退出码非零,否则会被误报成普通"命令失败"
+        if (killRequested && p.ExitCode != 0)
+            throw new EngineStallException(killReason ?? "探测子进程长时间无输出,已强制终止");
         if (p.ExitCode != 0)
         {
             // 探测类命令(转场/评分)失败不致命,但必须留痕:记录命令与输出尾部,便于定位(如 ffmpeg 滤镜不存在)
@@ -4963,17 +5037,28 @@ public static class VideoService
         using var p = Process.Start(psi) ?? throw new InvalidOperationException("无法启动: " + exe);
         SafeRender.ApplyProcessPriority(p);   // 处理时降优先级,防整机卡(可设置关闭)
         App.ActiveProcesses.Register(p);
+        var lockObj = new object();
+        int maxPct = 0, maxFrame = 0;
+        // ===== 无进展看门狗状态 =====
+        // 时间戳必须是"每次 RunAsync 调用私有"(闭包捕获):用全局静态会被并发任务互相"喂狗"
+        // (如 2/3 路并行超分),A 的心跳让 B 真卡死也判不出来,用户无限等。EngineService 同款教训。
+        bool sawAnyOutput = false;      // 是否已出现任何输出:区分"启动即挂死"与"跑了一半挂死"
+        bool killRequested = false;     // 看门狗已判死,等待循环据此收手
+        string? killReason = null;
+        long lastLiveTicks = DateTime.Now.Ticks;   // 最近一次"确认在干活"的时刻
         // 引擎不输出进度时(如 rife),轮询输出目录已生成的文件数来逐帧报告
         using var watchCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var watchTask = (watchDir != null && totalFrames > 0 && stage.Length > 0)
-            ? WatchDirProgressAsync(watchDir, stage, totalFrames, progress, watchCts.Token)
+            ? WatchDirProgressAsync(watchDir, stage, totalFrames, progress, watchCts.Token,
+                // 有新帧落盘 = 确实在出活 → 喂狗。补帧引擎可能长时间不打印 stdout,只看 stdout 静默会误杀。
+                () => { lock (lockObj) { sawAnyOutput = true; lastLiveTicks = DateTime.Now.Ticks; } })
             : Task.CompletedTask;
-        var lockObj = new object();
-        int maxPct = 0, maxFrame = 0;
         void OnChunk(string chunk)
         {
             lock (lockObj)
             {
+                sawAnyOutput = true;
+                if (chunk.Length > 0) lastLiveTicks = DateTime.Now.Ticks;
                 // ffmpeg 帧计数
                 foreach (System.Text.RegularExpressions.Match m in FrameRegex.Matches(chunk))
                 {
@@ -5011,6 +5096,37 @@ public static class VideoService
         }
         var drainOut = DrainAsync(p.StandardOutput, OnChunk, ct);
         var drainErr = DrainAsync(p.StandardError, OnChunk, ct);
+
+        // ===== 无进展看门狗 =====
+        // 为什么必须有:ffmpeg/引擎被驱动挂死时进程"活着但永不退出",原等待循环 while(!p.HasExited)
+        // 会无限转下去,唯一出路是用户手动点「强制结束」(实测有用户同一文件连续 7 次卡死在拆帧)。
+        // 判据用"输出静默"而非固定总时长:ffmpeg 拆帧/编码期间会持续打印 frame=/speed= 统计,
+        // 引擎也会打印百分比,正常干活时不可能长时间完全静默;而总时长无法设阈值(长视频本来就要跑很久)。
+        // 阈值取宽,宁可漏判也不可误杀"慢但正常"的作业——误杀会让每个视频任务都失败,代价远大于多等一会儿。
+        const int CheckEveryMs = 15_000;                                   // 每 15 秒巡检
+        const int StartupSilenceLimitSec = 90;                             // 启动后一直零输出:含硬解初始化/滤镜初始化/-ss 定位/模型加载与着色器编译
+        const int RunningSilenceLimitSec = 120;                            // 已出过输出后转静默:判定挂死
+        using var watchdog = new System.Threading.Timer(_ =>
+        {
+            try
+            {
+                lock (lockObj)
+                {
+                    if (killRequested || p.HasExited) return;
+                    // 暂停=子进程已被 NtSuspendProcess 冻结,冻结态与僵死态无法区分 → 喂狗,绝不误杀
+                    if (IsPaused) { lastLiveTicks = DateTime.Now.Ticks; return; }
+                    int limitSec = sawAnyOutput ? RunningSilenceLimitSec : StartupSilenceLimitSec;
+                    if (DateTime.Now.Ticks - lastLiveTicks <= TimeSpan.FromSeconds(limitSec).Ticks) return;
+                    killRequested = true;
+                    killReason = $"子进程 {limitSec} 秒无任何输出(疑似驱动/解码器挂死),已强制终止:{stage}";
+                    // Warn 是同步落盘(AppLogger sync),即使随后被用户强杀也留下证据
+                    AppLogger.Warn($"看门狗:{killReason} — exe={Path.GetFileName(exe)}");
+                    try { ResumeActiveProcess(); p.Kill(entireProcessTree: true); } catch { }   // 冻结进程 kill 可能失败,先解冻
+                }
+            }
+            catch { }
+        }, null, CheckEveryMs, CheckEveryMs);
+
         while (!p.HasExited)
         {
             if (ct.IsCancellationRequested)
@@ -5018,14 +5134,21 @@ public static class VideoService
                 try { ResumeActiveProcess(); p.Kill(entireProcessTree: true); } catch { }   // 取消前先解冻(冻结进程 kill 可能失败)
                 break;
             }
+            if (killRequested) break;   // 看门狗已判死并已杀进程,收手去抛停滞异常(走回退链)
             await Task.Delay(100).ConfigureAwait(false);
         }
         await Task.WhenAll(drainOut, drainErr).ConfigureAwait(false);
+        watchdog.Dispose();
         watchCts.Cancel();
         try { await watchTask.ConfigureAwait(false); } catch (OperationCanceledException) { }
         App.ActiveProcesses.Unregister(p.Id);
         if (ct.IsCancellationRequested)
             throw new OperationCanceledException();
+        // 停滞必须排在 ExitCode 判断之前:被看门狗杀掉的进程退出码非零,否则会被误报成普通"命令失败",
+        // 调用侧也就分不清"该走回退"还是"参数本身错了"。
+        // 加 ExitCode != 0 守卫:若进程恰好在判死的同一瞬间以 0 正常退出,说明活已干完,不能把成功任务误报成停滞。
+        if (killRequested && p.ExitCode != 0)
+            throw new EngineStallException(killReason ?? $"子进程长时间无输出,已强制终止:{stage}");
         if (p.ExitCode != 0)
         {
             var tail = (await drainErr).Trim();
@@ -5054,9 +5177,10 @@ public static class VideoService
         return Math.Clamp(fr * 90 / Math.Max(1, totalFrames), 1, 90);
     }
 
-    /// <summary>轮询输出目录已生成的文件数,逐帧报告进度(供不输出进度的引擎如 rife 使用)。</summary>
+    /// <summary>轮询输出目录已生成的文件数,逐帧报告进度(供不输出进度的引擎如 rife 使用)。
+    /// onFrame:每次文件数增长时回调,用作看门狗心跳(引擎可能长时间不打 stdout 但确实在出帧)。</summary>
     private static async Task WatchDirProgressAsync(string dir, string stage, int totalFrames,
-        IProgress<(int pct, string msg)>? progress, CancellationToken ct)
+        IProgress<(int pct, string msg)>? progress, CancellationToken ct, Action? onFrame = null)
     {
         int lastCount = 0;
         while (!ct.IsCancellationRequested)
@@ -5067,6 +5191,7 @@ public static class VideoService
                 if (count > lastCount)
                 {
                     lastCount = count;
+                    onFrame?.Invoke();
                     progress?.Report((StageProgressPct(stage, count, totalFrames),
                         $"{stage} 第 {Math.Min(count, totalFrames)} 帧 / 共 {totalFrames} 帧"));
                 }
@@ -5077,9 +5202,10 @@ public static class VideoService
         }
     }
 
-    // 逐块异步读取子进程输出(实时解析进度)
+    /// <summary>逐块异步读取子进程输出(实时解析进度)。keepTail=只保留的尾部字符数(RunAsync 报错只需尾巴);
+    /// 传 0 = 全量保留(RunCaptureAsync 的调用方要逐行解析 scdet/showinfo 输出,截断会丢帧)。</summary>
     private static async Task<string> DrainAsync(System.IO.StreamReader reader,
-        Action<string> onChunk, CancellationToken ct)
+        Action<string> onChunk, CancellationToken ct, int keepTail = 8192)
     {
         var sb = new System.Text.StringBuilder();
         var buf = new char[4096];
@@ -5092,7 +5218,7 @@ public static class VideoService
                 if (n <= 0) break;
                 var chunk = new string(buf, 0, n);
                 sb.Append(chunk);
-                if (sb.Length > 8192) sb.Remove(0, sb.Length - 8192);
+                if (keepTail > 0 && sb.Length > keepTail) sb.Remove(0, sb.Length - keepTail);
                 onChunk(chunk);
             }
         }

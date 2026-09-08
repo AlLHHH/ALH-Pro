@@ -3814,10 +3814,11 @@ public sealed partial class VideoView : UserControl
         SafeRender.RefreshFreeResources();
         SafeRender.RefreshIdleCpu();   // 处理前采样系统占用(引擎未启动,读数=其他软件真实占用)→ CPU 上限自适应
         {
-            double fr = SafeRender.FreeRamGB, fv = SafeRender.FreeVramGB;
+            double fr = SafeRender.FreeRamGB;
             int bs = SafeRender.GetVideoBatchSize();
-            Log($"资源自检:空闲内存 {fr:0.#} GB / 空闲显存 {fv:0.#} GB → 视频批 {bs} 帧/批");
-            AppLogger.Info($"资源自检:空闲内存 {fr:0.#} GB / 空闲显存 {fv:0.#} GB → 视频批 {bs} 帧/批");
+            // 批次只按空闲内存定档(显存峰值由分块大小界定);空闲显存照实写"未实测",不再伪造数值误导排查
+            Log($"资源自检:空闲内存 {fr:0.#} GB / 空闲显存 {SafeRender.FreeVramText} → 视频批 {bs} 帧/批");
+            AppLogger.Info($"资源自检:空闲内存 {fr:0.#} GB / 空闲显存 {SafeRender.FreeVramText} → 视频批 {bs} 帧/批");
         }
         // 预计时间:全局平均速度(已用时间 ÷ 已完成进度 → 总时长估计,再减已用 = 剩余)
         // 预计总时长初始估算:根据启用的处理项 + 每个视频的时长/帧率/分辨率,
@@ -3873,6 +3874,7 @@ public sealed partial class VideoView : UserControl
             System.Text.RegularExpressions.RegexOptions.Compiled);
         string? lastLoggedStep = null;
         DateTime lastStepLogAt = DateTime.MinValue;   // 步骤行节流:500ms 内原地更新
+        DateTime lastStepFileLogAt = DateTime.MinValue;   // 文件日志节流:阶段内每 30 秒补一行进度(诊断用)
         string? stepLogFull = null;                   // 当前已显示的步骤完整行([hh:mm:ss] ▶ ...)
         var taskStart = DateTime.Now;
         DateTime lastEtaAt = DateTime.MinValue;
@@ -3905,12 +3907,13 @@ public sealed partial class VideoView : UserControl
                 // 帧号防越界:引擎段内消息偶发"已处理 N > 共 M"(76/75)→ 显示按 M 封顶,不出现"超总数"
                 if (emNow < 0) emNow = 0;
                 if (emTotal < emNow) emTotal = emNow;
-                // 日志显示当前步骤:实时更新最后一行(500ms 节流);文件日志每阶段仅记首行(防刷爆)
+                // 日志显示当前步骤:实时更新最后一行(500ms 节流);文件日志=阶段首行 + 每 30 秒一行(防刷爆又可诊断)
                 if (lastLoggedStep != emStage)
                 {
                     lastLoggedStep = emStage;
                     stepLogFull = null;   // 新阶段:下一步走"追加"分支
                     lastStepLogAt = DateTime.MinValue;
+                    lastStepFileLogAt = DateTime.MinValue;
                 }
                 string stepNewFull = $"[{DateTime.Now:HH:mm:ss}] ▶ {emStage} 中(已处理 {emNow}/{emTotal})";
                 var fpsM = System.Text.RegularExpressions.Regex.Match(t.msg, @"\(目标\s*(\d+(?:\.\d+)?)\s*fps\)");
@@ -3920,8 +3923,16 @@ public sealed partial class VideoView : UserControl
                 {
                     bool first = stepLogFull == null;
                     lastStepLogAt = DateTime.Now;
-                    if (first)
-                        AppLogger.Info($"▶ {emStage} 中(已处理 {emNow}/{emTotal})");   // 文件日志:每阶段仅首行
+                    // 文件日志:阶段首行 + 每 30 秒补一行。原先只记首行,任务卡住时整个阶段在诊断包里
+                    // 只剩一条采样,无法区分"真僵死"与"慢但仍在跑"(实测有用户同一文件连卡 7 次都定位不了)。
+                    // AppLogger 每行自带时间戳,故最后一条进度行的时间+帧号即冻结点。
+                    if (first || DateTime.Now - lastStepFileLogAt >= TimeSpan.FromSeconds(30))
+                    {
+                        lastStepFileLogAt = DateTime.Now;
+                        AppLogger.Info(first
+                            ? $"▶ {emStage} 中(已处理 {emNow}/{emTotal})"
+                            : $"… {emStage} 仍在进行(已处理 {emNow}/{emTotal})");
+                    }
                     if (!first && stepLogFull != null
                         && VideoLogText.Text.EndsWith(stepLogFull, StringComparison.Ordinal))
                     {

@@ -23,7 +23,6 @@ public class RenderPolicyTests
     [InlineData(8.0, GpuCategory.Nvidia, 640)]
     [InlineData(12.0, GpuCategory.Nvidia, 768)]
     [InlineData(6.0, GpuCategory.Nvidia, 512)]
-    [InlineData(6.0, GpuCategory.Nvidia, 512)]
     public void VideoTileSize_nvidia_by_vram(double vram, GpuCategory cat, int expected)
     {
         Assert.Equal(expected, RenderPolicy.VideoTileSize(vram, cat));
@@ -49,13 +48,15 @@ public class RenderPolicyTests
     }
 
     [Theory]
-    [InlineData(10.0, 5.0, 240)]   // 空余内存>8G + 显存>4G:最快
-    [InlineData(6.0, 3.0, 120)]    // 中档
-    [InlineData(4.0, 2.0, 60)]
-    [InlineData(2.0, 1.0, 40)]
-    [InlineData(1.0, 0.5, 25)]     // 极端紧张
-    public void VideoBatchSize_by_free_resources(double freeRam, double freeVram, int expected)
+    [InlineData(10.0, 240)]   // 空余内存 >8G:最快
+    [InlineData(8.5, 240)]
+    [InlineData(8.0, 180)]    // 档位边界:=8 属中档
+    [InlineData(6.0, 120)]
+    [InlineData(4.0, 60)]
+    [InlineData(2.0, 40)]
+    [InlineData(1.0, 25)]     // 极端紧张
+    public void VideoBatchSize_by_free_ram(double freeRam, int expected)
     {
-        Assert.Equal(expected, RenderPolicy.VideoBatchSize(freeRam, freeVram));
+        Assert.Equal(expected, RenderPolicy.VideoBatchSize(freeRam));
     }
 }

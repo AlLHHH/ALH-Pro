@@ -23,10 +23,12 @@ public static partial class EngineService
         try
         {
             if (Environment.GetEnvironmentVariable("ALH_FORCE_BLACKWELL") == "1") return true;
-            var names = new System.Collections.Generic.List<string>();
+            var names = new System.Collections.Generic.List<string?>();
             try { names.AddRange(VulkanCheck.Devices.Select(d => d.Name)); } catch { }
             try { names.AddRange(GpuInfo.GetAdapterNames()); } catch { }
-            return names.Any(n => Regex.IsMatch(n, @"RTX 5[0-9]{2}", RegexOptions.IgnoreCase));
+            // 判定交给 AlhPro.Core.GpuName(纯函数,有单测):原先这里的 RTX 5[0-9]{2}
+            // 连 "RTX 5000 Ada"/"Quadro RTX 5000"(Turing) 一起吞,把跑得动 ncnn 的卡推到更慢的 ONNX。
+            return AlhPro.Core.GpuName.AnyIsBlackwell(names);
         }
         catch { return false; }
     }
@@ -37,7 +39,7 @@ public static partial class EngineService
     {
         if (EsrganOnnxService.FindModel() == null && EsrganOnnxService.FindAnimeVideoModel() == null)
             return false;
-        return IsBlackwellGpu() || OldNcnnGpuRisky();
+        return OldNcnnGpuRisky();   // 其定义已含 IsBlackwellGpu(),原先再 || 一遍是空操作
     }
 
     /// <summary>waifu2x 是否应走 ONNX 路线:仅在 无独显/Vulkan 不可用时(此时只能 CPU,而 waifu2x ncnn CPU 模式有 bug 会崩)。
@@ -81,26 +83,6 @@ public static partial class EngineService
             _waifu2xNcnnProbeGpu = gpuId;
         }
         return ok;
-    }
-
-    /// <summary>当前计算设备是否为 NVIDIA 显卡(ncnn-Vulkan 在这类卡上偶发 vkAllocateMemory/黑帧,
-    /// 故 N 卡走更稳定的 ONNX+DirectML;AMD/Intel 不预判,保持原 ncnn 或 ONNX 兜底逻辑)。
-    /// 综合引擎枚举(VulkanCheck.Devices)与注册表适配器名判断;取不到时按"非 N 卡"保守处理。</summary>
-    public static bool IsNvidiaGpu()
-    {
-        try
-        {
-            var names = new System.Collections.Generic.List<string>();
-            try { names.AddRange(VulkanCheck.Devices.Select(d => d.Name)); } catch { }
-            try { names.AddRange(GpuInfo.GetAdapterNames()); } catch { }
-            if (names.Count == 0) return false;
-            // 只要任一设备是 NVIDIA/GeForce/RTX/GTX → 认为是 N 卡环境
-            return names.Any(n => n.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase)
-                || n.Contains("GeForce", StringComparison.OrdinalIgnoreCase)
-                || n.Contains("RTX", StringComparison.OrdinalIgnoreCase)
-                || n.Contains("GTX", StringComparison.OrdinalIgnoreCase));
-        }
-        catch { return false; }
     }
 
     /// <summary>是否存在非 NVIDIA 显卡(AMD/Intel,含核显):驱动差异大,需要真机探测兜底。</summary>
@@ -235,6 +217,42 @@ public static partial class EngineService
         }
         catch { }
         return list;
+    }
+
+    /// <summary>DXGI 实测的独显显存总量(GB):所有非软件适配器中 DedicatedVideoMemory 的最大值。
+    /// 这是唯一跨厂商(NVIDIA/AMD/Intel)可靠的显存真值来源,用于 nvidia-smi 不可用时探测。
+    /// 只有独显级(&gt;1GB)才返回:核显的 DedicatedVideoMemory 通常只有几十~几百 MB(其余走共享内存),
+    /// 返回 null 让上层改用注册表 qwMemorySize —— 注册表对核显报告的是共享内存配额,那才是核显真正可用的预算。
+    /// 失败/无独显返回 null。</summary>
+    public static double? TryGetDxgiVramGb()
+    {
+        try
+        {
+            var riid = new System.Guid("770aae78-f26f-4dba-a829-253c83d1b387");   // IDXGIFactory1
+            if (CreateDXGIFactory1(ref riid, out var factoryPtr) != 0 || factoryPtr == IntPtr.Zero) return null;
+            var factory = (IDXGIFactory1)System.Runtime.InteropServices.Marshal.GetObjectForIUnknown(factoryPtr);
+            try
+            {
+                long best = 0;
+                for (uint i = 0; ; i++)
+                {
+                    if (factory.EnumAdapters1(i, out var adapter) != 0 || adapter == null) break;
+                    try
+                    {
+                        if (adapter.GetDesc1(out var desc) == 0)
+                        {
+                            const uint DXGI_ADAPTER_FLAG_SOFTWARE = 2;   // Microsoft 基本渲染驱动:无显存,必须排除
+                            if ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0 && desc.DedicatedVideoMemory > best)
+                                best = desc.DedicatedVideoMemory;
+                        }
+                    }
+                    finally { System.Runtime.InteropServices.Marshal.ReleaseComObject(adapter); }
+                }
+                return best > 1073741824L ? best / 1073741824.0 : null;
+            }
+            finally { System.Runtime.InteropServices.Marshal.ReleaseComObject(factory); }
+        }
+        catch { return null; }
     }
 
     /// <summary>旧 ncnn 引擎(2022 版,realesrgan ncnn)在 GPU 上可能不可用的设备:
@@ -678,6 +696,14 @@ public static partial class EngineService
                 lock (lockObj)
                 {
                     if (killRequested || p.HasExited) return;
+                    // 用户暂停=子进程已被 NtSuspendProcess 冻结,冻结态与僵死态外部无法区分
+                    // (存活、零输出、不退出)→ 喂狗,否则暂停久了会被误判挂死而杀掉任务。
+                    if (VideoService.IsPaused)
+                    {
+                        lastOutTicks = DateTime.Now.Ticks;
+                        lastFrameTicks = DateTime.Now.Ticks;
+                        return;
+                    }
                     bool cpu = args.Contains("-g -1", StringComparison.Ordinal);
                     // 【识别核显】核显共享显存(报告值常高达8~16G)但实际很慢,不能按"≥6G=强卡"给1分钟看门狗
                     // (否则处理大帧>1分钟零输出会被误杀)。核显也按 CPU/慢机宽容。
@@ -973,7 +999,12 @@ public static partial class EngineService
         {
             // CPU(-g -1)初始模式:这批 ncnn 引擎的 CPU 模式有 bug(实测 waifu2x 20250915
             // -g -1 直接 exit -1073741819 内存访问违规)→ 反向试 GPU 0,再失败抛指引异常
-            _ncnnCpuBroken = true;   // 记录本会话 CPU 崩溃,后续跳过 CPU
+            // 闩锁只在"引擎二进制自身崩溃"时置位:退出码落在 NTSTATUS 0xC0000000 段(表现为 ≤ -1073741824)
+            // 才是访问违规/堆损坏一类崩溃。原先任何 InvalidOperationException 都置位——磁盘满、看门狗判死、
+            // 命令行写错全算,之后整个会话把用户【主动选的 CPU】悄悄改写成 -g 0;在"GPU 才是坏件"的机器上
+            // 正好反了,还把真实错误(如磁盘满)掩盖成"CPU 模式崩溃"。本次调用内仍照常重试 GPU 0。
+            if (long.TryParse(ExtractExit(ex.Message), out var exitCodeNum) && exitCodeNum <= -1073741824L)
+                _ncnnCpuBroken = true;   // 记录本会话 CPU 崩溃,后续跳过 CPU
             string head = ex.Message.Split('\n')[0];
             if (head.Length > 90) head = head[..90];
             string gpu0Name = GpuName(0);
@@ -1109,40 +1140,9 @@ public static partial class EngineService
         return null;
     }
 
-    /// <summary>自研"任意时刻插帧"核心(M1):对单帧对 (A,B) 用 RIFE 二分级联生成 2^depth-1 个等距中间帧
-    /// (位置 j/2^depth, j=1..2^depth-1),输出到 outDir/interp_{000}.png 起(顺序=时间位置)。
-    /// 原理:一次 RIFE 只能插 0.5;按二叉子树逐层对"需要的子帧对"再做 0.5 插补,即可得到任意 dyadic 时刻。
-    /// 不依赖任何第三方任意 t 接口,纯自有引擎实现(任意时刻插帧,独立实现)。
-    /// 注意(M1):逐节点调用(每节点一次引擎进程);后续 M2 用"层内目录模式批处理"压开销。</summary>
-    public static async Task InterpPairMultiFrameAsync(string rifeExe, string imgA, string imgB,
-        int depth, string outDir, int gpuId, CancellationToken ct)
-    {
-        Directory.CreateDirectory(outDir);
-        int counter = 0;
-        async Task NodeAsync(string a, string b, int level)
-        {
-            if (level <= 0 || ct.IsCancellationRequested) return;
-            var mid = Path.Combine(outDir, $"interp_{++counter:D3}.png");
-            // RIFE 单对模式:-0 前一帧, -1 后一帧, -o 输出中间帧(0.5)
-            var args = $"-0 \"{a}\" -1 \"{b}\" -o \"{mid}\" -g {gpuId}{SafeRender.GetEngineThreadArgs()}";
-            try { await RunAsync(rifeExe, args, null, ct).ConfigureAwait(false); }
-            catch (InvalidOperationException ex) when (gpuId >= 0)
-            {
-                // GPU 失败(新显卡/驱动兼容)自动改用 CPU(与超分同策略)
-                AppLogger.Info($"降级:任意 t 插帧 GPU 失败({ex.Message.Split('\n')[0]}),改用 CPU");
-                await RunAsync(rifeExe,
-                    System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g -1"),
-                    null, ct).ConfigureAwait(false);
-            }
-            await NodeAsync(a, mid, level - 1).ConfigureAwait(false);
-            await NodeAsync(mid, b, level - 1).ConfigureAwait(false);
-        }
-        await NodeAsync(imgA, imgB, depth).ConfigureAwait(false);
-    }
-
     /// <summary>层批"任意 t 插值"(M2):对一批帧对同时做 0.5 插值——把各对的 (a_i,b_i) 平铺成目录序列,
     /// 一次 RIFE 目录模式跑完,再提取每对的中间帧(丢弃跨界对(B_i,A_{i+1})的产物)。
-    /// 返回中间帧路径列表(顺序=pairs)。配合 InterpPairMultiFrameAsync 的二叉树递归 = 每层一次引擎调用。
+    /// 返回中间帧路径列表(顺序=pairs)。调用方按二叉树逐层递归调用本方法 = 每层一次引擎调用。
     /// 注意:目录模式必须带 -f 帧名模式,否则引擎用默认 %08d 命名,frame_4i-2 提取永远落空
     /// (曾致"全部中间帧兜底为左端点 = 输出全是关键帧副本/没有补帧")。</summary>
     public static async Task<List<string>> InterpLayerBatchAsync(string rifeExe,
@@ -1171,8 +1171,14 @@ public static partial class EngineService
         try { await RunAsync(rifeExe, args, progress, ct, watchStageNow, 0, watchStage != null ? outDir : null).ConfigureAwait(false); }
         catch (InvalidOperationException ex) when (gpuId >= 0)
         {
-            AppLogger.Info($"降级:任意 t 层批 GPU 失败({ex.Message.Split('\n')[0]}),改用 CPU");
-            await RunAsync(rifeExe, System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g -1"),
+            // 「补帧绝不落 CPU」:原先这里用 -g -1 重跑 ncnn-CPU,直接违反该约定,而且 CPU 补帧慢到
+            // 用户以为卡死(看门狗判死抛的 EngineStallException 也派生自 InvalidOperationException,
+            // 同样会被这个 catch 捞去走 CPU)。改为按既定降级链换一张卡再试;没有第二张卡就把异常抛回
+            // 调用方,由上层接 ONNX(DirectML) 或明确报错——绝不静默降级到 CPU。
+            int? altGpu = TryGetAlternateGpu(gpuId);
+            if (altGpu == null) throw;
+            AppLogger.Info($"降级:任意 t 层批 GPU{gpuId} 失败({ex.Message.Split('\n')[0]}),改用 GPU{altGpu}(不落 CPU)");
+            await RunAsync(rifeExe, System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", $"-g {altGpu}"),
                 progress, ct, watchStageNow, 0, watchStage != null ? outDir : null).ConfigureAwait(false);
         }
         // 输出序列:out[0]=a1, out[1]=mid1, out[2]=b1, out[3]=mid(b1,a2) 丢弃, out[4]=a2, out[5]=mid2 ...
@@ -1662,38 +1668,24 @@ public static partial class EngineService
     /// <summary>检测单个 PNG 是否近全黑(95% 以上像素 RGB 和 < 24)。internal:视频补帧/层批复用(黑帧=GPU 队列异常兼容症状)。
     /// 同步把"读不出的帧"(0 字节 / 空 / 损坏)视为缺陷帧返回 true —— ncnn-vulkan 在 50 系/部分驱动上会静默输出 0KB 空帧
     /// (退出码 0 不报错),若这里返回 false,空帧会被当成正常帧放行,一路传到合帧导致"找不到 frame_%06d.jpg"。</summary>
-    internal static bool IsBlackPng(string file)
-    {
-        try
-        {
-            // 空/0 字节:必然不可解码,按缺陷帧处理(旧逻辑 new Bitmap 抛异常被 catch 吞掉返回 false,正是漏检的根源)
-            if (!File.Exists(file) || new FileInfo(file).Length == 0) return true;
-            using var bmp = new System.Drawing.Bitmap(file);
-            if (bmp.Width <= 0 || bmp.Height <= 0) return true;   // 尺寸非法也算缺陷
-            // 采样判定逻辑抽到 AlhPro.Core.FrameInspect(纯函数,可单测)
-            var sums = new System.Collections.Generic.List<int>();
-            int total = AlhPro.Core.FrameInspect.ForEachSample(bmp.Width, bmp.Height, (x, y) =>
-            {
-                var p = bmp.GetPixel(x, y);
-                sums.Add((int)p.R + (int)p.G + (int)p.B);
-            });
-            return AlhPro.Core.FrameInspect.IsNearBlack(sums.ToArray(), total);
-        }
-        catch { return true; }   // 解码失败也按缺陷帧处理(不静默放行)
-    }
+    internal static bool IsBlackPng(string file) => NearBlackProbe(file, failIsDefect: true);
 
     /// <summary>严格只判"真·近全黑"(可解码、确实 ≥95% 像素近黑)。空/0字节/未写完/解码失败的帧 → false(不算黑)。
     /// 用于【补帧黑帧防御】抽样:那里要找的是"GPU 输出真黑帧",若把"引擎还没写完的瞬时空帧"也当成黑,
     /// 会误触发整段补帧降级重算 → 补帧帧被清空 → upInput=0 → 超分无帧 / 合帧报"找不到 frame_%06d.jpg"。
     /// 空/坏帧在这里应"跳过不判黑",交给后续帧完整校验处理,而不是当黑帧降级。</summary>
-    internal static bool IsBlackPngStrict(string file)
+    internal static bool IsBlackPngStrict(string file) => NearBlackProbe(file, failIsDefect: false);
+
+    /// <summary>上面两个入口的唯一实现:差别只在"读不出的帧"算不算缺陷(failIsDefect)。
+    /// 判定阈值统一走 AlhPro.Core.FrameInspect(纯函数,可单测)。</summary>
+    private static bool NearBlackProbe(string file, bool failIsDefect)
     {
         try
         {
-            if (!File.Exists(file) || new FileInfo(file).Length == 0) return false;   // 空/未写完:不算黑
+            // 空/0 字节:必然不可解码(旧逻辑 new Bitmap 抛异常被 catch 吞掉返回 false,正是空帧漏检的根源)
+            if (!File.Exists(file) || new FileInfo(file).Length == 0) return failIsDefect;
             using var bmp = new System.Drawing.Bitmap(file);
-            if (bmp.Width <= 0 || bmp.Height <= 0) return false;
-            // 采样判定逻辑抽到 AlhPro.Core.FrameInspect(纯函数,可单测)
+            if (bmp.Width <= 0 || bmp.Height <= 0) return failIsDefect;   // 尺寸非法
             var sums = new System.Collections.Generic.List<int>();
             int total = AlhPro.Core.FrameInspect.ForEachSample(bmp.Width, bmp.Height, (x, y) =>
             {
@@ -1702,7 +1694,7 @@ public static partial class EngineService
             });
             return AlhPro.Core.FrameInspect.IsNearBlack(sums.ToArray(), total);
         }
-        catch { return false; }   // 解码失败:不算黑,跳过(不触发降级)
+        catch { return failIsDefect; }
     }
 
     /// <summary>给分块做羽化 alpha:左/上边缘在 overlapPx 内从 0 淡入到 1(右/下保持不透明)。</summary>
@@ -1909,11 +1901,29 @@ public static partial class EngineService
     /// <summary>把 PNG 转成 JPG(按质量),写入 jpgPath。
     /// 按内容解码(SourceBitmap 按魔数识别),故也接受 .png 名但实际为 JPG 字节的文件;供视频流水线「引擎输出转 JPG」复用。</summary>
     public static void ConvertPngToJpg(string pngPath, string jpgPath, float quality = 0.96f)
+        => ConvertPngToJpg(pngPath, jpgPath, quality, out _);
+
+    /// <summary>同上,并顺带报告该帧是否"近全黑"(nearBlack)。
+    /// 黑帧判定直接在已解码的位图上采样,不再另开一次全尺寸解码——视频批每帧本来就要解码转 JPG,
+    /// 为查黑帧再解码一遍等于把这条最热路径的开销翻倍。</summary>
+    public static void ConvertPngToJpg(string pngPath, string jpgPath, float quality, out bool nearBlack)
     {
+        // 解码抛出/尺寸非法时默认留 true:异常路径由调用方按缺陷处理,这里偏保守不会漏判。
+        nearBlack = true;
+        using var img = new System.Drawing.Bitmap(pngPath);
+        if (img.Width > 0 && img.Height > 0)
+        {
+            var sums = new System.Collections.Generic.List<int>();
+            int total = AlhPro.Core.FrameInspect.ForEachSample(img.Width, img.Height, (x, y) =>
+            {
+                var p = img.GetPixel(x, y);
+                sums.Add((int)p.R + (int)p.G + (int)p.B);
+            });
+            nearBlack = AlhPro.Core.FrameInspect.IsNearBlack(sums.ToArray(), total);
+        }
         // 视频中间帧 JPG:直接走 System.Drawing(GDI,转 24bppRgb 规避色偏),不走 WinRT——
         // WinRT BitmapEncoder 在后台/非 UI 线程会系统性抛 HRESULT=0x88982F41(视频处理必失败),
         // 导致每次视频处理都刷"WinRT JPG 编码不可用"日志 + 白试一次。GDI 在后台线程可靠、不刷日志。
-        using var img = new System.Drawing.Bitmap(pngPath);
         SaveJpegViaGdi(img, jpgPath, quality);
     }
 
@@ -1925,9 +1935,10 @@ public static partial class EngineService
     /// 保证永远输出真实画面,不再出现占位/冻结帧;并记录 HRESULT 供排查。</summary>
     private static void SaveJpegViaWinRT(System.Drawing.Bitmap bmp, string jpgPath, float quality = 0.92f)
     {
+        // 本会话已确认 WinRT 坏 → 直接走 GDI 兜底。原先这层兜底被包在 if(!_winrtJpegBroken) 块【内部】,
+        // 闩锁一旦置位,整个方法空返回、一个字节都不写,调用方随后因输出文件缺失而失败(照片 JPG 全断)。
+        if (_winrtJpegBroken) { SaveJpegViaGdi(bmp, jpgPath, quality); return; }
         int w = bmp.Width, h = bmp.Height;
-        if (!_winrtJpegBroken)
-        {
         try
         {
             // 转成 32bppArgb 再取像素(System.Drawing 内存布局为 BGRA,需转成 RGBA 给 WinRT)
@@ -1986,9 +1997,8 @@ public static partial class EngineService
             _winrtJpegBroken = true;
             AppLogger.Warn($"⚠ WinRT JPG 编码不可用({ex.GetType().Name},HRESULT=0x{ex.HResult:X8})——本会话改成 System.Drawing(转 24bppRgb)编码,避免占位/冻结帧;{ex.Message?.Split('\n')[0]}");
         }
-        // WinRT 不可用/已确认坏 → System.Drawing 兜底(真实画面,不再占位/冻结)
+        // WinRT 本次失败 → System.Drawing 兜底(真实画面,不再占位/冻结)
         SaveJpegViaGdi(bmp, jpgPath, quality);
-        }
     }
 
     /// <summary>System.Drawing 编码 JPG 的回退路径:转成无 alpha 的 24bppRgb 再编码,规避 GDI+ 对 ARGB 的色偏。</summary>

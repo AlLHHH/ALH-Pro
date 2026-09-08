@@ -67,9 +67,10 @@ public sealed partial class MainPage : Page
             var ok = EngineService.CheckEngines(out var missing);
             StatusText.Text = ok ? "就绪" : "引擎缺失: " + missing;
             AppLogger.Info($"安全渲染:模式={(SafeRender.Mode == 0 ? "自动" : "自定义")}," +
-                $"显存墙 {SafeRender.EffectiveVramGB:0.#} GB(总 {SafeRender.TotalVramGB:0.#} GB / 空闲 {SafeRender.FreeVramGB:0.#} GB)," +
+                $"显存墙 {SafeRender.EffectiveVramGB:0.#} GB(总 {SafeRender.TotalVramGB:0.#} GB / 空闲 {SafeRender.FreeVramText})," +
                 $"分块 {SafeRender.GetTileSize()},内存墙 {SafeRender.EffectiveRamGB:0.#} GB," +
                 $"视频批 {SafeRender.GetVideoBatchSize()} 帧/批,CPU {SafeRender.EffectiveCpuLevel switch { 1 => "低", 2 => "中", _ => "高" }}({SafeRender.CpuCoreCount} 核)," +
+                $"CPU硬上限 {SafeRender.GetEffectiveCpuCapPct():0}%(处理前系统占用 {SafeRender.IdleCpuLoad * 100:0}%)," +
                 $"降温休息={(SafeRender.RestEnabled ? "开(1小时/15分钟)" : "关")}");
             // Vulkan 自检:后台跑完,无 GPU 自动切 CPU。弹窗「设备检测」只对低配设备(无GPU/显存<6/内存<8/核数≤4)
             // 自动弹一次友好提示;强机不弹(结果随时可在「设置 → 计算设备」查看),弹过也不再重复弹。
@@ -304,7 +305,7 @@ public sealed partial class MainPage : Page
         int chosen = AppSettings.GpuIndex;
         if (chosen >= 0 && !string.IsNullOrWhiteSpace(GpuInfo.GetEngineDeviceName(chosen)))
             AddReportLine("推荐计算设备", "GPU " + chosen + " · " + GpuInfo.GetEngineDeviceName(chosen), null);
-        try { AddReportLine("显存", SafeRender.TotalVramGB.ToString("0.#", inv) + " GB / 可用 " + SafeRender.FreeVramGB.ToString("0.#", inv) + " GB", null); } catch { }
+        try { AddReportLine("显存", SafeRender.TotalVramGB.ToString("0.#", inv) + " GB / 可用 " + SafeRender.FreeVramText, null); } catch { }
         try { AddReportLine("系统内存", SafeRender.TotalRamGB.ToString("0.#", inv) + " GB", null); } catch { }
         try { AddReportLine("处理器", SafeRender.CpuName + " · " + SafeRender.CpuCoreCount + " 核", null); } catch { }
         try { var drv = GpuInfo.GetDriverVersions(); if (drv.Count > 0 && !string.IsNullOrWhiteSpace(drv[0])) AddReportLine("显卡驱动", drv[0], null); } catch { }
@@ -408,7 +409,7 @@ public sealed partial class MainPage : Page
             int chosen = AppSettings.GpuIndex;
             if (chosen >= 0 && !string.IsNullOrWhiteSpace(GpuInfo.GetEngineDeviceName(chosen)))
                 sb.Append("推荐计算设备: GPU ").Append(chosen).Append(" · ").Append(GpuInfo.GetEngineDeviceName(chosen)).Append('\n');
-            try { sb.Append("显存: ").Append(SafeRender.TotalVramGB.ToString("0.#", inv)).Append(" GB / 可用 ").Append(SafeRender.FreeVramGB.ToString("0.#", inv)).Append(" GB").Append('\n'); } catch { }
+            try { sb.Append("显存: ").Append(SafeRender.TotalVramGB.ToString("0.#", inv)).Append(" GB / 可用 ").Append(SafeRender.FreeVramText).Append('\n'); } catch { }
             try { sb.Append("系统内存: ").Append(SafeRender.TotalRamGB.ToString("0.#", inv)).Append(" GB").Append('\n'); } catch { }
             try { sb.Append("处理器: ").Append(SafeRender.CpuName).Append(" · ").Append(SafeRender.CpuCoreCount).Append(" 核").Append('\n'); } catch { }
             try

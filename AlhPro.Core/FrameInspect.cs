@@ -2,7 +2,7 @@ namespace AlhPro.Core;
 
 /// <summary>
 /// 帧质量判定(纯逻辑,不含图像解码):判断"帧是否近全黑 / 缺陷"。
-/// 从 VideoService.batchOutHasDefectiveFrame / EngineService.IsBlackPng 抽出可测的阈值逻辑。
+/// 抽出可测的阈值逻辑,使用方:EngineService.ConvertPngToJpg(超分批输出)/ IsBlackPng、VideoService.DirNearBlack(源帧黑场防误杀)。
 /// 判定规则:采样像素中 ≥95% 的 RGB 和 &lt; 24 视为近黑(缺陷);
 /// 空/0字节/非法尺寸/解码失败由调用方(持有图像句柄)负责,本类只做像素采样判定。
 /// </summary>
