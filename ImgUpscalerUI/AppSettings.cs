@@ -16,6 +16,12 @@ public static class AppSettings
     /// <summary>是否已完成首次 Vulkan 自检(只跑一次,结果缓存)。</summary>
     public static bool VulkanCheckDone { get; set; }
 
+    /// <summary>缓存的自检结论:是否真的枚举到 Vulkan 设备。null=旧版本写的缓存(没有这个字段),按未知处理→重测。
+    /// 之前是靠搜索报告文本里的"未检测到可用的 GPU"来反推,但 BuildReport 只在【注册表也没有显卡】时
+    /// 才写那句;引擎缺失/检测异常这两种失败写的是别的句子 → 反推成"有 GPU"(假阳性),
+    /// 下次启动就敢直接跑 ncnn-Vulkan。结论必须自己存。</summary>
+    public static bool? VulkanGpuOk { get; set; }
+
     /// <summary>首次 Vulkan 自检的友好报告文本(设置界面「计算设备」区常驻显示)。</summary>
     public static string VulkanReport { get; set; } = "";
 
@@ -69,6 +75,7 @@ public static class AppSettings
             AutoRemoveDone = d.AutoRemoveDone;
             GpuIndex = d.GpuIndex;
             VulkanCheckDone = d.VulkanCheckDone;
+            VulkanGpuOk = d.VulkanGpuOk;
             SelfCheckDone = d.SelfCheckDone;
             VulkanReport = d.VulkanReport ?? "";
             SelfCheckReport = d.SelfCheckReport ?? "";
@@ -100,6 +107,7 @@ public static class AppSettings
                         AutoRemoveDone = AutoRemoveDone,
                         GpuIndex = GpuIndex,
                         VulkanCheckDone = VulkanCheckDone,
+                        VulkanGpuOk = VulkanGpuOk,
                         SelfCheckDone = SelfCheckDone,
                         VulkanReport = VulkanReport,
                         SelfCheckReport = SelfCheckReport,
@@ -122,6 +130,7 @@ public static class AppSettings
         public bool AutoRemoveDone { get; set; }
         public int GpuIndex { get; set; } = 0;
         public bool VulkanCheckDone { get; set; }
+        public bool? VulkanGpuOk { get; set; }
         public bool SelfCheckDone { get; set; }
         public string VulkanReport { get; set; } = "";
         public string SelfCheckReport { get; set; } = "";

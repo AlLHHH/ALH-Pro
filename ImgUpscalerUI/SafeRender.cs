@@ -74,16 +74,6 @@ public static class SafeRender
         }
     }
 
-    /// <summary>GPU 型号名称(取第一块显卡,即主显卡;失败给空)。</summary>
-    public static string GpuName
-    {
-        get
-        {
-            var names = GpuInfo.GetAdapterNames();
-            return names.Count > 0 ? names[0] : "未知 GPU";
-        }
-    }
-
     /// <summary>读取当前 GPU 温度(°C,仅 NVIDIA 可靠);失败返回 null(A 卡/Intel 无通用 CLI)。</summary>
     public static double? GetGpuTempC()
     {
@@ -124,11 +114,23 @@ public static class SafeRender
     // ---------- 硬件探测(缓存) ----------
     private static double? _vramTotal, _vramFree, _ramTotal;
 
-    /// <summary>本机显存总量(GB);探测失败给保守值 8。</summary>
-    public static double TotalVramGB => _vramTotal ??= ProbeVram("memory.total", 8.0);
+    /// <summary>本机显存总量(GB)。探测顺序见 ProbeTotalVramGb;全失败给保守值 4(宁可低估)。</summary>
+    public static double TotalVramGB => _vramTotal ??= ProbeTotalVramGb();
 
-    /// <summary>当前空闲显存(GB);探测失败按总量的 80% 估。</summary>
-    public static double FreeVramGB => _vramFree ??= ProbeVram("memory.free", TotalVramGB * 0.8);
+    /// <summary>当前空闲显存(GB)。<b>只有 NVIDIA 能真测</b>(nvidia-smi);其他厂商测不到时这里返回的是
+    /// 估算值,调用方【必须】先看 FreeVramMeasured 再决定是否拿它当判据。</summary>
+    public static double FreeVramGB => _vramFree ??= ProbeFreeVramGb();
+
+    /// <summary>FreeVramGB 是否为真实测值(仅 NVIDIA/nvidia-smi 可用时为 true)。
+    /// AMD/Intel 没有跨厂商的空闲显存查询接口,原先代码在这种机器上返回"总量×0.8"当实测值用,
+    /// 一个凭空造的数字同时喂给批次档位与并发档位,导致好机器被误降档(实测有机器批次从 180 掉到 120)。</summary>
+    public static bool FreeVramMeasured { get; private set; }
+
+    /// <summary>空闲显存的显示串:真测到给数值,测不到明确标"未实测"。
+    /// UI/诊断包里出现一个凭空造的"空闲显存 6.4 GB"会误导排查——曾据此误判视频批次为何从 180 掉到 120。</summary>
+    public static string FreeVramText => FreeVramMeasured
+        ? FreeVramGB.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + " GB"
+        : "未实测(仅 NVIDIA 可测)";
 
     /// <summary>本机物理内存总量(GB)。</summary>
     public static double TotalRamGB => _ramTotal ??= GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 1073741824.0;
@@ -144,6 +146,7 @@ public static class SafeRender
     {
         _ramFree = null;
         _vramFree = null;
+        FreeVramMeasured = false;   // 重测前必须先复位,否则两次访问之间会读到上一次的陈旧标志
     }
 
     private static double ProbeFreeRam(double fallback)
@@ -175,7 +178,8 @@ public static class SafeRender
     [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto, SetLastError = true)]
     private static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX lpBuffer);
 
-    private static double ProbeVram(string field, double fallback)
+    /// <summary>nvidia-smi 查询(仅 NVIDIA 可用);任何失败返回 null —— 绝不返回估算值冒充实测值。</summary>
+    private static double? ProbeNvidiaSmi(string field)
     {
         try
         {
@@ -197,13 +201,30 @@ public static class SafeRender
             }
         }
         catch { /* 非 NVIDIA 或未安装驱动 */ }
-        // 【兼容短板】nvidia-smi 仅 NVIDIA 可用;AMD/Intel 走这里 → 用注册表 64 位 qwMemorySize 兜底,
-        // 避免大显存 AMD/Intel 卡被低估成 8GB(低估→分块保守→慢,但准确更利于满血)。仅总量/空闲都取显卡总量近似。
-        if (field == "memory.total")
-        {
-            try { var v = ALHPro.GpuInfo.GetDiscreteVramGb(); if (v is > 0) return v.Value; } catch { }
-        }
-        return fallback;
+        return null;
+    }
+
+    /// <summary>显存总量(GB):①nvidia-smi(NVIDIA 最准)②DXGI DedicatedVideoMemory(唯一跨厂商真值,
+    /// AMD/Intel 独显不再被低估)③注册表 qwMemorySize(核显走这条:报告的是共享内存配额,即核显真实预算)
+    /// ④保守 4.0。兜底值从 8.0 降到 4.0 是有意的:全探测失败时低估只让分块变小(慢但安全),
+    /// 而高估会让 4GB 卡按 8GB 去开 640 分块 → 爆显存 → 黑帧/崩溃,代价大得多。</summary>
+    private static double ProbeTotalVramGb()
+    {
+        var smi = ProbeNvidiaSmi("memory.total");
+        if (smi is > 0) return smi.Value;
+        try { var dxgi = ALHPro.EngineService.TryGetDxgiVramGb(); if (dxgi is > 0) return dxgi.Value; } catch { }
+        try { var reg = ALHPro.GpuInfo.GetDiscreteVramGb(); if (reg is > 0) return reg.Value; } catch { }
+        return 4.0;
+    }
+
+    /// <summary>空闲显存(GB)。只有 nvidia-smi 能真测;测不到时置 FreeVramMeasured=false,
+    /// 返回值仅作 UI 显示用的估算,调用方不得拿它当判据。</summary>
+    private static double ProbeFreeVramGb()
+    {
+        var smi = ProbeNvidiaSmi("memory.free");
+        if (smi is > 0) { FreeVramMeasured = true; return smi.Value; }
+        FreeVramMeasured = false;
+        return TotalVramGB * 0.8;
     }
 
     // ---------- 生效中的"墙" ----------
@@ -266,15 +287,12 @@ public static class SafeRender
         return AlhPro.Core.RenderPolicy.VideoTileSize(v, cat);
     }
 
-    /// <summary>视频逐帧超分的批大小(帧):看【空闲】资源——空余内存 >8G 且 空余显存 >4G 开 240(最快);
-    /// 空余不足按档回退(小批 = 内存/显存峰值低,稳)。判定用"当前空闲"而非名义值:
-    /// 名义 32G 但开着浏览器+剪辑器的机器,空余可能只剩 4G → 该小批。</summary>
+    /// <summary>视频逐帧超分的批大小(帧):只看【空闲】内存(实测可靠)。空余不足按档回退
+    /// (小批 = 内存峰值低,稳)。判定用"当前空闲"而非名义值:名义 32G 但开着浏览器+剪辑器的机器,
+    /// 空余可能只剩 4G → 该小批。显存不参与:显存峰值由分块大小界定,与批大小无关。</summary>
     public static int GetVideoBatchSize()
     {
-        double fr = FreeRamGB;
-        double fv = FreeVramGB > 0.5 ? FreeVramGB : EffectiveVramGB * 0.6;
-        // 纯计算逻辑抽到 AlhPro.Core.RenderPolicy(可单测):空闲内存+显存 → 批大小
-        return AlhPro.Core.RenderPolicy.VideoBatchSize(fr, fv);
+        return AlhPro.Core.RenderPolicy.VideoBatchSize(FreeRamGB);
     }
 
     /// <summary>视频超分的并行批数(同时几个引擎实例):按显存/内存/核数自动定。
@@ -289,12 +307,17 @@ public static class SafeRender
         int cores = CpuCoreCount;
         // 【分发给所有用户】放宽"SplitCores 非 High 一律单批":之前一刀切把满足 2 路资源条件
         // (16G 内存/6G 显存/≥8核) 的中端机也卡成单路,浪费算力。改为"资源够才多路",条件仍保守:
-        // two 要求 内存≥16G、有效显存≥6G、空闲显存≥3G、核数≥8,缺一就单路——不会让低端机爆显存/吃满 CPU。
+        // two 要求 内存≥16G、有效显存≥6G、核数≥8,缺一就单路——不会让低端机爆显存/吃满 CPU。
         // SplitCores 只影响多路时的线程分配,不再一刀切压制路数。
-        // 2 路:显存 ≥6G 空闲 ≥3G、内存 ≥16G、核数 ≥8
-        bool two = r >= 16 && v >= 6 && FreeVramGB >= 3 && cores >= 8;
-        // 3 路:仅 High 且更宽裕才上(空闲显存 ≥8G、内存 ≥24G、核数 ≥16)
-        bool three = Profile == DeviceProfile.High && r >= 24 && v >= 10 && FreeVramGB >= 8 && cores >= 16;
+        // 并发是显存的【真约束】(N 路 = N 份分块缓冲同时在显存里),所以这里必须按显存判;
+        // 但空闲显存只有 NVIDIA 能真测,AMD/Intel 测不到时不再拿"总量×0.8"这个伪造值当门槛,
+        // 退回上面已按 75% 折减的有效显存门槛(v≥6 / v≥10),宁可不加这一层也不要按假数据判。
+        bool vramOk2 = !FreeVramMeasured || FreeVramGB >= 3;
+        bool vramOk3 = !FreeVramMeasured || FreeVramGB >= 8;
+        // 2 路:显存 ≥6G(实测到空闲时再要求空闲 ≥3G)、内存 ≥16G、核数 ≥8
+        bool two = r >= 16 && v >= 6 && vramOk2 && cores >= 8;
+        // 3 路:仅 High 且更宽裕才上(显存 ≥10G、实测空闲 ≥8G、内存 ≥24G、核数 ≥16)
+        bool three = Profile == DeviceProfile.High && r >= 24 && v >= 10 && vramOk3 && cores >= 16;
         if (three) return 3;
         if (two) return 2;
         return 1;
@@ -315,6 +338,12 @@ public static class SafeRender
         {
             // 预留核心:核数 ≤4 预留 1 个;否则预留 2 个(让给前台)。亲和性按"除最后 N 个核"计算
             int cores = CpuCoreCount;
+            // 超过 64 逻辑核就别做亲和性了:掩码只有 64 位,而 C# 对 ulong 的移位量按 &0x3F 取模,
+            // i≥64 时 1UL<<i 会绕回去把低位重设一遍 → 掩码变成全 1,预留核心【静默失效】
+            // (恰恰是核最多的 HEDT/服务器机型上完全没用,且日志里看不出任何异常)。
+            // SetProcessAffinityMask 本身也只作用于当前处理器组,跨组预留无从表达。
+            // 这类机器富余核本来就多,保留上面已设的"低于正常"优先级即可。
+            if (cores > 64) return;
             int reserve = cores <= 4 ? 1 : 2;
             ulong mask = 0;
             for (int i = 0; i < Math.Max(1, cores - reserve); i++)
@@ -356,6 +385,8 @@ public static class SafeRender
     internal static IntPtr GetCpuJob()
     {
         if (!LimitCpuJob) return IntPtr.Zero;
+        // 重采含 ~400ms 睡眠,必须放在锁外:否则会长时间持有 _cpuJobLock,阻塞其他并发任务的进程注册。
+        MaybeResampleOtherCpu();
         lock (_cpuJobLock)
         {
             if (_cpuJob is null)
@@ -363,7 +394,7 @@ public static class SafeRender
                 _cpuJob = CreateJobObject(IntPtr.Zero, null);
                 if (_cpuJob.Value == IntPtr.Zero) return IntPtr.Zero;
             }
-            // 每次分配进程前刷新上限:GetEffectiveCpuCapPct 内部按系统已占用动态降档
+            // 每次分配进程前刷新上限:GetEffectiveCpuCapPct 内部按"其他软件"占用动态降档
             var info = new JOBOBJECT_CPU_RATE_CONTROL_INFORMATION
             {
                 ControlFlags = 0x1 | 0x4,   // JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | HARD_CAP
@@ -375,53 +406,91 @@ public static class SafeRender
     }
 
     /// <summary>有效 CPU 上限百分比:手动模式=滑条值(钳 50~95);
-    /// 自动模式=85,但**按系统当前已占用动态降档**——其他软件已占了 70%,
-    /// 软件再占 85% 会让整机 155% 爆卡。规则:系统空闲越少,软件上限越低,
-    /// 保证"软件+其他"总占用 ≤ ~100%(软件永远让位)。
-    /// 【关键】必须用"处理开始前"采样的闲置负载(见 _sysLoadIdle):软件自己引擎跑起来后
-    /// 系统负载读数会包含软件自身(85%+),按它降档会把软件限死到 8%→更慢→振荡。故每次任务
-    /// 开始前刷新一次闲置读数(此时引擎还没跑,读到的即"其他软件"占用)。</summary>
+    /// 自动模式=85,但**按"其他软件"当前占用动态降档**——别人已占了 70%,
+    /// 软件再占 85% 会让整机 155% 爆卡。规则:别人占得越多,软件上限越低(软件永远让位)。
+    /// 【关键】读数必须扣除本软件自身负载(见 ResampleOtherCpuLoad),否则引擎跑起来后系统占用读数
+    /// 会包含软件自己(85%+),按它降档会把软件限死→更慢→振荡。扣除后即可全程周期重采(60 秒节流),
+    /// 不再被任务开始前那一瞬间的读数锁死整场作业。
+    /// 上限的生效时机=有新子进程注册时(SetInformationJobObject 一改即对 Job 内全部进程生效),
+    /// 视频流水线每个阶段/每批都会启动进程,故实际刷新足够频繁。</summary>
     public static double GetEffectiveCpuCapPct()
     {
         if (Mode == 1) return Math.Clamp(CpuCapPct, 50.0, 95.0);
-        double sysUsed = _sysLoadIdle;   // 处理开始前的闲置占用(其他软件的真实占用)
-        return GetEffectiveCpuCapPctRaw(sysUsed);
+        return GetEffectiveCpuCapPctRaw(_sysLoadIdle);
     }
 
-    /// <summary>任务开始前刷新的"系统闲置负载"缓存(引擎未启动时采样,过滤掉软件自身负载)。</summary>
+    /// <summary>任务开始前刷新的"其他软件 CPU 占用"缓存(已扣除本软件自身负载)。</summary>
     private static double _sysLoadIdle;
 
-    /// <summary>任务开始前调用:采样当前系统占用(此时引擎还没跑,读数≈其他软件真实占用)。
-    /// 之后整个任务期间 GetEffectiveCpuCapPct 用此固定值(不再每次采样,避免引擎自身负载引起的振荡)。</summary>
+    /// <summary>当前采用的"其他软件 CPU 占用"(0~1),供日志/诊断显示。CPU 硬上限即由此推导。</summary>
+    public static double IdleCpuLoad => _sysLoadIdle;
+
+    /// <summary>任务开始前调用:采样"其他软件"的真实 CPU 占用(见 ResampleOtherCpuLoad)。</summary>
     public static void RefreshIdleCpu()
+    {
+        ResampleOtherCpuLoad();
+        _lastOtherCpuSample = DateTime.UtcNow;   // 刚采过,别让紧随其后的进程注册再白采一次
+        try { AppLogger.Info($"[资源] 处理前其他软件占用 {_sysLoadIdle * 100:0}% → 软件 CPU 上限 {GetEffectiveCpuCapPctRaw(_sysLoadIdle)}%(防整机过载)"); }
+        catch { }
+    }
+
+    private static DateTime _lastOtherCpuSample = DateTime.MinValue;
+    private static readonly object _sampleLock = new();
+
+    /// <summary>距上次重采超过 60 秒才重采(手动模式下上限由滑条决定,与采样无关,直接跳过)。</summary>
+    private static void MaybeResampleOtherCpu()
+    {
+        if (Mode == 1) return;
+        lock (_sampleLock)
+        {
+            if ((DateTime.UtcNow - _lastOtherCpuSample).TotalSeconds < 60) return;
+            _lastOtherCpuSample = DateTime.UtcNow;
+        }
+        ResampleOtherCpuLoad();
+    }
+
+    /// <summary>本软件自身(所有已注册子进程 + 本进程)累计占用的 CPU 毫秒数。
+    /// 与 GetSystemTimes 的 kernel+user 同为"跨所有核心的 CPU 时间"口径,可直接相减。
+    /// 单个进程可能已退出/无权限 → 逐个 try,漏掉一个不影响量级判断。</summary>
+    private static long SumOwnCpuMs()
+    {
+        long ms = 0;
+        // 本进程(UI 线程做 PNG↔JPG 转码/去重 SSIM/黑帧检查,CPU 占用不小);它不在 ActiveProcesses 里
+        // (那只是子进程表),故与下面的循环不会重复计数。
+        try { using var self = Process.GetCurrentProcess(); ms += (long)self.TotalProcessorTime.TotalMilliseconds; } catch { }
+        try
+        {
+            foreach (var p in App.ActiveProcesses.Snapshot())
+            {
+                try { ms += (long)p.TotalProcessorTime.TotalMilliseconds; } catch { }
+            }
+        }
+        catch { }
+        return ms;
+    }
+
+    /// <summary>重估"其他软件"的 CPU 占用 = 系统总占用 − 本软件自身占用。
+    /// 【为什么必须减自己】处理期间引擎把 CPU 打满,直接读系统占用会读到 85%+,据此降档会把软件限死
+    /// → 更慢 → 振荡;这正是原设计只敢在任务开始前采样一次的原因。但一次性采样的代价极大:
+    /// 任务开始那一瞬间的任何后台负载(杀软扫描/系统更新/浏览器)都会把可能跑数小时的作业锁死在 35% CPU,
+    /// 而用户中途关掉其他软件也升不回来。减掉自身后读数只反映"别人",稳定不振荡,于是可以全程周期重采。</summary>
+    public static void ResampleOtherCpuLoad()
     {
         try
         {
-            _sysLoadIdle = SampleSystemCpuLoad();
-            AppLogger.Info($"[资源] 处理前系统占用 {_sysLoadIdle * 100:0}% → 软件 CPU 上限 {GetEffectiveCpuCapPctRaw(_sysLoadIdle)}%(防整机过载)");
+            if (!GetSystemTimes(out var i0, out var k0, out var u0)) return;
+            long own0 = SumOwnCpuMs();
+            System.Threading.Thread.Sleep(400);
+            if (!GetSystemTimes(out var i1, out var k1, out var u1)) return;
+            long idle = i1.ToMilliseconds() - i0.ToMilliseconds();
+            // kernel 时间在 Windows 上【已包含】idle,故 total=kernel+user、busy=total-idle 是标准算法
+            long total = (k1.ToMilliseconds() - k0.ToMilliseconds()) + (u1.ToMilliseconds() - u0.ToMilliseconds());
+            if (total <= 0) return;
+            double sys = Math.Clamp(1.0 - (double)idle / total, 0, 1);
+            double own = Math.Clamp((double)(SumOwnCpuMs() - own0) / total, 0, 1);
+            _sysLoadIdle = Math.Clamp(sys - own, 0, 1);
         }
-        catch { _sysLoadIdle = 0; }
-    }
-
-    /// <summary>采样系统整体 CPU 使用率(0~1,GetSystemTimes 双采样,非阻塞由调用方控制)。
-    /// 失败返回 0(视为空闲)。【分发给所有用户】改为多次采样取平均:
-    /// 之前单次 250ms 采样易撞上瞬时满载(后台程序/前后任务残留)而误判"系统 100%",
-    /// 导致软件被降档到极低 CPU 上限,变慢。取平均能过滤瞬时抖动,读数更接近真实持续负载。</summary>
-    private static double SampleSystemCpuLoad()
-    {
-        const int samples = 3;
-        double sum = 0; int ok = 0;
-        for (int s = 0; s < samples; s++)
-        {
-            if (!GetSystemTimes(out var idle0, out var ker0, out var user0)) break;
-            System.Threading.Thread.Sleep(200);
-            if (!GetSystemTimes(out var idle1, out var ker1, out var user1)) break;
-            long idle = idle1.ToMilliseconds() - idle0.ToMilliseconds();
-            long total = (ker1.ToMilliseconds() - ker0.ToMilliseconds()) + (user1.ToMilliseconds() - user0.ToMilliseconds());
-            if (total > 0) { sum += Math.Clamp(1.0 - idle / total, 0, 1); ok++; }
-            if (ok == 0 && s == samples - 1) break;
-        }
-        return ok > 0 ? sum / ok : 0;
+        catch { /* 采样失败保留上一次的值,绝不清零(清零=当成全空闲=不再让位) */ }
     }
 
     private static double GetEffectiveCpuCapPctRaw(double sysUsed)

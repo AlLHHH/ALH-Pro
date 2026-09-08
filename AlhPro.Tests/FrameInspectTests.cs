@@ -4,7 +4,7 @@ using Xunit;
 namespace AlhPro.Tests;
 
 /// <summary>
-/// 帧质量判定(从 batchOutHasDefectiveFrame / IsBlackPng 抽出的阈值逻辑)的单测。
+/// 帧质量判定(从 ConvertPngToJpg / IsBlackPng 抽出的阈值逻辑)的单测。
 /// 这是出过回归的纯函数(commit 3ec571c),必须保护。
 /// </summary>
 public class FrameInspectTests

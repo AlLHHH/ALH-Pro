@@ -222,9 +222,23 @@ public static class VulkanCheck
             || name.Contains("TITAN", StringComparison.OrdinalIgnoreCase)
             || name.Contains("RTX A", StringComparison.OrdinalIgnoreCase)
             || name.Contains("Tesla", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("A[0-9]{2,4}", StringComparison.OrdinalIgnoreCase))
+            // 原先这里写的是 name.Contains("A[0-9]{2,4}") —— 把正则当字面量比,永远不成立,
+            // A100/A40 这类数据中心卡一路落到 "unknown"(报告里什么架构都不提)。
+            || Regex.IsMatch(name, @"\bA\d{2,4}\b", RegexOptions.IgnoreCase))
             return "pro";
-        if (Regex.IsMatch(name, @"RTX\s*5[0-9]{2}", RegexOptions.IgnoreCase)) return "blackwell";   // 50系
+        // Blackwell 判定复用已单测的 AlhPro.Core.GpuName,不再各写一份正则:
+        // 原先的 RTX\s*5[0-9]{2} 把 "RTX 5000 Ada"/"RTX 5880 Ada" 一起吞成 50 系,
+        // 于是自检报告对这些卡谎称"已自动改用 ONNX DirectML 稳定路线"——
+        // 而真正决定路由的 EngineService.IsBlackwellGpu 判它们不是 50 系、照走 ncnn。
+        // 报告与实际行为互相矛盾,用户照报告排查会完全跑偏。
+        if (AlhPro.Core.GpuName.IsBlackwell(name)) return "blackwell";   // 50系
+        // 工作站卡不一定带 Quadro/RTX A 字样("NVIDIA RTX 5000 Ada Generation" 就是),
+        // 上面修掉 Blackwell 误判后它们会一路落到 "unknown"(报告里对自己的显卡一言不发)。
+        // 判据:没有 GeForce 这个消费级标记 + 名字里直接写了架构代号。
+        // 必须排在 Blackwell 判定之后 —— 真是 50 系的卡,"有崩溃风险"比"是专业卡"重要得多。
+        if (!name.Contains("GeForce", StringComparison.OrdinalIgnoreCase)
+            && Regex.IsMatch(name, @"\b(Ada|Ampere|Turing|Hopper|Pascal|Volta)\b", RegexOptions.IgnoreCase))
+            return "pro";
         if (Regex.IsMatch(name, @"RTX\s*4[0-9]{2}", RegexOptions.IgnoreCase)) return "ada";         // 40系
         if (Regex.IsMatch(name, @"RTX\s*3[0-9]{2}", RegexOptions.IgnoreCase)) return "ampere";     // 30系
         if (Regex.IsMatch(name, @"RTX\s*2[0-9]{2}", RegexOptions.IgnoreCase)) return "turing";     // 20系
@@ -337,15 +351,15 @@ public static class VulkanCheck
         {
             var names = new System.Collections.Generic.List<string>();
             try { names.AddRange(regAllNames()); } catch { }
-            bool amdDedicated = false, intelIgpu = false;
+            bool amdDedicated = false, anyIgpu = false;
             string? nvArch = null;
             foreach (var n in names)
             {
                 switch (CardKind(n))
                 {
                     case "amd": amdDedicated = true; break;
-                    case "amd_igpu": intelIgpu = true; break;
-                    case "intel_igpu": intelIgpu = true; break;
+                    case "amd_igpu": anyIgpu = true; break;      // AMD APU 核显同样是共享内存,风险与 Intel 核显一致
+                    case "intel_igpu": anyIgpu = true; break;
                 }
                 if (CardKind(n) == "nvidia")
                 {
@@ -357,7 +371,7 @@ public static class VulkanCheck
             if (amdDedicated) risky = "AMD 独显补帧易间歇丢帧/黑帧";
             else if (nvArch == "blackwell") risky = "RTX 50 系 ncnn 超分易黑帧";
             else if (nvArch == "oldgtx") risky = "较老 GTX 系列部分 GPU 加速不支持";
-            else if (intelIgpu && !amdDedicated && !names.Any(n => CardKind(n) == "nvidia" || CardKind(n) == "amd"))
+            else if (anyIgpu && !amdDedicated && !names.Any(n => CardKind(n) == "nvidia" || CardKind(n) == "amd"))
                 risky = "核显(共享显存)高倍率/大图易显存不足";
             if (risky != null)
             {
@@ -452,7 +466,7 @@ public static class VulkanCheck
         catch { }
 
         // 显存 / 内存 / CPU
-        try { sb.Append($"显存:{SafeRender.TotalVramGB:0.#} GB(空闲 {SafeRender.FreeVramGB:0.#} GB)\n"); } catch { sb.Append("显存:未知\n"); }
+        try { sb.Append($"显存:{SafeRender.TotalVramGB:0.#} GB(空闲 {SafeRender.FreeVramText})\n"); } catch { sb.Append("显存:未知\n"); }
         try { sb.Append($"系统内存:{SafeRender.TotalRamGB:0.#} GB\n"); } catch { }
         try { sb.Append($"处理器:{SafeRender.CpuName}({SafeRender.CpuCoreCount} 核)\n"); } catch { }
 
@@ -510,8 +524,8 @@ public static class VulkanCheck
             if (CardKind(n) == "nvidia")
             {
                 var arch = NvidiaArch(n);
-                if (arch == "unknown" || nvArch == null) nvArch ??= arch;   // 优先记录已知架构
-                if (arch != "unknown") nvArch = arch;
+                // 已知架构总是覆盖;只有还没记到任何架构时才退而记 "unknown"(多卡机以认得出的那张为准)
+                if (arch != "unknown" || nvArch == null) nvArch = arch;
             }
         }
 
@@ -572,13 +586,18 @@ public static class VulkanCheck
         return sb.ToString().TrimEnd('\n');
     }
 
-    /// <summary>结果写缓存(下次启动直接显示,不再重测;记录版本号,升级自动作废)。</summary>
+    /// <summary>结果写缓存(下次启动直接显示,不再重测;记录版本号,升级自动作废)。
+    /// 【只缓存"检测到 GPU"】"无 GPU"这个结论可能是瞬时的(引擎首次启动慢/杀软占用 exe/驱动刚装完),
+    /// 而 GpuAvailable=false 会被 OldNcnnGpuRisky 拿去把整机锁到 ONNX 路线,直到版本号变化才解锁 ——
+    /// 一次偶发探测失败不该有跨会话的代价。真·无 GPU 机器重测只有几次秒级尝试,且跑在后台不阻塞启动。</summary>
     private static void Cache()
     {
+        if (!GpuAvailable) return;
         try
         {
             AppSettings.VulkanReport = Report;
             AppSettings.VulkanCheckDone = true;
+            AppSettings.VulkanGpuOk = true;
             AppSettings.VulkanReportVersion = UpdateChecker.CurrentVersion;
             AppSettings.Save();
         }
@@ -595,8 +614,15 @@ public static class VulkanCheck
             && (AppSettings.VulkanReportVersion == ver || AppSettings.VulkanReportVersion == ""))
         {
             Done = true;
-            GpuAvailable = !AppSettings.VulkanReport.Contains("未检测到可用的 GPU", StringComparison.Ordinal);
+            // 读存下来的结论,不再从报告文本反推:BuildReport 只在【注册表也查不到显卡】时才写
+            // "未检测到可用的 GPU",而"引擎缺失/检测异常"两种失败写的是别的句子 →
+            // 反推会把它们当成"有 GPU",下次启动直接敢跑 ncnn-Vulkan。旧版本写的缓存没有这个字段(null)→ 未知 → 重测。
+            GpuAvailable = AppSettings.VulkanGpuOk == true;
             Report = AppSettings.VulkanReport;
+            // 结论不是"确定有 GPU"就后台重测一次:瞬时失败(引擎还没解出来/杀软占用 exe/驱动刚装完)
+            // 会把整机锁在 ONNX 路线上,而 GpuAvailable 正是 OldNcnnGpuRisky 的判据之一。
+            // 先显示缓存报告(界面不空白),测出 GPU 会自动纠正;负结果不回写缓存,所以不会越测越糟。
+            if (!GpuAvailable) System.Threading.Tasks.Task.Run(ReProbe);
             return;
         }
         // 后台跑,不阻塞启动
@@ -611,6 +637,7 @@ public static class VulkanCheck
         AppSettings.VulkanCheckDone = false;
         AppSettings.VulkanReport = "";
         AppSettings.VulkanReportVersion = "";
+        AppSettings.VulkanGpuOk = null;
         try { AppSettings.Save(); } catch { }
         Done = false;
         Devices.Clear();
