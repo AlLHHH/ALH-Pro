@@ -1003,7 +1003,10 @@ public static partial class EngineService
             // 才是访问违规/堆损坏一类崩溃。原先任何 InvalidOperationException 都置位——磁盘满、看门狗判死、
             // 命令行写错全算,之后整个会话把用户【主动选的 CPU】悄悄改写成 -g 0;在"GPU 才是坏件"的机器上
             // 正好反了,还把真实错误(如磁盘满)掩盖成"CPU 模式崩溃"。本次调用内仍照常重试 GPU 0。
-            if (long.TryParse(ExtractExit(ex.Message), out var exitCodeNum) && exitCodeNum <= -1073741824L)
+            // 【修正阈值方向】崩溃码 0xC0000005 = -1073741819 > -1073741824,原先 `<=` 永不匹配 → 闩锁永不生效。
+            // NTSTATUS 0xC0000000~0xFFFFFFFF 区段的崩溃码作为有符号 long 落在 [-1073741824, -1],因此用 `>= -1073741824L`(且为负)。
+            if (long.TryParse(ExtractExit(ex.Message), out var exitCodeNum)
+                && exitCodeNum < 0 && exitCodeNum >= -1073741824L)
                 _ncnnCpuBroken = true;   // 记录本会话 CPU 崩溃,后续跳过 CPU
             string head = ex.Message.Split('\n')[0];
             if (head.Length > 90) head = head[..90];

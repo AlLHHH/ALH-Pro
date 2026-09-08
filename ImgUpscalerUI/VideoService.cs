@@ -2822,7 +2822,10 @@ public static class VideoService
                     // 但真实大分辨率视频下却输出无效文件(用户① RTX2070+核显双卡机实测:qsv 探测可用,合帧却黑屏/失败)。
                     // nvenc 也拒绝过小分辨率(64x64 报 incorrect parameters)。
                     await RunAsync(ff,
-                        $"-y -f lavfi -i \"testsrc=size=1280x720:rate=1:duration=0.4\" -frames:v 1 {args} \"{tmp}\"",
+                        // 探测要多编几帧(≥5):ValidateVideoFileAsync 对 <5 帧判无效(防 QSV 假成功)。
+                        // 原 `-frames:v 1` 只产 1 帧 → 探测恒失败 → 硬编被静默禁用(全走 CPU 软编),等于速度回归。
+                        // 改 rate=30 duration=0.4(≈12 帧)且不截断到 1 帧,既快又通过校验。
+                        $"-y -f lavfi -i \"testsrc=size=1280x720:rate=30:duration=0.4\" {args} \"{tmp}\"",
                         null, ct);
                     // 不只看"文件非 0 字节":QSV 那类会写出非空但解不开的文件,必须真校验一遍
                     if (await ValidateVideoFileAsync(tmp))
