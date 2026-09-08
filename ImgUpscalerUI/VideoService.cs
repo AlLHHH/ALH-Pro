@@ -413,6 +413,14 @@ public static class VideoService
                 $";补帧{(frameInterp ? $"{interpModel} {interpScale}x{(tta ? " TTA" : "")}" + (targetFps is > 0 ? $"→{targetFps.Value:0.##}fps" : "") : "关")}" +
                 $";去重{dedupDesc};转场{(sceneThreshold ?? 0):0.##};时间步{(timeStep ?? 0):0.##};裁剪{(trimStart ?? 0):0.###}~{(trimEnd ?? 0):0.###};设备{(gpuId >= 0 ? "GPU " + gpuId : "CPU")}" + StageElapsed()));
             AppLogger.Info($"参数详情:engine={engine},model={model},scale={scale},up={doUpscale}/{upscaleShrink1x},interp={frameInterp}/{interpModel}/{interpScale}x/{tta}/{targetFps},{timeStep},dedup={dedupMode}/{dedupAlgo}/{animeHoldN}/{contentFps}/{dedupSmartMode},scene={sceneThreshold},trim={trimStart}/{trimEnd},gpu={gpuId},out={outputVideo}");
+            // ===== 设备选择映射诊断(编号错位排查命门):设置 GpuIndex → 实际引擎 gpuId → 设备名 =====
+            try
+            {
+                string devName = gpuId >= 0 ? GpuInfo.GetEngineDeviceName(gpuId) : "(CPU)";
+                AppLogger.Info($"设备选择映射:设置 GpuIndex={AppSettings.GpuIndex} → 实际引擎 gpuId={gpuId} → {devName}" +
+                    (gpuId != AppSettings.GpuIndex && gpuId >= 0 ? " ⚠注意:设置值与运行时 -g 不一致(可能编号错位)" : ""));
+            }
+            catch { }
 
             // 2) 拆帧(可选去重 + 裁剪)
             // 去重模型:0=关,1=智能检测(freezedetect 自适应),2=动漫模式(freezedetect 高去重),3=标准模式(scene),4=手动模式(scene)
