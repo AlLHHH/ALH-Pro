@@ -4130,15 +4130,16 @@ public static class VideoService
                         if (ct.IsCancellationRequested) throw new OperationCanceledException(ct);
                         var batch = curNodes.Skip(off).Take(LayerBatch).ToList();
                         // 层批内逐帧进度:轮询输出文件数 → 映射到全局"已处理 X/共 Y 帧"
+                        // 【修复 跨批跳格】旧代码 gf=k/batch.Count*slotTotal 只看当前批(batch 开始时 k 归 0,
+                        //  进度会跳回/跳格,用户以为卡死)。改为用"批前已累计 midDone + 当前批已生成 k"折算,
+                        //  批内逐帧涨、跨批连续,不再跳格。
                         IProgress<(int pct, string msg)>? layerProg = progress == null ? null
                             : new System.Progress<(int pct, string msg)>(lt =>
                             {
                                 var m = System.Text.RegularExpressions.Regex.Match(lt.msg, @"第\s*(\d+)\s*帧");
                                 if (!m.Success) { progress.Report(lt); return; }
                                 int k = int.Parse(m.Groups[1].Value);
-                                // 层批每层:每帧对生成 1 张中间帧 → 一批 batch.Count 对 = batch.Count 张;
-                                // 旧代码 /(batch.Count*3) 把进度低估 3 倍 → 进度条长时间不动
-                                int gf = Math.Min(slotTotal, (int)((double)k / Math.Max(1, batch.Count) * slotTotal));
+                                int gf = Math.Min(slotTotal, (int)((double)(midDone + k) / Math.Max(1, midNeed) * slotTotal));
                                 progress.Report((10 + (int)(35.0 * gf / slotTotal),
                                     $"按源时间轴插帧 已处理 {gf} 帧 / 共 {slotTotal} 帧(源 {n} 帧·目标 {F:0.##} fps)"));
                             });
