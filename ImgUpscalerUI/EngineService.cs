@@ -63,6 +63,8 @@ public static partial class EngineService
     /// <summary>本会话内确认"ncnn CPU(-g -1)模式崩溃"(exit -1073741819 内存访问违规)后置位:
     /// 之后所有引擎的 CPU 兜底直接跳过,改为 GPU 0 重算,避免反复崩溃拖慢/卡住(双卡机/部分机型实测)。</summary>
     private static bool _ncnnCpuBroken;
+    /// <summary>本会话「GPU 引擎已重试过一次」标志:失败先重试一次,二次失败才走降级链(不轻易掉/不无限重试)。</summary>
+    private static bool _gpuRetried;
 
     /// <summary>本会话内确认"WinRT BitmapEncoder 编码 JPG 不可用"(视频/后台线程上系统性抛 HRESULT,空消息)
     /// 后置位:后续帧直接走 System.Drawing(转 24bppRgb),不再逐帧尝试 WinRT + 逐帧刷失败日志。</summary>
@@ -842,40 +844,51 @@ public static partial class EngineService
                     RedirectStandardError = true,
                     WorkingDirectory = Path.GetDirectoryName(exe) ?? ".",
                 };
-                using var p = Process.Start(psi);
-                if (p == null) return false;
-                using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                waitCts.CancelAfter(TimeSpan.FromSeconds(15));   // 探测超时 15 秒(旧 5 秒对"冷启动慢的 ncnn 卡"会误报 hang,如 4060 首次加载 Vulkan 要 >5s;15s 仍能拦住真 hang)
-                try
+                // 【有独显时不轻易掉 CPU】探测重试 3 次:快速失败(exit≠0/无输出/黑帧)多为瞬时抽风,退避后重试;
+                // 超时(真 hang)不重试(重试只会再白等 15s);3 次全失败才判不可用。避免"一次驱动抽风就把 4060 判成没 GPU、整段掉 CPU"。
+                const int MaxAttempts = 3;
+                for (int attempt = 1; attempt <= MaxAttempts && !ct.IsCancellationRequested; attempt++)
                 {
-                    await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
-                    // 判定:退出码 0 且输出文件存在(引擎正常出图)
-                    bool ok = p.ExitCode == 0 && File.Exists(outPng) && new FileInfo(outPng).Length > 0;
-                    // 【黑帧自检】引擎输出存在但全黑(静默黑帧 bug,如旧 ncnn on 50系/AMD 驱动异常)→ 该设备视为不可用,
-                    // 立即改用其它卡/ONNX;否则黑帧设备会被误判"可用",后续补帧/超分一路黑。
-                    if (ok)
+                    if (File.Exists(outPng)) { try { File.Delete(outPng); } catch { } }
+                    using var p = Process.Start(psi);
+                    if (p == null)
                     {
-                        try { if (IsBlackPng(outPng)) { ok = false; } } catch { }
+                        AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId})第 {attempt}/{MaxAttempts} 次启动失败(进程为空),退避后重试...");
+                        if (attempt < MaxAttempts) { try { await Task.Delay(1500, ct).ConfigureAwait(false); } catch { } }
+                        continue;
                     }
-                    if (ok)
-                        AppLogger.Info($"[探测] 引擎 {engine} GPU(-g {gpuId})可用(1×1 图出图,非黑)");
-                    else
-                        AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId})不可用(exit={p.ExitCode}/无输出/{outPng},可能黑帧)——将自动改用其它设备或 ONNX");
-                    return ok;
+                    using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    waitCts.CancelAfter(TimeSpan.FromSeconds(15));   // 探测超时 15 秒(旧 5 秒对"冷启动慢的 ncnn 卡"会误报 hang,如 4060 首次加载 Vulkan 要 >5s;15s 仍能拦住真 hang)
+                    try
+                    {
+                        await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
+                        // 判定:退出码 0 且输出文件存在(引擎正常出图)
+                        bool ok = p.ExitCode == 0 && File.Exists(outPng) && new FileInfo(outPng).Length > 0;
+                        // 【黑帧自检】引擎输出存在但全黑(静默黑帧 bug,如旧 ncnn on 50系/AMD 驱动异常)→ 该设备视为不可用,
+                        // 立即改用其它卡/ONNX;否则黑帧设备会被误判"可用",后续补帧/超分一路黑。
+                        if (ok) { try { if (IsBlackPng(outPng)) { ok = false; } } catch { } }
+                        if (ok)
+                        {
+                            AppLogger.Info($"[探测] 引擎 {engine} GPU(-g {gpuId})可用(第 {attempt} 次,1×1 图出图,非黑)");
+                            return true;
+                        }
+                        AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId})第 {attempt}/{MaxAttempts} 次不可用(exit={p.ExitCode}/无输出/{outPng},可能黑帧)" + (attempt < MaxAttempts ? ",退避后重试..." : "——将自动改用其它设备或 ONNX"));
+                    }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                    {
+                        // 超时(真 hang):重试只会再白等,直接判不可用并杀进程
+                        AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId}) {15} 秒无响应(疑似 hang)——按不可用处理,已终止探测(不重试)");
+                        try { p.Kill(entireProcessTree: true); } catch { }
+                        return false;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        try { p.Kill(entireProcessTree: true); } catch { }
+                        throw;
+                    }
+                    if (attempt < MaxAttempts) { try { await Task.Delay(1500, ct).ConfigureAwait(false); } catch { } }
                 }
-                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-                {
-                    // 5 秒无果:判定不可用,并杀掉探测进程(避免孤儿引擎占 GPU/CPU)
-                    AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId}) 5 秒无响应(疑似 hang)——按不可用处理,已终止探测");
-                    try { p.Kill(entireProcessTree: true); } catch { }
-                    return false;
-                }
-                catch (OperationCanceledException)
-                {
-                    // 用户取消(主令牌被取消):杀掉探测进程,重新抛出(不能让取消失效)
-                    try { p.Kill(entireProcessTree: true); } catch { }
-                    throw;
-                }
+                return false;
             }
             finally
             {
@@ -1034,6 +1047,39 @@ public static partial class EngineService
             string head = ex.Message.Split('\n')[0];
             if (head.Length > 90) head = head[..90];
 
+            // 【失败反复重试 2~3 次再降级(不轻易掉)】同一条 GPU 命令(同参数/同设备)重跑多次:
+            // 瞬时驱动抽风/编译着色器/显存短暂被占,重试能救回;全部失败才走下方降级链。
+            // 只在 GPU 初始模式重试(_gpuRetried 防递归),CPU 模式(-g -1)不重试(已知会崩)。
+            const int GpuRetryTimes = 3;
+            int retriedTimes = 0;
+            if (!ArmRetryOnce(ref _gpuRetried))
+            {
+                for (int r = 1; r <= GpuRetryTimes && !ct.IsCancellationRequested; r++)
+                {
+                    AppLogger.Info($"⚠ GPU 引擎失败({head}),同设备重试 {r}/{GpuRetryTimes} 次,仍失败才降级...");
+                    progress?.Report((0, $"⚠ GPU 引擎失败,重试 {r}/{GpuRetryTimes} 次(仍失败才降级)..."));
+                    try
+                    {
+                        await RunAsync(exe, args, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
+                        return;
+                    }
+                    catch (InvalidOperationException retryEx)
+                    {
+                        string head2 = retryEx.Message.Split('\n')[0];
+                        if (head2.Length > 90) head2 = head2[..90];
+                        head = head2;   // 用最新错误走下方降级
+                        retriedTimes = r;
+                        AppLogger.Warn($"⚠ GPU 重试 {r}/{GpuRetryTimes} 仍失败({head2})" + (r < GpuRetryTimes ? ",继续重试..." : ",走降级链(不自动转CPU)"));
+                        if (r < GpuRetryTimes) { try { await Task.Delay(1500, ct).ConfigureAwait(false); } catch { } }
+                    }
+                }
+                AppLogger.Warn($"⚠ GPU 已重试 {retriedTimes} 次全部失败({head}),按降级链处理(备用GPU→报错,不自动转CPU)");
+            }
+            else
+            {
+                AppLogger.Warn($"⚠ GPU 二次失败({head}),不再重试,走降级链(备用GPU→报错,不自动转CPU)");
+            }
+
             // 【OOM 减半分块】GPU 显存不足且当前 -t > 64:先把分块减半在 GPU 上重试(显存降到约 1/4,能留在 GPU 上跑),
             // 而非直接落 CPU(慢得多)。多次 OOM 再走下方 其他GPU→CPU 降级链。
             if (LooksLikeOom(ex))
@@ -1101,6 +1147,15 @@ public static partial class EngineService
     {
         var m = System.Text.RegularExpressions.Regex.Match(msg, @"exit (-?\d+)");
         return m.Success ? m.Groups[1].Value : "?";
+    }
+
+    /// <summary>取"本会话是否已重试过一次 GPU"并置位:第一次返回 false(应重试),之后返回 true(不再重试)。
+    /// 用于"GPU 失败先重试一次,二次失败才降级",避免递归/无限重试。</summary>
+    private static bool ArmRetryOnce(ref bool flag)
+    {
+        if (flag) return true;
+        flag = true;
+        return false;
     }
 
     /// <summary>判断引擎失败是否为显存不足(OOM):vkAllocateMemory / out of memory / vk:: / memory 等关键字。

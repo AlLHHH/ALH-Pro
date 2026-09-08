@@ -232,7 +232,12 @@ public static class EsrganOnnxService
                         ? (AppSettings.GpuIndex >= 0 ? EngineService.ToDmlDevice(AppSettings.GpuIndex) : EsrganOnnxService.DmlFallbackOk)
                         : EngineService.ToDmlDevice(gpuId);
                     try { opts.AppendExecutionProvider_DML(dmDevice); }
-                    catch { /* DML 不可用回退 CPU */ }
+                    catch (Exception dmlEx)
+                    {
+                        // 【不要轻易掉 CPU】DirectML 建会话失败:明确记录"卡在 GPU 哪一步",而不是静默落 CPU。
+                        // 这样"4060 显示 GPU 却跑几小时"的诊断包能一眼看到是 DirectML 挂在这(驱动过旧 / DML 设备不可用)。
+                        AppLogger.Warn($"⚠ ONNX DirectML 会话创建失败({dmDevice},原因:{dmlEx.Message.Split('\n')[0]})——本会话将退回 CPU(速度会变得特别慢,若持续出现请更新显卡驱动后重试)");
+                    }
                 }
                 sessions[s] = new Microsoft.ML.OnnxRuntime.InferenceSession(modelPath, opts);
             }
