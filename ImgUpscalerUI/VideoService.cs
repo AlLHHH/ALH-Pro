@@ -4818,10 +4818,14 @@ public static class VideoService
     {
         int q = quality switch { 0 => 22, 1 => 26, 2 => 24, 3 => 20, 4 => 15, _ => 22 };
         int th = SafeRender.GetLibx264Threads();
+        // 输出强制标 BT.709/tv:中间帧 JPG 不保留色彩元数据,ffmpeg 读 JPG 用默认 bt470bg/pc/yuvj420p,
+        // 对 1080p 高清(BT.709)源会造成红蓝错色(用户实测:源 bt709→输出 bt470bg 红蓝)。统一标正确色彩。
+        // (顺带纠正 video 帧 JPG 直走 GDI 后,合帧时色彩元数据缺失导致的同类偏差。)
+        const string colorArgs = " -color_range tv -colorspace bt709 -color_primaries bt709 -color_trc bt709";
         if (bitrateKbps > 0)
         {
             int k = (int)Math.Max(100, bitrateKbps);
-            return encoder switch
+            string core = encoder switch
             {
                 "h264_nvenc" or "hevc_nvenc" => $"-c:v {encoder} -preset p4 -rc vbr -cq 18 -b:v {k}K -maxrate {k}K -bufsize {k * 2}K -pix_fmt yuv420p",
                 "h264_amf" or "hevc_amf" => $"-c:v {encoder} -quality quality -rc cbr -b:v {k}K -pix_fmt nv12",
@@ -4829,8 +4833,9 @@ public static class VideoService
                 "libx265" => $"-c:v libx265 -preset veryfast -b:v {k}K -maxrate {k}K -bufsize {k * 2}K -pix_fmt yuv420p -x265-params threads={th}",
                 _ => $"-c:v libx264 -preset veryfast -b:v {k}K -maxrate {k}K -bufsize {k * 2}K -pix_fmt yuv420p -threads {th}",
             };
+            return core + colorArgs;
         }
-        return encoder switch
+        string core2 = encoder switch
         {
             "h264_nvenc" => $"-c:v h264_nvenc -preset p4 -cq {q} -pix_fmt yuv420p",
             "h264_amf" => $"-c:v h264_amf -quality quality -rc cqp -qp_i {q} -qp_p {q} -pix_fmt nv12",   // AMF 必须给 NV12,否则黑屏
@@ -4842,6 +4847,7 @@ public static class VideoService
             // 轻量 CPU 模式:限制线程 + 快速预设,不把 CPU 跑满;线程数按"安全渲染"CPU 墙
             _ => $"-c:v libx264 -preset veryfast -crf {q} -pix_fmt yuv420p -threads {th}",
         };
+        return core2 + colorArgs;
     }
 
     /// <summary>按开始/结束时间裁剪并保存(重编码保证精确,保留音频)。</summary>
