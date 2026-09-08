@@ -450,6 +450,25 @@ public static class VulkanCheck
         else
             sb.Append("计算设备:未检测到可用的 GPU\n");
 
+        // ===== 双枚举并排对照(诊断关键:注册表枚举序 vs 引擎枚举序,两者编号可能错位)=====
+        // 这台双卡机(AMD核显+NVIDIA独显)上,注册表顺序常与 ncnn 引擎 -g 编号相反。
+        // 把这套映射 + 各卡 Blackwell 判定一起打日志,下次诊断包一眼看清"哪套编号是 NVIDIA、50 系判定是否命中"。
+        try
+        {
+            var logSb = new System.Text.StringBuilder();
+            logSb.Append("GPU 双枚举对照:注册表枚举[");
+            for (int i = 0; i < regNames.Count; i++) { if (i > 0) logSb.Append(" | "); logSb.Append($"#{i} {regNames[i]}"); }
+            logSb.Append("] 引擎枚举[");
+            for (int i = 0; i < devices.Count; i++) { if (i > 0) logSb.Append(" | "); logSb.Append($"#{devices[i].Item1} {devices[i].Item2}"); }
+            logSb.Append("] Blackwell判定:");
+            var _bwNames = new System.Collections.Generic.List<string>();
+            try { _bwNames.AddRange(devices.Select(d => d.Item2)); } catch { }
+            try { _bwNames.AddRange(regNames); } catch { }
+            logSb.Append(AlhPro.Core.GpuName.AnyIsBlackwell(_bwNames) ? "是(将走 ONNX 稳定路线)" : "否(走 ncnn-GPU)");
+            AppLogger.Info(logSb.ToString());
+        }
+        catch { /* 对照日志失败不影响主报告 */ }
+
         // 显卡驱动版本(NVIDIA/AMD/Intel 都从注册表读,与显卡同序)
         try
         {

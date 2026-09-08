@@ -3100,22 +3100,22 @@ public sealed partial class MainPage : Page
     /// <summary>左下角「☕ 请作者喝咖啡」→ 打赏卡片弹窗(赞赏码图片 + 打赏平台链接)。</summary>
     private void CoffeeCard_Click(object sender, RoutedEventArgs e) => ShowCoffeeCard();
 
-    /// <summary>导出诊断包成功并点「确定」后:30% 概率弹出"请作者喝咖啡"赞助提示;关闭后 2 小时内不再触发。</summary>
+    /// <summary>导出诊断包成功并点「确定」后:60% 概率弹出"请作者喝咖啡"赞助提示;点赞赏且停留≥5秒后 10 小时内不再触发(点取消则不变)。</summary>
     public async Task ShowSponsorPromptAsync()
     {
         try
         {
-            // 冷却:上次关闭后 2 小时内不再弹(上线参数)
-            if (DateTime.Now - AppSettings.SponsorPromptTime < TimeSpan.FromHours(2)) return;
-            // 30% 概率(作者感谢但不打扰,上线参数)
-            if (new Random().NextDouble() >= 0.30) return;
+            // 冷却:上次关闭后 10 小时内不再弹(上线参数;更长=更不打扰)
+            if (DateTime.Now - AppSettings.SponsorPromptTime < TimeSpan.FromHours(10)) return;
+            // 60% 概率(作者感谢但尽量不打扰,上线参数)
+            if (new Random().NextDouble() >= 0.60) return;
             await Task.Delay(300);   // 让完成弹窗关闭后画面稳定再显示
             SponsorOverlay.Visibility = Visibility.Visible;
         }
         catch { }
     }
 
-    /// <summary>供图片/视频等视图在"处理完成"弹窗点确定后调用(30%概率弹赞助,2小时冷却)。
+    /// <summary>供图片/视频等视图在"处理完成"弹窗点确定后调用(60%概率弹赞助;点赞赏停留≥5秒后10小时冷却,点取消不变)。
     /// 注意:window.Content 是 Frame,MainPage 是 Navigate 进去的,必须经 Frame 取,否则拿不到。</summary>
     public static void MaybeShowSponsorPrompt()
     {
@@ -3135,7 +3135,8 @@ public sealed partial class MainPage : Page
         ShowCoffeeCard();
     }
 
-    /// <summary>打码界面关闭:若从赞助提示进入且停留≥5秒 → 1 天不再弹;否则 2 小时冷却。</summary>
+    /// <summary>打码界面关闭:若从赞助提示进入且认真看了赞赏码(停留≥5秒)→ 10 小时冷却;否则不设(下次还能弹)。
+    /// 点「取消」不设冷却(见 SponsorClose_Click)。</summary>
     private void OnCoffeeCardClosed()
     {
         try
@@ -3143,18 +3144,22 @@ public sealed partial class MainPage : Page
             if (!_coffeeViaSponsor) return;   // 导航栏进入的打码不影响赞助提示
             _coffeeViaSponsor = false;
             double sec = (DateTime.Now - _coffeeCardOpenedAt).TotalSeconds;
-            AppSettings.SponsorPromptTime = sec >= 5 ? DateTime.Now.AddDays(1) : DateTime.Now.AddHours(2);
-            try { AppSettings.Save(); } catch { }
-            if (sec >= 5) AppLogger.Info("已在打码界面停留≥5秒,赞助提示 1 天内不再弹出");
+            // 只在认真看了赞赏码(停留≥5秒)才设 10h 冷却;否则不设(下次还能弹)。
+            // (点「取消」什么都不变——见 SponsorClose_Click。)
+            if (sec >= 5)
+            {
+                AppSettings.SponsorPromptTime = DateTime.Now.AddHours(10);
+                try { AppSettings.Save(); } catch { }
+                AppLogger.Info("已在打码界面停留≥5秒(认真看赞赏码),赞助提示 10 小时内不再弹出");
+            }
         }
         catch { }
     }
 
     private void SponsorClose_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
     {
+        // 点「取消」= 什么都不变(不设冷却),下次处理完成仍可能弹。只有点了「请作者喝咖啡」且停留≥5秒才进冷却。
         try { SponsorOverlay.Visibility = Visibility.Collapsed; } catch { }
-        AppSettings.SponsorPromptTime = DateTime.Now;   // 关闭后 2 小时冷却
-        try { AppSettings.Save(); } catch { }
     }
 
     /// <summary>左下角「💬 ALH Pro 社区」→ 打开爱发电电圈(官方交流社区)。</summary>
