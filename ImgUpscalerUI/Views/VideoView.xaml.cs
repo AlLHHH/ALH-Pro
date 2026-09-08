@@ -2752,7 +2752,8 @@ public sealed partial class VideoView : UserControl
         await dlg.ShowAsync();
     }
 
-    /// <summary>检测是否 RTX 50 系列(Blackwell 架构)显卡:从 VulkanCheck 设备或系统枚举名称判断。</summary>
+    /// <summary>检测是否 RTX 50 系列(Blackwell 架构)显卡:从 VulkanCheck 设备或系统枚举名称判断。
+    /// 复用 AlhPro.Core.GpuName(有单测):先排除 Ada/Turing/Quadro,避免把 "RTX 5000 Ada"/"Quadro RTX 5000" 误判为 50 系。</summary>
     private static bool IsBlackwellGpu()
     {
         try
@@ -2760,7 +2761,7 @@ public sealed partial class VideoView : UserControl
             var names = new System.Collections.Generic.List<string>();
             names.AddRange(VulkanCheck.Devices.Select(d => d.Name));
             try { names.AddRange(GpuInfo.GetAdapterNames()); } catch { }
-            return names.Any(n => System.Text.RegularExpressions.Regex.IsMatch(n, @"RTX 5[0-9]{2}", System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+            return AlhPro.Core.GpuName.AnyIsBlackwell(names);
         }
         catch { return false; }
     }
