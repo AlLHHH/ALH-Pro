@@ -526,18 +526,20 @@ public static class SafeRender
         try { AssignProcessToJobObject(job, processHandle); } catch { }
     }
 
-    /// <summary>CPU 软编(libx264)线程数:低=2,中=4,高=8,不超过本机核心数。
-    /// 「系统流畅优先」开启时再收紧(亲和性已预留核心,线程设多了也跑不满,反而无效)。</summary>
+    /// <summary>CPU 软编(libx264)线程数:仅低档(≤4 核)用 2;自动/中/高档直接用满可用核。
+    /// 「系统流畅优先」开启时进程级已通过亲和性预留 1~2 核(低优先级+亲和性),线程数无需再双重收紧。
+    /// 实测(2026-09-08,RTX 4060 Laptop/16 核):4→16 线程编码段 1.95×、整段 1.42×;原自动档(>4核机器)只给 4
+    /// 线程,是 CPU 软编慢的主因——进程级保护已存在,再限线程属于重复防御。</summary>
     public static int GetLibx264Threads()
     {
-        int t = EffectiveCpuLevel switch { 1 => 2, 2 => 4, _ => 8 };
         int max = Math.Max(1, CpuCoreCount - (LowPriorityEnabled ? (CpuCoreCount <= 4 ? 1 : 2) : 0));
-        return Math.Clamp(t, 1, max);
+        if (EffectiveCpuLevel == 1) return Math.Clamp(2, 1, max);   // 低档:保守 2 线程
+        return max;                                                 // 自动/中/高档:用满可用核
     }
 
     /// <summary>AI 引擎(ncnn)线程参数(-j 加载:计算:保存),按 CPU 核数自动调优:
     /// 低=1:1:1;中/高=加载 1,计算按核数分配(多核吃满但留余量,防引擎抢光 CPU 卡死整机)。
-    /// 计算线程 = 核数/2(中档封顶 4、高档封顶 8);核数少时自动收紧;「系统流畅优先」时用剩余核。
+    /// 计算线程 = 核数/2(中档封顶 4、高档封顶 6 —— 封顶 8 实测会让 x4plus 系模型全黑,详见函数内注释);核数少时自动收紧;「系统流畅优先」时用剩余核。
     /// 开关2(SplitCores)开启时计算线程再除以并发路数,避免多路引擎挤在同一批核上超订。
     /// 注意:save 线程恒定为 1——实测 ncnn-vulkan 20250915 版引擎(waifu2x/realesrgan)在
     /// save>1 时与 Vulkan 提交队列冲突(vkQueueSubmit failed -4),小 tile 大批次下整批输出黑帧
@@ -548,15 +550,23 @@ public static class SafeRender
         usable = Math.Max(1, usable);
         // 开关2:计算线程按并发路数分摊(多路时每实例更少线程,不超订)
         int conc = Math.Max(1, GetVideoConcurrency());
-        // 【回到保守】compute 线程用保守的"可用核/2/并发路数"(原版值)——实测把 compute 加大到"用满核数"
+        // 【回到保守】compute 线程用保守的"可用核/2/并发路数"——实测把 compute 加大到"用满核数"
         // 会让 ncnn-vulkan 在部分 N 卡(GTX/RTX)上多线程 Vulkan 提交队列竞争 → vkQueueSubmit 失败 → 黑帧。
         // compute 过大正是"ncnn 之前没问题、后来黑帧"的根因(见 c001a03 引入的激进改法),这里回退保守。
         // load/save 保持 1:save>1 同样会触发 vkQueueSubmit 失败(黑帧)。
+        // 【高档封顶 8→6,2026-09-08 实测】原先注释说 8 是"原版保守值",但 8 并不安全:
+        // RTX 4060 Laptop(16 核)上 realesrgan-ncnn-vulkan 跑 realesrgan-x4plus / x4plus-anime 目录模式,
+        // -j 1:8:1 稳定输出【全黑帧】(退出码 0、无任何报错,30/30 帧 YAVG=16 且 md5 完全相同),
+        // 5 次复现全部如此;-j 1:6:1 与 1:7:1 各 2 次全部正常。分块大小不影响(-t 0/200/400 都黑)。
+        // 轻量的 realesr-animevideov3(视频默认模型)在 compute=8 下正常,所以只有手动把 CPU 档位调到「高」
+        // 又选了 x4plus 系模型的用户会中招——跑几小时拿到一整条黑视频。
+        // 封 6 而不是 7:留一档余量;且 6 恰是实测最快的正常档(x4plus 30 帧:compute 1/2/4/6/7 =
+        // 189/193/195/127/232 秒),超分本身是 GPU 瓶颈,减 compute 不掉速度(animevideov3 compute 8 vs 2:5.64 vs 5.48 秒)。
         int compute = EffectiveCpuLevel switch
         {
             1 => 1,
             2 => Math.Clamp(usable / 2 / (SplitCores ? conc : 1), 2, 4),   // 中档:÷2,封顶4(原版)
-            _ => Math.Clamp(usable / 2 / (SplitCores ? conc : 1), 4, 8),   // 高档:÷2,封顶8(原版)
+            _ => Math.Clamp(usable / 2 / (SplitCores ? conc : 1), 4, 6),   // 高档:÷2,封顶6(实测 8 会让 x4plus 全黑)
         };
         int load = 1;
         int save = 1;                            // 恒 1:防 ncnn-vulkan save 并发触发 GPU 队列失败(黑帧)
