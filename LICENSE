@@ -1,6 +1,9 @@
-ALH Pro 自用授权声明(个人免费版)
-================================
+ALH Pro 自用授权声明(个人免费版 / 自创专有许可)
+================================================
 
+Copyright (c) 2026 AlL.H. All rights reserved.
+
+本文件为 ALH Pro 的专属授权声明(定制专有许可),【非】MIT、Apache、GPL 等任何标准开源许可。
 ALH Pro 软件(以下简称"本软件")由 AlL.H 开发。
 界面、代码、文档等原创部分,版权归 AlL.H 所有,保留所有权利(All Rights Reserved)。
 
@@ -24,4 +27,4 @@ ONNX Runtime、Windows App SDK 等)版权归各原作者所有,遵循各自开�
 本软件按"现状"(AS-IS)提供,不附带任何明示或默示的担保(含适销性、特定用途适用性、不侵权)。
 作者不对因使用本软件产生的任何直接或间接损失负责。
 
-© 2026 AlL.H. 保留所有权利。
+Copyright (c) 2026 AlL.H. All rights reserved.
