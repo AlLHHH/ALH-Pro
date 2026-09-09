@@ -3044,7 +3044,18 @@ public sealed partial class VideoView : UserControl
             // 组装文本
             var parts = new System.Collections.Generic.List<string>();
             if (ow > 0 && oh > 0)
-                parts.Add($"输出: {ow}×{oh}{(sw > 0 && sh > 0 ? $"(源 {sw}×{sh})" : "")}");
+            {
+                // 统一写「输出: W×H(源 w×h ×倍数)」——让超分倍率直接体现在分辨率里,不再另外写"Nx超分"。
+                string srcNote = "";
+                if (sw > 0 && sh > 0)
+                {
+                    if (up && customRes) srcNote = $"(源 {sw}×{sh} · 自定义)";
+                    else if (up && shrink1x) srcNote = $"(源 {sw}×{sh} ×1·缩回)";
+                    else if (up) srcNote = $"(源 {sw}×{sh} ×{mult:0.##})";
+                    else srcNote = $"(源 {sw}×{sh})";
+                }
+                parts.Add($"输出: {ow}×{oh}{srcNote}");
+            }
             else if (sw > 0 && sh > 0)
                 parts.Add($"输出: 保持 {sw}×{sh}");
             if (outFps > 0)
@@ -3061,9 +3072,8 @@ public sealed partial class VideoView : UserControl
             }
             // 超限提示:仅当 输出分辨率 >4K(宽>3840 或 高>2160)时,在这行输出规格旁红字提示(不弹窗)。
             bool over4k = (ow > 3840 || oh > 2160);
-            // 倍率已由「输出: W×H(源 w×h)」隐含(7680×4320 源1920×1080 = 4x),不再重复写"Nx超分";
-            // 仅当倍率无法从分辨率看出的特殊情况(1x缩回/自定义)才备注。
-            var text = string.Join(" · ", parts) + (shrink1x ? " · 1x缩回" : customRes ? " · 自定义" : "");
+            // 倍率已写进「输出: W×H(源 w×h ×N)」,这里不再重复;"1x缩回/自定义"也已并入分辨率项。
+            var text = string.Join(" · ", parts);
             // 占用估算:临时帧峰值(与 C3 临时盘预检同口径:放大帧 JPG + 1.6 倍余量)+ 成片大小。
             // 输出帧数 = dur × outFps;输出单帧 JPG 按像素从 1080p(≈1MB)线性缩放,放大内容更平滑所以压到 0.18。
             string sizeNote = "";
