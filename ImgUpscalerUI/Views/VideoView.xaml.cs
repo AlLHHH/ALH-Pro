@@ -3461,7 +3461,9 @@ public sealed partial class VideoView : UserControl
             if (upOn && upscaleShrink1x) scale = 2;
             bool highRate = interpScale >= 4;   // 4x 及以上
             double totalNeedGB = 0, totalSec = 0;
-            // 超限检测:输出分辨率 >4K(超 3840×2160,即宽>3840 或 高>2160)且 输出帧率 >240 时弹窗警示。
+            // 超限检测:输出分辨率 >4K(超 3840×2160,即宽>3840 或 高>2160)时,开始前弹确认(仍要继续/取消)。
+            // 输出尺寸取决于超分倍率:0=1x缩回(输出=源) 1/2/3=×2/×3/×4 4=自定义(用户填的宽高)。
+            var over4k = new System.Collections.Generic.List<string>();
             // 后台扫描每个视频(不卡 UI)
             await Task.Run(async () =>
             {
@@ -3474,6 +3476,19 @@ public sealed partial class VideoView : UserControl
                         double fps = 30;
                         try { if (double.TryParse(VideoService.ProbeFps(it.Path), NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var pf) && pf > 0) fps = pf; } catch { }
                         var (w, h) = await VideoService.ProbeSizeAsync(it.Path).ConfigureAwait(false);
+                        // 输出分辨率:仅超分影响尺寸(补帧只改帧率)。自定义分辨率用用户填的;否则源×倍率。
+                        int outW = w, outH = h;
+                        if (upOn && VideoScaleRadios.SelectedIndex != 0)
+                        {
+                            if (VideoScaleRadios.SelectedIndex == 4)
+                            {
+                                int.TryParse(CustomWidthBox.Text, out var cw); int.TryParse(CustomHeightBox.Text, out var ch);
+                                if (cw > 0 && ch > 0) { outW = cw; outH = ch; }
+                            }
+                            else { outW = (int)Math.Round((double)w * scale); outH = (int)Math.Round((double)h * scale); }
+                        }
+                        if (outW > 3840 || outH > 2160)
+                            over4k.Add($"{it.Name}({outW}×{outH})");
                         totalSec += VideoService.EstimateProcessSeconds(dur, fps, w, h,
                             upOn, scale, engine, interpOn, interpScale, dedupOn, 0);
                         // 占盘(JPG 中间帧峰值,与 C3 一致):源帧≈1MB/1080p,放大后×倍率²×0.18
@@ -3486,7 +3501,45 @@ public sealed partial class VideoView : UserControl
                     }
                     catch { }
                 }
-            }).ConfigureAwait(false);
+            }).ConfigureAwait(true);
+
+            // ===== 超 4K 确认弹窗(硬性要求:超过 4K 必须让用户确认才能继续)=====
+            // 左「仍要继续」(红) / 右「取消」(蓝);取消则不启动。
+            if (over4k.Count > 0)
+            {
+                var dlg4k = new ContentDialog
+                {
+                    Title = "⚠ 输出规格超过 4K",
+                    Content = new StackPanel
+                    {
+                        Spacing = 8,
+                        Children =
+                        {
+                            new TextBlock
+                            {
+                                Text = "以下视频输出分辨率超过 4K(宽>3840 或 高>2160):\n\n　" + string.Join("\n　", over4k)
+                                    + "\n\n输出超 4K 会占用极大量显存/临时磁盘、处理非常慢,甚至中途失败。是否仍要继续?",
+                                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                            },
+                            new TextBlock { Text = "也可先降低超分/补帧倍率或分辨率再试。", FontSize = 11, Opacity = 0.6, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap },
+                        },
+                    },
+                    PrimaryButtonText = "仍要继续",
+                    CloseButtonText = "取消",
+                    DefaultButton = Microsoft.UI.Xaml.Controls.ContentDialogButton.Primary,
+                    XamlRoot = this.XamlRoot,
+                    // 按钮配色:左「仍要继续」红 / 右「取消」蓝(用户指定)
+                    PrimaryButtonStyle = ButtonStyle(Windows.UI.Color.FromArgb(255, 217, 48, 48), Windows.UI.Color.FromArgb(255, 255, 255, 255)),
+                    CloseButtonStyle = ButtonStyle(Windows.UI.Color.FromArgb(255, 0, 103, 192), Windows.UI.Color.FromArgb(255, 255, 255, 255)),
+                };
+                var r4k = await dlg4k.ShowAsync();
+                if (r4k != Microsoft.UI.Xaml.Controls.ContentDialogResult.Primary)
+                {
+                    Log("⚠ 检测到输出超 4K,用户选择「取消」,已停止处理。");
+                    return false;
+                }
+                Log($"⚠ 输出超 4K,用户选择「仍要继续」: {string.Join(" / ", over4k)}");
+            }
 
             // 硬风险1:会爆盘(预计占 > 当前临时盘剩余)
             bool diskRisk = false;
@@ -3550,6 +3603,16 @@ public sealed partial class VideoView : UserControl
             return r == Microsoft.UI.Xaml.Controls.ContentDialogResult.Primary;
         }
         catch { return true; }   // 诊断出错不拦截,照常处理
+    }
+
+    /// <summary>构造一个纯色按钮 Style(用于 ContentDialog 按钮自定义配色:如超4K弹窗「仍要继续」红 /「取消」蓝)。</summary>
+    private static Microsoft.UI.Xaml.Style ButtonStyle(Windows.UI.Color bg, Windows.UI.Color fg)
+    {
+        var st = new Microsoft.UI.Xaml.Style(typeof(Microsoft.UI.Xaml.Controls.Button));
+        st.Setters.Add(new Microsoft.UI.Xaml.Setter(Microsoft.UI.Xaml.Controls.Control.BackgroundProperty, new Microsoft.UI.Xaml.Media.SolidColorBrush(bg)));
+        st.Setters.Add(new Microsoft.UI.Xaml.Setter(Microsoft.UI.Xaml.Controls.Control.ForegroundProperty, new Microsoft.UI.Xaml.Media.SolidColorBrush(fg)));
+        st.Setters.Add(new Microsoft.UI.Xaml.Setter(Microsoft.UI.Xaml.Controls.Control.BorderBrushProperty, new Microsoft.UI.Xaml.Media.SolidColorBrush(bg)));
+        return st;
     }
 
     private async void RunBtn_Click(object sender, RoutedEventArgs e)
