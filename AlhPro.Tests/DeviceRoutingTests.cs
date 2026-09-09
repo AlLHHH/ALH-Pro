@@ -43,10 +43,12 @@ public class DeviceRoutingTests
     }
 
     [Fact]
-    public void Missing_setting_with_nothing_to_recommend_falls_back_to_cpu()
+    public void Device_table_present_never_falls_to_cpu_even_without_recommendation()
     {
+        // 铁律:超分/补帧绝不落 CPU。表非空(确实有可用设备)时,即便没有推荐值,
+        // 也必须取表内一个设备(最小号)而不是 -1 —— 旧实现此处返回 -1(CPU)是漏洞。
         var (id, remapped) = DeviceRouting.ResolveEngineDevice(3, new[] { 0, 2 }, -1, 3);
-        Assert.Equal(-1, id);
+        Assert.Equal(0, id);
         Assert.True(remapped);
     }
 

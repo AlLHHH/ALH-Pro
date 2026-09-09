@@ -92,35 +92,44 @@ public static class EsrganOnnxService
 
     /// <summary>同一设备【连续】瞬时失败次数(GPU 成功一次即清零)。上限见 DmlTransientStrikes。</summary>
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, int> _dmlStrikes = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, int> _audioDmlStrikes = new();
 
     /// <summary>瞬时失败连击上限。达限即认定该设备在本进程内不可用,按持续性错误同样口径处理(抛可操作错误 /
     /// 回退源帧),而不是转 CPU。为什么是 3:一次重试的代价是"一块/一对帧的 CPU 推理"(秒级),连吃 3 次
     /// 说明不是偶发抖动;再试下去就是"N 帧 × CPU 推理"的几小时形状——那正是要消灭的东西。</summary>
     private const int DmlTransientStrikes = 3;
 
+    /// <summary>业务域,决定用哪张连击表。音频(HT-Demucs)的显存压力与并发模型与图片/视频超分完全不同,
+    /// 失败成因(模型 OOM、输入形状)也不同,必须与视频分表,否则音频连吃 3 次失败会把图片超分/补帧
+    /// 判成设备不可用,或音频成功一次就 Clear 掉视频攒的连击 —— 双向污染。</summary>
+    internal enum DmlDomain { Video, Audio }
+
+    private static System.Collections.Concurrent.ConcurrentDictionary<int, int> Strikes(DmlDomain domain)
+        => domain == DmlDomain.Audio ? _audioDmlStrikes : _dmlStrikes;
+
     /// <summary>记一次瞬时(非设备级)DML 失败。返回 true = 已达连击上限,该设备视为不可用,调用方不得再转 CPU。</summary>
-    internal static bool NoteDmlTransientFailure(int device)
+    internal static bool NoteDmlTransientFailure(int device, DmlDomain domain = DmlDomain.Video)
     {
         if (device < 0) return false;
-        return _dmlStrikes.AddOrUpdate(device, 1, (_, old) => old + 1) >= DmlTransientStrikes;
+        return Strikes(domain).AddOrUpdate(device, 1, (_, old) => old + 1) >= DmlTransientStrikes;
     }
 
     /// <summary>GPU 推理成功 → 清零该设备的连击计数(偶发抖动不该累积成"设备不可用")。</summary>
-    internal static void ClearDmlStrikes(int device)
+    internal static void ClearDmlStrikes(int device, DmlDomain domain = DmlDomain.Video)
     {
-        if (device >= 0) _dmlStrikes.TryRemove(device, out _);
+        if (device >= 0) Strikes(domain).TryRemove(device, out _);
     }
 
     /// <summary>该设备是否已因连续瞬时失败被判定不可用(本进程内)。用于在建会话/推理之前快速失败——
     /// 这是原 _dmlBad 闩锁里唯一有用的那半(不重复注定失败的调用),去掉的是它"转 CPU"的落点。</summary>
-    internal static bool DmlDeviceUnusable(int device)
-        => device >= 0 && _dmlStrikes.TryGetValue(device, out var n) && n >= DmlTransientStrikes;
+    internal static bool DmlDeviceUnusable(int device, DmlDomain domain = DmlDomain.Video)
+        => device >= 0 && Strikes(domain).TryGetValue(device, out var n) && n >= DmlTransientStrikes;
 
     /// <summary>是否【任一】设备已达连击上限。供只持有"自动"(-2)这类未解析设备号的调用方使用:
     /// 逐对/逐帧循环里认出一次就该停止白试,否则几千帧就是几千次注定失败的调用 + 几千条同样的日志。</summary>
-    internal static bool AnyDmlDeviceUnusable()
+    internal static bool AnyDmlDeviceUnusable(DmlDomain domain = DmlDomain.Video)
     {
-        foreach (var kv in _dmlStrikes)
+        foreach (var kv in Strikes(domain))
             if (kv.Value >= DmlTransientStrikes) return true;
         return false;
     }
