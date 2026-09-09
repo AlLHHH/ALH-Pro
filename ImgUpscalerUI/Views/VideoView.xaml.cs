@@ -3070,8 +3070,8 @@ public sealed partial class VideoView : UserControl
                 VideoOutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                 return;
             }
-            // 超限提示:仅当 输出分辨率 >4K(宽>3840 或 高>2160)时,在这行输出规格旁红字提示(不弹窗)。
-            bool over4k = (ow > 3840 || oh > 2160);
+            // 超限提示:按【总像素】判定是否超 4K(3840×2160≈829万像素),不按单边——避免宽高比极端的视频误报。
+            bool over4k = (ow > 0 && oh > 0) && (double)ow * oh > 3840.0 * 2160.0;
             // 倍率已写进「输出: W×H(源 w×h ×N)」,这里不再重复;"1x缩回/自定义"也已并入分辨率项。
             var text = string.Join(" · ", parts);
             // 占用估算:临时帧峰值(与 C3 临时盘预检同口径:放大帧 JPG + 1.6 倍余量)+ 成片大小。
@@ -3487,7 +3487,10 @@ public sealed partial class VideoView : UserControl
                             }
                             else { outW = (int)Math.Round((double)w * scale); outH = (int)Math.Round((double)h * scale); }
                         }
-                        if (outW > 3840 || outH > 2160)
+                        // 超4K按【总像素】判(宽高别只看一边):4K=3840×2160≈829万像素。
+                        // 用"任一边"判会误伤宽高比极端的视频(如 10×33333 高远超2160但根本不是4K)——
+                        // 只在这些像素确实超过 4K 时才提示。用 double 防 int 溢出。
+                        if ((double)outW * outH > 3840.0 * 2160.0)
                             over4k.Add($"{it.Name}({outW}×{outH})");
                         totalSec += VideoService.EstimateProcessSeconds(dur, fps, w, h,
                             upOn, scale, engine, interpOn, interpScale, dedupOn, 0);
@@ -3517,11 +3520,10 @@ public sealed partial class VideoView : UserControl
                         {
                             new TextBlock
                             {
-                                Text = "以下视频输出分辨率超过 4K(宽>3840 或 高>2160):\n\n　" + string.Join("\n　", over4k)
+                                Text = "以下视频输出分辨率超过 4K:\n\n　" + string.Join("\n　", over4k)
                                     + "\n\n输出超 4K 会占用极大量显存/临时磁盘、处理非常慢,甚至中途失败。是否仍要继续?",
                                 TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
                             },
-                            new TextBlock { Text = "也可先降低超分/补帧倍率或分辨率再试。", FontSize = 11, Opacity = 0.6, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap },
                         },
                     },
                     PrimaryButtonText = "仍要继续",
