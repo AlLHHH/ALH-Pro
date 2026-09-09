@@ -289,8 +289,8 @@ public static class EsrganOnnxService
         // AppSettings.GpuIndex(=实测可用的独显 ncnn 编号),经 ToDmlDevice 名匹配映射到正确 DirectML 卡.
         // 提到循环外:每路 worker 解析出的都是同一个设备号,且熔断日志要报得出真实设备号(报 -1 会误导排查)。
         int dmDevice = !wantGpu ? -1
-            : auto ? (AppSettings.GpuIndex >= 0 ? EngineService.ToDmlDevice(AppSettings.GpuIndex) : EsrganOnnxService.DmlFallbackOk)
-            : EngineService.ToDmlDevice(gpuId);
+            : auto ? (AppSettings.GpuIndex >= 0 ? EngineService.ResolveDmlDevice(AppSettings.GpuIndex) : EsrganOnnxService.DmlFallbackOk)
+            : EngineService.ResolveDmlDevice(gpuId);
         // 预创建独立会话池(每个并行 worker 一个;绕开共享缓存锁,支持并发 Run)
         var sessions = new Microsoft.ML.OnnxRuntime.InferenceSession?[concurrency];
         for (int s = 0; s < concurrency; s++)

@@ -153,6 +153,26 @@ public static partial class EngineService
         catch { return engineGpu; }
     }
 
+    /// <summary>把"请求的计算设备编号"解析成【应实际使用的 DirectML 设备号】——先经 DeviceRouting 纠正
+    /// (编号命中了核显、而表里另有独显 → 换到独显;编号不在表 → 取表内独显),再 ToDmlDevice 名匹配映射。
+    /// 这是"锁定 NVIDIA 独显、绝不在核显上跑超分/补帧"的统一入口。requestedGpu&lt;0 = 调用方明确要 CPU,原样返回。</summary>
+    public static int ResolveDmlDevice(int requestedGpu)
+    {
+        if (requestedGpu < 0) return requestedGpu;   // 明确要 CPU
+        try
+        {
+            var devs = VulkanCheck.Devices;
+            if (devs.Count > 0)
+            {
+                // 带名重载:识别核显并换到独显(绝不落在核显上跑 GPU 计算)
+                var (id, _) = AlhPro.Core.DeviceRouting.ResolveEngineDevice(requestedGpu, devs, devs.Count);
+                return ToDmlDevice(id);
+            }
+        }
+        catch { }
+        return ToDmlDevice(requestedGpu);   // 设备表未枚举:原样映射
+    }
+
     // ===== DXGI 真枚举:显卡名 → DXGI/DirectML 设备号(替代按注册表顺序猜,双卡机上注册表序≠DXGI 序会选错卡) =====
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
     private struct DXGI_ADAPTER_DESC1

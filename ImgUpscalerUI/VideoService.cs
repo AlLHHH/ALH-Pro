@@ -2276,8 +2276,8 @@ public static class VideoService
             // 关键不变量:输出帧号严格用 InterpFraming 预分配(串行时完全一致),帧号精确连续、不重不漏,
             // 否则合帧缺号/乱序 → 整段视频黑帧/花屏(已用单测钉住 ComputeLayout)。
             var (per, totalOut) = AlhPro.Core.InterpFraming.ComputeLayout(Math.Max(1, target), pairs);
-            // 设备号:用户选的 GpuIndex(≥0)或探测兜底;若都<0(无 GPU)则不应走到 ONNX 路线,直接返回。
-            int dmlGpu = AppSettings.GpuIndex >= 0 ? AppSettings.GpuIndex : EsrganOnnxService.DmlFallbackOk;
+            // 设备号:经 ResolveDmlDevice 锁定独显(编号命中核显→换独显),绝不落在核显上补帧。
+            int dmlGpu = AppSettings.GpuIndex >= 0 ? EngineService.ResolveDmlDevice(AppSettings.GpuIndex) : EsrganOnnxService.DmlFallbackOk;
             if (dmlGpu < 0) { AppLogger.Warn("⚠ 补帧 ONNX:无可用 DirectML 设备,取消补帧"); return; }
 
             // 并发度受显存墙约束;DirectML session 非线程安全 → 每 worker 独占会话,绝不能共用/并发 Run。

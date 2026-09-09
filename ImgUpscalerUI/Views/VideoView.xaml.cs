@@ -456,10 +456,8 @@ public sealed partial class VideoView : UserControl
     }
 
     // 当前计算设备(全局设置):-1 = CPU;≥0 = GPU 编号。
-    // 【关键】用"编号是否在引擎实际设备表里"判断有效性,而非"编号<数量(GpuIndex<_gpuCount)"——
-    // 引擎 -g 编号可能是稀疏/非从 0 开始的(如注册表[0 Intel][1 NVIDIA],引擎实际编号[1 NVIDIA][2 Intel]),
-    // 此时编号 2 ≥ 设备数量 2,数量比对会把它误判为无效而掉成 CPU(-1),导致明明选了独显却报"无独显/走 CPU"。
-    // 与 MainPage 启动自检同一口径(VulkanCheck.Devices.Any(d => d.Id == GpuIndex)),真机验证有效。
+    // 【关键】按"编号是否在引擎实际设备表里 + 是否核显"判断:编号可能稀疏/从非0起(数量比对会误判掉成CPU),
+    // 且【绝不落在核显】——若设置值命中核显、表里另有独显,自动换到独显(聚焦N卡/独显,杜绝"选独显却跑核显")。
     private int CurrentGpuId
     {
         get
@@ -471,18 +469,17 @@ public sealed partial class VideoView : UserControl
                 if (devs.Count > 0)
                 {
                     var (id, remapped) = AlhPro.Core.DeviceRouting.ResolveEngineDevice(
-                        AppSettings.GpuIndex, devs.Select(d => d.Id).ToArray(),
-                        GpuInfo.GetRecommendedEngineId(), _gpuCount);
-                    // 重映射的典型原因:旧设置存着 D3D12 转译层设备的编号(该设备已被剔除)。留痕让旧设置自愈。
+                        AppSettings.GpuIndex, devs, _gpuCount);
+                    // 重映射原因:设置值的编号不在可用表 / 命中核显(表里有独显则已换过去)。留痕自愈。
                     if (remapped)
-                        AppLogger.Warn($"⚠ 设置的计算设备 GPU {AppSettings.GpuIndex} 不在可用设备表"
-                            + $"(多为已排除的 D3D12 转译层设备),本次改用 GPU {id}({GpuInfo.GetEngineDeviceName(id)})");
+                        AppLogger.Warn($"⚠ 设置的计算设备 GPU {AppSettings.GpuIndex} 不在可用设备表或命中核显，已自动改用 GPU {id}"
+                            + $"({GpuInfo.GetEngineDeviceName(id)})");
                     return id;
                 }
             }
             catch { /* 设备表未枚举时走数量兜底 */ }
             return AlhPro.Core.DeviceRouting.ResolveEngineDevice(
-                AppSettings.GpuIndex, Array.Empty<int>(), -1, _gpuCount).Id;
+                AppSettings.GpuIndex, Array.Empty<(int, string)>(), _gpuCount).Id;
         }
     }
 
