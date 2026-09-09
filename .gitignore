@@ -5,7 +5,7 @@ obj/
 .vs/
 artifacts/
 
-# ===== 引擎/模型(第三方二进制+大文件,入库无意义且超限)=====
+# ===== 引擎/模型(第三方二进制+大文件; 入库无意义且超限)=====
 engines/
 发布版/
 build_*/
@@ -18,9 +18,9 @@ _*/
 .iconregen/
 .smoketest/
 runvideo/
-# 根目录 assets(icon.ico/icon.png 为构建必需,必须入库;不要整目录忽略)
+# 根目录; assets(icon.ico/icon.png 为构建必需, 必须入库; 不要整目录忽略)
 
-# ===== 发布物/临时 =====
+# ===== 发布版: 临时 =====
 *.zip
 *.log
 *.tmp
@@ -33,5 +33,11 @@ Desktop.ini
 
 备份_*
 
-
 发布交接*
+
+# --- ALH Pro:忽略大文件/生成器产物/软著资料(勿提交) ---
+.diag_tmp/
+*.Setup_NoCut.exe
+ALHPro_v*.exe
+打包工具/gen_ad_imgs.ps1
+打包工具/软著材料/

@@ -3059,15 +3059,13 @@ public sealed partial class VideoView : UserControl
                 VideoOutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                 return;
             }
-            // 超限检测(编辑预览时红字提示,不弹窗;真正弹窗在"开始处理"前诊断):输出>4K(宽>3840或高>2160)且>240fps
+            // 超限提示:仅当 输出分辨率 >4K(宽>3840 或 高>2160)时,在这行输出规格旁红字提示(不弹窗)。
             bool over4k = (ow > 3840 || oh > 2160);
-            bool over240fps = outFps > 240;
-            bool overLimitPreview = over4k && over240fps;
             var text = string.Join(" · ", parts) + $" · {(shrink1x ? "1x缩回" : customRes ? "自定义" : $"{mult:0.##}x超分")}";
-            VideoOutSpecText.Text = overLimitPreview
-                ? "⚠ " + text + "  超4K/240fps"
+            VideoOutSpecText.Text = over4k
+                ? "⚠ " + text + "  超4K,可能很慢/占大量空间"
                 : text;
-            VideoOutSpecText.Foreground = overLimitPreview
+            VideoOutSpecText.Foreground = over4k
                 ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77))   // 红
                 : (Microsoft.UI.Xaml.Media.SolidColorBrush?)null;   // 恢复默认
             VideoOutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
@@ -3425,8 +3423,6 @@ public sealed partial class VideoView : UserControl
             bool highRate = interpScale >= 4;   // 4x 及以上
             double totalNeedGB = 0, totalSec = 0;
             // 超限检测:输出分辨率 >4K(超 3840×2160,即宽>3840 或 高>2160)且 输出帧率 >240 时弹窗警示。
-            // 输出分辨率 = 源尺寸×倍率(或自定义宽高);输出帧率 = 目标帧率或 源帧率×补帧倍率。
-            bool overLimit = false;
             // 后台扫描每个视频(不卡 UI)
             await Task.Run(async () =>
             {
@@ -3439,26 +3435,6 @@ public sealed partial class VideoView : UserControl
                         double fps = 30;
                         try { if (double.TryParse(VideoService.ProbeFps(it.Path), NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var pf) && pf > 0) fps = pf; } catch { }
                         var (w, h) = await VideoService.ProbeSizeAsync(it.Path).ConfigureAwait(false);
-                        // 计算该视频的输出分辨率×输出帧率,判断是否超限(>4K 且 >240fps)
-                        try
-                        {
-                            // 输出倍率:与下方占盘公式一致(1x缩回→内部按2x;否则 max(scale))
-                            double outMult2 = upOn ? (upscaleShrink1x ? 2.0 : Math.Max(1.0, scale)) : 1.0;
-                            double outW = w, outH = h;
-                            if (upOn && VideoScaleRadios.SelectedIndex == 4) {   // 自定义分辨率:直用自定义宽高
-                                if (int.TryParse(CustomWidthBox.Text, out var cw) && cw > 0) outW = cw;
-                                if (int.TryParse(CustomHeightBox.Text, out var ch) && ch > 0) outH = ch;
-                            } else if (upOn) { outW = w * outMult2; outH = h * outMult2; }
-                            double outFpsChk = fps;
-                            if (TargetFpsCheck.IsChecked == true && interpOn
-                                && double.TryParse(TargetFpsBox.Text, NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var tf2) && tf2 > 0)
-                                outFpsChk = tf2;
-                            else if (interpOn) outFpsChk = fps * interpScale;
-                            // >4K(宽>3840 或 高>2160)且 帧率>240 → 超限
-                            if ((outW > 3840 || outH > 2160) && outFpsChk > 240)
-                                overLimit = true;
-                        }
-                        catch { }
                         totalSec += VideoService.EstimateProcessSeconds(dur, fps, w, h,
                             upOn, scale, engine, interpOn, interpScale, dedupOn, 0);
                         // 占盘(JPG 中间帧峰值,与 C3 一致):源帧≈1MB/1080p,放大后×倍率²×0.18
@@ -3493,7 +3469,7 @@ public sealed partial class VideoView : UserControl
             bool weakDevice = SafeRender.IsWeakDevice && FastModeCheck.IsChecked != true;
 
             // 无硬风险 → 不弹,直接开始
-            if (!diskRisk && !resourceRisk && !weakDevice && !overLimit) return true;
+            if (!diskRisk && !resourceRisk && !weakDevice) return true;
 
             var lines = new System.Collections.Generic.List<string>();
             lines.Add($"预计处理耗时:约 {totalSec / 60:0.#} 分钟");
@@ -3502,8 +3478,6 @@ public sealed partial class VideoView : UserControl
                 lines.Add("⚠ 空间不足:预计占用超过临时盘可用空间,可能中途爆盘。建议:清理磁盘 / 降低超分或补帧倍率 / 换剩余空间更大的盘。");
             if (resourceRisk)
                 lines.Add("⚠ 高倍率补帧 + 设备偏弱:可能因显存不足中途出错。建议:点「一键开启兼容模式」自动降分块/批大小,或改用 2x。");
-            if (overLimit)
-                lines.Add("⚠ 输出规格超限:分辨率超过 4K 且帧率超过 240fps,可能占用极大量显存/磁盘、处理非常慢甚至失败。建议:降低超分/补帧倍率或分辨率,或把目标帧率降到 240 以内。");
             if (weakDevice)
                 lines.Add("⚠ 设备配置较低(核显/小显存/内存小),处理会明显偏慢。建议:开启「兼容模式」或先跑几秒小片段确认。");
 
