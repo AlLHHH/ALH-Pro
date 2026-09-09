@@ -63,8 +63,10 @@ public static partial class EngineService
     /// <summary>本会话内确认"ncnn CPU(-g -1)模式崩溃"(exit -1073741819 内存访问违规)后置位:
     /// 之后所有引擎的 CPU 兜底直接跳过,改为 GPU 0 重算,避免反复崩溃拖慢/卡住(双卡机/部分机型实测)。</summary>
     private static bool _ncnnCpuBroken;
-    /// <summary>本会话「GPU 引擎已重试过一次」标志:失败先重试一次,二次失败才走降级链(不轻易掉/不无限重试)。</summary>
-    private static bool _gpuRetried;
+    /// <summary>GPU 引擎重试的【递归深度】(0=顶层失败,该重试;≥1=已在重试递归里,直接走降级链防无限递归)。
+    /// 此前是静态 bool 闩锁:置位后永不复位 → 宣传的"同设备重试 3 次"整个进程只兑现一次(诊断包里第二次 GPU 失败
+    /// 直接报"不再重试"),而且第一次重试就被它自己的递归消耗掉。改成计数 + finally 归还,每次任务都恢复重试能力。</summary>
+    private static int _gpuRetryDepth;
 
     /// <summary>本会话内确认"WinRT BitmapEncoder 编码 JPG 不可用"(视频/后台线程上系统性抛 HRESULT,空消息)
     /// 后置位:后续帧直接走 System.Drawing(转 24bppRgb),不再逐帧尝试 WinRT + 逐帧刷失败日志。</summary>
@@ -1049,30 +1051,35 @@ public static partial class EngineService
 
             // 【失败反复重试 2~3 次再降级(不轻易掉)】同一条 GPU 命令(同参数/同设备)重跑多次:
             // 瞬时驱动抽风/编译着色器/显存短暂被占,重试能救回;全部失败才走下方降级链。
-            // 只在 GPU 初始模式重试(_gpuRetried 防递归),CPU 模式(-g -1)不重试(已知会崩)。
+            // 只在 GPU 初始模式重试(_gpuRetryDepth 防递归),CPU 模式(-g -1)不重试(已知会崩)。
             const int GpuRetryTimes = 3;
             int retriedTimes = 0;
-            if (!ArmRetryOnce(ref _gpuRetried))
+            if (Interlocked.CompareExchange(ref _gpuRetryDepth, 0, 0) == 0)
             {
-                for (int r = 1; r <= GpuRetryTimes && !ct.IsCancellationRequested; r++)
+                Interlocked.Increment(ref _gpuRetryDepth);
+                try
                 {
-                    AppLogger.Info($"⚠ GPU 引擎失败({head}),同设备重试 {r}/{GpuRetryTimes} 次,仍失败才降级...");
-                    progress?.Report((0, $"⚠ GPU 引擎失败,重试 {r}/{GpuRetryTimes} 次(仍失败才降级)..."));
-                    try
+                    for (int r = 1; r <= GpuRetryTimes && !ct.IsCancellationRequested; r++)
                     {
-                        await RunAsync(exe, args, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
-                        return;
-                    }
-                    catch (InvalidOperationException retryEx)
-                    {
-                        string head2 = retryEx.Message.Split('\n')[0];
-                        if (head2.Length > 90) head2 = head2[..90];
-                        head = head2;   // 用最新错误走下方降级
-                        retriedTimes = r;
-                        AppLogger.Warn($"⚠ GPU 重试 {r}/{GpuRetryTimes} 仍失败({head2})" + (r < GpuRetryTimes ? ",继续重试..." : ",走降级链(不自动转CPU)"));
-                        if (r < GpuRetryTimes) { try { await Task.Delay(1500, ct).ConfigureAwait(false); } catch { } }
+                        AppLogger.Info($"⚠ GPU 引擎失败({head}),同设备重试 {r}/{GpuRetryTimes} 次,仍失败才降级...");
+                        progress?.Report((0, $"⚠ GPU 引擎失败,重试 {r}/{GpuRetryTimes} 次(仍失败才降级)..."));
+                        try
+                        {
+                            await RunAsync(exe, args, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
+                            return;
+                        }
+                        catch (InvalidOperationException retryEx)
+                        {
+                            string head2 = retryEx.Message.Split('\n')[0];
+                            if (head2.Length > 90) head2 = head2[..90];
+                            head = head2;   // 用最新错误走下方降级
+                            retriedTimes = r;
+                            AppLogger.Warn($"⚠ GPU 重试 {r}/{GpuRetryTimes} 仍失败({head2})" + (r < GpuRetryTimes ? ",继续重试..." : ",走降级链(不自动转CPU)"));
+                            if (r < GpuRetryTimes) { try { await Task.Delay(1500, ct).ConfigureAwait(false); } catch { } }
+                        }
                     }
                 }
+                finally { Interlocked.Decrement(ref _gpuRetryDepth); }   // 归还深度:下一次任务/下一批重新获得完整重试次数
                 AppLogger.Warn($"⚠ GPU 已重试 {retriedTimes} 次全部失败({head}),按降级链处理(备用GPU→报错,不自动转CPU)");
             }
             else
@@ -1147,15 +1154,6 @@ public static partial class EngineService
     {
         var m = System.Text.RegularExpressions.Regex.Match(msg, @"exit (-?\d+)");
         return m.Success ? m.Groups[1].Value : "?";
-    }
-
-    /// <summary>取"本会话是否已重试过一次 GPU"并置位:第一次返回 false(应重试),之后返回 true(不再重试)。
-    /// 用于"GPU 失败先重试一次,二次失败才降级",避免递归/无限重试。</summary>
-    private static bool ArmRetryOnce(ref bool flag)
-    {
-        if (flag) return true;
-        flag = true;
-        return false;
     }
 
     /// <summary>判断引擎失败是否为显存不足(OOM):vkAllocateMemory / out of memory / vk:: / memory 等关键字。

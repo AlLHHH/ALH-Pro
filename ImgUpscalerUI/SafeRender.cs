@@ -74,29 +74,14 @@ public static class SafeRender
         }
     }
 
-    /// <summary>读取当前 GPU 温度(°C,仅 NVIDIA 可靠);失败返回 null(A 卡/Intel 无通用 CLI)。</summary>
+    /// <summary>读取当前 GPU 温度(°C,仅 NVIDIA 可靠);失败返回 null(A 卡/Intel 无通用 CLI)。
+    /// 走 RunNvidiaSmi:温度墙会周期性调用,绝不能因为驱动异常把调用线程永久挂住。</summary>
     public static double? GetGpuTempC()
     {
-        try
-        {
-            var psi = new ProcessStartInfo("nvidia-smi",
-                "--query-gpu=temperature.gpu --format=csv,noheader,nounits")
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            using var p = Process.Start(psi);
-            if (p != null)
-            {
-                var line = p.StandardOutput.ReadLine();
-                if (double.TryParse(line?.Trim(), System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture, out var t) && t > 0)
-                    return t;
-            }
-        }
-        catch { /* 非 NVIDIA */ }
+        var line = RunNvidiaSmi("--query-gpu=temperature.gpu --format=csv,noheader,nounits");
+        if (line != null && double.TryParse(line, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var t) && t > 0)
+            return t;
         return null;
     }
 
@@ -112,25 +97,46 @@ public static class SafeRender
     }
 
     // ---------- 硬件探测(缓存) ----------
-    private static double? _vramTotal, _vramFree, _ramTotal;
+    private static double? _vramTotal, _ramTotal;
+
+    // 空闲显存的三态缓存。用 int 标志 + double 值(而非 double?),是为了能配 Volatile 做无锁读写——
+    // 探测要 spawn 子进程,不能把它放进 lock 里(会把资源自检整条路径串行化在子进程上)。
+    private static double _vramFreeGb;      // 实测值(GB);未测到时为 0
+    private static int _vramFreeMeasured;   // 1 = nvidia-smi 真值;0 = 估算
+    private static int _vramFreeProbed;     // 1 = 本轮已探测过(成功或失败都算)
 
     /// <summary>本机显存总量(GB)。探测顺序见 ProbeTotalVramGb;全失败给保守值 4(宁可低估)。</summary>
     public static double TotalVramGB => _vramTotal ??= ProbeTotalVramGb();
 
     /// <summary>当前空闲显存(GB)。<b>只有 NVIDIA 能真测</b>(nvidia-smi);其他厂商测不到时这里返回的是
     /// 估算值,调用方【必须】先看 FreeVramMeasured 再决定是否拿它当判据。</summary>
-    public static double FreeVramGB => _vramFree ??= ProbeFreeVramGb();
+    public static double FreeVramGB { get { EnsureFreeVramProbed(); return _vramFreeGb > 0 ? _vramFreeGb : TotalVramGB * 0.8; } }
 
     /// <summary>FreeVramGB 是否为真实测值(仅 NVIDIA/nvidia-smi 可用时为 true)。
     /// AMD/Intel 没有跨厂商的空闲显存查询接口,原先代码在这种机器上返回"总量×0.8"当实测值用,
     /// 一个凭空造的数字同时喂给批次档位与并发档位,导致好机器被误降档(实测有机器批次从 180 掉到 120)。</summary>
-    public static bool FreeVramMeasured { get; private set; }
+    public static bool FreeVramMeasured { get { EnsureFreeVramProbed(); return Volatile.Read(ref _vramFreeMeasured) != 0; } }
 
     /// <summary>空闲显存的显示串:真测到给数值,测不到明确标"未实测"。
     /// UI/诊断包里出现一个凭空造的"空闲显存 6.4 GB"会误导排查——曾据此误判视频批次为何从 180 掉到 120。</summary>
     public static string FreeVramText => FreeVramMeasured
         ? FreeVramGB.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + " GB"
         : "未实测(仅 NVIDIA 可测)";
+
+    /// <summary>惰性探测一次空闲显存。<b>FreeVramGB 与 FreeVramMeasured 都必须经过这里</b>——
+    /// 此前 FreeVramMeasured 是个不触发探测的自动属性,而 GetVideoConcurrency() 的条件写的是
+    /// <c>!FreeVramMeasured || FreeVramGB &gt;= 3</c>:短路之后 FreeVramGB 一次都没被读过 → 探测永远不跑 →
+    /// 标志永远 false → ①纯 NVIDIA 机器的自检/诊断包也报"未实测"(v1.3.2 报 7 GB,v1.3.3 报未实测的回归)
+    /// ②并发档位的"空闲显存 ≥3G/≥8G"门槛整体失效,显存吃紧时也照样放 2~3 路并行。
+    /// 允许极小概率的并发重复探测(结果幂等,代价只是多 spawn 一次 nvidia-smi)。</summary>
+    private static void EnsureFreeVramProbed()
+    {
+        if (Volatile.Read(ref _vramFreeProbed) != 0) return;
+        var smi = ProbeNvidiaSmi("memory.free");
+        if (smi is > 0) { _vramFreeGb = smi.Value; Volatile.Write(ref _vramFreeMeasured, 1); }
+        else { _vramFreeGb = 0; Volatile.Write(ref _vramFreeMeasured, 0); }
+        Volatile.Write(ref _vramFreeProbed, 1);   // 最后置位:别人看到"已探测"时,值必定已写好
+    }
 
     /// <summary>本机物理内存总量(GB)。</summary>
     public static double TotalRamGB => _ramTotal ??= GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 1073741824.0;
@@ -145,8 +151,9 @@ public static class SafeRender
     public static void RefreshFreeResources()
     {
         _ramFree = null;
-        _vramFree = null;
-        FreeVramMeasured = false;   // 重测前必须先复位,否则两次访问之间会读到上一次的陈旧标志
+        _vramFreeGb = 0;
+        Volatile.Write(ref _vramFreeMeasured, 0);   // 重测前必须先复位,否则两次访问之间会读到上一次的陈旧标志
+        Volatile.Write(ref _vramFreeProbed, 0);     // 允许本轮重探:上一次 nvidia-smi 偶发失败不该锁死整场任务
     }
 
     private static double ProbeFreeRam(double fallback)
@@ -178,29 +185,58 @@ public static class SafeRender
     [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto, SetLastError = true)]
     private static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX lpBuffer);
 
-    /// <summary>nvidia-smi 查询(仅 NVIDIA 可用);任何失败返回 null —— 绝不返回估算值冒充实测值。</summary>
+    /// <summary>nvidia-smi 候选路径:先试绝对路径,再退回 PATH 查找。
+    /// 裸进程名依赖调用方的 PATH 环境变量——它被裁剪/改写时(某些启动方式、某些安全软件)明明装着 NVIDIA 驱动
+    /// 也找不到 nvidia-smi,于是空闲显存测不到、显存墙整层失效。</summary>
+    private static readonly string[] NvidiaSmiCandidates = new[]
+    {
+        Path.Combine(Environment.SystemDirectory, "nvidia-smi.exe"),
+        @"C:\Windows\System32\nvidia-smi.exe",
+        @"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe",
+        "nvidia-smi",
+    };
+
+    /// <summary>跑一次 nvidia-smi 返回首行输出;不存在/超时/非 NVIDIA 一律 null。
+    /// 【必须带超时】探测在资源自检里同步调用,驱动异常时挂住就等于 UI 卡死;
+    /// 且用异步读——同步 ReadLine 在子进程不输出时会一起挂住,连超时的机会都没有。</summary>
+    private static string? RunNvidiaSmi(string arguments)
+    {
+        foreach (var exe in NvidiaSmiCandidates)
+        {
+            try
+            {
+                if (exe != "nvidia-smi" && !File.Exists(exe)) continue;
+                var psi = new ProcessStartInfo(exe, arguments)
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                };
+                using var p = Process.Start(psi);
+                if (p == null) continue;
+                var readTask = p.StandardOutput.ReadLineAsync();
+                if (!readTask.Wait(3000))
+                {
+                    try { p.Kill(true); } catch { }
+                    try { p.WaitForExit(1000); } catch { }
+                    return null;   // 挂死:换候选也没意义(同一个驱动),直接放弃本轮探测
+                }
+                try { p.WaitForExit(1000); } catch { }
+                return readTask.Result?.Trim();
+            }
+            catch { /* 该候选不可用,试下一个 */ }
+        }
+        return null;
+    }
+
+    /// <summary>nvidia-smi 查询显存字段(MB→GB;仅 NVIDIA 可用);任何失败返回 null —— 绝不返回估算值冒充实测值。</summary>
     private static double? ProbeNvidiaSmi(string field)
     {
-        try
-        {
-            var psi = new ProcessStartInfo("nvidia-smi",
-                $"--query-gpu={field} --format=csv,noheader,nounits")
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            using var p = Process.Start(psi);
-            if (p != null)
-            {
-                var line = p.StandardOutput.ReadLine();
-                if (double.TryParse(line?.Trim(), System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture, out var mb) && mb > 0)
-                    return mb / 1024.0;
-            }
-        }
-        catch { /* 非 NVIDIA 或未安装驱动 */ }
+        var line = RunNvidiaSmi($"--query-gpu={field} --format=csv,noheader,nounits");
+        if (line != null && double.TryParse(line, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var mb) && mb > 0)
+            return mb / 1024.0;
         return null;
     }
 
@@ -215,16 +251,6 @@ public static class SafeRender
         try { var dxgi = ALHPro.EngineService.TryGetDxgiVramGb(); if (dxgi is > 0) return dxgi.Value; } catch { }
         try { var reg = ALHPro.GpuInfo.GetDiscreteVramGb(); if (reg is > 0) return reg.Value; } catch { }
         return 4.0;
-    }
-
-    /// <summary>空闲显存(GB)。只有 nvidia-smi 能真测;测不到时置 FreeVramMeasured=false,
-    /// 返回值仅作 UI 显示用的估算,调用方不得拿它当判据。</summary>
-    private static double ProbeFreeVramGb()
-    {
-        var smi = ProbeNvidiaSmi("memory.free");
-        if (smi is > 0) { FreeVramMeasured = true; return smi.Value; }
-        FreeVramMeasured = false;
-        return TotalVramGB * 0.8;
     }
 
     // ---------- 生效中的"墙" ----------

@@ -1356,6 +1356,17 @@ public static class VideoService
                 }
                 if (curBG.Count > 0) batchGroups.Add(curBG);
                 int batchCount = batchGroups.Count;
+                // 每批的起始槽位 = 【确定性前缀和】(前面各批的槽位数之和),不再读 doneFrames。
+                // doneFrames 只在批次【结束】时累加,而批次是并行跑的(SemaphoreSlim(GetVideoConcurrency()) 允许多批在飞),
+                // 所以"批次开始时读 doneFrames"读到的是别的批次的进度 → 进度计数器来回跳(诊断包里 65→131→199→33→2→7→11)、
+                // "仅首批写自检日志"(batchStartSlot==0)在非首批误触发、超分 ETA 的基准也跟着错。
+                // 前缀和对批次序号单调,三个用途一次修好。
+                var batchStartSlots = new int[batchCount];
+                for (int bi = 0, acc = 0; bi < batchCount; bi++)
+                {
+                    batchStartSlots[bi] = acc;
+                    foreach (var g in batchGroups[bi]) acc += g.slots.Count;
+                }
                 // 超分阶段自己的 ETA 时钟 + 休息/暂停累计(这两段时间不产出任何帧,必须从耗时里扣掉)
                 var srStageStart = DateTime.UtcNow;
                 double srIdleSec = 0;
@@ -1374,8 +1385,8 @@ public static class VideoService
                     foreach (var g in curPG) batchSlots.AddRange(g.slots);
                     batchSlots.Sort();
                     // 处理过程也做降温休息检查(单个长视频也能中途休息;按批检查,高频批时开销极小)
-                    // 进度按【槽位】:本批起始槽位 = doneFrames(此前已完成的槽数)
-                    int batchStartSlot = doneFrames;
+                    // 进度按【槽位】:本批起始槽位 = 前面各批槽数之和(确定性,不读并行更新的 doneFrames)
+                    int batchStartSlot = batchStartSlots[bi];
                     var idleT0 = DateTime.UtcNow;
                     await SafeRender.RestIfDueAsync(upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)), progress, ct);
                     if (pauseWait != null) await pauseWait();   // 暂停:当前超分批跑完即停(几秒~十几秒)
@@ -2206,6 +2217,10 @@ public static class VideoService
 
             int totalOut = Math.Max(1, target);   // 预估输出帧数(用于进度)
             int idx = 1;
+            // 【GPU 设备已摘除 = 不再逐帧白试】887A 之后本进程的 DirectML 永久失效,Interp 每次都会立刻抛。
+            // 认出一次就记住状态,剩余帧直接复制原帧(毫秒级);否则几千帧要几千次注定失败的调用 + 几千条同样的日志。
+            // gpuId=-1 是调用方明确要 CPU(本机无 GPU),那才允许跑 CPU,不受此影响。
+            bool onnxDead = gpuId != -1 && EsrganOnnxService.DmlDeviceDead;
             for (int p = 0; p < pairs; p++)
             {
                 ct.ThrowIfCancellationRequested();
@@ -2218,12 +2233,31 @@ public static class VideoService
                     ct.ThrowIfCancellationRequested();
                     float time = t / (float)(mids + 1);
                     var outF = Path.Combine(oDir, $"frame_{idx:D6}.png");
-                    try { RifeOnnxService.Interp(files[p], files[p + 1], time, outF, gpuId); idx++; }
-                    catch (Exception ex)
+                    if (onnxDead)
                     {
-                        AppLogger.Warn($"ONNX 补帧失败({ex.Message.Split('\n')[0]})——回退复制原帧");
                         CopyFrame(files[p], outF);
                         idx++;
+                    }
+                    else
+                    {
+                        try { RifeOnnxService.Interp(files[p], files[p + 1], time, outF, gpuId); idx++; }
+                        catch (Exception ex)
+                        {
+                            // 设备级失效(887A)或连击达上限 → 此后每对帧都必然失败:置 onnxDead,剩余帧直接复制原帧
+                            // (毫秒级),不再逐对白试"建会话 + 推理",也绝不降级到慢速 CPU。
+                            // 本方法的 gpuId 两个调用点传的都是 -2(自动,在 Interp 内部才解析),所以查"任一设备"。
+                            if (EsrganOnnxService.DmlDeviceDead
+                                || AlhPro.Core.GpuFault.IsPersistentDeviceError(ex)
+                                || EsrganOnnxService.AnyDmlDeviceUnusable())
+                            {
+                                onnxDead = true;
+                                AppLogger.Warn($"⚠ GPU 补帧已不可用({ex.Message.Split('\n')[0]})——剩余帧改为复制原帧(不降级到慢速 CPU);请重启软件后重试");
+                            }
+                            else
+                                AppLogger.Warn($"ONNX 补帧失败({ex.Message.Split('\n')[0]})——回退复制原帧");
+                            CopyFrame(files[p], outF);
+                            idx++;
+                        }
                     }
                     // 【黑帧防御】ONNX/DirectML 偶发静默输出全黑(不退场、不抛异常)→ 源不黑则回退该帧,绝不把黑帧写进输出
                     if (File.Exists(outF) && EngineService.IsBlackPng(outF) && !EngineService.IsBlackPng(files[p]))
