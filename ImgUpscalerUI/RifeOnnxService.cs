@@ -1,5 +1,6 @@
 // RifeOnnxService.cs — 补帧 ONNX 路线(为 50 系/无独显等 ncnn-Vulkan 不可用设备):
-// 标准 RIFE v4.9 模型(输入 img0/img1/timestep),DirectML GPU 优先,失败自动改 CPU(与 EsrganOnnxService 同策略)。
+// 标准 RIFE v4.9 模型(输入 img0/img1/timestep),DirectML GPU 优先;偶发失败只对【本对帧】CPU 重算一次,
+// 设备被摘除(887A)或连续失败达上限则不落 CPU(「补帧绝不落 CPU」是硬约定),由调用方复制原帧。
 // 模型:engines/rife/rife49.onnx(20.5MB,MIT,社区 yuvraj108c/rife-onnx 导出)。
 // 用途:VideoService 在 RIFE ncnn 引擎 GPU 探测失败时,优先走本 ONNX 路线(而非直接降 CPU)。
 using System;
@@ -18,8 +19,6 @@ public static class RifeOnnxService
     // 会话按设备号缓存:首帧可能是小帧 CPU 会话,若单会话复用,后续大帧全落 CPU(慢 ~19 倍)。
     static readonly System.Collections.Concurrent.ConcurrentDictionary<int, InferenceSession> _sessions = new();
     static readonly object _sessionGate = new();
-    /// <summary>已确认运行期失败的 DirectML 设备:后续帧直接 CPU(不再每对帧失败一次)。</summary>
-    static readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte> _dmlBad = new();
 
     /// <summary>ONNX 模型路径(engines/rife/rife49.onnx;不存在返回 null = 不启用 ONNX 路线)。</summary>
     public static string? FindModel()
@@ -50,13 +49,18 @@ public static class RifeOnnxService
         }
     }
 
-    /// <summary>用 ONNX 模型在 img0 与 img1 之间插 time(0~1) 帧,输出到 outputPng。gpuId&gt;=0 走 DirectML,失败自动 CPU;
+    /// <summary>用 ONNX 模型在 img0 与 img1 之间插 time(0~1) 帧,输出到 outputPng。gpuId&gt;=0 走 DirectML,
+    /// 偶发失败只对本对帧 CPU 重算一次,设备级失效/连续失败则抛出(不落 CPU);
     /// gpuId=-2 表示自动(按输入尺寸:大帧 GPU/小帧 CPU,实测小帧 CPU 反而快 19 倍)。</summary>
     public static void Interp(string img0, string img1, float time, string outputPng, int gpuId = -1)
     {
         var model = FindModel() ?? throw new FileNotFoundException("缺少补帧模型:rife49.onnx");
-        // 运行期已确认失败的 DirectML 设备:直接 CPU(每对帧不再重复失败调用)
-        if (gpuId >= 0 && _dmlBad.ContainsKey(gpuId)) gpuId = -1;
+        // 【设备已死 = 快速失败,绝不落 CPU】887A0005/887A0006 之后本进程的 D3D 设备已被摘除,每次 DirectML 调用
+        // 必然失败;这种情况转 CPU 会把整段视频静默拖到 CPU 上补帧(几十分钟起步),违反「补帧绝不落 CPU」。
+        // gpuId=-1 表示调用方明确要 CPU(本机无 GPU 可用)——那是唯一允许用 CPU 的场景,不在此列。
+        if (gpuId != -1 && EsrganOnnxService.DmlDeviceDead)
+            throw new InvalidOperationException(
+                "GPU(DirectML)已被系统摘除/挂死,本进程内无法恢复——已停止补帧尝试(不降级到慢速 CPU)。请重启软件后重试。");
         // -2 = 自动选设备
         if (gpuId == -2)
         {
@@ -67,6 +71,13 @@ public static class RifeOnnxService
             }
             catch { gpuId = -1; }
         }
+        // 连续瞬时失败已达上限:快速失败。必须在 -2 解析【之后】查——自动路径传进来的是 -2,解析前查永远命中不了,
+        // 于是每对帧都白试一次"建会话 + 注定失败的推理",那正是这个检查要省掉的成本。
+        // 抛出后调用方按帧复制原帧(毫秒级)。原先这里把 gpuId 改成 -1,等于一次抖动就让剩下整段视频在 CPU 上补帧。
+        if (EsrganOnnxService.DmlDeviceUnusable(gpuId))
+            throw new InvalidOperationException(
+                $"GPU(DirectML 设备 {gpuId})连续多次补帧推理失败,本进程内视为不可用——已停止补帧尝试(不降级到慢速 CPU)。"
+                + "剩余帧将复制原帧;请重启软件后重试。");
         var session = GetSession(gpuId);
         RunCore(session, img0, img1, time, outputPng, gpuId, model);
     }
@@ -87,21 +98,34 @@ public static class RifeOnnxService
             if (gpuId >= 0 && (w > Tile || h > Tile))
             {
                 RunTiled(session, bmp0, bmp1, time, outputPng, w, h);
+                EsrganOnnxService.ClearDmlStrikes(gpuId);   // GPU 真跑成功 → 偶发抖动不该累积
                 return;
             }
             RunSingle(session, bmp0, bmp1, time, outputPng, w, h, gpuId);
+            if (gpuId >= 0) EsrganOnnxService.ClearDmlStrikes(gpuId);
         }
         catch (Exception ex) when (gpuId >= 0)
         {
-            // DirectML 失败/分块失败 → 标记设备不可用 + CPU 整帧重试(稳定优先,绝不出黑帧/半帧)
-            AppLogger.Warn($"RIFE ONNX DirectML 失败,已改 CPU 整帧重算: {ex.Message.Split('\n')[0]}");
-            _dmlBad[gpuId] = 0;
+            // 设备被摘除/挂死(887A):本进程内不可恢复 → 熔断并抛出,让调用方按帧复制原帧(毫秒级)。
+            // CPU 整帧重算等于整段视频在 CPU 上补帧(几十分钟起步),违反「补帧绝不落 CPU」。
+            if (AlhPro.Core.GpuFault.IsPersistentDeviceError(ex))
+            {
+                EsrganOnnxService.TripDmlDead(gpuId, ex);
+                throw;
+            }
+            // 偶发失败:本对帧换 CPU 重算一次(代价有界,绝不出黑帧/半帧)。但连击达上限就认定设备不可用 → 抛出,
+            // 由调用方复制原帧。原先这里写 _dmlBad[gpuId] 永久闩锁,一次抖动就让剩下整段视频都在 CPU 上补帧。
+            if (EsrganOnnxService.NoteDmlTransientFailure(gpuId))
+                throw new InvalidOperationException(
+                    $"RIFE ONNX 补帧失败:GPU(DirectML 设备 {gpuId})连续多次推理失败,已停止尝试(不降级到慢速 CPU)。"
+                    + "剩余帧将复制原帧;请重启软件后重试。", ex);
+            AppLogger.Warn($"RIFE ONNX DirectML 失败,本对帧改 CPU 整帧重算: {ex.Message.Split('\n')[0]}");
             DropSession(gpuId);
             RunSingle(GetSession(-1), bmp0, bmp1, time, outputPng, w, h, -1);
         }
     }
 
-    /// <summary>整帧推理(CPU 或小帧 GPU)。失败时 GPU 自动降 CPU 重试并标记设备不可用。</summary>
+    /// <summary>整帧推理(CPU 或小帧 GPU)。GPU 失败一律抛出(设备级失效就地熔断),恢复策略由 RunCore 统一决定。</summary>
     static void RunSingle(InferenceSession session, Bitmap bmp0, Bitmap bmp1, float time, string outputPng,
         int w, int h, int gpuId)
     {
@@ -128,15 +152,11 @@ public static class RifeOnnxService
         }
         catch (Exception ex) when (gpuId >= 0)
         {
-            // DirectML 失败 → 丢弃该设备的会话,CPU 会话重试;标记设备不可用(后续帧直接 CPU)
-            _dmlBad[gpuId] = 0;
-            DropSession(gpuId);
-            results = GetSession(-1).Run(new[]
-            {
-                NamedOnnxValue.CreateFromTensor("img0", tensor0),
-                NamedOnnxValue.CreateFromTensor("img1", tensor1),
-                NamedOnnxValue.CreateFromTensor("timestep", ts),
-            });
+            // 设备被摘除/挂死(887A):就地熔断(越早置位,越多调用点能立刻快速失败),然后抛出。
+            if (AlhPro.Core.GpuFault.IsPersistentDeviceError(ex)) EsrganOnnxService.TripDmlDead(gpuId, ex);
+            // 恢复策略统一在 RunCore:它才知道该复制原帧还是 CPU 重算一次。原先这里自己转 CPU 重算,失败后异常
+            // 传到 RunCore 又转一次 —— 同一对帧做了两次 CPU 推理,白等一倍时间。
+            throw;
         }
         using (results)
         {
