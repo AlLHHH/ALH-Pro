@@ -2272,70 +2272,113 @@ public static class VideoService
             int pairs = srcCount - 1;
             if (pairs <= 0) return;
 
-            int totalOut = Math.Max(1, target);   // 预估输出帧数(用于进度)
-            int idx = 1;
-            // 【GPU 设备已摘除 = 不再逐帧白试】887A 之后本进程的 DirectML 永久失效,Interp 每次都会立刻抛。
-            // 认出一次就记住状态,剩余帧直接复制原帧(毫秒级);否则几千帧要几千次注定失败的调用 + 几千条同样的日志。
-            // gpuId=-1 是调用方明确要 CPU(本机无 GPU),那才允许跑 CPU,不受此影响。
-            bool onnxDead = gpuId != -1 && EsrganOnnxService.DmlDeviceDead;
-            for (int p = 0; p < pairs; p++)
+            // ===== 多路并行补帧(治"独显占用低/速度慢")=====
+            // 关键不变量:输出帧号严格用 InterpFraming 预分配(串行时完全一致),帧号精确连续、不重不漏,
+            // 否则合帧缺号/乱序 → 整段视频黑帧/花屏(已用单测钉住 ComputeLayout)。
+            var (per, totalOut) = AlhPro.Core.InterpFraming.ComputeLayout(Math.Max(1, target), pairs);
+            // 设备号:用户选的 GpuIndex(≥0)或探测兜底;若都<0(无 GPU)则不应走到 ONNX 路线,直接返回。
+            int dmlGpu = AppSettings.GpuIndex >= 0 ? AppSettings.GpuIndex : EsrganOnnxService.DmlFallbackOk;
+            if (dmlGpu < 0) { AppLogger.Warn("⚠ 补帧 ONNX:无可用 DirectML 设备,取消补帧"); return; }
+
+            // 并发度受显存墙约束;DirectML session 非线程安全 → 每 worker 独占会话,绝不能共用/并发 Run。
+            bool wantGpu = dmlGpu >= 0;
+            int concurrency = wantGpu ? (SafeRender.EffectiveVramGB >= 12 ? 3 : 2) : 1;
+            if (concurrency > pairs) concurrency = Math.Max(1, pairs);
+            Microsoft.ML.OnnxRuntime.InferenceSession[] sessions;
+            try { sessions = RifeOnnxService.CreateSessions(concurrency, dmlGpu); }
+            catch (InvalidOperationException) { throw; }
+            catch { sessions = new Microsoft.ML.OnnxRuntime.InferenceSession[] { RifeOnnxService.CreateSessions(1, dmlGpu)[0] }; }
+            concurrency = sessions.Length;
+
+            bool onnxDead = EsrganOnnxService.DmlDeviceDead;   // 设备已摘除:剩余帧复制原帧(不落 CPU)
+            int abortFlag = 0;
+            Exception? fatal = null;
+            int doneCount = 0;
+            try
             {
-                ct.ThrowIfCancellationRequested();
-                CopyFrame(files[p], Path.Combine(oDir, $"frame_{idx:D6}.png"));
-                idx++;
-                int mids = Math.Max(0, (target - 1) / pairs - 1);
-                if (p < (target - 1) % pairs) mids++;
-                for (int t = 1; t <= mids; t++)
+                var workers = new System.Threading.Tasks.Task[concurrency];
+                for (int w = 0; w < concurrency; w++)
                 {
-                    ct.ThrowIfCancellationRequested();
-                    float time = t / (float)(mids + 1);
-                    var outF = Path.Combine(oDir, $"frame_{idx:D6}.png");
-                    if (onnxDead)
+                    int wi = w;
+                    workers[w] = System.Threading.Tasks.Task.Run(() =>
                     {
-                        CopyFrame(files[p], outF);
-                        idx++;
-                    }
-                    else
-                    {
-                        try { RifeOnnxService.Interp(files[p], files[p + 1], time, outF, gpuId); idx++; }
-                        catch (Exception ex)
+                        for (int p = wi; p < pairs; p += concurrency)
                         {
-                            // 设备级失效(887A)或连击达上限 → 此后每对帧都必然失败:置 onnxDead,剩余帧直接复制原帧
-                            // (毫秒级),不再逐对白试"建会话 + 推理",也绝不降级到慢速 CPU。
-                            // 本方法的 gpuId 两个调用点传的都是 -2(自动,在 Interp 内部才解析),所以查"任一设备"。
-                            if (EsrganOnnxService.DmlDeviceDead
-                                || AlhPro.Core.GpuFault.IsPersistentDeviceError(ex)
-                                || EsrganOnnxService.AnyDmlDeviceUnusable())
+                            ct.ThrowIfCancellationRequested();
+                            if (Volatile.Read(ref abortFlag) != 0) break;
+                            int startIdx = AlhPro.Core.InterpFraming.StartIndex(p, per);
+                            // 左端点帧(files[p])——与串行一致:复制自身
+                            string left = Path.Combine(oDir, $"frame_{startIdx:D6}.png");
+                            try { CopyFrame(files[p], left); } catch { }
+                            int mids = per[p] - 1;   // 该对帧的中间帧数
+                            for (int t = 1; t <= mids; t++)
                             {
-                                onnxDead = true;
-                                AppLogger.Warn($"⚠ GPU 补帧已不可用({ex.Message.Split('\n')[0]})——剩余帧改为复制原帧(不降级到慢速 CPU);请重启软件后重试");
+                                ct.ThrowIfCancellationRequested();
+                                if (Volatile.Read(ref abortFlag) != 0) break;
+                                float time = t / (float)(mids + 1);
+                                string outF = Path.Combine(oDir, $"frame_{startIdx + t:D6}.png");
+                                if (onnxDead)
+                                {
+                                    CopyFrame(files[p], outF);
+                                }
+                                else
+                                {
+                                    try { RifeOnnxService.InterpWithSession(sessions[wi], files[p], files[p + 1], time, outF, dmlGpu); }
+                                    catch (Exception ex)
+                                    {
+                                        if (EsrganOnnxService.DmlDeviceDead
+                                            || AlhPro.Core.GpuFault.IsPersistentDeviceError(ex)
+                                            || EsrganOnnxService.AnyDmlDeviceUnusable())
+                                        {
+                                            onnxDead = true;
+                                            Interlocked.CompareExchange(ref fatal, ex, null);
+                                            Volatile.Write(ref abortFlag, 1);
+                                            AppLogger.Warn($"⚠ GPU 补帧已不可用({ex.Message.Split('\n')[0]})——剩余帧改为复制原帧(不降级到慢速 CPU);请重启软件后重试");
+                                            break;
+                                        }
+                                        AppLogger.Warn($"ONNX 补帧失败({ex.Message.Split('\n')[0]})——回退复制原帧");
+                                        CopyFrame(files[p], outF);
+                                    }
+                                }
+                                // 【黑帧防御】ONNX/DirectML 偶发静默输出全黑 → 源不黑则回退该帧
+                                if (File.Exists(outF) && EngineService.IsBlackPng(outF) && !EngineService.IsBlackPng(files[p]))
+                                {
+                                    CopyFrame(files[p], outF);
+                                    AppLogger.Warn($"⚠ ONNX 补帧第 {startIdx + t} 帧输出黑帧(DirectML 异常),已回退复制该对源帧");
+                                }
+                                // 进度:补帧阶段 10~45%,按已产中间帧数估算(并行安全:Interlocked 计数)。
+                                // 文案格式是契约:上层 segProg / etaRegex 靠「第 N 帧 / 共 M 帧」提取帧号。
+                                int dn = Interlocked.Increment(ref doneCount);
+                                try
+                                {
+                                    int pct = Math.Clamp(10 + dn * 35 / Math.Max(1, totalOut), 10, 45);
+                                    progress?.Report((pct, $"补帧 第 {dn} 帧 / 共 {totalOut} 帧"));
+                                }
+                                catch { }
                             }
-                            else
-                                AppLogger.Warn($"ONNX 补帧失败({ex.Message.Split('\n')[0]})——回退复制原帧");
-                            CopyFrame(files[p], outF);
-                            idx++;
                         }
-                    }
-                    // 【黑帧防御】ONNX/DirectML 偶发静默输出全黑(不退场、不抛异常)→ 源不黑则回退该帧,绝不把黑帧写进输出
-                    if (File.Exists(outF) && EngineService.IsBlackPng(outF) && !EngineService.IsBlackPng(files[p]))
-                    {
-                        CopyFrame(files[p], outF);
-                        AppLogger.Warn($"⚠ ONNX 补帧第 {idx} 帧输出黑帧(DirectML 异常),已回退复制该对源帧");
-                    }
-                    // 进度:补帧阶段 10~45%,按已产帧数估算。
-                    // 文案格式是契约:上层 segProg 与 VideoView 的 etaRegex 都靠「第 N 帧 / 共 M 帧」提取帧号,
-                    // 写成「第 5/100 帧」两边都匹配不上(数字后是斜杠),逐帧提示会整个失效。
-                    // 走的是 ONNX 路线这件事已在切换时单独播报,逐帧消息里不必重复。
-                    try
-                    {
-                        int pct = Math.Clamp(10 + idx * 35 / Math.Max(1, totalOut), 10, 45);
-                        progress?.Report((pct, $"补帧 第 {idx} 帧 / 共 {totalOut} 帧"));
-                    }
-                    catch { }
+                    }, ct);
                 }
+                try { System.Threading.Tasks.Task.WaitAll(workers); }
+                catch (System.AggregateException ae)
+                {
+                    // 取消(用户点「强制结束」/ct 取消)必须重新抛 OperationCanceledException,否则上层
+                    // catch(OperationCanceledException) 接不到 AggregateException,导致"取消被吞、任务异常收尾"。
+                    if (ae.Flatten().InnerExceptions.OfType<OperationCanceledException>().Any() || ct.IsCancellationRequested)
+                        throw new OperationCanceledException(ct);
+                    throw;
+                }
+                if (fatal != null)
+                    throw new InvalidOperationException($"补帧 ONNX 中止:GPU 设备已失效({fatal.Message.Split('\n')[0]})", fatal);
             }
-            CopyFrame(files[^1], Path.Combine(oDir, $"frame_{idx:D6}.png"));
-            try { progress?.Report((45, $"补帧(ONNX)完成:{idx} 帧")); } catch { }
+            finally
+            {
+                foreach (var s in sessions) try { s.Dispose(); } catch { }
+            }
+
+            // 端帧(files[^1])——与串行一致,最后复制
+            try { CopyFrame(files[^1], Path.Combine(oDir, $"frame_{totalOut + 1:D6}.png")); } catch { }
+            try { progress?.Report((45, $"补帧(ONNX)完成:{totalOut + 1} 帧")); } catch { }
         }).ConfigureAwait(false);
     }
 

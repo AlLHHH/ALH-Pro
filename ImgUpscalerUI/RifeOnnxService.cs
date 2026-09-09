@@ -31,38 +31,66 @@ public static class RifeOnnxService
     /// <summary>是否可走 ONNX 补帧路线(模型在才考虑;调用方还需 GPU 探测失败才真正用)。</summary>
     public static bool Available() => FindModel() != null;
 
+    /// <summary>建一个 DirectML 会话(不缓存)。gpuId≥0 走 DirectML;失败规则与超分一致:
+    /// 持久设备错误(887A)重抛(不落 CPU),其它失败打明确日志并回退 CPU。</summary>
+    static InferenceSession BuildSession(int gpuId)
+    {
+        var opts = new SessionOptions();
+        if (gpuId >= 0)
+        {
+            try
+            {
+                int dm = EngineService.ToDmlDevice(gpuId);
+                if (dm < 0)
+                    AppLogger.Warn($"⚠ 补帧 ONNX 设备映射:引擎编号 {gpuId} 未匹配到 DirectML 设备,将回退 CPU(速度会特别慢)——请检查显卡/驱动");
+                else
+                    opts.AppendExecutionProvider_DML(dm);
+            }
+            catch (Exception dmlEx)
+            {
+                if (AlhPro.Core.GpuFault.IsPersistentDeviceError(dmlEx)) throw;   // 设备摘除:不落 CPU,交由调用方复制原帧
+                AppLogger.Warn($"⚠ 补帧 ONNX DirectML 会话创建失败({gpuId},原因:{dmlEx.Message.Split('\n')[0]})——本机无可用 GPU ONNX,本会话将退回 CPU(速度会特别慢,若持续出现请更新显卡驱动后重试)");
+            }
+        }
+        return new InferenceSession(FindModel()!, opts);
+    }
+
     static InferenceSession GetSession(int gpuId)
     {
         if (_sessions.TryGetValue(gpuId, out var s) && s != null) return s;
         lock (_sessionGate)
         {
             if (_sessions.TryGetValue(gpuId, out var s2) && s2 != null) return s2;
-            var opts = new SessionOptions();
-            if (gpuId >= 0)
-            {
-                // 【补帧绝不落 CPU】DirectML 建会话失败不能静默吞掉,否则用户看到的是"补帧慢得像卡死",却查不出原因,
-                // 而且 CPU 会话还会被缓存到 gpuId 的 key 下,毒化后续所有帧(整段都在 CPU 上补帧)。
-                // 规则与超分(EsrganOnnxService)一致:
-                //   · 设备被摘除(887A 持久错误)→ 重抛,由调用方复制原帧(毫秒级),绝不静默转 CPU;
-                //   · 其它建会话失败 → 打明确日志(哪一步、设备号、原因),让诊断包一眼能定位。
-                try
-                {
-                    int dm = EngineService.ToDmlDevice(gpuId);
-                    if (dm < 0)
-                        AppLogger.Warn($"⚠ 补帧 ONNX 设备映射:引擎编号 {gpuId} 未匹配到 DirectML 设备,将回退 CPU(速度会特别慢)——请检查显卡/驱动");
-                    else
-                        opts.AppendExecutionProvider_DML(dm);
-                }
-                catch (Exception dmlEx)
-                {
-                    if (AlhPro.Core.GpuFault.IsPersistentDeviceError(dmlEx)) throw;   // 设备摘除:不落 CPU,交由调用方复制原帧
-                    AppLogger.Warn($"⚠ 补帧 ONNX DirectML 会话创建失败({gpuId},原因:{dmlEx.Message.Split('\n')[0]})——本机无可用 GPU ONNX,本会话将退回 CPU(速度会特别慢,若持续出现请更新显卡驱动后重试)");
-                }
-            }
-            var ses = new InferenceSession(FindModel()!, opts);
+            var ses = BuildSession(gpuId);
             _sessions[gpuId] = ses;
             return ses;
         }
+    }
+
+    /// <summary>创建 concurrency 个独立 DirectML 会话(并行 worker 每个独占一个;绝不共用/并发 Run 同一会话,
+    /// DirectML InferenceSession 非线程安全)。由调用方负责 finally 里 Dispose。</summary>
+    public static InferenceSession[] CreateSessions(int concurrency, int gpuId)
+    {
+        var arr = new InferenceSession[Math.Max(1, concurrency)];
+        for (int i = 0; i < arr.Length; i++)
+            arr[i] = BuildSession(gpuId);
+        return arr;
+    }
+
+    /// <summary>用【指定会话】在 img0/img1 间插 time 帧,写入 outputPng。worker 用自己独占的会话调用,
+    /// 不从共享 _sessions 取(否会同会话并发 Run 崩)。gpuId 仅用于错误关联/熔断判定(应传具体设备号)。</summary>
+    public static void InterpWithSession(InferenceSession session, string img0, string img1, float time,
+        string outputPng, int gpuId)
+    {
+        var model = FindModel() ?? throw new FileNotFoundException("缺少补帧模型:rife49.onnx");
+        if (gpuId != -1 && EsrganOnnxService.DmlDeviceDead)
+            throw new InvalidOperationException(
+                "GPU(DirectML)已被系统摘除/挂死,本进程内无法恢复——已停止补帧尝试(不降级到慢速 CPU)。请重启软件后重试。");
+        if (EsrganOnnxService.DmlDeviceUnusable(gpuId))
+            throw new InvalidOperationException(
+                $"GPU(DirectML 设备 {gpuId})连续多次补帧推理失败,本进程内视为不可用——已停止补帧尝试(不降级到慢速 CPU)。"
+                + "剩余帧将复制原帧;请重启软件后重试。");
+        RunCore(session, img0, img1, time, outputPng, gpuId, model);
     }
 
     /// <summary>用 ONNX 模型在 img0 与 img1 之间插 time(0~1) 帧,输出到 outputPng。gpuId&gt;=0 走 DirectML,
