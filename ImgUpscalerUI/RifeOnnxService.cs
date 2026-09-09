@@ -40,8 +40,24 @@ public static class RifeOnnxService
             var opts = new SessionOptions();
             if (gpuId >= 0)
             {
-                try { opts.AppendExecutionProvider_DML(EngineService.ToDmlDevice(gpuId)); }
-                catch { /* DirectML 不可用回退 CPU */ }
+                // 【补帧绝不落 CPU】DirectML 建会话失败不能静默吞掉,否则用户看到的是"补帧慢得像卡死",却查不出原因,
+                // 而且 CPU 会话还会被缓存到 gpuId 的 key 下,毒化后续所有帧(整段都在 CPU 上补帧)。
+                // 规则与超分(EsrganOnnxService)一致:
+                //   · 设备被摘除(887A 持久错误)→ 重抛,由调用方复制原帧(毫秒级),绝不静默转 CPU;
+                //   · 其它建会话失败 → 打明确日志(哪一步、设备号、原因),让诊断包一眼能定位。
+                try
+                {
+                    int dm = EngineService.ToDmlDevice(gpuId);
+                    if (dm < 0)
+                        AppLogger.Warn($"⚠ 补帧 ONNX 设备映射:引擎编号 {gpuId} 未匹配到 DirectML 设备,将回退 CPU(速度会特别慢)——请检查显卡/驱动");
+                    else
+                        opts.AppendExecutionProvider_DML(dm);
+                }
+                catch (Exception dmlEx)
+                {
+                    if (AlhPro.Core.GpuFault.IsPersistentDeviceError(dmlEx)) throw;   // 设备摘除:不落 CPU,交由调用方复制原帧
+                    AppLogger.Warn($"⚠ 补帧 ONNX DirectML 会话创建失败({gpuId},原因:{dmlEx.Message.Split('\n')[0]})——本机无可用 GPU ONNX,本会话将退回 CPU(速度会特别慢,若持续出现请更新显卡驱动后重试)");
+                }
             }
             var ses = new InferenceSession(FindModel()!, opts);
             _sessions[gpuId] = ses;
