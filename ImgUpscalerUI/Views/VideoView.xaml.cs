@@ -3061,10 +3061,39 @@ public sealed partial class VideoView : UserControl
             }
             // 超限提示:仅当 输出分辨率 >4K(宽>3840 或 高>2160)时,在这行输出规格旁红字提示(不弹窗)。
             bool over4k = (ow > 3840 || oh > 2160);
-            var text = string.Join(" · ", parts) + $" · {(shrink1x ? "1x缩回" : customRes ? "自定义" : $"{mult:0.##}x超分")}";
-            VideoOutSpecText.Text = over4k
-                ? "⚠ " + text + "  超4K,可能很慢/占大量空间"
-                : text;
+            // 倍率已由「输出: W×H(源 w×h)」隐含(7680×4320 源1920×1080 = 4x),不再重复写"Nx超分";
+            // 仅当倍率无法从分辨率看出的特殊情况(1x缩回/自定义)才备注。
+            var text = string.Join(" · ", parts) + (shrink1x ? " · 1x缩回" : customRes ? " · 自定义" : "");
+            // 占用估算:临时帧峰值(与 C3 临时盘预检同口径:放大帧 JPG + 1.6 倍余量)+ 成片大小。
+            // 输出帧数 = dur × outFps;输出单帧 JPG 按像素从 1080p(≈1MB)线性缩放,放大内容更平滑所以压到 0.18。
+            string sizeNote = "";
+            double dur = it.Duration;
+            if (dur > 0 && ow > 0 && oh > 0 && outFps > 0)
+            {
+                long outFrames = (long)Math.Ceiling(dur * outFps);
+                double tempFrameMB = Math.Max(0.5, 1.0 * ((double)ow * oh) / (1920.0 * 1080.0) * 0.18);
+                double tempGB = outFrames * tempFrameMB * 1.6 / 1024.0;
+                // 成片:H.264 CRF~22「自动」≈0.1 bit/像素/帧(1080p30≈8Mbps 的公认粗估)。
+                // 自定义码率(Mbps)时直接用它的目标码率;否则按输出像素×帧率×0.1 估,再按码率档微调。
+                double bpp = 0.10;
+                double bitrateMbps = 0;
+                if (QualityCombo.SelectedIndex == 5)
+                {
+                    double.TryParse(BitrateBox.Text, NumberStyles.Float, inv, out var bm);
+                    bitrateMbps = bm > 0 ? bm : 0;
+                }
+                if (bitrateMbps <= 0)
+                {
+                    double br = bpp * ((double)ow * oh) * outFps / 1e6;   // bpp × 像素 × 帧率 / 1e6 = Mbps
+                    // 码率档微调:0自动 1低 2中(默认) 3高 4极高 —— 只做量级修正,不承诺精确
+                    double qf = QualityCombo.SelectedIndex switch { 1 => 0.7, 2 => 1.0, 3 => 1.4, 4 => 2.0, _ => 1.0 };
+                    bitrateMbps = br * qf;
+                }
+                // Mbps × 秒 / 8 = MB(每秒多少 MB)
+                double exportMB = bitrateMbps * dur / 8.0;
+                sizeNote = $" · 临时帧≈{tempGB:0.#}GB · 成片≈{(exportMB >= 1024 ? exportMB / 1024.0 : exportMB):0.##}{(exportMB >= 1024 ? "GB" : "MB")}";
+            }
+            VideoOutSpecText.Text = (over4k ? "⚠ " : "") + text + sizeNote + (over4k ? "  ⚠ 超4K,可能很慢/占大量空间" : "");
             VideoOutSpecText.Foreground = over4k
                 ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77))   // 红
                 : (Microsoft.UI.Xaml.Media.SolidColorBrush?)null;   // 恢复默认
