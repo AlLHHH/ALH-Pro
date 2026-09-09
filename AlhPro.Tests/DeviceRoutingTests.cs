@@ -98,4 +98,77 @@ public class DeviceRoutingTests
         Assert.True(DeviceRouting.AchromaticSpreadTolerance >= 3 * 3);   // ≥ 正常值上界的 3 倍
         Assert.True(DeviceRouting.AchromaticSpreadTolerance <= 24 / 2);  // ≤ 损坏值下界的一半
     }
+
+    // ===== ResolveEngineDevice(int, (Id,Name)[], deviceCount) —— 选独显、绝不跑核显/CPU =====
+
+    // 真机形状:注册表枚举 [#0 AMD核显 | #1 NVIDIA],但引擎枚举 [#0 NVIDIA | #1 AMD](两者顺序相反)。
+    // 设备表 = 引擎枚举:[0= NVIDIA GeForce RTX 5070 Ti, 1= AMD Radeon(TM) Graphics核显]
+
+    [Fact]
+    public void Choose_nvidia_engine_id_when_registry_order_is_reversed()
+    {
+        // 用户设置 GpuIndex=0(引擎枚举里 0=NVIDIA 独显)。注册表序相反(0=AMD)不构成干扰——
+        // 只认引擎枚举,必须原样返回 0(NVIDIA),绝不跑核显。
+        var (id, remapped) = DeviceRouting.ResolveEngineDevice(0, new[] { (0, "NVIDIA GeForce RTX 5070 Ti"), (1, "AMD Radeon(TM) Graphics") }, 2);
+        Assert.Equal(0, id);
+        Assert.False(remapped);
+    }
+
+    [Fact]
+    public void Stale_registry_index_hitting_integrated_gpu_switches_to_discrete()
+    {
+        // 陈旧/错误的设置值撞号到核显:settingsIndex=1 = AMD 核显(比如旧版用注册表索引写的 1=AMD),
+        // 但表里有 NVIDIA 独显(id=0)。必须换成独显 0,并标记重映射 —— 这是"选独显却跑核显"的根治点。
+        var (id, remapped) = DeviceRouting.ResolveEngineDevice(1, new[] { (0, "NVIDIA GeForce RTX 5070 Ti"), (1, "AMD Radeon(TM) Graphics") }, 2);
+        Assert.Equal(0, id);
+        Assert.True(remapped);
+    }
+
+    [Fact]
+    public void Missing_id_with_discrete_present_never_falls_to_cpu()
+    {
+        // 设置值不在表里(如旧驱动枚举变了),表里有 NVIDIA 独显 → 取独显,绝不落 -1(CPU)。
+        var (id, remapped) = DeviceRouting.ResolveEngineDevice(3, new[] { (0, "NVIDIA GeForce RTX 5070 Ti"), (2, "Intel(R) UHD Graphics") }, 3);
+        Assert.Equal(0, id);
+        Assert.True(remapped);
+    }
+
+    [Fact]
+    public void Missing_id_with_only_integrated_uses_iGPU_not_cpu()
+    {
+        // 表里只有核显(无独显可用)→ 取表内唯一,绝不落 -1(CPU)。
+        var (id, _) = DeviceRouting.ResolveEngineDevice(5, new[] { (2, "Intel(R) UHD Graphics"), (3, "AMD Radeon(TM) Graphics") }, 4);
+        Assert.True(id >= 0);
+        Assert.True(id == 2 || id == 3);
+    }
+
+    [Fact]
+    public void User_chose_cpu_is_never_overridden_even_with_discrete()
+    {
+        // 用户主动选 CPU(settingsIndex<0):表里再有独显也尊重,原样 -1。
+        var (id, remapped) = DeviceRouting.ResolveEngineDevice(-1, new[] { (0, "NVIDIA GeForce RTX 5070 Ti"), (1, "AMD Radeon(TM) Graphics") }, 2);
+        Assert.Equal(-1, id);
+        Assert.False(remapped);
+    }
+
+    [Fact]
+    public void Translation_layer_device_is_skipped_even_if_named_rtx()
+    {
+        // 转译层设备(名字含 NVIDIA/RTX 但以 "Microsoft Direct3D12" 开头)会被打分当成独显,
+        // 但绝不能选它(输出损坏帧)。选真实 NVIDIA 独显(引擎枚举那台)。
+        var (id, _) = DeviceRouting.ResolveEngineDevice(1,
+            new[] { (0, "Microsoft Direct3D12 (NVIDIA GeForce RTX 5070 Ti)"), (2, "NVIDIA GeForce RTX 5070 Ti") }, 3);
+        Assert.Equal(2, id);
+    }
+
+    [Theory]
+    [InlineData("AMD Radeon(TM) Graphics", true)]
+    [InlineData("Radeon(TM) 780M", true)]
+    [InlineData("Intel(R) UHD Graphics", true)]
+    [InlineData("Intel(R) Iris(R) Xe Graphics", true)]
+    [InlineData("NVIDIA GeForce RTX 5070 Ti", false)]
+    [InlineData("AMD Radeon RX 7900 XTX", false)]
+    [InlineData("Intel(R) Arc(TM) A770", false)]
+    public void Integrated_gpu_detection_matches_ui_rules(string name, bool expected)
+        => Assert.Equal(expected, GpuName.IsIntegrated(name));
 }

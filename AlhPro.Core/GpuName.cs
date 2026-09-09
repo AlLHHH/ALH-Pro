@@ -40,4 +40,49 @@ public static class GpuName
     public static bool IsD3D12Translation(string? name)
         => !string.IsNullOrWhiteSpace(name)
            && name.StartsWith("Microsoft Direct3D12", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>该显卡名是否属于【核显/集成显卡】(纯字符串判定,可单测)。
+    /// 独立显卡全部返回 false: NVIDIA GeForce/RTX、AMD RX/Radeon Pro、Intel Arc/独显等。
+    /// 与 UI 工程 GpuInfo.IsIntegratedGPU 同口径 —— 统一搬进 Core,供设备路由「选独显不落核显」判定。</summary>
+    public static bool IsIntegrated(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return true;
+        if (name.Contains("AMD", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Radeon", StringComparison.OrdinalIgnoreCase))
+        {
+            if (name.Contains("Radeon(TM) Graphics", StringComparison.OrdinalIgnoreCase)) return true;
+            if (name.Contains("Radeon Graphics", StringComparison.OrdinalIgnoreCase)) return true;
+            // APU 核显:如 Radeon(TM) 680M / 780M / 480M ...(RX 独显不含 "M" 后缀型号)
+            if (System.Text.RegularExpressions.Regex.IsMatch(name,
+                @"Radeon(\(TM\))?\s*(?:[3-9]\d{2}M|1\d{2}M)", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                return true;
+            // Vega 核显:Vega 3/5/6/7/8/9/10/11(RX Vega 56/64 独显,排除)
+            if (System.Text.RegularExpressions.Regex.IsMatch(name,
+                @"Vega\s*(?:3|4|5|6|7|8|9|10|11)(?!\s*(?:56|64))", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                return true;
+        }
+        if (!name.Contains("Intel", StringComparison.OrdinalIgnoreCase)) return false;
+        return name.Contains("UHD", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Iris", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("HD Graphics", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Intel(R) Graphics", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Intel(R) Iris", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>设备优先级分数(越大越该用):核显=0(不选),NVIDIA=4,AMD 独显=3,Intel Arc=2,其他独显=1。
+    /// 与 UI 工程 GpuInfo.ScoreDeviceName 同口径 —— 统一搬进 Core,供设备路由取「最佳独显」。</summary>
+    public static int Score(string? name)
+    {
+        if (string.IsNullOrEmpty(name) || IsIntegrated(name)) return 0;
+        if (name.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("GeForce", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("RTX", StringComparison.OrdinalIgnoreCase))
+            return 4;
+        if (name.Contains("AMD", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Radeon", StringComparison.OrdinalIgnoreCase))
+            return 3;
+        if (name.Contains("Arc", StringComparison.OrdinalIgnoreCase))
+            return 2;
+        return 1;
+    }
 }
