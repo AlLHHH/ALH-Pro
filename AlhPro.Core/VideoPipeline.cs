@@ -40,6 +40,20 @@ public static class VideoPipeline
         return s * 1.15;                              // 略保守:从大往小对齐,不从小变大
     }
 
+    /// <summary>VFR 判定的免解码信号:r_frame_rate ÷ avg_frame_rate。
+    /// CFR 素材两者相等(比值 1.00);VFR 素材的 r_frame_rate 是"能精确表示全部时间戳的最低帧率",
+    /// 只要存在一对相邻帧间隔极小就会被抬得很高。实测:CFR 30fps → 1.00;合成 VFR(r=60/avg=25.4)→ 2.36;
+    /// 真机录屏(r≈96000/avg≈30)→ ≈3200。门槛取 2.0:远低于录屏/突发型 VFR,又高于普通手机 VFR 的轻微抖动
+    /// (典型 r=30/avg=28 → 1.07),避免把基本均匀的素材误判成 VFR 而改掉输出时间轴口径。</summary>
+    public const double VfrRateRatioThreshold = 2.0;
+
+    /// <summary>任一帧率无效(0/缺失)→ 不作判定(false),交由逐帧 PTS 抽查决定。</summary>
+    public static bool IsVfrByRateRatio(double rFrameRate, double avgFrameRate)
+    {
+        if (rFrameRate <= 0 || avgFrameRate <= 0) return false;
+        return rFrameRate / avgFrameRate >= VfrRateRatioThreshold;
+    }
+
     /// <summary>合并被删帧的时长到其前面最近的保留帧(逐条前移;durs 会被原地修改)。</summary>
     public static void MergeDurations(List<double> durs, System.Collections.Generic.IEnumerable<int> dropped, int totalCount)
     {

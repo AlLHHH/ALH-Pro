@@ -31,4 +31,13 @@ public static class GpuName
 
     /// <summary>设备名集合里是否存在 Blackwell(多卡机:只要有一张 50 系就按 50 系走)。</summary>
     public static bool AnyIsBlackwell(IEnumerable<string?> names) => names.Any(IsBlackwell);
+
+    /// <summary>D3D12 转译层(Mesa Dozen 等)伪装成的"Vulkan"设备,名字形如
+    /// "Microsoft Direct3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)"。ncnn 会把它当普通 Vulkan 设备枚举、
+    /// 编号还夹在原生设备中间,但经其计算的补帧/超分输出是【损坏帧】(真机:插值帧整帧红噪点+底部黑带,
+    /// 源帧正常);名字含 NVIDIA/RTX 又会被打分算法当成独显推荐。判错代价不对称:漏判 = 用户拿到损坏视频
+    /// 且日志无异常;误判 = 剔除一个本可用的设备(而同一块物理卡的原生 Vulkan 设备总在表里,不会无路可走)。</summary>
+    public static bool IsD3D12Translation(string? name)
+        => !string.IsNullOrWhiteSpace(name)
+           && name.StartsWith("Microsoft Direct3D12", StringComparison.OrdinalIgnoreCase);
 }

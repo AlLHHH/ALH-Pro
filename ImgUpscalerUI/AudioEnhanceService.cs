@@ -39,10 +39,11 @@ public static class AudioEnhanceService
     }
 
     // 【修复】会话/设备缓存(替换原来无用的 _sessions/_locks):
-    // _dmlBad: 记录 DirectML 失败的设备号(进程内),避免每个分块都反复重试 GPU → 灾难级慢;
+    // 设备可用性判定不再自带一张表 —— 原先这里有个 _dmlBad 永久闩锁(一次瞬时失败就把该设备
+    // 在【整个进程】内判死,只有重启软件能恢复)。现改为共用 EsrganOnnxService 的连击计数:
+    // 同设备【连续】3 次瞬时失败才算不可用,GPU 成功一次即清零(与超分/补帧同一口径)。
     // _cpuSession: 复用的 CPU 会话(DML 失败/纯 CPU 时用),避免每个分块都新建 158MB 模型 → 同样灾难级慢;
     // _gpuSession: 按 gpuId 复用的 GPU 会话(避免每批新建,但音频单次任务并发低,仍加锁保护)。
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, bool> _dmlBad = new();
     private static InferenceSession? _cpuSession;
     private static string? _cpuSessionPath;
     private static readonly object _sessionLock = new();
@@ -66,11 +67,12 @@ public static class AudioEnhanceService
         float vocalStrength, IProgress<(int pct, string msg)>? progress, CancellationToken ct)
     {
         // 【修复】复用会话(原先每次/每批都新建 158MB 模型,慢且 DML 失败时每分块重建):
-        // 优先复用 GPU 会话;若该设备已标记 DML 失败,则复用 CPU 会话。音频单次任务并发低,用锁串行化创建。
+        // 优先复用 GPU 会话;该设备连续失败达上限时才复用 CPU 会话。音频单次任务并发低,用锁串行化创建。
         InferenceSession session;
+        bool onCpu = gpuId < 0 || EsrganOnnxService.DmlDeviceUnusable(gpuId);
         lock (_sessionLock)
         {
-            if (gpuId >= 0 && !_dmlBad.ContainsKey(gpuId))
+            if (!onCpu)
             {
                 if (_gpuSession == null || _gpuSessionId != gpuId)
                 {
@@ -126,13 +128,18 @@ public static class AudioEnhanceService
                 try
                 {
                     results = session.Run(new[] { NamedOnnxValue.CreateFromTensor("mix", tensor) });
+                    // GPU 真跑成功 → 清零该设备连击(偶发抖动不该累积成"设备不可用")
+                    if (!onCpu) EsrganOnnxService.ClearDmlStrikes(gpuId);
                 }
-                catch (Exception ex) when (gpuId >= 0)
+                catch (Exception ex) when (gpuId >= 0 && !onCpu)
                 {
-                    // 【修复】DirectML 失败 → 标记该设备不再用 GPU,改用【复用的 CPU 会话】重试(不再每分块新建 158MB 模型、
-                    // 不再每块反复重试 GPU=灾难级慢)。后续分块直接走 CPU。
-                    AppLogger.Info($"⚠ 音频分离 GPU 推理失败({ex.Message.Split('\n')[0]}),标记该 GPU 不可用,改用 CPU 会话");
-                    _dmlBad[gpuId] = true;
+                    // 记一次瞬时失败(连续 3 次才判该设备不可用,与超分/补帧同口径),本次任务改走【复用的 CPU 会话】。
+                    // 关键:必须把 session 换掉。原先只写了一张闩锁表、session 从没重新赋值,
+                    // 于是"后续分块直接走 CPU"这句日志是假的 —— 剩下每个分块都照样白试一次注定失败的
+                    // GPU 再转 CPU(闩锁要到【下一个任务】才生效)。
+                    bool unusable = EsrganOnnxService.NoteDmlTransientFailure(gpuId);
+                    AppLogger.Warn($"⚠ 音频分离 GPU 推理失败({ex.Message.Split('\n')[0]}),本次任务改用 CPU 会话"
+                        + (unusable ? ";该 GPU 连续失败已达上限,本进程内不再尝试(重启软件可复位)" : "(GPU 成功一次即复位计数)"));
                     InferenceSession cpuS;
                     lock (_sessionLock)
                     {
@@ -144,6 +151,8 @@ public static class AudioEnhanceService
                         }
                         cpuS = _cpuSession;
                     }
+                    session = cpuS;
+                    onCpu = true;
                     results = cpuS.Run(new[] { NamedOnnxValue.CreateFromTensor("mix", tensor) });
                 }
                 using (results)

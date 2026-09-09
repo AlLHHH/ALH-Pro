@@ -1215,7 +1215,7 @@ public sealed partial class UpscaleView : UserControl
             }
             // 输出码率显示:JPG=质量数值;PNG=无损原样(固定)
             var qualityDesc = outExt == ".jpg" ? $"输出质量={imgQ}" : "输出=无损(原样)";
-            Log($"开始放大任务:共 {total} 张,引擎={engine}/{model},倍数={scale}x,格式={outExt.TrimStart('.')},设备={(gpuId >= 0 ? $"GPU {gpuId}" : "CPU (软件计算)")},{qualityDesc}");
+            Log($"开始放大任务:共 {total} 张,引擎={engine}/{model},倍数={scale}x,格式={outExt.TrimStart('.')},设备={(gpuId >= 0 ? $"GPU {gpuId}" : "CPU (软件计算)")},{qualityDesc},版本:v{UpdateChecker.CurrentVersion}");
             if (preDenoise) Log($"预处理降噪:已开启(强度 {"弱中强"[denoiseLevel - 1]})");
             Log($"输出目录:{outDir}");
             for (int i = 0; i < total; i++)

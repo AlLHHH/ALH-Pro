@@ -95,4 +95,75 @@ public class VideoPipelineTests
     {
         Assert.Null(VideoPipeline.BuildVfrSetptsExpr(new List<double>()));
     }
+
+    // ---------- IsVfrByRateRatio ----------
+    // 下列帧率全部是打包版 ffprobe 的真实测量值,不是构想的数字:
+    //   CFR 30fps 素材       r_frame_rate=30/1   avg_frame_rate=30/1
+    //   合成突发型 VFR 素材  r_frame_rate=60/1   avg_frame_rate=5060/199(真值 253 帧 / 9.95s)
+    //   真机录屏(用户诊断包)r≈96000           avg≈30
+    [Fact]
+    public void VfrRatio_cfr_source_is_not_vfr()
+    {
+        Assert.False(VideoPipeline.IsVfrByRateRatio(30, 30));
+    }
+
+    [Fact]
+    public void VfrRatio_ntsc_film_23_976_is_not_vfr()
+    {
+        double r = 24000.0 / 1001.0;
+        Assert.False(VideoPipeline.IsVfrByRateRatio(r, r));
+    }
+
+    [Fact]
+    public void VfrRatio_phone_style_small_jitter_is_not_vfr()
+    {
+        // 普通手机 VFR 的轻微抖动(r=30 / avg=28 → 1.07)不该判成 VFR:判了就会改走
+        // frameDurs + setpts 的输出时间轴口径,对基本均匀的素材是净损失。
+        Assert.False(VideoPipeline.IsVfrByRateRatio(30, 28));
+    }
+
+    [Fact]
+    public void VfrRatio_measured_bursty_vfr_is_vfr()
+    {
+        Assert.True(VideoPipeline.IsVfrByRateRatio(60, 5060.0 / 199.0));   // ≈2.36
+    }
+
+    [Fact]
+    public void VfrRatio_screen_recording_is_vfr()
+    {
+        // 用户诊断包里那个录屏:ffmpeg 按 r_frame_rate 铺 CFR 栅格 → 预估 917 帧对约 290 万实际帧。
+        Assert.True(VideoPipeline.IsVfrByRateRatio(96000, 30));
+    }
+
+    [Fact]
+    public void VfrRatio_missing_rate_makes_no_decision()
+    {
+        // 任一帧率缺失/非法 → 不作判定,交给逐帧 PTS 抽查那一路;不能因除零或 0 比值就误判。
+        Assert.False(VideoPipeline.IsVfrByRateRatio(0, 30));
+        Assert.False(VideoPipeline.IsVfrByRateRatio(60, 0));
+        Assert.False(VideoPipeline.IsVfrByRateRatio(0, 0));
+        Assert.False(VideoPipeline.IsVfrByRateRatio(-1, 30));
+        Assert.False(VideoPipeline.IsVfrByRateRatio(60, -1));
+    }
+
+    [Fact]
+    public void VfrRatio_threshold_boundary()
+    {
+        double t = VideoPipeline.VfrRateRatioThreshold;
+        Assert.True(VideoPipeline.IsVfrByRateRatio(t * 30, 30));            // 正好达门槛 → 判 VFR
+        Assert.False(VideoPipeline.IsVfrByRateRatio(t * 30 * 0.999, 30));   // 略低于门槛 → 不判
+    }
+
+    [Fact]
+    public void VfrRatio_threshold_is_calibrated_between_jitter_and_real_vfr()
+    {
+        // 门槛标定:必须高于所有"正常/轻微抖动"的实测比值,且低于所有"真 VFR"的实测比值。
+        // 改高了漏判录屏(拆帧帧数爆炸),改低了误伤手机素材(输出时间轴口径被改)——两头都有代价,
+        // 所以把两侧余量钉在测试里,以后动门槛会先撞上这条。
+        double t = VideoPipeline.VfrRateRatioThreshold;
+        double maxNormal = System.Math.Max(30.0 / 30.0, 30.0 / 28.0);   // 1.0714
+        double minRealVfr = 60.0 / (5060.0 / 199.0);                    // 2.3597
+        Assert.True(t > maxNormal, $"门槛 {t} 必须 > 正常素材最大实测比值 {maxNormal:0.###}");
+        Assert.True(t < minRealVfr, $"门槛 {t} 必须 < 真 VFR 最小实测比值 {minRealVfr:0.###}");
+    }
 }
