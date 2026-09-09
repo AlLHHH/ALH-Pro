@@ -153,24 +153,37 @@ public static partial class EngineService
         catch { return engineGpu; }
     }
 
-    /// <summary>把"请求的计算设备编号"解析成【应实际使用的 DirectML 设备号】——先经 DeviceRouting 纠正
-    /// (编号命中了核显、而表里另有独显 → 换到独显;编号不在表 → 取表内独显),再 ToDmlDevice 名匹配映射。
-    /// 这是"锁定 NVIDIA 独显、绝不在核显上跑超分/补帧"的统一入口。requestedGpu&lt;0 = 调用方明确要 CPU,原样返回。</summary>
-    public static int ResolveDmlDevice(int requestedGpu)
+    /// <summary>把"设置里存的计算设备编号"解析成本次要传给引擎的 -g 编号(唯一权威入口,尊重用户选择)。
+    /// 规则(比"强制锁定独显"更尊重用户,满足"选独显跑独显、选核显跑核显、默认独显"):
+    ///   ① settingsIndex &lt; 0 → 用户主动选 CPU,原样 -1(尊重);
+    ///   ② 编号在设备表 → 原样返回它的引擎 -g 编号【不管核显/独显】——用户选核显就核显;
+    ///   ③ 编号不在表 / 表为空 → 返回推荐的独显编号(GetRecommendedEngineId / 表内独显 / 兜底),避免无效编号崩。
+    /// 默认"选独显"由设备下拉默认选中推荐项(即最佳独显)实现,这里不做强制纠正。
+    /// </summary>
+    public static int ResolveEngineGpu(int settingsIndex)
     {
-        if (requestedGpu < 0) return requestedGpu;   // 明确要 CPU
+        if (settingsIndex < 0) return -1;   // 用户主动选 CPU
         try
         {
             var devs = VulkanCheck.Devices;
             if (devs.Count > 0)
-            {
-                // 带名重载:识别核显并换到独显(绝不落在核显上跑 GPU 计算)
-                var (id, _) = AlhPro.Core.DeviceRouting.ResolveEngineDevice(requestedGpu, devs, devs.Count);
-                return ToDmlDevice(id);
-            }
+                foreach (var d in devs)
+                    if (d.Id == settingsIndex) return settingsIndex;   // 尊重用户选择(核显就核显)
+            // 编号不在表/表空:用推荐(通常独显),绝不落 CPU
+            int rec = GpuInfo.GetRecommendedEngineId();
+            if (rec >= 0) return rec;
+            if (devs.Count > 0) return devs[0].Id;
         }
         catch { }
-        return ToDmlDevice(requestedGpu);   // 设备表未枚举:原样映射
+        return settingsIndex < GpuInfo.EngineDeviceCount ? settingsIndex : -1;   // 兜底
+    }
+
+    /// <summary>把"请求的计算设备编号"解析成应实际使用的 DirectML 设备号——经 ResolveEngineGpu(尊重用户)
+    /// 得到引擎 -g 编号,再 ToDmlDevice 按名字匹配映射到 DirectML 设备。</summary>
+    public static int ResolveDmlDevice(int requestedGpu)
+    {
+        int engineGpu = ResolveEngineGpu(requestedGpu);
+        return ToDmlDevice(engineGpu);
     }
 
     // ===== DXGI 真枚举:显卡名 → DXGI/DirectML 设备号(替代按注册表顺序猜,双卡机上注册表序≠DXGI 序会选错卡) =====

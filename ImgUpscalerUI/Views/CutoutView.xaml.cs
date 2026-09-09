@@ -152,21 +152,21 @@ public sealed partial class CutoutView : UserControl
 
     // 当前计算设备:-1 = CPU(下拉最后一项)
     /// <summary>当前计算设备(全局设置):-1=CPU,≥0=GPU 编号。
-    /// 统一走 DeviceRouting.ResolveEngineDevice:按"编号是否在引擎实际设备表里"判有效(而非"编号<数量"),
-    /// 且识别核显避免"选独显却跑核显"。</summary>
+    /// 【尊重用户选择】= 用户在下拉框选的引擎 -g 编号(选独显就独显、选核显就核显);仅当编号无效/设备表未枚举时
+    /// 才用 ResolveEngineGpu 的推荐(通常独显)兜底,绝不强制纠正用户选择。</summary>
     private int CurrentGpuId
     {
         get
         {
+            if (AppSettings.GpuIndex < 0) return -1;   // 用户主动选 CPU
             try
             {
                 var devs = ALHPro.VulkanCheck.Devices;
-                if (devs.Count > 0)
-                    return AlhPro.Core.DeviceRouting.ResolveEngineDevice(AppSettings.GpuIndex, devs, _gpuCount).Id;
+                if (devs.Count > 0 && devs.Any(d => d.Id == AppSettings.GpuIndex))
+                    return AppSettings.GpuIndex;   // 尊重用户选择(含核显)
             }
             catch { }
-            return AlhPro.Core.DeviceRouting.ResolveEngineDevice(
-                AppSettings.GpuIndex, Array.Empty<(int, string)>(), _gpuCount).Id;
+            return EngineService.ResolveEngineGpu(AppSettings.GpuIndex);   // 编号无效/表空 → 推荐(通常独显)
         }
     }
 
