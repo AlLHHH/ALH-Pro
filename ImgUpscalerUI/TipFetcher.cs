@@ -40,6 +40,9 @@ public static class TipFetcher
 
     private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(5) };
 
+    /// <summary>提示拉取失败是否已提示过一次(避免重复刷屏)。</summary>
+    private static bool _tipWarnedOnce;
+
     /// <summary>启动时一次性拉取(失败静默,保留旧缓存)。</summary>
     public static async Task RefreshAsync()
     {
@@ -91,9 +94,14 @@ public static class TipFetcher
                 // 404 = 文件不存在:记下,若所有端点都 404 才返回 null(代表"该编号不存在,停止拉取")
                 if (hre.StatusCode == System.Net.HttpStatusCode.NotFound) { sawNotFound = true; continue; }
             }
-            catch (Exception ex)
+            catch
             {
-                AppLogger.Info($"[提示] 文件 {file} 端点失败({url[..Math.Min(42, url.Length)]}...):" + ex.Message.Split('\n')[0]);
+                // 【日志友好化】提示拉取失败不刷屏、不说人看不懂的技术英文;只友好提示一次。
+                if (!_tipWarnedOnce)
+                {
+                    _tipWarnedOnce = true;
+                    AppLogger.Info("[提示] 在线提示暂时拉取不到(网络波动或访问受限);不影响软件任何功能。");
+                }
             }
         }
         return sawNotFound ? null : string.Empty;   // 全端点 404 → null;否则空串(非404失败,继续尝试但不中断)

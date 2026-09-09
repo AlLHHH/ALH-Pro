@@ -146,15 +146,51 @@ public static class VideoService
         catch { return null; }
     }
 
-    /// <summary>探测视频是否为可变帧率(VFR):抽查前 60 帧的 PTS 间隔,明显不均匀 → true。
-    /// VFR 素材(录屏/手机/监控)帧间隔忽大忽小,默认均匀拆帧会按平均帧率丢弃/复制帧
-    /// → 时间轴失真(变快/变慢)。检测到后 UI 标注「可变帧率」并自动启用 VFR 拆帧。
-    /// 数据源用 ffmpeg showinfo(滤镜层 = 真实播放时间轴),不用 ffprobe frame=pts_time:
+    /// <summary>探测视频是否为可变帧率(VFR)。两路信号,任一命中即判 VFR:
+    /// (1) 免解码:ffprobe 的 r_frame_rate ÷ avg_frame_rate 比值(见 Core.VideoPipeline.IsVfrByRateRatio);
+    /// (2) 抽查前 60 帧的 PTS 间隔,明显不均匀 → true。
+    /// 为什么必须有 (1):(2) 只看开头 60 帧,录屏素材开头常是一段均匀帧 → 整片漏判
+    /// (真机日志里的「VFR=自动(未检测到)」就是这么来的,而那个文件的 r/avg ≈ 3200)。
+    /// 比值信号看的是全片时间戳粒度,一次 ffprobe 就有、不解码,命中还能省掉后面 60 帧的解码。
+    /// VFR 素材(录屏/手机/监控)帧间隔忽大忽小,均匀拆帧会按平均帧率丢弃/复制帧
+    /// → 时间轴失真(变快/变慢)。检测到后 UI 标注「可变帧率」并自动按原节奏处理。
+    /// (2) 的数据源用 ffmpeg showinfo(滤镜层 = 真实播放时间轴),不用 ffprobe frame=pts_time:
     /// 后者含解码层时间戳,受 B 帧/时间基舍入影响会出现 2 倍间隔假象 → CFR 素材被误报为 VFR。</summary>
     public static async Task<bool> ProbeVfrAsync(string videoPath)
     {
         var ffmpeg = FfmpegPath;
         if (ffmpeg == null) return false;
+        // ===== 信号(1):r_frame_rate / avg_frame_rate 比值(免解码) =====
+        try
+        {
+            var ffprobe = FindFfprobe();
+            if (ffprobe != null)
+            {
+                // 必须按 key 解析:ffprobe 的 csv writer 按【内部结构体字段序】输出、忽略 -show_entries
+                // 的请求序(同 ProbeHdrToSdrAsync 的教训),位置解析迟早错位。
+                var kvLines = await RunCaptureAsync(ffprobe,
+                    $"-v error -select_streams v:0 -show_entries stream=r_frame_rate,avg_frame_rate " +
+                    $"-of default=nw=1 \"{videoPath}\"", CancellationToken.None);
+                double rRate = 0, avgRate = 0;
+                foreach (var ln in kvLines)
+                {
+                    int eq = ln.IndexOf('=');
+                    if (eq <= 0) continue;
+                    string k = ln.Substring(0, eq).Trim(), v = ln.Substring(eq + 1).Trim();
+                    if (!TryParseFps(v, out var f)) continue;
+                    if (k.Equals("r_frame_rate", StringComparison.OrdinalIgnoreCase)) rRate = f;
+                    else if (k.Equals("avg_frame_rate", StringComparison.OrdinalIgnoreCase)) avgRate = f;
+                }
+                if (AlhPro.Core.VideoPipeline.IsVfrByRateRatio(rRate, avgRate))
+                {
+                    AppLogger.Info($"可变帧率判定:r_frame_rate {rRate:0.##} ÷ avg_frame_rate {avgRate:0.##} = " +
+                        $"{rRate / Math.Max(0.001, avgRate):0.##} ≥ {AlhPro.Core.VideoPipeline.VfrRateRatioThreshold:0.#} → VFR(免解码信号)");
+                    return true;
+                }
+            }
+        }
+        catch { }
+        // ===== 信号(2):前 60 帧 PTS 间隔抽查 =====
         try
         {
             var lines = await RunCaptureAsync(ffmpeg,
@@ -504,7 +540,7 @@ public static class VideoService
                         AppLogger.Info($"智能检测({defaultGateName}):未采用拍数识别({cfInfo.Summary},置信 {cfInfo.Confidence:0%})→ 原样保留(不删帧)");
                         progress?.Report((4, $"智能检测({defaultGateName}):{cfInfo.Summary},原样保留..."));
                         frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs, scaleVf,
-                            framesIn, progress, ct, origCountEst, vfrPassthrough);
+                            framesIn, progress, ct, origCountEst);
                         frameDurs = null;
                         effectiveFps = inFps;
                         tempoSrcIdx = null;
@@ -517,7 +553,7 @@ public static class VideoService
                         double smartIv = inFps / smartFc;
                         progress?.Report((3, $"智能检测({defaultGateName}):内容帧率 ≈{smartFc:0.##} fps(拍型每 {smartIv:0.##} 帧,置信 {cfInfo.Confidence:0%})"));
                         var (smartFc2, smartEff, smartSrc) = await RunSegmentContentFpsAsync(ffmpeg, inputVideo, trimArgs, scaleVf,
-                            framesIn, origCountEst, vfrPassthrough, inFps, smartIv, 0.8, 0.4, $"智能-{smartFc:0.##}fps",
+                            framesIn, origCountEst, inFps, smartIv, 0.8, 0.4, $"智能-{smartFc:0.##}fps",
                             progress, ct, forceGrid: true, phaseAlign: phaseAlign);
                         frameCount = smartFc2;
                         effectiveFps = smartEff;
@@ -539,7 +575,7 @@ public static class VideoService
                         // 动漫-全动画:不做节奏处理,原样输出(内容帧率=素材帧率)
                         progress?.Report((3, "动漫-全动画:不做节奏处理,原样输出..."));
                         frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs,
-                            scaleVf, framesIn, progress, ct, origCountEst, vfrPassthrough);
+                            scaleVf, framesIn, progress, ct, origCountEst);
                         frameDurs = null;
                         effectiveFps = inFps;
                         progress?.Report((5, $"已拆出 {frameCount} 帧(全动画,不采样)"));
@@ -549,7 +585,7 @@ public static class VideoService
                         // 动漫-拍N:按档位间隔【网格抽帧】(一拍二=每2帧留1、一拍三=每3帧留1),
                         // 与像素相似度无关 → 重编码噪音保持帧也照样去除("选动漫1拍2不去重"修复)。
                         var (fC, eff, srcA) = await RunSegmentContentFpsAsync(ffmpeg, inputVideo, trimArgs, scaleVf,
-                            framesIn, origCountEst, vfrPassthrough, inFps, userInterval, userTol, 0.4, modeNote,
+                            framesIn, origCountEst, inFps, userInterval, userTol, 0.4, modeNote,
                             progress, ct, forceGrid: true, phaseAlign: phaseAlign);
                         frameCount = fC;
                         effectiveFps = eff;
@@ -564,7 +600,7 @@ public static class VideoService
                     double userFc = Math.Clamp(contentFps, 1.0, Math.Max(2.0, inFps));
                     double uIv = inFps / userFc;
                     var (fC2, eff2, srcB) = await RunSegmentContentFpsAsync(ffmpeg, inputVideo, trimArgs, scaleVf,
-                        framesIn, origCountEst, vfrPassthrough, inFps, uIv, 0.8, 0.4, $"手动-内容帧率 {userFc:0.##}fps",
+                        framesIn, origCountEst, inFps, uIv, 0.8, 0.4, $"手动-内容帧率 {userFc:0.##}fps",
                         progress, ct, forceGrid: true, phaseAlign: phaseAlign);
                     frameCount = fC2;
                     effectiveFps = eff2;
@@ -582,7 +618,7 @@ public static class VideoService
                     // 不做转场切段、不做每段拍数识别——识别不出来的素材就按差值精确删,不硬猜。
                     progress?.Report((3, "去重:自适应检测(先算差异分布再自动定阈值)..."));
                     frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs, scaleVf,
-                        framesIn, progress, ct, origCountEst, vfrPassthrough);
+                        framesIn, progress, ct, origCountEst);
                     if (dedup || vfrPassthrough)
                         frameDurs = await BuildFrameDurationsAsync(ffmpeg, inputVideo, trimArgs, scaleVf, ct);
                     // 智能 = 删"肉眼不变"帧(自适应阈值,删后帧帧都有可见变化 → 补帧后全动帧=连续感)
@@ -614,7 +650,7 @@ public static class VideoService
                     // 手动-帧差+SSIM 精确去重:用户自由阈值
                     progress?.Report((3, "去重:帧差初筛 + SSIM 精确验证(手动参数)..."));
                     frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs,
-                        scaleVf, framesIn, progress, ct, origCountEst, vfrPassthrough);
+                        scaleVf, framesIn, progress, ct, origCountEst);
                     if (dedup || vfrPassthrough)
                         frameDurs = await BuildFrameDurationsAsync(ffmpeg, inputVideo, trimArgs, scaleVf, ct);
                     // 【修复】重CPU去重丢后台线程(原先同步调用会冻结UI线程);与 L685 同风格
@@ -651,7 +687,7 @@ public static class VideoService
                     var dedupVf = $"mpdecimate=hi=64*{Math.Clamp(dedupHi, 4, 24)}:lo=64*{Math.Clamp(dedupLo, 2, 10)}:frac={Math.Clamp(dedupFrac, 0.1, 0.6):0.##}";
                     progress?.Report((3, "去重:检测重复帧(mpdecimate)..."));
                     frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs,
-                        $"{dedupVf},{scaleVf}", framesIn, progress, ct, origCountEst, vfrPassthrough);
+                        $"{dedupVf},{scaleVf}", framesIn, progress, ct, origCountEst);
                     if (dedup || vfrPassthrough)
                         frameDurs = await BuildFrameDurationsAsync(ffmpeg, inputVideo, trimArgs, $"{dedupVf},{scaleVf}", ct);
                     // 保留帧源号:滤镜内丢帧,用 metadata=print 探测(同滤镜确定性输出);失败→null→回退标准补帧
@@ -720,7 +756,7 @@ public static class VideoService
                         ? "去重:自适应检测(先算差异分布再自动定阈值)..."
                         : "去重:帧差初筛 + SSIM 精确验证(手动参数)..."));
                     frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs,
-                        scaleVf, framesIn, progress, ct, origCountEst, vfrPassthrough);
+                        scaleVf, framesIn, progress, ct, origCountEst);
                     if (dedup || vfrPassthrough)
                         frameDurs = await BuildFrameDurationsAsync(ffmpeg, inputVideo, trimArgs, scaleVf, ct);
                     // 逐帧检测(全帧解码小图+SAD/SSIM,CPU 重活)→ 后台线程,防拆帧后卡 UI
@@ -759,7 +795,7 @@ public static class VideoService
                 else dedupThr = 0.005;                                                         // 兜底:默认 0.005
                 string sceneVf = $"{(dedup ? $"select='eq(n,0)+gt(scene,{dedupThr.ToString("0.###", inv)})'," : "")}{scaleVf}";
                 frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs,
-                    sceneVf, framesIn, progress, ct, origCountEst, vfrPassthrough);
+                    sceneVf, framesIn, progress, ct, origCountEst);
                 if (dedup || vfrPassthrough)
                     frameDurs = await BuildFrameDurationsAsync(ffmpeg, inputVideo, trimArgs, sceneVf, ct);
                 // 保留帧源号:scene 滤镜内丢帧,用 metadata=print 探测(纯 select,不含 fps/scale——真实保留数);
@@ -1080,27 +1116,26 @@ public static class VideoService
                         var (s, e) = segBounds[si];
                         segNo++;
                         bool isLastSeg = si == segBounds.Count - 1;
-                        int segLen = e - s;
-                        // 本段插值目标帧数(与 InterpSegmentAsync 内部一致,用于把本段帧数映射到全局输出)
-                        int segTarget = isLastSeg
-                            ? (int)Math.Max(segLen + 1, globalTarget - (globalIdx - 1))
-                            : (int)Math.Max(segLen + 1, (int)Math.Round(segLen * interpScale * frameScale));
-                        // 包装进度:把本段帧数(1..segTarget)映射到全局累计,显示"总帧慢慢加上去"(而不是已处理/expand 帧数)
+                        // 包装进度:把本段帧号映射到全局累计,显示"总帧慢慢加上去"(而不是已处理/expand 帧数)。
+                        // 帧号只从消息的「第 N 帧」取,且单调不回退:没有帧号的消息(降温休息、引擎告警)沿用上一个
+                        // 帧号。原先此时改用 t.pct/100*segTarget 猜,而内层各路径的 pct 口径不一(ncnn 目录轮询
+                        // 1..90、ONNX 10..45),猜出来既偏小又会回退 → 段内帧号抖动、长时间不动再猛跳。
+                        int segLastLocal = 0;
                         IProgress<(int pct, string msg)>? segProg = progress == null ? null
                             : new System.Progress<(int pct, string msg)>(t =>
                             {
-                                int local = 0;
                                 var m = System.Text.RegularExpressions.Regex.Match(t.msg, @"第\s*(\d+)\s*帧");
-                                if (m.Success) local = int.Parse(m.Groups[1].Value);
-                                else local = (int)(t.pct / 100.0 * Math.Max(1, segTarget));
-                                long gf = (long)Math.Min(globalTarget, (globalIdx - 1) + Math.Max(0, local));
+                                if (m.Success) segLastLocal = Math.Max(segLastLocal, int.Parse(m.Groups[1].Value));
+                                long gf = (long)Math.Min(globalTarget, (globalIdx - 1) + segLastLocal);
                                 progress!.Report((10 + (int)(35.0 * gf / Math.Max(1, globalTarget)),
                                     $"补帧 第 {gf} 帧 / 共 {globalTarget} 帧" +
                                     EtaStr(gf - interpBase, globalTarget - interpBase,
                                         (DateTime.UtcNow - interpStageStart).TotalSeconds - interpIdleSec)));
                             });
                         progress?.Report((10 + (int)(35.0 * segNo / segBounds.Count),
-                            $"补帧 第 {globalIdx - 1} 帧 / 共 {globalTarget} 帧(段 {segNo}/{segBounds.Count})..."));
+                            $"补帧 第 {globalIdx - 1} 帧 / 共 {globalTarget} 帧(段 {segNo}/{segBounds.Count})" +
+                            EtaStr(globalIdx - 1 - interpBase, globalTarget - interpBase,
+                                (DateTime.UtcNow - interpStageStart).TotalSeconds - interpIdleSec)));
                         // 处理过程也做降温休息检查(单个长视频也能中途休息)
                         var interpIdleT0 = DateTime.UtcNow;
                         await SafeRender.RestIfDueAsync(10 + (int)(35.0 * segNo / segBounds.Count), progress, ct);
@@ -1805,6 +1840,7 @@ public static class VideoService
             }
             // ===== B 版(修正):时长=源容器 —— 多余时长给"最后一帧加长"(VFR 末帧 PTS 延到源容器时长),
             // 不复制"尾帧定格"(7 帧一样的观感差);播放器在末帧停留=与源尾帧容积一致,内容速度不变。 =====
+            double tailGapSec = 0;
             if (frameInterp && outFps > 0.01 && !vfrPassthrough && frameDurs == null)
             {
                 var seqA = Directory.EnumerateFiles(framesFinal, "*.jpg")
@@ -1815,11 +1851,23 @@ public static class VideoService
                     double gap = muxDur - curDur;
                     if (gap > 0.005)
                     {
-                        // 末帧加长:时长表(下游 VFR setpts 自动采用)
-                        finalDurs = new System.Collections.Generic.List<double>();
-                        for (int i = 0; i < seqA.Count; i++) finalDurs.Add(1.0 / outFps);
-                        finalDurs[^1] += gap;
-                        AppLogger.Info($"尾帧容积:末帧延长 {gap * 1000:0}ms(帧数不变,总长 {muxDur:0.###}s)");
+                        // finalDurs 的唯一下游消费者是 BuildVfrSetptsExpr,而它只在
+                        // (targetFps==null && preserveRhythm) 分支里跑。均匀输出路径上建表 = 白建:
+                        // 日志照打"末帧延长 XXms",成片一毫秒都没变(实测 111 帧源 → 441 帧 @119.47
+                        // = 3.691s,源容器 3.761s → 尾部 70ms 有声无画)。均匀时间轴上"只延长末帧"
+                        // 做不到,唯一能落地的手段是把这段差折进标称帧率(见下方"帧率保险")。
+                        if (targetFps == null && preserveRhythm)
+                        {
+                            finalDurs = new System.Collections.Generic.List<double>();
+                            for (int i = 0; i < seqA.Count; i++) finalDurs.Add(1.0 / outFps);
+                            finalDurs[^1] += gap;
+                            AppLogger.Info($"尾帧容积:末帧延长 {gap * 1000:0}ms(帧数不变,总长 {muxDur:0.###}s)");
+                        }
+                        else
+                        {
+                            tailGapSec = gap;
+                            AppLogger.Info($"尾帧容积:成片比源容器短 {gap * 1000:0}ms(均匀时间轴,折进标称帧率修正)");
+                        }
                     }
                     else if (gap < -0.005)
                     {
@@ -1921,10 +1969,19 @@ public static class VideoService
                 int fcFinal = Directory.EnumerateFiles(framesFinal, "*.jpg").Count();
                 if (fcFinal > 1 && muxDur > 0.01)
                 {
-                    double realFps = (fcFinal - 1) / muxDur;
-                    if (Math.Abs(realFps - baseFps) / Math.Max(0.01, baseFps) > 0.03)
+                    // 标称帧率 = 实际帧数 ÷ 源容器时长。实测 image2 按 pts=i/R 铺帧,N 帧在容器里
+                    // 占 N/R 秒(111 帧 @30fps → duration 3.700s,不是 (N-1)/R 的 3.667s),
+                    // 所以用 N/muxDur 才能让成片时长与源容器分毫不差。
+                    double realFps = fcFinal / muxDur;
+                    // tailGapSec>0 = 上面已判定"成片比源容器短,且均匀时间轴没法只延长末帧"。
+                    // 这种案例的偏差可能只有 2%(实测 2.07%),被原来的 3% 门槛整个放过 →
+                    // 尾部留下几十毫秒"有声无画"。这里必须改标称帧率把差补回来。
+                    // 不会引入慢放风险:新覆盖的这一段按定义偏差 <3%(改完速度差不到 3%,看不出来);
+                    // 偏差 >3% 的情况(muxDur 明显失真)本来就走这条路,行为没变。
+                    if (tailGapSec > 0 || Math.Abs(realFps - baseFps) / Math.Max(0.01, baseFps) > 0.03)
                     {
-                        AppLogger.Info($"⚠ 输出帧率标称修正:{baseFps:0.##} → {realFps:0.##} fps(实际 {fcFinal} 帧 / {muxDur:0.###}s;内容帧率模式偏差自愈)");
+                        AppLogger.Info($"⚠ 输出帧率标称修正:{baseFps:0.##} → {realFps:0.##} fps(实际 {fcFinal} 帧 / {muxDur:0.###}s;"
+                            + (tailGapSec > 0 ? $"补回尾部 {tailGapSec * 1000:0}ms" : "内容帧率模式偏差自愈") + ")");
                         frBase = realFps;
                     }
                 }
@@ -2265,11 +2322,14 @@ public static class VideoService
                         CopyFrame(files[p], outF);
                         AppLogger.Warn($"⚠ ONNX 补帧第 {idx} 帧输出黑帧(DirectML 异常),已回退复制该对源帧");
                     }
-                    // 进度:补帧阶段 10~45%,按已产帧数估算
+                    // 进度:补帧阶段 10~45%,按已产帧数估算。
+                    // 文案格式是契约:上层 segProg 与 VideoView 的 etaRegex 都靠「第 N 帧 / 共 M 帧」提取帧号,
+                    // 写成「第 5/100 帧」两边都匹配不上(数字后是斜杠),逐帧提示会整个失效。
+                    // 走的是 ONNX 路线这件事已在切换时单独播报,逐帧消息里不必重复。
                     try
                     {
                         int pct = Math.Clamp(10 + idx * 35 / Math.Max(1, totalOut), 10, 45);
-                        progress?.Report((pct, $"补帧(ONNX) 第 {idx}/{totalOut} 帧"));
+                        progress?.Report((pct, $"补帧 第 {idx} 帧 / 共 {totalOut} 帧"));
                     }
                     catch { }
                 }
@@ -3244,14 +3304,23 @@ public static class VideoService
             string? ffmpegDir = FfmpegPath != null ? Path.GetDirectoryName(FfmpegPath) : null;
             string? ffprobe = ffmpegDir != null ? Path.Combine(ffmpegDir, "ffprobe.exe") : null;
             if (ffprobe == null || !File.Exists(ffprobe)) return (null, null);
+            // 不能用 -of csv=p=0 + 位置解析:ffprobe 的 csv writer 按【内部结构体字段序】输出,
+            // 完全忽略 -show_entries 的请求序(实测:请求 space,primaries,transfer → 返回 space,transfer,primaries)。
+            // 全 bt709 素材上三个值一样,看不出问题;HDR 素材上 smpte2084 落进 prim、bt2020 落进 trc
+            // → isHdr 恒为 false,tonemap 分支是死代码,宽色域只走非 tonemap 的 zscale(亮度炸白)。按 key 解析。
             var lines = await RunCaptureAsync(ffprobe,
                 $"-v error -select_streams v:0 -show_entries stream=color_space,color_primaries,color_transfer " +
-                $"-of csv=p=0 \"{video}\"", ct);
-            var s = string.Concat(lines).Trim();
-            var p = s.Split(',').Select(x => x.Trim()).ToArray();
-            string space = p.Length > 0 ? p[0] : "";
-            string prim = p.Length > 1 ? p[1] : "";
-            string trc = p.Length > 2 ? p[2] : "";
+                $"-of default=nw=1 \"{video}\"", ct);
+            var kv = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var ln in lines)
+            {
+                int eq = ln.IndexOf('=');
+                if (eq > 0) kv[ln.Substring(0, eq).Trim()] = ln.Substring(eq + 1).Trim();
+            }
+            kv.TryGetValue("color_space", out string? sp);
+            kv.TryGetValue("color_primaries", out string? pr);
+            kv.TryGetValue("color_transfer", out string? tr);
+            string space = sp ?? "", prim = pr ?? "", trc = tr ?? "";
             bool isHdr = trc.Contains("smpte2084", StringComparison.OrdinalIgnoreCase)
                       || trc.Contains("arib-std-b67", StringComparison.OrdinalIgnoreCase);
             bool primKnown = prim.Length > 0 && !prim.Equals("unknown", StringComparison.OrdinalIgnoreCase);
@@ -3274,12 +3343,19 @@ public static class VideoService
 
     private static async Task<int> ExtractFramesCoreAsync(string ffmpeg, string inputVideo, string trimArgs,
         string vfExpr, string framesDir, IProgress<(int pct, string msg)>? progress, CancellationToken ct,
-        int origCountEst, bool vfrPts = false)
+        int origCountEst)
     {
         var pattern = Path.Combine(framesDir, "frame_%06d.jpg");
-        // VFR(可变帧率)素材:拆帧加 -fps_mode passthrough 保留每帧真实时间戳,不按平均帧率丢弃/复制帧,
-        // 避免时间轴失真(变速感)。仅在用户开启「可变帧率素材」时生效;CFR 素材不需要,默认关闭。
-        string fpsMode = vfrPts ? " -fps_mode passthrough" : "";
+        // 拆帧【无条件】passthrough:一个解码帧 = 一个 jpg,永不复制、永不丢弃。
+        // 原先只在 VFR 检测通过时才加,检测漏了就落回 ffmpeg 默认的 CFR 补帧路径 ——
+        // 该路径按 r_frame_rate 铺栅格,不足就复制帧填满。CFR 素材无害(r=avg),但录屏/手机这类
+        // VFR 素材 r_frame_rate 可以远大于 avg_frame_rate:实测合成 VFR(r=60/avg=25.4,真值 253 帧)
+        // 出 597 个 jpg(dup=344);真机录屏 r≈96000、avg≈30 → 预估 917 帧对 ~290 万实际帧,
+        // speed=0.000127x,按此速率要跑 74 小时(用户连续 8 天每次都在"拆帧 917/917"处强制结束,
+        // 日志里就是这条 frame=8643 time=00:00:00.09 dup=9261 的尾巴)。不是硬解挂死,是在写重复帧。
+        // 去重也依赖它:mpdecimate 删掉的帧会被 CFR 路径重新复制回来(实测 118→120,dup=2),等于白删。
+        // CFR 素材加了完全等价(实测 30fps/5s 两种写法都是 150 帧,首帧字节一致)。
+        const string fpsMode = " -fps_mode passthrough";
         // 开关2(分线程):拆帧限流,避免抢系统核(仅开启时生效)
         string threadsArg = SafeRender.SplitCores ? $" -threads {Math.Max(2, SafeRender.CpuCoreCount - 2)}" : "";
         // 硬解优先(仅当该编码本会话没验证过坏);某编码坏过一次就对该编码软解,其它编码仍试硬解
@@ -3910,13 +3986,13 @@ public static class VideoService
     /// (动漫档/手动值,段估计在容差内才采用);=0 = 纯自动(智能,按置信度门槛)。</summary>
     private static async Task<(int frameCount, double effectiveFps, System.Collections.Generic.List<int> srcIdx)> RunSegmentContentFpsAsync(string ffmpeg,
         string inputVideo, string trimArgs, string scaleVf, string framesIn, int origCountEst,
-        bool vfrPassthrough, double inFps, double userInterval, double userTol, double autoConf, string modeNote,
+        double inFps, double userInterval, double userTol, double autoConf, string modeNote,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct, bool forceGrid = false, bool phaseAlign = true)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         progress?.Report((3, $"{modeNote}:全量拆帧 + 去重(整片统一判定;随后展开时间轴+标准补帧)..."));
         int frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs,
-            scaleVf, framesIn, progress, ct, origCountEst, vfrPassthrough);
+            scaleVf, framesIn, progress, ct, origCountEst);
         // 用户定案:去重线【不分段】——分段(转场切段)只会把"全场等距"打成"段间有落差"
         // → 被迫走补缺慢路+段间不一致;去重=全片一个算法/网格(拍型/节奏是全局的)。
         // 「转场识别」仍独立(补帧时勾选才用),与去重互不干扰。
@@ -5026,6 +5102,14 @@ public static class VideoService
         // 对 1080p 高清(BT.709)源会造成红蓝错色(用户实测:源 bt709→输出 bt470bg 红蓝)。统一标正确色彩。
         // (顺带纠正 video 帧 JPG 直走 GDI 后,合帧时色彩元数据缺失导致的同类偏差。)
         const string colorArgs = " -color_range tv -colorspace bt709 -color_primaries bt709 -color_trc bt709";
+        // 打包版 ffmpeg(n7.1-20240930)的编码器【静默忽略】-color_trc 与 -color_primaries
+        // (libx264 与 h264_nvenc 均实测:只有 -colorspace 落进 VUI,另两个探回来是 unknown),
+        // 于是成片缺 bt709 的传递/色域标签,播放器只能按默认猜 → 偏色。唯一可靠写法是用
+        // bitstream filter 直接改 SPS 里的 VUI(1=bt709);bsf 作用在编码后的码流上,与具体编码器无关。
+        // 若某台机器的硬编 + bsf 编不出有效文件,EnsureHwProbeAsync 的 1 帧真实参数探测会先发现并回退 CPU。
+        string vuiBsf = encoder.StartsWith("hevc", StringComparison.OrdinalIgnoreCase) || encoder == "libx265"
+            ? " -bsf:v hevc_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1"
+            : " -bsf:v h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1";
         if (bitrateKbps > 0)
         {
             int k = (int)Math.Max(100, bitrateKbps);
@@ -5037,7 +5121,7 @@ public static class VideoService
                 "libx265" => $"-c:v libx265 -preset veryfast -b:v {k}K -maxrate {k}K -bufsize {k * 2}K -pix_fmt yuv420p -x265-params threads={th}",
                 _ => $"-c:v libx264 -preset veryfast -b:v {k}K -maxrate {k}K -bufsize {k * 2}K -pix_fmt yuv420p -threads {th}",
             };
-            return core + colorArgs;
+            return core + colorArgs + vuiBsf;
         }
         string core2 = encoder switch
         {
@@ -5051,7 +5135,7 @@ public static class VideoService
             // 轻量 CPU 模式:限制线程 + 快速预设,不把 CPU 跑满;线程数按"安全渲染"CPU 墙
             _ => $"-c:v libx264 -preset veryfast -crf {q} -pix_fmt yuv420p -threads {th}",
         };
-        return core2 + colorArgs;
+        return core2 + colorArgs + vuiBsf;
     }
 
     /// <summary>按开始/结束时间裁剪并保存(重编码保证精确,保留音频)。</summary>
@@ -5292,9 +5376,13 @@ public static class VideoService
                         maxFrame = fr;
                         if (totalFrames > 0 && stage.Length > 0)
                         {
-                            int shown = Math.Min(fr, totalFrames);   // 钳制:引擎报告帧号可能超总帧,显示永不超(修复"第11219帧/共11099帧"溢出)
-                            progress?.Report((StageProgressPct(stage, shown, totalFrames),
-                                $"{stage} 第 {shown} 帧 / 共 {totalFrames} 帧{EtaStr(shown, totalFrames, activeSec)}"));
+                            // 如实上报真实帧号,不在这里钳到预估值。百分比仍由 StageProgressPct 封顶;
+                            // 显示层(VideoView)分两档处理超出:≤5% 的收尾误差照旧封顶,大幅超出则
+                            // 标注"已超预估·仍在出帧"。原先在这里 Math.Min(fr, totalFrames) 是为了修
+                            // "第11219帧/共11099帧"的收尾溢出,但它同时把"预估偏低 3 倍、ffmpeg 仍在拼命
+                            // 出帧"也压成了永远不动的 917/917 —— 用户因此判成死机并强制结束。
+                            progress?.Report((StageProgressPct(stage, fr, totalFrames),
+                                $"{stage} 第 {fr} 帧 / 共 {totalFrames} 帧{EtaStr(fr, totalFrames, activeSec)}"));
                         }
                     }
                 }

@@ -953,6 +953,13 @@ public static partial class EngineService
                     {
                         await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
                         bool ok = p.ExitCode == 0 && File.Exists(o) && new FileInfo(o).Length > 0;
+                        // 出帧 ≠ 出对帧:某些设备(真机:D3D12 转译层)exit 0 且出图,但插值结果是整帧红噪点。
+                        // 探测输入是纯黑+纯白,正常引擎的中间帧必为无彩色灰阶 → 带色即损坏,按不可用处理。
+                        if (ok && !ProbeOutputIsAchromatic(o))
+                        {
+                            AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId})出帧但颜色损坏(黑→白应插出灰帧,实测通道严重失衡)——按不可用处理");
+                            ok = false;
+                        }
                         if (ok)
                         {
                             AppLogger.Info($"[探测] RIFE {model} GPU(-g {gpuId})可用(1~2 秒出帧)");
@@ -984,6 +991,39 @@ public static partial class EngineService
             AppLogger.Warn($"[探测] RIFE GPU 探测异常(按不可用):{ex.Message}");
             return false;
         }
+    }
+
+    /// <summary>探测帧健全性:RIFE 探测的输入是纯黑+纯白两帧,任何正常引擎插出的中间帧都应是【无彩色】灰阶。
+    /// 判定阈值在 <see cref="AlhPro.Core.DeviceRouting.IsAchromatic"/>(有单测);这里只负责把像素读成三通道均值。
+    /// 读图自身异常时放行:宁可放过,不因探测代码的问题把可用设备判死。</summary>
+    private static bool ProbeOutputIsAchromatic(string png)
+    {
+        try
+        {
+            using var bmp = new System.Drawing.Bitmap(png);
+            var rect = new System.Drawing.Rectangle(0, 0, bmp.Width, bmp.Height);
+            var d = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadOnly,
+                System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+            try
+            {
+                long sr = 0, sg = 0, sb = 0;
+                int n = d.Width * d.Height;
+                var row = new byte[d.Stride];
+                for (int y = 0; y < d.Height; y++)
+                {
+                    System.Runtime.InteropServices.Marshal.Copy(d.Scan0 + y * d.Stride, row, 0, d.Stride);
+                    for (int x = 0; x < d.Width; x++)
+                    {
+                        sb += row[x * 3]; sg += row[x * 3 + 1]; sr += row[x * 3 + 2];
+                    }
+                }
+                if (n == 0) return true;
+                double mr = (double)sr / n, mg = (double)sg / n, mb = (double)sb / n;
+                return AlhPro.Core.DeviceRouting.IsAchromatic(mr, mg, mb);
+            }
+            finally { bmp.UnlockBits(d); }
+        }
+        catch { return true; }
     }
 
     /// <summary>运行引擎命令;若命令使用 GPU(-g ≥0)且启动失败(如新显卡 RTX 50 系与 ncnn-vulkan

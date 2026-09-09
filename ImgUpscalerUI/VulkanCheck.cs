@@ -97,6 +97,17 @@ public static class VulkanCheck
                         ParseDevices(o2, devices);
                     }
                 }
+                // D3D12 转译层设备(名字形如 "Microsoft Direct3D12 (NVIDIA ...)"):编号夹在原生设备中间、
+                // 名字又像独显,用户和推荐算法都会选中;但经其计算的补帧/超分输出是损坏帧(真机实测)。
+                // 从设备表整体剔除 → 下拉/推荐/-g 全部不再可达。剔除前留痕,诊断包仍能看出"有转译层、剔了哪几个"。
+                var translated = devices.Where(d => AlhPro.Core.GpuName.IsD3D12Translation(d.Name)).ToList();
+                if (translated.Count > 0)
+                {
+                    AppLogger.Warn("⚠ 引擎枚举到 D3D12 转译层 Vulkan 设备:"
+                        + string.Join(" / ", translated.Select(d => $"#{d.Id} {d.Name}"))
+                        + " ——经其计算的补帧/超分输出为损坏帧,已排除;同卡原生 Vulkan 设备仍可选");
+                    devices.RemoveAll(d => AlhPro.Core.GpuName.IsD3D12Translation(d.Name));
+                }
                 // 引擎枚举到 Vulkan 设备即认为有 GPU(编号对错是另一回事,用户可在设置里换)
                 GpuAvailable = devices.Count > 0;
                 // 【修复】把引擎真实枚举的设备表同步到静态 Devices。之前只写入局部 devices(供报告),

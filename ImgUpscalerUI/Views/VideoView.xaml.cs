@@ -465,9 +465,24 @@ public sealed partial class VideoView : UserControl
         get
         {
             if (AppSettings.GpuIndex < 0) return -1;
-            try { if (VulkanCheck.Devices.Any(d => d.Id == AppSettings.GpuIndex)) return AppSettings.GpuIndex; }
+            try
+            {
+                var devs = VulkanCheck.Devices;
+                if (devs.Count > 0)
+                {
+                    var (id, remapped) = AlhPro.Core.DeviceRouting.ResolveEngineDevice(
+                        AppSettings.GpuIndex, devs.Select(d => d.Id).ToArray(),
+                        GpuInfo.GetRecommendedEngineId(), _gpuCount);
+                    // 重映射的典型原因:旧设置存着 D3D12 转译层设备的编号(该设备已被剔除)。留痕让旧设置自愈。
+                    if (remapped)
+                        AppLogger.Warn($"⚠ 设置的计算设备 GPU {AppSettings.GpuIndex} 不在可用设备表"
+                            + $"(多为已排除的 D3D12 转译层设备),本次改用 GPU {id}({GpuInfo.GetEngineDeviceName(id)})");
+                    return id;
+                }
+            }
             catch { /* 设备表未枚举时走数量兜底 */ }
-            return AppSettings.GpuIndex < _gpuCount ? AppSettings.GpuIndex : -1;
+            return AlhPro.Core.DeviceRouting.ResolveEngineDevice(
+                AppSettings.GpuIndex, Array.Empty<int>(), -1, _gpuCount).Id;
         }
     }
 
@@ -3400,6 +3415,9 @@ public sealed partial class VideoView : UserControl
             if (upOn && upscaleShrink1x) scale = 2;
             bool highRate = interpScale >= 4;   // 4x 及以上
             double totalNeedGB = 0, totalSec = 0;
+            // 超限检测:输出分辨率 >4K(超 3840×2160,即宽>3840 或 高>2160)且 输出帧率 >240 时弹窗警示。
+            // 输出分辨率 = 源尺寸×倍率(或自定义宽高);输出帧率 = 目标帧率或 源帧率×补帧倍率。
+            bool overLimit = false;
             // 后台扫描每个视频(不卡 UI)
             await Task.Run(async () =>
             {
@@ -3412,6 +3430,26 @@ public sealed partial class VideoView : UserControl
                         double fps = 30;
                         try { if (double.TryParse(VideoService.ProbeFps(it.Path), NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var pf) && pf > 0) fps = pf; } catch { }
                         var (w, h) = await VideoService.ProbeSizeAsync(it.Path).ConfigureAwait(false);
+                        // 计算该视频的输出分辨率×输出帧率,判断是否超限(>4K 且 >240fps)
+                        try
+                        {
+                            // 输出倍率:与下方占盘公式一致(1x缩回→内部按2x;否则 max(scale))
+                            double outMult2 = upOn ? (upscaleShrink1x ? 2.0 : Math.Max(1.0, scale)) : 1.0;
+                            double outW = w, outH = h;
+                            if (upOn && VideoScaleRadios.SelectedIndex == 4) {   // 自定义分辨率:直用自定义宽高
+                                if (int.TryParse(CustomWidthBox.Text, out var cw) && cw > 0) outW = cw;
+                                if (int.TryParse(CustomHeightBox.Text, out var ch) && ch > 0) outH = ch;
+                            } else if (upOn) { outW = w * outMult2; outH = h * outMult2; }
+                            double outFpsChk = fps;
+                            if (TargetFpsCheck.IsChecked == true && interpOn
+                                && double.TryParse(TargetFpsBox.Text, NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var tf2) && tf2 > 0)
+                                outFpsChk = tf2;
+                            else if (interpOn) outFpsChk = fps * interpScale;
+                            // >4K(宽>3840 或 高>2160)且 帧率>240 → 超限
+                            if ((outW > 3840 || outH > 2160) && outFpsChk > 240)
+                                overLimit = true;
+                        }
+                        catch { }
                         totalSec += VideoService.EstimateProcessSeconds(dur, fps, w, h,
                             upOn, scale, engine, interpOn, interpScale, dedupOn, 0);
                         // 占盘(JPG 中间帧峰值,与 C3 一致):源帧≈1MB/1080p,放大后×倍率²×0.18
@@ -3446,7 +3484,7 @@ public sealed partial class VideoView : UserControl
             bool weakDevice = SafeRender.IsWeakDevice && FastModeCheck.IsChecked != true;
 
             // 无硬风险 → 不弹,直接开始
-            if (!diskRisk && !resourceRisk && !weakDevice) return true;
+            if (!diskRisk && !resourceRisk && !weakDevice && !overLimit) return true;
 
             var lines = new System.Collections.Generic.List<string>();
             lines.Add($"预计处理耗时:约 {totalSec / 60:0.#} 分钟");
@@ -3455,6 +3493,8 @@ public sealed partial class VideoView : UserControl
                 lines.Add("⚠ 空间不足:预计占用超过临时盘可用空间,可能中途爆盘。建议:清理磁盘 / 降低超分或补帧倍率 / 换剩余空间更大的盘。");
             if (resourceRisk)
                 lines.Add("⚠ 高倍率补帧 + 设备偏弱:可能因显存不足中途出错。建议:点「一键开启兼容模式」自动降分块/批大小,或改用 2x。");
+            if (overLimit)
+                lines.Add("⚠ 输出规格超限:分辨率超过 4K 且帧率超过 240fps,可能占用极大量显存/磁盘、处理非常慢甚至失败。建议:降低超分/补帧倍率或分辨率,或把目标帧率降到 240 以内。");
             if (weakDevice)
                 lines.Add("⚠ 设备配置较低(核显/小显存/内存小),处理会明显偏慢。建议:开启「兼容模式」或先跑几秒小片段确认。");
 
@@ -3882,6 +3922,11 @@ public sealed partial class VideoView : UserControl
         DateTime lastPanelAt = DateTime.MinValue;   // 详情面板刷新节流(防高频报告刷 UI 卡顿)
         DateTime lastSpeedAt = DateTime.MinValue;   // 近期速度样本节流
         double lastEtaShown = -1;   // 上次显示的剩余(秒):轻 EMA 平滑,只压抖动
+        // 整批剩余与本片剩余是两套数,分开显示:batchEtaTxt 拼到顶部状态行,单项 EtaText 只算当前这一片
+        string batchEtaTxt = "";
+        int itemStartIdleFor = -1;      // 当前单项 ETA 归属的 progressIndex,切视频时复位平滑历史
+        double itemStartIdle = 0;       // 该片开始时的累计休息秒数(算纯处理耗时要减掉)
+        double lastItemEtaShown = -1;
         bool inRest = false;
         DateTime restStartAt = DateTime.MinValue;
         double idleSeconds = 0;
@@ -3905,9 +3950,19 @@ public sealed partial class VideoView : UserControl
                 emNow = int.Parse(em.Groups["now"].Value, inv);
                 emTotal = int.Parse(em.Groups["total"].Value, inv);
                 emStage = em.Groups["stage"].Value.Trim();
-                // 帧号防越界:引擎段内消息偶发"已处理 N > 共 M"(76/75)→ 显示按 M 封顶,不出现"超总数"
+                // 帧号防越界分两档:
+                //  · 小幅超出(≤5%,引擎段内消息偶发"已处理 76/75"的收尾误差)→ 按 M 封顶,不出现"超总数"观感;
+                //  · 大幅超出 → 预估本身偏低,必须如实显示真实帧号并标注"仍在出帧"。原先一律封顶,
+                //    步骤行就永远停在"917/917"一动不动 —— 这正是"看着像死机"的来源(实测有用户连续
+                //    8 天在拆帧 917/917 处点强制结束,而 ffmpeg 一直在写帧、看门狗也一直在被正常喂)。
+                bool overEst = false;
                 if (emNow < 0) emNow = 0;
-                if (emTotal < emNow) emTotal = emNow;
+                if (emTotal < emNow)
+                {
+                    if (emNow <= emTotal * 1.05) emTotal = emNow;
+                    else overEst = true;
+                }
+                string cntTxt = overEst ? $"已处理 {emNow}/{emTotal},已超预估·仍在出帧" : $"已处理 {emNow}/{emTotal}";
                 // 日志显示当前步骤:实时更新最后一行(500ms 节流);文件日志=阶段首行 + 每 30 秒一行(防刷爆又可诊断)
                 if (lastLoggedStep != emStage)
                 {
@@ -3916,7 +3971,7 @@ public sealed partial class VideoView : UserControl
                     lastStepLogAt = DateTime.MinValue;
                     lastStepFileLogAt = DateTime.MinValue;
                 }
-                string stepNewFull = $"[{DateTime.Now:HH:mm:ss}] ▶ {emStage} 中(已处理 {emNow}/{emTotal})";
+                string stepNewFull = $"[{DateTime.Now:HH:mm:ss}] ▶ {emStage} 中({cntTxt})";
                 var fpsM = System.Text.RegularExpressions.Regex.Match(t.msg, @"\(目标\s*(\d+(?:\.\d+)?)\s*fps\)");
                 if (fpsM.Success)
                     stepNewFull = stepNewFull[..^1] + $"·{fpsM.Groups[1].Value}fps)";
@@ -3931,8 +3986,8 @@ public sealed partial class VideoView : UserControl
                     {
                         lastStepFileLogAt = DateTime.Now;
                         AppLogger.Info(first
-                            ? $"▶ {emStage} 中(已处理 {emNow}/{emTotal})"
-                            : $"… {emStage} 仍在进行(已处理 {emNow}/{emTotal})");
+                            ? $"▶ {emStage} 中({cntTxt})"
+                            : $"… {emStage} 仍在进行({cntTxt})");
                     }
                     if (!first && stepLogFull != null
                         && VideoLogText.Text.EndsWith(stepLogFull, StringComparison.Ordinal))
@@ -3949,7 +4004,9 @@ public sealed partial class VideoView : UserControl
                 }
                 if (emTotal > 0)
                 {
-                    double ratio = (double)emNow / emTotal;
+                    // 比例封顶 1.0:emNow 现在允许如实超出 emTotal(见上方 overEst),不封顶会让
+                    // 超分段的 pctFine 冲到 100 以上(45+45×1.3=103.5)污染进度条。文字如实、比例封顶。
+                    double ratio = Math.Min(1.0, (double)emNow / emTotal);
                     double fine = emStage switch
                     {
                         "拆帧" => 2 + 3 * ratio,
@@ -3989,7 +4046,7 @@ public sealed partial class VideoView : UserControl
                 ? Math.Min(100.0, (done + pctFine / 100.0) / (done + active) * 100.0)
                 : pctFine;
             VideoProgress.Value = Math.Max(VideoProgress.Value, overall);   // 浮点:无取整平台
-            VideoStatus.Text = done + active > 0 ? $"({done + 1}/{done + active}) {t.msg}" : t.msg;
+            VideoStatus.Text = (done + active > 0 ? $"({done + 1}/{done + active}) {t.msg}" : t.msg) + batchEtaTxt;
             // 去重关键信息由"阶段结束消息转写"(上方"完成"匹配)统一写入日志区,避免重复显示两行
             // 当前视频的列表项进度条 + 状态小字 + 预计剩余时间
             if (progressIndex < items.Length)
@@ -4035,7 +4092,9 @@ public sealed partial class VideoView : UserControl
                     if (lastEtaShown > 0 && remain > 0)
                         remain = 0.7 * remain + 0.3 * lastEtaShown;
                     lastEtaShown = remain;
-                    it.EtaText = "预计剩余 " + FormatTime(Math.Max(remain, 5));   // 完成前一直显示
+                    batchEtaTxt = done + active > 1 && remain > 5
+                        ? $" · 整批剩余 {FormatTime(remain)}"
+                        : "";
                 }
                 else if (etaProgress < 2 && initRemain > 8 && workElapsed > 3)
                 {
@@ -4044,7 +4103,28 @@ public sealed partial class VideoView : UserControl
                         ? Math.Min(initRemain, lastEtaShown * 1.03 + 10)
                         : initRemain;
                     lastEtaShown = remain;
-                    it.EtaText = "预计剩余 " + FormatTime(remain);
+                    batchEtaTxt = done + active > 1 && remain > 5 ? $" · 整批剩余 {FormatTime(remain)}" : "";
+                }
+                // ===== 本片剩余:只算当前这一个视频 =====
+                // 用片内进度 pctFine 与该片自己的 StartTime,并减掉该片开始之后累计的降温休息时间。
+                if (progressIndex != itemStartIdleFor)
+                {
+                    itemStartIdleFor = progressIndex;
+                    itemStartIdle = idleSeconds;
+                    lastItemEtaShown = -1;
+                }
+                if (it.IsProcessing && pctFine >= 1.0)
+                {
+                    double itemElapsed = (now - it.StartTime).TotalSeconds
+                        - Math.Max(0, idleSeconds - itemStartIdle);
+                    if (itemElapsed > 3)
+                    {
+                        double itemRemain = itemElapsed * (100.0 / Math.Min(99.9, pctFine) - 1.0);
+                        if (lastItemEtaShown > 0 && itemRemain > 0)
+                            itemRemain = 0.7 * itemRemain + 0.3 * lastItemEtaShown;
+                        lastItemEtaShown = itemRemain;
+                        it.EtaText = itemRemain > 5 ? "本片剩余 " + FormatTime(itemRemain) : "";
+                    }
                 }
             }
             // 任务详情面板(节流:每帧报告只取 500ms 一次,防高频刷新拖慢界面)
@@ -4064,7 +4144,7 @@ public sealed partial class VideoView : UserControl
         string gpuName = "";
         try { gpuName = GpuInfo.GetEngineDeviceName(gpuId); } catch { }
         string devStr = gpuId >= 0 ? (gpuName.Length > 0 ? gpuName : $"GPU {gpuId}") : "CPU (软件计算)";
-        Log($"开始处理:共 {items.Length} 个视频,计算设备:{devStr}");
+        Log($"开始处理:共 {items.Length} 个视频,计算设备:{devStr},版本:v{UpdateChecker.CurrentVersion}");
         Log($"输出设置:编码格式={(CodecCombo.SelectedIndex == 1 ? "H.265" : "H.264")},封装={(FormatCombo.SelectedIndex == 1 ? "MKV" : "MP4")}," +
             $"码率={(QualityCombo.SelectedIndex == 5 ? $"自定义 {ParseBitrate():0.#} Mbps" : new[] { "自动", "低", "中", "高", "极高" }[Math.Min(QualityCombo.SelectedIndex, 4)])}," +
             $"静音={(MuteCheck.IsChecked == true ? "是" : "否")}");

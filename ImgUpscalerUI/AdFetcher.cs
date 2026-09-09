@@ -87,6 +87,9 @@ public static class AdFetcher
 
     private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(5) };
 
+    /// <summary>广告拉取失败是否已提示过一次(避免一次启动里反复刷屏;网络波动/被墙很常见,只需友好提示一次)。</summary>
+    private static bool _adWarnedOnce;
+
     /// <summary>启动时一次性拉取(失败静默,保留旧缓存)。</summary>
     public static async Task RefreshAsync()
     {
@@ -139,7 +142,14 @@ public static class AdFetcher
             }
             catch (Exception ex)
             {
-                AppLogger.Info($"[广告] 文件 {file} 端点失败({url[..Math.Min(42, url.Length)]}...):" + ex.Message.Split('\n')[0]);
+                // 【日志友好化】广告文件拉取失败【不刷屏、不说人看不懂的技术英文】。
+                // 网络抖动/被墙很常见(尤其国内直连 GitHub),没必要每个文件每个端点都刷一条原始异常。
+                // 这里只记一次友好的说明(真正的网络排查可看诊断包里的 request 状态码),普通用户/看报告的人能懂。
+                if (!_adWarnedOnce)
+                {
+                    _adWarnedOnce = true;
+                    AppLogger.Info("[广告] 在线广告暂时拉取不到(网络波动或访问受限),已改用内置默认广告;不影响软件任何功能。");
+                }
             }
         }
         return sawNotFound ? null : string.Empty;   // 全端点 404 → null;否则空串(非404失败,继续尝试但不中断)

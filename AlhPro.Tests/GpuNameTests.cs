@@ -65,4 +65,46 @@ public class GpuNameTests
         Assert.False(GpuName.AnyIsBlackwell(new[] { "NVIDIA RTX 5000 Ada Generation", "NVIDIA GeForce RTX 4060" }));
         Assert.False(GpuName.AnyIsBlackwell(new string?[0]));
     }
+
+    // ===== D3D12 转译层设备判定 =====
+    // 漏判的代价是用户拿到整帧损坏的补帧视频且日志无异常;误判只是剔除一个冗余设备
+    // (同卡原生 Vulkan 设备总在表里),所以负例(绝不能被剔除的名字)比正例更重要。
+
+    [Theory]
+    // 真机(2026-09-09 诊断包)引擎实际枚举出的三个转译设备,编号 1/3/5 夹在原生设备 0/2 中间
+    [InlineData("Microsoft Direct3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)")]
+    [InlineData("Microsoft Direct3D12 (Intel(R) UHD Graphics)")]
+    [InlineData("Microsoft Direct3D12 (Microsoft Basic Render Driver)")]
+    [InlineData("microsoft direct3d12 (NVIDIA GeForce RTX 4060 Laptop GPU)")]
+    public void D3D12_translation_layer_devices_are_detected(string name)
+    {
+        Assert.True(GpuName.IsD3D12Translation(name));
+    }
+
+    [Theory]
+    // 同机器的原生 Vulkan 设备:剔除转译设备后它们是唯一可用项,绝不能被误剔
+    [InlineData("NVIDIA GeForce RTX 4060 Laptop GPU")]
+    [InlineData("Intel(R) UHD Graphics")]
+    // 注册表口径的名字(不含 Direct3D12 前缀)
+    [InlineData("NVIDIA GeForce RTX 5090")]
+    [InlineData("AMD Radeon RX 7900 XTX")]
+    // 虚拟适配器由 IsVirtual 负责,不走这个判定
+    [InlineData("Microsoft Basic Display Adapter")]
+    [InlineData("Microsoft 基本显示适配器")]
+    [InlineData("OrayIddDriver Device")]
+    // 名字里含 "Direct3D12" 但前缀不同的假想命名:宁可漏剔(有探测兜底),不可误剔好卡
+    [InlineData("Direct3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)")]
+    public void Native_and_registry_devices_are_not_translation_layer(string name)
+    {
+        Assert.False(GpuName.IsD3D12Translation(name));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Empty_names_are_not_translation_layer(string? name)
+    {
+        Assert.False(GpuName.IsD3D12Translation(name));
+    }
 }
