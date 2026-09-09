@@ -151,9 +151,24 @@ public sealed partial class CutoutView : UserControl
     }
 
     // 当前计算设备:-1 = CPU(下拉最后一项)
-    /// <summary>当前计算设备(全局设置):-1=CPU,≥0=GPU 编号(超出枚举数按 CPU 处理)。</summary>
+    /// <summary>当前计算设备(全局设置):-1=CPU,≥0=GPU 编号。
+    /// 统一走 DeviceRouting.ResolveEngineDevice:按"编号是否在引擎实际设备表里"判有效(而非"编号<数量"),
+    /// 且识别核显避免"选独显却跑核显"。</summary>
     private int CurrentGpuId
-        => AppSettings.GpuIndex >= 0 && AppSettings.GpuIndex < _gpuCount ? AppSettings.GpuIndex : -1;
+    {
+        get
+        {
+            try
+            {
+                var devs = ALHPro.VulkanCheck.Devices;
+                if (devs.Count > 0)
+                    return AlhPro.Core.DeviceRouting.ResolveEngineDevice(AppSettings.GpuIndex, devs, _gpuCount).Id;
+            }
+            catch { }
+            return AlhPro.Core.DeviceRouting.ResolveEngineDevice(
+                AppSettings.GpuIndex, Array.Empty<(int, string)>(), _gpuCount).Id;
+        }
+    }
 
     // 抠图推理设备:【强制 CPU】——AI 抠图用 GPU(DirectML)会占满显卡,导致整个电脑卡顿(实测);
     // 宁慢勿卡,此功能不使用 GPU(引擎自动降级链也不走 GPU)。
