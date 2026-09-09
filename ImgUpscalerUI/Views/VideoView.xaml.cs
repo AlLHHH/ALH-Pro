@@ -995,7 +995,7 @@ public sealed partial class VideoView : UserControl
         int fpsModeNow = FpsModeRadios.SelectedIndex;
         var inFps = fpsModeNow == 2
             && double.TryParse(InputFpsBox.Text, NumberStyles.Float, inv, out var f) && f > 0 ? f : 0;
-        var m = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, _ => 2 };
+        var m = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, 4 => 12, 5 => 16, _ => 2 };
         var extras = new System.Collections.Generic.List<string>();
         if (dedup) extras.Add($"去重({DedupModelCombo.SelectedItem})");
         if (scene) extras.Add($"转场 {SceneSlider.Value:0.00}");
@@ -3029,7 +3029,7 @@ public sealed partial class VideoView : UserControl
             double? targetFps = (TargetFpsCheck.IsChecked == true
                 && double.TryParse(TargetFpsBox.Text, NumberStyles.Float, inv, out var tf) && tf > 0) ? tf : null;
             bool interp = InterpToggle.IsChecked == true;
-            int interpScale = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, _ => 2 };
+            int interpScale = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, 4 => 12, 5 => 16, _ => 2 };
             // 帧率基准:0=真实时间轴(源帧率×倍率) 1=匀速(内容帧率×倍率)。匀速模式用内容帧率,不是源帧率。
             bool uniform = FpsBaseCombo.SelectedIndex == 1;
             double baseFps = srcFps ?? 0;
@@ -3059,8 +3059,17 @@ public sealed partial class VideoView : UserControl
                 VideoOutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
                 return;
             }
-            var scaleLabel = shrink1x ? "1x缩回" : customRes ? "自定义" : $"{mult:0.##}x";
-            VideoOutSpecText.Text = string.Join(" · ", parts) + $" · {scaleLabel}";
+            // 超限检测(编辑预览时红字提示,不弹窗;真正弹窗在"开始处理"前诊断):输出>4K(宽>3840或高>2160)且>240fps
+            bool over4k = (ow > 3840 || oh > 2160);
+            bool over240fps = outFps > 240;
+            bool overLimitPreview = over4k && over240fps;
+            var text = string.Join(" · ", parts) + $" · {(shrink1x ? "1x缩回" : customRes ? "自定义" : $"{mult:0.##}x超分")}";
+            VideoOutSpecText.Text = overLimitPreview
+                ? "⚠ " + text + "  超4K/240fps"
+                : text;
+            VideoOutSpecText.Foreground = overLimitPreview
+                ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77))   // 红
+                : (Microsoft.UI.Xaml.Media.SolidColorBrush?)null;   // 恢复默认
             VideoOutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
         }
         catch { VideoOutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed; }
@@ -3405,7 +3414,7 @@ public sealed partial class VideoView : UserControl
             bool interpOn = InterpToggle.IsChecked == true;
             bool upOn = UpscaleToggle.IsChecked == true;
             bool dedupOn = DedupCheck.IsChecked == true;
-            int interpScale = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, _ => 2 };
+            int interpScale = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, 4 => 12, 5 => 16, _ => 2 };
             int engIdx = VideoEngineRadios.SelectedIndex;
             string engine = engIdx == 0 ? "waifu2x" : "realesrgan";
             // 倍率:0=1x(2x缩回) 1=2x 2=3x 3=4x 4=自定义(内部按2x)
@@ -3748,7 +3757,7 @@ public sealed partial class VideoView : UserControl
             inFps = double.TryParse(InputFpsBox.Text, NumberStyles.Float, inv, out f) && f > 0 ? f : null;
         else if (fpsMode == 1)
             fpsOffset = FpsOffsetSlider.Value;
-        var interpScale = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, _ => 2 };
+        var interpScale = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, 4 => 12, 5 => 16, _ => 2 };
         double? targetFps = (TargetFpsCheck.IsChecked == true
             && double.TryParse(TargetFpsBox.Text, NumberStyles.Float, inv, out var tf) && tf > 0)
             ? tf : null;
