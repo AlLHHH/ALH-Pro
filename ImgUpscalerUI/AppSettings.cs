@@ -74,18 +74,9 @@ public static class AppSettings
             if (d is null) return;
             AutoRemoveDone = d.AutoRemoveDone;
             GpuIndex = d.GpuIndex;
-            // ===== 编号归一化:消除"选独显却跑核显/陈旧错号" =====
-            // 读回的 GpuIndex 可能是旧版用【注册表索引】写的(双卡机上注册表序≠引擎序会存错)、或撞号到核显。
-            // 设备表(引擎枚举)已就绪时,用 DeviceRouting 重解析:撞核显/不在表 → 换到最佳独显;表未就绪则保持原值(启动自检兜底)。
-            try
-            {
-                var devs = ALHPro.VulkanCheck.Devices;
-                if (devs.Count > 0)
-                {
-                    GpuIndex = AlhPro.Core.DeviceRouting.ResolveEngineDevice(GpuIndex, devs, devs.Count).Id;
-                }
-            }
-            catch { /* 设备表未就绪:保持原值,启动自检会纠正 */ }
+            // 【尊重用户选择】加载时原样读回用户保存的计算设备编号(选独显就独显、选核显就核显)。
+            // 不做"归一化纠正"——设备表在此刻(启动早期)可能尚未枚举,强行远程解析会悄悄改掉用户选择;
+            // 默认"选独显"由设备下拉默认选中推荐项(最佳独显)实现。
             VulkanCheckDone = d.VulkanCheckDone;
             VulkanGpuOk = d.VulkanGpuOk;
             SelfCheckDone = d.SelfCheckDone;

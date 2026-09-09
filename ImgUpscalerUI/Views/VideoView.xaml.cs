@@ -456,30 +456,21 @@ public sealed partial class VideoView : UserControl
     }
 
     // 当前计算设备(全局设置):-1 = CPU;≥0 = GPU 编号。
-    // 【关键】按"编号是否在引擎实际设备表里 + 是否核显"判断:编号可能稀疏/从非0起(数量比对会误判掉成CPU),
-    // 且【绝不落在核显】——若设置值命中核显、表里另有独显,自动换到独显(聚焦N卡/独显,杜绝"选独显却跑核显")。
+    // 【尊重用户选择】计算设备编号 = 用户在下拉框选的引擎 -g 编号(选独显就独显、选核显就核显,不做强制纠正);
+    // 仅当编号无效/设备表未枚举时,用 ResolveEngineGpu 的推荐(通常独显)兜底,绝不因此悄悄跑错卡。
     private int CurrentGpuId
     {
         get
         {
-            if (AppSettings.GpuIndex < 0) return -1;
+            if (AppSettings.GpuIndex < 0) return -1;   // 用户主动选 CPU
             try
             {
                 var devs = VulkanCheck.Devices;
-                if (devs.Count > 0)
-                {
-                    var (id, remapped) = AlhPro.Core.DeviceRouting.ResolveEngineDevice(
-                        AppSettings.GpuIndex, devs, _gpuCount);
-                    // 重映射原因:设置值的编号不在可用表 / 命中核显(表里有独显则已换过去)。留痕自愈。
-                    if (remapped)
-                        AppLogger.Warn($"⚠ 设置的计算设备 GPU {AppSettings.GpuIndex} 不在可用设备表或命中核显，已自动改用 GPU {id}"
-                            + $"({GpuInfo.GetEngineDeviceName(id)})");
-                    return id;
-                }
+                if (devs.Count > 0 && devs.Any(d => d.Id == AppSettings.GpuIndex))
+                    return AppSettings.GpuIndex;   // 尊重用户选择(含核显)
             }
-            catch { /* 设备表未枚举时走数量兜底 */ }
-            return AlhPro.Core.DeviceRouting.ResolveEngineDevice(
-                AppSettings.GpuIndex, Array.Empty<(int, string)>(), _gpuCount).Id;
+            catch { }
+            return EngineService.ResolveEngineGpu(AppSettings.GpuIndex);   // 编号无效/表空 → 用推荐(通常独显)
         }
     }
 
