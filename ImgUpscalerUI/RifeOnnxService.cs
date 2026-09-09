@@ -40,7 +40,7 @@ public static class RifeOnnxService
         {
             try
             {
-                int dm = EngineService.ToDmlDevice(gpuId);
+                int dm = EngineService.ResolveDmlDevice(gpuId);
                 if (dm < 0)
                     AppLogger.Warn($"⚠ 补帧 ONNX 设备映射:引擎编号 {gpuId} 未匹配到 DirectML 设备,将回退 CPU(速度会特别慢)——请检查显卡/驱动");
                 else
