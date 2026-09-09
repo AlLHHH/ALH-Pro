@@ -30,7 +30,10 @@ public static class DeviceRouting
         {
             foreach (var id in availableIds)
                 if (id == settingsIndex) return (settingsIndex, false);
-            return (recommendedId >= 0 ? recommendedId : -1, true);
+            // 表里没有设置里存的编号 → 必须换成表里的原生设备,绝不落 CPU(铁律:超分/补帧不准锁 CPU)。
+            // 此时表非空(确实有可用设备),即便没有推荐值也要取表内一个(取最小,确定性)而不是 -1。
+            int fallback = recommendedId >= 0 ? recommendedId : availableIds.Min();
+            return (fallback, true);
         }
         return (settingsIndex < deviceCount ? settingsIndex : -1, false);
     }
