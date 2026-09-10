@@ -789,7 +789,8 @@ public sealed partial class VideoView : UserControl
         var scene = SceneCheck.IsChecked == true && interp;
         // 去重可单独使用,不依赖补帧开关(UI 联动与门控用同一条件)
         var dedup = DedupCheck.IsChecked == true;
-        var dedupModel = DedupModelCombo.SelectedIndex;   // 0智能 1动漫 2标准 3温和 4敏感 5手动 6内容帧率
+        var dedupModel = DedupModelCombo.SelectedIndex;   // 0智能检测 1动漫模式 2手动模式 ——【下拉只有 3 项】,服务端 dedupMode = 本索引+1(1智能/2动漫/3手动)。
+        // ⚠ 历史上曾有一版是 7 项(智能/动漫/标准/温和/敏感/手动/内容帧率),注释没跟着改过,别再照旧注释写分支
         var multi = _videos.Count > 1;
 
         VideoEngineRadios.IsEnabled = up;
@@ -2465,9 +2466,28 @@ public sealed partial class VideoView : UserControl
         if (_previewItem == null) return;
         double dup = _previewItem.DupRatioPct;
         DedupCheck.IsChecked = true;
-        // 重复很多→动漫(一拍二/拍三);中等→智能;很少→温和(几乎不删)
-        DedupModelCombo.SelectedIndex = dup >= 25 ? 1 : dup >= 8 ? 0 : 3;
-        Log($"已按预览设置去重(重复≈{dup:0}%):{(dup >= 25 ? "动漫模式" : dup >= 8 ? "智能模式" : "温和模式")}");
+        // 按预估重复率推荐去重模式。下拉【只有 3 项】:0 智能检测 / 1 动漫模式 / 2 手动模式。
+        // 【修复越界】这里原来在"重复很少"那一支赋 SelectedIndex = 3(越界)→ ComboBox 变成未选中(-1)
+        // → 传下去 dedupMode = 0 → 【去重被静默关掉】,而日志还写着早已删除的"温和模式"。
+        // 现在用「智能 + 保守策略」表达当年的"温和"意图:保守 = 置信度门槛 0.70 且必须是常见拍数才采用,
+        // 也就是【几乎不误删】。三支的索引都在 0..2 内,且日志文案与实际一致。
+        if (dup >= 25)
+        {
+            DedupModelCombo.SelectedIndex = 1;   // 动漫模式:按拍型均匀采样
+            Log($"已按预览设置去重(重复≈{dup:0}%):动漫模式(按拍型均匀采样,不做逐帧判定)");
+        }
+        else if (dup >= 8)
+        {
+            DedupModelCombo.SelectedIndex = 0;   // 智能检测
+            DedupSmartCombo.SelectedIndex = 0;   // 均衡
+            Log($"已按预览设置去重(重复≈{dup:0}%):智能检测 · 均衡(识别得出拍数才采样)");
+        }
+        else
+        {
+            DedupModelCombo.SelectedIndex = 0;   // 智能检测
+            DedupSmartCombo.SelectedIndex = 2;   // 保守:几乎不误删
+            Log($"已按预览设置去重(重复≈{dup:0}%):智能检测 · 保守(重复很少,宁可不删也不误删细节)");
+        }
         UpdateOptions();
         SaveSettings();
     }
