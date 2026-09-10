@@ -1948,8 +1948,9 @@ public static partial class EngineService
         return t * t * (3.0 - 2.0 * t);
     }
 
-    /// <summary>检测目录里的 PNG 是否有全黑块(ncnn-vulkan GPU 队列失败时输出全黑,退出码仍 0)。
-    /// 采样近似:任一张图 95% 以上像素接近全黑即判黑。</summary>
+    /// <summary>检测目录里的 PNG 是否有全黑块(ncnn-vulkan GPU 队列失败时输出全黑/带状黑,退出码仍 0)。
+    /// 采样近似:任一张图【整帧 ≥95% 像素接近全黑】或【某个 1/3 主条带 ≥95% 近黑】即判黑
+    /// —— 实测坏帧是"下 2/3 全黑、上 1/3 正常",只看整帧会让整批黑块静默通过。</summary>
     private static bool HasBlackPng(string dir)
     {
         try
@@ -1965,13 +1966,16 @@ public static partial class EngineService
 
     /// <summary>检测单个 PNG 是否近全黑(95% 以上像素 RGB 和 < 24)。internal:视频补帧/层批复用(黑帧=GPU 队列异常兼容症状)。
     /// 同步把"读不出的帧"(0 字节 / 空 / 损坏)视为缺陷帧返回 true —— ncnn-vulkan 在 50 系/部分驱动上会静默输出 0KB 空帧
-    /// (退出码 0 不报错),若这里返回 false,空帧会被当成正常帧放行,一路传到合帧导致"找不到 frame_%06d.jpg"。</summary>
+    /// (退出码 0 不报错),若这里返回 false,空帧会被当成正常帧放行,一路传到合帧导致"找不到 frame_%06d.jpg"。
+    /// 【判定口径】走 FrameInspect.IsDefectiveFrame = 整帧 ≥95% 近黑【或】任一条 1/3 主条带 ≥95% 近黑:
+    /// 实测(ncnn-vulkan,RTX 4060)坏帧更常见的形态是"每帧下 2/3 全黑、上 1/3 正常",整帧口径会漏检。</summary>
     internal static bool IsBlackPng(string file) => NearBlackProbe(file, failIsDefect: true);
 
-    /// <summary>严格只判"真·近全黑"(可解码、确实 ≥95% 像素近黑)。空/0字节/未写完/解码失败的帧 → false(不算黑)。
+    /// <summary>只判"真·近全黑 / 带状近全黑"(可解码、确实 ≥95% 像素[或某个 1/3 条带]近黑)。空/0字节/未写完/解码失败的帧 → false(不算黑)。
     /// 用于【补帧黑帧防御】抽样:那里要找的是"GPU 输出真黑帧",若把"引擎还没写完的瞬时空帧"也当成黑,
     /// 会误触发整段补帧降级重算 → 补帧帧被清空 → upInput=0 → 超分无帧 / 合帧报"找不到 frame_%06d.jpg"。
-    /// 空/坏帧在这里应"跳过不判黑",交给后续帧完整校验处理,而不是当黑帧降级。</summary>
+    /// 空/坏帧在这里应"跳过不判黑",交给后续帧完整校验处理,而不是当黑帧降级。
+    /// (条带判定只针对"已成功解码的完整帧",与"帧还没写完"这个场景互不干扰,故不引入上面的误触发风险。)</summary>
     internal static bool IsBlackPngStrict(string file) => NearBlackProbe(file, failIsDefect: false);
 
     /// <summary>上面两个入口的唯一实现:差别只在"读不出的帧"算不算缺陷(failIsDefect)。
@@ -1990,7 +1994,11 @@ public static partial class EngineService
                 var p = bmp.GetPixel(x, y);
                 sums.Add((int)p.R + (int)p.G + (int)p.B);
             });
-            return AlhPro.Core.FrameInspect.IsNearBlack(sums.ToArray(), total);
+            // IsDefectiveFrame = 整帧近全黑(原语义一字未改)【或】任一 1/3 主条带近全黑(新增):
+            // 实测坏帧是"下 2/3 全黑、上 1/3 正常",只黑约 66% 像素,整帧口径必然漏检(详见 FrameInspect 注释)。
+            // 这样"黑帧"探测点(GPU 探测自检 / 分块黑块修复 / 补帧与层批抽样)都能识别带状坏帧,
+            // 从而走既有的降级链,而不是把它当正常帧放行。
+            return AlhPro.Core.FrameInspect.IsDefectiveFrame(sums.ToArray(), total, bmp.Width, bmp.Height);
         }
         catch { return failIsDefect; }
     }
@@ -2117,7 +2125,10 @@ public static partial class EngineService
         {
             var exe = FindRealESRGAN() ?? throw new FileNotFoundException("未找到 Real-ESRGAN 引擎");
             // 同单张路径:显式 -m models -n 模型名(缺 -m 会找不到模型加载失败);TTA(-x)在 2022 老引擎上会卡死,故不传
-            // -t 0:关闭引擎内部 tiling(实测引擎 tiling 在这类卡上 vkQueueSubmit failed → 黑帧/接缝)。
+            // -t 0 的语义是【引擎自己决定分块大小(auto)】,不是"关闭 tiling"——实测 ncnn-vulkan 引擎帮助里写的是
+            //   "-t tile-size (>=32/0=auto, default=0)",0 即 auto(旧注释写成"关闭引擎内部 tiling",与引擎语义相反)。
+            // 行为不变(仍传 0):整帧直算交给引擎按显存自选分块,分块过大才会 vkQueueSubmit 失败 → 黑帧/OOM,
+            // 那种情况由 RunEngAsync 的"降分块重试"与上层的黑帧降级链接住。
             // 视频帧整帧直算(OOM 时 RunEngAsync 自动降级重试/减 tile),避免逐帧"一块一块"。
             await RunEngAsync(exe, t => $"-i \"{inputDir}\" -o \"{outputDir}\" -s {engineScale} -m models -n {model} " +
                 $"-t 0 -g {gpuId}{SafeRender.GetEngineThreadArgs()}").ConfigureAwait(false);
@@ -2201,9 +2212,13 @@ public static partial class EngineService
     public static void ConvertPngToJpg(string pngPath, string jpgPath, float quality = 0.96f)
         => ConvertPngToJpg(pngPath, jpgPath, quality, out _);
 
-    /// <summary>同上,并顺带报告该帧是否"近全黑"(nearBlack)。
+    /// <summary>同上,并顺带报告该帧是否"缺陷帧"(nearBlack)——整帧近全黑【或】某条 1/3 主条带近全黑。
     /// 黑帧判定直接在已解码的位图上采样,不再另开一次全尺寸解码——视频批每帧本来就要解码转 JPG,
-    /// 为查黑帧再解码一遍等于把这条最热路径的开销翻倍。</summary>
+    /// 为查黑帧再解码一遍等于把这条最热路径的开销翻倍。
+    /// 【为什么必须带条带判定】实测坏帧形态"下 2/3 全黑、上 1/3 正常"只黑约 66% 像素,
+    /// 旧口径(整帧 ≥95%)判它正常 → 坏帧静默进成片、零日志、ncnnUnreliable 不置位(用户报的问题)。
+    /// 参数名沿用它原来的 nearBlack,但语义是"是否缺陷帧":true 的调用方一律按缺陷走既有降级链。
+    /// 注意:整帧近全黑的老语义【没有】被放宽(整帧近黑必然仍为 true),只是补上了漏检的那一类。</summary>
     public static void ConvertPngToJpg(string pngPath, string jpgPath, float quality, out bool nearBlack)
     {
         // 解码抛出/尺寸非法时默认留 true:异常路径由调用方按缺陷处理,这里偏保守不会漏判。
@@ -2217,7 +2232,7 @@ public static partial class EngineService
                 var p = img.GetPixel(x, y);
                 sums.Add((int)p.R + (int)p.G + (int)p.B);
             });
-            nearBlack = AlhPro.Core.FrameInspect.IsNearBlack(sums.ToArray(), total);
+            nearBlack = AlhPro.Core.FrameInspect.IsDefectiveFrame(sums.ToArray(), total, img.Width, img.Height);
         }
         // 视频中间帧 JPG:直接走 System.Drawing(GDI,转 24bppRgb 规避色偏),不走 WinRT——
         // WinRT BitmapEncoder 在后台/非 UI 线程会系统性抛 HRESULT=0x88982F41(视频处理必失败),

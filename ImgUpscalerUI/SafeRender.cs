@@ -334,7 +334,8 @@ public static class SafeRender
         // 【分发给所有用户】放宽"SplitCores 非 High 一律单批":之前一刀切把满足 2 路资源条件
         // (16G 内存/6G 显存/≥8核) 的中端机也卡成单路,浪费算力。改为"资源够才多路",条件仍保守:
         // two 要求 内存≥16G、有效显存≥6G、核数≥8,缺一就单路——不会让低端机爆显存/吃满 CPU。
-        // SplitCores 只影响多路时的线程分配,不再一刀切压制路数。
+        // SplitCores 现在只影响下游 ffmpeg 软编的线程参数(-j 已恒定 1:1:1,见 GetEngineThreadArgs),
+        // 不再一刀切压制路数。
         // 并发是显存的【真约束】(N 路 = N 份分块缓冲同时在显存里),所以这里必须按显存判;
         // 但空闲显存只有 NVIDIA 能真测,AMD/Intel 测不到时不再拿"总量×0.8"这个伪造值当门槛,
         // 退回上面已按 75% 折减的有效显存门槛(v≥6 / v≥10),宁可不加这一层也不要按假数据判。
@@ -563,39 +564,34 @@ public static class SafeRender
         return max;                                                 // 自动/中/高档:用满可用核
     }
 
-    /// <summary>AI 引擎(ncnn)线程参数(-j 加载:计算:保存),按 CPU 核数自动调优:
-    /// 低=1:1:1;中/高=加载 1,计算按核数分配(多核吃满但留余量,防引擎抢光 CPU 卡死整机)。
-    /// 计算线程 = 核数/2(中档封顶 4、高档封顶 6 —— 封顶 8 实测会让 x4plus 系模型全黑,详见函数内注释);核数少时自动收紧;「系统流畅优先」时用剩余核。
-    /// 开关2(SplitCores)开启时计算线程再除以并发路数,避免多路引擎挤在同一批核上超订。
-    /// 注意:save 线程恒定为 1——实测 ncnn-vulkan 20250915 版引擎(waifu2x/realesrgan)在
-    /// save>1 时与 Vulkan 提交队列冲突(vkQueueSubmit failed -4),小 tile 大批次下整批输出黑帧
-    /// (表现为"视频导出全黑/开头黑")。save 只写磁盘,单线程不会明显拖慢,稳定优先。</summary>
+    /// <summary>AI 引擎(ncnn)线程参数(-j 加载:计算:保存)。三个线程数一律取 1 —— 依据是实测,不再是"按核数调优"。
+    /// 【compute 为什么恒 1 —— 2026 实测:本机 RTX 4060 Laptop 8GB / 驱动 572.83 / 16 核,
+    ///  waifu2x-ncnn-vulkan 20250915 + models-cunet,2x,1080×1920 四帧目录批,-t 0,同素材同参数逐档对比】
+    /// · compute=4(旧中档在本机解析出的 -j 1:4:1)是【坏帧制造机】:6 次运行里 5 次(83%)打印 200+ 条
+    ///   "vkQueueSubmit failed",输出【每帧下 2/3 全黑、上 1/3 正常】或整帧全黑;
+    ///   而【退出码全是 0、引擎不报任何错】—— 用户侧只看到"超分成片里有黑帧"。
+    ///   同机 compute=1 → 0 失败、0.497 秒/帧、GPU 利用率 92.4%;compute=2 → 5/5 干净。
+    /// · 【提高 compute 既无吞吐收益、还更慢】同一素材逐档实测:1:1:1 = 0.87 秒/帧、GPU 59.5%;
+    ///   1:2:1 = 1.03 / 53.3%;1:4:1(旧值)= 1.27~1.38 / 46~50%。
+    ///   另一组生产形态实测 1:2:1=0.415、1:1:1=0.469、1:4:1(旧)=0.509 秒/帧,
+    ///   1:6:1 / 1:8:1 / 2:4:4 / 4:8:8 全落在 ±10% 噪声内 —— "档位越高越快"从来就不成立。
+    ///   超分本身是 GPU 瓶颈:多开 compute 线程只是把 Vulkan 提交队列挤爆,引擎反复重投/卡住,
+    ///   GPU 利用率从 92% 掉到 18~25%,活干得更少 —— 这就是用户报的"超分慢 + GPU 占用很低"。
+    /// · 硬上界 2:后续任何"按核数/并发调 compute"的尝试都不得越过 2(≥4 必掉进上述 vkQueueSubmit 风暴)。
+    ///   连"多路并发按路数分摊"也不再需要:compute 恒 1 时,即便 SplitCores 许可 2 路并发,
+    ///   聚合 proc 线程也只有 2 个,天然到不了 ≥4 的坏区间(原先的 ÷并发路数 正是为压制这个而存在)。
+    /// 【旧注释的依据已作废,故不再沿用】旧注释称"compute=8 会让 realesrgan x4plus 系全黑",但 2026 在
+    ///  1080×1920 上【没能复现】:1:8:1 与 1:6:1 都是 3.82/3.83 秒/帧、0 失败。旧依据靠不住,
+    ///  而"compute≥4 → 83% 坏帧"这条是可复现的实测,所以取 1,而不是沿用"封顶 6/8"那套。
+    /// 【load / save】恒 1:save>1 历史上同样会触发 vkQueueSubmit failed(黑帧,表现为"导出全黑/开头黑");
+    ///  save 只写磁盘,单线程不会明显拖慢,稳定优先。
+    /// 【共用性】本函数被图片超分 / 视频超分 / 逐块超分 / 补帧(rife)等多处共用。
+    ///  收紧到 1 是【更保守】的方向,不会给任何一条路径引入新的黑帧风险;也已逐档实测确认没有路径变慢。</summary>
     public static string GetEngineThreadArgs()
     {
-        int usable = CpuCoreCount - (LowPriorityEnabled ? (CpuCoreCount <= 4 ? 1 : 2) : 0);
-        usable = Math.Max(1, usable);
-        // 开关2:计算线程按并发路数分摊(多路时每实例更少线程,不超订)
-        int conc = Math.Max(1, GetVideoConcurrency());
-        // 【回到保守】compute 线程用保守的"可用核/2/并发路数"——实测把 compute 加大到"用满核数"
-        // 会让 ncnn-vulkan 在部分 N 卡(GTX/RTX)上多线程 Vulkan 提交队列竞争 → vkQueueSubmit 失败 → 黑帧。
-        // compute 过大正是"ncnn 之前没问题、后来黑帧"的根因(见 c001a03 引入的激进改法),这里回退保守。
-        // load/save 保持 1:save>1 同样会触发 vkQueueSubmit 失败(黑帧)。
-        // 【高档封顶 8→6,2026-09-08 实测】原先注释说 8 是"原版保守值",但 8 并不安全:
-        // RTX 4060 Laptop(16 核)上 realesrgan-ncnn-vulkan 跑 realesrgan-x4plus / x4plus-anime 目录模式,
-        // -j 1:8:1 稳定输出【全黑帧】(退出码 0、无任何报错,30/30 帧 YAVG=16 且 md5 完全相同),
-        // 5 次复现全部如此;-j 1:6:1 与 1:7:1 各 2 次全部正常。分块大小不影响(-t 0/200/400 都黑)。
-        // 轻量的 realesr-animevideov3(视频默认模型)在 compute=8 下正常,所以只有手动把 CPU 档位调到「高」
-        // 又选了 x4plus 系模型的用户会中招——跑几小时拿到一整条黑视频。
-        // 封 6 而不是 7:留一档余量;且 6 恰是实测最快的正常档(x4plus 30 帧:compute 1/2/4/6/7 =
-        // 189/193/195/127/232 秒),超分本身是 GPU 瓶颈,减 compute 不掉速度(animevideov3 compute 8 vs 2:5.64 vs 5.48 秒)。
-        int compute = EffectiveCpuLevel switch
-        {
-            1 => 1,
-            2 => Math.Clamp(usable / 2 / (SplitCores ? conc : 1), 2, 4),   // 中档:÷2,封顶4(原版)
-            _ => Math.Clamp(usable / 2 / (SplitCores ? conc : 1), 4, 6),   // 高档:÷2,封顶6(实测 8 会让 x4plus 全黑)
-        };
-        int load = 1;
-        int save = 1;                            // 恒 1:防 ncnn-vulkan save 并发触发 GPU 队列失败(黑帧)
+        const int load = 1;
+        const int compute = 1;   // 硬上界 2(见上):≥4 必出 vkQueueSubmit 风暴 → 带状/整帧黑帧
+        const int save = 1;      // 恒 1:防 ncnn-vulkan save 并发触发 GPU 队列失败(黑帧)
         return $" -j {load}:{compute}:{save}";
     }
 
@@ -788,7 +784,7 @@ public static class SafeRender
             TempWallEnabled = d.TempWallEnabled;
             LimitCpuJob = true;   // 强制开启(给其他程序留余量,不能关);忽略旧存档里的 false
             if (d.CpuCapPct is >= 1 and <= 100) CpuCapPct = d.CpuCapPct;
-            SplitCores = true;    // 默认开启(引擎按可用核分线程,避免多路挤核超订)
+            SplitCores = true;    // 默认开启(下游软编线程按可用核分配;-j 已恒 1:1:1,见 GetEngineThreadArgs)
             if (d.RestIntervalMin is >= 0.2 and <= 600) RestIntervalMin = d.RestIntervalMin;
             if (d.RestDurationMin is >= 1 and <= 120) RestDurationMin = d.RestDurationMin;
         }
