@@ -1286,6 +1286,11 @@ public sealed partial class VideoView : UserControl
         public string Name { get; set; } = "";
         public string SavedAt { get; set; } = "";
         public bool IsOfficial { get; set; }   // 官方预设(程序内置):悬停显示"官方"、不显示日期时间;用户预设=普通条目
+        /// <summary>官方预设的"参数基线版本"。0 = 早期版本(没有这个字段时写入的老预设)。
+        /// 用途:内置预设改了默认参数后,要在【下一次启动时把老的官方预设覆盖成新基线】——
+        /// 否则老用户永远带着旧参数(例如已删除的去频闪/去杂色、或旧的一拍二去重档)。
+        /// 只在 OfficialRev &lt; 当前基线 时才覆盖一次,之后用户自己的改动会被尊重,直到下次基线提升。</summary>
+        public int OfficialRev { get; set; }
         public VideoSettings Params { get; set; } = new();
     }
 
@@ -1318,10 +1323,15 @@ public sealed partial class VideoView : UserControl
 
     private const int MaxPresets = 100;   // 上限 100 个预设
 
-    /// <summary>官方内置预设定义(名字 + 一套默认参数)。以后要加官方预设,在这里加一项即可,下次更新自动带上。</summary>
-    private static (string Name, Func<VideoSettings> Make)[] BuiltinPresets() => new[]
+    /// <summary>官方内置预设定义(名字 + 参数基线版本 Rev + 一套默认参数)。
+    /// 以后要加官方预设,在这里加一项即可,下次启动自动带上。
+    /// 【Rev 怎么用】官方预设的参数基线一旦改动(增删项、调默认值),就把该项的 Rev 加 1 ——
+    /// 下次启动时 EnsureBuiltinPresets 会把老用户的同名官方预设覆盖成新基线(只覆盖一次),
+    /// 不然老用户永远带着旧参数。**只改这一项的 Rev,不要动其它项**,否则会连带覆盖用户对它们的自定义。
+    /// 约定:Rev = 0 表示"早期版本写入的老预设"(那时还没有 OfficialRev 字段)。</summary>
+    private static (string Name, int Rev, Func<VideoSettings> Make)[] BuiltinPresets() => new[]
     {
-        ( "通用画质增强 不含补帧", new Func<VideoSettings>(() => new VideoSettings
+        ( "通用画质增强 不含补帧", 0, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = false, Up = true, Engine = 0, Scale = 1, Gpu = 0,
             Interp = false, Model = 0, UpWaifu2xModel = 0, UpEsrganModel = 0, InterpScale = 0,
@@ -1330,24 +1340,28 @@ public sealed partial class VideoView : UserControl
             Scene = false, SceneThr = 0.3, TimeStep = 0.5, Tta = false, OutDir = "", CustomW = "1920", CustomH = "1080",
             DedupAlgo = 0, DedupHi = 12, DedupLo = 5, DedupFrac = 0.33, DedupSadThr = 3, DedupSsimThr = 0.97, ContentFps = 0,
             DedupMotionComp = true, DedupOnlyTrueHold = true, ManualProtectSmallMotion = true, DedupPhaseAlign = true,
-            PostSharpen = 25, PostClarity = 15, PostUsm = 20, PostDetail = 30, PostDeblur = 15, PostFlicker = 0, PostDenoise = 10, PostAa = 30,
+            PostSharpen = 25, PostClarity = 15, PostUsm = 20, PostDetail = 30, PostDeblur = 15, PostAa = 30,
             Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
             FastMode = false, Mute = false, VideoDenoiseOn = false, VideoDenoiseStrong = -1,
         })),
-        ( "动漫通用", new Func<VideoSettings>(() => new VideoSettings
+        // 【Rev 1】去重由「智能 + 去除一拍二」改为「动漫模式 + 去除一拍四」。
+        // 理由:动漫素材绝大多数是一拍二/一拍三,而"去除一拍四"才是把"一拍四的片子"还原成内容帧率的正解;
+        // 用智能模式则依赖拍数识别,识别不出就原样保留(等于没去重)。改档后按内容帧率均匀采样,不会误删细节帧。
+        // 同时清理已删除的 PostFlicker / PostDenoise(去频闪/去杂色两项已从管线移除,不再被读取)。
+        ( "动漫通用", 1, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = true, Up = true, Engine = 0, Scale = 1, Gpu = 0,
             Interp = true, Model = 0, UpWaifu2xModel = 1, UpEsrganModel = 0, InterpScale = 2,
             Target = false, TargetFps = "", VfrMode = 0, VfrExpanded = false, FpsBase = 0, FpsMode = 0, FpsOffset = 0, FpsExpanded = true,
-            DedupOn = true, DedupModel = 0, DedupAnime = 0, DedupSmart = 0, DedupThr = 0.01,
+            DedupOn = true, DedupModel = 1, DedupAnime = 4, DedupSmart = 0, DedupThr = 0.01,
             Scene = false, SceneThr = 0.3, TimeStep = 0.5, Tta = false, OutDir = "", CustomW = "1920", CustomH = "1080",
             DedupAlgo = 3, DedupHi = 12, DedupLo = 5, DedupFrac = 0.33, DedupSadThr = 3, DedupSsimThr = 0.97, ContentFps = 0,
             DedupMotionComp = true, DedupOnlyTrueHold = true, ManualProtectSmallMotion = true, DedupPhaseAlign = true,
-            PostSharpen = 20, PostClarity = 20, PostUsm = 20, PostDetail = 30, PostDeblur = 20, PostFlicker = 5, PostDenoise = 10, PostAa = 50,
+            PostSharpen = 20, PostClarity = 20, PostUsm = 20, PostDetail = 30, PostDeblur = 20, PostAa = 50,
             Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
             FastMode = false, Mute = false, VideoDenoiseOn = true, VideoDenoiseStrong = 1,
         })),
-        ( "去重补帧4x", new Func<VideoSettings>(() => new VideoSettings
+        ( "去重补帧4x", 0, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = true, Up = false, Engine = 0, Scale = 1, Gpu = 0,
             Interp = true, Model = 0, UpWaifu2xModel = 0, UpEsrganModel = 0, InterpScale = 2,
@@ -1356,44 +1370,61 @@ public sealed partial class VideoView : UserControl
             Scene = false, SceneThr = 0.3, TimeStep = 0.5, Tta = false, OutDir = "", CustomW = "1920", CustomH = "1080",
             DedupAlgo = 3, DedupHi = 12, DedupLo = 5, DedupFrac = 0.33, DedupSadThr = 3, DedupSsimThr = 0.97, ContentFps = 0,
             DedupMotionComp = true, DedupOnlyTrueHold = true, ManualProtectSmallMotion = true, DedupPhaseAlign = true,
-            PostSharpen = 0, PostClarity = 0, PostUsm = 0, PostDetail = 0, PostDeblur = 0, PostFlicker = 0, PostDenoise = 0, PostAa = 0,
+            PostSharpen = 0, PostClarity = 0, PostUsm = 0, PostDetail = 0, PostDeblur = 0, PostAa = 0,
             Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
             FastMode = false, Mute = false, VideoDenoiseOn = false, VideoDenoiseStrong = -1,
         })),
     };
 
-    /// <summary>确保每个官方内置预设存在:缺失则用官方默认创建(标记官方);已有同名则标记为官方(把用户保存的同款变成官方)。
-    /// 绝不覆盖/删除用户已有预设。以后加官方预设只需在 BuiltinPresets() 加一项。</summary>
+    /// <summary>确保每个官方内置预设存在,并把【参数基线过旧】的官方预设更新到新基线。
+    /// 规则:
+    ///   · 缺失 → 用官方默认创建(标记官方 + 记下当前 Rev)。
+    ///   · 同名但本来不是官方 → 只标记为官方,【不动参数】(用户自己攒的同名预设保留原样)。
+    ///   · 同名、是官方、且 OfficialRev &lt; 当前 Rev → 用新基线【覆盖参数】并记下新 Rev(只覆盖这一次)。
+    ///     这条是刻意为之:老用户手里的"老动漫通用"必须被更新,否则永远带着旧档位(如旧的"智能+一拍二"去重)。
+    ///   · 用户自建的其它预设(名字不同)一律不碰、不删、不改参数。
+    /// 以后想再更新某项默认参数:把 BuiltinPresets() 里【那一项】的 Rev 加 1 即可 —— 只加那一项,
+    /// 否则会连带覆盖用户对其它官方预设的自定义。</summary>
     private void EnsureBuiltinPresets()
     {
         try
         {
             var list = LoadPresets();
             bool changed = false;
-            foreach (var (name, make) in BuiltinPresets())
+            int updated = 0;
+            foreach (var (name, rev, make) in BuiltinPresets())
             {
                 var existing = list.FirstOrDefault(x => x.Name == name);
-                if (existing != null)
+                if (existing == null)
                 {
-                    if (!existing.IsOfficial) { existing.IsOfficial = true; changed = true; }
+                    // 缺失 → 用官方默认参数创建,标记官方,排在已有预设之前(官方靠前)
+                    list.Insert(0, new VideoPreset
+                    {
+                        Name = name,
+                        SavedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm") + " · 内置",
+                        IsOfficial = true,
+                        OfficialRev = rev,
+                        Params = make(),
+                    });
+                    changed = true;
+                    AppLogger.Info($"[内置预设] 已创建官方预设「{name}」(基线 Rev {rev})");
                     continue;
                 }
-                // 缺失 → 用官方默认参数创建,标记官方,排在已有预设之前(官方靠前)
-                var p = new VideoPreset
+                if (!existing.IsOfficial) { existing.IsOfficial = true; changed = true; }
+                if (existing.OfficialRev < rev)
                 {
-                    Name = name,
-                    SavedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm") + " · 内置",
-                    IsOfficial = true,
-                    Params = make(),
-                };
-                list.Insert(0, p);
-                changed = true;
-                AppLogger.Info($"[内置预设] 已创建官方预设「{name}」");
+                    existing.Params = make();
+                    existing.OfficialRev = rev;
+                    changed = true;
+                    updated++;
+                    AppLogger.Info($"[内置预设] 已把官方预设「{name}」更新到新基线(Rev {rev}):"
+                        + "该预设参数已按新版重置;其余官方预设与你自建的预设未动");
+                }
             }
             if (changed)
             {
                 SavePresets(list);
-                AppLogger.Info("[内置预设] 官方预设检查完成(缺失已补/同名已标记官方,用户预设未动)");
+                AppLogger.Info($"[内置预设] 官方预设检查完成(缺失已补 / 同名已标记官方 / 基线过旧已更新 {updated} 项;用户自建预设未动)");
             }
         }
         catch { }
