@@ -3449,9 +3449,16 @@ public sealed partial class VideoView : UserControl
             if (upOn && upscaleShrink1x) scale = 2;
             bool highRate = interpScale >= 4;   // 4x 及以上
             double totalNeedGB = 0, totalSec = 0;
-            // 超限检测:输出分辨率 >4K(超 3840×2160,即宽>3840 或 高>2160)时,开始前弹确认(仍要继续/取消)。
-            // 输出尺寸取决于超分倍率:0=1x缩回(输出=源) 1/2/3=×2/×3/×4 4=自定义(用户填的宽高)。
-            var over4k = new System.Collections.Generic.List<string>();
+            // 【已删除·跨线程读控件导致整段扫描静默失效】原先这里在 Task.Run 之前先声明 over4k 列表,
+            // 并在 lambda 内读 VideoScaleRadios.SelectedIndex / CustomWidthBox.Text / CustomHeightBox.Text
+            // 来算"输出超 4K"。但 WinUI3 的 XAML 对象有线程亲和,后台线程访问会抛
+            // RPC_E_WRONG_THREAD(0x8001010E)——本仓库真机复现过同一故障(见本文件 3879 行注释)。
+            // 该异常被下面 lambda 内的 catch{} 逐个吞掉,于是"超分开启时"整段扫描静默失效:
+            //   · over4k 恒为空 → 超 4K 确认框永不弹出(线上表现就是"我从来没见过这个弹窗");
+            //   · totalSec / totalNeedGB 恒为 0 → 爆盘预检(totalNeedGB > 剩余×0.9)也永不触发,
+            //     诊断框还会显示"约 0 分钟 / 约 0 GB"这种假数字,比不显示更误导。
+            // 现在:超 4K 只走【内联红字】(RefreshVideoOutSpec → VideoOutSpecText,按总像素判定),
+            // 不再弹窗(用户明确要求"不要弹窗,放在进度条旁边"),本方法只负责给爆盘预检算真实数值。
             // 后台扫描每个视频(不卡 UI)
             await Task.Run(async () =>
             {
@@ -3464,22 +3471,6 @@ public sealed partial class VideoView : UserControl
                         double fps = 30;
                         try { if (double.TryParse(VideoService.ProbeFps(it.Path), NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var pf) && pf > 0) fps = pf; } catch { }
                         var (w, h) = await VideoService.ProbeSizeAsync(it.Path).ConfigureAwait(false);
-                        // 输出分辨率:仅超分影响尺寸(补帧只改帧率)。自定义分辨率用用户填的;否则源×倍率。
-                        int outW = w, outH = h;
-                        if (upOn && VideoScaleRadios.SelectedIndex != 0)
-                        {
-                            if (VideoScaleRadios.SelectedIndex == 4)
-                            {
-                                int.TryParse(CustomWidthBox.Text, out var cw); int.TryParse(CustomHeightBox.Text, out var ch);
-                                if (cw > 0 && ch > 0) { outW = cw; outH = ch; }
-                            }
-                            else { outW = (int)Math.Round((double)w * scale); outH = (int)Math.Round((double)h * scale); }
-                        }
-                        // 超4K按【总像素】判(宽高别只看一边):4K=3840×2160≈829万像素。
-                        // 用"任一边"判会误伤宽高比极端的视频(如 10×33333 高远超2160但根本不是4K)——
-                        // 只在这些像素确实超过 4K 时才提示。用 double 防 int 溢出。
-                        if ((double)outW * outH > 3840.0 * 2160.0)
-                            over4k.Add($"{it.Name}({outW}×{outH})");
                         totalSec += VideoService.EstimateProcessSeconds(dur, fps, w, h,
                             upOn, scale, engine, interpOn, interpScale, dedupOn, 0);
                         // 占盘(JPG 中间帧峰值,与 C3 一致):源帧≈1MB/1080p,放大后×倍率²×0.18
@@ -3494,42 +3485,15 @@ public sealed partial class VideoView : UserControl
                 }
             }).ConfigureAwait(true);
 
-            // ===== 超 4K 确认弹窗(硬性要求:超过 4K 必须让用户确认才能继续)=====
-            // 左「仍要继续」(红) / 右「取消」(蓝);取消则不启动。
-            if (over4k.Count > 0)
-            {
-                var dlg4k = new ContentDialog
-                {
-                    Title = "⚠ 输出规格超过 4K",
-                    Content = new StackPanel
-                    {
-                        Spacing = 8,
-                        Children =
-                        {
-                            new TextBlock
-                            {
-                                Text = "以下视频输出分辨率超过 4K:\n\n　" + string.Join("\n　", over4k)
-                                    + "\n\n输出超 4K 会占用极大量显存/临时磁盘、处理非常慢,甚至中途失败。是否仍要继续?",
-                                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-                            },
-                        },
-                    },
-                    PrimaryButtonText = "仍要继续",
-                    CloseButtonText = "取消",
-                    DefaultButton = Microsoft.UI.Xaml.Controls.ContentDialogButton.Primary,
-                    XamlRoot = this.XamlRoot,
-                    // 按钮配色:左「仍要继续」红 / 右「取消」蓝(用户指定)
-                    PrimaryButtonStyle = ButtonStyle(Windows.UI.Color.FromArgb(255, 217, 48, 48), Windows.UI.Color.FromArgb(255, 255, 255, 255)),
-                    CloseButtonStyle = ButtonStyle(Windows.UI.Color.FromArgb(255, 0, 103, 192), Windows.UI.Color.FromArgb(255, 255, 255, 255)),
-                };
-                var r4k = await dlg4k.ShowAsync();
-                if (r4k != Microsoft.UI.Xaml.Controls.ContentDialogResult.Primary)
-                {
-                    Log("⚠ 检测到输出超 4K,用户选择「取消」,已停止处理。");
-                    return false;
-                }
-                Log($"⚠ 输出超 4K,用户选择「仍要继续」: {string.Join(" / ", over4k)}");
-            }
+            // 【已删除】原「输出超 4K」阻塞确认弹窗(仍要继续/取消)。
+            // 删除原因有二:
+            //   ① 它从未真正生效过 —— 判定所依赖的 outW/outH 算在跨线程的 Task.Run 里读 XAML 控件,
+            //      抛 0x8001010E 被 catch{} 吞掉,over4k 恒空(见本方法开头的说明)。一个永远不会出现的
+            //      弹窗只会让人以为"这道防线在",实际没有。
+            //   ② 与既有设计冲突 —— 超 4K 已经在输出规格行用红字内联提示(RefreshVideoOutSpec:
+            //      按【总像素】判定,不会误伤 10×33333 这类极端宽高比),RELEASE_NOTES 公布的既定做法
+            //      也是"不弹窗、改内联红字",用户也明确要求过"不要弹窗,放在进度条旁边"。
+            // 所以现在超 4K 只做内联红字提示,不再打断用户。
 
             // 硬风险1:会爆盘(预计占 > 当前临时盘剩余)
             bool diskRisk = false;
@@ -3593,16 +3557,6 @@ public sealed partial class VideoView : UserControl
             return r == Microsoft.UI.Xaml.Controls.ContentDialogResult.Primary;
         }
         catch { return true; }   // 诊断出错不拦截,照常处理
-    }
-
-    /// <summary>构造一个纯色按钮 Style(用于 ContentDialog 按钮自定义配色:如超4K弹窗「仍要继续」红 /「取消」蓝)。</summary>
-    private static Microsoft.UI.Xaml.Style ButtonStyle(Windows.UI.Color bg, Windows.UI.Color fg)
-    {
-        var st = new Microsoft.UI.Xaml.Style(typeof(Microsoft.UI.Xaml.Controls.Button));
-        st.Setters.Add(new Microsoft.UI.Xaml.Setter(Microsoft.UI.Xaml.Controls.Control.BackgroundProperty, new Microsoft.UI.Xaml.Media.SolidColorBrush(bg)));
-        st.Setters.Add(new Microsoft.UI.Xaml.Setter(Microsoft.UI.Xaml.Controls.Control.ForegroundProperty, new Microsoft.UI.Xaml.Media.SolidColorBrush(fg)));
-        st.Setters.Add(new Microsoft.UI.Xaml.Setter(Microsoft.UI.Xaml.Controls.Control.BorderBrushProperty, new Microsoft.UI.Xaml.Media.SolidColorBrush(bg)));
-        return st;
     }
 
     private async void RunBtn_Click(object sender, RoutedEventArgs e)
