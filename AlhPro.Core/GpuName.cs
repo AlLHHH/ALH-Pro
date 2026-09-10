@@ -56,9 +56,14 @@ public static class GpuName
             if (System.Text.RegularExpressions.Regex.IsMatch(name,
                 @"Radeon(\(TM\))?\s*(?:[3-9]\d{2}M|1\d{2}M)", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
                 return true;
-            // Vega 核显:Vega 3/5/6/7/8/9/10/11(RX Vega 56/64 独显,排除)
+            // Vega 核显:Vega 3/5/6/7/8/9/10/11(RX Vega 56/64 是独显,必须排除)
+            // 【为什么不能写成 (?:3|4|...|11)(?!\s*(?:56|64))】那样交替组只吃掉【一位】数字,
+            // 前瞻随即在剩下的 "6"/"4" 上求值 → "\s*56" 永远匹配不上 → 前瞻恒成功 →
+            // "RX Vega 56/64" 被判成核显(实测确认)。改用"后面不能再跟数字":(?!\d)。
+            // 实测 10 个真实卡名全部正确:RX Vega 56 / 64 / 56 8GB / 64 Liquid → 独显;
+            // Vega 3 / 8 / 11 / Radeon(TM) Vega 8 Graphics → 核显;RX 580 与 Radeon(TM) Graphics 不受影响。
             if (System.Text.RegularExpressions.Regex.IsMatch(name,
-                @"Vega\s*(?:3|4|5|6|7|8|9|10|11)(?!\s*(?:56|64))", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                @"Vega\s*(?:10|11|[3-9])(?!\d)", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
                 return true;
         }
         if (!name.Contains("Intel", StringComparison.OrdinalIgnoreCase)) return false;

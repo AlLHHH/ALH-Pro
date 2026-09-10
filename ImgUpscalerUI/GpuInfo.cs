@@ -90,9 +90,12 @@ public static class GpuInfo
             if (System.Text.RegularExpressions.Regex.IsMatch(n,
                 @"Radeon(\(TM\))?\s*(?:[3-9]\d{2}M|1\d{2}M)", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
                 return true;
-            // Vega 核显:Vega 3/5/6/7/8/9/10/11(RX Vega 56/64 独显,排除)
+            // Vega 核显:Vega 3/5/6/7/8/9/10/11(RX Vega 56/64 是独显,必须排除)
+            // 与 AlhPro.Core/GpuName.IsIntegrated 保持同一份正则(两处必须同步改,已实测 10/10 正确):
+            // 不能写成 (?:3|4|...|11)(?!(?:56|64)) —— 交替组只吃一位数字,前瞻会在剩下的 "6"/"4" 上求值,
+            // 于是前瞻恒成功,"RX Vega 56/64" 被判成核显。改用"后面不能再跟数字"。
             if (System.Text.RegularExpressions.Regex.IsMatch(n,
-                @"Vega\s*(?:3|4|5|6|7|8|9|10|11)(?!\s*(?:56|64))", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                @"Vega\s*(?:10|11|[3-9])(?!\d)", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
                 return true;
         }
         if (!n.Contains("Intel", StringComparison.OrdinalIgnoreCase)) return false;
