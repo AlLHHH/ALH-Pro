@@ -96,6 +96,61 @@ public class VideoPipelineTests
         Assert.Null(VideoPipeline.BuildVfrSetptsExpr(new List<double>()));
     }
 
+    // ---------- BuildVfrSetptsExpr:退化时长必须"回退 CFR",而不是死循环 ----------
+    // 注意:下列用例在【修前】不是失败而是让测试进程挂死 —— 合并循环里的
+    // Math.Abs(durs[i] - d) < 1e-5 在 d 为 NaN/±Inf 时恒为假 → i 永不推进、外层 while 永不退出、
+    // segs 无界增长到 OOM,末尾的 catch 也拦不住(那不是异常)。所以是"先修代码、再加这些测试"。
+
+    /// <summary>非有限时长(NaN/±Inf):整表回退 CFR。放在表首、表尾、单元素位置都要拦到(守卫必须扫全表)。</summary>
+    [Fact]
+    public void BuildVfrSetpts_non_finite_duration_returns_null()
+    {
+        Assert.Null(VideoPipeline.BuildVfrSetptsExpr(new List<double> { 0.04, 0.04, double.NaN, 0.08 }));
+        Assert.Null(VideoPipeline.BuildVfrSetptsExpr(new List<double> { double.NaN }));
+        Assert.Null(VideoPipeline.BuildVfrSetptsExpr(new List<double> { double.PositiveInfinity, 0.04 }));
+        Assert.Null(VideoPipeline.BuildVfrSetptsExpr(new List<double> { 0.04, double.NegativeInfinity }));
+    }
+
+    /// <summary>非正时长(0/负数):同样是契约外输入,回退 CFR(不能进表达式,否则 PTS 会倒退)。</summary>
+    [Fact]
+    public void BuildVfrSetpts_non_positive_duration_returns_null()
+    {
+        Assert.Null(VideoPipeline.BuildVfrSetptsExpr(new List<double> { 0.04, 0.0, 0.04 }));
+        Assert.Null(VideoPipeline.BuildVfrSetptsExpr(new List<double> { 0.0 }));
+        Assert.Null(VideoPipeline.BuildVfrSetptsExpr(new List<double> { 0.04, -0.04 }));
+    }
+
+    /// <summary>守卫不能过紧:合法但极小的时长(VFR 素材 1/96000 帧间隔)必须照样出表达式,
+    /// 否则真 VFR 素材会被这条守卫整段降级成 CFR。</summary>
+    [Fact]
+    public void BuildVfrSetpts_tiny_but_valid_durations_still_produce_expr()
+    {
+        var expr = VideoPipeline.BuildVfrSetptsExpr(
+            new List<double> { 1.0 / 96000.0, 1.0 / 96000.0, 1.0 / 30.0 });
+
+        Assert.NotNull(expr);
+    }
+
+    /// <summary>末段必须没有 lt(N,e) 上界:setpts 在滤镜链末尾、前面还有 minterpolate/fps 重采样,
+    /// 送进来的帧数比时长表多 1 是常态 —— 若末段也带 `lt(N,durs.Count)`,多出来的那帧所有段项都为 0 →
+    /// PTS=0(与首帧同刻),播放器会当作重复时间戳丢掉,成片末尾少一截。
+    /// 同时钉住"非末段仍必须有上界",否则各段会重叠累加。</summary>
+    [Fact]
+    public void BuildVfrSetpts_last_segment_has_no_upper_bound()
+    {
+        // 4 帧(0.04/0.04/0.08/0.08)→ 2 段:段0 上界 2,段1 = 末段
+        var expr = VideoPipeline.BuildVfrSetptsExpr(new List<double> { 0.04, 0.04, 0.08, 0.08 });
+        Assert.NotNull(expr);
+
+        var parts = expr!.Split(" + ");
+        Assert.Equal(2, parts.Length);
+        Assert.Contains("lt(N\\,2)*gte(N\\,0)", parts[0]);   // 非末段保留上界(天然不重叠)
+        Assert.DoesNotContain("lt(N\\,", parts[1]);          // 末段无上界
+        Assert.Contains("gte(N\\,2)", parts[1]);
+        // 表尾之外那一帧(N = 4 = 表长)不能被任何 lt(N,4) 关在门外
+        Assert.DoesNotContain("lt(N\\,4)", expr);
+    }
+
     // ---------- IsVfrByRateRatio ----------
     // 下列帧率全部是打包版 ffprobe 的真实测量值,不是构想的数字:
     //   CFR 30fps 素材       r_frame_rate=30/1   avg_frame_rate=30/1

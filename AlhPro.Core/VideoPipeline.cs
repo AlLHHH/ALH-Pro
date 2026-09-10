@@ -72,11 +72,22 @@ public static class VideoPipeline
         }
     }
 
-    /// <summary>由时长表生成 ffmpeg VFR setpts 表达式(合并相邻相同时长段;段数&gt;400 返回 null=回退 CFR)。</summary>
+    /// <summary>由时长表生成 ffmpeg VFR setpts 表达式(合并相邻相同时长段;段数&gt;400 返回 null=回退 CFR)。
+    /// 时长表里出现非有限值(NaN/±Inf)或非正值时一律返回 null=回退 CFR:这不是"精度差一点"，
+    /// 而是会让本函数的合并循环永不推进(见下方守卫注释)。</summary>
     public static string? BuildVfrSetptsExpr(List<double> durs)
     {
         try
         {
+            // 入口守卫:非有限/非正的时长直接回退 CFR(本函数注释承诺的兜底行为)。
+            // 为什么必须在入口拦:合并循环用 Math.Abs(durs[i] - d) < 1e-5 判定"同一段",而
+            // Math.Abs(NaN - d) < 1e-5 恒为假 → i 永不推进,外层 while (i < durs.Count) 永不退出,
+            // 每轮还往 segs 里塞一段 → 无界增长到 OOM。这不是异常,末尾的 catch 拦不住,
+            // 调用方的看门狗和"停止"按钮也救不回来(进程直接挂死)。NaN/±Inf 一旦从某个新探测源
+            // 传进来就是必挂,所以这里按契约直接回退,而不是试图"算出一个近似结果"。
+            foreach (var x in durs)
+                if (!double.IsFinite(x) || x <= 0) return null;
+
             // 合并相邻相同时长成段(±1e-5 视为相同)
             var segs = new System.Collections.Generic.List<(int s, int e, double p0, double d)>();
             int i = 0;
@@ -86,19 +97,30 @@ public static class VideoPipeline
                 int s = i;
                 double d = durs[i];
                 while (i < durs.Count && Math.Abs(durs[i] - d) < 1e-5) i++;
+                // 保险:即便将来有人改宽上面的守卫(或把容差换成相对判据),也必须保证 i 单调前进 ——
+                // 否则这里又变回"每轮加一段、i 不动"的死循环。
+                if (i == s) i++;
                 segs.Add((s, i, acc, d));
+                // 段数上限放进循环内:原先放在循环之后,一旦合并循环退化,这个判断永远到不了,
+                // 等于没有上限。放在这里保证它一定可达,且超限时立即返回、不再继续建表。
+                if (segs.Count > 400) return null;   // 超长:回退 CFR(避免 setpts 命令超命令行长度)
                 acc += d * (i - s);
             }
             if (segs.Count == 0) return null;
-            if (segs.Count > 400) return null;   // 超长:回退 CFR(避免 setpts 命令超命令行长度)
             var inv = CultureInfo.InvariantCulture;
             var sb = new StringBuilder("setpts=(");
-            bool first = true;
-            foreach (var (s, e, p0, d) in segs)
+            for (int k = 0; k < segs.Count; k++)
             {
-                if (!first) sb.Append(" + ");
-                first = false;
-                sb.Append($"(lt(N\\,{e})*gte(N\\,{s})*({p0.ToString("0.######", inv)}+(N-{s})*{d.ToString("0.######", inv)}))");
+                var (s, e, p0, d) = segs[k];
+                if (k > 0) sb.Append(" + ");
+                // 末段只留 gte(N,s)、去掉 lt(N,e) 上界:setpts 位于滤镜链末尾,其前面还有
+                // minterpolate/fps 重采样,送进来的帧数比时长表多 1 是常态。而末段的 e 就是
+                // durs.Count,多出来的那一帧会让【所有】段项都为 0 → PTS=0(与首帧同刻),
+                // 播放器把它当重复时间戳丢掉 → 成片末尾少一截/抖一下。各段条件本身互斥
+                // (前面各段仍带 lt 上界),所以末段去掉上界不会与它们重叠。
+                bool last = k == segs.Count - 1;
+                string range = last ? $"gte(N\\,{s})" : $"lt(N\\,{e})*gte(N\\,{s})";
+                sb.Append($"({range}*({p0.ToString("0.######", inv)}+(N-{s})*{d.ToString("0.######", inv)}))");
             }
             sb.Append(")/TB");
             return sb.ToString();
