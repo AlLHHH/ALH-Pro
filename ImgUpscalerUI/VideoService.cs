@@ -250,7 +250,7 @@ public static class VideoService
     /// <param name="inFpsOverride">用户指定输入帧率(>0 时优先于自动探测)。</param>
     /// <param name="interpScale">补帧倍率(2/3/4/8;3 需 v4 架构模型)。</param>
     /// <param name="targetFps">指定输出帧率(仅补帧时生效;null=按倍率计算)。</param>
-    /// <param name="dedupMode">去重模式:0=关,1=严格(完全相同),2=标准,3=自定义阈值。</param>
+    /// <param name="dedupMode">去重模式(= VideoView 去重模型下拉索引+1):0=关,1=智能检测(自动识别拍数→网格采样),2=动漫模式(按拍型均匀采样),3=手动模式(按 dedupAlgo 分支)。</param>
     /// <param name="dedupThreshold">去重阈值(自定义模式,scene 分数上限)。</param>
     /// <param name="interpModel">RIFE 模型目录名(相对 engines/rife)。</param>
     /// <param name="sceneThreshold">转场识别阈值 0~1(null=不检测;转场处不插帧)。</param>
