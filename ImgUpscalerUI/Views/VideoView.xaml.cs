@@ -564,9 +564,12 @@ public sealed partial class VideoView : UserControl
             string? compatMsg = null;
             bool upOn = UpscaleToggle.IsChecked == true;
             bool interpOn = InterpToggle.IsChecked == true;
-            if (upOn && VideoEngineRadios.SelectedIndex == 1 && EngineService.OldNcnnGpuRisky())
+            // 【以实测为准,不再按型号猜】只有真测出"本机 realesrgan ncnn 不可用"才提示;没测过不提示
+            // (原先用 OldNcnnGpuRisky() → 50 系一律提示,而实际探测往往是能跑的,等于对用户说反话)
+            if (upOn && VideoEngineRadios.SelectedIndex == 1
+                && EngineService.TryGetNcnnVerdict("realesrgan", AppSettings.GpuIndex) == false)
             {
-                compatMsg = $"⚠ 当前显卡与「Real-ESRGAN」(2022 版)不兼容,建议改用「waifu2x」(官方新版,更稳定)";
+                compatMsg = $"⚠ 本机实测「Real-ESRGAN」(2022 版)无法用 GPU 加速,建议改用「waifu2x」(官方新版,更稳定)";
             }
             else if (interpOn && InterpModelCombo.SelectedIndex is 3 or 4 or 5 or 6 && EngineService.OldRifeModelRisky())
             {
@@ -4104,10 +4107,13 @@ public sealed partial class VideoView : UserControl
                 catch { }
             }
         }
-        // ===== RTX 50 系 + 旧引擎(realesrgan,2022 版 ncnn)提前提示 =====
-        // 50 系上 real 引擎可能降级 CPU;waifu2x(官方 20250915 版)兼容。让用户知情,而非跑起来才发现掉速。
-        // 探测(超分前 1×1 实测)仍会兜底;这里只是提前告知+给选择。
-        if (up && IsBlackwellGpu() && VideoEngineRadios.SelectedIndex == 1)
+        // ===== Real-ESRGAN 在本机 GPU 上【实测】跑不通时提前提示 =====
+        // 【不再按型号猜】原先这里是 "IsBlackwellGpu() 就弹窗",等于 50 系一律假定不兼容:
+        // 引擎路由已改成真机探测(EngineService.EnsureNcnnProbeAsync),提示也必须以【实测结论】为准 ——
+        // 只有已经测出"这台机的 realesrgan ncnn 不可用"(TryGetNcnnVerdict == false)才弹窗;
+        // 没测过就交给运行时探测去定并明确告知,避免"先弹窗说不兼容、结果跑得比 waifu2x 还快"的说反话。
+        if (up && IsBlackwellGpu() && VideoEngineRadios.SelectedIndex == 1
+            && EngineService.TryGetNcnnVerdict("realesrgan", AppSettings.GpuIndex) == false)
         {
             if (await AskBlackwellOldEngineAsync("Real-ESRGAN"))
                 VideoEngineRadios.SelectedIndex = 0;   // 好,换成 waifu2x(兼容 50 系,且最快)

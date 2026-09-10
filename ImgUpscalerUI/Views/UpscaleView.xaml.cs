@@ -313,7 +313,11 @@ public sealed partial class UpscaleView : UserControl
         public string Name { get; set; } = "";
         public string SavedAt { get; set; } = "";
         public bool IsOfficial { get; set; }   // 官方预设(程序内置):悬停显示"官方"、无删除日期;用户预设=普通条目
-        public bool ScaleIndexV2 { get; set; }   // Params.Scale 已按 4 项单选索引语义存储(旧文件为"旧版五项"语义,见迁移)
+        /// <summary>官方预设【参数基线版本】(与视频页 VideoPreset.OfficialRev 同一机制)。
+        /// 用途:内置预设改了默认参数后,要在【下一次启动时把老的官方预设覆盖成新基线】——
+        /// 只在 OfficialRev &lt; 当前基线 时才覆盖一次,之后用户自己的改动会被尊重,直到下次基线提升。
+        /// 约定:Rev = 0 表示"早期版本写入的老预设"(那时还没有 OfficialRev 字段)。</summary>
+        public int OfficialRev { get; set; }
         public UpscaleSettings Params { get; set; } = new();
     }
 
@@ -344,73 +348,91 @@ public sealed partial class UpscaleView : UserControl
         catch { }
     }
 
-    /// <summary>官方内置图片预设定义(名字 + 一套默认参数)。以后要加官方预设,在这里加一项即可,下次更新自动带上。
-    /// Scale 一律写【页面当前的 4 项单选索引】语义(0=1x超分,1=2x,2=3x,3=4x),与 ApplyImgSettings 的读法一致;
-    /// 老版本这里写的是"旧版五项"语义(1=1x超分,3=3x),由 EnsureBuiltinImgPresets 里的一次性迁移换算过来。</summary>
-    private static (string Name, Func<UpscaleSettings> Make)[] BuiltinImgPresets() => new[]
+    /// <summary>官方内置图片预设定义(名字 + 参数基线版本 Rev + 一套默认参数)。
+    /// 以后要加官方预设,在这里加一项即可,下次启动自动带上;想更新某项的默认参数,把【那一项】的 Rev 加 1
+    /// (只加那一项,否则会连带覆盖用户对其它官方预设的自定义)。
+    /// Scale 一律写【页面当前的 4 项单选索引】语义(0=1x超分,1=2x,2=3x,3=4x),与 ApplyImgSettings 的读法一致。
+    /// 语义版本约定(Rev=0):早期版本写入的官方预设按"旧版五项"语义写 Scale(1=1x超分、3=3x),
+    /// 与现在的读法【差一位】。Rev=1 是第一个携带正确倍率语义的基线,由 EnsureBuiltinImgPresets 覆盖纠正。
+    /// Rev=2(仅「清晰MAX」,其它项不动):倍率 3x → 4x、输出码率档 默认 → 超高。只提这一项的 Rev,
+    /// 所以「通用变清晰」不会被连带覆盖,用户对它的改动继续被尊重。</summary>
+    private static (string Name, int Rev, Func<UpscaleSettings> Make)[] BuiltinImgPresets() => new[]
     {
-        ( "通用变清晰", new Func<UpscaleSettings>(() => new UpscaleSettings
+        ( "通用变清晰", 1, new Func<UpscaleSettings>(() => new UpscaleSettings
         {
             Remember = true, Mode = 0, W2xModel = 0, Scale = 0, Noise = 2, Tta = false, SelectedOnly = false,
             Fmt = 0, Detail = 50, Sharpen = 10, Clarity = 15, Deblur = 35, Usm = 20, Edge = 5, DetailEnhance = 10,
             Denoise = 20, Aa = 40, Dehaze = 5, ImgQualityMode = 2, ImgQualityCustom = 92, ImgQuality = 92,
             PreDenoise = true, DenoiseLevel = 0, OutDir = "",
         })),
-        ( "清晰MAX", new Func<UpscaleSettings>(() => new UpscaleSettings
+        // 【Rev=2】倍率 3x → 4x(realesrgan-x4plus 权重原生就是 4x,4x 直出不再需要级联推演);
+        // 输出码率档 默认(92) → 超高(98)。提 Rev 的【唯一目的】就是让老用户手里那个旧基线(Rev≤1)的
+        // 「清晰MAX」在下次启动时被覆盖成这个新基线 —— 不改 Rev 的话上面那段 OfficialRev 判断不会触发,
+        // 老用户永远停在 3x + 92,而列表里明明写着官方预设。
+        ( "清晰MAX", 2, new Func<UpscaleSettings>(() => new UpscaleSettings
         {
-            Remember = true, Mode = 1, W2xModel = 2, Scale = 2, Noise = 3, Tta = false, SelectedOnly = false,
+            Remember = true, Mode = 1, W2xModel = 2, Scale = 3, Noise = 3, Tta = false, SelectedOnly = false,
             Fmt = 0, Detail = 40, Sharpen = 20, Clarity = 25, Deblur = 35, Usm = 30, Edge = 30, DetailEnhance = 20,
-            Denoise = 35, Aa = 65, Dehaze = 5, ImgQualityMode = 2, ImgQualityCustom = 92, ImgQuality = 92,
+            Denoise = 35, Aa = 65, Dehaze = 5, ImgQualityMode = 3, ImgQualityCustom = 92, ImgQuality = 98,
             PreDenoise = true, DenoiseLevel = 2, OutDir = "",
         })),
     };
 
-    /// <summary>确保每个官方内置图片预设存在:缺失则用官方默认创建(标记官方);已有同名则标记为官方(把用户保存的同款变成官方)。
-    /// 绝不覆盖/删除用户已有预设。以后加官方预设只需在 BuiltinImgPresets() 加一项。</summary>
+    /// <summary>确保每个官方内置图片预设存在,并把【参数基线过旧】的官方预设更新到新基线。
+    /// 规则(与视频页 EnsureBuiltinPresets 完全一致,同一套 Rev 机制):
+    ///   · 缺失 → 用官方默认创建(标记官方 + 记下当前 Rev)。
+    ///   · 同名但本来不是官方 → 只标记为官方,【不动参数】(用户自己攒的同名预设保留原样)。
+    ///   · 同名、是官方、且 OfficialRev &lt; 当前 Rev → 用新基线【覆盖参数】并记下新 Rev(只覆盖这一次)。
+    ///     这条是刻意为之:老用户手里的官方预设必须被更新,否则永远带着旧语义的档位。
+    ///   · 用户自建的其它预设(名字不同)一律不碰、不删、不改参数。
+    /// 【为什么从"字符串判断"改成"Rev 判断"——实测 BUG】此前这里靠 SavedAt 里是否含「内置」来决定要不要
+    /// 做倍率换算。但早期版本写入的官方预设 SavedAt 是 "2026-09-04 22:12:03" 这种【不带「内置」】的格式,
+    /// 判断直接落空 → 整段迁移被跳过(而且两条 IsOfficial 本就是 true,changed 恒为 false,连文件都没重写)。
+    /// 真机后果:老用户升级后「通用变清晰」静默从 1x超分 变成 2x、「清晰MAX」从 3x 变成 4x ——
+    /// 真机实测该用户的 img-presets.json 就是 Scale=1 / Scale=3,与官方定义 0 / 2 不一致,而用户没改过任何设置。
+    /// 现在改成按 Rev 基线覆盖,不再依赖任何字符串约定。</summary>
     private void EnsureBuiltinImgPresets()
     {
         try
         {
             var list = LoadImgPresets();
             bool changed = false;
-            foreach (var (name, make) in BuiltinImgPresets())
+            int updated = 0;
+            foreach (var (name, rev, make) in BuiltinImgPresets())
             {
                 var existing = list.FirstOrDefault(x => x.Name == name);
-                if (existing != null)
+                if (existing == null)
                 {
-                    if (!existing.IsOfficial) { existing.IsOfficial = true; changed = true; }
+                    // 缺失 → 用官方默认创建,标记官方 + 记下当前基线,排在已有预设之前(官方靠前)
+                    list.Insert(0, new UpscalePreset
+                    {
+                        Name = name,
+                        SavedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm") + " · 内置",
+                        IsOfficial = true,
+                        OfficialRev = rev,
+                        Params = make(),
+                    });
+                    changed = true;
+                    AppLogger.Info($"[内置预设] 已创建官方图片预设「{name}」(基线 Rev {rev})");
                     continue;
                 }
-                var p = new UpscalePreset
+                // 同名但本来不是官方 → 只标记为官方,不动参数(用户自己攒的同名预设保留原样)
+                if (!existing.IsOfficial) { existing.IsOfficial = true; changed = true; }
+                // 基线过旧 → 用新基线覆盖参数(只覆盖这一次;之后用户自己的改动会被尊重,直到下次提升 Rev)
+                if (existing.OfficialRev < rev)
                 {
-                    Name = name,
-                    SavedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm") + " · 内置",
-                    IsOfficial = true,
-                    ScaleIndexV2 = true,   // 新建的按当前语义写,不再被下面的迁移换算一次
-                    Params = make(),
-                };
-                list.Insert(0, p);
-                changed = true;
-                AppLogger.Info($"[内置预设] 已创建官方图片预设「{name}」");
-            }
-            // 【倍率语义一次性迁移】老版本这几项官方预设的 Scale 按"旧版五项"书写(1=1x超分,3=3x),
-            // 而页面现在按 4 项单选索引读(0=1x超分,2=3x)。不迁移的话老用户升级后"通用变清晰"会从
-            // 1x超分 静默变成 2x、"清晰MAX" 从 3x 变成 4x —— 用户没改任何设置却换了输出分辨率。
-            // 用独立字段 ScaleIndexV2 记语义版本(不让同一字段承担两套语义);SavedAt 里的「内置」标记
-            // 保证只动我们自己创建的官方预设,用户自建的同名预设(即便被上面标记成官方)不会被误改。
-            foreach (var (name, _) in BuiltinImgPresets())
-            {
-                var p = list.FirstOrDefault(x => x.Name == name);
-                if (p == null || p.ScaleIndexV2 || !p.SavedAt.Contains("内置", StringComparison.Ordinal)) continue;
-                p.Params.Scale = p.Params.Scale == 0 ? 0 : Math.Min(p.Params.Scale - 1, 3);   // 旧语义 → 新语义
-                p.ScaleIndexV2 = true;
-                changed = true;
-                AppLogger.Info($"[内置预设] 「{name}」倍率档已按 4 项索引语义迁移 → 索引 {p.Params.Scale}");
+                    existing.Params = make();
+                    existing.OfficialRev = rev;
+                    changed = true;
+                    updated++;
+                    AppLogger.Info($"[内置预设] 已把官方图片预设「{name}」更新到新基线(Rev {rev}):"
+                        + "该预设参数已按新版重置;其余官方预设与你自建的预设未动");
+                }
             }
             if (changed)
             {
                 SaveImgPresets(list);
-                AppLogger.Info("[内置预设] 官方图片预设检查完成(缺失已补/同名已标记官方,用户预设未动)");
+                AppLogger.Info($"[内置预设] 官方图片预设检查完成(缺失已补 / 同名已标记官方 / 基线过旧已更新 {updated} 项;用户自建预设未动)");
             }
         }
         catch { }
@@ -1391,13 +1413,19 @@ public sealed partial class UpscaleView : UserControl
                         _progressSegStart = preDenoise ? 0.4 : 0.0;
                         _progressSegEnd = 0.97;   // 给最后"画质增强"留 3%(否则超分就满 100%)
                         progress.Report((0, $"正在处理 {item.Name}..."));
-                        // 智能自检选择:照片模式 + 50系/无独显(Blackwell,ncnn-Vulkan 会崩) + ONNX 模型存在
-                        // → 走 ONNX 版(不走 Vulkan,稳定);否则 ncnn GPU(非 50 系更快更成熟)。
-                        // Real-ESRGAN / waifu2x 都支持 ONNX 兜底(50系/无独显也能稳定跑)。
+                        // 智能自检选择:【先真机探测、再按结果决定】,与视频路径共用同一份结论缓存(key = realesrgan|gpuId)。
+                        // 【为什么必须在这里探测 —— 实测漏洞】此前这里只【读】结论,而图片路径上没有任何地方【写】结论,
+                        // 于是 TryGetNcnnVerdict 永远返回 null → 回退旧启发式(Blackwell 一律算风险)→ 50 系照片模式
+                        // 被硬编码走 ONNX。真机证据(诊断包 20260910_2352,RTX 5060 Laptop):该机 Vulkan 枚举正常、
+                        // 引擎枚举正常、DirectML 建会话正常 —— 拦它的纯粹是"按型号猜"那条规则,ONNX 超分实测 ~2 秒/帧。
+                        // 探测结论会落盘(ncnn-probe),同一设备 7 天内不再重复试跑。
+                        bool esrganNcnnOk = await EngineService
+                            .EnsureNcnnProbeAsync("realesrgan", gpuId, model, ct).ConfigureAwait(false);
                         string? onnxPath = null;
                         // 手动选 CPU(-1)时:waifu2x/realesrgan 的 ncnn CPU 模式在部分机器崩(实测 exit -1/-1073741819)→ 直接 ONNX(CPU 同样稳定,画质一致)
-                        if (engine == "realesrgan"
-                            && (EngineService.ShouldUseOnnxEsrgan() || (gpuId < 0 && EsrganOnnxService.FindModel() != null)))
+                        // 没有 ONNX 模型时不能把用户堵死:只能走 ncnn(哪怕探测说它不稳,也比什么都不做强)
+                        if (engine == "realesrgan" && !esrganNcnnOk
+                            && EsrganOnnxService.FindModel() != null)
                             onnxPath = EsrganOnnxService.ResolveEsrganOnnxPath(model);
                         else if (engine == "waifu2x"
                             && (EngineService.ShouldUseOnnxWaifu2x()
@@ -1428,7 +1456,7 @@ public sealed partial class UpscaleView : UserControl
                         }
                         else
                         {
-                            if (engine == "realesrgan" && EngineService.OldNcnnGpuRisky())
+                            if (engine == "realesrgan" && !esrganNcnnOk)
                                 Log("⚠ 自检:当前显卡与老引擎不兼容且未找到稳定版,回退旧引擎(可能失败,建议改用 waifu2x)");
                             else
                                 Log($"✅ 自检完毕:{(engine == "realesrgan" ? "ncnn GPU 引擎可用(快)" : "常规引擎")}");

@@ -1048,28 +1048,26 @@ public static class VideoService
                 progress?.Report((10, $"RIFE 补帧({interpScale}x,源 {frameCount} 帧 → 输出 {(long)Math.Round((double)((frameCount - 1) * interpScale)) + 1} 帧,模型 {interpModel})..."));
                 if (interpScale >= 4)
                     AppLogger.Warn($"⚠ 高倍率补帧({interpScale}x):输出帧数是源 {interpScale} 倍,处理耗时会明显变长,属正常,请耐心等待(非卡死)");
-                // ===== RIFE GPU 探测(50 系等可能静默 hang,不预检白等 8 分钟)=====
-                // 实测 2 帧插 1 帧能否 GPU 出图;不能 → 本视频补帧改用 CPU(慢但确定能跑),日志+进度提示。
+                // ===== RIFE GPU 探测(任何可能静默 hang 的设备都不放过,不预检白等 8 分钟)=====
+                // 实测 2 帧插 1 帧能否 GPU 出图;不能 → 本视频补帧改用 ONNX(慢但确定能跑),日志+进度提示。
                 int interpGpu = gpuId;
                 if (gpuId >= 0)
                 {
-                    // Blackwell(50系)ncnn-RIFE 已知会 hang/崩,不必探测——直接走 ONNX(否则探测要白等 10~20 秒)
-                    if (EngineService.IsBlackwellGpu())
+                    // 【50 系不再"一律禁用 ncnn"】旧逻辑:Blackwell 一律直接改走 ONNX、不做任何探测。
+                    // 现在改为"先真机探测、再按结果决定":探测通过 → 用 ncnn-Vulkan 补帧(最快那条路);
+                    // 失败(hang/崩/坏帧)→ 才改走 ONNX,并明确告知用户"为稳定性改用 ONNX"。
+                    // 结论跨任务缓存(EnsureRifeNcnnProbeAsync),同一设备不会每次任务都白等一遍探测。
+                    progress?.Report((10, $"正在检测补帧 GPU 兼容性(首次约 10 秒,结论会记住,失败重试一次)..."));
+                    bool rifeOk = await EngineService.EnsureRifeNcnnProbeAsync(rife, interpModel, gpuId, ct).ConfigureAwait(false);
+                    if (!rifeOk)
                     {
-                        AppLogger.Info("⚠ 50系(Blackwell)ncnn 补帧引擎会 hang,直接改用 ONNX 补帧路线");
-                        progress?.Report((10, "⚠ 50系 ncnn 补帧不稳,直接改用 ONNX 补帧..."));
-                        interpGpu = -1;
+                        AppLogger.Warn($"⚠ RIFE {interpModel} 在本机 GPU({gpuId})真机探测失败(hang/崩溃/坏帧)——为稳定性改用 ONNX 补帧路线");
+                        progress?.Report((10, $"⚠ 补帧 ncnn 引擎在本机不可用,为稳定性自动改用 ONNX 补帧..."));
+                        interpGpu = -1;   // 本视频后续补帧 API 全部走 ONNX(InterpSegmentAsync 传入)
                     }
                     else
                     {
-                        progress?.Report((10, $"正在检测补帧 GPU 兼容性(最长约 10 秒,失败重试一次)..."));
-                        bool rifeOk = await EngineService.IsRifeGpuUsableAsync(rife, interpModel, gpuId, ct).ConfigureAwait(false);
-                        if (!rifeOk)
-                        {
-                            AppLogger.Warn($"⚠ RIFE {interpModel} GPU 探测失败,改用 CPU 补帧(慢但不会挂起白等)");
-                            progress?.Report((10, $"⚠ RIFE 无法用 GPU,自动改用 CPU 补帧(较慢但稳定)..."));
-                            interpGpu = -1;   // 本视频后续补帧 API 全部 CPU(InterpSegmentAsync 传入)
-                        }
+                        AppLogger.Info($"✅ RIFE {interpModel} GPU({gpuId})真机探测通过 → 使用 ncnn-Vulkan 补帧(未因 50 系而禁用)");
                     }
                 }
                 var segStart = 0;
@@ -1245,42 +1243,39 @@ public static class VideoService
                 bool ncnnUnreliable = false;   // 视频超分检测到 ncnn-Vulkan 黑帧 → 后续批次直接走 ONNX(不再每批先 ncnn 失败再降级,省极长时间)
                 if (gpuId >= 0)
                 {
-                    // 【50 系 + waifu2x 直接走 ONNX】:Blackwell 上 waifu2x-ncnn-vulkan 的 GPU 探测在 1×1 小图能过
-                    // (日志"1×1 图出图,非黑"),但真实分辨率会静默输出 0KB 空帧/黑帧(退出码 0 不报错)——
-                    // 这是视频超分"找不到 frame_%06d.jpg"的根源。别再探测/别碰 ncnn,整段直接走 ONNX(DirectML/CPU)。
-                    if (engine == "waifu2x" && EngineService.IsBlackwellGpu())
+                    // 【50 系不再"一律禁用 ncnn"】旧逻辑:Blackwell + waifu2x 直接改走 ONNX,不做任何实测。
+                    // 旧口径漏检的根因已写明在 EngineService.IsEngineGpuUsableAsync(fullFrame) 上:
+                    // 320×240(甚至 1×1)小图能过,真实分辨率才静默出 0KB 空帧/黑帧且【退出码 0】——
+                    // 于是探测判"可用",坏帧一路进成片。现在改为:先按【生产形态】真机探测
+                    // (1080×1920 + 真实模型 + 生产 -j + 带状黑判据),通过 → 就走 ncnn-Vulkan
+                    // (真机实测 0.24~0.6 秒/帧,而"ONNX 落 CPU"是 8 秒/帧);失败 → 才改走 ONNX 并明确告知用户。
+                    progress?.Report((45, $"正在检测超分 GPU 兼容性({engine},首次最长约 30 秒,结论会记住)..."));
+                    bool usable = await EngineService.EnsureNcnnProbeAsync(engine, gpuId, model, ct).ConfigureAwait(false);
+                    if (!usable)
                     {
-                        waifuOnnx = true;
-                        upOnnxDml = true;
-                        AppLogger.Warn($"⚠ waifu2x 在 50 系(Blackwell)上 ncnn-Vulkan 会静默出空帧/黑帧,直接改用 ONNX 稳定版(整段视频,兼容模式)");
-                        progress?.Report((45, $"⚠ waifu2x 在 50 系上自动改用稳定引擎(ONNX,整段视频)..."));
+                        if (engine == "waifu2x" && EngineService.IsBlackwellGpu())
+                        {
+                            // waifu2x 在 50 系:ncnn CPU 模式同样会崩(实测 exit -1073741819)——
+                            // 不能像其他引擎那样"降 CPU",而是整段改走 ONNX 稳定版(DirectML/CPU 都行)
+                            waifuOnnx = true;
+                            upOnnxDml = true;
+                            AppLogger.Warn($"⚠ waifu2x 在 50 系(Blackwell)上真机探测失败(空帧/黑帧/崩溃)——为稳定性改用 ONNX 稳定版(整段视频,兼容模式)");
+                            progress?.Report((45, $"⚠ waifu2x 在本机 50 系 GPU 上不可用,为稳定性改用 ONNX(整段视频)..."));
+                        }
+                        else
+                        {
+                            // ncnn GPU 不可用:不急着掉最慢的 ncnn-CPU —— 先试 ONNX DirectML(与 ncnn-Vulkan
+                            // 是两套完全独立运行时,这些卡 DirectML 往往能正常 GPU 加速);ONNX 失败才自动掉 CPU。
+                            AppLogger.Warn($"⚠ 超分引擎 {engine} 真机探测失败(生产帧尺寸 1080×1920)——为稳定性改用 ONNX DirectML GPU(比 ncnn-CPU 快一个数量级)");
+                            progress?.Report((45, $"⚠ 超分引擎 {engine} 无法用 ncnn GPU,为稳定性改用 ONNX 稳定引擎(DirectML GPU)..."));
+                            upGpu = -1;          // 触发下方 ONNX 分支
+                            upOnnxDml = true;    // 且用 DirectML GPU(-2 自动选设备),而非强制 CPU
+                            waifuOnnx = engine == "waifu2x" ? true : waifuOnnx;   // waifu2x 探测失败同样走 ONNX
+                        }
                     }
                     else
                     {
-                        progress?.Report((45, $"正在检测超分 GPU 兼容性(最长 5 秒)..."));
-                        bool usable = await EngineService.IsEngineGpuUsableAsync(engine, gpuId, ct).ConfigureAwait(false);
-                        if (!usable)
-                        {
-                            if (engine == "waifu2x" && EngineService.IsBlackwellGpu())
-                            {
-                                // waifu2x 在 50 系:ncnn CPU 模式同样会崩(实测 exit -1073741819)——
-                                // 不能像其他引擎那样"降 CPU",而是整段改走 ONNX 稳定版(DirectML/CPU 都行)
-                                waifuOnnx = true;
-                                upOnnxDml = true;
-                                AppLogger.Warn($"⚠ waifu2x 引擎在 50 系 GPU 上不可用,自动改走 ONNX 稳定版(整段视频,兼容模式)");
-                                progress?.Report((45, $"⚠ waifu2x 无法用 GPU,自动改用稳定引擎(ONNX,整段视频)..."));
-                            }
-                            else
-                            {
-                                // ncnn GPU 不可用:不急着掉最慢的 ncnn-CPU —— 先试 ONNX DirectML(与 ncnn-Vulkan
-                                // 是两套完全独立运行时,这些卡 DirectML 往往能正常 GPU 加速);ONNX 失败才自动掉 CPU。
-                                AppLogger.Warn($"⚠ 超分引擎 {engine} GPU 探测失败,自动改用 ONNX DirectML GPU(比 ncnn-CPU 快一个数量级)");
-                                progress?.Report((45, $"⚠ 超分引擎 {engine} 无法用 ncnn GPU,自动改用 ONNX 稳定引擎(DirectML GPU)..."));
-                                upGpu = -1;          // 触发下方 ONNX 分支
-                                upOnnxDml = true;    // 且用 DirectML GPU(-2 自动选设备),而非强制 CPU
-                                waifuOnnx = engine == "waifu2x" ? true : waifuOnnx;   // waifu2x 探测失败同样走 ONNX
-                            }
-                        }
+                        AppLogger.Info($"✅ 超分引擎 {engine} 真机探测通过(生产帧尺寸 1080×1920,GPU {gpuId})→ 使用 ncnn-Vulkan(未因 50 系而禁用)");
                     }
                 }
                 else if (engine == "waifu2x" && EngineService.IsBlackwellGpu())

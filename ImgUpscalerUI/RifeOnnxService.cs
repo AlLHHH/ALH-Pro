@@ -26,11 +26,22 @@ public static class RifeOnnxService
     /// (DmlDeviceUnusable/AnyDmlDeviceUnusable 一直报健康,视频会持续重试那块死掉的卡)。
     /// 【为什么用 ConditionalWeakTable】它按【引用】比较键(与 Equals 重写无关),且会话被回收后条目自动消失,
     /// 不会像普通字典那样把已 Dispose 的会话钉在内存里。</summary>
-    sealed class SessionDevice { public int Dml; }
+    sealed class SessionDevice { public int Dml; public int Concurrency = 1; }
     static readonly System.Runtime.CompilerServices.ConditionalWeakTable<InferenceSession, SessionDevice> _sessionDml = new();
 
     static void TagSession(InferenceSession session, int dmlDevice)
-        => _sessionDml.AddOrUpdate(session, new SessionDevice { Dml = dmlDevice });
+        => TagSession(session, dmlDevice, 1);
+
+    /// <summary>把"这个会话真实所在设备"和"建它时声明的并发路数"一起钉在会话上。
+    /// 并发路数必须在这里记:分块大小要按【显存 ÷ 路数】算,而 RunCore 只拿到一个会话,
+    /// 拿不到调用方(VideoService)的并发数(见 CreateSessions)。</summary>
+    static void TagSession(InferenceSession session, int dmlDevice, int concurrency)
+        => _sessionDml.AddOrUpdate(session, new SessionDevice { Dml = dmlDevice, Concurrency = Math.Max(1, concurrency) });
+
+    /// <summary>这个会话建的时候声明了几路并发(查不到按 1 路)。
+    /// 用于把显存预算摊到每一路上:分块大小是"每路能占多少显存"的函数,不是整机显存。</summary>
+    static int ConcurrencyOfSession(InferenceSession session)
+        => _sessionDml.TryGetValue(session, out var tag) ? Math.Max(1, tag.Concurrency) : 1;
 
     /// <summary>这个会话【确实】跑在哪个 DirectML 设备上(-1 = CPU 会话)。查不到标志时按调用方的 gpuId 兜底
     /// (只可能是本类之外建的会话)。</summary>
@@ -112,6 +123,8 @@ public static class RifeOnnxService
 
     /// <summary>创建 concurrency 个独立 DirectML 会话(并行 worker 每个独占一个;绝不共用/并发 Run 同一会话,
     /// DirectML InferenceSession 非线程安全)。由调用方负责 finally 里 Dispose。
+    /// 【concurrency 不只是循环次数】它同时决定每路能用多少显存(总预算 ÷ 路数),进而决定分块大小——
+    /// 所以这里把并发数钉在会话上(见 TagSession/ConcurrencyOfSession),RunCore 才能按路数收紧分块。
     /// <paramref name="dmlDevice"/> 必须是【已解析的 DirectML 设备号】(见 BuildSession 说明,不要传引擎 -g 编号)。</summary>
     public static InferenceSession[] CreateSessions(int concurrency, int dmlDevice)
     {
@@ -121,7 +134,8 @@ public static class RifeOnnxService
             arr[i] = BuildSession(dmlDevice, out bool onDml);
             // 把"这个会话到底跑在 DML 上还是 CPU 上"钉在会话本身上:调用方(VideoService)只会把 dmlDevice
             // 传回来,没法区分这两者,而熔断/连击的写法必须靠这个标志(C-4 ④)。
-            TagSession(arr[i], onDml ? dmlDevice : -1);
+            // 并发路数一并记上:N 路 = N 份推理工作集同时在显存里,分块必须按 1/N 的预算收紧。
+            TagSession(arr[i], onDml ? dmlDevice : -1, arr.Length);
         }
         return arr;
     }
@@ -193,13 +207,14 @@ public static class RifeOnnxService
         // ClearDmlStrikes(该 GPU),等于每次 CPU 成功都把 GPU 的死活洗白,设备级熔断永远无法触发。
         int dmDevice = DmlOfSession(session, gpuId);
         bool dmlSession = dmDevice >= 0;
+        // 分块大小按【显存 ÷ 并发路数】自适应:0 = 整帧(优先),>0 = 分块边长。理由与实测数据见 ResolveInterpTile。
+        // CPU 会话不受显存墙约束 → 保持整帧(与旧行为一致,不引入新的失败面)。
+        int tile = dmlSession ? ResolveInterpTile(w, h, ConcurrencyOfSession(session)) : 0;
         try
         {
-            // GPU + 大帧:DirectML 显存有限,整帧 4K 会 OOM → 分块插帧(带边缘余量,无接缝)
-            const int Tile = 512;
-            if (dmlSession && (w > Tile || h > Tile))
+            if (tile > 0)
             {
-                RunTiled(session, bmp0, bmp1, time, outputPng, w, h);
+                RunTiled(session, bmp0, bmp1, time, outputPng, w, h, tile, TileMargin);
                 EsrganOnnxService.ClearDmlStrikes(dmDevice);   // GPU 真跑成功 → 偶发抖动不该累积
                 return;
             }
@@ -287,12 +302,87 @@ public static class RifeOnnxService
         }
     }
 
-    /// <summary>分块插帧:512×512 块 + 边缘余量(M=16)防接缝;块尺寸取 4 的倍数(RIFE 输入要求),越界用边缘像素填充。</summary>
-    static void RunTiled(InferenceSession session, Bitmap bmp0, Bitmap bmp1, float time, string outputPng,
-        int w, int h)
+    /// <summary>分块边长下限(像素)。再小就没有意义:块越小 Run 次数越多(每次都有固定的 DirectML 往返+张量拷贝开销),
+    /// 而显存收益已经趋平(实测 512 块在 4K 下峰值也只有 0.36GB,再往下省不出多少)。</summary>
+    const int MinTile = 256;
+
+    /// <summary>分块时的边缘余量(像素):每块向四周各多取这么多行/列当上下文,写回时丢弃。
+    /// 16 是实测值:现行 512 分块 + 16px 余量下,真实素材上块边界处的"逐列相邻差分"与整帧基准之比只有
+    /// 0.45~1.14 倍(没有尖峰);只有强空间变化运动(zoom 106%)才会露出边界台阶(见 ResolveInterpTile)。
+    /// 所以 16 足够压住边界,不需要为此加大(加大 = 块更贵、更慢)。</summary>
+    const int TileMargin = 16;
+
+    // ---------- 整帧/分块的显存模型:常量全部由本机取证实测标定,不是拍脑袋的档位 ----------
+    // 取证环境:RTX 4060 Laptop 8G(TotalVramGB=8.0 / EffectiveVramGB=6.0)、DirectML、rife49.onnx、
+    // 同一对 1920×1080 真实帧、同一 time=0.5。每条路【独立进程】测(否则 DirectML 分配器池会把上一路的
+    // 峰值留在显存里把数字抬高),报「nvidia-smi 峰值总占用 / 相对干净基线的增量」+ 预热后多次取均值耗时:
+    //   1080p(2.07MP)  整帧      480 ms/帧  Δ1439MiB(总 3168MiB)
+    //                  分块 1024  854 ms/帧  Δ1161MiB(总 2890MiB)
+    //                  分块 512  1078 ms/帧   Δ357MiB(总 2086MiB)
+    //   4K   (8.29MP)  整帧     1676 ms/帧  Δ5392MiB(总 7120MiB —— 8188MiB 的卡只剩 1GB)
+    //                  分块 2048 2898 ms/帧  Δ5226MiB(总 6120MiB)
+    //                  分块 1024 2985 ms/帧  Δ1160MiB(总 2908MiB)
+    //                  分块 512  3483 ms/帧   Δ365MiB(总 2093MiB)
+    // 三个关键结论(决定了下面的策略):
+    // ① 【整帧明显更快】1080p 整帧 480ms/帧 vs 512 分块 1078~1405ms/帧(快 2.2~2.9 倍):分块把每次 Run 的
+    //    固定开销(DirectML 往返 + 张量拷贝)付了 12 遍以上。原先"GPU 大帧一律 512 分块"在这台机器上是纯亏。
+    // ② 【每百万像素的峰值,整帧反而更省】整帧 650~695 MiB/MP,分块路径 1075~1230 MiB/MP(边距让每块的
+    //    输入面积都放大,而固定开销按块重复)。但整帧的总面积大,所以绝对峰值仍可能超过某个块——
+    //    能不能整帧必须按预算算(见下面 ResolveInterpTile),不能凭"整帧更小"想当然。
+    // ③ 【分块必须保留】4K 整帧峰值总占用 7120/8188MiB(只剩 1GB 余量),再叠上并发路数/浏览器就很可能爆显存;
+    //    爆显存 → 设备摘除(887A0005/6)是【本进程不可恢复】的故障,比慢严重得多。4K 改走 1024 分块后总占用只有 2908MiB。
+    const double TileFixedMiB = 400;         // 会话/模型/临时缓冲的固定开销(按实测上界取)
+    const double WholeMiBPerMp = 900;        // 整帧:每百万像素峰值(实测 650~695,放大留余量)
+    const double TiledMiBPerMp = 1400;       // 分块:每百万像素峰值(实测 1075~1230,放大留余量)
+    const double VramSafety = 0.75;          // 再留 25%:估不准时宁可取更小的块(慢),绝不为提速冒爆显存的风险
+
+    /// <summary>本帧该不该分块、用多大的块:返回 0 = 整帧(不分块),否则为分块边长(像素)。
+    /// 【为什么整帧优先】见上面一段的实测:整帧在 1080p 上比 512 分块快 2~3 倍、每百万像素峰值还更低,
+    /// 而且没有分块边界(分块 = 每块各自独立估光流,边界处两条独立估计相接;本次取证在 zoom 106% 的强空间
+    /// 变化运动上,实测 512 分块的 x=1536 处逐列相邻差分是整帧基准的 3.32 倍、y=1024 处逐行差分 15.47 倍,
+    /// 换成 1024 分块后 x=1536 的边界消失、该处降到 0.51 倍。真实素材/纯平移下 16px 边距把边界压到
+    /// 0.45~1.14 倍(看不出接缝),所以边距维持 16 不改,能不分块就不分块)。
+    /// 【并发路数算进预算】补帧是多会话并发,每个 worker 独占一个会话、各自持有一份推理工作集,
+    /// 所以预算是「(显存预算 ÷ 路数)×安全系数」,而路数由 CreateSessions 建会话时钉在会话上(TagSession)。
+    /// 【为什么不会爆显存】① 预算口径直接复用 SafeRender(自动档 = 本机总量 75%,自定义档 = 用户设的上限),
+    /// 不再另造一套阈值;并且只有【实测到】空闲显存时才用它收紧(AMD/Intel 上那是估算值,SafeRender 的注释
+    /// 明确警告过不能拿它当判据)。② 每百万像素的峰值常量比实测值还放大 1.3~1.9 倍,再乘 0.75 安全系数
+    /// (本机 1080p:估计 2263MiB vs 实测 1439MiB;4K:估计 7861MiB vs 实测 5392MiB)。
+    /// ③ 它只用来决定"能不能放大":估不准一律取更小的块,最小到 MinTile;连 MinTile 都算不下时仍返回 MinTile
+    /// (它是最省显存的一档,且分块峰值随块面积近似线性下降,块小永远比块大安全)。
+    /// <paramref name="concurrency"/> = 并发的会话路数(1 = 单路/共享会话)。</summary>
+    internal static int ResolveInterpTile(int w, int h, int concurrency)
     {
-        const int Tile = 512;
-        const int M = 16;
+        double vramGb;
+        try
+        {
+            vramGb = SafeRender.EffectiveVramGB;
+            if (SafeRender.FreeVramMeasured) vramGb = Math.Min(vramGb, SafeRender.FreeVramGB);
+        }
+        catch
+        {
+            return 512;   // 显存探测异常:退回原来的固定分块(保守),绝不因为"探测失败"就中断补帧
+        }
+        double budgetMiB = vramGb * 1024.0 / Math.Max(1, concurrency) * VramSafety;
+
+        // ① 先试整帧:放得下就用整帧(最快,而且没有分块边界)
+        if (TileFixedMiB + WholeMiBPerMp * (w * (double)h / 1e6) <= budgetMiB) return 0;
+
+        // ② 整帧放不下:从大到小挑第一个放得下的块。面积按"块边长 + 两侧边距"(RunTiled 实际喂给模型的尺寸)
+        //    估算;块边长必须是 4 的倍数(RIFE 输入要求),候选全是 4 的倍数。
+        for (int t = 2048; t >= MinTile; t /= 2)
+        {
+            double side = t + 2.0 * TileMargin;
+            if (TileFixedMiB + TiledMiBPerMp * (side * side / 1e6) <= budgetMiB) return t;
+        }
+        return MinTile;
+    }
+
+    /// <summary>分块插帧:tile×tile 块 + 边缘余量(margin)防接缝;块尺寸取 4 的倍数(RIFE 输入要求),越界用边缘像素填充。
+    /// 【块大小不再写死 512】由 <see cref="ResolveInterpTile"/> 按显存 ÷ 并发路数决定(tile 由调用方传入)。</summary>
+    static void RunTiled(InferenceSession session, Bitmap bmp0, Bitmap bmp1, float time, string outputPng,
+        int w, int h, int tile, int margin)
+    {
         using var outBmp = new Bitmap(w, h, PixelFormat.Format24bppRgb);
         var rect = new Rectangle(0, 0, w, h);
         var data = outBmp.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb);
@@ -301,15 +391,15 @@ public static class RifeOnnxService
             unsafe
             {
                 var ptr = (byte*)data.Scan0.ToPointer();
-                for (int ty = 0; ty < h; ty += Tile)
+                for (int ty = 0; ty < h; ty += tile)
                 {
-                    for (int tx = 0; tx < w; tx += Tile)
+                    for (int tx = 0; tx < w; tx += tile)
                     {
-                        int tw = Math.Min(Tile, w - tx);
-                        int th = Math.Min(Tile, h - ty);
-                        int sx0 = Math.Max(0, tx - M), sy0 = Math.Max(0, ty - M);
-                        int bw = Math.Min(w, tx + tw + M) - sx0;
-                        int bh = Math.Min(h, ty + th + M) - sy0;
+                        int tw = Math.Min(tile, w - tx);
+                        int th = Math.Min(tile, h - ty);
+                        int sx0 = Math.Max(0, tx - margin), sy0 = Math.Max(0, ty - margin);
+                        int bw = Math.Min(w, tx + tw + margin) - sx0;
+                        int bh = Math.Min(h, ty + th + margin) - sy0;
                         int pw = (bw + 3) & ~3, ph = (bh + 3) & ~3;   // 向上取 4 的倍数
                         var t0 = ToTensorRect(bmp0, sx0, sy0, pw, ph);
                         var t1 = ToTensorRect(bmp1, sx0, sy0, pw, ph);
@@ -323,8 +413,22 @@ public static class RifeOnnxService
                             NamedOnnxValue.CreateFromTensor("timestep", ts),
                         });
                         var outT = results.First().AsTensor<float>();
+                        // 【输出形状校验,必须在写像素之前】与 RunSingle 同款,但 RunTiled 原先没有:
+                        // 模型输出异常时原来的代码会在下面的像素循环里抛 IndexOutOfRangeException(或写进错位像素),
+                        // 那是个"看不出所以然"的异常 —— 调用方只能看到下标越界,拿不到块坐标/期望尺寸,无从下手。
+                        // 这里提前校验维数与高宽,给出可行动的上下文(期望 vs 实际 + 块坐标 + 输入尺寸)。
+                        var dims = outT.Dimensions;
+                        if (dims.Length != 4 || dims[1] != 3)
+                            throw new InvalidOperationException(
+                                $"RIFE 分块输出形状异常: {string.Join("x", dims.ToArray())}"
+                                + $"(期望 1x3x{ph}x{pw};块 tx={tx},ty={ty},输入 {pw}×{ph})");
+                        int oh = dims[2], ow = dims[3];
                         // 只写块有效中心区(丢弃边缘余量,防接缝)
                         int ox = tx - sx0, oy = ty - sy0;
+                        if (ow < ox + tw || oh < oy + th)
+                            throw new InvalidOperationException(
+                                $"RIFE 分块输出尺寸不足: 实际 {ow}×{oh},本块至少需要 {ox + tw}×{oy + th}"
+                                + $"(块 tx={tx},ty={ty},输入 {pw}×{ph},边距 {margin})");
                         for (int yy = 0; yy < th; yy++)
                         {
                             byte* row = ptr + (ty + yy) * data.Stride + tx * 3;
