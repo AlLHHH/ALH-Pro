@@ -336,6 +336,9 @@ public sealed partial class VideoView : UserControl
     private bool _suppressEvents;
     private bool _settingsLoaded;   // LoadSettings 完成后才允许保存(防构造/加载期的 -1 值污染 video-settings.json)
     private VideoItem? _selected;
+    // 「输入帧率」框里那个值是从哪个视频探测来的(null = 无来源/用户手填):
+    // 用于在开始处理时识别"框里还留着上一个视频的帧率"的残留(输入帧率参与节奏换算,残留会算错结果)。
+    private VideoItem? _inputFpsOwner;
     private int _gpuCount;
 
     // ---- 暂停/恢复:暂停后停在下一个视频之前,可删除"未处理"的项目 ----
@@ -710,7 +713,13 @@ public sealed partial class VideoView : UserControl
     }
 
     private void Text_Changed(object sender, Microsoft.UI.Xaml.Controls.TextChangedEventArgs e)
-        => OnOptionChanged();
+    {
+        // 用户手改「输入帧率」框 = 显式覆盖(要跟"程序探测来的值"区分开:探测值带 owner,
+        // 开始处理时若发现 owner 不是本次要处理的视频就会被丢弃,手填值则原样保留)。
+        // 必须判 _suppressEvents:程序写入(SetInputFpsText)同样会触发本回调。
+        if (!_suppressEvents && ReferenceEquals(sender, InputFpsBox)) _inputFpsOwner = null;
+        OnOptionChanged();
+    }
 
     private void OnOptionChanged()
     {
@@ -1040,6 +1049,8 @@ public sealed partial class VideoView : UserControl
         InterpToggle.IsChecked = false;
         InterpModelCombo.SelectedIndex = 0;
         InputFpsBox.Text = "30";
+        // 「重置」填的是默认值,不是某个视频的探测值 → 清掉来源标记,让它按用户设定生效(与重置前的行为一致)
+        _inputFpsOwner = null;
         InterpScaleRadios.SelectedIndex = 0;
         TargetFpsCheck.IsChecked = false;
         TargetFpsBox.Text = "";
@@ -2254,7 +2265,8 @@ public sealed partial class VideoView : UserControl
             if (existing != null)
             {
                 // 同名文件被覆盖导出(同名重命名导出很常见):刷新探测信息,不沿用旧数据
-                _ = RefreshItemProbeAsync(existing);
+                // 必须 await:下面「输入帧率」框会按 FpsProbe 同步,不等它就等于把旧帧率又写回界面
+                await RefreshItemProbeAsync(existing);
                 continue;
             }
             var info = await VideoService.ProbeVideoInfoAsync(p);
@@ -2278,6 +2290,14 @@ public sealed partial class VideoView : UserControl
         // 仅第一个视频(单视频)自动选中以填充帧率;多视频不自动选中
         if (_videos.Count == 1)
             VideoList.SelectedIndex = 0;
+        // 「输入帧率」框必须归【新加入的待处理视频】所有,不能沿用上一个条目。
+        // 只在"待处理(未完成)视频恰好一个"时同步:这时它是单视频语义,框里的值就是该视频实际用的输入帧率;
+        // 而"上一个视频已完成变灰 + 新拖入一个"时列表有 2 项、框已被隐藏,但「开始处理」只处理未完成的那一个
+        // → 框里的旧值会被当成新视频的输入帧率参与节奏换算(内容帧率 = 输入帧率 ÷ 拍数),直接算错去重/补帧。
+        // FpsProbe 与入列时用的是同一个 VideoService.ProbeFps,口径一致;探测失败=空串(不沿用旧值)。
+        // 这里会覆盖"拖入之前手填的值"—— 与既有语义一致(选中项一变该框就按新视频重写);拖入之后手填仍然有效。
+        var actives = _videos.Where(v => !v.IsDone).ToArray();
+        if (actives.Length == 1) SetInputFpsText(actives[0].FpsProbe, actives[0]);
         UpdateDropHint();
         UpdateRunState();
         UpdateOptions();   // 单/多视频 UI 切换
@@ -2724,6 +2744,22 @@ public sealed partial class VideoView : UserControl
         _videos.Remove(item);
         if (ReferenceEquals(_selected, item)) _selected = null;
         if (ReferenceEquals(_previewItem, item)) _previewItem = null;
+        // 删掉的正是「当前选中项」或「输入帧率框当前值的来源视频」→ 这两处派生值立刻清空。
+        // 该框是"某个视频"的派生值,删完后若还留着(选中事件不保证重发),用户接着拖入新视频
+        // 就会看到【上一个视频】的帧率 —— 而它参与节奏换算(内容帧率 = 输入帧率 ÷ 拍数),会算错去重/补帧。
+        bool selGone = _selected == null || !_videos.Contains(_selected);
+        if (selGone) _selected = null;
+        if (selGone)
+        {
+            SetInputFpsText("", null);     // 空 = 无对应视频(处理时自动探测)
+            VideoInfo.Text = "未选择视频";
+        }
+        else if (ReferenceEquals(_inputFpsOwner, item))
+        {
+            // 删掉的是"框里那个值的来源视频",但列表里仍有选中项 → 把框重新对齐到当前选中项
+            // (不重新探测就会留着一个"已删除视频"的帧率,选中事件在这种情形下不会重发)
+            _ = SyncInputFpsAsync(_selected);
+        }
     }
 
     private void ApplyListRefresh()
@@ -2939,6 +2975,7 @@ public sealed partial class VideoView : UserControl
         _selected = null;
         _previewItem = null;
         VideoInfo.Text = "未选择视频";
+        SetInputFpsText("", null);   // 「输入帧率」是某个视频的派生值,列表清空就不许留在界面上(会带进下一个视频)
         if (wasCount > 0) Log($"清空了视频列表(共 {wasCount} 个)");
         // 退出单独调整模式
         _fpsIndividualMode = false;
@@ -3022,27 +3059,42 @@ public sealed partial class VideoView : UserControl
     private async void VideoList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         // 多选模式:取最后点击的项作为"当前选中"
-        _selected = VideoList.SelectedItems.Count > 0
+        var sel = VideoList.SelectedItems.Count > 0
             ? VideoList.SelectedItems[^1] as VideoItem : null;
+        _selected = sel;
         UpdateListButtons();
-        if (_selected != null)
-        {
-            VideoInfo.Text = $"{_selected.Name}\n{_selected.Info}";
-            // 输入帧率自动 = 该视频的实际帧率;ffprobe 阻塞,放后台线程避免卡 UI
-            var fps = await Task.Run(() => VideoService.ProbeFps(_selected.Path));
-            if (fps != null)
-            {
-                _suppressEvents = true;
-                InputFpsBox.Text = fps;
-                _suppressEvents = false;
-                UpdateOptions();
-            }
-        }
-        else
-        {
-            VideoInfo.Text = "未选择视频";
-        }
+        VideoInfo.Text = sel != null ? $"{sel.Name}\n{sel.Info}" : "未选择视频";
+        // 传【局部 sel】而不是字段 _selected:探测期间用户又改选中/删项时,
+        // await 之后再读字段会把 A 的帧率写进 B 的输入框(异步竞态)。
+        await SyncInputFpsAsync(sel);
         _ = RefreshVideoOutSpec();
+    }
+
+    /// <summary>把「输入帧率」框同步为指定视频的实测帧率;<paramref name="item"/> 为 null = 清空该框。
+    /// 【必须无条件写入,探测失败/为空就留空】:这个值参与节奏换算(内容帧率 = 输入帧率 ÷ 拍数),
+    /// 沿用上一个视频的残留值不只是显示错,会真的算错去重/补帧 —— 空值=处理时自动探测(正确语义),
+    /// 所以宁可为空也绝不留旧值。ffprobe 阻塞,放后台线程避免卡 UI。</summary>
+    private async Task SyncInputFpsAsync(VideoItem? item)
+    {
+        string fps = "";
+        if (item != null)
+        {
+            try { fps = await Task.Run(() => VideoService.ProbeFps(item.Path)) ?? ""; } catch { }
+        }
+        SetInputFpsText(fps, item);
+    }
+
+    /// <summary>直接写入「输入帧率」框(值已知时用,不再重跑 ffprobe)。空串 = 未知 —— 见上:宁可留空。
+    /// owner = 这个值是从哪个视频探测来的(null = 无来源/用户手填)。记来源是为了在开始处理时识别
+    /// "框里还留着上一个视频的帧率"这种残留(见 RunBtn 里的残留防线)。</summary>
+    private void SetInputFpsText(string fps, VideoItem? owner)
+    {
+        // 先记来源再赋值:TextChanged 是同步回调,"用户手改"那条规则会清掉 owner,顺序反了会误判。
+        _inputFpsOwner = owner;
+        _suppressEvents = true;
+        InputFpsBox.Text = fps;
+        _suppressEvents = false;
+        UpdateOptions();
     }
 
     /// <summary>左下角「输出规格」提示:未处理时显示将输出的分辨率+帧率(随超分/补帧/目标帧率实时更新)。
@@ -3524,16 +3576,18 @@ public sealed partial class VideoView : UserControl
             if (upOn && upscaleShrink1x) scale = 2;
             bool highRate = interpScale >= 4;   // 4x 及以上
             double totalNeedGB = 0, totalSec = 0;
-            // 【已删除·跨线程读控件导致整段扫描静默失效】原先这里在 Task.Run 之前先声明 over4k 列表,
-            // 并在 lambda 内读 VideoScaleRadios.SelectedIndex / CustomWidthBox.Text / CustomHeightBox.Text
-            // 来算"输出超 4K"。但 WinUI3 的 XAML 对象有线程亲和,后台线程访问会抛
-            // RPC_E_WRONG_THREAD(0x8001010E)——本仓库真机复现过同一故障(见本文件 3879 行注释)。
-            // 该异常被下面 lambda 内的 catch{} 逐个吞掉,于是"超分开启时"整段扫描静默失效:
-            //   · over4k 恒为空 → 超 4K 确认框永不弹出(线上表现就是"我从来没见过这个弹窗");
-            //   · totalSec / totalNeedGB 恒为 0 → 爆盘预检(totalNeedGB > 剩余×0.9)也永不触发,
-            //     诊断框还会显示"约 0 分钟 / 约 0 GB"这种假数字,比不显示更误导。
-            // 现在:超 4K 只走【内联红字】(RefreshVideoOutSpec → VideoOutSpecText,按总像素判定),
-            // 不再弹窗(用户明确要求"不要弹窗,放在进度条旁边"),本方法只负责给爆盘预检算真实数值。
+            // ===== 超 4K 判定所需的 UI 值,必须在 UI 线程先读成局部量 =====
+            // XAML 对象有线程亲和:后台线程读控件会抛 RPC_E_WRONG_THREAD(0x8001010E)。
+            // 历史上这里正是在下面 Task.Run 的 lambda 内读 VideoScaleRadios.SelectedIndex /
+            // CustomWidthBox.Text 来算"输出超 4K",异常被 lambda 里的 catch{} 逐个吞掉,
+            // 于是超分开启时整段扫描静默失效:超 4K 名单恒空(弹窗从未真正生效过)、
+            // totalSec/totalNeedGB 恒 0(爆盘预检永不触发,诊断框还显示"约 0 分钟/约 0 GB"的假数字)。
+            // 所以这里先取快照,lambda 内只许用这些局部量,不许再碰任何控件。
+            bool customResUi = VideoScaleRadios.SelectedIndex == 4;   // 4=自定义分辨率
+            int.TryParse(CustomWidthBox.Text, out int customWUi);
+            int.TryParse(CustomHeightBox.Text, out int customHUi);
+            // 超 4K 名单(形如 "名字(3840×4320)"):只装确实超 4K 的项,供下方确认弹窗列出
+            var over4k = new System.Collections.Generic.List<string>();
             // 后台扫描每个视频(不卡 UI)
             await Task.Run(async () =>
             {
@@ -3542,10 +3596,29 @@ public sealed partial class VideoView : UserControl
                     try
                     {
                         double dur = await VideoService.ProbeDurationSeconds(it.Path).ConfigureAwait(false);
-                        if (dur <= 0) continue;
+                        var (w, h) = await VideoService.ProbeSizeAsync(it.Path).ConfigureAwait(false);
+                        // 输出尺寸口径与内联红字(RefreshVideoOutSpec)完全一致:超分开启且非 1x 缩回 → 源×倍率;
+                        // 自定义分辨率 → 用用户填的值;1x 缩回 → 源尺寸(补帧只改帧率,不影响尺寸)。
+                        int outW = w, outH = h;
+                        if (upOn)
+                        {
+                            if (customResUi)
+                            {
+                                if (customWUi > 0 && customHUi > 0) { outW = customWUi; outH = customHUi; }
+                            }
+                            else if (!upscaleShrink1x)
+                            {
+                                outW = (int)Math.Round((double)w * scale); outH = (int)Math.Round((double)h * scale);
+                            }
+                        }
+                        // 按【总像素】判定(3840×2160≈829 万),不按单边 —— 否则 10×33333 这类极端宽高比会误报。
+                        // 尺寸探测与时长无关,所以这条判定放在"时长未知就跳过"之前:内联红字同样只看尺寸,
+                        // 时长探不出来的视频也超 4K,漏掉它两处提示就不一致了。
+                        if (outW > 0 && outH > 0 && (double)outW * outH > 3840.0 * 2160.0)
+                            over4k.Add($"{it.Name}({outW}×{outH})");
+                        if (dur <= 0) continue;   // 时长未知:下面两项估算(耗时/占盘)都依赖时长
                         double fps = 30;
                         try { if (double.TryParse(VideoService.ProbeFps(it.Path), NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var pf) && pf > 0) fps = pf; } catch { }
-                        var (w, h) = await VideoService.ProbeSizeAsync(it.Path).ConfigureAwait(false);
                         totalSec += VideoService.EstimateProcessSeconds(dur, fps, w, h,
                             upOn, scale, engine, interpOn, interpScale, dedupOn, 0);
                         // 占盘(JPG 中间帧峰值,与 C3 一致):源帧≈1MB/1080p,放大后×倍率²×0.18
@@ -3560,15 +3633,47 @@ public sealed partial class VideoView : UserControl
                 }
             }).ConfigureAwait(true);
 
-            // 【已删除】原「输出超 4K」阻塞确认弹窗(仍要继续/取消)。
-            // 删除原因有二:
-            //   ① 它从未真正生效过 —— 判定所依赖的 outW/outH 算在跨线程的 Task.Run 里读 XAML 控件,
-            //      抛 0x8001010E 被 catch{} 吞掉,over4k 恒空(见本方法开头的说明)。一个永远不会出现的
-            //      弹窗只会让人以为"这道防线在",实际没有。
-            //   ② 与既有设计冲突 —— 超 4K 已经在输出规格行用红字内联提示(RefreshVideoOutSpec:
-            //      按【总像素】判定,不会误伤 10×33333 这类极端宽高比),RELEASE_NOTES 公布的既定做法
-            //      也是"不弹窗、改内联红字",用户也明确要求过"不要弹窗,放在进度条旁边"。
-            // 所以现在超 4K 只做内联红字提示,不再打断用户。
+            // ===== 超 4K 确认弹窗(用户要求加回:超 4K 必须让用户主动确认才继续) =====
+            // 只对确实超 4K 的项弹;一个都没有就完全不弹(不为了"保险"每次都打断用户)。
+            // 该弹窗此前从未真正生效过:判定依赖的 outW/outH 算在跨线程的 Task.Run 里读 XAML 控件,
+            // 抛 0x8001010E 被 catch{} 吞掉 → 名单恒空。现在判定已挪到 UI 线程取快照(见本方法开头),
+            // 才真正有防线。它与内联红字(RefreshVideoOutSpec)同口径,一个在开始前拦、一个常驻提示。
+            if (over4k.Count > 0)
+            {
+                var dlg4k = new ContentDialog
+                {
+                    Title = "⚠ 输出规格超过 4K",
+                    Content = new StackPanel
+                    {
+                        Spacing = 8,
+                        Children =
+                        {
+                            new TextBlock
+                            {
+                                Text = "以下视频的输出分辨率超过 4K(按总像素 >3840×2160 判定):\n\n　"
+                                    + string.Join("\n　", over4k)
+                                    + "\n\n超 4K 会占用极大量显存/临时磁盘、处理非常慢,甚至中途失败。是否仍要继续?",
+                                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                            },
+                            new TextBlock { Text = "也可先降低超分倍率或改小自定义分辨率再试。", FontSize = 11, Opacity = 0.6, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap },
+                        },
+                    },
+                    PrimaryButtonText = "仍要继续",
+                    CloseButtonText = "取消",
+                    DefaultButton = Microsoft.UI.Xaml.Controls.ContentDialogButton.Primary,
+                    XamlRoot = this.XamlRoot,   // 必填:缺它 ShowAsync 直接抛异常(弹窗根本出不来)
+                    // 按钮配色(用户指定):「仍要继续」红底白字 /「取消」蓝底白字
+                    PrimaryButtonStyle = ButtonStyle(Windows.UI.Color.FromArgb(255, 217, 48, 48), Windows.UI.Color.FromArgb(255, 255, 255, 255)),
+                    CloseButtonStyle = ButtonStyle(Windows.UI.Color.FromArgb(255, 0, 103, 192), Windows.UI.Color.FromArgb(255, 255, 255, 255)),
+                };
+                var r4k = await dlg4k.ShowAsync();
+                if (r4k != Microsoft.UI.Xaml.Controls.ContentDialogResult.Primary)
+                {
+                    Log("⚠ 检测到输出超 4K,用户选择「取消」,已停止处理。");
+                    return false;
+                }
+                Log($"⚠ 输出超 4K,用户选择「仍要继续」:{string.Join(" / ", over4k)}");
+            }
 
             // 硬风险1:会爆盘(预计占 > 当前临时盘剩余)
             bool diskRisk = false;
@@ -3632,6 +3737,32 @@ public sealed partial class VideoView : UserControl
             return r == Microsoft.UI.Xaml.Controls.ContentDialogResult.Primary;
         }
         catch { return true; }   // 诊断出错不拦截,照常处理
+    }
+
+    /// <summary>构造一个纯色按钮 Style:ContentDialog 的默认按钮配色由主题接管,
+    /// 而超 4K 弹窗要求「仍要继续」红底 /「取消」蓝底(风险动作要一眼可辨),只能自己设 Background/Foreground。
+    /// BorderBrush 也一并设成同色 —— ContentDialog 按钮默认带描边,不设会露出主题色描边形成"双色边"。</summary>
+    private static Microsoft.UI.Xaml.Style ButtonStyle(Windows.UI.Color bg, Windows.UI.Color fg)
+    {
+        var st = new Microsoft.UI.Xaml.Style(typeof(Microsoft.UI.Xaml.Controls.Button));
+        st.Setters.Add(new Microsoft.UI.Xaml.Setter(Microsoft.UI.Xaml.Controls.Control.BackgroundProperty, new Microsoft.UI.Xaml.Media.SolidColorBrush(bg)));
+        st.Setters.Add(new Microsoft.UI.Xaml.Setter(Microsoft.UI.Xaml.Controls.Control.ForegroundProperty, new Microsoft.UI.Xaml.Media.SolidColorBrush(fg)));
+        st.Setters.Add(new Microsoft.UI.Xaml.Setter(Microsoft.UI.Xaml.Controls.Control.BorderBrushProperty, new Microsoft.UI.Xaml.Media.SolidColorBrush(bg)));
+        return st;
+    }
+
+    /// <summary>ETA 用的粗阶段键:只用来识别"是否换了处理阶段"(换阶段时剩余时间本来就该跳变,
+    /// 允许重置单调基准)。认不出返回空串 —— 空串不触发重置,避免个别阶段内消息把基准反复清零。
+    /// 先判"编码":编码阶段的消息(编码 N/M、压缩编码器:…、混合编码…)都归到此键,
+    /// 而拆帧/超分阶段的消息不会含"编码"二字。</summary>
+    private static string EtaStageKey(string msg)
+    {
+        if (msg.Contains("编码", StringComparison.Ordinal)) return "enc";
+        if (msg.Contains("拆帧", StringComparison.Ordinal)) return "split";
+        if (msg.Contains("插帧", StringComparison.Ordinal) || msg.Contains("补帧", StringComparison.Ordinal)) return "interp";
+        if (msg.Contains("超分", StringComparison.Ordinal)) return "up";
+        if (msg.Contains("后处理", StringComparison.Ordinal)) return "post";
+        return "";
     }
 
     private async void RunBtn_Click(object sender, RoutedEventArgs e)
@@ -3849,7 +3980,18 @@ public sealed partial class VideoView : UserControl
         // 多视频:模式1(偏移)用滑条;模式2(单独调整)按右侧 CustomFps(见下方逐条取值)。
         double f;
         if (!multi)
+        {
             inFps = double.TryParse(InputFpsBox.Text, NumberStyles.Float, inv, out f) && f > 0 ? f : null;
+            // 【残留防线】框里的值若是从【别的视频】探测来的(上一个视频的残留值),绝不能当本视频的输入帧率用:
+            // 输入帧率参与节奏换算(内容帧率 = 输入帧率 ÷ 拍数),用错会直接算错去重/补帧 —— 不只是显示错。
+            // 常见触发:上一个视频处理完变灰(未删除)+ 新拖入一个 → 列表有 2 项、框已隐藏,但本次只处理未完成的
+            // 那一个,框里的旧值就会被当成它的输入帧率。用户手填的值 owner 为 null,不受影响。
+            if (inFps != null && _inputFpsOwner != null && !ReferenceEquals(_inputFpsOwner, items[0]))
+            {
+                Log($"⚠ 「输入帧率」框里的 {inFps:0.##}fps 是视频「{_inputFpsOwner.Name}」的探测值,与本次要处理的「{items[0].Name}」不是同一个 —— 已忽略,改按本视频自身帧率自动探测。");
+                inFps = null;
+            }
+        }
         else if (fpsMode == 1)
             fpsOffset = FpsOffsetSlider.Value;
         var interpScale = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, 4 => 12, 5 => 16, _ => 2 };
@@ -3989,7 +4131,9 @@ public sealed partial class VideoView : UserControl
             }
             catch { etaInitTotal += 60; }
         }
-        // 经验库校准:同配置有实测记录 → 按实测秒/帧重算(权重 50%,避免单次异常把估算带飞)
+        // 经验库校准:同配置有实测记录 → 按实测秒/帧重算。
+        // 【取较大者,不做加权平均】:初始 ETA 宁可能偏保守 —— 一开始显示得乐观,后面只会一路"涨",
+        // 观感就是"剩余时间越等越久";偏保守则单调往下收敛,越跑越准。(旧的 0.5/0.5 会把偏低的公式值拉进来。)
         if (perFrameHist.HasValue && totalFramesEst > 0)
         {
             double estHistory = 0;
@@ -4005,9 +4149,15 @@ public sealed partial class VideoView : UserControl
                 }
                 catch { }
             }
-            if (estHistory > 1)
-                etaInitTotal = 0.5 * etaInitTotal + 0.5 * estHistory;
-            AppLogger.Info($"ETA 经验库:配置[{perfKey}] 上次实测 {perFrameHist.Value:0.###} 秒/帧 → 校准为 {etaInitTotal:0} 秒");
+            if (estHistory > 1 && estHistory > etaInitTotal)
+            {
+                etaInitTotal = estHistory;
+                AppLogger.Info($"ETA 经验库:配置[{perfKey}] 上次实测 {perFrameHist.Value:0.###} 秒/帧 → 取保守值 {etaInitTotal:0} 秒(≥公式估算)");
+            }
+            else
+            {
+                AppLogger.Info($"ETA 经验库:配置[{perfKey}] 上次实测 {perFrameHist.Value:0.###} 秒/帧(估算 {estHistory:0} 秒)低于公式估算,按公式 {etaInitTotal:0} 秒(取较大者)");
+            }
         }
 
         // 预计剩余(ETA):整体进度占比法——已用时间 ÷ 进度% → 总时长,减已用 = 剩余。
@@ -4026,6 +4176,14 @@ public sealed partial class VideoView : UserControl
         DateTime lastPanelAt = DateTime.MinValue;   // 详情面板刷新节流(防高频报告刷 UI 卡顿)
         DateTime lastSpeedAt = DateTime.MinValue;   // 近期速度样本节流
         double lastEtaShown = -1;   // 上次显示的剩余(秒):轻 EMA 平滑,只压抖动
+        // 当前处理阶段键(拆帧/补帧/超分/编码):阶段切换时才允许重置上面的单调基准 ——
+        // 各阶段快慢本来差一个量级(4K 任务实测编码占 9376s/总共 9806s),不重置会让 ETA 停在旧阶段的乐观值上。
+        string etaStageKey = "";
+        // 编码阶段计时:经验库只记"处理阶段"耗时,编码/封装必须单独切出来(见任务结束处记账)。
+        // 按【每段增量】累加而不是记"第一次进入编码的时刻":多视频批次里后续视频还要回到处理阶段,
+        // 只记起点会把它们的处理时间也一起当成编码扣掉,处理阶段耗时就只剩第一个视频的。
+        double encSecondsAcc = 0;             // 已封口的编码段累计
+        DateTime? encSegStart = null;         // 当前正在进行、尚未封口的编码段起点
         // 整批剩余与本片剩余是两套数,分开显示:batchEtaTxt 拼到顶部状态行,单项 EtaText 只算当前这一片
         string batchEtaTxt = "";
         int itemStartIdleFor = -1;      // 当前单项 ETA 归属的 progressIndex,切视频时复位平滑历史
@@ -4036,6 +4194,19 @@ public sealed partial class VideoView : UserControl
         double idleSeconds = 0;
         var progress = new Progress<(int pct, string msg)>(t =>
         {
+            // 编码阶段计时:必须放在下面节流 return 之前 —— 漏采样,任务结束时就会把编码耗时
+            // 一起算进"每帧推理成本"(实测把 0.24 秒/帧记成 7.04 秒/帧,偏差 29 倍)。
+            // 判据用进度分区(96=编码起始,与 VideoService.StageProgressPct 的分段一致),不猜字符串。
+            // 进入编码开始计一段,回到处理阶段(pct<96,即下一个视频开工)把这封口累加。
+            if (t.pct >= 96.0)
+            {
+                encSegStart ??= DateTime.Now;
+            }
+            else if (encSegStart != null)
+            {
+                encSecondsAcc += (DateTime.Now - encSegStart.Value).TotalSeconds;
+                encSegStart = null;
+            }
             // ===== 节流(修复长视频"未响应"):补帧/超分每帧都 Report,Progress<T> 不合并、
             // 每个回调都跑重活(正则+字符串+O(N²) 计数+日志重建),100k+ 帧会把 UI 线程塞死。
             // 100ms 内只刷一次界面(约 10 次/秒,足够平滑),但最后 99% 总处理(收尾不漏)。
@@ -4183,6 +4354,15 @@ public sealed partial class VideoView : UserControl
                 if (now - lastEtaAt >= TimeSpan.FromSeconds(1))
                 {
                     lastEtaAt = now;
+                    // 阶段切换(如 超分→编码)是【合法跳变】:进度占比法在慢阶段会把剩余"追认"上去,
+                    // 此时重置单调基准(只认得出阶段才重置,空串不动,避免个别消息反复清零)。
+                    var stageKeyNow = EtaStageKey(t.msg);
+                    if (stageKeyNow.Length > 0 && stageKeyNow != etaStageKey)
+                    {
+                        etaStageKey = stageKeyNow;
+                        lastEtaShown = -1;
+                        lastItemEtaShown = -1;
+                    }
                     double remain;
                     if (etaProgress >= 1.0 && workElapsed > 3)
                     {
@@ -4195,6 +4375,9 @@ public sealed partial class VideoView : UserControl
                     // 轻平滑:70% 真实 + 30% 历史(偏重真实,避免"编码快结束还显示 34 秒"的滞后)
                     if (lastEtaShown > 0 && remain > 0)
                         remain = 0.7 * remain + 0.3 * lastEtaShown;
+                    // 单调约束:同一阶段内剩余只许变小 —— 进度只有零点几个百分点时微小抖动会把
+                    // "已用÷进度"的推算放大成剧烈变化,表现为"越等越久"。取上次值即可消除。
+                    if (lastEtaShown > 0 && remain > lastEtaShown) remain = lastEtaShown;
                     lastEtaShown = remain;
                     batchEtaTxt = done + active > 1 && remain > 5
                         ? $" · 整批剩余 {FormatTime(remain)}"
@@ -4202,10 +4385,9 @@ public sealed partial class VideoView : UserControl
                 }
                 else if (etaProgress < 2 && initRemain > 8 && workElapsed > 3)
                 {
-                    // 早期(进度<2%)没有帧数消息:用初始估算线性递减展示
-                    double remain = lastEtaShown > 0 && initRemain > lastEtaShown
-                        ? Math.Min(initRemain, lastEtaShown * 1.03 + 10)
-                        : initRemain;
+                    // 早期(进度<2%)没有帧数消息:用初始估算线性递减展示;同样只许减小
+                    double remain = initRemain;
+                    if (lastEtaShown > 0 && remain > lastEtaShown) remain = lastEtaShown;
                     lastEtaShown = remain;
                     batchEtaTxt = done + active > 1 && remain > 5 ? $" · 整批剩余 {FormatTime(remain)}" : "";
                 }
@@ -4226,6 +4408,8 @@ public sealed partial class VideoView : UserControl
                         double itemRemain = itemElapsed * (100.0 / Math.Min(99.9, pctFine) - 1.0);
                         if (lastItemEtaShown > 0 && itemRemain > 0)
                             itemRemain = 0.7 * itemRemain + 0.3 * lastItemEtaShown;
+                        // 单调约束:本片剩余与整批同规则 —— 片内进度低时抖动同样会把它推上去
+                        if (lastItemEtaShown > 0 && itemRemain > lastItemEtaShown) itemRemain = lastItemEtaShown;
                         lastItemEtaShown = itemRemain;
                         it.EtaText = itemRemain > 5 ? "本片剩余 " + FormatTime(itemRemain) : "";
                     }
@@ -4529,22 +4713,38 @@ public sealed partial class VideoView : UserControl
                 AppLogger.WriteTaskSummary(summary.ToString());
             }
             catch { }
-            // 耗时经验库:全部成功才算有效样本(失败会扭曲每帧成本),记录"秒/帧"(按总面积归一)
-            if (okCount > 0 && failCount == 0 && totalFramesEst > 0 && taskSpan.TotalSeconds > 10)
+            // 耗时经验库:全部成功才算有效样本(失败会扭曲每帧成本),记录"秒/帧"(按面积归一)。
+            // 【只记"处理阶段"】taskSpan 涵盖拆帧+去重+补帧+超分+后处理+编码+封装+ffprobe 全过程,
+            // 按"每帧推理成本"记账必须把编码/封装扣掉:真实诊断包里记录 7.04 秒/帧,而实际超分只有
+            // 0.24 秒/帧(偏差 29 倍)—— 那次 4K 任务编码占 9376 秒 / 总共 9806 秒,编码被算成了推理成本。
+            // 编码耗时 = 已封口的编码段 + 任务结束时仍在进行的那一段(封装/校验都在这段内,一并排除)
+            double encSeconds = encSecondsAcc + (encSegStart.HasValue
+                ? Math.Max(0, (DateTime.Now - encSegStart.Value).TotalSeconds)
+                : 0);
+            double processSeconds = Math.Max(0, taskSpan.TotalSeconds - encSeconds);
+            AppLogger.Info($"阶段耗时拆分:处理阶段(拆帧/去重/补帧/超分/后处理){processSeconds:0.#} 秒 + 编码/封装 {encSeconds:0.#} 秒 = 总 {taskSpan.TotalSeconds:0.#} 秒");
+            if (okCount > 0 && failCount == 0 && totalFramesEst > 0 && processSeconds > 10)
             {
-                double avgAreaN = 0;
+                // 面积归一只按【帧数加权】:实际成本 = Σ(帧数ᵢ × 每帧成本 × 面积ᵢ),各视频面积不同时
+                // 算术平均会系统性偏离(混合分辨率批次尤其明显)。权重用该片自己的帧数,口径与记录端一致。
+                double areaWeighted = 0, framesWeight = 0;
                 foreach (var it in items)
                 {
                     try
                     {
                         var (w, h) = await VideoService.ProbeSizeAsync(it.Path);
-                        avgAreaN += Math.Max(0.25, (double)w * h / 2_073_600.0);
+                        var fpsS = await Task.Run(() => VideoService.ProbeFps(it.Path));
+                        double fps = double.TryParse(fpsS, NumberStyles.Float, inv, out var pf2) && pf2 > 0 ? pf2 : 30;
+                        double dur = it.Duration > 0 ? it.Duration : await VideoService.ProbeDurationSeconds(it.Path);
+                        double frames = Math.Max(1.0, dur * fps);
+                        areaWeighted += frames * Math.Max(0.25, (double)w * h / 2_073_600.0);
+                        framesWeight += frames;
                     }
                     catch { }
                 }
-                if (items.Length > 0) avgAreaN /= items.Length;
-                PerfMemory.Record(perfKey, taskSpan.TotalSeconds, totalFramesEst, avgAreaN);
-                AppLogger.Info($"ETA 经验库:记录配置[{perfKey}] 实测 {taskSpan.TotalSeconds:0} 秒/{totalFramesEst} 帧 → {taskSpan.TotalSeconds / totalFramesEst / Math.Max(0.25, avgAreaN):0.###} 秒/帧");
+                double avgAreaN = framesWeight > 0 ? areaWeighted / framesWeight : 1.0;   // 探测全失败时回退 1080p 基准
+                PerfMemory.Record(perfKey, processSeconds, totalFramesEst, avgAreaN);
+                AppLogger.Info($"ETA 经验库:记录配置[{perfKey}] 处理阶段实测 {processSeconds:0} 秒/{totalFramesEst} 帧(已排除编码 {encSeconds:0} 秒,加权面积 {avgAreaN:0.##}) → {processSeconds / totalFramesEst / Math.Max(0.25, avgAreaN):0.###} 秒/帧");
             }
             TaskSummary.Text = failCount > 0
                 ? $"完成:成功 {okCount} 个,失败 {failCount} 个"
