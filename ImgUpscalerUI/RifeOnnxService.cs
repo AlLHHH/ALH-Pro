@@ -31,54 +31,62 @@ public static class RifeOnnxService
     /// <summary>是否可走 ONNX 补帧路线(模型在才考虑;调用方还需 GPU 探测失败才真正用)。</summary>
     public static bool Available() => FindModel() != null;
 
-    /// <summary>建一个 DirectML 会话(不缓存)。gpuId≥0 走 DirectML;失败规则与超分一致:
-    /// 持久设备错误(887A)重抛(不落 CPU),其它失败打明确日志并回退 CPU。</summary>
-    static InferenceSession BuildSession(int gpuId)
+    /// <summary>建一个 DirectML 会话(不缓存)。
+    /// 【形参语义:dmlDevice 已经是 DirectML 设备号,不是引擎 -g 编号】——调用方(VideoService)已用
+    /// EngineService.ResolveDmlDevice 解析过(那一步负责"尊重用户选择 + 无效编号兜底 + 锁定独显")。
+    /// 【为什么这里绝不能再映射一次】历史事故:bc554b5 为了"锁定独显"在调用方和本函数【同时】加了映射,
+    /// 而 EngineService.ResolveDmlDevice 并不幂等——ResolveEngineGpu 在编号存在于引擎表时原样返回
+    /// (EngineService.cs 里那句"尊重用户选择(核显就核显)"),于是第二次调用会把【DML 号当引擎号】再解释一遍。
+    /// 双卡机上引擎序与 DXGI 序相反(实测:引擎 [0 独显][1 核显] vs DXGI [#0 核显][#1 独显]),
+    /// 两次映射正好互相抵消成"选独显 → 建到核显",而所有日志与设备号都显示独显。
+    /// → 编号空间只允许解析一次:解析在调用方,这里直接用。dmlDevice&lt;0 表示调用方明确要 CPU。
+    /// 失败规则与超分一致:持久设备错误(887A)重抛(不落 CPU),其它失败打明确日志并回退 CPU。</summary>
+    static InferenceSession BuildSession(int dmlDevice)
     {
         var opts = new SessionOptions();
-        if (gpuId >= 0)
+        if (dmlDevice >= 0)
         {
             try
             {
-                int dm = EngineService.ResolveDmlDevice(gpuId);
-                if (dm < 0)
-                    AppLogger.Warn($"⚠ 补帧 ONNX 设备映射:引擎编号 {gpuId} 未匹配到 DirectML 设备,将回退 CPU(速度会特别慢)——请检查显卡/驱动");
-                else
-                    opts.AppendExecutionProvider_DML(dm);
+                opts.AppendExecutionProvider_DML(dmlDevice);
             }
             catch (Exception dmlEx)
             {
                 if (AlhPro.Core.GpuFault.IsPersistentDeviceError(dmlEx)) throw;   // 设备摘除:不落 CPU,交由调用方复制原帧
-                AppLogger.Warn($"⚠ 补帧 ONNX DirectML 会话创建失败({gpuId},原因:{dmlEx.Message.Split('\n')[0]})——本机无可用 GPU ONNX,本会话将退回 CPU(速度会特别慢,若持续出现请更新显卡驱动后重试)");
+                AppLogger.Warn($"⚠ 补帧 ONNX DirectML 会话创建失败(DML 设备 {dmlDevice},原因:{dmlEx.Message.Split('\n')[0]})——本机无可用 GPU ONNX,本会话将退回 CPU(速度会特别慢,若持续出现请更新显卡驱动后重试)");
             }
         }
         return new InferenceSession(FindModel()!, opts);
     }
 
-    static InferenceSession GetSession(int gpuId)
+    /// <summary>共享会话缓存(dmlDevice = DirectML 设备号,见 BuildSession 说明)。</summary>
+    static InferenceSession GetSession(int dmlDevice)
     {
-        if (_sessions.TryGetValue(gpuId, out var s) && s != null) return s;
+        if (_sessions.TryGetValue(dmlDevice, out var s) && s != null) return s;
         lock (_sessionGate)
         {
-            if (_sessions.TryGetValue(gpuId, out var s2) && s2 != null) return s2;
-            var ses = BuildSession(gpuId);
-            _sessions[gpuId] = ses;
+            if (_sessions.TryGetValue(dmlDevice, out var s2) && s2 != null) return s2;
+            var ses = BuildSession(dmlDevice);
+            _sessions[dmlDevice] = ses;
             return ses;
         }
     }
 
     /// <summary>创建 concurrency 个独立 DirectML 会话(并行 worker 每个独占一个;绝不共用/并发 Run 同一会话,
-    /// DirectML InferenceSession 非线程安全)。由调用方负责 finally 里 Dispose。</summary>
-    public static InferenceSession[] CreateSessions(int concurrency, int gpuId)
+    /// DirectML InferenceSession 非线程安全)。由调用方负责 finally 里 Dispose。
+    /// <paramref name="dmlDevice"/> 必须是【已解析的 DirectML 设备号】(见 BuildSession 说明,不要传引擎 -g 编号)。</summary>
+    public static InferenceSession[] CreateSessions(int concurrency, int dmlDevice)
     {
         var arr = new InferenceSession[Math.Max(1, concurrency)];
         for (int i = 0; i < arr.Length; i++)
-            arr[i] = BuildSession(gpuId);
+            arr[i] = BuildSession(dmlDevice);
         return arr;
     }
 
     /// <summary>用【指定会话】在 img0/img1 间插 time 帧,写入 outputPng。worker 用自己独占的会话调用,
-    /// 不从共享 _sessions 取(否会同会话并发 Run 崩)。gpuId 仅用于错误关联/熔断判定(应传具体设备号)。</summary>
+    /// 不从共享 _sessions 取(否会同会话并发 Run 崩)。
+    /// 【gpuId 必须传 DirectML 设备号】(与本类 BuildSession/连击表同一编号空间;引擎 -g 编号请先经
+    /// EngineService.ResolveDmlDevice 解析)。它仅用于熔断判定与错误关联。</summary>
     public static void InterpWithSession(InferenceSession session, string img0, string img1, float time,
         string outputPng, int gpuId)
     {
@@ -105,7 +113,8 @@ public static class RifeOnnxService
         if (gpuId != -1 && EsrganOnnxService.DmlDeviceDead)
             throw new InvalidOperationException(
                 "GPU(DirectML)已被系统摘除/挂死,本进程内无法恢复——已停止补帧尝试(不降级到慢速 CPU)。请重启软件后重试。");
-        // -2 = 自动选设备
+        // -2 = 自动选设备。PickDevice 返回的是【引擎 -g 编号】,而 BuildSession/GetSession/连击表
+        // 统一用【DirectML 设备号】——所以在这里一次性解析,之后本方法内 gpuId 一律是 DML 号。
         if (gpuId == -2)
         {
             try
@@ -114,6 +123,7 @@ public static class RifeOnnxService
                     gpuId = EsrganOnnxService.PickDevice(probe.Width, probe.Height);
             }
             catch { gpuId = -1; }
+            if (gpuId >= 0) gpuId = EngineService.ResolveDmlDevice(gpuId);
         }
         // 连续瞬时失败已达上限:快速失败。必须在 -2 解析【之后】查——自动路径传进来的是 -2,解析前查永远命中不了,
         // 于是每对帧都白试一次"建会话 + 注定失败的推理",那正是这个检查要省掉的成本。

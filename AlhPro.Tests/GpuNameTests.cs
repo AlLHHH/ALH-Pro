@@ -107,4 +107,53 @@ public class GpuNameTests
     {
         Assert.False(GpuName.IsD3D12Translation(name));
     }
+
+    // ===== 核显判定(Vega 分支) =====
+    // 历史事故:正则写成 @"Vega\s*(?:3|4|…|11)(?!\s*(?:56|64))",交替组只吃掉【一位】数字,
+    // 前瞻随即在剩下的 "6"/"4" 上求值 → "\s*56" 永远匹配不上 → 前瞻恒成功 →
+    // RX Vega 56/64(独显)被判成核显。后果不是崩溃而是"用户可见的错误行为且无异常可查":
+    // IsWeakDevice 误判、弹假的"当前用核显请开兼容模式"、以及 wantDiscrete 取反去问 Windows 要省电偏好。
+    // 这一档此前【零覆盖】,所以错了很久没人发现。
+    [Theory]
+    [InlineData("AMD Radeon RX Vega 56")]
+    [InlineData("AMD Radeon RX Vega 64")]
+    [InlineData("AMD Radeon RX Vega 56 8GB")]
+    [InlineData("AMD Radeon RX Vega 64 Liquid")]
+    [InlineData("Radeon RX Vega 56")]
+    public void Vega_discrete_cards_are_not_integrated(string name)
+    {
+        Assert.False(GpuName.IsIntegrated(name));
+    }
+
+    [Theory]
+    [InlineData("AMD Radeon(TM) Vega 8 Graphics")]
+    [InlineData("AMD Radeon Vega 3")]
+    [InlineData("AMD Radeon Vega 8")]
+    [InlineData("AMD Radeon Vega 11")]
+    [InlineData("AMD Radeon Vega 10")]
+    [InlineData("AMD Radeon(TM) Graphics")]   // AMD 核显在注册表里的典型名字(主力机上就是它)
+    [InlineData("AMD Radeon Graphics")]
+    public void Vega_apu_graphics_are_integrated(string name)
+    {
+        Assert.True(GpuName.IsIntegrated(name));
+    }
+
+    [Theory]
+    [InlineData("AMD Radeon RX 580")]
+    [InlineData("AMD Radeon RX 7900 XTX")]
+    [InlineData("NVIDIA GeForce RTX 5070 Ti")]
+    [InlineData("Intel(R) Arc(TM) A770 Graphics")]
+    public void Non_vega_cards_are_not_integrated(string name)
+    {
+        Assert.False(GpuName.IsIntegrated(name));
+    }
+
+    [Fact]
+    public void Discrete_vega_outscores_integrated_vega()
+    {
+        // 路由层真正使用的是 Score():核显=0 会被 BestDiscrete 排除。
+        // 若回归成"RX Vega 56 是核显",这里会直接变成 0。
+        Assert.True(GpuName.Score("AMD Radeon RX Vega 56") > 0);
+        Assert.Equal(0, GpuName.Score("AMD Radeon Vega 8"));
+    }
 }
