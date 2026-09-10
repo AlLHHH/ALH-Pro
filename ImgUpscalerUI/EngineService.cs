@@ -34,31 +34,39 @@ public static partial class EngineService
     }
 
     /// <summary>照片超分(Real-ESRGAN)是否应走 ONNX 路线:
-    /// ①Blackwell(ncnn-Vulkan 崩)②无独显/Vulkan 不可用(只能 CPU,而 ncnn CPU 也崩)—— 都走 ONNX(DML/CPU 稳)。
+    /// ①【本机实测】ncnn 在该 GPU 上跑不通(优先判据)②无独显/Vulkan 不可用(只能 CPU,而 ncnn CPU 也崩)
+    /// —— 都走 ONNX(DML/CPU 稳)。
+    /// 【不再"50 系一律禁用 ncnn"】:50 系上只要真机探测通过(EnsureNcnnProbeAsync,生产帧尺寸 +
+    /// 带状黑判据)就走更快的 ncnn-Vulkan;没探测过时才回退到"50 系算风险"的保守启发式(与本次改动前一致)。</summary>
     public static bool ShouldUseOnnxEsrgan()
     {
         if (EsrganOnnxService.FindModel() == null && EsrganOnnxService.FindAnimeVideoModel() == null)
             return false;
-        return OldNcnnGpuRisky();   // 其定义已含 IsBlackwellGpu(),原先再 || 一遍是空操作
+        return NcnnGpuRisky("realesrgan", AppSettings.GpuIndex);
     }
 
-    /// <summary>waifu2x 是否应走 ONNX 路线:仅在 无独显/Vulkan 不可用时(此时只能 CPU,而 waifu2x ncnn CPU 模式有 bug 会崩)。
-    /// 50 系 waifu2x 20250915 新版引擎兼容 Blackwell,无需 ONNX;普通 GPU 走 ncnn 更快。
-    /// (50 系引擎到底行不行,由 IsWaifu2xNcnnUsableAsync 真机探测兜底——见下方。)</summary>
+    /// <summary>waifu2x 是否应走 ONNX 路线:①【本机实测】ncnn 不可用(优先判据)
+    /// ②无独显/Vulkan 不可用(此时只能 CPU,而 waifu2x ncnn CPU 模式有 bug 会崩)。
+    /// 50 系 waifu2x 20250915 新版引擎兼容 Blackwell —— 但"到底行不行"不再靠型号猜,由真机探测决定
+    /// (EnsureNcnnProbeAsync:生产帧尺寸 1080×1920 + 带状黑判据);探测通过就用 ncnn(快),失败才 ONNX。
+    /// 未探测过时按"Blackwell 不算风险"处理 = 与本次改动前的行为逐字节一致(不引入回归)。</summary>
     public static bool ShouldUseOnnxWaifu2x()
     {
         if (EsrganOnnxService.FindWaifu2xModel() == null) return false;
-        return !IsBlackwellGpu() && OldNcnnGpuRisky();   // 无独显才需要(50系 waifu2x 引擎本身兼容)
+        return NcnnGpuRisky("waifu2x", AppSettings.GpuIndex, treatBlackwellAsRiskyWithoutProbe: false);
     }
 
-    /// <summary>waifu2x ncnn 引擎在【本机】GPU 上是否可用(风险设备安全网):
-    /// 1×1 小图实测一次(5 秒超时,崩/无输出 = 不可用)并缓存(进程内,不重复探测)。
-    /// 不可用 → 调用方改走 ONNX(waifu2x ONNX 模型稳定,DirectML/CPU 都行)。
-    /// 触发条件:①RTX 50 系(Blackwell)②存在 AMD/Intel 显卡(驱动差异大、含核显共享显存机型,真机兜底)。
-    /// 纯 NVIDIA 成熟环境不探测(零开销,行为不变)。</summary>
-    private static bool? _waifu2xNcnnUsable;
-    private static int _waifu2xNcnnProbeGpu = int.MinValue;
-    private static readonly object _waifu2xProbeLock = new();
+    // ========== ncnn 可用性"真机探测"结论缓存(50 系路由的唯一判据来源)==========
+    /// <summary>探测结论(进程内):key = "引擎|GPU编号" → 该设备上 ncnn-Vulkan 实测能否用。
+    /// 【为什么要有它】此前 50 系是"一律禁用 ncnn、直接改 ONNX":实测后果是 5060 上 DirectML 建不出会话
+    /// (探测 #-1 + 8007000E OOM)→ 落 CPU → 8 秒/帧(40 系走 ncnn 只要 0.24 秒/帧,慢 33 倍)。
+    /// 现在改为"先真机探测 → 按结果决定":通过就用 ncnn(快的那条路),失败才 ONNX(明确告知用户)。
+    /// 结论缓存(进程内 + 落盘),同一设备不重复试跑;失败过的设备也不会每批重试。</summary>
+    private static readonly System.Collections.Generic.Dictionary<string, NcnnVerdictEntry> _ncnnVerdicts = new();
+    private static bool _ncnnVerdictsLoaded;   // 落盘文件是否已合并进上面的字典(只读一次,避免反复 I/O)
+    private static readonly object _ncnnVerdictLock = new();
+    /// <summary>结论有效期(过期自动重测):驱动/引擎/模型都会更新,旧结论不该永久钉死路由。</summary>
+    private static readonly TimeSpan NcnnVerdictTtl = TimeSpan.FromDays(7);
     private static bool? _nonNvidiaCache;
     /// <summary>本会话内确认"ncnn CPU(-g -1)模式崩溃"(exit -1073741819 内存访问违规)后置位:
     /// 之后所有引擎的 CPU 兜底直接跳过,改为 GPU 0 重算,避免反复崩溃拖慢/卡住(双卡机/部分机型实测)。</summary>
@@ -75,18 +83,178 @@ public static partial class EngineService
     public static async Task<bool> IsWaifu2xNcnnUsableAsync(int gpuId, CancellationToken ct)
     {
         if (!IsBlackwellGpu() && !HasNonNvidiaGpu()) return true;
-        lock (_waifu2xProbeLock)
+        // 统一走"生产帧尺寸"探测并共享同一份结论缓存(原先这里另有一套 1×1/320×240 小图缓存,
+        // 小图在 Blackwell 上会假通过 —— 两套缓存还可能给出互相矛盾的结论,故合并为一套)。
+        return await EnsureNcnnProbeAsync("waifu2x", gpuId, null, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>探测结论落盘条目。
+    /// 【为什么用纯文本而不是 JSON】决策键/值都是短标量,JSON 只会引入"私有嵌套类型的反射序列化 +
+    /// 裁剪(trim)风险"这类与需求无关的失败面;纯文本还可让人直接读诊断包核查。字段用 TAB 分隔。</summary>
+    private sealed class NcnnVerdictEntry
+    {
+        public bool Ok { get; set; }
+        public long At { get; set; }          // Unix 秒(UTC)
+        public string Device { get; set; } = "";
+        public string Detail { get; set; } = "";
+    }
+
+    private static string NcnnVerdictKey(string engine, int gpuId) => engine + "|" + gpuId;
+
+    /// <summary>探测结论落盘文件(与其他设置同在 settings 目录)。首行是格式说明,便于人工核查。</summary>
+    private static string NcnnProbeCacheFile => ParaPaths.SettingsFile("ncnn-probe.txt");
+
+    private static string SafeDeviceName(int gpuId)
+    {
+        try { return GpuInfo.GetEngineDeviceName(gpuId) ?? ""; } catch { return ""; }
+    }
+
+    /// <summary>字段净化:去掉分隔符与换行,保证一行一条(诊断包里也不会串行)。</summary>
+    private static string OneLine(string s)
+        => (s ?? "").Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
+
+    /// <summary>读落盘结论。文件不存在/不可读/单行损坏都只跳过该行 —— 缓存坏了绝不能影响处理。</summary>
+    private static System.Collections.Generic.Dictionary<string, NcnnVerdictEntry>? LoadNcnnVerdicts()
+    {
+        var path = NcnnProbeCacheFile;
+        if (!File.Exists(path)) return null;
+        var map = new System.Collections.Generic.Dictionary<string, NcnnVerdictEntry>();
+        foreach (var line in File.ReadAllLines(path))
         {
-            if (_waifu2xNcnnUsable.HasValue && _waifu2xNcnnProbeGpu == gpuId)
-                return _waifu2xNcnnUsable.Value;
+            if (string.IsNullOrWhiteSpace(line) || line[0] == '#') continue;
+            var f = line.Split('\t');
+            if (f.Length < 4) continue;
+            if (!bool.TryParse(f[1], out var ok)) continue;
+            if (!long.TryParse(f[2], out var at)) continue;
+            map[f[0]] = new NcnnVerdictEntry { Ok = ok, At = at, Device = f[3], Detail = f.Length > 4 ? f[4] : "" };
         }
-        bool ok = await IsEngineGpuUsableAsync("waifu2x", gpuId, ct).ConfigureAwait(false);
-        lock (_waifu2xProbeLock)
+        return map;
+    }
+
+    /// <summary>把落盘结论一次性合并进进程内字典(已合并过则直接返回)。过期条目直接丢弃 = 过期自动重测。
+    /// 调用方必须已持有 _ncnnVerdictLock。</summary>
+    private static void EnsureNcnnVerdictsLoaded_NoLock()
+    {
+        if (_ncnnVerdictsLoaded) return;
+        _ncnnVerdictsLoaded = true;
+        try
         {
-            _waifu2xNcnnUsable = ok;
-            _waifu2xNcnnProbeGpu = gpuId;
+            var map = LoadNcnnVerdicts();
+            if (map == null) return;
+            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            foreach (var kv in map)
+                if (kv.Value != null && now - kv.Value.At >= 0 && now - kv.Value.At <= (long)NcnnVerdictTtl.TotalSeconds)
+                    _ncnnVerdicts[kv.Key] = kv.Value;
         }
+        catch { }
+    }
+
+    /// <summary>取已缓存的 ncnn 可用性结论。null = 没测过(调用方回退保守启发式)。
+    /// 首次调用把落盘结论合并进进程内,之后纯内存查表(零 I/O)。全程 try/catch:缓存坏了绝不能影响处理。</summary>
+    public static bool? TryGetNcnnVerdict(string engine, int gpuId)
+    {
+        var key = NcnnVerdictKey(engine, gpuId);
+        try
+        {
+            lock (_ncnnVerdictLock)
+            {
+                EnsureNcnnVerdictsLoaded_NoLock();
+                return _ncnnVerdicts.TryGetValue(key, out var e) ? e.Ok : (bool?)null;
+            }
+        }
+        catch { return null; }
+    }
+
+    /// <summary>记录探测结论(进程内 + 落盘)。落盘失败只记日志,绝不影响处理。</summary>
+    private static void SaveNcnnVerdict(string engine, int gpuId, bool ok, string detail)
+    {
+        var key = NcnnVerdictKey(engine, gpuId);
+        System.Collections.Generic.List<string> lines = new();
+        lock (_ncnnVerdictLock)
+        {
+            EnsureNcnnVerdictsLoaded_NoLock();
+            _ncnnVerdicts[key] = new NcnnVerdictEntry
+            {
+                Ok = ok,
+                At = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                Device = SafeDeviceName(gpuId),
+                Detail = detail,
+            };
+            lines.Add("# key\tok\tatUnix\tdevice\tdetail  (ALH Pro ncnn 真机探测结论缓存;删掉本文件即强制重新探测)");
+            foreach (var kv in _ncnnVerdicts)
+                lines.Add($"{OneLine(kv.Key)}\t{kv.Value.Ok}\t{kv.Value.At}\t{OneLine(kv.Value.Device)}\t{OneLine(kv.Value.Detail)}");
+        }
+        try { File.WriteAllLines(NcnnProbeCacheFile, lines); }
+        catch (Exception ex) { AppLogger.Warn($"[探测] ncnn 探测结论落盘失败(不影响本次处理):{ex.Message}"); }
+    }
+
+    /// <summary>【50 系路由核心】真机探测某引擎的 ncnn-Vulkan 在本机该 GPU 上能否按【生产形态】跑通,
+    /// 结论缓存(进程内 + 落盘),供 NcnnGpuRisky / ShouldUseOnnx* 决定走 ncnn 还是 ONNX。
+    /// 【与旧探测口径的区别 —— 旧口径正是"50 系一律禁用"的根因】
+    /// ①探测图用【生产帧尺寸 1080×1920】(旧 320×240 太小:真机证据是"小图能过、真实分辨率静默出 0KB 空帧/黑帧,
+    ///   退出码还是 0",于是探测判"可用"→ 整段黑);
+    /// ②参数与生产逐字一致(-s 2 -n 0 -t 0 -j 1:1:1 + 真实模型),而不是裸 -s 2;
+    /// ③判据含【带状近黑】:IsBlackPng → FrameInspect.IsDefectiveFrame = 整帧 ≥95% 近黑 或 任一 1/3 主条带 ≥95% 近黑
+    ///   (整帧量词在"下 2/3 全黑、上 1/3 正常"时只黑 66%,判不出来 —— 这正是旧探测漏检的形态)。
+    /// gpuId&lt;0(用户选 CPU)直接返回 false:ncnn CPU 模式在 50 系上有崩溃 bug(实测 exit -1073741819)。</summary>
+    public static async Task<bool> EnsureNcnnProbeAsync(string engine, int gpuId, string? model, CancellationToken ct)
+    {
+        if (gpuId < 0) return false;
+        // 【快速通道:纯 NVIDIA 非 Blackwell + 机内没有非 NVIDIA 显卡 → 不探测,直接判可用】
+        // 理由:①这套组合从无"ncnn-Vulkan 跑不通"的实测证据(实测出问题的是 50 系、AMD、无独显);
+        // ②一次探测要 ~15 秒,而图片路径上一个任务可能总共只要 2 秒 —— 不能先白等 15 秒;
+        // ③真出问题还有引擎自身的"输出全黑 → 该设备判不可用 + 降级链"兜底(见 IsEngineGpuUsableAsync)。
+        // 50 系 / AMD / Intel 核显一律照旧真机探测,该走的自适应一点不少。
+        if (!IsBlackwellGpu() && !HasNonNvidiaGpu()) return true;
+        var cached = TryGetNcnnVerdict(engine, gpuId);
+        if (cached.HasValue)
+        {
+            AppLogger.Info($"[探测] {engine} GPU({gpuId}/{SafeDeviceName(gpuId)})沿用已缓存结论:" +
+                (cached.Value ? "ncnn-Vulkan 可用 → 走 ncnn(不重复试跑)" : "ncnn-Vulkan 不可用 → 走 ONNX(不每批重试)"));
+            return cached.Value;
+        }
+        AppLogger.Info($"[探测] {engine} GPU({gpuId})首次真机探测(生产帧尺寸 1080×1920,模型 {model ?? "(默认)"} + 带状黑判据,最长约 30 秒)...");
+        bool ok = await IsEngineGpuUsableAsync(engine, gpuId, ct, fullFrame: true, model: model).ConfigureAwait(false);
+        // 结论按【引擎|GPU】记账(决策键);探测用的模型一并记进明细,便于诊断包核查"这个结论是对哪个模型测出来的"。
+        SaveNcnnVerdict(engine, gpuId, ok, (ok ? "production-geometry probe ok" : "production-geometry probe failed") + $"; model={model ?? "(default)"}");
+        if (ok) AppLogger.Info($"[探测] {engine} GPU({gpuId})真机探测通过 → 使用 ncnn-Vulkan(50 系未禁用,走最快路径)");
+        else AppLogger.Warn($"[探测] {engine} GPU({gpuId})真机探测失败(崩溃/空帧/黑帧/超时)→ 为稳定性改用 ONNX(结论已记住,不再重复试)");
         return ok;
+    }
+
+    /// <summary>补帧(RIFE)同款"先探后决定 + 结论缓存"。
+    /// 旧逻辑在 50 系上【直接】改走 ONNX、不做任何探测(原文:"50系(Blackwell)ncnn 补帧引擎会 hang,直接改用 ONNX")。
+    /// 现在改为真实插一帧实测(含"出帧但颜色损坏"判据):通过就用更快的 ncnn-Vulkan 补帧,失败才 ONNX。
+    /// 模型名进缓存 key:NIHUI 老模型(anime/HD/UHD/v2.3/anime)与 v4.x 架构不同,稳定性不能互相顶替。</summary>
+    public static async Task<bool> EnsureRifeNcnnProbeAsync(string rifeExe, string model, int gpuId, CancellationToken ct)
+    {
+        if (gpuId < 0 || string.IsNullOrEmpty(rifeExe)) return false;
+        var key = "rife:" + model;
+        var cached = TryGetNcnnVerdict(key, gpuId);
+        if (cached.HasValue)
+        {
+            AppLogger.Info($"[探测] 补帧 {model} GPU({gpuId})沿用已缓存结论:" + (cached.Value ? "可用 → 走 ncnn-Vulkan" : "不可用 → 走 ONNX"));
+            return cached.Value;
+        }
+        bool ok = await IsRifeGpuUsableAsync(rifeExe, model, gpuId, ct).ConfigureAwait(false);
+        SaveNcnnVerdict(key, gpuId, ok, ok ? "rife probe ok" : "rife probe failed");
+        return ok;
+    }
+
+    /// <summary>【本机实测优先】某引擎的 ncnn-Vulkan 在本机该 GPU 上是否算"风险"(=该走 ONNX)。
+    /// ①有实测结论(EnsureNcnnProbeAsync / EnsureRifeNcnnProbeAsync 写入)→ 一律以实测为准:
+    ///    实测可用 → false(走 ncnn),实测不可用 → true(走 ONNX);
+    /// ②没测过 → 回退原保守启发式(treatBlackwellAsRiskyWithoutProbe 决定 50 系算不算风险),
+    ///    保证"没探测过的调用路径"与本次改动前行为一致,不引入回归。</summary>
+    public static bool NcnnGpuRisky(string engine, int gpuId, bool treatBlackwellAsRiskyWithoutProbe = true)
+    {
+        try
+        {
+            var v = TryGetNcnnVerdict(engine, gpuId);
+            if (v.HasValue) return !v.Value;
+        }
+        catch { }
+        return OldNcnnGpuRiskyHeuristic(treatBlackwellAsRiskyWithoutProbe);
     }
 
     /// <summary>是否存在非 NVIDIA 显卡(AMD/Intel,含核显):驱动差异大,需要真机探测兜底。</summary>
@@ -471,12 +639,18 @@ public static partial class EngineService
     }
 
     /// <summary>旧 ncnn 引擎(2022 版,realesrgan ncnn)在 GPU 上可能不可用的设备:
-    /// ①RTX 50 系(Blackwell,ncnn-Vulkan vkQueueSubmit 崩,全局已知)②Vulkan 不可用/无独显(只能 CPU,而 CPU 也崩)。
-    /// 用于全设备兼容自检提示(不限 50 系)。</summary>
-    public static bool OldNcnnGpuRisky()
+    /// ①RTX 50 系(Blackwell)②Vulkan 不可用/无独显(只能 CPU,而 CPU 也崩)。
+    /// 用于全设备兼容自检提示(不限 50 系)。
+    /// 【注意】这是"还没实测过"时的保守启发式 —— 真机探测过就以实测为准(见 NcnnGpuRisky / EnsureNcnnProbeAsync);
+    /// 50 系不再"一律禁用 ncnn":引擎够新(waifu2x 20250915 已是上游最新构建)时探测能过,就该走 ncnn 这条快 33 倍的路。</summary>
+    public static bool OldNcnnGpuRisky() => OldNcnnGpuRiskyHeuristic(treatBlackwellAsRisky: true);
+
+    /// <summary>风险启发式的公共实现。treatBlackwellAsRisky=false 给 waifu2x 用:
+    /// 它自带的是 20250915 版(上游最新)引擎,未实测时不该按"风险"处理 —— 否则又退回"50 系一刀切禁用 ncnn"。</summary>
+    private static bool OldNcnnGpuRiskyHeuristic(bool treatBlackwellAsRisky)
     {
-        // Blackwell:Vulkan 驱动问题,已知崩
-        if (IsBlackwellGpu()) return true;
+        // Blackwell:历史上是 2022 版 ncnn 的 Vulkan 驱动问题(引擎够新则不一定)
+        if (treatBlackwellAsRisky && IsBlackwellGpu()) return true;
         // Vulkan 不可用(无独显/驱动缺):引擎 GPU 无法跑,CPU 模式也崩 → 风险
         try { if (!ALHPro.VulkanCheck.GpuAvailable) return true; } catch { }
         // 其余(AMD/Intel 核显/NVIDIA 老卡):Vulkan 正常即可用,不预判(避免误报)
@@ -1014,12 +1188,23 @@ public static partial class EngineService
         return tail;
     }
 
-    /// <summary>探测指定超分引擎能否用 GPU(-g 0)成功跑一张 1×1 图。
+    /// <summary>探测指定超分引擎能否用 GPU(-g 0)成功跑一张 320×240 图。
     /// 用途:视频处理开始前,若当前引擎在用户显卡上跑不通(不仅 RTX 50 系——
     /// AMD/Intel/老驱动等任何"该引擎不支持"的场景),提前提示换引擎,而不是处理中默默降级。
     /// 返回 false = GPU 不可用(建议换 waifu2x);异常/超时一律按 false 处理(不中断主流程)。
-    /// 注意:仅探测(1×1 图,毫秒级),不影响正常处理;结果不缓存(显卡/驱动随时可能变)。</summary>
+    /// 注意:仅探测(小图,毫秒级),不影响正常处理;结果不缓存(显卡/驱动随时可能变)。
+    /// 【保持原行为】这个 3 参重载 = fullFrame:false,与改动前逐字一致(所有既有调用点都走它)。
+    /// 需要"能堵住 Blackwell 静默空帧/黑帧"的强判据时,用 fullFrame:true 的重载(见下)。</summary>
     public static async Task<bool> IsEngineGpuUsableAsync(string engine, int gpuId, CancellationToken ct)
+        => await IsEngineGpuUsableAsync(engine, gpuId, ct, fullFrame: false, model: null).ConfigureAwait(false);
+
+    /// <summary>同上,但 fullFrame=true 时按【生产形态】探测:1080×1920 真帧尺寸 + 生产参数
+    /// (-s 2 -n 0 -t 0 -j 1:1:1 + 真实模型)。这是"50 系该走 ncnn 还是 ONNX"的判据来源。
+    /// 【为什么小图不够】真机证据(诊断包):320×240 甚至 1×1 探测都能通过,真实分辨率却静默输出
+    /// 0KB 空帧/黑帧、【退出码还是 0】——于是旧探测判"可用",整段视频的黑帧一路进成片。
+    /// 判据仍沿用 IsBlackPng(= FrameInspect.IsDefectiveFrame:整帧 ≥95% 近黑 或 任一 1/3 主条带 ≥95% 近黑),
+    /// 因此"下 2/3 全黑、上 1/3 正常"这种带状坏帧也能被这一层拦住。</summary>
+    public static async Task<bool> IsEngineGpuUsableAsync(string engine, int gpuId, CancellationToken ct, bool fullFrame, string? model)
     {
         try
         {
@@ -1030,23 +1215,58 @@ public static partial class EngineService
                 _ => null,
             };
             if (exe == null) return false;
-            // 生成 320×240 测试图(原 1×1 会假通过:部分引擎能跑 1×1,但在真实帧尺寸上因分块/显存/驱动崩)
+            // 生成测试图:fullFrame=false 用 320×240(原 1×1 会假通过:部分引擎能跑 1×1,但在真实帧尺寸上因分块/显存/驱动崩);
+            // fullFrame=true 用生产帧尺寸 1080×1920 —— 见下方 overload 的说明。
             var inPng = Path.Combine(EngineService.TempRoot, $"eng_probe_{Guid.NewGuid():N}.png");
             var outPng = Path.Combine(EngineService.TempRoot, $"eng_probe_out_{Guid.NewGuid():N}.png");
             try
             {
-                using (var bmp = new System.Drawing.Bitmap(320, 240))
+                if (fullFrame)
                 {
-                    using (var g = System.Drawing.Graphics.FromImage(bmp))
+                    // 生产帧尺寸(1080×1920 = 短竖屏视频原生帧):只有够大才复现"小图能过、真实分辨率静默出空帧/黑帧"。
+                    // 三段内容刻意都不黑(上亮/中灰/下中亮):这样"某个 1/3 条带近黑"只可能来自引擎故障,而不是素材本身。
+                    using (var bmp = new System.Drawing.Bitmap(1080, 1920))
                     {
-                        g.Clear(System.Drawing.Color.Red);
-                        using var brush = new System.Drawing.SolidBrush(System.Drawing.Color.White);
-                        g.FillRectangle(brush, 0, 0, 160, 120);   // 有明暗变化,更接近真实帧
+                        using (var g = System.Drawing.Graphics.FromImage(bmp))
+                        {
+                            g.Clear(System.Drawing.Color.FromArgb(96, 128, 168));                       // 中 1/3:灰蓝
+                            using var b1 = new System.Drawing.SolidBrush(System.Drawing.Color.FromArgb(238, 236, 228));
+                            g.FillRectangle(b1, 0, 0, 1080, 640);                                       // 上 1/3:亮
+                            using var b2 = new System.Drawing.SolidBrush(System.Drawing.Color.FromArgb(150, 158, 140));
+                            g.FillRectangle(b2, 0, 1280, 1080, 640);                                    // 下 1/3:中亮
+                        }
+                        bmp.Save(inPng, System.Drawing.Imaging.ImageFormat.Png);
                     }
-                    bmp.Save(inPng, System.Drawing.Imaging.ImageFormat.Png);
                 }
-                // 引擎参数:统一 -s 2(2x 模型)
-                var args = $"-i \"{inPng}\" -o \"{outPng}\" -s 2 -g {gpuId}";
+                else
+                {
+                    using (var bmp = new System.Drawing.Bitmap(320, 240))
+                    {
+                        using (var g = System.Drawing.Graphics.FromImage(bmp))
+                        {
+                            g.Clear(System.Drawing.Color.Red);
+                            using var brush = new System.Drawing.SolidBrush(System.Drawing.Color.White);
+                            g.FillRectangle(brush, 0, 0, 160, 120);   // 有明暗变化,更接近真实帧
+                        }
+                        bmp.Save(inPng, System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                }
+                // 引擎参数:fullFrame=false 统一 -s 2(2x 模型,与原口径逐字一致);
+                // fullFrame=true 用与生产【逐字一致】的形态:真实模型 + -t 0 + 现行 -j(1:1:1)。
+                string args;
+                if (fullFrame && engine == "waifu2x")
+                {
+                    var modelDir = Path.Combine(Path.GetDirectoryName(exe)!, string.IsNullOrEmpty(model) ? "models-cunet" : model);
+                    args = $"-i \"{inPng}\" -o \"{outPng}\" -s 2 -n 0 -t 0 -g {gpuId} -m \"{modelDir}\"{SafeRender.GetEngineThreadArgs()}";
+                }
+                else if (fullFrame)
+                {
+                    args = $"-i \"{inPng}\" -o \"{outPng}\" -s 2 -m models -n {model ?? "realesrgan-x4plus"} -t 0 -g {gpuId}{SafeRender.GetEngineThreadArgs()}";
+                }
+                else
+                {
+                    args = $"-i \"{inPng}\" -o \"{outPng}\" -s 2 -g {gpuId}";
+                }
                 var psi = new ProcessStartInfo
                 {
                     FileName = exe,
@@ -1071,7 +1291,10 @@ public static partial class EngineService
                         continue;
                     }
                     using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    waitCts.CancelAfter(TimeSpan.FromSeconds(15));   // 探测超时 15 秒(旧 5 秒对"冷启动慢的 ncnn 卡"会误报 hang,如 4060 首次加载 Vulkan 要 >5s;15s 仍能拦住真 hang)
+                    // 探测超时:小图 15 秒(旧 5 秒对"冷启动慢的 ncnn 卡"会误报 hang,如 4060 首次加载 Vulkan 要 >5s);
+                    // 生产帧尺寸探测放大到 30 秒 —— 1080×1920 一帧(0.5~1s)+ 冷启动编译着色器,15 秒在慢卡/首次运行上会误判。
+                    int probeTimeoutSec = fullFrame ? 30 : 15;
+                    waitCts.CancelAfter(TimeSpan.FromSeconds(probeTimeoutSec));
                     try
                     {
                         await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
@@ -1079,18 +1302,21 @@ public static partial class EngineService
                         bool ok = p.ExitCode == 0 && File.Exists(outPng) && new FileInfo(outPng).Length > 0;
                         // 【黑帧自检】引擎输出存在但全黑(静默黑帧 bug,如旧 ncnn on 50系/AMD 驱动异常)→ 该设备视为不可用,
                         // 立即改用其它卡/ONNX;否则黑帧设备会被误判"可用",后续补帧/超分一路黑。
+                        // 判据是 IsBlackPng = FrameInspect.IsDefectiveFrame(整帧近黑【或】任一 1/3 主条带近黑)——
+                        // 带状黑("下 2/3 全黑、上 1/3 正常")也拦得住,不是只查整帧全黑。
                         if (ok) { try { if (IsBlackPng(outPng)) { ok = false; } } catch { } }
                         if (ok)
                         {
-                            AppLogger.Info($"[探测] 引擎 {engine} GPU(-g {gpuId})可用(第 {attempt} 次,1×1 图出图,非黑)");
+                            AppLogger.Info($"[探测] 引擎 {engine} GPU(-g {gpuId})可用(第 {attempt} 次," +
+                                (fullFrame ? "生产帧尺寸 1080×1920 出图,非黑/非带状黑" : "320×240 小图出图,非黑") + ")");
                             return true;
                         }
-                        AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId})第 {attempt}/{MaxAttempts} 次不可用(exit={p.ExitCode}/无输出/{outPng},可能黑帧)" + (attempt < MaxAttempts ? ",退避后重试..." : "——将自动改用其它设备或 ONNX"));
+                        AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId})第 {attempt}/{MaxAttempts} 次不可用(exit={p.ExitCode}/无输出/空帧/黑帧)" + (attempt < MaxAttempts ? ",退避后重试..." : "——将自动改用其它设备或 ONNX"));
                     }
                     catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                     {
                         // 超时(真 hang):重试只会再白等,直接判不可用并杀进程
-                        AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId}) {15} 秒无响应(疑似 hang)——按不可用处理,已终止探测(不重试)");
+                        AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId}) {probeTimeoutSec} 秒无响应(疑似 hang)——按不可用处理,已终止探测(不重试)");
                         try { p.Kill(entireProcessTree: true); } catch { }
                         return false;
                     }
