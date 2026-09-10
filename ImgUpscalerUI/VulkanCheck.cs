@@ -477,6 +477,11 @@ public static class VulkanCheck
             try { _bwNames.AddRange(regNames); } catch { }
             logSb.Append(AlhPro.Core.GpuName.AnyIsBlackwell(_bwNames) ? "是(将走 ONNX 稳定路线)" : "否(走 ncnn-GPU)");
             AppLogger.Info(logSb.ToString());
+            // ===== 补上最关键的一环:DXGI(DirectML)枚举序 + 引擎编号→DirectML 号映射 =====
+            // 注册表序/引擎序/DXGI 序是三套编号;超分/补帧在 50 系走 ONNX DirectML,实际用哪张卡由
+            // ToDmlDevice(引擎编号) 名匹配 DXGI 决定。此前诊断包只有"注册表 vs 引擎",缺 DXGI 这一环,
+            // 导致"选独显实际跑核显"无法定位。这里一并打进日志,下次诊断包即可一眼定案。
+            try { AppLogger.Info("GPU→DirectML 映射对照:" + EngineService.DescribeDmlMapping()); } catch { }
         }
         catch { /* 对照日志失败不影响主报告 */ }
 

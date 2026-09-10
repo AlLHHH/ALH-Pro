@@ -186,6 +186,41 @@ public static partial class EngineService
         return ToDmlDevice(engineGpu);
     }
 
+    /// <summary>诊断用:一次性打印"DXGI 枚举序(=DirectML 设备号) + 每个引擎编号→DirectML号 的映射"。
+    /// 排查"选独显实际跑核显"的关键数据——注册表序、引擎序、DXGI(DirectML)序是三套可能互不相同的编号,
+    /// 只有并排才能一眼看出 ToDmlDevice 映射对不对(此前进诊断包的只有"注册表 vs 引擎",缺 DXGI 这一环)。</summary>
+    public static string DescribeDmlMapping()
+    {
+        var sb = new System.Text.StringBuilder();
+        try
+        {
+            var dx = TryEnumerateDxgiAdapters();
+            sb.Append("DXGI(DirectML)枚举[");
+            for (int i = 0; i < dx.Count; i++) { if (i > 0) sb.Append(" | "); sb.Append($"#{dx[i].Index} {dx[i].Name}"); }
+            if (dx.Count == 0) sb.Append("(枚举失败)");
+            sb.Append("] 引擎→DML 映射[");
+            var devs = VulkanCheck.Devices;
+            for (int i = 0; i < devs.Count; i++)
+            {
+                if (i > 0) sb.Append(" | ");
+                int dm = ToDmlDevice(devs[i].Id);
+                string dmName;
+                if (dm < 0) dmName = "(未匹配→走CPU)";
+                else
+                {
+                    dmName = "(?";
+                    try { foreach (var a in dx) if (a.Index == dm) { dmName = a.Name; break; } } catch { }
+                    dmName = $"({dmName})";
+                }
+                sb.Append($"引擎#{devs[i].Id}[{devs[i].Name}]→DML#{dm}{dmName}");
+            }
+            if (devs.Count == 0) sb.Append("(引擎未枚举)");
+            sb.Append("] DML探测首可用=#").Append(EsrganOnnxService.DmlFallbackOk);
+        }
+        catch (Exception ex) { sb.Append("(诊断失败:").Append(ex.Message).Append(')'); }
+        return sb.ToString();
+    }
+
     // ===== DXGI 真枚举:显卡名 → DXGI/DirectML 设备号(替代按注册表顺序猜,双卡机上注册表序≠DXGI 序会选错卡) =====
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
     private struct DXGI_ADAPTER_DESC1
