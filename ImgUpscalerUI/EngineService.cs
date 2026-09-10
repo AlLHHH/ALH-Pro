@@ -260,34 +260,78 @@ public static partial class EngineService
     [System.Runtime.InteropServices.DllImport("dxgi.dll")]
     private static extern int CreateDXGIFactory1(ref System.Guid riid, out System.IntPtr ppFactory);
 
-    /// <summary>枚举 DXGI 适配器(顺序 = DirectML 设备号)。返回 (索引, 名字, LUID)。失败/无卡返回空。</summary>
+    // ===== DXGI 真枚举:vtable 手动调用(不依赖 built-in COM interop)=====
+    // 【为什么必须这么做】原实现用 Marshal.GetObjectForIUnknown + COM 接口强转,而 .NET 5+ 的 built-in
+    // COM interop 默认**关闭**(csproj 未开 BuiltInComInteropSupport)→ 该调用抛异常,又被 catch{} 静默吞掉
+    // → TryEnumerateDxgiAdapters 永远返回空 → ToDmlDevice 的"DXGI 名匹配"整条失效,只能回退到【注册表序】名匹配。
+    // 而双卡机上注册表序(实测 [#0 AMD][#1 NVIDIA])与 DirectML 设备号序相反 → 引擎编号 0(NVIDIA) 被映射到
+    // DirectML 的核显号 → 表现为"选独显却跑核显"。改用手动读 vtable 调 COM 方法,彻底摆脱该开关依赖。
+    private delegate int DxgiEnumAdapters1Fn(IntPtr self, uint index, out IntPtr adapter);
+    private delegate int DxgiGetDesc1Fn(IntPtr self, out DXGI_ADAPTER_DESC1 desc);
+    [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.StdCall)]
+    private delegate uint DxgiReleaseFn(IntPtr self);
+
+    /// <summary>从 COM 对象的 vtable 取第 slot 个方法指针。</summary>
+    private static IntPtr VtblSlot(IntPtr comObj, int slot)
+    {
+        var vtbl = System.Runtime.InteropServices.Marshal.ReadIntPtr(comObj);
+        return System.Runtime.InteropServices.Marshal.ReadIntPtr(vtbl, slot * IntPtr.Size);
+    }
+
+    // vtable 槽位(继承链累计):
+    //   IUnknown: QueryInterface=0 AddRef=1 Release=2
+    //   IDXGIObject: +SetPrivateData=3 SetPrivateDataInterface=4 GetParent=5
+    //   IDXGIFactory: +EnumAdapters=6 MakeWindowAssociation=7 GetWindowAssociation=8 CreateSwapChain=9 CreateSoftwareAdapter=10
+    //   IDXGIFactory1: +EnumAdapters1=11 IsCurrent=12
+    //   IDXGIAdapter: (继承 IDXGIObject) +EnumOutputs=6 GetDesc=7 CheckInterfaceSupport=8
+    //   IDXGIAdapter1: +GetDesc1=9
+    private const int SlotEnumAdapters1 = 11;
+    private const int SlotGetDesc1 = 9;
+    private const int SlotRelease = 2;
+
+    /// <summary>枚举 DXGI 适配器(顺序 = DirectML 设备号)。返回 (索引, 名字, LUID)。失败/无卡返回空;
+    /// 失败原因写入 lastDxgiError 供诊断包定位(不再静默吞掉)。</summary>
+    public static string LastDxgiError { get; private set; } = "";
+
     private static System.Collections.Generic.List<(int Index, string Name, long Luid)> TryEnumerateDxgiAdapters()
     {
         var list = new System.Collections.Generic.List<(int, string, long)>();
+        LastDxgiError = "";
+        IntPtr factoryPtr = IntPtr.Zero;
         try
         {
             var riid = new System.Guid("770aae78-f26f-4dba-a829-253c83d1b387");   // IDXGIFactory1
-            if (CreateDXGIFactory1(ref riid, out var factoryPtr) != 0 || factoryPtr == IntPtr.Zero) return list;
-            var factory = (IDXGIFactory1)System.Runtime.InteropServices.Marshal.GetObjectForIUnknown(factoryPtr);
-            try
+            int hr = CreateDXGIFactory1(ref riid, out factoryPtr);
+            if (hr != 0 || factoryPtr == IntPtr.Zero)
             {
-                for (uint i = 0; ; i++)
+                LastDxgiError = $"CreateDXGIFactory1 hr=0x{hr:X8}";
+                return list;
+            }
+            var enumAdapters1 = System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer<DxgiEnumAdapters1Fn>(VtblSlot(factoryPtr, SlotEnumAdapters1));
+            var releaseFactory = System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer<DxgiReleaseFn>(VtblSlot(factoryPtr, SlotRelease));
+            for (uint i = 0; ; i++)
+            {
+                if (enumAdapters1(factoryPtr, i, out var adapterPtr) != 0 || adapterPtr == IntPtr.Zero) break;
+                try
                 {
-                    if (factory.EnumAdapters1(i, out var adapter) != 0 || adapter == null) break;
-                    try
+                    var getDesc1 = System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer<DxgiGetDesc1Fn>(VtblSlot(adapterPtr, SlotGetDesc1));
+                    if (getDesc1(adapterPtr, out var desc) == 0)
                     {
-                        if (adapter.GetDesc1(out var desc) == 0)
-                        {
-                            var name = desc.Description != null ? new string(desc.Description).TrimEnd('\0', ' ') : "";
-                            if (name.Length > 0) list.Add(((int)i, name, desc.AdapterLuid));
-                        }
+                        var name = desc.Description != null ? new string(desc.Description).TrimEnd('\0', ' ') : "";
+                        if (name.Length > 0) list.Add(((int)i, name, desc.AdapterLuid));
                     }
-                    finally { System.Runtime.InteropServices.Marshal.ReleaseComObject(adapter); }
+                }
+                finally
+                {
+                    try { System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer<DxgiReleaseFn>(VtblSlot(adapterPtr, SlotRelease))(adapterPtr); } catch { }
                 }
             }
-            finally { System.Runtime.InteropServices.Marshal.ReleaseComObject(factory); }
+            releaseFactory(factoryPtr);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            LastDxgiError = ex.GetType().Name + ": " + ex.Message.Split('\n')[0];
+        }
         return list;
     }
 
@@ -298,31 +342,35 @@ public static partial class EngineService
     /// 失败/无独显返回 null。</summary>
     public static double? TryGetDxgiVramGb()
     {
+        IntPtr factoryPtr = IntPtr.Zero;
         try
         {
             var riid = new System.Guid("770aae78-f26f-4dba-a829-253c83d1b387");   // IDXGIFactory1
-            if (CreateDXGIFactory1(ref riid, out var factoryPtr) != 0 || factoryPtr == IntPtr.Zero) return null;
-            var factory = (IDXGIFactory1)System.Runtime.InteropServices.Marshal.GetObjectForIUnknown(factoryPtr);
-            try
+            if (CreateDXGIFactory1(ref riid, out factoryPtr) != 0 || factoryPtr == IntPtr.Zero) return null;
+            // 同 TryEnumerateDxgiAdapters:vtable 手动调用(不依赖 built-in COM interop;原 COM 方式在 .NET 5+ 下必抛并被吞)
+            var enumAdapters1 = System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer<DxgiEnumAdapters1Fn>(VtblSlot(factoryPtr, SlotEnumAdapters1));
+            var releaseFactory = System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer<DxgiReleaseFn>(VtblSlot(factoryPtr, SlotRelease));
+            long best = 0;
+            for (uint i = 0; ; i++)
             {
-                long best = 0;
-                for (uint i = 0; ; i++)
+                if (enumAdapters1(factoryPtr, i, out var adapterPtr) != 0 || adapterPtr == IntPtr.Zero) break;
+                try
                 {
-                    if (factory.EnumAdapters1(i, out var adapter) != 0 || adapter == null) break;
-                    try
+                    var getDesc1 = System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer<DxgiGetDesc1Fn>(VtblSlot(adapterPtr, SlotGetDesc1));
+                    if (getDesc1(adapterPtr, out var desc) == 0)
                     {
-                        if (adapter.GetDesc1(out var desc) == 0)
-                        {
-                            const uint DXGI_ADAPTER_FLAG_SOFTWARE = 2;   // Microsoft 基本渲染驱动:无显存,必须排除
-                            if ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0 && desc.DedicatedVideoMemory > best)
-                                best = desc.DedicatedVideoMemory;
-                        }
+                        const uint DXGI_ADAPTER_FLAG_SOFTWARE = 2;   // Microsoft 基本渲染驱动:无显存,必须排除
+                        if ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0 && desc.DedicatedVideoMemory > best)
+                            best = desc.DedicatedVideoMemory;
                     }
-                    finally { System.Runtime.InteropServices.Marshal.ReleaseComObject(adapter); }
                 }
-                return best > 1073741824L ? best / 1073741824.0 : null;
+                finally
+                {
+                    try { System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer<DxgiReleaseFn>(VtblSlot(adapterPtr, SlotRelease))(adapterPtr); } catch { }
+                }
             }
-            finally { System.Runtime.InteropServices.Marshal.ReleaseComObject(factory); }
+            releaseFactory(factoryPtr);
+            return best > 1073741824L ? best / 1073741824.0 : null;
         }
         catch { return null; }
     }
