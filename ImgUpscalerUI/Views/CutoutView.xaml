@@ -49,6 +49,7 @@
                     <TextBlock Text="输出" Style="{StaticResource SectionTitle}"/>
                     <TextBox x:Name="OutDirBox" PlaceholderText="默认与源图同目录"
                              IsSpellCheckEnabled="False"
+                             TextChanged="OutDirBox_TextChanged"
                              ToolTipService.ToolTip="输出文件夹:留空=和源图同目录"/>
                     <Button Content="选择输出文件夹..." Click="BrowseOut_Click"
                             HorizontalAlignment="Stretch"/>
