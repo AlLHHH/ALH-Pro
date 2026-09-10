@@ -2112,6 +2112,7 @@ public static class VideoService
                 throw;
             }
             // ===== 输出校验:帧率/时长与预期对比,偏差大告警(找出封装/编码异常) =====
+            string outWarn = "";
             try
             {
                 double durOut = await ProbeDurationSeconds(outputVideo);
@@ -2126,13 +2127,19 @@ public static class VideoService
                     warn += $"时长 {durOut:0.###}s vs 预期 {muxDur:0.###}s(偏差 {(durOut - muxDur) / muxDur * 100:0.#}%);";
                 if (Math.Abs(fpsOut - outFps) / Math.Max(0.01, outFps) > 0.03)
                     warn += $"帧率 {fpsOut:0.##}vs 预期 {outFps:0.##};";
+                // 【输出端黑场自检】后处理与编码两个阶段原本【没有任何黑帧防线】(防线只覆盖超分引擎输出那一步),
+                // 所以后处理滤镜产生的黑帧能一路进成片且零日志 —— 用户实际就是这样报上来的。
+                // 这里在成片落盘后扫一遍,把黑场位置写进日志与任务提示,让它再也藏不住。
+                string blackSeg = await ScanBlackSegmentsAsync(outputVideo, ct).ConfigureAwait(false);
+                if (blackSeg.Length > 0) warn += $"成片含全黑片段({blackSeg});";
                 AppLogger.Info($"输出校验:{Path.GetFileName(outputVideo)} 帧率 {fpsOut:0.##}fps,时长 {durOut:0.###}s" +
                     (warn.Length > 0 ? " ⚠ " + warn : " ✓"));
-                if (warn.Length > 0)
-                    progress?.Report((100, $"完成 ⚠ 输出校验:{warn}"));
+                outWarn = warn;
             }
             catch { /* 校验失败不影响完成 */ }
-            progress?.Report((100, "完成" + StageElapsed()));
+            // 【修复】原先是先 Report("完成 ⚠ 输出校验:…") 紧接着又 Report("完成")——后者把前者覆盖掉,
+            // 而 UI 只在进度 <99% 时做节流,所以那条 ⚠ 用户永远看不到(输出异常被静默吞掉)。合并成一条。
+            progress?.Report((100, (outWarn.Length > 0 ? "完成 ⚠ " + outWarn : "完成") + StageElapsed()));
 
             // 6) 清理临时帧
             try { Directory.Delete(workDir, true); } catch { }
@@ -5163,6 +5170,76 @@ public static class VideoService
             return true;
         }
         catch { return false; }
+    }
+
+    /// <summary>最近一次「输出端黑场自检」发现的黑场片段描述(空 = 未扫过或没发现)。供 UI/任务摘要附加显示。</summary>
+    public static string LastBlackScanResult { get; private set; } = "";
+
+    /// <summary>扫描【成片】里有没有"整片全黑"的片段,返回形如 "1.2s~1.6s、8.4s~8.9s" 的描述(无则空串)。
+    /// 【为什么必须有这一步】黑帧防线原先只覆盖"超分引擎输出"那一步(ConvertPngToJpg 时判 isBlack),
+    /// 而 **后处理阶段与编码阶段完全没有检测**。真实案例(用户 3070 Laptop · 花熏25.mp4):
+    /// 任务全程零 WARN、输出校验通过、用户却看到黑帧 —— 黑帧不管来自哪一步都无人发现、日志无痕。
+    /// 做法:抽 6fps → 缩到 320 宽 → blackdetect,只为找"整片全黑",不必原分辨率逐帧,成本低一个数量级。
+    /// 【阈值是实测选出来的,别随手改大】pic_th=0.98 要求 ≥98% 像素算"黑",配合 pix_th=0.05(亮度 &lt; 约 12.75/255)。
+    /// 本机用捆绑 ffmpeg 实测对比:
+    ///   · 暗夜场景(luma=20 深灰,非黑帧):pix_th=0.10 → **误报 1 处**;0.05 → 0 处;0.02 → 0 处
+    ///   · 真黑帧(且经 h264 压缩带噪):0.10 / 0.05 / 0.02 三者都能命中 1 处
+    /// ⇒ 0.10 会把正常夜景当成黑帧,0.05 既有余量拒掉暗场、又留足余量接住压缩噪声后的真黑帧。
+    /// 【注意】它只如实报告"成片里有黑场",不区分"素材本来就有"还是"处理引入的" —— 提示文案里已写明让用户比对源片。</summary>
+    private static async Task<string> ScanBlackSegmentsAsync(string videoPath, CancellationToken ct)
+    {
+        LastBlackScanResult = "";
+        var ffmpeg = FfmpegPath;
+        if (ffmpeg == null) return "";
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = ffmpeg,
+                Arguments = $"-v info -i \"{videoPath}\" " +
+                            $"-vf \"fps=6,scale=320:-2,blackdetect=d=0.15:pic_th=0.98:pix_th=0.05\" " +
+                            $"-an -f null -",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            using var p = Process.Start(psi);
+            if (p == null) return "";
+            var errTask = p.StandardError.ReadToEndAsync();
+            var exitTask = p.WaitForExitAsync(ct);
+            // 加超时:卡住的话不能把整个任务拖住(这一步只是附加检查,失败就当没发现)
+            var done = await Task.WhenAny(exitTask, Task.Delay(TimeSpan.FromMinutes(5), ct)).ConfigureAwait(false);
+            if (done != exitTask)
+            {
+                try { p.Kill(entireProcessTree: true); } catch { }
+                AppLogger.Info("输出端黑场自检:超时跳过(不影响成片)");
+                return "";
+            }
+            await exitTask.ConfigureAwait(false);
+            string err = await errTask.ConfigureAwait(false);
+
+            var segs = new System.Collections.Generic.List<string>();
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
+                err, @"black_start:([0-9.]+)\s+black_end:([0-9.]+)"))
+            {
+                bool okS = double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var s);
+                bool okE = double.TryParse(m.Groups[2].Value, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var e);
+                if (okS && okE) segs.Add($"{s:0.##}s~{e:0.##}s");
+                if (segs.Count >= 20) { segs.Add("…"); break; }   // 别把日志刷爆
+            }
+            if (segs.Count == 0) return "";
+            var summary = string.Join("、", segs);
+            LastBlackScanResult = summary;
+            AppLogger.Warn($"⚠ 输出端黑场自检:成片含 {segs.Count} 处全黑片段({summary})。"
+                + "若源片本来没有黑场,说明是处理链某一步产生的 —— 请把本行发作者。"
+                + "常见来源:后处理滤镜(去频闪 deflicker / 去模糊)或 ncnn-Vulkan 队列异常。");
+            return summary;
+        }
+        catch (OperationCanceledException) { return ""; }
+        catch { return ""; }
     }
 
     /// <summary>编码参数;quality 0=自动 1=低 2=中 3=高 4=极高(CRF 值递减=画质递增,单调)。

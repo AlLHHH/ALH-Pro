@@ -4343,9 +4343,16 @@ public sealed partial class VideoView : UserControl
                         var mb = new FileInfo(outPath).Length / 1048576.0;
                         var dedupShort = VideoService.LastDedupShort;
                         var dedupNote = VideoService.LastDedupReport;
+                        var blackSeg = VideoService.LastBlackScanResult;
                         item.OutputInfo = $"输出:{outInfo} · {mb:0.0} MB" +
-                            (dedupShort != null ? $" · {dedupShort}" : "");
+                            (dedupShort != null ? $" · {dedupShort}" : "") +
+                            (string.IsNullOrEmpty(blackSeg) ? "" : $" · ⚠ 含全黑片段 {blackSeg}");
                         if (dedupNote != null) Log($"  {dedupNote}");   // 完整细节写入日志区,不再一闪而过,不再一闪而过
+                        // 输出端黑场自检结果:直接摆到列表项与日志区。原先后处理/编码阶段没有任何黑帧防线,
+                        // 产生的黑帧只能靠用户肉眼发现且无迹可查(用户实际就是这样报上来的)。
+                        if (!string.IsNullOrEmpty(blackSeg))
+                            Log($"  ⚠ 输出端黑场自检:成片含全黑片段({blackSeg})。若源片本来没有黑场,"
+                                + "说明是处理链某一步产生的 —— 请导出诊断包发作者(常见来源:后处理滤镜或 ncnn 队列异常)。");
                     }
                     catch { }
                     UpdateTaskPanel("完成", finished: true);

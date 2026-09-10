@@ -15,7 +15,12 @@
 #define MyAppVersion "1.3.4"
 #define MyAppExeName "ALHPro.exe"
 ; GitHub Release 模型包直链(与 Release 附件名必须一致;仓库=AlLHHH/ALH-Pro)
-#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.3.4/models_v1.0.zip"
+; 【为什么指向 v1.3.3 而不是 v1.3.4】models_v1.0.zip 与软件版本无关(内容一直没变),
+; 而 v1.3.4 的 Release 尚未建立 → 指向它会让"下载并安装模型包"必然 404。
+; 已核实:经 GitHub API 查得 v1.3.3/v1.3.2/…/v1.0 每个 Release 都带 models_v1.0.zip 附件,
+; 最新可用 tag 为 v1.3.3(2026-09-08)。
+; ⇒ v1.3.4 Release 建好并上传模型附件后,可把本行改回 v1.3.4(不改也能正常工作)。
+#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.3.3/models_v1.0.zip"
 #define ModelsFile "models_v1.0.zip"
 ; 完整版(含模型,网盘/整包)说明:安装完成后可到软件内「使用教程」或 GitHub 说明页找完整版直链
 

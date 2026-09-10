@@ -1164,7 +1164,7 @@ public sealed partial class MainPage : Page
         var entries = new System.Collections.Generic.List<(string v, string title, string notes)>();
         string curNotes = "未找到更新说明(RELEASE_NOTES.md 缺失)。";
         var notesPath = Path.Combine(AppContext.BaseDirectory, "RELEASE_NOTES.md");
-        try { if (File.Exists(notesPath)) curNotes = File.ReadAllText(notesPath); } catch { }
+        try { if (File.Exists(notesPath)) curNotes = ExtractVersionSection(File.ReadAllText(notesPath), UpdateChecker.CurrentVersion); } catch { }
         curNotes = CleanNotes(curNotes);
         entries.Add(($"v{UpdateChecker.CurrentVersion}", "当前版本", curNotes));
         var histPath = Path.Combine(AppContext.BaseDirectory, "release_history.json");
@@ -1181,6 +1181,35 @@ public sealed partial class MainPage : Page
         }
         catch { }
         return entries;
+    }
+
+    /// <summary>从 RELEASE_NOTES.md 里只取【当前版本】那一节。
+    /// 【为什么必须截断】原实现把整份 RELEASE_NOTES.md(含 v1.3.0 起的全部历史版本)原样塞进
+    /// 「当前版本」这个条目,于是下拉框里 v1.3.0 / v1.2.x 的正文会【出现两遍】——一遍在这坨文字里,
+    /// 一遍在它们各自的条目里(release_history.json)。用户看到的是重复内容,而 1.3.1~1.3.3 却
+    /// 只存在于这坨文字里、没有独立条目,列表看起来像"跳版"。
+    /// 取法:跳过文件开头到目标版本标题之前的一切,从该标题开始收,遇到下一个 `## v` 标题即停。
+    /// 找不到该版本标题时(例如新版本还没写进 RELEASE_NOTES)退回整份,至少不显示空白。</summary>
+    private static string ExtractVersionSection(string md, string version)
+    {
+        if (string.IsNullOrEmpty(md)) return md;
+        var sb = new System.Text.StringBuilder();
+        bool started = false;
+        foreach (var raw in md.Split('\n'))
+        {
+            if (raw.StartsWith("## v", StringComparison.OrdinalIgnoreCase))
+            {
+                if (started) break;   // 遇到下一个版本标题 → 当前版本这一节结束
+                if (raw.Replace(" ", "").Contains("v" + version, StringComparison.OrdinalIgnoreCase))
+                {
+                    started = true;
+                    sb.AppendLine(raw);
+                }
+                continue;             // 还没轮到目标版本 → 跳过
+            }
+            if (started) sb.AppendLine(raw);
+        }
+        return sb.Length > 0 ? sb.ToString() : md;
     }
 
     /// <summary>安全取主题画笔(资源不存在时透明,不崩)。</summary>
