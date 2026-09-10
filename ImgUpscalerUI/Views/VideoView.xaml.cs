@@ -527,7 +527,7 @@ public sealed partial class VideoView : UserControl
             if (DenoiseToggle.IsChecked == true) slow.Add("视频降噪");
             if ((int)SharpenSlider.Value > 0 || (int)ClaritySlider.Value > 0 || (int)UsmSlider.Value > 0
                 || (int)DetailSlider.Value > 0 || (int)DeblurSlider.Value > 0
-                || FlickerSlider.Value > 0 || PostDenoiseSlider.Value > 0 || PostAaSlider.Value > 0)
+                || PostAaSlider.Value > 0)
                 slow.Add("后处理");
             if (interp && MotionBlurCombo.SelectedIndex > 0) slow.Add("运动模糊");
             if (interp && DeShakeCheck.IsChecked == true) slow.Add("画面去抖");
@@ -974,8 +974,6 @@ public sealed partial class VideoView : UserControl
         UsmVal.Text = UsmSlider.Value.ToString("0");
         DetailVal.Text = DetailSlider.Value.ToString("0");
         DeblurVal.Text = DeblurSlider.Value.ToString("0");
-        FlickerVal.Text = FlickerSlider.Value.ToString("0");
-        PostDenoiseVal.Text = PostDenoiseSlider.Value.ToString("0");
         PostAaVal.Text = PostAaSlider.Value.ToString("0");
 
         // 输出帧率提示
@@ -1075,8 +1073,6 @@ public sealed partial class VideoView : UserControl
         // 补全剩余参数(真正"重置所有"):视频降噪/后处理杂色/抗锯齿/去频闪/VFR/去重智能/微动防线/静音
         DenoiseToggle.IsChecked = false;
         DenoiseStrongRadios.SelectedIndex = 0;
-        FlickerSlider.Value = 0;
-        PostDenoiseSlider.Value = 0;
         PostAaSlider.Value = 0;
         VfrModeRadios.SelectedIndex = 0;
         DedupSmartCombo.SelectedIndex = 0;
@@ -1098,8 +1094,6 @@ public sealed partial class VideoView : UserControl
         UsmSlider.Value = 0;
         DetailSlider.Value = 0;
         DeblurSlider.Value = 0;
-        FlickerSlider.Value = 0;
-        PostDenoiseSlider.Value = 0;
         PostAaSlider.Value = 0;
         _suppressEvents = false;
         UpdateOptions();
@@ -1467,8 +1461,6 @@ public sealed partial class VideoView : UserControl
         if (d.PostUsm is >= 0 and <= 100) UsmSlider.Value = d.PostUsm;
         if (d.PostDetail is >= 0 and <= 100) DetailSlider.Value = d.PostDetail;
         if (d.PostDeblur is >= 0 and <= 100) DeblurSlider.Value = d.PostDeblur;
-        if (d.PostFlicker is >= 0 and <= 100) FlickerSlider.Value = d.PostFlicker;
-        if (d.PostDenoise is >= 0 and <= 100) PostDenoiseSlider.Value = d.PostDenoise;
         if (d.PostAa is >= 0 and <= 100) PostAaSlider.Value = d.PostAa;
         if (d.MotionBlur is >= 0 and <= 3) MotionBlurCombo.SelectedIndex = d.MotionBlur;
         DeShakeCheck.IsChecked = d.DeShake;
@@ -1925,7 +1917,7 @@ public sealed partial class VideoView : UserControl
         sb.AppendLine("去重: " + (d.DedupOn ? $"{(d.DedupModel == 0 ? "智能" : d.DedupModel == 1 ? "动漫" : "手动")}" : "关闭"));
         sb.AppendLine("后处理: " +
             $"锐化{d.PostSharpen} 清晰{d.PostClarity} 钝化蒙版{d.PostUsm} 保留细节{d.PostDetail} " +
-            $"去模糊{d.PostDeblur} 去频闪{d.PostFlicker} 去杂色{d.PostDenoise} 边缘抗锯齿{d.PostAa}");
+            $"去模糊{d.PostDeblur} 边缘抗锯齿{d.PostAa}");
         sb.AppendLine("码率: " + (d.Quality == 5 ? $"自定义 {d.BitrateMbps:0.#}Mbps" : d.Quality switch { 0 => "自动", 1 => "低", 2 => "中", 3 => "高", 4 => "极高", _ => "?" }));
         sb.AppendLine("格式: " + (d.Format == 1 ? "MKV" : "MP4") + " · " + (d.Codec == 1 ? "H.265" : "H.264"));
         if (d.FastMode) sb.AppendLine("兼容模式: 开");
@@ -2038,8 +2030,6 @@ public sealed partial class VideoView : UserControl
             PostUsm = (int)UsmSlider.Value,
             PostDetail = (int)DetailSlider.Value,
             PostDeblur = (int)DeblurSlider.Value,
-            PostFlicker = (int)FlickerSlider.Value,
-            PostDenoise = (int)PostDenoiseSlider.Value,
             PostAa = (int)PostAaSlider.Value,
             MotionBlur = MotionBlurCombo.SelectedIndex,
             DeShake = DeShakeCheck.IsChecked == true,
@@ -3873,8 +3863,8 @@ public sealed partial class VideoView : UserControl
         var bitrateNow = ParseBitrate();
         var vfrModeNow = VfrModeRadios.SelectedIndex;
         int postSP = (int)SharpenSlider.Value, postCL = (int)ClaritySlider.Value, postUM = (int)UsmSlider.Value,
-            postDT = (int)DetailSlider.Value, postDB = (int)DeblurSlider.Value, postFL = (int)FlickerSlider.Value,
-            postDN = (int)PostDenoiseSlider.Value, postAA = (int)PostAaSlider.Value;
+            postDT = (int)DetailSlider.Value, postDB = (int)DeblurSlider.Value,
+            postAA = (int)PostAaSlider.Value;
         InitTaskStages(up, interp, dedupOn, sceneThreshold != null);
         _taskTotalCount = items.Length;
         _taskDoneCount = 0;
@@ -3895,7 +3885,7 @@ public sealed partial class VideoView : UserControl
         // 一开始就显示合理数值(偏保守,随时间慢慢对齐),不是从小变大校准
         double etaInitTotal = 0;
         var perfKey = PerfMemory.Fingerprint(engine, upscaleShrink1x ? 2.0 : scale, 1920, 1080,
-            interpScale, dedupOn, vdenoiseNow, postSP + postCL + postUM + postDB + postFL + postDN + postAA > 0);
+            interpScale, dedupOn, vdenoiseNow, postSP + postCL + postUM + postDB + postAA > 0);
         double? perFrameHist = PerfMemory.PerFrameFor(perfKey);   // 同配置上次实测(秒/帧,1080p 基准)
         int totalFramesEst = 0;
         foreach (var it in items)
@@ -3910,7 +3900,7 @@ public sealed partial class VideoView : UserControl
                 etaInitTotal += VideoService.EstimateProcessSeconds(dur, fps, w, h,
                     up, upscaleShrink1x ? 2.0 : scale, engine, interp, interpScale, dedupOn,
                     DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex + 1 : 0,
-                    postSP + postCL + postUM + postDB + postFL + postDN + postAA > 0);
+                    postSP + postCL + postUM + postDB + postAA > 0);
             }
             catch { etaInitTotal += 60; }
         }
@@ -4212,8 +4202,6 @@ public sealed partial class VideoView : UserControl
         if ((int)UsmSlider.Value > 0) postList.Add($"钝化蒙版{(int)UsmSlider.Value}");
         if ((int)DetailSlider.Value > 0) postList.Add($"保留细节{(int)DetailSlider.Value}");
         if ((int)DeblurSlider.Value > 0) postList.Add($"去模糊{(int)DeblurSlider.Value}");
-        if ((int)FlickerSlider.Value > 0) postList.Add($"去频闪{(int)FlickerSlider.Value}");
-        if ((int)PostDenoiseSlider.Value > 0) postList.Add($"去杂色{(int)PostDenoiseSlider.Value}");
         if ((int)PostAaSlider.Value > 0) postList.Add($"边缘抗锯齿{(int)PostAaSlider.Value}");
         if (postList.Count > 0) Log("后处理:" + string.Join(",", postList));
         // 果冻修复(运动模糊/画面去抖,CPU 逐帧滤镜,单独记录便于诊断耗时)
@@ -4312,8 +4300,6 @@ public sealed partial class VideoView : UserControl
                         postSharpen: postSP, postClarity: postCL,
                         postUsm: postUM, postDetail: postDT,
                         postDeblur: postDB,
-                        postFlicker: postFL,
-                        postDenoise: postDN,
                         postAa: postAA,
                         mute: muteNow,
                         postMotionBlur: mblurNow,

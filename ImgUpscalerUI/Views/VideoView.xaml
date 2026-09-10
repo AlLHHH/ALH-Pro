@@ -155,30 +155,12 @@
                             <TextBlock x:Name="DeblurVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="去频闪:消除亮度忽明忽暗的闪烁(补帧/超分产生的,或视频本身自带的)">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="56"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="28"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="去频闪" VerticalAlignment="Center"/>
-                            <Slider x:Name="FlickerSlider" Grid.Column="1" Minimum="0" Maximum="100"
-                                    ValueChanged="Slider_Changed"/>
-                            <TextBlock x:Name="FlickerVal" Grid.Column="2" Text="0" TextAlignment="Right"
-                                       VerticalAlignment="Center" Style="{StaticResource HintText}"/>
-                        </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="去杂色:去除彩色噪点/颗粒(源视频压缩产生的),保细节不糊">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="56"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="28"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="去杂色" VerticalAlignment="Center"/>
-                            <Slider x:Name="PostDenoiseSlider" Grid.Column="1" Minimum="0" Maximum="100"
-                                    ValueChanged="Slider_Changed"/>
-                            <TextBlock x:Name="PostDenoiseVal" Grid.Column="2" Text="0" TextAlignment="Right"
-                                       VerticalAlignment="Center" Style="{StaticResource HintText}"/>
-                        </Grid>
+                        <!-- 【已删除「去频闪」与「去杂色」两个滑条】
+                             去频闪(deflicker):ffmpeg 该滤镜按时间窗口中值归一化亮度且不识别转场,
+                             实测把每个硬切点前 3 帧压暗/提亮最多 76 级(0~255 的 30%)——即"转场前两帧黑一下/亮一下"。
+                             它本是为延时摄影设计的,正常视频无此问题;属"不适用且有害",故整项移除。
+                             去杂色(nlmeans):与上方「视频降噪」是同一滤镜的重复入口,同时开启时代码本就把本项跳过,
+                             常见配置下等于空操作。降噪请用「视频降噪」(它在超分之前生效,那才是正确位置)。 -->
                         <Grid ColumnSpacing="8" ToolTipService.ToolTip="边缘抗锯齿:磨平超分/放大后边缘的锯齿阶梯,细节不糊">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
