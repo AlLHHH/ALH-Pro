@@ -130,6 +130,44 @@ public static class AudioService
     private static double DurSec;
 
     /// <summary>
+    /// 等 ffmpeg 结束,且【保证】取消时真的把它杀掉(含子进程树)。
+    /// 为什么不能写成 `while (!p.HasExited && !ct.IsCancellationRequested) await Task.Delay(100, ct);`
+    /// —— token 取消时 Task.Delay 是【抛】OperationCanceledException,控制流直接跳过紧随其后的
+    /// `if (ct.IsCancellationRequested) p.Kill(...)`,于是那行 Kill 几乎永不执行:界面显示"已取消"、
+    /// 批次 break,而 ffmpeg 继续把整个文件转完(输出目录照旧出现成品),反复重来还会叠多个 ffmpeg。
+    /// 现在:取消 → 杀;退出 → 返回;任何路径退出(含任务异常/强制结束)都由 finally 兜底杀。
+    /// </summary>
+    private static async Task WaitOrKillAsync(Process p, CancellationToken ct)
+    {
+        try
+        {
+            if (!ct.CanBeCanceled) { await p.WaitForExitAsync().ConfigureAwait(false); return; }
+            try
+            {
+                await p.WaitForExitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                try { p.Kill(entireProcessTree: true); } catch { }
+                try { await p.WaitForExitAsync().ConfigureAwait(false); } catch { }
+                throw;
+            }
+        }
+        finally
+        {
+            // 兜底:无论怎么退出,都不留 ffmpeg 孤儿进程(真机现象:任务"已取消"但文件仍在被写)
+            if (!p.HasExited)
+            {
+                AppLogger.Warn($"音频:ffmpeg 未随取消退出,强制结束(pid={SafePid(p)})");
+                try { p.Kill(entireProcessTree: true); } catch { }
+                try { await p.WaitForExitAsync().ConfigureAwait(false); } catch { }
+            }
+        }
+    }
+
+    private static int SafePid(Process p) { try { return p.Id; } catch { return -1; } }
+
+    /// <summary>
     /// 音频增强主流程。denoise:0~2(关/弱/强), loudness:bool, lowcut:bool, eq:bool;
     /// 输出格式:0=WAV,1=FLAC,2=MP3;outDir=输出目录(空=源目录)。
     /// trimStart/trimEnd:裁剪(秒;0=不裁)。进度按 ffmpeg 时间戳百分比(0-100)。
@@ -220,12 +258,7 @@ public static class AudioService
                 }
             });
             var errTask = p.StandardError.ReadToEndAsync();
-            while (!p.HasExited && !ct.IsCancellationRequested) await Task.Delay(100, ct).ConfigureAwait(false);
-            if (ct.IsCancellationRequested)
-            {
-                try { p.Kill(entireProcessTree: true); } catch { }
-                throw new OperationCanceledException();
-            }
+            await WaitOrKillAsync(p, ct).ConfigureAwait(false);
             await Task.WhenAll(lineTask, errTask).ConfigureAwait(false);
             if (p.ExitCode != 0)
             {
@@ -281,12 +314,7 @@ public static class AudioService
                 }
             });
             var errTask = p.StandardError.ReadToEndAsync();
-            while (!p.HasExited && !ct.IsCancellationRequested) await Task.Delay(100, ct).ConfigureAwait(false);
-            if (ct.IsCancellationRequested)
-            {
-                try { p.Kill(entireProcessTree: true); } catch { }
-                throw new OperationCanceledException();
-            }
+            await WaitOrKillAsync(p, ct).ConfigureAwait(false);
             await Task.WhenAll(lineTask, errTask).ConfigureAwait(false);
             if (p.ExitCode != 0)
             {
@@ -362,12 +390,7 @@ public static class AudioService
                 }
             });
             var errTask = p.StandardError.ReadToEndAsync();
-            while (!p.HasExited && !ct.IsCancellationRequested) await Task.Delay(100, ct).ConfigureAwait(false);
-            if (ct.IsCancellationRequested)
-            {
-                try { p.Kill(entireProcessTree: true); } catch { }
-                throw new OperationCanceledException();
-            }
+            await WaitOrKillAsync(p, ct).ConfigureAwait(false);
             await Task.WhenAll(lineTask, errTask).ConfigureAwait(false);
             if (p.ExitCode != 0)
             {
@@ -442,12 +465,7 @@ public static class AudioService
                 }
             });
             var errTask = p.StandardError.ReadToEndAsync();
-            while (!p.HasExited && !ct.IsCancellationRequested) await Task.Delay(100, ct).ConfigureAwait(false);
-            if (ct.IsCancellationRequested)
-            {
-                try { p.Kill(entireProcessTree: true); } catch { }
-                throw new OperationCanceledException();
-            }
+            await WaitOrKillAsync(p, ct).ConfigureAwait(false);
             await Task.WhenAll(lineTask, errTask).ConfigureAwait(false);
             if (p.ExitCode != 0)
             {
