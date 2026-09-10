@@ -1,70 +1,36 @@
 // AudioSrsDsp.cs — 音频超分辨率 DSP(纯 C#,对齐 LavaSR Python 实现 Apache-2.0):
 // STFT/ISTFT(Hann 窗、onesided)、mel-filterbank(Lucas 系)、resample_poly、
-// Linkwitz-Riley 频谱合并。不用 scipy,全部手写数学(与 numpy 输出对齐)。
+// Linkwitz-Riley 分频合并。不用 scipy,全部手写数学(与 numpy 输出对齐)。
+//
+// 【为什么重采样与分频合并改为委托 AlhPro.Core.AudioResample】
+// 这两段是"纯数学",以前埋在本文件里 → 单测项目(只引用 AlhPro.Core,不引 WinUI)碰不到,
+// 于是两个真实缺陷长期无法用数字证明、也没人敢改(听感复测看不出来):
+//   1) ResamplePoly 丢小数相位 = 低通 + 最近邻,16k→44.1k 实测 SNR 仅 18.9 dB、63.7% 相邻输出样本逐位相同;
+//   2) SpectralMerge 按 n 解释谱轴而 FFT 按 nextPow2(n) 做 → 长度非 2 的幂时分频点/保留上限整体下移
+//      (352800 点实测 17.64kHz 分量被丢掉、保留上限只剩 14.8kHz)。
+// 现在这里只做参数与数据类型的适配(short↔double),行为由 Core 的构造保证,
+// 测试钉住的 AlhPro.Core.AudioResample 就是生产路径本身,不存在"测试一套、跑的又一套"。
 using System;
-using System.Collections.Generic;
 using System.Linq;
 
 namespace ALHPro;
 
 public static class AudioSrsDsp
 {
-    // ---------- 重采样(窗化 sinc,与 scipy.resample_poly 质量可比) ----------
+    // ---------- 重采样(窗化 sinc 多相核,与 scipy.resample_poly 质量可比) ----------
     public static float[] ResamplePoly(float[] x, int up, int down)
     {
+        if (x.Length == 0) return Array.Empty<float>();
         if (up == down) return x;
-        // 目标长度
-        long outN = (long)Math.Round((double)x.Length * up / down);
-        var y = new float[outN];
-        // 半带 sinc 低通:cutoff 归一化到"输出奈奎斯特 × 目标比"
-        // 边缘衰减主因是 cutoff 太窄+窗不够长;用 Kaiser 窗(alpha=5)半径 32
-        int halfKernel = 32;
-        double ratio = (double)up / down;
-        double cutoff = ratio < 1.0 ? ratio : 1.0;   // 下采样防混叠,上采样全频带
-        cutoff *= 0.95;
-        const double alpha = 5.0;
-        var kernel = new double[halfKernel * 2 + 1];
-        double ks = 0;
-        for (int i = -halfKernel; i <= halfKernel; i++)
-        {
-            double t = i * cutoff;
-            double v = Math.Abs(t) < 1e-9 ? 2.0 * cutoff : Math.Sin(Math.PI * t) / (Math.PI * t) * 2.0 * cutoff;
-            double xr = i / (double)halfKernel;
-            double win = BesselI0(alpha * Math.Sqrt(Math.Max(0, 1 - xr * xr))) / BesselI0(alpha);
-            kernel[i + halfKernel] = v * win;
-            ks += v * win;
-        }
-        for (int i = 0; i < kernel.Length; i++) kernel[i] /= ks;
-        for (int i = 0; i < outN; i++)
-        {
-            double pos = i / ratio;
-            int center = (int)Math.Round(pos);
-            double acc = 0;
-            for (int k = -halfKernel; k <= halfKernel; k++)
-            {
-                int idx = center + k;
-                if (idx < 0) idx = 0;
-                if (idx >= x.Length) idx = x.Length - 1;
-                acc += x[idx] * kernel[k + halfKernel];
-            }
-            y[i] = (float)Math.Clamp(acc, -1.0, 1.0);
-        }
-        return y;
-    }
-
-    private static double BesselI0(double x)
-    {
-        double sum = 1, term = 1, k = 1;
-        double xh = x / 2;
-        while (true)
-        {
-            term *= xh / k;
-            term *= xh / k;
-            sum += term;
-            if (term < 1e-9) break;
-            k++;
-        }
-        return sum;
+        // float → double:Core 按 double 计算(与 Python 参考实现的精度一致,float 会让本级的 −115dB 级
+        // 改善被 float 的 24bit 尾数吃掉一部分)。本函数的入参是 int16 量级(±32767),不是 ±1.0 归一化值,
+        // 故 Core 里的 Math.Clamp(±1.0) 只会截掉真正越界的样本,与本文件改前的行为一致。
+        var d = new double[x.Length];
+        for (int i = 0; i < x.Length; i++) d[i] = x[i];
+        var y = AlhPro.Core.AudioResample.Resample(d, up, down);
+        var r = new float[y.Length];
+        for (int i = 0; i < y.Length; i++) r[i] = (float)y[i];
+        return r;
     }
 
     // ---------- STFT(与 scipy.signal.stft onesided hann 对齐) ----------
@@ -234,68 +200,23 @@ public static class AudioSrsDsp
         return minLogHz * Math.Exp(logstep * (mel - minLogMel));
     }
 
-    // ---------- Linkwitz-Riley 频谱合并(对齐 _spectral_merge) ----------
+    // ---------- 分频合并(低频取原信号、高频取增强信号) ----------
+    // 改前这里是"np 点 FFT + 按 n 解释谱轴 + 只留 n/2+1 个 bin",三个口径不一致 →
+    // 长度非 2 的幂时等效把输出硬限带到 (n/np)×fs/2、分频点整体乘 n/np(0.5~1 倍):
+    // 实测 44.1kHz 下 n=4097 时 8kHz 的交叉点掉到 4kHz、17.64kHz 分量被丢掉;
+    // n=352800(8 秒 16k→48k 的自测用例长度)保留上限只剩 14.8kHz → 5~8kHz 的真实原声被 AI 猜测替换。
+    // 现在改成时域零相位 FIR 分频(见 AlhPro.Core.AudioResample.SpectralMerge),与信号长度彻底解耦。
     public static float[] SpectralMerge(float[] original, float[] enhanced, int sr, double cutoffHz, int transitionBins)
     {
         int n = Math.Min(original.Length, enhanced.Length);
         if (n <= 0) return enhanced;
-        var specO = RfftD(original, n);
-        var specE = RfftD(enhanced, n);
-        var freqs = new double[specO.Length];
-        for (int k = 0; k < specO.Length; k++) freqs[k] = k * sr / (double)n;
-        int cutoffBin = 0;
-        double best = double.MaxValue;
-        for (int k = 0; k < freqs.Length; k++)
-        {
-            double d = Math.Abs(freqs[k] - cutoffHz);
-            if (d < best) { best = d; cutoffBin = k; }
-        }
-        int half = Math.Max(1, transitionBins / 2);
-        int start = Math.Max(0, cutoffBin - half);
-        int end = Math.Min(specO.Length - 1, cutoffBin + half);
-        var mask = new float[specO.Length];
-        if (start > 0) for (int k = 0; k < start; k++) mask[k] = 1f;
-        if (end > start)
-        {
-            int span = end - start + 1;
-            for (int i = 0; i < span; i++)
-            {
-                double t = 1.0 - (double)i / (span - 1);
-                mask[start + i] = (float)(3.0 * t * t - 2.0 * t * t * t);
-            }
-        }
-        var merged = new Complex[specO.Length];
-        for (int k = 0; k < specO.Length; k++)
-        {
-            // merged = spec_e + (spec_o - spec_e) * mask
-            merged[k] = new Complex(
-                specE[k].Re + (specO[k].Re - specE[k].Re) * mask[k],
-                specE[k].Im + (specO[k].Im - specE[k].Im) * mask[k]);
-        }
-        // 逆变换:频段数 N/2+1 → 完整 N(2 幂) — 与 RfftD 的 pad 对称
-        int np = 1;
-        while (np < n) np <<= 1;
-        var fullSpec = new Complex[np];
-        for (int k = 0; k < merged.Length; k++) fullSpec[k] = merged[k];
-        var wavN = Irfft(fullSpec, np);
+        var o = new double[n];
+        var e = new double[n];
+        for (int i = 0; i < n; i++) { o[i] = original[i]; e[i] = enhanced[i]; }
+        var merged = AlhPro.Core.AudioResample.SpectralMerge(o, e, sr, cutoffHz, transitionBins);
         var result = new float[n];
-        for (int i = 0; i < n; i++) result[i] = (float)Math.Clamp(wavN[i], -1.0, 1.0);
+        for (int i = 0; i < n; i++) result[i] = (float)merged[i];
         return result;
-    }
-
-    private static Complex[] RfftD(float[] x, int n)
-    {
-        // n 必须 2 的幂(FFT);非 2 的幂时零填充到 nextPow2(幅度/频率保持,逆变换后截断)
-        int np = 1;
-        while (np < n) np <<= 1;
-        var frame = new double[np];
-        for (int i = 0; i < n; i++) frame[i] = x[i];
-        var full = Rfft(frame, np);
-        // 截断到 n/2+1(只保留有效频段)
-        var half = new Complex[n / 2 + 1];
-        int keep = Math.Min(half.Length, full.Length);
-        for (int i = 0; i < keep; i++) half[i] = full[i];
-        return half;
     }
 
     // ---------- 工具 ----------

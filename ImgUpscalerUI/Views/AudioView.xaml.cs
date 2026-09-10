@@ -72,6 +72,44 @@ public sealed partial class AudioView : UserControl
     private Windows.Media.Playback.MediaPlayer? _mediaPlayer;
     private Windows.Foundation.TypedEventHandler<Windows.Media.Playback.MediaPlaybackSession, object>? _previewHandler;
 
+    /// <summary>
+    /// MediaPlayer 惰性获取(必要时重建)。
+    /// 为什么必须有重建路径:Unloaded 里释放 MediaPlayer 是必要的(WinRT COM 对象持有解码/渲染管线),
+    /// 但 MainPage 是 `_audioView ??= new AudioView()` 缓存页面实例 —— 切走再切回【不会】重新构造页面,
+    /// 所以只 Dispose 不置 null 会让 _mediaPlayer 变成"非 null 但已释放"的死对象:
+    /// 双击预览后播放/暂停/拖音量直接抛 RO_E_CLOSED/ObjectDisposedException,
+    /// 落到 App.xaml.cs 的全局兜底弹"程序遇到问题"(波形能画出来,所以看起来"预览坏了")。
+    /// </summary>
+    private Windows.Media.Playback.MediaPlayer GetMediaPlayer()
+    {
+        if (_mediaPlayer != null) return _mediaPlayer;
+        var mp = new Windows.Media.Playback.MediaPlayer
+        {
+            AutoPlay = false,              // 打开预览不自动播,由用户点 ▶
+            Volume = _lastVolume,          // 恢复上次音量
+        };
+        mp.MediaOpened += (s, _) =>
+        {
+            try
+            {
+                if (_previewItem != null && _previewItem.TrimStart > 0.1 && s.PlaybackSession.CanSeek)
+                    s.PlaybackSession.Position = TimeSpan.FromSeconds(_previewItem.TrimStart);
+            }
+            catch (Exception ex) { LogPlaybackIssue("打开预览后定位", ex); }
+        };
+        _mediaPlayer = mp;
+        // 只在真正重建时记一条(不放在每次调用处,免得切页回来刷日志);UserAction 不会在 UI 线程上做文件 IO
+        AppLogger.UserAction("音频:重建 MediaPlayer(页面被缓存复用,Unloaded 时已释放过)");
+        return mp;
+    }
+
+    /// <summary>播放相关异常统一记录:已知的"对象已释放"要能一眼看出来,不要落到全局错误框。</summary>
+    private void LogPlaybackIssue(string what, Exception ex)
+    {
+        AppLogger.Warn($"音频:预览{what}失败({ex.GetType().Name}: {ex.Message})");
+        Log($"⚠ 预览{what}失败:{ex.Message}");
+    }
+
     /// <summary>状态变化(底部状态栏显示)。</summary>
     public event Action<string>? StatusChanged;
 
@@ -79,17 +117,17 @@ public sealed partial class AudioView : UserControl
     {
         this.InitializeComponent();
         LoadSettings();   // 恢复上次:降噪/AI分离/响亮/低切/清晰/输出格式
-        _mediaPlayer = new Windows.Media.Playback.MediaPlayer();
-        _mediaPlayer.AutoPlay = false;   // 打开预览不自动播,由用户点 ▶
-        _mediaPlayer.Volume = _lastVolume;   // 恢复上次音量
-        _mediaPlayer.MediaOpened += (s, _) =>
-        {
-            if (_previewItem != null && _previewItem.TrimStart > 0.1 && s.PlaybackSession.CanSeek)
-                s.PlaybackSession.Position = TimeSpan.FromSeconds(_previewItem.TrimStart);
-        };
         _playStateHandler = PlayStateChanged;
-        // 页面卸载时释放 MediaPlayer(WinRT COM 对象,持有解码/渲染管线;不释放会泄漏,页面重建即多一个实例)
-        Unloaded += (_, _) => { try { RemovePreviewHandler(); _mediaPlayer?.Dispose(); } catch { } };
+        GetMediaPlayer();   // 首次创建(之后由 GetMediaPlayer 惰性重建)
+        // 页面卸载时释放 MediaPlayer(WinRT COM 对象,持有解码/渲染管线;不释放会泄漏,页面重建即多一个实例)。
+        // 【必须同时置 null】:页面实例被 MainPage 缓存复用,不置 null 就没有任何重建路径(见 GetMediaPlayer)。
+        Unloaded += (_, _) =>
+        {
+            try { RemovePreviewHandler(); } catch { }
+            try { _mediaPlayer?.Dispose(); } catch { }
+            _mediaPlayer = null;
+            _previewHandler = null;
+        };
         UpdateRunState();
     }
 
@@ -98,10 +136,14 @@ public sealed partial class AudioView : UserControl
 
     private void VolSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
-        if (_mediaPlayer == null) return;
+        // 音量值先记住(重建 MediaPlayer 时要用);写 Volume 可能抛已释放异常,单独兜住
         var v = e.NewValue / 100.0;
         _lastVolume = v;
-        _mediaPlayer.Volume = v;
+        try
+        {
+            GetMediaPlayer().Volume = v;
+        }
+        catch (Exception ex) { LogPlaybackIssue("调整音量", ex); }
     }
 
     private void Log(string msg)
@@ -530,9 +572,10 @@ public sealed partial class AudioView : UserControl
             TrimEndThumb.Visibility = Visibility.Visible;
             UpdateTrimUI();
             // 播放:自绘控制(纯 MediaPlayer,不再用 MediaPlayerElement 自带控件)
-            if (_mediaPlayer != null)
+            // GetMediaPlayer():页面被缓存复用后 _mediaPlayer 已释放 → 这里惰性重建(否则整个预览报废)
+            try
             {
-                var mp = _mediaPlayer;
+                var mp = GetMediaPlayer();
                 _previewHandler = (s, _) =>
                 {
                     try
@@ -556,14 +599,19 @@ public sealed partial class AudioView : UserControl
                     mp.PlaybackSession.Position = TimeSpan.FromSeconds(it.TrimStart);
                 TimeText.Text = $"0:00 / {FormatTime(it.DurationSec)}";
             }
+            catch (Exception ex) { LogPlaybackIssue("准备播放", ex); }
         }
         catch { }
     }
 
     private void PlayStateChanged(Windows.Media.Playback.MediaPlaybackSession s, object _)
     {
-        var playing = s.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing;
-        DispatcherQueue.TryEnqueue(() => PlayIcon.Glyph = playing ? "\uE769" : "\uE768");
+        try
+        {
+            var playing = s.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing;
+            DispatcherQueue.TryEnqueue(() => PlayIcon.Glyph = playing ? "\uE769" : "\uE768");
+        }
+        catch (Exception ex) { LogPlaybackIssue("同步播放状态", ex); }
     }
 
     private readonly Windows.Foundation.TypedEventHandler<Windows.Media.Playback.MediaPlaybackSession, object> _playStateHandler;
@@ -571,39 +619,46 @@ public sealed partial class AudioView : UserControl
     private void PlayBtn_Click(object sender, RoutedEventArgs e)
     {
         AppLogger.UserAction("音频:点击预览「播放/暂停」");
-        var mp = _mediaPlayer;
-        if (mp == null) return;
-        if (mp.PlaybackSession.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing)
+        try
         {
-            mp.Pause();
-            PlayIcon.Glyph = "\uE768";
-        }
-        else
-        {
-            var it = _previewItem;
-            var pos = mp.PlaybackSession.Position.TotalSeconds;
-            // 没在播:若已到裁剪末尾或起点之后,回到起点再听(不然点播放没反应)
-            if (it != null)
+            var mp = GetMediaPlayer();
+            if (mp.PlaybackSession.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing)
             {
-                var end = it.TrimEnd > 0.1 && it.DurationSec > 0 ? it.TrimEnd : 0;
-                if ((end > 0.1 && pos >= end - 0.05) || pos < it.TrimStart - 0.1)
-                    mp.PlaybackSession.Position = TimeSpan.FromSeconds(it.TrimStart > 0.1 ? it.TrimStart : 0);
+                mp.Pause();
+                PlayIcon.Glyph = "\uE768";
             }
-            mp.Play();
-            PlayIcon.Glyph = "\uE769";
+            else
+            {
+                var it = _previewItem;
+                var pos = mp.PlaybackSession.Position.TotalSeconds;
+                // 没在播:若已到裁剪末尾或起点之后,回到起点再听(不然点播放没反应)
+                if (it != null)
+                {
+                    var end = it.TrimEnd > 0.1 && it.DurationSec > 0 ? it.TrimEnd : 0;
+                    if ((end > 0.1 && pos >= end - 0.05) || pos < it.TrimStart - 0.1)
+                        mp.PlaybackSession.Position = TimeSpan.FromSeconds(it.TrimStart > 0.1 ? it.TrimStart : 0);
+                }
+                mp.Play();
+                PlayIcon.Glyph = "\uE769";
+            }
         }
+        catch (Exception ex) { LogPlaybackIssue("播放/暂停", ex); }
     }
 
     private void ResetBtn_Click(object sender, RoutedEventArgs e)
     {
         AppLogger.UserAction("音频:点击「再听一次」");
-        var mp = _mediaPlayer;
-        if (mp == null || _previewItem == null) return;
-        // 再听一次 = 从头(0:00)开始播放
-        mp.PlaybackSession.Position = TimeSpan.Zero;
-        mp.Play();
-        PlayIcon.Glyph = "\uE769";
-        UpdatePlayLine(0);
+        try
+        {
+            if (_previewItem == null) return;
+            var mp = GetMediaPlayer();
+            // 再听一次 = 从头(0:00)开始播放
+            mp.PlaybackSession.Position = TimeSpan.Zero;
+            mp.Play();
+            PlayIcon.Glyph = "\uE769";
+            UpdatePlayLine(0);
+        }
+        catch (Exception ex) { LogPlaybackIssue("重新播放", ex); }
     }
 
     // ---------- 波形绘制 ----------
@@ -697,13 +752,24 @@ public sealed partial class AudioView : UserControl
     private void WaveHost_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
         if (_previewItem == null || _previewItem.DurationSec <= 0) return;
-        _waveSeeking = true;
-        // 拖动进度条时静音,防止边拖边播的刮擦声;松手恢复
-        _mutedVolumeBeforeSeek = _mediaPlayer?.Volume ?? 0;
-        if (_mediaPlayer != null) _mediaPlayer.Volume = 0;
-        WaveHost.CapturePointer(e.Pointer);
-        SeekWave(e);
-        e.Handled = true;
+        try
+        {
+            // GetMediaPlayer() 而不是 _mediaPlayer?.Volume:切页回来时旧实例已释放,
+            // "非 null 但已释放"的 ?. 防不住(访问属性即抛 RO_E_CLOSED)
+            var mp = GetMediaPlayer();
+            _waveSeeking = true;
+            // 拖动进度条时静音,防止边拖边播的刮擦声;松手恢复
+            _mutedVolumeBeforeSeek = mp.Volume;
+            mp.Volume = 0;
+            WaveHost.CapturePointer(e.Pointer);
+            SeekWave(e);
+            e.Handled = true;
+        }
+        catch (Exception ex)
+        {
+            _waveSeeking = false;
+            LogPlaybackIssue("拖动定位", ex);
+        }
     }
 
     private void WaveHost_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
@@ -719,9 +785,10 @@ public sealed partial class AudioView : UserControl
         try
         {
             WaveHost.ReleasePointerCapture(e.Pointer);
-            if (_mediaPlayer != null) _mediaPlayer.Volume = _mutedVolumeBeforeSeek;   // 恢复音量
+            var mp = GetMediaPlayer();
+            mp.Volume = _mutedVolumeBeforeSeek;   // 恢复音量
         }
-        catch { }
+        catch (Exception ex) { LogPlaybackIssue("恢复音量", ex); }
     }
 
     private void SeekWave(Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
@@ -731,10 +798,9 @@ public sealed partial class AudioView : UserControl
             0, _previewItem.DurationSec);
         try
         {
-            if (_mediaPlayer != null)
-                _mediaPlayer.PlaybackSession.Position = TimeSpan.FromSeconds(sec);
+            GetMediaPlayer().PlaybackSession.Position = TimeSpan.FromSeconds(sec);
         }
-        catch { }
+        catch (Exception ex) { LogPlaybackIssue("定位播放位置", ex); }
         UpdatePlayLine(sec);
     }
 
@@ -749,20 +815,24 @@ public sealed partial class AudioView : UserControl
 
     private void RemovePreviewHandler()
     {
-        if (_previewHandler != null && _mediaPlayer != null)
+        // 用 mediaPlayer:已释放的实例上解订阅同样会抛 RO_E_CLOSED,
+        // 而异常被 catch 吞掉后 _previewHandler 永远清不掉(切页回来会重复订阅)
+        var mp = _mediaPlayer;
+        if (_previewHandler != null && mp != null)
         {
-            try { _mediaPlayer.PlaybackSession.PositionChanged -= _previewHandler; } catch { }
-            try { _mediaPlayer.PlaybackSession.PlaybackStateChanged -= _playStateHandler; } catch { }
-            _previewHandler = null;
+            try { mp.PlaybackSession.PositionChanged -= _previewHandler; } catch { }
+            try { mp.PlaybackSession.PlaybackStateChanged -= _playStateHandler; } catch { }
         }
+        _previewHandler = null;
     }
 
     private void ClosePreview()
     {
         RemovePreviewHandler();
-        if (_mediaPlayer != null)
+        var mp = _mediaPlayer;
+        if (mp != null)
         {
-            try { _mediaPlayer.Pause(); _mediaPlayer.Source = null; } catch { }
+            try { mp.Pause(); mp.Source = null; } catch { }
         }
         _previewItem = null;
         PlayIcon.Glyph = "\uE768";
