@@ -1419,8 +1419,15 @@ public sealed partial class UpscaleView : UserControl
                         // 被硬编码走 ONNX。真机证据(诊断包 20260910_2352,RTX 5060 Laptop):该机 Vulkan 枚举正常、
                         // 引擎枚举正常、DirectML 建会话正常 —— 拦它的纯粹是"按型号猜"那条规则,ONNX 超分实测 ~2 秒/帧。
                         // 探测结论会落盘(ncnn-probe),同一设备 7 天内不再重复试跑。
-                        bool esrganNcnnOk = await EngineService
-                            .EnsureNcnnProbeAsync("realesrgan", gpuId, model, ct).ConfigureAwait(false);
+                        // 【必须限定 engine == "realesrgan" —— 这里踩过坑】探测无条件执行过一次的后果:
+                        // waifu2x 模式下 model 是 "models-cunet" 这类【waifu2x 的模型名】,而 realesrgan 引擎
+                        // 拿到的是 `-m models -n {model}`(EngineService.cs:1264)→ 找不到该模型 → 探测必然失败 →
+                        // 把"realesrgan 不可用"的【假结论】写进落盘缓存(ncnn-probe,TTL 7 天)→ 照片模式被错误地
+                        // 永久推到 ONNX。而且这个探测在 waifu2x 路径上本来是毫无意义的。
+                        bool esrganNcnnOk = true;
+                        if (engine == "realesrgan")
+                            esrganNcnnOk = await EngineService
+                                .EnsureNcnnProbeAsync("realesrgan", gpuId, model, ct).ConfigureAwait(false);
                         string? onnxPath = null;
                         // 手动选 CPU(-1)时:waifu2x/realesrgan 的 ncnn CPU 模式在部分机器崩(实测 exit -1/-1073741819)→ 直接 ONNX(CPU 同样稳定,画质一致)
                         // 没有 ONNX 模型时不能把用户堵死:只能走 ncnn(哪怕探测说它不稳,也比什么都不做强)

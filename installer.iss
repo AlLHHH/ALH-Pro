@@ -14,6 +14,9 @@
 #define MyAppName "ALH Pro"
 #define MyAppVersion "1.3.4"
 #define MyAppExeName "ALHPro.exe"
+; 【构建时间戳】(ISPP 在编译时求值):用于让用户一眼分辨"同名同版本的不同构建"。
+; 起因:同一个 1.3.4 出了多次安装包,名字完全一样、大小只差几十 MB,用户无法确认手上是哪一个。
+#define BuildStamp GetDateTimeString('yyyymmdd-hhnn', '', '')
 ; GitHub Release 模型包直链(与 Release 附件名必须一致;仓库=AlLHHH/ALH-Pro)
 ; 【为什么指向 v1.3.3 而不是 v1.3.4】models_v1.0.zip 与软件版本无关(内容一直没变),
 ; 而 v1.3.4 的 Release 尚未建立 → 指向它会让"下载并安装模型包"必然 404。
@@ -31,6 +34,15 @@ AppVersion={#MyAppVersion}
 ; 窗口标题/卸载名:默认"AppName 版本 AppVersion",改为简洁的 "ALH Pro v{#MyAppVersion}"
 AppVerName=ALH Pro v{#MyAppVersion}
 AppPublisher=AlL.H
+; 【安装包自身的版本信息 —— 此前缺失导致的真问题】原先只设了 AppVersion/AppVerName,没设
+; VersionInfoVersion → 资源管理器里"文件版本"是空的、显示成 0.0.0.0,叠加"名字一样",
+; 用户根本无法分辨装的是哪一次构建(同一版本多次出包时尤其致命)。
+; 现在:文件版本=1.3.4,文件说明带构建时间戳 → 悬停安装包即可看到"构建 20260911-0003"。
+VersionInfoVersion={#MyAppVersion}
+VersionInfoProductVersion={#MyAppVersion}
+VersionInfoProductName={#MyAppName}
+VersionInfoCompany=AlL.H
+VersionInfoDescription={#MyAppName} 安装程序 v{#MyAppVersion} · 构建 {#BuildStamp}
 ; 最低系统:Win10 1809(与 TargetPlatformMinVersion 一致);比这更旧的装完必崩,直接拦下
 MinVersion=10.0.17763
 ; 默认安装到【用户程序目录】(C:\Users\用户名\AppData\Local\Programs\ALH Pro):

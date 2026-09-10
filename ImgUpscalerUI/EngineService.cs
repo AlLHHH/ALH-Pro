@@ -65,8 +65,13 @@ public static partial class EngineService
     private static readonly System.Collections.Generic.Dictionary<string, NcnnVerdictEntry> _ncnnVerdicts = new();
     private static bool _ncnnVerdictsLoaded;   // 落盘文件是否已合并进上面的字典(只读一次,避免反复 I/O)
     private static readonly object _ncnnVerdictLock = new();
-    /// <summary>结论有效期(过期自动重测):驱动/引擎/模型都会更新,旧结论不该永久钉死路由。</summary>
-    private static readonly TimeSpan NcnnVerdictTtl = TimeSpan.FromDays(7);
+    /// <summary>结论有效期(过期自动重测):驱动/引擎/模型都会更新,旧结论不该永久钉死路由。
+    /// 【成功 7 天,失败只记 1 天 —— 代价不对称】一次偶发失败(驱动瞬时故障 / GPU 被别的程序占满 /
+    /// 探测时传错模型名)会让用户整整一周被挡在慢路上,而重测一次只要 ~15 秒。失败用短 TTL 给机器自愈机会。
+    /// 这条不是理论:实测刚踩过 —— 探测调用曾被无条件执行,waifu2x 模式下拿 waifu2x 的模型名去探
+    /// realesrgan,必然失败,于是"realesrgan 不可用"这个假结论会被钉 7 天。</summary>
+    private static readonly TimeSpan NcnnVerdictTtlOk = TimeSpan.FromDays(7);
+    private static readonly TimeSpan NcnnVerdictTtlFail = TimeSpan.FromDays(1);
     private static bool? _nonNvidiaCache;
     /// <summary>本会话内确认"ncnn CPU(-g -1)模式崩溃"(exit -1073741819 内存访问违规)后置位:
     /// 之后所有引擎的 CPU 兜底直接跳过,改为 GPU 0 重算,避免反复崩溃拖慢/卡住(双卡机/部分机型实测)。</summary>
@@ -143,7 +148,8 @@ public static partial class EngineService
             if (map == null) return;
             long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             foreach (var kv in map)
-                if (kv.Value != null && now - kv.Value.At >= 0 && now - kv.Value.At <= (long)NcnnVerdictTtl.TotalSeconds)
+                if (kv.Value != null && now - kv.Value.At >= 0
+                    && now - kv.Value.At <= (long)(kv.Value.Ok ? NcnnVerdictTtlOk : NcnnVerdictTtlFail).TotalSeconds)
                     _ncnnVerdicts[kv.Key] = kv.Value;
         }
         catch { }
@@ -213,7 +219,7 @@ public static partial class EngineService
                 (cached.Value ? "ncnn-Vulkan 可用 → 走 ncnn(不重复试跑)" : "ncnn-Vulkan 不可用 → 走 ONNX(不每批重试)"));
             return cached.Value;
         }
-        AppLogger.Info($"[探测] {engine} GPU({gpuId})首次真机探测(生产帧尺寸 1080×1920,模型 {model ?? "(默认)"} + 带状黑判据,最长约 30 秒)...");
+        AppLogger.Info($"[探测] {engine} GPU({gpuId})首次真机探测(生产帧尺寸 1080×1920,模型 {model ?? "(默认)"} + 带状黑判据,最长约 60 秒)...");
         bool ok = await IsEngineGpuUsableAsync(engine, gpuId, ct, fullFrame: true, model: model).ConfigureAwait(false);
         // 结论按【引擎|GPU】记账(决策键);探测用的模型一并记进明细,便于诊断包核查"这个结论是对哪个模型测出来的"。
         SaveNcnnVerdict(engine, gpuId, ok, (ok ? "production-geometry probe ok" : "production-geometry probe failed") + $"; model={model ?? "(default)"}");
@@ -1292,8 +1298,11 @@ public static partial class EngineService
                     }
                     using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     // 探测超时:小图 15 秒(旧 5 秒对"冷启动慢的 ncnn 卡"会误报 hang,如 4060 首次加载 Vulkan 要 >5s);
-                    // 生产帧尺寸探测放大到 30 秒 —— 1080×1920 一帧(0.5~1s)+ 冷启动编译着色器,15 秒在慢卡/首次运行上会误判。
-                    int probeTimeoutSec = fullFrame ? 30 : 15;
+                    // 【生产帧尺寸探测必须给足 60 秒】实测(4060,1080×1920,-s 2):waifu2x-cunet 1.6s、
+                    // realesrgan-animevideov3 1.7s,但【realesrgan-x4plus 要 24.1s】—— 30 秒余量对重模型太紧,
+                    // 慢卡上会把能用的设备误判"不可用"→ 永久推回 ONNX(假失败代价很大:5060 上 ONNX 落 CPU 是 8 秒/帧)。
+                    // 真 hang 不会因超时变长而变慢:超时后直接返回 false,不重试。
+                    int probeTimeoutSec = fullFrame ? 60 : 15;
                     waitCts.CancelAfter(TimeSpan.FromSeconds(probeTimeoutSec));
                     try
                     {
@@ -1316,7 +1325,9 @@ public static partial class EngineService
                     catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                     {
                         // 超时(真 hang):重试只会再白等,直接判不可用并杀进程
-                        AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId}) {probeTimeoutSec} 秒无响应(疑似 hang)——按不可用处理,已终止探测(不重试)");
+                        AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId}) {probeTimeoutSec} 秒无响应(疑似 hang)" +
+                            (fullFrame ? "(探测用 1080×1920 生产帧尺寸:重模型本身也可能跑数十秒,本次按不可用保守处理)" : "") +
+                            "——按不可用处理,已终止探测(不重试)");
                         try { p.Kill(entireProcessTree: true); } catch { }
                         return false;
                     }
