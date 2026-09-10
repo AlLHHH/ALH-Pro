@@ -174,11 +174,11 @@ public sealed partial class UpscaleView : UserControl
             if (d.Mode is >= 0 and <= 1) ModeRadios.SelectedIndex = d.Mode;
             if (d.W2xModel is >= 0 && d.W2xModel < ModelCombo.Items.Count)
                 ModelCombo.SelectedIndex = d.W2xModel;
+            // 倍率存的就是 4 项单选索引(0=1x超分 1=2x 2=3x 3=4x,与 SaveSettings 写入侧一致),读侧必须原样 Clamp。
+            // 再按"旧版五项"做 -1 映射就会把存 3(4x) 读成 2(3x) —— "4x 重启变 3x / 2x 变 1x" 的根因。
+            // 旧文件里残留的 4(旧语义 4x)由 Clamp 收敛到 3=4x,方向正确(0~3 两套语义重叠,无法逐值区分)。
             if (d.Scale is >= 0 and <= 4)
-            {
-                // 旧版(含「不放大 1x」五项)映射:0(不放大)→0(1x超分),1(1x超分)→0,2(2x)→1,3(3x)→2,4(4x)→3
-                ScaleRadios.SelectedIndex = d.Scale == 0 ? 0 : Math.Min(d.Scale - 1, 3);
-            }
+                ScaleRadios.SelectedIndex = Math.Clamp(d.Scale, 0, 3);
             if (d.Noise is >= 0 and <= 3) NoiseCombo.SelectedIndex = d.Noise;
             TtaCheck.IsChecked = d.Tta;
             SelectedOnlyCheck.IsChecked = d.SelectedOnly;
@@ -313,6 +313,7 @@ public sealed partial class UpscaleView : UserControl
         public string Name { get; set; } = "";
         public string SavedAt { get; set; } = "";
         public bool IsOfficial { get; set; }   // 官方预设(程序内置):悬停显示"官方"、无删除日期;用户预设=普通条目
+        public bool ScaleIndexV2 { get; set; }   // Params.Scale 已按 4 项单选索引语义存储(旧文件为"旧版五项"语义,见迁移)
         public UpscaleSettings Params { get; set; } = new();
     }
 
@@ -343,19 +344,21 @@ public sealed partial class UpscaleView : UserControl
         catch { }
     }
 
-    /// <summary>官方内置图片预设定义(名字 + 一套默认参数)。以后要加官方预设,在这里加一项即可,下次更新自动带上。</summary>
+    /// <summary>官方内置图片预设定义(名字 + 一套默认参数)。以后要加官方预设,在这里加一项即可,下次更新自动带上。
+    /// Scale 一律写【页面当前的 4 项单选索引】语义(0=1x超分,1=2x,2=3x,3=4x),与 ApplyImgSettings 的读法一致;
+    /// 老版本这里写的是"旧版五项"语义(1=1x超分,3=3x),由 EnsureBuiltinImgPresets 里的一次性迁移换算过来。</summary>
     private static (string Name, Func<UpscaleSettings> Make)[] BuiltinImgPresets() => new[]
     {
         ( "通用变清晰", new Func<UpscaleSettings>(() => new UpscaleSettings
         {
-            Remember = true, Mode = 0, W2xModel = 0, Scale = 1, Noise = 2, Tta = false, SelectedOnly = false,
+            Remember = true, Mode = 0, W2xModel = 0, Scale = 0, Noise = 2, Tta = false, SelectedOnly = false,
             Fmt = 0, Detail = 50, Sharpen = 10, Clarity = 15, Deblur = 35, Usm = 20, Edge = 5, DetailEnhance = 10,
             Denoise = 20, Aa = 40, Dehaze = 5, ImgQualityMode = 2, ImgQualityCustom = 92, ImgQuality = 92,
             PreDenoise = true, DenoiseLevel = 0, OutDir = "",
         })),
         ( "清晰MAX", new Func<UpscaleSettings>(() => new UpscaleSettings
         {
-            Remember = true, Mode = 1, W2xModel = 2, Scale = 3, Noise = 3, Tta = false, SelectedOnly = false,
+            Remember = true, Mode = 1, W2xModel = 2, Scale = 2, Noise = 3, Tta = false, SelectedOnly = false,
             Fmt = 0, Detail = 40, Sharpen = 20, Clarity = 25, Deblur = 35, Usm = 30, Edge = 30, DetailEnhance = 20,
             Denoise = 35, Aa = 65, Dehaze = 5, ImgQualityMode = 2, ImgQualityCustom = 92, ImgQuality = 92,
             PreDenoise = true, DenoiseLevel = 2, OutDir = "",
@@ -383,11 +386,26 @@ public sealed partial class UpscaleView : UserControl
                     Name = name,
                     SavedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm") + " · 内置",
                     IsOfficial = true,
+                    ScaleIndexV2 = true,   // 新建的按当前语义写,不再被下面的迁移换算一次
                     Params = make(),
                 };
                 list.Insert(0, p);
                 changed = true;
                 AppLogger.Info($"[内置预设] 已创建官方图片预设「{name}」");
+            }
+            // 【倍率语义一次性迁移】老版本这几项官方预设的 Scale 按"旧版五项"书写(1=1x超分,3=3x),
+            // 而页面现在按 4 项单选索引读(0=1x超分,2=3x)。不迁移的话老用户升级后"通用变清晰"会从
+            // 1x超分 静默变成 2x、"清晰MAX" 从 3x 变成 4x —— 用户没改任何设置却换了输出分辨率。
+            // 用独立字段 ScaleIndexV2 记语义版本(不让同一字段承担两套语义);SavedAt 里的「内置」标记
+            // 保证只动我们自己创建的官方预设,用户自建的同名预设(即便被上面标记成官方)不会被误改。
+            foreach (var (name, _) in BuiltinImgPresets())
+            {
+                var p = list.FirstOrDefault(x => x.Name == name);
+                if (p == null || p.ScaleIndexV2 || !p.SavedAt.Contains("内置", StringComparison.Ordinal)) continue;
+                p.Params.Scale = p.Params.Scale == 0 ? 0 : Math.Min(p.Params.Scale - 1, 3);   // 旧语义 → 新语义
+                p.ScaleIndexV2 = true;
+                changed = true;
+                AppLogger.Info($"[内置预设] 「{name}」倍率档已按 4 项索引语义迁移 → 索引 {p.Params.Scale}");
             }
             if (changed)
             {
@@ -406,7 +424,9 @@ public sealed partial class UpscaleView : UserControl
         {
             if (d.Mode is >= 0 and <= 1) ModeRadios.SelectedIndex = d.Mode;
             if (d.W2xModel is >= 0 && d.W2xModel < ModelCombo.Items.Count) ModelCombo.SelectedIndex = d.W2xModel;
-            if (d.Scale is >= 0 and <= 4) ScaleRadios.SelectedIndex = d.Scale == 0 ? 0 : Math.Min(d.Scale - 1, 3);
+            // 与 LoadSettings 同一读法:同一字段只允许一套语义。两处不一致会让同一个预设/设置值
+            // 在"应用预设"与"重启恢复"下得到不同倍率(用户看到"预设每次套出来都不一样")
+            if (d.Scale is >= 0 and <= 4) ScaleRadios.SelectedIndex = Math.Clamp(d.Scale, 0, 3);
             if (d.Noise is >= 0 and <= 3) NoiseCombo.SelectedIndex = d.Noise;
             TtaCheck.IsChecked = d.Tta;
             if (d.Fmt is >= 0 and <= 1) FmtCombo.SelectedIndex = d.Fmt;
@@ -933,7 +953,7 @@ public sealed partial class UpscaleView : UserControl
             if (_running) { OutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed; return; }
             // 无效倍率:1x 超分(2x放大后缩回)= 输出不变;2x/3x/4x 对应倍率
             bool shrink1x = ScaleRadios.SelectedIndex == 0;
-            double mult = ScaleRadios.SelectedIndex switch { 1 => 2.0, 2 => 3.0, 3 => 4.0, _ => 1.0 };
+            double mult = shrink1x ? 1.0 : EngineScaleOf(ScaleRadios.SelectedIndex);   // 与真正导出用同一份映射,防"提示与实际不符"
             // 取选中项的第一张(无选中则取列表第一张)
             ImageItem? it = null;
             if (ToolGrid.SelectedItems.Count > 0) it = ToolGrid.SelectedItems[0];
@@ -1024,6 +1044,75 @@ public sealed partial class UpscaleView : UserControl
     }
 
     // ---------- 批量处理 ----------
+    /// <summary>「放大倍数」单选项索引 → 引擎实际放大倍数:0=1x超分(先 2x 再缩回)、1=2x、2=3x、3=4x。
+    /// 主流程、输出规格提示与「放大选区」必须共用这一份映射:两处各写一份曾经分叉 —— 选区整体错一档,
+    /// 选 2x 实际只放大 1x(引擎在 scale≤1 时直接复制文件),而选区样张正是用户判断超分效果的依据。</summary>
+    private static int EngineScaleOf(int scaleRadioIndex)
+        => scaleRadioIndex switch { 1 => 2, 2 => 3, 3 => 4, _ => 2 };   // 0(1x超分)也要真 2x 放大,再由 upscaleShrink1x 缩回
+
+    /// <summary>界面上的"引擎能力"提示(黄色):当前引擎不支持用户已选的参数时必须显式说明,不许静默忽略。</summary>
+    private void ShowEngineCapHint(string msg)
+    {
+        EngineCapHint.Text = msg;
+        EngineCapHint.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>ONNX 分支出图后的收尾(主流程与黑块重试共用),兑现两条"预览=结果"承诺:
+    /// ①「1x 超分」= 输出与源同尺寸 —— ONNX 只按 scale=2 出图,不缩回就是"选 1x 得到 2x";
+    /// ② 输出扩展名与真实编码一致 —— ONNX 所有出口都写 PNG,直接叫 .jpg 会出现"JPG 文件里装 PNG 字节"
+    ///    (格式契约被破坏,按魔数识别的看图软件/上传接口会判为坏文件)。
+    /// onnxInputPath 是喂给 ONNX 的那张图(源尺寸基准);缩回与 JPG 转码合并成一次,避免二次有损压缩。
+    /// 【纯计算,不碰控件】大图要整张解码+重编码,必须由调用方放进 Task.Run——在 UI 线程跑会卡界面,
+    /// 而这里若自己写日志就会从后台线程碰 XAML(0x8001010E),故只返回一行日志文本交给 UI 线程打印。</summary>
+    private static string? FinalizeOnnxOutput(string onnxInputPath, string outPath, bool shrink1x, int imgQ)
+    {
+        int sw = 0, sh = 0;
+        if (shrink1x)
+        {
+            using var src = new System.Drawing.Bitmap(onnxInputPath);   // 源尺寸 = 1x 超分承诺的输出尺寸
+            sw = src.Width;
+            sh = src.Height;
+        }
+        bool isJpg = outPath.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+                  || outPath.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase);
+        var tmpPng = Path.Combine(EngineService.TempRoot, $"imgup_onnx_out_{Guid.NewGuid():N}.png");
+        try
+        {
+            if (shrink1x) SaveShrunkPng(outPath, tmpPng, sw, sh);
+            if (isJpg)
+            {
+                if (!shrink1x) File.Copy(outPath, tmpPng, overwrite: true);   // 不能边读边写同一文件
+                EngineService.ConvertPngToJpg(tmpPng, outPath, imgQ / 100f);   // 按用户码率档位转真实 JPG
+            }
+            else if (shrink1x)
+            {
+                File.Move(tmpPng, outPath, overwrite: true);
+            }
+        }
+        finally
+        {
+            try { if (File.Exists(tmpPng)) File.Delete(tmpPng); } catch { /* 清理失败忽略 */ }
+        }
+        return shrink1x ? $"  1x 超分:输出已缩回源尺寸 {sw}×{sh}"
+                        : isJpg ? "  已按输出格式重编码为真实 JPG" : null;
+    }
+
+    /// <summary>把 srcPath 高保真缩放到 w×h 写入 destPngPath(始终 PNG,无损)。
+    /// 失败即抛,绝不写占位图 —— 输出目录里出现一张灰图比明确失败更难排查。</summary>
+    private static void SaveShrunkPng(string srcPath, string destPngPath, int w, int h)
+    {
+        using var src = new System.Drawing.Bitmap(srcPath);
+        using var dst = new System.Drawing.Bitmap(Math.Max(1, w), Math.Max(1, h));
+        using (var g = System.Drawing.Graphics.FromImage(dst))
+        {
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+            g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+            g.DrawImage(src, 0, 0, dst.Width, dst.Height);
+        }
+        dst.Save(destPngPath, System.Drawing.Imaging.ImageFormat.Png);
+    }
+
     // 区域放大:只对框选区域做 AI 放大,产出新图加入列表
     private async void RegionUpscaleAsync(ImageItem item, int x, int y, int w, int h)
     {
@@ -1042,7 +1131,7 @@ public sealed partial class UpscaleView : UserControl
             // 照片模式:按 ModelCombo 选的 Real-ESRGAN 模型(0=animevideov3 1=x4plus-anime 2=x4plus)
             model = EngineService.PhotoModels[Math.Clamp(ModelCombo.SelectedIndex, 0, EngineService.PhotoModels.Length - 1)].Name;
         }
-        var scale = ScaleRadios.SelectedIndex switch { 0 => 2, _ => ScaleRadios.SelectedIndex };   // 0=1x超分→2x 放大(区域放大不做缩回)
+        var scale = EngineScaleOf(ScaleRadios.SelectedIndex);   // 与主流程同一映射(选区不做 1x 缩回,故文件名里的倍数就是真实倍数)
         var noise = NoiseCombo.SelectedIndex == 0 ? -1 : NoiseCombo.SelectedIndex - 1;   // 0=不降噪,1/2/3=弱/中/强(映射到 -n 0/1/2,整体偏轻避免揉成一团)
         var tta = TtaCheck.IsChecked == true;
         var gpuId = CurrentGpuId;
@@ -1058,12 +1147,23 @@ public sealed partial class UpscaleView : UserControl
         ResumeBtn.IsEnabled = false;
         PauseBtn.Style = null;        // 恢复普通样式(不留高亮残留)
         ResumeBtn.Style = null;
+        string? tmpExif = null;
         try
         {
             Log($"→ 区域放大 {w}×{h} @({x},{y}) 倍数 {scale}x 引擎 {engine}/{model}");
             // 降温休息(每小时/温度墙):全软件覆盖,选区放大同样生效
             await SafeRender.RestIfDueAsync(0, null, CancellationToken.None);
-            await EngineService.UpscaleRegionAsync(item.Path, outPath,
+            // 【裁剪坐标必须先做 EXIF 方向标准化】框选坐标来自预览显示空间(BitmapImage 走 WIC,默认应用
+            // EXIF 方向),而 UpscaleRegionAsync 内部是 System.Drawing 解码 —— 它不应用 EXIF。
+            // 手机竖拍图(方向 6/8/3)直接用显示坐标去裁像素,会拿"竖着框的矩形"切"横躺的像素":
+            // 轻则裁到错误区域、重则被 Math.Clamp 夹到边缘。与抠图页同一做法(NormalizeExif 返回临时文件)。
+            string regionSrc = await Task.Run(() => EngineService.NormalizeExif(item.Path));
+            if (!ReferenceEquals(regionSrc, item.Path))
+            {
+                tmpExif = regionSrc;
+                Log("  检测到 EXIF 旋转,已先旋转为标准方向再裁剪选区");
+            }
+            await EngineService.UpscaleRegionAsync(regionSrc, outPath,
                 x, y, w, h, engine, model, scale, noise, gpuId, tta);
             await ToolGrid.AddImagesAsync(new[] { outPath });
             StatusChanged?.Invoke($"选区放大完成 → {Path.GetFileName(outPath)}");
@@ -1076,6 +1176,7 @@ public sealed partial class UpscaleView : UserControl
         }
         finally
         {
+            try { if (tmpExif != null) File.Delete(tmpExif); } catch { /* 清理失败忽略 */ }
             _running = false;
             ToolGrid.IsProcessing = false;
             PauseBtn.IsEnabled = false;
@@ -1144,6 +1245,8 @@ public sealed partial class UpscaleView : UserControl
         UpdatePauseButtonVisual();   // 运行中未暂停:暂停按钮高亮蓝
         TaskProgress.Value = 0;
         TaskStatus.Text = "准备中...";
+        EngineCapHint.Text = "";                              // 清掉上一轮的引擎能力提示(每轮重新判定)
+        EngineCapHint.Visibility = Visibility.Collapsed;
 
         var isAnime = ModeRadios.SelectedIndex == 0;
         string engine, model;
@@ -1160,7 +1263,7 @@ public sealed partial class UpscaleView : UserControl
             model = EngineService.PhotoModels[Math.Clamp(ModelCombo.SelectedIndex, 0, EngineService.PhotoModels.Length - 1)].Name;
         }
         bool upscaleShrink1x = ScaleRadios.SelectedIndex == 0;   // 1x 超分(2x 放大后缩回)
-        var scale = ScaleRadios.SelectedIndex switch { 1 => 2, 2 => 3, 3 => 4, _ => 2 };   // 0=1x超分→先 2x 再缩回
+        var scale = EngineScaleOf(ScaleRadios.SelectedIndex);   // 与「放大选区」共用同一映射,避免两处再次分叉
         var noise = NoiseCombo.SelectedIndex == 0 ? -1 : NoiseCombo.SelectedIndex - 1;   // 0=不降噪,1/2/3=弱/中/强(映射到 -n 0/1/2,整体偏轻避免揉成一团)
         var tta = TtaCheck.IsChecked == true;
         var gpuId = CurrentGpuId;
@@ -1305,9 +1408,23 @@ public sealed partial class UpscaleView : UserControl
                         {
                             Log("✅ 自检:已按当前显卡自动改用稳定引擎(直接处理,无需设置)");
                             progress.Report((0, "✅ 自检完毕:用稳定引擎处理..."));
+                            // 【必须显式告知】ONNX 稳定引擎的权重是固定的:降噪档与 TTA 传进去也没有任何效果。
+                            // 静默忽略 = 界面显示"已开降噪/TTA"而实际没做(预览≠结果),所以写日志 + 界面上方黄字提示。
+                            var dropped = new List<string>();
+                            if (isAnime && noise >= 0) dropped.Add($"降噪级别({NoiseCombo.SelectedIndex})");
+                            if (tta) dropped.Add("高级增强(TTA)");
+                            if (dropped.Count > 0)
+                            {
+                                var capMsg = $"当前引擎(ONNX 稳定引擎)不支持 {string.Join(" / ", dropped)} — 已忽略,其余参数照常生效";
+                                Log($"  ⚠ {capMsg}");
+                                ShowEngineCapHint(capMsg);
+                            }
                             await AbandonOnCancelAsync(
                                 EsrganOnnxService.UpscaleAsync(srcPath, outPath, scale,
                                     gpuId < 0 ? -1 : -2, progress, CancellationToken.None, onnxPath), ct);   // 用户选 CPU(-1)则强制 CPU;否则按图大小自动选设备
+                            // ONNX 出图后收尾:1x 超分缩回源尺寸 + 按扩展名(该 JPG 就写真 JPEG 字节)
+                            var finLog = await Task.Run(() => FinalizeOnnxOutput(srcPath, outPath, upscaleShrink1x, imgQ));
+                            if (finLog != null) Log(finLog);
                         }
                         else
                         {
@@ -1343,7 +1460,11 @@ public sealed partial class UpscaleView : UserControl
                                 try
                                 {
                                     Log("  ⚠ 黑块修复:该显卡 ncnn 引擎黑块且 CPU 不可用,自动改用 ONNX 稳定引擎重试...");
-                                    await EsrganOnnxService.UpscaleAsync(converted ?? item.Path, outPath, scale, gpuId < 0 ? -1 : -2, progress, ct, onnxRetry);
+                                    var retrySrc = converted ?? item.Path;
+                                    await EsrganOnnxService.UpscaleAsync(retrySrc, outPath, scale, gpuId < 0 ? -1 : -2, progress, ct, onnxRetry);
+                                    // 同主分支:重试也是 ONNX 出图,1x 缩回与"JPG 里不能装 PNG 字节"同样要收尾
+                                    var retryLog = await Task.Run(() => FinalizeOnnxOutput(retrySrc, outPath, upscaleShrink1x, imgQ));
+                                    if (retryLog != null) Log(retryLog);
                                     succeeded = true;
                                 }
                                 catch { }

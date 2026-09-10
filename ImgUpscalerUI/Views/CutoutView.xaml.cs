@@ -17,7 +17,12 @@ namespace ALHPro.Views;
 public sealed partial class CutoutView : UserControl
 {
     private bool _running;
-    private bool _suppressEvents;   // 构造器赋默认值/LoadSettings 期间 true,抑制 SaveSettings,防止默认值覆盖用户设置
+    private bool _suppressEvents = true;   // 构造期(XAML 解析 + 赋默认值 + LoadSettings)抑制 SaveSettings,防止默认值覆盖用户设置;
+                                           // 必须"字段初始值就是 true":InitializeComponent() 解析 XAML 时 AutoThresholdCheck 的
+                                           // IsChecked="True" 就会触发 Checked→OnParamsChanged→SaveSettings,那一刻若还是 false,
+                                           // 默认值(含 Remember=false、OutDir="")会立刻覆盖用户的 cutout-settings.json,
+                                           // 紧接着 LoadSettings() 读到的就是这份默认值 → 用户的参数永远恢复不了。
+                                           // 故只在 LoadSettings() 返回后才置 false(见构造器),而不是在 XAML 里删 IsChecked="True"。
     private string? _customOutDir;
     private CancellationTokenSource? _cts;
     private int _gpuCount;
@@ -50,16 +55,15 @@ public sealed partial class CutoutView : UserControl
         ToolGrid.ItemDoubleTapped += ToolGrid_ItemDoubleTapped;
         // 计算设备:统一在「设置」里选择(AppSettings.GpuIndex),页面不再显示下拉
         _gpuCount = GpuInfo.EngineDeviceCount;
-        // 【修复】构造器赋默认值期间抑制保存:否则默认值(128/64/0/0)会触发 OnParamsChanged→SaveSettings,
-        // 把默认值写盘覆盖用户之前保存的前景/背景等参数(用户"记住参数"失效的真正原因之一)。
-        _suppressEvents = true;
+        // 【修复"记住上次"永久失效的根因】抑制保存从字段初始值就是 true(见字段声明):
+        // InitializeComponent() 解析期就会触发事件回调,赋默认值的这几行也必须仍然被抑制。
         // 参数默认值(在 InitializeComponent 之后设置,避免 XAML 解析期事件)
         FgSlider.Value = 128;
         BgSlider.Value = 64;
         FeatherSlider.Value = 0;
         EdgeSlider.Value = 0;
         LoadSettings();
-        _suppressEvents = false;
+        _suppressEvents = false;   // 恢复完成,此后用户改动才允许写盘
         UpdateOptions();
         UpdateRunState();
         // 「抠图前降噪」未勾选 → 降噪强度下拉与标签禁用并置灰(与超分页照片模式联动一致)
@@ -675,6 +679,19 @@ public sealed partial class CutoutView : UserControl
         SaveSettings();   // 编辑后立即记住(此前遗失)
     }
 
+    /// <summary>输出目录合法性预检:目录路径允许「:」(盘符)与「\」(分隔符),但不允许 " &lt; &gt; | * ? 与控制字符。
+    /// 用于在开始处理前拦住会让 Path.Combine/CreateDirectory 抛异常的路径(如从聊天软件粘来的含 * 的路径)。
+    /// 返回第一个非法字符,合法则返回 null。</summary>
+    internal static char? FindIllegalDirChar(string dir)
+    {
+        foreach (var c in dir)
+        {
+            if (c < 32) return c;
+            if (c is '"' or '<' or '>' or '|' or '*' or '?') return c;
+        }
+        return null;
+    }
+
     // ---------- 批量抠图 ----------
     private async void RunBtn_Click(object sender, RoutedEventArgs e)
     {
@@ -695,6 +712,37 @@ public sealed partial class CutoutView : UserControl
             await ShowErrorAsync($"未找到抠图模型「{cutModel.Label}」({cutModel.FileName}) — 请安装/恢复模型包:下载 models_v1.0.zip,解压到程序目录的 engines\\rembg\\ 文件夹(6 个 .onnx 直接放这,不要多套一层文件夹);或换用其它已安装的模型");
             return;
         }
+        // 输出目录:多张时创建子文件夹(WebP 转码件优先用原始目录,避免落到应用私有目录)
+        // 【修复 崩溃+永久卡死】目录创建/路径拼接原先在 _running=true 之后、且在 try 之外:
+        // 用户手填的路径含非法字符或盘满/只读时,Path.Combine/Directory.CreateDirectory 抛异常,
+        // 异常从 async void 逃逸 → 进程崩溃;即便不崩,_running 已 true 而 finally 在更内侧的 try 里
+        // → 列表锁死、RunBtn 永久灰(只能重启)。与超分页 UpscaleView 的正确写法保持一致:
+        // 全部移到 _running=true 之前,失败给出可行动提示后直接 return。
+        var firstSrc = items[0].OriginalPath.Length > 0 ? items[0].OriginalPath : items[0].Path;
+        string outDir;
+        try
+        {
+            var customDir = _customOutDir;
+            if (!string.IsNullOrWhiteSpace(customDir))
+            {
+                // 手填的输出目录先做非法字符校验,给出"哪个字符不合法"的可行动提示(而不是让它抛 ArgumentException)
+                var bad = FindIllegalDirChar(customDir);
+                if (bad != null)
+                    throw new ArgumentException($"路径里含 Windows 不允许的字符「{bad}」({customDir})");
+            }
+            var baseDir = customDir ?? Path.GetDirectoryName(firstSrc);
+            if (string.IsNullOrWhiteSpace(baseDir))
+                throw new ArgumentException("无法确定输出目录(源图所在目录为空),请在「输出」里手动选择一个文件夹");
+            outDir = items.Length >= 2
+                ? Path.Combine(baseDir, $"抠图输出_{DateTime.Now:yyyyMMdd_HHmmss}")
+                : baseDir;
+            Directory.CreateDirectory(outDir);
+        }
+        catch (Exception ex)
+        {
+            await ShowErrorAsync($"无法创建输出目录,请在「输出」里重新选择/修改输出文件夹(或留空用源图目录):{ex.Message}");
+            return;
+        }
         _running = true;
         _paused = false;
         _resumeTcs = null;
@@ -709,21 +757,6 @@ public sealed partial class CutoutView : UserControl
         ToolGrid.IsProcessing = true;   // 处理中锁死右侧列表的删除/清空等操作(暂停时解锁删除)
         TaskProgress.Value = 0;
         TaskStatus.Text = "准备中...";
-
-        // 输出目录:多张时创建子文件夹(WebP 转码件优先用原始目录,避免落到应用私有目录)
-        var firstSrc = items[0].OriginalPath.Length > 0 ? items[0].OriginalPath : items[0].Path;
-        var baseDir = _customOutDir ?? Path.GetDirectoryName(firstSrc)!;
-        string outDir;
-        if (items.Length >= 2)
-        {
-            var sub = $"抠图输出_{DateTime.Now:yyyyMMdd_HHmmss}";
-            outDir = Path.Combine(baseDir, sub);
-            Directory.CreateDirectory(outDir);
-        }
-        else
-        {
-            outDir = baseDir;
-        }
 
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;

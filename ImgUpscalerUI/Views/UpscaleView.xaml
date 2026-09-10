@@ -315,6 +315,10 @@
                         <TextBlock x:Name="SpeedHint" Text=""
                                    Foreground="#E8A33D" FontSize="11" TextWrapping="Wrap"
                                    TextAlignment="Center" Visibility="Collapsed"/>
+                        <!-- 引擎能力提示(黄色):当前引擎不支持用户已选的参数(如 ONNX 稳定引擎的降噪/TTA)时显式告知,不许静默忽略 -->
+                        <TextBlock x:Name="EngineCapHint" Text=""
+                                   Foreground="#E8A33D" FontSize="11" TextWrapping="Wrap"
+                                   TextAlignment="Center" Visibility="Collapsed"/>
                         <CheckBox x:Name="SelectedOnlyCheck" Content="只处理选中的项目"
                                   ToolTipService.ToolTip="勾选后只处理右侧列表里选中的项;不勾选则处理全部"/>
                         <Grid ColumnSpacing="8">
