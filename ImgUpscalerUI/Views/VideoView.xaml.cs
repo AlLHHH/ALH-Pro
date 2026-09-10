@@ -1930,6 +1930,34 @@ public sealed partial class VideoView : UserControl
         catch { _suppressEvents = false; }
     }
 
+    /// <summary>去重模式显示名 —— 必须与 DedupModelCombo 的 7 项一一对应
+    /// (0智能检测 1动漫模式 2标准 3温和 4敏感 5手动 6内容帧率;顺序见 VideoView.xaml 的去重模型下拉)。
+    /// 【为什么单列一个函数】原来这段是内联三元表达式,只认 0/1、其余全写"手动",
+    /// 于是"标准/温和/敏感/内容帧率"四种在预设悬停里全都被显示成"手动",用户看不出自己选了什么。</summary>
+    private static string DedupModelName(int idx) => idx switch
+    {
+        0 => "智能检测",
+        1 => "动漫模式",
+        2 => "标准",
+        3 => "温和",
+        4 => "敏感",
+        5 => "手动",
+        6 => "内容帧率",
+        _ => $"模式{idx}",
+    };
+
+    /// <summary>动漫去重档位显示名 —— 与 DedupAnimeCombo 的 5 项一一对应。
+    /// 一拍N 是有限动画的绘制节奏(每 N 帧才有一帧真内容),选错档位就采不到内容帧。</summary>
+    private static string DedupAnimeName(int idx) => idx switch
+    {
+        0 => "去除一拍二",
+        1 => "去除一拍三",
+        2 => "去除一拍二与一拍三",
+        3 => "半拍二",
+        4 => "去除一拍四",
+        _ => $"档位{idx}",
+    };
+
     /// <summary>生成预设参数摘要(悬停提示):引擎/倍率/补帧/去重/后处理/码率等,多行文本。</summary>
     private static string BuildPresetSummary(VideoPreset p)
     {
@@ -1945,7 +1973,13 @@ public sealed partial class VideoView : UserControl
         sb.AppendLine("补帧: " + (d.Interp
             ? $"{(d.Model < 0 ? "?" : InterpModelName(d.Model))} · {d.InterpScale}x{(d.Tta ? " · TTA" : "")}"
             : "关闭"));
-        sb.AppendLine("去重: " + (d.DedupOn ? $"{(d.DedupModel == 0 ? "智能" : d.DedupModel == 1 ? "动漫" : "手动")}" : "关闭"));
+        // 去重摘要:模式共 7 项(智能检测/动漫模式/标准/温和/敏感/手动/内容帧率),原来只映射了 0 和 1、
+        // 其余一律显示成"手动" —— 预设悬停里根本看不出到底选了什么(标准/温和/敏感/内容帧率全被叫"手动")。
+        // 动漫模式另需带上拍型档位(去除一拍二/三/四…),那才是这项预设真正的区别所在。
+        // 这正是"动漫通用"改档后必须能一眼看出来的地方。
+        sb.AppendLine("去重: " + (d.DedupOn
+            ? DedupModelName(d.DedupModel) + (d.DedupModel == 1 ? "·" + DedupAnimeName(d.DedupAnime) : "")
+            : "关闭"));
         sb.AppendLine("后处理: " +
             $"锐化{d.PostSharpen} 清晰{d.PostClarity} 钝化蒙版{d.PostUsm} 保留细节{d.PostDetail} " +
             $"去模糊{d.PostDeblur} 边缘抗锯齿{d.PostAa}");
