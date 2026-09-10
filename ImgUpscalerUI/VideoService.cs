@@ -1249,7 +1249,7 @@ public static class VideoService
                     // 于是探测判"可用",坏帧一路进成片。现在改为:先按【生产形态】真机探测
                     // (1080×1920 + 真实模型 + 生产 -j + 带状黑判据),通过 → 就走 ncnn-Vulkan
                     // (真机实测 0.24~0.6 秒/帧,而"ONNX 落 CPU"是 8 秒/帧);失败 → 才改走 ONNX 并明确告知用户。
-                    progress?.Report((45, $"正在检测超分 GPU 兼容性({engine},首次最长约 30 秒,结论会记住)..."));
+                    progress?.Report((45, $"正在检测超分 GPU 兼容性({engine},首次最长约 60 秒,结论会记住)..."));
                     bool usable = await EngineService.EnsureNcnnProbeAsync(engine, gpuId, model, ct).ConfigureAwait(false);
                     if (!usable)
                     {
