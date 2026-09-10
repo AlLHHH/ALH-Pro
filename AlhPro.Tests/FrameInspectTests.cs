@@ -61,6 +61,46 @@ public class FrameInspectTests
         Assert.True(FrameInspect.SampleStep(1920, 1080) <= 60);
     }
 
+    // ===== 黑帧降级的"防误杀"判定 =====
+    // 产品铁律「绝不把黑帧写进输出」在历史上被这条判定整批绕过:
+    // 旧实现用的是【存在量词】(目录里任一源帧近黑 → 豁免整批),
+    // 于是含黑场的素材(片头黑场/淡入淡出/夜戏/闪黑)上,GPU 真正故障产出的黑帧会整批放行,且零日志。
+    // 现在必须是"每一帧的源帧都近黑"才豁免。
+    [Fact]
+    public void Exempt_only_when_every_defective_frame_comes_from_black_source()
+    {
+        // 全部源帧都近黑 → 输出黑来自素材,可豁免(不浪费 CPU 重算)
+        Assert.True(FrameInspect.ShouldExemptAsSourceBlack(new[] { true, true, true }));
+        Assert.True(FrameInspect.ShouldExemptAsSourceBlack(new[] { true }));
+    }
+
+    [Fact]
+    public void Single_non_black_source_forbids_exemption()
+    {
+        // 这是历史 bug 的核心:64 帧里 63 帧源黑、只有 1 帧源不黑 —— 那一帧就是 GPU 故障,必须降级。
+        // 旧实现("存在量词")会因为那 63 帧而豁免整批,把这一帧的黑帧写进成片。
+        var flags = new bool[64];
+        for (int i = 0; i < 63; i++) flags[i] = true;
+        flags[63] = false;
+        Assert.False(FrameInspect.ShouldExemptAsSourceBlack(flags));
+
+        // 反向:只有第一帧源黑、其余都不是 → 同样不豁免
+        var flags2 = new bool[64];
+        flags2[0] = true;
+        Assert.False(FrameInspect.ShouldExemptAsSourceBlack(flags2));
+
+        // 全部都不是黑场源 → 明确的 GPU 故障,必须降级
+        Assert.False(FrameInspect.ShouldExemptAsSourceBlack(new[] { false, false }));
+    }
+
+    [Fact]
+    public void Empty_defective_set_never_exempts()
+    {
+        // 引擎一帧都没输出(空批)= 真故障,与素材内容无关 → 必须降级
+        Assert.False(FrameInspect.ShouldExemptAsSourceBlack(null));
+        Assert.False(FrameInspect.ShouldExemptAsSourceBlack(System.Array.Empty<bool>()));
+    }
+
     [Fact]
     public void ForEachSample_iterates_grid()
     {

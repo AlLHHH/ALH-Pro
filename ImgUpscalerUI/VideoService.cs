@@ -1487,6 +1487,12 @@ public static class VideoService
                             // 放过它们,一路传到合帧只会报"找不到 frame_%06d.jpg"。
                             // 不可提前 break:源帧本就是黑场时会跳过降级,此时每张 JPG 都必须已落盘。
                             bool anyFrame = false, anyDefective = false;
+                            // 【黑帧防线·按帧对应】记下"被判黑 / 转码失败"的具体帧,回退前只对这些帧检查其
+                            // 【对应源帧】是否也本来就近黑。原先用 DirNearBlack(batchIn) 做整批判断,而它是
+                            // 【存在量词】(任一源帧近黑即返回 true)→ 一批 64 帧里只要有一帧是黑场
+                            // (片头黑场/淡入淡出/夜戏/闪黑),本批 GPU 输出的【全部】黑帧都被当成"素材本来如此"
+                            // 放行,黑帧直接进成片且零日志,ncnnUnreliable 也不会置位(后续批次继续用坏引擎)。
+                            var defectiveFrames = new System.Collections.Generic.List<string>();
                             foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
                             {
                                 anyFrame = true;
@@ -1494,14 +1500,14 @@ public static class VideoService
                                 try
                                 {
                                     EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality, out bool isBlack);
-                                    if (isBlack) anyDefective = true;
+                                    if (isBlack) { anyDefective = true; defectiveFrames.Add(f); }
                                 }
-                                catch { anyDefective = true; try { File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true); } catch { } }
+                                catch { anyDefective = true; defectiveFrames.Add(f); try { File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true); } catch { } }
                             }
-                            // 兜底防误杀:若【源帧】本来就近全黑(视频黑场/淡入淡出),输出黑是素材本身,
-                            // 不是 GPU 故障——跳过降级,不浪费 CPU 重算。
-                            // 空批(!anyFrame)也按缺陷处理:引擎一帧都没出必然坏了,旧检测器会静默放过。
-                            if ((anyDefective || !anyFrame) && !DirNearBlack(batchIn))
+                            // 兜底防误杀:若【被判黑/失败的每一帧】其源帧本来就近全黑(视频黑场/淡入淡出),
+                            // 输出黑是素材本身,不是 GPU 故障——跳过降级,不浪费 CPU 重算。
+                            // 空批(!anyFrame)必然是真故障:一帧都没出,与素材内容无关,必须降级。
+                            if ((anyDefective || !anyFrame) && !DefectiveFramesAllComeFromNearBlack(batchIn, defectiveFrames))
                             {
                                 // ===== 黑帧降级改进 =====
                                 // ncnn-vulkan 偶发 vkQueueSubmit 失败 → 输出全黑帧。原逻辑先走最慢的 ncnn-CPU 重处理,
@@ -2061,7 +2067,7 @@ public static class VideoService
                         throw new InvalidOperationException("hw-encoder-known-broken");
                     await RunAsync(encFfmpeg, muxBase + encMuxArgs, progress, ct, "编码", encTotal);
                     // 硬件编码可能留下 0 字节/损坏文件却退出 0,这里校验;无效则触发回退
-                    if (!await ValidateVideoFileAsync(outTmp))
+                    if (!await ValidateVideoFileAsync(outTmp, 1))
                         throw new InvalidOperationException("硬件编码输出文件无效");
                 }
                 catch (Exception ex) when (encoder != "libx264" && encoder != "libx265")
@@ -2083,7 +2089,7 @@ public static class VideoService
                         muxBase + $"{videoMap}{audioPart} {EncoderArgs(cpuEnc, quality, bitrateKbps)} {vfArg}{fastFlag} \"{outTmp}\"",
                         progress, ct, "编码", encTotal);
                 }
-                if (!await ValidateVideoFileAsync(outTmp))
+                if (!await ValidateVideoFileAsync(outTmp, 1))
                     throw new InvalidOperationException("视频合成失败:输出文件无效(无法被解码)");
                 // 校验通过,才以最终文件名出现在输出目录(合帧期间输出目录只有 .tmp,不会误以为完成)
                 File.Move(outTmp, outputVideo, true);
@@ -2454,13 +2460,16 @@ public static class VideoService
                     {
                         bool anyBad = false;
                         bool anyFrame = false;
+                        // 【按帧对应】收集被抽到的黑帧(不再 break:要知道具体是哪些帧,才能逐帧比对其源帧)
+                        var badFrames = new System.Collections.Generic.List<string>();
                         foreach (var f in Directory.EnumerateFiles(watchDir, "*.png").Take(4))
                         {
                             anyFrame = true;
-                            try { if (EngineService.IsBlackPngStrict(f)) { anyBad = true; break; } } catch { }
+                            try { if (EngineService.IsBlackPngStrict(f)) { anyBad = true; badFrames.Add(f); } } catch { }
                         }
-                        // 防误杀:段【源帧】(segIn)本来就近黑(素材黑场/淡入淡出)→ 输出黑正常,不降级
-                        if ((anyBad && !DirNearBlack(segIn)) || !anyFrame)   // 黑帧 或 0帧(空跑)都降级
+                        // 防误杀:被抽到的黑帧【各自】的源帧本来就近黑(素材黑场/淡入淡出)→ 输出黑正常,不降级。
+                        // 原用 DirNearBlack(segIn) 是存在量词:段内任意一帧源黑就豁免整段,含黑场的素材上会整段放行。
+                        if ((anyBad && !DefectiveFramesAllComeFromNearBlack(segIn, badFrames)) || !anyFrame)   // 黑帧 或 0帧(空跑)都降级
                         {
                             AppLogger.Info($"⚠ 降级:补帧 GPU {g} {(anyFrame ? "输出黑帧" : "未输出任何帧(0帧)")}(队列异常),走 ONNX→换卡 重算该段(不落 CPU)");
                             progress?.Report((0, $"⚠ 补帧 GPU {g} {(anyFrame ? "输出黑帧" : "未输出帧")},改用 ONNX/换卡重算该段(不落 CPU)..."));
@@ -2734,28 +2743,44 @@ public static class VideoService
         AppLogger.Info($"方案C 累积网格插值:{n} 关键画 → {gOut - 1} 帧({totalGaps} 个动作段,F_out={outFpsSafe:0.##},CFR 对齐输出)");
     }
 
-    /// <summary>目录中【源帧】是否本来就近全黑(≥95% 像素 RGB 和 &lt; 24):
-    /// 用于"黑帧防误杀"——素材本身的黑场(淡入淡出/片头黑场/夜间纯黑镜头)
-    /// 输出黑是正常结果,不是 GPU 故障,不需要 CPU 重算。</summary>
-    private static bool DirNearBlack(string dir)
+    /// <summary>单个文件是否近全黑(≥95% 像素 RGB 和 &lt; 24)。</summary>
+    private static bool IsFileNearBlack(string path)
+    {
+        using var bmp = new System.Drawing.Bitmap(path);
+        var sums = new System.Collections.Generic.List<int>();
+        int total = AlhPro.Core.FrameInspect.ForEachSample(bmp.Width, bmp.Height, (x, y) =>
+        {
+            var p = bmp.GetPixel(x, y);
+            sums.Add((int)p.R + (int)p.G + (int)p.B);
+        });
+        return AlhPro.Core.FrameInspect.IsNearBlack(sums.ToArray(), total);
+    }
+
+    /// <summary>检查每一个"被判黑/转码失败"的帧,其【对应源帧】是否也本来就近全黑。
+    /// 只有全部对应上才返回 true(= 输出黑来自素材本身,不是 GPU 故障,可跳过降级)。
+    /// 【为什么按帧而不是按目录】原 DirNearBlack 是存在量词:只要目录里有【任意一张】源帧近黑就豁免整批,
+    /// 于是含黑场(片头/夜戏/淡入淡出)的素材上,GPU 真正产出的黑帧会整批放行 —— 产品铁律
+    /// 「绝不把黑帧写进输出」在这些素材上完全失效,且静默无日志。
+    /// 拿不准时一律返回 false(= 降级):降级最坏只是白算一遍,与"黑帧进成片"不是一个量级的代价。
+    /// 缺陷帧为空(引擎一帧都没出)也返回 false —— 空批必然是真故障,与素材内容无关。</summary>
+    private static bool DefectiveFramesAllComeFromNearBlack(string srcDir, System.Collections.Generic.List<string> defectiveFrames)
     {
         try
         {
-            foreach (var f in EnumerateFrameFiles(dir))
+            var sourceIsNearBlack = new System.Collections.Generic.List<bool>(defectiveFrames.Count);
+            foreach (var f in defectiveFrames)
             {
-                using var bmp = new System.Drawing.Bitmap(f);
-                var sums = new System.Collections.Generic.List<int>();
-                int total = AlhPro.Core.FrameInspect.ForEachSample(bmp.Width, bmp.Height, (x, y) =>
-                {
-                    var p = bmp.GetPixel(x, y);
-                    sums.Add((int)p.R + (int)p.G + (int)p.B);
-                });
-                // 只要有一张源帧本来就是黑场,说明这批输出黑来自素材,不是 GPU 故障
-                if (AlhPro.Core.FrameInspect.IsNearBlack(sums.ToArray(), total)) return true;
+                string baseName = Path.GetFileNameWithoutExtension(f);
+                string src = Path.Combine(srcDir, baseName + ".jpg");
+                if (!File.Exists(src)) src = Path.Combine(srcDir, baseName + ".png");
+                // 找不到对应源帧 → 记 false(不豁免),按故障处理:降级最坏只是白算一遍
+                sourceIsNearBlack.Add(File.Exists(src) && IsFileNearBlack(src));
             }
+            // 判定规则本身抽到 AlhPro.Core.FrameInspect.ShouldExemptAsSourceBlack(有单测钉住):
+            // 必须"每一帧的源帧都近黑"才豁免;空集合(引擎一帧没出)返回 false。
+            return AlhPro.Core.FrameInspect.ShouldExemptAsSourceBlack(sourceIsNearBlack);
         }
-        catch { }
-        return false;
+        catch { return false; }
     }
 
     /// <summary>把源帧写进超分输出目录当"该批回退帧",并缩放到与同目录其他帧一致的尺寸。
@@ -3120,7 +3145,7 @@ public static class VideoService
                         $"-y -f lavfi -i \"testsrc=size=1280x720:rate=30:duration=0.4\" {args} \"{tmp}\"",
                         null, ct);
                     // 不只看"文件非 0 字节":QSV 那类会写出非空但解不开的文件,必须真校验一遍
-                    if (await ValidateVideoFileAsync(tmp))
+                    if (await ValidateVideoFileAsync(tmp, 5))
                     {
                         lock (_hwLock)
                         {
@@ -5092,9 +5117,14 @@ public static class VideoService
         }
     }
 
-    /// <summary>校验合成的视频文件确实是可读的有效视频(非空 + ffprobe 能读出视频流 + 帧数不少于 5 帧)。
-    /// 硬件编码失败时 ffmpeg 可能留下 0 字节/损坏的文件但被 File.Exists 误判为成功,这里兜底。</summary>
-    private static async Task<bool> ValidateVideoFileAsync(string path)
+    /// <summary>校验视频文件确实是可读的有效视频(非空 + ffprobe 能读出视频流 + 帧数下限)。
+    /// 硬件编码失败时 ffmpeg 可能留下 0 字节/损坏的文件但被 File.Exists 误判为成功,这里兜底。
+    /// 【minFrames 必须区分两种用途,不能都用 5】
+    ///   · 编码器探测(ProbeEncodersAsync):要求 ≥5 帧——目的是识破 QSV 那类"能退出 0 但没真编码"的假成功。
+    ///   · 真实输出校验:必须传 1——≤4 帧的成片是**合法**的(单帧视频、极短视频、用户确认"去重过强仍要进行"
+    ///     后的短输出)。原先两者共用 "&lt;5 即无效",会把合法成片判死、**删掉已经编码好的文件**,
+    ///     还抛"输出文件无效(无法被解码)"这种与事实不符的错误(文件其实完全可解码),用户白等一整轮编码。</summary>
+    private static async Task<bool> ValidateVideoFileAsync(string path, int minFrames = 5)
     {
         try
         {
@@ -5127,9 +5157,9 @@ public static class VideoService
             var outp = (await outTask).Trim();
             await errTask;
             if (p.ExitCode != 0 || !outp.Contains("video", StringComparison.OrdinalIgnoreCase)) return false;
-            // 帧数下限检查:只有几帧的"视频"视为无效(去重过度/异常),防止假成功
+            // 帧数下限检查:阈值由调用方给(探测=5,真实输出=1,见方法注释)
             var fields = outp.Split(',');
-            if (fields.Length >= 2 && int.TryParse(fields[1], out var nb) && nb < 5) return false;
+            if (fields.Length >= 2 && int.TryParse(fields[1], out var nb) && nb < minFrames) return false;
             return true;
         }
         catch { return false; }
