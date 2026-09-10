@@ -286,7 +286,7 @@ public static class VideoService
         double dedupSadThr = 3.0, double dedupSsimThr = 0.97,
         double dedupPanThr = 8, bool dedupPanOn = false,
         double dedupAnimeThr = 0.92,
-        int postFlicker = 0, int postDenoise = 0, int postAa = 0,
+        int postAa = 0,
         bool mute = false, bool allowFewFrames = false,
         int codecPref = 0, double customBitrateMbps = 0,
         bool vfrPassthrough = false,
@@ -1753,14 +1753,7 @@ public static class VideoService
             var preParts = new System.Collections.Generic.List<string>();
             var postParts = new System.Collections.Generic.List<string>();
             var postFilter = BuildPostFilter(postSharpen, postClarity, postUsm, postDetail, postDeblur,
-                postFlicker, postDenoise, postAa, inv);
-            // nlmeans 去重:视频降噪(主开关)与后处理去杂色同为 nlmeans,同时开启时去杂色跳过——
-            // 两个 nlmeans 串行跑一倍耗时至多,画质无增益(降噪强度由主开关决定)。
-            if (postFilter != null && videoDenoise >= 1 && postDenoise > 0)
-            {
-                AppLogger.Info($"去杂色跳过:视频降噪(强度 {videoDenoise})已含 nlmeans 降噪,后处理去杂色不再重复执行");
-                postFilter = postFilter.Replace($"nlmeans={Math.Min(7.0, 1.0 + postDenoise / 25.0).ToString("0.#", inv)}:5:9,", "");
-            }
+                postAa, inv);
             if (postFilter != null) preParts.Add(postFilter);
             // 视频降噪(空间+时间,去噪点/闪烁/压缩噪点),放最前:先降噪再锐化
             if (videoDenoise >= 1) preParts.Insert(0, VideoDenoiseFilter(videoDenoise));
@@ -2157,12 +2150,22 @@ public static class VideoService
     /// 钝化蒙版=smartblur 负强度+阈值(经典 USM,阈值保护平坦区);
     /// 保留细节=cas 自适应对比锐化(只锐化边缘,不放大噪点);
     /// 去模糊=smartblur 大半径负强度(反锐化掩膜近似去卷积);
-    /// 去频闪=【暂时停用】见 WarnDeflickerDisabledOnce:ffmpeg deflicker 不识别转场,会把切点前几帧拉到相邻镜头亮度;
-    /// 去杂色=nlmeans 空间降噪(旧 hqdn3d 实测几乎无效);
+    /// 去模糊=smartblur 大半径负强度(反锐化掩膜近似去卷积);
     /// 边缘抗锯齿=sab 自适应模糊(只在局部对比度强处磨边)。
+    /// 【已删除「去频闪」「去杂色」两项,原因有实测证据,不要加回来】
+    ///  · 去频闪(deflicker):ffmpeg 的该滤镜按【时间窗口中值】归一化每帧亮度、且完全没有转场识别,
+    ///    窗口跨过硬切时中值属于相邻镜头,于是把切点附近的帧整体拉到那个镜头的亮度。
+    ///    本机实测(硬切:前 15 帧灰 200、后 15 帧灰 40,30fps;signalstats 取逐帧 YAVG):
+    ///    切点前 3 帧 126 → 50,【被压暗 76 级】(0~255 量程的 30%),表现为"转场前两帧黑一下";
+    ///    反向转场则是"亮一下"。size=3 只影响 1 帧但同样错 → 是滤镜固有行为,调参解决不了。
+    ///    而它本来是给【延时摄影】用的(逐帧自动曝光不一致),正常视频同一镜头内曝光一致,本就没有这个问题
+    ///    —— 属于"不适用 + 有害",故直接删除,而非花力气重做。
+    ///  · 去杂色(nlmeans):与「视频降噪」是同一个滤镜的重复入口,且代码原本就在两者同时开启时
+    ///    把本项从链里删掉(打日志"去杂色跳过")→ 常见配置下它根本是空操作。保留「视频降噪」即可
+    ///    (它在 preParts 最前,先降噪再锐化/超分,那才是降噪该在的位置)。
     /// </summary>
     private static string? BuildPostFilter(int sharpen, int clarity, int usm, int detail, int deblur,
-        int flicker, int postDenoise, int aa, System.Globalization.CultureInfo inv)
+        int aa, System.Globalization.CultureInfo inv)
     {
         var parts = new System.Collections.Generic.List<string>();
         if (sharpen > 0)
@@ -2175,41 +2178,9 @@ public static class VideoService
             parts.Add($"cas=strength={Math.Min(1.0, detail / 100.0).ToString("0.00", inv)}");
         if (deblur > 0)
             parts.Add($"smartblur=luma_radius=3:luma_strength=-{Math.Min(0.8, deblur / 100.0 * 0.8).ToString("0.00", inv)}:luma_threshold=2");
-        if (flicker > 0)
-            WarnDeflickerDisabledOnce();
-        if (postDenoise > 0)
-            parts.Add($"nlmeans={Math.Min(7.0, 1.0 + postDenoise / 25.0).ToString("0.#", inv)}:5:9");   // 空间去杂色(nlmeans 有效)
         if (aa > 0)
             parts.Add($"sab=lr=1:ls={Math.Max(0.5, aa / 100.0 * 3).ToString("0.##", inv)}");   // 自适应模糊:磨超分/放大后的边缘锯齿
         return parts.Count > 0 ? string.Join(",", parts) : null;
-    }
-
-    /// <summary>「去频闪」暂时停用的一次性说明(见 WarnDeflickerDisabledOnce 上方的方法注释)。</summary>
-    private static int _deflickerWarned;
-
-    /// <summary>【去频闪(deflicker)为何被停用 —— 有实测证据,不要随手加回来】
-    /// ffmpeg 的 deflicker 按【时间窗口中值】归一化每一帧的亮度,而它**完全没有转场识别**:
-    /// 窗口跨过一个硬切时,中值属于相邻的另一个镜头,于是切点附近的帧被整体拉到那个镜头的亮度。
-    /// 【本机实测】硬切素材(前 15 帧亮、后 15 帧暗,30fps,color 灰 200 → 灰 40),
-    /// 逐帧平均亮度(YAVG,signalstats)对比:
-    ///     帧号    源YAVG   deflicker(size=5)   偏差
-    ///      11      126        126              0
-    ///      12      126         50            -76
-    ///      13      126         50            -76
-    ///      14      126         50            -76
-    ///      15(切点) 50         50              0
-    /// 即切点前 3 帧被压暗 76 级(0~255 量程),肉眼就是"转场时前两帧黑一下";
-    /// 反向转场(暗→亮)则表现为"亮一下"。size=3 只影响 1 帧,但同样错 —— 这是滤镜固有行为,
-    /// 不是参数配错,所以调参解决不了。
-    /// 【为什么不是静默停用】用户勾了"去频闪"却什么都不发生也是一种欺骗,必须明确告知。
-    /// 正确的做法是【带场景切分 + 限幅】地重做这一项(只在同一个镜头内做亮度平滑,且限制修正幅度),
-    /// 计划放在逐帧处理阶段实现(那里本来就逐帧解码/重编码,不必再进 ffmpeg 滤镜链)。</summary>
-    private static void WarnDeflickerDisabledOnce()
-    {
-        if (System.Threading.Interlocked.CompareExchange(ref _deflickerWarned, 1, 0) != 0) return;
-        AppLogger.Warn("⚠ 去频闪(deflicker)已暂时停用:实测它会按时间窗口中值归一化亮度、且不识别转场,"
-            + "把每个硬切点前约 3 帧拉到相邻镜头的亮度(本机实测 126→50,暗 76 级),表现为「转场前两帧黑一下/亮一下」。"
-            + "这是滤镜固有行为、调参无法解决;将改为「同一镜头内 + 限幅」的方式重做。本次导出该项不生效,其余后处理正常。");
     }
 
     /// <summary>视频降噪滤镜(ffmpeg nlmeans 非局部均值,比 hqdn3d 强得多):
