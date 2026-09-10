@@ -74,9 +74,15 @@ public static class RifeOnnxService
             catch (Exception dmlEx)
             {
                 if (AlhPro.Core.GpuFault.IsPersistentDeviceError(dmlEx)) throw;   // 设备摘除:不落 CPU,交由调用方复制原帧
-                AppLogger.Warn($"⚠ 补帧 ONNX DirectML 会话创建失败(DML 设备 {dmlDevice},原因:{dmlEx.Message.Split('\n')[0]})——本机无可用 GPU ONNX,本会话将退回 CPU(速度会特别慢,若持续出现请更新显卡驱动后重试)");
+                // 【第 1 项】完整诊断(设备号/HRESULT 十六进制/异常类型/Message 首行/InnerException 链 + 定性):
+                // 只留"原因:首行"时分不清是显存不足 0x8007000E、设备摘除 0x887A0005/6 还是 provider 注册失败。
+                EsrganOnnxService.LogDmlFailure("RifeOnnxService.BuildSession.AppendExecutionProvider_DML", dmlDevice, dmlEx);
             }
         }
+        // 【第 4 项①】没有 DML(= 本会话其实是 CPU 会话)→ 显式限制 ONNX CPU 线程数。
+        // 默认(intra_op_num_threads=0)会让 ONNX 按【物理核】自建线程池,而该线程池在本进程内、
+        // 不受 Job 对象 CPU 上限约束 → CPU 100% + 界面卡。GPU 会话不设(算子跑在设备上)。
+        if (!onDml) EsrganOnnxService.ApplyConservativeCpuThreads(opts);
         return new InferenceSession(FindModel()!, opts);
     }
 
@@ -240,6 +246,9 @@ public static class RifeOnnxService
         IDisposableReadOnlyCollection<DisposableNamedOnnxValue>? results = null;
         try
         {
+            // 【第 4 项②】CPU 会话(dmDevice<0)的推理进"本进程内 CPU 计算"作用域:
+            // 让 SafeRender 的 CPU 硬上限压到 CpuComputeCapPct(65%)。GPU 会话不进作用域,上限维持原值。
+            using var cpuScope = dmDevice < 0 ? SafeRender.EnterOwnCpuCompute() : null;
             results = session.Run(new[]
             {
                 NamedOnnxValue.CreateFromTensor("img0", tensor0),

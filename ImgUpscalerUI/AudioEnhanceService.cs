@@ -78,7 +78,24 @@ public static class AudioEnhanceService
                 {
                     _gpuSession?.Dispose();
                     var opts = new SessionOptions();
-                    try { opts.AppendExecutionProvider_DML(EngineService.ToDmlDevice(gpuId)); } catch { /* DML 不可用回退 CPU */ }
+                    bool onDml = false;
+                    // 【只解析一次】EngineService.ToDmlDevice 内部会真枚举 DXGI(无缓存),不要为了日志再算一遍
+                    int dmDevice = EngineService.ToDmlDevice(gpuId);
+                    try
+                    {
+                        opts.AppendExecutionProvider_DML(dmDevice);
+                        onDml = true;
+                    }
+                    catch (Exception dmlEx)
+                    {
+                        // 【第 1 项】原先是 `catch { }` —— DirectML 建会话失败在音频路径上一点痕迹都没有,
+                        // 诊断包里只能看到后面的 8007000E 推理失败,分不清是"provider 没起来"还是"起来了但显存不足"。
+                        // 现在完整记录:设备号/HRESULT(十六进制)/异常类型/Message 首行/InnerException 链 + 定性。
+                        // 不重抛(保持既有"音频 DML 不可用回退 CPU"的行为不变),但必须留痕。
+                        EsrganOnnxService.LogDmlFailure("AudioEnhanceService.AppendExecutionProvider_DML", dmDevice, dmlEx);
+                    }
+                    // 【第 4 项①】DML 没起来 → 这是 CPU 会话,显式限制 ONNX 线程数(见 ApplyConservativeCpuThreads)
+                    if (!onDml) EsrganOnnxService.ApplyConservativeCpuThreads(opts);
                     _gpuSession = new InferenceSession(modelPath, opts);
                     _gpuSessionId = gpuId;
                 }
@@ -89,7 +106,7 @@ public static class AudioEnhanceService
                 if (_cpuSession == null || _cpuSessionPath != modelPath)
                 {
                     _cpuSession?.Dispose();
-                    _cpuSession = new InferenceSession(modelPath, new SessionOptions());
+                    _cpuSession = new InferenceSession(modelPath, EsrganOnnxService.NewCpuSessionOptions());
                     _cpuSessionPath = modelPath;
                 }
                 session = _cpuSession;
@@ -127,7 +144,10 @@ public static class AudioEnhanceService
                 IDisposableReadOnlyCollection<DisposableNamedOnnxValue>? results = null;
                 try
                 {
-                    results = session.Run(new[] { NamedOnnxValue.CreateFromTensor("mix", tensor) });
+                    // 【第 4 项②】CPU 会话的推理进"本进程内 CPU 计算"作用域(Job 上限压到 CpuComputeCapPct);
+                    // GPU 会话不进作用域,上限维持原值(不拖慢正常情况)。
+                    using (onCpu ? SafeRender.EnterOwnCpuCompute() : null)
+                        results = session.Run(new[] { NamedOnnxValue.CreateFromTensor("mix", tensor) });
                     // GPU 真跑成功 → 清零该设备连击(偶发抖动不该累积成"设备不可用")
                     if (!onCpu) EsrganOnnxService.ClearDmlStrikes(gpuId, EsrganOnnxService.DmlDomain.Audio);
                 }
@@ -138,7 +158,10 @@ public static class AudioEnhanceService
                     // 于是"后续分块直接走 CPU"这句日志是假的 —— 剩下每个分块都照样白试一次注定失败的
                     // GPU 再转 CPU(闩锁要到【下一个任务】才生效)。
                     bool unusable = EsrganOnnxService.NoteDmlTransientFailure(gpuId, EsrganOnnxService.DmlDomain.Audio);
-                    AppLogger.Warn($"⚠ 音频分离 GPU 推理失败({ex.Message.Split('\n')[0]}),本次任务改用 CPU 会话"
+                    // 【第 1 项】把 HRESULT 十六进制/异常类型/Message 首行/InnerException 链一并记下:
+                    // 原先只有 Message 首行,诊断包里分不清显存不足 0x8007000E 还是设备摘除 0x887A0005/6。
+                    AppLogger.Warn($"⚠ 音频分离 GPU 推理失败 — {EsrganOnnxService.DescribeDmlFailure("AudioEnhanceService session.Run(GPU)", gpuId, ex)}"
+                        + ";本次任务改用 CPU 会话"
                         + (unusable ? ";该 GPU 连续失败已达上限,本进程内不再尝试(重启软件可复位)" : "(GPU 成功一次即复位计数)"));
                     InferenceSession cpuS;
                     lock (_sessionLock)
@@ -146,14 +169,16 @@ public static class AudioEnhanceService
                         if (_cpuSession == null || _cpuSessionPath != modelPath)
                         {
                             _cpuSession?.Dispose();
-                            _cpuSession = new InferenceSession(modelPath, new SessionOptions());
+                            _cpuSession = new InferenceSession(modelPath, EsrganOnnxService.NewCpuSessionOptions());
                             _cpuSessionPath = modelPath;
                         }
                         cpuS = _cpuSession;
                     }
                     session = cpuS;
                     onCpu = true;
-                    results = cpuS.Run(new[] { NamedOnnxValue.CreateFromTensor("mix", tensor) });
+                    // 【第 4 项②】转 CPU 后的重算同样进 CPU 计算作用域(上限压到 CpuComputeCapPct)
+                    using (SafeRender.EnterOwnCpuCompute())
+                        results = cpuS.Run(new[] { NamedOnnxValue.CreateFromTensor("mix", tensor) });
                 }
                 using (results)
                 {

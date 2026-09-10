@@ -39,6 +39,15 @@ public static class SafeRender
     public static bool LimitCpuJob { get; set; } = true;
     /// <summary>开关1 的 CPU 上限百分比(默认 85%)。</summary>
     public static double CpuCapPct { get; set; } = 85.0;
+    /// <summary>【第 4 项②】本进程自己在做 CPU 神经网络推理(ONNX CPU 会话)期间的更保守 CPU 上限(默认 65%)。
+    /// 【为什么 85% 不够】85% 是按"CPU 负载都在【子进程】里(ffmpeg/ncnn 引擎)"设计的:那些进程被
+    /// AssignToCpuJob 装进了 Job 对象,Job 的硬上限对它们生效。但 ONNX 的 CPU 推理跑在【本进程内】
+    /// (EsrganOnnxService/RifeOnnxService/AudioEnhanceService 的 session.Run 都在 UI 进程的线程池上),
+    /// Job 对象【根本不覆盖本进程】—— 所以"安全渲染:CPU 硬上限 85%"对 ONNX CPU 推理一行都不生效,
+    /// 表现就是"上限写着 85%,任务管理器却是 100%,界面卡"。
+    /// 取值 65%:留 1/3 的 CPU 给 UI 线程/系统/其它软件;与 85% 的差值只在【CPU 计算路径】生效,
+    /// GPU 路径(不进 OwnCpuCompute 作用域)仍按原值,不拖慢正常情况。</summary>
+    public static double CpuComputeCapPct { get; set; } = 65.0;
     /// <summary>开关2:引擎/ffmpeg 按可用核分线程,并让非 High 档并发恒 1(避免多路挤同一批核超订)。默认开启。</summary>
     public static bool SplitCores { get; set; } = true;
 
@@ -406,6 +415,41 @@ public static class SafeRender
 
     private static IntPtr? _cpuJob;
     private static readonly object _cpuJobLock = new();
+    /// <summary>上一次真正写进 Job 的 CpuRate(1/100 %)。用来【去重】:值没变就不重复调 SetInformationJobObject ——
+    /// 本进程内 CPU 计算的作用域会频繁进出(每帧一次),每次都做系统调用是白费。</summary>
+    private static uint _appliedCapX100;
+
+    /// <summary>按【当前】上限值写一次 Job 的 CPU 硬上限(调用方必须已持有 _cpuJobLock 且确认 Job 已存在)。
+    /// 值没变则跳过(见 _appliedCapX100)。</summary>
+    private static void ApplyCpuCapLocked()
+    {
+        if (_cpuJob is null || _cpuJob.Value == IntPtr.Zero) return;
+        uint rate = (uint)Math.Round(GetEffectiveCpuCapPct() * 100);
+        if (rate == _appliedCapX100) return;
+        var info = new JOBOBJECT_CPU_RATE_CONTROL_INFORMATION
+        {
+            ControlFlags = 0x1 | 0x4,   // JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | HARD_CAP
+            CpuRate = rate,
+        };
+        try
+        {
+            if (SetInformationJobObject(_cpuJob.Value, 15 /* JobObjectCpuRateControlInformation */, ref info, (uint)System.Runtime.InteropServices.Marshal.SizeOf(info)))
+                _appliedCapX100 = rate;
+        }
+        catch { }
+    }
+
+    /// <summary>让 Job 的 CPU 硬上限【立刻】按当前状态重算(进入/退出"本进程内 CPU 计算"时调用)。
+    /// 【为什么需要】原实现只在"有新子进程注册"时才重设(见 GetCpuJob 说明),而 ONNX CPU 推理
+    /// 不产生任何子进程 —— 于是"CPU 计算期间把上限压到 65%"这件事若不主动重设就永远不会生效。
+    /// 【不在此路径创建 Job】GetCpuJob() 会顺带做一次 ~400ms 的系统负载采样,而本方法由
+    /// 会话创建/推理进出触发,不该引入这种开销;Job 已创建时 SetInformationJobObject 对 Job 内
+    /// 全部进程立即生效,已创建则这里就是即时的。</summary>
+    internal static void RefreshCpuCapNow()
+    {
+        if (!LimitCpuJob) return;
+        lock (_cpuJobLock) { ApplyCpuCapLocked(); }
+    }
 
     /// <summary>取 Job 句柄(按 LimitCpuJob 创建一次);每次调用前按【当前系统负载】重设 CPU 硬上限,
     /// 保证"其他软件占用高时软件自动让路"。(Job 创建后 CpuRate 可随时覆盖。)</summary>
@@ -422,12 +466,7 @@ public static class SafeRender
                 if (_cpuJob.Value == IntPtr.Zero) return IntPtr.Zero;
             }
             // 每次分配进程前刷新上限:GetEffectiveCpuCapPct 内部按"其他软件"占用动态降档
-            var info = new JOBOBJECT_CPU_RATE_CONTROL_INFORMATION
-            {
-                ControlFlags = 0x1 | 0x4,   // JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | HARD_CAP
-                CpuRate = (uint)(GetEffectiveCpuCapPct() * 100),
-            };
-            try { SetInformationJobObject(_cpuJob.Value, 15 /* JobObjectCpuRateControlInformation */, ref info, (uint)System.Runtime.InteropServices.Marshal.SizeOf(info)); } catch { }
+            ApplyCpuCapLocked();
             return _cpuJob.Value;
         }
     }
@@ -442,9 +481,73 @@ public static class SafeRender
     /// 视频流水线每个阶段/每批都会启动进程,故实际刷新足够频繁。</summary>
     public static double GetEffectiveCpuCapPct()
     {
-        if (Mode == 1) return Math.Clamp(CpuCapPct, 50.0, 95.0);
-        return GetEffectiveCpuCapPctRaw(_sysLoadIdle);
+        double pct = Mode == 1 ? Math.Clamp(CpuCapPct, 50.0, 95.0) : GetEffectiveCpuCapPctRaw(_sysLoadIdle);
+        // 【第 4 项②】本进程内正在跑 CPU 神经网络推理(ONNX CPU 会话)时再压一档:
+        // 那种负载不受 Job 约束(见 CpuComputeCapPct 说明),只能靠"少派活"来保界面流畅。
+        if (OwnCpuComputeActive) pct = Math.Min(pct, Math.Clamp(CpuComputeCapPct, 50.0, 95.0));
+        return pct;
     }
+
+    // ---------- 第 4 项:本进程内 CPU 计算(ONNX CPU 会话)----------
+
+    /// <summary>本进程内【正在】跑 CPU 神经网络推理的并发计数(0 = 没有)。</summary>
+    private static int _ownCpuCompute;
+
+    /// <summary>本进程内是否有正在运行的 CPU 神经网络推理。供日志/诊断显示"当前上限为什么是 65% 而不是 85%"。</summary>
+    public static bool OwnCpuComputeActive => Volatile.Read(ref _ownCpuCompute) > 0;
+
+    /// <summary>进入"本进程内 CPU 计算"作用域:必须 using(退出时自动恢复上限)。
+    /// 只在【计数 0↔1 的切换瞬间】重设 Job 上限,不在每条推理上做系统调用。</summary>
+    internal static IDisposable EnterOwnCpuCompute() => new OwnCpuComputeScope();
+
+    private sealed class OwnCpuComputeScope : IDisposable
+    {
+        private bool _disposed;
+        internal OwnCpuComputeScope()
+        {
+            if (Interlocked.Increment(ref _ownCpuCompute) == 1) RefreshCpuCapNow();
+        }
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            if (Interlocked.Decrement(ref _ownCpuCompute) == 0) RefreshCpuCapNow();
+        }
+    }
+
+    /// <summary>ONNX CPU 会话的 intra-op(算子内并行)线程数。【第 4 项①:这是真正能压住 CPU 的旋钮】
+    /// 【为什么必须显式设】ONNX Runtime 在 intra_op_num_threads=0(默认)时【自己按物理核开一个线程池】,
+    /// 那个线程池在【本进程内】,既不受 Job 对象约束(见 CpuComputeCapPct 说明),也没有"低于正常"优先级
+    /// (ApplyProcessPriority 只作用于子进程)—— 于是它和 UI 线程同优先级抢满 16 物理核,
+    /// 这就是"CPU 100% + 界面卡"的直接成因。
+    /// 【取值依据(不编)】物理核 ≈ 逻辑核/2(超线程按 2 计;Environment.ProcessorCount 是逻辑核);
+    /// 再按本文件 ApplyProcessPriority 的同一口径"给前台预留 1~2 核"(那里是进程亲和性预留 1~2 个核
+    /// —— 这里把同一个原则用在 ONNX 线程池上,避免两处口径打架);低档再减半,高档允许放宽到只留 1 核。
+    /// CPU 档位 = EffectiveCpuLevel(已有的 0=自动/1=低/2=中/3=高,自动档在 >4 核机器上就是"中")。
+    /// 下限 2(与 GetLibx264Threads 的低档值一致:单/双核机若只给 1 线程,CPU 路径会慢到不可用)。
+    /// 例:32 逻辑核(16 物理核)的 Ryzen 9 8940HX → 中档 = 16−2 = 14 线程,始终留 2 个物理核给界面。</summary>
+    public static int OnnxCpuIntraOpThreads
+    {
+        get
+        {
+            int logical = Math.Max(1, Environment.ProcessorCount);
+            int phys = Math.Max(1, logical / 2);
+            int reserve = phys <= 4 ? 1 : 2;
+            int t = EffectiveCpuLevel switch
+            {
+                1 => phys / 2,          // 低档:物理核一半
+                3 => phys - 1,          // 高档:只留 1 核
+                _ => phys - reserve,    // 自动/中档:留 1~2 核给前台(与 ApplyProcessPriority 同口径)
+            };
+            return Math.Clamp(t, 2, Math.Max(2, logical - 1));
+        }
+    }
+
+    /// <summary>ONNX CPU 会话的 inter-op(可并行子图/算子)线程数。【恒 1】
+    /// inter-op &gt;1 是"多个算子节点各自开线程"——它会与 intra-op 线程池叠加相乘,
+    /// 实际线程数变成 intra×inter(旧行为:默认值让总线程数远超核数,互相抢占,吞吐不升反降,
+    /// 且 CPU 占用尖峰更狠)。CPU 路径的瓶颈是内存带宽/单算子并行度,不需要算子间再并行。</summary>
+    public static int OnnxCpuInterOpThreads => 1;
 
     /// <summary>任务开始前刷新的"其他软件 CPU 占用"缓存(已扣除本软件自身负载)。</summary>
     private static double _sysLoadIdle;

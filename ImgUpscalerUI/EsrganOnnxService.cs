@@ -161,42 +161,345 @@ public static class EsrganOnnxService
         }
     }
 
-    // ---- DirectML 设备实测(名字匹配失败时的兜底;启动时后台探测一次)----
-    private static int _dmlProbeState;   // 0=未做 1=进行中 2=完成
-    private static int _dmlFirstOk = -1; // 第一个能创建 DirectML 会话的设备号
+    // ---- DirectML 建会话失败的完整诊断(第 1 项)----
 
-    /// <summary>后台探测 DML 设备 0..3 哪些能用(建会话成功即算可用;设备不可用/驱动缺会抛)。
-    /// 结果供 EngineService.ToDmlDevice 在"名字匹配失败"时兜底(不越界、不跑错误设备)。
-    /// 幂等;未完成/全失败返回 -1(调用方维持原行为)。</summary>
+    /// <summary>把 DirectML 建会话 / provider 注册的失败整理成**一行可定性的完整诊断**。
+    /// 【为什么必须有】原日志只留 "DirectML 不可用/探测没成功",拿不到根因 —— 诊断包里只能看到
+    /// "显示 GPU、实际跑 CPU",分不清是显存不足(0x8007000E)、设备被摘除(0x887A0005/6),
+    /// 还是 provider 注册失败。三者处置完全不同(关软件腾显存 / 更新驱动重启 / 驱动重装),
+    /// 没有 HRESULT 就只能靠猜。
+    /// 一行里同时给出:尝试的设备号、异常类型、**HRESULT(十六进制)**、Message 首行、
+    /// 以及【InnerException 链】每一层的类型与 HRESULT —— ONNX Runtime/DirectML 常把真正的
+    /// DXGI 错误埋在两三层 InnerException 里(且内层 Message 常常为空,只有 HRESULT 有信息)。
+    /// 末尾附上 GpuFault 的判定结论,便于一眼看出"会不会落 CPU"。</summary>
+    internal static string DescribeDmlFailure(string stage, int dmlDevice, Exception? ex)
+    {
+        if (ex == null) return $"DirectML 失败诊断[阶段={stage}, 设备号={(dmlDevice < 0 ? "(未解析/-1)" : dmlDevice.ToString())}, 无异常对象]";
+        var sb = new System.Text.StringBuilder();
+        sb.Append("DirectML 失败诊断[阶段=").Append(stage)
+          .Append(" | 设备号=").Append(dmlDevice < 0 ? "(未解析/-1)" : dmlDevice.ToString())
+          .Append(" | 异常=").Append(ex.GetType().Name)
+          .Append(" | HRESULT=0x").Append(((uint)ex.HResult).ToString("X8"))
+          .Append('(').Append(ClassifyDmlHresult((uint)ex.HResult)).Append(')')
+          .Append(" | Message=").Append(FirstLine(ex.Message));
+        var inner = ex.InnerException;
+        for (int depth = 1; inner != null && depth <= 4; depth++, inner = inner.InnerException)
+        {
+            sb.Append(" | Inner").Append(depth).Append("[类型=").Append(inner.GetType().Name)
+              .Append(", HRESULT=0x").Append(((uint)inner.HResult).ToString("X8"))
+              .Append('(').Append(ClassifyDmlHresult((uint)inner.HResult)).Append(')')
+              .Append(", Message=").Append(FirstLine(inner.Message)).Append(']');
+        }
+        sb.Append(AlhPro.Core.GpuFault.IsPersistentDeviceError(ex)
+            ? " | 判定=持久性设备错误(设备已被系统摘除,不落 CPU,直接重抛)"
+            : " | 判定=非持久性(可回退 CPU / 可换设备重试)");
+        return sb.ToString();
+    }
+
+    /// <summary>把一个 HRESULT 翻成中文定性(便于一眼分辨"显存不足 / 设备摘除 / provider 注册失败")。
+    /// 只做已知码的映射;未知码返回 "未知错误码",绝不猜测成因。
+    /// 0x8007000E = E_OUTOFMEMORY(HRESULT_FROM_WIN32(ERROR_OUTOFMEMORY)):
+    ///   DirectML 建会话时常见于【显存/共享内存不足】(真机诊断包里的音频分离 DML 就是这个码)。
+    /// 0x887A0005/06/07/20 = DXGI DEVICE_REMOVED/HUNG/RESET/DRIVER_INTERNAL_ERROR:设备级失效。
+    /// 0x80004005 = E_FAIL:provider 注册/设备创建被拒绝(驱动不完整、DML 运行时不匹配等)。
+    /// 0x80070057 = E_INVALIDARG:设备号越界/参数非法(代码侧问题,不是硬件问题)。</summary>
+    internal static string ClassifyDmlHresult(uint hr) => hr switch
+    {
+        0x8007000Eu => "内存/显存资源不足 E_OUTOFMEMORY",
+        0x887A0005u => "GPU 设备已被摘除 DXGI_ERROR_DEVICE_REMOVED",
+        0x887A0006u => "GPU 设备挂死 DXGI_ERROR_DEVICE_HUNG",
+        0x887A0007u => "GPU 设备已重置 DXGI_ERROR_DEVICE_RESET",
+        0x887A0020u => "显卡驱动内部错误 DXGI_ERROR_DRIVER_INTERNAL_ERROR",
+        0x80004005u => "E_FAIL(provider 注册/设备创建被拒绝,多为驱动或 DirectML 运行时不匹配)",
+        0x80070057u => "E_INVALIDARG(设备号/参数非法,属代码或编号空间问题)",
+        0x80070005u => "E_ACCESSDENIED(权限不足)",
+        0x00000000u => "S_OK(无错误码)",
+        _ => "未知错误码",
+    };
+
+    /// <summary>Message 首行(去掉换行与超长尾部):ONNX/DirectML 的 Message 常常是几十行堆栈,
+    /// 首行才是人话;截断是为了不让一行日志变成几百行。</summary>
+    private static string FirstLine(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return "(无消息)";
+        int nl = s.IndexOfAny(new[] { '\r', '\n' });
+        var line = nl > 0 ? s.Substring(0, nl) : s;
+        line = line.Trim();
+        if (line.Length == 0) return "(消息首行为空)";
+        return line.Length > 300 ? line.Substring(0, 300) + "…" : line;
+    }
+
+    /// <summary>按"是否持久性设备错误"选级别记录 DirectML 失败:持久性用 Error(带堆栈,同步落盘),
+    /// 其余用 Warn。【不要刷屏】调用方必须先过 once 闩锁(_dmlWarned / _dmlBrokenSessions),
+    /// 本方法只负责"把一次失败写完整"。</summary>
+    internal static void LogDmlFailure(string stage, int dmlDevice, Exception ex)
+    {
+        string detail = DescribeDmlFailure(stage, dmlDevice, ex);
+        if (AlhPro.Core.GpuFault.IsPersistentDeviceError(ex)) AppLogger.Error("⚠ " + detail, ex);
+        else AppLogger.Warn("⚠ " + detail);
+    }
+
+    /// <summary>运行期实测到"目标 DML 设备建不出会话"时,把完整原因写进 DmlUnavailableReason(第 1 项:
+    /// 让诊断包与界面提示拿得到根因)。**不改 DmlFallbackOk**:它的语义是"启动探测的结论",
+    /// 运行期失效另有 _dmlBrokenSessions / 连击表 / DmlDeviceDead 各自负责,不在这里越权改写。</summary>
+    private static void SetDmlUnavailableByRuntime(int dmlDevice, Exception ex)
+    {
+        try
+        {
+            if (_dmlFirstOk >= 0) return;   // 启动探测已确认可用:运行期个例不覆盖"可用"这个结论
+            _dmlUnavailableReason = DescribeDmlFailure("运行期建 DirectML 会话", dmlDevice, ex);
+        }
+        catch { }
+    }
+
+    // ---- 本进程 CPU 会话(第 4 项①:显式限制 ONNX 线程数)----
+
+    /// <summary>**所有 CPU(非 DirectML)会话的 SessionOptions 都必须走这里**。
+    /// 【为什么】ONNX Runtime 默认(intra_op_num_threads=0)按【物理核】自建线程池,那个线程池在
+    /// 本进程内、不受 Job 对象的 CPU 硬上限约束、也没有"低于正常"优先级 —— 结果就是
+    /// "安全渲染写着 85%,任务管理器却是 100%,界面卡"。这里显式按 SafeRender 的 CPU 档位
+    /// 给保守值(依据见 SafeRender.OnnxCpuIntraOpThreads),inter-op 恒 1(避免线程数相乘)。
+    /// DirectML 会话不调用本方法:intra-op 对 GPU 路径无意义(算子跑在设备上,不是本进程线程池)。</summary>
+    internal static SessionOptions NewCpuSessionOptions()
+    {
+        var o = new SessionOptions();
+        ApplyConservativeCpuThreads(o);
+        return o;
+    }
+
+    /// <summary>把"保守的 ONNX CPU 线程数"写进【已建好但尚未用于建会话】的 SessionOptions(第 4 项①)。
+    /// **只在确实没有 DirectML 的会话上调用**(GPU 会话不设:算子跑在设备上,不占本进程线程池)。
+    /// 两处 try 分开写:inter-op 若因 ORT 版本策略被拒,不能连带把更关键的 intra-op 一起丢掉。
+    /// 设置失败只告警不抛 —— 退回 ONNX 默认(吃满物理核)虽然慢/卡,但比任务直接失败强;
+    /// 而"设置失败"必须在日志里看得见(否则又会变成"以为限了线程、其实没限")。</summary>
+    internal static void ApplyConservativeCpuThreads(SessionOptions opts)
+    {
+        int intra = SafeRender.OnnxCpuIntraOpThreads;
+        try
+        {
+            opts.IntraOpNumThreads = intra;
+            AppLogger.Info($"ONNX CPU 会话线程数:intra-op={intra}(inter-op={SafeRender.OnnxCpuInterOpThreads},"
+                + $"逻辑核={Environment.ProcessorCount},CPU档位={SafeRender.EffectiveCpuLevel})—— 显式限制,避免默认按物理核吃满导致界面卡");
+        }
+        catch (Exception ex) { AppLogger.Warn("⚠ ONNX CPU intra-op 线程数设置失败(将退回 ONNX 默认=按物理核吃满,CPU 占用会很高):" + FirstLine(ex.Message)); }
+        try { opts.InterOpNumThreads = SafeRender.OnnxCpuInterOpThreads; }
+        catch (Exception ex) { AppLogger.Warn("⚠ ONNX CPU inter-op 线程数设置失败(保持默认):" + FirstLine(ex.Message)); }
+    }
+
+    // ---- DirectML 设备实测(只探【映射出的目标设备】;启动时后台探测一次)----
+    private static int _dmlProbeState;   // 0=未做 1=进行中 2=完成
+    private static int _dmlFirstOk = -1; // 能创建 DirectML 会话的设备号;-1 = 无可用设备
+    private static volatile string _dmlUnavailableReason = "";
+
+    /// <summary>DirectML 探测是否已完成。【必须与 DmlFallbackOk 一起看】:`DmlFallbackOk==-1` 有两种
+    /// 完全不同的含义 —— "还没探测(未知)" 和 "探测完成、确认不可用(结论)"。下游(视频页处理前诊断/
+    /// 内联红字提示)必须先看本标志,否则"未探测"会被当成"不可用"而误报慢速提示。</summary>
+    public static bool DmlProbeCompleted => Volatile.Read(ref _dmlProbeState) == 2;
+
+    /// <summary>DirectML 不可用的原因(完整诊断串;可用或未探测时为空)。供诊断包/界面直接显示。</summary>
+    public static string DmlUnavailableReason => _dmlUnavailableReason;
+
+    /// <summary>解析"本次探测应该建 DirectML 会话的唯一设备号"。-1 = 解析不出。
+    /// 顺序:①设置里指定的卡(尊重用户选择,经 ResolveDmlDevice 名称匹配到真卡);
+    ///       ②引擎映射表里第一个【独显】对应的 DML 号(设置里的卡无效/未选时的兜底)。
+    /// 【绝不遍历设备 0..3】原实现 for i in 0..3 逐个建会话:会把核显、以及 DXGI 里重复出现的同名
+    /// 适配器条目(诊断包里 NVIDIA RTX 5060 在 #0/#2/#3 各有一条)一并拉起来建 DirectML 会话,
+    /// 每个都要吃一份显存/共享内存 —— 这正是 8007000E(内存资源不足)的常见来源,
+    /// 而且"探测到的第一个可用设备"未必是用户要用的那张卡。</summary>
+    private static int ResolveProbeDmlDevice(out string why)
+    {
+        var tried = new System.Collections.Generic.List<string>();
+        // ① 设置里的计算设备(用户选择优先;无效编号由 ResolveDmlDevice 内部兜底到推荐独显)
+        try
+        {
+            int want = AppSettings.GpuIndex;
+            if (want >= 0)
+            {
+                int dm = EngineService.ResolveDmlDevice(want);
+                if (dm >= 0)
+                {
+                    why = $"设置的计算设备 #{want} 经名称匹配 → DirectML #{dm}";
+                    return dm;
+                }
+                tried.Add($"设置设备#{want}({GpuInfo.GetEngineDeviceName(want)})未匹配到 DirectML 设备");
+            }
+            else tried.Add("设置的计算设备=-1(用户选了 CPU)");
+        }
+        catch (Exception ex) { tried.Add("设置设备解析异常:" + ex.GetType().Name); }
+        // ② 引擎映射表里第一个独显
+        try
+        {
+            var devs = VulkanCheck.Devices;
+            if (devs.Count == 0) tried.Add("引擎设备表为空(未枚举)");
+            foreach (var d in devs)
+            {
+                if (GpuInfo.IsIntegratedGPU(d.Name)) continue;   // 核显不探(慢且不是用户要的卡)
+                int dm = EngineService.ToDmlDevice(d.Id);
+                if (dm >= 0)
+                {
+                    why = $"引擎映射表第一个独显 引擎#{d.Id}({d.Name}) → DirectML #{dm}";
+                    return dm;
+                }
+                tried.Add($"引擎#{d.Id}({d.Name})未匹配到 DirectML 设备");
+            }
+        }
+        catch (Exception ex) { tried.Add("引擎映射解析异常:" + ex.GetType().Name); }
+        why = string.Join(";", tried);
+        return -1;
+    }
+
+    /// <summary>探测用模型:**任一可用的超分 ONNX**(ESRGAN x4plus → waifu2x → 动漫)。
+    /// 【为什么不能用 FindModel() 一个】机器上不一定装了 x4plus 那个通用模型(仓库/安装包里
+    /// realesrgan 目录常常只有 realesr-animevideov3.onnx,waifu2x 目录只有 waifu2x-cunet2x.onnx),
+    /// 而视频超分在 50 系/无独显机器上走的正是 **waifu2x ONNX** 这条路 ——
+    /// 若探测只认 x4plus,这种机器上探测会因"模型缺失"而永远拿不到 DirectML 结论,
+    /// 于是又回到"静默落 CPU、日志里没有根因"的老问题。任一模型都能建 DirectML 会话,
+    /// 探测只需要"能不能在该设备上把会话建起来"这一个事实。</summary>
+    internal static string? FindProbeModel()
+        => FindModel() ?? FindWaifu2xModel() ?? FindAnimeVideoModel();
+
+    /// <summary>实测 DirectML 设备是否可用 —— **只探映射出的那一个目标设备**(见 ResolveProbeDmlDevice)。
+    /// 目标设备建会话失败时,再退到"引擎映射表里第一个独显"重试一次(最多 2 次,不是 0..3 的遍历)。
+    /// 结果供 EngineService.ToDmlDevice 在"名字匹配失败"时兜底,也供 PickDevice / 界面提示判定。
+    /// 幂等;失败时留下**完整原因**(DescribeDmlFailure 的 HRESULT/类型/Message/InnerException),
+    /// 并置 DmlFallbackOk=-1(=-1 仍表示不可用,公开签名与语义不变)。
+    /// 注意区分持久性设备错误:那类错误照样只记日志(本函数只做探测,不做熔断),不改变既有重抛行为。</summary>
     public static async Task<int> EnsureDmlProbeAsync(CancellationToken ct = default)
     {
         if (Interlocked.CompareExchange(ref _dmlProbeState, 1, 0) != 0)
             return _dmlFirstOk;   // 已在做或被别人做过
+        int nextState = 2;
         try
         {
-            var model = FindModel();
-            if (model == null) return _dmlFirstOk;
-            for (int i = 0; i < 4; i++)
+            // 探测模型:任一可用的超分 ONNX(见 FindProbeModel —— 只认 x4plus 会在只装了 waifu2x
+            // / 动漫模型(视频超分实际用的那两个)的机器上永远探不出结论)。
+            var model = FindProbeModel();
+            if (model == null)
             {
-                ct.ThrowIfCancellationRequested();
-                try
-                {
-                    var opts = new SessionOptions();
-                    opts.AppendExecutionProvider_DML(i);
-                    using var s = new InferenceSession(model, opts);   // DML 设备创建失败 → 抛 → 该号不可用
-                    if (_dmlFirstOk < 0) _dmlFirstOk = i;
-                }
-                catch { }
+                _dmlUnavailableReason = "未找到任何超分 ONNX 模型(" + Path.Combine(EngineService.EnginesDir, "realesrgan")
+                    + " 与 " + Path.Combine(EngineService.EnginesDir, "waifu2x") + " 下都没有),无法用建会话的方式实测 DirectML";
+                AppLogger.Warn("⚠ DirectML 不可用 — " + _dmlUnavailableReason + ";DmlFallbackOk 保持 -1(下游按不可用处理)。");
+                return _dmlFirstOk;
             }
+            int target = ResolveProbeDmlDevice(out var why);
+            if (target < 0)
+            {
+                _dmlUnavailableReason = $"无法解析出要探测的 DirectML 设备号({why})";
+                AppLogger.Warn("⚠ DirectML 不可用 — " + _dmlUnavailableReason
+                    + "。已【不再】遍历设备 0..3(会把核显与 DXGI 里重复的同名适配器条目一并拉起建会话,是 8007000E 内存资源不足的常见来源)。"
+                    + "DmlFallbackOk=-1(明确按不可用处理),下游将改用 CPU 或回退源帧。");
+                return _dmlFirstOk;
+            }
+            ct.ThrowIfCancellationRequested();
+            int ok = TryProbeDmlDevice(model, target, out var fail);
+            if (ok < 0)
+            {
+                // 目标设备建不出会话:退到"引擎映射表里第一个独显"再试一次(若与目标不同)
+                int second = FirstDiscreteDmlDevice();
+                if (second >= 0 && second != target)
+                {
+                    AppLogger.Warn($"⚠ DirectML 探测:目标设备 #{target} 建会话失败,再试引擎映射表里第一个独显 → DirectML #{second}");
+                    ok = TryProbeDmlDevice(model, second, out var fail2);
+                    if (ok < 0) _dmlUnavailableReason = $"{fail} ; 兜底设备 #{second}:{fail2}";
+                    else { _dmlFirstOk = ok; _dmlUnavailableReason = ""; }
+                }
+                else _dmlUnavailableReason = fail;
+            }
+            else
+            {
+                _dmlFirstOk = ok;
+                _dmlUnavailableReason = "";
+            }
+            if (_dmlFirstOk < 0)
+                AppLogger.Warn($"⚠ DirectML 不可用(实测建会话失败,{why}) — {_dmlUnavailableReason}"
+                    + "。DmlFallbackOk=-1 = 明确的「DirectML 不可用」结论(不是「还没探」);"
+                    + "ONNX 超分/补帧在对应路径上会改用 CPU 或回退源帧,并非静默跳过。");
         }
-        catch { }
-        finally { Volatile.Write(ref _dmlProbeState, 2); }
+        catch (OperationCanceledException)
+        {
+            nextState = 0;   // 取消:状态复位,下次调用可重新探测(不把"被取消"钉成"不可用"的结论)
+            AppLogger.Info("DirectML 探测:已取消,状态复位(下次调用会重新探测)");
+        }
+        catch (Exception ex)
+        {
+            _dmlUnavailableReason = DescribeDmlFailure("EnsureDmlProbeAsync(探测外层意外异常)", -1, ex);
+            AppLogger.Error("⚠ DirectML 探测意外失败(按不可用处理):" + _dmlUnavailableReason, ex);
+        }
+        finally { Volatile.Write(ref _dmlProbeState, nextState); }
         await Task.CompletedTask;   // 保持 async 签名(调用方统一 await;探测本身同步,已在后台任务中跑)
         return _dmlFirstOk;
     }
 
-    /// <summary>实测可用的 DirectML 设备兜底号(-1=未探测/全部不可用)。</summary>
+    /// <summary>引擎映射表里第一个独显 → DirectML 设备号(-1 = 没有/不匹配)。</summary>
+    private static int FirstDiscreteDmlDevice()
+    {
+        try
+        {
+            foreach (var d in VulkanCheck.Devices)
+            {
+                if (GpuInfo.IsIntegratedGPU(d.Name)) continue;
+                int dm = EngineService.ToDmlDevice(d.Id);
+                if (dm >= 0) return dm;
+            }
+        }
+        catch { }
+        return -1;
+    }
+
+    /// <summary>对【一个】设备号做一次真实探测(建 DirectML 会话)。成功返回该设备号,失败返回 -1 并把
+    /// 完整诊断写入 fail(含 HRESULT/类型/Message/InnerException)。只建会话、不推理(探测极轻)。</summary>
+    private static int TryProbeDmlDevice(string model, int dmlDevice, out string fail)
+    {
+        fail = "";
+        try
+        {
+            var opts = new SessionOptions();
+            opts.AppendExecutionProvider_DML(dmlDevice);
+            using var s = new InferenceSession(model, opts);   // DML 设备创建失败 → 抛 → 该号不可用
+            AppLogger.Info($"DirectML 探测:设备 #{dmlDevice} 建会话成功(只探这一个映射目标,不再遍历 0..3)");
+            return dmlDevice;
+        }
+        catch (Exception ex)
+        {
+            fail = DescribeDmlFailure("EnsureDmlProbeAsync → AppendExecutionProvider_DML + new InferenceSession", dmlDevice, ex);
+            LogDmlFailure("DirectML 探测(设备 #" + dmlDevice + " 建会话)", dmlDevice, ex);
+            return -1;
+        }
+    }
+
+    /// <summary>实测可用的 DirectML 设备号(-1=未探测/不可用;与 DmlProbeCompleted 一起看才能区分)。</summary>
     public static int DmlFallbackOk => _dmlFirstOk;
+
+    /// <summary>CPU(ONNX)逐帧超分的【保守】秒/帧常数(1080p 源面积基准)。第 3 项:预估"落到 CPU 后要多久"。
+    /// 【取值来源 —— 不是编的,是两处真实实测中【较小】的那个】
+    /// ① 本项目既有的 GPU 逐帧常数在 AlhPro.Core.VideoPipeline:1080p 单帧 waifu2x≈0.18 秒、realesrgan≈0.45 秒
+    ///    (ncnn-Vulkan GPU 实测);
+    /// ② 真实诊断包实测:RTX 5060 Laptop(Blackwell)+ Ryzen 9 8940HX(32 线程)的机器上,DirectML 建会话失败后
+    ///    ONNX 超分静默落 CPU,日志实测 35 秒 3 帧、64 秒 8 帧 → **≈8 秒/帧**(同一素材同一参数);
+    /// ③ 本机复测(2026 验证工程 _dmlfix_verify,真实 EsrganOnnxService 代码,i7-12650H 16 线程、
+    ///    本次新增的 intra-op=6 限制下):waifu2x-cunet2x 1080p 源帧 = **12.6 秒/帧**
+    ///    (768² 小图 3.0 秒/帧 @ 并行度 5.5 核,1080p 12.6 秒/帧 @ 5.2 核);
+    /// ④ 8 / 0.18 ≈ 44 倍 —— 与"CPU 逐帧神经网络推理比 GPU 慢一到两个数量级"的常识量级一致
+    ///    (项目内另有"极小输入下 CPU 反而快 13/19 倍"的实测,那只在 96px 级小图上成立,不能用来做保守预估)。
+    /// 【取 8.0,即两处实测中较小的那个】含义要说清楚:该常数在【更慢的 CPU 上会低估】(本机实测 12.6,已是 8 的 1.6 倍)。
+    /// 之所以仍取 8.0:它对应本报告的真实故障场景(同一台机器、同一引擎、DirectML 不可用 → CPU),
+    /// 且面积项已按源像素线性放大;界面/日志里因此【明确写出"秒/帧来源"并注明实际可能更慢】,
+    /// 而不是把预估值当成承诺。若将来拿到更多机器数据,应上调本常数(只允许上调:宁可高估,不可低估)。
+    /// 按【源】面积线性缩放(ONNX 模型是固定 4x 或 2x 的,推理成本只取决于模型输入=源帧尺寸,
+    /// 与用户选的输出倍率无关,因此这里【不】再乘倍率 —— 乘了会和面积项重复放大)。
+    /// 命中 PerfMemory 实测时取 max(实测, 本常数):只增不减,避免"上次是 GPU 跑的 0.18 秒/帧"把 CPU 预估压低。</summary>
+    public const double CpuSecondsPerFrame1080p = 8.0;
+
+    /// <summary>预估"若超分落到 CPU,该阶段约需多少秒"。frames = 待超分帧数(= 源帧数,补帧在超分之后放大帧数)。
+    /// measuredPerFrame1080p:调用方从 PerfMemory 查到的同配置实测秒/帧(1080p 基准;没有传 null 或 0)。
+    /// perFrame 为出参:实际采用的"秒/帧"(1080p 基准×面积),供界面显示"约 X 秒/帧"。</summary>
+    public static double EstimateCpuUpscaleSeconds(long frames, int srcW, int srcH, double measuredPerFrame1080p, out double perFrame)
+    {
+        double areaN = Math.Max(0.25, (double)Math.Max(1, srcW) * Math.Max(1, srcH) / 2073600.0);   // 与 PerfMemory/VideoPipeline 同口径
+        double basePer = Math.Max(CpuSecondsPerFrame1080p, measuredPerFrame1080p > 0 ? measuredPerFrame1080p : 0);
+        perFrame = basePer * areaN;
+        return Math.Max(0, frames) * perFrame;
+    }
 
     /// <summary>DirectML 不可用时的一次性明确提示(避免"静默掉 CPU → 慢几倍 → 以为不能用")。
     /// 常见于 RTX 50 系(Blackwell)但驱动较旧、或 AMD/Intel 驱动不完整。</summary>
@@ -327,6 +630,10 @@ public static class EsrganOnnxService
         {
             try
             {
+                // 【第 4 项①】CPU 会话必须显式限制线程数(见 ApplyConservativeCpuThreads)。
+                // 注意:下面的 opts 在 DML append 失败时会【降级成 CPU 会话】,所以线程数必须在
+                // append 结果确定之后、new InferenceSession 之前补上 —— 否则"本想跑 GPU、实际落 CPU"
+                // 的那条路径会退回"ONNX 默认吃满全部物理核"(正是 CPU 100% / 界面卡的成因)。
                 var opts = new SessionOptions();
                 bool onDml = false;
                 if (wantGpu)
@@ -340,9 +647,16 @@ public static class EsrganOnnxService
                         // 【不要轻易掉 CPU】DirectML 建会话失败:明确记录"卡在 GPU 哪一步",而不是静默落 CPU。
                         // 这样"4060 显示 GPU 却跑几小时"的诊断包能一眼看到是 DirectML 挂在这(驱动过旧 / DML 设备不可用)。
                         // 走到这里说明本机没有可用的 GPU ONNX 运行时,CPU 是唯一计算设备 —— 这是允许用 CPU 的场景。
-                        AppLogger.Warn($"⚠ ONNX DirectML 会话创建失败({dmDevice},原因:{dmlEx.Message.Split('\n')[0]})——本机无可用 GPU ONNX,本会话将退回 CPU(速度会变得特别慢,若持续出现请更新显卡驱动后重试)");
+                        // 【第 1 项】原因升级为完整诊断(设备号/HRESULT 十六进制/异常类型/Message 首行/InnerException
+                        // 类型与 HRESULT + 定性结论):只留 "原因:xxx" 时,诊断包里分不清是显存不足 0x8007000E、
+                        // 设备摘除 0x887A0005/6,还是 provider 注册失败 —— 三者处置完全不同。
+                        AppLogger.Warn($"⚠ ONNX DirectML 会话创建失败(本会话将退回 CPU) — {DescribeDmlFailure("UpscaleDirAsync 预建会话池.AppendExecutionProvider_DML", dmDevice, dmlEx)}"
+                            + " ——本机无可用 GPU ONNX,本会话将退回 CPU(第 3 项:已按实测速度给出预估并在界面醒目提示;若持续出现请更新显卡驱动后重试)");
                     }
                 }
+                // 【第 4 项①】到此还没有 DML(本就要 CPU,或 append 刚刚失败)→ 显式限制 ONNX CPU 线程数。
+                // GPU 会话(onDml=true)不设:算子跑在设备上,不该被本进程线程数约束(不动正常路径)。
+                if (!onDml) ApplyConservativeCpuThreads(opts);
                 sessions[s] = new Microsoft.ML.OnnxRuntime.InferenceSession(modelPath, opts);
                 // 【C-4 ④】只有 DML append 真的成功,这个会话才算"跑在 DML 上";否则它其实是 CPU 会话,
                 // 之后绝不能拿它去清零/查询 GPU 连击表。这个号会随会话一起传给 RunTile 复用(编号空间只解析一次)。
@@ -896,9 +1210,14 @@ public static class EsrganOnnxService
                             }
                             // 【C-4 ②】非持续性失败(驱动/provider 注册等):明确日志,再由下面落到独立的
                             // (modelPath,-1) 键 —— 绝不把 CPU 会话缓存进 GPU 键。
-                            WarnDmlUnavailable($"创建 GPU 会话失败(DML 设备 {dmDevice}): " + dmlEx.Message.Split('\n')[0]);
+                            // 【第 1 项】完整诊断(HRESULT 十六进制/异常类型/Message 首行/InnerException 链 + 定性),
+                            // 并直接落进 DmlUnavailableReason,让诊断包/界面提示拿得到根因。
+                            SetDmlUnavailableByRuntime(dmDevice, dmlEx);
+                            LogDmlFailure("RunTile 共享会话.AppendExecutionProvider_DML", dmDevice, dmlEx);
                         }
                     }
+                    // 【第 4 项①】没有 DML → 这是 CPU 会话,必须显式限制线程数(见 ApplyConservativeCpuThreads)。
+                    if (!onDml) ApplyConservativeCpuThreads(opts);
                     if (dmDevice < 0 || onDml)
                     {
                         // 明确要 CPU(dmDevice<0,键就是 (modelPath,-1))或 DML 建成功(键与"会话真实设备"一致):直接缓存
@@ -918,7 +1237,7 @@ public static class EsrganOnnxService
                         {
                             if (!_sessions.TryGetValue(cpuKey, out session!) || session == null)
                             {
-                                session = new InferenceSession(modelPath, new SessionOptions());
+                                session = new InferenceSession(modelPath, NewCpuSessionOptions());
                                 _sessions[cpuKey] = session;
                             }
                         }
@@ -928,7 +1247,8 @@ public static class EsrganOnnxService
                         // 只报一次(每 模型×设备 一条):不记的话分块路径每块都刷一遍同样的告警
                         if (_dmlBrokenSessions.TryAdd(dmlKey, true))
                             AppLogger.Warn($"⚠ ONNX 超分:DirectML 设备 {dmDevice} 无法创建推理会话,本进程内改用 CPU 会话(缓存键 (模型,-1),不占 GPU 键)——"
-                                + "GPU 键不会指向 CPU 会话,设备级熔断不受影响;速度会慢数倍,更新显卡驱动后重启软件即可恢复(本提示只报一次)");
+                                + "GPU 键不会指向 CPU 会话,设备级熔断不受影响;更新显卡驱动后重启软件即可恢复(本提示只报一次)。"
+                                + $"第 4 项:CPU 会话线程数已显式限制为 intra-op={SafeRender.OnnxCpuIntraOpThreads}(默认会按物理核吃满 → CPU 100%/界面卡)");
                     }
                 }
             }
@@ -941,6 +1261,10 @@ public static class EsrganOnnxService
         {
             try
             {
+                // 【第 4 项②】CPU 会话的推理必须在"本进程内 CPU 计算"作用域里跑:它决定 SafeRender 的
+                // CPU 硬上限是否压到 CpuComputeCapPct(65%)。GPU 会话(dmlSession=true)不进作用域,
+                // GPU 路径的上限仍是原来的 85%(不拖慢正常情况)。
+                using var cpuScope = dmlSession ? null : SafeRender.EnterOwnCpuCompute();
                 if (sessionOverride != null)
                 {
                     // 并行路径:session 来自调用方(独立会话),无需共享锁,直接推理
@@ -1003,8 +1327,11 @@ public static class EsrganOnnxService
                 cpuGate.Wait();
                 try
                 {
-                    var cpuSession = _sessions.GetOrAdd(cpuKey, _ => new InferenceSession(modelPath, new SessionOptions()));
-                    results = cpuSession.Run(inputs);
+                    // 【第 4 项①】CPU 回退会话同样必须显式限制线程数(NewCpuSessionOptions)
+                    var cpuSession = _sessions.GetOrAdd(cpuKey, _ => new InferenceSession(modelPath, NewCpuSessionOptions()));
+                    // 【第 4 项②】这段是纯 CPU 推理:进"本进程内 CPU 计算"作用域,让 Job 上限压到 CpuComputeCapPct
+                    using (SafeRender.EnterOwnCpuCompute())
+                        results = cpuSession.Run(inputs);
                 }
                 catch (Exception cpuEx) { throw new InvalidOperationException($"ONNX 超分失败(GPU+CPU 均失败): {cpuEx.Message}\n--\n{ex.Message}"); }
                 finally { cpuGate.Release(); }

@@ -237,6 +237,15 @@ public static partial class EngineService
             }
             if (devs.Count == 0) sb.Append("(引擎未枚举)");
             sb.Append("] DML探测首可用=#").Append(EsrganOnnxService.DmlFallbackOk);
+            // 【第 1/2 项】把"探测是否已完成 + 失败的真实原因"直接写进诊断行:
+            // DmlFallbackOk=-1 有两种含义(还没探 / 探完确认不可用),下游与诊断包都必须能区分;
+            // 失败原因带 HRESULT(十六进制)/异常类型/Message/InnerException,一眼定性是显存不足(0x8007000E)、
+            // 设备摘除(0x887A0005/6)还是 provider 注册失败 —— 不必再去日志里翻上下文。
+            if (!EsrganOnnxService.DmlProbeCompleted) sb.Append("(探测未完成/未做)");
+            else if (EsrganOnnxService.DmlFallbackOk < 0)
+                sb.Append("(探测已完成:DirectML 不可用;原因=").Append(EsrganOnnxService.DmlUnavailableReason).Append(')');
+            else
+                sb.Append("(探测已完成:可用;本次只探映射目标设备,不遍历 0..3)");
             if (!string.IsNullOrEmpty(LastDxgiError)) sb.Append(" DXGI失败原因=").Append(LastDxgiError);
         }
         catch (Exception ex) { sb.Append("(诊断失败:").Append(ex.Message).Append(')'); }

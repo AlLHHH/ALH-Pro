@@ -349,6 +349,20 @@ public sealed partial class VideoView : UserControl
     public VideoView()
     {
         this.InitializeComponent();
+        // 【第 3 项】确保"DirectML 是否可用"这件事已经有结论(幂等兜底):
+        // MainPage 的启动自检只在"存在超分 ONNX 模型(ESRGAN x4plus)"时才调用 EnsureDmlProbeAsync,
+        // 而那台机器若只装了 waifu2x/动漫模型(视频超分实际用的就是它们),探测从未发生 →
+        // DmlProbeCompleted 恒为 false → 视频页永远给不出"超分将落到 CPU"的醒目提示。
+        // 本页自己补跑一次(后台线程,不阻塞 UI;MainPage 已跑过时立即返回),完成后再刷新内联提示。
+        _ = System.Threading.Tasks.Task.Run(async () =>
+        {
+            try
+            {
+                await ALHPro.EsrganOnnxService.EnsureDmlProbeAsync().ConfigureAwait(false);
+                DispatcherQueue.TryEnqueue(() => _ = RefreshVideoOutSpec());
+            }
+            catch { }
+        });
         // 进入页面自动重估列表项的"内容≈Xfps"徽标:列表恢复/旧项目不会再"没有显示"
         // (预估只在"拖入列表"时触发,重启后旧项不重算 → 徽标空白;这里统一补上,后台串行,不卡界面)
         this.Loaded += async (_, _) =>
@@ -3097,6 +3111,140 @@ public sealed partial class VideoView : UserControl
         UpdateOptions();
     }
 
+    // ===== 【第 3 项】"超分将落到 CPU"的醒目提示(内联红字为主;预计 >30 分钟才多一次确认) =====
+
+    /// <summary>本次超分是否会落到 CPU。只判【确定的】场景,不猜:
+    /// ① 用户显式选了 CPU(AppSettings.GpuIndex &lt; 0);
+    /// ② 本次超分走 ONNX 路线,而 DirectML 已【实测完成且确认不可用】
+    ///    (DmlProbeCompleted 且 DmlFallbackOk &lt; 0)—— ONNX 路线下 DML 建会话失败就会静默落到 CPU,
+    ///    这正是真机诊断包里"8 秒/帧"的成因。
+    /// 【为什么必须先看 DmlProbeCompleted】DmlFallbackOk==-1 有两种含义:还没探测(未知)/ 探完确认不可用。
+    /// 把"未知"当"不可用"会误报"要用 CPU"吓用户,所以只在探测【完成并判定不可用】时才提示。
+    /// ncnn-Vulkan 路线不受 DirectML 影响,不提示。</summary>
+    private bool UpscaleWillFallbackToCpu()
+    {
+        try
+        {
+            if (UpscaleToggle.IsChecked != true) return false;
+            if (AppSettings.GpuIndex < 0) return true;   // ① 用户主动选 CPU
+            if (!ALHPro.EsrganOnnxService.DmlProbeCompleted || ALHPro.EsrganOnnxService.DmlFallbackOk >= 0)
+                return false;                            // 未探完 / 探测说可用 → 不当作 CPU 场景(不误报)
+            return OnnxUpscaleRouteLikely();             // ② 走 ONNX 路线 + DirectML 实测不可用
+        }
+        catch { return false; }
+    }
+
+    /// <summary>本次超分是否会走 ONNX 路线(只用 EngineService 的公共判定函数,不复制 VideoService 内部状态):
+    /// 兼容模式强制 ONNX;waifu2x 在 50 系或"老 ncnn 有风险的机器"上走 ONNX;Real-ESRGAN 同理。
+    /// 判定不出(引擎未枚举等)返回 false —— 宁可漏提示,也不误报"要用 CPU"。</summary>
+    private bool OnnxUpscaleRouteLikely()
+    {
+        try
+        {
+            if (FastModeCheck.IsChecked == true) return true;   // 兼容模式:ncnn 路径同样改走 ONNX
+            if (VideoEngineRadios.SelectedIndex == 0)
+                return IsBlackwellGpu() || EngineService.ShouldUseOnnxWaifu2x();
+            return EngineService.ShouldUseOnnxEsrgan();
+        }
+        catch { return false; }
+    }
+
+    /// <summary>当前 UI 参数对应的经验库指纹(与 RunBtn_Click 里 ETA 校准的构造口径一致:分辨率固定按 1080p 归一,
+    /// 面积倍率由 EstimateCpuUpscaleSeconds 单独乘)。只用于查"同配置上次实测秒/帧"——
+    /// 查不到就用保守常数,估不准的风险有界。</summary>
+    private string PerfFingerprintForCpuEstimate(out string engine)
+    {
+        engine = VideoEngineRadios.SelectedIndex == 0 ? "waifu2x" : "realesrgan";
+        double scale = VideoScaleRadios.SelectedIndex switch { 1 => 2, 2 => 3, 3 => 4, _ => 1 };
+        if (VideoScaleRadios.SelectedIndex is 0 or 4) scale = 2;   // 1x 缩回 / 自定义:内部都按 2x 超分
+        int interpScale = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, 4 => 12, 5 => 16, _ => 2 };
+        bool dedupOn = DedupCheck.IsChecked == true;
+        int vdenoise = DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex + 1 : 0;
+        bool postFx = (int)SharpenSlider.Value + (int)ClaritySlider.Value + (int)UsmSlider.Value
+            + (int)DetailSlider.Value + (int)DeblurSlider.Value + (int)PostAaSlider.Value > 0;
+        return PerfMemory.Fingerprint(engine, scale, 1920, 1080, interpScale, dedupOn, vdenoise, postFx);
+    }
+
+    /// <summary>取"CPU 预估用的秒/帧(1080p 基准)":经验库同配置实测 与 保守常数 取【较大者】(只增不减)。
+    /// 返回 (秒每帧基准, 来源说明)。</summary>
+    private (double perFrameBase, string source, bool fromHistory) CpuPerFrameBase()
+    {
+        double floor = ALHPro.EsrganOnnxService.CpuSecondsPerFrame1080p;
+        try
+        {
+            var hist = PerfMemory.PerFrameFor(PerfFingerprintForCpuEstimate(out _));
+            if (hist.HasValue && hist.Value > floor)
+                return (hist.Value, $"同配置上次实测 {hist.Value:0.##} 秒/帧(1080p 基准)", true);
+        }
+        catch { }
+        return (floor, $"保守常数 {floor:0.#} 秒/帧(1080p 基准;出处见 EsrganOnnxService.CpuSecondsPerFrame1080p)", false);
+    }
+
+    /// <summary>刷新"超分将落到 CPU"的醒目红字(第 3 项①②:内联为主,不弹窗)。
+    /// 在开始处理【之前】就能看到(与输出规格同一处提示位),所以用户不必等跑起来才知道。
+    /// 数字来源:秒/帧 = max(经验库同配置实测, 保守常数) × 面积;帧数 = 时长 × 源帧率。
+    /// 算不出数字(时长/尺寸探测失败)时只报"会落到 CPU",绝不编一个数出来。</summary>
+    private void SetCpuFallbackHint(string? text)
+    {
+        try
+        {
+            if (CpuFallbackHint == null) return;
+            if (string.IsNullOrEmpty(text))
+            {
+                CpuFallbackHint.Text = "";
+                CpuFallbackHint.Visibility = Visibility.Collapsed;
+                return;
+            }
+            CpuFallbackHint.Text = text;
+            CpuFallbackHint.Visibility = Visibility.Visible;
+        }
+        catch { }
+    }
+
+    /// <summary>按当前选中视频刷新 CPU 回落提示(供 RefreshVideoOutSpec 在算完尺寸/帧率后调用)。</summary>
+    private void RefreshCpuFallbackHint(double dur, double srcFps, int sw, int sh)
+    {
+        try
+        {
+            if (!UpscaleWillFallbackToCpu()) { SetCpuFallbackHint(null); return; }
+            var est = EstimateCpuUpscale(dur, srcFps, sw, sh);
+            if (est == null)
+            {
+                SetCpuFallbackHint("⚠ 本机 DirectML 不可用,超分将使用 CPU(速度极慢;当前视频时长/尺寸未探明,无法给出秒/帧与总时长预估)");
+                return;
+            }
+            var (perFrame, stageMin, frames) = est.Value;
+            SetCpuFallbackHint($"⚠ 本机 DirectML 不可用,超分将使用 CPU:约 {perFrame:0.#} 秒/帧 × {frames} 帧 → 该阶段预计约 {FormatMinutes(stageMin)}");
+        }
+        catch { }
+    }
+
+    /// <summary>预估"超分落到 CPU 后该阶段多久"。(perFrame 秒/帧, stageMin 分钟, frames 帧)。
+    /// 返回 null = 信息不足(时长/尺寸/帧率未知),此时【不显示数字】(绝不编)。</summary>
+    private (double perFrame, double stageMin, long frames)? EstimateCpuUpscale(double dur, double fps, int w, int h)
+    {
+        try
+        {
+            if (dur <= 0 || fps <= 0 || w <= 0 || h <= 0) return null;
+            long frames = (long)Math.Ceiling(dur * fps);
+            if (frames <= 0) return null;
+            var (perFrameBase, _, _) = CpuPerFrameBase();
+            double sec = ALHPro.EsrganOnnxService.EstimateCpuUpscaleSeconds(frames, w, h, perFrameBase, out var perFrame);
+            return (perFrame, sec / 60.0, frames);
+        }
+        catch { return null; }
+    }
+
+    /// <summary>分钟数的可读写法(≥60 分钟写成"N 小时 M 分",避免"预计 187 分钟"这种要用户自己换算的数字)。</summary>
+    private static string FormatMinutes(double minutes)
+    {
+        if (minutes < 1) return "不到 1 分钟";
+        if (minutes < 60) return $"{minutes:0.#} 分钟";
+        double h = Math.Floor(minutes / 60);
+        double m = minutes - h * 60;
+        return m < 1 ? $"{h:0} 小时" : $"{h:0} 小时 {m:0} 分";
+    }
+
     /// <summary>左下角「输出规格」提示:未处理时显示将输出的分辨率+帧率(随超分/补帧/目标帧率实时更新)。
     /// 处理中/音频页/无视频时隐藏。帧率 = 源帧率×补帧倍率(或用户指定目标帧率)。</summary>
     private async System.Threading.Tasks.Task RefreshVideoOutSpec()
@@ -3107,7 +3255,7 @@ public sealed partial class VideoView : UserControl
             if (_running)
             {
                 VideoOutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
-                return;
+                return;   // CPU 回落提示(CpuFallbackHint)不在这里隐藏:处理中它正是要给用户看的
             }
             // 取选中项第一;无选中取列表第一
             var sel = VideoList.SelectedItems.Cast<VideoItem>().LastOrDefault();
@@ -3115,6 +3263,7 @@ public sealed partial class VideoView : UserControl
             if (it == null)
             {
                 VideoOutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                SetCpuFallbackHint(null);   // 无视频可处理 → CPU 回落提示一并收起
                 return;
             }
             // 源分辨率(失败给 0,显示时省略)
@@ -3183,6 +3332,8 @@ public sealed partial class VideoView : UserControl
             if (parts.Count == 0)
             {
                 VideoOutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                // 输出规格没有可显示的内容,但"会落到 CPU"这件事仍然成立 → 照样提示(信息不足时不显示数字)
+                RefreshCpuFallbackHint(it.Duration, srcFps ?? 0, sw, sh);
                 return;
             }
             // 超限提示:按【总像素】判定是否超 4K(3840×2160≈829万像素),不按单边——避免宽高比极端的视频误报。
@@ -3223,6 +3374,8 @@ public sealed partial class VideoView : UserControl
                 ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77))   // 红
                 : (Microsoft.UI.Xaml.Media.SolidColorBrush?)null;   // 恢复默认
             VideoOutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+            // 【第 3 项】同一处顺带刷新"超分将落到 CPU"的红字(用同一份实测尺寸/帧率/时长,不多探一次)
+            RefreshCpuFallbackHint(dur, srcFps ?? 0, sw, sh);
         }
         catch { VideoOutSpecText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed; }
     }
@@ -3673,6 +3826,98 @@ public sealed partial class VideoView : UserControl
                     return false;
                 }
                 Log($"⚠ 输出超 4K,用户选择「仍要继续」:{string.Join(" / ", over4k)}");
+            }
+
+            // ===== 【第 3 项】DirectML 不可用 → 超分将落到 CPU:开始前就给出【量级】并醒目提示 =====
+            // 用户要求:①内联醒目提示为主(不弹窗);②给具体预估;③只在预计超阈值(30 分钟)时才多一次确认;
+            // ④必须在开始处理【前】算出来 —— 这里正是既有的"处理前诊断"处,与 4K 确认同一个时机。
+            // 现状问题:原代码只有一行日志 +"速度会变得特别慢",没有任何量级,用户跑起来才发现 8 秒/帧。
+            // 【先确保探测有结论】幂等;MainPage 已探过立即返回。不做这一步的话,在"启动自检跳过了探测"的
+            // 机器上 DmlProbeCompleted 会是 false,判定退化为"不提示",第 3 项在这类机器上等于没做。
+            try { await ALHPro.EsrganOnnxService.EnsureDmlProbeAsync().ConfigureAwait(true); } catch { }
+            if (UpscaleWillFallbackToCpu())
+            {
+                string cpuEngine = VideoEngineRadios.SelectedIndex == 0 ? "waifu2x" : "realesrgan";
+                var (perFrameBase, perFrameSrc, _) = CpuPerFrameBase();
+                long cpuFrames = 0;
+                double cpuMinutes = 0, cpuPerFrameMax = 0;
+                int cpuW = 0, cpuH = 0;
+                foreach (var it in items)
+                {
+                    try
+                    {
+                        double d = await VideoService.ProbeDurationSeconds(it.Path);
+                        var (w, h) = await VideoService.ProbeSizeAsync(it.Path);
+                        double fps = 30;
+                        try
+                        {
+                            if (double.TryParse(await Task.Run(() => VideoService.ProbeFps(it.Path)), NumberStyles.Float,
+                                    System.Globalization.CultureInfo.InvariantCulture, out var pf) && pf > 0)
+                                fps = pf;
+                        }
+                        catch { }
+                        if (d <= 0 || w <= 0 || h <= 0) continue;
+                        long fr = (long)Math.Ceiling(d * fps);
+                        if (fr <= 0) continue;
+                        // 秒/帧 = max(经验库同配置实测, 保守常数) × 面积;帧数 = 时长 × 源帧率(补帧在超分【之后】,不放大超分帧数)
+                        double sec = ALHPro.EsrganOnnxService.EstimateCpuUpscaleSeconds(fr, w, h, perFrameBase, out var per);
+                        cpuFrames += fr;
+                        cpuMinutes += sec / 60.0;
+                        cpuPerFrameMax = Math.Max(cpuPerFrameMax, per);
+                        if (w * h > cpuW * cpuH) { cpuW = w; cpuH = h; }
+                    }
+                    catch { }
+                }
+                string detail = cpuFrames > 0
+                    ? $"约 {cpuPerFrameMax:0.#} 秒/帧(最大尺寸 {cpuW}×{cpuH};{perFrameSrc})、共 {cpuFrames} 帧 → 超分阶段预计约 {FormatMinutes(cpuMinutes)}"
+                    : "秒/帧与总时长无法估算(视频时长/尺寸/帧率未探明)——按经验,CPU 逐帧超分每帧需数秒到数十秒";
+                string summary = "⚠ 本机 DirectML 不可用,超分将使用 CPU:" + detail;
+                Log(summary);
+                AppLogger.Warn(summary + $"(设备={ALHPro.EsrganOnnxService.DmlUnavailableReason};共 {items.Length} 个视频)");
+                SetCpuFallbackHint(summary);   // 内联红字:开始前就能看到,处理中也常显
+                // ③ 仅当预计超过 30 分钟,才允许【一次】确认(沿用既有「仍要继续/取消」模式:主按钮红、取消蓝)
+                const double cpuConfirmThresholdMin = 30.0;
+                if (cpuMinutes > cpuConfirmThresholdMin)
+                {
+                    var dlgCpu = new ContentDialog
+                    {
+                        Title = "⚠ 超分将使用 CPU,预计很慢",
+                        Content = new StackPanel
+                        {
+                            Spacing = 8,
+                            Children =
+                            {
+                                new TextBlock
+                                {
+                                    Text = "本机 DirectML(GPU 加速)不可用,超分只能使用 CPU 计算。\n\n" + detail
+                                        + "\n\n(秒/帧来源:" + perFrameSrc + ";该数值为保守估计,实际可能更快或更慢。)\n"
+                                        + "DirectML 不可用的原因:" + ALHPro.EsrganOnnxService.DmlUnavailableReason + "\n\n"
+                                        + "是否仍要继续?",
+                                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                                },
+                                new TextBlock
+                                {
+                                    Text = "建议:先取消,更新显卡驱动后重启软件再试;或减少视频数量(只处理需要的片段)、"
+                                        + "降低输出分辨率/超分倍率,把总时间压下来。",
+                                    FontSize = 11, Opacity = 0.6, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                                },
+                            },
+                        },
+                        PrimaryButtonText = "仍要继续",
+                        CloseButtonText = "取消",
+                        DefaultButton = Microsoft.UI.Xaml.Controls.ContentDialogButton.Primary,
+                        XamlRoot = this.XamlRoot,
+                        PrimaryButtonStyle = ButtonStyle(Windows.UI.Color.FromArgb(255, 217, 48, 48), Windows.UI.Color.FromArgb(255, 255, 255, 255)),
+                        CloseButtonStyle = ButtonStyle(Windows.UI.Color.FromArgb(255, 0, 103, 192), Windows.UI.Color.FromArgb(255, 255, 255, 255)),
+                    };
+                    var rCpu = await dlgCpu.ShowAsync();
+                    if (rCpu != ContentDialogResult.Primary)
+                    {
+                        Log("⚠ 超分将用 CPU 且预计超过 30 分钟,用户选择「取消」,已停止处理。");
+                        return false;
+                    }
+                    Log("⚠ 超分将用 CPU 且预计超过 30 分钟,用户选择「仍要继续」。");
+                }
             }
 
             // 硬风险1:会爆盘(预计占 > 当前临时盘剩余)
