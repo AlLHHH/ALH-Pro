@@ -20,6 +20,23 @@ public static class RifeOnnxService
     static readonly System.Collections.Concurrent.ConcurrentDictionary<int, InferenceSession> _sessions = new();
     static readonly object _sessionGate = new();
 
+    /// <summary>会话 → 它【真实】所在的 DirectML 设备号(-1 = 这个会话其实是 CPU 会话)。
+    /// 【为什么需要】调用方传进来的 gpuId 只表示"我想要 GPU";DML append 失败时建出来的其实是纯 CPU 会话,
+    /// 若拿"CPU 推理成功"去 ClearDmlStrikes(该 GPU 设备号),设备级熔断就永远无法触发
+    /// (DmlDeviceUnusable/AnyDmlDeviceUnusable 一直报健康,视频会持续重试那块死掉的卡)。
+    /// 【为什么用 ConditionalWeakTable】它按【引用】比较键(与 Equals 重写无关),且会话被回收后条目自动消失,
+    /// 不会像普通字典那样把已 Dispose 的会话钉在内存里。</summary>
+    sealed class SessionDevice { public int Dml; }
+    static readonly System.Runtime.CompilerServices.ConditionalWeakTable<InferenceSession, SessionDevice> _sessionDml = new();
+
+    static void TagSession(InferenceSession session, int dmlDevice)
+        => _sessionDml.AddOrUpdate(session, new SessionDevice { Dml = dmlDevice });
+
+    /// <summary>这个会话【确实】跑在哪个 DirectML 设备上(-1 = CPU 会话)。查不到标志时按调用方的 gpuId 兜底
+    /// (只可能是本类之外建的会话)。</summary>
+    static int DmlOfSession(InferenceSession session, int gpuId)
+        => _sessionDml.TryGetValue(session, out var tag) ? tag.Dml : (gpuId >= 0 ? gpuId : -1);
+
     /// <summary>ONNX 模型路径(engines/rife/rife49.onnx;不存在返回 null = 不启用 ONNX 路线)。</summary>
     public static string? FindModel()
     {
@@ -40,15 +57,19 @@ public static class RifeOnnxService
     /// 双卡机上引擎序与 DXGI 序相反(实测:引擎 [0 独显][1 核显] vs DXGI [#0 核显][#1 独显]),
     /// 两次映射正好互相抵消成"选独显 → 建到核显",而所有日志与设备号都显示独显。
     /// → 编号空间只允许解析一次:解析在调用方,这里直接用。dmlDevice&lt;0 表示调用方明确要 CPU。
-    /// 失败规则与超分一致:持久设备错误(887A)重抛(不落 CPU),其它失败打明确日志并回退 CPU。</summary>
-    static InferenceSession BuildSession(int dmlDevice)
+    /// 失败规则与超分一致:持久设备错误(887A)重抛(不落 CPU),其它失败打明确日志并回退 CPU。
+    /// <paramref name="onDml"/> 出参 = 这个会话【确实】建在 DirectML 上(见 _sessionDml 说明:C-4 要靠显式标志,
+    /// 不靠 gpuId&gt;=0 推断);DML append 失败时它是 false,而返回的会话是纯 CPU 会话。</summary>
+    static InferenceSession BuildSession(int dmlDevice, out bool onDml)
     {
         var opts = new SessionOptions();
+        onDml = false;
         if (dmlDevice >= 0)
         {
             try
             {
                 opts.AppendExecutionProvider_DML(dmlDevice);
+                onDml = true;
             }
             catch (Exception dmlEx)
             {
@@ -66,8 +87,19 @@ public static class RifeOnnxService
         lock (_sessionGate)
         {
             if (_sessions.TryGetValue(dmlDevice, out var s2) && s2 != null) return s2;
-            var ses = BuildSession(dmlDevice);
-            _sessions[dmlDevice] = ses;
+            var ses = BuildSession(dmlDevice, out bool onDml);
+            // 【C-4 ②】DML 建不起来时会话其实是 CPU:绝不能缓存在 GPU 键 dmlDevice 下(同键后续全部命中它,
+            // 而且它推理成功还会去清零该 GPU 的连击 → 设备级熔断永不触发)。改缓存在 CPU 键 -1,
+            // GPU 键只留给【真 DML 会话】。
+            int cacheKey = onDml ? dmlDevice : -1;
+            if (_sessions.TryGetValue(cacheKey, out var existing) && existing != null)
+            {
+                ses.Dispose();   // 已有同键会话(例如上次失败时建的 CPU 会话):复用它,本次新建的别泄漏
+                TagSession(existing, cacheKey);
+                return existing;
+            }
+            _sessions[cacheKey] = ses;
+            TagSession(ses, cacheKey);
             return ses;
         }
     }
@@ -79,7 +111,12 @@ public static class RifeOnnxService
     {
         var arr = new InferenceSession[Math.Max(1, concurrency)];
         for (int i = 0; i < arr.Length; i++)
-            arr[i] = BuildSession(dmlDevice);
+        {
+            arr[i] = BuildSession(dmlDevice, out bool onDml);
+            // 把"这个会话到底跑在 DML 上还是 CPU 上"钉在会话本身上:调用方(VideoService)只会把 dmlDevice
+            // 传回来,没法区分这两者,而熔断/连击的写法必须靠这个标志(C-4 ④)。
+            TagSession(arr[i], onDml ? dmlDevice : -1);
+        }
         return arr;
     }
 
@@ -145,43 +182,49 @@ public static class RifeOnnxService
             throw new InvalidOperationException("两帧尺寸不一致,无法补帧");
 
         int w = bmp0.Width, h = bmp0.Height;
+        // 【C-4 ④】这个会话【确实】跑在 DirectML 上吗?由建会话时钉在会话上的标志决定,绝不用 gpuId>=0 推断:
+        // gpuId 只表示调用方"要 GPU",而 DML append 失败时会话其实是纯 CPU 会话 —— 拿这种会话的成功去
+        // ClearDmlStrikes(该 GPU),等于每次 CPU 成功都把 GPU 的死活洗白,设备级熔断永远无法触发。
+        int dmDevice = DmlOfSession(session, gpuId);
+        bool dmlSession = dmDevice >= 0;
         try
         {
             // GPU + 大帧:DirectML 显存有限,整帧 4K 会 OOM → 分块插帧(带边缘余量,无接缝)
             const int Tile = 512;
-            if (gpuId >= 0 && (w > Tile || h > Tile))
+            if (dmlSession && (w > Tile || h > Tile))
             {
                 RunTiled(session, bmp0, bmp1, time, outputPng, w, h);
-                EsrganOnnxService.ClearDmlStrikes(gpuId);   // GPU 真跑成功 → 偶发抖动不该累积
+                EsrganOnnxService.ClearDmlStrikes(dmDevice);   // GPU 真跑成功 → 偶发抖动不该累积
                 return;
             }
-            RunSingle(session, bmp0, bmp1, time, outputPng, w, h, gpuId);
-            if (gpuId >= 0) EsrganOnnxService.ClearDmlStrikes(gpuId);
+            RunSingle(session, bmp0, bmp1, time, outputPng, w, h, dmDevice);
+            if (dmlSession) EsrganOnnxService.ClearDmlStrikes(dmDevice);
         }
-        catch (Exception ex) when (gpuId >= 0)
+        catch (Exception ex) when (dmlSession)
         {
             // 设备被摘除/挂死(887A):本进程内不可恢复 → 熔断并抛出,让调用方按帧复制原帧(毫秒级)。
             // CPU 整帧重算等于整段视频在 CPU 上补帧(几十分钟起步),违反「补帧绝不落 CPU」。
             if (AlhPro.Core.GpuFault.IsPersistentDeviceError(ex))
             {
-                EsrganOnnxService.TripDmlDead(gpuId, ex);
+                EsrganOnnxService.TripDmlDead(dmDevice, ex);
                 throw;
             }
             // 偶发失败:本对帧换 CPU 重算一次(代价有界,绝不出黑帧/半帧)。但连击达上限就认定设备不可用 → 抛出,
             // 由调用方复制原帧。原先这里写 _dmlBad[gpuId] 永久闩锁,一次抖动就让剩下整段视频都在 CPU 上补帧。
-            if (EsrganOnnxService.NoteDmlTransientFailure(gpuId))
+            if (EsrganOnnxService.NoteDmlTransientFailure(dmDevice))
                 throw new InvalidOperationException(
-                    $"RIFE ONNX 补帧失败:GPU(DirectML 设备 {gpuId})连续多次推理失败,已停止尝试(不降级到慢速 CPU)。"
+                    $"RIFE ONNX 补帧失败:GPU(DirectML 设备 {dmDevice})连续多次推理失败,已停止尝试(不降级到慢速 CPU)。"
                     + "剩余帧将复制原帧;请重启软件后重试。", ex);
             AppLogger.Warn($"RIFE ONNX DirectML 失败,本对帧改 CPU 整帧重算: {ex.Message.Split('\n')[0]}");
-            DropSession(gpuId);
+            DropSession(dmDevice);
             RunSingle(GetSession(-1), bmp0, bmp1, time, outputPng, w, h, -1);
         }
     }
 
-    /// <summary>整帧推理(CPU 或小帧 GPU)。GPU 失败一律抛出(设备级失效就地熔断),恢复策略由 RunCore 统一决定。</summary>
+    /// <summary>整帧推理(CPU 或小帧 GPU)。GPU 失败一律抛出(设备级失效就地熔断),恢复策略由 RunCore 统一决定。
+    /// <paramref name="dmDevice"/> = 该会话【真实】所在的 DirectML 设备号(-1 = CPU 会话;CPU 会话失败不写任何 GPU 连击表)。</summary>
     static void RunSingle(InferenceSession session, Bitmap bmp0, Bitmap bmp1, float time, string outputPng,
-        int w, int h, int gpuId)
+        int w, int h, int dmDevice)
     {
         // 【修复 补帧没效果】RIFE ONNX 输入要求宽高为 4 的倍数。原整帧路径直接把 w/h 喂进模型,
         // 非 4 倍数的帧会抛形状错误 → 上层 catch 后静默复制左端点 → 该帧不插帧(看起来"没效果")。
@@ -204,10 +247,10 @@ public static class RifeOnnxService
                 NamedOnnxValue.CreateFromTensor("timestep", ts),
             });
         }
-        catch (Exception ex) when (gpuId >= 0)
+        catch (Exception ex) when (dmDevice >= 0)
         {
             // 设备被摘除/挂死(887A):就地熔断(越早置位,越多调用点能立刻快速失败),然后抛出。
-            if (AlhPro.Core.GpuFault.IsPersistentDeviceError(ex)) EsrganOnnxService.TripDmlDead(gpuId, ex);
+            if (AlhPro.Core.GpuFault.IsPersistentDeviceError(ex)) EsrganOnnxService.TripDmlDead(dmDevice, ex);
             // 恢复策略统一在 RunCore:它才知道该复制原帧还是 CPU 重算一次。原先这里自己转 CPU 重算,失败后异常
             // 传到 RunCore 又转一次 —— 同一对帧做了两次 CPU 推理,白等一倍时间。
             throw;

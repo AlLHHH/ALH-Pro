@@ -90,9 +90,24 @@ public static class EsrganOnnxService
     /// <summary>本进程的 DirectML 是否已永久失效(需重启软件才能恢复)。</summary>
     public static bool DmlDeviceDead => Volatile.Read(ref _dmlDead) != 0;
 
-    /// <summary>同一设备【连续】瞬时失败次数(GPU 成功一次即清零)。上限见 DmlTransientStrikes。</summary>
+    /// <summary>同一设备【连续】瞬时失败次数(GPU 成功一次即清零)。上限见 DmlTransientStrikes。
+    /// 【键的编号空间:DirectML 设备号】—— 全表只认 DML 号,绝不混入引擎 -g 编号(见 DmlForEngineDevice 说明)。</summary>
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, int> _dmlStrikes = new();
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, int> _audioDmlStrikes = new();
+
+    /// <summary>【引擎 -g 编号 → DirectML 设备号】的进程内缓存。
+    /// 【为什么必须有缓存】EngineService.ToDmlDevice 内部会【真枚举 DXGI】(CreateDXGIFactory1 + 遍历适配器,
+    /// 本身没有缓存),而超分是按【块】调用的(1080p 一张图 12 块、4K 更多块,视频还要逐帧)——连击表的
+    /// 记录/查询/清零若每次现算一次,就把设备号解析变成了新的性能问题。所以编号空间只解析一次并复用。
+    /// 【为什么失败不缓存】ToDmlDevice 匹配不到同名卡时返回 -1(宁可慢不跑错卡);那是"当前匹配不上",
+    /// 不是硬件事实——启动探测(DmlFallbackOk)稍后就绪时还可能兜底,缓存 -1 会把临时结果钉成永久结论。</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, int> _engineToDmlCache = new();
+
+    /// <summary>(模型, DML 设备号) → 已确认"建不出 DirectML 会话"(非持续性失败)。
+    /// 【为什么需要记】超分是按【块】调用的:一张 1080p 图 12 块、视频还要逐帧。不记的话每一块都会重试一次
+    /// 注定失败的 AppendExecutionProvider_DML,还会把同一条告警刷满日志(I-19 那种刷屏)。
+    /// 记下之后该组合直接走独立的 CPU 键,且只告警一次(进程级;驱动修好后重启软件即可恢复)。</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, int), bool> _dmlBrokenSessions = new();
 
     /// <summary>瞬时失败连击上限。达限即认定该设备在本进程内不可用,按持续性错误同样口径处理(抛可操作错误 /
     /// 回退源帧),而不是转 CPU。为什么是 3:一次重试的代价是"一块/一对帧的 CPU 推理"(秒级),连吃 3 次
@@ -230,10 +245,12 @@ public static class EsrganOnnxService
 
     /// <summary>ONNX 超分一张图(4x)。scale=目标倍数(4x 原生;2x 也走 4x 再缩回)。
     /// modelPath: 指定模型;null = Real-ESRGAN 自动查找。
-    /// gpuId 传入 -2 表示"自动"(按输入大小选设备);其余按传入值。</summary>
+    /// gpuId 传入 -2 表示"自动"(按输入大小选设备);其余按传入值。
+    /// <paramref name="dmlDeviceHint"/>:调用方【已经解析好】的 DirectML 设备号(与 sessionOverride 配套:
+    /// 那批会话就是按它建的)。null = 未告知,由 RunTile 自行按 gpuId 解析。见 RunTile 的 C-2 说明。</summary>
     public static async Task UpscaleAsync(string input, string output, double scale,
         int gpuId = -1, IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default,
-        string? modelPath = null, InferenceSession? sessionOverride = null)
+        string? modelPath = null, InferenceSession? sessionOverride = null, int? dmlDeviceHint = null)
     {
         modelPath ??= FindModel()
             ?? throw new FileNotFoundException("缺少超分模型:RealESRGAN_x4plus.onnx。");
@@ -248,7 +265,7 @@ public static class EsrganOnnxService
         }
         catch { }
         progress?.Report((5, "加载 ONNX 模型..."));
-        await Task.Run(() => RunCore(input, output, scale, modelPath, gpuId, progress, ct, sessionOverride), ct);
+        await Task.Run(() => RunCore(input, output, scale, modelPath, gpuId, progress, ct, sessionOverride, dmlDeviceHint), ct);
         progress?.Report((100, "完成"));
     }
 
@@ -291,16 +308,30 @@ public static class EsrganOnnxService
         int dmDevice = !wantGpu ? -1
             : auto ? (AppSettings.GpuIndex >= 0 ? EngineService.ResolveDmlDevice(AppSettings.GpuIndex) : EsrganOnnxService.DmlFallbackOk)
             : EngineService.ResolveDmlDevice(gpuId);
+        // 【C-3】想要 GPU 却解析不出合法的 DirectML 设备号(名字匹配失败返回 -1 / 启动探测未完成 / DmlFallbackOk=-1)时:直接抛。
+        // 原代码会把这个非法号交给 AppendExecutionProvider_DML → 必然失败 → 被 catch 吞掉 → 静默建出【纯 CPU 会话】,
+        // 于是"设置里写 GPU、实际整批 3 路 × 240 帧全跑 CPU(一整夜)"且日志里只有一条容易被忽略的 warning。
+        // 这里宁可抛出:VideoService 会按【批次】回退源帧/改走 ncnn 重跑,不会静默锁 CPU。
+        if (wantGpu && dmDevice < 0)
+            throw new InvalidOperationException(
+                $"ONNX 超分:无法把 GPU 编号 {gpuId} 映射到可用的 DirectML 设备(不降级到慢速 CPU)——"
+                + "请在设置里重新选择显卡后重试;若反复出现,建议更新显卡驱动。");
         // 预创建独立会话池(每个并行 worker 一个;绕开共享缓存锁,支持并发 Run)
         var sessions = new Microsoft.ML.OnnxRuntime.InferenceSession?[concurrency];
+        // 每个会话【真实】所在的 DirectML 设备号(-1 = 该会话其实是 CPU 会话)。绝不靠"想要 GPU"推断:
+        // CPU 会话推理成功后若去清零 GPU 连击,设备级熔断就永远无法触发(见 RunTile 的 C-4 说明)。
+        var sessionDml = new int[concurrency];
+        for (int s = 0; s < concurrency; s++) sessionDml[s] = -1;
+        int poolFailed = 0;   // 【C-3】建会话失败的 worker 数:必须留痕,不许静默少一路并行
         for (int s = 0; s < concurrency; s++)
         {
             try
             {
                 var opts = new SessionOptions();
+                bool onDml = false;
                 if (wantGpu)
                 {
-                    try { opts.AppendExecutionProvider_DML(dmDevice); }
+                    try { opts.AppendExecutionProvider_DML(dmDevice); onDml = true; }
                     catch (Exception dmlEx)
                     {
                         // 设备被摘除/挂死时建会话本身就会抛 887A:此时绝不能静默建出 CPU 会话把整批帧跑在 CPU 上
@@ -313,16 +344,49 @@ public static class EsrganOnnxService
                     }
                 }
                 sessions[s] = new Microsoft.ML.OnnxRuntime.InferenceSession(modelPath, opts);
+                // 【C-4 ④】只有 DML append 真的成功,这个会话才算"跑在 DML 上";否则它其实是 CPU 会话,
+                // 之后绝不能拿它去清零/查询 GPU 连击表。这个号会随会话一起传给 RunTile 复用(编号空间只解析一次)。
+                sessionDml[s] = onDml ? dmDevice : -1;
             }
             // 设备级失效必须往上抛:被这里吞掉就等于"熔断器又失效一次",整批照样在 CPU 上跑到天荒地老。
             // (new InferenceSession 本身也会在设备被摘除时抛 887A,同样走这条重抛。)
             catch (Exception ex) when (AlhPro.Core.GpuFault.IsPersistentDeviceError(ex))
             {
                 TripDmlDead(dmDevice, ex);
+                foreach (var ss in sessions) try { ss?.Dispose(); } catch { }   // 【不泄漏】已建的会话先 Dispose 再抛
                 throw new InvalidOperationException(
                     $"GPU(DirectML)已被系统摘除/挂死,无法创建推理会话(不降级到慢速 CPU): {ex.Message.Split('\n')[0]}\n请重启软件后重试。", ex);
             }
-            catch { sessions[s] = null; }
+            // 【C-3】原先是 `catch { sessions[s] = null; }`:零日志吞掉任何非持续性异常(OOM、非法设备号、
+            // provider 注册失败)。那个 null 会让该 worker 回落到共享缓存路径(可能建出 CPU 会话)→ 整批帧里
+            // 有一路静默跑 CPU,而日志一行线索都没有。现在:记日志 + 计数,下面统一降并发并明确告警。
+            catch (Exception ex)
+            {
+                sessions[s] = null;
+                poolFailed++;
+                AppLogger.Warn($"⚠ ONNX 超分会话创建失败(第 {s + 1}/{concurrency} 路,原因:{ex.Message.Split('\n')[0]})");
+            }
+        }
+        if (poolFailed > 0 || (wantGpu && Array.Exists(sessionDml, x => x < 0)))
+        {
+            // 【C-3】会话池降级,必须显式且留痕:只保留一个可用会话(其余 Dispose,绝不泄漏)。
+            // ① 任一路建会话失败(原先 `catch { sessions[s]=null; }` 静默吞掉):失败的 worker 会回落到共享缓存
+            //    路径,整批帧里就有一路"静默走别的路径",而日志一行线索都没有;
+            // ② 想要 GPU 却只建出 CPU 会话:3 路并行 CPU 推理只是把 CPU 抢成 3 份(每路一个线程池),总时间不变、
+            //    内存三倍,而且"设置写 GPU、实际跑 CPU"必须是一眼能看到的告警(绝不静默共存)。
+            int keep = Array.FindIndex(sessions, x => x != null);
+            for (int s = 0; s < sessions.Length; s++)
+                if (s != keep) { try { sessions[s]?.Dispose(); } catch { } }
+            if (keep < 0)
+                throw new InvalidOperationException(
+                    $"ONNX 超分:本批 {concurrency} 路推理会话全部创建失败(不降级到慢速 CPU)——该批帧将回退源帧缩放。"
+                    + "请重启软件后重试;若反复出现,建议关闭其他占用显存的程序并更新显卡驱动。");
+            AppLogger.Warn(poolFailed > 0
+                ? $"⚠ ONNX 超分会话池创建不完整({concurrency - poolFailed}/{concurrency} 成功)——本批并行度由 {concurrency} 降为 1,速度会变慢(原因见上一条日志)"
+                : $"⚠ ONNX 超分:想要 GPU 却至少有一路只建出 CPU 会话(DirectML 设备 {dmDevice} 不可用)——本批并行度由 {concurrency} 降为 1,并整批在 CPU 上运行(不占 GPU 键,设备级熔断不受影响;详见上一条日志)");
+            sessions = new[] { sessions[keep] };
+            sessionDml = new[] { sessionDml[keep] };
+            concurrency = 1;
         }
         try
         {
@@ -349,7 +413,8 @@ public static class EsrganOnnxService
                         try
                         {
                             var sess = sessions[wi];
-                            UpscaleAsync(files[i], outPath, scale, auto ? -2 : gpuId, null, ct, modelPath, sess)
+                            int sessDml = sessionDml[wi];   // 该会话【真实】所在的 DML 号(-1 = 其实是 CPU 会话)
+                            UpscaleAsync(files[i], outPath, scale, auto ? -2 : gpuId, null, ct, modelPath, sess, sessDml)
                                 .GetAwaiter().GetResult();
                         }
                         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
@@ -422,7 +487,8 @@ public static class EsrganOnnxService
     }
 
     private static void RunCore(string input, string output, double scale, string modelPath, int gpuId,
-        IProgress<(int pct, string msg)>? progress, CancellationToken ct, InferenceSession? sessionOverride = null)
+        IProgress<(int pct, string msg)>? progress, CancellationToken ct, InferenceSession? sessionOverride = null,
+        int? dmlDeviceHint = null)
     {
         using var src = new System.Drawing.Bitmap(input);
         int sw = src.Width, sh = src.Height;
@@ -434,7 +500,7 @@ public static class EsrganOnnxService
         {
             // ===== 透明底保护:ONNX 只处理 RGB(alpha 会丢/脏),这里分离处理 =====
             // ① 提取 alpha 通道(缩放后恢复用) ② RGB 填白(防透明区超分成脏色) ③ 超分 ④ 恢复 alpha
-            RunCoreAlphaSafe(src, output, scale, modelPath, gpuId, progress, ct, TileFor(sw, sh), 64);
+            RunCoreAlphaSafe(src, output, scale, modelPath, gpuId, progress, ct, TileFor(sw, sh), 64, sessionOverride, dmlDeviceHint);
             return;
         }
 
@@ -444,12 +510,12 @@ public static class EsrganOnnxService
         const int Overlap = 64;   // 32→64:分块共享上下文更多,接缝过渡带更宽、高纹理更难看出"分块"(代价:边缘计算略增)
         if (sw > Tile || sh > Tile)
         {
-            RunCoreTiled(src, output, scale, modelPath, gpuId, progress, ct, Tile, Overlap, sessionOverride);
+            RunCoreTiled(src, output, scale, modelPath, gpuId, progress, ct, Tile, Overlap, sessionOverride, dmlDeviceHint);
             return;
         }
 
         // 单块(整图 ≤ Tile):直接推理
-        using var tileBmp = RunTile(src, modelPath, gpuId, ct, sessionOverride);
+        using var tileBmp = RunTile(src, modelPath, gpuId, ct, sessionOverride, dmlDeviceHint);
         int tW = tileBmp.Width, tH = tileBmp.Height;
         if (Math.Abs(tW - ow) > 1 || Math.Abs(tH - oh) > 1)
             SaveScaled(tileBmp, output, ow, oh);
@@ -470,7 +536,7 @@ public static class EsrganOnnxService
     /// <summary>透明底保护:提取 alpha → RGB 填白 → 超分 → 恢复 alpha(输出 32bpp Argb)。</summary>
     private static void RunCoreAlphaSafe(System.Drawing.Bitmap src, string output, double scale, string modelPath,
         int gpuId, IProgress<(int pct, string msg)>? progress, CancellationToken ct, int tile, int overlap,
-        InferenceSession? sessionOverride = null)
+        InferenceSession? sessionOverride = null, int? dmlDeviceHint = null)
     {
         int sw = src.Width, sh = src.Height;
         int ow = (int)Math.Round(sw * scale), oh = (int)Math.Round(sh * scale);
@@ -493,10 +559,10 @@ public static class EsrganOnnxService
         try
         {
             if (sw > tile || sh > tile)
-                RunCoreTiled(rgbSrc, tmpRgb, scale, modelPath, gpuId, null, ct, tile, overlap, sessionOverride);
+                RunCoreTiled(rgbSrc, tmpRgb, scale, modelPath, gpuId, null, ct, tile, overlap, sessionOverride, dmlDeviceHint);
             else
             {
-                using var tileBmp = RunTile(rgbSrc, modelPath, gpuId, ct, sessionOverride);
+                using var tileBmp = RunTile(rgbSrc, modelPath, gpuId, ct, sessionOverride, dmlDeviceHint);
                 if (Math.Abs(tileBmp.Width - ow) > 1 || Math.Abs(tileBmp.Height - oh) > 1)
                     SaveScaled(tileBmp, tmpRgb, ow, oh);
                 else
@@ -559,7 +625,7 @@ public static class EsrganOnnxService
     ///    (走 ONNX)大图/视频帧会出现明显拼贴接缝。</summary>
     private static void RunCoreTiled(System.Drawing.Bitmap src, string output, double scale, string modelPath,
         int gpuId, IProgress<(int pct, string msg)>? progress, CancellationToken ct, int tile, int overlap,
-        InferenceSession? sessionOverride = null)
+        InferenceSession? sessionOverride = null, int? dmlDeviceHint = null)
     {
         int sw = src.Width, sh = src.Height;
         int ow = (int)Math.Round(sw * scale), oh = (int)Math.Round(sh * scale);
@@ -599,7 +665,7 @@ public static class EsrganOnnxService
                             using (var g = System.Drawing.Graphics.FromImage(cropped))
                                 g.DrawImage(src, new System.Drawing.Rectangle(0, 0, tw, th),
                                     new System.Drawing.Rectangle(x0, y0, tw, th), System.Drawing.GraphicsUnit.Pixel);
-                            using var tileOut = RunTile(cropped, modelPath, gpuId, ct, sessionOverride);
+                            using var tileOut = RunTile(cropped, modelPath, gpuId, ct, sessionOverride, dmlDeviceHint);
                             // ①缩放到目标倍率:模型固有倍率 != 用户 scale 时先 resize(显式 24bpp,保证 LockBits 格式)
                             var tileFinal = tileOut;
                             if (Math.Abs(modelScale - scale) > 0.001)
@@ -683,12 +749,41 @@ public static class EsrganOnnxService
         return t * t * (3.0 - 2.0 * t);
     }
 
+    /// <summary>把【引擎 -g 编号】解析成【DirectML 设备号】,结果进程内缓存(见 _engineToDmlCache 说明)。
+    /// 这是整个 ONNX 超分里【唯一】允许调用 EngineService.ToDmlDevice 的地方 —— 连击表(_dmlStrikes)、
+    /// 熔断(TripDmlDead)、会话创建(AppendExecutionProvider_DML)三处必须共用同一个号,且只解析一次。
+    /// 【为什么必须统一】两套编号在双卡机上并不相同(引擎序 [0 独显][1 核显] vs DirectML/DXGI 序可能相反),
+    /// 混用会出现"图片页在核显连吃 3 次失败 → 把 DML 设备 0(=独显)标成不可用 → 补帧直接抛 →
+    /// 剩余整段视频静默变成复制原帧",而独显完全健康。单卡机两套编号恰好同值,所以只看单卡机永远发现不了。
+    /// 解析失败返回 -1:调用方【必须抛出】(绝不拿非法号去建会话、更不落 CPU)。</summary>
+    private static int DmlForEngineDevice(int engineGpu)
+    {
+        if (engineGpu < 0) return -1;
+        // 引擎设备表 ≤1 项(单卡机 / 表尚未就绪)时 ToDmlDevice 是【原样返回】,不是真映射:
+        // 这种情况下不缓存 —— 否则会把"设备表还没就绪"时的临时值钉成永久结论。
+        if (VulkanCheck.Devices.Count <= 1) return EngineService.ToDmlDevice(engineGpu);
+        if (_engineToDmlCache.TryGetValue(engineGpu, out var cached)) return cached;
+        int dm = EngineService.ToDmlDevice(engineGpu);
+        if (dm < 0) return -1;   // 匹配失败不缓存(见字段说明)
+        _engineToDmlCache[engineGpu] = dm;
+        AppLogger.Info($"设备映射(缓存):ONNX 超分引擎 -g {engineGpu} → DirectML 设备 {dm}(本进程内不再重复枚举 DXGI)");
+        return dm;
+    }
+
     /// <summary>单块推理(返回 4x 结果位图)。会话按 (modelPath,gpuId) 缓存;GPU 失败自动 CPU 重试。
-    /// waifu2x 模型(文件名含 waifu2x)输入名为 x(非 input),其余模型为 input。</summary>
+    /// waifu2x 模型(文件名含 waifu2x)输入名为 x(非 input),其余模型为 input。
+    /// <paramref name="dmlDeviceHint"/>:调用方【已经解析好】的 DirectML 设备号(null = 未告知,本方法自行解析)。
+    /// 若调用方传 sessionOverride(会话池),必须同时传这个号 —— 那批会话就是按它建的,连击表/熔断/清零要复用它。</summary>
     private static System.Drawing.Bitmap RunTile(System.Drawing.Bitmap src, string modelPath, int gpuId, CancellationToken ct,
-        InferenceSession? sessionOverride = null)
+        InferenceSession? sessionOverride = null, int? dmlDeviceHint = null)
     {
         int inW = src.Width, inH = src.Height;
+        // 【C-3】-2 = "自动选设备",那是【调用方的请求】,不等于"要 CPU":UpscaleAsync 的自动探测一旦抛异常被吞,
+        // gpuId 就会以 -2 落到这里,而下面所有 `gpuId >= 0` 判定在 -2 上全为假 → 静默建出 CPU 会话,
+        // 该 worker 剩下的每一帧都跑 CPU。这里就地解析一次(PickDevice 是纯函数,代价可忽略):
+        // 它返回 -1 时是【有明确理由并已记日志】的 CPU 决定(小图 CPU 更快 / DirectML 无可用设备),那是唯一允许 CPU 的场景。
+        if (gpuId == -2 && sessionOverride == null)
+            gpuId = PickDevice(src.Width, src.Height);
         // 【修复 448x449 BroadcastIterator + 分块网格缝】waifu2x-cunet2x ONNX 模型要求输入宽高必须为偶数且 ≥38,
         // 否则内部 Add 节点广播轴错配直接崩溃(真机 CPU 无 Vulkan/50系走 ONNX 已复现)。
         // 同时该模型输出有固定内裁(实测 out = 2*in - 72,等价于每边裁 18px),导致分块贴回时按 2*in 假设错位,
@@ -718,6 +813,33 @@ public static class EsrganOnnxService
         // waifu2x 模型输入名是 x(实测 ONNX 元数据);其余(esrgan/cugan/animevideo)是 input
         string inputName = modelPath.Contains("waifu2x", StringComparison.OrdinalIgnoreCase) ? "x" : "input";
 
+        // 【C-2 编号空间统一】dmDevice = 本帧【实际使用】的 DirectML 设备号 = 引擎 -g 编号 gpuId 经 ToDmlDevice 的映射。
+        // 下面的建会话 / 连击表 / 熔断 / 清零【全部只认这个号】,绝不再用引擎 -g 编号做键:两套编号在双卡机上不同,
+        // 混用会让"核显上连吃 3 次失败"把"DirectML 设备 0(=独显)"标成不可用 → 补帧直接抛 → 剩余整段视频静默复制原帧。
+        // 【只解析一次】:结果存成局部变量复用;解析走 DmlForEngineDevice(进程内缓存),不会每块/每帧真枚举 DXGI。
+        // 会话池路径已解析过并显式传进来(dmlDeviceHint),这里直接用,不重复解析。
+        int dmDevice;
+        if (dmlDeviceHint.HasValue)
+            dmDevice = dmlDeviceHint.Value;   // 调用方明示:那批会话就是建在这个号上(-1 = 那些会话其实是 CPU 会话)
+        else if (gpuId >= 0)
+        {
+            dmDevice = DmlForEngineDevice(gpuId);
+            // 【C-4 ③】解析不出 DirectML 设备号时直接抛:原代码把 -1/非法号交给 AppendExecutionProvider_DML,
+            // 必然失败 → 再被 catch 吞掉 → 静默建出【CPU 会话】并缓存到 GPU 键下,之后同键全命中 CPU。
+            if (dmDevice < 0)
+                throw new InvalidOperationException(
+                    $"ONNX 超分:无法把 GPU 编号 {gpuId} 映射到可用的 DirectML 设备(不降级到慢速 CPU)——"
+                    + "请在设置里重新选择显卡后重试;若反复出现,建议更新显卡驱动。");
+        }
+        else dmDevice = -1;
+
+        // 【C-4 ④】会话是否【确实跑在 DirectML 上】—— 唯一权威标志。绝不用 gpuId>=0 推断:
+        // gpuId 只表示"调用方想要 GPU",而 DML 建不起来时会话其实是 CPU;拿这种会话在推理成功后
+        // ClearDmlStrikes(设备号),等于每次 CPU 成功都把 GPU 的死活洗白 → 设备级熔断永远无法触发
+        // (DmlDeviceUnusable/AnyDmlDeviceUnusable 一直报健康,视频/补帧持续重试那块死掉的卡)。
+        // 共享缓存路径一旦退到 CPU 会话,下面会把它改回 false。
+        bool dmlSession = dmDevice >= 0;
+
         // 【设备已死 = 快速失败,绝不悄悄转 CPU】887A0005/887A0006 之后本进程的 D3D 设备已被 Windows 摘除,
         // 后续每一次 DirectML 调用都必然失败;这种时候转 CPU,分块路径一张大图十几个块、每块一次 CPU 推理
         // = 几十分钟起步,正是诊断包里"设置显示 GPU、实际跑了几小时"的成因。立刻抛出,由调用方整图/整批降级。
@@ -726,11 +848,11 @@ public static class EsrganOnnxService
                 "GPU(DirectML)已被系统摘除/挂死,本进程内无法恢复——已停止超分尝试(不降级到慢速 CPU)。请重启软件后重试。");
 
         // 连续瞬时失败已达上限的设备:同样快速失败,不再重复"建会话 + 注定失败的推理"。
-        // 只对共享会话缓存路径(单图/分块)生效——连击计数只由这条路径喂;视频并行路径(sessionOverride 非空)
-        // 自带独立会话池与逐帧源帧回退,不该被图片页的失败牵连。
-        if (sessionOverride == null && DmlDeviceUnusable(gpuId))
+        // 只对共享会话缓存路径(单图/分块)生效——视频并行路径(sessionOverride 非空)自带独立会话池与逐帧
+        // 源帧回退,不该被图片页的失败牵连(它的失败会记在【同一个真实 DML 号】上,由调用方按批次处理)。
+        if (sessionOverride == null && DmlDeviceUnusable(dmDevice))
             throw new InvalidOperationException(
-                $"GPU(DirectML 设备 {gpuId})已连续 {DmlTransientStrikes} 次推理失败,本进程内视为不可用——"
+                $"GPU(DirectML 设备 {dmDevice})已连续 {DmlTransientStrikes} 次推理失败,本进程内视为不可用——"
                 + "已停止超分尝试(不降级到慢速 CPU)。请重启软件后重试;若反复出现,建议关闭其他占用显存的程序并更新显卡驱动。");
 
         // 【并行优化】sessionOverride 非空:直接用调用方传入的独立会话(绕开共享缓存锁,支持多 session 并行),
@@ -744,22 +866,73 @@ public static class EsrganOnnxService
         }
         else
         {
-            gate = _locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
-            gate.Wait();
+            var keyGate = _locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+            keyGate.Wait();
             try
             {
-                session = _sessions.GetOrAdd(key, _ =>
+                gate = keyGate;
+                if (_sessions.TryGetValue(key, out var cached) && cached != null)
+                {
+                    session = cached;
+                }
+                else
                 {
                     var opts = new SessionOptions();
-                    if (gpuId >= 0)
+                    bool onDml = false;
+                    var dmlKey = (modelPath, dmDevice);
+                    // 【C-4 ②】这个组合已经确认建不出 DML 会话 → 不再逐块/逐帧重试 append(白等一次失败 + 刷屏日志)。
+                    bool dmlKnownBroken = dmDevice >= 0 && _dmlBrokenSessions.ContainsKey(dmlKey);
+                    if (dmDevice >= 0 && !dmlKnownBroken)
                     {
-                        try { opts.AppendExecutionProvider_DML(EngineService.ToDmlDevice(gpuId)); }
-                        catch (Exception dmlEx) { WarnDmlUnavailable("创建 GPU 会话失败: " + dmlEx.Message.Split('\n')[0]); }
+                        try { opts.AppendExecutionProvider_DML(dmDevice); onDml = true; }
+                        catch (Exception dmlEx)
+                        {
+                            // 【C-4 ①】设备被摘除/挂死(887A)是【持续性】错误:重抛(绝不落 CPU),并就地熔断 ——
+                            // 否则分块路径一张图十几个块会逐块重演"建会话必然失败",违反"设备摘除→熔断,不逐帧重试"。
+                            if (AlhPro.Core.GpuFault.IsPersistentDeviceError(dmlEx))
+                            {
+                                TripDmlDead(dmDevice, dmlEx);
+                                throw;
+                            }
+                            // 【C-4 ②】非持续性失败(驱动/provider 注册等):明确日志,再由下面落到独立的
+                            // (modelPath,-1) 键 —— 绝不把 CPU 会话缓存进 GPU 键。
+                            WarnDmlUnavailable($"创建 GPU 会话失败(DML 设备 {dmDevice}): " + dmlEx.Message.Split('\n')[0]);
+                        }
                     }
-                    return new InferenceSession(modelPath, opts);
-                });
+                    if (dmDevice < 0 || onDml)
+                    {
+                        // 明确要 CPU(dmDevice<0,键就是 (modelPath,-1))或 DML 建成功(键与"会话真实设备"一致):直接缓存
+                        session = new InferenceSession(modelPath, opts);
+                        _sessions[key] = session;
+                        dmlSession = onDml;
+                    }
+                    else
+                    {
+                        // 【C-4 ②】DML 建不起来 → 落到【独立的 (modelPath,-1) CPU 键】,绝不让 GPU 键指向 CPU 会话:
+                        // 否则之后同键全部命中它,而且它推理成功还会 ClearDmlStrikes(GPU 设备号) → 设备级熔断永不触发。
+                        // 该会话的 Run 必须用它自己那把锁(同一 InferenceSession 不能并发 Run)。
+                        var cpuKey = (modelPath, -1);
+                        var cpuGate = _locks.GetOrAdd(cpuKey, _ => new SemaphoreSlim(1, 1));
+                        cpuGate.Wait();
+                        try
+                        {
+                            if (!_sessions.TryGetValue(cpuKey, out session!) || session == null)
+                            {
+                                session = new InferenceSession(modelPath, new SessionOptions());
+                                _sessions[cpuKey] = session;
+                            }
+                        }
+                        finally { cpuGate.Release(); }
+                        gate = cpuGate;
+                        dmlSession = false;
+                        // 只报一次(每 模型×设备 一条):不记的话分块路径每块都刷一遍同样的告警
+                        if (_dmlBrokenSessions.TryAdd(dmlKey, true))
+                            AppLogger.Warn($"⚠ ONNX 超分:DirectML 设备 {dmDevice} 无法创建推理会话,本进程内改用 CPU 会话(缓存键 (模型,-1),不占 GPU 键)——"
+                                + "GPU 键不会指向 CPU 会话,设备级熔断不受影响;速度会慢数倍,更新显卡驱动后重启软件即可恢复(本提示只报一次)");
+                    }
+                }
             }
-            finally { gate.Release(); }
+            finally { keyGate.Release(); }
         }
 
         var inputs = new[] { NamedOnnxValue.CreateFromTensor(inputName, inputTensor) };
@@ -779,20 +952,26 @@ public static class EsrganOnnxService
                     try { results = session.Run(inputs); }
                     finally { gate!.Release(); }
                 }
-                // GPU 真跑成功 → 清零连击:偶发抖动不该累积成"设备不可用"
-                if (gpuId >= 0) ClearDmlStrikes(gpuId);
+                // 【C-4 ④】只有会话确实跑在 DirectML 上,才算"GPU 真跑成功":CPU 会话成功不能清零 GPU 设备的连击
+                if (dmlSession) ClearDmlStrikes(dmDevice);
             }
-            catch (Exception ex) when (gpuId >= 0)
+            catch (Exception ex) when (dmlSession)
             {
                 // 【熔断必须写在早退之前】设备级失效要在任何分支之前记上:视频超分走的正是下面的 sessionOverride
                 // 早退分支,熔断写在它后面就一次都记不上 → 每帧都重演"注定失败的 DML 尝试 + 新建 CPU 会话 + CPU 推理"
                 // (诊断包里 240 帧跑几小时、4 个线程反复报 887A 的直接原因)。
                 bool persistent = AlhPro.Core.GpuFault.IsPersistentDeviceError(ex);
-                if (persistent) TripDmlDead(gpuId, ex);
+                if (persistent) TripDmlDead(dmDevice, ex);
 
                 // 并行路径(sessionOverride):独立会话,失败直接抛出(上层按帧/批次降级),不进入缓存 key 回退
                 if (sessionOverride != null)
                 {
+                    // 【C-2 附带修复】原先这条分支直接抛,连击表一次都不写 → 一块真坏掉的 DML 设备会被【逐帧】
+                    // 白试(每帧一次注定失败的推理 + 每帧一条同样的日志)。现在把失败记在【真实 DML 号】上:
+                    // 连吃 3 次后调用方(VideoService 的 AnyDmlDeviceUnusable)会让整批立即停手、按批次回退源帧。
+                    if (NoteDmlTransientFailure(dmDevice))
+                        AppLogger.Warn($"⚠ ONNX 超分:DirectML 设备 {dmDevice} 连续 {DmlTransientStrikes} 次推理失败,本进程内视为不可用——"
+                            + "剩余帧按批次回退源帧(不降级到慢速 CPU);请重启软件后重试");
                     throw new InvalidOperationException($"ONNX 超分失败(并行会话): {ex.Message}", ex);
                 }
                 // 设备级失效:单图/分块路径也不落 CPU。设备已被摘除,后续每块必然再失败,而"每块一次 CPU 推理"
@@ -812,10 +991,10 @@ public static class EsrganOnnxService
                 // 于是【一次】瞬时失败就让此后整个进程的每张图都跑 CPU(大图分块 × 每块一次 CPU 推理 = 单张十几分钟、
                 // 批量几小时,只有重启能解)。保留闩锁里"不重复注定失败调用"的那半(见 RunTile 开头的快速失败),
                 // 去掉的是"转 CPU"这个落点。
-                if (NoteDmlTransientFailure(gpuId))
+                if (NoteDmlTransientFailure(dmDevice))
                 {
                     throw new InvalidOperationException(
-                        $"ONNX 超分失败:GPU(DirectML 设备 {gpuId})已连续 {DmlTransientStrikes} 次推理失败,"
+                        $"ONNX 超分失败:GPU(DirectML 设备 {dmDevice})已连续 {DmlTransientStrikes} 次推理失败,"
                         + "已停止尝试(不降级到慢速 CPU)。请重启软件后重试;若反复出现,多为显存不足或驱动问题——"
                         + "建议关闭其他占用显存的程序并更新显卡驱动。\n--\n" + ex.Message, ex);
                 }
@@ -836,34 +1015,53 @@ public static class EsrganOnnxService
             if (dims.Length != 4 || dims[1] != 3)
                 throw new InvalidOperationException($"ONNX 输出形状异常: {string.Join("x", dims.ToArray())}");
             int oH = dims[2], oW = dims[3];
+            // 【C-1】输出尺寸正负/上界校验(与 RIFE 侧 RifeOnnxService.RunSingle 同款守卫):
+            // 非正值会让 new Bitmap 抛出语义不明的异常,超大值直接 OOM —— 这里给一条能定位"模型/输入尺寸"的明确错误。
+            if (oW <= 0 || oH <= 0 || oW > 16384 || oH > 16384)
+                throw new InvalidOperationException($"ONNX 输出尺寸异常({oW}×{oH},输入 {inW}×{inH}),模型输出异常,无法落图");
 
             var dst = new System.Drawing.Bitmap(oW, oH, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
-            var rect = new System.Drawing.Rectangle(0, 0, oW, oH);
-            var data = dst.LockBits(rect, System.Drawing.Imaging.ImageLockMode.WriteOnly,
-                System.Drawing.Imaging.PixelFormat.Format24bppRgb);
             try
             {
-                unsafe
+                var rect = new System.Drawing.Rectangle(0, 0, oW, oH);
+                var data = dst.LockBits(rect, System.Drawing.Imaging.ImageLockMode.WriteOnly,
+                    System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+                try
                 {
-                    var ptr = (byte*)data.Scan0.ToPointer();
-                    int stride = data.Stride;
-                    for (int y = 0; y < oH; y++)
+                    unsafe
                     {
-                        for (int x = 0; x < oW; x++)
+                        var ptr = (byte*)data.Scan0.ToPointer();
+                        int stride = data.Stride;
+                        for (int y = 0; y < oH; y++)
                         {
-                            int idx = (y * oW + x);
-                            float r = outTensor[0, 0, y, x];
-                            float g = outTensor[0, 1, y, x];
-                            float b = outTensor[0, 2, y, x];
-                            byte* px = ptr + y * stride + x * 3;
-                            px[0] = (byte)Math.Clamp((int)Math.Round(b * 255f), 0, 255);
-                            px[1] = (byte)Math.Clamp((int)Math.Round(g * 255f), 0, 255);
-                            px[2] = (byte)Math.Clamp((int)Math.Round(r * 255f), 0, 255);
+                            for (int x = 0; x < oW; x++)
+                            {
+                                float r = outTensor[0, 0, y, x];
+                                float g = outTensor[0, 1, y, x];
+                                float b = outTensor[0, 2, y, x];
+                                // 【C-1 数值防线】NaN/±Inf 经 (int)Math.Round(b*255f) 在 .NET 8/x64 得 int.MinValue,
+                                // Clamp(...,0,255) 之后 = 0 = 纯黑:而"部分块变黑"既不满足 IsBlackPng 的"≥95% 近黑",
+                                // 图片页更是完全没有判黑兜底 → 黑块会静默进成图/成片且日志无痕。
+                                // 这里按"该帧作废"抛出,交给既有降级链(整图/该帧回退源帧缩放,尺寸与正常输出一致)。
+                                if (float.IsNaN(r) || float.IsInfinity(r) || float.IsNaN(g) || float.IsInfinity(g)
+                                    || float.IsNaN(b) || float.IsInfinity(b))
+                                    throw new InvalidOperationException(
+                                        $"ONNX 超分输出含 NaN/Inf(数值异常,输出 {oW}×{oH}),该帧结果无效");
+                                byte* px = ptr + y * stride + x * 3;
+                                px[0] = (byte)Math.Clamp((int)Math.Round(b * 255f), 0, 255);
+                                px[1] = (byte)Math.Clamp((int)Math.Round(g * 255f), 0, 255);
+                                px[2] = (byte)Math.Clamp((int)Math.Round(r * 255f), 0, 255);
+                            }
                         }
                     }
                 }
+                finally { dst.UnlockBits(data); }
             }
-            finally { dst.UnlockBits(data); }
+            catch
+            {
+                dst.Dispose();   // 【不泄漏】异常路径的 GDI+ 位图:视频路径一帧一次失败会一路累积到 GC 回收
+                throw;
+            }
             return dst;
         }
         finally
