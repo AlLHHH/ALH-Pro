@@ -135,7 +135,8 @@ public static partial class EngineService
                         return idx;
             }
             catch { }
-            // ② DXGI 不可用(罕见):回退注册表名匹配(≈DXGI 序)
+            // ② DXGI 不可用(罕见):回退注册表名匹配(≈DXGI 序)——【风险路径】注册表序可能与 DirectML 序相反,
+            // 双卡机上会把 NVIDIA 映射到核显号。明确留痕,便于诊断包定位"选独显跑核显"。
             try
             {
                 var names = GpuInfo.GetAdapterNames();
@@ -143,7 +144,11 @@ public static partial class EngineService
                     if (names[i].Equals(want.Name, StringComparison.OrdinalIgnoreCase)
                         || names[i].Contains(want.Name, StringComparison.OrdinalIgnoreCase)
                         || want.Name.Contains(names[i], StringComparison.OrdinalIgnoreCase))
+                    {
+                        AppLogger.Warn($"⚠ 设备映射:DXGI 枚举不可用,已回退【注册表序】匹配——引擎编号 {engineGpu}({want.Name}) → 注册表#{i}。" +
+                            $"注册表序可能与 DirectML 设备号序相反(双卡机常见),若出现'选独显却跑核显'请把本行发作者。DXGI错误={LastDxgiError}");
                         return i;
+                    }
             }
             catch { }
             // ③ 匹配不到:落 CPU(宁可慢不跑错卡)
@@ -216,6 +221,7 @@ public static partial class EngineService
             }
             if (devs.Count == 0) sb.Append("(引擎未枚举)");
             sb.Append("] DML探测首可用=#").Append(EsrganOnnxService.DmlFallbackOk);
+            if (!string.IsNullOrEmpty(LastDxgiError)) sb.Append(" DXGI失败原因=").Append(LastDxgiError);
         }
         catch (Exception ex) { sb.Append("(诊断失败:").Append(ex.Message).Append(')'); }
         return sb.ToString();
@@ -297,6 +303,14 @@ public static partial class EngineService
     {
         var list = new System.Collections.Generic.List<(int, string, long)>();
         LastDxgiError = "";
+        // ① 首选 COM interop(csproj 已开 BuiltInComInteropSupport=true):DXGI 真枚举,索引 = DirectML 设备号
+        try
+        {
+            var viaCom = TryEnumerateDxgiAdaptersCom();
+            if (viaCom.Count > 0) return viaCom;
+        }
+        catch (Exception ex) { LastDxgiError = "COM方式:" + ex.GetType().Name + "(" + ex.Message.Split('\n')[0] + ")"; }
+        // ② 兜底:vtable 手动调用(不依赖 COM interop 开关)
         IntPtr factoryPtr = IntPtr.Zero;
         try
         {
@@ -330,8 +344,36 @@ public static partial class EngineService
         }
         catch (Exception ex)
         {
-            LastDxgiError = ex.GetType().Name + ": " + ex.Message.Split('\n')[0];
+            LastDxgiError = (LastDxgiError.Length > 0 ? LastDxgiError + " | " : "") + "vtable:" + ex.GetType().Name + ": " + ex.Message.Split('\n')[0];
         }
+        return list;
+    }
+
+    /// <summary>COM interop 方式的 DXGI 枚举(需 csproj BuiltInComInteropSupport=true)。
+    /// 这是官方支持的路径;vtable 方式作为不依赖该开关的兜底。</summary>
+    private static System.Collections.Generic.List<(int Index, string Name, long Luid)> TryEnumerateDxgiAdaptersCom()
+    {
+        var list = new System.Collections.Generic.List<(int, string, long)>();
+        var riid = new System.Guid("770aae78-f26f-4dba-a829-253c83d1b387");   // IDXGIFactory1
+        if (CreateDXGIFactory1(ref riid, out var factoryPtr) != 0 || factoryPtr == IntPtr.Zero) return list;
+        var factory = (IDXGIFactory1)System.Runtime.InteropServices.Marshal.GetObjectForIUnknown(factoryPtr);
+        try
+        {
+            for (uint i = 0; ; i++)
+            {
+                if (factory.EnumAdapters1(i, out var adapter) != 0 || adapter == null) break;
+                try
+                {
+                    if (adapter.GetDesc1(out var desc) == 0)
+                    {
+                        var name = desc.Description != null ? new string(desc.Description).TrimEnd('\0', ' ') : "";
+                        if (name.Length > 0) list.Add(((int)i, name, desc.AdapterLuid));
+                    }
+                }
+                finally { System.Runtime.InteropServices.Marshal.ReleaseComObject(adapter); }
+            }
+        }
+        finally { System.Runtime.InteropServices.Marshal.ReleaseComObject(factory); }
         return list;
     }
 

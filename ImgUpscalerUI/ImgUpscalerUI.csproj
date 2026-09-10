@@ -4,6 +4,12 @@
         <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>        <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
         <OutputType>WinExe</OutputType>
 
+        <!-- 【关键修复】.NET 5+ 默认关闭 built-in COM interop,导致 Marshal.GetObjectForIUnknown 抛
+             PlatformNotSupportedException → DXGI 适配器枚举永远失败 → ToDmlDevice 只能回退"注册表序"名匹配,
+             而双卡机上注册表序与 DirectML 设备号序相反 → 引擎编号 0(NVIDIA) 被映射到核显号 → "选独显却跑核显"。
+             开启后 DXGI 真枚举可用(ToDmlDevice 按名字匹配才正确)。同时代码里另有不依赖本开关的 vtable 方式兜底。 -->
+        <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+
         <!-- WinUI 3 -->
         <UseWinUI>true</UseWinUI>
         <EnableMsixTooling>true</EnableMsixTooling>
