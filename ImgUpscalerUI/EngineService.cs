@@ -128,11 +128,23 @@ public static partial class EngineService
             // ① DXGI 真枚举:名匹配 → DirectML 设备号(顺序=DXGI,与注册表可能不同)
             try
             {
-                foreach (var (idx, name, _) in TryEnumerateDxgiAdapters())
+                var dxAdapters = TryEnumerateDxgiAdapters();
+                foreach (var (idx, name, _, _) in dxAdapters)
                     if (name.Equals(want.Name, StringComparison.OrdinalIgnoreCase)
                         || name.Contains(want.Name, StringComparison.OrdinalIgnoreCase)
                         || want.Name.Contains(name, StringComparison.OrdinalIgnoreCase))
                         return idx;
+                // ①b 名字没命中 → 用【显存】可靠识别独显(独显 GB 级,核显只有几十~几百 MB):完全不依赖名字,
+                //     这样"选独显"时即使名字格式有差异也一定落到真独显。这是"锁定用独显"的最后一道可靠保险。
+                if (dxAdapters.Count > 0 && !AlhPro.Core.GpuName.IsIntegrated(want.Name))
+                {
+                    var biggest = dxAdapters.OrderByDescending(a => a.Vram).First();
+                    if (biggest.Vram > 1073741824L)   // >1GB = 独显级(核显 DedicatedVideoMemory 通常只有几十~几百 MB)
+                    {
+                        AppLogger.Info($"设备映射:引擎 {engineGpu}({want.Name}) 名字未命中 DXGI 表,已按【显存最大】定位独显 → DXGI#{biggest.Index}({biggest.Name},{biggest.Vram / 1073741824.0:0.#}GB)");
+                        return biggest.Index;
+                    }
+                }
             }
             catch { }
             // ② DXGI 不可用(罕见):回退注册表名匹配(≈DXGI 序)——【风险路径】注册表序可能与 DirectML 序相反,
@@ -299,9 +311,9 @@ public static partial class EngineService
     /// 失败原因写入 lastDxgiError 供诊断包定位(不再静默吞掉)。</summary>
     public static string LastDxgiError { get; private set; } = "";
 
-    private static System.Collections.Generic.List<(int Index, string Name, long Luid)> TryEnumerateDxgiAdapters()
+    private static System.Collections.Generic.List<(int Index, string Name, long Luid, long Vram)> TryEnumerateDxgiAdapters()
     {
-        var list = new System.Collections.Generic.List<(int, string, long)>();
+        var list = new System.Collections.Generic.List<(int, string, long, long)>();
         LastDxgiError = "";
         // ① 首选 COM interop(csproj 已开 BuiltInComInteropSupport=true):DXGI 真枚举,索引 = DirectML 设备号
         try
@@ -332,7 +344,7 @@ public static partial class EngineService
                     if (getDesc1(adapterPtr, out var desc) == 0)
                     {
                         var name = desc.Description != null ? new string(desc.Description).TrimEnd('\0', ' ') : "";
-                        if (name.Length > 0) list.Add(((int)i, name, desc.AdapterLuid));
+                        if (name.Length > 0) list.Add(((int)i, name, desc.AdapterLuid, desc.DedicatedVideoMemory));
                     }
                 }
                 finally
@@ -351,9 +363,9 @@ public static partial class EngineService
 
     /// <summary>COM interop 方式的 DXGI 枚举(需 csproj BuiltInComInteropSupport=true)。
     /// 这是官方支持的路径;vtable 方式作为不依赖该开关的兜底。</summary>
-    private static System.Collections.Generic.List<(int Index, string Name, long Luid)> TryEnumerateDxgiAdaptersCom()
+    private static System.Collections.Generic.List<(int Index, string Name, long Luid, long Vram)> TryEnumerateDxgiAdaptersCom()
     {
-        var list = new System.Collections.Generic.List<(int, string, long)>();
+        var list = new System.Collections.Generic.List<(int, string, long, long)>();
         var riid = new System.Guid("770aae78-f26f-4dba-a829-253c83d1b387");   // IDXGIFactory1
         if (CreateDXGIFactory1(ref riid, out var factoryPtr) != 0 || factoryPtr == IntPtr.Zero) return list;
         var factory = (IDXGIFactory1)System.Runtime.InteropServices.Marshal.GetObjectForIUnknown(factoryPtr);
@@ -367,7 +379,7 @@ public static partial class EngineService
                     if (adapter.GetDesc1(out var desc) == 0)
                     {
                         var name = desc.Description != null ? new string(desc.Description).TrimEnd('\0', ' ') : "";
-                        if (name.Length > 0) list.Add(((int)i, name, desc.AdapterLuid));
+                        if (name.Length > 0) list.Add(((int)i, name, desc.AdapterLuid, desc.DedicatedVideoMemory));
                     }
                 }
                 finally { System.Runtime.InteropServices.Marshal.ReleaseComObject(adapter); }
