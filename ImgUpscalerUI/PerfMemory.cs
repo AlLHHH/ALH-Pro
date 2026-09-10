@@ -10,8 +10,14 @@ namespace ALHPro;
 /// </summary>
 public static class PerfMemory
 {
+    /// <summary>记账口径版本。2 = 只记"处理阶段"(拆帧/去重/补帧/超分/后处理),排除编码与封装。
+    /// 旧记录(无此字段)把编码耗时也算成"每帧推理成本"(实测 7.04 秒/帧 vs 实际 0.24 秒/帧,
+    /// 偏差 29 倍),拿它当初始 ETA 会一路虚高,所以只认当前口径的记录。</summary>
+    private const int SchemaVersion = 2;
+
     private sealed class Entry
     {
+        public int Schema { get; set; }          // 写入时的记账口径版本(旧文件无此字段=0)
         public double Seconds { get; set; }      // 最近一次实测耗时
         public int Frames { get; set; }          // 处理的视频总帧数
         public DateTime At { get; set; }         // 记录时间
@@ -34,6 +40,10 @@ public static class PerfMemory
                     ?? new Dictionary<string, Entry>();
             else
                 _cache = new Dictionary<string, Entry>();
+            // 口径不匹配的旧条目直接丢弃(不采用):它们含编码/封装耗时,与当前"纯处理阶段"不同口径,
+            // 混用会把初始 ETA 带飞。丢弃后由下一次 Save 顺手从文件里清掉,无需手工迁移。
+            foreach (var k in _cache.Where(kv => kv.Value.Schema != SchemaVersion).Select(kv => kv.Key).ToList())
+                _cache.Remove(k);
         }
         catch { _cache = new Dictionary<string, Entry>(); }
         return _cache;
@@ -72,7 +82,9 @@ public static class PerfMemory
         return null;
     }
 
-    /// <summary>记录一次实测耗时(帧数 = 处理视频总帧数,areaN = 面积归一倍数)。</summary>
+    /// <summary>记录一次实测耗时(帧数 = 处理视频总帧数,areaN = 面积归一倍数)。
+    /// 【seconds 必须是"处理阶段"耗时】:调用方需先扣掉编码/封装(见 VideoView 的 encSeconds),
+    /// 否则编码会被当成每帧推理成本记下来,污染后续初始 ETA。</summary>
     public static void Record(string key, double seconds, int frames, double areaN)
     {
         try
@@ -84,6 +96,7 @@ public static class PerfMemory
             {
                 map[key] = new Entry
                 {
+                    Schema = SchemaVersion,
                     Seconds = seconds,
                     Frames = frames,
                     At = DateTime.Now,

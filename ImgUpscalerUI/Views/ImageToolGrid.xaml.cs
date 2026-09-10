@@ -678,8 +678,16 @@ public sealed partial class ImageToolGrid : UserControl
         Canvas.SetLeft(CropInfo, 8);
         Canvas.SetTop(CropInfo, 8);
         var bmp = new BitmapImage(new Uri(_cropItem.Path));
+        // 【框选基准】必须用"预览显示方向"的尺寸:BitmapImage(WIC)按 EXIF 旋转绘制,竖拍(方向 6/8)照片
+        // 会被宽高对调显示,但它报的 PixelWidth/PixelHeight 是旋转前的存储尺寸 —— 拿它算比例会把绘制区
+        // 转置:可拖区域伸到图片外的空白处、图片却在画布中间、起点/尺寸也对不上(框选实际不可用)。
+        // item.PixelWidth/Height 在导入时已按同一套 EXIF 归一(AddImagesAsync),两处必须同一基准。
+        var dispW = _cropItem.PixelWidth;
+        var dispH = _cropItem.PixelHeight;
         bmp.ImageOpened += (_, _) =>
-            _cropImgSize = (bmp.PixelWidth, bmp.PixelHeight);
+            _cropImgSize = dispW > 0 && dispH > 0
+                ? ((double)dispW, (double)dispH)                    // 显示方向尺寸(与 CropImage 实际绘制一致)
+                : ((double)bmp.PixelWidth, (double)bmp.PixelHeight); // 兜底:导入时尺寸读取失败 → 按未旋转处理
         CropImage.Source = bmp;
     }
 
@@ -817,6 +825,10 @@ public sealed partial class ImageToolGrid : UserControl
 
             // 替换预览(原文件保留),静默完成,不弹提示
             item.Path = newPath;
+            // 产物是 w×h 的 PNG(无 EXIF):同步尺寸,否则在这张裁剪结果上再次裁剪时,
+            // 框选基准还是旧图尺寸 → 同一个"选不中图片"的问题会复发
+            item.PixelWidth = w;
+            item.PixelHeight = h;
             item.Name = Path.GetFileName(newPath) + " (裁剪)";
             item.CustomName = "";
             item.Info = $"裁剪 {w}×{h}";
