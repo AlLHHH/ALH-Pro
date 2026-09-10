@@ -134,7 +134,17 @@ public static partial class EngineService
                         || name.Contains(want.Name, StringComparison.OrdinalIgnoreCase)
                         || want.Name.Contains(name, StringComparison.OrdinalIgnoreCase))
                         return idx;
-                // ①b 名字没命中 → 用【显存】可靠识别独显(独显 GB 级,核显只有几十~几百 MB):完全不依赖名字,
+                // ①b 官方 GPU 偏好(最权威):Windows 自己判定"高性能独显 / 省电核显",取其在默认顺序里的索引。
+                //     完全不依赖名字格式与注册表顺序 —— 这是"选独显就一定用独显"的关键兜底。
+                bool wantDiscrete = !AlhPro.Core.GpuName.IsIntegrated(want.Name);
+                int prefIdx = TryGetAdapterIndexByGpuPreference(wantDiscrete);
+                if (prefIdx >= 0)
+                {
+                    AppLogger.Info($"设备映射:引擎 {engineGpu}({want.Name}) 未命中 DXGI 名字表,已按 Windows 官方 GPU 偏好"
+                        + $"({(wantDiscrete ? "高性能·独显" : "省电·核显")}) → DXGI#{prefIdx}");
+                    return prefIdx;
+                }
+                // ①c 名字没命中 → 用【显存】可靠识别独显(独显 GB 级,核显只有几十~几百 MB):完全不依赖名字,
                 //     这样"选独显"时即使名字格式有差异也一定落到真独显。这是"锁定用独显"的最后一道可靠保险。
                 if (dxAdapters.Count > 0 && !AlhPro.Core.GpuName.IsIntegrated(want.Name))
                 {
@@ -233,6 +243,8 @@ public static partial class EngineService
             }
             if (devs.Count == 0) sb.Append("(引擎未枚举)");
             sb.Append("] DML探测首可用=#").Append(EsrganOnnxService.DmlFallbackOk);
+            sb.Append(" GPU偏好[高性能(独显)=#").Append(TryGetAdapterIndexByGpuPreference(true))
+              .Append(" 省电(核显)=#").Append(TryGetAdapterIndexByGpuPreference(false)).Append(']');
             if (!string.IsNullOrEmpty(LastDxgiError)) sb.Append(" DXGI失败原因=").Append(LastDxgiError);
         }
         catch (Exception ex) { sb.Append("(诊断失败:").Append(ex.Message).Append(')'); }
@@ -359,6 +371,114 @@ public static partial class EngineService
             LastDxgiError = (LastDxgiError.Length > 0 ? LastDxgiError + " | " : "") + "vtable:" + ex.GetType().Name + ": " + ex.Message.Split('\n')[0];
         }
         return list;
+    }
+
+    // ===== Windows 官方「GPU 偏好」API:IDXGIFactory6::EnumAdapterByGpuPreference =====
+    // 为什么用它:.NET/ncnn/DirectML 的多卡编号互不相同,靠"名字匹配"遇名字格式差异就失败,靠"注册表顺序"
+    // 更会错位(实测:注册表 [#0 AMD][#1 NVIDIA] 与引擎序相反)。而 **Windows 自己**知道哪张是"高性能独显"
+    // 哪张是"省电核显"(即"设置>系统>屏幕>显示卡"里那套判定),这是最权威的依据,DXGI_GPU_PREFERENCE:
+    // 1=MinimumPower(省电/核显) 2=HighPerformance(高性能/独显)。
+    // 参考:https://learn.microsoft.com/windows/win32/api/dxgi1_6/nf-dxgi1_6-idxgifactory6-enumadapterbygpupreference
+    // ⚠ 接口必须【按 vtable 顺序完整声明】:不调用的方法也用 IntPtr 占位,少一个就会槽位错位调错方法。
+    [System.Runtime.InteropServices.ComImport, System.Runtime.InteropServices.Guid("c1b6694f-ff09-44a9-b03c-77900a0a1d17"),
+     System.Runtime.InteropServices.InterfaceType(System.Runtime.InteropServices.ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IDXGIFactory6
+    {
+        // IDXGIObject
+        int SetPrivateData(ref Guid name, uint size, IntPtr data);
+        int SetPrivateDataInterface(ref Guid name, IntPtr obj);
+        int GetParent(ref Guid riid, out IntPtr parent);
+        // IDXGIFactory
+        int EnumAdapters(uint i, out IntPtr adapter);
+        int MakeWindowAssociation(IntPtr hwnd, uint flags);
+        int GetWindowAssociation(out IntPtr hwnd);
+        int CreateSwapChain(IntPtr device, IntPtr desc, out IntPtr sc);
+        int CreateSoftwareAdapter(IntPtr module, out IntPtr adapter);
+        // IDXGIFactory1
+        int EnumAdapters1(uint i, out IntPtr adapter);
+        int IsCurrent();
+        // IDXGIFactory2
+        int IsWindowedStereoEnabled();
+        int CreateSwapChainForHwnd(IntPtr d, IntPtr h, IntPtr desc, IntPtr fs, IntPtr rr, out IntPtr sc);
+        int CreateSwapChainForCoreWindow(IntPtr d, IntPtr w, IntPtr desc, IntPtr rr, out IntPtr sc);
+        int GetSharedResourceAdapterLuid(IntPtr hResource, out long luid);
+        int RegisterStereoStatusWindow(IntPtr w, uint msg, out uint cookie);
+        int RegisterStereoStatusEvent(IntPtr e, out uint cookie);
+        int UnregisterStereoStatus(uint cookie);
+        int RegisterOcclusionStatusWindow(IntPtr w, uint msg, out uint cookie);
+        int RegisterOcclusionStatusEvent(IntPtr e, out uint cookie);
+        int UnregisterOcclusionStatus(uint cookie);
+        int CreateSwapChainForComposition(IntPtr d, IntPtr desc, IntPtr rr, out IntPtr sc);
+        // IDXGIFactory3
+        uint GetCreationFlags();
+        // IDXGIFactory4
+        int EnumAdapterByLuid(long luid, ref Guid riid, out IntPtr adapter);
+        int EnumWarpAdapter(ref Guid riid, out IntPtr adapter);
+        // IDXGIFactory5
+        int CheckFeatureSupport(int feature, IntPtr data, uint size);
+        // IDXGIFactory6 ← 目标方法
+        int EnumAdapterByGpuPreference(uint adapter, int gpuPreference, ref Guid riid, out IntPtr ppAdapter);
+    }
+
+    private const int DxgiGpuPreferenceMinimumPower = 1;    // 省电(通常=核显)
+    private const int DxgiGpuPreferenceHighPerformance = 2; // 高性能(通常=独显)
+
+    /// <summary>用 Windows 官方 GPU 偏好 API,取"高性能独显 / 省电核显"在【默认 DXGI 顺序】里的索引
+    /// (该索引即 ONNX Runtime DirectML 的 device_id)。失败返回 -1。
+    /// 这是"选独显就用独显"的最权威依据:由 Windows 判定,完全不依赖名字匹配或注册表顺序。</summary>
+    public static int TryGetAdapterIndexByGpuPreference(bool discrete)
+    {
+        IntPtr factoryPtr = IntPtr.Zero;
+        try
+        {
+            var iidF1 = new System.Guid("770aae78-f26f-4dba-a829-253c83d1b387");   // IDXGIFactory1
+            if (CreateDXGIFactory1(ref iidF1, out factoryPtr) != 0 || factoryPtr == IntPtr.Zero) return -1;
+            IDXGIFactory6 f6;
+            try
+            {
+                var f1 = (IDXGIFactory1)System.Runtime.InteropServices.Marshal.GetObjectForIUnknown(factoryPtr);
+                f6 = (IDXGIFactory6)f1;   // QI:同对象拿更全 vtable(Win10 1803+ 才有 IDXGIFactory6)
+            }
+            catch { return -1; }
+            try
+            {
+                var iidA1 = new System.Guid("29038f61-3839-4626-91fd-086879011a05");   // IDXGIAdapter1
+                int pref = discrete ? DxgiGpuPreferenceHighPerformance : DxgiGpuPreferenceMinimumPower;
+                if (f6.EnumAdapterByGpuPreference(0, pref, ref iidA1, out var prefAdPtr) != 0 || prefAdPtr == IntPtr.Zero)
+                    return -1;
+                long prefLuid;
+                try
+                {
+                    var ad = (IDXGIAdapter1)System.Runtime.InteropServices.Marshal.GetObjectForIUnknown(prefAdPtr);
+                    try
+                    {
+                        if (ad.GetDesc1(out var d) != 0) return -1;
+                        prefLuid = d.AdapterLuid;
+                    }
+                    finally { System.Runtime.InteropServices.Marshal.ReleaseComObject(ad); }
+                }
+                finally { System.Runtime.InteropServices.Marshal.Release(prefAdPtr); }
+                // 在【默认顺序】里按 LUID 找它的索引(ORT DirectML 的 device_id = 默认顺序索引)
+                for (uint i = 0; ; i++)
+                {
+                    if (f6.EnumAdapters1(i, out var aPtr) != 0 || aPtr == IntPtr.Zero) break;
+                    try
+                    {
+                        var a = (IDXGIAdapter1)System.Runtime.InteropServices.Marshal.GetObjectForIUnknown(aPtr);
+                        try { if (a.GetDesc1(out var d2) == 0 && d2.AdapterLuid == prefLuid) return (int)i; }
+                        finally { System.Runtime.InteropServices.Marshal.ReleaseComObject(a); }
+                    }
+                    finally { System.Runtime.InteropServices.Marshal.Release(aPtr); }
+                }
+                return -1;
+            }
+            finally { System.Runtime.InteropServices.Marshal.ReleaseComObject(f6); }
+        }
+        catch (Exception ex)
+        {
+            LastDxgiError = (LastDxgiError.Length > 0 ? LastDxgiError + " | " : "") + "gpuPref:" + ex.GetType().Name;
+            return -1;
+        }
     }
 
     /// <summary>COM interop 方式的 DXGI 枚举(需 csproj BuiltInComInteropSupport=true)。
