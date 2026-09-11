@@ -1903,23 +1903,33 @@ public static partial class EngineService
         try { if (File.Exists(output)) File.Delete(output); } catch { }
         try { if (File.Exists(output + ".png")) File.Delete(output + ".png"); } catch { }
 
-        // 1x 超分(2x 放大后缩回):内部先按"可用上限倍率"超分,再把结果精确缩回 1x,画质比直接 1x 更好。
+        // 1x 超分(放大后缩回):内部先按"可用上限倍率"超分,再把结果精确缩回【源图尺寸】,画质比直接 1x 更好。
         // 注意:照片模型 realesrgan-x4plus 只有 4x 权重(-s 2 会拿 4x 模型硬缩=模糊/伪影),
         // 故 realesrgan 的 1x 超分中间倍率用 4x(4x→缩 0.25=原尺寸);waifu2x 用 2x。
-        if (upscaleShrink1x && scale <= 1.001)
+        // 【修"静默错尺寸"】原条件写成 `upscaleShrink1x && scale <= 1.001`,只在"调用方传 1"时成立;
+        // 而图片页现在传的是 2(EngineScaleOf:1x超分也要真 2x 放大再缩回)——条件恒假,于是 ncnn 路径的
+        // 1x 超分【直接输出了 2x 尺寸】,界面与预设却都写着"输出仍 1x",全程不报错。
+        // 改为:只要 upscaleShrink1x 为真,就按引擎可用上限放大,再精确缩回源尺寸(不再依赖调用方传 1)。
+        if (upscaleShrink1x)
         {
             int upper = engine == "realesrgan" ? 4 : 2;
-            var tmp2x = output + ".tmp2x.png";
+            int useScale = scale > 1.001 ? Math.Max(upper, (int)Math.Round(scale)) : upper;
+            int srcW = 0, srcH = 0;
+            try { using var probe = new System.Drawing.Bitmap(input); srcW = probe.Width; srcH = probe.Height; } catch { }
+            var tmpUp = output + ".tmp1x.png";
             try
             {
-                await UpscaleAsync(input, tmp2x, engine, model, upper, noise, gpuId, tta,
+                await UpscaleAsync(input, tmpUp, engine, model, useScale, noise, gpuId, tta,
                     progress, ct, tileSize, allowTiling).ConfigureAwait(false);
-                await Task.Run(() => ResizeImage(tmp2x, output, 1.0 / upper), ct).ConfigureAwait(false);
+                if (srcW > 0 && srcH > 0)
+                    await Task.Run(() => ResizeImageTo(tmpUp, output, srcW, srcH), ct).ConfigureAwait(false);
+                else
+                    await Task.Run(() => ResizeImage(tmpUp, output, 1.0 / useScale), ct).ConfigureAwait(false);
                 return output;
             }
             finally
             {
-                try { File.Delete(tmp2x); } catch { /* 清理失败忽略 */ }
+                try { File.Delete(tmpUp); } catch { /* 清理失败忽略 */ }
             }
         }
 
