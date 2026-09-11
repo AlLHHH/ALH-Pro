@@ -587,7 +587,7 @@ public static class VulkanCheck
         if (amdDedicated)
             notes.Add("AMD 独显:Vulkan 驱动差异较大,若处理中出现黑屏/崩溃会自动改用 ONNX DirectML 或 CPU,无需手动设置");
         if (amdIgpu || (intelIgpu && !amdDedicated))
-            notes.Add("核显使用共享内存,处理大图或高倍率时可能显存不足,建议勾选「快速模式」或改用 CPU");
+            notes.Add("核显使用共享内存,处理大图或高倍率时可能显存不足,建议勾选「兼容模式」或改用 CPU");
         if (intelArc)
             notes.Add("Intel Arc 独显:支持 GPU 加速,驱动较新时稳定;个别旧驱动需更新后再试");
 
