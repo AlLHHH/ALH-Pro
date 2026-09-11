@@ -499,15 +499,9 @@ public static class VideoService
             // 比 nlmeans 更对症 —— 这种情况下把强度交给模型的 -n(见超分调用处),这里就不再叠一层 nlmeans,
             // 避免"双重平滑更糊 + 双重耗时"。
             bool denoiseViaModel = doUpscale && engine == "waifu2x";
-            if (videoDenoise >= 1 && !denoiseViaModel)
-            {
-                scaleVf = $"{VideoDenoiseFilter(videoDenoise)},{scaleVf}";
-                AppLogger.Info($"视频降噪:拆帧阶段应用 {VideoDenoiseFilter(videoDenoise)}(源分辨率;调色/超分前)");
-            }
-            else if (videoDenoise >= 1 && denoiseViaModel)
-            {
+            bool nlmeansOn = videoDenoise >= 1 && !denoiseViaModel;
+            if (videoDenoise >= 1 && denoiseViaModel)
                 AppLogger.Info($"视频降噪:交由 waifu2x 引擎自带降噪档(-n {videoDenoise})处理(不叠 nlmeans,更对症且不额外耗时)");
-            }
             // ===== HDR / 广色域适配:源为 HDR(PQ/HLG)或宽色域(≠BT.709)→ 拆帧时转成 BT.709 SDR(避免偏色/掉信息),黄字提示 =====
             (string? hdrDesc, string? hdrVf) = await ProbeHdrToSdrAsync(inputVideo, ct);
             if (hdrVf != null)
@@ -515,6 +509,15 @@ public static class VideoService
                 scaleVf = $"{scaleVf},{hdrVf}";
                 AppLogger.Warn($"⚠ 检测到 HDR/广色域源({hdrDesc}):已自动转成 BT.709 标准 SDR 输出(避免偏色/掉信息)。");
                 progress?.Report((2, $"⚠ 检测到 HDR/广色域源,输出已转标准 SDR(避免偏色)"));
+            }
+            // 【降噪只加给"真正抽帧"的调用】scaleVf 同时被【内容帧率检测 / 时长表 / 转场检测】这些分析调用复用,
+            // 它们要解码大量帧;若带上全分辨率的 nlmeans,每个分析 pass 都要多花几十分钟(纯粹白干)。
+            // 所以另建 scaleVfDenoise:只在 ExtractFramesCoreAsync(真正落盘的抽帧)上用它,分析调用继续用 scaleVf。
+            var scaleVfDenoise = scaleVf;
+            if (nlmeansOn)
+            {
+                scaleVfDenoise = $"{VideoDenoiseFilter(videoDenoise)},{scaleVf}";
+                AppLogger.Info($"视频降噪:拆帧阶段应用 {VideoDenoiseFilter(videoDenoise)}(源分辨率、超分之前;分析类调用不带它)");
             }
             // 去重统计报告收集:记录各算法判定为重复而被删的帧号(1-based,相对删帧前的序列),
             // 供最终生成"哪个时间段重复最多"的报告;mpdecimate/scene 直接在拆帧滤镜里丢帧,
@@ -557,7 +560,7 @@ public static class VideoService
                         // 识别不出拍数(连续运动/无保持帧)或置信度不足:原样保留,一帧不删(不硬猜,与"连续运动闸"一致)
                         AppLogger.Info($"智能检测({defaultGateName}):未采用拍数识别({cfInfo.Summary},置信 {cfInfo.Confidence:0%})→ 原样保留(不删帧)");
                         progress?.Report((4, $"智能检测({defaultGateName}):{cfInfo.Summary},原样保留..."));
-                        frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs, scaleVf,
+                        frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs, scaleVfDenoise,
                             framesIn, progress, ct, origCountEst);
                         frameDurs = null;
                         effectiveFps = inFps;
@@ -570,7 +573,7 @@ public static class VideoService
                         double smartFc = Math.Clamp(cfInfo.Fps, 1.0, Math.Max(2.0, inFps));
                         double smartIv = inFps / smartFc;
                         progress?.Report((3, $"智能检测({defaultGateName}):内容帧率 ≈{smartFc:0.##} fps(拍型每 {smartIv:0.##} 帧,置信 {cfInfo.Confidence:0%})"));
-                        var (smartFc2, smartEff, smartSrc) = await RunSegmentContentFpsAsync(ffmpeg, inputVideo, trimArgs, scaleVf,
+                        var (smartFc2, smartEff, smartSrc) = await RunSegmentContentFpsAsync(ffmpeg, inputVideo, trimArgs, scaleVfDenoise,
                             framesIn, origCountEst, inFps, smartIv, 0.8, 0.4, $"智能-{smartFc:0.##}fps",
                             progress, ct, forceGrid: true, phaseAlign: phaseAlign);
                         frameCount = smartFc2;
@@ -593,7 +596,7 @@ public static class VideoService
                         // 动漫-全动画:不做节奏处理,原样输出(内容帧率=素材帧率)
                         progress?.Report((3, "动漫-全动画:不做节奏处理,原样输出..."));
                         frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs,
-                            scaleVf, framesIn, progress, ct, origCountEst);
+                            scaleVfDenoise, framesIn, progress, ct, origCountEst);
                         frameDurs = null;
                         effectiveFps = inFps;
                         progress?.Report((5, $"已拆出 {frameCount} 帧(全动画,不采样)"));
@@ -602,7 +605,7 @@ public static class VideoService
                     {
                         // 动漫-拍N:按档位间隔【网格抽帧】(一拍二=每2帧留1、一拍三=每3帧留1),
                         // 与像素相似度无关 → 重编码噪音保持帧也照样去除("选动漫1拍2不去重"修复)。
-                        var (fC, eff, srcA) = await RunSegmentContentFpsAsync(ffmpeg, inputVideo, trimArgs, scaleVf,
+                        var (fC, eff, srcA) = await RunSegmentContentFpsAsync(ffmpeg, inputVideo, trimArgs, scaleVfDenoise,
                             framesIn, origCountEst, inFps, userInterval, userTol, 0.4, modeNote,
                             progress, ct, forceGrid: true, phaseAlign: phaseAlign);
                         frameCount = fC;
@@ -617,7 +620,7 @@ public static class VideoService
                         throw new InvalidOperationException("内容帧率未填写:请先填写素材真实内容帧率(动漫素材可直接用「动漫模式」选一拍N)");
                     double userFc = Math.Clamp(contentFps, 1.0, Math.Max(2.0, inFps));
                     double uIv = inFps / userFc;
-                    var (fC2, eff2, srcB) = await RunSegmentContentFpsAsync(ffmpeg, inputVideo, trimArgs, scaleVf,
+                    var (fC2, eff2, srcB) = await RunSegmentContentFpsAsync(ffmpeg, inputVideo, trimArgs, scaleVfDenoise,
                         framesIn, origCountEst, inFps, uIv, 0.8, 0.4, $"手动-内容帧率 {userFc:0.##}fps",
                         progress, ct, forceGrid: true, phaseAlign: phaseAlign);
                     frameCount = fC2;
@@ -635,7 +638,7 @@ public static class VideoService
                     // 老版(用户认可的成果) = 全片自适应精确判据删"真重复帧" + 标准补帧,
                     // 不做转场切段、不做每段拍数识别——识别不出来的素材就按差值精确删,不硬猜。
                     progress?.Report((3, "去重:自适应检测(先算差异分布再自动定阈值)..."));
-                    frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs, scaleVf,
+                    frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs, scaleVfDenoise,
                         framesIn, progress, ct, origCountEst);
                     if (dedup || vfrPassthrough)
                         frameDurs = await BuildFrameDurationsAsync(ffmpeg, inputVideo, trimArgs, scaleVf, ct);
@@ -668,7 +671,7 @@ public static class VideoService
                     // 手动-帧差+SSIM 精确去重:用户自由阈值
                     progress?.Report((3, "去重:帧差初筛 + SSIM 精确验证(手动参数)..."));
                     frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs,
-                        scaleVf, framesIn, progress, ct, origCountEst);
+                        scaleVfDenoise, framesIn, progress, ct, origCountEst);
                     if (dedup || vfrPassthrough)
                         frameDurs = await BuildFrameDurationsAsync(ffmpeg, inputVideo, trimArgs, scaleVf, ct);
                     // 【修复】重CPU去重丢后台线程(原先同步调用会冻结UI线程);与 L685 同风格
@@ -705,7 +708,7 @@ public static class VideoService
                     var dedupVf = $"mpdecimate=hi=64*{Math.Clamp(dedupHi, 4, 24)}:lo=64*{Math.Clamp(dedupLo, 2, 10)}:frac={Math.Clamp(dedupFrac, 0.1, 0.6):0.##}";
                     progress?.Report((3, "去重:检测重复帧(mpdecimate)..."));
                     frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs,
-                        $"{dedupVf},{scaleVf}", framesIn, progress, ct, origCountEst);
+                        $"{dedupVf},{scaleVfDenoise}", framesIn, progress, ct, origCountEst);
                     if (dedup || vfrPassthrough)
                         frameDurs = await BuildFrameDurationsAsync(ffmpeg, inputVideo, trimArgs, $"{dedupVf},{scaleVf}", ct);
                     // 保留帧源号:滤镜内丢帧,用 metadata=print 探测(同滤镜确定性输出);失败→null→回退标准补帧
@@ -774,7 +777,7 @@ public static class VideoService
                         ? "去重:自适应检测(先算差异分布再自动定阈值)..."
                         : "去重:帧差初筛 + SSIM 精确验证(手动参数)..."));
                     frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs,
-                        scaleVf, framesIn, progress, ct, origCountEst);
+                        scaleVfDenoise, framesIn, progress, ct, origCountEst);
                     if (dedup || vfrPassthrough)
                         frameDurs = await BuildFrameDurationsAsync(ffmpeg, inputVideo, trimArgs, scaleVf, ct);
                     // 逐帧检测(全帧解码小图+SAD/SSIM,CPU 重活)→ 后台线程,防拆帧后卡 UI
@@ -811,9 +814,11 @@ public static class VideoService
                 if (!dedup) dedupThr = 0;
                 else if (dedupMode == 3) dedupThr = Math.Clamp(dedupThreshold, 0.001, 0.5);   // 手动-scene:滑条
                 else dedupThr = 0.005;                                                         // 兜底:默认 0.005
-                string sceneVf = $"{(dedup ? $"select='eq(n,0)+gt(scene,{dedupThr.ToString("0.###", inv)})'," : "")}{scaleVf}";
+                string sceneSelect = dedup ? $"select='eq(n,0)+gt(scene,{dedupThr.ToString("0.###", inv)})'," : "";
+                string sceneVf = $"{sceneSelect}{scaleVf}";                  // 分析用(时长表/帧号探测:不带降噪,纯解码即可)
+                string sceneVfDenoise = $"{sceneSelect}{scaleVfDenoise}";    // 真正抽帧用(带降噪,与其它抽帧路径一致)
                 frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs,
-                    sceneVf, framesIn, progress, ct, origCountEst);
+                    sceneVfDenoise, framesIn, progress, ct, origCountEst);
                 if (dedup || vfrPassthrough)
                     frameDurs = await BuildFrameDurationsAsync(ffmpeg, inputVideo, trimArgs, sceneVf, ct);
                 // 保留帧源号:scene 滤镜内丢帧,用 metadata=print 探测(纯 select,不含 fps/scale——真实保留数);
@@ -4191,14 +4196,14 @@ public static class VideoService
     /// <summary>分段内容帧率化包装:全量拆帧后按段处理(不逐帧判重)。userInterval&gt;0 = 用户声明的间隔
     /// (动漫档/手动值,段估计在容差内才采用);=0 = 纯自动(智能,按置信度门槛)。</summary>
     private static async Task<(int frameCount, double effectiveFps, System.Collections.Generic.List<int> srcIdx)> RunSegmentContentFpsAsync(string ffmpeg,
-        string inputVideo, string trimArgs, string scaleVf, string framesIn, int origCountEst,
+        string inputVideo, string trimArgs, string scaleVfDenoise, string framesIn, int origCountEst,
         double inFps, double userInterval, double userTol, double autoConf, string modeNote,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct, bool forceGrid = false, bool phaseAlign = true)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         progress?.Report((3, $"{modeNote}:全量拆帧 + 去重(整片统一判定;随后展开时间轴+标准补帧)..."));
         int frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs,
-            scaleVf, framesIn, progress, ct, origCountEst);
+            scaleVfDenoise, framesIn, progress, ct, origCountEst);
         // 用户定案:去重线【不分段】——分段(转场切段)只会把"全场等距"打成"段间有落差"
         // → 被迫走补缺慢路+段间不一致;去重=全片一个算法/网格(拍型/节奏是全局的)。
         // 「转场识别」仍独立(补帧时勾选才用),与去重互不干扰。
