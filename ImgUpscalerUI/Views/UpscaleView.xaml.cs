@@ -386,13 +386,15 @@ public sealed partial class UpscaleView : UserControl
     /// Scale 一律写【页面当前的 4 项单选索引】语义(0=1x超分,1=2x,2=3x,3=4x),与 ApplyImgSettings 的读法一致。
     /// 语义版本约定(Rev=0):早期版本写入的官方预设按"旧版五项"语义写 Scale(1=1x超分、3=3x),
     /// 与现在的读法【差一位】。Rev=1 是第一个携带正确倍率语义的基线,由 EnsureBuiltinImgPresets 覆盖纠正。
-    /// Rev=2(仅「清晰MAX」,其它项不动):倍率 3x → 4x、输出码率档 默认 → 超高。只提这一项的 Rev,
-    /// 所以「通用变清晰」不会被连带覆盖,用户对它的改动继续被尊重。</summary>
+    /// Rev=2(「清晰MAX」):倍率 3x → 4x(realesrgan-x4plus 权重原生就是 4x)、输出码率档 默认 → 超高。
+    /// Rev=2(「通用变清晰」):倍率 1x超分 → **2x**。理由:做 1x 时用户拿它跟「清晰MAX(4x)」比会觉得
+    ///   "糊/像没变化"——它压根没放大;而 2x 又正是 waifu2x 模型的原生倍率(直出、不必缩回),画质与速度都最优。
+    /// Rev 是【每个预设各自记】的(OfficialRev 存在预设里),两项都升到 2 互不影响;用户自建的预设一律不碰。</summary>
     private static (string Name, int Rev, Func<UpscaleSettings> Make)[] BuiltinImgPresets() => new[]
     {
-        ( "通用变清晰", 1, new Func<UpscaleSettings>(() => new UpscaleSettings
+        ( "通用变清晰", 2, new Func<UpscaleSettings>(() => new UpscaleSettings
         {
-            Remember = true, Mode = 0, W2xModel = 0, W2xModelName = "models-cunet", Scale = 0, Noise = 2, Tta = false, SelectedOnly = false,
+            Remember = true, Mode = 0, W2xModel = 0, W2xModelName = "models-cunet", Scale = 1, Noise = 2, Tta = false, SelectedOnly = false,
             Fmt = 0, Detail = 50, Sharpen = 10, Clarity = 15, Deblur = 35, Usm = 20, Edge = 5, DetailEnhance = 10,
             Denoise = 20, Aa = 40, Dehaze = 5, ImgQualityMode = 2, ImgQualityCustom = 92, ImgQuality = 92,
             PreDenoise = true, DenoiseLevel = 0, OutDir = "",
@@ -599,6 +601,16 @@ public sealed partial class UpscaleView : UserControl
         inner.Children.Add(topBar); inner.Children.Add(listView); inner.Children.Add(bottomBar);
         ContentDialog dlg = new() { Title = "图片预设", Content = inner, CloseButtonText = "", XamlRoot = this.XamlRoot };
 
+        // 【与视频页预设一致】每行套一层 item 内边距,非末行加分隔线 —— 视觉与视频页预设列表统一
+        void AddRow(Microsoft.UI.Xaml.Controls.Grid r, int idx, int count)
+        {
+            var itemPanel = new StackPanel { Padding = new Microsoft.UI.Xaml.Thickness(12, 8, 4, 8) };
+            itemPanel.Children.Add(r);
+            if (idx < count - 1)
+                itemPanel.Children.Add(new Microsoft.UI.Xaml.Shapes.Rectangle { Height = 1, Fill = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 40, 44, 52)), Margin = new Microsoft.UI.Xaml.Thickness(0, 6, 0, 0) });
+            listView.Items.Add(itemPanel);
+        }
+
         void RebuildList()
         {
             var cur = LoadImgPresets();
@@ -614,12 +626,13 @@ public sealed partial class UpscaleView : UserControl
                 var presetName = cur[i].Name;
                 // 【一行摘要 + 悬停完整详情】此前列表只有"名字 + 时间",用户看不出预设里到底是什么
                 // (要问维护者才知道)。悬停形式与视频页预设的摘要一致。
+                // 【与视频页预设一致】列表行只显示「名字 + [官方]」单行,参数详情放在悬停提示里。
+                // (此前把参数摘要拼成了第二行,于是图片预设列表比视频页"多一块内容"、视觉不统一。)
                 var name = new TextBlock
                 {
-                    Text = cur[i].Name + (cur[i].IsOfficial ? "  [官方]" : "") + "\n" + ImgPresetSubtitle(cur[i]),
+                    Text = cur[i].Name + (cur[i].IsOfficial ? "  [官方]" : ""),
                     FontSize = 14,
                     VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
-                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
                 };
                 ToolTipService.SetToolTip(name, new TextBlock
                 {
@@ -633,7 +646,7 @@ public sealed partial class UpscaleView : UserControl
                     var cb = new Microsoft.UI.Xaml.Controls.CheckBox { VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center, IsChecked = false };
                     exportChecks.Add((cur[i], cb));
                     var rowEx = new Grid(); rowEx.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) }); rowEx.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
-                    rowEx.Children.Add(name); Grid.SetColumn(name, 0); rowEx.Children.Add(cb); Grid.SetColumn(cb, 1); listView.Items.Add(rowEx);
+                    rowEx.Children.Add(name); Grid.SetColumn(name, 0); rowEx.Children.Add(cb); Grid.SetColumn(cb, 1); AddRow(rowEx, i, cur.Count);
                     continue;
                 }
                 var delBtn = new Button { Content = "\uE74D", FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe MDL2 Assets"), FontSize = 13, Background = null, BorderThickness = new Microsoft.UI.Xaml.Thickness(0), Padding = new Microsoft.UI.Xaml.Thickness(6, 2, 6, 2), VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center, MinWidth = 0, Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 229, 72, 77)) };
@@ -648,11 +661,11 @@ public sealed partial class UpscaleView : UserControl
                     cancel.Click += (_, _) => { pendingDel = null; RebuildList(); };
                     span.Children.Add(ok); span.Children.Add(cancel);
                     var rowG = new Grid(); rowG.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) }); rowG.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
-                    rowG.Children.Add(name); Grid.SetColumn(name, 0); rowG.Children.Add(span); Grid.SetColumn(span, 1); listView.Items.Add(rowG); continue;
+                    rowG.Children.Add(name); Grid.SetColumn(name, 0); rowG.Children.Add(span); Grid.SetColumn(span, 1); AddRow(rowG, i, cur.Count); continue;
                 }
                 delBtn.Click += (_, _) => { pendingDel = presetName; RebuildList(); };
                 var row = new Grid(); row.ColumnDefinitions.Add(new ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) }); row.ColumnDefinitions.Add(new ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
-                row.Children.Add(name); Grid.SetColumn(name, 0); row.Children.Add(delBtn); Grid.SetColumn(delBtn, 1); listView.Items.Add(row);
+                row.Children.Add(name); Grid.SetColumn(name, 0); row.Children.Add(delBtn); Grid.SetColumn(delBtn, 1); AddRow(row, i, cur.Count);
             }
         }
         RebuildList();
@@ -792,15 +805,6 @@ public sealed partial class UpscaleView : UserControl
                 4 => $"自定义({d.ImgQualityCustom})", _ => "?",
             })));
         return sb.ToString().TrimEnd();
-    }
-
-    /// <summary>预设列表里那一行摘要 —— 不悬停也能看出关键项(引擎 / 倍率 / 模型 / 输出格式)。</summary>
-    private static string ImgPresetSubtitle(UpscalePreset p)
-    {
-        var d = p.Params;
-        bool photo = d.Mode == 1;
-        string scale = d.Scale switch { 0 => "1x超分", 1 => "2x", 2 => "3x", 3 => "4x", _ => $"倍率{d.Scale}" };
-        return $"{(photo ? "Real-ESRGAN" : "waifu2x")} · {scale} · {ModelNameOf(d, photo)} · {(d.Fmt == 1 ? "PNG" : "JPG")}";
     }
 
     /// <summary>预设里记的模型名(老文件没有该字段 → 用下标从表里取,取不到给 "?")。</summary>
@@ -1568,7 +1572,7 @@ public sealed partial class UpscaleView : UserControl
                             && (EngineService.ShouldUseOnnxWaifu2x()
                                 || gpuId < 0
                                 || !await EngineService.IsWaifu2xNcnnUsableAsync(gpuId, ct)))
-                            onnxPath = EsrganOnnxService.FindWaifu2xModel();
+                            onnxPath = EsrganOnnxService.FindWaifu2xModel(model);
                         if (onnxPath != null)
                         {
                             Log("✅ 自检:已按当前显卡自动改用稳定引擎(直接处理,无需设置)");
@@ -1578,6 +1582,15 @@ public sealed partial class UpscaleView : UserControl
                             var dropped = new List<string>();
                             if (isAnime && noise >= 0) dropped.Add($"降噪级别({NoiseCombo.SelectedIndex})");
                             if (tta) dropped.Add("高级增强(TTA)");
+                            // 模型同理:ONNX 侧 waifu2x 目前只有 cunet 一份,选了 upconv_7_photo / upconv_7_anime
+                            // 实际仍跑 cunet(实测确认会被静默忽略)→ 与"预览≠结果"同性质,必须告知。
+                            if (engine == "waifu2x" && !string.IsNullOrEmpty(model))
+                            {
+                                string want = model.Replace("models-", "", StringComparison.OrdinalIgnoreCase)
+                                                   .Replace("models_", "", StringComparison.OrdinalIgnoreCase);
+                                if (!System.IO.Path.GetFileName(onnxPath).Contains(want, StringComparison.OrdinalIgnoreCase))
+                                    dropped.Add($"所选模型({model},稳定引擎只有 cunet)");
+                            }
                             if (dropped.Count > 0)
                             {
                                 var capMsg = $"当前引擎(ONNX 稳定引擎)不支持 {string.Join(" / ", dropped)} — 已忽略,其余参数照常生效";
