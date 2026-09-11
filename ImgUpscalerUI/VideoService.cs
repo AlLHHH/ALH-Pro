@@ -1478,7 +1478,8 @@ public static class VideoService
                                     upScale, 0, upGpu, false, srProgress, ct,
                                     SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1),   // 显卡家族感知分块(视频超分专用);快速模式再减半(显存占用约降 4 倍)
                                     watchStage: "超分",   // 逐帧汇报(像补帧一样显示"超分 第 N 帧 / 共 M 帧")
-                                    globalBaseFrames: batchStartSlot, globalTotalFrames: total);   // 百分比按全局帧数算,预计时间才准
+                                    globalBaseFrames: batchStartSlot, globalTotalFrames: total,   // 百分比按全局帧数算,预计时间才准
+                                    outFormat: "jpg");   // 引擎直出 JPG:4K 实测 2.98→2.02 秒/帧(省 31%),且省掉下面整段 PNG 解码+q96 重编码
                             }
                             // 【峰值优化】本批超分 PNG 立即转 JPG 再落 upOutput(不再全量 PNG 累积到最后统一转):
                             // 超分过程中只有"当前批的 PNG"存在,upOutput 全程 JPG,峰值降 70%+。
@@ -1494,14 +1495,28 @@ public static class VideoService
                             // (片头黑场/淡入淡出/夜戏/闪黑),本批 GPU 输出的【全部】黑帧都被当成"素材本来如此"
                             // 放行,黑帧直接进成片且零日志,ncnnUnreliable 也不会置位(后续批次继续用坏引擎)。
                             var defectiveFrames = new System.Collections.Generic.List<string>();
-                            foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
+                            foreach (var f in Directory.EnumerateFiles(batchOut, "*.*")
+                                .Where(x => x.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+                                         || x.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+                                         || x.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)))
                             {
                                 anyFrame = true;
                                 var dst = Path.Combine(upOutput, Path.ChangeExtension(Path.GetFileName(f), ".jpg"));
                                 try
                                 {
-                                    EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality, out bool isBlack);
-                                    if (isBlack) { anyDefective = true; defectiveFrames.Add(f); }
+                                    if (f.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        // 引擎写 PNG(图片分块路径/降级重算/ONNX):解码一次判黑,顺便转成 JPG
+                                        EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality, out bool isBlack);
+                                        if (isBlack) { anyDefective = true; defectiveFrames.Add(f); }
+                                    }
+                                    else
+                                    {
+                                        // 引擎直出 JPG(outFormat:"jpg"):只需解码一次判黑,然后【搬】过去。
+                                        // 不再"解码 PNG → 重编码 q96":引擎写的是 q100,画质更好,且 4K 下省掉 31% 超分耗时。
+                                        if (EngineService.IsBlackPng(f)) { anyDefective = true; defectiveFrames.Add(f); }
+                                        File.Move(f, dst, overwrite: true);
+                                    }
                                 }
                                 catch { anyDefective = true; defectiveFrames.Add(f); try { File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true); } catch { } }
                             }
@@ -1530,14 +1545,26 @@ public static class VideoService
                                         upOnnxDml ? -2 : (upGpu < 0 ? -1 : -2), progress, ct, onnxB,
                                         start, total, pauseWait);   // 探测失败/黑帧 → DeepSeek-2(DirectML GPU 自动);主动选 CPU → -1;pauseWait=ONNX/CPU 也能暂停
                                     bool retryAny = false, retryDefective = false;
-                                    foreach (var f in Directory.EnumerateFiles(batchOut, "*.png"))
+                                    foreach (var f in Directory.EnumerateFiles(batchOut, "*.*")
+                                        .Where(x => x.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+                                                 || x.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+                                                 || x.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)))
                                     {
                                         retryAny = true;
                                         var dst = Path.Combine(upOutput, Path.ChangeExtension(Path.GetFileName(f), ".jpg"));
                                         try
                                         {
-                                            EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality, out bool isBlack);
-                                            if (isBlack) retryDefective = true;
+                                            if (f.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+                                            {
+                                                EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality, out bool isBlack);
+                                                if (isBlack) retryDefective = true;
+                                            }
+                                            else
+                                            {
+                                                // 引擎直出 JPG:解码判黑后直接搬(ONNX 路径目前写 PNG,此处为兼容两种格式)
+                                                if (EngineService.IsBlackPng(f)) retryDefective = true;
+                                                File.Move(f, dst, overwrite: true);
+                                            }
                                         }
                                         catch { retryDefective = true; try { File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true); } catch { } }
                                     }
@@ -3298,8 +3325,11 @@ public static class VideoService
     /// <summary>拆帧(优先 GPU 硬解 d3d11va,失败自动回退软解):既省 CPU 又提速。
     /// vfExpr=滤镜表达式(如 scale...);返回实际拆出的帧数。</summary>
     // ===== 视频中间帧统一 JPG(降临时盘)=====
-    // 流水线所有中间帧(ffmpeg 拆帧 / 超分后 / 缩放后)统一存为 .jpg;引擎(realesrgan/rife-ncnn)的
-    // PNG 输出在应用侧取回后立即重编码成 JPG 再交下游。引擎 I/O 读取仍保持各自 .png 契约(读取处不改)。
+    // 流水线所有中间帧(ffmpeg 拆帧 / 超分后 / 缩放后)统一存为 .jpg。
+    // 【2026-09-11 改】超分那一段不再"引擎写 PNG → 应用侧重编码 q96":改为让 ncnn 引擎直出 JPG
+    // (`-f jpg`,见 EngineService.UpscaleDirAsync 的 outFormat)——4K 实测 2.98→2.02 秒/帧(省 31%,
+    // 因保存线程仅 1 个时 PNG 压缩压不住 GPU),且省掉应用侧整段 PNG 解码+q96 重编码,引擎写的是 q100,画质更好。
+    // 补帧(rife)仍写 PNG,在应用侧取回后重编码成 JPG(该段后续可同样改为引擎直出)。
     // 仅列帧(枚举 .png/.jpg 均可),供"格式随路径变化"的读取点使用(去重/缩放/黑帧守卫)。
     private static System.Collections.Generic.IEnumerable<string> EnumerateFrameFiles(string dir)
         => Directory.EnumerateFiles(dir, "*.*").Where(f =>
@@ -5727,7 +5757,7 @@ public static class VideoService
             lastTick = nowTick;
             try
             {
-                int count = Directory.Exists(dir) ? Directory.EnumerateFiles(dir, "*.png").Count() : 0;
+                int count = Directory.Exists(dir) ? EnumerateFrameFiles(dir).Count() : 0;
                 if (count > lastCount)
                 {
                     lastCount = count;
