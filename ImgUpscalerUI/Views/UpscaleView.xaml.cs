@@ -172,8 +172,11 @@ public sealed partial class UpscaleView : UserControl
             RememberCheck.IsChecked = d.Remember;
             if (!d.Remember) return;
             if (d.Mode is >= 0 and <= 1) ModeRadios.SelectedIndex = d.Mode;
-            if (d.W2xModel is >= 0 && d.W2xModel < ModelCombo.Items.Count)
-                ModelCombo.SelectedIndex = d.W2xModel;
+            // 模型同 ApplyImgSettings:优先按模型名定位,找不到才退回下标(两处必须同一读法)
+            int lmi = FindModelIndexByName(d.W2xModelName, d.Mode == 1);
+            if (lmi < 0) lmi = d.W2xModel;
+            if (lmi >= 0 && lmi < ModelCombo.Items.Count)
+                ModelCombo.SelectedIndex = lmi;
             // 倍率存的就是 4 项单选索引(0=1x超分 1=2x 2=3x 3=4x,与 SaveSettings 写入侧一致),读侧必须原样 Clamp。
             // 再按"旧版五项"做 -1 映射就会把存 3(4x) 读成 2(3x) —— "4x 重启变 3x / 2x 变 1x" 的根因。
             // 旧文件里残留的 4(旧语义 4x)由 Clamp 收敛到 3=4x,方向正确(0~3 两套语义重叠,无法逐值区分)。
@@ -279,11 +282,40 @@ public sealed partial class UpscaleView : UserControl
         catch { /* 保存失败忽略 */ }
     }
 
+    /// <summary>当前模式选中模型的【引擎侧名】(models-cunet / realesrgan-x4plus …)。
+    /// 存预设与存设置都写它,读取时优先按名定位 —— 见 UpscaleSettings.W2xModelName 的说明。</summary>
+    private string SelectedModelName()
+    {
+        int i = ModelCombo.SelectedIndex;
+        if (ModeRadios.SelectedIndex == 1)
+            return i >= 0 && i < EngineService.PhotoModels.Length ? EngineService.PhotoModels[i].Name : "";
+        return i >= 0 && i < EngineService.AnimeModels.Length ? EngineService.AnimeModels[i].Model : "";
+    }
+
+    /// <summary>按【模型名】在当前模式的模型表里找下标;-1 = 没找到(调用方退回存的下标)。
+    /// photo = 当前是否照片模式(Real-ESRGAN),决定查哪张表。</summary>
+    private static int FindModelIndexByName(string name, bool photo)
+    {
+        if (string.IsNullOrEmpty(name)) return -1;
+        if (photo)
+        {
+            for (int i = 0; i < EngineService.PhotoModels.Length; i++)
+                if (EngineService.PhotoModels[i].Name == name) return i;
+        }
+        else
+        {
+            for (int i = 0; i < EngineService.AnimeModels.Length; i++)
+                if (EngineService.AnimeModels[i].Model == name) return i;
+        }
+        return -1;
+    }
+
     /// <summary>把当前页面参数收集为一个快照(供「保存预设」复用;不含输出目录等位置偏好)。</summary>
     private UpscaleSettings CollectSettings() => new()
     {
         Mode = ModeRadios.SelectedIndex,
         W2xModel = ModelCombo.SelectedIndex,
+        W2xModelName = SelectedModelName(),
         Scale = ScaleRadios.SelectedIndex,
         Noise = NoiseCombo.SelectedIndex,
         Tta = TtaCheck.IsChecked == true,
@@ -360,7 +392,7 @@ public sealed partial class UpscaleView : UserControl
     {
         ( "通用变清晰", 1, new Func<UpscaleSettings>(() => new UpscaleSettings
         {
-            Remember = true, Mode = 0, W2xModel = 0, Scale = 0, Noise = 2, Tta = false, SelectedOnly = false,
+            Remember = true, Mode = 0, W2xModel = 0, W2xModelName = "models-cunet", Scale = 0, Noise = 2, Tta = false, SelectedOnly = false,
             Fmt = 0, Detail = 50, Sharpen = 10, Clarity = 15, Deblur = 35, Usm = 20, Edge = 5, DetailEnhance = 10,
             Denoise = 20, Aa = 40, Dehaze = 5, ImgQualityMode = 2, ImgQualityCustom = 92, ImgQuality = 92,
             PreDenoise = true, DenoiseLevel = 0, OutDir = "",
@@ -371,7 +403,7 @@ public sealed partial class UpscaleView : UserControl
         // 老用户永远停在 3x + 92,而列表里明明写着官方预设。
         ( "清晰MAX", 2, new Func<UpscaleSettings>(() => new UpscaleSettings
         {
-            Remember = true, Mode = 1, W2xModel = 2, Scale = 3, Noise = 3, Tta = false, SelectedOnly = false,
+            Remember = true, Mode = 1, W2xModel = 2, W2xModelName = "realesrgan-x4plus", Scale = 3, Noise = 3, Tta = false, SelectedOnly = false,
             Fmt = 0, Detail = 40, Sharpen = 20, Clarity = 25, Deblur = 35, Usm = 30, Edge = 30, DetailEnhance = 20,
             Denoise = 35, Aa = 65, Dehaze = 5, ImgQualityMode = 3, ImgQualityCustom = 92, ImgQuality = 98,
             PreDenoise = true, DenoiseLevel = 2, OutDir = "",
@@ -418,6 +450,15 @@ public sealed partial class UpscaleView : UserControl
                 }
                 // 同名但本来不是官方 → 只标记为官方,不动参数(用户自己攒的同名预设保留原样)
                 if (!existing.IsOfficial) { existing.IsOfficial = true; changed = true; }
+                // 【只补字段、不提 Rev】老文件里没有"模型名"这个字段(W2xModelName 是后加的)。
+                // 官方预设按定义补上即可 —— 注意【不能靠提 Rev 来触发】:提 Rev 会连带把用户改过的
+                // 其它参数一并覆盖,为补一个内部字段付这个代价不值得。用户自建预设不动(留索引回退)。
+                var def = make();
+                if (string.IsNullOrEmpty(existing.Params.W2xModelName) && !string.IsNullOrEmpty(def.W2xModelName))
+                {
+                    existing.Params.W2xModelName = def.W2xModelName;
+                    changed = true;
+                }
                 // 基线过旧 → 用新基线覆盖参数(只覆盖这一次;之后用户自己的改动会被尊重,直到下次提升 Rev)
                 if (existing.OfficialRev < rev)
                 {
@@ -445,7 +486,11 @@ public sealed partial class UpscaleView : UserControl
         try
         {
             if (d.Mode is >= 0 and <= 1) ModeRadios.SelectedIndex = d.Mode;
-            if (d.W2xModel is >= 0 && d.W2xModel < ModelCombo.Items.Count) ModelCombo.SelectedIndex = d.W2xModel;
+            // 模型:【优先按模型名定位】,名字找不到(老文件没这个字段 / 模型已下架)才退回存的下标。
+            // 只存下标的话,模型表增删一项就会让所有老预设/老设置静默指到别的模型上。
+            int mi = FindModelIndexByName(d.W2xModelName, d.Mode == 1);
+            if (mi < 0) mi = d.W2xModel;
+            if (mi >= 0 && mi < ModelCombo.Items.Count) ModelCombo.SelectedIndex = mi;
             // 与 LoadSettings 同一读法:同一字段只允许一套语义。两处不一致会让同一个预设/设置值
             // 在"应用预设"与"重启恢复"下得到不同倍率(用户看到"预设每次套出来都不一样")
             if (d.Scale is >= 0 and <= 4) ScaleRadios.SelectedIndex = Math.Clamp(d.Scale, 0, 3);
@@ -567,7 +612,21 @@ public sealed partial class UpscaleView : UserControl
             for (int i = 0; i < cur.Count; i++)
             {
                 var presetName = cur[i].Name;
-                var name = new TextBlock { Text = cur[i].Name + (cur[i].IsOfficial ? "  [官方]" : ""), FontSize = 14, VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center };
+                // 【一行摘要 + 悬停完整详情】此前列表只有"名字 + 时间",用户看不出预设里到底是什么
+                // (要问维护者才知道)。悬停形式与视频页预设的摘要一致。
+                var name = new TextBlock
+                {
+                    Text = cur[i].Name + (cur[i].IsOfficial ? "  [官方]" : "") + "\n" + ImgPresetSubtitle(cur[i]),
+                    FontSize = 14,
+                    VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                };
+                ToolTipService.SetToolTip(name, new TextBlock
+                {
+                    Text = BuildImgPresetSummary(cur[i]),
+                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                    MaxWidth = 320,
+                });
                 if (exportMode)
                 {
                     // 导出多选模式:右侧显示【复选框】(勾选要导出的预设),替代垃圾桶。默认全选。
@@ -695,6 +754,72 @@ public sealed partial class UpscaleView : UserControl
         return sb.Length == 0 ? "预设" : sb.ToString();
     }
 
+    /// <summary>图片预设的【完整参数摘要】(悬停提示,多行)。与视频页 BuildPresetSummary 同一目的:
+    /// 此前图片预设列表只有"名字 + 保存时间",用户根本看不出预设里到底是什么(得去问维护者才知道),
+    /// 而"预设名与实际参数对不上"恰恰是最难自己发现的一类问题。
+    /// 【模式感知】照片模式(Real-ESRGAN)下"降噪级别"控件是禁用的、引擎也不支持 —— 若照原样打印
+    /// "降噪: 强"就是在骗用户(那个值不生效)。这里如实标注"不适用"并指出真正生效的是预处理降噪。</summary>
+    private static string BuildImgPresetSummary(UpscalePreset p)
+    {
+        var d = p.Params;
+        bool photo = d.Mode == 1;
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine(p.IsOfficial ? $"「{p.Name}」[官方]" : $"「{p.Name}」({p.SavedAt})");
+        sb.AppendLine("模式: " + (photo ? "Real-ESRGAN(照片)" : "waifu2x(动漫)"));
+        sb.AppendLine("模型: " + ModelLabelOf(d, photo));
+        sb.AppendLine("倍率: " + (d.Scale switch
+        {
+            0 => "1x 超分(2x 放大后缩回,分辨率不变)",
+            1 => "2x",
+            2 => "3x",
+            3 => "4x",
+            _ => $"倍率索引 {d.Scale}",
+        }));
+        sb.AppendLine(photo
+            ? "降噪级别: 不适用(Real-ESRGAN 不支持;本预设用「预处理降噪」代替)"
+            : "降噪级别: " + (d.Noise switch { 0 => "不降噪", 1 => "弱", 2 => "中", 3 => "强", _ => "?" }));
+        sb.AppendLine("预处理降噪: " + (d.PreDenoise
+            ? "开 · " + (d.DenoiseLevel switch { 0 => "弱", 1 => "中", 2 => "强", _ => "?" })
+            : "关"));
+        sb.AppendLine("高级增强(TTA): " + (d.Tta ? "开(耗时约 2~3 倍)" : "关"));
+        sb.AppendLine("增强: " + $"去雾{d.Dehaze} 减少杂色{d.Denoise} 锐化{d.Sharpen} 清晰{d.Clarity} 钝化蒙版{d.Usm} " +
+            $"保留细节{d.Detail} 细节增强{d.DetailEnhance} 去模糊{d.Deblur} 边缘增强{d.Edge} 边缘抗锯齿{d.Aa}");
+        sb.AppendLine("输出: " + (d.Fmt == 1
+            ? "PNG(无损)"
+            : "JPG · " + (d.ImgQualityMode switch
+            {
+                0 => "低(75)", 1 => "中(85)", 2 => "默认(92)", 3 => "超高(98)",
+                4 => $"自定义({d.ImgQualityCustom})", _ => "?",
+            })));
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>预设列表里那一行摘要 —— 不悬停也能看出关键项(引擎 / 倍率 / 模型 / 输出格式)。</summary>
+    private static string ImgPresetSubtitle(UpscalePreset p)
+    {
+        var d = p.Params;
+        bool photo = d.Mode == 1;
+        string scale = d.Scale switch { 0 => "1x超分", 1 => "2x", 2 => "3x", 3 => "4x", _ => $"倍率{d.Scale}" };
+        return $"{(photo ? "Real-ESRGAN" : "waifu2x")} · {scale} · {ModelNameOf(d, photo)} · {(d.Fmt == 1 ? "PNG" : "JPG")}";
+    }
+
+    /// <summary>预设里记的模型名(老文件没有该字段 → 用下标从表里取,取不到给 "?")。</summary>
+    private static string ModelNameOf(UpscaleSettings d, bool photo)
+    {
+        if (!string.IsNullOrEmpty(d.W2xModelName)) return d.W2xModelName;
+        if (photo) return d.W2xModel >= 0 && d.W2xModel < EngineService.PhotoModels.Length ? EngineService.PhotoModels[d.W2xModel].Name : "?";
+        return d.W2xModel >= 0 && d.W2xModel < EngineService.AnimeModels.Length ? EngineService.AnimeModels[d.W2xModel].Model : "?";
+    }
+
+    /// <summary>预设里模型的显示名(带体量与快慢标注);优先按名定位,找不到才用下标。</summary>
+    private static string ModelLabelOf(UpscaleSettings d, bool photo)
+    {
+        int i = FindModelIndexByName(d.W2xModelName, photo);
+        if (i < 0) i = d.W2xModel;
+        if (photo) return i >= 0 && i < EngineService.PhotoModels.Length ? EngineService.PhotoModels[i].Label : "?";
+        return i >= 0 && i < EngineService.AnimeModels.Length ? EngineService.AnimeModels[i].Label : "?";
+    }
+
     private async Task ShowPresetHintAsync(string msg)
     {
         var dlg = new ContentDialog { Title = "参数预设", Content = new TextBlock { Text = msg, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap }, CloseButtonText = "知道了", XamlRoot = this.XamlRoot };
@@ -706,6 +831,11 @@ public sealed partial class UpscaleView : UserControl
         public bool Remember { get; set; } = true;
         public int Mode { get; set; } = 0;
         public int W2xModel { get; set; } = 0;
+        /// <summary>模型名(models-cunet / realesrgan-x4plus …)。
+        /// 【为什么必须存名而不是只存下标】下标会随模型表增删而【静默错位】:以后往 AnimeModels /
+        /// PhotoModels 里加一项,所有老预设与老设置就会指到别的模型上,而用户什么都没改、界面上也看不出来。
+        /// 读取侧一律优先按名定位,名字找不到(老文件没有这个字段)才退回上面的下标 —— 向后兼容。</summary>
+        public string W2xModelName { get; set; } = "";
         public int Scale { get; set; } = 1;
         public int Noise { get; set; } = 0;
         public bool Tta { get; set; } = false;
