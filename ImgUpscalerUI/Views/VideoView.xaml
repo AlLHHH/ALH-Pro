@@ -56,9 +56,11 @@
                              animevideov3 0.84s;x4plus 还有"只有 4x 权重"的问题(选 2x 也照样全量算 4x 再缩回)。
                              注:本项 Content 是 StackPanel(富文本),读模型名一律走 Tag —— 不要改成读 Content。 -->
                         <ComboBoxItem Tag="realesrgan-x4plus">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <TextBlock Text="通用 · realesrgan-x4plus（41MB · 慢）" VerticalAlignment="Center"/>
+                            <!-- 「慢」直接在括号里改成红字「超慢」,不再另挂一个红字标记(用户:冗余了) -->
+                            <StackPanel Orientation="Horizontal" Spacing="0">
+                                <TextBlock Text="通用 · realesrgan-x4plus（41MB · " VerticalAlignment="Center"/>
                                 <TextBlock Text="超慢" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="#E5484D"/>
+                                <TextBlock Text="）" VerticalAlignment="Center"/>
                             </StackPanel>
                         </ComboBoxItem>
                     </ComboBox>
