@@ -47,11 +47,20 @@
                         <ComboBoxItem Content="现实 · models-upconv_7_photo（5MB · 快）" Tag="models-upconv_7_photo"/>
                     </ComboBox>
                     <ComboBox x:Name="VideoEsrganModelCombo" Visibility="Collapsed"
-                              ToolTipService.ToolTip="Real-ESRGAN 模型(动漫/通用)"
+                              ToolTipService.ToolTip="Real-ESRGAN 模型(动漫/通用)。标「超慢」的 realesrgan-x4plus 只有 4x 权重:1080p 源实测约 14.5 秒/帧(比 animevideov3 慢 17 倍),建议只在图片上用"
                               SelectionChanged="Combo_Changed">
                         <ComboBoxItem Content="动漫 · realesr-animevideov3（4MB · 快）" Tag="realesr-animevideov3"/>
                         <ComboBoxItem Content="动漫 · realesrgan-x4plus-anime（9MB · 中）" Tag="realesrgan-x4plus-anime"/>
-                        <ComboBoxItem Content="通用 · realesrgan-x4plus（41MB · 慢）" Tag="realesrgan-x4plus"/>
+                        <!-- 「通用 · realesrgan-x4plus」保留可选,但红字标出"超慢"(用户要求:不删除、只警示)。
+                             依据(2026-09-11 本机 4060 Laptop 实测,源 1920×1080 每帧):x4plus 14.48s / x4plus-anime 4.84s /
+                             animevideov3 0.84s;x4plus 还有"只有 4x 权重"的问题(选 2x 也照样全量算 4x 再缩回)。
+                             注:本项 Content 是 StackPanel(富文本),读模型名一律走 Tag —— 不要改成读 Content。 -->
+                        <ComboBoxItem Tag="realesrgan-x4plus">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Text="通用 · realesrgan-x4plus（41MB · 慢）" VerticalAlignment="Center"/>
+                                <TextBlock Text="超慢" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="#E5484D"/>
+                            </StackPanel>
+                        </ComboBoxItem>
                     </ComboBox>
 
                     <TextBlock Text="放大倍数" Style="{StaticResource SectionTitle}"/>
