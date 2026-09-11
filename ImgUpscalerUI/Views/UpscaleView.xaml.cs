@@ -1595,6 +1595,13 @@ public sealed partial class UpscaleView : UserControl
                         {
                             if (engine == "realesrgan" && !esrganNcnnOk)
                                 Log("⚠ 自检:当前显卡与老引擎不兼容且未找到稳定版,回退旧引擎(可能失败,建议改用 waifu2x)");
+                                // 【把原因说清】探测带回的失败形态直接进日志 + 黄字提示:
+                                // "初始化即崩"在 50 系上就是 NVIDIA 的驱动缺陷,不能让它看起来像我们的问题。
+                                if (!string.IsNullOrEmpty(EngineService.LastProbeUserMessage))
+                                {
+                                    Log("  " + EngineService.LastProbeUserMessage);
+                                    ShowEngineCapHint(EngineService.LastProbeUserMessage);
+                                }
                             else
                                 Log($"✅ 自检完毕:{(engine == "realesrgan" ? "ncnn GPU 引擎可用(快)" : "常规引擎")}");
                             await EngineService.UpscaleAsync(srcPath, outPath, engine,
