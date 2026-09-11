@@ -4810,7 +4810,17 @@ public sealed partial class VideoView : UserControl
                 // 单个视频完整处理(局部函数:「去重帧过少,仍要进行」时用 allowFew 跳过保护重跑)
                 async Task ProcessOneAsync(bool allowFew, double? tStart, double? tEnd, double? itemFps)
                 {
-                    await VideoService.ProcessVideoAsync(item.Path, outPath,
+                    // 【必须在后台线程上跑整条流水线 —— 修"阶段中间短暂未响应"】
+                    // 原先这里是 `await VideoService.ProcessVideoAsync(...)` 直接调用:RunBtn_Click 是 async void,
+                    // 所以它带着 UI 线程上下文;而 ProcessVideoAsync 内部 131 处 await 里只有 28 处写了
+                    // ConfigureAwait(false) —— 于是剩下 ~100 处续体【全部回到 UI 线程】执行。
+                    // 而阶段切换处恰好都是重活:清源帧/中间帧目录(逐文件 File.Delete)、
+                    // Directory.EnumerateFiles(...).Count() 数万帧、Directory.Delete(workDir, true)…
+                    // 表现就是"补帧完换超分等中间操作短暂未响应"(真机日志的 [临时清理] 正落在这个位置;
+                    // 5080 帧那种任务里这一段会明显卡住)。
+                    // 放到线程池后:进度仍靠 IProgress 回报(Progress<T> 自带回 UI 线程),界面刷新不受影响;
+                    // await 之后的 item.StatusText 等 UI 赋值仍在 UI 线程执行(ProcessOneAsync 自身带 UI 上下文)。
+                    await Task.Run(() => VideoService.ProcessVideoAsync(item.Path, outPath,
                         engine, model, scale, up, interp, itemFps, interpScale, targetFps,
                         dedupOn ? dedupModel : 0, dedupThreshold, interpModel, sceneThreshold, timeStep, tta,
                         tStart, tEnd, gpuId,
@@ -4847,7 +4857,7 @@ public sealed partial class VideoView : UserControl
                         // 仅当用户显式选「不启用」时按常规方式处理。
                         vfrPassthrough: vfrModeNow == 0 && item.IsVfr,
                         allowFewFrames: allowFew,
-                        pauseWait: PauseWaitAsync);
+                        pauseWait: PauseWaitAsync));
                     item.Progress = 100;
                     item.StatusText = "✓ 完成";
                     item.EtaText = "";   // 完成时清空预计时间
@@ -4857,6 +4867,7 @@ public sealed partial class VideoView : UserControl
                     // 输出信息:帧率 / 分辨率 / 大小(去重结果用简短版,蓝色小字不截断;细节见日志)
                     try
                     {
+                        // 注:ProbeVideoInfoAsync 内部已经是 return await Task.Run(...),本身不堵 UI 线程,无需再包一层
                         var outInfo = await VideoService.ProbeVideoInfoAsync(outPath);
                         var mb = new FileInfo(outPath).Length / 1048576.0;
                         var dedupShort = VideoService.LastDedupShort;
