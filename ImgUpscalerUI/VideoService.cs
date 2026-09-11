@@ -1450,17 +1450,31 @@ public static class VideoService
                                 if (engine == "realesrgan")
                                     onnxModelPath = EsrganOnnxService.ResolveEsrganOnnxPath(model);
                                 else if (engine == "waifu2x")
-                                    onnxModelPath = EsrganOnnxService.FindWaifu2xModel();
+                                    onnxModelPath = EsrganOnnxService.FindWaifu2xModel(model);
                             }
                             else if (engine == "realesrgan" && (EngineService.ShouldUseOnnxEsrgan() || ncnnUnreliable || fastMode))
                                 onnxModelPath = EsrganOnnxService.ResolveEsrganOnnxPath(model);
                             else if (engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx || ncnnUnreliable || fastMode))
-                                onnxModelPath = EsrganOnnxService.FindWaifu2xModel();
+                                onnxModelPath = EsrganOnnxService.FindWaifu2xModel(model);
                             if (onnxModelPath != null)
                             {
                                 if (batchStartSlot == 0)   // 仅首批写自检日志(视频批多,避免刷屏)
                                 {
                                     AppLogger.Info($"✅ 自检:视频超分({engine})已按当前显卡自动改用稳定引擎(直接处理,无需设置)");
+                                    // 【模型如实告知】ONNX 稳定引擎的 waifu2x 目前只有 cunet 一份:用户在 50 系(走 ONNX)
+                                    // 下拉选的 upconv_7_photo / upconv_7_anime【用不上】,画面确实比 Real-ESRGAN 柔和。
+                                    // 不说明的话,用户只会觉得"视频 waifu 超分差"却查不出原因(实测确认:选的模型被静默忽略)。
+                                    if (engine == "waifu2x" && !string.IsNullOrEmpty(model))
+                                    {
+                                        string want = model.Replace("models-", "", StringComparison.OrdinalIgnoreCase)
+                                                           .Replace("models_", "", StringComparison.OrdinalIgnoreCase);
+                                        if (!Path.GetFileName(onnxModelPath).Contains(want, StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            AppLogger.Info($"ℹ 视频超分:稳定引擎(ONNX)的 waifu2x 只有 cunet,已忽略所选模型「{model}」");
+                                            progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
+                                                $"ℹ 稳定引擎(ONNX)的 waifu2x 仅有 cunet 模型,已按 cunet 处理 —— 你选的「{model}」需要 ncnn 引擎;写实片源建议改选 Real-ESRGAN"));
+                                        }
+                                    }
                                     // 【不要轻易掉 CPU】若这就要落 CPU(-1 = 强制 CPU),黄字明示用户(而非静默跑慢几倍)
                                     if (upGpu < 0 && !upOnnxDml)
                                         progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
@@ -1532,7 +1546,7 @@ public static class VideoService
                                 // 无模型/WORK 失败才降 ncnn-CPU。两套运行时独立,ncnn GPU 崩 ≠ DirectML 崩。
                                 string? onnxB = engine == "realesrgan"
                                     ? EsrganOnnxService.ResolveEsrganOnnxPath(model)
-                                    : engine == "waifu2x" ? EsrganOnnxService.FindWaifu2xModel() : null;
+                                    : engine == "waifu2x" ? EsrganOnnxService.FindWaifu2xModel(model) : null;
                                 if (onnxB != null)
                                 {
                                     progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
@@ -2021,6 +2035,14 @@ public static class VideoService
             var muxInput = $"-framerate {fr} -i \"{framePattern}\"";
             await EnsureHwProbeAsync(ffmpeg, ct);
             var encoder = PickVideoEncoder(gpuId, codecPref);
+            // 【编码最优解·解码侧】硬编生效时,瓶颈会从编码器转到"软件解码 JPG 序列"(4K 实测 ≈39.6 fps);
+            // NVDEC(mjpeg_cuvid)实测 4595 fps、端到端 +52%。探测已确认本机可用(EnsureHwProbeAsync)且当前是
+            // nvenc 才加 —— 软编时加了也没用(实测只快 2%),不加反而少一个失败面。
+            if (HwJpegDecodeUsable && encoder.Contains("nvenc", StringComparison.OrdinalIgnoreCase))
+            {
+                muxInput = "-c:v mjpeg_cuvid " + muxInput;
+                AppLogger.Info("合帧解码:改用 NVDEC 硬件解码 JPG 序列(解码不再是瓶颈)");
+            }
             progress?.Report((96, $"压缩编码器:{LastVideoEncoderInfo}"));
             // 自定义码率模式:用户指定 Mbps(0 = 用质量档 CRF);码率也随回退保持(CPU 软编同样适用)
             double bitrateKbps = customBitrateMbps > 0 ? customBitrateMbps * 1000 : 0;
@@ -3070,6 +3092,13 @@ public static class VideoService
     private static bool _hwProbed;
     private static readonly object _hwLock = new();
 
+    /// <summary>本会话已实测"能硬件解码 JPG 序列"(NVDEC mjpeg_cuvid)的标志。
+    /// 【为什么必须有前提】实测(2026-09-11,200 帧 4K JPG 序列):软编时瓶颈是编码器本身——
+    /// 软件解码 39.6 fps / NVDEC 4595 fps,但 `libx264 veryfast` 端到端只有 34.5→35.1 fps(+2%,等于没用);
+    /// 而硬编(NVENC)生效后瓶颈才会转移到软件解码 JPG,此时 NVDEC 才有价值(调研实测 86.5→131.7 fps,+52%)。
+    /// 所以只在【已有可用 nvenc】时才探测、才启用;探测口径与硬编一致:用真实解码器+真实编码参数真编出有效文件。</summary>
+    private static bool HwJpegDecodeUsable;
+
     /// <summary>某个硬件编码器实测可用的【调用配方】:用哪个 ffmpeg + 是否必须去掉 -preset。
     /// 只记"哪个编码器能用"是不够的 —— 50 系上常见的失败恰恰是 -preset p4 被拒(exit -22),
     /// 去掉 preset 就能硬编;旧 ffmpeg 打不开的 NVENC,备用 ffmpeg(8.x)能打开。
@@ -3207,6 +3236,39 @@ public static class VideoService
                 finally { try { File.Delete(tmp); } catch { } }
             }
         }
+        // ===== NVDEC(JPG 序列硬件解码)探测 =====
+        // 只在【已有可用 nvenc】时才探:软编时瓶颈是编码器本身,硬解救不了(见 HwJpegDecodeUsable 的实测)。
+        // 口径与上面完全一致 —— 用真实解码器 + 真实编码参数,真编出能校验通过的文件才算可用。
+        try
+        {
+            if (!ct.IsCancellationRequested && WorkingHwEncoders.Any(e => e.Contains("nvenc", StringComparison.OrdinalIgnoreCase)))
+            {
+                var nvEnc = WorkingHwEncoders.First(e => e.Contains("nvenc", StringComparison.OrdinalIgnoreCase));
+                var probeJpg = Path.Combine(EngineService.TempRoot, $"imgup_decprobe_{Guid.NewGuid():N}.jpg");
+                var probeOut = Path.Combine(EngineService.TempRoot, $"imgup_decprobe_{Guid.NewGuid():N}.mp4");
+                try
+                {
+                    await RunAsync(ffmpeg,
+                        $"-y -f lavfi -i \"testsrc=size=1280x720:rate=30:duration=0.4\" -frames:v 1 -q:v 2 \"{probeJpg}\"", null, ct);
+                    if (File.Exists(probeJpg) && new FileInfo(probeJpg).Length > 0)
+                    {
+                        await RunAsync(ffmpeg,
+                            $"-y -c:v mjpeg_cuvid -f image2 -framerate 30 -i \"{probeJpg}\" -frames:v 1 {EncoderArgs(nvEnc)} \"{probeOut}\"", null, ct);
+                        if (await ValidateVideoFileAsync(probeOut, 1))
+                        {
+                            HwJpegDecodeUsable = true;
+                            AppLogger.Info($"硬件解码探测:NVDEC(mjpeg_cuvid)可用 —— 合帧将用硬件解码 JPG 序列({nvEnc})");
+                        }
+                    }
+                }
+                finally
+                {
+                    try { File.Delete(probeJpg); } catch { }
+                    try { File.Delete(probeOut); } catch { }
+                }
+            }
+        }
+        catch { /* 探测失败 = 不可用,保持 false,合帧照旧走软件解码 */ }
         // 诊断:记录本机可用/不可用的硬件编码器(排查"为什么没走 GPU 编码"一眼可见)
         lock (_hwLock)
         {

@@ -42,11 +42,26 @@ public static class EsrganOnnxService
     }
 
     /// <summary>waifu2x ONNX 模型路径(engines/waifu2x/ waifu2x-cunet2x.onnx;nagadomi/nunif 官方导出)。
-    /// 注意:该模型输入名为 x(不是 input)——用于核显/无独显设备(waifu2x ncnn CPU 模式有 bug 会崩)。</summary>
-    public static string? FindWaifu2xModel()
+    /// 注意:该模型输入名为 x(不是 input)——用于核显/无独显设备(waifu2x ncnn CPU 模式有 bug 会崩)。
+    /// <paramref name="preferredModel"/>:调用方【用户在下拉里选的 ncnn 模型名】。ONNX 侧目前只有 cunet 一份,
+    /// 但若日后补上同名 ONNX(如 waifu2x-upconv_7_photo-2x.onnx),这里会优先用它 —— 否则用户在 50 系
+    /// (走 ONNX)上选的模型会被【静默忽略】,画面与预期不符却查不出原因(实测:选「现实 · upconv_7_photo」
+    /// 实际跑的仍是 cunet)。找不到匹配就回退 cunet,并把"用了哪个"如实返回给调用方去提示。</summary>
+    public static string? FindWaifu2xModel(string? preferredModel = null)
     {
         var root = Path.Combine(EngineService.EnginesDir, "waifu2x");
-        foreach (var f in new[] { "waifu2x-cunet2x.onnx", "waifu2x_cunet2x.onnx" })
+        var names = new System.Collections.Generic.List<string>();
+        if (!string.IsNullOrWhiteSpace(preferredModel) &&
+            !preferredModel.Contains("cunet", StringComparison.OrdinalIgnoreCase))
+        {
+            // 兼容几种常见命名:waifu2x-<模型>-2x.onnx / waifu2x_<模型>_2x.onnx / <模型>.onnx
+            names.Add($"waifu2x-{preferredModel}-2x.onnx");
+            names.Add($"waifu2x_{preferredModel}_2x.onnx");
+            names.Add($"{preferredModel}.onnx");
+        }
+        names.Add("waifu2x-cunet2x.onnx");
+        names.Add("waifu2x_cunet2x.onnx");
+        foreach (var f in names)
         {
             foreach (var found in Directory.EnumerateFiles(root, f, SearchOption.AllDirectories))
                 return found;
