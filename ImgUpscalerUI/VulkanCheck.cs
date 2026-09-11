@@ -475,10 +475,14 @@ public static class VulkanCheck
             var _bwNames = new System.Collections.Generic.List<string>();
             try { _bwNames.AddRange(devices.Select(d => d.Item2)); } catch { }
             try { _bwNames.AddRange(regNames); } catch { }
-            logSb.Append(AlhPro.Core.GpuName.AnyIsBlackwell(_bwNames) ? "是(将走 ONNX 稳定路线)" : "否(走 ncnn-GPU)");
+            logSb.Append(AlhPro.Core.GpuName.AnyIsBlackwell(_bwNames) ? "是" : "否");
+            // 【不再在这一行断言路线】原先写的是 50 系 → "是(将走 ONNX 稳定路线)",那是"按型号猜"时代的结论。
+            // 现在路由由真机探测决定,这里只报【判定结果 + 已测到的结论】,没测过就写"未测"。
+            logSb.Append(" | ncnn实测结论:").Append(EngineService.DescribeNcnnVerdicts());
             AppLogger.Info(logSb.ToString());
             // ===== 补上最关键的一环:DXGI(DirectML)枚举序 + 引擎编号→DirectML 号映射 =====
-            // 注册表序/引擎序/DXGI 序是三套编号;超分/补帧在 50 系走 ONNX DirectML,实际用哪张卡由
+            // 注册表序/引擎序/DXGI 序是三套编号;超分/补帧走 ncnn 还是 ONNX 由真机探测决定(DirectML 路径下),
+            // 实际用哪张卡由
             // ToDmlDevice(引擎编号) 名匹配 DXGI 决定。此前诊断包只有"注册表 vs 引擎",缺 DXGI 这一环,
             // 导致"选独显实际跑核显"无法定位。这里一并打进日志,下次诊断包即可一眼定案。
             try { AppLogger.Info("GPU→DirectML 映射对照:" + EngineService.DescribeDmlMapping()); } catch { }
@@ -565,7 +569,10 @@ public static class VulkanCheck
         }
 
         if (nvArch == "blackwell")
-            notes.Add("RTX 50 系(Blackwell):ncnn-Vulkan 在新驱动上有已知崩溃风险,软件已自动改用 ONNX DirectML 稳定路线,无需手动设置");
+            // 【不再断言"已自动改用 ONNX"】50 系现在是"首次处理时真机实测":通过就走 ncnn(最快),
+            // 失败才改走 ONNX DirectML。报告写"已自动改用 ONNX"会和实际行为相反(已被用户实测抓到一次)。
+            notes.Add("RTX 50 系(Blackwell):首次处理时会【实测】ncnn-Vulkan 能否在本机按生产形态跑通"
+                + "(生产帧尺寸 + 带状黑判据),通过就用 ncnn(最快),失败才自动改走 ONNX DirectML,结论会记住;无需手动设置");
         else if (nvArch == "ada")
             notes.Add("RTX 40 系(Ada):主流架构,驱动成熟,ncnn-Vulkan 直接加速,稳定");
         else if (nvArch == "ampere")
@@ -591,29 +598,28 @@ public static class VulkanCheck
 
         // ===== 各模型在本机的兼容性(按真实路由如实展示:走 ncnn 还是 ONNX、GPU 还是 CPU)=====
         sb.Append("模型兼容性:").Append('\n');
-        bool blackwell = EngineService.IsBlackwellGpu();
-        bool onnxEsrgan = EngineService.ShouldUseOnnxEsrgan();   // 50系/Vulkan不可用 → ONNX(DML 加速)
-        bool onnxWaifu = EngineService.ShouldUseOnnxWaifu2x();
         bool onnxRife = RifeOnnxService.Available();
+        // 【按实测结论报;没测过就如实写"未测",不再按显卡型号断言走哪条路】
+        // 此前这里用 ShouldUseOnnxEsrgan()(默认把 Blackwell 当风险),于是 50 系上报告永远写"走 ONNX DirectML",
+        // 而软件实际是"先真机探测、通过就走 ncnn" —— 报告与行为相反(已被用户实测抓到一次)。
+        var vEsrgan = EngineService.TryGetNcnnVerdict("realesrgan", AppSettings.GpuIndex);
+        var vWaifu = EngineService.TryGetNcnnVerdict("waifu2x", AppSettings.GpuIndex);
+        string RouteOf(bool? verdict, string ncnnDesc, string cpuDesc)
+            => verdict.HasValue
+                ? (verdict.Value ? ncnnDesc : "走 ONNX DirectML(本机实测 ncnn 不可用;显卡加速,稳定)")
+                : (gpuOk ? "未测 —— 首次处理时自动实测(通过用 ncnn,失败才走 ONNX)" : cpuDesc);
 
-        // 图片/视频超分:走 ONNX(DirectML 显卡加速)还是 ncnn(直接 GPU)还是 CPU
-        string esrganPic = onnxEsrgan ? "走 ONNX DirectML(显卡加速,稳定)"
-            : (gpuOk ? "ncnn-Vulkan 直接 GPU,加速,稳定" : "CPU 软算,慢但稳");
-        string esrganVid = onnxEsrgan ? "走 ONNX DirectML(显卡加速,稳定)"
-            : (gpuOk ? "ncnn-Vulkan GPU 加速,快速;异常自动降级" : "CPU 软算,较慢但稳");
-
-        sb.Append("· 图片超分(Real-ESRGAN):").Append(esrganPic).Append('\n');
-        sb.Append("· 视频超分(Real-ESRGAN):").Append(esrganVid).Append('\n');
-        // waifu2x:仅无独显(ShouldUseOnnxWaifu2x)走 ONNX;否则一律 ncnn——新版 waifu2x 引擎本身兼容 Blackwell,
-        // 故 50 系(有独显)也用 ncnn 直跑,不走 ONNX(报表此前误写"Blackwell waifu2x→ONNX",已修正)
-        if (onnxWaifu)
-            sb.Append("· 动漫超分(waifu2x):走 ONNX DirectML(显卡加速,稳定)\n");
-        else
-            sb.Append("· 动漫超分(waifu2x):").Append(gpuOk ? "ncnn-Vulkan GPU 加速,快速流畅\n" : "CPU 软算,慢但稳\n");
-        // 补帧:有 ONNX 模型走 ONNX;否则 ncnn
-        sb.Append("· 视频补帧(RIFE):").Append(onnxRife ? "走 ONNX DirectML(稳定,GPU 加速)\n"
-            : (blackwell ? "已自动适配稳定引擎(较慢)\n"
-            : (gpuOk ? "ncnn-Vulkan GPU 加速,流畅稳定\n" : "CPU 软算,较慢但稳\n")));
+        sb.Append("· 图片超分(Real-ESRGAN):")
+          .Append(RouteOf(vEsrgan, "ncnn-Vulkan 直接 GPU,加速,稳定", "CPU 软算,慢但稳")).Append('\n');
+        sb.Append("· 视频超分(Real-ESRGAN):")
+          .Append(RouteOf(vEsrgan, "ncnn-Vulkan GPU 加速,快速;异常自动降级", "CPU 软算,较慢但稳")).Append('\n');
+        sb.Append("· 动漫超分(waifu2x):")
+          .Append(RouteOf(vWaifu, "ncnn-Vulkan GPU 加速,快速流畅", "CPU 软算,慢但稳")).Append('\n');
+        // 补帧:RIFE 的 ncnn 结论是【按模型】缓存的(key = rife:<模型名>),报告这里拿不到具体模型 →
+        // 只如实说明"由首次补帧时的实测决定",不再断言"50 系一律走 ONNX"/"已自动适配稳定引擎(较慢)"。
+        sb.Append("· 视频补帧(RIFE):").Append(onnxRife
+            ? "ncnn(RIFE-Vulkan)与 ONNX 双路,首次补帧时实测选择:通过用 ncnn(最快),失败才走 ONNX DirectML\n"
+            : (gpuOk ? "ncnn-Vulkan GPU 加速;若本机不可用会明确告知并改走其他路线\n" : "CPU 软算,较慢但稳\n"));
         // 抠图/音频:CPU 恒定(无需 GPU)
         sb.Append("· AI 抠图:").Append(gpuOk ? "CPU 计算(强制),速度快,任何显卡均稳定\n" : "CPU 计算,可用,速度一般\n");
         sb.Append("· 音频处理:CPU 计算,任何设备均稳定\n");

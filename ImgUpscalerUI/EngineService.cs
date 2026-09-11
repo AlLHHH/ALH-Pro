@@ -37,12 +37,16 @@ public static partial class EngineService
     /// ①【本机实测】ncnn 在该 GPU 上跑不通(优先判据)②无独显/Vulkan 不可用(只能 CPU,而 ncnn CPU 也崩)
     /// —— 都走 ONNX(DML/CPU 稳)。
     /// 【不再"50 系一律禁用 ncnn"】:50 系上只要真机探测通过(EnsureNcnnProbeAsync,生产帧尺寸 +
-    /// 带状黑判据)就走更快的 ncnn-Vulkan;没探测过时才回退到"50 系算风险"的保守启发式(与本次改动前一致)。</summary>
+    /// 带状黑判据)就走更快的 ncnn-Vulkan。
+    /// 【未测过时也不再把 Blackwell 当风险(treatBlackwellAsRiskyWithoutProbe:false)】——与 ShouldUseOnnxWaifu2x
+    /// 同一口径。原因:本函数同时被"自检报告 / 界面提示 / ETA 估算"用来【断言】"会走 ONNX",而按型号断言会让
+    /// 50 系用户在实测通过(走 ncnn)的情况下仍被告知"已自动改用 ONNX" —— 报告与行为相反(已被用户实测抓到)。
+    /// 路由本身不受影响:真正决定走哪条路的地方(VideoService / 图片路径)都是先跑探测、再读结论。</summary>
     public static bool ShouldUseOnnxEsrgan()
     {
         if (EsrganOnnxService.FindModel() == null && EsrganOnnxService.FindAnimeVideoModel() == null)
             return false;
-        return NcnnGpuRisky("realesrgan", AppSettings.GpuIndex);
+        return NcnnGpuRisky("realesrgan", AppSettings.GpuIndex, treatBlackwellAsRiskyWithoutProbe: false);
     }
 
     /// <summary>waifu2x 是否应走 ONNX 路线:①【本机实测】ncnn 不可用(优先判据)
@@ -169,6 +173,24 @@ public static partial class EngineService
             }
         }
         catch { return null; }
+    }
+
+    /// <summary>把已缓存的 ncnn 真机探测结论汇总成一行,供自检报告/日志展示。
+    /// 【为什么需要它】自检报告此前按显卡型号断言"50 系将走 ONNX",而真实路由由实测决定 ——
+    /// 报告必须报实测,否则用户看到的结论和软件实际行为相反(已被用户抓到一次)。没测过就如实写"未测"。</summary>
+    public static string DescribeNcnnVerdicts()
+    {
+        try
+        {
+            var parts = new System.Collections.Generic.List<string>();
+            foreach (var eng in new[] { "realesrgan", "waifu2x" })
+            {
+                var v = TryGetNcnnVerdict(eng, AppSettings.GpuIndex);
+                parts.Add($"{eng}={(v.HasValue ? (v.Value ? "实测可用→走 ncnn" : "实测不可用→走 ONNX") : "未测(首次处理时自动实测)")}");
+            }
+            return string.Join(" ", parts);
+        }
+        catch { return "未测"; }
     }
 
     /// <summary>记录探测结论(进程内 + 落盘)。落盘失败只记日志,绝不影响处理。</summary>
