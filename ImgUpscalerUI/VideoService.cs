@@ -264,7 +264,7 @@ public static class VideoService
     /// <param name="postUsm">后处理·钝化蒙版 0-100(0=关;smartblur 负强度+阈值)。</param>
     /// <param name="postDetail">后处理·保留细节 0-100(0=关;cas 自适应锐化)。</param>
     /// <param name="postDeblur">后处理·去模糊 0-100(0=关;smartblur 大半径反锐化)。</param>
-    /// <param name="fastMode">快速模式(弱设备):tile 减半降显存、单批处理防爆显存、忽略 TTA。</param>
+    /// <param name="fastMode">兼容模式(弱设备):tile 减半降显存、单批处理防爆显存、忽略 TTA。</param>
     /// <param name="upscaleShrink1x">1x超分:内部按 2x 超分后缩回原始尺寸(输出仍是 1x,画质更好)。</param>
     /// <param name="postMotionBlur">果冻修复·运动模糊 0=关 1=弱 2=中 3=强(tmix 混合帧数递增)。</param>
     /// <param name="postDeshake">果冻修复·画面去抖(deshake 轻量稳定)。</param>
@@ -333,7 +333,7 @@ public static class VideoService
         dedupScale = dedupScale is 8 or 24 or 32 ? dedupScale : 16;
         dedupBlockThr = Math.Clamp(dedupBlockThr, 2, 12);
 
-        // 快速模式(弱设备):忽略 TTA(其速度开销接近翻倍,弱设备不划算)
+        // 兼容模式(弱设备):忽略 TTA(其速度开销接近翻倍,弱设备不划算)
         if (fastMode) tta = false;
 
         // 内容帧率管线(智能 1 / 动漫 2 / 手动-内容帧率采样 3):按转场切段、每段自适应压缩复制帧
@@ -504,16 +504,26 @@ public static class VideoService
             bool denoiseViaModel = doUpscale && engine == "waifu2x";
             if (denoiseViaModel && videoDenoise >= 1)
             {
-                try
+                // 兼容模式(内部字段 fastMode)会【强制】走 ONNX 稳定引擎(见超分路由条件里的 || fastMode),
+                // 所以它同样吃不到模型自带降噪档 —— 先判它,免得白探一次还把降噪判给模型。
+                if (fastMode)
                 {
-                    denoiseViaModel = await EngineService.EnsureNcnnProbeAsync("waifu2x", gpuId, model, ct);
-                    if (!denoiseViaModel)
-                        AppLogger.Info("视频降噪:waifu2x 的 ncnn 引擎在本机不可用(将走 ONNX 稳定引擎),降噪改由拆帧阶段 nlmeans 承担");
+                    denoiseViaModel = false;
+                    AppLogger.Info("视频降噪:「兼容模式」强制走 ONNX 稳定引擎(无降噪档),降噪改由拆帧阶段 nlmeans 承担");
                 }
-                catch
+                else
                 {
-                    // 探测异常:保守地按"模型档可用"处理(最坏情况只是该档无效,超分阶段已有如实提示)
-                    denoiseViaModel = true;
+                    try
+                    {
+                        denoiseViaModel = await EngineService.EnsureNcnnProbeAsync("waifu2x", gpuId, model, ct);
+                        if (!denoiseViaModel)
+                            AppLogger.Info("视频降噪:waifu2x 的 ncnn 引擎在本机不可用(将走 ONNX 稳定引擎),降噪改由拆帧阶段 nlmeans 承担");
+                    }
+                    catch
+                    {
+                        // 探测异常:保守地按"模型档可用"处理(最坏情况只是该档无效,超分阶段已有如实提示)
+                        denoiseViaModel = true;
+                    }
                 }
             }
             bool nlmeansOn = videoDenoise >= 1 && !denoiseViaModel;
@@ -1350,7 +1360,7 @@ public static class VideoService
                     .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
                 // 批大小/并发按"安全渲染"墙自适应(内存/显存墙越小越保守)
                 int batchSize = SafeRender.GetVideoBatchSize();
-                if (fastMode) batchSize = Math.Max(8, batchSize / 2);   // 快速模式:帧批减半,内存峰值更低(弱设备)
+                if (fastMode) batchSize = Math.Max(8, batchSize / 2);   // 兼容模式:帧批减半,内存峰值更低(弱设备)
                 if (diskTight) batchSize = Math.Max(8, batchSize / 2);   // 临时盘偏紧:批再减半,降低同屏临时帧峰值(防爆盘)
                 var total = upFiles.Length;
                 // ===== 相同帧只超分一次(无损提速;决策①=B 决策②=拷贝)=====
@@ -1419,7 +1429,7 @@ public static class VideoService
                     if (repIdx[i] == i && !groupsByRep.ContainsKey(i))
                         groupsByRep[i] = new System.Collections.Generic.List<int> { i };
                 var repSlots = groupsByRep.Keys.OrderBy(i => i).ToList();
-                using var sem = new SemaphoreSlim(fastMode ? 1 : SafeRender.GetVideoConcurrency());   // 快速模式:单批防显存竞争
+                using var sem = new SemaphoreSlim(fastMode ? 1 : SafeRender.GetVideoConcurrency());   // 兼容模式:单批防显存竞争
                 int doneFrames = 0;
                 var tasks = new System.Collections.Generic.List<Task>();
                 // 按【唯一帧(组)数】切批(非槽数):每批引擎正好处理 batchSize 个唯一帧 → 磁盘峰值=今天一致。
@@ -1517,7 +1527,7 @@ public static class VideoService
                                     }
                     // 视频降噪(用户那个「启用视频降噪」开关):拆帧阶段由 nlmeans 处理,超分阶段由 waifu2x 自带降噪处理。
                     // 正常情况下上面已用探测结果保证二者择一;这里兜的是【探测通过、但本批仍走了 ONNX】的边角情形
-                    // (例如中途黑帧降级把 ncnnUnreliable 置位、或用户勾了快速模式)——那时模型档不生效,
+                    // (例如中途黑帧降级把 ncnnUnreliable 置位、或用户勾了兼容模式)——那时模型档不生效,
                     // 而帧已经拆完(没法回头再补 nlmeans),只能如实告知并给出替代做法。
                     if (denoiseViaModel && videoDenoise > 0)
                     {
@@ -1540,7 +1550,7 @@ public static class VideoService
                             {
                                 await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
                                     upScale, denoiseViaModel ? videoDenoise : 0, upGpu, false, srProgress, ct,   // waifu2x 引擎:"视频降噪"的强弱档直接当它的 -n(模型自带降噪,更对症且不额外耗时)
-                                    SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1),   // 显卡家族感知分块(视频超分专用);快速模式再减半(显存占用约降 4 倍)
+                                    SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1),   // 显卡家族感知分块(视频超分专用);兼容模式再减半(显存占用约降 4 倍)
                                     watchStage: "超分",   // 逐帧汇报(像补帧一样显示"超分 第 N 帧 / 共 M 帧")
                                     globalBaseFrames: batchStartSlot, globalTotalFrames: total,   // 百分比按全局帧数算,预计时间才准
                                     outFormat: "jpg");   // 引擎直出 JPG:4K 实测 2.98→2.02 秒/帧(省 31%),且省掉下面整段 PNG 解码+q96 重编码
@@ -1684,7 +1694,7 @@ public static class VideoService
                                 $"超分 已处理 {doneFrames} 帧 / 共 {total} 帧"));
                             if (fastMode)
                             {
-                                // 快速模式:强制 GC,内存峰值降到最低(弱设备不内存墙)
+                                // 兼容模式:强制 GC,内存峰值降到最低(弱设备不内存墙)
                                 GC.Collect();
                                 GC.WaitForPendingFinalizers();
                             }

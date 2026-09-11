@@ -4748,7 +4748,7 @@ public sealed partial class VideoView : UserControl
             $"转场识别={(sceneThreshold != null ? $"{sceneThreshold:0.00}" : "关")} | " +
             $"目标帧率={(targetFps is > 0 ? $"{targetFps:0.##}fps" : "随倍率")} | " +
             $"输出基准={(FpsBaseCombo.SelectedIndex == 0 ? "真实时间轴(原帧率×倍率)" : "匀速(内容×倍率)")} | " +
-            $"快速模式={(FastModeCheck.IsChecked == true ? "开" : "关")} | " +
+            $"兼容模式={(FastModeCheck.IsChecked == true ? "开" : "关")} | " +   // 文案与界面控件名一致(界面叫「兼容模式」,内部字段仍叫 FastMode)
             $"VFR={(VfrModeRadios.SelectedIndex == 0 ? $"自动({(items.Any(i => i.IsVfr) ? "检测到可变帧率" : "未检测到")})" : "不启用")}");
         var trimmedCount = items.Count(i => i.IsTrimmed);
         if (trimmedCount > 0)

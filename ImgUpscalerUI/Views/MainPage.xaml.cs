@@ -534,7 +534,7 @@ public sealed partial class MainPage : Page
             var devs = ALHPro.VulkanCheck.Devices;
             foreach (var d in devs) if (!ALHPro.GpuInfo.IsIntegratedGPU(d.Name)) { hasDedicated = true; break; }
             if (devs.Count > 0 && !hasDedicated)
-                AppLogger.Warn("⚠ 未检测到独立显卡(纯核显/核显):视频超分/补帧会明显变慢,建议用 CPU 或勾选「快速模式」。");
+                AppLogger.Warn("⚠ 未检测到独立显卡(纯核显/核显):视频超分/补帧会明显变慢,建议用 CPU 或勾选「兼容模式」。");
             // ③ 存在 AMD/Intel 显卡(非 NVIDIA)→ 相关引擎走 ONNX/CPU 兜底,速度较慢(黄字提醒)
             foreach (var d in devs)
             {
