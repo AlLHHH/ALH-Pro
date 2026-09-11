@@ -570,7 +570,7 @@ public sealed partial class VideoView : UserControl
             if (upOn && VideoEngineRadios.SelectedIndex == 1
                 && EngineService.TryGetNcnnVerdict("realesrgan", AppSettings.GpuIndex) == false)
             {
-                compatMsg = $"⚠ 本机实测「Real-ESRGAN」(2022 版)无法用 GPU 加速,建议改用「waifu2x」(官方新版,更稳定)";
+                compatMsg = $"⚠ 本机实测「{EngineService.EngineLabel("realesrgan")}」无法用 GPU 加速,建议改用「waifu2x」(官方新版,更稳定)";
             }
             // 【不再按型号判断旧 RIFE 模型】RIFE 的 ncnn 结论是【按模型】缓存的(key = rife:<模型名>),
             // 所以这里查的正是"当前选中模型"的那条实测结论:只有实测不可用才提示,没测过不提示。
