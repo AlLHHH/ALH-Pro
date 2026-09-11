@@ -2179,7 +2179,13 @@ public static class VideoService
                     // 已知会失败的硬件编码器直接跳过,走 CPU(避免每次先白跑一次)
                     if (BrokenHwEncoders.Contains(encoder))
                         throw new InvalidOperationException("hw-encoder-known-broken");
-                    await RunAsync(encFfmpeg, muxBase + encMuxArgs, progress, ct, "编码", encTotal);
+                    // 【编码阶段必须能报进度】ffmpeg 的 stats 行(打给 stderr)在输出被重定向时不保证持续出现,
+                    // 于是"编码"这一步此前只有一条静止的「合成视频…」——用户实测"一直显示合成视频",不知道还要多久、
+                    // 也判断不出是死机还是在跑(实测那段可能是几十分钟到数小时)。
+                    // 改成 -progress pipe:1:ffmpeg 会把 frame=/fps=/out_time… 等【机器可读】行写到 stdout,
+                    // 而 RunAsync 的 FrameRegex 正在解析 frame= → "编码 第 N 帧 / 共 M 帧 + 预计还剩" 就稳定刷新了;
+                    // -nostats 顺手去掉 stderr 上重复的统计行。
+                    await RunAsync(encFfmpeg, "-nostats -progress pipe:1 " + muxBase + encMuxArgs, progress, ct, "编码", encTotal);
                     // 硬件编码可能留下 0 字节/损坏文件却退出 0,这里校验;无效则触发回退
                     if (!await ValidateVideoFileAsync(outTmp, 1))
                         throw new InvalidOperationException("硬件编码输出文件无效");
@@ -2200,7 +2206,7 @@ public static class VideoService
                     progress?.Report((96, $"⚠ 硬件编码({encoder})不可用{(driverOld ? "(显卡驱动过旧)" : "")},改用轻量 CPU 编码({cpuEnc})..."));
                     LastVideoEncoderInfo = $"{cpuEnc} (CPU 软编,硬件编码回退)";
                     await RunAsync(ffmpeg,
-                        muxBase + $"{videoMap}{audioPart} {EncoderArgs(cpuEnc, quality, bitrateKbps)} {vfArg}{fastFlag} \"{outTmp}\"",
+                        "-nostats -progress pipe:1 " + muxBase + $"{videoMap}{audioPart} {EncoderArgs(cpuEnc, quality, bitrateKbps)} {vfArg}{fastFlag} \"{outTmp}\"",
                         progress, ct, "编码", encTotal);
                 }
                 if (!await ValidateVideoFileAsync(outTmp, 1))
