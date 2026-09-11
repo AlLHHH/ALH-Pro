@@ -1860,7 +1860,7 @@ public static partial class EngineService
         {
             try
             {
-                int count = Directory.Exists(dir) ? Directory.EnumerateFiles(dir, "*.png").Count() : 0;
+                int count = Directory.Exists(dir) ? EnumerateImageFiles(dir).Count() : 0;
                 if (count > lastCount)
                 {
                     lastCount = count;
@@ -2289,6 +2289,16 @@ public static partial class EngineService
         return t * t * (3.0 - 2.0 * t);
     }
 
+    /// <summary>枚举目录里的帧图(png/jpg/jpeg)。
+    /// 【为什么必须扩展名无关】引擎目录模式可直出 JPG(`-f jpg`,4K 实测省 31%),此后输出目录里【没有 PNG】;
+    /// 若某些环节仍写死 "*.png",会静默失效:进度看门狗数不到帧(喂不了狗→误判挂起)、
+    /// 非原生倍率缩回整段跳过(3x 变成 4x 输出)、黑帧巡检漏检整批。故统一走这里。</summary>
+    private static System.Collections.Generic.IEnumerable<string> EnumerateImageFiles(string dir) =>
+        Directory.EnumerateFiles(dir, "*.*").Where(x =>
+            x.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+            x.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
+            x.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase));
+
     /// <summary>检测目录里的 PNG 是否有全黑块(ncnn-vulkan GPU 队列失败时输出全黑/带状黑,退出码仍 0)。
     /// 采样近似:任一张图【整帧 ≥95% 像素接近全黑】或【某个 1/3 主条带 ≥95% 近黑】即判黑
     /// —— 实测坏帧是"下 2/3 全黑、上 1/3 正常",只看整帧会让整批黑块静默通过。</summary>
@@ -2296,7 +2306,7 @@ public static partial class EngineService
     {
         try
         {
-            foreach (var f in Directory.EnumerateFiles(dir, "*.png"))
+            foreach (var f in EnumerateImageFiles(dir))
             {
                 if (IsBlackPng(f)) return true;
             }
@@ -2372,8 +2382,15 @@ public static partial class EngineService
         IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default,
         int tileSize = 0, string? watchStage = null,
         int globalBaseFrames = 0, int globalTotalFrames = 0,
-        bool preTiled = false)
+        bool preTiled = false, string outFormat = "png")
     {
+        // 【引擎直出 JPG:4K 下实测省 31% 的超分耗时】
+        // 实测(2026-09-11,RTX 4060 Laptop,waifu2x models-cunet 2x,1920×1080→3840×2160,同参数同素材各跑 2 次):
+        //   引擎写 PNG = 2.98 秒/帧(5.6MB)、写 JPG = **2.02 秒/帧(2.8MB)**、写 webp = 9.99 秒/帧(更慢,勿选)。
+        // 原因是 -j 1:1:1 时保存线程只有 1 个 4K 帧的 PNG 压缩压不住 GPU 计算 → 保存成了瓶颈;JPG(q100)快得多。
+        // 视频链路本来就要把超分输出统一转成 JPG(q96)再合帧,所以让引擎直出 JPG 是【零画质代价的纯提速】:
+        //   省掉引擎的 PNG 压缩 + App 侧的 PNG 解码 + q96 重编码整段(而且 q100 > q96,画质反而更好)。
+        // 默认仍为 png(图片路径/分块路径依赖 *.png 枚举,行为一字不变),只在视频链路显式传 "jpg"。
         if (scale <= 0 || scale > 32)
             throw new ArgumentOutOfRangeException(nameof(scale), "放大倍数必须在 0~32 之间");
         tileSize = SafeRender.ResolveTile(tileSize);   // 未显式指定时按"安全渲染"墙自适应
@@ -2444,10 +2461,10 @@ public static partial class EngineService
                                  || x.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
                                  || x.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)))
                     {
-                        // 【一致性】视频侧读批输出用 "*.png":若输入是 .jpg,复制到 .png 名(字节供 GDI+/ffmpeg 嗅探,
-                        // 可解码),避免"视频读 *.png 却因输入是 .jpg 而得到 0 帧"。1x 无降噪分支在视频正常路径不触发,
-                        // 这里统一成 .png 只是保持一致。
-                        var dest = Path.Combine(outputDir, Path.GetFileNameWithoutExtension(f) + ".png");
+                        // 【一致性】视频侧读批输出按调用方要的扩展名:若输入是 .jpg 而调用方要 png,复制到 .png 名
+                        // (字节供 GDI+/ffmpeg 嗅探,可解码),避免"视频读某扩展名却因输入是另一种而得到 0 帧"。
+                        // 1x 无降噪分支在视频正常路径不触发,这里统一成 outFormat 只是保持一致。
+                        var dest = Path.Combine(outputDir, Path.GetFileNameWithoutExtension(f) + "." + outFormat);
                         File.Copy(f, dest, overwrite: true);
                     }
                     return;
@@ -2455,7 +2472,7 @@ public static partial class EngineService
                 engineScale = 2;
             }
             await RunEngAsync(exe, t => $"-i \"{inputDir}\" -o \"{outputDir}\" -s {engineScale} -n {noise} " +
-                $"-t 0 -g {gpuId} -m \"{modelDir}\"{SafeRender.GetEngineThreadArgs()}" + (tta ? " -x" : "")).ConfigureAwait(false);
+                $"-t 0 -g {gpuId} -m \"{modelDir}\"{SafeRender.GetEngineThreadArgs()} -f {outFormat}" + (tta ? " -x" : "")).ConfigureAwait(false);
         }
         else if (engine == "realcugan")
         {
@@ -2472,7 +2489,7 @@ public static partial class EngineService
             // 那种情况由 RunEngAsync 的"降分块重试"与上层的黑帧降级链接住。
             // 视频帧整帧直算(OOM 时 RunEngAsync 自动降级重试/减 tile),避免逐帧"一块一块"。
             await RunEngAsync(exe, t => $"-i \"{inputDir}\" -o \"{outputDir}\" -s {engineScale} -m models -n {model} " +
-                $"-t 0 -g {gpuId}{SafeRender.GetEngineThreadArgs()}").ConfigureAwait(false);
+                $"-t 0 -g {gpuId}{SafeRender.GetEngineThreadArgs()} -f {outFormat}").ConfigureAwait(false);
         }
 
         // 非引擎原生倍数:批量缩放到目标倍数
@@ -2480,7 +2497,7 @@ public static partial class EngineService
         {
             var ratio = scale / engineScale;
             progress?.Report((95, $"输出 {scale:0.##}x(引擎 {engineScale}x 放大后精确调整)..."));
-            foreach (var f in Directory.EnumerateFiles(outputDir, "*.png"))
+            foreach (var f in EnumerateImageFiles(outputDir))
                 await Task.Run(() => ResizeImage(f, f, ratio), ct).ConfigureAwait(false);
         }
 
