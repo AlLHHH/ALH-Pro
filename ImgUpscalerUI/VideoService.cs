@@ -498,7 +498,24 @@ public static class VideoService
             // 【例外:waifu2x 引擎】它自带降噪档(同一套网络只换权重,不额外耗时,且是专门针对动漫压缩块训练的),
             // 比 nlmeans 更对症 —— 这种情况下把强度交给模型的 -n(见超分调用处),这里就不再叠一层 nlmeans,
             // 避免"双重平滑更糊 + 双重耗时"。
+            // 【要不要把降噪交给模型?必须先探一次】ONNX 稳定引擎是固定权重:既不认所选模型、也不认降噪档,
+            // 若此时仍把降噪交给"模型档",用户开了「视频降噪」却等于没降噪(静默失效)。
+            // 探测用的是一张合成图(不依赖已拆出的帧),且有会话缓存 —— 后面超分阶段不会因此多花时间。
             bool denoiseViaModel = doUpscale && engine == "waifu2x";
+            if (denoiseViaModel && videoDenoise >= 1)
+            {
+                try
+                {
+                    denoiseViaModel = await EngineService.EnsureNcnnProbeAsync("waifu2x", gpuId, model, ct);
+                    if (!denoiseViaModel)
+                        AppLogger.Info("视频降噪:waifu2x 的 ncnn 引擎在本机不可用(将走 ONNX 稳定引擎),降噪改由拆帧阶段 nlmeans 承担");
+                }
+                catch
+                {
+                    // 探测异常:保守地按"模型档可用"处理(最坏情况只是该档无效,超分阶段已有如实提示)
+                    denoiseViaModel = true;
+                }
+            }
             bool nlmeansOn = videoDenoise >= 1 && !denoiseViaModel;
             if (videoDenoise >= 1 && denoiseViaModel)
                 AppLogger.Info($"视频降噪:交由 waifu2x 引擎自带降噪档(-n {videoDenoise})处理(不叠 nlmeans,更对症且不额外耗时)");
@@ -1499,13 +1516,14 @@ public static class VideoService
                                         }
                                     }
                     // 视频降噪(用户那个「启用视频降噪」开关):拆帧阶段由 nlmeans 处理,超分阶段由 waifu2x 自带降噪处理。
-                    // 在 ONNX 稳定引擎上 waifu2x 的 -n 不生效(固定权重),而此时我们【没有】再叠 nlmeans
-                    // (避免双重平滑),所以这一步等于没降噪 —— 必须如实告知,并给出替代做法。
+                    // 正常情况下上面已用探测结果保证二者择一;这里兜的是【探测通过、但本批仍走了 ONNX】的边角情形
+                    // (例如中途黑帧降级把 ncnnUnreliable 置位、或用户勾了快速模式)——那时模型档不生效,
+                    // 而帧已经拆完(没法回头再补 nlmeans),只能如实告知并给出替代做法。
                     if (denoiseViaModel && videoDenoise > 0)
                     {
-                        AppLogger.Info($"ℹ 视频超分:稳定引擎(ONNX)不支持 waifu2x 自带降噪档(视频降噪 {videoDenoise}),该帧未降噪");
+                        AppLogger.Info($"ℹ 视频超分:稳定引擎(ONNX)不支持 waifu2x 自带降噪档(视频降噪 {videoDenoise}),本批未降噪");
                         progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
-                            $"ℹ 稳定引擎(ONNX)不支持 waifu2x 自带降噪(视频降噪已忽略)—— 需要降噪请把超分引擎改为 Real-ESRGAN(那时「视频降噪」由拆帧阶段的 nlmeans 执行)"));
+                            $"ℹ 稳定引擎(ONNX)不支持 waifu2x 自带降噪(本批降噪无效)—— 需要降噪请把超分引擎改为 Real-ESRGAN(那时「视频降噪」由拆帧阶段的 nlmeans 执行)"));
                     }
                                     // 【不要轻易掉 CPU】若这就要落 CPU(-1 = 强制 CPU),黄字明示用户(而非静默跑慢几倍)
                                     if (upGpu < 0 && !upOnnxDml)
