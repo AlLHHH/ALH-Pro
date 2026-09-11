@@ -92,6 +92,11 @@ public static partial class EngineService
     /// 后置位:后续帧直接走 System.Drawing(转 24bppRgb),不再逐帧尝试 WinRT + 逐帧刷失败日志。</summary>
     private static bool _winrtJpegBroken;
 
+    /// <summary>最近一次探测失败的【用户可读原因】(空 = 上次探测通过/还没探过)。
+    /// 供调用方(视频/图片路径)在提示里原样引用,避免各处自写一套措辞;
+    /// 措辞规则集中在 AlhPro.Core.ProbeDiagnosis,并有单测守着"坏帧不许甩锅给驱动"这条约束。</summary>
+    public static string LastProbeUserMessage { get; private set; } = "";
+
     public static async Task<bool> IsWaifu2xNcnnUsableAsync(int gpuId, CancellationToken ct)
     {
         if (!IsBlackwellGpu() && !HasNonNvidiaGpu()) return true;
@@ -245,11 +250,29 @@ public static partial class EngineService
             return cached.Value;
         }
         AppLogger.Info($"[探测] {engine} GPU({gpuId})首次真机探测(生产帧尺寸 1080×1920,模型 {model ?? "(默认)"} + 带状黑判据,最长约 60 秒)...");
-        bool ok = await IsEngineGpuUsableAsync(engine, gpuId, ct, fullFrame: true, model: model).ConfigureAwait(false);
-        // 结论按【引擎|GPU】记账(决策键);探测用的模型一并记进明细,便于诊断包核查"这个结论是对哪个模型测出来的"。
-        SaveNcnnVerdict(engine, gpuId, ok, (ok ? "production-geometry probe ok" : "production-geometry probe failed") + $"; model={model ?? "(default)"}");
-        if (ok) AppLogger.Info($"[探测] {engine} GPU({gpuId})真机探测通过 → 使用 ncnn-Vulkan(50 系未禁用,走最快路径)");
-        else AppLogger.Warn($"[探测] {engine} GPU({gpuId})真机探测失败(崩溃/空帧/黑帧/超时)→ 为稳定性改用 ONNX(结论已记住,不再重复试)");
+        // 接住失败形态:日志、落盘明细、以及给用户看的话都由它决定(见 AlhPro.Core.ProbeDiagnosis)
+        AlhPro.Core.ProbeFailureKind failKind = AlhPro.Core.ProbeFailureKind.None;
+        string failDetail = "";
+        bool ok = await IsEngineGpuUsableAsync(engine, gpuId, ct, fullFrame: true, model: model,
+            (k, d) => { failKind = k; failDetail = d; }).ConfigureAwait(false);
+        // 结论按【引擎|GPU】记账(决策键);明细带上失败形态 —— 诊断包里一眼能分出"初始化即崩"还是"出图但坏帧"。
+        SaveNcnnVerdict(engine, gpuId, ok,
+            (ok ? "probe ok" : "probe failed: " + AlhPro.Core.ProbeDiagnosis.ShortName(failKind))
+            + $"; model={model ?? "(default)"}");
+        if (ok)
+        {
+            LastProbeUserMessage = "";
+            AppLogger.Info($"[探测] {engine} GPU({gpuId})真机探测通过 → 使用 ncnn-Vulkan(50 系未禁用,走最快路径)");
+        }
+        else
+        {
+            // 【按形态说话】初始化即崩(Blackwell 上=NVIDIA 驱动缺陷)与"出图但坏帧"是两回事,不能混为一谈
+            LastProbeUserMessage = AlhPro.Core.ProbeDiagnosis.Describe(failKind, IsBlackwellGpu(),
+                engine == "realesrgan" ? "Real-ESRGAN" : "waifu2x");
+            AppLogger.Warn($"[探测] {engine} GPU({gpuId})真机探测失败({AlhPro.Core.ProbeDiagnosis.ShortName(failKind)}"
+                + (failDetail.Length > 0 ? ";" + failDetail : "") + ")→ 为稳定性改用 ONNX(结论已记住,不再重复试)。"
+                + LastProbeUserMessage);
+        }
         return ok;
     }
 
@@ -267,8 +290,24 @@ public static partial class EngineService
             AppLogger.Info($"[探测] 补帧 {model} GPU({gpuId})沿用已缓存结论:" + (cached.Value ? "可用 → 走 ncnn-Vulkan" : "不可用 → 走 ONNX"));
             return cached.Value;
         }
-        bool ok = await IsRifeGpuUsableAsync(rifeExe, model, gpuId, ct).ConfigureAwait(false);
-        SaveNcnnVerdict(key, gpuId, ok, ok ? "rife probe ok" : "rife probe failed");
+        AlhPro.Core.ProbeFailureKind failKind = AlhPro.Core.ProbeFailureKind.None;
+        string failDetail = "";
+        bool ok = await IsRifeGpuUsableAsync(rifeExe, model, gpuId, ct,
+            (k, d) => { failKind = k; failDetail = d; }).ConfigureAwait(false);
+        SaveNcnnVerdict(key, gpuId, ok,
+            (ok ? "rife probe ok" : "rife probe failed: " + AlhPro.Core.ProbeDiagnosis.ShortName(failKind)) + $"; model={model}");
+        if (ok)
+        {
+            LastProbeUserMessage = "";
+            AppLogger.Info($"[探测] 补帧 {model} GPU({gpuId})真机探测通过 → 使用 ncnn-Vulkan 补帧");
+        }
+        else
+        {
+            LastProbeUserMessage = AlhPro.Core.ProbeDiagnosis.Describe(failKind, IsBlackwellGpu(), "RIFE");
+            AppLogger.Warn($"[探测] 补帧 {model} GPU({gpuId})真机探测失败({AlhPro.Core.ProbeDiagnosis.ShortName(failKind)}"
+                + (failDetail.Length > 0 ? ";" + failDetail : "") + ")→ 为稳定性改用 ONNX 补帧(结论已记住)。"
+                + LastProbeUserMessage);
+        }
         return ok;
     }
 
@@ -1213,7 +1252,19 @@ public static partial class EngineService
     /// 判据仍沿用 IsBlackPng(= FrameInspect.IsDefectiveFrame:整帧 ≥95% 近黑 或 任一 1/3 主条带 ≥95% 近黑),
     /// 因此"下 2/3 全黑、上 1/3 正常"这种带状坏帧也能被这一层拦住。</summary>
     public static async Task<bool> IsEngineGpuUsableAsync(string engine, int gpuId, CancellationToken ct, bool fullFrame, string? model)
+        => await IsEngineGpuUsableAsync(engine, gpuId, ct, fullFrame, model, null).ConfigureAwait(false);
+
+    /// <summary>同上,并把【失败形态】回传给 onFailure(只报最终决定性的那一次,不报每次重试)。
+    /// 【为什么需要它】原返回 bool 把失败原因全丢了,调用方只能含糊说"崩溃/空帧/黑帧/超时"。
+    /// 而"初始化即崩"与"出图但坏帧"是两件完全不同的事:前者在 Blackwell 上就是 NVIDIA 的
+    /// cooperative-matrix 驱动缺陷(必须说清楚,否则用户会一直来找我们),后者属引擎并发/渲染
+    /// (绝不能甩给驱动)。文案规则见 AlhPro.Core.ProbeDiagnosis(有单测守着这两条约束)。</summary>
+    public static async Task<bool> IsEngineGpuUsableAsync(string engine, int gpuId, CancellationToken ct, bool fullFrame, string? model, Action<AlhPro.Core.ProbeFailureKind, string>? onFailure)
     {
+        AlhPro.Core.ProbeFailureKind failKind = AlhPro.Core.ProbeFailureKind.None;
+        string failDetail = "";
+        // 重试链里以【最后一次】的形态为准 —— 那才是导致判"不可用"的原因
+        void Note(AlhPro.Core.ProbeFailureKind k, string d) { failKind = k; failDetail = d; }
         try
         {
             string? exe = engine switch
@@ -1222,7 +1273,11 @@ public static partial class EngineService
                 "realesrgan" => FindRealESRGAN(),
                 _ => null,
             };
-            if (exe == null) return false;
+            if (exe == null)
+            {
+                onFailure?.Invoke(AlhPro.Core.ProbeFailureKind.EngineMissing, engine);
+                return false;
+            }
             // 生成测试图:fullFrame=false 用 320×240(原 1×1 会假通过:部分引擎能跑 1×1,但在真实帧尺寸上因分块/显存/驱动崩);
             // fullFrame=true 用生产帧尺寸 1080×1920 —— 见下方 overload 的说明。
             var inPng = Path.Combine(EngineService.TempRoot, $"eng_probe_{Guid.NewGuid():N}.png");
@@ -1295,6 +1350,7 @@ public static partial class EngineService
                     if (p == null)
                     {
                         AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId})第 {attempt}/{MaxAttempts} 次启动失败(进程为空),退避后重试...");
+                        Note(AlhPro.Core.ProbeFailureKind.StartupFailed, "进程为空(引擎未启动起来)");
                         if (attempt < MaxAttempts) { try { await Task.Delay(1500, ct).ConfigureAwait(false); } catch { } }
                         continue;
                     }
@@ -1309,6 +1365,17 @@ public static partial class EngineService
                     try
                     {
                         await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
+                        // 【失败形态分类,决定对用户怎么说】
+                        // 退出码非 0 = 初始化/运行期崩溃(0xC0000005 访问违例是驱动缺陷的典型特征);
+                        // 退出码 0 但无产出/产出 0 字节 = 静默失败;产出非空但近黑 = 坏帧(另一类问题)。
+                        if (p.ExitCode != 0)
+                            Note(AlhPro.Core.ProbeFailureKind.CrashExitCode, $"exit=0x{p.ExitCode:X8}");
+                        else if (!File.Exists(outPng))
+                            Note(AlhPro.Core.ProbeFailureKind.NoOutput, "退出码 0 但无产出文件");
+                        else if (new FileInfo(outPng).Length == 0)
+                            Note(AlhPro.Core.ProbeFailureKind.EmptyOutput, "产出文件 0 字节");
+                        else
+                            Note(AlhPro.Core.ProbeFailureKind.DefectiveFrame, "产出非空,但判为缺陷帧(近黑/带状近黑)");
                         // 判定:退出码 0 且输出文件存在(引擎正常出图)
                         bool ok = p.ExitCode == 0 && File.Exists(outPng) && new FileInfo(outPng).Length > 0;
                         // 【黑帧自检】引擎输出存在但全黑(静默黑帧 bug,如旧 ncnn on 50系/AMD 驱动异常)→ 该设备视为不可用,
@@ -1331,6 +1398,7 @@ public static partial class EngineService
                             (fullFrame ? "(探测用 1080×1920 生产帧尺寸:重模型本身也可能跑数十秒,本次按不可用保守处理)" : "") +
                             "——按不可用处理,已终止探测(不重试)");
                         try { p.Kill(entireProcessTree: true); } catch { }
+                        onFailure?.Invoke(AlhPro.Core.ProbeFailureKind.Hang, $"{probeTimeoutSec} 秒无响应");
                         return false;
                     }
                     catch (OperationCanceledException)
@@ -1340,6 +1408,7 @@ public static partial class EngineService
                     }
                     if (attempt < MaxAttempts) { try { await Task.Delay(1500, ct).ConfigureAwait(false); } catch { } }
                 }
+                onFailure?.Invoke(failKind, failDetail);
                 return false;
             }
             finally
@@ -1351,6 +1420,7 @@ public static partial class EngineService
         catch (Exception ex)
         {
             AppLogger.Warn($"[探测] 引擎 {engine} GPU 探测异常(按不可用):{ex.Message}");
+            onFailure?.Invoke(AlhPro.Core.ProbeFailureKind.StartupFailed, "探测过程异常:" + ex.Message);
             return false;
         }
     }
@@ -1360,10 +1430,22 @@ public static partial class EngineService
     /// 不预检用户只能白等 8 分钟看门狗)。失败返回 false,调用方改用 CPU。
     /// 注意:RIFE 单对模式(-0 -1 -o)而非目录模式(目录模式需 ≥2 帧输入,探测用单对最快)。</summary>
     public static async Task<bool> IsRifeGpuUsableAsync(string rifeExe, string model, int gpuId, CancellationToken ct)
+        => await IsRifeGpuUsableAsync(rifeExe, model, gpuId, ct, null).ConfigureAwait(false);
+
+    /// <summary>同上,并回传失败形态 —— 理由同 IsEngineGpuUsableAsync:调用方要按形态说话
+    /// (初始化即崩 ≠ 出图但坏帧;前者在 Blackwell 上是 NVIDIA 驱动缺陷,后者不许甩给驱动)。</summary>
+    public static async Task<bool> IsRifeGpuUsableAsync(string rifeExe, string model, int gpuId, CancellationToken ct, Action<AlhPro.Core.ProbeFailureKind, string>? onFailure)
     {
+        AlhPro.Core.ProbeFailureKind failKind = AlhPro.Core.ProbeFailureKind.None;
+        string failDetail = "";
+        void Note(AlhPro.Core.ProbeFailureKind k, string d) { failKind = k; failDetail = d; }
         try
         {
-            if (gpuId < 0 || rifeExe == null) return false;
+            if (gpuId < 0 || rifeExe == null)
+            {
+                onFailure?.Invoke(AlhPro.Core.ProbeFailureKind.EngineMissing, "未指定补帧引擎或选了 CPU");
+                return false;
+            }
             var tmp = Path.Combine(EngineService.TempRoot, $"rife_probe_{Guid.NewGuid():N}");
             Directory.CreateDirectory(tmp);
             var a = Path.Combine(tmp, "a.png");
@@ -1396,18 +1478,26 @@ public static partial class EngineService
                 {
                     try { if (File.Exists(o)) File.Delete(o); } catch { }
                     using var p = Process.Start(psi);
-                    if (p == null) return false;
+                    if (p == null) { onFailure?.Invoke(AlhPro.Core.ProbeFailureKind.StartupFailed, "进程为空"); return false; }
                     using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     waitCts.CancelAfter(TimeSpan.FromSeconds(10));
                     try
                     {
                         await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
+                        // 失败形态分类(同超分探测):非零退出 = 崩溃;退出 0 无产出/空产出 = 静默失败
+                        if (p.ExitCode != 0)
+                            Note(AlhPro.Core.ProbeFailureKind.CrashExitCode, $"exit=0x{p.ExitCode:X8}");
+                        else if (!File.Exists(o))
+                            Note(AlhPro.Core.ProbeFailureKind.NoOutput, "退出码 0 但无产出");
+                        else if (new FileInfo(o).Length == 0)
+                            Note(AlhPro.Core.ProbeFailureKind.EmptyOutput, "产出 0 字节");
                         bool ok = p.ExitCode == 0 && File.Exists(o) && new FileInfo(o).Length > 0;
                         // 出帧 ≠ 出对帧:某些设备(真机:D3D12 转译层)exit 0 且出图,但插值结果是整帧红噪点。
                         // 探测输入是纯黑+纯白,正常引擎的中间帧必为无彩色灰阶 → 带色即损坏,按不可用处理。
                         if (ok && !ProbeOutputIsAchromatic(o))
                         {
                             AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId})出帧但颜色损坏(黑→白应插出灰帧,实测通道严重失衡)——按不可用处理");
+                            Note(AlhPro.Core.ProbeFailureKind.DefectiveFrame, "出帧但颜色损坏(应插出灰阶却通道失衡)");
                             ok = false;
                         }
                         if (ok)
@@ -1421,6 +1511,7 @@ public static partial class EngineService
                     {
                         AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId}) {10} 秒无响应(疑似 hang),按不可用处理");
                         try { p.Kill(entireProcessTree: true); } catch { }
+                        onFailure?.Invoke(AlhPro.Core.ProbeFailureKind.Hang, "10 秒无响应");
                         return false;   // 超时=真 hang,不重试(重试只会再白等 10 秒);仅快速失败(非超时)才走重试
                     }
                     catch (OperationCanceledException)
@@ -1429,6 +1520,7 @@ public static partial class EngineService
                         throw;
                     }
                 }
+                onFailure?.Invoke(failKind, failDetail);
                 return false;
             }
             finally
@@ -1439,6 +1531,7 @@ public static partial class EngineService
         catch (Exception ex)
         {
             AppLogger.Warn($"[探测] RIFE GPU 探测异常(按不可用):{ex.Message}");
+            onFailure?.Invoke(AlhPro.Core.ProbeFailureKind.StartupFailed, "探测过程异常:" + ex.Message);
             return false;
         }
     }

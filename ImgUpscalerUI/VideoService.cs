@@ -1061,7 +1061,11 @@ public static class VideoService
                     bool rifeOk = await EngineService.EnsureRifeNcnnProbeAsync(rife, interpModel, gpuId, ct).ConfigureAwait(false);
                     if (!rifeOk)
                     {
-                        AppLogger.Warn($"⚠ RIFE {interpModel} 在本机 GPU({gpuId})真机探测失败(hang/崩溃/坏帧)——为稳定性改用 ONNX 补帧路线");
+                        // 【按形态说话】失败原因由探测带回(初始化即崩 ≠ 出图但坏帧),措辞集中在 AlhPro.Core.ProbeDiagnosis:
+                        // 前者在 Blackwell 上就是 NVIDIA 的 cooperative-matrix 驱动缺陷(要说清"不是本软件的问题"),
+                        // 后者属引擎并发/渲染(不许甩锅给驱动)。
+                        AppLogger.Warn($"⚠ RIFE {interpModel} 在本机 GPU({gpuId})真机探测失败——为稳定性改用 ONNX 补帧路线。"
+                            + EngineService.LastProbeUserMessage);
                         progress?.Report((10, $"⚠ 补帧 ncnn 引擎在本机不可用,为稳定性自动改用 ONNX 补帧..."));
                         interpGpu = -1;   // 本视频后续补帧 API 全部走 ONNX(InterpSegmentAsync 传入)
                     }
@@ -1259,14 +1263,16 @@ public static class VideoService
                             // 不能像其他引擎那样"降 CPU",而是整段改走 ONNX 稳定版(DirectML/CPU 都行)
                             waifuOnnx = true;
                             upOnnxDml = true;
-                            AppLogger.Warn($"⚠ waifu2x 在 50 系(Blackwell)上真机探测失败(空帧/黑帧/崩溃)——为稳定性改用 ONNX 稳定版(整段视频,兼容模式)");
+                            AppLogger.Warn($"⚠ waifu2x 在本机 50 系 GPU 上真机探测失败——为稳定性改用 ONNX 稳定版(整段视频,兼容模式)。"
+                                + EngineService.LastProbeUserMessage);
                             progress?.Report((45, $"⚠ waifu2x 在本机 50 系 GPU 上不可用,为稳定性改用 ONNX(整段视频)..."));
                         }
                         else
                         {
                             // ncnn GPU 不可用:不急着掉最慢的 ncnn-CPU —— 先试 ONNX DirectML(与 ncnn-Vulkan
                             // 是两套完全独立运行时,这些卡 DirectML 往往能正常 GPU 加速);ONNX 失败才自动掉 CPU。
-                            AppLogger.Warn($"⚠ 超分引擎 {engine} 真机探测失败(生产帧尺寸 1080×1920)——为稳定性改用 ONNX DirectML GPU(比 ncnn-CPU 快一个数量级)");
+                            AppLogger.Warn($"⚠ 超分引擎 {engine} 真机探测失败(生产帧尺寸 1080×1920)——为稳定性改用 ONNX DirectML GPU(比 ncnn-CPU 快一个数量级)。"
+                                + EngineService.LastProbeUserMessage);
                             progress?.Report((45, $"⚠ 超分引擎 {engine} 无法用 ncnn GPU,为稳定性改用 ONNX 稳定引擎(DirectML GPU)..."));
                             upGpu = -1;          // 触发下方 ONNX 分支
                             upOnnxDml = true;    // 且用 DirectML GPU(-2 自动选设备),而非强制 CPU
