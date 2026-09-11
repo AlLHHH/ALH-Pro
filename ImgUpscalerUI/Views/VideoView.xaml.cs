@@ -3138,15 +3138,18 @@ public sealed partial class VideoView : UserControl
     }
 
     /// <summary>本次超分是否会走 ONNX 路线(只用 EngineService 的公共判定函数,不复制 VideoService 内部状态):
-    /// 兼容模式强制 ONNX;waifu2x 在 50 系或"老 ncnn 有风险的机器"上走 ONNX;Real-ESRGAN 同理。
+    /// 兼容模式强制 ONNX;其余一律【以真机实测结论为准】——没测过时不按显卡型号断言(与 ShouldUseOnnx* 同口径)。
     /// 判定不出(引擎未枚举等)返回 false —— 宁可漏提示,也不误报"要用 CPU"。</summary>
     private bool OnnxUpscaleRouteLikely()
     {
         try
         {
             if (FastModeCheck.IsChecked == true) return true;   // 兼容模式:ncnn 路径同样改走 ONNX
+            // 【删掉了 IsBlackwellGpu() ||】此前 50 系无条件返回 true → ETA/提示永远按 ONNX 慢路估算,
+            // 即使实测证明 ncnn 可用。现在只看实测结论(ShouldUseOnnx* 内部:有结论用结论;
+            // 没结论时只在"无独显 / Vulkan 不可用"这两种确实只能 CPU 的情况下才为真)。
             if (VideoEngineRadios.SelectedIndex == 0)
-                return IsBlackwellGpu() || EngineService.ShouldUseOnnxWaifu2x();
+                return EngineService.ShouldUseOnnxWaifu2x();
             return EngineService.ShouldUseOnnxEsrgan();
         }
         catch { return false; }
