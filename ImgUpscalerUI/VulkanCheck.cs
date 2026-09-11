@@ -629,7 +629,7 @@ public static class VulkanCheck
 
     /// <summary>结果写缓存(下次启动直接显示,不再重测;记录版本号,升级自动作废)。
     /// 【只缓存"检测到 GPU"】"无 GPU"这个结论可能是瞬时的(引擎首次启动慢/杀软占用 exe/驱动刚装完),
-    /// 而 GpuAvailable=false 会被 OldNcnnGpuRisky 拿去把整机锁到 ONNX 路线,直到版本号变化才解锁 ——
+    /// 而 GpuAvailable=false 会被"按型号的风险启发式"(NcnnGpuRisky 在无实测结论时的回退口径)拿去把整机锁到 ONNX 路线,直到版本号变化才解锁 ——
     /// 一次偶发探测失败不该有跨会话的代价。真·无 GPU 机器重测只有几次秒级尝试,且跑在后台不阻塞启动。</summary>
     private static void Cache()
     {
@@ -661,7 +661,7 @@ public static class VulkanCheck
             GpuAvailable = AppSettings.VulkanGpuOk == true;
             Report = AppSettings.VulkanReport;
             // 结论不是"确定有 GPU"就后台重测一次:瞬时失败(引擎还没解出来/杀软占用 exe/驱动刚装完)
-            // 会把整机锁在 ONNX 路线上,而 GpuAvailable 正是 OldNcnnGpuRisky 的判据之一。
+            // 会把整机锁在 ONNX 路线上,而 GpuAvailable 正是那套"无实测结论时"回退启发式的判据之一。
             // 先显示缓存报告(界面不空白),测出 GPU 会自动纠正;负结果不回写缓存,所以不会越测越糟。
             if (!GpuAvailable) System.Threading.Tasks.Task.Run(ReProbe);
             return;

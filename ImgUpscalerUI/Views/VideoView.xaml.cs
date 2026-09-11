@@ -559,8 +559,9 @@ public sealed partial class VideoView : UserControl
         if (CompatHintPanel != null)
         {
             bool weak = SafeRender.IsWeakDevice && FastModeCheck.IsChecked != true;
-            // 引擎兼容自检优先(不限 50 系):旧 ncnn 引擎(realesrgan 2022)在
-            // Blackwell/Vulkan 不可用设备上 GPU 崩 → 建议 waifu2x;rife 老模型在 Blackwell 不稳 → 建议 v4.13/v4.6
+            // 引擎兼容自检(不限 50 系):结论【一律以真机实测为准】,不按显卡型号猜。
+            // · Real-ESRGAN:本机实测 ncnn 不可用 → 建议换 waifu2x
+            // · 旧 RIFE 模型:该模型在本机实测 ncnn 补帧不可用 → 建议换 v4.13/v4.6
             string? compatMsg = null;
             bool upOn = UpscaleToggle.IsChecked == true;
             bool interpOn = InterpToggle.IsChecked == true;
@@ -571,10 +572,14 @@ public sealed partial class VideoView : UserControl
             {
                 compatMsg = $"⚠ 本机实测「Real-ESRGAN」(2022 版)无法用 GPU 加速,建议改用「waifu2x」(官方新版,更稳定)";
             }
-            else if (interpOn && InterpModelCombo.SelectedIndex is 3 or 4 or 5 or 6 && EngineService.OldRifeModelRisky())
+            // 【不再按型号判断旧 RIFE 模型】RIFE 的 ncnn 结论是【按模型】缓存的(key = rife:<模型名>),
+            // 所以这里查的正是"当前选中模型"的那条实测结论:只有实测不可用才提示,没测过不提示。
+            // (原先用 OldRifeModelRisky() = IsBlackwellGpu() → 50 系上不论该模型实际能不能跑都提示,说反话)
+            else if (interpOn && InterpModelCombo.SelectedIndex is 3 or 4 or 5 or 6
+                     && EngineService.TryGetNcnnVerdict("rife:" + SelectedInterpModel, AppSettings.GpuIndex) == false)
             {
                 var oldModel = InterpModelCombo.SelectedIndex switch { 3 => "动漫专用(RIFE Anime)", 4 => "高清(RIFE HD)", 5 => "超高清(RIFE UHD)", _ => "经典兼容(RIFE v2.3)" };
-                compatMsg = $"⚠ 当前显卡与「{oldModel}」旧模型兼容性差,建议改用「通用画质最新 v4.13/v4.6」(更稳定)";
+                compatMsg = $"⚠ 本机实测「{oldModel}」的 ncnn 补帧不可用,建议改用「通用画质最新 v4.13/v4.6」(更稳定)";
             }
             if (compatMsg != null)
             {
@@ -3137,6 +3142,20 @@ public sealed partial class VideoView : UserControl
         catch { return false; }
     }
 
+    /// <summary>当前下拉选中的补帧模型名(引擎侧用名)。与 RunBtn 构造参数时用的是同一个映射,
+    /// 抽出来是为了让"兼容提示"和"实际执行"永不脱钩(两处各写一份迟早分叉)。</summary>
+    private string SelectedInterpModel => InterpModelCombo.SelectedIndex switch
+    {
+        0 => "rife-v4.13",
+        1 => "rife-v4.6",
+        2 => "rife-v4.26",
+        3 => "rife-anime",
+        4 => "rife-HD",
+        5 => "rife-UHD",
+        6 => "rife-v2.3",
+        _ => "rife-v4.13",
+    };
+
     /// <summary>本次超分是否会走 ONNX 路线(只用 EngineService 的公共判定函数,不复制 VideoService 内部状态):
     /// 兼容模式强制 ONNX;其余一律【以真机实测结论为准】——没测过时不按显卡型号断言(与 ShouldUseOnnx* 同口径)。
     /// 判定不出(引擎未枚举等)返回 false —— 宁可漏提示,也不误报"要用 CPU"。</summary>
@@ -4252,17 +4271,7 @@ public sealed partial class VideoView : UserControl
         double? targetFps = (TargetFpsCheck.IsChecked == true
             && double.TryParse(TargetFpsBox.Text, NumberStyles.Float, inv, out var tf) && tf > 0)
             ? tf : null;
-        var interpModel = InterpModelCombo.SelectedIndex switch
-        {
-            0 => "rife-v4.13",
-            1 => "rife-v4.6",
-            2 => "rife-v4.26",
-            3 => "rife-anime",
-            4 => "rife-HD",
-            5 => "rife-UHD",
-            6 => "rife-v2.3",
-            _ => "rife-v4.13",
-        };
+        var interpModel = SelectedInterpModel;
         // 去重可单独使用(不勾补帧也能只去重导出);转场/指定输出帧率仅补帧时有效
         var dedupOn = DedupCheck.IsChecked == true;
         var dedupModel = DedupModelCombo.SelectedIndex + 1;   // 服务端:1智能 2动漫 3手动(内含内容帧率采样)

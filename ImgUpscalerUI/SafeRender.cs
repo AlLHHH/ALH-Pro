@@ -294,7 +294,9 @@ public static class SafeRender
     /// <summary>视频逐帧超分专用分块大小【显卡家族感知】:不同显卡家族的 ncnn-Vulkan 稳定性/显存表现不同,
     /// 一刀切 GetTileSize 会让 1660Ti/20系(小显存)和 50系(Blackwell)、A卡(驱动差异)用同一参数,适配差。
     /// 各家族取舍(基于权威 ncnn 引擎参数 + 项目历史黑帧/爆显存实测):
-    /// - Blackwell(RTX50):ncnn-Vulkan 易崩,偏保守 tile,且主路径走 ONNX
+    /// - Blackwell(RTX50):⚠ 仍按保守 tile 处理,但【这条依据已过时、待重估】—— 原文写的是
+    ///   "ncnn-Vulkan 易崩,主路径走 ONNX",而路由如今已改成"真机探测后决定"。若探测表明 50 系能正常跑
+    ///   ncnn,这里的保守值就是白亏吞吐。重估需要真机数据(探测结论 + 实际吞吐),拿到之前不动数值。
     /// - NVIDIA Turing(20系/1660Ti/1060,6~8G):中等 tile,快且不炸显存
     /// - AMD 独显(驱动差异大):保守 tile,配合 ONNX 兜底
     /// - 大显存(12G+):放大 tile 提速(块少、接缝少、质量更好)

@@ -16,7 +16,10 @@ namespace ALHPro;
 public static partial class EngineService
 {
     /// <summary>是否 RTX 50 系(Blackwell)显卡:从 VulkanCheck/GPU 枚举名字判断。
-    /// 50 系上 2022 版 ncnn 引擎(Vulkan)会崩 —— 需换 ONNX 路线(不走 Vulkan)。
+    /// 【它现在只决定"要不要真机探测",不再决定"禁不禁 ncnn"】原先据此一律改走 ONNX;现在 ncnn
+    /// 能否用由 EnsureNcnnProbeAsync 实测决定(见 NcnnGpuRisky / ShouldUseOnnx*),50 系探测通过就走 ncnn。
+    /// 仍需名字判定的场景:①探测的快速通道(纯 NVIDIA 非 Blackwell 且机内无非 N 卡 → 不探测直接判可用)
+    /// ②少数确实只见于 50 系的引擎缺陷兜底(如 waifu2x 的 ncnn CPU 模式崩溃 exit -1073741819)。
     /// 测试钩子:环境变量 ALH_FORCE_BLACKWELL=1 时强制视为 50 系(开发/诊断用,正常用户不生效)。</summary>
     public static bool IsBlackwellGpu()
     {
@@ -666,13 +669,6 @@ public static partial class EngineService
         catch { return null; }
     }
 
-    /// <summary>旧 ncnn 引擎(2022 版,realesrgan ncnn)在 GPU 上可能不可用的设备:
-    /// ①RTX 50 系(Blackwell)②Vulkan 不可用/无独显(只能 CPU,而 CPU 也崩)。
-    /// 用于全设备兼容自检提示(不限 50 系)。
-    /// 【注意】这是"还没实测过"时的保守启发式 —— 真机探测过就以实测为准(见 NcnnGpuRisky / EnsureNcnnProbeAsync);
-    /// 50 系不再"一律禁用 ncnn":引擎够新(waifu2x 20250915 已是上游最新构建)时探测能过,就该走 ncnn 这条快 33 倍的路。</summary>
-    public static bool OldNcnnGpuRisky() => OldNcnnGpuRiskyHeuristic(treatBlackwellAsRisky: true);
-
     /// <summary>风险启发式的公共实现。treatBlackwellAsRisky=false 给 waifu2x 用:
     /// 它自带的是 20250915 版(上游最新)引擎,未实测时不该按"风险"处理 —— 否则又退回"50 系一刀切禁用 ncnn"。</summary>
     private static bool OldNcnnGpuRiskyHeuristic(bool treatBlackwellAsRisky)
@@ -684,9 +680,6 @@ public static partial class EngineService
         // 其余(AMD/Intel 核显/NVIDIA 老卡):Vulkan 正常即可用,不预判(避免误报)
         return false;
     }
-
-    /// <summary>旧 rife 模型(anime/HD/UHD/v2.3,ncnn 2022 权重)在 Blackwell 上不稳(其余卡正常)。</summary>
-    public static bool OldRifeModelRisky() => IsBlackwellGpu();
 
     /// <summary>【实测验证】推荐 GPU:引擎枚举的设备按优先级(NVIDIA&gt;AMD 独显&gt;Arc&gt;其他,核显排除)
     /// 逐个做 1×1 真机探测,返回第一个【实际可用】的引擎编号;-1=全部不可用。
