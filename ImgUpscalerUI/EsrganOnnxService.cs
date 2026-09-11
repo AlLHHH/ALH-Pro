@@ -614,6 +614,9 @@ public static class EsrganOnnxService
         bool wantGpu = auto ? true : gpuId >= 0;
         // 大显存(12G+)ONNX 逐帧超分用 3 路并行(5070 Ti 等更有算力,多活能让 GPU 更饱和);小显存保持 2,避免爆显存
         int concurrency = wantGpu ? (SafeRender.EffectiveVramGB >= 12 ? 3 : 2) : 1;
+        // 【诊断】把 ONNX 路线的实际配置写进日志:排查"GPU 占用低/慢"时要看它(路数少 = GPU 吃不饱)
+        AppLogger.Info($"ONNX 超分路线:{(wantGpu ? "DirectML GPU" : "CPU")},并行 {concurrency} 路会话"
+            + $"(有效显存 {SafeRender.EffectiveVramGB:0.#}GB;分块大小见下一条「大图分块」日志)");
         // 【熔断快速失败】DirectML 已被系统摘除/挂死(887A0005/887A0006):本进程内不可能恢复,再建会话、再逐帧试
         // 都必然失败。立刻抛出让调用方按【批次】回退源帧(几十秒),而不是每批重来一遍(几小时)。
         // wantGpu=false 表示调用方明确要 CPU(本机无 GPU 可用)——那是唯一允许用 CPU 的场景,不在此列。

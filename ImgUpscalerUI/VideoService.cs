@@ -1778,7 +1778,16 @@ public static class VideoService
                     }
                     await Task.WhenAll(shTasks);
                 }
-                progress?.Report((90, $"帧超分完成({total} 帧)" + StageElapsed()));
+                // 【实测速度上报】把"这一阶段到底多快"写进日志 —— 排查"慢 / GPU 占用低"时先看这里,
+            // 再与上面那条探测结论行(「真机探测通过→ncnn」 或 「探测失败→改用 ONNX」)对照,
+            // 就能立刻判断是"路线选错了"还是"这条路本身就慢"。
+            {
+                double srSec = (DateTime.UtcNow - srStageStart).TotalSeconds - srIdleSec;
+                double msPer = total > 0 ? srSec * 1000.0 / total : 0;
+                AppLogger.Info($"超分实测:{total} 帧 / {srSec:0.#}s = {msPer:0} ms/帧"
+                    + $"({(srSec > 0.001 ? total / srSec : 0):0.##} 帧/秒) · 路线={(upOnnxDml ? "ONNX 稳定引擎(DirectML)" : "ncnn-Vulkan")}");
+            }
+            progress?.Report((90, $"帧超分完成({total} 帧)" + StageElapsed()));
             }
 
             // 4.5) 自定义输出分辨率:超分/补帧后批量缩放到精确 W×H(未超分时也生效,相当于统一尺寸)
