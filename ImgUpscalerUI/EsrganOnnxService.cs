@@ -1,6 +1,9 @@
 // EsrganOnnxService.cs — Real-ESRGAN ONNX 超分(纯 C#,ONNX Runtime,无 Python)
-// 目的:50 系 Blackwell + CPU 都稳定的超分实现(ncnn-vulkan 老引擎在 50 系/CUDA 系崩溃)。
-// 路径:引擎文件 realesrgan-ncnn-vulkan.exe(2022)在 50 系不可用,此服务用 ONNX 模型替代。
+// 目的:ncnn-Vulkan 实测不可用时(50 系 / AMD / 无独显 / 驱动异常)的稳定超分实现 —— 走 ONNX
+// (优先 DirectML,失败落 CPU),与 ncnn 是两套完全独立的运行时。
+// 【措辞已更正】原文写"引擎文件 realesrgan-ncnn-vulkan.exe(2022)在 50 系不可用",那是"按型号猜"时代的
+// 结论:现在是否走 ncnn 由真机探测决定(EngineService.EnsureNcnnProbeAsync,生产帧尺寸 + 带状黑判据),
+// 实测通过就走更快的 ncnn —— 本服务只是探测失败后的兜底,不再是"50 系的主路径"。
 // CPU/GPU(DirectML)双模式,GPU 失败自动降 CPU(与 CutoutService 同策略)。
 using System;
 using System.IO;
