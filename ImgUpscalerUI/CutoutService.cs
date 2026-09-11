@@ -868,32 +868,11 @@ public static class CutoutService
                 $"图片过大:{bmp.Width}×{bmp.Height} = {px:N0} 像素,超出 AI 抠图安全上限(单边≤{MaxDim},总像素≤{MaxPx:N0})。" +
                 "请先缩小图片再抠图。");
         }
-        ApplyExifRotation(bmp, input);
+        // 【统一实现】原先这里只处理 6/8/3,方向 2/4/5/7(镜像/转置)静默不处理 → 掩码/坐标与预览不一致;
+        // 而且为了读 EXIF 又 new Bitmap(path) 全解码一次(大图白卡主线程)。现在共用 ExifFix(8 种全覆盖),
+        // 并直接在【已加载的位图】上读标记,不再二次解码。
+        ExifFix.ApplyInPlace(bmp);
         return bmp;
-    }
-
-    /// <summary>应用 EXIF 方向旋转(手机照片;System.Drawing 读取不自动旋转,须手动处理,
-    /// 否则掩码/坐标与预览显示(已旋转)不一致)。</summary>
-    private static void ApplyExifRotation(System.Drawing.Bitmap bmp, string path)
-    {
-        try
-        {
-            using var probe = new System.Drawing.Bitmap(path);
-            foreach (System.Drawing.Imaging.PropertyItem pi in probe.PropertyItems)
-            {
-                if (pi.Id == 0x0112 && pi.Value is { Length: > 0 })
-                {
-                    switch (pi.Value[0])
-                    {
-                        case 6: bmp.RotateFlip(System.Drawing.RotateFlipType.Rotate90FlipNone); break;
-                        case 8: bmp.RotateFlip(System.Drawing.RotateFlipType.Rotate270FlipNone); break;
-                        case 3: bmp.RotateFlip(System.Drawing.RotateFlipType.Rotate180FlipNone); break;
-                    }
-                    break;
-                }
-            }
-        }
-        catch { /* 无 EXIF 或读取失败按原样处理 */ }
     }
 
     /// <summary>滑动窗口 box blur(水平 + 垂直各一遍,边界取 clamp)。</summary>

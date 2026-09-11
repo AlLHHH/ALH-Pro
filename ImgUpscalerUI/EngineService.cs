@@ -960,34 +960,21 @@ public static partial class EngineService
         _tempFiles.Clear();
     }
 
-    /// <summary>若图片带 EXIF 旋转(手机照片),返回旋转后的临时 PNG 路径;否则返回原路径。
-    /// 用于预处理(降噪/超分)前标准化方向,保证标记坐标与处理结果同坐标系。</summary>
+    /// <summary>若图片带 EXIF 方向标记(手机照片),返回【转正后】的临时 PNG 路径;否则原样返回入参路径。
+    /// 用于预处理(降噪/超分)前标准化方向,保证标记坐标与处理结果同坐标系。
+    /// 【已收敛到 ExifFix】此前这里只处理 6/8/3,方向 2/4/5/7(镜像/转置)会静默不处理 → 坐标错位;
+    /// 而且为了读 EXIF 先 new Bitmap(input) 全解码一次、再 new 一次做变换 —— 现在只解码一次。</summary>
     public static string NormalizeExif(string input)
     {
         try
         {
-            using (var probe = new System.Drawing.Bitmap(input))
-            {
-                foreach (System.Drawing.Imaging.PropertyItem pi in probe.PropertyItems)
-                {
-                    if (pi.Id == 0x0112 && pi.Value is { Length: > 0 } && pi.Value[0] is 6 or 8 or 3)
-                    {
-                        var outPath = Path.Combine(EngineService.TempRoot, $"imgup_exif_{Guid.NewGuid():N}.png");
-                        RegisterTempFile(outPath);   // 注册待清理
-                        using var bmp = new System.Drawing.Bitmap(input);
-                        switch (pi.Value[0])
-                        {
-                            case 6: bmp.RotateFlip(System.Drawing.RotateFlipType.Rotate90FlipNone); break;
-                            case 8: bmp.RotateFlip(System.Drawing.RotateFlipType.Rotate270FlipNone); break;
-                            case 3: bmp.RotateFlip(System.Drawing.RotateFlipType.Rotate180FlipNone); break;
-                        }
-                        // 旋转后清除 EXIF 方向标记,否则下游 LoadRotatedBitmap 会再转一次(双重旋转→主体偏位)
-                        try { bmp.RemovePropertyItem(0x0112); } catch { }
-                        bmp.Save(outPath, System.Drawing.Imaging.ImageFormat.Png);
-                        return outPath;
-                    }
-                }
-            }
+            using var bmp = new System.Drawing.Bitmap(input);
+            if (!AlhPro.Core.ExifOrientation.NeedsTransform(ExifFix.ReadOrientation(bmp))) return input;
+            ExifFix.ApplyInPlace(bmp);   // 就地转正,并清掉 0x0112 标记(否则下游会再转一次 → 双重旋转)
+            var outPath = Path.Combine(EngineService.TempRoot, $"imgup_exif_{Guid.NewGuid():N}.png");
+            RegisterTempFile(outPath);   // 注册待清理
+            bmp.Save(outPath, System.Drawing.Imaging.ImageFormat.Png);
+            return outPath;
         }
         catch { }
         return input;

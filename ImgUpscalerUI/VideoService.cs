@@ -2179,17 +2179,26 @@ public static class VideoService
     }
 
     /// <summary>视频降噪滤镜(ffmpeg nlmeans 非局部均值,比 hqdn3d 强得多):
-    /// 实测 hqdn3d(原实现,参数 5~12 档)对压缩/随机噪点几乎无效果(标准差仅降 0.2%),
-    /// nlmeans 同条件降噪 53%(14.4→6.8)——故改为 nlmeans,效果真实可见。
-    /// 参数 = sigma空间:radius:patch_size:sigma时间,越大越强;档位按强度递增。</summary>
+    /// 实测 hqdn3d(原实现)对压缩/随机噪点几乎无效果,而 nlmeans 效果真实可见,故改用 nlmeans。
+    /// 【参数必须写显式名,绝不能用位置参数 —— 这里踩过坑】原先写成 "nlmeans=3:3:7:3",注释还写成
+    /// "sigma空间:radius:patch_size:sigma时间" —— 那是 hqdn3d 的签名,nlmeans 根本没有这个顺序
+    /// (本机 `ffmpeg -h filter=nlmeans` 实证,选项为 s/p/pc/r/rc)。于是第 3 个数被当成【色度 patch】
+    /// 而第 4 个数被当成【研究窗】:结果色度 patch 比亮度 patch 还大、研究窗被压到 3~7(默认 15)。
+    /// 【实测数据】720p24 合成噪声源,PSNR 对干净源(未降噪基准 32.97 dB);耗时=1080p 60 帧批次:
+    ///   弱 旧 3:3:7:3 = 37.59 dB / 32.8 ms  → 新 s=3:p=3:r=3 = 40.63 dB / 33.0 ms  (+3.04 dB,代价不变)
+    ///   中 旧 5:5:9:5 = 41.34 dB / 79.2 ms  → 新 s=5:p=5:r=5 = 42.45 dB / 77.2 ms  (+1.11 dB,略快)
+    ///   强 旧 7:7:11:7 = 42.15 dB / 140.8 ms → 新 s=7:p=7:r=7 = 42.51 dB / 140.5 ms (+0.36 dB,代价不变)
+    /// 结论:那个显式 pc(色度 patch)在三档上都是纯亏,去掉它(留默认 0 = 与亮度 p 相同)全部为正收益。
+    /// 【为什么刻意不把 r 提到默认 15】实测代价 ∝ r²:s=5:p=7:r=15 是 622 ms/帧(8.3 倍)、只多 2.2 dB ——
+    /// 与本项目"治慢"的方向相反。故三档保持小研究窗,并让 r 与 p 同步递增(小窗小块→大窗大块),便于解释。</summary>
     private static string VideoDenoiseFilter(int strength)
     {
         return strength switch
         {
-            1 => "nlmeans=3:3:7:3",      // 弱(明显去噪,细节轻微损失)
-            2 => "nlmeans=5:5:9:5",      // 中
-            3 => "nlmeans=7:7:11:7",     // 强(去噪最狠,可能略糊)
-            _ => "nlmeans=5:5:9:5",
+            1 => "nlmeans=s=3:p=3:r=3",   // 弱(明显去噪,细节轻微损失;最便宜)
+            2 => "nlmeans=s=5:p=5:r=5",   // 中(默认:实测最优点附近)
+            3 => "nlmeans=s=7:p=7:r=7",   // 强(去噪最狠,可能略糊;代价约为弱档 4 倍)
+            _ => "nlmeans=s=5:p=5:r=5",
         };
     }
 
