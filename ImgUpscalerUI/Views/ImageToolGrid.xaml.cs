@@ -848,29 +848,11 @@ public sealed partial class ImageToolGrid : UserControl
         }
     }
 
-    /// <summary>EXIF 方向 6/8(旋转 90°)转正后返回新图;其余方向无操作返回原实例(调用方 using 双释放安全)。
-    /// 预览(WIC)按 EXIF 显示,裁剪必须用同一坐标系,否则竖拍照片裁错区域。</summary>
-    private static System.Drawing.Bitmap ApplyExifOrientation(System.Drawing.Bitmap src)
-    {
-        int orient = 1;
-        try
-        {
-            foreach (System.Drawing.Imaging.PropertyItem pi in src.PropertyItems)
-            {
-                if (pi.Id == 0x0112 && pi.Value is { Length: > 0 }) { orient = pi.Value[0]; break; }
-            }
-        }
-        catch { }
-        if (orient is not (6 or 8)) return src;
-        var outB = new System.Drawing.Bitmap(src.Height, src.Width, src.PixelFormat);
-        using (var g = System.Drawing.Graphics.FromImage(outB))
-        {
-            if (orient == 6) { g.TranslateTransform(0, outB.Height); g.RotateTransform(90); }   // 顺时针 90°
-            else { g.TranslateTransform(outB.Width, 0); g.RotateTransform(-90); }              // 逆时针 90°
-            g.DrawImage(src, 0, 0);
-        }
-        return outB;
-    }
+    /// <summary>EXIF 方向转正后返回新图;方向为 1(正常)时返回原实例(调用方 using 双释放安全)。
+    /// 预览(WIC)按 EXIF 显示,裁剪必须用同一坐标系,否则竖拍照片裁错区域。
+    /// 【已收敛到 ExifFix】原先这里只处理 6/8,方向 2/4/5/7(镜像/转置)会静默不处理 → 裁错区域;
+    /// 而且三处调用点各写了一份不同覆盖范围的定义,现已统一。</summary>
+    private static System.Drawing.Bitmap ApplyExifOrientation(System.Drawing.Bitmap src) => ExifFix.Apply(src);
 
     // ---------- 拖拽添加 ----------
     public static bool IsImageExt(string ext)
