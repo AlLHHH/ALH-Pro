@@ -2054,9 +2054,10 @@ public sealed partial class VideoView : UserControl
         3 => "动漫专用", 4 => "高清", 5 => "超高清", _ => "?",
     };
 
-    // 视频超分模型下拉选项文本(与 VideoView.xaml 里 ComboBoxItem.Content 一致)
+    // 视频超分模型下拉选项文本(与 VideoView.xaml 里 ComboBoxItem.Content 一致;x4plus 那项是富文本+红字"超慢",
+    // 这里只用于预设摘要显示,故仍是纯文本)
     private static string[] UpWaifu2xModelNames = { "通用·cunet", "动漫·upconv_7_anime", "现实·upconv_7_photo" };
-    private static string[] UpEsrganModelNames = { "动漫·animevideov3", "动漫·x4plus-anime", "通用·x4plus" };
+    private static string[] UpEsrganModelNames = { "动漫·animevideov3", "动漫·x4plus-anime", "通用·x4plus(超慢)" };
     private static string UpWaifu2xModelName(int idx) => idx >= 0 && idx < UpWaifu2xModelNames.Length ? UpWaifu2xModelNames[idx] : "通用·cunet";
     private static string UpEsrganModelName(int idx) => idx >= 0 && idx < UpEsrganModelNames.Length ? UpEsrganModelNames[idx] : "动漫·animevideov3";
 
