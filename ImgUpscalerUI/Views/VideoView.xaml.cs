@@ -847,6 +847,22 @@ public sealed partial class VideoView : UserControl
         // Real-ESRGAN 有对应权重,全亮
         SetScaleRadioEnabled(VScale3xRadio, true);
         SetScaleRadioEnabled(VScale4xRadio, true);
+        // 【4x-only 权重模型 × 倍率】realesrgan-x4plus 只有 4x 权重:选 2x/3x 时引擎照样把 4x 网络全量算一遍再缩回
+        // (实测 1080p 源:-s 2 = 17.5s → 3840×2160 vs -s 4 = 18.1s → 7680×4320 —— 时间一点没省,还多一道缩回)。
+        // 按"既然它只有 4x,就别让人以为能选 2x"的要求:选中该模型时只开放 4x,当前若停在 2x/3x 则回退到 4x。
+        // ① 1x 超分保留 —— 它的语义本身就是"放大后缩回",输出仍是原尺寸,不会把成片撑成 8K;
+        // ② 只锁这一个重型模型 —— realesr-animevideov3 等轻量模型仍可 2x(官方预设正是用它出 2x=4K,
+        //    且轻模型下 2x 实测比 4x 更快:1.5s vs 2.5s,因为省掉 4 倍像素的写盘)。
+        string esrModel = (VideoEsrganModelCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
+        bool x4plusOnly = up && VideoEngineRadios.SelectedIndex == 1 && esrModel == "realesrgan-x4plus";
+        SetScaleRadioEnabled(VScale2xRadio, !x4plusOnly);
+        SetScaleRadioEnabled(VScale3xRadio, !x4plusOnly);
+        if (x4plusOnly)
+        {
+            if (scaleIdx is 1 or 2) VideoScaleRadios.SelectedIndex = 3;   // 回退到该模型的原生 4x
+            ScaleHint.Text = "⚠ realesrgan-x4plus 只有 4x 权重:2x/3x 只是把 4x 结果缩回(耗时与 4x 相同),已只开放 4x。"
+                + "1080p 源此时输出 7680×4320(8K);想要 2x/3x 请换轻量模型(realesr-animevideov3 / waifu2x cunet)";
+        }
         InterpModelCombo.IsEnabled = interp;
         // 非 2 的幂倍率(3x/12x/16x)仅 v4 架构模型支持;其余模型按 2x 级联(置灰+已选回退)。
         // v4.26(索引2)已停用(引擎兼容问题,置灰不可选),不再算可用 v4 模型,按不可用处理。
