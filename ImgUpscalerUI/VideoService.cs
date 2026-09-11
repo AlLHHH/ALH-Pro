@@ -301,6 +301,7 @@ public static class VideoService
         double contentFps = 0,   // 内容帧率模式(去重模型 7):按 fc 时间网格均匀采样,不做逐帧判定;≤0=报错
         double animeHoldN = 0,   // 动漫模式(去重模型 2):动画帧率变种"一拍N"(2/3/2.5=混合拍二+三/4/5/6;0/1=不采样=内容帧率=输入帧率)
         bool tempoResample = false,   // 节奏重采样(实验):任意 t 插帧按关键帧真实时长分布(自研任意 t 方案)
+        int upWaifu2xNoise = 0,   // 超分 waifu2x 降噪档(0=不降噪 1=弱 2=中 3=强):waifu2x 唯一真正起作用的旋钮
         Func<Task>? pauseWait = null)
     {
         // 静态报告字段清零:防止上一个视频的去重摘要/编码器信息残留在下一个视频的显示里
@@ -1475,6 +1476,13 @@ public static class VideoService
                                                 $"ℹ 稳定引擎(ONNX)的 waifu2x 仅有 cunet 模型,已按 cunet 处理 —— 你选的「{model}」需要 ncnn 引擎;写实片源建议改选 Real-ESRGAN"));
                                         }
                                     }
+                                    // 降噪档同理:ONNX 稳定引擎是固定权重,传进去也没效果(与图片页"稳定引擎不支持 X 已忽略"同一套口径)
+                                    if (engine == "waifu2x" && upWaifu2xNoise > 0)
+                                    {
+                                        AppLogger.Info($"ℹ 视频超分:稳定引擎(ONNX)不支持 waifu2x 降噪档({upWaifu2xNoise}),已忽略");
+                                        progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
+                                            $"ℹ 稳定引擎(ONNX)不支持 waifu2x 降噪档(已忽略)—— 该档位只在 ncnn 引擎上生效"));
+                                    }
                                     // 【不要轻易掉 CPU】若这就要落 CPU(-1 = 强制 CPU),黄字明示用户(而非静默跑慢几倍)
                                     if (upGpu < 0 && !upOnnxDml)
                                         progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
@@ -1489,7 +1497,7 @@ public static class VideoService
                             else
                             {
                                 await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
-                                    upScale, 0, upGpu, false, srProgress, ct,
+                                    upScale, upWaifu2xNoise, upGpu, false, srProgress, ct,   // noise = waifu2x 降噪档(Real-ESRGAN 时调用方恒传 0)
                                     SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1),   // 显卡家族感知分块(视频超分专用);快速模式再减半(显存占用约降 4 倍)
                                     watchStage: "超分",   // 逐帧汇报(像补帧一样显示"超分 第 N 帧 / 共 M 帧")
                                     globalBaseFrames: batchStartSlot, globalTotalFrames: total,   // 百分比按全局帧数算,预计时间才准
