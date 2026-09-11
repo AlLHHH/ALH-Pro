@@ -3556,6 +3556,15 @@ public static class VideoService
         string vfExpr, string framesDir, IProgress<(int pct, string msg)>? progress, CancellationToken ct,
         int origCountEst)
     {
+        // 【阶段收尾上报】ffmpeg 的进度行是周期性的,最后那一帧的 frame= 常常来不及打出(真机日志停在 66/72),
+        // 于是"拆帧"看起来永远跑不满就跳到下一阶段(超分/补帧本来各有"完成"那条,只有拆帧漏了)。
+        // 文案必须与 UI 的解析正则对齐:`^(?<stage>..)(?:已处理|第) N 帧 / 共 M 帧`,步骤行才会显示"已处理 N/M"。
+        int FinishExtract(int n)
+        {
+            int total = Math.Max(n, origCountEst);
+            progress?.Report((StageProgressPct("拆帧", n, total), $"拆帧 已处理 {n} 帧 / 共 {total} 帧"));
+            return n;
+        }
         var pattern = Path.Combine(framesDir, "frame_%06d.jpg");
         // 拆帧【无条件】passthrough:一个解码帧 = 一个 jpg,永不复制、永不丢弃。
         // 原先只在 VFR 检测通过时才加,检测漏了就落回 ffmpeg 默认的 CFR 补帧路径 ——
@@ -3583,7 +3592,7 @@ public static class VideoService
                     $"-y {trimArgs} -hwaccel d3d11va -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{vfExpr}\" -qscale:v 2 \"{pattern}\"",
                     progress, ct, "拆帧", origCountEst);
                 int n = Directory.EnumerateFiles(framesDir, "*.jpg").Count();
-                if (n > 0) return n;
+                if (n > 0) return FinishExtract(n);
                 if (canLatchHw) _hwDecodeBrokenCodecs.Add(hwCodec);   // 硬解输出 0 帧 → 该编码视为不可用
                 AppLogger.Warn($"拆帧:硬解(d3d11va)正常退出但一帧未出(编码 {codecName})→ 本会话该编码改走软解");
             }
@@ -3608,7 +3617,7 @@ public static class VideoService
         await RunAsync(ffmpeg,
             $"-y {trimArgs} -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{vfExpr}\" -qscale:v 2 \"{pattern}\"",
             progress, ct, "拆帧", origCountEst);
-        return Directory.EnumerateFiles(framesDir, "*.jpg").Count();
+        return FinishExtract(Directory.EnumerateFiles(framesDir, "*.jpg").Count());
     }
 
     /// <summary>
