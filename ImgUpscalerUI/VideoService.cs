@@ -513,6 +513,10 @@ public static class VideoService
                 }
                 else
                 {
+                    // 【先报进度再探测】这一步要起引擎真跑一帧(可用/黑帧判定),探测失败还会 3 次退避 ≈ 20 秒 ——
+                    // 期间界面若一条消息都没有,用户就会觉得"点了开始没反应/卡住"(真机反馈"开始处理时卡3秒")。
+                    // 先给条进度(百分比落在拆帧前段),把这段等待变成"可见的检测中"。
+                    progress?.Report((1, $"正在检测超分引擎兼容性({engine},首次约 1~20 秒,结论会记住)..." + StageElapsed()));
                     try
                     {
                         denoiseViaModel = await EngineService.EnsureNcnnProbeAsync("waifu2x", gpuId, model, ct);
