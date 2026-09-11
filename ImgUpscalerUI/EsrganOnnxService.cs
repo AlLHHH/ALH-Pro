@@ -822,12 +822,14 @@ public static class EsrganOnnxService
         }
 
         // ===== 分块保护(实测:GPU 整帧喂 1080p → DirectML OOM 崩溃;CPU 慢到 210s/帧)=====
-        // 输入超 512 就切成块(带 32px 重叠羽化拼回):GPU 每块 0.3~0.5s,1080p 也稳;速度数倍提升。
-        const int Tile = 512;
+        // 【分块改为按显存自适应】此前这里写死 const int Tile = 512,而自适应函数 TileFor() 只被透明底路径用到 ——
+        // 于是绝大多数图片/视频帧(不透明)一律按 512 分块。实测 8GB 卡上 1024 才是最优点且未溢出、还更快
+        // (见 AlhPro.Core.RenderPolicy.OnnxTileSize 的实测锚点与"为什么上限就钉 1024")。
         const int Overlap = 64;   // 32→64:分块共享上下文更多,接缝过渡带更宽、高纹理更难看出"分块"(代价:边缘计算略增)
-        if (sw > Tile || sh > Tile)
+        int tile = TileFor(sw, sh);
+        if (sw > tile || sh > tile)
         {
-            RunCoreTiled(src, output, scale, modelPath, gpuId, progress, ct, Tile, Overlap, sessionOverride, dmlDeviceHint);
+            RunCoreTiled(src, output, scale, modelPath, gpuId, progress, ct, tile, Overlap, sessionOverride, dmlDeviceHint);
             return;
         }
 
@@ -844,10 +846,10 @@ public static class EsrganOnnxService
     private static int TileFor(int w, int h)
     {
         int max = Math.Max(w, h);
-        // 显存自适应分块(与 ncnn 同口径):大显存卡(12G+,如 5070 Ti)用更大的块(最多 768,块少→GPU 吃得饱→更快),
-        // 小显存沿用保守值(512);小图(≤512)直接用原尺寸、无需分块。
+        // 小图直接用原尺寸(无需分块);否则按【显存 + 是否核显】定 —— 实测锚点与取值理由见
+        // AlhPro.Core.RenderPolicy.OnnxTileSize(8GB→1024 最优且安全;核显共享显存一律 512)。
         if (max <= 512) return Math.Max(64, max);
-        return Math.Max(512, SafeRender.GetTileSize());
+        return Math.Max(512, SafeRender.GetOnnxTileSize());
     }
 
     /// <summary>透明底保护:提取 alpha → RGB 填白 → 超分 → 恢复 alpha(输出 32bpp Argb)。</summary>
@@ -954,7 +956,7 @@ public static class EsrganOnnxService
         int cols = (sw + stride - 1) / stride;
         int rows = (sh + stride - 1) / stride;
         int total = cols * rows;
-        progress?.Report((5, $"大图分块: {cols}×{rows}={total} 块(超分 {scale:0.##}x,自动分块防爆显存)..."));
+        progress?.Report((5, $"大图分块: {cols}×{rows}={total} 块 · 每块 {tile}px(超分 {scale:0.##}x,按显存自适应防爆显存)..."));
 
         int modelScale = modelPath.Contains("waifu2x", StringComparison.OrdinalIgnoreCase) ? 2 : 4;
         // 重叠区羽化宽度(输出像素),留 2px 余量保证淡入区落在真实重叠内

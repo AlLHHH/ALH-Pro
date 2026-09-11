@@ -68,7 +68,7 @@ public sealed partial class MainPage : Page
             StatusText.Text = ok ? "就绪" : "引擎缺失: " + missing;
             AppLogger.Info($"安全渲染:模式={(SafeRender.Mode == 0 ? "自动" : "自定义")}," +
                 $"显存墙 {SafeRender.EffectiveVramGB:0.#} GB(总 {SafeRender.TotalVramGB:0.#} GB / 空闲 {SafeRender.FreeVramText})," +
-                $"分块 {SafeRender.GetTileSize()},内存墙 {SafeRender.EffectiveRamGB:0.#} GB," +
+                $"分块 {SafeRender.GetTileSize()}(ONNX {SafeRender.GetOnnxTileSize()}),内存墙 {SafeRender.EffectiveRamGB:0.#} GB," +
                 $"视频批 {SafeRender.GetVideoBatchSize()} 帧/批,CPU {SafeRender.EffectiveCpuLevel switch { 1 => "低", 2 => "中", _ => "高" }}({SafeRender.CpuCoreCount} 核)," +
                 $"CPU硬上限 {SafeRender.GetEffectiveCpuCapPct():0}%(处理前系统占用 {SafeRender.IdleCpuLoad * 100:0}%)," +
                 $"降温休息={(SafeRender.RestEnabled ? "开(1小时/15分钟)" : "关")}");

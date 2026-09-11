@@ -291,6 +291,22 @@ public static class SafeRender
         return 768;                // 12GB+:768(≈4.3GB/块),16GB 级仍安全;封顶防 TTA×2 爆显存
     }
 
+    /// <summary>ONNX(DirectML)路径专用分块 —— 纯策略在 AlhPro.Core.RenderPolicy(有单测),
+    /// 这里只负责把两个事实喂进去:①显存(已计入用户设的显存墙)②本机枚举到的第一张显卡是不是核显。
+    /// 【为什么要单独一个】它与 GetTileSize()(引擎/ncnn 口径的保守估算)不是一回事:
+    /// ONNX 分块有【实测锚点】—— 8GB 卡上 1024 是最优点且未溢出,1280 起会静默慢十余倍,见 RenderPolicy.OnnxTileSize。</summary>
+    public static int GetOnnxTileSize()
+    {
+        bool integrated = false;
+        try
+        {
+            if (VulkanCheck.Devices.Count > 0)
+                integrated = AlhPro.Core.GpuName.IsIntegrated(VulkanCheck.Devices[0].Name);
+        }
+        catch { /* 枚举失败按独显处理:核显那一路另有 512 下限兜底 */ }
+        return AlhPro.Core.RenderPolicy.OnnxTileSize(TotalVramGB, EffectiveVramGB, integrated);
+    }
+
     /// <summary>视频逐帧超分专用分块大小【显卡家族感知】:不同显卡家族的 ncnn-Vulkan 稳定性/显存表现不同,
     /// 一刀切 GetTileSize 会让 1660Ti/20系(小显存)和 50系(Blackwell)、A卡(驱动差异)用同一参数,适配差。
     /// 各家族取舍(基于权威 ncnn 引擎参数 + 项目历史黑帧/爆显存实测):
