@@ -60,7 +60,7 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/max
 SolidCompression=yes
 OutputDir=.\
-OutputBaseFilename=ALHPro_v{#MyAppVersion}_Full_Setup
+OutputBaseFilename=ALHPro_v{#MyAppVersion}_完整版_{#BuildStamp}
 SetupIconFile=assets\icon.ico
 ; 不用管理员权限(普通用户直接装;默认用户目录,无需提权)——配合 {userpf} 无权限冲突
 PrivilegesRequired=lowest
