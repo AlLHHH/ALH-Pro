@@ -116,7 +116,9 @@ public static partial class EngineService
         public string Detail { get; set; } = "";
     }
 
-    private static string NcnnVerdictKey(string engine, int gpuId) => engine + "|" + gpuId;
+    // 【引擎身份键】realesrgan 会被规整成 realesrgan / realesrgan2026(见 RealEsrganEngineId):
+    // 新旧引擎共用同一个键的话,旧版在 50 系上"出坏帧"的结论会把新引擎一起判死。
+    private static string NcnnVerdictKey(string engine, int gpuId) => EngineId(engine) + "|" + gpuId;
 
     /// <summary>探测结论落盘文件(与其他设置同在 settings 目录)。首行是格式说明,便于人工核查。</summary>
     private static string NcnnProbeCacheFile => ParaPaths.SettingsFile("ncnn-probe.txt");
@@ -194,7 +196,7 @@ public static partial class EngineService
             foreach (var eng in new[] { "realesrgan", "waifu2x" })
             {
                 var v = TryGetNcnnVerdict(eng, AppSettings.GpuIndex);
-                parts.Add($"{eng}={(v.HasValue ? (v.Value ? "实测可用→走 ncnn" : "实测不可用→走 ONNX") : "未测(首次处理时自动实测)")}");
+                parts.Add($"{EngineId(eng)}={(v.HasValue ? (v.Value ? "实测可用→走 ncnn" : "实测不可用→走 ONNX") : "未测(首次处理时自动实测)")}");
             }
             return string.Join(" ", parts);
         }
@@ -268,7 +270,7 @@ public static partial class EngineService
         {
             // 【按形态说话】初始化即崩(Blackwell 上=NVIDIA 驱动缺陷)与"出图但坏帧"是两回事,不能混为一谈
             LastProbeUserMessage = AlhPro.Core.ProbeDiagnosis.Describe(failKind, IsBlackwellGpu(),
-                engine == "realesrgan" ? "Real-ESRGAN" : "waifu2x");
+                EngineLabel(engine));
             AppLogger.Warn($"[探测] {engine} GPU({gpuId})真机探测失败({AlhPro.Core.ProbeDiagnosis.ShortName(failKind)}"
                 + (failDetail.Length > 0 ? ";" + failDetail : "") + ")→ 为稳定性改用 ONNX(结论已记住,不再重复试)。"
                 + LastProbeUserMessage);
@@ -933,7 +935,28 @@ public static partial class EngineService
     }
 
     public static string? FindWaifu2x() => FindExe("waifu2x", "waifu2x-ncnn-vulkan.exe");
-    public static string? FindRealESRGAN() => FindExe("realesrgan", "realesrgan-ncnn-vulkan.exe");
+
+    /// <summary>新版 Real-ESRGAN 引擎(2026 重编译:官方 MIT 前端 + 含 Blackwell 修复的 ncnn)。
+    /// 官方 2022 版 exe 在 50 系上会出坏帧,必须靠新版才能走 ncnn 快路。</summary>
+    public static string? FindRealEsrgan2026() => FindExe("realesrgan", "realesrgan-ncnn-vulkan-2026.exe");
+
+    /// <summary>实际使用的 Real-ESRGAN 引擎:有新版就用新版,否则回退官方 2022 版。</summary>
+    public static string? FindRealESRGAN() => FindRealEsrgan2026() ?? FindExe("realesrgan", "realesrgan-ncnn-vulkan.exe");
+
+    /// <summary>Real-ESRGAN 引擎的"身份键"。装了新版就用 "realesrgan2026",否则沿用 "realesrgan"。
+    /// 【为什么必须区分】探测结论按 "引擎|GPU" 落盘缓存(成功 7 天):官方 2022 版在 50 系上"出坏帧"是真结论,
+    /// 若沿用同一个键,新引擎会被这条旧结论直接判死 → 又回到又慢又糊的 ONNX。换了引擎就必须重新实测。</summary>
+    public static string RealEsrganEngineId => FindRealEsrgan2026() is not null ? "realesrgan2026" : "realesrgan";
+
+    /// <summary>把对外的引擎名规整成实际身份键(探测 / 结论缓存 / 日志统一走这里)。</summary>
+    public static string EngineId(string engine) => engine == "realesrgan" ? RealEsrganEngineId : engine;
+
+    /// <summary>引擎的中文显示名(带新旧版区分,便于用户反馈时对号)。</summary>
+    public static string EngineLabel(string engine) => engine switch
+    {
+        "realesrgan" or "realesrgan2026" => RealEsrganEngineId == "realesrgan2026" ? "Real-ESRGAN(新版引擎)" : "Real-ESRGAN",
+        _ => "waifu2x",
+    };
 
     public static string? FindU2NetModel()
     {
