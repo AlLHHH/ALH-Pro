@@ -766,6 +766,8 @@ public sealed partial class VideoView : UserControl
         if (VideoWaifu2xModelCombo == null || VideoEsrganModelCombo == null) return;
         bool waifu2x = VideoEngineRadios.SelectedIndex == 0;
         VideoWaifu2xModelCombo.Visibility = waifu2x ? Visibility.Visible : Visibility.Collapsed;
+        if (VideoWaifu2xNoiseCombo != null)
+            VideoWaifu2xNoiseCombo.Visibility = waifu2x ? Visibility.Visible : Visibility.Collapsed;
         VideoEsrganModelCombo.Visibility = waifu2x ? Visibility.Collapsed : Visibility.Visible;
         // 确保各下拉有默认选中项(首次/恢复时)
         if (VideoWaifu2xModelCombo.SelectedIndex < 0) VideoWaifu2xModelCombo.SelectedIndex = 0;
@@ -830,6 +832,11 @@ public sealed partial class VideoView : UserControl
         VideoModelLabel.Opacity = up ? 1.0 : 0.5;
         VideoWaifu2xModelCombo.IsEnabled = up;
         VideoWaifu2xModelCombo.Opacity = up ? 1.0 : 0.5;
+        if (VideoWaifu2xNoiseCombo != null)
+        {
+            VideoWaifu2xNoiseCombo.IsEnabled = up;
+            VideoWaifu2xNoiseCombo.Opacity = up ? 1.0 : 0.5;
+        }
         VideoEsrganModelCombo.IsEnabled = up;
         VideoEsrganModelCombo.Opacity = up ? 1.0 : 0.5;
         // 自定义分辨率面板 + 倍率后果提示(随选择动态变化);索引:0=1x超分 1=2x 2=3x 3=4x 4=自定义
@@ -1263,6 +1270,12 @@ public sealed partial class VideoView : UserControl
         public bool Interp { get; set; }
         public int Model { get; set; }         // 补帧模型索引(InterpModelCombo)
         public int UpWaifu2xModel { get; set; }   // 视频超分 waifu2x 模型索引(VideoWaifu2xModelCombo)
+        /// <summary>视频超分 waifu2x 降噪档(0=不降噪 1=弱 2=中 3=强)。
+        /// 【为什么视频页必须有这个】waifu2x 的看家本领就是去噪/去压缩块 —— 实测(2026-09-11,干净源压成 q15):
+        /// 不降噪(n=0)与"纯双三次放大"只差 35.5 dB,而 n=2 能修到 36.9 dB。视频链路此前把 noise 写死 0,
+        /// 等于把 waifu2x 唯一有用的功能关掉 —— 干净素材上它就显得"只是放大了"。
+        /// 干净素材建议 0;老 DVD/低码率等有噪点压缩块的素材建议 2~3。ONNX 稳定引擎为固定权重,该档不生效(会如实提示)。</summary>
+        public int UpWaifu2xNoise { get; set; }
         public int UpEsrganModel { get; set; }    // 视频超分 Real-ESRGAN 模型索引(VideoEsrganModelCombo)
         public int InterpScale { get; set; }
         public bool Target { get; set; }
@@ -1564,6 +1577,9 @@ public sealed partial class VideoView : UserControl
         if (VideoWaifu2xModelCombo.Items.Count > 0 && d.UpWaifu2xModel is >= 0 && d.UpWaifu2xModel < VideoWaifu2xModelCombo.Items.Count)
             VideoWaifu2xModelCombo.SelectedIndex = d.UpWaifu2xModel;
         else VideoWaifu2xModelCombo.SelectedIndex = 0;
+        // 恢复 waifu2x 降噪档(0~3;旧设置文件没有该字段 → 默认 0 = 不降噪,与历史行为一致)
+        if (VideoWaifu2xNoiseCombo != null)
+            VideoWaifu2xNoiseCombo.SelectedIndex = d.UpWaifu2xNoise is >= 0 and <= 3 ? d.UpWaifu2xNoise : 0;
         if (VideoEsrganModelCombo.Items.Count > 0 && d.UpEsrganModel is >= 0 && d.UpEsrganModel < VideoEsrganModelCombo.Items.Count)
             VideoEsrganModelCombo.SelectedIndex = d.UpEsrganModel;
         else VideoEsrganModelCombo.SelectedIndex = 0;
@@ -2115,6 +2131,7 @@ public sealed partial class VideoView : UserControl
             Interp = InterpToggle.IsChecked == true,
             Model = InterpModelCombo.SelectedIndex,
             UpWaifu2xModel = VideoWaifu2xModelCombo.SelectedIndex,   // 超分 waifu2x 模型
+            UpWaifu2xNoise = VideoWaifu2xNoiseCombo?.SelectedIndex ?? 0,   // 超分 waifu2x 降噪档
             UpEsrganModel = VideoEsrganModelCombo.SelectedIndex,    // 超分 Real-ESRGAN 模型
             InterpScale = InterpScaleRadios.SelectedIndex >= 0 ? InterpScaleRadios.SelectedIndex : 0,
             Target = TargetFpsCheck.IsChecked == true,
@@ -4242,6 +4259,9 @@ public sealed partial class VideoView : UserControl
             // Real-ESRGAN:从模型下拉 Tag 读模型名(默认 realesr-animevideov3)
             _ => ("realesrgan", SelModel(VideoEsrganModelCombo, "realesr-animevideov3")),
         };
+        // waifu2x 降噪档(0~3):waifu2x 唯一"真正做事"的旋钮 —— 干净素材 0,老噪点/低码率素材 2~3。
+        // Real-ESRGAN 不支持该参数(引擎会忽略),故只在 waifu2x 时取值。
+        int upWaifu2xNoise = engine == "waifu2x" ? Math.Clamp(VideoWaifu2xNoiseCombo?.SelectedIndex ?? 0, 0, 3) : 0;
         // 倍率:0=1x超分(2x放大后缩回) 1=2x 2=3x 3=4x 4=自定义分辨率
         bool upscaleShrink1x = false;
         var scale = VideoScaleRadios.SelectedIndex switch
@@ -4871,14 +4891,14 @@ public sealed partial class VideoView : UserControl
                         videoDenoise: vdenoiseNow,
                         quality: qualityNow,
                         fastMode: fastNow,
-                        upscaleShrink1x: upscaleShrink1x,
-                        codecPref: codecNow,
+                        upscaleShrink1x: upscaleShrink1x,                        codecPref: codecNow,
                         customBitrateMbps: bitrateNow,
                         // 可变帧率(VFR)拆帧:默认「自动」= 加入列表时已探测(IsVfr),是 VFR 素材就自动
                         // 按原节奏逐帧提取(时间轴保真);面板收起也生效,用户无须手动开启。
                         // 仅当用户显式选「不启用」时按常规方式处理。
                         vfrPassthrough: vfrModeNow == 0 && item.IsVfr,
                         allowFewFrames: allowFew,
+                        upWaifu2xNoise: upWaifu2xNoise,   // waifu2x 降噪档(0~3);Real-ESRGAN 时恒 0
                         pauseWait: PauseWaitAsync));
                     item.Progress = 100;
                     item.StatusText = "✓ 完成";
