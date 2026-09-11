@@ -301,7 +301,6 @@ public static class VideoService
         double contentFps = 0,   // 内容帧率模式(去重模型 7):按 fc 时间网格均匀采样,不做逐帧判定;≤0=报错
         double animeHoldN = 0,   // 动漫模式(去重模型 2):动画帧率变种"一拍N"(2/3/2.5=混合拍二+三/4/5/6;0/1=不采样=内容帧率=输入帧率)
         bool tempoResample = false,   // 节奏重采样(实验):任意 t 插帧按关键帧真实时长分布(自研任意 t 方案)
-        int upWaifu2xNoise = 0,   // 超分 waifu2x 降噪档(0=不降噪 1=弱 2=中 3=强):waifu2x 唯一真正起作用的旋钮
         Func<Task>? pauseWait = null)
     {
         // 静态报告字段清零:防止上一个视频的去重摘要/编码器信息残留在下一个视频的显示里
@@ -490,6 +489,24 @@ public static class VideoService
             {
                 scaleVf = $"fps={inFps.ToString("0.###", inv)},{scaleVf}";
                 progress?.Report((2, $"输入帧率覆盖为 {inFps:0.##} fps(探测 {probedFps:0.##}),拆帧按覆盖帧率抽帧/补帧"));
+            }
+            // ===== 视频降噪:放在【拆帧阶段】,而不是合帧滤镜链 =====
+            // 【为什么挪】原先它挂在合帧/编码的滤镜链上 → 作用在"超分之后的帧"上(1080p 源超分成 4K 后),
+            // 实测 nlmeans:s=5 在 4K 上要 1.56 秒/帧、s=7 要 2.15 秒/帧,而源分辨率(1080p)只要 0.49 / 0.61 秒/帧
+            // —— 挪到拆帧阶段便宜 2.5~3.5 倍(2 万帧的任务省数小时),顺序也更正确:先降噪再超分,
+            // 超分不必再去放大噪点。nlmeans 是纯空间滤镜(只看单帧,不依赖前后帧),挪动安全。
+            // 【例外:waifu2x 引擎】它自带降噪档(同一套网络只换权重,不额外耗时,且是专门针对动漫压缩块训练的),
+            // 比 nlmeans 更对症 —— 这种情况下把强度交给模型的 -n(见超分调用处),这里就不再叠一层 nlmeans,
+            // 避免"双重平滑更糊 + 双重耗时"。
+            bool denoiseViaModel = doUpscale && engine == "waifu2x";
+            if (videoDenoise >= 1 && !denoiseViaModel)
+            {
+                scaleVf = $"{VideoDenoiseFilter(videoDenoise)},{scaleVf}";
+                AppLogger.Info($"视频降噪:拆帧阶段应用 {VideoDenoiseFilter(videoDenoise)}(源分辨率;调色/超分前)");
+            }
+            else if (videoDenoise >= 1 && denoiseViaModel)
+            {
+                AppLogger.Info($"视频降噪:交由 waifu2x 引擎自带降噪档(-n {videoDenoise})处理(不叠 nlmeans,更对症且不额外耗时)");
             }
             // ===== HDR / 广色域适配:源为 HDR(PQ/HLG)或宽色域(≠BT.709)→ 拆帧时转成 BT.709 SDR(避免偏色/掉信息),黄字提示 =====
             (string? hdrDesc, string? hdrVf) = await ProbeHdrToSdrAsync(inputVideo, ct);
@@ -1476,13 +1493,15 @@ public static class VideoService
                                                 $"ℹ 稳定引擎(ONNX)的 waifu2x 仅有 cunet 模型,已按 cunet 处理 —— 你选的「{model}」需要 ncnn 引擎;写实片源建议改选 Real-ESRGAN"));
                                         }
                                     }
-                                    // 降噪档同理:ONNX 稳定引擎是固定权重,传进去也没效果(与图片页"稳定引擎不支持 X 已忽略"同一套口径)
-                                    if (engine == "waifu2x" && upWaifu2xNoise > 0)
-                                    {
-                                        AppLogger.Info($"ℹ 视频超分:稳定引擎(ONNX)不支持 waifu2x 降噪档({upWaifu2xNoise}),已忽略");
-                                        progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
-                                            $"ℹ 稳定引擎(ONNX)不支持 waifu2x 降噪档(已忽略)—— 该档位只在 ncnn 引擎上生效"));
-                                    }
+                    // 视频降噪(用户那个「启用视频降噪」开关):拆帧阶段由 nlmeans 处理,超分阶段由 waifu2x 自带降噪处理。
+                    // 在 ONNX 稳定引擎上 waifu2x 的 -n 不生效(固定权重),而此时我们【没有】再叠 nlmeans
+                    // (避免双重平滑),所以这一步等于没降噪 —— 必须如实告知,并给出替代做法。
+                    if (denoiseViaModel && videoDenoise > 0)
+                    {
+                        AppLogger.Info($"ℹ 视频超分:稳定引擎(ONNX)不支持 waifu2x 自带降噪档(视频降噪 {videoDenoise}),该帧未降噪");
+                        progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
+                            $"ℹ 稳定引擎(ONNX)不支持 waifu2x 自带降噪(视频降噪已忽略)—— 需要降噪请把超分引擎改为 Real-ESRGAN(那时「视频降噪」由拆帧阶段的 nlmeans 执行)"));
+                    }
                                     // 【不要轻易掉 CPU】若这就要落 CPU(-1 = 强制 CPU),黄字明示用户(而非静默跑慢几倍)
                                     if (upGpu < 0 && !upOnnxDml)
                                         progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
@@ -1497,7 +1516,7 @@ public static class VideoService
                             else
                             {
                                 await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
-                                    upScale, upWaifu2xNoise, upGpu, false, srProgress, ct,   // noise = waifu2x 降噪档(Real-ESRGAN 时调用方恒传 0)
+                                    upScale, denoiseViaModel ? videoDenoise : 0, upGpu, false, srProgress, ct,   // waifu2x 引擎:"视频降噪"的强弱档直接当它的 -n(模型自带降噪,更对症且不额外耗时)
                                     SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1),   // 显卡家族感知分块(视频超分专用);快速模式再减半(显存占用约降 4 倍)
                                     watchStage: "超分",   // 逐帧汇报(像补帧一样显示"超分 第 N 帧 / 共 M 帧")
                                     globalBaseFrames: batchStartSlot, globalTotalFrames: total,   // 百分比按全局帧数算,预计时间才准
@@ -1806,7 +1825,9 @@ public static class VideoService
                 postAa, inv);
             if (postFilter != null) preParts.Add(postFilter);
             // 视频降噪(空间+时间,去噪点/闪烁/压缩噪点),放最前:先降噪再锐化
-            if (videoDenoise >= 1) preParts.Insert(0, VideoDenoiseFilter(videoDenoise));
+            // 【已挪走】视频降噪原先挂在这里(合帧滤镜链)→ 作用在"超分后的帧"上,4K 下 1.56 秒/帧;
+            // 现改为拆帧阶段应用(源分辨率,0.49 秒/帧,便宜 2.5~3.5 倍);waifu2x 引擎则交给模型自带降噪档。
+            // 见本文件上方 scaleVf 构造处的「视频降噪:放在拆帧阶段」。
             if (postDeshake) postParts.Add("deshake");                      // 画面去抖:轻量稳定
             if (frameInterp && targetFps is > 0)
             {

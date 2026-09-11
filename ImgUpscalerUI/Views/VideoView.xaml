@@ -46,15 +46,6 @@
                         <ComboBoxItem Content="动漫 · models-upconv_7_anime_style_art_rgb（5MB · 快）" Tag="models-upconv_7_anime_style_art_rgb"/>
                         <ComboBoxItem Content="现实 · models-upconv_7_photo（5MB · 快）" Tag="models-upconv_7_photo"/>
                     </ComboBox>
-                    <!-- waifu2x 降噪档:waifu2x 唯一"真正做事"的旋钮。干净素材选不降噪;老噪点/低码率素材选弱~强 -->
-                    <ComboBox x:Name="VideoWaifu2xNoiseCombo" SelectedIndex="0"
-                              ToolTipService.ToolTip="waifu2x 降噪档(仅 waifu2x 引擎生效):干净素材选「不降噪」;老 DVD/低码率等有噪点、压缩块的素材选「弱~强」—— 实测这是 waifu2x 唯一明显起作用的档位(去噪/去压缩块),不降噪时它基本等于普通放大"
-                              SelectionChanged="Combo_Changed">
-                        <ComboBoxItem Content="不降噪（干净素材用这个）"/>
-                        <ComboBoxItem Content="弱（轻微噪点）"/>
-                        <ComboBoxItem Content="中（低码率/老片源，推荐）"/>
-                        <ComboBoxItem Content="强（噪点很重）"/>
-                    </ComboBox>
                     <ComboBox x:Name="VideoEsrganModelCombo" Visibility="Collapsed"
                               ToolTipService.ToolTip="Real-ESRGAN 模型(动漫/通用)。标「超慢」的 realesrgan-x4plus 只有 4x 权重:1080p 源实测约 14.5 秒/帧(比 animevideov3 慢 17 倍),建议只在图片上用"
                               SelectionChanged="Combo_Changed">
@@ -103,7 +94,7 @@
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
                     <TextBlock Text="视频降噪" Style="{StaticResource SectionTitle}"/>
-                    <CheckBox x:Name="DenoiseToggle" Content="启用视频降噪" ToolTipService.ToolTip="ffmpeg 非局部均值降噪(nlmeans):去视频噪点/闪烁/压缩噪点,比 AI 逐帧快很多"
+                    <CheckBox x:Name="DenoiseToggle" Content="启用视频降噪" ToolTipService.ToolTip="去视频噪点/闪烁/压缩块。两种执行方式(自动选):① 超分用 waifu2x → 交给模型自带降噪(更对症、不额外耗时);② 其它情况(Real-ESRGAN / 未超分) → 拆帧阶段用 ffmpeg nlmeans 在原始分辨率上降噪(实测比放在合帧阶段快 2.5~3.5 倍)"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
                     <TextBlock x:Name="DenoiseStrongLabel" Text="降噪强度" Style="{StaticResource SectionTitle}"/>
                     <RadioButtons x:Name="DenoiseStrongRadios" SelectedIndex="0" ToolTipService.ToolTip="越强去噪越多,但可能抹掉细纹理"
