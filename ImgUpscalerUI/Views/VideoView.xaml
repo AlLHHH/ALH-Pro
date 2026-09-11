@@ -34,7 +34,7 @@
                               IsChecked="True" Checked="Options_Changed" Unchecked="Options_Changed"/>
 
                     <TextBlock Text="超分引擎" Style="{StaticResource SectionTitle}"/>
-                    <RadioButtons x:Name="VideoEngineRadios" SelectedIndex="0" ToolTipService.ToolTip="超分引擎:waifu2x 最快(经典动漫)/ Real-ESRGAN 写实照片"
+                    <RadioButtons x:Name="VideoEngineRadios" SelectedIndex="1" ToolTipService.ToolTip="超分引擎:Real-ESRGAN 会主动合成细节(动漫/写实都明显变清晰);waifu2x 只做去噪/去压缩块 —— 干净素材上看起来≈单纯放大,只适合有噪点的老片源"
                                   SelectionChanged="Combo_Changed">
                         <RadioButton Content="waifu2x"/>
                         <RadioButton Content="Real-ESRGAN"/>
