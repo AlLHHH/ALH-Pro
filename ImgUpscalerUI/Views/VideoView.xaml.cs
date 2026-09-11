@@ -1362,12 +1362,19 @@ public sealed partial class VideoView : UserControl
     /// 【Rev 怎么用】官方预设的参数基线一旦改动(增删项、调默认值),就把该项的 Rev 加 1 ——
     /// 下次启动时 EnsureBuiltinPresets 会把老用户的同名官方预设覆盖成新基线(只覆盖一次),
     /// 不然老用户永远带着旧参数。**只改这一项的 Rev,不要动其它项**,否则会连带覆盖用户对它们的自定义。
-    /// 约定:Rev = 0 表示"早期版本写入的老预设"(那时还没有 OfficialRev 字段)。</summary>
+    /// 约定:Rev = 0 表示"早期版本写入的老预设"(那时还没有 OfficialRev 字段)。
+    /// 【Rev 1 / Rev 2:超分引擎由 waifu2x 换成 Real-ESRGAN · realesr-animevideov3】
+    /// 依据(2026-09-11 本机 4060 Laptop 实测,源 1920×1080 → 2x=4K,每帧):
+    ///   realesrgan-x4plus 14.48s · realesrgan-x4plus-anime 4.84s · **realesr-animevideov3 0.84s** · waifu2x cunet 0.71s。
+    /// 前两者都慢在"4x-only 权重":要 2x 也照样全量算 4x 再缩回(实测 -s 2 = 17.5s vs -s 4 = 18.1s,输出分别
+    /// 3840×2160 与 7680×4320 —— **输出尺寸是对的,白付的是算力**)。animevideov3 同为 4x 权重但网络极轻,
+    /// 同样的 2x=4K 输出快 17 倍。取舍:它是动漫向模型,写实素材若觉得不如 x4plus 可手动换回(或折中用
+    /// realesrgan-x4plus-anime,约为 x4plus 的 3 倍速)。</summary>
     private static (string Name, int Rev, Func<VideoSettings> Make)[] BuiltinPresets() => new[]
     {
-        ( "通用画质增强 不含补帧", 0, new Func<VideoSettings>(() => new VideoSettings
+        ( "通用画质增强 不含补帧", 1, new Func<VideoSettings>(() => new VideoSettings
         {
-            Remember = false, Up = true, Engine = 0, Scale = 1, Gpu = 0,
+            Remember = false, Up = true, Engine = 1, Scale = 1, Gpu = 0,
             Interp = false, Model = 0, UpWaifu2xModel = 0, UpEsrganModel = 0, InterpScale = 0,
             Target = false, TargetFps = "", VfrMode = 0, VfrExpanded = false, FpsBase = 0, FpsMode = 0, FpsOffset = 0, FpsExpanded = true,
             DedupOn = false, DedupModel = 0, DedupAnime = 0, DedupSmart = 0, DedupThr = 0.01,
@@ -1382,9 +1389,10 @@ public sealed partial class VideoView : UserControl
         // 理由:动漫素材绝大多数是一拍二/一拍三,而"去除一拍四"才是把"一拍四的片子"还原成内容帧率的正解;
         // 用智能模式则依赖拍数识别,识别不出就原样保留(等于没去重)。改档后按内容帧率均匀采样,不会误删细节帧。
         // 同时清理已删除的 PostFlicker / PostDenoise(去频闪/去杂色两项已从管线移除,不再被读取)。
-        ( "动漫通用", 1, new Func<VideoSettings>(() => new VideoSettings
+        // 【Rev 2】超分引擎同样换成 Real-ESRGAN · realesr-animevideov3(理由见上,实测 17 倍速、输出仍是 2x=4K)。
+        ( "动漫通用", 2, new Func<VideoSettings>(() => new VideoSettings
         {
-            Remember = true, Up = true, Engine = 0, Scale = 1, Gpu = 0,
+            Remember = true, Up = true, Engine = 1, Scale = 1, Gpu = 0,
             Interp = true, Model = 0, UpWaifu2xModel = 1, UpEsrganModel = 0, InterpScale = 2,
             Target = false, TargetFps = "", VfrMode = 0, VfrExpanded = false, FpsBase = 0, FpsMode = 0, FpsOffset = 0, FpsExpanded = true,
             DedupOn = true, DedupModel = 1, DedupAnime = 4, DedupSmart = 0, DedupThr = 0.01,
