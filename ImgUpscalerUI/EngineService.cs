@@ -2449,9 +2449,16 @@ public static partial class EngineService
                 || s.Contains("memory", StringComparison.OrdinalIgnoreCase);
         }
 
-        // 引擎实际执行的倍数:waifu2x 取最大 2 的幂;realesrgan 就近取不小于目标的整数
+        // 引擎实际执行的倍数:waifu2x 取最大 2 的幂;realesrgan 的 x4plus 系【只有 4x 权重,必须按原生 4x 跑】,
+        // 其余(如 realesr-animevideov3)按目标倍数。
+        // 【为什么 x4plus 系不能按目标倍数跑】实测(2026-09-11,同一 1080p 帧、目录批量 + -t 0 -j 1:1:1):
+        //   非原生 -s 2 时引擎的输出相对源帧【整体位移】(1080p 源约偏 56×40 像素:与源帧相关 0.71),
+        //   而原生 -s 4 时相关 0.999;realesr-animevideov3 两种倍数都是 1.000 —— 引擎是按"模型原生倍率"
+        //   计算分块贴回位置的,倍率不匹配时贴回就偏了。视频里表现为"每帧都偏一点、边缘还错",不报任何错。
+        // 图片路径一直是按 4x 跑再缩回的(见 UpOneTileAsync 的注释),视频路径此前漏了这一步。
         int engineScale;
         if (engine == "waifu2x") engineScale = CeilPowerOfTwo(scale);
+        else if (model.Contains("x4plus", StringComparison.OrdinalIgnoreCase)) engineScale = 4;
         else engineScale = Math.Clamp((int)Math.Ceiling(scale), 1, 4);
 
         if (engine == "waifu2x")

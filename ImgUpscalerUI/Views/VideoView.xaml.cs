@@ -847,21 +847,18 @@ public sealed partial class VideoView : UserControl
         // Real-ESRGAN 有对应权重,全亮
         SetScaleRadioEnabled(VScale3xRadio, true);
         SetScaleRadioEnabled(VScale4xRadio, true);
-        // 【4x-only 权重模型 × 倍率】realesrgan-x4plus 只有 4x 权重:选 2x/3x 时引擎照样把 4x 网络全量算一遍再缩回
-        // (实测 1080p 源:-s 2 = 17.5s → 3840×2160 vs -s 4 = 18.1s → 7680×4320 —— 时间一点没省,还多一道缩回)。
-        // 按"既然它只有 4x,就别让人以为能选 2x"的要求:选中该模型时只开放 4x,当前若停在 2x/3x 则回退到 4x。
-        // ① 1x 超分保留 —— 它的语义本身就是"放大后缩回",输出仍是原尺寸,不会把成片撑成 8K;
-        // ② 只锁这一个重型模型 —— realesr-animevideov3 等轻量模型仍可 2x(官方预设正是用它出 2x=4K,
-        //    且轻模型下 2x 实测比 4x 更快:1.5s vs 2.5s,因为省掉 4 倍像素的写盘)。
+        // 【4x-only 权重模型 × 倍率】realesrgan-x4plus / x4plus-anime 只有 4x 权重:选 2x/3x 时引擎会按非原生倍率
+        // 贴图,实测【画面整体位移】(1080p 源约偏 56×40 像素:与源帧相关 0.71;原生 4x 时 0.999)。
+        // 所以不再置灰禁用(用户要求放开),而是照常可选 —— 由超分引擎层统一按【原生 4x】执行、再由 App 精确缩回
+        // (与图片路径既有做法一致,见 EngineService 的视频/图片 dir 路径 engineScale 处理),几何与画质都正确,
+        // 耗时可忽略(-s 2 = 17.5s vs -s 4 = 18.1s)。此处只负责把这件事讲清楚。
         string esrModel = (VideoEsrganModelCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
-        bool x4plusOnly = up && VideoEngineRadios.SelectedIndex == 1 && esrModel == "realesrgan-x4plus";
-        SetScaleRadioEnabled(VScale2xRadio, !x4plusOnly);
-        SetScaleRadioEnabled(VScale3xRadio, !x4plusOnly);
-        if (x4plusOnly)
+        bool x4plusModel = up && VideoEngineRadios.SelectedIndex == 1 && esrModel.Contains("x4plus");
+        if (x4plusModel)
         {
-            if (scaleIdx is 1 or 2) VideoScaleRadios.SelectedIndex = 3;   // 回退到该模型的原生 4x
-            ScaleHint.Text = "⚠ realesrgan-x4plus 只有 4x 权重:2x/3x 只是把 4x 结果缩回(耗时与 4x 相同),已只开放 4x。"
-                + "1080p 源此时输出 7680×4320(8K);想要 2x/3x 请换轻量模型(realesr-animevideov3 / waifu2x cunet)";
+            ScaleHint.Text = "⚠ 该模型只有 4x 权重(实测 1080p 源约 14.5 秒/帧,比 animevideov3 慢 17 倍):"
+                + "选 2x/3x 时会内部按 4x 超分再精确缩回(耗时与 4x 相同、画面不会变形);"
+                + "想要最高细节可直接选 4x(1080p 源即 7680×4320 的 8K,文件与编码时间都大很多)。画质优先的长片更推荐 realesr-animevideov3";
         }
         InterpModelCombo.IsEnabled = interp;
         // 非 2 的幂倍率(3x/12x/16x)仅 v4 架构模型支持;其余模型按 2x 级联(置灰+已选回退)。
