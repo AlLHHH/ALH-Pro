@@ -1115,7 +1115,10 @@ public sealed partial class VideoView : UserControl
         FpsModeRadios.SelectedIndex = 0;   // 视频帧率:默认「各视频默认帧率」
         FpsOffsetSlider.Value = 0;
         DedupCheck.IsChecked = false;
-        DedupModelCombo.SelectedIndex = 2;   // 去重模型默认=手动模式(算法默认=内容帧率采样,见 XAML)
+        // 【默认档 = 智能检测(2026-09-12 用户反馈)】此前这里与 XAML 的启动默认都写的是 2=手动模式,
+        // 用户一开去重看到的就是"手动模式"(还要自己挑算法、调一堆滑条),而三种模式里智能检测才是该默认的那个
+        // (自动识别拍数;识别不出来就原样保留、不乱删帧)。XAML 的 SelectedIndex 已同步改成 0。
+        DedupModelCombo.SelectedIndex = 0;
         DedupAnimeCombo.SelectedIndex = 0;   // 动漫模式:动画帧率变种,默认一拍二(最常用)
         DedupAlgoCombo.SelectedIndex = 0;   // 手动算法默认=内容帧率采样(UI 第 1 项)
         DedupHiSlider.Value = 12;
@@ -1287,6 +1290,10 @@ public sealed partial class VideoView : UserControl
         public int Model { get; set; }         // 补帧模型索引(InterpModelCombo)
         public int UpWaifu2xModel { get; set; }   // 视频超分 waifu2x 模型索引(VideoWaifu2xModelCombo)
         public int UpEsrganModel { get; set; }    // 视频超分 Real-ESRGAN 模型索引(VideoEsrganModelCombo)
+        // 【序号迁移标记(2026-09-12)】视频超分模型下拉换过一次顺序:自转的 general-x4v3 从序号 3 上移到 2
+        // (与「超慢」的 x4plus 对调)。下拉存的是序号,老文件必须换算一次。
+        // 读到 ModelOrderRev < 1 就做一次 2↔3 互换并把标记写回 1 —— 只换一次,之后用户自己选的序号不再被改动。
+        public int ModelOrderRev { get; set; }
         public int InterpScale { get; set; }
         public bool Target { get; set; }
         public string TargetFps { get; set; } = "";
@@ -1369,24 +1376,89 @@ public sealed partial class VideoView : UserControl
     /// <summary>预设文件路径(%LOCALAPPDATA%\ALHPro\settings\video-presets.json)。</summary>
     private static string PresetFile => ParaPaths.SettingsFile("video-presets.json");
 
-    /// <summary>读取全部预设(按创建时间排序;坏项跳过)。失败/空返回空列表。</summary>
+    /// <summary>视频超分模型下拉的**一次性序号迁移**(2026-09-12 下拉顺序调整:general-x4v3 上移到「超慢」之前)。
+    /// 旧序 2=x4plus(超慢) / 3=general-x4v3;新序 2=general-x4v3 / 3=x4plus(超慢) → 两个序号互换。
+    /// 【为什么必须做】这个下拉存的是**序号**:不迁移的话,老用户"存的 3 = 轻量模型"会静默变成
+    /// "3 = 超慢(x4plus)"——1080p 实测 14.5 秒/帧、比 animevideov3 慢 17 倍,用户什么都没改却突然慢十几倍,
+    /// 而界面上完全看不出异常(下拉里那一项就叫"通用")。
+    /// 【为什么带标记】不能每次读都换:换完会写回文件,标记置 1 后就不再动 —— 否则每次启动来回横跳。
+    /// 返回 true 表示"做过改动"(调用方据此决定是否立即写回盘)。</summary>
+    private static bool MigrateEsrganModelOrder(VideoSettings d)
+    {
+        if (d is null || d.ModelOrderRev >= 1) return false;
+        if (d.UpEsrganModel == 2) d.UpEsrganModel = 3;
+        else if (d.UpEsrganModel == 3) d.UpEsrganModel = 2;
+        d.ModelOrderRev = 1;
+        return true;
+    }
+
+    /// <summary>预设文件"存在但读不出来"(写入被截断/手改坏)时的**只读保护**标志。
+    /// 【为什么必须】原来解析失败就 catch { return new(); },紧接着 EnsureBuiltinPresets 看到"一条预设都没有"
+    /// 就把内置预设写回去 —— 整份文件被覆盖,用户自己攒的预设**无声消失**(文件里的原内容就这么没了)。
+    /// 现在:①先把坏文件留一份 .bak;②本次运行拒绝再写这个文件;③日志明确写出来。
+    /// 宁可这一次预设列表是空的,也不覆盖掉唯一的那份数据。</summary>
+    private static bool _presetFileUnreadable;
+
+    /// <summary>预设文件损坏时的统一处置:备份 + 置只读保护 + 留痕(只做一次)。</summary>
+    private static void ProtectCorruptPresetFile(string why)
+    {
+        if (_presetFileUnreadable) return;
+        _presetFileUnreadable = true;
+        try
+        {
+            var bak = PresetFile + ".bak";
+            File.Copy(PresetFile, bak, true);
+            AppLogger.Warn($"⚠ 视频预设文件读不出来({why})——已把它备份为 {Path.GetFileName(bak)},"
+                + "本次运行不再写入该文件(避免把你原有预设覆盖掉);如需要可把 .bak 发来或重新导入");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"⚠ 视频预设文件读不出来({why}),且备份失败:{ex.Message.Split('\n')[0]}");
+        }
+    }
+
+    /// <summary>读取全部预设(按创建时间排序;坏项跳过)。失败/空返回空列表。
+    /// 【顺带迁移】预设里同样按序号存超分模型,所以读出来后要过一遍 MigrateEsrganModelOrder,
+    /// 有改动就立刻写回(用户自建预设的"轻量模型"也要被正确换算,不能只迁移当前设置)。
+    /// 【损坏保护】文件存在但解析失败时:备份成 .bak 并置只读保护(见 ProtectCorruptPresetFile / SavePresets)。</summary>
     private static List<VideoPreset> LoadPresets()
     {
         try
         {
             if (!File.Exists(PresetFile)) return new();
-            var list = System.Text.Json.JsonSerializer.Deserialize<List<VideoPreset>>(File.ReadAllText(PresetFile));
-            return list ?? new();
+            var text = File.ReadAllText(PresetFile);
+            if (string.IsNullOrWhiteSpace(text)) return new();   // 空文件=没有预设(不是损坏)
+            var list = System.Text.Json.JsonSerializer.Deserialize<List<VideoPreset>>(text);
+            if (list == null) { ProtectCorruptPresetFile("内容为 null"); return new(); }
+            bool changed = false;
+            foreach (var p in list)
+                if (p?.Params != null && MigrateEsrganModelOrder(p.Params)) changed = true;
+            if (changed) SavePresets(list);
+            return list;
         }
-        catch { return new(); }   // 文件损坏/无法反序列化 → 视为空,不崩溃
+        catch (Exception ex)
+        {
+            ProtectCorruptPresetFile(ex.Message.Split('\n')[0]);   // 文件损坏/无法反序列化 → 备份 + 只读保护(不崩溃、不覆盖)
+            return new();
+        }
     }
 
-    /// <summary>把预设列表写盘。空列表则删除文件。</summary>
+    /// <summary>把预设列表写盘。空列表则删除文件。
+    /// 【盖章】写盘前给每个预设的 Params 盖上"新序号"标记:预设里的 VideoSettings 也是从界面收集来的
+    /// (ModelOrderRev 默认 0),不盖章的话下次 LoadPresets 的迁移会把它当老文件再换一遍序号(来回横跳)。
+    /// 【损坏保护】若本会话此前读这个文件失败过(_presetFileUnreadable),一律拒绝写入 —— 否则会把用户那份
+    /// 读不出来但可能还能救的数据直接顶掉。</summary>
     private static void SavePresets(List<VideoPreset> list)
     {
         try
         {
+            if (_presetFileUnreadable)
+            {
+                AppLogger.Warn("视频预设文件本次运行处于只读保护(先前读不出来),已跳过这次写入;重启软件后若文件已修好会恢复正常");
+                return;
+            }
             if (list.Count == 0) { if (File.Exists(PresetFile)) File.Delete(PresetFile); return; }
+            foreach (var p in list) if (p?.Params != null) p.Params.ModelOrderRev = 1;
             Directory.CreateDirectory(Path.GetDirectoryName(PresetFile)!);
             File.WriteAllText(PresetFile, System.Text.Json.JsonSerializer.Serialize(list));
         }
@@ -1415,11 +1487,14 @@ public sealed partial class VideoView : UserControl
         //   边缘抗锯齿给到能真正生效的强度(旧参数实测空转),去模糊整项移除(视频侧 ffmpeg 无反卷积)。
         // 【Rev 3 · 2026-09】这个预设名字是「通用」,但原模型是动漫向的 animevideov3 —— 语义不符。
         // 现在有了自转的轻量通用模型 realesr-general-x4v3(4.85MB / 960x540→4K 1.7s / PSNR 33.13),
-        // 它才是"通用"的正解,故本预设改用 it(下拉末位,序号 3)。动漫片源请用「动漫通用」。
-        ( "通用画质增强 不含补帧", 3, new Func<VideoSettings>(() => new VideoSettings
+        // 它才是"通用"的正解,故本预设改用 it。
+        // 【Rev 4 · 2026-09-12】下拉顺序调整:general-x4v3 上移到「超慢」之前(序号 3 → 2)。
+        // ⚠ 这里必须跟着改成 2,并且**【必须提 Rev】** —— 否则老用户机器上那份 Rev3 的官方预设不会被刷新,
+        //   它记的还是旧序号 3,而新列表里 3 已经是「超慢」(x4plus,慢 17 倍):用户点一下这个预设就突然变超慢。
+        ( "通用画质增强 不含补帧", 4, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = false, Up = true, Engine = 1, Scale = 1, Gpu = 0,
-            Interp = false, Model = 0, UpWaifu2xModel = 0, UpEsrganModel = 3, InterpScale = 0,
+            Interp = false, Model = 0, UpWaifu2xModel = 0, UpEsrganModel = 2, InterpScale = 0,
             Target = false, TargetFps = "", VfrMode = 0, VfrExpanded = false, FpsBase = 0, FpsMode = 0, FpsOffset = 0, FpsExpanded = true,
             DedupOn = false, DedupModel = 0, DedupAnime = 0, DedupSmart = 0, DedupThr = 0.01,
             Scene = false, SceneThr = 0.3, TimeStep = 0.5, Tta = false, OutDir = "", CustomW = "1920", CustomH = "1080",
@@ -1500,7 +1575,22 @@ public sealed partial class VideoView : UserControl
                     AppLogger.Info($"[内置预设] 已创建官方预设「{name}」(基线 Rev {rev})");
                     continue;
                 }
-                if (!existing.IsOfficial) { existing.IsOfficial = true; changed = true; }
+                if (!existing.IsOfficial)
+                {
+                    // 【规则见本方法上方注释:同名但不是官方 → 只标记,不动参数】
+                    // 【为什么必须 continue】原实现只把 IsOfficial 置 true 就往下走,而紧接着的判断是
+                    // `OfficialRev < rev` —— 用户自建预设的 OfficialRev 一定是 0,于是**条件必然成立**,
+                    // 用户攒的那份参数被官方基线整份覆盖,同时被盖上 [官方] 标记;而日志还写着
+                    // "用户自建预设未动"(实际动了)。2026-09-12 自检发现。
+                    // 现在:标记为官方 + 把 Rev 补到当前值(表示"已按当前基线结算过,以后别再覆盖"),
+                    // 然后 continue —— 参数一个字段都不动。
+                    existing.IsOfficial = true;
+                    existing.OfficialRev = rev;
+                    changed = true;
+                    AppLogger.Info($"[内置预设] 「{name}」是官方预设名,但这条是你自建的:已标记为官方," +
+                        "参数保持你自己那套(不覆盖、不重置)");
+                    continue;
+                }
                 if (existing.OfficialRev < rev)
                 {
                     existing.Params = make();
@@ -1532,6 +1622,12 @@ public sealed partial class VideoView : UserControl
             }
             var d = System.Text.Json.JsonSerializer.Deserialize<VideoSettings>(File.ReadAllText(SettingsFile));
             if (d is null) { _settingsLoaded = true; AppLogger.Warn("[记忆] 视频设置加载: 反序列化返回 null,放弃恢复"); return; }
+            // 超分模型下拉改过顺序:先把老序号换算成新序号,并立刻写回(只做一次,见 MigrateEsrganModelOrder)
+            if (MigrateEsrganModelOrder(d))
+            {
+                AppLogger.Info($"[记忆] 超分模型序号已迁移(下拉顺序调整):UpEsrganModel → {d.UpEsrganModel}(2=轻量通用,3=超慢)");
+                try { File.WriteAllText(SettingsFile, System.Text.Json.JsonSerializer.Serialize(d)); } catch { }
+            }
             AppLogger.Info($"[记忆] 视频设置加载: Remember={d.Remember}, Up={d.Up}, Engine={d.Engine}, Scale={d.Scale}, Model={d.Model}, InterpScale={d.InterpScale}, Quality={d.Quality}, Format={d.Format}, Codec={d.Codec}, 文件时间={File.GetLastWriteTime(SettingsFile):HH:mm:ss}");
             _suppressEvents = true;
             VideoRememberCheck.IsChecked = d.Remember;
@@ -1616,10 +1712,19 @@ public sealed partial class VideoView : UserControl
         FpsPanel.Visibility = d.FpsExpanded ? Visibility.Visible : Visibility.Collapsed;
         FpsToggleBtn.Content = d.FpsExpanded ? "视频帧率 ▴" : "视频帧率 ▾";
         DedupCheck.IsChecked = d.DedupOn;   // 预设里去重开关,勾/不勾都要设置(否则关的预设不会取消勾选)
-        if (d.DedupModel is >= 0 and <= 5)
+        // 【上界必须与下拉项数一致(2026-09-12 自检)】去重模式下拉只有 3 项(0智能/1动漫/2手动)、
+        // 动漫档位只有 5 项。原来这里写的是 <=5 / <=6:老文件或别的预设里只要出现 3~5(早期版本确实有过更多档),
+        // 就会给 ComboBox 赋一个越界下标 → WinUI 把 SelectedIndex 清成 -1 → 保存时写 -1、
+        // 或运行时 `SelectedIndex + 1 = 0` 表示"去重关闭" → **用户勾着去重却被静默关掉**。
+        // 越界值一律回退到安全档(模式=智能检测 0 / 动漫档=一拍二 0),不再静默关功能。
+        if (d.DedupModel is >= 0 and <= 2)
             DedupModelCombo.SelectedIndex = d.DedupModel;   // 预设存当前去重模式索引,直接赋
-        if (d.DedupAnime is >= 0 and <= 6)
+        else
+            DedupModelCombo.SelectedIndex = 0;
+        if (d.DedupAnime is >= 0 and <= 4)
             DedupAnimeCombo.SelectedIndex = d.DedupAnime;   // 预设存当前档位索引,直接赋
+        else
+            DedupAnimeCombo.SelectedIndex = 0;
         if (d.DedupSmart is 0 or 1 or 2) DedupSmartCombo.SelectedIndex = d.DedupSmart;
         if (d.DedupAlgo is >= 0 and <= 3) DedupAlgoCombo.SelectedIndex = _algoCoreToUi[d.DedupAlgo];
         if (d.DedupHi is >= 4 and <= 24) DedupHiSlider.Value = d.DedupHi;
@@ -1631,8 +1736,14 @@ public sealed partial class VideoView : UserControl
         var pa = d.DedupPhaseAlign;
         DedupPhaseAlignAnimeCheck.IsChecked = pa;
         DedupPhaseAlignManualCheck.IsChecked = pa;
+        // 【空值必须显式清空(2026-09-12 自检)】原来只有"值合法"时才赋值,快照里是 0/空就不管 →
+        // 界面上**上一个预设(或手填)的残留值会渗进这一次运行**。内容帧率这一项尤其致命:
+        // 手动-内容帧率采样算法读的就是这个输入框,残留一个旧值 = 按错误的帧率抽帧,画面被抽稀,
+        // 而界面上看不出任何异常。现在:合法就填,非法/为空一律清空(回到"待填写"语义)。
         if (d.ContentFps is >= 1 and <= 120)
             ContentFpsBox.Text = d.ContentFps.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+        else
+            ContentFpsBox.Text = "";
         if (d.DedupThr is >= 0.001 and <= 0.5) DedupSceneSlider.Value = d.DedupThr;
         SceneCheck.IsChecked = d.Scene;
         // 转场阈值:旧/非法设置(如字段缺失反序列化为 0)回退默认 0.3。阈值 0 会被处理端当作"不检测转场"(见 VideoService sceneThreshold is > 0),导致勾选转场识别却无效果。
@@ -1770,16 +1881,15 @@ public sealed partial class VideoView : UserControl
         // 刷新列表:每行=预设名(撑满)+ 最右小删除图标;行间分隔线(放在 item 内底部);悬停看摘要(限宽换行)
         void RebuildList()
         {
-            var cur = LoadPresets();
-            exportChecks.Clear();   // 每次重建都清空勾选记录(会随行重建重新填充)
+            var cur = SortedPresets(sortCombo.SelectedIndex);
+            exportChecks.Clear();   // 每次重建都清空勾选记录(会随行重建重新填充）
             switch (sortCombo.SelectedIndex)
             {
                 case 1: cur = cur.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList(); break;
                 case 2: cur = cur.OrderByDescending(x => x.SavedAt, StringComparer.OrdinalIgnoreCase).ToList(); break;
             }
             listView.Items.Clear();
-            for (int i = 0; i < cur.Count; i++)
-            {
+            for (int i = 0; i < cur.Count; i++)            {
                 var itemPanel = new StackPanel { Padding = new Microsoft.UI.Xaml.Thickness(12, 8, 4, 8) };
                 // 行:预设名(撑满)+ 最右小删除图标
                 var row = new Grid();
@@ -1883,7 +1993,11 @@ public sealed partial class VideoView : UserControl
             }
             int s = listView.SelectedIndex;
             if (s < 0) return;
-            var cur = LoadPresets();
+            // 【必须取"排序后"的那一份】listView 的行是按"当前排序方式"排出来的,里面第 s 行对应的是
+            // 排序后列表的第 s 项。原先这里拿的是 LoadPresets() 的**原始顺序**列表,而 ResolveSortedIndex
+            // 又把 s 原样返回 —— 于是只要用户把排序切成「按名字 A→Z」或「按最近修改」,点「应用预设」
+            // 套用的就是**另一条预设**(2026-09-12 自检发现)。改用与 RebuildList 相同的排序再取。
+            var cur = SortedPresets(sortCombo.SelectedIndex);
             int idx = ResolveSortedIndex(sortCombo.SelectedIndex, s, cur);
             if (idx >= 0 && idx < cur.Count) ApplyPreset(cur[idx]);
             try { dlg.Hide(); } catch { }
@@ -1921,7 +2035,23 @@ public sealed partial class VideoView : UserControl
         try { await dlg.ShowAsync(); } catch { }
     }
 
-    /// <summary>把"排序后列表的显示下标"映射回原始预设下标(listView 显示序 = 排序后的 list,故直接用 showIdx)。</summary>
+    /// <summary>按当前排序方式取预设列表(与预设窗口 listView 的显示顺序**严格一致**)。
+    /// 【为什么必须抽成一处】"显示顺序"只能有一个定义:原先 RebuildList 自己排一次、而点「应用预设」时
+    /// 又按原始(未排序)顺序去取,于是排序一切到「按名字」/「按最近修改」就会套错预设(2026-09-12 自检发现)。
+    /// 现在两边都调它,显示序与取数序不可能再错位。新增排序方式:只改这里 + 排序下拉的文案。</summary>
+    private static List<VideoPreset> SortedPresets(int sortIdx)
+    {
+        var cur = LoadPresets();
+        return sortIdx switch
+        {
+            1 => cur.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList(),
+            2 => cur.OrderByDescending(x => x.SavedAt, StringComparer.OrdinalIgnoreCase).ToList(),
+            _ => cur,   // 0 = 按创建时间(存储顺序)
+        };
+    }
+
+    /// <summary>把"显示下标"映射回列表下标。入参必须是【与显示同一份排序】的列表(用 SortedPresets 取),
+    /// 此时显示序就是列表序,直接返回 showIdx 即可。原先调用方传的是未排序列表 —— 那正是"套错预设"的根因。</summary>
     private static int ResolveSortedIndex(int sortIdx, int showIdx, List<VideoPreset> sorted)
         => showIdx;
 
@@ -1980,6 +2110,13 @@ public sealed partial class VideoView : UserControl
             }
             var imported = System.Text.Json.JsonSerializer.Deserialize<List<VideoPreset>>(json) ?? new List<VideoPreset>();
             if (imported.Count == 0) { AppLogger.Warn("导入预设:文件无内容"); return 0; }
+            // 【导入也要过一遍序号迁移】旧版导出的 .alhpreset 里超分模型是**旧序号**(3=轻量通用),
+            // 而 SavePresets 会统一盖"新序号"章;不先换算就会把"轻量"当成"超慢"存下来(点一下预设慢 17 倍)。
+            // 新版导出的文件自带 ModelOrderRev=1,过这里不会被动。
+            int migrated = 0;
+            foreach (var p in imported)
+                if (p?.Params != null && MigrateEsrganModelOrder(p.Params)) migrated++;
+            if (migrated > 0) AppLogger.Info($"导入预设:已按新下拉顺序换算 {migrated} 个预设的超分模型序号(旧序 3=轻量通用 → 新序 2)");
             var existing = LoadPresets();
             int added = 0;
             foreach (var p in imported)
@@ -2091,7 +2228,10 @@ public sealed partial class VideoView : UserControl
     // 视频超分模型下拉选项文本(与 VideoView.xaml 里 ComboBoxItem.Content 一致;x4plus 那项是富文本+红字"超慢",
     // 这里只用于预设摘要显示,故仍是纯文本)
     private static string[] UpWaifu2xModelNames = { "通用·cunet", "动漫·upconv_7_anime", "现实·upconv_7_photo" };
-    private static string[] UpEsrganModelNames = { "动漫·animevideov3", "动漫·x4plus-anime", "通用·x4plus(超慢)" };
+    /// <summary>视频超分 Real-ESRGAN 模型的显示名(必须与 VideoView.xaml 里 ComboBoxItem 的**顺序**一一对应)。
+    /// 【2026-09-12】补上第 4 项 general-x4v3:此前数组只有 3 项(漏了它),序号 3 会落到兜底值上、显示成别的模型;
+    /// 同时顺序随下拉调整:2=轻量通用(general-x4v3)、3=超慢(x4plus)。改这里必须与 XAML 同步改,否则显示与实跑不符。</summary>
+    private static string[] UpEsrganModelNames = { "动漫·animevideov3", "动漫·x4plus-anime", "通用·general-x4v3(轻量)", "通用·x4plus(超慢)" };
     private static string UpWaifu2xModelName(int idx) => idx >= 0 && idx < UpWaifu2xModelNames.Length ? UpWaifu2xModelNames[idx] : "通用·cunet";
     private static string UpEsrganModelName(int idx) => idx >= 0 && idx < UpEsrganModelNames.Length ? UpEsrganModelNames[idx] : "动漫·animevideov3";
 
@@ -2132,6 +2272,10 @@ public sealed partial class VideoView : UserControl
         try
         {
             var d = CollectVideoParams();
+            // 【盖章:本版写出来的文件一律是新序号】CollectVideoParams 每次都 new 一个 VideoSettings,
+            // ModelOrderRev 默认 0;若不在这里盖章,下次启动 LoadSettings 的迁移会以为"这还是老文件"→
+            // 又把 2↔3 换一遍,轻量/超慢在两次启动之间来回横跳(实测过一次,必须钉住)。
+            d.ModelOrderRev = 1;
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile)!);
             File.WriteAllText(SettingsFile, System.Text.Json.JsonSerializer.Serialize(d));
         }
@@ -2210,6 +2354,23 @@ public sealed partial class VideoView : UserControl
     /// 状态没变时不重播(否则滑条拖动等触发 UpdateOptions 会让动画一闪一闪)。</summary>
     private void AnimateShowHide(Microsoft.UI.Xaml.UIElement el, bool show)
     {
+        // 【整体兜底】这类"高度+淡入淡出"动画会在布局线程上跑:Begin() 与 Completed 回调都可能抛
+        // COMException(0x80070490)或 LayoutCycleException(该机器 2026-09-11 崩过一次)。
+        // 动画只是观感,失败就退化成"直接显示/隐藏" —— 绝不能让它把界面或任务带崩。
+        try
+        {
+            AnimateShowHideCore(el, show);
+        }
+        catch (Exception ex)
+        {
+            NoteUiRefreshFailure("展开/收起动画", ex);
+            try { el.Visibility = show ? Visibility.Visible : Visibility.Collapsed; } catch { }
+            if (el is Microsoft.UI.Xaml.FrameworkElement fe2) { try { fe2.Height = double.NaN; } catch { } }
+        }
+    }
+
+    private void AnimateShowHideCore(Microsoft.UI.Xaml.UIElement el, bool show)
+    {
         if ((el.Visibility == Visibility.Visible) == show) return;   // 目标状态已达成,跳过动画
         var fe = el as Microsoft.UI.Xaml.FrameworkElement;
         if (fe == null) { el.Visibility = show ? Visibility.Visible : Visibility.Collapsed; return; }
@@ -2226,41 +2387,24 @@ public sealed partial class VideoView : UserControl
             : null;
         if (show)
         {
+            // 【2026-09-12 起:不再给 Height 做动画 —— 这是布局循环的经典成因】
+            // 依据:那台 50 系笔记本 22:31 的崩溃诊断是 **LayoutCycleException**("Layout cycle detected"),
+            // 而且崩溃文件里【没有】「最近界面操作」面包屑 → 说明异常是从 XAML 的布局过程本身抛出的,
+            // 不是从我们某次控件调用里抛的,**外面包 try/catch 根本拦不到**。
+            // 给 Height/Width 这类"参与测量排布"的属性做动画,会在动画每一帧都让下游重新测量;
+            // 面板下面又挂着会自增长的日志区与滚动条,两者互相触发就成环 → WinUI 直接判布局循环崩掉。
+            // 现在:显示/隐藏的高度变化一次性完成(布局只算一遍),观感交给透明度渐变(不参与布局,绝不会成环)。
             el.Visibility = Visibility.Visible;
             el.Opacity = 0;
-            // 先按自然高度布局一次,拿到目标高度,再置 0 开始展开动画
-            try { el.UpdateLayout(); } catch { }
-            double target = fe.ActualHeight > 0 ? fe.ActualHeight : 80;
-            fe.Height = 0;
-            var ha = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
-            {
-                To = target, Duration = new Duration(TimeSpan.FromMilliseconds(220)),
-                EasingFunction = ease,
-                EnableDependentAnimation = true,
-            };
-            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(ha, fe);
-            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(ha, "Height");
-            sb.Children.Add(ha);
-            sb.Completed += (_, _) => fe.Height = double.NaN;   // 展开完成恢复自适应高度
+            fe.Height = double.NaN;   // 恢复自适应高度(绝不再对它做动画)
         }
         else
         {
-            // 收起:高度动画到 0,结束后隐藏。淡出比高度收缩更快(内容先消失,
-            // 末尾高度收缩时已基本透明,不会"顿"一下)
-            double from = fe.ActualHeight > 0 ? fe.ActualHeight : fe.Height;
-            var ha = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
-            {
-                From = from, To = 0, Duration = new Duration(TimeSpan.FromMilliseconds(120)),
-                EasingFunction = ease,
-                EnableDependentAnimation = true,
-            };
-            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(ha, fe);
-            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(ha, "Height");
-            sb.Children.Add(ha);
+            // 收起:只淡出,高度同样交给布局一次搞定;淡出结束后再真正隐藏
             sb.Completed += (_, _) =>
             {
-                fe.Height = double.NaN;   // 恢复自适应高度
-                el.Visibility = Visibility.Collapsed;
+                try { el.Visibility = Visibility.Collapsed; }
+                catch (Exception ex) { NoteUiRefreshFailure("收起动画收尾", ex); }
             };
         }
         var oa = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
@@ -2325,16 +2469,71 @@ public sealed partial class VideoView : UserControl
         return "_去重-" + name;
     }
 
+    /// <summary>【界面日志刷新抑制(2026-09-12)】一旦本次运行检出"布局循环"(LayoutCycleException),就把它置 true:
+    /// 之后日志**只写文件、不再改界面文本框与滚动条** —— 因为继续高频改那个会自增长的日志区,
+    /// 只会让布局再次成环,界面永久卡死(而那台 50 系笔记本的实测是:界面死了、后台任务其实还在正常跑,
+    /// 用户只能重启软件把任务一起打断 —— 代价比"少刷几行界面日志"大得多)。
+    /// 只在内存里生效,重启软件自动恢复。</summary>
+    internal static volatile bool SuppressUiLogUpdates;
+    /// <summary>把"日志滚到底部"推迟到当前布局收尾之后再执行(2026-09-12)。
+    /// 【为什么必须推迟】直接在调用里 ChangeView:若此刻 XAML 正在测量/排布(日志区边填边量、又正值面板显隐),
+    /// 就会在布局过程中再次改动滚动位置 → 布局失效 → 重测 → 成环,WinUI 抛 **LayoutCycleException**。
+    /// 该异常是在框架布局代码里抛的,**外面包 try/catch 根本拦不到** —— 那台 50 系笔记本 22:31 的崩溃诊断
+    /// 正是 LayoutCycleException,且崩溃文件里连「最近界面操作」面包屑都没有(因为异常不来自我们的调用栈)。
+    /// TryEnqueue 让滚动发生在下一次空闲,脱离布局过程;入队回调里仍包 try/catch(队列里抛同样会成未处理异常)。
+    /// 观感上无差别:滚到底只是"下一帧"完成,人眼看不出。</summary>
+    private void ScrollLogToBottomDeferred()
+    {
+        try
+        {
+            App.UiBreadcrumb = "日志滚动到底(延迟执行)";
+            var q = DispatcherQueue;
+            if (q == null) return;
+            q.TryEnqueue(() =>
+            {
+                try { VideoLogScroll.ChangeView(null, VideoLogScroll.ScrollableHeight, null, true); }
+                catch (Exception ex) { NoteUiRefreshFailure("日志滚动到底(延迟)", ex); }
+            });
+        }
+        catch { }
+    }
     private void Log(string msg)
     {
         AppLogger.Info(msg);   // 同步写诊断日志文件
-        var line = $"[{DateTime.Now:HH:mm:ss}] {msg}";
-        VideoLogText.Text = VideoLogText.Text == "日志:等待任务..."
-            ? line : VideoLogText.Text + "\n" + line;
-        var lines = VideoLogText.Text.Split('\n');
-        if (lines.Length > 200)
-            VideoLogText.Text = string.Join("\n", lines.Skip(80)) + "\n";
-        VideoLogScroll.ChangeView(null, VideoLogScroll.ScrollableHeight, null, true);
+        // 【UI 刷新绝不许把任务带崩】下面两句是 WinRT/原生控件操作:文本越长布局越贵,
+        // 而 ScrollViewer.ChangeView 在布局进行中/文本高速增长时会抛 COMException(实测 0x80070490
+        // "找不到元素")或 LayoutCycleException —— 50 系笔记本一天内崩两次,两次都紧跟在"刷新日志行"
+        // 之后,崩完界面不再更新、用户只看到"卡住"。日志文件已经落了盘(上面那行),界面刷不动就少刷一次,
+        // 绝不能让它把正在跑的任务拖死。
+        if (SuppressUiLogUpdates) return;   // 布局循环已检出:界面日志停刷(文件日志上面已落盘)
+        try
+        {
+            App.UiBreadcrumb = "日志行追加(界面文本框)";
+            var line = $"[{DateTime.Now:HH:mm:ss}] {msg}";
+            // 【一次赋值:先拼好、裁好,只改一次 Text(2026-09-12)】原来是"先追加、再裁剪",一次刷新里连着改两次 Text。
+            // 这段文本是自动折行的,每改一次就要重新测量一次;日志快速变长时(开去重)正是把布局推向成环的推手之一。
+            // 现在:字符串上拼好、裁好,只赋一次值。
+            var next = VideoLogText.Text == "日志:等待任务..." ? line : VideoLogText.Text + "\n" + line;
+            var lines = next.Split('\n');
+            if (lines.Length > 200) next = string.Join("\n", lines.Skip(80)) + "\n";
+            VideoLogText.Text = next;
+            ScrollLogToBottomDeferred();
+        }
+        catch (Exception ex) { NoteUiRefreshFailure("视频日志追加/自动滚动", ex); }
+    }
+
+    /// <summary>界面刷新失败只记一次(避免每帧一条把日志刷爆),并记下"是哪一处 UI 操作":
+    /// 崩溃诊断里会带上这条面包屑,下次再崩就能直接指到具体调用,不用像这次一样靠时间线推断。</summary>
+    private static int _uiFailLogged;
+    internal static void NoteUiRefreshFailure(string where, Exception ex)
+    {
+        try
+        {
+            App.UiBreadcrumb = where + " 抛 " + ex.GetType().Name + " 0x" + ex.HResult.ToString("X8");
+            if (System.Threading.Interlocked.Increment(ref _uiFailLogged) <= 5)
+                AppLogger.Warn($"⚠ 界面刷新失败,已忽略并继续(不影响处理结果):{where} — {ex.GetType().Name} 0x{ex.HResult:X8} {ex.Message.Split('\n')[0]}");
+        }
+        catch { }
     }
 
     // ---------- 视频添加 ----------
@@ -4377,10 +4576,19 @@ public sealed partial class VideoView : UserControl
         //   兜底保留(双保险,即使未来路径变化也不跨线程改控件)。
         if (up && SelectedEngineIsReal)
         {
-            // 开始处理前先让用户知道"正在检测引擎兼容性"(探测最长 15 秒,避免用户以为卡住)
-            TaskSummary.Text = "正在检测 Real-ESRGAN 显卡兼容性(约 15 秒)…";
-            try { Log("正在检测 Real-ESRGAN 显卡兼容性(探测,最长约 15 秒)…"); } catch { }
-            bool usable = await EngineService.IsEngineGpuUsableAsync("realesrgan", gpuId, cts.Token);
+            // 【口径统一到与处理流水线同一个入口(2026-09-12 自检发现)】这里原来调的是
+            // EngineService.IsEngineGpuUsableAsync(engine, gpuId, ct) 这个 3 参重载 = fullFrame:false =
+            // **320×240 小图**探测(15 秒)。而本项目自己实测过的失败形态恰恰是:
+            //   "320×240 能跑、真帧尺寸(1080×1920)才静默出空帧/黑帧,退出码还是 0"(见 EngineService 里
+            //   fullFrame 的注释与 VideoService 的调用点)—— 也就是说:小图探测通过 ≠ 能用,
+            //   这个"兼容性检测"会给用户一个不可靠的 OK,而真正的问题要等到流水线里才暴露。
+            // 改为调用与流水线【完全相同】的入口 EnsureNcnnProbeAsync,于是三件事一起对上:
+            //   ①纯 NVIDIA 非 50 系走快速通道(秒回,不白等);②50 系/AMD/Intel 按生产帧尺寸 + 真实模型实测;
+            //   ③结论按"引擎|GPU|模型"缓存 —— 流水线随后再查一次会直接命中缓存,不会重复探测两遍。
+            TaskSummary.Text = "正在检测 Real-ESRGAN 显卡兼容性(首次约 15~60 秒,结论会记住)…";
+            try { Log("正在检测 Real-ESRGAN 显卡兼容性(按生产帧尺寸实测,首次较慢,结论会记住)…"); } catch { }
+            bool usable = await EngineService.EnsureNcnnProbeAsync("realesrgan", gpuId,
+                SelModel(VideoEsrganModelCombo, "realesrgan-x4plus"), cts.Token);
             if (!usable)
             {
                 var useWaifu = await AskBlackwellCompatibleAsync("Real-ESRGAN");
@@ -4520,6 +4728,14 @@ public sealed partial class VideoView : UserControl
         double idleSeconds = 0;
         var progress = new Progress<(int pct, string msg)>(t =>
         {
+            // ===== 兜底:整段进度刷新不许把任务带崩 =====
+            // Progress<T> 的回调跑在 UI 线程,里面全是原生控件操作(改文本/进度条/滚动/面板)。
+            // 实测(50 系笔记本,只开去重时必现):这里抛出的 COMException(0x80070490 找不到元素)
+            // 会走全局未处理异常 → 弹"程序遇到问题"→ 界面停止更新、任务被用户关掉后报一堆假错。
+            // 去重开着时日志行更多、刷新更频繁,撞上布局的窗口就更多 —— 这才是"只有开去重才出现"的原因。
+            // 单点都加了保护之后仍在此处兜一层:任何一项刷新失败都只是"这次少刷一点",任务继续跑。
+            try
+            {
             // 编码阶段计时:必须放在下面节流 return 之前 —— 漏采样,任务结束时就会把编码耗时
             // 一起算进"每帧推理成本"(实测把 0.24 秒/帧记成 7.04 秒/帧,偏差 29 倍)。
             // 判据用进度分区(96=编码起始,与 VideoService.StageProgressPct 的分段一致),不猜字符串。
@@ -4590,17 +4806,29 @@ public sealed partial class VideoView : UserControl
                             ? $"▶ {emStage} 中({cntTxt})"
                             : $"… {emStage} 仍在进行({cntTxt})");
                     }
-                    if (!first && stepLogFull != null
-                        && VideoLogText.Text.EndsWith(stepLogFull, StringComparison.Ordinal))
+                    // 【包 try/catch】这几句是 UI 线程上的原生控件操作(改文本 + ScrollViewer.ChangeView),
+                    // 实测会在布局繁忙时抛 COMException 0x80070490 / LayoutCycleException。崩在这里的后果不是
+                    // "少刷一行日志",而是任务再也收不到界面更新、用户只看到"卡住",收尾时还会报一堆找不到路径的假错。
+                    try
                     {
-                        // 原地替换最后一行(实时进度,不刷屏)
-                        VideoLogText.Text = VideoLogText.Text.Substring(0, VideoLogText.Text.Length - stepLogFull.Length) + stepNewFull;
+                        if (SuppressUiLogUpdates) stepLogFull = stepNewFull;   // 布局循环已检出:只记状态、不碰界面
+                        else if (!first && stepLogFull != null
+                            && VideoLogText.Text.EndsWith(stepLogFull, StringComparison.Ordinal))
+                        {
+                            // 原地替换最后一行(实时进度,不刷屏)
+                            VideoLogText.Text = VideoLogText.Text.Substring(0, VideoLogText.Text.Length - stepLogFull.Length) + stepNewFull;
+                        }
+                        else
+                        {
+                            // 同样"一次赋值":先拼好、裁好,只改一次 Text(理由见 Log() 里的说明)
+                            var snext = (VideoLogText.Text == "日志:等待任务..." ? "" : VideoLogText.Text + "\n") + stepNewFull;
+                            var stepLines = snext.Split('\n');
+                            if (stepLines.Length > 200) snext = string.Join("\n", stepLines.Skip(80)) + "\n";
+                            VideoLogText.Text = snext;
+                            ScrollLogToBottomDeferred();
+                        }
                     }
-                    else
-                    {
-                        VideoLogText.Text = (VideoLogText.Text == "日志:等待任务..." ? "" : VideoLogText.Text + "\n") + stepNewFull;
-                        VideoLogScroll.ChangeView(null, VideoLogScroll.ScrollableHeight, null, true);
-                    }
+                    catch (Exception ex) { NoteUiRefreshFailure("步骤行刷新/自动滚动", ex); }
                     stepLogFull = stepNewFull;
                 }
                 if (emTotal > 0)
@@ -4628,13 +4856,18 @@ public sealed partial class VideoView : UserControl
                     || t.msg.StartsWith("压缩编码器:", StringComparison.Ordinal)))
             {
                 string doneFull = $"[{DateTime.Now:HH:mm:ss}] ✓ {t.msg}";
-                if (VideoLogText.Text.EndsWith(stepLogFull, StringComparison.Ordinal))
-                    VideoLogText.Text = VideoLogText.Text.Substring(0, VideoLogText.Text.Length - stepLogFull.Length) + doneFull;
-                else
+                // 同"步骤行刷新":UI 原生操作必须包起来(见上面那段注释与 NoteUiRefreshFailure)
+                try
                 {
-                    VideoLogText.Text = (VideoLogText.Text == "日志:等待任务..." ? "" : VideoLogText.Text + "\n") + doneFull;
-                    VideoLogScroll.ChangeView(null, VideoLogScroll.ScrollableHeight, null, true);
+                    if (VideoLogText.Text.EndsWith(stepLogFull, StringComparison.Ordinal))
+                        VideoLogText.Text = VideoLogText.Text.Substring(0, VideoLogText.Text.Length - stepLogFull.Length) + doneFull;
+                    else
+                    {
+                        VideoLogText.Text = (VideoLogText.Text == "日志:等待任务..." ? "" : VideoLogText.Text + "\n") + doneFull;
+                        ScrollLogToBottomDeferred();
+                    }
                 }
+                catch (Exception ex) { NoteUiRefreshFailure("阶段完成行刷新/自动滚动", ex); }
                 stepLogFull = doneFull;
                 lastLoggedStep = null;   // 下一阶段重新出现步骤行
             }
@@ -4748,6 +4981,8 @@ public sealed partial class VideoView : UserControl
                 UpdateTaskPanel(t.msg);
             }
             SafeRender.ApplyRestUi(VideoStatus, CancelBtn, t.msg);   // 休息时:黄字加粗 + 按钮变「跳过休息」
+            }
+            catch (Exception ex) { NoteUiRefreshFailure("任务进度刷新(整体)", ex); }
         });
 
         int okCount = 0, failCount = 0;

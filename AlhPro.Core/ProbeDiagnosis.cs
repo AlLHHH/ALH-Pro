@@ -16,7 +16,7 @@ public enum ProbeFailureKind
     CrashExitCode,     // 非零退出码(含 0xC0000005 访问违例 —— 驱动缺陷的典型特征)
     NoOutput,          // 退出码 0 但没产出文件
     EmptyOutput,       // 产出文件存在但 0 字节
-    DefectiveFrame,    // 出图但整帧近黑 / 任一 1/3 条带近黑
+    DefectiveFrame,    // 出图但画面坏:整帧近黑 / 任一 1/3 条带近黑 / 通道失衡 / 亮度不对 / 被抹成一块平的
     Hang,              // 超时无响应(已强杀)
 }
 
@@ -39,7 +39,7 @@ public static class ProbeDiagnosis
         ProbeFailureKind.CrashExitCode => "初始化即崩(非零退出码)",
         ProbeFailureKind.NoOutput => "无产出文件",
         ProbeFailureKind.EmptyOutput => "产出空文件",
-        ProbeFailureKind.DefectiveFrame => "出图但坏帧(近黑/带状近黑)",
+        ProbeFailureKind.DefectiveFrame => "出图但画面坏帧",
         ProbeFailureKind.Hang => "无响应(超时被强杀)",
         _ => "未知",
     };
@@ -55,7 +55,9 @@ public static class ProbeDiagnosis
 
         if (kind == ProbeFailureKind.DefectiveFrame)
             // 【硬约束】坏帧是引擎并发/渲染这一类问题,不提驱动、不提 NVIDIA。
-            return $"「{engineLabel}」引擎能出图但画面异常(近黑或带状近黑),已自动改用 ONNX 稳定路线。";
+            // 【措辞】2026 起坏帧判据不止"近黑"了(还有通道失衡/亮度不对/被抹平),所以文案不能再只说近黑 ——
+            // 说错形态会把排查方向带偏(连"是黑帧还是彩色噪点"都不是一回事)。明细在探测日志与诊断包里。
+            return $"「{engineLabel}」引擎能出图但画面是坏的(黑帧/亮度或结构不对),已自动改用 ONNX 稳定路线。";
 
         if (IsInitStageFailure(kind))
         {

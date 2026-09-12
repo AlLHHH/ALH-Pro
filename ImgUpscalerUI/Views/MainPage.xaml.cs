@@ -63,6 +63,9 @@ public sealed partial class MainPage : Page
                     await ShowUpdateLogAsync(fromStartup: true);
             }
             catch { }
+            // 【图片预设换代提醒不单独弹窗】参数调整导致"老预设数值没变、效果变了"这件事,
+            // 只写在更新公告(RELEASE_NOTES.md 的当前版本那一节)里 —— 用户本来就会看更新说明,
+            // 再弹一个只讲这一个滑杆的窗是二次打扰(用户明确要求:弹窗不要有,公告里写了就行)。
             // 引擎可用性:仅缺失时提示,正常就绪不刷屏
             var ok = EngineService.CheckEngines(out var missing);
             StatusText.Text = ok ? "就绪" : "引擎缺失: " + missing;
@@ -1619,7 +1622,7 @@ public sealed partial class MainPage : Page
         "三、广告说明(合规告知)\n" +
         "1. 本软件为免费软件,通过左侧底部「广告」区域展示合作方广告,以维持开发与维护成本。\n" +
         "2. 广告内容由广告主提供,由作者按合规要求审核后展示;右上角「推广」角标用于标识广告性质。\n" +
-        "3. 您可随时点广告卡右上角「✕」隐藏本次,或在「设置 → 显示广告」彻底关闭;关闭不影响软件任何功能。\n" +
+        "3. 您可随时点广告卡右上角「✕」隐藏本次,或在「设置 → 本次运行不显示广告」勾选(勾选只对本次运行生效,重启软件自动恢复显示;广告是本软件维持开发的唯一来源,没有永久关闭项)。关闭不影响软件任何功能。\n" +
         "4. 本软件不收集您的任何个人信息用于广告定向/推荐,不将您的使用数据上传给任何广告方。\n\n" +
         "四、版权与许可\n" +
         "1. 本软件版权归作者所有;未经许可不得商业倒卖或为营利再分发,不得移除版权/许可信息。\n" +
@@ -1664,7 +1667,7 @@ public sealed partial class MainPage : Page
         "三、第三方服务\n" +
         "软件集成的开源引擎与模型(FFmpeg、Real-ESRGAN、waifu2x-ncnn、RIFE、ONNX Runtime、BiRefNet、Demucs、LavaSR 等)均为本地调用,不会向它们的作者或任何第三方传输您的数据。\n\n" +
         "四、广告\n" +
-        "本软件为免费软件,通过界面广告位展示合作方广告以维持开发维护成本。广告由作者按合规要求审核后展示,您可点广告卡右上角「✕」隐藏本次,或在「设置 → 显示广告」彻底关闭。关闭不影响软件任何功能。\n\n" +
+        "本软件为免费软件,通过界面广告位展示合作方广告以维持开发维护成本。广告由作者按合规要求审核后展示,您可点广告卡右上角「✕」隐藏本次,或在「设置 → 本次运行不显示广告」勾选(仅对本次运行生效,重启软件自动恢复显示)。关闭不影响软件任何功能。\n\n" +
         "五、您的权利\n" +
         "由于本软件不收集您的个人信息,无需也无法向您提供查询、更正、删除个人信息的途径。您可以随时卸载本软件;卸载后本软件在您设备上不遗留任何账号数据。\n\n" +
         "六、隐私政策更新\n" +
@@ -2250,7 +2253,7 @@ public sealed partial class MainPage : Page
         content.Children.Add(gpuCombo);
         content.Children.Add(new TextBlock
         {
-            Text = "四个功能(图片放大 / 视频处理 / 音频处理 / AI 抠图)统一使用这里选的计算设备。编号顺序可能与引擎实际识别的设备不一致(Windows 顺序 ≠ 引擎顺序):若选某编号处理崩/慢,换其它编号实测,日志「引擎启动...设备 -g X」会显示所选编号。无独显的电脑建议选 CPU(软件计算)。音频增强/分离(Demucs)会优先用这里选的显卡(DirectML)加速,没有显卡时自动用 CPU;音频升采样率(LavaSR)目前用 CPU 计算(暂不支持显卡)。注意:AI 抠图已强制使用 CPU(GPU 推理会占满显卡导致整机卡),此处设置对抠图不生效。",
+            Text = "四个功能(图片放大 / 视频处理 / 音频处理 / AI 抠图)统一使用这里选的计算设备。编号顺序可能与引擎实际识别的设备不一致(Windows 顺序 ≠ 引擎顺序):若选某编号处理崩/慢,换其它编号实测,日志「引擎启动...设备 -g X」会显示所选编号。设备列表里没有显卡时,软件会自动改用 ONNX DirectML,再不行回退到 CPU(软件计算),不需要你手动选 CPU。音频增强/分离(Demucs)会优先用这里选的显卡(DirectML)加速,没有显卡时自动用 CPU;音频升采样率(LavaSR)目前用 CPU 计算(暂不支持显卡)。注意:AI 抠图已强制使用 CPU(GPU 推理会占满显卡导致整机卡),此处设置对抠图不生效。",
             FontSize = 10, Opacity = 0.5,
             TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
@@ -2550,11 +2553,16 @@ public sealed partial class MainPage : Page
 
         var splitCoresCheck = new CheckBox
         {
-            Content = "引擎/ffmpeg 按可用核分线程",
-            FontSize = 12, IsChecked = SafeRender.SplitCores,
+            // 【置灰只读(2026-09-12 自检)】这一项在 SafeRender.Load 里被**强制置 true**(作者定案:下游软编
+            // 线程按可用核分配,关掉只会让长任务更容易被别的程序抢核),但复选框一直可点、还会把 false 写进设置
+            // → 用户取消勾选后,下次启动又变回勾上,只会让人以为"改了不保存/设置坏了"。
+            // 与旁边同样"不能关"的「限制总 CPU」保持一致:置灰 + 说明为什么。想省 CPU 请用上面的 CPU 上限。
+            Content = "引擎/ffmpeg 按可用核分线程(始终开启)",
+            FontSize = 12, IsChecked = true, IsEnabled = false,
         };
         ToolTipService.SetToolTip(splitCoresCheck,
-            "把超分/补帧引擎线程数除以并发路数,并给每个实例分配独立核,避免多路引擎挤在同一批核上超订;同时给 ffmpeg 拆帧/编码限制线程。开启后后台占用更规整,不抢系统核。");
+            "始终开启:把超分/补帧引擎线程数除以并发路数,并给每个实例分配独立核,避免多路引擎挤在同一批核上超订;同时给 ffmpeg 拆帧/编码限制线程。"
+            + "关闭它只会让长任务更容易被其它程序抢核,所以不提供关闭(想压低占用请用上面的「CPU 上限」)。");
         splitCoresCheck.Checked += (_, _) => { SafeRender.SplitCores = true; SafeRender.Save(); RefreshResHint(); };
         splitCoresCheck.Unchecked += (_, _) => { SafeRender.SplitCores = false; SafeRender.Save(); RefreshResHint(); };
         content.Children.Add(splitCoresCheck);
@@ -2918,7 +2926,45 @@ public sealed partial class MainPage : Page
                     }
                     catch { }
                     info.AppendLine("计算设备设置: GPU " + AppSettings.GpuIndex);
-                    try { info.AppendLine("Vulkan 自检报告:\n" + AppSettings.VulkanReport); } catch { }
+                    // 【ncnn 实测结论必须现测现写】原来这里贴的是 AppSettings.VulkanReport —— 那是【按版本缓存的快照】,
+                    // 生成时间永远早于任何一次真机探测,而且探测出结论后没有任何代码去刷新它 → 报告永远显示"未测"
+                    // (用户重装后尤其明显:全新安装必然在空缓存下重建快照)。这里强制实测一次再写实时结论。
+                    // 顺带修好读/写编号不一致:写侧(处理任务)用 ResolveEngineGpu 解析出的编号,读侧若固定用
+                    // AppSettings.GpuIndex,在设备表还没枚举的窗口里会查错键 → 明明测过也显示"未测"。
+                    int probeGpu = AppSettings.GpuIndex;
+                    try { probeGpu = ALHPro.EngineService.ResolveEngineGpu(AppSettings.GpuIndex); } catch { }
+                    try
+                    {
+                        // 只对"本来会显示未测"的引擎强制实测,否则直接用已有结论 —— 正常机器导出不额外等待。
+                        var needProbe = new System.Collections.Generic.List<string>();
+                        foreach (var eng in new[] { "realesrgan", "waifu2x" })
+                            if (!ALHPro.EngineService.TryGetNcnnVerdict(eng, probeGpu).HasValue) needProbe.Add(eng);
+                        if (needProbe.Count > 0)
+                        {
+                            var prevStatus = StatusText.Text;
+                            try { StatusText.Text = "正在实测 ncnn 引擎(诊断包,最长约 90 秒)…"; } catch { }
+                            info.AppendLine($"ncnn 探测:本机此前没有 {string.Join(" / ", needProbe)} 的实测结论,导出时强制实测一次");
+                            AppLogger.Info($"[探测] 诊断包导出:此前无 {string.Join("/", needProbe)} 的实测结论,强制实测(GPU {probeGpu})");
+                            using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+                            foreach (var eng in needProbe)
+                            {
+                                bool ok = false;
+                                try
+                                {
+                                    ok = await ALHPro.EngineService.EnsureNcnnProbeAsync(
+                                        eng, probeGpu, model: null, probeCts.Token, force: true);
+                                }
+                                catch (Exception ex) { AppLogger.Warn($"[探测] 诊断包强制实测 {eng} 失败(不影响打包):{ex.Message}"); }
+                                info.AppendLine($"ncnn 探测({eng}, GPU {probeGpu}): {(ok ? "实测可用 → 走 ncnn-Vulkan" : "实测不可用 → 走 ONNX 稳定引擎")}");
+                            }
+                            try { StatusText.Text = prevStatus; } catch { }
+                        }
+                        info.AppendLine("ncnn 实测结论(导出时实时): " + ALHPro.EngineService.DescribeNcnnVerdicts(probeGpu));
+                    }
+                    catch (Exception ex) { AppLogger.Warn("[探测] 诊断包 ncnn 实测异常(不影响打包):" + ex.Message); }
+                    info.AppendLine("ncnn 实测结论(导出时实时): " + ALHPro.EngineService.DescribeNcnnVerdicts(probeGpu));
+                    info.AppendLine("Vulkan 自检报告(以下为本次启动时的快照,可能早于上面的实时结论):");
+                    try { info.AppendLine(AppSettings.VulkanReport); } catch { }
                     info.AppendLine("临时文件目录: " + ALHPro.EngineService.TempRoot);
                     var infoPath = System.IO.Path.Combine(tmpDir, "设备信息.txt");
                     System.IO.File.WriteAllText(infoPath, info.ToString());
@@ -2951,6 +2997,15 @@ public sealed partial class MainPage : Page
                             foreach (var s in System.IO.Directory.EnumerateFiles(settingsDir, "*.json"))
                             { System.IO.File.Copy(s, System.IO.Path.Combine(tmpDir, System.IO.Path.GetFileName(s)), true); gathered++; }
                         try { System.IO.File.Copy(ALHPro.AppLogger.LogSettingsFile, System.IO.Path.Combine(tmpDir, "log-settings.json"), true); gathered++; } catch { }
+                        // 【ncnn 探测结论原样带上】此前这里只枚举 *.json,而探测结算是 settings\ncnn-probe.txt(.txt)
+                        // → 被静默漏掉,诊断包里根本没有"到底测了什么"的第一手材料,只能看到报告里的"未测"。
+                        try
+                        {
+                            var probeFile = ALHPro.EngineService.NcnnProbeCacheFilePath;
+                            if (System.IO.File.Exists(probeFile))
+                            { System.IO.File.Copy(probeFile, System.IO.Path.Combine(tmpDir, "ncnn-probe.txt"), true); gathered++; }
+                        }
+                        catch { }
                     }
                     catch { }
                     // ④ 打包到内存流(不落地临时 zip,避免被清理/边写边读竞态),再写入用户选的保存文件
@@ -3083,31 +3138,36 @@ public sealed partial class MainPage : Page
             Height = 1,
             Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorderBrush"],
         });
-        // 广告:本次运行是否显示。去掉「永久关闭」开关,只留「本次运行不再显示」语义(重启自动恢复显示)。
-        var showAds = new CheckBox
+        // 广告:本次运行是否**不显示**(2026-09-12 用户要求换思路)。
+        // 【为什么把语义倒过来】原来这一项叫「本次运行显示广告」且默认勾选 —— 看着像"一个开着的功能",
+        // 用户每次都要先把它取消勾选才清净,而且"默认勾选"本身就有替用户做主的味道。
+        // 现在改成「本次运行不显示广告」:默认**不勾**(= 广告照常显示),想安静就自己勾一下。
+        // 【重启自动恢复】勾选只写内存(_adHiddenUntil),不落设置文件 —— 重启软件后回到"不勾=显示",
+        // 这也是「本次运行」四个字的意思;不存在"永久关闭广告"的开关。
+        var hideAdsThisRun = new CheckBox
         {
-            Content = "本次运行显示广告",
-            IsChecked = !AdIsHiddenNow,   // 未处于隐藏期=显示(默认选中)
+            Content = "本次运行不显示广告",
+            IsChecked = AdIsHiddenNow,   // 默认 false(不在隐藏期)= 不勾选 = 广告显示
         };
-        ToolTipService.SetToolTip(showAds,
-            "左栏底部由作者投放的「广告」动态区(从 GitHub 定时更新,每 30 秒轮播一张卡)。取消勾选=本次运行不再显示(点广告卡✕也是 2 小时内不显示);重启软件自动恢复显示,不影响任何功能。");
-        showAds.Unchecked += (_, _) =>
+        ToolTipService.SetToolTip(hideAdsThisRun,
+            "勾选后:本次运行期间左栏底部的「广告」动态区不再显示(点广告卡右上角✕也是 2 小时内不显示)。重启软件后自动恢复显示——这是「本次运行」的意思,不会永久关闭,不影响软件任何功能。");
+        hideAdsThisRun.Checked += (_, _) =>
         {
-            _adHiddenUntil = DateTime.MaxValue;   // 本次运行不再显示(内存记录,重启恢复)
-            AppLogger.Info("本次运行已隐藏广告(设置)");
+            _adHiddenUntil = DateTime.MaxValue;   // 本次运行不再显示(只写内存,重启自动恢复)
+            AppLogger.Info("本次运行已隐藏广告(设置里勾选「本次运行不显示广告」)");
             RenderAds();
         };
-        showAds.Checked += (_, _) =>
+        hideAdsThisRun.Unchecked += (_, _) =>
         {
-            _adHiddenUntil = DateTime.MinValue;    // 本次运行恢复显示
-            AppLogger.Info("本次运行恢复显示广告(设置)");
+            _adHiddenUntil = DateTime.MinValue;   // 本次运行恢复显示
+            AppLogger.Info("本次运行恢复显示广告(取消勾选「本次运行不显示广告」)");
             StartAdActivity();
             RenderAds();
         };
-        content.Children.Add(showAds);
+        content.Children.Add(hideAdsThisRun);
         content.Children.Add(new TextBlock
         {
-            Text = "作者在 GitHub 更新后,软件内每隔一段时间自动刷新。「本次运行」隐藏 = 重启软件后恢复显示,不会永久关闭。",
+            Text = "默认显示作者在 GitHub 投放的广告区(每 30 秒轮播一张卡)。勾选上面这一项只在本次运行生效,重启软件自动恢复;不存在永久关闭。",
             FontSize = 10, Opacity = 0.5, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
 

@@ -54,6 +54,15 @@
                               SelectionChanged="Combo_Changed">
                         <ComboBoxItem Content="动漫 · realesr-animevideov3（4MB · 快）" Tag="realesr-animevideov3"/>
                         <ComboBoxItem Content="动漫 · realesrgan-x4plus-anime（9MB · 中）" Tag="realesrgan-x4plus-anime"/>
+                        <!-- 【顺序 · 2026-09-12 用户要求】自转的 general-x4v3 上移到「超慢」之前,耗时档由「快」改为「中」,
+                             标签里不再写「轻量通用」(它已经在主列表里了,不必再标注"轻量")。
+                             为什么上移:它只有 5MB、是 4x 原生权重,比 x4plus 快得多;原先压在最末尾,用户第一眼看不到。
+                             ⚠【移动 = 改了序号,必须同步迁移已存序号】下拉项存的是序号(index):
+                                旧序 0=animevideov3 1=x4plus-anime 2=x4plus(超慢) 3=general-x4v3
+                                新序 0=animevideov3 1=x4plus-anime 2=general-x4v3 3=x4plus(超慢)
+                             迁移在 VideoView.xaml.cs 的 MigrateEsrganModelOrder(读设置、读预设都走它,一次性 2↔3 互换)。
+                             不迁移的后果:老用户"存的 3 = 轻量模型"会静默变成 3 = 超慢(1080p 实测 14.5 秒/帧,慢 17 倍)。 -->
+                        <ComboBoxItem Content="通用 · realesr-general-x4v3（5MB · 中）" Tag="realesr-general-x4v3"/>
                         <!-- 「通用 · realesrgan-x4plus」保留可选,但红字标出"超慢"(用户要求:不删除、只警示)。
                              依据(2026-09-11 本机 4060 Laptop 实测,源 1920×1080 每帧):x4plus 14.48s / x4plus-anime 4.84s /
                              animevideov3 0.84s;x4plus 还有"只有 4x 权重"的问题(选 2x 也照样全量算 4x 再缩回)。
@@ -66,9 +75,6 @@
                                 <TextBlock Text="）" VerticalAlignment="Center"/>
                             </StackPanel>
                         </ComboBoxItem>
-                        <!-- 【必须追加在末尾】自转的 general-x4v3。下拉项存的是序号(index),
-                             插在中间会让老用户已保存的模型选择集体错位到别的模型上。 -->
-                        <ComboBoxItem Content="通用 · realesr-general-x4v3（5MB · 快 · 轻量通用）" Tag="realesr-general-x4v3"/>
                     </ComboBox>
                     <!-- 4x 专用权重模型的提示(用户要求:放在模型下拉正下方) -->
                     <TextBlock x:Name="EsrganModelHint" Visibility="Collapsed" TextWrapping="Wrap" FontSize="12"
@@ -337,7 +343,7 @@
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
                     <TextBlock Text="去重模型" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="DedupModelCombo" HorizontalAlignment="Stretch" ToolTipService.ToolTip="去重模型:智能=自动识别素材拍数(一拍N)并均匀采样;动漫=按动画拍型(一拍二/三/四)均匀采样;手动=自己选算法(含内容帧率采样)自由调参"
-                              SelectedIndex="2" SelectionChanged="Combo_Changed">
+                              SelectedIndex="0" SelectionChanged="Combo_Changed">
                         <ComboBoxItem Content="智能检测" ToolTipService.ToolTip="自动识别素材拍数(一拍N:画面每 N 帧才算一个新动作),识别到就按拍数均匀采样去重;识别不出来的素材(如实拍连续运动)原样保留。三档策略控制采用门槛"/>
                         <ComboBoxItem Content="动漫模式" ToolTipService.ToolTip="动画帧率变种(一拍N):动漫是「一拍一/二/三…」的有限动画——每 N 帧才有一帧真内容。选对档位后软件按内容帧率均匀采样+均匀补帧(不做逐帧判定,不会误删细节帧),输出标准帧率。24fps 源:一拍二=12fps 内容、一拍三=8fps"/>
                         <ComboBoxItem Content="手动模式" ToolTipService.ToolTip="自己选算法 + 自由调参:重复帧检测(mpdecimate)/ 画面变化阈值(scene)/ 帧差+SSIM/ 内容帧率采样,下方面板展开所有滑条"/>
@@ -762,8 +768,18 @@
                     <Border Background="{StaticResource AppBgBrush}"
                             BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
                             CornerRadius="6" Padding="8,6">
+                        <!-- 【滚动条必须常驻:这是"布局循环"的根因,别改回 Auto(2026-09-12)】
+                             原来写的是 VerticalScrollBarVisibility="Auto" + 里面 TextBlock TextWrapping="Wrap"
+                             + 外面是 StackPanel(高度由内容决定)+ MaxHeight=220。这一组合会成环:
+                               日志长过 220 → 滚动条出现 → 内容宽度变窄 → 自动折行 → 高度变化 →
+                               又不需要滚动条了 → 宽度变回来 → 再折行 …… 来回横跳 = WinUI 判"布局循环"
+                               (LayoutCycleException)。实测:50 系笔记本开【去重】时日志行暴增、正好越过这个临界点,
+                               于是界面被冻死(后台任务其实还在跑,只能重启软件)。这就是"开了去重就卡死"的真正原因。
+                             常驻滚动条 = 内容宽度恒定 → 折行结果恒定 → 高度不会再变 → 环路断掉。
+                             代价:日志区一直留着一条滚动条槽(观感,可接受);换来的是界面绝不因日志变长而死。 -->
                         <ScrollViewer x:Name="VideoLogScroll" MaxHeight="220"
-                                      VerticalScrollBarVisibility="Auto">
+                                      VerticalScrollBarVisibility="Visible"
+                                      HorizontalScrollBarVisibility="Disabled">
                             <TextBlock x:Name="VideoLogText" FontSize="10" Opacity="0.7"
                                        TextWrapping="Wrap" Text="日志:等待任务..."/>
                         </ScrollViewer>

@@ -189,7 +189,12 @@
                     <Border Background="{StaticResource AppBgBrush}"
                             BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
                             CornerRadius="6" Padding="8,6">
-                        <ScrollViewer x:Name="LogScroll" MaxHeight="180" VerticalScrollBarVisibility="Auto">
+                        <!-- 滚动条常驻:与视频页同一处修复(见 VideoView.xaml 的说明)。
+                             Auto + 自动折行 + StackPanel 会成"滚动条出现↔换行变高"的布局循环(LayoutCycleException),
+                             常驻滚动条让内容宽度恒定,环路断掉。 -->
+                        <ScrollViewer x:Name="LogScroll" MaxHeight="180"
+                                      VerticalScrollBarVisibility="Visible"
+                                      HorizontalScrollBarVisibility="Disabled">
                             <TextBlock x:Name="LogText" FontSize="10" Opacity="0.7"
                                        TextWrapping="Wrap" Text="日志:等待任务..."/>
                         </ScrollViewer>

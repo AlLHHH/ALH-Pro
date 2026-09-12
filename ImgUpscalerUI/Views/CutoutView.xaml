@@ -239,8 +239,10 @@
                     <Border Background="{StaticResource AppPanelBrush}"
                             BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
                             CornerRadius="6" Padding="8,6">
+                        <!-- 滚动条常驻:见 VideoView.xaml 的说明(Auto + 自动折行会成布局循环) -->
                         <ScrollViewer x:Name="TaskLogScroll" MaxHeight="220"
-                                      VerticalScrollBarVisibility="Auto">
+                                      VerticalScrollBarVisibility="Visible"
+                                      HorizontalScrollBarVisibility="Disabled">
                             <TextBlock x:Name="TaskLogText" FontSize="10" Opacity="0.7"
                                        TextWrapping="Wrap"
                                        Text="日志:等待任务..."/>

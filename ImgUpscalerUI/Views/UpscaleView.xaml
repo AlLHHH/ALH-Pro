@@ -110,7 +110,7 @@
                                 ToolTipService.ToolTip="把所有增强参数恢复默认"/>
                     </Grid>
                     <StackPanel Spacing="2">
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="去雾:暗通道先验去雾,去除雾霾/逆光灰蒙,还原通透色彩(对真雾霾/灰蒙蒙图效果好)">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="去雾:暗通道先验去雾,去除雾霾/逆光灰蒙。⚠ 只对真有雾/灰蒙蒙的图有效,没雾的图开了只会变灰变脏。本版已把强度压到实测有效区间(拉满 = 最彻底,约在 87 处效果最好)">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -122,7 +122,7 @@
                             <TextBlock x:Name="DehazeValue" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="减少杂色:中值滤波去噪点/颗粒,保边缘不糊(先降噪再做锐化,效果最稳)">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="减少杂色:中值滤波去噪点/颗粒,保边缘不糊(先降噪再做锐化最稳)。强度是连续力度:20~30 只轻抹颗粒,70 以上才接近「彻底」。⚠ 3×3 中值会抹掉 1 像素宽的细线/发丝(强度 50 时留一半、100 时全没)">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -134,7 +134,7 @@
                             <TextBlock x:Name="DenoiseValue" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="锐化:增强边缘对比,画面更利落(过大会出白边)">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="锐化:亮度域小半径锐化 + 按边缘强度加权 —— 强边缘多给、平坦区与细纹理少给,不会出彩色描边(实测同强度下白边比「钝化蒙版」少一半)。想要更利落用它,想要更保险用「钝化蒙版」">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -146,7 +146,7 @@
                             <TextBlock x:Name="SharpenValue" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="清晰:大范围局部对比度增强,画面更通透">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="清晰:大范围局部对比,但只作用在中间调 —— 暗部与高光几乎不动,提的是通透感而不是锐度(所以高光边缘不会被顶白)">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -158,7 +158,7 @@
                             <TextBlock x:Name="ClarityValue" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="钝化蒙版:只锐化物体边缘、不锐化平坦区域,让轮廓更清晰(比「锐化」更柔和)">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="钝化蒙版:经典做法 —— 逐通道反锐化,带阈值保护(平坦区、弱噪声不动)。三档锐化里最标准的一个,拿不准就用它">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -170,7 +170,7 @@
                             <TextBlock x:Name="UsmValue" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="保留细节:局部对比度增强,提升细节立体感,不动整体影调(比「锐化」更自然)">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="保留细节:自适应直方图均衡(CLAHE),提的是局部明暗层次 —— 六个档里唯一天生不出白边的(实测白边像素 ≈0),边缘也几乎无损。⚠ 它提的不是「锐度」,拉普拉斯细节指标看不出变化,得看图">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -182,7 +182,7 @@
                             <TextBlock x:Name="DetailValue" Grid.Column="2" Text="50" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="细节增强:高通提取毛发/纹理等微细节(温和,不易放大噪点)">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="细节增强:3×3 高通提微细节 + 软门槛 —— 幅值太小的(噪点)不放大,只放大成形的纹理。六个锐化档里同等清晰度下代价最小的一个,日常首选用它">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -194,7 +194,7 @@
                             <TextBlock x:Name="DetailEnhanceValue" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="去模糊:理查森-露西反卷积,真正复原轻微运动/对焦模糊(过大可能出振铃/发灰)">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="去模糊:理查森-露西反卷积,复原轻微运动/对焦模糊(核与迭代都随强度连续变化)。⚠ 只对真的糊了的原片有用;放大后的图本身不糊,开了基本是白亏。⚠ 超过 900 万像素(约 4K 以上)会自动退化成普通锐化">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -206,7 +206,7 @@
                             <TextBlock x:Name="DeblurValue" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="边缘增强:强化物体轮廓边缘,不放大噪点">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="边缘增强:Sobel 边缘掩膜(幅值 + 拉普拉斯符号偏置),轮廓更硬。⚠ 它只往亮的方向加,所以只出白边不出暗边 —— 十档里最不建议开的一档(本版已把强度限幅,拉满约等于原来的 31 档)">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -218,7 +218,7 @@
                             <TextBlock x:Name="EdgeValue" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="边缘抗锯齿:只磨边缘的阶梯锯齿,平滑区/细节不动(适合放大后边缘发毛)">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="边缘抗锯齿:只磨局部对比度 ≥16 的边缘阶梯,平坦区不动。它是十档里唯一各项指标都变好的一档(PSNR 升、白边降),代价是细节变少 —— Real-ESRGAN 基底 40~60 合适,waifu2x 本来就软,建议 ≤30">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -355,8 +355,10 @@
                     <Border Background="{StaticResource AppPanelBrush}"
                             BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
                             CornerRadius="6" Padding="8,6">
+                        <!-- 滚动条常驻:见 VideoView.xaml 的说明(Auto + 自动折行会成布局循环) -->
                         <ScrollViewer x:Name="TaskLogScroll" MaxHeight="220"
-                                      VerticalScrollBarVisibility="Auto">
+                                      VerticalScrollBarVisibility="Visible"
+                                      HorizontalScrollBarVisibility="Disabled">
                             <TextBlock x:Name="TaskLogText" FontSize="10" Opacity="0.7"
                                        TextWrapping="Wrap"
                                        Text="日志:等待任务..."/>

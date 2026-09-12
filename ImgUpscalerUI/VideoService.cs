@@ -19,10 +19,16 @@ public sealed class DedupTooStrongException : InvalidOperationException
 
 /// <summary>子进程长时间无任何输出(疑似驱动/解码器挂死),已被无进展看门狗强制终止。
 /// 派生自 InvalidOperationException,故现有的回退层(拆帧硬解→软解、编码器降级链)能直接接管。
-/// 与用户取消(OperationCanceledException)严格区分:停滞要走回退,取消要立刻收手。</summary>
+/// 与用户取消(OperationCanceledException)严格区分:停滞要走回退,取消要立刻收手。
+/// 【ProcessStillRunning】= 收到终止请求后进程**没有真的退出**(卡在内核态驱动调用里,TerminateProcess
+/// 要等它返回)。这种时候**绝不能走"回退重跑"**:旧进程可能还在往同一个帧目录写文件,新旧两个进程交叉
+/// 写出的帧数/内容都是错的(静默坏结果)。所以调用侧见到它为 true 必须直接失败,而不是降级重试。</summary>
 public sealed class EngineStallException : InvalidOperationException
 {
-    public EngineStallException(string message) : base(message) { }
+    public bool ProcessStillRunning { get; }
+
+    public EngineStallException(string message, bool processStillRunning = false) : base(message)
+        => ProcessStillRunning = processStillRunning;
 }
 
 public static class VideoService
@@ -43,7 +49,21 @@ public static class VideoService
     /// <summary>备用 ffmpeg(如 8.x,用于 50 系/Blackwell NVENC 硬编在旧 7.1 上失败时的兜底)。
     /// 放 engines/ffmpeg8/ 目录;默认不存在则返回 null,完全不影响现有逻辑。</summary>
     public static string? BackupFfmpegPath => FindInEngines("ffmpeg8", "ffmpeg.exe");
-    public static string? RifePath => FindInEngines("rife", "rife-ncnn-vulkan.exe");
+    /// <summary>补帧引擎:ncnn-Vulkan 版 RIFE。
+    /// 【优先 2026 重编版】engines/rife/ 下若同时存在 rife-ncnn-vulkan-2026.exe 与老的
+    /// rife-ncnn-vulkan.exe,一律优先 2026 版:
+    ///  旧版是 2022 年的上游二进制,静态指纹里 VK_EXT_robustness2 / VK_KHR_cooperative_matrix
+    ///  命中数全是 0(根本没链那段兼容处理);2026 版用与 realesrgan 重编同一套 2025/2026 ncnn 源码编译,
+    ///  指纹 2/2 + cooperative_matrix 364 命中,与已实测可用的 realesrgan-ncnn-vulkan-2026.exe 完全一致。
+    /// 只有旧文件时仍返回旧的 —— 不删功能、不改变"引擎缺失"的判定语义。</summary>
+    public static string? RifePath
+    {
+        get
+        {
+            var rebuilt = FindInEngines("rife", "rife-ncnn-vulkan-2026.exe");
+            return rebuilt ?? FindInEngines("rife", "rife-ncnn-vulkan.exe");
+        }
+    }
 
     /// <summary>组件状态(界面显示用)。</summary>
     public static (bool ffmpeg, bool rife) CheckComponents()
@@ -677,7 +697,8 @@ public static class VideoService
                     if (dedup || vfrPassthrough)
                         frameDurs = await BuildFrameDurationsAsync(ffmpeg, inputVideo, trimArgs, scaleVf, ct);
                     // 智能 = 删"肉眼不变"帧(自适应阈值,删后帧帧都有可见变化 → 补帧后全动帧=连续感)
-                    var dropA = await Task.Run(() => DetectDupFramesAdaptive(framesIn, progress, 16, dedupSmartMode, motionCompDedup), ct);
+                    var dropA = await Task.Run(() => DetectDupFramesAdaptive(framesIn, progress, 16, dedupSmartMode, motionCompDedup,
+                        ct, "去重分析(自适应)"), ct);
                     var allA = Directory.EnumerateFiles(framesIn, "*.jpg")
                         .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
                     var dropSetA = new System.Collections.Generic.HashSet<int>(dropA);
@@ -713,7 +734,8 @@ public static class VideoService
                         Math.Clamp(dedupSadThr, 0.5, 10.0), Math.Clamp(dedupSsimThr, 0.90, 0.999),
                         dedupProtect, dedupWindow, dedupScale, dedupBlockThr,
                         dedupSegOn ? Math.Clamp(dedupSegSsim, 0.80, 0.99) : 0, Math.Clamp(dedupSegSad, 2, 10),
-                        protectSmallMotion: manualProtectSmallMotion), ct);   // 手动模式"微动防线"开关(默认开)
+                        protectSmallMotion: manualProtectSmallMotion,
+                        ct: ct, progress: progress, stage: "去重分析(帧差+SSIM)"), ct);   // 手动模式"微动防线"开关(默认开)
                     if (dropM.Count > 0)
                     {
                         dedupDroppedFrames.AddRange(dropM);
@@ -816,8 +838,10 @@ public static class VideoService
                         frameDurs = await BuildFrameDurationsAsync(ffmpeg, inputVideo, trimArgs, scaleVf, ct);
                     // 逐帧检测(全帧解码小图+SAD/SSIM,CPU 重活)→ 后台线程,防拆帧后卡 UI
                     var drop = dedupMode == 1
-                        ? await Task.Run(() => DetectDupFramesAdaptive(framesIn, progress, 16, dedupSmartMode, motionCompDedup), ct)
-                        : await Task.Run(() => DetectDupFramesWithSsim(framesIn, sadThr, ssimThr, protectRatio, 6, 16, 4, segSsim, segSad, motionCompDedup), ct);
+                        ? await Task.Run(() => DetectDupFramesAdaptive(framesIn, progress, 16, dedupSmartMode, motionCompDedup,
+                            ct, "去重分析(自适应)"), ct)
+                        : await Task.Run(() => DetectDupFramesWithSsim(framesIn, sadThr, ssimThr, protectRatio, 6, 16, 4, segSsim, segSad,
+                            motionCompDedup, ct: ct, progress: progress, stage: "去重分析(帧差+SSIM)"), ct);
                     // 末帧永远保留:视频最后一张画面即使与前一帧相似也必须保留,
                     // 否则输出尾部会缺失原视频末帧内容(用户看到"最后一帧不是原视频最后一帧")。
                     if (drop.Count > 0)
@@ -906,7 +930,7 @@ public static class VideoService
             {
                 progress?.Report((3, "去重(叠加):语义运动分析(镜头均匀移动=冗余,局部动作=保留)..."));
                 // 【修复】重CPU运动分析丢后台线程(原先同步调用冻结UI线程)
-                var dropPan = await Task.Run(() => DetectDupFramesWithMotion(framesIn, Math.Clamp(dedupPanThr, 1, 10), progress, dedupScale, dedupProtect, dedupBlockThr, Math.Clamp(dedupPanMax, 10, 60)), ct);
+                var dropPan = await Task.Run(() => DetectDupFramesWithMotion(framesIn, Math.Clamp(dedupPanThr, 1, 10), progress, dedupScale, dedupProtect, dedupBlockThr, Math.Clamp(dedupPanMax, 10, 60), ct), ct);
                 if (dropPan.Count > 0)
                 {
                     dedupDroppedFrames.AddRange(dropPan);
@@ -1114,8 +1138,10 @@ public static class VideoService
                     // 现在改为"先真机探测、再按结果决定":探测通过 → 用 ncnn-Vulkan 补帧(最快那条路);
                     // 失败(hang/崩/坏帧)→ 才改走 ONNX,并明确告知用户"为稳定性改用 ONNX"。
                     // 结论跨任务缓存(EnsureRifeNcnnProbeAsync),同一设备不会每次任务都白等一遍探测。
-                    progress?.Report((10, $"正在检测补帧 GPU 兼容性(首次约 10 秒,结论会记住,失败重试一次)..."));
-                    bool rifeOk = await EngineService.EnsureRifeNcnnProbeAsync(rife, interpModel, gpuId, ct).ConfigureAwait(false);
+                    // 【按源分辨率探】探测帧尺寸=本视频源尺寸(旧实现固定 320×240):小图能跑 ≠ 真帧能跑,
+                    // 显存/着色器分块压力差一个量级,实测过"小图通过、真分辨率上静默出坏帧"的形态。
+                    progress?.Report((10, $"正在检测补帧 GPU 兼容性(按源分辨率 {srcW}×{srcH} 实测,首次约 10 秒,结论会记住,失败重试一次)..."));
+                    bool rifeOk = await EngineService.EnsureRifeNcnnProbeAsync(rife, interpModel, gpuId, ct, srcW, srcH).ConfigureAwait(false);
                     if (!rifeOk)
                     {
                         // 【按形态说话】失败原因由探测带回(初始化即崩 ≠ 出图但坏帧),措辞集中在 AlhPro.Core.ProbeDiagnosis:
@@ -1824,7 +1850,17 @@ public static class VideoService
             // ===== 统一 JPG(降 200 多 G 的核心):把 framesFinal 剩余 PNG(超分放大后的大帧)重编码成 JPG =====
             // 放在帧数对齐之前、缩放之后。超分后的 4K PNG 单帧 10~20MB,转 JPG 后仅 ~1~2MB;
             // 引擎(超分/补帧)的 PNG 输出在此统一收束成 JPG,下游帧数对齐/合帧只读 .jpg。
-            ReencodeDirPngToJpg(framesFinal);
+            // 【边缘抗锯齿也在这里做】见 ReencodeDirPngToJpg 的注释:ffmpeg sab 在 4K 上要 4.88 秒/帧,
+            // 换成这套 C# 并行实现约 0.1 秒/帧,而且与"本来就要做的 JPG 编码"合并,不多一代损失。
+            var aaWatch = System.Diagnostics.Stopwatch.StartNew();
+            ReencodeDirPngToJpg(framesFinal, postAa, progress, ct);
+            aaWatch.Stop();
+            LastFramePostProcSeconds = postAa > 0 ? aaWatch.Elapsed.TotalSeconds : 0;
+            if (postAa > 0)
+            {
+                AppLogger.Info($"画面后处理:边缘抗锯齿(强度 {postAa},C# 按帧并行)耗时 {aaWatch.Elapsed.TotalSeconds:0.#} 秒"
+                    + " —— 该档原先在 ffmpeg 滤镜链里(4K 实测 4.88 秒/帧),现不再计入'编码/封装'");
+            }
 
             // 5) 合帧 + 音频
             // 输出基准帧率:
@@ -2040,6 +2076,7 @@ public static class VideoService
                 AppLogger.Info($"时长保护(均匀): muxDur={muxDur:0.###}, baseFps={baseFps:0.##}");
             }
             string vfArg, videoMap;
+            string vfChainBody = "";   // 非运动模糊分支才有独立的 -vf 链;运动模糊走 filter_complex,不做抽样
             if (postMotionBlur >= 1)
             {
                 // 局部真实运动模糊:先运动补偿插帧到 N 倍帧率,再平均 N 子帧回原帧率(沿运动方向拖尾),
@@ -2066,6 +2103,10 @@ public static class VideoService
                 vfArg = allParts.Count > 0
                     ? $" -vf \"{string.Join(",", allParts)},format=yuv420p{(vfrSetpts != null ? "," + vfrSetpts : "")}\""
                     : (vfrSetpts != null ? $" -vf \"format=yuv420p,{vfrSetpts}\"" : "");
+                // 供"编码阶段拆分"抽样实测滤镜链成本用(与上面 vfArg 同一份链,去掉 -vf 包装)
+                vfChainBody = allParts.Count > 0
+                    ? string.Join(",", allParts) + ",format=yuv420p" + (vfrSetpts != null ? "," + vfrSetpts : "")
+                    : (vfrSetpts != null ? "format=yuv420p," + vfrSetpts : "");
                 videoMap = "-map 0:v:0";
             }
             // 卡顿预防提示:内容帧率低(如 12fps)时,低倍率输出仍会卡,建议提高倍率。
@@ -2197,11 +2238,15 @@ public static class VideoService
                     if (!await ValidateVideoFileAsync(outTmp, 1))
                         throw new InvalidOperationException("硬件编码输出文件无效");
                 }
+                catch (OperationCanceledException) { throw; }   // 【必须排在下面那条之前】取消不是"硬编坏了"
                 catch (Exception ex) when (encoder != "libx264" && encoder != "libx265")
                 {
                     // 【不再整片重试 GPU】"去掉 -preset"和"换备用 ffmpeg"这两个问题探测期已回答过,
                     // 到这里还失败说明这台机器就是编不了(驱动过旧/硬件不在/输出损坏)。整片长度的重试
                     // = 用户白等一整遍编码时间,而答案在 1 帧探测里就能拿到。直接标记坏 + 回退 CPU。
+                    // 【踩过的坑】此前这里没有上面那条 catch:用户点一次「停止」→ 抛取消异常 → 命中本 catch
+                    // → BrokenHwEncoders.Add(encoder) —— 从此本次运行所有任务都被判"硬编不可用"、静默走 CPU 软编
+                    // (慢数倍),必须重启软件才恢复。日志实证:2026-09-11 21:59 "原因:The operation was canceled."。
                     BrokenHwEncoders.Add(encoder);
                     var cpuEnc = encoder.StartsWith("hevc", StringComparison.OrdinalIgnoreCase) ? "libx265" : "libx264";
                     // 驱动过旧单列:它是最常见且用户能自己解决的一种,提示要说清"去更新驱动"
@@ -2225,6 +2270,21 @@ public static class VideoService
                 double encSec = encSw.Elapsed.TotalSeconds;
                 double encFps = encSec > 0.01 ? encTotal / encSec : 0;
                 AppLogger.Info($"编码实测:编码器={LastVideoEncoderInfo},帧数={encTotal},耗时={encSec:0.##}s,实测={encFps:0.#}fps{(!encUsed.StartsWith("libx264") && !encUsed.StartsWith("libx265") ? "(硬编)" : "(CPU 软编)")}");
+                // 【把"滤镜"和"编码"分开报】"编码/封装"这个数里其实混着 ffmpeg 的后处理滤镜(同一进程)。
+                // 2026-09-12 就是被这一点误导过:日志显示"硬编只有 1fps",实际是滤镜链里一个 sab 把整条链
+                // 拖到 4.88 秒/帧(4K),编码器本身有 15~20fps。这里抽样实测滤镜链每帧成本,把它摊开写清楚。
+                if (!string.IsNullOrEmpty(vfChainBody))
+                {
+                    double perFrame = await SampleFilterChainCostPerFrameAsync(encFfmpeg, framePattern, vfChainBody, frBase, ct);
+                    if (perFrame >= 0)
+                    {
+                        double filterEst = perFrame * encTotal;
+                        double other = Math.Max(0, encSec - filterEst);
+                        AppLogger.Info($"编码阶段拆分:后处理滤镜(抽样 {perFrame:0.###} 秒/帧 × {encTotal} 帧)≈ {filterEst:0.#} 秒"
+                            + $" + 编码/音频/封装/校验 ≈ {other:0.#} 秒(合计 {encSec:0.#} 秒)"
+                            + (perFrame > 0.5 ? " ⚠ 滤镜占了大头,瓶颈不是编码器" : ""));
+                    }
+                }
             }
             catch (IOException ex) when (File.Exists(outputVideo))
             {
@@ -2327,11 +2387,12 @@ public static class VideoService
             parts.Add($"smartblur=luma_radius=2:luma_strength=-{Math.Min(1.0, usm / 100.0).ToString("0.00", inv)}:luma_threshold=8");
         if (detail > 0)
             parts.Add($"cas=strength={Math.Min(0.60, detail / 100.0 * 0.60).ToString("0.00", inv)}");
-        if (aa > 0)
-        {
-            int lr = aa <= 40 ? 1 : (aa <= 80 ? 2 : 3);
-            parts.Add($"sab=lr={lr}:ls={(2.0 + aa / 100.0 * 2.0).ToString("0.0", inv)}");
-        }
+        // 【边缘抗锯齿已从这里移除 —— 2026-09-12 实测】这一档原用 ffmpeg 的 sab 滤镜,4K 下代价极大:
+        //   整条 6 档滤镜链 = 4.88 秒/帧;把 sab 去掉 = 0.10 秒/帧(约 48 倍);sab 单跑也要 0.90 秒/帧。
+        // 同一效果改用图片页那套 C# 实现(EngineService.ApplyEdgeSmoothInMemory),在"PNG→JPG 统一"那一步
+        // 顺带做掉并按帧并行(4K 单帧 1.19 秒 ÷ 多核),既不多一次 JPG 重编码,也不再把这一档的成本
+        // 藏进"编码/封装"的耗时里。aa 参数保留形参:调用方签名不变,但不再产出滤镜。
+        _ = aa;
         return parts.Count > 0 ? string.Join(",", parts) : null;
     }
 
@@ -3268,9 +3329,11 @@ public static class VideoService
     private static bool HwJpegDecodeUsable;
 
     /// <summary>某个硬件编码器实测可用的【调用配方】:用哪个 ffmpeg + 是否必须去掉 -preset。
-    /// 只记"哪个编码器能用"是不够的 —— 50 系上常见的失败恰恰是 -preset p4 被拒(exit -22),
-    /// 去掉 preset 就能硬编;旧 ffmpeg 打不开的 NVENC,备用 ffmpeg(8.x)能打开。
-    /// 这些组合在探测期(1 帧、亚秒级)就能试出来,不必等整片编完失败再整片重来。</summary>
+    /// 只记"哪个编码器能用"是不够的:同一张卡在不同 ffmpeg 上的 NVENC 支持不同(旧 ffmpeg 打不开的 NVENC,
+    /// 备用 ffmpeg 8.x 能打开 —— 实测 572 驱动下主 ffmpeg 直接报"需要 610 以上")。
+    /// 【"50 系失败 = -preset p4 被拒"这条因果已被否定(2026-09-12 自检按 RESEARCH_SPEED §10.3 #18 修正)】
+    /// 真实机制是 NVENC API 版本与驱动版本不匹配(Required 13.1 / Found 13.0),**去掉 preset 照样失败**。
+    /// "去掉 preset 再试一档"保留为历史兼容尝试(成本极低,万一有机器只认它),但别再把当它成 50 系的配方。</summary>
     private sealed record HwEncoderRecipe(string Ffmpeg, bool NoPreset);
     private static readonly System.Collections.Generic.Dictionary<string, HwEncoderRecipe> HwRecipes = new();
 
@@ -3286,6 +3349,35 @@ public static class VideoService
 
     /// <summary>最近一次选择的视频压缩编码器描述(供界面/日志展示,不靠猜)。</summary>
     public static string LastVideoEncoderInfo { get; private set; } = "libx264 (CPU 软编)";
+
+    /// <summary>本次任务里"画面后处理:边缘抗锯齿"这一步的耗时(秒)。它现在跑在帧处理阶段(C# 按帧并行),
+    /// 不再混进"编码/封装"里 —— 日志要能一眼分出瓶颈在哪(2026-09-12 实测:ffmpeg sab 在 4K 下
+    /// 与其它滤镜串起来是 4.88 秒/帧,去掉它只要 0.10 秒/帧,这项拆分就是为了让这种事下次一眼可见)。</summary>
+    public static double LastFramePostProcSeconds { get; private set; }
+
+    /// <summary>抽样实测"纯后处理滤镜链"的成本(只做 解码→滤镜→丢弃:不编码、不落盘、不写文件)。
+    /// 抽 6 帧即可外推到全片 —— 目的是把"编码/封装"这个数里混着的滤镜成本摊开,而不是精确到毫秒。
+    /// 返回"秒/帧";链为空或失败返回 -1(调用方跳过这一步,绝不影响主流程)。
+    /// 【为什么需要它】2026-09-12 实测:4K 下整条 6 档滤镜链 4.88 秒/帧、去掉 sab 只剩 0.10 秒/帧,
+    /// 而日志当时只写"编码/封装 X 秒",于是"硬编只有 1fps"的假象持续了很久。</summary>
+    private static async Task<double> SampleFilterChainCostPerFrameAsync(string ffmpegExe, string framePattern,
+        string chain, double fps, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(chain)) return -1;
+        try
+        {
+            const int n = 6;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            await RunAsync(ffmpegExe,
+                $"-nostdin -y -v error -framerate {fps.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture)} " +
+                $"-start_number 1 -i \"{framePattern}\" -frames:v {n} -vf \"{chain}\" -f null -",
+                null, ct);
+            sw.Stop();
+            return sw.Elapsed.TotalSeconds / n;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { return -1; }
+    }
 
     /// <summary>最近一次去重的报告文本(删帧数/集中时段/有效帧率),供任务完成后显示在输出信息与日志,
     /// 解决"已拆出 N 帧/有效帧率"提示一闪而过看不清的问题。</summary>
@@ -3346,7 +3438,16 @@ public static class VideoService
         // H.264 与 H.265(hevc)各探一遍,方便用户选编码格式时直接给出可用的。
         foreach (var enc in new[] { "h264_nvenc", "h264_amf", "h264_qsv", "hevc_nvenc", "hevc_amf", "hevc_qsv" })
         {
-            if (ct.IsCancellationRequested) return;   // 用户取消/任务中止:探测立即收手(不再不可取消卡住)
+            if (ct.IsCancellationRequested)
+            {
+                // 【闩锁必须放开(2026-09-12 自检发现)】原来不论探没探完都把 _hwProbed 永久置 true:
+                // 用户在中途点了停止(或任务被取消)时,循环立刻 return,WorkingHwEncoders 还是空的,
+                // 而闩锁已经封死 —— **本会话之后所有任务都会静默走 CPU 软编**(用户只看到"变慢/没有可用硬编",
+                // 日志里也没有任何线索,必须重启软件才恢复)。
+                // 取消 = "没探完",不算数:把闩锁放开,下一个任务重新探一次。
+                lock (_hwLock) { _hwProbed = false; }
+                return;
+            }
             // 【关键】探测参数 = 真实编码参数(EncoderArgs 里的 -preset/-pix_fmt/-cq 全带上)。
             // 原先只给 `-c:v {enc}`,探的是"这台机器有没有这个编码器",而真实命令要问的是
             // "这套参数在这台机器上能不能编" —— 两者不等价,差集就得靠整片重跑试出来。
@@ -3406,33 +3507,65 @@ public static class VideoService
         }
         // ===== NVDEC(JPG 序列硬件解码)探测 =====
         // 只在【已有可用 nvenc】时才探:软编时瓶颈是编码器本身,硬解救不了(见 HwJpegDecodeUsable 的实测)。
-        // 口径与上面完全一致 —— 用真实解码器 + 真实编码参数,真编出能校验通过的文件才算可用。
+        // 【2026-09-12 加固,三个改动都是踩过的坑】
+        //  ① 用【真会去编码的那个 ffmpeg】探(encFfmpeg 的配方来源),而不是永远用主 ffmpeg ——
+        //     主 ffmpeg 能过、实际编码用的是备用 ffmpeg8 时,探测结论对不上真实路径。
+        //  ② 从"1 帧图 + 1 帧解码"改成【8 帧序列 + 必须解出 8 帧】—— 单帧探不出"多帧序列下 cuvid 卡住"。
+        //     实测:ffmpeg8 + h264_nvenc + `-c:v mjpeg_cuvid` 解 1080p JPG **序列**,20 帧的命令永不结束(挂到超时强杀),
+        //     而同命令去掉 cuvid 0.67 秒完成。单帧探测对这种形态完全无感。
+        //  ③ 探测本身加【硬超时】:即使某台机器真被 cuvid 卡住,也只损失这几秒并把该路径判为不可用,
+        //     绝不会让整个视频任务无声挂死(以前的写法一旦挂住就是整任务不动)。
+        //     【超时值以代码为准 = 6 秒】本段早先写过"30 秒",与下面 CancelAfter(6) 自相矛盾 —— 2026-09-12 自检统一:
+        //     正常 NVDEC 解 8 帧 720p 连 1 秒都用不到,6 秒已是 6 倍余量;真卡的机器多等 24 秒毫无收益。
         try
         {
             if (!ct.IsCancellationRequested && WorkingHwEncoders.Any(e => e.Contains("nvenc", StringComparison.OrdinalIgnoreCase)))
             {
                 var nvEnc = WorkingHwEncoders.First(e => e.Contains("nvenc", StringComparison.OrdinalIgnoreCase));
-                var probeJpg = Path.Combine(EngineService.TempRoot, $"imgup_decprobe_{Guid.NewGuid():N}.jpg");
+                // 用该硬编配方对应的 ffmpeg(与真实编码一致)
+                string decFfmpeg = GetHwRecipe(nvEnc)?.Ffmpeg ?? ffmpeg;
+                var probeJpgPattern = Path.Combine(EngineService.TempRoot, $"imgup_decprobe_{Guid.NewGuid():N}_%03d.jpg");
                 var probeOut = Path.Combine(EngineService.TempRoot, $"imgup_decprobe_{Guid.NewGuid():N}.mp4");
                 try
                 {
-                    await RunAsync(ffmpeg,
-                        $"-y -f lavfi -i \"testsrc=size=1280x720:rate=30:duration=0.4\" -frames:v 1 -q:v 2 \"{probeJpg}\"", null, ct);
-                    if (File.Exists(probeJpg) && new FileInfo(probeJpg).Length > 0)
+                    await RunAsync(decFfmpeg,
+                        $"-y -f lavfi -i \"testsrc=size=1280x720:rate=30:duration=0.4\" -frames:v 8 -q:v 2 \"{probeJpgPattern}\"", null, ct);
+                    var probeOne = probeJpgPattern.Replace("_%03d.jpg", "_001.jpg");
+                    if (File.Exists(probeOne) && new FileInfo(probeOne).Length > 0)
                     {
-                        await RunAsync(ffmpeg,
-                            $"-y -c:v mjpeg_cuvid -f image2 -framerate 30 -i \"{probeJpg}\" -frames:v 1 {EncoderArgs(nvEnc)} \"{probeOut}\"", null, ct);
-                        if (await ValidateVideoFileAsync(probeOut, 1))
+                        using var decCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                        // 超时 6 秒(不是 30):NVDEC 正常工作时 8 帧 720p 连 1 秒都用不到;
+                        // 实测某些机器(本机 ffmpeg8 + mjpeg_cuvid 解 JPG 序列)会**永久挂住**,
+                        // 6 秒足够判死,不至于让每次启动都白等半分钟。超时 = 判不可用,绝不挂死任务。
+                        decCts.CancelAfter(TimeSpan.FromSeconds(6));
+                        bool decodedOk = false;
+                        try
+                        {
+                            await RunAsync(decFfmpeg,
+                                $"-y -c:v mjpeg_cuvid -f image2 -framerate 30 -start_number 1 -i \"{probeJpgPattern}\" " +
+                                $"-frames:v 8 {EncoderArgs(nvEnc)} \"{probeOut}\"", null, decCts.Token);
+                            decodedOk = await ValidateVideoFileAsync(probeOut, 8);
+                        }
+                        catch (Exception ex) when (!ct.IsCancellationRequested)
+                        {
+                            AppLogger.Info($"硬件解码探测:NVDEC(mjpeg_cuvid)不可用({ex.Message.Split('\n')[0]})—— 合帧走软件解码(不影响结果,只影响速度)");
+                        }
+                        if (decodedOk)
                         {
                             HwJpegDecodeUsable = true;
-                            AppLogger.Info($"硬件解码探测:NVDEC(mjpeg_cuvid)可用 —— 合帧将用硬件解码 JPG 序列({nvEnc})");
+                            AppLogger.Info($"硬件解码探测:NVDEC(mjpeg_cuvid)可用(8 帧序列实测通过)—— 合帧将用硬件解码 JPG 序列({nvEnc})");
                         }
                     }
                 }
                 finally
                 {
-                    try { File.Delete(probeJpg); } catch { }
                     try { File.Delete(probeOut); } catch { }
+                    try
+                    {
+                        foreach (var g in Directory.EnumerateFiles(EngineService.TempRoot, Path.GetFileName(probeJpgPattern).Replace("%03d", "*")))
+                            File.Delete(g);
+                    }
+                    catch { }
                 }
             }
         }
@@ -3443,6 +3576,19 @@ public static class VideoService
             AppLogger.Info("硬件编码器探测:" + (WorkingHwEncoders.Count > 0
                 ? "可用 [" + string.Join(", ", WorkingHwEncoders) + "]"
                 : "全部不可用(将用 CPU 软编)"));
+            // 【备用 ffmpeg 缺失要说清】内置主 ffmpeg 需要 NVIDIA 驱动 ≥610 才能开 NVENC;
+            // 驱动较旧(实测 572.83)的机器是靠 engines\ffmpeg8\ffmpeg.exe 这个备用包兜住的。
+            // 而 engines\ 是 gitignore、deploy.ps1 也不同步 —— 漏拷一次,硬编就静默消失,用户只会觉得"变慢了"。
+            if (WorkingHwEncoders.Count == 0 && BackupFfmpegPath == null)
+            {
+                AppLogger.Warn("⚠ 硬件编码不可用,且未找到备用 ffmpeg(engines\\ffmpeg8\\ffmpeg.exe)—— 本机将使用 CPU 软编(明显更慢)。"
+                    + "若显卡支持硬编:补齐该备用 ffmpeg,或把 NVIDIA 驱动更新到 610 以上(内置 ffmpeg 的 NVENC 需要 610+)。");
+            }
+            else if (WorkingHwEncoders.Count > 0 && BackupFfmpegPath == null)
+            {
+                AppLogger.Info("硬件编码可用(未用到备用 ffmpeg)。注:若哪天换到驱动较旧/较新的机器上主 ffmpeg 开不了 NVENC,"
+                    + "需要 engines\\ffmpeg8\\ffmpeg.exe 兜底,当前未找到该文件。");
+            }
         }
     }
 
@@ -3571,11 +3717,53 @@ public static class VideoService
     // 单帧重编码失败时保留原帧内容(复制改名),保证帧号连续可解码、合帧不中断。
     // 中间帧 JPG 质量保持 0.96(近无损,画质优先;不降低以免影响最终成片效果)。
     private const float VideoFrameJpgQuality = 0.96f;
-    private static void ReencodeDirPngToJpg(string dir)
+    private static void ReencodeDirPngToJpg(string dir) => ReencodeDirPngToJpg(dir, 0, null, default);
+
+    /// <summary>把帧目录里的中间帧统一成 JPG(降临时盘),可选顺带做「边缘抗锯齿」。
+    /// <param name="edgeSmooth">0 = 只转格式;1~100 = 在写 JPG 前对同一张位图做一次抗锯齿(与图片页同语义)。
+    /// 【为什么抗锯齿挪到这里 + 并行】见 EngineService.ConvertPngToJpg 的注释:ffmpeg 的 sab 滤镜在 4K 上
+    /// 与其它滤镜串起来是 4.88 秒/帧,去掉它只要 0.10 秒/帧。这里用与图片页同一套 C# 实现,
+    /// 并**按帧并行**(每帧独立),再与本来就要做的 PNG→JPG 合并成一次编码,不额外多一代 JPG 损失。
+    /// 目录里本来就是 JPG 的帧(未超分/未补帧等分支)也会吃到这一档,避免同一开关在不同分支下效果不一致。</param>
+    private static void ReencodeDirPngToJpg(string dir, int edgeSmooth,
+        IProgress<(int pct, string msg)>? progress, CancellationToken ct)
     {
-        // 先扫描一遍:记录第一张可正常解码的 PNG 尺寸,作为"损坏帧占位图"的参考尺寸
-        // (ncnn-vulkan 在 50 系/部分驱动上会静默输出 0KB 空 PNG,new Bitmap 读不出尺寸 →
-        //  旧逻辑退到 File.Copy 复制 0 字节 → 合帧"找不到 frame_%06d.jpg")。
+        // ① 先记下"本来就已经是 JPG"的帧:PNG 转完之后无从区分,所以要提前抓
+        string[] preexistingJpg = Array.Empty<string>();
+        if (edgeSmooth > 0)
+        {
+            try { preexistingJpg = Directory.EnumerateFiles(dir, "*.jpg").ToArray(); } catch { }
+        }
+        ReencodeDirPngToJpgCore(dir, edgeSmooth, progress, ct, 93, 95);
+        // ② 本就已经是 JPG 的帧:就地做一次抗锯齿(临时文件 + 替换,绝不半写坏)
+        if (edgeSmooth > 0 && preexistingJpg.Length > 0)
+        {
+            int done = 0;
+            int threads = Math.Clamp(Environment.ProcessorCount - 2, 2, 12);
+            var opts = new System.Threading.Tasks.ParallelOptions
+            {
+                MaxDegreeOfParallelism = threads,
+                CancellationToken = ct,
+            };
+            try
+            {
+                System.Threading.Tasks.Parallel.ForEach(preexistingJpg, opts, f =>
+                {
+                    try { EngineService.ApplyEdgeSmoothToJpeg(f, edgeSmooth, VideoFrameJpgQuality); }
+                    catch (Exception ex) { AppLogger.Warn($"⚠ 边缘抗锯齿失败({Path.GetFileName(f)}):{ex.Message.Split('\n')[0]}"); }
+                    int d = Interlocked.Increment(ref done);
+                    if (d % 20 == 0 || d == preexistingJpg.Length)
+                        progress?.Report((96, $"边缘抗锯齿 已处理 {d} 帧 / 共 {preexistingJpg.Length} 帧"));
+                });
+            }
+            catch (OperationCanceledException) { throw; }
+        }
+    }
+
+    /// <summary>PNG → JPG(可选抗锯齿)。分两遍扫,保持原有"坏帧补同尺寸占位、保帧号连续"的行为。</summary>
+    private static void ReencodeDirPngToJpgCore(string dir, int edgeSmooth,
+        IProgress<(int pct, string msg)>? progress, CancellationToken ct, int pctFrom, int pctTo)
+    {
         int refW = 0, refH = 0;
         try
         {
@@ -3592,49 +3780,66 @@ public static class VideoService
         }
         catch { }
 
-        foreach (var png in Directory.EnumerateFiles(dir, "*.png").ToArray())
+        var pngs = Directory.EnumerateFiles(dir, "*.png").ToArray();
+        int done = 0;
+        // 【并行】每帧独立、写不同文件;4K 抗锯齿单帧约 1.19 秒,单线程会让这一步变成新瓶颈
+        int threads2 = Math.Clamp(Environment.ProcessorCount - 2, 2, 12);
+        var opts = new System.Threading.Tasks.ParallelOptions
         {
-            var jpg = Path.ChangeExtension(png, ".jpg");
-            try { EngineService.ConvertPngToJpg(png, jpg, VideoFrameJpgQuality); }
-            catch (Exception ex)
+            MaxDegreeOfParallelism = threads2,
+            CancellationToken = ct,
+        };
+        try
+        {
+            System.Threading.Tasks.Parallel.ForEach(pngs, opts, png =>
             {
-                AppLogger.Warn($"⚠ 帧转 JPG 失败({Path.GetFileName(png)}):{ex.Message.Split('\n')[0]}——用同尺寸占位帧替代,保持编号连续可解码");
-                // 优先生成同尺寸深灰占位(可解码、编号不断);尺寸读不出(彻底损坏)才用参考帧尺寸;
-                // 连参考尺寸都拿不到才退回复制原名(尽力保编号连续)
-                int pw = 0, ph = 0;
-                try { using (var b = new System.Drawing.Bitmap(png)) { pw = b.Width; ph = b.Height; } } catch { }
-                if (pw <= 0 || ph <= 0) { pw = refW; ph = refH; }
-                if (pw > 0 && ph > 0)
+                var jpg = Path.ChangeExtension(png, ".jpg");
+                try { EngineService.ConvertPngToJpg(png, jpg, VideoFrameJpgQuality, out _, edgeSmooth); }
+                catch (Exception ex)
                 {
-                    using var phb = new System.Drawing.Bitmap(pw, ph);
-                    using (var g = System.Drawing.Graphics.FromImage(phb)) g.Clear(System.Drawing.Color.FromArgb(24, 24, 24));
-                    phb.Save(jpg, System.Drawing.Imaging.ImageFormat.Jpeg);   // 纯灰占位,System.Drawing JPG 无色偏问题
-                }
-                else
-                    try { File.Copy(png, jpg, true); } catch { }
-            }
-            // 【校验生成的 JPG】ConvertPngToJpg 内部 WinRT 失败会转 GDI,但某些情况下(引擎输出 0 字节/坏 PNG)
-            // 可能"不抛异常却写出 0 字节或坏 JPG"。这里兜底:生成的 .jpg 若 0 字节/不可解码,用参考尺寸补一张深灰占位,
-            // 否则合帧会因这些 0 字节帧而报"找不到 frame_%06d.jpg / 输出文件无效"。
-            try
-            {
-                if (File.Exists(jpg) && new FileInfo(jpg).Length == 0)
-                {
-                    int pw = refW, ph = refH;
+                    AppLogger.Warn($"⚠ 帧转 JPG 失败({Path.GetFileName(png)}):{ex.Message.Split('\n')[0]}——用同尺寸占位帧替代,保持编号连续可解码");
+                    // 优先生成同尺寸深灰占位(可解码、编号不断);尺寸读不出(彻底损坏)才用参考帧尺寸;
+                    // 连参考尺寸都拿不到才退回复制原名(尽力保编号连续)
+                    int pw = 0, ph = 0;
                     try { using (var b = new System.Drawing.Bitmap(png)) { pw = b.Width; ph = b.Height; } } catch { }
                     if (pw <= 0 || ph <= 0) { pw = refW; ph = refH; }
                     if (pw > 0 && ph > 0)
                     {
                         using var phb = new System.Drawing.Bitmap(pw, ph);
                         using (var g = System.Drawing.Graphics.FromImage(phb)) g.Clear(System.Drawing.Color.FromArgb(24, 24, 24));
-                        phb.Save(jpg, System.Drawing.Imaging.ImageFormat.Jpeg);
-                        AppLogger.Warn($"⚠ 帧转 JPG 输出 0 字节({Path.GetFileName(jpg)}),已用深灰占位替代(保帧号连续)");
+                        phb.Save(jpg, System.Drawing.Imaging.ImageFormat.Jpeg);   // 纯灰占位,System.Drawing JPG 无色偏问题
+                    }
+                    else
+                        try { File.Copy(png, jpg, true); } catch { }
+                }
+                // 【校验生成的 JPG】ConvertPngToJpg 内部 WinRT 失败会转 GDI,但某些情况下(引擎输出 0 字节/坏 PNG)
+                // 可能"不抛异常却写出 0 字节或坏 JPG"。这里兜底:生成的 .jpg 若 0 字节/不可解码,用参考尺寸补一张深灰占位,
+                // 否则合帧会因这些 0 字节帧而报"找不到 frame_%06d.jpg / 输出文件无效"。
+                try
+                {
+                    if (File.Exists(jpg) && new FileInfo(jpg).Length == 0)
+                    {
+                        int pw = refW, ph = refH;
+                        try { using (var b = new System.Drawing.Bitmap(png)) { pw = b.Width; ph = b.Height; } } catch { }
+                        if (pw <= 0 || ph <= 0) { pw = refW; ph = refH; }
+                        if (pw > 0 && ph > 0)
+                        {
+                            using var phb = new System.Drawing.Bitmap(pw, ph);
+                            using (var g = System.Drawing.Graphics.FromImage(phb)) g.Clear(System.Drawing.Color.FromArgb(24, 24, 24));
+                            phb.Save(jpg, System.Drawing.Imaging.ImageFormat.Jpeg);
+                            AppLogger.Warn($"⚠ 帧转 JPG 输出 0 字节({Path.GetFileName(jpg)}),已用深灰占位替代(保帧号连续)");
+                        }
                     }
                 }
-            }
-            catch { }
-            try { File.Delete(png); } catch { }
+                catch { }
+                try { File.Delete(png); } catch { }
+                int d = Interlocked.Increment(ref done);
+                if (edgeSmooth > 0 && (d % 20 == 0 || d == pngs.Length))
+                    progress?.Report((pctFrom + (int)((pctTo - pctFrom) * (double)d / Math.Max(1, pngs.Length)),
+                        $"边缘抗锯齿 已处理 {d} 帧 / 共 {pngs.Length} 帧"));
+            });
         }
+        catch (OperationCanceledException) { throw; }
     }
 
     /// <summary>
@@ -3733,6 +3938,13 @@ public static class VideoService
             // 用户取消 ≠ 硬解坏:必须直接收手。原先 catch { } 会把取消也当成硬解失败写进
             // _hwDecodeBrokenCodecs(静态、整个会话从不清理),害得之后所有同编码视频都被迫走慢速软解。
             catch (OperationCanceledException) { throw; }
+            catch (EngineStallException ex) when (ex.ProcessStillRunning)
+            {
+                // 【进程收不回来 → 不许回退重跑】旧进程可能还在往同一个帧目录写 jpg,新建的软解进程与它
+                // 交叉写出的帧数/内容都是错的(静默坏结果)。宁可这一条任务明确失败,也不产出一份内容错误的成片。
+                AppLogger.Warn($"拆帧:硬解进程无法回收(编码 {codecName}),已中止本任务——不回退重跑,避免新旧进程同时写同一帧目录。{ex.Message}");
+                throw;
+            }
             catch (EngineStallException ex)
             {
                 // 看门狗判死:硬解被驱动挂死,进程活着却永不退出 —— 正是"用户只能手动点强制结束"的根因。
@@ -3850,6 +4062,43 @@ public static class VideoService
         return r;
     }
 
+    /// <summary>去重分析的"心跳":把进度**同时**喂给界面与日志(日志按 5 秒限流)。
+    /// 【为什么必须有】用户报"去重卡住"时,日志里往往只有任务开始那一条 —— 事后完全无法判断它是
+    /// 停在第几帧、还是根本没开始跑。有了心跳,下一份诊断包就能直接指到帧号(配合耗时一起看)。
+    /// 【为什么限流】4 万帧的视频每帧写一行会把日志刷爆;界面进度不限(它是覆盖式的,不落盘)。</summary>
+    private sealed class DedupHeartbeat
+    {
+        private readonly IProgress<(int pct, string msg)>? _progress;
+        private readonly string _stage;
+        private readonly int _total;
+        private readonly System.Diagnostics.Stopwatch _sw = System.Diagnostics.Stopwatch.StartNew();
+        private long _lastLogMs;
+
+        public DedupHeartbeat(IProgress<(int pct, string msg)>? progress, string stage, int total)
+        {
+            _progress = progress;
+            _stage = stage;
+            _total = total;
+            AppLogger.Info($"{_stage}开始:共 {_total} 帧(逐段心跳每 5 秒一条,便于事后判断卡在哪一帧)");
+        }
+
+        public void Step(int i, int deleted)
+        {
+            string msg = $"{_stage} 第 {i} 帧 / 共 {_total} 帧(已判重 {deleted} 帧,已用 {_sw.Elapsed.TotalSeconds:0} 秒)";
+            _progress?.Report((3, msg));
+            long ms = _sw.ElapsedMilliseconds;
+            if (ms - _lastLogMs >= 5000)
+            {
+                _lastLogMs = ms;
+                AppLogger.Info(msg);
+            }
+        }
+
+        /// <summary>收尾:无论走到哪一步都要落一条"结束"日志(有了它,"开始有、结束没有"就等于卡住)。</summary>
+        public void Done(int deleted)
+            => AppLogger.Info($"{_stage}完成:共 {_total} 帧,判重 {deleted} 帧,用时 {_sw.Elapsed.TotalSeconds:0.#} 秒");
+    }
+
     /// <summary>帧差法(SAD)快筛 + 分块 SSIM 精确验证的动漫去重:
     /// 1) 与前面 N 帧(默认 6)做帧差(SAD)比较——不只相邻帧:循环动画/正反打镜头(来回重复的画面)
     ///    与"上一帧"往往不同,但和前面某帧几乎相同,多参考帧能识别并删除这种重复;
@@ -3860,17 +4109,23 @@ public static class VideoService
     /// 4) 静止段合并(segSsim>0 时启用):连续 N(≥3)帧都与"段首帧"近似(与段首比,不是相邻比),
     ///    说明整段画面没动(长保持/静止镜头)→ 段内除首帧全部删除,只留段首代表帧。
     ///    动漫/敏感模式启用(强度联动),标准/智能不启用(保守)。
-    /// 返回要删除的帧号(1-based,与 frame_%06d.png 序号对应)。</summary>
+    /// 返回要删除的帧号(1-based,与 frame_%06d.png 序号对应)。
+    /// 【2026-09-12 补】新增 ct(可取消)与 progress(界面进度):此前这个函数**既不能取消、也从不报进度** ——
+    /// 长片/多帧时界面一动不动、点「停止」也停不下来,用户只能判成"去重卡住了"(实测过的真实反馈)。
+    /// 取消是"每 16 帧检查一次"(检查本身极便宜),不会拖慢正常处理。</summary>
     private static System.Collections.Generic.HashSet<int> DetectDupFramesWithSsim(string framesDir,
         double sadThr, double ssimThr, double protectRatio = 0.06,
         int window = 6, int scale = 16, double blockThr = 4,
-        double segSsim = 0, double segSad = 5, bool motionComp = true, bool protectSmallMotion = true)
+        double segSsim = 0, double segSad = 5, bool motionComp = true, bool protectSmallMotion = true,
+        System.Threading.CancellationToken ct = default,
+        IProgress<(int pct, string msg)>? progress = null, string stage = "去重分析")
     {
         var drop = new System.Collections.Generic.HashSet<int>();
         var files = EnumerateFrameFiles(framesDir)
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
         if (files.Length < 2) return drop;
         window = Math.Clamp(window, 2, 12);
+        var hb = new DedupHeartbeat(progress, stage, files.Length);
         var grays = new System.Collections.Generic.List<byte[]>(Math.Min(window, files.Length));
         grays.Add(SampleGray(files[0], scale, out var sw, out var sh));
         // 静止段合并用独立"段首样本"(全序列帧号,不受 grays 窗口裁剪影响——旧实现复用窗口后
@@ -3879,6 +4134,12 @@ public static class VideoService
         int segRun = 0;
         for (int i = 1; i < files.Length; i++)
         {
+            // 取消 + 进度/日志心跳:每 16 帧一次(取 2 的幂,判断成本可忽略)
+            if ((i & 15) == 0)
+            {
+                ct.ThrowIfCancellationRequested();
+                hb.Step(i, drop.Count);
+            }
             var cur = SampleGray(files[i], scale, out sw, out sh);
             // 与窗口内前面各帧比较:命中任一"几乎相同"的参考帧即判重复(多参考帧:抓循环/回切)
             for (int k = Math.Max(0, grays.Count - window); k < grays.Count; k++)
@@ -3924,6 +4185,7 @@ public static class VideoService
             grays.Add(cur);
             if (grays.Count > window * 2) grays.RemoveAt(0);   // 只留最近窗口,防内存膨胀
         }
+        hb.Done(drop.Count);
         return drop;
     }
 
@@ -4041,7 +4303,8 @@ public static class VideoService
             System.Collections.Generic.HashSet<int> drop;
             if (dedupMode == 1)   // 智能:自适应
             {
-                drop = DetectDupFramesAdaptive(dir, null, scaleSample, dedupSmartMode, motionComp);
+                drop = DetectDupFramesAdaptive(dir, null, scaleSample, dedupSmartMode, motionComp,
+                    ct, "去重预估(自适应)");
             }
             else
             {
@@ -4064,7 +4327,8 @@ public static class VideoService
                 if (dedupMode == 2) { segSsim = dedupAnimeThr switch { 0.85 => 0.93, 0.88 => 0.94, 0.90 => 0.94, _ => 0.95 }; segSad = dedupAnimeThr switch { 0.90 => 5.0, 0.88 => 6.0, 0.85 => 6.5, _ => 4.0 }; }
                 else if (dedupMode == 5) { segSsim = 0.88; segSad = 6.5; }
                 if (dedupOnlyTrueHold && segSsim > 0) segSsim = Math.Max(segSsim, 0.995);
-                drop = DetectDupFramesWithSsim(dir, sad, ssim, protect, 6, scaleSample, 4, segSsim, segSad, motionComp);
+                drop = DetectDupFramesWithSsim(dir, sad, ssim, protect, 6, scaleSample, 4, segSsim, segSad, motionComp,
+                    ct: ct, stage: "去重预估(帧差+SSIM)");
             }
             double dupPct = 100.0 * drop.Count / Math.Max(1, total);
             double cFps = inFps * (1 - dupPct / 100.0); if (cFps < 0.5) cFps = 0.5;
@@ -4851,13 +5115,15 @@ public static class VideoService
     /// smartMode 策略:0=均衡(Otsu+低动态分支+段合并 0.95/4) 1=激进(阈值放宽,接近动漫/敏感)
     /// 2=保守(只删几乎相同+长静止段,微动不碰)。</summary>
     private static System.Collections.Generic.HashSet<int> DetectDupFramesAdaptive(string framesDir,
-        IProgress<(int pct, string msg)>? progress, int scale = 16, int smartMode = 0, bool motionComp = true)
+        IProgress<(int pct, string msg)>? progress, int scale = 16, int smartMode = 0, bool motionComp = true,
+        System.Threading.CancellationToken ct = default, string stage = "去重分析")
     {
         var drop = new System.Collections.Generic.HashSet<int>();
         var files = EnumerateFrameFiles(framesDir)
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
         if (files.Length < 2) return drop;
         // 第一遍:采样帧灰度,算相邻对统计标量(逐段报告,检测不会像卡死)
+        var hb = new DedupHeartbeat(progress, stage, files.Length);
         var prev = SampleGray(files[0], scale, out var sw, out var sh);
         int pairCount = files.Length - 1;
         // ===== 滚动统计(不再全量驻留 grays,长视频内存从 ~800MB 降到 O(1) 标量) =====
@@ -4874,7 +5140,10 @@ public static class VideoService
         for (int i = 1; i < files.Length; i++)
         {
             if ((i & 31) == 0)
-                progress?.Report((3, $"去重分析 第 {i} 帧 / 共 {files.Length} 帧..."));
+            {
+                ct.ThrowIfCancellationRequested();   // 可取消(见 DetectDupFramesWithSsim 注释)
+                hb.Step(i, 0);
+            }
             var cur = SampleGray(files[i], scale, out sw, out sh);
             int p = i - 1;
             sads[p] = MeanAbsDiff(prev, cur);
@@ -4954,6 +5223,7 @@ public static class VideoService
                 else runStart = -1;
             }
         }
+        hb.Done(drop.Count);
         return drop;
     }
 
@@ -4962,17 +5232,21 @@ public static class VideoService
     /// maxDiffThr=镜头平移时单块最大差异上限(排除场景切换/爆炸);scale/blockThr=采样粒度/变化块判线。</summary>
     private static System.Collections.Generic.HashSet<int> DetectDupFramesWithMotion(string framesDir, double panAvgThr,
         IProgress<(int pct, string msg)>? progress, int scale = 16, double protect = 0.12, double blockThr = 4,
-        double maxDiffThr = 20)
+        double maxDiffThr = 20, System.Threading.CancellationToken ct = default, string stage = "去重分析(镜头运动)")
     {
         var drop = new System.Collections.Generic.HashSet<int>();
         var files = EnumerateFrameFiles(framesDir)
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
         if (files.Length < 2) return drop;
+        var hb = new DedupHeartbeat(progress, stage, files.Length);
         var prev = SampleGray(files[0], scale, out var sw, out var sh);
         for (int i = 1; i < files.Length; i++)
         {
             if ((i & 31) == 0)
-                progress?.Report((3, $"去重分析 第 {i} 帧 / 共 {files.Length} 帧..."));
+            {
+                ct.ThrowIfCancellationRequested();   // 可取消(见 DetectDupFramesWithSsim 注释)
+                hb.Step(i, drop.Count);
+            }
             var cur = SampleGray(files[i], scale, out sw, out sh);
             double sad = MeanAbsDiff(prev, cur);
             // 关键防线(研究):maxDiff 高 = 有大块真的在动(小口型也会触发)→ 不判静止,避免误删微动帧
@@ -4985,6 +5259,7 @@ public static class VideoService
             if (isStatic || isPan) drop.Add(i + 1);   // 第 i+1 帧(1-based)重复/镜头平移 → 删除
             prev = cur;
         }
+        hb.Done(drop.Count);
         return drop;
     }
 
@@ -5716,12 +5991,27 @@ public static class VideoService
             await Task.Delay(100).ConfigureAwait(false);
         }
         // 顺序保持"先 stderr 全部行、再 stdout 全部行"(与改造前一致):调用方按行解析,换序会读错字段
-        var err = await drainErr.ConfigureAwait(false);
-        var stdout = await drainOut.ConfigureAwait(false);
+        // 【必须给上限】理由同 RunAsync:Kill 只是"请求终止",进程卡在内核态驱动调用时不会真退出、
+        // 也无法读到 EOF;无限 await 两个管道 = 任务永久卡死(看门狗已经打过"已强制终止"的日志也没用)。
+        // 最多等 5 秒,等不到就放弃输出、直接按停滞处理(调用侧本来就有非致命兜底,不会因此误判成功)。
+        bool drained = true;
+        var drainAll = Task.WhenAll(drainErr, drainOut);
+        if (await Task.WhenAny(drainAll, Task.Delay(TimeSpan.FromSeconds(5))).ConfigureAwait(false) != drainAll)
+        {
+            drained = false;
+            AppLogger.Warn($"⚠ 探测子进程未能在 5 秒内退出(已请求强制终止,pid={p.Id})——放弃等待其输出,按停滞处理。");
+        }
+        var err = drained ? await drainErr.ConfigureAwait(false) : "";
+        var stdout = drained ? await drainOut.ConfigureAwait(false) : "";
         watchdog.Dispose();
         App.ActiveProcesses.Unregister(p.Id);
         if (ct.IsCancellationRequested)
             throw new OperationCanceledException();
+        // 进程没退出时不许读 ExitCode(会抛),也不许当成"普通失败"被吞掉 → 统一按停滞上报(ProcessStillRunning=true)
+        if (!p.HasExited || !drained)
+            throw new EngineStallException(killReason
+                ?? "探测子进程在收到终止请求后仍未退出;它可能仍占用显卡或临时目录,已放弃本次处理。"
+                   + "请结束软件后重启,再重试。", processStillRunning: true);
         // 停滞必须排在 ExitCode 判断之前:被看门狗杀掉的进程退出码非零,否则会被误报成普通"命令失败"
         if (killRequested && p.ExitCode != 0)
             throw new EngineStallException(killReason ?? "探测子进程长时间无输出,已强制终止");
@@ -5880,13 +6170,32 @@ public static class VideoService
             if (killRequested) break;   // 看门狗已判死并已杀进程,收手去抛停滞异常(走回退链)
             await Task.Delay(100).ConfigureAwait(false);
         }
-        await Task.WhenAll(drainOut, drainErr).ConfigureAwait(false);
+        // ===== 管道读取必须给上限(否则看门狗形同虚设)=====
+        // 【为什么】Kill 只是"请求终止":进程若卡在内核态的驱动调用里(TerminateProcess 要等该调用返回),
+        // 它会继续活着、继续占着 stdout/stderr 管道 —— 这时 `await Task.WhenAll(drainOut, drainErr)`
+        // (读到 EOF 才返回)会**永远等下去**。表现就是:日志里已经打了"看门狗:…已强制终止",界面却再也
+        // 不动、点停止也没反应,用户只能强杀软件 —— 与"去重/拆帧卡住"的反馈完全一致,而看门狗以为它赢了。
+        // 现在最多等 5 秒:等不到就放弃管道,继续往下走(该走回退走回退、该报错报错),绝不再无限等待。
+        bool drained = true;
+        var drainAll = Task.WhenAll(drainOut, drainErr);
+        if (await Task.WhenAny(drainAll, Task.Delay(TimeSpan.FromSeconds(5))).ConfigureAwait(false) != drainAll)
+        {
+            drained = false;
+            AppLogger.Warn($"⚠ 子进程未能在 5 秒内退出(已请求强制终止,pid={p.Id},阶段 {stage})"
+                + "——放弃等待其输出并继续处理;若它仍占着显卡/文件,建议结束软件后重启。");
+        }
         watchdog.Dispose();
         watchCts.Cancel();
         try { await watchTask.ConfigureAwait(false); } catch (OperationCanceledException) { }
         App.ActiveProcesses.Unregister(p.Id);
         if (ct.IsCancellationRequested)
             throw new OperationCanceledException();
+        // 进程没退出时**不许读 ExitCode**(未退出会抛 InvalidOperationException,把"卡死"伪装成别的错);
+        // 也不许走"回退重跑"——它可能还在往同一个帧目录写文件,重跑会与它交叉写出错误帧数(静默坏结果)。
+        if (!p.HasExited || !drained)
+            throw new EngineStallException(killReason
+                ?? $"子进程在收到终止请求后仍未退出(阶段 {stage});它可能仍占用显卡或临时目录,已放弃本次处理。"
+                   + "请结束软件后重启,再重试。", processStillRunning: true);
         // 停滞必须排在 ExitCode 判断之前:被看门狗杀掉的进程退出码非零,否则会被误报成普通"命令失败",
         // 调用侧也就分不清"该走回退"还是"参数本身错了"。
         // 加 ExitCode != 0 守卫:若进程恰好在判死的同一瞬间以 0 正常退出,说明活已干完,不能把成功任务误报成停滞。

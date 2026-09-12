@@ -112,4 +112,35 @@ public static class DeviceRouting
         double min = Math.Min(meanR, Math.Min(meanG, meanB));
         return max - min <= AchromaticSpreadTolerance;
     }
+
+    /// <summary>【补帧探测:输出均值与"预期均值"的容差】(0~255 灰度口径)。
+    /// 预期均值 = 两个输入探测帧各自均值的平均(探测输入是"渐变 + 同一渐变右移 2 像素",
+    /// 正确插值结果必然保持这个均值)。定标依据(本机 RTX 4060 Laptop / rife-v4.6,320×240 / 1080p / 4K 三档实测):
+    /// 新老两代引擎的输出均值与预期值偏差都 ≤0.5,而"输出了黑帧/白帧"这类损坏的偏差是 127 上下。
+    /// 取 24 = 实测偏差的 48 倍余量、损坏值的 1/5 左右,两侧都不靠边界吃饭。</summary>
+    public const double InterpProbeMeanTolerance = 24;
+
+    /// <summary>【补帧探测:输出方差至少要保住输入方差的这个比例】—— 查"结构被抹平"。
+    /// 均值对得上、通道也均衡,但整帧被抹成一块平的(任何常数灰帧),均值判据抓不到,方差判据一抓一个准。
+    /// 定标依据:同一台机器上实测输出方差/输入方差 ≈ 1.00(三档尺寸、新老两代引擎都一样),
+    /// 取 0.25 = 4 倍余量:真引擎就算被模糊一点也不至于掉到 1/4。</summary>
+    public const double InterpProbeStructureRatio = 0.25;
+
+    /// <summary>探测输出是否像【真的插了一帧】:<see cref="IsAchromatic">通道均衡</see> +
+    /// 均值落在预期周围 <see cref="InterpProbeMeanTolerance">容差</see>内 +
+    /// 方差保住输入结构的 <see cref="InterpProbeStructureRatio">比例</see>。纯数学,可单测。
+    /// 【为什么要"预期值"而不是写死 127】探测输入换成了"渐变 + 右移 2 像素",它的正确输出由输入自己决定
+    /// (均值≈两输入均值、方差≈输入方差),写死常数会把判据绑死在某一对输入图上。传参进来即可自校准。
+    /// 【为什么要有方差这一条】黑帧/白帧由"均值"抓,但"整帧被抹成一块平的灰"均值能对得上、通道也均衡,
+    /// 只有方差能抓(实测真引擎的方差比≈1.00,0.25 是 4 倍余量)。</summary>
+    public static bool IsPlausibleInterpOf(double outMeanR, double outMeanG, double outMeanB, double outVariance,
+        double expectedMean, double expectedVariance)
+    {
+        if (!IsAchromatic(outMeanR, outMeanG, outMeanB)) return false;
+        double m = (outMeanR + outMeanG + outMeanB) / 3.0;
+        if (Math.Abs(m - expectedMean) > InterpProbeMeanTolerance) return false;
+        // 预期方差 ≤0 时(理论上不该发生)不拿方差判死:拿不准就放过,不误杀
+        if (expectedVariance > 0 && outVariance < expectedVariance * InterpProbeStructureRatio) return false;
+        return true;
+    }
 }

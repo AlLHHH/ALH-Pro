@@ -254,7 +254,12 @@ public static class VulkanCheck
         if (Regex.IsMatch(name, @"RTX\s*3[0-9]{2}", RegexOptions.IgnoreCase)) return "ampere";     // 30系
         if (Regex.IsMatch(name, @"RTX\s*2[0-9]{2}", RegexOptions.IgnoreCase)) return "turing";     // 20系
         if (Regex.IsMatch(name, @"GTX\s*16[0-9]{2}", RegexOptions.IgnoreCase)) return "turing";    // 16系(图灵)
-        if (Regex.IsMatch(name, @"GTX\s*(6|7|8|9|10)[0-9]{2}", RegexOptions.IgnoreCase)) return "oldgtx";  // 老GTX
+        // 【GTX 10 系必须与"真·老卡"分开(2026-09-12 自检)】原来一条正则把 (6|7|8|9|10) 都归成 oldgtx,
+        // 于是自检报告对 GTX 1050/1060/1070/1080 用户说"可能不支持完整 GPU 加速,遇到报错请改用 CPU" —— 说反了:
+        // Pascal(Vulkan 1.2/1.3、DX12 齐备,驱动至今仍在维护)用 ncnn-Vulkan 完全能跑,只是算力比新卡低、显存 3~6GB。
+        // 真正 GPU 加速可能不完整的是 Kepler/Maxwell(GTX 600/700/900 系,驱动已停更、显存 2~4GB)。
+        if (Regex.IsMatch(name, @"GTX\s*10[0-9]{2}", RegexOptions.IgnoreCase)) return "pascal";   // GTX 10 系(Pascal)
+        if (Regex.IsMatch(name, @"GTX\s*(6|7|8|9)[0-9]{2}", RegexOptions.IgnoreCase)) return "oldgtx";  // GTX 600/700/800/900 系
         if (name.Contains("GeForce", StringComparison.OrdinalIgnoreCase)) return "nvidia";          // 其他GeForce
         return "unknown";
     }
@@ -377,11 +382,12 @@ public static class VulkanCheck
                     var arch = NvidiaArch(n);
                     if (arch == "blackwell") nvArch = "blackwell";
                     else if (arch == "oldgtx") nvArch = "oldgtx";
+                    else if (arch == "pascal") nvArch = "pascal";
                 }
             }
             if (amdDedicated) risky = "AMD 独显补帧易间歇丢帧/黑帧";
-            else if (nvArch == "blackwell") risky = "RTX 50 系 ncnn 超分易黑帧";
-            else if (nvArch == "oldgtx") risky = "较老 GTX 系列部分 GPU 加速不支持";
+            else if (nvArch == "blackwell") risky = "RTX 50 系:是否走 ncnn 由首次处理时真机实测决定(重编版 ncnn 已在 50 系笔记本上实测通过)";
+            else if (nvArch == "oldgtx") risky = "GTX 600/700/800/900 系:驱动已停更,GPU 加速可能不完整(软件会先真机实测)";
             else if (anyIgpu && !amdDedicated && !names.Any(n => CardKind(n) == "nvidia" || CardKind(n) == "amd"))
                 risky = "核显(共享显存)高倍率/大图易显存不足";
             if (risky != null)
@@ -579,15 +585,20 @@ public static class VulkanCheck
             notes.Add("RTX 30 系(Ampere):性能与稳定性均衡,ncnn-Vulkan 加速顺畅");
         else if (nvArch == "turing")
             notes.Add("RTX 20/16 系(Turing):支持 GPU 加速,显存较小时处理大图会自动降低分块");
+        else if (nvArch == "pascal")
+            notes.Add("GTX 10 系(Pascal):Vulkan/DX12 齐备,ncnn GPU 加速可用(比新卡慢,属正常);显存多为 3~6GB,大图/高倍率会自动降低分块");
         else if (nvArch == "oldgtx")
-            notes.Add("较老的 NVIDIA 型号(GTX 600/700/900 系)可能不支持完整 GPU 加速,遇到报错请改用 CPU");
+            notes.Add("GTX 600/700/800/900 系(Kepler/Maxwell):驱动已停更、显存多为 2~4GB,GPU 加速可能不完整;"
+                + "软件不按型号下结论,会先真机实测,失败自动回退 ONNX 或源帧(慢,但不会把坏结果写进成片)");
         else if (nvArch == "pro")
             notes.Add("专业卡(Quadro/RTX A/TITAN):GPU 加速可用,显存通常较大,适合高倍率大图");
 
         if (amdDedicated)
             notes.Add("AMD 独显:Vulkan 驱动差异较大,若处理中出现黑屏/崩溃会自动改用 ONNX DirectML 或 CPU,无需手动设置");
         if (amdIgpu || (intelIgpu && !amdDedicated))
-            notes.Add("核显使用共享内存,处理大图或高倍率时可能显存不足,建议勾选「兼容模式」或改用 CPU");
+            // 【别让用户找不到开关】「兼容模式」复选框只在【视频处理页】;这里是设置页/自检报告的全局提示,
+            // 原话"建议勾选「兼容模式」"会让图片页用户满处找一个不存在的开关(2026-09-12 自检发现)。
+            notes.Add("核显使用共享内存,处理大图或高倍率时可能显存不足——视频处理页可勾「兼容模式」降低占用,或改用 CPU");
         if (intelArc)
             notes.Add("Intel Arc 独显:支持 GPU 加速,驱动较新时稳定;个别旧驱动需更新后再试");
 
