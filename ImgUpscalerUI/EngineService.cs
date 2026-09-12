@@ -919,13 +919,14 @@ public static partial class EngineService
     public static readonly (string Label, string Name)[] PhotoModels =
     {
         ("动漫 · realesr-animevideov3（4MB · 快）", "realesr-animevideov3"),
-        // 【自己转的 ncnn 版】官方只发 .pth/onnx,没有 ncnn 权重;用 ncnn 老版 onnx2ncnn + ncnnoptimize 转出:
-        // 实测 960x540→4K 1.7 秒、PSNR 33.13dB(与 x4plus 同档),体积仅 4.85MB(小 7 倍)。
-        // 【转换踩过的坑】① 引擎必须开启 Clip 层(社区模型用得到)② 图内 3 处引用 input、输入层定义却叫 data,
-        // 必须全局统一后 ncnnoptimize 才能加载 ③ 转换工具要在 MSYS2 环境里跑(依赖 protobuf 的 DLL)。
-        ("通用 · realesr-general-x4v3（5MB · 快 · 轻量通用）", "realesr-general-x4v3"),
         ("动漫 · realesrgan-x4plus-anime（9MB · 中）", "realesrgan-x4plus-anime"),
         ("通用 · realesrgan-x4plus（41MB · 慢）", "realesrgan-x4plus"),
+        // 【必须追加在末尾】自转的 ncnn 版轻量通用模型。官方只发 .pth/onnx,没有 ncnn 权重;
+        // 用 ncnn 老版 onnx2ncnn + ncnnoptimize 转出:实测 960x540→4K 1.7 秒、PSNR 33.13dB(与 x4plus 同档),4.85MB。
+        // 转换踩的坑:① 引擎必须开 Clip 层 ② 图内 3 处引用 input、输入层定义却叫 data,全局统一后 ncnnoptimize 才能加载
+        // ③ 工具要在 MSYS2 环境跑(依赖 protobuf DLL)。
+        // 【位置约定】列表存的是序号(index),新模型一律追加末尾,否则老用户已保存的选择会集体错位。
+        ("通用 · realesr-general-x4v3（5MB · 快 · 轻量通用）", "realesr-general-x4v3"),
     };
 
     /// <summary>分块尺寸:大图按 tile 分块超分再拼接(防显存爆)。
