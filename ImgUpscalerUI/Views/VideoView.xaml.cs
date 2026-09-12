@@ -1128,6 +1128,7 @@ public sealed partial class VideoView : UserControl
         // 补全剩余参数(真正"重置所有"):视频降噪/后处理杂色/抗锯齿/去频闪/VFR/去重智能/微动防线/静音
         DenoiseToggle.IsChecked = false;
         DenoiseStrongRadios.SelectedIndex = 0;
+        if (DenoiseKindRadios != null) DenoiseKindRadios.SelectedIndex = 0;
         PostAaSlider.Value = 0;
         VfrModeRadios.SelectedIndex = 0;
         DedupSmartCombo.SelectedIndex = 0;
@@ -1329,6 +1330,8 @@ public sealed partial class VideoView : UserControl
         public bool Mute { get; set; }
         public bool VideoDenoiseOn { get; set; }
         public int VideoDenoiseStrong { get; set; }
+        /// <summary>降噪方式:0=空间+时间结合(默认,兼容旧设置) 1=仅空间 nlmeans 2=仅时间 hqdn3d。</summary>
+        public int DenoiseKind { get; set; }
     }
 
     private static string SettingsFile => ParaPaths.SettingsFile("video-settings.json");
@@ -1571,6 +1574,7 @@ public sealed partial class VideoView : UserControl
         MuteCheck.IsChecked = d.Mute;
         DenoiseToggle.IsChecked = d.VideoDenoiseOn;
         if (d.VideoDenoiseStrong is >= 0 and <= 2) DenoiseStrongRadios.SelectedIndex = d.VideoDenoiseStrong;
+        if (d.DenoiseKind is >= 0 and <= 2 && DenoiseKindRadios != null) DenoiseKindRadios.SelectedIndex = d.DenoiseKind;
         InterpToggle.IsChecked = d.Interp;
         if (d.Model is >= 0 && d.Model < InterpModelCombo.Items.Count) InterpModelCombo.SelectedIndex = d.Model;
         // 恢复超分模型(waifu2x / Real-ESRGAN,各自按引擎下拉索引,越界回退 0)
@@ -2175,6 +2179,7 @@ public sealed partial class VideoView : UserControl
             Mute = MuteCheck.IsChecked == true,
             VideoDenoiseOn = DenoiseToggle.IsChecked == true,
             VideoDenoiseStrong = DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex : -1,
+            DenoiseKind = DenoiseKindRadios?.SelectedIndex ?? 0,
         };
     }
 
@@ -4384,6 +4389,7 @@ public sealed partial class VideoView : UserControl
         var mblurNow = MotionBlurCombo.SelectedIndex;
         var deshakeNow = DeShakeCheck.IsChecked == true;
         var vdenoiseNow = DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex + 1 : 0;
+        var denoiseKindNow = DenoiseKindRadios?.SelectedIndex ?? 0;   // 0=两者 1=仅空间 2=仅时间
         var qualityNow = QualityCombo.SelectedIndex == 5 ? 0 : QualityCombo.SelectedIndex;
         var fastNow = FastModeCheck.IsChecked == true;
         var codecNow = CodecCombo.SelectedIndex == 1 ? 2 : 0;   // 0=H.264,1=H.265
@@ -4883,6 +4889,7 @@ public sealed partial class VideoView : UserControl
                         postMotionBlur: mblurNow,
                         postDeshake: deshakeNow,
                         videoDenoise: vdenoiseNow,
+                        denoiseKind: denoiseKindNow,
                         quality: qualityNow,
                         fastMode: fastNow,
                         upscaleShrink1x: upscaleShrink1x,                        codecPref: codecNow,

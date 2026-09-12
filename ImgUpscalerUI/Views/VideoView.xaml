@@ -106,6 +106,13 @@
                         <RadioButton Content="中"/>
                         <RadioButton Content="强"/>
                     </RadioButtons>
+                    <TextBlock x:Name="DenoiseKindLabel" Text="降噪方式" Style="{StaticResource SectionTitle}"/>
+                    <RadioButtons x:Name="DenoiseKindRadios" SelectedIndex="0" SelectionChanged="Combo_Changed"
+                                  ToolTipService.ToolTip="空间 = nlmeans:只处理单帧里的噪点,但会磨掉细纹理;时间 = hqdn3d:处理帧与帧之间的闪烁/颗粒,更保细节,但快速运动可能拖影;两者结合 = 先空间再时间(实测时间抖动 −24%、细节 −18%,综合最优,默认)">
+                        <RadioButton Content="两者结合(推荐)"/>
+                        <RadioButton Content="仅空间 nlmeans"/>
+                        <RadioButton Content="仅时间 hqdn3d"/>
+                    </RadioButtons>
 
                     <TextBlock Text="视频调整 (后处理)" Style="{StaticResource SectionTitle}"/>
                     <StackPanel Spacing="2">
