@@ -862,7 +862,22 @@ public sealed partial class VideoView : UserControl
         // (与图片路径既有做法一致,见 EngineService 的视频/图片 dir 路径 engineScale 处理),几何与画质都正确,
         // 耗时可忽略(-s 2 = 17.5s vs -s 4 = 18.1s)。此处只负责把这件事讲清楚。
         string esrModel = (VideoEsrganModelCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
-        bool x4plusModel = up && SelectedEngineIsReal && esrModel.Contains("x4plus");
+        // 【4x 专用权重】x4plus / x4plus-anime / 自转的 general-x4v3 都只有 4x 权重:
+        // 选 2x/3x 会内部按 4x 跑再缩回(画面正确,但耗时与 4x 相同)。提示直接放在模型下拉正下方(用户要求)。
+        bool x4plusModel = up && SelectedEngineIsReal
+            && (esrModel.Contains("x4plus") || esrModel.Contains("general-x4v3"));
+        if (EsrganModelHint != null)
+        {
+            if (x4plusModel)
+            {
+                bool isLight = esrModel.Contains("general-x4v3");
+                EsrganModelHint.Text = isLight
+                    ? "⚠ 该模型只有 4x 权重:选 2x/3x 会按 4x 超分后再缩回(画面不变形,但耗时可观)。它是轻量通用模型,4x 直出反而更划算"
+                    : "⚠ 该模型只有 4x 权重:选 2x/3x 会按 4x 超分后再缩回(画面不变形,但耗时与 4x 相同)";
+                EsrganModelHint.Visibility = Visibility.Visible;
+            }
+            else EsrganModelHint.Visibility = Visibility.Collapsed;
+        }
         if (x4plusModel)
         {
             ScaleHint.Text = "⚠ 该模型只有 4x 权重(实测 1080p 源约 14.5 秒/帧,比 animevideov3 慢 17 倍):"
