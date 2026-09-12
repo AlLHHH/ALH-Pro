@@ -333,6 +333,24 @@ namespace ALHPro
                     try { extra = $" HRESULT=0x{ex.HResult:X8}"; } catch { }
                     AppLogger.Error($"未处理异常{extra}", ex);
                     WriteCrashDiagnostic(ex);   // 崩溃时也把版本/系统/驱动/GPU/引擎/堆栈写到磁盘,崩溃后仍可拿到
+                    // 【自愈:检出"布局循环"就停掉界面日志刷新】
+                    // 实测(2026-09-12 22:31,50 系笔记本):LayoutCycleException 抛出后**界面永久卡死**,
+                    // 而后台任务其实一直在正常跑(日志显示补帧推进到 171/285)—— 用户只能重启软件,把任务一起打断。
+                    // 这类异常是在框架布局代码里抛的,外面 try/catch 拦不到;唯一能自愈的办法是**不再喂它**:
+                    // 停掉"既自增长、又要改滚动位置"的界面日志刷新(改成只写文件)。
+                    // 代价=界面少刷几行日志;收益=界面不再被反复拖死、任务能跑完、结果拿得到。
+                    try
+                    {
+                        bool layoutCycle = ex is Microsoft.UI.Xaml.LayoutCycleException
+                            || ex.GetType().Name.Contains("LayoutCycle", StringComparison.OrdinalIgnoreCase);
+                        if (layoutCycle && !Views.VideoView.SuppressUiLogUpdates)
+                        {
+                            Views.VideoView.SuppressUiLogUpdates = true;
+                            AppLogger.Warn("⚠ 检出界面「布局循环」异常:已自动停用界面日志刷新(日志继续写文件);" +
+                                "正在跑的任务不受影响、会继续跑完,重启软件即恢复界面日志。");
+                        }
+                    }
+                    catch { }
                     if (!_fatalDialogShown)
                     {
                         _fatalDialogShown = true;
@@ -378,6 +396,10 @@ namespace ALHPro
             };
         }
 
+        /// <summary>最近一次"界面刷新"动作(哪个控件操作在跑 / 抛了什么)。
+        /// 崩溃诊断会把它一并写出:COMException 有时不带托管堆栈,靠这条才能定位到具体调用点。</summary>
+        internal static string UiBreadcrumb = "";
+
         /// <summary>崩溃时把 版本/系统/驱动/GPU/引擎/异常堆栈 写到磁盘(即使软件崩了也能拿到这份诊断)。</summary>
         private static void WriteCrashDiagnostic(Exception? ex)
         {
@@ -413,6 +435,11 @@ namespace ALHPro
                     sb.AppendLine("异常: " + ex.GetType().FullName + " (" + ex.Message + ")");
                     sb.AppendLine(ex.ToString());
                 }
+                // 【面包屑】最近一次界面刷新动作(哪个控件操作抛了异常/正在做哪一步)。
+                // 为什么需要:COMException 有时**不带托管堆栈**(ex.ToString() 只有类型+消息),光看日志
+                // 只能靠时间线猜是哪一处 WinRT 调用 —— 2026-09-12 那次就是这样,查了半天才靠"崩前最后一行"
+                // 推断到日志刷新/自动滚动。有了这条,下次直接指到具体调用。
+                if (!string.IsNullOrEmpty(UiBreadcrumb)) sb.AppendLine("最近界面操作: " + UiBreadcrumb);
                 System.IO.File.WriteAllText(path, sb.ToString());
                 AppLogger.Info("崩溃诊断已写入: " + path);
             }

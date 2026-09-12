@@ -1000,13 +1000,19 @@ public sealed partial class CutoutView : UserControl
     {
         AppLogger.Info(msg);   // 同步写诊断日志文件
         var line = $"[{DateTime.Now:HH:mm:ss}] {msg}";
-        var text = TaskLogText.Text;
-        TaskLogText.Text = text == "日志:等待任务..." ? line : text + "\n" + line;
-        // 自动清理:超过 200 行,删除最旧的一半
-        var lines = TaskLogText.Text.Split('\n');
-        if (lines.Length > 200)
-            TaskLogText.Text = string.Join("\n", lines.Skip(80)) + "\n";
-        TaskLogScroll.ChangeView(null, TaskLogScroll.ScrollableHeight, null, true);
+        // 【包起来】文本刷新 + ScrollViewer.ChangeView 是 WinRT/原生调用,布局繁忙时会抛 COMException
+        // (0x80070490)/LayoutCycleException;日志文件已落盘,界面刷不动不能让整个任务陪葬。
+        try
+        {
+            var text = TaskLogText.Text;
+            TaskLogText.Text = text == "日志:等待任务..." ? line : text + "\n" + line;
+            // 自动清理:超过 200 行,删除最旧的一半
+            var lines = TaskLogText.Text.Split('\n');
+            if (lines.Length > 200)
+                TaskLogText.Text = string.Join("\n", lines.Skip(80)) + "\n";
+            TaskLogScroll.ChangeView(null, TaskLogScroll.ScrollableHeight, null, true);
+        }
+        catch (Exception ex) { VideoView.NoteUiRefreshFailure("抠图日志追加/自动滚动", ex); }
     }
 
     private void CancelBtn_Click(object sender, RoutedEventArgs e)

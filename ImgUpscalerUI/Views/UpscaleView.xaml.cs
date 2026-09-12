@@ -365,21 +365,47 @@ public sealed partial class UpscaleView : UserControl
     private const int MaxImgPresets = 100;
     private const string ImgPresetExt = ".alhimg";
 
+    /// <summary>图片预设文件"存在但读不出来"时的只读保护(与视频页同一套,理由见 VideoView.ProtectCorruptPresetFile):
+    /// 原来解析失败就返回空列表,紧接着内置预设检查会把内置写回去 → 用户自建预设被无声覆盖掉。
+    /// 现在:备份成 .bak + 本次运行拒绝写该文件。</summary>
+    private static bool _imgPresetFileUnreadable;
+
+    private static void ProtectCorruptImgPresetFile(string why)
+    {
+        if (_imgPresetFileUnreadable) return;
+        _imgPresetFileUnreadable = true;
+        try
+        {
+            var bak = ImgPresetFile + ".bak";
+            File.Copy(ImgPresetFile, bak, true);
+            AppLogger.Warn($"⚠ 图片预设文件读不出来({why})——已备份为 {Path.GetFileName(bak)},本次运行不再写入该文件(避免覆盖你原有预设)");
+        }
+        catch (Exception ex) { AppLogger.Warn($"⚠ 图片预设文件读不出来({why}),且备份失败:{ex.Message.Split('\n')[0]}"); }
+    }
+
     private static List<UpscalePreset> LoadImgPresets()
     {
         try
         {
             if (!File.Exists(ImgPresetFile)) return new();
-            return System.Text.Json.JsonSerializer.Deserialize<List<UpscalePreset>>(File.ReadAllText(ImgPresetFile))
-                ?? new();
+            var text = File.ReadAllText(ImgPresetFile);
+            if (string.IsNullOrWhiteSpace(text)) return new();   // 空文件=没有预设(不是损坏)
+            var list = System.Text.Json.JsonSerializer.Deserialize<List<UpscalePreset>>(text);
+            if (list == null) { ProtectCorruptImgPresetFile("内容为 null"); return new(); }
+            return list;
         }
-        catch { return new(); }
+        catch (Exception ex) { ProtectCorruptImgPresetFile(ex.Message.Split('\n')[0]); return new(); }
     }
 
     private static void SaveImgPresets(List<UpscalePreset> list)
     {
         try
         {
+            if (_imgPresetFileUnreadable)
+            {
+                AppLogger.Warn("图片预设文件本次运行处于只读保护(先前读不出来),已跳过这次写入");
+                return;
+            }
             if (list.Count == 0) { if (File.Exists(ImgPresetFile)) File.Delete(ImgPresetFile); return; }
             Directory.CreateDirectory(Path.GetDirectoryName(ImgPresetFile)!);
             File.WriteAllText(ImgPresetFile, System.Text.Json.JsonSerializer.Serialize(list));
@@ -396,25 +422,35 @@ public sealed partial class UpscaleView : UserControl
     /// Rev=2(「清晰MAX」):倍率 3x → 4x(realesrgan-x4plus 权重原生就是 4x)、输出码率档 默认 → 超高。
     /// Rev=2(「通用变清晰」):倍率 1x超分 → **2x**。理由:做 1x 时用户拿它跟「清晰MAX(4x)」比会觉得
     ///   "糊/像没变化"——它压根没放大;而 2x 又正是 waifu2x 模型的原生倍率(直出、不必缩回),画质与速度都最优。
-    /// Rev 是【每个预设各自记】的(OfficialRev 存在预设里),两项都升到 2 互不影响;用户自建的预设一律不碰。</summary>
+    /// Rev 是【每个预设各自记】的(OfficialRev 存在预设里),两项都升到 2 互不影响;用户自建的预设一律不碰。
+    /// Rev=3(两项都升):「减少杂色」的强度语义变了 —— 从"1~50 跑一遍中值 / 51~100 再跑一遍"的开关式映射
+    ///   改成"0~100 线性控制中值力度"(100 = 旧 51+ 档)。旧基线里的 Denoise=20(通用变清晰)/35(清晰MAX)
+    ///   在新映射下各只有 0.20 / 0.35 的力度,等于把降噪悄悄关掉了,所以按实测等效值改成 50。
+    /// Rev=4(两项都升):**取值按实测收敛**(见 _qa\imgpost\imgpost_presets.txt)。旧基线点一下就把"强边缘
+    ///   过冲像素"从基底的 0.83% 推到 22.9%/26.2%(压缩素材)、31.4%/33.6%(干净素材),PSNR 掉 4~7dB ——
+    ///   用户反馈的"白边"主要来自这里。原因有二:①锐化族 6 档本质是同一个算子,旧基线一口气开了 5 档
+    ///   (锐化/清晰/钝化蒙版/保留细节/细节增强),改动方向两两相关 0.83~0.98 = 同一个旋钮拧五遍;
+    ///   ②「去模糊」「边缘增强」在"先超分再做后处理"的流程里基本纯亏(前者没有模糊可回收、后者单边过冲)。
+    ///   新基线只留 **细节增强(实测同等清晰度下代价最小)+ 钝化蒙版(唯一带阈值保护的)**,再配边缘抗锯齿收尾;
+    ///   实测过冲像素降到 0.42%~4.3%(通用变清晰)/ 0.34%~7.6%(清晰MAX),细节仍比基底高 1.6~1.9 倍。</summary>
     private static (string Name, int Rev, Func<UpscaleSettings> Make)[] BuiltinImgPresets() => new[]
     {
-        ( "通用变清晰", 2, new Func<UpscaleSettings>(() => new UpscaleSettings
+        ( "通用变清晰", 4, new Func<UpscaleSettings>(() => new UpscaleSettings
         {
             Remember = true, Mode = 0, W2xModel = 0, W2xModelName = "models-cunet", Scale = 1, Noise = 2, Tta = false, SelectedOnly = false,
-            Fmt = 0, Detail = 50, Sharpen = 10, Clarity = 15, Deblur = 35, Usm = 20, Edge = 5, DetailEnhance = 10,
-            Denoise = 20, Aa = 40, Dehaze = 5, ImgQualityMode = 2, ImgQualityCustom = 92, ImgQuality = 92,
+            Fmt = 0, Detail = 0, Sharpen = 0, Clarity = 0, Deblur = 0, Usm = 20, Edge = 0, DetailEnhance = 50,
+            Denoise = 50, Aa = 30, Dehaze = 0, ImgQualityMode = 2, ImgQualityCustom = 92, ImgQuality = 92,
             PreDenoise = true, DenoiseLevel = 0, OutDir = "",
         })),
         // 【Rev=2】倍率 3x → 4x(realesrgan-x4plus 权重原生就是 4x,4x 直出不再需要级联推演);
         // 输出码率档 默认(92) → 超高(98)。提 Rev 的【唯一目的】就是让老用户手里那个旧基线(Rev≤1)的
         // 「清晰MAX」在下次启动时被覆盖成这个新基线 —— 不改 Rev 的话上面那段 OfficialRev 判断不会触发,
         // 老用户永远停在 3x + 92,而列表里明明写着官方预设。
-        ( "清晰MAX", 2, new Func<UpscaleSettings>(() => new UpscaleSettings
+        ( "清晰MAX", 4, new Func<UpscaleSettings>(() => new UpscaleSettings
         {
             Remember = true, Mode = 1, W2xModel = 2, W2xModelName = "realesrgan-x4plus", Scale = 3, Noise = 3, Tta = false, SelectedOnly = false,
-            Fmt = 0, Detail = 40, Sharpen = 20, Clarity = 25, Deblur = 35, Usm = 30, Edge = 30, DetailEnhance = 20,
-            Denoise = 35, Aa = 65, Dehaze = 5, ImgQualityMode = 3, ImgQualityCustom = 92, ImgQuality = 98,
+            Fmt = 0, Detail = 0, Sharpen = 0, Clarity = 0, Deblur = 0, Usm = 30, Edge = 0, DetailEnhance = 60,
+            Denoise = 50, Aa = 50, Dehaze = 0, ImgQualityMode = 3, ImgQualityCustom = 92, ImgQuality = 98,
             PreDenoise = true, DenoiseLevel = 2, OutDir = "",
         })),
     };
@@ -458,7 +494,19 @@ public sealed partial class UpscaleView : UserControl
                     continue;
                 }
                 // 同名但本来不是官方 → 只标记为官方,不动参数(用户自己攒的同名预设保留原样)
-                if (!existing.IsOfficial) { existing.IsOfficial = true; changed = true; }
+                // 【必须 continue】原实现只置 IsOfficial 就往下走,而紧接着的 `OfficialRev < rev` 对用户自建
+                // 预设必然成立(其 OfficialRev = 0)→ **用户攒的参数被官方基线整份覆盖**,还先被写进了官方模型名;
+                // 日志却宣称"你自建的预设未动"。2026-09-12 自检发现(与视频页同一个 bug)。
+                // 现在:标记为官方 + 把 Rev 补到当前值(表示已按当前基线结算过),然后 continue,参数一个都不动。
+                if (!existing.IsOfficial)
+                {
+                    existing.IsOfficial = true;
+                    existing.OfficialRev = rev;
+                    changed = true;
+                    AppLogger.Info($"[内置预设] 「{name}」是官方图片预设名,但这条是你自建的:已标记为官方," +
+                        "参数保持你自己那套(不覆盖、不重置)");
+                    continue;
+                }
                 // 【只补字段、不提 Rev】老文件里没有"模型名"这个字段(W2xModelName 是后加的)。
                 // 官方预设按定义补上即可 —— 注意【不能靠提 Rev 来触发】:提 Rev 会连带把用户改过的
                 // 其它参数一并覆盖,为补一个内部字段付这个代价不值得。用户自建预设不动(留索引回退)。
@@ -1091,13 +1139,19 @@ public sealed partial class UpscaleView : UserControl
     {
         AppLogger.Info(msg);   // 同步写诊断日志文件
         var line = $"[{DateTime.Now:HH:mm:ss}] {msg}";
-        var text = TaskLogText.Text;
-        TaskLogText.Text = text == "日志:等待任务..." ? line : text + "\n" + line;
-        // 自动清理:超过 200 行,删除最旧的一半
-        var lines = TaskLogText.Text.Split('\n');
-        if (lines.Length > 200)
-            TaskLogText.Text = string.Join("\n", lines.Skip(80)) + "\n";
-        TaskLogScroll.ChangeView(null, TaskLogScroll.ScrollableHeight, null, true);
+        // 【包起来】同抠图/视频页:文本刷新 + ChangeView 会抛 COMException/LayoutCycleException,
+        // 日志文件已落盘,界面刷不动不能把任务带崩。
+        try
+        {
+            var text = TaskLogText.Text;
+            TaskLogText.Text = text == "日志:等待任务..." ? line : text + "\n" + line;
+            // 自动清理:超过 200 行,删除最旧的一半
+            var lines = TaskLogText.Text.Split('\n');
+            if (lines.Length > 200)
+                TaskLogText.Text = string.Join("\n", lines.Skip(80)) + "\n";
+            TaskLogScroll.ChangeView(null, TaskLogScroll.ScrollableHeight, null, true);
+        }
+        catch (Exception ex) { VideoView.NoteUiRefreshFailure("图片日志追加/自动滚动", ex); }
     }
 
     // ---------- 单击仅选中,不弹预览;双击打开大图预览 ----------

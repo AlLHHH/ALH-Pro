@@ -68,7 +68,20 @@ public static class AppLogger
         try
         {
             if (File.Exists(SettingsFile))
-                _settings = JsonSerializer.Deserialize<LogSettings>(File.ReadAllText(SettingsFile)) ?? new LogSettings();
+            {
+                var d = JsonSerializer.Deserialize<LogSettings>(File.ReadAllText(SettingsFile));
+                // 【必须过一遍带 Clamp 的 setter(2026-09-12 自检发现)】原来直接把反序列化结果赋给 _settings,
+                // 绕开了 KeepDays/MaxSizeMb 的 Clamp:文件里若出现 KeepDays=0(手改/旧版本写坏),
+                // CleanByTime 会算成 cutoff=now → **启动即把日志清空**,而设置界面照样显示"7 天 / 20 MB",
+                // 显示值与实际执行值不一致,用户完全看不出为什么日志没了。现在经属性赋值,一律落到合法区间。
+                if (d != null)
+                {
+                    KeepDays = d.KeepDays;
+                    MaxSizeMb = d.MaxSizeMb;
+                    CleanByTime = d.CleanByTime;
+                    CleanBySize = d.CleanBySize;
+                }
+            }
         }
         catch { /* 读取失败用默认 */ }
     }

@@ -12,7 +12,7 @@
 ;   不勾选 = 之后手动下载模型包,解压到 程序目录\engines\rembg\ 即可。
 
 #define MyAppName "ALH Pro"
-#define MyAppVersion "1.3.4"
+#define MyAppVersion "1.3.5"
 #define MyAppExeName "ALHPro.exe"
 ; 【构建时间戳】(ISPP 在编译时求值):用于让用户一眼分辨"同名同版本的不同构建"。
 ; 起因:同一个 1.3.4 出了多次安装包,名字完全一样、大小只差几十 MB,用户无法确认手上是哪一个。
@@ -86,6 +86,15 @@ Name: "downloadmodels"; Description: "下载并安装模型包(约 1.4GB,来自 
 ; Excludes:排除抠图模型(engines\rembg\*.onnx 1.65GB)、发布版里的解压副本(models_v1.0\)、
 ; 以及开发残留/调试产物(_ttracks 脚本、旧 exe、pdb/lib/bak、DirectML.Debug)——否则体积膨胀且泄露源码痕迹
 Source: "发布版\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "engines\rembg\*.onnx,models_v1.0\*,_ttracks*,bin\*,obj\*,*.pdb,*.lib,*.bak,ALHPro_old*,DirectML.Debug.*,d3dcompiler_47.dll.bak,onnxruntime.lib"
+
+; 【备用 ffmpeg(ffmpeg8)必须随包带上 —— 单独显式列一条,不靠上面那条通配】
+; 内置主 ffmpeg 的 NVENC 需要 NVIDIA 驱动 ≥610.00(nvenc API 13.1);驱动较旧的机器(实测 572.83)主 ffmpeg 直接报
+;   "Driver does not support the required nvenc API version. Required: 13.1 Found: 13.0",而且会写出 0 字节文件。
+; 这类机器【全靠 ffmpeg8 这个备用包】才能用上显卡编码(实测 4K 下 15~19 fps,CPU 软编只有它的几分之一)。
+; 少了它,软件会静默退回 CPU 软编 —— 用户只觉得"变慢了",日志里还没有任何线索。
+; engines\ 是 gitignore、deploy.ps1 也不同步 engines,最容易漏;显式写一条的收益是:
+; **漏拷时 Inno 在编译期就报错(找不到 Source),不会发出一份"悄悄变慢"的包**。
+Source: "发布版\engines\ffmpeg8\*"; DestDir: "{app}\engines\ffmpeg8"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [InstallDelete]
 ; v1.0 升级清理:Real-CUGAN 已从 v1.1.0 起移除(许可不明),旧引擎目录不再需要(约 200MB+),

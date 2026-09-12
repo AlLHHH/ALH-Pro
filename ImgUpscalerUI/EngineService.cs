@@ -188,20 +188,29 @@ public static partial class EngineService
     /// <summary>把已缓存的 ncnn 真机探测结论汇总成一行,供自检报告/日志展示。
     /// 【为什么需要它】自检报告此前按显卡型号断言"50 系将走 ONNX",而真实路由由实测决定 ——
     /// 报告必须报实测,否则用户看到的结论和软件实际行为相反(已被用户抓到一次)。没测过就如实写"未测"。</summary>
-    public static string DescribeNcnnVerdicts()
+    public static string DescribeNcnnVerdicts() => DescribeNcnnVerdicts(AppSettings.GpuIndex);
+
+    /// <summary>同上,但显式指定 GPU 编号。诊断包导出时用 —— 写侧(处理任务)用的是
+    /// ResolveEngineGpu 解析出来的编号,读侧若固定用 AppSettings.GpuIndex,在"设备表还没枚举"的窗口里
+    /// 会查错键,于是明明测过也显示"未测"。两边必须用同一个编号。</summary>
+    public static string DescribeNcnnVerdicts(int gpuId)
     {
         try
         {
             var parts = new System.Collections.Generic.List<string>();
             foreach (var eng in new[] { "realesrgan", "waifu2x" })
             {
-                var v = TryGetNcnnVerdict(eng, AppSettings.GpuIndex);
+                var v = TryGetNcnnVerdict(eng, gpuId);
                 parts.Add($"{EngineId(eng)}={(v.HasValue ? (v.Value ? "实测可用→走 ncnn" : "实测不可用→走 ONNX") : "未测(首次处理时自动实测)")}");
             }
             return string.Join(" ", parts);
         }
         catch { return "未测"; }
     }
+
+    /// <summary>ncnn 探测结论落盘文件的路径(诊断包要把这个文件原样带上,供作者核查"测了什么、什么时间、什么键")。
+    /// 此前诊断包只收集 settings 目录下的 *.json,而这个文件是 .txt → 被静默漏掉,作者只能看到报告里的"未测"。</summary>
+    public static string NcnnProbeCacheFilePath => NcnnProbeCacheFile;
 
     /// <summary>记录探测结论(进程内 + 落盘)。落盘失败只记日志,绝不影响处理。</summary>
     private static void SaveNcnnVerdict(string engine, int gpuId, bool ok, string detail)
@@ -234,8 +243,14 @@ public static partial class EngineService
     /// ②参数与生产逐字一致(-s 2 -n 0 -t 0 -j 1:1:1 + 真实模型),而不是裸 -s 2;
     /// ③判据含【带状近黑】:IsBlackPng → FrameInspect.IsDefectiveFrame = 整帧 ≥95% 近黑 或 任一 1/3 主条带 ≥95% 近黑
     ///   (整帧量词在"下 2/3 全黑、上 1/3 正常"时只黑 66%,判不出来 —— 这正是旧探测漏检的形态)。
-    /// gpuId&lt;0(用户选 CPU)直接返回 false:ncnn CPU 模式在 50 系上有崩溃 bug(实测 exit -1073741819)。</summary>
-    public static async Task<bool> EnsureNcnnProbeAsync(string engine, int gpuId, string? model, CancellationToken ct)
+    /// gpuId&lt;0(用户选 CPU)直接返回 false:ncnn CPU 模式在 50 系上有崩溃 bug(实测 exit -1073741819)。
+    /// <param name="force">true = 忽略快速通道与缓存,无条件真机重测一次(仅"导出诊断包"用)。
+    /// 【为什么需要它】诊断报告一直显示"未测"有两个独立原因:①报告文本是【按版本缓存的快照】,
+    /// 生成于任何探测之前、之后永不刷新;②纯 NVIDIA 非 Blackwell 机型走快速通道**从不落盘结论**。
+    /// 导出诊断包时必须拿到"这一刻的真实结论",所以 force 会绕过 ①的缓存短路 与 ②的快速通道,
+    /// 仍然复用同一套生产帧探测口径(不新增第二套判据)。</param>
+    public static async Task<bool> EnsureNcnnProbeAsync(string engine, int gpuId, string? model, CancellationToken ct,
+        bool force = false)
     {
         if (gpuId < 0) return false;
         // 【快速通道:纯 NVIDIA 非 Blackwell + 机内没有非 NVIDIA 显卡 → 不探测,直接判可用】
@@ -243,13 +258,20 @@ public static partial class EngineService
         // ②一次探测要 ~15 秒,而图片路径上一个任务可能总共只要 2 秒 —— 不能先白等 15 秒;
         // ③真出问题还有引擎自身的"输出全黑 → 该设备判不可用 + 降级链"兜底(见 IsEngineGpuUsableAsync)。
         // 50 系 / AMD / Intel 核显一律照旧真机探测,该走的自适应一点不少。
-        if (!IsBlackwellGpu() && !HasNonNvidiaGpu()) return true;
-        var cached = TryGetNcnnVerdict(engine, gpuId);
-        if (cached.HasValue)
+        if (!force && !IsBlackwellGpu() && !HasNonNvidiaGpu()) return true;
+        if (!force)
         {
-            AppLogger.Info($"[探测] {engine} GPU({gpuId}/{SafeDeviceName(gpuId)})沿用已缓存结论:" +
-                (cached.Value ? "ncnn-Vulkan 可用 → 走 ncnn(不重复试跑)" : "ncnn-Vulkan 不可用 → 走 ONNX(不每批重试)"));
-            return cached.Value;
+            var cached = TryGetNcnnVerdict(engine, gpuId);
+            if (cached.HasValue)
+            {
+                AppLogger.Info($"[探测] {engine} GPU({gpuId}/{SafeDeviceName(gpuId)})沿用已缓存结论:" +
+                    (cached.Value ? "ncnn-Vulkan 可用 → 走 ncnn(不重复试跑)" : "ncnn-Vulkan 不可用 → 走 ONNX(不每批重试)"));
+                return cached.Value;
+            }
+        }
+        else
+        {
+            AppLogger.Info($"[探测] {engine} GPU({gpuId})强制真机重测(诊断包导出:绕过快速通道与缓存,拿到当前真实结论)");
         }
         AppLogger.Info($"[探测] {engine} GPU({gpuId})首次真机探测(生产帧尺寸 1080×1920,模型 {model ?? "(默认)"} + 带状黑判据,最长约 60 秒)...");
         // 接住失败形态:日志、落盘明细、以及给用户看的话都由它决定(见 AlhPro.Core.ProbeDiagnosis)
@@ -282,10 +304,11 @@ public static partial class EngineService
     /// 旧逻辑在 50 系上【直接】改走 ONNX、不做任何探测(原文:"50系(Blackwell)ncnn 补帧引擎会 hang,直接改用 ONNX")。
     /// 现在改为真实插一帧实测(含"出帧但颜色损坏"判据):通过就用更快的 ncnn-Vulkan 补帧,失败才 ONNX。
     /// 模型名进缓存 key:NIHUI 老模型(anime/HD/UHD/v2.3/anime)与 v4.x 架构不同,稳定性不能互相顶替。</summary>
-    public static async Task<bool> EnsureRifeNcnnProbeAsync(string rifeExe, string model, int gpuId, CancellationToken ct)
+    public static async Task<bool> EnsureRifeNcnnProbeAsync(string rifeExe, string model, int gpuId, CancellationToken ct,
+        int frameW = 0, int frameH = 0)
     {
         if (gpuId < 0 || string.IsNullOrEmpty(rifeExe)) return false;
-        var key = "rife:" + model;
+        var key = RifeProbeKey(rifeExe, model, frameW, frameH);
         var cached = TryGetNcnnVerdict(key, gpuId);
         if (cached.HasValue)
         {
@@ -295,7 +318,8 @@ public static partial class EngineService
         AlhPro.Core.ProbeFailureKind failKind = AlhPro.Core.ProbeFailureKind.None;
         string failDetail = "";
         bool ok = await IsRifeGpuUsableAsync(rifeExe, model, gpuId, ct,
-            (k, d) => { failKind = k; failDetail = d; }).ConfigureAwait(false);
+            (k, d) => { failKind = k; failDetail = d; },
+            frameW <= 0 ? 320 : frameW, frameH <= 0 ? 240 : frameH).ConfigureAwait(false);
         SaveNcnnVerdict(key, gpuId, ok,
             (ok ? "rife probe ok" : "rife probe failed: " + AlhPro.Core.ProbeDiagnosis.ShortName(failKind)) + $"; model={model}");
         if (ok)
@@ -313,11 +337,37 @@ public static partial class EngineService
         return ok;
     }
 
+    /// <summary>补帧(RIFE)探测结论的缓存键:把【引擎二进制指纹】与【探测帧尺寸档】都编进 key。
+    /// 【为什么要带引擎指纹】换引擎(旧的 rife-ncnn-vulkan.exe ↔ 2026 重编版)等于换了实现:
+    /// 二进制文件名/体积必然不同,于是 key 不同 —— 老结论不会被套到新二进制上。
+    /// 否则最坏情况正是"新引擎第一次跑就沿用旧结论、真正的探测永不发生"。
+    /// 【为什么要带尺寸档】探测按生产帧尺寸做(小图能跑 ≠ 真帧能跑),所以 1080p 上测出来的结论
+    /// 不能拿去给 4K 任务背书。只分三档(SD/FHD/UHD)而不是每个分辨率一个 key:档位有限,
+    /// 不会变成"每换一个分辨率就重测一遍";同一档内复用,一次探测管到底。
+    /// 指纹只取【文件名 + 字节数】而不含时间戳:文件没变就不该因为"重装一次"白等一遍探测。</summary>
+    private static string RifeProbeKey(string rifeExe, string model, int frameW, int frameH)
+    {
+        string id;
+        try
+        {
+            var fi = new FileInfo(rifeExe);
+            id = fi.Exists ? $"{fi.Name}/{fi.Length}" : Path.GetFileName(rifeExe);
+        }
+        catch { id = Path.GetFileName(rifeExe); }
+        long area = (long)(frameW <= 0 ? 320 : frameW) * (frameH <= 0 ? 240 : frameH);
+        string bucket = area >= 3840L * 2160 ? "uhd" : area >= 1920L * 1080 ? "fhd" : "sd";
+        return $"rife:{id}:{bucket}:{model}";
+    }
+
     /// <summary>【本机实测优先】某引擎的 ncnn-Vulkan 在本机该 GPU 上是否算"风险"(=该走 ONNX)。
     /// ①有实测结论(EnsureNcnnProbeAsync / EnsureRifeNcnnProbeAsync 写入)→ 一律以实测为准:
     ///    实测可用 → false(走 ncnn),实测不可用 → true(走 ONNX);
-    /// ②没测过 → 回退原保守启发式(treatBlackwellAsRiskyWithoutProbe 决定 50 系算不算风险),
-    ///    保证"没探测过的调用路径"与本次改动前行为一致,不引入回归。</summary>
+    /// ②没测过 → 回退保守启发式(treatBlackwellAsRiskyWithoutProbe 决定 50 系算不算风险)。
+    /// 【2026-09-12 收紧:只对旧引擎保留"50 系未测即判风险"】Blackwell 那个坑的根因是 **2022 版 ncnn** 的
+    /// Vulkan 驱动问题;本仓库现在用的 realesrgan / rife 都是 2025/2026 ncnn 重编版(指纹含 robustness2,旧版为 0),
+    /// 并且在 RTX 5060 Laptop 上**实测补帧与超分探测都通过**。再按显卡型号预判,只会让"没走探测的路径"
+    /// 白白退回慢得多的 ONNX(用户感受就是"50 系上超分/补帧莫名很慢",且没有任何提示)。
+    /// 所以:引擎是 2026 重编版 → 不再按型号预判(交给真机探测与缓存结论);仍是旧引擎 → 保持原保守行为不变。</summary>
     public static bool NcnnGpuRisky(string engine, int gpuId, bool treatBlackwellAsRiskyWithoutProbe = true)
     {
         try
@@ -326,7 +376,27 @@ public static partial class EngineService
             if (v.HasValue) return !v.Value;
         }
         catch { }
-        return OldNcnnGpuRiskyHeuristic(treatBlackwellAsRiskyWithoutProbe);
+        // 2026 重编版引擎:不再按"50 系"预判(见上面注释);旧引擎保持原保守行为
+        return OldNcnnGpuRiskyHeuristic(treatBlackwellAsRiskyWithoutProbe && !EngineIsRebuilt2026(engine));
+    }
+
+    /// <summary>该引擎是不是本仓库用 2025/2026 ncnn 源码重编的那一份(文件名带 2026)。
+    /// 依据:`ENGINE_REALESRGAN_REBUILD.md` 与 `RIFE_ENGINE_AUDIT.md` —— 重编版静态指纹含
+    /// `VK_EXT_robustness2`/`VK_KHR_cooperative_matrix`(旧版为 0),这是"50 系 Blackwall 毒点已消失"的可核对标志。
+    /// 只用来决定"要不要按显卡型号预判风险",不参与任何用户可见文案。</summary>
+    private static bool EngineIsRebuilt2026(string engine)
+    {
+        try
+        {
+            string? exe = engine switch
+            {
+                "realesrgan" => FindRealEsrgan2026(),
+                "rife" => VideoService.RifePath,
+                _ => null,   // waifu2x 上游 20250915 版走它自己的参数(默认就不按 Blackwell 预判)
+            };
+            return exe != null && Path.GetFileName(exe).Contains("2026", StringComparison.Ordinal);
+        }
+        catch { return false; }
     }
 
     /// <summary>是否存在非 NVIDIA 显卡(AMD/Intel,含核显):驱动差异大,需要真机探测兜底。</summary>
@@ -723,8 +793,14 @@ public static partial class EngineService
     }
 
     /// <summary>【实测验证】推荐 GPU:引擎枚举的设备按优先级(NVIDIA&gt;AMD 独显&gt;Arc&gt;其他,核显排除)
-    /// 逐个做 1×1 真机探测,返回第一个【实际可用】的引擎编号;-1=全部不可用。
-    /// 不只按名字推荐——名字对但驱动/编号/引擎支持有问题时,实测能拦住(真机:RTX5060 三卡机选中 Intel 核显)。</summary>
+    /// 逐个做真机探测,返回第一个【实际可用】的引擎编号;-1=全部不可用。
+    /// 不只按名字推荐——名字对但驱动/编号/引擎支持有问题时,实测能拦住(真机:RTX5060 三卡机选中 Intel 核显)。
+    /// 【口径说明(2026-09-12 自检)】这里的探测是 **320×240 小图的"活性检查"**(fullFrame:false),
+    /// **不等于"可用性"**:本项目实测过的失败形态正是"小图能过、生产帧尺寸才静默出空帧/黑帧"。
+    /// 所以日志与文案一律写"320×240 活性检查",别再说"1×1 可用";真正的可用性结论来自
+    /// `EnsureNcnnProbeAsync`(生产帧尺寸 1080×1920 + 带状黑判据)。
+    /// 为什么不升级成生产帧口径:首次自检要给每张候选卡多等一次生产帧探测(实测 x4plus 在 4060 上 24.1 秒),
+    /// 该自检只是"挑一张卡",没必要这么贵 —— 先留着,把话说准。</summary>
     public static async Task<int> FindBestWorkingGpuAsync(CancellationToken ct = default)
     {
         try
@@ -740,7 +816,7 @@ public static partial class EngineService
             foreach (var d in ordered)
             {
                 bool ok = await IsEngineGpuUsableAsync("waifu2x", d.Id, ct).ConfigureAwait(false);
-                AppLogger.Info(d.Id + ": " + d.Name + " → " + (ok ? "1×1 可用" : "不可用"));
+                AppLogger.Info(d.Id + ": " + d.Name + " → " + (ok ? "320×240 活性检查通过" : "不可用"));
                 if (ok) return d.Id;
             }
             // ② 独显全不可用 → 核显作"底牌"兜底(核显也是计算设备,能用就用,总比报错强)
@@ -748,7 +824,7 @@ public static partial class EngineService
             foreach (var d in igpu)
             {
                 bool ok = await IsEngineGpuUsableAsync("waifu2x", d.Id, ct).ConfigureAwait(false);
-                AppLogger.Info(d.Id + ": " + d.Name + "(核显) → " + (ok ? "1×1 可用(兜底)" : "不可用"));
+                AppLogger.Info(d.Id + ": " + d.Name + "(核显) → " + (ok ? "320×240 活性检查通过(兜底)" : "不可用"));
                 if (ok)
                 {
                     AppLogger.Warn($"⚠ 独显均不可用,已降级使用核显: GPU {d.Id}({d.Name})——处理会明显变慢,建议更新显卡驱动(需支持 Vulkan)后重试。");
@@ -926,7 +1002,9 @@ public static partial class EngineService
         // 转换踩的坑:① 引擎必须开 Clip 层 ② 图内 3 处引用 input、输入层定义却叫 data,全局统一后 ncnnoptimize 才能加载
         // ③ 工具要在 MSYS2 环境跑(依赖 protobuf DLL)。
         // 【位置约定】列表存的是序号(index),新模型一律追加末尾,否则老用户已保存的选择会集体错位。
-        ("通用 · realesr-general-x4v3（5MB · 快 · 轻量通用）", "realesr-general-x4v3"),
+        // (视频页那份下拉 2026-09-12 按用户要求单独调过顺序并带序号迁移;图片页这份不动,避免动到图片预设里的序号。)
+        // 【标签(2026-09-12 用户要求)】耗时档写「中」、不再写"轻量通用"(与视频页保持一致口径)。
+        ("通用 · realesr-general-x4v3（5MB · 中）", "realesr-general-x4v3"),
     };
 
     /// <summary>分块尺寸:大图按 tile 分块超分再拼接(防显存爆)。
@@ -1239,11 +1317,28 @@ public static partial class EngineService
             await Task.Delay(100).ConfigureAwait(false);
         }
         // 清理永远执行(即使强制终止/kill 也释放看门狗定时器与轮询任务,不留泄漏)
-        await Task.WhenAll(drainOut, drainErr).ConfigureAwait(false);
+        // 【管道等待必须给上限】与 VideoService.RunAsync/RunCaptureAsync 同一处修复(2026-09-12):
+        // Kill 只是"请求终止";引擎进程若卡在内核态(显卡驱动挂死),它不会真退出、stdout/stderr 也不会 EOF,
+        // 于是 `await Task.WhenAll(drainOut, drainErr)` 会**永远等下去** —— 看门狗明明已经打了"强制终止",
+        // 界面却再也不动(用户只能强杀软件)。这里最多等 5 秒,超时就放弃输出继续走降级链。
+        bool drained = true;
+        var drainAll = Task.WhenAll(drainOut, drainErr);
+        if (await Task.WhenAny(drainAll, Task.Delay(TimeSpan.FromSeconds(5))).ConfigureAwait(false) != drainAll)
+        {
+            drained = false;
+            AppLogger.Warn($"⚠ 引擎进程未能在 5 秒内退出(已请求强制终止,pid={p.Id},阶段 {stage})"
+                + "——放弃等待其输出并继续处理;若它仍占着显卡/文件,建议结束软件后重启。");
+        }
         watchdog.Dispose();
         watchCts.Cancel();
         try { await watchTask.ConfigureAwait(false); } catch (OperationCanceledException) { }
         App.ActiveProcesses.Unregister(p.Id);
+        // 进程没退出时不许读 ExitCode(会抛 InvalidOperationException,把"卡死"伪装成别的错),
+        // 也不许走"回退重跑"(它可能还在往同一个输出目录写文件,重跑会与它交叉写出错结果)。
+        if (!p.HasExited || !drained)
+            throw new InvalidOperationException(killReason
+                ?? $"引擎进程在收到终止请求后仍未退出({stage});它可能仍占用显卡或临时目录,已放弃本批处理。"
+                   + "请结束软件后重启再试。");
         if (killReason != null) throw new InvalidOperationException(killReason);
 
         string tail;
@@ -1466,8 +1561,12 @@ public static partial class EngineService
         => await IsRifeGpuUsableAsync(rifeExe, model, gpuId, ct, null).ConfigureAwait(false);
 
     /// <summary>同上,并回传失败形态 —— 理由同 IsEngineGpuUsableAsync:调用方要按形态说话
-    /// (初始化即崩 ≠ 出图但坏帧;前者在 Blackwell 上是 NVIDIA 驱动缺陷,后者不许甩给驱动)。</summary>
-    public static async Task<bool> IsRifeGpuUsableAsync(string rifeExe, string model, int gpuId, CancellationToken ct, Action<AlhPro.Core.ProbeFailureKind, string>? onFailure)
+    /// (初始化即崩 ≠ 出图但坏帧;前者在 Blackwell 上是 NVIDIA 驱动缺陷,后者不许甩给驱动)。
+    /// <param name="frameW"/><param name="frameH">探测用的帧尺寸。默认 320×240(给不掌握视频尺寸的调用方兜底);
+    /// 【为什么必须能传生产尺寸】实测过的漏检形态正是"小图能跑、真分辨率上崩/静默出坏帧":320×240 只占
+    /// 1080p 的 1/27 像素、4K 的 1/108,显存与着色器分块压力都差一个量级 —— 在小图上探测通过,不等于真帧上能跑。
+    /// 视频路径知道源分辨率,就必须按源分辨率探(见 VideoService 调用处)。</summary>
+    public static async Task<bool> IsRifeGpuUsableAsync(string rifeExe, string model, int gpuId, CancellationToken ct, Action<AlhPro.Core.ProbeFailureKind, string>? onFailure, int frameW = 320, int frameH = 240)
     {
         AlhPro.Core.ProbeFailureKind failKind = AlhPro.Core.ProbeFailureKind.None;
         string failDetail = "";
@@ -1479,6 +1578,9 @@ public static partial class EngineService
                 onFailure?.Invoke(AlhPro.Core.ProbeFailureKind.EngineMissing, "未指定补帧引擎或选了 CPU");
                 return false;
             }
+            // 尺寸兜底:调用方可能传来 0/负数(分辨率未探到)或极端值,夹到合理范围,免得探测本身成为故障源。
+            int pw = Math.Clamp(frameW <= 0 ? 320 : frameW, 64, 8192);
+            int ph = Math.Clamp(frameH <= 0 ? 240 : frameH, 64, 8192);
             var tmp = Path.Combine(EngineService.TempRoot, $"rife_probe_{Guid.NewGuid():N}");
             Directory.CreateDirectory(tmp);
             var a = Path.Combine(tmp, "a.png");
@@ -1486,17 +1588,42 @@ public static partial class EngineService
             var o = Path.Combine(tmp, "out.png");
             try
             {
-                // 两帧:黑→白(有显著运动,引擎必然尝试插帧)。用 320×240 真实尺寸(原 64×64 太小,部分引擎在小尺寸能跑、真帧上崩)。
-                using (var bmp = new System.Drawing.Bitmap(320, 240))
+                // 【探测输入:水平渐变 + 同一渐变右移 2 像素】(2026 换,原来的是"纯黑帧 → 纯白帧"硬切)
+                // 【为什么必须换】黑→白硬切对光流是【病态输入】:没有真实运动、只有内容突变,正确输出该是什么
+                //  没有定义。实测(本机 RTX 4060 Laptop / rife-v4.6,新老两代引擎一致)那种输入下"中间帧"均值
+                //  在 320×240 上只有 2.4(近黑!)、1080p 74.4、4K 90.3 —— 随分辨率乱变。于是旧探测只能查
+                //  "通道是否均衡",任何"出黑帧/出糊帧"的损坏都查不出来(本次要堵的盲区)。
+                // 换成"渐变 + 右移 2 像素"(=真实的小位移)后,正确输出有确定预期:均值≈两输入均值、
+                //  方差≈输入方差。实测 13 个模型 × 新老两代引擎:均值偏差 ≤0.24、方差比 1.00(见 _qa/rifeprobe)。
+                // 【必须显式指定 Format24bppRgb —— 这里踩过坑】`new Bitmap(w,h)` 默认是 32bppArgb(带 alpha),
+                //  而该引擎的前端对带 alpha 的 PNG 会读错通道:实测同一对渐变图,24bpp 进 → 出帧均值 126.70、
+                //  方差 5410(与输入 127.00/5424 一致);换成 32bpp 进 → 出帧直接变成乱码(横剖面 32/158/186/54…
+                //  不再是渐变)、均值 158.96、方差 2120。这不是引擎故障,是"喂了它不认的像素格式";
+                //  生产帧全是 JPG(拆帧就是 JPG)与 24bpp PNG,所以生产不受影响 —— 但探测图必须与生产同格式,
+                //  否则探测会把自己的图当成引擎故障、把可用设备误判成不可用(第一次跑就踩到,日志里是"亮度不对")。
+                var px = System.Drawing.Imaging.PixelFormat.Format24bppRgb;
+                using (var bmp = new System.Drawing.Bitmap(pw, ph, px))
                 {
-                    using var g = System.Drawing.Graphics.FromImage(bmp);
-                    g.Clear(System.Drawing.Color.Black);
+                    using (var g = System.Drawing.Graphics.FromImage(bmp))
+                    using (var br = new System.Drawing.Drawing2D.LinearGradientBrush(
+                               new System.Drawing.Rectangle(0, 0, pw, ph), System.Drawing.Color.Black, System.Drawing.Color.White, 0f))
+                        g.FillRectangle(br, 0, 0, pw, ph);
                     bmp.Save(a, System.Drawing.Imaging.ImageFormat.Png);
-                    g.Clear(System.Drawing.Color.White);
-                    bmp.Save(b, System.Drawing.Imaging.ImageFormat.Png);
+                    using var shifted = new System.Drawing.Bitmap(pw, ph, px);
+                    using (var g2 = System.Drawing.Graphics.FromImage(shifted))
+                    {
+                        g2.Clear(System.Drawing.Color.Black);   // 左边缘那 2 列:渐变左端本来就是纯黑,无缝
+                        g2.DrawImage(bmp, new System.Drawing.Rectangle(2, 0, pw, ph));
+                    }
+                    shifted.Save(b, System.Drawing.Imaging.ImageFormat.Png);
                 }
                 // 【放宽+重试】原 5 秒超时对首次运行(编译着色器)太紧,正常独显被误判→整段补帧被切 ONNX/CPU。
-                // 改 10 秒;失败再重试一次(再失败才判不可用),避免瞬时抽风误判。
+                // 改 10 秒起步;失败再重试一次(再失败才判不可用),避免瞬时抽风误判。
+                // 【超时按面积给】实测(RTX 4060 Laptop,rife-v4.6 单对插值):320×240 冷启动 8.3s、热 1.5s;
+                // 1080p 1.4~3.0s;4K 2.8~4.4s;最重的 rife-anime/rife 系在 1080p 上热态也要 10s 上下。
+                // ≥1080p 给 25 秒(2 倍余量);<1080p 给 15 秒(冷启动 8.3s 的 1.8 倍)。
+                // 25 秒仍远小于 8 分钟看门狗 —— 宁可多等一次(结论会缓存),也不要"探测误判 → 整段补帧被切走"。
+                int timeoutSec = (long)pw * ph >= 1920L * 1080 ? 25 : 15;
                 var psi = new ProcessStartInfo
                 {
                     FileName = rifeExe,
@@ -1513,7 +1640,7 @@ public static partial class EngineService
                     using var p = Process.Start(psi);
                     if (p == null) { onFailure?.Invoke(AlhPro.Core.ProbeFailureKind.StartupFailed, "进程为空"); return false; }
                     using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    waitCts.CancelAfter(TimeSpan.FromSeconds(10));
+                    waitCts.CancelAfter(TimeSpan.FromSeconds(timeoutSec));
                     try
                     {
                         await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
@@ -1525,27 +1652,27 @@ public static partial class EngineService
                         else if (new FileInfo(o).Length == 0)
                             Note(AlhPro.Core.ProbeFailureKind.EmptyOutput, "产出 0 字节");
                         bool ok = p.ExitCode == 0 && File.Exists(o) && new FileInfo(o).Length > 0;
-                        // 出帧 ≠ 出对帧:某些设备(真机:D3D12 转译层)exit 0 且出图,但插值结果是整帧红噪点。
-                        // 探测输入是纯黑+纯白,正常引擎的中间帧必为无彩色灰阶 → 带色即损坏,按不可用处理。
-                        if (ok && !ProbeOutputIsAchromatic(o))
+                        // 出帧 ≠ 出对帧:某些设备(真机:D3D12 转译层)exit 0 且出图,但插值结果是整帧红噪点;
+                        // 还有"根本没插、把输入帧抄回来"(全黑/全白帧)—— 三判据一起看,见 ProbeOutputIsSane。
+                        if (ok && !ProbeOutputIsSane(o, a, b, out var why))
                         {
-                            AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId})出帧但颜色损坏(黑→白应插出灰帧,实测通道严重失衡)——按不可用处理");
-                            Note(AlhPro.Core.ProbeFailureKind.DefectiveFrame, "出帧但颜色损坏(应插出灰阶却通道失衡)");
+                            AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId})出帧但坏帧({why})——按不可用处理");
+                            Note(AlhPro.Core.ProbeFailureKind.DefectiveFrame, "出帧但坏帧:" + why);
                             ok = false;
                         }
                         if (ok)
                         {
-                            AppLogger.Info($"[探测] RIFE {model} GPU(-g {gpuId})可用(1~2 秒出帧)");
+                            AppLogger.Info($"[探测] RIFE {model} GPU(-g {gpuId})可用({pw}×{ph} 出帧,耗时远低于 {timeoutSec} 秒上限)");
                             return true;
                         }
                         AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId})第 {attempt} 次不可用(exit={p.ExitCode}/无输出)" + (attempt < 2 ? ",重试一次..." : "——将自动改用 CPU/ONNX 补帧"));
                     }
                     catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                     {
-                        AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId}) {10} 秒无响应(疑似 hang),按不可用处理");
+                        AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId}) {timeoutSec} 秒无响应(疑似 hang),按不可用处理");
                         try { p.Kill(entireProcessTree: true); } catch { }
-                        onFailure?.Invoke(AlhPro.Core.ProbeFailureKind.Hang, "10 秒无响应");
-                        return false;   // 超时=真 hang,不重试(重试只会再白等 10 秒);仅快速失败(非超时)才走重试
+                        onFailure?.Invoke(AlhPro.Core.ProbeFailureKind.Hang, $"{timeoutSec} 秒无响应");
+                        return false;   // 超时=真 hang,不重试(重试只会再白等一个超时);仅快速失败(非超时)才走重试
                     }
                     catch (OperationCanceledException)
                     {
@@ -1569,37 +1696,112 @@ public static partial class EngineService
         }
     }
 
-    /// <summary>探测帧健全性:RIFE 探测的输入是纯黑+纯白两帧,任何正常引擎插出的中间帧都应是【无彩色】灰阶。
-    /// 判定阈值在 <see cref="AlhPro.Core.DeviceRouting.IsAchromatic"/>(有单测);这里只负责把像素读成三通道均值。
-    /// 读图自身异常时放行:宁可放过,不因探测代码的问题把可用设备判死。</summary>
-    private static bool ProbeOutputIsAchromatic(string png)
+    /// <summary>探测帧健全性:输入是"水平渐变 + 同一渐变右移 2 像素"两帧,正确插值结果必然
+    /// 【均值≈两输入均值、方差≈输入方差、三通道均衡、不是近黑/带状近黑】。
+    /// 【四判据,任一不过 = "出帧但坏帧"】(2026 扩充;旧版只查通道均衡,实测有两个盲区)
+    ///  ①通道均衡 <see cref="AlhPro.Core.DeviceRouting.IsAchromatic"/>:抓"D3D12 转译层整帧红噪点";
+    ///  ②非缺陷帧 <see cref="AlhPro.Core.FrameInspect.IsDefectiveFrame"/>(整帧 ≥95% 近黑【或】任一 1/3 主条带
+    ///    ≥95% 近黑):抓"整帧黑"与"下半 2/3 黑"的条带损坏(近黑帧三通道极差是 0,①对它完全无感);
+    ///  ③均值对得上 <see cref="AlhPro.Core.DeviceRouting.InterpProbeMeanTolerance"/>:抓"输出与正确结果亮度
+    ///    根本不是一回事"(黑帧、白帧、亮度被拉平);
+    ///  ④结构没被抹平 <see cref="AlhPro.Core.DeviceRouting.InterpProbeStructureRatio"/>:抓"均值对得上、
+    ///    通道也均衡,但整帧被抹成一块平的"(任何常数灰帧)。①②③都抓不到它,只有方差能。
+    /// 【口径】三张图的像素都按 <see cref="AlhPro.Core.FrameInspect.ForEachSample"/> 的同一采样网格取,
+    /// 与 ②的条带几何严格一致;预期值由输入帧自己算出来(不写死 127),换探测输入也不用改判据。
+    /// 【读图异常时放行(返回 true)】宁可放过,不因探测代码的问题把可用设备判死 —— 与旧实现同口径。
+    /// reason 只在返回 false 时有意义,用于写日志/诊断包(说清是哪一条判据不过)。</summary>
+    private static bool ProbeOutputIsSane(string outPng, string inAPng, string inBPng, out string reason)
     {
+        reason = "";
+        if (!SamplePngStats(outPng, out double omR, out double omG, out double omB, out double oVar,
+                out var oSum, out int oN, out int w, out int h)) return true;
+        if (oN <= 0) return true;
+
+        if (!AlhPro.Core.DeviceRouting.IsAchromatic(omR, omG, omB))
+        {
+            reason = $"颜色损坏(应出灰阶却通道失衡 R{omR:0.#}/G{omG:0.#}/B{omB:0.#})";
+            return false;
+        }
+        if (AlhPro.Core.FrameInspect.IsDefectiveFrame(oSum, oN, w, h))
+        {
+            reason = "缺陷帧(近黑/带状近黑)";
+            return false;
+        }
+        // 预期值 = 两个输入帧自己的均值/方差。读不到输入帧(异常)就跳过 ③④ —— 只留"不误杀"的那两条。
+        if (SamplePngStats(inAPng, out double amR, out double amG, out double amB, out double aVar,
+                out _, out int aN, out _, out _) && aN > 0 &&
+            SamplePngStats(inBPng, out double bmR, out double bmG, out double bmB, out double bVar,
+                out _, out int bN, out _, out _) && bN > 0)
+        {
+            double expMean = ((amR + amG + amB) + (bmR + bmG + bmB)) / 6.0;
+            double expVar = (aVar + bVar) / 2.0;
+            if (!AlhPro.Core.DeviceRouting.IsPlausibleInterpOf(omR, omG, omB, oVar, expMean, expVar))
+            {
+                double oMean = (omR + omG + omB) / 3.0;
+                reason = Math.Abs(oMean - expMean) > AlhPro.Core.DeviceRouting.InterpProbeMeanTolerance
+                    ? $"亮度不对(均值 {oMean:0.#},正确结果应≈{expMean:0.#})"
+                    : $"画面被抹平(方差 {oVar:0.#},输入方差 {expVar:0.#} —— 插值结果不该是一块平的)";
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>把一张 PNG 按 <see cref="AlhPro.Core.FrameInspect.ForEachSample"/> 的采样网格读成统计量:
+    /// 三通道均值、全部通道样本的方差、以及每采样点的 RGB 和(给 IsDefectiveFrame 的条带判定用)。
+    /// 读图/解码失败返回 false(调用方按"拿不准就放过"处理)。
+    /// 【为什么采样而不是逐像素全扫】判定逻辑(均值/方差/条带比例)在采样口径下等价,而 4K 从 830 万像素
+    /// 降到约 1800 个采样点;三张图加起来仍是毫秒级。采样网格与 FrameInspect 共用,不会与条带几何错位。</summary>
+    private static bool SamplePngStats(string png,
+        out double meanR, out double meanG, out double meanB, out double variance,
+        out int[] sumRgb, out int count, out int width, out int height)
+    {
+        meanR = meanG = meanB = variance = 0;
+        sumRgb = Array.Empty<int>();
+        count = 0; width = 0; height = 0;
         try
         {
             using var bmp = new System.Drawing.Bitmap(png);
-            var rect = new System.Drawing.Rectangle(0, 0, bmp.Width, bmp.Height);
+            width = bmp.Width; height = bmp.Height;
+            if (width <= 0 || height <= 0) return false;
+            AlhPro.Core.FrameInspect.SampleGrid(width, height, out int rows, out int cols);
+            if (rows <= 0 || cols <= 0) return false;
+            // 【必须是局部数组】下面要在 lambda 里写它,而 out 参数不允许在匿名方法中使用(CS1628)。
+            var sums = new int[rows * cols];
+
+            var rect = new System.Drawing.Rectangle(0, 0, width, height);
             var d = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadOnly,
                 System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+            long sr = 0, sg = 0, sb = 0, sq = 0;
+            int n = 0;
             try
             {
-                long sr = 0, sg = 0, sb = 0;
-                int n = d.Width * d.Height;
-                var row = new byte[d.Stride];
-                for (int y = 0; y < d.Height; y++)
+                var scan = d.Scan0;
+                int stride = d.Stride;
+                // 24bpp 字节序 BGR;采样点由 ForEachSample 给出,与 SampleGrid 同几何。
+                AlhPro.Core.FrameInspect.ForEachSample(width, height, (x, y) =>
                 {
-                    System.Runtime.InteropServices.Marshal.Copy(d.Scan0 + y * d.Stride, row, 0, d.Stride);
-                    for (int x = 0; x < d.Width; x++)
-                    {
-                        sb += row[x * 3]; sg += row[x * 3 + 1]; sr += row[x * 3 + 2];
-                    }
-                }
-                if (n == 0) return true;
-                double mr = (double)sr / n, mg = (double)sg / n, mb = (double)sb / n;
-                return AlhPro.Core.DeviceRouting.IsAchromatic(mr, mg, mb);
+                    int off = y * stride + x * 3;
+                    int b = System.Runtime.InteropServices.Marshal.ReadByte(scan, off);
+                    int g = System.Runtime.InteropServices.Marshal.ReadByte(scan, off + 1);
+                    int r = System.Runtime.InteropServices.Marshal.ReadByte(scan, off + 2);
+                    sb += b; sg += g; sr += r;
+                    if (n < sums.Length) sums[n] = r + g + b;
+                    sq += (long)r * r + (long)g * g + (long)b * b;
+                    n++;
+                });
             }
             finally { bmp.UnlockBits(d); }
+            if (n <= 0) return false;
+            count = n;
+            sumRgb = sums;
+            meanR = (double)sr / n; meanG = (double)sg / n; meanB = (double)sb / n;
+            double m1 = (meanR + meanG + meanB) / 3.0;
+            double m2 = (double)sq / (3.0 * n);
+            variance = Math.Max(0, m2 - m1 * m1);
+            return true;
         }
-        catch { return true; }
+        catch { return false; }
     }
 
     /// <summary>运行引擎命令;若命令使用 GPU(-g ≥0)且启动失败(如新显卡 RTX 50 系与 ncnn-vulkan
@@ -2452,10 +2654,14 @@ public static partial class EngineService
         // 显存不足(如 vkAllocateMemory 失败)时自动降分块重试,避免爆显存崩溃
         async Task RunEngAsync(string exe, Func<int, string> buildArgs)
         {
-            // preTiled(图片分块路径):输入块已 ≤ tileSize,无需引擎再内部 tiling。
-            // 关键修复(真实照片超分变黑):引擎在这些已≤tile 的块上再 -t 会触发 ncnn-vulkan vkQueueSubmit 失败→全黑。
-            // 传 -t 0(关闭引擎侧 tiling)即可(块够小,无需 tiling,且更快)。
-            int t = preTiled ? 0 : tileSize;
+            // 【t 的语义(实测)】0 = 让引擎自己决定分块大小(auto);>0 = 显式指定分块边长。
+            // 视频路径默认就用 auto(见下面调用点的注释与实测:auto 无接缝/无黑帧)。
+            // 【为什么初始值是 0 而不是 tileSize】原来写 `preTiled ? 0 : tileSize`,但两个调用点的 lambda
+            // 都把 `-t 0` 硬编码了、**根本没用这个 t** —— 于是下面"显存不足降半分块"的重试管线形同虚设:
+            // t 从 512 减到 256/128 全是空转,命令一字未变,日志却写着"分块 512→256 重试"。
+            // 在 8GB 小显存卡上(如 RTX 5060 Laptop)这等于把"救回来"变成"同参数白跑 3 次再降级"。
+            // 现在:调用点必须用 {t}(正常路径 t=0 与旧行为逐字一致),OOM 时才真正改成显式小分块。
+            int t = 0;
             int attempts = 0;
             while (true)
             {
@@ -2464,12 +2670,13 @@ public static partial class EngineService
                     await RunEngFallbackGpuAsync(exe, buildArgs(t), progress, ct, watchStage ?? "", watchTotal, watchDir, globalBaseFrames, globalTotalFrames).ConfigureAwait(false);
                     return;
                 }
-                catch (Exception ex) when (attempts < 3 && t > 64 && IsVramOom(ex))
+                catch (Exception ex) when (attempts < 3 && IsVramOom(ex))
                 {
                     attempts++;
-                    t = Math.Max(64, t / 2);
-                    AppLogger.Info($"⚠ 降级:显存不足(第 {attempts} 次,原因:{ex.Message}),分块 {tileSize}→{t} 重试");
-                    progress?.Report((0, $"⚠ 显存不足,自动降低分块 {tileSize}→{t} 重试(第 {attempts} 次)..."));
+                    int prevT = t;
+                    t = t == 0 ? 512 : Math.Max(64, t / 2);   // auto → 512 → 256 → 128:逐级真正降显存
+                    AppLogger.Info($"⚠ 降级:显存不足(第 {attempts} 次,原因:{ex.Message.Split('\n')[0]}),分块 {(prevT == 0 ? "auto" : prevT.ToString())}→{t} 重试");
+                    progress?.Report((0, $"⚠ 显存不足,自动降低分块 {(prevT == 0 ? "auto" : prevT.ToString())}→{t} 重试(第 {attempts} 次)..."));
                 }
             }
         }
@@ -2629,6 +2836,17 @@ public static partial class EngineService
     /// 参数名沿用它原来的 nearBlack,但语义是"是否缺陷帧":true 的调用方一律按缺陷走既有降级链。
     /// 注意:整帧近全黑的老语义【没有】被放宽(整帧近黑必然仍为 true),只是补上了漏检的那一类。</summary>
     public static void ConvertPngToJpg(string pngPath, string jpgPath, float quality, out bool nearBlack)
+        => ConvertPngToJpg(pngPath, jpgPath, quality, out nearBlack, 0);
+
+    /// <summary>同上,并可在写 JPG 前顺带做一次「边缘抗锯齿」(edgeSmooth &gt; 0 时;0~100,与图片页同语义)。
+    /// 【为什么把视频页的抗锯齿搬到 C#】视频页原先用 ffmpeg 的 sab 滤镜做这一档。2026-09-12 实测(4K JPG 序列):
+    ///   加满 6 档后处理滤镜 = 4.88 秒/帧;把「边缘抗锯齿」一档去掉 = 0.10 秒/帧(**差约 48 倍**);
+    ///   单个 sab 滤镜单独跑也要 0.90 秒/帧,串进链里更贵。
+    /// 同样效果的 C# 实现(与图片页共用 ApplyEdgeSmoothInMemory)4K 单帧 1.19 秒,**多核并行后约 0.1 秒/帧**。
+    /// 放在这里做还顺带白赚一次:本方法本来就要把超分后的 PNG 重编码成 JPG(降临时盘),
+    /// 抗锯齿在同一张位图上做完再写,**不额外增加一次 JPG 重编码**。
+    /// 数据:_qa\encbench(编码/滤镜实测)、_qa\imgpost(滤镜逐个计时)。</summary>
+    public static void ConvertPngToJpg(string pngPath, string jpgPath, float quality, out bool nearBlack, int edgeSmooth)
     {
         // 解码抛出/尺寸非法时默认留 true:异常路径由调用方按缺陷处理,这里偏保守不会漏判。
         nearBlack = true;
@@ -2643,10 +2861,33 @@ public static partial class EngineService
             });
             nearBlack = AlhPro.Core.FrameInspect.IsDefectiveFrame(sums.ToArray(), total, img.Width, img.Height);
         }
+        // 抗锯齿必须在黑帧采样【之后】做:先算缺陷帧再动画面,判定口径不受影响
+        if (edgeSmooth > 0) ApplyEdgeSmoothInMemory(img, edgeSmooth);
         // 视频中间帧 JPG:直接走 System.Drawing(GDI,转 24bppRgb 规避色偏),不走 WinRT——
         // WinRT BitmapEncoder 在后台/非 UI 线程会系统性抛 HRESULT=0x88982F41(视频处理必失败),
         // 导致每次视频处理都刷"WinRT JPG 编码不可用"日志 + 白试一次。GDI 在后台线程可靠、不刷日志。
         SaveJpegViaGdi(img, jpgPath, quality);
+    }
+
+    /// <summary>对【已存在的 JPG】就地做一次「边缘抗锯齿」(写临时文件再替换,绝不半写坏原帧)。
+    /// 用途:帧目录里本来就已经是 JPG 的帧(未超分/未补帧、或引擎直接给 JPG 的路径)也要吃到这一档,
+    /// 否则同一个开关在不同管线分支下效果不一致。</summary>
+    public static void ApplyEdgeSmoothToJpeg(string jpgPath, int strength, float quality)
+    {
+        var tmp = jpgPath + ".aa.jpg";
+        try
+        {
+            using (var bmp = new System.Drawing.Bitmap(jpgPath))
+            {
+                ApplyEdgeSmoothInMemory(bmp, strength);
+                SaveJpegViaGdi(bmp, tmp, quality);
+            }
+            File.Copy(tmp, jpgPath, overwrite: true);
+        }
+        finally
+        {
+            try { File.Delete(tmp); } catch { /* 清理失败忽略 */ }
+        }
     }
 
     /// <summary>
@@ -2750,9 +2991,11 @@ public static partial class EngineService
     }
 
     /// <summary>
-    /// 后处理增强(可叠加,顺序从温和到强烈):
-    /// 减少杂色(中值滤波·保边缘) → 保留细节(温和·保护平坦区) → 清晰(大核局部对比度) → 钝化蒙版(经典 USM·阈值保护) →
-    /// 去模糊(大半径反锐化) → 边缘增强(只强边缘) → 锐化(强·全边缘) → 边缘抗锯齿(只磨边缘阶梯)。
+    /// 后处理增强(可叠加,顺序从温和到强烈;此处顺序 = 下面 passes.Add 的真实执行顺序):
+    /// 去雾 → 减少杂色(中值·按强度混合) → 保留细节(7×7 盒均值反锐化·保护平坦区) → 细节增强(3×3 高通微细节) →
+    /// 清晰(大核反锐化·局部对比度) → 钝化蒙版(4 遍盒模糊反锐化·阈值 8 保护平坦区) → 去模糊(理查森-露西反卷积) →
+    /// 边缘增强(Sobel 幅值 + 拉普拉斯符号偏置) → 锐化(小核反锐化·无阈值·最强) → 边缘抗锯齿(只磨边缘阶梯)。
+    /// 【2026-09 核对】原注释漏了「去雾」与「细节增强」两项、且顺序与实际不符 —— 已按代码改正(仅注释,行为未变)。
     /// </summary>
     /// <param name="path">图片路径(原地处理,按扩展名保存 PNG/JPG)。</param>
     public static void EnhanceImage(string path, int sharpen, int detail,
@@ -2767,20 +3010,20 @@ public static partial class EngineService
         var passes = new System.Collections.Generic.List<(string name, System.Action<System.Drawing.Bitmap> run)>();
         if (dehaze > 0)       passes.Add(("去雾", b => ApplyDehazeInMemory(b, dehaze)));
         if (denoise > 0)      passes.Add(("减少杂色", b => ApplyMedianInMemory(b, denoise)));
-        // 保留细节:CLAHE 风格局部对比度(提升局部细节,不动整体影调)——不是全局锐化
-        if (detail > 0)       passes.Add(("保留细节", b => ApplyLocalContrastInMemory(b, detail)));
-        // 细节增强:高通提取(原图 - 高斯模糊)加强微细节
+        // 保留细节:真 CLAHE(分块直方图均衡 + 限幅)→ 提局部对比但天生不过冲(实测白边 0.000%~0.10%)
+        if (detail > 0)       passes.Add(("保留细节", b => ApplyClaheInMemory(b, detail)));
+        // 细节增强:3×3 高通 + 软门槛(低幅高频=噪声,按比例压掉,只放大成形的微纹理)
         if (detailEnhance > 0) passes.Add(("细节增强", b => ApplyHighFreqInMemory(b, detailEnhance)));
-        // 清晰:大半径 unsharp = 局部对比度/中调对比(Lightroom Clarity 常用)
-        if (clarity > 0)      passes.Add(("清晰", b => ApplyUnsharpInMemory(b, clarity / 100.0 * 1.1, 0, 8)));
-        // 钝化蒙版:标准 USM(阈值保护平坦区,弱噪声不被放大)
+        // 清晰:大半径局部对比,但按【中调权重】缩放 —— 暗部/高光几乎不动(Lightroom Clarity 的本意)
+        if (clarity > 0)      passes.Add(("清晰", b => ApplyClarityInMemory(b, clarity)));
+        // 钝化蒙版:标准 USM(逐通道、阈值保护平坦区,弱噪声不被放大)
         if (usm > 0)          passes.Add(("钝化蒙版", b => ApplyUnsharpInMemory(b, usm / 100.0 * 1.4, 8, 4)));
-        // 去模糊:真·理查森-露西反卷积
+        // 去模糊:真·理查森-露西反卷积(核与迭代都随强度连续变化)
         if (deblur > 0)       passes.Add(("去模糊", b => ApplyDeblurInMemory(b, deblur)));
         // 边缘增强:Sobel 边缘掩膜放缩加到原图(只提边,不糊内部)
         if (edge > 0)         passes.Add(("边缘增强", b => ApplyEdgeEnhanceInMemory(b, edge)));
-        // 锐化:小核 USM(强烈、无阈值,边缘清晰)
-        if (sharpen > 0)      passes.Add(("锐化", b => ApplyUnsharpInMemory(b, sharpen / 100.0 * 2.0, 0, 2)));
+        // 锐化:亮度域高通 + 【边缘加权】(成形边缘多给、平坦区与细纹理少给)→ 不出彩色描边
+        if (sharpen > 0)      passes.Add(("锐化", b => ApplySharpenEdgeInMemory(b, sharpen)));
         if (aa > 0)           passes.Add(("边缘抗锯齿", b => ApplyEdgeSmoothInMemory(b, aa)));
         int total = passes.Count, done = 0;
         using var bmp = new System.Drawing.Bitmap(path);
@@ -2812,69 +3055,267 @@ public static partial class EngineService
         }
     }
 
-    /// <summary>保留细节(CLAHE 风格局部对比度):以像素为中心取局部窗口,把该像素向"局部对比度拉伸"方向调整,
-    /// 提升局部细节而**不改变整体影调/全局对比**。强度 0-100 控制提升幅度。</summary>
-    private static void ApplyLocalContrastInMemory(System.Drawing.Bitmap bmp, int strength)
+    /// <summary>保留细节:真 CLAHE(Contrast Limited Adaptive Histogram Equalization)。
+    /// 做法:在【亮度】上分 8×8 块统计直方图 → 每块按 clip 限幅(超出的计数均摊回全直方图)→
+    /// 得到 256 级映射表 → 像素取周围 4 块映射表的双线性插值 → 亮度变化按比例映射回 RGB(不动色相)。
+    /// 【为什么换成它 —— 2026-09 实测】原实现自称"CLAHE 风格",实际是 7×7 盒均值反锐化,
+    /// 与「锐化/清晰/钝化蒙版/细节增强」是同一个算子(改动图两两相关 0.83~0.98),叠起来只叠白边。
+    /// 换成真 CLAHE 之后:①它与锐化族的改动图相关 ≈ **−0.02~−0.05(完全正交)**,是六个档里
+    /// 唯一"提局部对比但天生不出白边"的(实测 over% 0.000~0.101,而同强度锐化族是 0.235~1.63);
+    /// ②边缘几乎无损(压缩/Real-ESRGAN 基底 edgePSNR 23.19→23.34,干净 waifu2x 38.37→37.63)。
+    /// 代价:它提的是"局部明暗层次"而不是拉普拉斯方差,所以 detail 指标基本不动(99%~101%)——
+    /// 指标看不见它,得看图。强度 ×0.2 映射(实测不降压时 25 档就 −4.6dB,过猛)。
+    /// 数据:_qa\imgpost\imgpost_sharpen.txt / imgpost_sharpen_overlap.txt。</summary>
+    private static void ApplyClaheInMemory(System.Drawing.Bitmap bmp, int strength)
     {
         int w = bmp.Width, h = bmp.Height;
-        if (w < 3 || h < 3) return;
-        double amount = strength / 100.0;
-        int R = 3;   // 局部窗口半径(3×3~7×7 邻域)
+        const int tiles = 8;
+        if (w < tiles * 2 || h < tiles * 2) return;
+        double amount = Math.Clamp(strength / 100.0 * 0.2, 0.0, 1.0);
+        const double clipFactor = 2.0;
         var rect = new System.Drawing.Rectangle(0, 0, w, h);
         var data = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadWrite,
             System.Drawing.Imaging.PixelFormat.Format32bppArgb);
         try
         {
-            int stride = data.Stride; int n = w * h;
-            var rc = new byte[n]; var gc = new byte[n]; var bc = new byte[n];
+            int stride = data.Stride;
+            int n = w * h;
+            var r = new byte[n];
+            var g = new byte[n];
+            var b = new byte[n];
             unsafe
             {
                 byte* p0 = (byte*)data.Scan0.ToPointer();
-                for (int y = 0; y < h; y++) { byte* row = p0 + y * stride; int idx = y * w;
-                    for (int x = 0; x < w; x++) { int i = x * 4; bc[idx + x] = row[i]; gc[idx + x] = row[i + 1]; rc[idx + x] = row[i + 2]; } }
+                for (int y = 0; y < h; y++)
+                {
+                    byte* row = p0 + y * stride;
+                    int idx = y * w;
+                    for (int x = 0; x < w; x++)
+                    {
+                        int i = x * 4;
+                        b[idx + x] = row[i];
+                        g[idx + x] = row[i + 1];
+                        r[idx + x] = row[i + 2];
+                    }
+                }
             }
-            LocalContrastChannel(rc, w, h, R, amount);
-            LocalContrastChannel(gc, w, h, R, amount);
-            LocalContrastChannel(bc, w, h, R, amount);
+            // ① 亮度
+            var lum = new byte[n];
+            for (int i = 0; i < n; i++)
+                lum[i] = (byte)Math.Clamp((int)Math.Round(0.299 * r[i] + 0.587 * g[i] + 0.114 * b[i]), 0, 255);
+            // ② 每块直方图 → 限幅 → 映射表
+            int tw = (w + tiles - 1) / tiles, th = (h + tiles - 1) / tiles;
+            var lut = new byte[tiles * tiles][];
+            int clip = Math.Max(1, (int)(clipFactor * (tw * th) / 256.0));
+            for (int ty = 0; ty < tiles; ty++)
+            {
+                for (int tx = 0; tx < tiles; tx++)
+                {
+                    int x0 = tx * tw, x1 = Math.Min(w, x0 + tw);
+                    int y0 = ty * th, y1 = Math.Min(h, y0 + th);
+                    var hist = new int[256];
+                    int cnt = 0;
+                    for (int y = y0; y < y1; y++)
+                        for (int x = x0; x < x1; x++) { hist[lum[y * w + x]]++; cnt++; }
+                    int excess = 0;
+                    for (int i = 0; i < 256; i++) if (hist[i] > clip) { excess += hist[i] - clip; hist[i] = clip; }
+                    if (cnt > 0 && excess > 0)
+                    {
+                        int share = excess / 256, rest = excess % 256;
+                        for (int i = 0; i < 256; i++) hist[i] += share;
+                        for (int i = 0; i < rest; i++) hist[i]++;
+                    }
+                    var map = new byte[256];
+                    int acc = 0;
+                    for (int i = 0; i < 256; i++)
+                    {
+                        acc += hist[i];
+                        map[i] = (byte)Math.Clamp((int)Math.Round(acc * 255.0 / Math.Max(1, cnt)), 0, 255);
+                    }
+                    lut[ty * tiles + tx] = map;
+                }
+            }
+            // ③ 双线性插值取映射值 → 按比例映射回 RGB → 与原图按强度混合
+            for (int y = 0; y < h; y++)
+            {
+                double fy = (y - th / 2.0) / th;
+                int ty0 = (int)Math.Floor(fy);
+                double wy = fy - ty0;
+                int tyA = Math.Clamp(ty0, 0, tiles - 1), tyB = Math.Clamp(ty0 + 1, 0, tiles - 1);
+                for (int x = 0; x < w; x++)
+                {
+                    int i = y * w + x;
+                    int v = lum[i];
+                    double fx = (x - tw / 2.0) / tw;
+                    int tx0 = (int)Math.Floor(fx);
+                    double wx = fx - tx0;
+                    int txA = Math.Clamp(tx0, 0, tiles - 1), txB = Math.Clamp(tx0 + 1, 0, tiles - 1);
+                    double v00 = lut[tyA * tiles + txA][v], v01 = lut[tyA * tiles + txB][v];
+                    double v10 = lut[tyB * tiles + txA][v], v11 = lut[tyB * tiles + txB][v];
+                    double newY = (v00 * (1 - wx) + v01 * wx) * (1 - wy) + (v10 * (1 - wx) + v11 * wx) * wy;
+                    double scale = newY / Math.Max(1.0, v);
+                    int nr = (int)Math.Round(r[i] * scale);
+                    int ng = (int)Math.Round(g[i] * scale);
+                    int nb = (int)Math.Round(b[i] * scale);
+                    r[i] = (byte)Math.Clamp((int)Math.Round(r[i] + (nr - r[i]) * amount), 0, 255);
+                    g[i] = (byte)Math.Clamp((int)Math.Round(g[i] + (ng - g[i]) * amount), 0, 255);
+                    b[i] = (byte)Math.Clamp((int)Math.Round(b[i] + (nb - b[i]) * amount), 0, 255);
+                }
+            }
             unsafe
             {
                 byte* p0 = (byte*)data.Scan0.ToPointer();
-                for (int y = 0; y < h; y++) { byte* row = p0 + y * stride; int idx = y * w;
-                    for (int x = 0; x < w; x++) { int i = x * 4; row[i] = bc[idx + x]; row[i + 1] = gc[idx + x]; row[i + 2] = rc[idx + x]; } }
+                for (int y = 0; y < h; y++)
+                {
+                    byte* row = p0 + y * stride;
+                    int idx = y * w;
+                    for (int x = 0; x < w; x++)
+                    {
+                        int i = x * 4;
+                        row[i] = b[idx + x];
+                        row[i + 1] = g[idx + x];
+                        row[i + 2] = r[idx + x];
+                    }
+                }
             }
         }
         finally { bmp.UnlockBits(data); }
     }
 
-    /// <summary>单通道局部对比度增强:像素新值 = 原值 + (原值 - 局部均值) × k(放大局部偏离,保留细节)。
-    /// 局部均值用 (2R+1)² 均值近似;k 随强度,最大约 +0.6。</summary>
-    private static void LocalContrastChannel(byte[] src, int w, int h, int R, double amount)
+    /// <summary>清晰:大半径局部对比(8 遍盒模糊 ≈ 半径 7),但按【中调权重】缩放 ——
+    /// 权重 = 1 − (|亮度−128|/140)²,中调满给、亮部/暗部几乎不动。这是 Lightroom Clarity 的本意:
+    /// 提"通透感"而不是"锐度",所以高光不会像全图锐化那样被顶出白边。
+    /// 【与「锐化」的区别】锐化是亮度域 + 边缘加权的小核高通;清晰是大核 + 中调加权的局部对比,
+    /// 两者改动图相关 0.85(旧实现两者是 0.98)。增益实测定标 0.5(1.6 时干净基底 25 档就 −6.6dB)。</summary>
+    private static void ApplyClarityInMemory(System.Drawing.Bitmap bmp, int strength)
     {
-        var orig = (byte[])src.Clone();
-        double k = amount * 0.6;
-        for (int y = 0; y < h; y++)
+        int w = bmp.Width, h = bmp.Height;
+        if (w < 3 || h < 3) return;
+        double amt = Math.Clamp(strength / 100.0, 0.0, 1.0);
+        var rect = new System.Drawing.Rectangle(0, 0, w, h);
+        var data = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadWrite,
+            System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        try
         {
-            for (int x = 0; x < w; x++)
+            int stride = data.Stride;
+            int n = w * h;
+            var r = new byte[n]; var g = new byte[n]; var b = new byte[n];
+            unsafe
             {
-                long sum = 0; int cnt = 0;
-                for (int dy = -R; dy <= R; dy++)
+                byte* p0 = (byte*)data.Scan0.ToPointer();
+                for (int y = 0; y < h; y++)
                 {
-                    int yy = Math.Clamp(y + dy, 0, h - 1) * w;
-                    for (int dx = -R; dx <= R; dx++)
-                    {
-                        int xx = Math.Clamp(x + dx, 0, w - 1);
-                        sum += orig[yy + xx]; cnt++;
-                    }
+                    byte* row = p0 + y * stride; int idx = y * w;
+                    for (int x = 0; x < w; x++)
+                    { int i = x * 4; b[idx + x] = row[i]; g[idx + x] = row[i + 1]; r[idx + x] = row[i + 2]; }
                 }
-                int center = orig[y * w + x];
-                double localAvg = (double)sum / cnt;
-                int v = (int)Math.Round(center + (center - localAvg) * k);
-                src[y * w + x] = (byte)Math.Clamp(v, 0, 255);
+            }
+            var br = (byte[])r.Clone(); var bg2 = (byte[])g.Clone(); var bb = (byte[])b.Clone();
+            var tmp = new byte[n];
+            for (int p = 0; p < 8; p++)
+            {
+                BoxBlur(br, tmp, w, h);
+                BoxBlur(bg2, tmp, w, h);
+                BoxBlur(bb, tmp, w, h);
+            }
+            for (int i = 0; i < n; i++)
+            {
+                double y0 = 0.299 * r[i] + 0.587 * g[i] + 0.114 * b[i];
+                double t = Math.Abs(y0 - 128.0) / 140.0;
+                double wgt = Math.Max(0.0, 1.0 - t * t);
+                double k = amt * 0.5 * wgt;
+                r[i] = (byte)Math.Clamp((int)Math.Round(r[i] + k * (r[i] - br[i])), 0, 255);
+                g[i] = (byte)Math.Clamp((int)Math.Round(g[i] + k * (g[i] - bg2[i])), 0, 255);
+                b[i] = (byte)Math.Clamp((int)Math.Round(b[i] + k * (b[i] - bb[i])), 0, 255);
+            }
+            unsafe
+            {
+                byte* p0 = (byte*)data.Scan0.ToPointer();
+                for (int y = 0; y < h; y++)
+                {
+                    byte* row = p0 + y * stride; int idx = y * w;
+                    for (int x = 0; x < w; x++)
+                    { int i = x * 4; row[i] = b[idx + x]; row[i + 1] = g[idx + x]; row[i + 2] = r[idx + x]; }
+                }
             }
         }
+        finally { bmp.UnlockBits(data); }
     }
 
-    /// <summary>细节增强(高通提取):把"原图 - 高斯模糊"(= 高频细节)按强度加回原图。比 unsharp 更细、更贴微细节。</summary>
+    /// <summary>锐化:在【亮度】上做小核高通(2 遍盒模糊 ≈ 半径 2),并按【局部梯度】加权 ——
+    /// 强边缘多给、平坦区与细纹理少给(权重 0.25 + 0.75×梯度归一)。
+    /// 【为什么不用原来的写法】原先锐化是"逐通道、全图、无阈值"的 USM:①逐通道处理会在彩色边缘上
+    /// 出彩色描边;②全图无差别增强会把噪点和纹理一起提;③它的改动图与「钝化蒙版」相关 0.98,等于同一个旋钮。
+    /// 现在改成亮度域 + 边缘加权:实测同强度下白边更少(干净 waifu2x 基底强度 25 时 over% 0.002 vs 钝化蒙版 0.009)、
+    /// 与钝化蒙版的相关从 0.98 降到 0.94,与「细节增强」0.92,且不会出彩色描边。</summary>
+    private static void ApplySharpenEdgeInMemory(System.Drawing.Bitmap bmp, int strength)
+    {
+        int w = bmp.Width, h = bmp.Height;
+        if (w < 4 || h < 4) return;
+        double amt = Math.Clamp(strength / 100.0, 0.0, 1.0);
+        var rect = new System.Drawing.Rectangle(0, 0, w, h);
+        var data = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadWrite,
+            System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        try
+        {
+            int stride = data.Stride;
+            int n = w * h;
+            var r = new byte[n]; var g = new byte[n]; var b = new byte[n];
+            unsafe
+            {
+                byte* p0 = (byte*)data.Scan0.ToPointer();
+                for (int y = 0; y < h; y++)
+                {
+                    byte* row = p0 + y * stride; int idx = y * w;
+                    for (int x = 0; x < w; x++)
+                    { int i = x * 4; b[idx + x] = row[i]; g[idx + x] = row[i + 1]; r[idx + x] = row[i + 2]; }
+                }
+            }
+            var lum = new byte[n];
+            for (int i = 0; i < n; i++)
+                lum[i] = (byte)Math.Clamp((int)Math.Round(0.299 * r[i] + 0.587 * g[i] + 0.114 * b[i]), 0, 255);
+            var blur = (byte[])lum.Clone();
+            var tmp = new byte[n];
+            BoxBlur(blur, tmp, w, h);
+            BoxBlur(blur, tmp, w, h);
+            for (int y = 1; y < h - 1; y++)
+            {
+                int row = y * w;
+                for (int x = 1; x < w - 1; x++)
+                {
+                    int i = row + x;
+                    int gx = (blur[i - w + 1] + 2 * blur[i + 1] + blur[i + w + 1])
+                           - (blur[i - w - 1] + 2 * blur[i - 1] + blur[i + w - 1]);
+                    int gy = (blur[i + w - 1] + 2 * blur[i + w] + blur[i + w + 1])
+                           - (blur[i - w - 1] + 2 * blur[i - w] + blur[i - w + 1]);
+                    double mag = Math.Sqrt((double)gx * gx + (double)gy * gy) / 4.0;
+                    double wgt = Math.Clamp(mag / 48.0, 0.0, 1.0);
+                    double add = amt * 1.5 * (lum[i] - blur[i]) * (0.25 + 0.75 * wgt);
+                    r[i] = (byte)Math.Clamp((int)Math.Round(r[i] + add), 0, 255);
+                    g[i] = (byte)Math.Clamp((int)Math.Round(g[i] + add), 0, 255);
+                    b[i] = (byte)Math.Clamp((int)Math.Round(b[i] + add), 0, 255);
+                }
+            }
+            unsafe
+            {
+                byte* p0 = (byte*)data.Scan0.ToPointer();
+                for (int y = 0; y < h; y++)
+                {
+                    byte* row = p0 + y * stride; int idx = y * w;
+                    for (int x = 0; x < w; x++)
+                    { int i = x * 4; row[i] = b[idx + x]; row[i + 1] = g[idx + x]; row[i + 2] = r[idx + x]; }
+                }
+            }
+        }
+        finally { bmp.UnlockBits(data); }
+    }
+
+    /// <summary>细节增强(高通提取 + 软门槛):把"原图 − 3×3 盒均值"按强度加回原图,
+    /// 但幅值小于门槛(4 级)的部分按比例压掉 —— 低幅高频就是噪声,只有成形的微纹理才被放大。
+    /// 【为什么加门槛】原实现是无门槛高通,而半径 1 的高通对噪点最敏感(UI 却写着"温和,不易放大噪点",说反了)。
+    /// 加软门槛后同强度下白边过冲更低(压缩/Real-ESRGAN 基底强度 50:over% 0.235 而对等的锐化为 0.315,
+    /// PSNR −1.85dB 对 −2.03dB),而且它是六个锐化档里同等清晰度下代价最小的。
+    /// 【与「锐化」的区别】这个是全图高通 + 幅值门槛;锐化是亮度域 + 空间(梯度)加权。</summary>
     private static void ApplyHighFreqInMemory(System.Drawing.Bitmap bmp, int strength)
     {
         int w = bmp.Width, h = bmp.Height;
@@ -2906,9 +3347,11 @@ public static partial class EngineService
         finally { bmp.UnlockBits(data); }
     }
 
-    /// <summary>单通道高通增强:new = orig + (orig - blur(3×3均值)) × amount。</summary>
+    /// <summary>单通道高通增强 + 软门槛:new = orig + (orig − 3×3 盒均值) × amount × gate,
+    /// gate = |hp| ≤ 4 时为 0,否则 (|hp|−4)/|hp| —— 低幅高频(噪声)被压掉,成形的微纹理照常放大。</summary>
     private static void HighFreqChannel(byte[] src, int w, int h, double amount)
     {
+        const double thr = 4.0;
         var orig = (byte[])src.Clone();
         for (int y = 1; y < h - 1; y++)
         {
@@ -2921,67 +3364,108 @@ public static partial class EngineService
                     int yy = row + dy * w;
                     for (int dx = -1; dx <= 1; dx++) sum += orig[yy + x + dx];
                 }
-                int blur = sum / 9;
-                int edge = orig[row + x] - blur;   // 高频
-                int v = (int)Math.Round(orig[row + x] + edge * amount);
+                int c = orig[row + x];
+                double hp = c - sum / 9.0;          // 高频(3×3 盒均值为低频)
+                double a = Math.Abs(hp);
+                double gate = a <= thr ? 0.0 : (a - thr) / a;   // 软门槛:噪声不放大
+                int v = (int)Math.Round(c + amount * hp * gate);
                 src[row + x] = (byte)Math.Clamp(v, 0, 255);
             }
         }
     }
 
-    /// <summary>边缘增强(Sobel 掩膜):计算梯度幅值,把边缘处像素沿梯度方向放大,边缘锐利但内部平坦区不动。</summary>
+    /// <summary>边缘增强:【对称】拉普拉斯锐化 + 边缘加权(2026-09-12 重做机理,档位保留)。
+    /// 算法:`v = c + (强度/100) × 0.5 × 归一化拉普拉斯 × 边缘权重`。
+    /// 【为什么重做】原实现的两项都"只加正值"(梯度幅值×0.25 + 拉普拉斯**符号**×固定偏置),于是只把边缘
+    /// 往亮的方向推 —— 实测**只出白边不出暗边**(over 0.83%→17.78%@50,under 始终 ≈0.05%),是十档里最差的一档。
+    /// 换成真正的拉普拉斯(8×中心 − 邻域和,再 /8 归一):暗侧为负、亮侧为正,**天然对称**;再按索伯梯度
+    /// (在模糊后的亮度上算,避免被噪声带偏)加权 —— 只动成形的边缘,平坦区与噪点不动。
+    /// 【实测(四组基底,出厂代码)】强度 100:
+    ///   干净 waifu2x 基底:PSNR 损失 −10.99dB → **−3.65dB**,白边像素 0.027% → **0.002%**,detail 156% → **172%**;
+    ///   干净 Real-ESRGAN 基底:−2.91dB → **−1.53dB**,强边缘白边 13.18% → **4.14%**,detail 138% → **196%**;
+    /// 且 over/under 由"单边"(0.464%/0.040%)变成**平衡**(0.160%/0.222%)—— 这正是本轮要修的东西。
+    /// 数据:_qa\imgpost\imgpost_edgedeblur.txt。</summary>
     private static void ApplyEdgeEnhanceInMemory(System.Drawing.Bitmap bmp, int strength)
     {
         int w = bmp.Width, h = bmp.Height;
-        if (w < 3 || h < 3) return;
-        double amount = strength / 100.0 * 0.8;
+        if (w < 4 || h < 4) return;
+        double amt = Math.Clamp(strength / 100.0, 0.0, 1.0);
+        const double kGain = 0.5;
         var rect = new System.Drawing.Rectangle(0, 0, w, h);
         var data = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadWrite,
             System.Drawing.Imaging.PixelFormat.Format32bppArgb);
         try
         {
-            int stride = data.Stride; int n = w * h;
-            var rc = new byte[n]; var gc = new byte[n]; var bc = new byte[n];
+            int stride = data.Stride;
+            int n = w * h;
+            var r = new byte[n];
+            var g = new byte[n];
+            var b = new byte[n];
             unsafe
             {
                 byte* p0 = (byte*)data.Scan0.ToPointer();
-                for (int y = 0; y < h; y++) { byte* row = p0 + y * stride; int idx = y * w;
-                    for (int x = 0; x < w; x++) { int i = x * 4; bc[idx + x] = row[i]; gc[idx + x] = row[i + 1]; rc[idx + x] = row[i + 2]; } }
+                for (int y = 0; y < h; y++)
+                {
+                    byte* row = p0 + y * stride;
+                    int idx = y * w;
+                    for (int x = 0; x < w; x++)
+                    {
+                        int i = x * 4;
+                        b[idx + x] = row[i];
+                        g[idx + x] = row[i + 1];
+                        r[idx + x] = row[i + 2];
+                    }
+                }
             }
-            EdgeEnhanceChannel(rc, w, h, amount);
-            EdgeEnhanceChannel(gc, w, h, amount);
-            EdgeEnhanceChannel(bc, w, h, amount);
+            // 边缘权重用"模糊后的亮度"算(与「锐化」同一做法:避免噪声把权重带满)
+            var lum = new byte[n];
+            for (int i = 0; i < n; i++)
+                lum[i] = (byte)Math.Clamp((int)Math.Round(0.299 * r[i] + 0.587 * g[i] + 0.114 * b[i]), 0, 255);
+            var blur = (byte[])lum.Clone();
+            var tmp = new byte[n];
+            BoxBlur(blur, tmp, w, h);
+            foreach (var ch in new[] { r, g, b })
+            {
+                var orig = (byte[])ch.Clone();
+                for (int y = 1; y < h - 1; y++)
+                {
+                    int row = y * w;
+                    for (int x = 1; x < w - 1; x++)
+                    {
+                        int i = row + x;
+                        int c = orig[i];
+                        int nb = orig[i - w - 1] + orig[i - w] + orig[i - w + 1]
+                               + orig[i - 1] + orig[i + 1]
+                               + orig[i + w - 1] + orig[i + w] + orig[i + w + 1];
+                        double lap = (8.0 * c - nb) / 8.0;                 // 对称:暗侧负、亮侧正
+                        int gx = (blur[i - w + 1] + 2 * blur[i + 1] + blur[i + w + 1])
+                               - (blur[i - w - 1] + 2 * blur[i - 1] + blur[i + w - 1]);
+                        int gy = (blur[i + w - 1] + 2 * blur[i + w] + blur[i + w + 1])
+                               - (blur[i - w - 1] + 2 * blur[i - w] + blur[i - w + 1]);
+                        double mag = Math.Sqrt((double)gx * gx + (double)gy * gy) / 4.0;
+                        double wgt = Math.Clamp(mag / 48.0, 0.0, 1.0);
+                        ch[i] = (byte)Math.Clamp((int)Math.Round(c + amt * kGain * lap * wgt), 0, 255);
+                    }
+                }
+            }
             unsafe
             {
                 byte* p0 = (byte*)data.Scan0.ToPointer();
-                for (int y = 0; y < h; y++) { byte* row = p0 + y * stride; int idx = y * w;
-                    for (int x = 0; x < w; x++) { int i = x * 4; row[i] = bc[idx + x]; row[i + 1] = gc[idx + x]; row[i + 2] = rc[idx + x]; } }
+                for (int y = 0; y < h; y++)
+                {
+                    byte* row = p0 + y * stride;
+                    int idx = y * w;
+                    for (int x = 0; x < w; x++)
+                    {
+                        int i = x * 4;
+                        row[i] = b[idx + x];
+                        row[i + 1] = g[idx + x];
+                        row[i + 2] = r[idx + x];
+                    }
+                }
             }
         }
         finally { bmp.UnlockBits(data); }
-    }
-
-    /// <summary>单通道边缘增强:Sobel 梯度 gx/gy → 梯度幅值 m;沿梯度方向加一次差分以锐化边缘。</summary>
-    private static void EdgeEnhanceChannel(byte[] src, int w, int h, double amount)
-    {
-        var orig = (byte[])src.Clone();
-        for (int y = 1; y < h - 1; y++)
-        {
-            int row = y * w;
-            for (int x = 1; x < w - 1; x++)
-            {
-                int a = orig[(y - 1) * w + (x - 1)], b2 = orig[(y - 1) * w + x], c = orig[(y - 1) * w + (x + 1)];
-                int d = orig[row + (x - 1)], e = orig[row + x], f = orig[row + (x + 1)];
-                int g = orig[(y + 1) * w + (x - 1)], h2 = orig[(y + 1) * w + x], i = orig[(y + 1) * w + (x + 1)];
-                int gx = (c + 2 * f + i) - (a + 2 * d + g);
-                int gy = (g + 2 * h2 + i) - (a + 2 * b2 + c);
-                int mag = (int)Math.Abs(gx) + (int)Math.Abs(gy);   // 梯度幅值(粗)
-                // 沿梯度方向二阶梯微分强化边缘
-                int laplace = (a + b2 + c + d + f + g + h2 + i) - 8 * e;
-                int v = (int)Math.Round(e + mag * amount * 0.25 + Math.Sign(laplace) * amount * 8);
-                src[row + x] = (byte)Math.Clamp(v, 0, 255);
-            }
-        }
     }
 
     /// <summary>在内存 Bitmap 上执行一轮 unsharp 增强(不读盘不存盘,多轮增强共用一张图)。passes = box blur 次数。</summary>
@@ -3111,8 +3595,14 @@ public static partial class EngineService
         Array.Copy(src, tmp, src.Length);
     }
 
-    /// <summary>去雾:标准【暗通道先验(何恺明 DCP)】——估计透射率 + 大气光,反演雾图,比简单直方图拉伸真正有效。
-    /// 对"灰蒙/泛白/雾霾"图显著去除;强度 0-100 控制还原程度(与原图混合)。</summary>
+    /// <summary>去雾:标准【暗通道先验(何恺明 DCP)】——估计透射率 + 大气光,反演雾图。
+    /// 对"灰蒙/泛白/雾霾"图确实有效(实测人工雾图 PSNR 12.97→21.68dB、edgeBad 83%→24%);
+    /// 但对**本来没有雾**的图任何强度都是纯亏(强度 10 已经 PSNR −11dB,强度 30 起 37% 像素被截断)。
+    /// 【有效区间只有 40~52,峰值 48】<36 几乎无效、>56 开始毁图(56 档 14% 像素截断、70 档 61%)。
+    /// 强度 0-100 映射为 amount(与原图混合比例),上限 1.0 —— 见 _qa\imgpost\measure2.py --haze。
+    /// 【2026-09 核对】原注释两处与实现不符(仅注释改正,行为未变):①暗通道最小值滤波实际是
+    /// 半径 2 跑 6 遍 = 有效半径 12(25×25 窗口),不是 15×15;②透射率实际用固定常数 229.5 归一,
+    /// **大气光 A 并没有进入 t 的计算**(A 只在后面减光幕时用到)。</summary>
     private static void ApplyDehazeInMemory(System.Drawing.Bitmap bmp, int strength)
     {
         int w = bmp.Width, h = bmp.Height;
@@ -3134,7 +3624,7 @@ public static partial class EngineService
                     for (int x = 0; x < w; x++) { int i = x * 4; b[idx + x] = row[i]; g[idx + x] = row[i + 1]; r[idx + x] = row[i + 2]; }
                 }
             }
-            // ① 暗通道:每像素取 R/G/B 最小值,再做局部(15×15)最小值滤波(近似 DCP)
+            // ① 暗通道:每像素取 R/G/B 最小值,再做局部最小值滤波(半径 2 × 6 遍 → 有效窗口 25×25)
             var dark = new byte[n];
             for (int i = 0; i < n; i++)
                 dark[i] = (byte)Math.Min(r[i], Math.Min(g[i], b[i]));
@@ -3149,14 +3639,21 @@ public static partial class EngineService
             double aR = 0, aG = 0, aB = 0; int cnt = Math.Max(1, n / 1000);
             for (int k = 0; k < cnt; k++) { int i = idxByLuma[k]; aR += r[i]; aG += g[i]; aB += b[i]; }
             aR /= cnt; aG /= cnt; aB /= cnt;
-            // ③ 透射率 t = 1 - ω·dark/A(ω=0.95 保留一点雾);加下限防除零/过饱和
+            // ③ 透射率 t = 1 − ω·dark/229.5(固定归一常数,没用上面估的大气光 A —— 与教科书 DCP 的
+            //    t = 1 − ω·dark/A 不同;A 只在下一步减光幕时参与)。加下限防除零/过饱和。
             const double omega = 0.95;
-            double amount = strength / 100.0;
+            // 【2026-09 实测重定标】强度映射到 0~0.55,不再是 0~1。
+            // 原映射 0~100 → amount 0~1,但实测"能用"的只有 amount 0.40~0.52(峰值 0.48):
+            //   · amount < 0.36(即强度 <36)几乎无效;
+            //   · amount ≥ 0.56(即强度 ≥56)开始截断:56 档 14% 像素被截断、70 档 61%、100 档 100%。
+            // 也就是说原滑杆 8/9 的行程要么没用、要么在毁图。压到 0.55 之后整段行程单调有效
+            // (峰值落在强度 ≈87),代价是最浓的雾不如原来"够力"——但原来那个"够力"是拿毁图换的。
+            // 数据:_qa\imgpost\measure2.py --haze(人工雾图,最浓 0.75A)。
+            double amount = strength / 100.0 * 0.55;
             double tMin = Math.Max(0.05, 1.0 - amount * 0.4);   // 强度越大,可去雾越深(透射率下限越低)
             for (int i = 0; i < n; i++)
             {
-                double darkNorm = dark[i] / 255.0;
-                // 归一化透射率(按大气光归一)
+                // 归一化透射率(按固定常数归一)
                 double t = 1.0 - omega * Math.Min(1.0, dark[i] / (255.0 * 0.9 + 1.0));
                 t = Math.Max(tMin, Math.Min(1.0, t));
                 int re = (int)((r[i] - amount * aR) / t);
@@ -3214,11 +3711,20 @@ public static partial class EngineService
         }
     }
 
-    /// <summary>减少杂色:3×3 中值滤波(保边缘去噪点),强度 51+ 时再做一遍(更彻底)。</summary>
+    /// <summary>减少杂色:3×3 中值滤波(保边缘去噪点),**按强度线性混合** —— 0 = 原图,100 = 两遍中值的完整效果。
+    /// 【为什么从"开关"改成"连续"(2026-09 逐档实测)】原实现是 `strength > 50` 时再跑一遍中值,
+    /// 于是 101 个滑块位置只有 **2 个不同结果**(实测强度 10/30/50 三档输出逐像素完全相同,70/90/100 也相同),
+    /// 用户想"少降一点"做不到 —— 一开就是满力。而全力的 3×3 中值对 **1 像素宽的细结构**
+    /// (发丝/细描边)是 100% 抹掉(1080p 细线靶标实测保留率 0.0%,2px/3px 的线则完全不受影响)。
+    /// 但中值本身不该扔:四组真实基底上它都是净收益(真实素材 PSNR +0.02~+0.42dB、带颗粒素材最高 +7.86dB),
+    /// 比双边/Sigma 等候选都更会去颗粒。所以要修的是**力度不连续**,不是算子。
+    /// 新映射:细结构保留率随强度线性(25→75%、50→50%、75→25%、100→0%),强度 100 与旧的 51+ 档逐像素一致。
+    /// 数据与对照图:_qa\imgpost\(measure.py / measure2.py / measure4.py / measure5.py)。</summary>
     private static void ApplyMedianInMemory(System.Drawing.Bitmap bmp, int strength)
     {
         int w = bmp.Width, h = bmp.Height;
         if (w < 3 || h < 3) return;
+        double amount = Math.Clamp(strength / 100.0, 0.0, 1.0);
         var rect = new System.Drawing.Rectangle(0, 0, w, h);
         var data = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadWrite,
             System.Drawing.Imaging.PixelFormat.Format32bppArgb);
@@ -3245,14 +3751,21 @@ public static partial class EngineService
                     }
                 }
             }
-            MedianChannel(r, w, h);
-            MedianChannel(g, w, h);
-            MedianChannel(b, w, h);
-            if (strength > 50)
+            // 目标 = 两遍中值(旧的"彻底"档);再与原图按强度线性混合 → 力度连续可调
+            var tr = (byte[])r.Clone();
+            var tg = (byte[])g.Clone();
+            var tb = (byte[])b.Clone();
+            MedianChannel(tr, w, h);
+            MedianChannel(tr, w, h);
+            MedianChannel(tg, w, h);
+            MedianChannel(tg, w, h);
+            MedianChannel(tb, w, h);
+            MedianChannel(tb, w, h);
+            for (int i = 0; i < n; i++)
             {
-                MedianChannel(r, w, h);
-                MedianChannel(g, w, h);
-                MedianChannel(b, w, h);
+                r[i] = (byte)Math.Clamp((int)Math.Round(r[i] + (tr[i] - r[i]) * amount), 0, 255);
+                g[i] = (byte)Math.Clamp((int)Math.Round(g[i] + (tg[i] - g[i]) * amount), 0, 255);
+                b[i] = (byte)Math.Clamp((int)Math.Round(b[i] + (tb[i] - b[i]) * amount), 0, 255);
             }
             unsafe
             {
@@ -3314,7 +3827,12 @@ public static partial class EngineService
 
     /// <summary>真·去模糊:理查森-露西(Richardson-Lucy)反卷积。对运动/散焦/高斯类模糊有真实复原效果,
     /// 区别于 unsharp 反锐化(后者只是"增强边缘",对真模糊无效)。用高斯核 + 若干次迭代(强度决定迭代数)。
-    /// 为控制耗时/噪点,迭代次数随强度线性(3~10 次),并在最后与"轻微锐化"补一下边缘。</summary>
+    /// 迭代次数随强度线性(3~10 次);核半径 1、强度 ≥60 时改 2(**60 是一条隐藏台阶**,效果不连续)。
+    /// 【2026-09 核对】原注释末尾"并在最后与轻微锐化补一下边缘"在函数体里**不存在**(仅注释改正,行为未变)——
+    /// 这才是交接说明里想找的那处注释与实现不符(「减少杂色」那条 51+ 中值其实是有的)。
+    /// 另:>900 万像素时本函数会**静默退化成 unsharp**(见下方 px 判断),UI 未披露这一点。
+    /// 实测(压缩/Real-ESRGAN 基底,强度 10):PSNR 34.99→33.41(−1.58dB)、强边缘过冲 0.83%→9.22%,
+    /// 而超分后的图本身并不模糊 —— 也就是说在"先超分再做后处理"的既有流程里它基本是纯亏。</summary>
     private static void ApplyDeblurInMemory(System.Drawing.Bitmap bmp, int strength)
     {
         int w = bmp.Width, h = bmp.Height;
@@ -3322,14 +3840,18 @@ public static partial class EngineService
         // 【超大图保护】RL 反卷积迭代多次+3通道,内存/耗时随像素数线性增长。
         // >400 万像素(约2000×2000)时降低迭代,>900 万像素(约4K)时改用简单 unsharp 兜底(避免内存峰值/超长耗时)。
         long px = (long)w * h;
-        int iter = Math.Max(3, Math.Min(10, (int)Math.Round(strength / 100.0 * 9) + 2));
+        // 【2026-09 改】迭代从 3~10 降到 2~6:配合下面的"过冲钳制"后,多迭代只增加振铃与耗时,
+        // 实测 6 次已经拿到全部有效复原(图越不糊,多迭代越是白烧时间 —— 1080p 一帧 3.75 秒主要花在这)。
+        int iter = Math.Max(2, Math.Min(6, (int)Math.Round(2 + strength / 100.0 * 4)));
         if (px > 9_000_000) { ApplyUnsharpInMemory(bmp, strength / 100.0 * 1.5, 2, 6); return; }
-        if (px > 4_000_000) iter = Math.Max(2, iter - 3);   // 大图收敛快,减迭代防卡太久
-        int kernelR = strength >= 60 ? 2 : 1;   // 强度大 → 更大模糊核(对应更严重的模糊)
-        // 预计算归一化一维高斯核(对称可分离):RL 用可分离卷积大幅提速(二维→两次一维)
+        if (px > 4_000_000) iter = Math.Max(2, iter - 2);   // 大图收敛快,减迭代防卡太久
+        // 【2026-09 改】核半径原来是"强度 ≥60 时从 1 跳到 2"—— 效果在 60 处有台阶(实测 50→70 档
+        // detail 反而掉、PSNR 也掉)。改成【连续 sigma】:支撑半径固定 3,σ = 0.6 + 强度/100×1.6,
+        // 于是强度是单调的,不再有隐藏的跳变点。
+        const int kernelR = 3;
         int ksz = kernelR * 2 + 1;
         var k1d = new double[ksz];
-        double ksum = 0; double sigma = kernelR * 0.8 + 0.6;
+        double ksum = 0; double sigma = 0.6 + strength / 100.0 * 1.6;
         for (int dx = -kernelR; dx <= kernelR; dx++)
         {
             double v = Math.Exp(-(dx * dx) / (2 * sigma * sigma));
@@ -3352,9 +3874,17 @@ public static partial class EngineService
             }
             // 归一化到 0..1 双精度数组做 RL
             double[] R = ToDouble(r), G = ToDouble(g), B = ToDouble(b);
-            R = RichardsonLucy(R, w, h, k1d, kernelR, iter);
-            G = RichardsonLucy(G, w, h, k1d, kernelR, iter);
-            B = RichardsonLucy(B, w, h, k1d, kernelR, iter);
+            // 【过冲钳制(2026-09-12)】预先把"观测图的 3×3 局部范围"算出来,RL 每轮迭代后把估计值夹回这个
+            // 范围(±6 级余量)。RL 是病态问题:输入本来不糊时会把噪点当细节放大,并产生振铃/白边
+            // (实测原实现强度 10 档就把强边缘过冲像素从 0.83% 推到 9.22%,干净 Real-ESRGAN 基底强度 50 到 22.49%)。
+            // 钳制后实测:干净基底强度 100 的白边 2.211%→0.552%、PSNR 损失 −5.10dB→−2.50dB,细节仍有 136%。
+            var lo = new double[n]; var hi = new double[n];
+            BuildLocalRange(R, lo, hi, w, h);
+            R = RichardsonLucy(R, w, h, k1d, kernelR, iter, lo, hi);
+            BuildLocalRange(G, lo, hi, w, h);
+            G = RichardsonLucy(G, w, h, k1d, kernelR, iter, lo, hi);
+            BuildLocalRange(B, lo, hi, w, h);
+            B = RichardsonLucy(B, w, h, k1d, kernelR, iter, lo, hi);
             // 写回(RL 结果可能轻微过冲,收紧)
             for (int i = 0; i < n; i++)
             {
@@ -3372,8 +3902,36 @@ public static partial class EngineService
         finally { bmp.UnlockBits(data); }
     }
 
-    /// <summary>理查森-露西反卷积:单通道,已知一维可分离(高斯)核。迭代增强高频复原。</summary>
-    private static double[] RichardsonLucy(double[] obs, int w, int h, double[] k1d, int kr, int iter)
+    /// <summary>算"观测图的 3×3 局部范围"作为 RL 每轮迭代的钳制上下界(留 ±6 级余量,保留一点过冲空间)。
+    /// 这是标准的"不让复原结果跑出局部动态范围"约束,专治反卷积的振铃/白边。</summary>
+    private static void BuildLocalRange(double[] obs, double[] lo, double[] hi, int w, int h)
+    {
+        const double margin = 6.0 / 255.0;
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                double mn = 1.0, mx = 0.0;
+                for (int dy = -1; dy <= 1; dy++)
+                {
+                    int yy = Math.Clamp(y + dy, 0, h - 1) * w;
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        double v = obs[yy + Math.Clamp(x + dx, 0, w - 1)];
+                        if (v < mn) mn = v;
+                        if (v > mx) mx = v;
+                    }
+                }
+                lo[y * w + x] = mn - margin;
+                hi[y * w + x] = mx + margin;
+            }
+        }
+    }
+
+    /// <summary>理查森-露西反卷积:单通道,已知一维可分离(高斯)核。迭代增强高频复原。
+    /// lo/hi 非空时每轮迭代后做【过冲钳制】(夹回观测图的局部范围)—— 治振铃/白边,见调用处注释。</summary>
+    private static double[] RichardsonLucy(double[] obs, int w, int h, double[] k1d, int kr, int iter,
+        double[]? lo = null, double[]? hi = null)
     {
         int n = w * h;
         var est = (double[])obs.Clone();   // 初始估计 = 退化图
@@ -3388,6 +3946,10 @@ public static partial class EngineService
             // ③ 比值再卷积核(相关 = 翻转核卷积),更新估计
             SepConv(rel, blur, w, h, k1d, kr);
             for (int i = 0; i < n; i++) est[i] *= Math.Max(0.0, blur[i]);
+            // ④ 过冲钳制(可选):把估计值夹回观测图的局部动态范围
+            if (lo != null && hi != null)
+                for (int i = 0; i < n; i++)
+                    est[i] = Math.Min(hi[i], Math.Max(lo[i], est[i]));
         }
         return est;
     }
@@ -3436,8 +3998,11 @@ public static partial class EngineService
         return d;
     }
 
-    /// <summary>边缘抗锯齿:只对边缘(3×3 局部对比度大)的像素向邻域均值靠拢,
-    /// 磨平阶梯感;平坦区域完全不动,细节不糊。强度越大混合越多(最多 55%)。</summary>
+    /// <summary>边缘抗锯齿:只对"3×3 邻域最大差 ≥ 16"的像素向邻域均值靠拢,磨平阶梯感;强度越大混合越多(最多 55%)。
+    /// 【2026-09 核对】原注释写"平坦区域完全不动,细节不糊" —— 前半对,后半过强:阈值是**局部对比度**,
+    /// 任何局部对比 ≥16 的纹理都会被混掉 0.55 的均值,实测 detail 也真的在掉
+    /// (压缩/Real-ESRGAN 基底 54.1→36.1@50→23.1@100)。它是十档里唯一"所有客观指标单调变好"的一档
+    /// (PSNR/edgePSNR 升、白边降),代价就是拿细节换干净。</summary>
     private static void ApplyEdgeSmoothInMemory(System.Drawing.Bitmap bmp, int strength)
     {
         int w = bmp.Width, h = bmp.Height;

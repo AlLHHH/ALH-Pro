@@ -35,7 +35,11 @@ public sealed partial class AudioView : UserControl
 
     private static string SettingsFile => ParaPaths.SettingsFile("audio-settings.json");
     private System.Collections.Generic.List<string> _allOutputs = new();   // 本次任务输出文件(完成弹窗用)
-    private bool _suppressSave;   // 加载/重置期间抑制写盘,避免默认值被中途覆盖写回
+    // 【初值必须是 true】理由(2026-09-12 自检发现):InitializeComponent() 在 LoadSettings() 之前,
+    // XAML 里 IsChecked="True" 这类默认值在解析期就会触发 Checked → SaveSettings(),瞬间把**默认值写盘**,
+    // 随后 LoadSettings 读到的正是这份刚被覆盖的文件 → 音频页的「记住上次参数」永远恢复不了。
+    // 抠图页早就用"字段初值 true + LoadSettings 末尾置 false"修过同一个坑,这里对齐。
+    private bool _suppressSave = true;   // 加载/重置期间抑制写盘,避免默认值被中途覆盖写回
 
     /// <summary>唯一化输出路径:同名时自动加 (1)/(2)... 不覆盖(与图片/视频页一致)。</summary>
     public static string UniquePath(string dir, string fileName)

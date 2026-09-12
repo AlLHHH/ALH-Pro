@@ -171,4 +171,55 @@ public class DeviceRoutingTests
     [InlineData("Intel(R) Arc(TM) A770", false)]
     public void Integrated_gpu_detection_matches_ui_rules(string name, bool expected)
         => Assert.Equal(expected, GpuName.IsIntegrated(name));
+
+    // ===== IsPlausibleInterpOf —— 补帧探测的第二/三层判据(均值对得上 + 结构没被抹平)=====
+    // 背景:探测输入是"水平渐变 + 同一渐变右移 2 像素",正确插值结果由输入自己决定:
+    // 均值≈两输入均值、方差≈输入方差(实测 13 个模型 × 新老两代引擎:均值偏差 ≤0.24、方差比 1.00)。
+    // 旧判据只有 IsAchromatic,而"输出整帧黑"的三通道极差是 0 —— 颜色完全均衡,旧判据对它无感(盲区)。
+
+    [Theory]
+    [InlineData(127, 127, 127, 5424, 126.87, 5424)]   // 真机实测:均值偏差 0.13、方差比 1.00
+    [InlineData(126.76, 126.76, 126.76, 5424, 126.87, 5424)]  // 实测最差的一档(偏差 0.24)
+    [InlineData(150, 150, 150, 5424, 126.87, 5424)]   // 偏差 23.1 < 容差 24:放行(边界内侧)
+    [InlineData(127, 127, 127, 1400, 126.87, 5424)]   // 方差比 0.258 > 0.25:结构还在(边界内侧)
+    public void Plausible_interp_output_passes(double r, double g, double b, double var, double expMean, double expVar)
+        => Assert.True(DeviceRouting.IsPlausibleInterpOf(r, g, b, var, expMean, expVar));
+
+    [Theory]
+    [InlineData(0, 0, 0, 0, 126.87, 5424)]            // 整帧黑:均值差 127、方差 0 —— 旧判据(只看通道均衡)放行
+    [InlineData(255, 255, 255, 0, 126.87, 5424)]      // 整帧白
+    [InlineData(127, 127, 127, 0, 126.87, 5424)]      // 均值对得上、通道也均衡,但被抹成一块平的 → 靠方差抓
+    [InlineData(151, 151, 151, 5424, 126.87, 5424)]   // 偏差 24.13 > 容差
+    [InlineData(127, 127, 127, 1300, 126.87, 5424)]   // 方差比 0.24 < 0.25:结构基本被抹平
+    [InlineData(132, 4, 4, 5424, 126.87, 5424)]       // 真机损坏帧(整帧红噪点):颜色那一层拦下
+    public void Broken_interp_output_is_rejected(double r, double g, double b, double var, double expMean, double expVar)
+        => Assert.False(DeviceRouting.IsPlausibleInterpOf(r, g, b, var, expMean, expVar));
+
+    [Fact]
+    public void Interp_judgement_is_calibrated_wide_against_measured_values()
+    {
+        // 容差必须【远宽于】实测偏差(≤0.24),又【远窄于】损坏值(黑/白帧偏差 127)
+        Assert.True(DeviceRouting.InterpProbeMeanTolerance >= 0.24 * 20);
+        Assert.True(DeviceRouting.InterpProbeMeanTolerance <= 127 / 4);
+        // 结构门槛必须【远低于】实测方差比(1.00),又不至于形同虚设
+        Assert.True(DeviceRouting.InterpProbeStructureRatio <= 1.00 / 2);
+        Assert.True(DeviceRouting.InterpProbeStructureRatio >= 0.1);
+    }
+
+    [Fact]
+    public void Interp_judgement_still_composes_with_chroma_check()
+    {
+        // 颜色那一层没被均值/方差吃掉:均值方差都完美、但通道失衡 → 照样判不可用
+        Assert.False(DeviceRouting.IsPlausibleInterpOf(127, 4, 4, 5424, 126.87, 5424));
+        // 而纯黑/纯白在旧判据下是"通过"的 —— 单测把"这是新增能力、不是换了个写法"钉住
+        Assert.True(DeviceRouting.IsAchromatic(0, 0, 0));
+        Assert.True(DeviceRouting.IsAchromatic(255, 255, 255));
+    }
+
+    [Fact]
+    public void Interp_judgement_does_not_use_variance_when_expected_is_unknown()
+    {
+        // 预期方差拿不到(≤0)时不拿方差判死:拿不准就放过,不误杀
+        Assert.True(DeviceRouting.IsPlausibleInterpOf(127, 127, 127, 0, 126.87, 0));
+    }
 }
