@@ -99,19 +99,19 @@
                     <TextBlock Text="视频降噪" Style="{StaticResource SectionTitle}"/>
                     <CheckBox x:Name="DenoiseToggle" Content="启用视频降噪" ToolTipService.ToolTip="去视频噪点/闪烁/压缩块。两种执行方式(自动选):① 超分用 waifu2x → 交给模型自带降噪(更对症、不额外耗时),此时即使不开本开关也用 2 档(实测压缩素材提升、干净素材基本无损);② 其它情况(Real-ESRGAN / 未超分) → 拆帧阶段用 ffmpeg nlmeans 在原始分辨率上降噪(实测比放在合帧阶段快 2.5~3.5 倍)"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
+                    <TextBlock x:Name="DenoiseKindLabel" Text="降噪算法" Style="{StaticResource SectionTitle}"/>
+                    <ComboBox x:Name="DenoiseKindCombo" SelectedIndex="0" SelectionChanged="Combo_Changed"
+                              ToolTipService.ToolTip="两者结合 = 先空间(nlmeans)再时间(hqdn3d):实测抖动 −25%、细节只掉 10%,综合最优(默认)&#x0a;仅空间 nlmeans = 只擦单帧里的噪点,会磨掉细纹理(实测细节 −29%)&#x0a;仅时间 hqdn3d = 只治帧与帧之间的闪烁/颗粒,最保细节,但擦不掉单帧噪点(实测把它的空间参数翻倍也无效),快速运动还可能拖影">
+                        <ComboBoxItem Content="两者结合(推荐)"/>
+                        <ComboBoxItem Content="仅空间 nlmeans(会磨细节)"/>
+                        <ComboBoxItem Content="仅时间 hqdn3d(不治单帧噪点)"/>
+                    </ComboBox>
                     <TextBlock x:Name="DenoiseStrongLabel" Text="降噪强度" Style="{StaticResource SectionTitle}"/>
-                    <RadioButtons x:Name="DenoiseStrongRadios" SelectedIndex="0" ToolTipService.ToolTip="越强去噪越多,但可能抹掉细纹理"
+                    <RadioButtons x:Name="DenoiseStrongRadios" SelectedIndex="0" ToolTipService.ToolTip="越强去噪越多,但可能抹掉细纹理。结合模式下强度主要加在时间维(空间固定轻档,实测这样抖动更低、细节更多)"
                                   SelectionChanged="Combo_Changed">
                         <RadioButton Content="弱"/>
                         <RadioButton Content="中"/>
                         <RadioButton Content="强"/>
-                    </RadioButtons>
-                    <TextBlock x:Name="DenoiseKindLabel" Text="降噪方式" Style="{StaticResource SectionTitle}"/>
-                    <RadioButtons x:Name="DenoiseKindRadios" SelectedIndex="0" SelectionChanged="Combo_Changed"
-                                  ToolTipService.ToolTip="空间 = nlmeans:只处理单帧里的噪点,但会磨掉细纹理;时间 = hqdn3d:处理帧与帧之间的闪烁/颗粒,更保细节,但快速运动可能拖影;两者结合 = 先空间再时间(实测时间抖动 −24%、细节 −18%,综合最优,默认)">
-                        <RadioButton Content="两者结合(推荐)"/>
-                        <RadioButton Content="仅空间 nlmeans"/>
-                        <RadioButton Content="仅时间 hqdn3d"/>
                     </RadioButtons>
 
                     <TextBlock Text="视频调整 (后处理)" Style="{StaticResource SectionTitle}"/>
