@@ -44,7 +44,7 @@ ALH Pro v1.3.5 — 更新内容(❕最新说明)
 
 **【安装包】**
 
-- 标准版(不含模型):随包附件 `ALHPro_v1.3.5_Setup.exe`(0.83GB)
+- 标准版(不含模型):随包附件 `ALHPro_v1.3.5_Setup.exe`(0.81GB)
 - 完整版(含全部引擎 + 模型,约 2.4GB):百度网盘 https://pan.baidu.com/s/1_heewIWeoPpWQKPJv9blew 提取码 yxfd
 - 模型包(安装时可勾选下载,或手动解压到 `engines\rembg`):随包附件 `models_v1.0.zip`
 
