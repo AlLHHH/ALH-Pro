@@ -1,0 +1,8 @@
+{
+  "_note": "自适应广告卡(第9张)。字段同 ad1~ad5: title=标题, text=正文, image=图URL(可空=纯文字卡), link=点击跳转, linkText=按钮文字, sponsor=赞助商名(有则显示黄色角标)。新增广告只需在 ad/ 放 adN.json 并上传,客户端自动拉取轮播,无需发版。⚠ 编号必须连续:客户端从 ad1 拉到第一个不存在的编号就停。",
+  "title": "升级后请重调图片预设",
+  "text": "1.3.5 改了 6 个锐化档的机理,老预设数值没变但效果不同,建议重新调一次。",
+  "link": "https://github.com/AlLHHH/ALH-Pro/releases/latest",
+  "linkText": "看说明",
+  "sponsor": "ALH Pro"
+}
