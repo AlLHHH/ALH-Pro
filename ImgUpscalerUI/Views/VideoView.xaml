@@ -34,10 +34,13 @@
                               IsChecked="True" Checked="Options_Changed" Unchecked="Options_Changed"/>
 
                     <TextBlock Text="超分引擎" Style="{StaticResource SectionTitle}"/>
-                    <RadioButtons x:Name="VideoEngineRadios" SelectedIndex="1" ToolTipService.ToolTip="超分引擎:Real-ESRGAN 会主动合成细节(动漫/写实都明显变清晰);waifu2x 只做去噪/去压缩块 —— 干净素材上看起来≈单纯放大,只适合有噪点的老片源"
+                    <!-- 【顺序:Real-ESRGAN 在上、waifu2x 在下】(用户要求)列表顺序只影响界面,
+                         存盘值仍用旧约定(0=waifu2x / 1=realesrgan),转换在 VideoView 的 EngineFromStored/EngineToStored,
+                         这样老用户已保存的选择不会被翻转。 -->
+                    <RadioButtons x:Name="VideoEngineRadios" SelectedIndex="0" ToolTipService.ToolTip="超分引擎:Real-ESRGAN 会主动合成细节(动漫/写实都明显变清晰);waifu2x 只做去噪/去压缩块 —— 干净素材上看起来≈单纯放大,只适合有噪点的老片源"
                                   SelectionChanged="Combo_Changed">
-                        <RadioButton Content="waifu2x"/>
                         <RadioButton Content="Real-ESRGAN"/>
+                        <RadioButton Content="waifu2x"/>
                     </RadioButtons>
                     <TextBlock x:Name="VideoModelLabel" Text="超分模型" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="VideoWaifu2xModelCombo" ToolTipService.ToolTip="waifu2x 模型(动漫/通用/现实)"
@@ -106,7 +109,7 @@
 
                     <TextBlock Text="视频调整 (后处理)" Style="{StaticResource SectionTitle}"/>
                     <StackPanel Spacing="2">
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="锐化:增强边缘对比,画面更利落(过大会出白边)">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="锐化:只提细节,带阈值保护平坦区与噪点(实测 50 档只掉 0.35 dB;旧版会让边缘区掉 4.9 dB、白边和锯齿明显)">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -118,7 +121,7 @@
                             <TextBlock x:Name="SharpenVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="清晰:大范围局部对比度增强,画面更通透">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="清晰:大半径局部对比度(只动中调,不硬吃边缘),画面更通透">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -130,7 +133,7 @@
                             <TextBlock x:Name="ClarityVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="钝化蒙版:只锐化物体边缘、不锐化平坦区域,让轮廓更清晰(比「锐化」更柔和)">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="钝化蒙版:只锐化超过阈值的明显边缘,平坦区完全不动。实测是唯一不伤边缘结构的锐化档(边缘 SSIM 反升),预设里给得最多">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -142,7 +145,7 @@
                             <TextBlock x:Name="UsmVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="保留细节:自适应锐化,平坦区不动,噪点少">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="保留细节:对比度自适应锐化(按局部对比决定增益),设计上不产生白边,实测全档最干净(平坦区误差几乎不涨)">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -154,25 +157,7 @@
                             <TextBlock x:Name="DetailVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="去模糊:减轻轻微模糊/对焦不实(过大会发灰)">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="56"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="28"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="去模糊" VerticalAlignment="Center"/>
-                            <Slider x:Name="DeblurSlider" Grid.Column="1" Minimum="0" Maximum="100"
-                                    ValueChanged="Slider_Changed"/>
-                            <TextBlock x:Name="DeblurVal" Grid.Column="2" Text="0" TextAlignment="Right"
-                                       VerticalAlignment="Center" Style="{StaticResource HintText}"/>
-                        </Grid>
-                        <!-- 【已删除「去频闪」与「去杂色」两个滑条】
-                             去频闪(deflicker):ffmpeg 该滤镜按时间窗口中值归一化亮度且不识别转场,
-                             实测把每个硬切点前 3 帧压暗/提亮最多 76 级(0~255 的 30%)——即"转场前两帧黑一下/亮一下"。
-                             它本是为延时摄影设计的,正常视频无此问题;属"不适用且有害",故整项移除。
-                             去杂色(nlmeans):与上方「视频降噪」是同一滤镜的重复入口,同时开启时代码本就把本项跳过,
-                             常见配置下等于空操作。降噪请用「视频降噪」(它在超分之前生效,那才是正确位置)。 -->
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="边缘抗锯齿:磨平超分/放大后边缘的锯齿阶梯,细节不糊">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="边缘抗锯齿:只削阶梯边缘和振铃(实测细节 −7%、结构指标反升)。超分后的斜线/曲线发锯就开它">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -184,6 +169,15 @@
                             <TextBlock x:Name="PostAaVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
+                    <!-- 【已移除「去模糊」】视频侧 ffmpeg 没有反卷积滤镜,那档本质只是"大半径锐化",
+                         与「清晰」重复且名不副实;图片页的「去模糊」是真 Richardson-Lucy 反卷积,那边保留。
+                         实测与理由见 _qa\ab_waifu\POSTPROC_REPORT.md -->
+                        <!-- 【已删除「去频闪」与「去杂色」两个滑条】
+                             去频闪(deflicker):ffmpeg 该滤镜按时间窗口中值归一化亮度且不识别转场,
+                             实测把每个硬切点前 3 帧压暗/提亮最多 76 级(0~255 的 30%)——即"转场前两帧黑一下/亮一下"。
+                             它本是为延时摄影设计的,正常视频无此问题;属"不适用且有害",故整项移除。
+                             去杂色(nlmeans):与上方「视频降噪」是同一滤镜的重复入口,同时开启时代码本就把本项跳过,
+                             常见配置下等于空操作。降噪请用「视频降噪」(它在超分之前生效,那才是正确位置)。 -->
                         <Button x:Name="PostResetBtn" Content="重置调整" HorizontalAlignment="Right"
                                 FontSize="12" Padding="12,4" Click="PostResetBtn_Click"
                                 ToolTipService.ToolTip="把所有后处理参数清零"/>

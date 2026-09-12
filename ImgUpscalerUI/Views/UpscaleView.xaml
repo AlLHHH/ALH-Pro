@@ -33,10 +33,13 @@
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
                     <TextBlock Text="超分引擎" Style="{StaticResource SectionTitle}"/>
-                    <RadioButtons x:Name="ModeRadios" SelectedIndex="0"
+                    <!-- 顺序与视频页一致:Real-ESRGAN 在上(索引 0)、waifu2x 在下(索引 1)。
+                         存盘仍用旧约定(0=waifu2x / 1=Real-ESRGAN),换算见 UpscaleView 的 ModeFromStored/ModeToStored,
+                         默认选中保持"动漫(waifu2x)"不变(SelectedIndex=1)。 -->
+                    <RadioButtons x:Name="ModeRadios" SelectedIndex="1"
                                   ToolTipService.ToolTip="算法模式:动漫插画用 waifu2x;真实照片用 Real-ESRGAN">
-                        <RadioButton Content="waifu2x"/>
                         <RadioButton Content="Real-ESRGAN"/>
+                        <RadioButton Content="waifu2x"/>
                     </RadioButtons>
 
                     <StackPanel x:Name="ModelPanel" Spacing="6">
