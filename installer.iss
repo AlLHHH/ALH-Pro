@@ -18,12 +18,12 @@
 ; 起因:同一个 1.3.4 出了多次安装包,名字完全一样、大小只差几十 MB,用户无法确认手上是哪一个。
 #define BuildStamp GetDateTimeString('yyyymmdd-hhnn', '', '')
 ; GitHub Release 模型包直链(与 Release 附件名必须一致;仓库=AlLHHH/ALH-Pro)
-; 【为什么指向 v1.3.3 而不是 v1.3.4】models_v1.0.zip 与软件版本无关(内容一直没变),
-; 而 v1.3.4 的 Release 尚未建立 → 指向它会让"下载并安装模型包"必然 404。
-; 已核实:经 GitHub API 查得 v1.3.3/v1.3.2/…/v1.0 每个 Release 都带 models_v1.0.zip 附件,
-; 最新可用 tag 为 v1.3.3(2026-09-08)。
-; ⇒ v1.3.4 Release 建好并上传模型附件后,可把本行改回 v1.3.4(不改也能正常工作)。
-#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.3.3/models_v1.0.zip"
+; 【2026-09-12 改指 v1.3.5】models_v1.0.zip 与软件版本无关(内容一直没变),但**必须指向一个真实存在的
+; Release 附件**,否则"下载并安装模型包"必然 404(历史上曾被迫指向 v1.3.3,因为 v1.3.4 没建 Release)。
+; 现在 v1.3.5 的 tag 已推送、Release 建好并把 models_v1.0.zip 作为附件上传 → 本行指向 v1.3.5。
+; 【维护备注】以后发新版:①先建 Release 并上传 models_v1.0.zip 附件 → ②再把本行改成新版本号;
+; 顺序反了会让新包里的"下载模型包"404。
+#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.3.5/models_v1.0.zip"
 #define ModelsFile "models_v1.0.zip"
 ; 完整版(含模型,网盘/整包)说明:安装完成后可到软件内「使用教程」或 GitHub 说明页找完整版直链
 
