@@ -2407,12 +2407,12 @@ public static class VideoService
         };
     }
 
-    /// <summary>降噪方式的中文名(日志/提示用)。</summary>
+    /// <summary>降噪方式的中文名(日志/提示用,措辞与界面下拉项一致)。</summary>
     private static string DenoiseKindName(int kind) => kind switch
     {
-        1 => "仅空间降噪 nlmeans(去单帧噪点;会磨细节)",
-        2 => "仅时间降噪 hqdn3d(去帧间闪烁;快速运动可能拖影)",
-        _ => "空间+时间结合(推荐)",
+        1 => "nlmeans(仅空间域降噪)",
+        2 => "hqdn3d(仅时间域降噪)",
+        _ => "nlmeans + hqdn3d(空间域与时间域联合降噪)",
     };
 
     /// <summary>waifu2x 模型自带降噪档(-n)的取值:用户显式选的 1/3 档照用,没开(0)也至少给 2 档。
