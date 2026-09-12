@@ -1,4 +1,4 @@
-﻿// VideoView.xaml.cs — 视频超分 + 补帧 + 裁剪板块
+// VideoView.xaml.cs — 视频超分 + 补帧 + 裁剪板块
 using System;
 using System.Collections.ObjectModel;
 using System.Globalization;
@@ -1433,7 +1433,7 @@ public sealed partial class VideoView : UserControl
             Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
             FastMode = false, Mute = false, VideoDenoiseOn = true, VideoDenoiseStrong = 1, DenoiseKind = 0,
         })),
-        ( "去重补帧4x", 0, new Func<VideoSettings>(() => new VideoSettings
+        ( "去重补帧4x", 1, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = true, Up = false, Engine = 0, Scale = 1, Gpu = 0,
             Interp = true, Model = 0, UpWaifu2xModel = 0, UpEsrganModel = 0, InterpScale = 2,
