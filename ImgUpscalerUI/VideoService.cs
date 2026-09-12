@@ -281,7 +281,7 @@ public static class VideoService
         int postSharpen = 0, int postClarity = 0, int postUsm = 0,
         int postDetail = 0, int postDeblur = 0,
         int postMotionBlur = 0, bool postDeshake = false,
-        int videoDenoise = 0, int quality = 0, bool fastMode = false, bool upscaleShrink1x = false,
+        int videoDenoise = 0, int denoiseKind = 0, int quality = 0, bool fastMode = false, bool upscaleShrink1x = false,
         int dedupAlgo = 0, int dedupHi = 12, int dedupLo = 5, double dedupFrac = 0.33,
         double dedupSadThr = 3.0, double dedupSsimThr = 0.97,
         double dedupPanThr = 8, bool dedupPanOn = false,
@@ -549,8 +549,9 @@ public static class VideoService
             var scaleVfDenoise = scaleVf;
             if (nlmeansOn)
             {
-                scaleVfDenoise = $"{VideoDenoiseFilter(videoDenoise)},{scaleVf}";
-                AppLogger.Info($"视频降噪:拆帧阶段应用 {VideoDenoiseFilter(videoDenoise)}(源分辨率、超分之前;分析类调用不带它)");
+                var dnFilter = VideoDenoiseFilter(videoDenoise, denoiseKind);
+                scaleVfDenoise = $"{dnFilter},{scaleVf}";
+                AppLogger.Info($"视频降噪:拆帧阶段应用 {dnFilter} [{DenoiseKindName(denoiseKind)}](源分辨率、超分之前;分析类调用不带它)");
             }
             // 去重统计报告收集:记录各算法判定为重复而被删的帧号(1-based,相对删帧前的序列),
             // 供最终生成"哪个时间段重复最多"的报告;mpdecimate/scene 直接在拆帧滤镜里丢帧,
@@ -2372,16 +2373,36 @@ public static class VideoService
     ///   smartblur 强模糊    : 0.56 / 0.104 / 18.7   ← 细节被毁,禁用
     /// 【教训】早先判"hqdn3d 无用"是拿单张图测的 —— 时间维降噪在单帧上根本发挥不出来(测试方法本身的盲区)。
     /// 现三档都是"空间 nlmeans + 时间 hqdn3d"组合,并按档位同步放大;参数格式 hqdn3d=亮度空间:色度空间:亮度时间:色度时间。</summary>
-    private static string VideoDenoiseFilter(int strength)
+    private static string VideoDenoiseFilter(int strength, int kind = 0)
     {
-        return strength switch
+        // kind: 0=两者结合(默认,兼容旧设置) 1=仅空间 nlmeans 2=仅时间 hqdn3d
+        string spatial = strength switch
         {
-            1 => "nlmeans=s=5:p=3:r=5,hqdn3d=3:2:4:3",   // 弱(空间 + 轻时间)
-            2 => "nlmeans=s=5:p=5:r=5,hqdn3d=6:4:9:6",   // 中
-            3 => "nlmeans=s=7:p=7:r=7,hqdn3d=8:6:12:8",  // 强(实测时间抖动 −39%、细节几乎不损)
-            _ => "nlmeans=s=5:p=5:r=5,hqdn3d=6:4:9:6",
+            1 => "nlmeans=s=5:p=3:r=5",
+            2 => "nlmeans=s=5:p=5:r=5",
+            _ => "nlmeans=s=7:p=7:r=7",
+        };
+        string temporal = strength switch
+        {
+            1 => "hqdn3d=3:2:4:3",
+            2 => "hqdn3d=6:4:9:6",
+            _ => "hqdn3d=8:6:12:8",
+        };
+        return kind switch
+        {
+            1 => spatial,
+            2 => temporal,
+            _ => spatial + "," + temporal,
         };
     }
+
+    /// <summary>降噪方式的中文名(日志/提示用)。</summary>
+    private static string DenoiseKindName(int kind) => kind switch
+    {
+        1 => "仅空间降噪 nlmeans(去单帧噪点;会磨细节)",
+        2 => "仅时间降噪 hqdn3d(去帧间闪烁;快速运动可能拖影)",
+        _ => "空间+时间结合(推荐)",
+    };
 
     /// <summary>waifu2x 模型自带降噪档(-n)的取值:用户显式选的 1/3 档照用,没开(0)也至少给 2 档。
     /// 【为什么默认给 2 —— 实测,真实动画帧 960×540→1080p】
