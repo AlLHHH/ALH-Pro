@@ -68,6 +68,9 @@
                             </StackPanel>
                         </ComboBoxItem>
                     </ComboBox>
+                    <!-- 4x 专用权重模型的提示(用户要求:放在模型下拉正下方) -->
+                    <TextBlock x:Name="EsrganModelHint" Visibility="Collapsed" TextWrapping="Wrap" FontSize="12"
+                               Foreground="#E5484D" Margin="0,2,0,0"/>
 
                     <TextBlock Text="放大倍数" Style="{StaticResource SectionTitle}"/>
                     <RadioButtons x:Name="VideoScaleRadios" SelectedIndex="1" ToolTipService.ToolTip="输出放大倍数(3x 内部按引擎支持倍数处理)"
