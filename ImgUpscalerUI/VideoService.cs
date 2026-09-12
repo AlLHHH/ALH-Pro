@@ -533,6 +533,8 @@ public static class VideoService
             bool nlmeansOn = videoDenoise >= 1 && !denoiseViaModel;
             if (videoDenoise >= 1 && denoiseViaModel)
                 AppLogger.Info($"视频降噪:交由 waifu2x 引擎自带降噪档(-n {videoDenoise})处理(不叠 nlmeans,更对症且不额外耗时)");
+            else if (videoDenoise <= 0 && denoiseViaModel)
+                AppLogger.Info($"视频降噪:未开启,但 waifu2x 引擎仍用模型自带 {Waifu2xNoiseLevel(0)} 档降噪(实测压缩素材 PSNR/SSIM 双升,干净素材基本无损)");
             // ===== HDR / 广色域适配:源为 HDR(PQ/HLG)或宽色域(≠BT.709)→ 拆帧时转成 BT.709 SDR(避免偏色/掉信息),黄字提示 =====
             (string? hdrDesc, string? hdrVf) = await ProbeHdrToSdrAsync(inputVideo, ct);
             if (hdrVf != null)
@@ -1553,7 +1555,7 @@ public static class VideoService
                             else
                             {
                                 await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
-                                    upScale, denoiseViaModel ? videoDenoise : 0, upGpu, false, srProgress, ct,   // waifu2x 引擎:"视频降噪"的强弱档直接当它的 -n(模型自带降噪,更对症且不额外耗时)
+                                    upScale, denoiseViaModel ? Waifu2xNoiseLevel(videoDenoise) : 0, upGpu, false, srProgress, ct,   // waifu2x 引擎:用它的 -n(模型自带降噪,更对症且不额外耗时)≥2 档,见 Waifu2xNoiseLevel
                                     SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1),   // 显卡家族感知分块(视频超分专用);兼容模式再减半(显存占用约降 4 倍)
                                     watchStage: "超分",   // 逐帧汇报(像补帧一样显示"超分 第 N 帧 / 共 M 帧")
                                     globalBaseFrames: batchStartSlot, globalTotalFrames: total,   // 百分比按全局帧数算,预计时间才准
@@ -2337,6 +2339,16 @@ public static class VideoService
             _ => "nlmeans=s=5:p=5:r=5",
         };
     }
+
+    /// <summary>waifu2x 模型自带降噪档(-n)的取值:用户显式选的 1/3 档照用,没开(0)也至少给 2 档。
+    /// 【为什么默认给 2 —— 实测,真实动画帧 960×540→1080p】
+    ///   压缩素材(h264 crf30):n2 比 n0 PSNR 35.68→36.23、SSIM 0.9434→0.9654(双升);
+    ///   干净素材:n2 比 n0 PSNR 略降 0.94 但 SSIM 反升 0.037、细节(拉普拉斯方差)不降 —— 基本无损。
+    /// 而 n0 时 waifu2x 只剩纯放大:细节仅为 bicubic 的约 2 倍(对比 realesr-animevideov3 的 7 倍),
+    /// 用户观感就是"waifu 好像只是单纯放大了"(真机反馈点到,数据同样支持)。
+    /// 代价为零:降噪是模型自带能力,不额外多跑一遍。
+    /// 数据与对比图:_qa\ab_waifu\REPORT.md</summary>
+    private static int Waifu2xNoiseLevel(int chosen) => chosen >= 1 ? chosen : 2;
 
     /// <summary>
     /// freezedetect 检测冻结(静止)段:返回 (开始秒, 结束秒) 列表。

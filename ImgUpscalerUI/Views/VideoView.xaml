@@ -94,7 +94,7 @@
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
                     <TextBlock Text="视频降噪" Style="{StaticResource SectionTitle}"/>
-                    <CheckBox x:Name="DenoiseToggle" Content="启用视频降噪" ToolTipService.ToolTip="去视频噪点/闪烁/压缩块。两种执行方式(自动选):① 超分用 waifu2x → 交给模型自带降噪(更对症、不额外耗时);② 其它情况(Real-ESRGAN / 未超分) → 拆帧阶段用 ffmpeg nlmeans 在原始分辨率上降噪(实测比放在合帧阶段快 2.5~3.5 倍)"
+                    <CheckBox x:Name="DenoiseToggle" Content="启用视频降噪" ToolTipService.ToolTip="去视频噪点/闪烁/压缩块。两种执行方式(自动选):① 超分用 waifu2x → 交给模型自带降噪(更对症、不额外耗时),此时即使不开本开关也用 2 档(实测压缩素材提升、干净素材基本无损);② 其它情况(Real-ESRGAN / 未超分) → 拆帧阶段用 ffmpeg nlmeans 在原始分辨率上降噪(实测比放在合帧阶段快 2.5~3.5 倍)"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
                     <TextBlock x:Name="DenoiseStrongLabel" Text="降噪强度" Style="{StaticResource SectionTitle}"/>
                     <RadioButtons x:Name="DenoiseStrongRadios" SelectedIndex="0" ToolTipService.ToolTip="越强去噪越多,但可能抹掉细纹理"
