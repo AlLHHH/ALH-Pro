@@ -1869,7 +1869,7 @@ public static class VideoService
             // 视频滤镜链:后处理(锐化/清晰/…) → 果冻修复 → 运动模糊 → 去抖 → 可选 fps 重映射
             var preParts = new System.Collections.Generic.List<string>();
             var postParts = new System.Collections.Generic.List<string>();
-            var postFilter = BuildPostFilter(postSharpen, postClarity, postUsm, postDetail, postDeblur,
+            var postFilter = BuildPostFilter(postSharpen, postClarity, postUsm, postDetail,
                 postAa, inv);
             if (postFilter != null) preParts.Add(postFilter);
             // 视频降噪(空间+时间,去噪点/闪烁/压缩噪点),放最前:先降噪再锐化
@@ -2297,22 +2297,40 @@ public static class VideoService
     ///    把本项从链里删掉(打日志"去杂色跳过")→ 常见配置下它根本是空操作。保留「视频降噪」即可
     ///    (它在 preParts 最前,先降噪再锐化/超分,那才是降噪该在的位置)。
     /// </summary>
-    private static string? BuildPostFilter(int sharpen, int clarity, int usm, int detail, int deblur,
+    ///  【2026-09 全部重做,每一档都必须名副其实(旧版 6 档里 5 档是同一个 unsharp 的不同半径,
+    ///   用户实测反馈"效果都一样、全像锐化",且"边缘抗锯齿"实测空转 —— 见 _qa\ab_waifu\POSTPROC_REPORT.md)】
+    ///  现在每档用【不同机制】,并用【边缘区指标】验证过(全帧平均会把副作用稀释掉):
+    ///   · 锐化(smartblur 负强度, r=1, 带阈值 3/6)——细节反锐化,阈值保护平坦区与噪点。
+    ///     实测 v50:PSNR −0.35 dB、edgePSNR −0.38(旧版 unsharp 5x5 a1.5 是 −3.77 / −4.86 ✗)。
+    ///   · 清晰(unsharp 13x13,低强度)——大半径"局部对比",只动中调不通吃边缘。
+    ///     (ffmpeg 的 unsharp 没有阈值参数,第 6 个参数是色度强度,所以只能靠低强度控制副作用)
+    ///   · 钝化蒙版(smartblur 负强度, r=2, 阈值 8)——只锐化超过阈值的明显边缘;
+    ///     实测 v50 edgeSSIM 0.9582 ≥ 基底 0.9571,是唯一不伤边缘结构的档,故预设里给得最多。
+    ///   · 保留细节(cas,对比度自适应)——按局部对比自适应增益,设计上不产生白边;
+    ///     实测 v50 平坦区误差 2.09(基底 2.07),全档最干净。
+    ///   · 边缘抗锯齿(sab 形状自适应模糊)——【旧参数 lr=1:ls=1.5 实测等于没开】(细节只降 2%),
+    ///     现改为 lr 随强度 1→3、ls 2→4;实测 v50 细节 −7%、SSIM 反升 0.0123、edgePSNR 反升 0.05
+    ///     = 真的在削阶梯/振铃,而不是空转。
+    ///  · 【已移除:去模糊】ffmpeg 没有反卷积滤镜(实测卷积核方案 PSNR −8.6 dB ✗),
+    ///    视频里那档只是"大半径锐化",名不副实 → 删除。图片页的「去模糊」是真·Richardson-Lucy
+    ///    反卷积(C# 实现),那边保留。</summary>
+    private static string? BuildPostFilter(int sharpen, int clarity, int usm, int detail,
         int aa, System.Globalization.CultureInfo inv)
     {
         var parts = new System.Collections.Generic.List<string>();
         if (sharpen > 0)
-            parts.Add($"unsharp=5:5:{Math.Min(2.0, sharpen / 100.0 * 1.5).ToString("0.00", inv)}:5:5:0");
+            parts.Add($"smartblur=luma_radius=1:luma_strength=-{Math.Min(1.0, sharpen / 100.0).ToString("0.00", inv)}:luma_threshold={(sharpen <= 60 ? 3 : 6)}");
         if (clarity > 0)
-            parts.Add($"unsharp=9:9:{Math.Min(2.0, clarity / 100.0 * 0.8).ToString("0.00", inv)}:9:9:0");
+            parts.Add($"unsharp=13:13:{Math.Min(0.50, clarity / 100.0 * 0.50).ToString("0.00", inv)}:13:13:0");
         if (usm > 0)
             parts.Add($"smartblur=luma_radius=2:luma_strength=-{Math.Min(1.0, usm / 100.0).ToString("0.00", inv)}:luma_threshold=8");
         if (detail > 0)
-            parts.Add($"cas=strength={Math.Min(1.0, detail / 100.0).ToString("0.00", inv)}");
-        if (deblur > 0)
-            parts.Add($"smartblur=luma_radius=3:luma_strength=-{Math.Min(0.8, deblur / 100.0 * 0.8).ToString("0.00", inv)}:luma_threshold=2");
+            parts.Add($"cas=strength={Math.Min(0.60, detail / 100.0 * 0.60).ToString("0.00", inv)}");
         if (aa > 0)
-            parts.Add($"sab=lr=1:ls={Math.Max(0.5, aa / 100.0 * 3).ToString("0.##", inv)}");   // 自适应模糊:磨超分/放大后的边缘锯齿
+        {
+            int lr = aa <= 40 ? 1 : (aa <= 80 ? 2 : 3);
+            parts.Add($"sab=lr={lr}:ls={(2.0 + aa / 100.0 * 2.0).ToString("0.0", inv)}");
+        }
         return parts.Count > 0 ? string.Join(",", parts) : null;
     }
 

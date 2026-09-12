@@ -543,7 +543,7 @@ public sealed partial class VideoView : UserControl
             if (interp && SceneCheck.IsChecked == true) slow.Add("转场识别");
             if (DenoiseToggle.IsChecked == true) slow.Add("视频降噪");
             if ((int)SharpenSlider.Value > 0 || (int)ClaritySlider.Value > 0 || (int)UsmSlider.Value > 0
-                || (int)DetailSlider.Value > 0 || (int)DeblurSlider.Value > 0
+                || (int)DetailSlider.Value > 0
                 || PostAaSlider.Value > 0)
                 slow.Add("后处理");
             if (interp && MotionBlurCombo.SelectedIndex > 0) slow.Add("运动模糊");
@@ -567,7 +567,7 @@ public sealed partial class VideoView : UserControl
             bool interpOn = InterpToggle.IsChecked == true;
             // 【以实测为准,不再按型号猜】只有真测出"本机 realesrgan ncnn 不可用"才提示;没测过不提示
             // (原先用 OldNcnnGpuRisky() → 50 系一律提示,而实际探测往往是能跑的,等于对用户说反话)
-            if (upOn && VideoEngineRadios.SelectedIndex == 1
+            if (upOn && SelectedEngineIsReal
                 && EngineService.TryGetNcnnVerdict("realesrgan", AppSettings.GpuIndex) == false)
             {
                 compatMsg = $"⚠ 本机实测「{EngineService.EngineLabel("realesrgan")}」无法用 GPU 加速,建议改用「waifu2x」(官方新版,更稳定)";
@@ -760,11 +760,20 @@ public sealed partial class VideoView : UserControl
         ScheduleSave();   // 参数记忆:变化后防抖写盘
     }
 
+    // ===== 超分引擎:界面顺序 Real-ESRGAN(上) / waifu2x(下) =====
+    // 【为什么要这层映射】界面顺序按用户要求改成 real 在上,但**存盘沿用旧约定**
+    // (0=waifu2x, 1=realesrgan, 2=更早的 Real-CUGAN):老用户存过的选择不会被顺序调整翻转。
+    /// <summary>界面索引 → 存盘值(旧约定)。</summary>
+    private static int EngineToStored(int uiIndex) => uiIndex == 1 ? 0 : 1;   // ui: 0=real,1=waifu
+    /// <summary>存盘值(旧约定) → 界面索引。</summary>
+    private static int EngineFromStored(int stored) => stored == 0 ? 1 : 0;   // 0=waifu → ui 1;1/2 → ui 0(real)
+    /// <summary>当前选中的超分引擎是否是 Real-ESRGAN(界面上排第一个 = 索引 0)。</summary>
+    private bool SelectedEngineIsReal => VideoEngineRadios.SelectedIndex == 0;
     /// <summary>选 waifu2x 显示 waifu2x 模型下拉,选 Real-ESRGAN 显示其模型下拉;并确保默认选中首个模型。</summary>
     private void UpdateVideoModelVisibility()
     {
         if (VideoWaifu2xModelCombo == null || VideoEsrganModelCombo == null) return;
-        bool waifu2x = VideoEngineRadios.SelectedIndex == 0;
+        bool waifu2x = !SelectedEngineIsReal;
         VideoWaifu2xModelCombo.Visibility = waifu2x ? Visibility.Visible : Visibility.Collapsed;
         VideoEsrganModelCombo.Visibility = waifu2x ? Visibility.Collapsed : Visibility.Visible;
         // 确保各下拉有默认选中项(首次/恢复时)
@@ -853,7 +862,7 @@ public sealed partial class VideoView : UserControl
         // (与图片路径既有做法一致,见 EngineService 的视频/图片 dir 路径 engineScale 处理),几何与画质都正确,
         // 耗时可忽略(-s 2 = 17.5s vs -s 4 = 18.1s)。此处只负责把这件事讲清楚。
         string esrModel = (VideoEsrganModelCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
-        bool x4plusModel = up && VideoEngineRadios.SelectedIndex == 1 && esrModel.Contains("x4plus");
+        bool x4plusModel = up && SelectedEngineIsReal && esrModel.Contains("x4plus");
         if (x4plusModel)
         {
             ScaleHint.Text = "⚠ 该模型只有 4x 权重(实测 1080p 源约 14.5 秒/帧,比 animevideov3 慢 17 倍):"
@@ -1018,7 +1027,6 @@ public sealed partial class VideoView : UserControl
         ClarityVal.Text = ClaritySlider.Value.ToString("0");
         UsmVal.Text = UsmSlider.Value.ToString("0");
         DetailVal.Text = DetailSlider.Value.ToString("0");
-        DeblurVal.Text = DeblurSlider.Value.ToString("0");
         PostAaVal.Text = PostAaSlider.Value.ToString("0");
 
         // 输出帧率提示
@@ -1108,7 +1116,7 @@ public sealed partial class VideoView : UserControl
         ClaritySlider.Value = 0;
         UsmSlider.Value = 0;
         DetailSlider.Value = 0;
-        DeblurSlider.Value = 0;
+        PostAaSlider.Value = 0;
         MotionBlurCombo.SelectedIndex = 0;
         DeShakeCheck.IsChecked = false;
         QualityCombo.SelectedIndex = 0;
@@ -1140,7 +1148,6 @@ public sealed partial class VideoView : UserControl
         ClaritySlider.Value = 0;
         UsmSlider.Value = 0;
         DetailSlider.Value = 0;
-        DeblurSlider.Value = 0;
         PostAaSlider.Value = 0;
         _suppressEvents = false;
         UpdateOptions();
@@ -1385,7 +1392,10 @@ public sealed partial class VideoView : UserControl
     /// realesrgan-x4plus-anime,约为 x4plus 的 3 倍速)。</summary>
     private static (string Name, int Rev, Func<VideoSettings> Make)[] BuiltinPresets() => new[]
     {
-        ( "通用画质增强 不含补帧", 1, new Func<VideoSettings>(() => new VideoSettings
+        // 【Rev 2 · 2026-09】后处理全部重做后同步预设值(每一档换了机制,见 VideoService.BuildPostFilter):
+        //   钝化蒙版给最多(唯一实测不伤边缘结构的锐化档:边缘 SSIM 反升),保留细节用 CAS(全档最干净),
+        //   边缘抗锯齿给到能真正生效的强度(旧参数实测空转),去模糊整项移除(视频侧 ffmpeg 无反卷积)。
+        ( "通用画质增强 不含补帧", 2, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = false, Up = true, Engine = 1, Scale = 1, Gpu = 0,
             Interp = false, Model = 0, UpWaifu2xModel = 0, UpEsrganModel = 0, InterpScale = 0,
@@ -1394,7 +1404,7 @@ public sealed partial class VideoView : UserControl
             Scene = false, SceneThr = 0.3, TimeStep = 0.5, Tta = false, OutDir = "", CustomW = "1920", CustomH = "1080",
             DedupAlgo = 0, DedupHi = 12, DedupLo = 5, DedupFrac = 0.33, DedupSadThr = 3, DedupSsimThr = 0.97, ContentFps = 0,
             DedupMotionComp = true, DedupOnlyTrueHold = true, ManualProtectSmallMotion = true, DedupPhaseAlign = true,
-            PostSharpen = 25, PostClarity = 15, PostUsm = 20, PostDetail = 30, PostDeblur = 15, PostAa = 30,
+            PostSharpen = 20, PostClarity = 25, PostUsm = 35, PostDetail = 40, PostDeblur = 0, PostAa = 45,
             Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
             FastMode = false, Mute = false, VideoDenoiseOn = false, VideoDenoiseStrong = -1,
         })),
@@ -1403,7 +1413,9 @@ public sealed partial class VideoView : UserControl
         // 用智能模式则依赖拍数识别,识别不出就原样保留(等于没去重)。改档后按内容帧率均匀采样,不会误删细节帧。
         // 同时清理已删除的 PostFlicker / PostDenoise(去频闪/去杂色两项已从管线移除,不再被读取)。
         // 【Rev 2】超分引擎同样换成 Real-ESRGAN · realesr-animevideov3(理由见上,实测 17 倍速、输出仍是 2x=4K)。
-        ( "动漫通用", 2, new Func<VideoSettings>(() => new VideoSettings
+        // 【Rev 3 · 2026-09】后处理重做后同步:钝化蒙版 40(实测唯一不伤边缘的锐化档,动漫线条收益最大)、
+        //   保留细节 40(CAS)、边缘抗锯齿 45(新参数才真的在削锯齿)、去模糊归零(视频侧已移除)、锐化收到 20。
+        ( "动漫通用", 3, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = true, Up = true, Engine = 1, Scale = 1, Gpu = 0,
             Interp = true, Model = 0, UpWaifu2xModel = 1, UpEsrganModel = 0, InterpScale = 2,
@@ -1412,7 +1424,7 @@ public sealed partial class VideoView : UserControl
             Scene = false, SceneThr = 0.3, TimeStep = 0.5, Tta = false, OutDir = "", CustomW = "1920", CustomH = "1080",
             DedupAlgo = 3, DedupHi = 12, DedupLo = 5, DedupFrac = 0.33, DedupSadThr = 3, DedupSsimThr = 0.97, ContentFps = 0,
             DedupMotionComp = true, DedupOnlyTrueHold = true, ManualProtectSmallMotion = true, DedupPhaseAlign = true,
-            PostSharpen = 20, PostClarity = 20, PostUsm = 20, PostDetail = 30, PostDeblur = 20, PostAa = 50,
+            PostSharpen = 20, PostClarity = 25, PostUsm = 40, PostDetail = 40, PostDeblur = 0, PostAa = 45,
             Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
             FastMode = false, Mute = false, VideoDenoiseOn = true, VideoDenoiseStrong = 1,
         })),
@@ -1534,9 +1546,10 @@ public sealed partial class VideoView : UserControl
     private void ApplyVideoParams(VideoSettings d)
     {
         UpscaleToggle.IsChecked = d.Up;
-        // 兼容旧设置:旧值 2(Real-CUGAN,已移除)→ 1(Real-ESRGAN);0=waifu2x 1=Real-ESRGAN
-        if (d.Engine == 2) VideoEngineRadios.SelectedIndex = 1;
-        else if (d.Engine is >= 0 and <= 1) VideoEngineRadios.SelectedIndex = d.Engine;
+        // 兼容旧设置:存盘沿用旧约定 0=waifu2x / 1=Real-ESRGAN / 2=Real-CUGAN(已移除,归到 Real-ESRGAN)。
+        // 界面顺序已改成 Real-ESRGAN 在上(索引 0)、waifu2x 在下(索引 1),所以要经 EngineFromStored 换算,
+        // 否则老用户存的选择会被顺序调整翻转。
+        if (d.Engine is >= 0 and <= 2) VideoEngineRadios.SelectedIndex = EngineFromStored(d.Engine);
         // 放大倍数索引已去掉「自定义分辨率」(4),旧设置里的 4 归到 2x(索引1),其余 0~3 照搬
         if (d.Scale is >= 0 and <= 3) VideoScaleRadios.SelectedIndex = d.Scale;
         else if (d.Scale == 4) VideoScaleRadios.SelectedIndex = 1;   // 旧「自定义分辨率」→ 2x
@@ -1546,7 +1559,7 @@ public sealed partial class VideoView : UserControl
         if (d.PostClarity is >= 0 and <= 100) ClaritySlider.Value = d.PostClarity;
         if (d.PostUsm is >= 0 and <= 100) UsmSlider.Value = d.PostUsm;
         if (d.PostDetail is >= 0 and <= 100) DetailSlider.Value = d.PostDetail;
-        if (d.PostDeblur is >= 0 and <= 100) DeblurSlider.Value = d.PostDeblur;
+        // 【已移除 去模糊】视频页没有该滑杆了(ffmpeg 无反卷积,那档名不副实);旧设置里的值忽略即可。
         if (d.PostAa is >= 0 and <= 100) PostAaSlider.Value = d.PostAa;
         if (d.MotionBlur is >= 0 and <= 3) MotionBlurCombo.SelectedIndex = d.MotionBlur;
         DeShakeCheck.IsChecked = d.DeShake;
@@ -2109,7 +2122,7 @@ public sealed partial class VideoView : UserControl
         {
             Remember = VideoRememberCheck.IsChecked == true,
             Up = UpscaleToggle.IsChecked == true,
-            Engine = VideoEngineRadios.SelectedIndex,
+            Engine = EngineToStored(VideoEngineRadios.SelectedIndex),   // 存盘用旧约定(0=waifu2x/1=real),与界面顺序解耦
             Scale = VideoScaleRadios.SelectedIndex,
             Gpu = AppSettings.GpuIndex,
             Interp = InterpToggle.IsChecked == true,
@@ -2150,7 +2163,7 @@ public sealed partial class VideoView : UserControl
             PostClarity = (int)ClaritySlider.Value,
             PostUsm = (int)UsmSlider.Value,
             PostDetail = (int)DetailSlider.Value,
-            PostDeblur = (int)DeblurSlider.Value,
+            PostDeblur = 0,   // 视频页已移除「去模糊」(ffmpeg 无反卷积滤镜);字段保留仅为兼容旧设置文件
             PostAa = (int)PostAaSlider.Value,
             MotionBlur = MotionBlurCombo.SelectedIndex,
             DeShake = DeShakeCheck.IsChecked == true,
@@ -3189,7 +3202,7 @@ public sealed partial class VideoView : UserControl
             // 【删掉了 IsBlackwellGpu() ||】此前 50 系无条件返回 true → ETA/提示永远按 ONNX 慢路估算,
             // 即使实测证明 ncnn 可用。现在只看实测结论(ShouldUseOnnx* 内部:有结论用结论;
             // 没结论时只在"无独显 / Vulkan 不可用"这两种确实只能 CPU 的情况下才为真)。
-            if (VideoEngineRadios.SelectedIndex == 0)
+            if (!SelectedEngineIsReal)
                 return EngineService.ShouldUseOnnxWaifu2x();
             return EngineService.ShouldUseOnnxEsrgan();
         }
@@ -3201,14 +3214,14 @@ public sealed partial class VideoView : UserControl
     /// 查不到就用保守常数,估不准的风险有界。</summary>
     private string PerfFingerprintForCpuEstimate(out string engine)
     {
-        engine = VideoEngineRadios.SelectedIndex == 0 ? "waifu2x" : "realesrgan";
+        engine = SelectedEngineIsReal ? "realesrgan" : "waifu2x";
         double scale = VideoScaleRadios.SelectedIndex switch { 1 => 2, 2 => 3, 3 => 4, _ => 1 };
         if (VideoScaleRadios.SelectedIndex is 0 or 4) scale = 2;   // 1x 缩回 / 自定义:内部都按 2x 超分
         int interpScale = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, 4 => 12, 5 => 16, _ => 2 };
         bool dedupOn = DedupCheck.IsChecked == true;
         int vdenoise = DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex + 1 : 0;
         bool postFx = (int)SharpenSlider.Value + (int)ClaritySlider.Value + (int)UsmSlider.Value
-            + (int)DetailSlider.Value + (int)DeblurSlider.Value + (int)PostAaSlider.Value > 0;
+            + (int)DetailSlider.Value + (int)PostAaSlider.Value > 0;
         return PerfMemory.Fingerprint(engine, scale, 1920, 1080, interpScale, dedupOn, vdenoise, postFx);
     }
 
@@ -3768,7 +3781,7 @@ public sealed partial class VideoView : UserControl
             bool dedupOn = DedupCheck.IsChecked == true;
             int interpScale = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, 4 => 12, 5 => 16, _ => 2 };
             int engIdx = VideoEngineRadios.SelectedIndex;
-            string engine = engIdx == 0 ? "waifu2x" : "realesrgan";
+            string engine = SelectedEngineIsReal ? "realesrgan" : "waifu2x";
             // 倍率:0=1x(2x缩回) 1=2x 2=3x 3=4x 4=自定义(内部按2x)
             int scale = VideoScaleRadios.SelectedIndex switch { 1 => 2, 2 => 3, 3 => 4, _ => 1 };
             bool upscaleShrink1x = VideoScaleRadios.SelectedIndex == 0;
@@ -3884,7 +3897,7 @@ public sealed partial class VideoView : UserControl
             try { await ALHPro.EsrganOnnxService.EnsureDmlProbeAsync().ConfigureAwait(true); } catch { }
             if (UpscaleWillFallbackToCpu())
             {
-                string cpuEngine = VideoEngineRadios.SelectedIndex == 0 ? "waifu2x" : "realesrgan";
+                string cpuEngine = SelectedEngineIsReal ? "realesrgan" : "waifu2x";
                 var (perFrameBase, perFrameSrc, _) = CpuPerFrameBase();
                 long cpuFrames = 0;
                 double cpuMinutes = 0, cpuPerFrameMax = 0;
@@ -4091,9 +4104,8 @@ public sealed partial class VideoView : UserControl
             var missing = new System.Collections.Generic.List<string>();
             if (up)
             {
-                int eng = VideoEngineRadios.SelectedIndex;
-                if (eng == 0 && EngineService.FindWaifu2x() is null) missing.Add("waifu2x 引擎");
-                if (eng == 1 && EngineService.FindRealESRGAN() is null) missing.Add("Real-ESRGAN 引擎");
+                if (!SelectedEngineIsReal && EngineService.FindWaifu2x() is null) missing.Add("waifu2x 引擎");
+                if (SelectedEngineIsReal && EngineService.FindRealESRGAN() is null) missing.Add("Real-ESRGAN 引擎");
             }
             if (interp && VideoService.RifePath is null) missing.Add("RIFE 补帧引擎");
             if (VideoService.FfmpegPath is null) missing.Add("ffmpeg");
@@ -4156,11 +4168,11 @@ public sealed partial class VideoView : UserControl
         // 引擎路由已改成真机探测(EngineService.EnsureNcnnProbeAsync),提示也必须以【实测结论】为准 ——
         // 只有已经测出"这台机的 realesrgan ncnn 不可用"(TryGetNcnnVerdict == false)才弹窗;
         // 没测过就交给运行时探测去定并明确告知,避免"先弹窗说不兼容、结果跑得比 waifu2x 还快"的说反话。
-        if (up && IsBlackwellGpu() && VideoEngineRadios.SelectedIndex == 1
+        if (up && IsBlackwellGpu() && SelectedEngineIsReal
             && EngineService.TryGetNcnnVerdict("realesrgan", AppSettings.GpuIndex) == false)
         {
             if (await AskBlackwellOldEngineAsync("Real-ESRGAN"))
-                VideoEngineRadios.SelectedIndex = 0;   // 好,换成 waifu2x(兼容 50 系,且最快)
+                VideoEngineRadios.SelectedIndex = 1;   // 好,换成 waifu2x(界面上第二项;兼容 50 系,且最快)
         }
         // 自定义码率:选了该项但没填/填了非法值 → 提示并拦截(避免按"自动"悄悄处理)
         if (QualityCombo.SelectedIndex == 5 && ParseBitrate() <= 0)
@@ -4237,10 +4249,10 @@ public sealed partial class VideoView : UserControl
         }
         var (engine, model) = VideoEngineRadios.SelectedIndex switch
         {
-            // waifu2x:从模型下拉 Tag 读模型名(默认 models-cunet)
-            0 => ("waifu2x", SelModel(VideoWaifu2xModelCombo, "models-cunet")),
-            // Real-ESRGAN:从模型下拉 Tag 读模型名(默认 realesr-animevideov3)
-            _ => ("realesrgan", SelModel(VideoEsrganModelCombo, "realesr-animevideov3")),
+            // Real-ESRGAN(界面上排第一):从模型下拉 Tag 读模型名(默认 realesr-animevideov3)
+            0 => ("realesrgan", SelModel(VideoEsrganModelCombo, "realesr-animevideov3")),
+            // waifu2x(界面第二项):从模型下拉 Tag 读模型名(默认 models-cunet)
+            _ => ("waifu2x", SelModel(VideoWaifu2xModelCombo, "models-cunet")),
         };
         // 视频降噪由现有「启用视频降噪 + 强度(弱/中/强)」统一驱动,不再单开一个 waifu2x 专用下拉(割裂):
         // waifu2x 引擎 → 强弱档直接当它的自带降噪 -n(模型更对症、不额外耗时);
@@ -4338,7 +4350,7 @@ public sealed partial class VideoView : UserControl
         //   留在后台线程会抛 0x8001010E(已真机复现:选 Real-ESRGAN 视频必崩)——await 不带
         //   ConfigureAwait(false),让方法自然地回到 UI 线程;内部改 SelectedIndex 的 DispatcherQueue
         //   兜底保留(双保险,即使未来路径变化也不跨线程改控件)。
-        if (up && VideoEngineRadios.SelectedIndex == 1)
+        if (up && SelectedEngineIsReal)
         {
             // 开始处理前先让用户知道"正在检测引擎兼容性"(探测最长 15 秒,避免用户以为卡住)
             TaskSummary.Text = "正在检测 Real-ESRGAN 显卡兼容性(约 15 秒)…";
@@ -4352,8 +4364,8 @@ public sealed partial class VideoView : UserControl
                 {
                     try
                     {
-                        if (useWaifu && VideoEngineRadios.SelectedIndex != 0)
-                            VideoEngineRadios.SelectedIndex = 0;   // 换成 waifu2x(兼容+最快)
+                        if (useWaifu && SelectedEngineIsReal)
+                            VideoEngineRadios.SelectedIndex = 1;   // 换成 waifu2x(界面第二项;兼容+最快)
                     }
                     finally { tcs.TrySetResult(); }
                 });
@@ -4378,7 +4390,7 @@ public sealed partial class VideoView : UserControl
         var bitrateNow = ParseBitrate();
         var vfrModeNow = VfrModeRadios.SelectedIndex;
         int postSP = (int)SharpenSlider.Value, postCL = (int)ClaritySlider.Value, postUM = (int)UsmSlider.Value,
-            postDT = (int)DetailSlider.Value, postDB = (int)DeblurSlider.Value,
+            postDT = (int)DetailSlider.Value, postDB = 0,
             postAA = (int)PostAaSlider.Value;
         InitTaskStages(up, interp, dedupOn, sceneThreshold != null);
         _taskTotalCount = items.Length;
@@ -4758,7 +4770,6 @@ public sealed partial class VideoView : UserControl
         if ((int)ClaritySlider.Value > 0) postList.Add($"清晰{(int)ClaritySlider.Value}");
         if ((int)UsmSlider.Value > 0) postList.Add($"钝化蒙版{(int)UsmSlider.Value}");
         if ((int)DetailSlider.Value > 0) postList.Add($"保留细节{(int)DetailSlider.Value}");
-        if ((int)DeblurSlider.Value > 0) postList.Add($"去模糊{(int)DeblurSlider.Value}");
         if ((int)PostAaSlider.Value > 0) postList.Add($"边缘抗锯齿{(int)PostAaSlider.Value}");
         if (postList.Count > 0) Log("后处理:" + string.Join(",", postList));
         // 果冻修复(运动模糊/画面去抖,CPU 逐帧滤镜,单独记录便于诊断耗时)

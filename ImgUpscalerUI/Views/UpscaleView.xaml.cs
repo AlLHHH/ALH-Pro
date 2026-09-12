@@ -17,6 +17,12 @@ public sealed partial class UpscaleView : UserControl
     private string? _customOutDir;
     private CancellationTokenSource? _cts;
     private int _gpuCount;   // 枚举到的 GPU 数量(用于 gpuId 计算)
+    // ===== 算法模式:界面顺序 Real-ESRGAN(上,索引 0) / waifu2x(下,索引 1) =====
+    // 存盘与内置预设沿用旧约定(0=waifu2x / 1=Real-ESRGAN),靠下面两个换算函数解耦,
+    // 这样老用户存过的模式和已有预设不会被界面顺序调整翻转。
+    private bool IsAnimeMode => ModeRadios.SelectedIndex == 1;          // waifu2x(动漫)
+    private static int ModeToStored(int uiIndex) => uiIndex == 1 ? 0 : 1;  // ui 1=waifu → 存 0
+    private static int ModeFromStored(int stored) => stored == 0 ? 1 : 0;  // 存 0=waifu → ui 1
     private int _lastJpgQuality = 2;   // 上次 JPG 模式选中的码率档(0-4):切到 PNG 时把"无损"占位替换,保存时保留 JPG 真实档
     private bool _settingsLoaded;      // LoadSettings 完成后才允许保存(防构造期默认值覆盖用户设置)——修复"记不住格式"的守卫
     private bool _suppressEvents;      // 应用预设/加载时抑制控件事件触发 SaveSettings(防覆盖)
@@ -47,10 +53,12 @@ public sealed partial class UpscaleView : UserControl
         RefreshQualityCombo();   // 输出码率档位:按当前格式(PNG/JPG)填充对应选项
         EnsureBuiltinImgPresets();   // 确保自带图片预设存在(官方预设)
 
-        // 模式联动:动漫=waifu2x 模型,照片=Real-ESRGAN 模型,均可选(标题固定「超分模型」)
+        // 【界面顺序:Real-ESRGAN(索引 0)在上、waifu2x(索引 1)在下】与视频页统一;
+        // 存盘/预设沿用旧约定(0=waifu2x, 1=Real-ESRGAN),经 ModeFromStored/ModeToStored 换算,
+        // 这样老用户存的选择和已有预设不会被顺序调整翻转。
         ModeRadios.SelectionChanged += (_, _) =>
         {
-            var isAnime = ModeRadios.SelectedIndex == 0;
+            var isAnime = ModeRadios.SelectedIndex == 1;
             AppLogger.UserAction($"图片:切换算法 → {(isAnime ? "waifu2x" : "Real-ESRGAN")}");
             ModelCombo.IsEnabled = true;
             NoiseCombo.IsEnabled = isAnime;   // Real-ESRGAN 不支持降噪,照片模式禁用
@@ -65,7 +73,6 @@ public sealed partial class UpscaleView : UserControl
             PopulateModelCombo(isAnime);
             UpdateScaleAvailability();   // 模型变化 → 倍率支持变化(如 waifu2x 无 4x 权重)
         };
-
         // 按模式填充模型下拉(选项显示模型名)
         void PopulateModelCombo(bool isAnime)
         {
@@ -171,7 +178,7 @@ public sealed partial class UpscaleView : UserControl
             // 开关本身总是恢复;关闭时不恢复其他参数
             RememberCheck.IsChecked = d.Remember;
             if (!d.Remember) return;
-            if (d.Mode is >= 0 and <= 1) ModeRadios.SelectedIndex = d.Mode;
+            if (d.Mode is >= 0 and <= 1) ModeRadios.SelectedIndex = ModeFromStored(d.Mode);
             // 模型同 ApplyImgSettings:优先按模型名定位,找不到才退回下标(两处必须同一读法)
             int lmi = FindModelIndexByName(d.W2xModelName, d.Mode == 1);
             if (lmi < 0) lmi = d.W2xModel;
@@ -246,7 +253,7 @@ public sealed partial class UpscaleView : UserControl
             var d = new UpscaleSettings
             {
                 Remember = RememberCheck.IsChecked == true,
-                Mode = ModeRadios.SelectedIndex,
+                Mode = ModeToStored(ModeRadios.SelectedIndex),
                 W2xModel = ModelCombo.SelectedIndex,
                 Scale = ScaleRadios.SelectedIndex,
                 Noise = NoiseCombo.SelectedIndex,
@@ -287,7 +294,7 @@ public sealed partial class UpscaleView : UserControl
     private string SelectedModelName()
     {
         int i = ModelCombo.SelectedIndex;
-        if (ModeRadios.SelectedIndex == 1)
+        if (!IsAnimeMode)
             return i >= 0 && i < EngineService.PhotoModels.Length ? EngineService.PhotoModels[i].Name : "";
         return i >= 0 && i < EngineService.AnimeModels.Length ? EngineService.AnimeModels[i].Model : "";
     }
@@ -313,7 +320,7 @@ public sealed partial class UpscaleView : UserControl
     /// <summary>把当前页面参数收集为一个快照(供「保存预设」复用;不含输出目录等位置偏好)。</summary>
     private UpscaleSettings CollectSettings() => new()
     {
-        Mode = ModeRadios.SelectedIndex,
+        Mode = ModeToStored(ModeRadios.SelectedIndex),
         W2xModel = ModelCombo.SelectedIndex,
         W2xModelName = SelectedModelName(),
         Scale = ScaleRadios.SelectedIndex,
@@ -487,7 +494,7 @@ public sealed partial class UpscaleView : UserControl
         _suppressEvents = true;
         try
         {
-            if (d.Mode is >= 0 and <= 1) ModeRadios.SelectedIndex = d.Mode;
+            if (d.Mode is >= 0 and <= 1) ModeRadios.SelectedIndex = ModeFromStored(d.Mode);
             // 模型:【优先按模型名定位】,名字找不到(老文件没这个字段 / 模型已下架)才退回存的下标。
             // 只存下标的话,模型表增删一项就会让所有老预设/老设置静默指到别的模型上。
             int mi = FindModelIndexByName(d.W2xModelName, d.Mode == 1);
@@ -907,7 +914,7 @@ public sealed partial class UpscaleView : UserControl
         // 照片模式 Real-ESRGAN(2022 ncnn)在 Blackwell/Vulkan 不可用设备无法 GPU → 已自动 ONNX;动漫 waifu2x 官方新版稳定
         if (ToolGrid.Items.Count > 0 && !_running)
         {
-            if (ModeRadios.SelectedIndex != 0 && EngineService.ShouldUseOnnxEsrgan())
+            if (!IsAnimeMode && EngineService.ShouldUseOnnxEsrgan())
             {
                 SpeedHint.Text = "✅ 已按此显卡自动选用稳定引擎处理(无需其他设置)";
                 SpeedHint.Visibility = Visibility.Visible;
@@ -1044,7 +1051,7 @@ public sealed partial class UpscaleView : UserControl
         _suppressEvents = true;
         try
         {
-            ModeRadios.SelectedIndex = 0;          // 动漫(waifu2x)
+            ModeRadios.SelectedIndex = 1;          // 动漫(waifu2x,界面第二项)
             ModelCombo.SelectedIndex = 0;
             ScaleRadios.SelectedIndex = 0;         // 1x超分
             NoiseCombo.SelectedIndex = 0;
@@ -1273,7 +1280,7 @@ public sealed partial class UpscaleView : UserControl
     private async void RegionUpscaleAsync(ImageItem item, int x, int y, int w, int h)
     {
         if (_running) return;
-        var isAnime = ModeRadios.SelectedIndex == 0;
+        var isAnime = IsAnimeMode;
         string engine, model;
         if (isAnime)
         {
@@ -1353,7 +1360,7 @@ public sealed partial class UpscaleView : UserControl
         }
         if (items.Length == 0 || _running) return;
         // 引擎前置校验:所选算法缺引擎立即提示(不让它失败后才知道)
-        var needEngine = ModeRadios.SelectedIndex == 0
+        var needEngine = IsAnimeMode
             ? (EngineService.FindWaifu2x() is null ? "waifu2x 引擎" : null)
             : (EngineService.FindRealESRGAN() is null ? "Real-ESRGAN 引擎" : null);
         if (needEngine != null)
@@ -1404,7 +1411,7 @@ public sealed partial class UpscaleView : UserControl
         EngineCapHint.Text = "";                              // 清掉上一轮的引擎能力提示(每轮重新判定)
         EngineCapHint.Visibility = Visibility.Collapsed;
 
-        var isAnime = ModeRadios.SelectedIndex == 0;
+        var isAnime = IsAnimeMode;
         string engine, model;
         if (isAnime)
         {
