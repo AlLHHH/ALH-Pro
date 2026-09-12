@@ -1,29 +1,30 @@
 ; ALH Pro 安装脚本 (Inno Setup 6.3+)
 ; ⚠ 需要 Inno Setup 6.3 或更高版本(首次版本(2021)起支持 DownloadTemporaryFile / CreateDownloadPage)
 ;
+; 【本脚本 = 完整版(内置模型)】与 installer.iss(本体版)的区别只有一处:
+;   installer.iss 的 [Files] Excludes 里排除了 engines\rembg\*.onnx(约 1.65GB)→ 装完必须另下模型包;
+;   本脚本**不排除**这些模型 → 抠图/去背景装完即用,代价是安装包大 1.4GB(实测 v1.3.5:2285.3MB vs 826MB)。
 ; 用法:
-;   1. 先构建发布版(确保 发布版\ 目录是最新,含软件+引擎,模型可缺省);
-;   2. 确认 [Files] 里 发布版\* 没有打包模型(模型 1.38GB 不要进安装包本体);
-;   3. 将本文件放入仓库根,用 Inno Setup 编译 → ALHPro_v1.2.0_Full_Setup.exe(约 900MB);
-;   4. 模型包(models_v1.0.zip, 1.38GB)单独上传 GitHub Release 附件(与 ModelsUrl 同版本)。
-;
-; 安装时「选择附加任务」页勾选「下载并安装模型包(来自 GitHub)」:
-;   安装完成即从 GitHub 下载模型包并解压到 程序目录\engines\rembg\(扁平结构:6 个 .onnx 直接展开),
-;   不勾选 = 之后手动下载模型包,解压到 程序目录\engines\rembg\ 即可。
+;   1. 先构建发布版(deploy.ps1),并确认 发布版\engines\rembg\ 里确实有那 6 个 rembg .onnx
+;      —— 缺了它们、本脚本编译出来的就和本体版没区别(体积会露馅:掉回 ~826MB);
+;   2. 用 Inno Setup 编译本文件 → ALHPro_v{版本}_完整版_{构建时间戳}.exe;
+;   3. 完整版体积**超过 GitHub Release 单文件 2GiB 上限**(实测 2285MB > 2147483648 字节),
+;      只能网盘/直传分发,不要试图传 Release 附件(会失败)。
+; 说明:本脚本没有 [Tasks]/[Code] 段,因此**不提供**"安装时从 GitHub 下载模型包"的任务 ——
+;   那套逻辑只存在于 installer.iss;下面的 ModelsUrl/ModelsFile 是本脚本的历史遗留定义,当前未被引用。
 
 #define MyAppName "ALH Pro"
-#define MyAppVersion "1.3.4"
+#define MyAppVersion "1.3.5"
 #define MyAppExeName "ALHPro.exe"
 ; 【构建时间戳】(ISPP 在编译时求值):用于让用户一眼分辨"同名同版本的不同构建"。
 ; 起因:同一个 1.3.4 出了多次安装包,名字完全一样、大小只差几十 MB,用户无法确认手上是哪一个。
 #define BuildStamp GetDateTimeString('yyyymmdd-hhnn', '', '')
 ; GitHub Release 模型包直链(与 Release 附件名必须一致;仓库=AlLHHH/ALH-Pro)
-; 【为什么指向 v1.3.3 而不是 v1.3.4】models_v1.0.zip 与软件版本无关(内容一直没变),
-; 而 v1.3.4 的 Release 尚未建立 → 指向它会让"下载并安装模型包"必然 404。
-; 已核实:经 GitHub API 查得 v1.3.3/v1.3.2/…/v1.0 每个 Release 都带 models_v1.0.zip 附件,
-; 最新可用 tag 为 v1.3.3(2026-09-08)。
-; ⇒ v1.3.4 Release 建好并上传模型附件后,可把本行改回 v1.3.4(不改也能正常工作)。
-#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.3.3/models_v1.0.zip"
+; 【历史遗留,本脚本当前未引用】这两个定义只在 installer.iss 的 DownloadAndExtractModels() 里用到;
+; 完整版不下载模型,留着只为与 installer.iss 对照。本体版那边的维护规则同样适用:
+;   ModelsUrl **必须指向一个真实存在、且确实挂了该附件的 Release**,否则"下载并安装模型包"必然 404。
+; v1.3.5 的 Release 已建好并上传 models_v1.0.zip 附件(2026-09-12),故两边都指向 v1.3.5。
+#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.3.5/models_v1.0.zip"
 #define ModelsFile "models_v1.0.zip"
 ; 完整版(含模型,网盘/整包)说明:安装完成后可到软件内「使用教程」或 GitHub 说明页找完整版直链
 
@@ -79,9 +80,11 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.i
 
 
 [Files]
-; 发布版 = 软件 + 引擎(不含模型)。模型不在安装包内,保持体积 ~900MB
-; Excludes:排除抠图模型(engines\rembg\*.onnx 1.65GB)、发布版里的解压副本(models_v1.0\)、
-; 以及开发残留/调试产物(_ttracks 脚本、旧 exe、pdb/lib/bak、DirectML.Debug)——否则体积膨胀且泄露源码痕迹
+; 完整版 = 软件 + 引擎 + **抠图模型**(engines\rembg\*.onnx 约 1.65GB 一并打包,装完即用)
+; Excludes:排除发布版里的解压副本(models_v1.0\)、开发残留/调试产物
+;   (_ttracks 脚本、旧 exe、pdb/lib/bak、DirectML.Debug)——否则体积膨胀且泄露源码痕迹
+; ⚠ 与 installer.iss 的差异就在这一点:那边 Excludes 里多一条 engines\rembg\*.onnx(所以本体版 ~826MB),
+;   本脚本**故意不排除** —— 这就是"完整版"三个字的全部含义(实测 v1.3.5:2285.3MB)。改这行之前想清楚。
 Source: "发布版\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "models_v1.0\*,_ttracks*,bin\*,obj\*,*.pdb,*.lib,*.bak,ALHPro_old*,DirectML.Debug.*,d3dcompiler_47.dll.bak,onnxruntime.lib"
 
 [InstallDelete]
