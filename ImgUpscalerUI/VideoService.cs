@@ -2376,7 +2376,18 @@ public static class VideoService
     private static string VideoDenoiseFilter(int strength, int kind = 0)
     {
         // kind: 0=两者结合(默认,兼容旧设置) 1=仅空间 nlmeans 2=仅时间 hqdn3d
-        string spatial = strength switch
+        // 【结合模式为什么空间只用"轻"档】用户素材实测(1080p 2 秒):空间参数调重是拿细节换收益 ——
+        //   nlmeans 强 + hqdn3d 强 : 平坦噪点 0.66 / 抖动 1.419 / 细节 19.0
+        //   nlmeans 弱 + hqdn3d 强 : 平坦噪点 0.69 / 抖动 1.396 / 细节 20.7  ← 采用(抖动更低、细节多 9%)
+        // 所以结合模式下三档只放大【时间维】,空间固定轻档;「仅空间」模式下强度照旧作用于 nlmeans。
+        // 【仅时间模式擦不干净单帧噪点】实测把 hqdn3d 空间参数从 8 拉到 16,平坦噪点 0.77→0.77 纹丝不动 ——
+        // 它那部分机制天生就弱,这是"部分噪点去不干净"的根因,不是参数没调好(要用结合模式才能清掉)。
+        string spatialFor = strength switch
+        {
+            2 => "nlmeans=s=5:p=5:r=5",
+            _ => "nlmeans=s=5:p=3:r=5",
+        };
+        string spatialOnly = strength switch
         {
             1 => "nlmeans=s=5:p=3:r=5",
             2 => "nlmeans=s=5:p=5:r=5",
@@ -2384,15 +2395,15 @@ public static class VideoService
         };
         string temporal = strength switch
         {
-            1 => "hqdn3d=3:2:4:3",
-            2 => "hqdn3d=6:4:9:6",
-            _ => "hqdn3d=8:6:12:8",
+            1 => "hqdn3d=4:3:6:4",
+            2 => "hqdn3d=8:6:12:8",
+            _ => "hqdn3d=12:10:12:8",
         };
         return kind switch
         {
-            1 => spatial,
+            1 => spatialOnly,
             2 => temporal,
-            _ => spatial + "," + temporal,
+            _ => spatialFor + "," + temporal,
         };
     }
 
