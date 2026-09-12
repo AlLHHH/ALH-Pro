@@ -53,6 +53,7 @@
                               ToolTipService.ToolTip="Real-ESRGAN 模型(动漫/通用)。标「超慢」的 realesrgan-x4plus 只有 4x 权重:1080p 源实测约 14.5 秒/帧(比 animevideov3 慢 17 倍),建议只在图片上用"
                               SelectionChanged="Combo_Changed">
                         <ComboBoxItem Content="动漫 · realesr-animevideov3（4MB · 快）" Tag="realesr-animevideov3"/>
+                        <ComboBoxItem Content="通用 · realesr-general-x4v3（5MB · 快 · 轻量通用）" Tag="realesr-general-x4v3"/>
                         <ComboBoxItem Content="动漫 · realesrgan-x4plus-anime（9MB · 中）" Tag="realesrgan-x4plus-anime"/>
                         <!-- 「通用 · realesrgan-x4plus」保留可选,但红字标出"超慢"(用户要求:不删除、只警示)。
                              依据(2026-09-11 本机 4060 Laptop 实测,源 1920×1080 每帧):x4plus 14.48s / x4plus-anime 4.84s /

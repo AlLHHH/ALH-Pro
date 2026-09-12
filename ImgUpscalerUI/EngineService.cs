@@ -901,11 +901,15 @@ public static partial class EngineService
         }
     }
 
-    /// <summary>动漫模式可选模型(waifu2x 系,全部 MIT 许可)。显示名=类别·模型名(体量 MB · 快/中/慢);取值用 Model=模型名。</summary>
+    /// <summary>动漫模式可选模型(waifu2x 系,全部 MIT 许可)。显示名=类别·模型名(体量 MB · 快/中/慢);取值用 Model=模型名。
+    /// 【为什么就这几个】联网逐个核过许可:效果更强的社区模型要么前端是 AGPL(Upscayl / SPAN-ncnn / Universal-NCNN-Upscaler)、
+    /// 要么权重是非商用(NMKD 等),要么官方只发 .pth(ncnn 权重官方没有,如 realesr-general-x4v3)——都不能随安装包分发。
+    /// 详见 ENGINE_REALESRGAN_REBUILD.md 的"可用模型盘点"一节。</summary>
     public static readonly (string Label, string Engine, string Model)[] AnimeModels =
     {
         ("通用 · models-cunet（24MB · 中）", "waifu2x", "models-cunet"),
         ("动漫 · models-upconv_7_anime_style_art_rgb（5MB · 快）", "waifu2x", "models-upconv_7_anime_style_art_rgb"),
+        ("实拍/照片 · models-upconv_7_photo（5MB · 快）", "waifu2x", "models-upconv_7_photo"),
     };
 
     // 注意:预处理降噪用 cunet(models-cunet 自带 1x 降噪模型 noise_model.bin);
@@ -915,6 +919,11 @@ public static partial class EngineService
     public static readonly (string Label, string Name)[] PhotoModels =
     {
         ("动漫 · realesr-animevideov3（4MB · 快）", "realesr-animevideov3"),
+        // 【自己转的 ncnn 版】官方只发 .pth/onnx,没有 ncnn 权重;用 ncnn 老版 onnx2ncnn + ncnnoptimize 转出:
+        // 实测 960x540→4K 1.7 秒、PSNR 33.13dB(与 x4plus 同档),体积仅 4.85MB(小 7 倍)。
+        // 【转换踩过的坑】① 引擎必须开启 Clip 层(社区模型用得到)② 图内 3 处引用 input、输入层定义却叫 data,
+        // 必须全局统一后 ncnnoptimize 才能加载 ③ 转换工具要在 MSYS2 环境里跑(依赖 protobuf 的 DLL)。
+        ("通用 · realesr-general-x4v3（5MB · 快 · 轻量通用）", "realesr-general-x4v3"),
         ("动漫 · realesrgan-x4plus-anime（9MB · 中）", "realesrgan-x4plus-anime"),
         ("通用 · realesrgan-x4plus（41MB · 慢）", "realesrgan-x4plus"),
     };
@@ -2481,7 +2490,8 @@ public static partial class EngineService
         // 图片路径一直是按 4x 跑再缩回的(见 UpOneTileAsync 的注释),视频路径此前漏了这一步。
         int engineScale;
         if (engine == "waifu2x") engineScale = CeilPowerOfTwo(scale);
-        else if (model.Contains("x4plus", StringComparison.OrdinalIgnoreCase)) engineScale = 4;
+        else if (model.Contains("x4plus", StringComparison.OrdinalIgnoreCase)
+                 || model.Contains("general-x4v3", StringComparison.OrdinalIgnoreCase)) engineScale = 4;   // 4x 专用权重:必须按原生 4x 跑,x4plus 与自转的 general-x4v3 同理
         else engineScale = Math.Clamp((int)Math.Ceiling(scale), 1, 4);
 
         if (engine == "waifu2x")
