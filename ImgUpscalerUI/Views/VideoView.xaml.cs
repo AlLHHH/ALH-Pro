@@ -1413,10 +1413,13 @@ public sealed partial class VideoView : UserControl
         // 【Rev 2 · 2026-09】后处理全部重做后同步预设值(每一档换了机制,见 VideoService.BuildPostFilter):
         //   钝化蒙版给最多(唯一实测不伤边缘结构的锐化档:边缘 SSIM 反升),保留细节用 CAS(全档最干净),
         //   边缘抗锯齿给到能真正生效的强度(旧参数实测空转),去模糊整项移除(视频侧 ffmpeg 无反卷积)。
-        ( "通用画质增强 不含补帧", 2, new Func<VideoSettings>(() => new VideoSettings
+        // 【Rev 3 · 2026-09】这个预设名字是「通用」,但原模型是动漫向的 animevideov3 —— 语义不符。
+        // 现在有了自转的轻量通用模型 realesr-general-x4v3(4.85MB / 960x540→4K 1.7s / PSNR 33.13),
+        // 它才是"通用"的正解,故本预设改用 it(下拉末位,序号 3)。动漫片源请用「动漫通用」。
+        ( "通用画质增强 不含补帧", 3, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = false, Up = true, Engine = 1, Scale = 1, Gpu = 0,
-            Interp = false, Model = 0, UpWaifu2xModel = 0, UpEsrganModel = 0, InterpScale = 0,
+            Interp = false, Model = 0, UpWaifu2xModel = 0, UpEsrganModel = 3, InterpScale = 0,
             Target = false, TargetFps = "", VfrMode = 0, VfrExpanded = false, FpsBase = 0, FpsMode = 0, FpsOffset = 0, FpsExpanded = true,
             DedupOn = false, DedupModel = 0, DedupAnime = 0, DedupSmart = 0, DedupThr = 0.01,
             Scene = false, SceneThr = 0.3, TimeStep = 0.5, Tta = false, OutDir = "", CustomW = "1920", CustomH = "1080",
