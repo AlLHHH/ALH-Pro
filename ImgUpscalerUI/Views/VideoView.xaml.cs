@@ -1409,7 +1409,7 @@ public sealed partial class VideoView : UserControl
             DedupMotionComp = true, DedupOnlyTrueHold = true, ManualProtectSmallMotion = true, DedupPhaseAlign = true,
             PostSharpen = 20, PostClarity = 25, PostUsm = 35, PostDetail = 40, PostDeblur = 0, PostAa = 45,
             Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
-            FastMode = false, Mute = false, VideoDenoiseOn = false, VideoDenoiseStrong = -1,
+            FastMode = false, Mute = false, VideoDenoiseOn = false, VideoDenoiseStrong = -1, DenoiseKind = 0,
         })),
         // 【Rev 1】去重由「智能 + 去除一拍二」改为「动漫模式 + 去除一拍四」。
         // 理由:动漫素材绝大多数是一拍二/一拍三,而"去除一拍四"才是把"一拍四的片子"还原成内容帧率的正解;
@@ -1418,7 +1418,9 @@ public sealed partial class VideoView : UserControl
         // 【Rev 2】超分引擎同样换成 Real-ESRGAN · realesr-animevideov3(理由见上,实测 17 倍速、输出仍是 2x=4K)。
         // 【Rev 3 · 2026-09】后处理重做后同步:钝化蒙版 40(实测唯一不伤边缘的锐化档,动漫线条收益最大)、
         //   保留细节 40(CAS)、边缘抗锯齿 45(新参数才真的在削锯齿)、去模糊归零(视频侧已移除)、锐化收到 20。
-        ( "动漫通用", 3, new Func<VideoSettings>(() => new VideoSettings
+        // 【Rev 4 · 2026-09】降噪方式入选预设:结合模式(空间+时间)已证实优于单一方式
+        // (仅时间擦不掉单帧噪点:实测把 hqdn3d 空间参数翻倍,平坦噪点 0.77→0.77 无变化)。
+        ( "动漫通用", 4, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = true, Up = true, Engine = 1, Scale = 1, Gpu = 0,
             Interp = true, Model = 0, UpWaifu2xModel = 1, UpEsrganModel = 0, InterpScale = 2,
@@ -1429,7 +1431,7 @@ public sealed partial class VideoView : UserControl
             DedupMotionComp = true, DedupOnlyTrueHold = true, ManualProtectSmallMotion = true, DedupPhaseAlign = true,
             PostSharpen = 20, PostClarity = 25, PostUsm = 40, PostDetail = 40, PostDeblur = 0, PostAa = 45,
             Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
-            FastMode = false, Mute = false, VideoDenoiseOn = true, VideoDenoiseStrong = 1,
+            FastMode = false, Mute = false, VideoDenoiseOn = true, VideoDenoiseStrong = 1, DenoiseKind = 0,
         })),
         ( "去重补帧4x", 0, new Func<VideoSettings>(() => new VideoSettings
         {
@@ -1442,7 +1444,7 @@ public sealed partial class VideoView : UserControl
             DedupMotionComp = true, DedupOnlyTrueHold = true, ManualProtectSmallMotion = true, DedupPhaseAlign = true,
             PostSharpen = 0, PostClarity = 0, PostUsm = 0, PostDetail = 0, PostDeblur = 0, PostAa = 0,
             Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
-            FastMode = false, Mute = false, VideoDenoiseOn = false, VideoDenoiseStrong = -1,
+            FastMode = false, Mute = false, VideoDenoiseOn = false, VideoDenoiseStrong = -1, DenoiseKind = 0,
         })),
     };
 
