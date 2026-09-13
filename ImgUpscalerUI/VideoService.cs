@@ -1147,6 +1147,13 @@ public static class VideoService
                 double interpIdleSec = 0;
                 int segNo = 0;
                 int releasedConsumed = 0;   // 本阶段已按段释放的输入帧数(审计用)
+                // 【G-补2 · 2026-09-13】阶段末之后【马上】还有一整批收尾:把补帧输出的 PNG 全部重编码成 JPG
+                // (ReencodeDirPngToJpg(framesFinal),耗时正比于帧数 —— 用户那条 2668 帧要跑几分钟)。
+                // 这条 ETA 只按补帧引擎自己的帧数外推,不知道后面还有这一步;于是最后一两帧时它会算成
+                // "不足 1 秒",界面显示"预计还剩几秒"而后面还有几分钟的活(用户原话:"几???")。
+                // 处理:①<1 秒那一档改口径并带上本说明(见 Core.EtaText);
+                //      ②这段收尾自己在界面发进度 + 自己的 ETA(G 主条),用户不会停在假数字上。
+                string interpWrapUp = $"{globalTarget} 帧整理成 JPG";
                 for (int si = 0; si < segBounds.Count; si++)
                 {
                     var (s, e) = segBounds[si];
@@ -1167,12 +1174,12 @@ public static class VideoService
                             progress!.Report((interpPctBase + (int)((double)interpPctSpan * gf / Math.Max(1, globalTarget)),
                                 $"补帧 第 {gf} 帧 / 共 {globalTarget} 帧" +
                                 EtaStr(gf - interpBase, globalTarget - interpBase,
-                                    (DateTime.UtcNow - interpStageStart).TotalSeconds - interpIdleSec)));
+                                    (DateTime.UtcNow - interpStageStart).TotalSeconds - interpIdleSec, interpWrapUp)));
                         });
                     progress?.Report((interpPctBase + (int)((double)interpPctSpan * segNo / segBounds.Count),
                         $"补帧 第 {globalIdx - 1} 帧 / 共 {globalTarget} 帧(段 {segNo}/{segBounds.Count})" +
                         EtaStr(globalIdx - 1 - interpBase, globalTarget - interpBase,
-                            (DateTime.UtcNow - interpStageStart).TotalSeconds - interpIdleSec)));
+                            (DateTime.UtcNow - interpStageStart).TotalSeconds - interpIdleSec, interpWrapUp)));
                     // 【让"段间停顿"可见】每一段都是【一次新的 RIFE 进程】(启动 + 模型加载是秒级固定开销,
                     // 高倍率非 v4 模型还要级联多次),先说明"正在启动补帧引擎";引擎真出帧后再报"已就绪(启动 X.Xs)"。
                     // 文案不含「完成」二字:UI 会把含"完成"的进度行改写成"✓ …"并清掉当前步骤行。
@@ -1705,9 +1712,12 @@ public static class VideoService
                 var srStageStart = DateTime.UtcNow;
                 double srIdleSec = 0;
                 // 引擎内部的逐帧汇报(超分期间刷屏最频繁的那条)只有"本批"信息、没有 ETA → 包一层统一补上
+                // 【G-补1】upcoming = 超分阶段结束之后马上要做的收尾:旧顺序是"合帧前的整理与编码"
+                // (统一 JPG + 编码),新顺序则是补帧阶段 —— 不足 1 秒时把它说出来,别再给含糊的"几秒"。
+                string srNextStep = upscaleFirst ? "补帧阶段" : "合帧前的整理与编码";
                 var srProgress = progress == null ? null : new EtaProgress(progress,
                     () => (long)doneFrames,
-                    done => EtaStr(done, total, (DateTime.UtcNow - srStageStart).TotalSeconds - srIdleSec));
+                    done => EtaStr(done, total, (DateTime.UtcNow - srStageStart).TotalSeconds - srIdleSec, srNextStep));
                 try
                 {
                 for (int bi = 0; bi < batchCount; bi++)
@@ -4211,6 +4221,9 @@ public static class VideoService
 
         var pngs = Directory.EnumerateFiles(dir, "*.png").ToArray();
         int done = 0;
+        // 【G-补2】这段整批重编码自己的计时:只用于给它自己算"预计还剩"(同一套 EtaText 公式,
+        // 用【本步自己的净耗时】而不是上游阶段的时间 —— 口径与其它阶段一致,不新造公式)。
+        var reencSw = System.Diagnostics.Stopwatch.StartNew();
         // 【并行 + 线程上限的依据(2026-09-13 复核,本次未改)】每帧独立、写不同文件,4K 抗锯齿单帧约 1.19 秒,
         // 单线程会让这一步变成新瓶颈,故按帧并行。上限取 min(ProcessorCount-2, 12) 而不是"核数减二":
         //   · 本进程总 CPU 已被 Windows Job 对象按百分比封顶(SafeRender 的「CPU 上限」,自动模式 85%、
@@ -4289,7 +4302,10 @@ public static class VideoService
                     //   · 文案不带"共"字 → UI 的 etaRegex(要求"第 N 帧 / 共 M 帧")匹配不上 → 不抢步骤行、不改写它;
                     //   · 不含"完成"二字 → 不会被 UI 当成阶段结束行(否则会清掉当前步骤行);
                     //   · 每 20 帧一条 + 末帧一条,和 AA 路径同频(不刷屏)。
-                    progress?.Report((curPct, $"整理帧(JPG) 第 {d} / {pngs.Length} 帧"));
+                    // 【G-补2】末尾接上本步自己的"预计还剩"(同一套 EtaText 公式 + 本步自己的净耗时):
+                    // 这样收尾阶段也有真实数字,而不是让用户对着上一阶段的假 ETA 干等。
+                    progress?.Report((curPct, $"整理帧(JPG) 第 {d} / {pngs.Length} 帧"
+                        + AlhPro.Core.EtaText.ForRemaining(d, pngs.Length, reencSw.Elapsed.TotalSeconds)));
                 }
             });
         }
@@ -6731,21 +6747,13 @@ public static class VideoService
     /// 传任务级耗时会把拆帧/去重/补帧的时间算进当前阶段的速率里,速率被严重低估、ETA 虚高
     /// (这正是 2026-09-08 之前"所有人都觉得预计时间不准"的根因:全文件只有一个任务级 stageStart,
     /// 而它只在超分阶段被使用;降温休息和用户暂停的时间也全算成了产出时间)。
-    /// 只在已处理若干帧且净耗时超过 1 秒后才显示:头几帧含模型加载/编码器初始化,用它算速率会离谱。</summary>
-    private static string EtaStr(long done, long total, double elapsedSec)
-    {
-        try
-        {
-            if (done < 4 || total <= 0 || done >= total) return "";
-            if (elapsedSec < 1.0) return "";
-            double remainSec = (total - done) * elapsedSec / done;
-            if (remainSec < 1) return "预计还剩几秒";
-            if (remainSec < 60) return $"预计还剩 {(int)remainSec} 秒";
-            if (remainSec < 3600) return $"预计还剩 {remainSec / 60:0.#} 分钟";
-            return $"预计还剩 {remainSec / 3600:0.#} 小时";
-        }
-        catch { return ""; }
-    }
+    /// 只在已处理若干帧且净耗时超过 1 秒后才显示:头几帧含模型加载/编码器初始化,用它算速率会离谱。
+    /// 【2026-09-13 修 G-补1】不足 1 秒那一档不再输出含糊的"预计还剩几秒"(见 Core.EtaText 的说明):
+    /// 阶段末往往后面还有整批收尾(补帧后的整批 PNG→JPG 整理,几分钟),含糊文案会让用户以为马上就好。
+    /// 文案生成已抽到 <see cref="AlhPro.Core.EtaText.ForRemaining"/>(纯逻辑 + 单测钉住每一档)。
+    /// <param name="upcoming">阶段末之后马上要做的收尾工作描述(只说"后面还有什么",不改其余档位口径)。</param></summary>
+    private static string EtaStr(long done, long total, double elapsedSec, string? upcoming = null)
+        => AlhPro.Core.EtaText.ForRemaining(done, total, elapsedSec, upcoming);
 
     /// <summary>把引擎内部的逐帧汇报(EngineService 目录轮询 / EsrganOnnxService)补上"预计还剩"。
     /// 引擎只知道"本批",既不知道整阶段净耗时也不知道全局总帧数,所以它刷屏最频繁的那条消息一直没有 ETA;
