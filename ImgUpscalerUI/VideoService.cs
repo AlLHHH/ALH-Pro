@@ -1534,6 +1534,17 @@ public static class VideoService
                     segStart = c;
                 }
                 if (segStart < frameCount) segBounds.Add((segStart, frameCount));
+                // 【任务 S】"按时轴填平"计划(用户亲测有效:「小样填平没有震颤了」)。
+                // 判定 = 源时长表有缺口(间隔偏离中位数 >25%)且开了补帧;CFR 源一律不填平(行为逐字不变)。
+                // 【当前接线状态】本次只接入【判定 + 日志】+ 纯函数计划器(有单测);
+                // 真正"按 MapTargetFrame 给出的 srcIdx0/srcIdx1/φ 逐槽 -s φ 合成"的那一步**尚未**接到生产路径,
+                // 因此这里**只出日志、不改行为**(默认不开填平)。详见本次提交说明的【仅方案】。
+                {
+                    var flatPlan = AlhPro.Core.TimelineFlattenPlan.Decide(frameDurs, effectiveFps, interpScale);
+                    AppLogger.Info(flatPlan.LogLine + (flatPlan.Flatten
+                        ? $" → 可填平(缺口 {flatPlan.GapCount} 处,目标 {flatPlan.TargetFps:0.##}fps);合成步骤尚未接入,本次仍按原样输出"
+                        : ""));
+                }
                 // 【任务 Q1 · 2026-09-13】阶段顺序不再靠全局开关(常量 false),改为**按实测单价自动判定**:
                 // 超分单帧成本 u 与"补帧在源分辨率/放大后分辨率的单帧成本"比较,谁便宜谁先跑。
                 // 判据/成本表/安全边际(节省 <15% 不切换)/未实测组合回退,全在 AlhPro.Core.PipelineOrderPlan
