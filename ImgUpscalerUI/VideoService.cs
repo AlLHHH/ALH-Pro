@@ -2144,8 +2144,7 @@ public static class VideoService
             // 视频滤镜链:后处理(锐化/清晰/…) → 果冻修复 → 运动模糊 → 去抖 → 可选 fps 重映射
             var preParts = new System.Collections.Generic.List<string>();
             var postParts = new System.Collections.Generic.List<string>();
-            var postFilter = BuildPostFilter(postSharpen, postClarity, postUsm, postDetail,
-                postAa, inv);
+            var postFilter = AlhPro.Core.VideoPostFilters.Build(postSharpen, postClarity, postUsm, postDetail, postAa);
             if (postFilter != null) preParts.Add(postFilter);
             // 视频降噪(空间+时间,去噪点/闪烁/压缩噪点),放最前:先降噪再锐化
             // 【已挪走】视频降噪原先挂在这里(合帧滤镜链)→ 作用在"超分后的帧"上,4K 下 1.56 秒/帧;
@@ -2508,19 +2507,28 @@ public static class VideoService
                 double encSec = encSw.Elapsed.TotalSeconds;
                 double encFps = encSec > 0.01 ? encTotal / encSec : 0;
                 AppLogger.Info($"编码实测:编码器={LastVideoEncoderInfo},帧数={encTotal},耗时={encSec:0.##}s,实测={encFps:0.#}fps{(!encUsed.StartsWith("libx264") && !encUsed.StartsWith("libx265") ? "(硬编)" : "(CPU 软编)")}");
-                // 【把"滤镜"和"编码"分开报】"编码/封装"这个数里其实混着 ffmpeg 的后处理滤镜(同一进程)。
-                // 2026-09-12 就是被这一点误导过:日志显示"硬编只有 1fps",实际是滤镜链里一个 sab 把整条链
-                // 拖到 4.88 秒/帧(4K),编码器本身有 15~20fps。这里抽样实测滤镜链每帧成本,把它摊开写清楚。
+                // 【把"解码""滤镜""编码"三者分开报】"编码/封装"这个数里混着 ffmpeg 的后处理滤镜与 JPG 解码
+                // (同一进程)。2026-09-12 就是被这一点误导过:日志显示"硬编只有 1fps",实际是滤镜链里一个 sab
+                // 把整条链拖到 4.88 秒/帧(4K),编码器本身有 15~20fps。这里分别抽样实测"解码"与"解码+滤镜",
+                // 相减得到纯滤镜成本,三者都写清楚(2026-09-13:原来是混在一起报的,导致用户拿含解码的数去优化滤镜)。
                 if (!string.IsNullOrEmpty(vfChainBody))
                 {
-                    double perFrame = await SampleFilterChainCostPerFrameAsync(encFfmpeg, framePattern, vfChainBody, frBase, ct);
-                    if (perFrame >= 0)
+                    bool hwJpeg = HwJpegDecodeUsable && encUsed.Contains("nvenc", StringComparison.OrdinalIgnoreCase);
+                    var (perFrameFull, perFrameDecode) = await SampleFilterChainCostPerFrameAsync(
+                        encFfmpeg, framePattern, vfChainBody, frBase, hwJpeg, ct);
+                    if (perFrameFull >= 0)
                     {
-                        double filterEst = perFrame * encTotal;
-                        double other = Math.Max(0, encSec - filterEst);
-                        AppLogger.Info($"编码阶段拆分:后处理滤镜(抽样 {perFrame:0.###} 秒/帧 × {encTotal} 帧)≈ {filterEst:0.#} 秒"
+                        double decodePer = perFrameDecode >= 0 ? Math.Min(perFrameDecode, perFrameFull) : 0;
+                        double filterPer = Math.Max(0, perFrameFull - decodePer);
+                        double filterEst = filterPer * encTotal;
+                        double decodeEst = decodePer * encTotal;
+                        double other = Math.Max(0, encSec - filterEst - decodeEst);
+                        AppLogger.Info($"编码阶段拆分:JPG 序列解码(抽样 {decodePer:0.###} 秒/帧{(hwJpeg ? ",NVDEC 硬解" : ",软件解码")})≈ {decodeEst:0.#} 秒"
+                            + $" + 后处理滤镜(抽样 {filterPer:0.###} 秒/帧)≈ {filterEst:0.#} 秒"
                             + $" + 编码/音频/封装/校验 ≈ {other:0.#} 秒(合计 {encSec:0.#} 秒)"
-                            + (perFrame > 0.5 ? " ⚠ 滤镜占了大头,瓶颈不是编码器" : ""));
+                            + (filterPer > 0.5 ? " ⚠ 滤镜占了大头,瓶颈不是编码器" : ""));
+                        LastPostFilterCostPerFrame = filterPer;
+                        LastJpegDecodeCostPerFrame = decodePer;
                     }
                 }
             }
@@ -2613,26 +2621,16 @@ public static class VideoService
     ///  · 【已移除:去模糊】ffmpeg 没有反卷积滤镜(实测卷积核方案 PSNR −8.6 dB ✗),
     ///    视频里那档只是"大半径锐化",名不副实 → 删除。图片页的「去模糊」是真·Richardson-Lucy
     ///    反卷积(C# 实现),那边保留。</summary>
-    private static string? BuildPostFilter(int sharpen, int clarity, int usm, int detail,
-        int aa, System.Globalization.CultureInfo inv)
-    {
-        var parts = new System.Collections.Generic.List<string>();
-        if (sharpen > 0)
-            parts.Add($"smartblur=luma_radius=1:luma_strength=-{Math.Min(1.0, sharpen / 100.0).ToString("0.00", inv)}:luma_threshold={(sharpen <= 60 ? 3 : 6)}");
-        if (clarity > 0)
-            parts.Add($"unsharp=13:13:{Math.Min(0.50, clarity / 100.0 * 0.50).ToString("0.00", inv)}:13:13:0");
-        if (usm > 0)
-            parts.Add($"smartblur=luma_radius=2:luma_strength=-{Math.Min(1.0, usm / 100.0).ToString("0.00", inv)}:luma_threshold=8");
-        if (detail > 0)
-            parts.Add($"cas=strength={Math.Min(0.60, detail / 100.0 * 0.60).ToString("0.00", inv)}");
-        // 【边缘抗锯齿已从这里移除 —— 2026-09-12 实测】这一档原用 ffmpeg 的 sab 滤镜,4K 下代价极大:
-        //   整条 6 档滤镜链 = 4.88 秒/帧;把 sab 去掉 = 0.10 秒/帧(约 48 倍);sab 单跑也要 0.90 秒/帧。
-        // 同一效果改用图片页那套 C# 实现(EngineService.ApplyEdgeSmoothInMemory),在"PNG→JPG 统一"那一步
-        // 顺带做掉并按帧并行(4K 单帧 1.19 秒 ÷ 多核),既不多一次 JPG 重编码,也不再把这一档的成本
-        // 藏进"编码/封装"的耗时里。aa 参数保留形参:调用方签名不变,但不再产出滤镜。
-        _ = aa;
-        return parts.Count > 0 ? string.Join(",", parts) : null;
-    }
+    // 【2026-09-13 迁走】后处理滤镜链的构造已迁到 AlhPro.Core.VideoPostFilters.Build(纯逻辑 + 单测
+    // 把每一档产出的 ffmpeg 滤镜字符串逐字钉住,见 AlhPro.Tests.VideoPostFilterTests)。
+    // 【下面这些实测结论随实现一起保留在这里,别当废注释删】
+    //  · 锐化=v50 PSNR −0.35 dB / edgePSNR −0.38(旧版 unsharp 5x5 a1.5 是 −3.77/−4.86 ✗)
+    //  · 钝化蒙版=v50 edgeSSIM 0.9582 ≥ 基底 0.9571(唯一不伤边缘结构的档,预设给最多)
+    //  · 保留细节=v50 平坦区误差 2.09(基底 2.07,全档最干净)
+    //  · 边缘抗锯齿=旧 sab 参数实测空转;2026-09-12 起这一档不再进 ffmpeg 链(转 C# 并行实现),
+    //    见 AlhPro.Core.VideoPostFilters 类注释与 EngineService.ApplyEdgeSmoothToJpeg。
+    //  · 去频闪/去杂色/去模糊三项已删除,理由见 git 历史与本文件旧注释(不要加回来)。
+    // 调用点一律直接用 AlhPro.Core.VideoPostFilters.Build(...)(不再保留本地同名包装,避免两份实现分叉)。
 
     /// <summary>视频降噪滤镜(ffmpeg nlmeans 非局部均值,比 hqdn3d 强得多):
     /// 实测 hqdn3d(原实现)对压缩/随机噪点几乎无效果,而 nlmeans 效果真实可见,故改用 nlmeans。
@@ -3603,28 +3601,51 @@ public static class VideoService
     /// 与其它滤镜串起来是 4.88 秒/帧,去掉它只要 0.10 秒/帧,这项拆分就是为了让这种事下次一眼可见)。</summary>
     public static double LastFramePostProcSeconds { get; private set; }
 
-    /// <summary>抽样实测"纯后处理滤镜链"的成本(只做 解码→滤镜→丢弃:不编码、不落盘、不写文件)。
-    /// 抽 6 帧即可外推到全片 —— 目的是把"编码/封装"这个数里混着的滤镜成本摊开,而不是精确到毫秒。
-    /// 返回"秒/帧";链为空或失败返回 -1(调用方跳过这一步,绝不影响主流程)。
+    /// <summary>最近一次合帧里【后处理滤镜链本身】的每帧成本(秒/帧,抽样实测;已减掉 JPG 解码那份)。
+    /// 用途:诊断"这条片子慢在滤镜还是编码"—— 2026-09-13 之前报的数里混着解码,会误导优化方向。</summary>
+    public static double LastPostFilterCostPerFrame { get; private set; }
+
+    /// <summary>最近一次合帧里【JPG 序列解码】的每帧成本(秒/帧,抽样实测;NVDEC 硬解还是软件解码见日志)。</summary>
+    public static double LastJpegDecodeCostPerFrame { get; private set; }
+
+    /// <summary>抽样实测"解码 JPG 序列"与"后处理滤镜链"各自的每帧成本(只做 解码→滤镜→丢弃:
+    /// 不编码、不落盘、不写文件)。抽 6 帧即可外推到全片 —— 目的是把"编码/封装"这个数里混着的
+    /// 【解码】与【滤镜】分别摊开,而不是精确到毫秒。返回 (解码+滤镜, 纯解码) 秒/帧;链为空或失败返回 (-1,-1)。
+    /// 【为什么必须分开测(2026-09-13)】本方法原先只测"带链跑一遍",而那条命令是【软件解码 4K JPEG】——
+    /// 于是报出来的"后处理滤镜 X 秒/帧"里含着解码成本,用户会照着这个数去优化滤镜,方向就跑偏了
+    /// (用户实测:3420 帧 4K 作业报"后处理滤镜 0.084 秒/帧 ≈ 288.6 秒",其中相当一部分其实是
+    ///  【软件 mjpeg 解码】—— 本文件上方注释记录过 4K 软件解码 ≈39.6 fps,即约 25 ms/帧)。
+    /// 现在跑两遍:带链(解码+滤镜)减去不带链(纯解码)= 真正的滤镜成本;hwJpegDecode 传 true 时
+    /// 两遍都用与合帧相同的 `-c:v mjpeg_cuvid`(保持"抽样的解码路径 = 真实合帧的解码路径")。
     /// 【为什么需要它】2026-09-12 实测:4K 下整条 6 档滤镜链 4.88 秒/帧、去掉 sab 只剩 0.10 秒/帧,
     /// 而日志当时只写"编码/封装 X 秒",于是"硬编只有 1fps"的假象持续了很久。</summary>
-    private static async Task<double> SampleFilterChainCostPerFrameAsync(string ffmpegExe, string framePattern,
-        string chain, double fps, CancellationToken ct)
+    private static async Task<(double full, double decode)> SampleFilterChainCostPerFrameAsync(string ffmpegExe,
+        string framePattern, string chain, double fps, bool hwJpegDecode, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(chain)) return -1;
-        try
+        if (string.IsNullOrEmpty(chain)) return (-1, -1);
+        string hw = hwJpegDecode ? "-c:v mjpeg_cuvid " : "";
+        string fpsArg = fps.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture);
+        async Task<double> Measure(string vf)
         {
-            const int n = 6;
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            await RunAsync(ffmpegExe,
-                $"-nostdin -y -v error -framerate {fps.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture)} " +
-                $"-start_number 1 -i \"{framePattern}\" -frames:v {n} -vf \"{chain}\" -f null -",
-                null, ct);
-            sw.Stop();
-            return sw.Elapsed.TotalSeconds / n;
+            try
+            {
+                const int n = 6;
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                await RunAsync(ffmpegExe,
+                    $"-nostdin -y -v error {hw}-framerate {fpsArg} " +
+                    $"-start_number 1 -i \"{framePattern}\" -frames:v {n}{vf} -f null -",
+                    null, ct);
+                sw.Stop();
+                return sw.Elapsed.TotalSeconds / n;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { return -1; }
         }
-        catch (OperationCanceledException) { throw; }
-        catch { return -1; }
+        double full = await Measure($" -vf \"{chain}\"");
+        if (full < 0) return (-1, -1);
+        // 纯解码:同一路输入、同一次数,只是不过滤镜链(-f null 仍会把帧解出来,滤镜为空不影响解码发生)
+        double decode = await Measure("");
+        return (full, decode);
     }
 
     /// <summary>最近一次去重的报告文本(删帧数/集中时段/有效帧率),供任务完成后显示在输出信息与日志,
