@@ -1238,10 +1238,20 @@ public static class VideoService
                     if (progress != null)
                     {
                         int doneNow = (int)Math.Min(globalTarget, Math.Max(0, globalIdx - 1));   // 钳制:当前帧永不超总帧(修复"第11219帧/共11099帧"溢出)
-                        progress.Report((interpPctBase + (int)((double)interpPctSpan * doneNow / Math.Max(1, globalTarget)),
+                        int segPct = interpPctBase + (int)((double)interpPctSpan * doneNow / Math.Max(1, globalTarget));
+                        progress.Report((segPct,
                             $"补帧 第 {doneNow} 帧 / 共 {globalTarget} 帧(段 {segNo}/{segBounds.Count})" +
                             EtaStr(doneNow - interpBase, globalTarget - interpBase,
                                 (DateTime.UtcNow - interpStageStart).TotalSeconds - interpIdleSec)));
+                        // 【界面可见性 · 2026-09-13】逐段清盘过去只写 AppLogger,界面上完全看不到"边跑边释放临时帧"。
+                        // 这里就地更新一条轻提示:沿用【刚刚上报的同一个百分比】(只换文字,不把进度往回带):
+                        //   · 文案不带帧号 → 不与「补帧 第 N 帧 / 共 M 帧」抢步骤行(UI 的 etaRegex 匹配不上);
+                        //   · 不含"完成"二字 → UI 不会把它改写成"✓ …"并清掉当前步骤行;
+                        //   · 不带 [临时清理] 前缀(那是日志口径,不搬上界面);
+                        //   · 本段没释放到帧(delThisSeg == 0)时不发,避免噪声。
+                        // 纯提示:删除时机/并发/处理顺序一律未动。
+                        if (delThisSeg > 0)
+                            progress.Report((segPct, $"本段已释放 {delThisSeg} 帧临时文件(累计 {releasedConsumed} 帧)"));
                     }
                 }
                 var interpCount = EnumerateFrameFiles(segOutDir).Count();   // 补帧输出可能是 png(旧)或 jpg(新边转边存),统一按两种数
@@ -1991,6 +2001,22 @@ public static class VideoService
                             Interlocked.Add(ref releasedInputFrames, relCnt);
                             AppLogger.Info($"[临时清理] 超分批 {bi + 1}/{batchCount}(槽位 {batchSlots[0]}~{batchSlots[^1]})完成:已释放" +
                                 (upscaleFirst ? "源帧" : "补帧帧") + $" {relCnt} 帧(本阶段累计 {Volatile.Read(ref releasedInputFrames)} 帧;目录 {Path.GetFileName(upInput)})");
+                            // 【界面可见性 · 2026-09-13】逐批清盘过去只写 AppLogger,界面上完全看不到"边跑边释放临时帧"
+                            // (长素材批数多,用户只看到盘在掉、界面无任何动静)。这里就地更新一条轻提示:
+                            //   · 沿用【当前进度百分比】(doneFrames 单调递增 → 只会往前、不会把进度往回带);
+                            //   · 文案不带帧号 → 不与「超分 第 N 帧 / 共 M 帧」抢步骤行;不含"完成"二字 → 不会被
+                            //     UI 改写成"✓ …"并清掉步骤行;不带 [临时清理] 前缀(那是日志口径);
+                            //   · 本批没释放到帧(relCnt == 0)时不发,避免噪声。
+                            // 纯提示:删除时机/并发/处理顺序一律未动(下面 sem.Release 照旧)。
+                            if (relCnt > 0)
+                            {
+                                try
+                                {
+                                    progress?.Report((upBase + (int)((upEnd - upBase) * Volatile.Read(ref doneFrames) / Math.Max(1, total)),
+                                        $"本批已释放 {relCnt} 帧临时文件(累计 {Volatile.Read(ref releasedInputFrames)} 帧)"));
+                                }
+                                catch { }
+                            }
                             sem.Release();
                         }
                     }, ct));
