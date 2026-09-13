@@ -2655,7 +2655,12 @@ public static class VideoService
             // Core.CountTimestampCollisions 复算撞格数;若仍有撞格,再细化到 1ms(1000fps)。
             // CFR 分支一字未改:此时 frInput == fr。
             string frInput = fr;
-            if (vfrSetpts != null && finalDurs != null && finalDurs.Count > 0)
+            // 【为什么这里排除了运动模糊】`postMotionBlur >= 1` 的链自带时间维度重采样
+            // (minterpolate=fps=… → tmix → fps=…),它按"输入时间戳算出的时长 × 目标帧率"决定产出帧数:
+            // 把输入时基从 1/fr 细化到 1/120 会让它以为素材只有一半长 → 产出帧数减半(画质功能被弄坏)。
+            // 那条链自身的设计前提就是"输入是按目标帧率铺的 CFR",与 VFR 时间轴本来就不同源;
+            // 所以该组合维持原时基(**该组合仍可能撞格丢帧,属于未处理的已知空洞**),其余情况一律细化。
+            if (vfrSetpts != null && finalDurs != null && finalDurs.Count > 0 && postMotionBlur < 1)
             {
                 double c0 = AlhPro.Core.VideoPipeline.CountTimestampCollisions(finalDurs, frBase);
                 double need = AlhPro.Core.VideoPipeline.VfrInputFramerate(finalDurs, frBase);
