@@ -23,7 +23,10 @@
 ; 现在 v1.3.5 的 tag 已推送、Release 建好并把 models_v1.0.zip 作为附件上传 → 本行指向 v1.3.5。
 ; 【维护备注】以后发新版:①先建 Release 并上传 models_v1.0.zip 附件 → ②再把本行改成新版本号;
 ; 顺序反了会让新包里的"下载模型包"404。
-#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.3.6/models_v1.0.zip"
+; 【2026-09-13】v1.3.6 的 Release 尚未发布(tag 已按要求删除)→ 直链必须指向【真实存在】的 Release,
+; 否则"下载并安装模型包"必然 404。现指向 v1.3.5(它挂着 models_v1.0.zip,已实测可下)。
+; 等 v1.3.6 的 Release 建好并上传附件后,把本行改回 v1.3.6。
+#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.3.5/models_v1.0.zip"
 #define ModelsFile "models_v1.0.zip"
 ; 完整版(含模型,网盘/整包)说明:安装完成后可到软件内「使用教程」或 GitHub 说明页找完整版直链
 
