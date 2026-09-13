@@ -76,4 +76,75 @@ public static class RenderPolicy
         if (freeRamGB <= 8) return 180;      // 中档
         return 240;                          // 空余内存 >8G:最快
     }
+
+    // ===== 素材规模感知的批次决策(2026-09-13 新增)=====
+    // 【为什么要加】VideoBatchSize(freeRamGB) 只按空闲内存定批大小,【完全不知道素材规模】:
+    // 同一个 60 秒素材在低内存档上会被切成七八批,而每批都要重新启动一次引擎进程
+    // (命令行引擎,启动 + 模型加载是秒级固定开销;本机日志:单批 72 帧"引擎启动→引擎完成"17.1s,
+    //  而 240 帧/批那一轮每批同样只要 15.7~16.4s)。用户看到的就是"批次之间停顿好几秒,像卡死"。
+
+    /// <summary>每批帧数的绝对上限 = 现有内存档的最大值(240 帧)。
+    /// 【为什么钉在这里】批次越大,同屏临时帧越多(输入帧 + 本批输出帧并存,见 VideoService 的逐批清盘注释),
+    /// 临时盘/内存峰值随每批帧数近似线性上涨。240 是今天"空闲内存 >8G"档【已经在用】的最大批 ——
+    /// 短素材单批豁免永远不越过它,最坏峰值就等于今天高端机型已经在跑的配置,不引入新的爆盘/爆内存风险。
+    /// 要再往上抬必须先有实测(同屏临时帧峰值、盘占用、内存水位),不许凭感觉放大。</summary>
+    public const int MaxFramesPerBatch = 240;
+
+    /// <summary>每批帧数下限:与 VideoService 原有"减半后不小于 8 帧"(Math.Max(8, batchSize / 2))一致,避免批次碎成每批几帧。</summary>
+    public const int MinFramesPerBatch = 8;
+
+    /// <summary>【短素材单批】唯一帧数不超过这个数 → 只跑一批,不再为几十帧反复启动引擎进程。
+    /// 取值 = MaxFramesPerBatch(240),依据:
+    ///  ① 不超过它时,单批的同屏临时帧数不会超过今天"空闲内存>8G → 240 帧/批"已在用的水平(见 MaxFramesPerBatch);
+    ///  ② 一次引擎进程启动/模型加载是秒级固定开销(本机日志:单批 72 帧的引擎启动→完成 17.1s),
+    ///     把 2~4 批合并成 1 批,省下的正是这个量级。
+    /// 【待实测标定】阈值本身(240)以及"短素材单批确实更快"都还没有在真机空闲时验证过
+    /// (验证要独占显卡跑作业,用户正在用机器);fastMode/diskTight 时这个上限按同样比例减半,见 PlanVideoBatches。</summary>
+    public const int ShortClipSingleBatchUniqueFrames = MaxFramesPerBatch;
+
+    /// <summary>批次决策结果:每批帧数上限、批数、以及"为什么是这个数"(供日志/事后验收)。</summary>
+    public readonly record struct VideoBatchPlan(
+        int BatchSize, int BatchCount, int UniqueFrames, int MemoryBatchSize,
+        bool SingleBatchByShortClip, bool HalvedForFastMode, bool HalvedForDiskTight, string Reason);
+
+    /// <summary>把【素材规模】纳入批次决策的纯函数(可单测)。
+    /// 【规则】
+    ///  ① 内存基准 = VideoBatchSize(freeRamGB) —— 既有安全上界,一字不改;
+    ///  ② fastMode / diskTight:各自把基准减半(下限 8 帧),次序与 VideoService 原实现一致(fast 先、diskTight 后);
+    ///  ③ 短素材单批:唯一帧数 ≤ 单批上限(默认 240,减半时 120 / 60)→ 批数 = 1;
+    ///  ④ 长素材:批数 = ⌈唯一帧数 ÷ 每批帧数⌉,每批帧数【永不】超过内存基准(因此不设"批数上限")。
+    /// 【为什么不设批数上限 K —— 这是与"峰值盘/内存不能暴涨"的硬冲突,已上报未擅自实现】
+    ///  批数 = ⌈N ÷ 每批帧数⌉,要让批数 ≤ K 只能让每批帧数随 N 线性变大:几万帧的长素材上 K=8
+    ///  会要求每批几千帧,同屏临时帧(输入帧 + 本批输出帧)按同样倍数上涨,峰值盘/内存随之暴涨 ——
+    ///  恰好违反本函数第 ④ 条要守的安全上界。真正能"摊薄启动开销又不涨峰值"的办法是让引擎进程
+    ///  【跨批复用】(长驻引擎 / 引擎批输入内含多批),那是管线改造,不在"批次决策"这一层内。</summary>
+    public static VideoBatchPlan PlanVideoBatches(double freeRamGB, int uniqueFrames, bool fastMode = false, bool diskTight = false)
+    {
+        if (uniqueFrames < 0) uniqueFrames = 0;
+        int memBatch = VideoBatchSize(freeRamGB);            // ① 内存基准
+        int batch = memBatch;
+        bool halvedFast = false, halvedDisk = false;
+        if (fastMode) { batch = Math.Max(MinFramesPerBatch, batch / 2); halvedFast = true; }    // ② 兼容模式(弱设备)
+        if (diskTight) { batch = Math.Max(MinFramesPerBatch, batch / 2); halvedDisk = true; }   // ② 临时盘偏紧(防爆盘)
+        // ③ 短素材单批上限:与"减半"同比例收紧(减半必须仍然生效),且永不超过 ShortClipSingleBatchUniqueFrames
+        int singleCap = ShortClipSingleBatchUniqueFrames;
+        if (halvedFast) singleCap = Math.Max(MinFramesPerBatch, singleCap / 2);
+        if (halvedDisk) singleCap = Math.Max(MinFramesPerBatch, singleCap / 2);
+        bool single = uniqueFrames > 0 && uniqueFrames <= singleCap;
+        if (single) batch = Math.Max(batch, Math.Min(uniqueFrames, singleCap));
+        int count = uniqueFrames <= 0 ? 1 : (uniqueFrames + batch - 1) / batch;   // ④ 长素材:按内存基准切,不设批数上限
+        string halveTxt = (halvedFast, halvedDisk) switch
+        {
+            (true, true) => "兼容模式+临时盘紧",
+            (true, false) => "兼容模式",
+            (false, true) => "临时盘紧",
+            _ => "",
+        };
+        string reason = $"内存基准 {memBatch} 帧/批"
+            + (halveTxt.Length > 0 ? $"(减半:{halveTxt} → {batch} 帧/批)" : "")
+            + (single
+                ? $";唯一帧 {uniqueFrames} ≤ 单批上限 {singleCap} → 1 批(短素材不为几十帧重复启动引擎)"
+                : $";唯一帧 {uniqueFrames} 按内存基准切 {count} 批(每批 ≤ {batch} 帧;不设批数上限,理由见 PlanVideoBatches)");
+        return new VideoBatchPlan(batch, count, uniqueFrames, memBatch, single, halvedFast, halvedDisk, reason);
+    }
 }

@@ -348,6 +348,14 @@ public static class SafeRender
         return AlhPro.Core.RenderPolicy.VideoBatchSize(FreeRamGB);
     }
 
+    /// <summary>视频逐帧超分的【素材规模感知】批次决策(2026-09-13 新增):除空闲内存外,
+    /// 还把"唯一帧数"算进去——短素材单批跑完(不为几十帧重复启动引擎),长素材按内存基准切批。
+    /// 内存基准与 fastMode/diskTight 减半的语义全部保留在 RenderPolicy.PlanVideoBatches 里(纯函数、可单测)。</summary>
+    public static AlhPro.Core.RenderPolicy.VideoBatchPlan GetVideoBatchPlan(int uniqueFrames, bool fastMode, bool diskTight)
+    {
+        return AlhPro.Core.RenderPolicy.PlanVideoBatches(FreeRamGB, uniqueFrames, fastMode, diskTight);
+    }
+
     /// <summary>视频超分的并行批数(同时几个引擎实例):按显存/内存/核数自动定。
     /// 显存充足 + 内存大 + 多核才多路(每路独立引擎实例,GPU 并行算力翻倍);
     /// 条件不够一律单批(多路会让显存/CPU 吃满,后台卡甚至爆)。快速模式强制 1 路。</summary>

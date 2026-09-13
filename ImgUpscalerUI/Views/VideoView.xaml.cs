@@ -4085,7 +4085,8 @@ public sealed partial class VideoView : UserControl
                         bool upscaleFirstEta = upOn && interpOn
                             && !(scale <= 1.001 && !upscaleShrink1x) && !(scale > 2.001);
                         totalSec += VideoService.EstimateProcessSeconds(dur, fps, w, h,
-                            upOn, scale, engine, interpOn, interpScale, dedupOn, 0, postFx: false, upscaleFirst: upscaleFirstEta);
+                            upOn, scale, engine, interpOn, interpScale, dedupOn, 0, postFx: false, upscaleFirst: upscaleFirstEta,
+                            freeRamGB: SafeRender.FreeRamGB);   // 传空闲内存 → 估算里计入"每批引擎启动开销 × 批数"
                         // 占盘(JPG 中间帧峰值,与 C3 一致):源帧≈1MB/1080p,放大后×倍率²×0.18
                         double srcMB = 1.0 * ((double)w * h) / (1920.0 * 1080.0); if (srcMB < 0.5) srcMB = 0.5;
                         double outMult = upOn ? (upscaleShrink1x ? 2.0 : Math.Max(1.0, scale)) : 1.0;
@@ -4695,7 +4696,8 @@ public sealed partial class VideoView : UserControl
                 etaInitTotal += VideoService.EstimateProcessSeconds(dur, fps, w, h,
                     up, upscaleShrink1x ? 2.0 : scale, engine, interp, interpScale, dedupOn,
                     DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex + 1 : 0,
-                    postSP + postCL + postUM + postDB + postAA > 0, upscaleFirstEta);
+                    postSP + postCL + postUM + postDB + postAA > 0, upscaleFirstEta,
+                    SafeRender.FreeRamGB);   // 传空闲内存 → 估算里计入"每批引擎启动开销 × 批数"
             }
             catch { etaInitTotal += 60; }
         }
