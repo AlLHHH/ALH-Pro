@@ -83,6 +83,9 @@
         <None Include="ALHPro_icon.png" Link="ALHPro_icon.png" CopyToOutputDirectory="PreserveNewest"/>
         <!-- 广告区本地兜底占位图:远程广告图拉取失败/为空时显示(用路径加载,与收款码同款约定,避免裂图) -->
         <None Include="Assets\ad_placeholder.png" Link="ad_placeholder.png" CopyToOutputDirectory="PreserveNewest"/>
+        <!-- 【2026-09-13】致谢名单:关于页自动扫描程序目录 thanks\ 文件夹(文件名=网名,.txt=只写名字,图片=带头像)。
+             必须随包输出,否则发布后名单为空 —— 之前只靠手工拷进 发布版\,重新发布就丢名单。 -->
+        <None Update="thanks\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"/>
     </ItemGroup>
 
     <ItemGroup>
