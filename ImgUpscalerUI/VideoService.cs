@@ -673,9 +673,76 @@ public static class VideoService
                             : null;
                         AppLogger.Info($"拆帧(智能-未采用拍数,不采样):帧数 {frameCount},源时长表 "
                             + $"{(frameDurs != null ? frameDurs.Count + " 项" : "未建")}(VFR 素材={vfrPassthrough},去重={dedup})");
-                        effectiveFps = inFps;
+                        // ===== 【任务 M3 · 2026-09-13】信度不足时的兜底:回退「帧差 + SSIM」逐帧检测 =====
+                        // 真机反馈:素材确实有一拍N,只是转场/长静止镜头那几个离群间隔把置信度拉低,
+                        // 结果"选了去重却一帧没删"。现在改为回退到与【手动-帧差+SSIM】同一条路、同一套默认参数;
+                        // 三档按"删帧比例下限"决定是否真的采用(低于下限 = 没有可靠重复 → 仍原样保留):
+                        //   激进 <5% → 不去重;均衡 <10% → 不去重;保守档不参与回退(它就是最不愿意删的那档)。
+                        // 【待真机标定】5% / 10% 是用户给的初值,尚未真机实测。
+                        // 两条早退不参与回退(与 cfInfo 语义一致):几乎无变化、几乎连续运动。
+                        // 全过程无随机数:同一素材、同一档位每次结果一致。
+                        bool fbStatic = cfInfo.Fps <= 0.5;
+                        bool fbContinuous = !fbStatic && cfInfo.Fps >= inFps * 0.95;
+                        double fbFloor = dedupSmartMode == 1 ? 0.05 : 0.10;
+                        bool fbAdopted = false;
+                        string fbNote;
+                        if (dedupSmartMode == 2)
+                            fbNote = "保守档不参与回退";
+                        else if (fbStatic)
+                            fbNote = "素材几乎无变化,不适用回退";
+                        else if (fbContinuous)
+                            fbNote = "素材几乎连续运动,不适用回退";
+                        else
+                        {
+                            // 【任务 M4】三档力度(0.7/1.0/1.5)在这里真正生效 —— 旧实现把 force 放在
+                            // DetectDupFramesAdaptive 里,而智能主路径根本到不了那个函数(识别不出拍数就直接返回),
+                            // 所以三档"只有门槛不同、处理路径一样"。现在按力度缩放四个阈值(公式见 Core.DedupTier,
+                            // 与旧代码同口径、同上下限),并把档位/力度/阈值/实际删帧数打进日志(三档差异可核对)。
+                            double fbForce = AlhPro.Core.DedupTier.Force(dedupSmartMode);
+                            double fbSadThr = AlhPro.Core.DedupTier.ScaleSad(3.0, fbForce);
+                            double fbSsimThr = AlhPro.Core.DedupTier.ScaleSsim(dedupOnlyTrueHold ? 0.995 : 0.97, fbForce, dedupSmartMode);
+                            double fbProtect = AlhPro.Core.DedupTier.ScaleProtect(0.30, fbForce);
+                            double fbSegSad = AlhPro.Core.DedupTier.ScaleSegSad(5.0, fbForce);
+                            progress?.Report((3, $"智能检测({defaultGateName}):拍数未直接采用,回退帧差+SSIM 复核(力度 ×{fbForce:0.#})..."));
+                            var fbDrop = await Task.Run(() => DetectDupFramesWithSsim(framesIn, fbSadThr, fbSsimThr, fbProtect,
+                                6, 16, 4, 0, fbSegSad, motionCompDedup, ct: ct, progress: progress,
+                                stage: "去重分析(智能回退-帧差+SSIM)"), ct);
+                            double fbRatio = fbDrop.Count / (double)Math.Max(1, frameCount);
+                            fbAdopted = fbDrop.Count > 0 && fbRatio >= fbFloor;
+                            AppLogger.Info($"智能检测({defaultGateName})回退帧差+SSIM:力度 ×{fbForce:0.#}"
+                                + $",快筛 {fbSadThr:0.##} / SSIM {fbSsimThr:0.###} / 保护 {fbProtect:0.##} / 静止段 {fbSegSad:0.#}"
+                                + $",重复 {fbDrop.Count}/{frameCount} 帧({fbRatio:0%}),档位下限 {fbFloor:0%}"
+                                + $" → {(fbAdopted ? "采用(删帧)" : "低于下限,原样保留")}");
+                            if (fbAdopted)
+                            {
+                                dedupDroppedFrames.AddRange(fbDrop);
+                                var fbAll = Directory.EnumerateFiles(framesIn, "*.jpg")
+                                    .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
+                                // 与手动分支同一处落盘逻辑:尾帧保护 + 合并时长表 + 删帧/重命名
+                                ApplyDedupDrop(framesIn, fbAll, new System.Collections.Generic.HashSet<int>(fbDrop), frameDurs, fbAll.Length);
+                                frameCount = Directory.EnumerateFiles(framesIn, "*.jpg").Count();
+                            }
+                            fbNote = fbAdopted
+                                ? $"回退帧差+SSIM 删 {fbDrop.Count} 帧"
+                                : $"回退复核重复 {fbRatio:0%}(低于档位下限 {fbFloor:0%},原样保留)";
+                        }
+                        if (fbAdopted)
+                        {
+                            // 与手动-帧差+SSIM 分支同口径重算有效帧率(帧数已变)
+                            var fullDur3 = await ProbeDurationSeconds(inputVideo);
+                            double effDur3 = (trimEnd ?? fullDur3) - (trimStart ?? 0);
+                            int origCount3 = effDur3 > 0 ? (int)Math.Round(effDur3 * inFps) : frameCount;
+                            effectiveFps = inFps * frameCount / Math.Max(1, origCount3);
+                            var learned3 = new[] { 8.0, 10, 12, 15, 24, 25, 30 }.OrderBy(a => Math.Abs(effectiveFps - a)).First();
+                            string learnedMsg3 = Math.Abs(effectiveFps - learned3) / learned3 < 0.1 ? $"(内容帧率 {learned3:0} fps)" : "";
+                            progress?.Report((5, $"已拆出 {frameCount} 帧(智能-{fbNote},有效帧率 {effectiveFps.ToString("0.##", inv)} fps {learnedMsg3})"));
+                        }
+                        else
+                        {
+                            effectiveFps = inFps;
+                            progress?.Report((5, $"已拆出 {frameCount} 帧(智能-未采用拍数,不采样;{fbNote})"));
+                        }
                         tempoSrcIdx = null;
-                        progress?.Report((5, $"已拆出 {frameCount} 帧(智能-未采用拍数,不采样)"));
                     }
                     else
                     {
