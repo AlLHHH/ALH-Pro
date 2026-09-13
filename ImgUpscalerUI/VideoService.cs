@@ -3973,6 +3973,19 @@ public static class VideoService
     /// 与其它滤镜串起来是 4.88 秒/帧,去掉它只要 0.10 秒/帧。这里用与图片页同一套 C# 实现,
     /// 并**按帧并行**(每帧独立),再与本来就要做的 PNG→JPG 合并成一次编码,不额外多一代 JPG 损失。
     /// 目录里本来就是 JPG 的帧(未超分/未补帧等分支)也会吃到这一档,避免同一开关在不同分支下效果不一致。</param>
+    /// 【每帧到底在算什么(2026-09-13 逐行核对,供后续提速对照)】
+    ///   A. PNG 输入(引擎写 PNG 的分支)→ EngineService.ConvertPngToJpg(png,jpg,q,out _,aa):
+    ///      ① new Bitmap(png) = PNG 解码一次;② 黑帧采样(ForEachSample 抽样,不是全图 GetPixel);
+    ///      ③ ApplyEdgeSmoothInMemory:LockBits(32bppArgb)→ 拆 3 个通道平面(3×w×h 字节)
+    ///         → 每通道一次 3×3 边缘平滑 → 合回 32bpp;④ SaveJpegViaGdi 再拷一张 24bppRgb(GDI+ DrawImage);
+    ///      ⑤ GDI+ JPEG 编码。全流程只有一次解码、一次编码(AA 搭在中间,不多一代损失)。
+    ///   B. JPG 输入(引擎直出 JPG,视频正常路径)→ EngineService.ApplyEdgeSmoothToJpeg:
+    ///      ① new Bitmap(jpg) = JPEG 解码一次;② 同 A 的 ③/④/⑤(AA + 24bpp 拷贝 + 编码);③ 落盘。
+    ///      旧落盘是"写 原文件.aa.jpg 再 File.Copy 覆盖"(同一份 JPG 多一轮全文件读+写),
+    ///      2026-09-13 改成"内存里编完再一次性写回原路径"(见 EngineService.ApplyEdgeSmoothToJpeg)。
+    ///   本步骤【不】额外做的:黑帧判定只在 A 分支顺带做(B 分支不为查黑再解码一遍)。
+    /// 【已知可再提速但会改画质语义 → 只列方案、本次未改】把 AA 挪到超分/缩放【之前】(在源分辨率上做):
+    ///   单帧成本随面积下降明显,但"放大前削锯齿"与"放大后削锯齿"是两种画面,须用户看对比图再定。
     private static void ReencodeDirPngToJpg(string dir, int edgeSmooth,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct)
     {
@@ -3983,7 +3996,7 @@ public static class VideoService
             try { preexistingJpg = Directory.EnumerateFiles(dir, "*.jpg").ToArray(); } catch { }
         }
         ReencodeDirPngToJpgCore(dir, edgeSmooth, progress, ct, 93, 95);
-        // ② 本就已经是 JPG 的帧:就地做一次抗锯齿(临时文件 + 替换,绝不半写坏)
+        // ② 本就已经是 JPG 的帧:就地做一次抗锯齿(先在内存里编完再覆盖原路径,绝不半写坏)
         if (edgeSmooth > 0 && preexistingJpg.Length > 0)
         {
             int done = 0;
@@ -4030,7 +4043,15 @@ public static class VideoService
 
         var pngs = Directory.EnumerateFiles(dir, "*.png").ToArray();
         int done = 0;
-        // 【并行】每帧独立、写不同文件;4K 抗锯齿单帧约 1.19 秒,单线程会让这一步变成新瓶颈
+        // 【并行 + 线程上限的依据(2026-09-13 复核,本次未改)】每帧独立、写不同文件,4K 抗锯齿单帧约 1.19 秒,
+        // 单线程会让这一步变成新瓶颈,故按帧并行。上限取 min(ProcessorCount-2, 12) 而不是"核数减二":
+        //   · 本进程总 CPU 已被 Windows Job 对象按百分比封顶(SafeRender 的「CPU 上限」,自动模式 85%、
+        //     自定义 50~95%,见 SafeRender.cs:40/500/589)。16 核 × 85% ≈ 13.6 核的等价额度,
+        //     12 路已经贴着这个额度;再往上加线程只会让每路更慢、上下文切换更多,总吞吐不变。
+        //   · 这一步跑在整条管线里(ffmpeg/引擎随时可能还有活在跑),留 2 核给界面与其它环节是产品既定的
+        //     "防整机卡"策略(与 ApplyProcessPriority 同一条思路)。
+        // 【未真机实测】本机禁止占显卡/跑基准,所以"12 是否最优"没有实测数据 —— 要动这个上限必须先测出
+        //   "AA 步骤耗时 vs 线程数"的曲线(本条注释只说明现状依据,不代表已标定)。
         int threads2 = Math.Clamp(Environment.ProcessorCount - 2, 2, 12);
         var opts = new System.Threading.Tasks.ParallelOptions
         {
