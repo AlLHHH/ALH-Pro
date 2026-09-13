@@ -539,7 +539,7 @@ public sealed partial class VideoView : UserControl
             if (UpscaleToggle.IsChecked == true) slow.Add("超分");
             if (interp && InterpModelCombo.SelectedIndex is 3 or 4 or 5 or 6) slow.Add("非 v4 补帧模型");   // anime/HD/UHD/v2.3 只能级联
             if (TtaCheck.IsChecked == true) slow.Add("高质量 TTA");
-            if (interp && InterpScaleRadios.SelectedIndex is 3 or 4) slow.Add("高倍率补帧");
+            if (interp && AlhPro.Core.InterpScaleMap.IsHighRate(InterpScaleRadios.SelectedIndex)) slow.Add("高倍率补帧");
             if (interp && SceneCheck.IsChecked == true) slow.Add("转场识别");
             if (DenoiseToggle.IsChecked == true) slow.Add("视频降噪");
             if ((int)SharpenSlider.Value > 0 || (int)ClaritySlider.Value > 0 || (int)UsmSlider.Value > 0
@@ -900,7 +900,7 @@ public sealed partial class VideoView : UserControl
         Scale12xRadio.Opacity = v4Model ? 1.0 : 0.5;
         Scale16xRadio.IsEnabled = v4Model;
         Scale16xRadio.Opacity = v4Model ? 1.0 : 0.5;
-        if (!v4Model && InterpScaleRadios.SelectedIndex is 1 or 4 or 5)
+        if (!v4Model && AlhPro.Core.InterpScaleMap.NeedsV4Model(InterpScaleRadios.SelectedIndex))
             InterpScaleRadios.SelectedIndex = 0;
         // 补帧模型提示:随所选模型更新,说明推荐 / 其它模型的问题(选 v4.13 提示推荐,选其它提示局限)
         {
@@ -1049,7 +1049,7 @@ public sealed partial class VideoView : UserControl
         int fpsModeNow = FpsModeRadios.SelectedIndex;
         var inFps = fpsModeNow == 2
             && double.TryParse(InputFpsBox.Text, NumberStyles.Float, inv, out var f) && f > 0 ? f : 0;
-        var m = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, 4 => 12, 5 => 16, _ => 2 };
+        var m = AlhPro.Core.InterpScaleMap.Multiplier(InterpScaleRadios.SelectedIndex);
         var extras = new System.Collections.Generic.List<string>();
         if (dedup) extras.Add($"去重({DedupModelCombo.SelectedItem})");
         if (scene) extras.Add($"转场 {SceneSlider.Value:0.00}");
@@ -1491,10 +1491,15 @@ public sealed partial class VideoView : UserControl
         // 【Rev 4 · 2026-09-12】下拉顺序调整:general-x4v3 上移到「超慢」之前(序号 3 → 2)。
         // ⚠ 这里必须跟着改成 2,并且**【必须提 Rev】** —— 否则老用户机器上那份 Rev3 的官方预设不会被刷新,
         //   它记的还是旧序号 3,而新列表里 3 已经是「超慢」(x4plus,慢 17 倍):用户点一下这个预设就突然变超慢。
-        ( "通用画质增强 不含补帧", 4, new Func<VideoSettings>(() => new VideoSettings
+        // 【Rev 5 · 2026-09-13】按用户要求:超分模型改用「动漫通用」那支 realesr-animevideov3(序号 0)。
+        //   直接诱因:摘要里印着「通用·general-x4v3(轻量)」,用户看到"轻量"就认为这支不行 —— 那是 v1.3.5
+        //   改名时漏改的旧标签(已在 UpEsrganModelNames 改成「(中)」),但模型本身照用户要求换掉。
+        //   这一条与 Rev 3 的取舍相反(Rev 3 以"预设名叫「通用」就该配通用模型"为由换成 general-x4v3),
+        //   本次以用户偏好为准。若要退回:把下面 UpEsrganModel 改回 2 并**再提一次 Rev**,不提则老机器不刷新。
+        ( "通用画质增强 不含补帧", 5, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = false, Up = true, Engine = 1, Scale = 1, Gpu = 0,
-            Interp = false, Model = 0, UpWaifu2xModel = 0, UpEsrganModel = 2, InterpScale = 0,
+            Interp = false, Model = 0, UpWaifu2xModel = 0, UpEsrganModel = 0, InterpScale = 0,
             Target = false, TargetFps = "", VfrMode = 0, VfrExpanded = false, FpsBase = 0, FpsMode = 0, FpsOffset = 0, FpsExpanded = true,
             DedupOn = false, DedupModel = 0, DedupAnime = 0, DedupSmart = 0, DedupThr = 0.01,
             Scene = false, SceneThr = 0.3, TimeStep = 0.5, Tta = false, OutDir = "", CustomW = "1920", CustomH = "1080",
@@ -2199,8 +2204,11 @@ public sealed partial class VideoView : UserControl
         sb.AppendLine("超分: " + (d.Up
             ? $"{(d.Engine == 1 ? "Real-ESRGAN" : "waifu2x")} · 倍率 {d.Scale switch { 0 => "1x", 1 => "2x", 2 => "3x", 3 => "4x", _ => "自定义" }} · 模型 {(d.Engine == 1 ? UpEsrganModelName(d.UpEsrganModel) : UpWaifu2xModelName(d.UpWaifu2xModel))}"
             : "关闭"));
+        // 【2026-09-13 修 · 用户报告「去重补帧4x 的提示显示成 2x」】原实现直接印 {d.InterpScale}x ——
+        // 那是下拉【序号】(0~5)不是倍率:「去重补帧4x」存的序号 2 就被打成 "2x";序号为 0 时更会打成 "0x",
+        // 用户会以为自己选错了档。现在统一走 InterpScaleMap.Label(与实跑共用同一份映射,另有单测钉住)。
         sb.AppendLine("补帧: " + (d.Interp
-            ? $"{(d.Model < 0 ? "?" : InterpModelName(d.Model))} · {d.InterpScale}x{(d.Tta ? " · TTA" : "")}"
+            ? $"{(d.Model < 0 ? "?" : InterpModelName(d.Model))} · {AlhPro.Core.InterpScaleMap.Label(d.InterpScale)}{(d.Tta ? " · TTA" : "")}"
             : "关闭"));
         // 去重摘要:模式共 7 项(智能检测/动漫模式/标准/温和/敏感/手动/内容帧率),原来只映射了 0 和 1、
         // 其余一律显示成"手动" —— 预设悬停里根本看不出到底选了什么(标准/温和/敏感/内容帧率全被叫"手动")。
@@ -2230,8 +2238,10 @@ public sealed partial class VideoView : UserControl
     private static string[] UpWaifu2xModelNames = { "通用·cunet", "动漫·upconv_7_anime", "现实·upconv_7_photo" };
     /// <summary>视频超分 Real-ESRGAN 模型的显示名(必须与 VideoView.xaml 里 ComboBoxItem 的**顺序**一一对应)。
     /// 【2026-09-12】补上第 4 项 general-x4v3:此前数组只有 3 项(漏了它),序号 3 会落到兜底值上、显示成别的模型;
-    /// 同时顺序随下拉调整:2=轻量通用(general-x4v3)、3=超慢(x4plus)。改这里必须与 XAML 同步改,否则显示与实跑不符。</summary>
-    private static string[] UpEsrganModelNames = { "动漫·animevideov3", "动漫·x4plus-anime", "通用·general-x4v3(轻量)", "通用·x4plus(超慢)" };
+    /// 同时顺序随下拉调整:2=general-x4v3、3=超慢(x4plus)。改这里必须与 XAML 同步改,否则显示与实跑不符。
+    /// 【2026-09-13】去掉末尾的"(轻量)":v1.3.5 已把该项在下拉里改叫「通用 · realesr-general-x4v3(5MB · 中)」,
+    /// 摘要却还印着「(轻量)」—— 用户正是看到"轻量"以为这支不行,才要求把预设模型换成动漫那支。摘要必须与下拉同口径。</summary>
+    private static string[] UpEsrganModelNames = { "动漫·animevideov3", "动漫·x4plus-anime", "通用·general-x4v3(中)", "通用·x4plus(超慢)" };
     private static string UpWaifu2xModelName(int idx) => idx >= 0 && idx < UpWaifu2xModelNames.Length ? UpWaifu2xModelNames[idx] : "通用·cunet";
     private static string UpEsrganModelName(int idx) => idx >= 0 && idx < UpEsrganModelNames.Length ? UpEsrganModelNames[idx] : "动漫·animevideov3";
 
@@ -3441,7 +3451,7 @@ public sealed partial class VideoView : UserControl
         engine = SelectedEngineIsReal ? "realesrgan" : "waifu2x";
         double scale = VideoScaleRadios.SelectedIndex switch { 1 => 2, 2 => 3, 3 => 4, _ => 1 };
         if (VideoScaleRadios.SelectedIndex is 0 or 4) scale = 2;   // 1x 缩回 / 自定义:内部都按 2x 超分
-        int interpScale = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, 4 => 12, 5 => 16, _ => 2 };
+        int interpScale = AlhPro.Core.InterpScaleMap.Multiplier(InterpScaleRadios.SelectedIndex);
         bool dedupOn = DedupCheck.IsChecked == true;
         int vdenoise = DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex + 1 : 0;
         bool postFx = (int)SharpenSlider.Value + (int)ClaritySlider.Value + (int)UsmSlider.Value
@@ -3577,7 +3587,7 @@ public sealed partial class VideoView : UserControl
             double? targetFps = (TargetFpsCheck.IsChecked == true
                 && double.TryParse(TargetFpsBox.Text, NumberStyles.Float, inv, out var tf) && tf > 0) ? tf : null;
             bool interp = InterpToggle.IsChecked == true;
-            int interpScale = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, 4 => 12, 5 => 16, _ => 2 };
+            int interpScale = AlhPro.Core.InterpScaleMap.Multiplier(InterpScaleRadios.SelectedIndex);
             // 帧率基准:0=真实时间轴(源帧率×倍率) 1=匀速(内容帧率×倍率)。匀速模式用内容帧率,不是源帧率。
             bool uniform = FpsBaseCombo.SelectedIndex == 1;
             double baseFps = srcFps ?? 0;
@@ -4003,7 +4013,7 @@ public sealed partial class VideoView : UserControl
             bool interpOn = InterpToggle.IsChecked == true;
             bool upOn = UpscaleToggle.IsChecked == true;
             bool dedupOn = DedupCheck.IsChecked == true;
-            int interpScale = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, 4 => 12, 5 => 16, _ => 2 };
+            int interpScale = AlhPro.Core.InterpScaleMap.Multiplier(InterpScaleRadios.SelectedIndex);
             int engIdx = VideoEngineRadios.SelectedIndex;
             string engine = SelectedEngineIsReal ? "realesrgan" : "waifu2x";
             // 倍率:0=1x(2x缩回) 1=2x 2=3x 3=4x 4=自定义(内部按2x)
@@ -4349,7 +4359,9 @@ public sealed partial class VideoView : UserControl
         {
             bool weakGpu = SafeRender.Profile == SafeRender.DeviceProfile.UltraLow
                 || CurrentIsIntegratedGpu() || SafeRender.TotalVramGB < 6.5;   // 放宽:<8 → <6.5,避免 8GB 4060 误判为弱
-            bool highRate = InterpScaleRadios.SelectedIndex >= 2;   // 0=2x 1=3x 2=4x 3=8x...
+            // 序号→倍率映射统一在 AlhPro.Core.InterpScaleMap(有单测)。原写 "SelectedIndex is 3 or 4"(=8x/12x)
+            // 把 16x 漏了 —— 最高倍率反而没有耗时提示,故改用倍率判定(≥8x 即高倍率)。
+            bool highRate = AlhPro.Core.InterpScaleMap.IsHighRate(InterpScaleRadios.SelectedIndex);
             bool highTarget = TargetFpsCheck.IsChecked == true
                 && double.TryParse(TargetFpsBox.Text, System.Globalization.NumberStyles.Float,
                     System.Globalization.CultureInfo.InvariantCulture, out var tf2) && tf2 >= 90;
@@ -4528,7 +4540,7 @@ public sealed partial class VideoView : UserControl
         }
         else if (fpsMode == 1)
             fpsOffset = FpsOffsetSlider.Value;
-        var interpScale = InterpScaleRadios.SelectedIndex switch { 1 => 3, 2 => 4, 3 => 8, 4 => 12, 5 => 16, _ => 2 };
+        var interpScale = AlhPro.Core.InterpScaleMap.Multiplier(InterpScaleRadios.SelectedIndex);
         double? targetFps = (TargetFpsCheck.IsChecked == true
             && double.TryParse(TargetFpsBox.Text, NumberStyles.Float, inv, out var tf) && tf > 0)
             ? tf : null;
