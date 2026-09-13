@@ -597,7 +597,8 @@ public static class EsrganOnnxService
     /// 仍保留逐帧进度 + 取消,失败帧回退原帧(不中断)。</summary>
     public static async Task UpscaleDirAsync(string inputDir, string outputDir, double scale,
         int gpuId = -1, IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default,
-        string? modelPath = null, int globalBaseFrames = 0, int globalTotalFrames = 0, Func<Task>? pauseWait = null)
+        string? modelPath = null, int globalBaseFrames = 0, int globalTotalFrames = 0, Func<Task>? pauseWait = null,
+        int pctLo = 0, int pctHi = 0)
     {
         var files = Directory.EnumerateFiles(inputDir, "*.*")
             .Where(f => f.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
@@ -781,7 +782,10 @@ public static class EsrganOnnxService
                                 {
                                     // 全局逐帧进度:当前帧全局号 = globalBase(本批起始) + d(本批已完成)
                                     int globalDone = globalBaseFrames + d;
-                                    int pct = (int)Math.Clamp(globalDone * 100.0 / globalTotalFrames, 0, 100);
+                                    // 区间由调用方给(视频链路 1x/2x 新顺序 = 10~45);不给(0/0)则沿用原口径 0~100。
+                                    int pct = pctLo > 0 && pctHi > pctLo
+                                        ? (int)Math.Clamp(pctLo + globalDone * (double)(pctHi - pctLo) / Math.Max(1, globalTotalFrames), pctLo, pctHi)
+                                        : (int)Math.Clamp(globalDone * 100.0 / globalTotalFrames, 0, 100);
                                     progress?.Report((pct, $"超分 第 {globalDone} 帧 / 共 {globalTotalFrames} 帧"));
                                 }
                                 else

@@ -42,6 +42,52 @@ public class VideoPipelineTests
         Assert.True(weak > fast * 3, "弱机系数应显著放大估算");
     }
 
+    // ---------- EstimateProcessSeconds:阶段顺序(1x/2x「超分 → 补帧」)----------
+    // 【数值断言】不是"新比旧小"这种单调性断言 —— 必须钉住差额本身:
+    //   省下的超分 = 源帧数 × 每帧超分成本(旧顺序超分跑 2×源帧、新顺序只跑源帧 → 省一半)
+    //   多出的补帧 = 新增帧数 × 0.09 × 面积 × (scale²-1)(新顺序补帧在放大后的帧上做)
+    [Fact]
+    public void Estimate_upscaleFirst_cheaper_at_2x_with_exact_delta()
+    {
+        double oldWay = VideoPipeline.EstimateProcessSeconds(10, 30, 1920, 1080,
+            up: true, 2.0, "waifu2x", interp: true, 2, dedup: false, 0);
+        double newWay = VideoPipeline.EstimateProcessSeconds(10, 30, 1920, 1080,
+            up: true, 2.0, "waifu2x", interp: true, 2, dedup: false, 0, upscaleFirst: true);
+        Assert.True(newWay < oldWay, "2x + 补帧:新顺序(超分→补帧)必须比旧顺序便宜");
+        double src = 300;               // 10s × 30fps
+        double areaN = 1.0;             // 1920×1080 = 基准面积
+        double per = 0.18 * areaN * 2;  // waifu2x 2x 每帧超分成本
+        // 旧:补帧 src×0.09×areaN + 超分 2src×per;新:超分 src×per + 补帧 src×0.09×areaN×4
+        double expectDelta = (src * per - 3 * src * 0.09 * areaN) * 1.15;   // 收尾统一 ×1.15(略保守)
+        Assert.Equal(expectDelta, oldWay - newWay, 3);
+    }
+
+    [Fact]
+    public void Estimate_upscaleFirst_is_noop_without_interp_or_upscale()
+    {
+        // 不补帧 / 不超分时,阶段顺序没有意义 → 两个 flag 取值必须给出完全相同的估算(防止顺手多算一笔)
+        double noInterpA = VideoPipeline.EstimateProcessSeconds(10, 30, 1920, 1080, up: true, 2.0, "waifu2x", interp: false, 2, dedup: false, 0);
+        double noInterpB = VideoPipeline.EstimateProcessSeconds(10, 30, 1920, 1080, up: true, 2.0, "waifu2x", interp: false, 2, dedup: false, 0, upscaleFirst: true);
+        Assert.Equal(noInterpA, noInterpB, 9);
+        double noUpA = VideoPipeline.EstimateProcessSeconds(10, 30, 1920, 1080, up: false, 2.0, "waifu2x", interp: true, 2, dedup: false, 0);
+        double noUpB = VideoPipeline.EstimateProcessSeconds(10, 30, 1920, 1080, up: false, 2.0, "waifu2x", interp: true, 2, dedup: false, 0, upscaleFirst: true);
+        Assert.Equal(noUpA, noUpB, 9);
+    }
+
+    [Fact]
+    public void Estimate_upscaleFirst_clamped_back_above_2x()
+    {
+        // 4x(及任何 scale>2.001)在管线里保持旧顺序「补帧 → 超分」,估算也必须钳回旧口径 ——
+        // 否则调用方传错倍数时 ETA 会按一条【实际不会执行】的快路径算,预计时间会偏乐观。
+        double oldWay = VideoPipeline.EstimateProcessSeconds(10, 30, 1920, 1080, up: true, 4.0, "realesrgan", interp: true, 2, dedup: false, 0);
+        double misused = VideoPipeline.EstimateProcessSeconds(10, 30, 1920, 1080, up: true, 4.0, "realesrgan", interp: true, 2, dedup: false, 0, upscaleFirst: true);
+        Assert.Equal(oldWay, misused, 9);
+        // 2.001 以内仍按新顺序生效(边界值 2.0 生效)
+        double at2Old = VideoPipeline.EstimateProcessSeconds(10, 30, 1920, 1080, up: true, 2.0, "realesrgan", interp: true, 2, dedup: false, 0);
+        double at2New = VideoPipeline.EstimateProcessSeconds(10, 30, 1920, 1080, up: true, 2.0, "realesrgan", interp: true, 2, dedup: false, 0, upscaleFirst: true);
+        Assert.True(at2New != at2Old, "2.0x 边界必须真的按新顺序算");
+    }
+
     // ---------- MergeDurations ----------
     [Fact]
     public void MergeDurations_merges_dropped_frames_into_previous_kept()

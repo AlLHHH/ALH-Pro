@@ -94,13 +94,14 @@ public static class VideoService
     /// <summary>任务开始前的总时长估算(秒):按启用的处理项 + 视频时长/帧率/分辨率粗算。
     /// 用于一开始就显示合理的预计剩余(偏保守,随时间慢慢对齐),而不是从小变大校准。
     /// 【实测校准】同配置在 PerfMemory 有历史实测秒/帧时,用实测重算覆盖固定常数估算(越用越准)。
-    /// postFx=是否启用了后处理(与记录端指纹一致,否则查不到导致校准失效)。</summary>
+    /// postFx=是否启用了后处理(与记录端指纹一致,否则查不到导致校准失效)。
+    /// upscaleFirst=「超分 → 补帧」的新阶段顺序(1x/2x);默认 false 保持旧口径,4x 不要传 true。</summary>
     public static double EstimateProcessSeconds(double duration, double fps, int w, int h,
         bool up, double scale, string engine, bool interp, int interpScale, bool dedup, int videoDenoise,
-        bool postFx = false)
+        bool postFx = false, bool upscaleFirst = false)
     {
         var sf = SafeRender.Profile == SafeRender.DeviceProfile.UltraLow ? 6.0 : 1.0;
-        double core = AlhPro.Core.VideoPipeline.EstimateProcessSeconds(duration, fps, w, h, up, scale, engine, interp, interpScale, dedup, videoDenoise, sf);
+        double core = AlhPro.Core.VideoPipeline.EstimateProcessSeconds(duration, fps, w, h, up, scale, engine, interp, interpScale, dedup, videoDenoise, sf, upscaleFirst);
         // 【实测校准】查同配置历史秒/帧(1080p 基准),命中则按"源帧数×实测×面积"重算;与固定估算加权(各50%)。
         // 注意:PerfMemory 记录时按【源帧数】归一(不乘补帧倍率),这里也用源帧数 src,避免补帧任务被重复放大。
         try
@@ -469,6 +470,24 @@ public static class VideoService
                 $";补帧{(frameInterp ? $"{interpModel} {interpScale}x{(tta ? " TTA" : "")}" + (targetFps is > 0 ? $"→{targetFps.Value:0.##}fps" : "") : "关")}" +
                 $";去重{dedupDesc};转场{(sceneThreshold ?? 0):0.##};时间步{(timeStep ?? 0):0.##};裁剪{(trimStart ?? 0):0.###}~{(trimEnd ?? 0):0.###};设备{(gpuId >= 0 ? "GPU " + gpuId : "CPU")}" + StageElapsed()));
             AppLogger.Info($"参数详情:engine={engine},model={model},scale={scale},up={doUpscale}/{upscaleShrink1x},interp={frameInterp}/{interpModel}/{interpScale}x/{tta}/{targetFps},{timeStep},dedup={dedupMode}/{dedupAlgo}/{animeHoldN}/{contentFps}/{dedupSmartMode},scene={sceneThreshold},trim={trimStart}/{trimEnd},gpu={gpuId},out={outputVideo}");
+            // ===== 阶段顺序:1x/2x 走「超分 → 补帧」,3x/4x 保持「补帧 → 超分」=====
+            // 【为什么】(2026-09-13 本机实测:1080p 源 240 帧,k=2 补帧,RIFE v4.13,realesr-animevideov3 2x,
+            // 两序交错各 3 轮)中位 346.6s(超分→补帧) vs 411.6s(补帧→超分),新顺序快 65s ≈ 15.8%,逐档配对每档都快。
+            // 原因:超分单价按帧算(2x@1080p≈0.70s/帧),补帧按【输出帧数】算;先超分 → 超分只跑源帧数(少一半),
+            // 补帧帧数不变(源帧数×倍率),总账少一半的超分帧。
+            // 1x 也是此列:1x 内部就是「2x 放大后缩回源尺寸」(upscaleShrink1x),补帧仍在源分辨率上做,
+            // 与旧顺序的补帧成本完全相同,但超分/缩回次数减半 → 约省 44%。
+            // 3x/4x(任何 scale>2.001)按【旧顺序一字不改】:4x 超分要跑到 4320p(2.30s/帧),
+            // 而补帧在 4320p 上是 0.76~1.09s/输出帧、在源分辨率上只有 0.10s/输出帧 —— 先补帧能把补帧按便宜价跑。
+            // 顺序分档的依据是"补帧单价随分辨率涨得比超分快",不是越新越好。
+            bool upscaleRuns = doUpscale && !(scale <= 1.001 && !upscaleShrink1x);   // 超分阶段是否真的会执行
+            bool upscaleFirst = frameInterp && upscaleRuns && !(scale > 2.001);
+            // 进度区间随【实际执行的顺序】走(阶段名必须与真正在跑的阶段一致,不允许张冠李戴):
+            //   新顺序:超分 10~45、补帧 45~90;旧顺序保持原口径:补帧 10~45、超分 45~90。
+            int interpPctBase = upscaleFirst ? 45 : 10;
+            int interpPctSpan = upscaleFirst ? 45 : 35;
+            AppLogger.Info($"阶段顺序:{(upscaleFirst ? "超分 → 补帧(1x/2x 新顺序)" : "补帧 → 超分(旧顺序)")}"
+                + $"(up={doUpscale}/shrink1x={upscaleShrink1x}/scale={scale:0.###},interp={frameInterp},超分是否执行={upscaleRuns})");
             // ===== 设备选择映射诊断(编号错位排查命门):设置 GpuIndex → 实际引擎 gpuId → 设备名 =====
             try
             {
@@ -1028,14 +1047,173 @@ public static class VideoService
             // 故去重删过帧时也用「每帧真实时长表」重定时:输出 VFR 时间轴=原视频节奏,补帧只负责填运动、不改变时间。
             bool preserveRhythm = vfrPassthrough || (dedup && frameDurs != null && frameDurs.Count == frameCount);
 
-            // 3) 补帧(可选):RIFE 在原始分辨率上插值(先补帧后超分,
-            //    避免在大图上补帧造成 9 倍开销);转场识别时按转场点分段,段内插值、转场处不插
+            // 3) 补帧(可选):按下面 InterpStageAsync 执行,转场识别时按转场点分段,段内插值、转场处不插。
+            //    【阶段顺序】1x/2x 走「超分 → 补帧」(补帧在超分输出上做),3x/4x 走「补帧 → 超分」(旧顺序,一字不改)。
+            //    旧注释里"避免在大图上补帧造成 9 倍开销"只对高倍率成立:实测 2x@1080p→2160p 补帧 0.10→0.35 秒/输出帧,
+            //    而超分帧数减半省下的是 0.70 秒/帧 —— 1x/2x 上新顺序赢;4x(→4320p 补帧 0.76~1.09 秒/输出帧)仍是旧顺序赢。
             var frameFiles = Directory.EnumerateFiles(framesIn, "*.jpg")
                 .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
             // 最终帧时长表(合帧用):有原始时长表时,补帧按"每源帧展开"填充,否则 null → 固定帧率输出
             System.Collections.Generic.List<double>? finalDurs = null;
             // 防御:时长表帧数与实际帧数不一致(探测异常)时整体回退固定帧率,绝不让索引越界
             if (frameDurs != null && frameDurs.Count != frameCount) frameDurs = null;
+            // ===== 补帧阶段(3b)的计划量与本体 =====
+            // 【为什么声明在 3) 之外】1x/2x 新顺序下补帧在超分【之后】执行,而下面 3) 块里算出的 segBounds/
+            // frameScale/globalTarget 必须在那之前就绪。它们只依赖 frameCount/origCountEst/fpsMode/cuts ——
+            // 与"补帧输入目录是源分辨率还是超分后分辨率"无关(超分保帧数,帧号一一对应),故提前声明、
+            // 由 3) 块赋值、两种顺序共用。
+            var segBounds = new System.Collections.Generic.List<(int s, int e)>();
+            double frameScale = 1.0;
+            long globalTarget = 0;
+            int globalIdx = 1;
+
+            // 3b) 分段补帧(RIFE)本体 —— 局部函数,两种阶段顺序共用同一份实现,只有"输入/输出目录 + 探测帧尺寸"不同:
+            //   · 旧顺序(3x/4x/不实际超分):输入 framesIn(源帧)、输出 framesFinal,在 3) 块里原地调用;
+            //   · 新顺序(1x/2x):输入 upOutput(超分输出)、输出 framesInterp,在超分阶段之后调用。
+            // probeW/probeH = 本阶段真正要处理的帧尺寸:RIFE 的 GPU 兼容性探测必须按【真实帧尺寸】做 ——
+            // 小图能跑 ≠ 真帧能跑(显存/着色器分块压力差一个量级,实测过"小图通过、真分辨率上静默出坏帧")。
+            // 【边用边删】每段跑完即删该段已消费的输入帧:分段互不共享输入帧(段 [s,e) 只读 frame_{s+1}..frame_{e}),
+            // 且 InterpSegmentAsync 在段首就把这一段全部复制进自己的 segIn 目录,其后所有重试/降级路径
+            // (ncnn 原卡、换另一张卡、ONNX DirectML、黑帧回退、残缺重算)都只读 segIn —— 故这些帧可证明已消费。
+            async Task InterpStageAsync(string segSrcDir, string segOutDir, int probeW, int probeH)
+            {
+                progress?.Report((interpPctBase, $"RIFE 补帧({interpScale}x,源 {frameCount} 帧 → 输出 {(long)Math.Round((double)((frameCount - 1) * interpScale)) + 1} 帧,模型 {interpModel})..."));
+                if (interpScale >= 4)
+                    AppLogger.Warn($"⚠ 高倍率补帧({interpScale}x):输出帧数是源 {interpScale} 倍,处理耗时会明显变长,属正常,请耐心等待(非卡死)");
+                // ===== RIFE GPU 探测(任何可能静默 hang 的设备都不放过,不预检白等 8 分钟)=====
+                // 实测 2 帧插 1 帧能否 GPU 出图;不能 → 本视频补帧改用 ONNX(慢但确定能跑),日志+进度提示。
+                // rife 非空由调用点保证(两处调用都只在 frameInterp 成立时;而 frameInterp 且 RifePath 缺失
+                // 时本方法开头就抛了异常),这里显式取本地量,避免可空性告警。
+                string rifeExe = rife ?? throw new InvalidOperationException("补帧引擎未就绪(rife-ncnn-vulkan 未找到),无法补帧");
+                int interpGpu = gpuId;
+                if (gpuId >= 0)
+                {
+                    // 【50 系不再"一律禁用 ncnn"】旧逻辑:Blackwell 一律直接改走 ONNX、不做任何探测。
+                    // 现在改为"先真机探测、再按结果决定":探测通过 → 用 ncnn-Vulkan 补帧(最快那条路);
+                    // 失败(hang/崩/坏帧)→ 才改走 ONNX,并明确告知用户"为稳定性改用 ONNX"。
+                    // 结论跨任务缓存(EnsureRifeNcnnProbeAsync),同一设备不会每次任务都白等一遍探测。
+                    // 【按真实帧尺寸探】探测帧尺寸 = 本阶段真正要处理的尺寸(旧实现固定 320×240):小图能跑 ≠ 真帧能跑,
+                    // 显存/着色器分块压力差一个量级,实测过"小图通过、真分辨率上静默出坏帧"的形态。
+                    // 新顺序(1x/2x)下探测尺寸 = 超分后的尺寸(probeW/probeH),旧顺序 = 源尺寸(与改动前逐字一致)。
+                    progress?.Report((interpPctBase, $"正在检测补帧 GPU 兼容性(按补帧输入帧尺寸 {probeW}×{probeH} 实测,首次约 10 秒,结论会记住,失败重试一次)..."));
+                    bool rifeOk = await EngineService.EnsureRifeNcnnProbeAsync(rifeExe, interpModel, gpuId, ct, probeW, probeH).ConfigureAwait(false);
+                    if (!rifeOk)
+                    {
+                        // 【按形态说话】失败原因由探测带回(初始化即崩 ≠ 出图但坏帧),措辞集中在 AlhPro.Core.ProbeDiagnosis:
+                        // 前者在 Blackwell 上就是 NVIDIA 的 cooperative-matrix 驱动缺陷(要说清"不是本软件的问题"),
+                        // 后者属引擎并发/渲染(不许甩锅给驱动)。
+                        AppLogger.Warn($"⚠ RIFE {interpModel} 在本机 GPU({gpuId})真机探测失败——为稳定性改用 ONNX 补帧路线。"
+                            + EngineService.LastProbeUserMessage);
+                        progress?.Report((interpPctBase, $"⚠ 补帧 ncnn 引擎在本机不可用,为稳定性自动改用 ONNX 补帧..."));
+                        interpGpu = -1;   // 本视频后续补帧 API 全部走 ONNX(InterpSegmentAsync 传入)
+                    }
+                    else
+                    {
+                        AppLogger.Info($"✅ RIFE {interpModel} GPU({gpuId})真机探测通过({probeW}×{probeH})→ 使用 ncnn-Vulkan 补帧(未因 50 系而禁用)");
+                    }
+                }
+                // 补帧阶段自己的 ETA 时钟:segProg 会用全局帧号重建消息文本,引擎内部那层加不上 ETA,只能在这里算。
+                // base = 本阶段开始前已写出的帧数(前一趟/补洞留下的),速率只对"本阶段真正产出的帧"计算,
+                // 否则 done 含旧帧 → 速率虚高 → ETA 偏乐观。
+                var interpStageStart = DateTime.UtcNow;
+                long interpBase = Math.Max(0, globalIdx - 1);
+                double interpIdleSec = 0;
+                int segNo = 0;
+                int releasedConsumed = 0;   // 本阶段已按段释放的输入帧数(审计用)
+                for (int si = 0; si < segBounds.Count; si++)
+                {
+                    var (s, e) = segBounds[si];
+                    segNo++;
+                    bool isLastSeg = si == segBounds.Count - 1;
+                    // 包装进度:把本段帧号映射到全局累计,显示"总帧慢慢加上去"(而不是已处理/expand 帧数)。
+                    // 帧号只从消息的「第 N 帧」取,且单调不回退:没有帧号的消息(降温休息、引擎告警)沿用上一个
+                    // 帧号。原先此时改用 t.pct/100*segTarget 猜,而内层各路径的 pct 口径不一(ncnn 目录轮询
+                    // 1..90、ONNX 10..45),猜出来既偏小又会回退 → 段内帧号抖动、长时间不动再猛跳。
+                    // 区间用 interpPctBase/Span:旧顺序 10~45、新顺序 45~90 —— 与真正在跑的阶段一致。
+                    int segLastLocal = 0;
+                    IProgress<(int pct, string msg)>? segProg = progress == null ? null
+                        : new System.Progress<(int pct, string msg)>(t =>
+                        {
+                            var m = System.Text.RegularExpressions.Regex.Match(t.msg, @"第\s*(\d+)\s*帧");
+                            if (m.Success) segLastLocal = Math.Max(segLastLocal, int.Parse(m.Groups[1].Value));
+                            long gf = (long)Math.Min(globalTarget, (globalIdx - 1) + segLastLocal);
+                            progress!.Report((interpPctBase + (int)((double)interpPctSpan * gf / Math.Max(1, globalTarget)),
+                                $"补帧 第 {gf} 帧 / 共 {globalTarget} 帧" +
+                                EtaStr(gf - interpBase, globalTarget - interpBase,
+                                    (DateTime.UtcNow - interpStageStart).TotalSeconds - interpIdleSec)));
+                        });
+                    progress?.Report((interpPctBase + (int)((double)interpPctSpan * segNo / segBounds.Count),
+                        $"补帧 第 {globalIdx - 1} 帧 / 共 {globalTarget} 帧(段 {segNo}/{segBounds.Count})" +
+                        EtaStr(globalIdx - 1 - interpBase, globalTarget - interpBase,
+                            (DateTime.UtcNow - interpStageStart).TotalSeconds - interpIdleSec)));
+                    // 处理过程也做降温休息检查(单个长视频也能中途休息)
+                    var interpIdleT0 = DateTime.UtcNow;
+                    await SafeRender.RestIfDueAsync(interpPctBase + (int)((double)interpPctSpan * segNo / segBounds.Count), progress, ct);
+                    if (pauseWait != null) await pauseWait();   // 暂停:当前补帧段跑完即停(几秒)
+                    interpIdleSec += (DateTime.UtcNow - interpIdleT0).TotalSeconds;
+                    // 时长表展开:真 VFR 素材 或 去重删过帧(内容时间轴不均匀)时,展开每帧真实时长供 setpts 重定时;
+                    // 否则按固定帧率均匀输出,无需展开。
+                    if (frameDurs != null && preserveRhythm)
+                    {
+                        finalDurs ??= new System.Collections.Generic.List<double>();
+                        double per = interpScale;
+                        int perN = Math.Max(1, (int)Math.Round(per));
+                        for (int k = s; k < e; k++)
+                        {
+                            double d = Math.Max(0.0005, frameDurs[k] / per);
+                            for (int m = 0; m < perN; m++) finalDurs.Add(d);
+                        }
+                    }
+                    globalIdx = await InterpSegmentAsync(rifeExe, segSrcDir, segOutDir, s, e, interpScale,
+                        interpModel, timeStep, tta, interpGpu, globalIdx, segProg, ct, frameScale,
+                        isLastSeg ? globalTarget : 0,
+                        false);   // appendTailCopy = false
+                    // ===== 批处理清盘(边用边删):本段输入帧已证明消费完,立刻释放,不等整阶段结束 =====
+                    // 依据:InterpSegmentAsync 段首就把 frame_{s+1}..frame_{e}(恰好 e-s 帧,不含下一段的首帧)
+                    // 复制进了它自己的 segIn 目录;其后 ncnn 原卡/换卡、ONNX DirectML、黑帧回退、残缺重算
+                    // 全都只读 segIn,不会再碰 segSrcDir —— 故这 e-s 帧可证明已消费,立即删。
+                    // 下一段读的是 frame_{e+1}..,与本节无交集(段边界锚点各归下一段),不会删到还要用的帧。
+                    int delThisSeg = 0;
+                    for (int i = s; i < e; i++)
+                    {
+                        try
+                        {
+                            string srcFrame = Path.Combine(segSrcDir, $"frame_{i + 1:D6}.jpg");
+                            if (File.Exists(srcFrame)) { File.Delete(srcFrame); delThisSeg++; }
+                        }
+                        catch { /* 删不掉不影响正确性:阶段收尾还会再扫一次 */ }
+                    }
+                    releasedConsumed += delThisSeg;
+                    AppLogger.Info($"[临时清理] 补帧段 {segNo}/{segBounds.Count}(帧 {s + 1}~{e})完成:已释放" +
+                        (upscaleFirst ? "超分输出帧" : "源帧") + $" {delThisSeg} 帧(本阶段累计 {releasedConsumed} 帧;目录 {Path.GetFileName(segSrcDir)})");
+                    if (progress != null)
+                    {
+                        int doneNow = (int)Math.Min(globalTarget, Math.Max(0, globalIdx - 1));   // 钳制:当前帧永不超总帧(修复"第11219帧/共11099帧"溢出)
+                        progress.Report((interpPctBase + (int)((double)interpPctSpan * doneNow / Math.Max(1, globalTarget)),
+                            $"补帧 第 {doneNow} 帧 / 共 {globalTarget} 帧(段 {segNo}/{segBounds.Count})" +
+                            EtaStr(doneNow - interpBase, globalTarget - interpBase,
+                                (DateTime.UtcNow - interpStageStart).TotalSeconds - interpIdleSec)));
+                    }
+                }
+                var interpCount = EnumerateFrameFiles(segOutDir).Count();   // 补帧输出可能是 png(旧)或 jpg(新边转边存),统一按两种数
+                if (interpCount == 0)
+                {
+                    // 【补帧 0 帧诊断】打印关键中间值,定位"补帧失败,未生成插帧"根因:
+                    // frameScale=origCountEst/frameCount(若 origCountEst 探测失败=0,frameScale=0 → mult=1 → 等于没补帧);
+                    // globalTarget / segBounds / 段数 等,以便下次拿到日志精确定位。
+                    try
+                    {
+                        AppLogger.Error($"补帧 0 帧诊断: frameScale={frameScale:0.###}, origCountEst={origCountEst}, frameCount={frameCount}, interpScale={interpScale}, segs={segBounds.Count}, model={interpModel}, fpsMode={fpsMode}, 顺序={(upscaleFirst ? "超分→补帧" : "补帧→超分")}, 输出目录={segOutDir}");
+                    }
+                    catch { }
+                    throw new InvalidOperationException(
+                        "补帧失败:未生成任何画面。显卡加速、备用方案和换卡都试过了仍无输出,通常是显卡不兼容或需要更新显卡驱动。建议在「计算设备」里换一个 GPU,或更新显卡驱动后重试。");
+                }
+                // 帧数对齐已移至"muxDur/outFps 已知处"(时长=源容器 × 帧率),此处不再处理(需帧率公式才能定目标)。
+                // 注:补帧诊断(输出帧数/frameScale)也移到合帧前与实际输出帧数一并打印。
+                progress?.Report((interpPctBase + interpPctSpan, $"补帧完成({interpCount} 帧,含原始帧)" + StageElapsed()));
+            }
+
             if (frameInterp && rife != null)
             {
                 // ===== 拍数等距(拍二/三/四 × 整数倍率)→ 标准补帧一次 = "直接倍数补回来"(无需补回/层批) =====
@@ -1158,16 +1336,13 @@ public static class VideoService
                     }
                 }
                 var segStart = 0;
-                int globalIdx = 1;
-                int segNo = 0;
-                var segBounds = new System.Collections.Generic.List<(int s, int e)>();
                 foreach (var c in cuts)
                 {
                     if (c > segStart) segBounds.Add((segStart, c));
                     segStart = c;
                 }
                 if (segStart < frameCount) segBounds.Add((segStart, frameCount));
-                double frameScale = frameCount > 0 ? Math.Min(6.0, (double)origCountEst / frameCount) : 1.0;
+                frameScale = frameCount > 0 ? Math.Min(6.0, (double)origCountEst / frameCount) : 1.0;
                 bool v4Model = IsV4Model(interpModel);
                 // ===== 方案 C(真实时间轴插值/对齐丝滑):「密度还原 → 整段一次 RIFE → 帧数精确对齐」=====
                 // 整段序列喂给 RIFE,光流上下文足(估得准、不糊不扭);密度还原把各状态的真实停留时长铺回同一条
@@ -1188,89 +1363,15 @@ public static class VideoService
                     if (fpsMode == 1) frameScale = 1.0;
                     // 全局输出帧数目标 = (内容帧数-1)×倍率+1(A)或 (原帧数-1)×倍率+1(B/未去重):
                     // 末段 RIFE -n 补足,使最后锚点帧精确落在最后一帧(避免合帧裁剪吞尾帧)。
-                    long globalTarget = Math.Max(frameCount + 1,
+                    globalTarget = Math.Max(frameCount + 1,
                         (long)Math.Round((double)((fpsMode == 1 ? frameCount : origCountEst) - 1) * interpScale) + 1);
-                    // 补帧阶段自己的 ETA 时钟:segProg 会用全局帧号重建消息文本,引擎内部那层加不上 ETA,只能在这里算。
-                    // base = 本阶段开始前已写出的帧数(前一趟/补洞留下的),速率只对"本阶段真正产出的帧"计算,
-                    // 否则 done 含旧帧 → 速率虚高 → ETA 偏乐观。
-                    var interpStageStart = DateTime.UtcNow;
-                    long interpBase = Math.Max(0, globalIdx - 1);
-                    double interpIdleSec = 0;
-                    for (int si = 0; si < segBounds.Count; si++)
-                    {
-                        var (s, e) = segBounds[si];
-                        segNo++;
-                        bool isLastSeg = si == segBounds.Count - 1;
-                        // 包装进度:把本段帧号映射到全局累计,显示"总帧慢慢加上去"(而不是已处理/expand 帧数)。
-                        // 帧号只从消息的「第 N 帧」取,且单调不回退:没有帧号的消息(降温休息、引擎告警)沿用上一个
-                        // 帧号。原先此时改用 t.pct/100*segTarget 猜,而内层各路径的 pct 口径不一(ncnn 目录轮询
-                        // 1..90、ONNX 10..45),猜出来既偏小又会回退 → 段内帧号抖动、长时间不动再猛跳。
-                        int segLastLocal = 0;
-                        IProgress<(int pct, string msg)>? segProg = progress == null ? null
-                            : new System.Progress<(int pct, string msg)>(t =>
-                            {
-                                var m = System.Text.RegularExpressions.Regex.Match(t.msg, @"第\s*(\d+)\s*帧");
-                                if (m.Success) segLastLocal = Math.Max(segLastLocal, int.Parse(m.Groups[1].Value));
-                                long gf = (long)Math.Min(globalTarget, (globalIdx - 1) + segLastLocal);
-                                progress!.Report((10 + (int)(35.0 * gf / Math.Max(1, globalTarget)),
-                                    $"补帧 第 {gf} 帧 / 共 {globalTarget} 帧" +
-                                    EtaStr(gf - interpBase, globalTarget - interpBase,
-                                        (DateTime.UtcNow - interpStageStart).TotalSeconds - interpIdleSec)));
-                            });
-                        progress?.Report((10 + (int)(35.0 * segNo / segBounds.Count),
-                            $"补帧 第 {globalIdx - 1} 帧 / 共 {globalTarget} 帧(段 {segNo}/{segBounds.Count})" +
-                            EtaStr(globalIdx - 1 - interpBase, globalTarget - interpBase,
-                                (DateTime.UtcNow - interpStageStart).TotalSeconds - interpIdleSec)));
-                        // 处理过程也做降温休息检查(单个长视频也能中途休息)
-                        var interpIdleT0 = DateTime.UtcNow;
-                        await SafeRender.RestIfDueAsync(10 + (int)(35.0 * segNo / segBounds.Count), progress, ct);
-                        if (pauseWait != null) await pauseWait();   // 暂停:当前补帧段跑完即停(几秒)
-                        interpIdleSec += (DateTime.UtcNow - interpIdleT0).TotalSeconds;
-                        // 时长表展开:真 VFR 素材 或 去重删过帧(内容时间轴不均匀)时,展开每帧真实时长供 setpts 重定时;
-                        // 否则按固定帧率均匀输出,无需展开。
-                        if (frameDurs != null && preserveRhythm)
-                        {
-                            finalDurs ??= new System.Collections.Generic.List<double>();
-                            double per = interpScale;
-                            int perN = Math.Max(1, (int)Math.Round(per));
-                            for (int k = s; k < e; k++)
-                            {
-                                double d = Math.Max(0.0005, frameDurs[k] / per);
-                                for (int m = 0; m < perN; m++) finalDurs.Add(d);
-                            }
-                        }
-                        globalIdx = await InterpSegmentAsync(rife, framesIn, framesFinal, s, e, interpScale,
-                            interpModel, timeStep, tta, interpGpu, globalIdx, segProg, ct, frameScale,
-                            isLastSeg ? globalTarget : 0,
-                            false);   // appendTailCopy = false
-                        if (progress != null)
-                        {
-                            int doneNow = (int)Math.Min(globalTarget, Math.Max(0, globalIdx - 1));   // 钳制:当前帧永不超总帧(修复"第11219帧/共11099帧"溢出)
-                            progress.Report((10 + (int)(35.0 * doneNow / Math.Max(1, globalTarget)),
-                                $"补帧 第 {doneNow} 帧 / 共 {globalTarget} 帧(段 {segNo}/{segBounds.Count})" +
-                                EtaStr(doneNow - interpBase, globalTarget - interpBase,
-                                    (DateTime.UtcNow - interpStageStart).TotalSeconds - interpIdleSec)));
-                        }
-                    }
+                    // ===== 旧顺序(3x/4x/不实际超分):补帧在这里跑 =====
+                    // 输入 framesIn(源帧)、输出 framesFinal;RIFE 探测尺寸 = 源尺寸(srcW×srcH)——与改动前逐字一致。
+                    // 新顺序(1x/2x)不在这里跑:同一份 InterpStageAsync 被推迟到超分阶段之后调用
+                    // (输入 upOutput(超分输出)、输出 framesInterp、探测尺寸=超分后的真实尺寸)。
+                    if (!upscaleFirst)
+                        await InterpStageAsync(framesIn, framesFinal, srcW, srcH);
                 }
-
-                var interpCount = EnumerateFrameFiles(framesFinal).Count();   // 补帧输出可能是 png(旧)或 jpg(新边转边存),统一按两种数
-                if (interpCount == 0)
-                {
-                    // 【补帧 0 帧诊断】打印关键中间值,定位"补帧失败,未生成插帧"根因:
-                    // frameScale=origCountEst/frameCount(若 origCountEst 探测失败=0,frameScale=0 → mult=1 → 等于没补帧);
-                    // globalTarget / segBounds / 段数 等,以便下次拿到日志精确定位。
-                    try
-                    {
-                        AppLogger.Error($"补帧 0 帧诊断: frameScale={frameScale:0.###}, origCountEst={origCountEst}, frameCount={frameCount}, interpScale={interpScale}, segs={segBounds.Count}, model={interpModel}, fpsMode={fpsMode}");
-                    }
-                    catch { }
-                    throw new InvalidOperationException(
-                        "补帧失败:未生成任何画面。显卡加速、备用方案和换卡都试过了仍无输出,通常是显卡不兼容或需要更新显卡驱动。建议在「计算设备」里换一个 GPU,或更新显卡驱动后重试。");
-                }
-                // 帧数对齐已移至"muxDur/outFps 已知处"(时长=源容器 × 帧率),此处不再处理(需帧率公式才能定目标)。
-                // 注:补帧诊断(输出帧数/frameScale)也移到合帧前与实际输出帧数一并打印。
-                progress?.Report((45, $"补帧完成({interpCount} 帧,含原始帧)" + StageElapsed()));
                 }
             }
             else
@@ -1282,37 +1383,60 @@ public static class VideoService
                     ? new System.Collections.Generic.List<double>(frameDurs) : null;
                 progress?.Report((45, $"帧准备完成({frameFiles.Length} 帧)"));
             }
-            // ===== 临时文件控制:补帧/帧准备完成后,源帧(framesIn)不再需要,立即删除释放磁盘 =====
-            // (长视频 + 高倍率补帧时 framesIn 可占几十 GB;及时清,避免累积到 100+GB)
-            try
+            if (!upscaleFirst)
             {
-                int delCnt = 0;
-                foreach (var f in Directory.EnumerateFiles(framesIn, "*.jpg")) { File.Delete(f); delCnt++; }
-                AppLogger.Info($"[临时清理] 已释放源帧目录 framesIn({delCnt} 帧),后续超分/合帧不再需要");
+                // ===== 临时文件控制:补帧/帧准备完成后,源帧(framesIn)不再需要,立即删除释放磁盘 =====
+                // (长视频 + 高倍率补帧时 framesIn 可占几十 GB;及时清,避免累积到 100+GB)
+                try
+                {
+                    int delCnt = 0;
+                    foreach (var f in Directory.EnumerateFiles(framesIn, "*.jpg")) { File.Delete(f); delCnt++; }
+                    AppLogger.Info($"[临时清理] 已释放源帧目录 framesIn({delCnt} 帧),后续超分/合帧不再需要");
+                }
+                catch { /* 清理失败忽略,不中断 */ }
+
+                // ===== 统一 JPG:帧准备/补帧完成后,把 framesFinal 从引擎 PNG 重编码成 JPG(降临时盘)=====
+                // 下游超分(读 framesFinal)/缩放/对齐/合帧统一读 .jpg;引擎 I/O 仍按各自 .png 契约(读取处不改)。
+                // 目录已是 JPG(未补帧,直接复制 framesIn)则空跑。
+                ReencodeDirPngToJpg(framesFinal);
             }
-            catch { /* 清理失败忽略,不中断 */ }
+            else
+            {
+                // 【新顺序(1x/2x)】源帧不能在这里删 —— 它们是超分阶段的输入(超分读 framesIn、写 upOutput),
+                // 补帧则在超分之后读 upOutput。源帧的释放交给超分阶段【逐批清盘】(该批输入帧用完即删,见批次 finally);
+                // 补帧输出(超分帧)的释放交给补帧阶段【逐段清盘】(每段跑完即删)。
+                AppLogger.Info($"[阶段顺序] 新顺序(1x/2x):超分阶段将读源帧目录 framesIn({frameCount} 帧)并逐批释放,补帧读取超分输出");
+            }
 
-            // ===== 统一 JPG:帧准备/补帧完成后,把 framesFinal 从引擎 PNG 重编码成 JPG(降临时盘)=====
-            // 下游超分(读 framesFinal)/缩放/对齐/合帧统一读 .jpg;引擎 I/O 仍按各自 .png 契约(读取处不改)。
-            // 目录已是 JPG(未补帧,直接复制 framesIn)则空跑。
-            ReencodeDirPngToJpg(framesFinal);
-
-            // 4) 超分(可选):批处理在补帧后的帧上进行;1x 时直接剔除(不超分,帧原样使用)
+            // 4) 超分(可选):批处理在【阶段顺序决定的输入】上进行;1x 时直接剔除(不超分,帧原样使用)
             //    1x超分(2x放大后缩回):内部按 2x 超分,再缩回原始尺寸,输出仍是 1x
+            //    【输入目录】旧顺序(3x/4x)= framesFinal(补帧结果);新顺序(1x/2x)= framesIn(源帧)—— 由 upInput 决定。
+            //    两种顺序的输出目录都是 upOutput(workDir\upscaled),临时文件口径一致。
+            var upInput = upscaleFirst ? framesIn : framesFinal;
+            var upOutput = Path.Combine(workDir, "upscaled");
+            var framesInterp = Path.Combine(workDir, "frames_interp");   // 新顺序:补帧输出(编码/合帧读它)
             if (doUpscale && scale <= 1.001 && !upscaleShrink1x)
             {
                 progress?.Report((45, "1x 不超分:跳过超分阶段"));
             }
             else if (doUpscale)
             {
-                // 【进度动态分段】超分起点随"是否补帧"调整:补帧时超分从45爬(补帧占10-45);
-                // 不补帧时从15爬(拆帧后直接超分,不空跳到45,进度条不"猛地拉一大截")。
-                int upBase = frameInterp ? 45 : 15;
-                // 1x超分:记录原始帧尺寸(拆帧/补帧后的帧尺寸),供 2x 超分后缩回
+                // 【进度动态分段】超分区间随【实际阶段顺序】走,阶段名与真正在跑的阶段必须一致:
+                //   新顺序(1x/2x,超分在前)  → 超分 10~45、补帧 45~90;
+                //   旧顺序(3x/4x,补帧在前)  → 补帧 10~45、超分 45~90(原口径一字不改)。
+                int upBase = upscaleFirst ? 10 : (frameInterp ? 45 : 15);
+                int upEnd = upscaleFirst ? 45 : 90;
+                // 引擎内部按帧汇报的区间(EngineService/EsrganOnnxService 的"超分 第 N 帧"):只在【新顺序】传,
+                // 旧顺序不传=沿用引擎原有的 45~90 口径,保证 4x 的进度口径不变。
+                int upPctLoArg = upscaleFirst ? upBase : 0;
+                int upPctHiArg = upscaleFirst ? upEnd : 0;
+                // 1x超分:记录原始帧尺寸(超分阶段的输入帧尺寸),供 2x 超分后缩回
                 int? origW = null, origH = null;
                 if (upscaleShrink1x)
                 {
-                    var firstFrame = Directory.EnumerateFiles(framesFinal, "*.jpg")
+                    // 【必须读 upInput 而不是 framesFinal】新顺序下 framesFinal 此刻还是空的(补帧尚未跑),
+                    // 照旧读 framesFinal 会拿不到尺寸 → origW/origH 为 null → 1x 缩回被静默跳过、输出变成 2x。
+                    var firstFrame = Directory.EnumerateFiles(upInput, "*.jpg")
                         .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).FirstOrDefault();
                     if (firstFrame != null)
                     {
@@ -1386,8 +1510,7 @@ public static class VideoService
                 }
                 // 分批目录批处理超分 + 并行 2 批(多 worker):
                 // 一次引擎启动处理一批帧,避免每帧启动引擎;批间并行提高 GPU 利用率
-                var upInput = framesFinal;
-                var upOutput = Path.Combine(workDir, "upscaled");
+                // upInput/upOutput 已在超分阶段入口声明(upInput = 新顺序 framesIn / 旧顺序 framesFinal)。
                 Directory.CreateDirectory(upOutput);
                 var upFiles = Directory.EnumerateFiles(upInput, "*.jpg")
                     .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -1464,6 +1587,7 @@ public static class VideoService
                 var repSlots = groupsByRep.Keys.OrderBy(i => i).ToList();
                 using var sem = new SemaphoreSlim(fastMode ? 1 : SafeRender.GetVideoConcurrency());   // 兼容模式:单批防显存竞争
                 int doneFrames = 0;
+                int releasedInputFrames = 0;   // 已按【批】释放的输入帧数(边用边删;审计日志用)
                 var tasks = new System.Collections.Generic.List<Task>();
                 // 按【唯一帧(组)数】切批(非槽数):每批引擎正好处理 batchSize 个唯一帧 → 磁盘峰值=今天一致。
                 var batchGroups = new System.Collections.Generic.List<System.Collections.Generic.List<(int rep, List<int> slots)>>();
@@ -1507,7 +1631,7 @@ public static class VideoService
                     // 进度按【槽位】:本批起始槽位 = 前面各批槽数之和(确定性,不读并行更新的 doneFrames)
                     int batchStartSlot = batchStartSlots[bi];
                     var idleT0 = DateTime.UtcNow;
-                    await SafeRender.RestIfDueAsync(upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)), progress, ct);
+                    await SafeRender.RestIfDueAsync(upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)), progress, ct);
                     if (pauseWait != null) await pauseWait();   // 暂停:当前超分批跑完即停(几秒~十几秒)
                     srIdleSec += (DateTime.UtcNow - idleT0).TotalSeconds;
                     await sem.WaitAsync(ct);
@@ -1523,7 +1647,7 @@ public static class VideoService
                             // 只拷贝【代表帧】进引擎(唯一帧;重复槽不占引擎输入/PNG 峰值)
                             foreach (var g in curPG)
                                 File.Copy(upFiles[g.rep], Path.Combine(batchIn, Path.GetFileName(upFiles[g.rep])), true);
-                            progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
+                            progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
                                 $"超分 已处理 {batchStartSlot} 帧 / 共 {total} 帧(批次 {bi + 1}/{batchCount}){EtaStr(batchStartSlot, total, (DateTime.UtcNow - srStageStart).TotalSeconds - srIdleSec)}..."));
                             // 视频超分:50系/无独显/手动CPU + Real-ESRGAN/waifu2x + ONNX 模型在 → 走 ONNX 逐帧(不走会崩的 ncnn-vulkan)
                             string? onnxModelPath = null;
@@ -1554,7 +1678,7 @@ public static class VideoService
                                         if (!Path.GetFileName(onnxModelPath).Contains(want, StringComparison.OrdinalIgnoreCase))
                                         {
                                             AppLogger.Info($"ℹ 视频超分:稳定引擎(ONNX)的 waifu2x 只有 cunet,已忽略所选模型「{model}」");
-                                            progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
+                                            progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
                                                 $"ℹ 稳定引擎(ONNX)的 waifu2x 仅有 cunet 模型,已按 cunet 处理 —— 你选的「{model}」需要 ncnn 引擎;写实片源建议改选 Real-ESRGAN"));
                                         }
                                     }
@@ -1565,19 +1689,20 @@ public static class VideoService
                     if (denoiseViaModel && videoDenoise > 0)
                     {
                         AppLogger.Info($"ℹ 视频超分:稳定引擎(ONNX)不支持 waifu2x 自带降噪档(视频降噪 {videoDenoise}),本批未降噪");
-                        progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
+                        progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
                             $"ℹ 稳定引擎(ONNX)不支持 waifu2x 自带降噪(本批降噪无效)—— 需要降噪请把超分引擎改为 Real-ESRGAN(那时「视频降噪」由拆帧阶段的 nlmeans 执行)"));
                     }
                                     // 【不要轻易掉 CPU】若这就要落 CPU(-1 = 强制 CPU),黄字明示用户(而非静默跑慢几倍)
                                     if (upGpu < 0 && !upOnnxDml)
-                                        progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
+                                        progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
                                             $"⚠ 本机无可用 GPU 加速(DirectML 不可用),超分已降级为 CPU——速度会变得特别慢(可能慢数倍)。建议更新显卡驱动后重启软件再试"));
                                 }
-                                progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
+                                progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
                                     $"超分(稳定引擎) 批次 {bi + 1}/{batchCount}{EtaStr(batchStartSlot, total, (DateTime.UtcNow - srStageStart).TotalSeconds - srIdleSec)}..."));
                                 await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
                                     upGpu < 0 ? (upOnnxDml ? -2 : -1) : -2, srProgress, ct, onnxModelPath,
-                                    batchStartSlot, total, pauseWait);   // 用户主动选 CPU(-1)强制 CPU;探测失败(upOnnxDml)用 -2=DirectML GPU 自动;正常 GPU 也 -2 自适应;pauseWait=ONNX/CPU 也能暂停
+                                    batchStartSlot, total, pauseWait, upPctLoArg, upPctHiArg);   // 用户主动选 CPU(-1)强制 CPU;探测失败(upOnnxDml)用 -2=DirectML GPU 自动;正常 GPU 也 -2 自适应;pauseWait=ONNX/CPU 也能暂停
+                                    // 末两参 = 逐帧进度的百分比区间:新顺序(超分排第一)传 10~45,旧顺序传 0/0=沿用引擎原口径
                             }
                             else
                             {
@@ -1586,7 +1711,8 @@ public static class VideoService
                                     SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1),   // 显卡家族感知分块(视频超分专用);兼容模式再减半(显存占用约降 4 倍)
                                     watchStage: "超分",   // 逐帧汇报(像补帧一样显示"超分 第 N 帧 / 共 M 帧")
                                     globalBaseFrames: batchStartSlot, globalTotalFrames: total,   // 百分比按全局帧数算,预计时间才准
-                                    outFormat: "jpg");   // 引擎直出 JPG:4K 实测 2.98→2.02 秒/帧(省 31%),且省掉下面整段 PNG 解码+q96 重编码
+                                    outFormat: "jpg",   // 引擎直出 JPG:4K 实测 2.98→2.02 秒/帧(省 31%),且省掉下面整段 PNG 解码+q96 重编码
+                                    pctLo: upPctLoArg, pctHi: upPctHiArg);   // 新顺序(超分排第一)逐帧区间 10~45;旧顺序 0/0=原有 45~90 口径不变
                             }
                             // 【峰值优化】本批超分 PNG 立即转 JPG 再落 upOutput(不再全量 PNG 累积到最后统一转):
                             // 超分过程中只有"当前批的 PNG"存在,upOutput 全程 JPG,峰值降 70%+。
@@ -1642,7 +1768,7 @@ public static class VideoService
                                     : engine == "waifu2x" ? EsrganOnnxService.FindWaifu2xModel(model) : null;
                                 if (onnxB != null)
                                 {
-                                    progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
+                                    progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
                                         $"⚠ 检测到黑帧(批次 {start}~{batchSlots[^1]},GPU 输出异常),该批改用 ONNX DirectML 引擎重处理..." + StageElapsed()));
                                     AppLogger.Warn($"⚠ 批次 {start}~{batchSlots[^1]} 输出黑帧(ncnn-vulkan GPU 队列异常)——改用 ONNX DirectML({Path.GetFileNameWithoutExtension(onnxB)}) 重跑该批");
                                     ncnnUnreliable = true;   // 标记:ncnn-GPU 超分不可靠 → 后续批次直接走 ONNX,不再每批先 ncnn 失败再降级(用户② 4060 黑帧重跑 282 分钟的根因)
@@ -1650,7 +1776,7 @@ public static class VideoService
                                     Directory.CreateDirectory(batchOut);
                                     await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
                                         upOnnxDml ? -2 : (upGpu < 0 ? -1 : -2), progress, ct, onnxB,
-                                        start, total, pauseWait);   // 探测失败/黑帧 → DeepSeek-2(DirectML GPU 自动);主动选 CPU → -1;pauseWait=ONNX/CPU 也能暂停
+                                        start, total, pauseWait, upPctLoArg, upPctHiArg);   // 探测失败/黑帧 → DeepSeek-2(DirectML GPU 自动);主动选 CPU → -1;pauseWait=ONNX/CPU 也能暂停
                                     bool retryAny = false, retryDefective = false;
                                     foreach (var f in Directory.EnumerateFiles(batchOut, "*.*")
                                         .Where(x => x.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
@@ -1679,7 +1805,7 @@ public static class VideoService
                                     // 【绝不跑慢速 CPU】超分 CPU 兜底要跑到天荒地老,这不是可接受的降级目标。
                                     if (retryDefective || !retryAny)
                                     {
-                                        progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
+                                        progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
                                             $"⚠ ONNX DirectML 仍黑(批次 {start}~{batchSlots[^1]}),该批回退原帧(不跑慢速 CPU)..." + StageElapsed()));
                                         AppLogger.Warn($"⚠ 批次 {start}~{batchSlots[^1]} ONNX(DirectML)重跑仍黑——该批回退源帧(已尽力重跑,仍无法得非黑);若反复出现请更新显卡驱动");
                                         foreach (var si in batchSlots)
@@ -1689,7 +1815,7 @@ public static class VideoService
                                 else
                                 {
                                     // 无 ONNX 模型:黑帧【不跑慢速 CPU】,直接回退原帧(只做一次缩放,绝不把黑帧写进输出)
-                                    progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
+                                    progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
                                         $"⚠ 检测到黑帧(批次 {start}~{batchSlots[^1]},GPU 输出异常),该批回退原帧(无 ONNX 模型,不跑慢速 CPU)..." + StageElapsed()));
                                     AppLogger.Warn($"⚠ 批次 {start}~{batchSlots[^1]} 输出黑帧(GPU 队列异常),无 ONNX 模型——该批回退源帧(若反复出现请更新显卡驱动)");
                                     foreach (var si in batchSlots)
@@ -1716,14 +1842,14 @@ public static class VideoService
                                     try { File.Copy(repJpg, dupJpg, true); backfilled++; }
                                     catch { }
                                     if ((backfilled & 0x3F) == 0)   // 每 64 个拷贝报一次进度,长静止组不冻进度
-                                        progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
+                                        progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
                                             $"超分 复用重复帧({backfilled} 帧已回填)..."));
                                     if (ct.IsCancellationRequested) break;
                                 }
                                 if (ct.IsCancellationRequested) break;
                             }
                             Interlocked.Add(ref doneFrames, batchSlots.Count);
-                            progress?.Report((upBase + (int)((90 - upBase) * doneFrames / total),
+                            progress?.Report((upBase + (int)((upEnd - upBase) * doneFrames / total),
                                 $"超分 已处理 {doneFrames} 帧 / 共 {total} 帧"));
                             if (fastMode)
                             {
@@ -1747,7 +1873,7 @@ public static class VideoService
                             string head = batchEx.Message.Split('\n')[0];
                             if (head.Length > 90) head = head[..90];
                             AppLogger.Warn($"⚠ 超分批次 {batchSlots[0]}~{batchSlots[^1]} 失败({head})——该批回退原帧,继续(不中断任务)");
-                            progress?.Report((upBase + (int)((90 - upBase) * batchStartSlot / Math.Max(1, total)),
+                            progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
                                 $"⚠ 超分批次 {batchSlots[0]}~{batchSlots[^1]} 异常({head}),该批回退原帧,继续处理..."));
                             // 清空本批半成品,回退原帧(未超分帧缩放后复用源帧;batchOut 临时目录由任务收尾统一清理)
                             foreach (var si in batchSlots)
@@ -1756,16 +1882,26 @@ public static class VideoService
                                 catch { }
                             }
                             Interlocked.Add(ref doneFrames, batchSlots.Count);
-                            progress?.Report((upBase + (int)((90 - upBase) * doneFrames / total),
+                            progress?.Report((upBase + (int)((upEnd - upBase) * doneFrames / total),
                                 $"超分 已处理 {doneFrames} 帧 / 共 {total} 帧(部分回退原帧)"));
                         }
                         finally
                         {
-                            // 【降临时盘峰值】本批源帧(本批全部槽位:代表+重复)已全部超分输出到 upOutput,
-                            // 补帧帧(upInput)用完即删,避免"全部补帧帧 + 全部超分帧"同时占盘(长视频高倍率时可省几十 G)。
+                            // 【降临时盘峰值·批处理清盘】本批输入帧(本批全部槽位:代表+重复)已全部超分输出到 upOutput,
+                            // 用完即删,避免"全部输入帧 + 全部超分帧"同时占盘(长视频高倍率时可省几十 G)。
                             // 槽位不再连续(start..end 区间写法失效),必须按本批显式槽位列表删。
+                            // 【顺序无关】新顺序(1x/2x)下 upInput = 源帧 framesIn、旧顺序(3x/4x)下 = 补帧结果 framesFinal,
+                            // 两种顺序都在这里逐批释放 —— 这正是"边用边删"的落点,不等整阶段结束。
+                            // 【为什么在这里删是安全的】本批所有输出(含重复槽回填、黑帧回退原帧、批次异常回退原帧)
+                            // 都在本 task 内、finally 之前写完,删的是本批【全部槽位】的输入;批与批之间按槽位不重叠。
+                            int relCnt = 0;
                             foreach (var si in batchSlots)
-                                try { File.Delete(upFiles[si]); } catch { }
+                            {
+                                try { File.Delete(upFiles[si]); relCnt++; } catch { /* 删不掉不影响正确性:阶段收尾还会再扫一次 */ }
+                            }
+                            Interlocked.Add(ref releasedInputFrames, relCnt);
+                            AppLogger.Info($"[临时清理] 超分批 {bi + 1}/{batchCount}(槽位 {batchSlots[0]}~{batchSlots[^1]})完成:已释放" +
+                                (upscaleFirst ? "源帧" : "补帧帧") + $" {relCnt} 帧(本阶段累计 {Volatile.Read(ref releasedInputFrames)} 帧;目录 {Path.GetFileName(upInput)})");
                             sem.Release();
                         }
                     }, ct));
@@ -1778,12 +1914,15 @@ public static class VideoService
                     throw;
                 }
                 await Task.WhenAll(tasks);
-                // ===== 临时文件控制:超分完成后,补帧帧(upInput,即原 framesFinal)已用完,删除释放磁盘 =====
-                // (8x 补帧+超分后补帧帧体积巨大,及时清,避免超分帧+补帧帧同时占盘)
+                // ===== 临时文件控制:超分阶段收尾补扫 —— 输入帧其实已由【每批 finally】逐批释放(见上),
+                // 这里只兜"某批删除失败/取消残留"的尾巴,正常情况为 0 帧(不再等到整阶段结束才删)。
+                // (8x 补帧+超分后输入帧体积巨大,逐批清避免"超分帧+输入帧"同时占盘)
                 try
                 {
-                    foreach (var f in Directory.EnumerateFiles(upInput, "*.jpg")) File.Delete(f);
-                    AppLogger.Info($"[临时清理] 已释放补帧帧目录 upInput({upFiles.Length} 帧),后续合帧用超分帧");
+                    int delCnt = 0;
+                    foreach (var f in Directory.EnumerateFiles(upInput, "*.jpg")) { File.Delete(f); delCnt++; }
+                    AppLogger.Info($"[临时清理] 超分阶段收尾:输入目录 {Path.GetFileName(upInput)} 补扫释放 {delCnt} 帧" +
+                        $"(共 {upFiles.Length} 帧,其中 {Volatile.Read(ref releasedInputFrames)} 帧已在逐批清盘中释放)");
                 }
                 catch { /* 清理失败忽略 */ }
                 framesFinal = upOutput;   // 合帧使用超分后的帧
@@ -1794,7 +1933,7 @@ public static class VideoService
                         .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
                     int doneSh = 0;
                     var shTasks = new System.Collections.Generic.List<Task>();
-                    progress?.Report((88, $"1x超分:将 {shFiles.Length} 帧从 2x 缩回原始尺寸 {origW}×{origH}..."));
+                    progress?.Report((upEnd - 2, $"1x超分:将 {shFiles.Length} 帧从 2x 缩回原始尺寸 {origW}×{origH}..."));
                     foreach (var f in shFiles)
                     {
                         ct.ThrowIfCancellationRequested();
@@ -1805,7 +1944,7 @@ public static class VideoService
                             EngineService.ResizeImageTo(f, f, origW.Value, origH.Value);
                             int d = Interlocked.Increment(ref doneSh);
                             if (d % 20 == 0 || d == shFiles.Length)
-                                progress?.Report((88 + (int)(2.0 * d / shFiles.Length),
+                                progress?.Report((upEnd - 2 + (int)(2.0 * d / shFiles.Length),
                                     $"1x超分 缩回中 {d} 帧 / 共 {shFiles.Length} 帧"));
                         }, ct));
                     }
@@ -1820,7 +1959,31 @@ public static class VideoService
                 AppLogger.Info($"超分实测:{total} 帧 / {srSec:0.#}s = {msPer:0} ms/帧"
                     + $"({(srSec > 0.001 ? total / srSec : 0):0.##} 帧/秒) · 路线={(upOnnxDml ? "ONNX 稳定引擎(DirectML)" : "ncnn-Vulkan")}");
             }
-            progress?.Report((90, $"帧超分完成({total} 帧)" + StageElapsed()));
+                progress?.Report((upEnd, $"帧超分完成({total} 帧)" + StageElapsed()));
+                // ===== 4.2) 新顺序(1x/2x)的补帧阶段:读超分输出(upOutput)、写 frames_interp =====
+                // 与 3) 块里的旧顺序调用点是【同一个 InterpStageAsync】,只是输入/输出目录与探测尺寸不同 ——
+                // 补帧方法、分段(segBounds)、帧数对齐(globalTarget)、时长表(finalDurs)全部照旧,不分叉。
+                if (upscaleFirst)
+                {
+                    // 超分输出必须全是 .jpg:InterpSegmentAsync 按 frame_%06d.jpg 读输入(文件名硬编码 .jpg),
+                    // 而超分异常回退路径可能在 upOutput 留下 .png(见本阶段的 File.Copy 兜底)。这里统一成 JPG,
+                    // 正常路径(引擎直出 JPG)是空跑,不会重编码。
+                    ReencodeDirPngToJpg(upOutput);
+                    Directory.CreateDirectory(framesInterp);
+                    // RIFE GPU 探测按【补帧真正要处理的尺寸】做:新顺序下 = 超分后的尺寸
+                    // (1x 缩回后 = 源尺寸;2x = 源×2)。探测结论带尺寸进缓存 key,不会与源尺寸那次的结论互相顶替。
+                    int probeW = srcW, probeH = srcH;
+                    try
+                    {
+                        var f0 = Directory.EnumerateFiles(upOutput, "*.jpg")
+                            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).FirstOrDefault();
+                        if (f0 != null) { using var b0 = new System.Drawing.Bitmap(f0); probeW = b0.Width; probeH = b0.Height; }
+                    }
+                    catch { }
+                    AppLogger.Info($"[阶段顺序] 超分阶段完成({total} 帧)→ 进入补帧阶段(输入 = 超分输出 {Path.GetFileName(upOutput)} {probeW}×{probeH},{total} 帧)");
+                    await InterpStageAsync(upOutput, framesInterp, probeW, probeH);
+                    framesFinal = framesInterp;   // 编码/合帧继续读 framesFinal(= 补帧输出)
+                }
             }
 
             // 4.5) 自定义输出分辨率:超分/补帧后批量缩放到精确 W×H(未超分时也生效,相当于统一尺寸)

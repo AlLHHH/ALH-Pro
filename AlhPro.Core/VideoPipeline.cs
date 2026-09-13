@@ -10,10 +10,14 @@ namespace AlhPro.Core;
 /// </summary>
 public static class VideoPipeline
 {
-    /// <summary>估算整个视频处理流程的大致秒数(用于处理前"预计剩余时间")。slowFactor=弱机放大系数(默认 1)。</summary>
+    /// <summary>估算整个视频处理流程的大致秒数(用于处理前"预计剩余时间")。slowFactor=弱机放大系数(默认 1)。
+    /// upscaleFirst=「超分 → 补帧」的新阶段顺序(1x/2x 走这条,见 VideoService.ProcessVideoAsync 的阶段顺序说明):
+    /// 超分先按【源帧数】跑,补帧在放大后的帧上做(单价按放大后的面积算)。
+    /// 默认 false = 旧顺序「补帧 → 超分」,与改动前逐字一致;scale&gt;2.001(4x 等)在函数内一律钳回旧顺序
+    /// —— 阶段顺序只对 1x/2x 生效,钳住可保证"估算口径"与真正执行的顺序不会各说各话。</summary>
     public static double EstimateProcessSeconds(double duration, double fps, int w, int h,
         bool up, double scale, string engine, bool interp, int interpScale, bool dedup, int videoDenoise,
-        double slowFactor = 1.0)
+        double slowFactor = 1.0, bool upscaleFirst = false)
     {
         int src = (int)Math.Max(1, duration * fps);
         double s = src * 0.02 + 1.5;                 // 拆帧(含引擎启动)
@@ -21,6 +25,8 @@ public static class VideoPipeline
         int frames = src;
         // 补帧/超分的每帧成本按面积缩放(基准 1080p=2073600):固定常数会让 4K/大图严重低估
         double areaN = Math.Max(0.25, (double)w * h / 2073600.0);
+        // 阶段顺序只对 1x/2x 成立(4x 及任何 scale>2.001 保持旧顺序):调用方传错倍数时在这里钳住。
+        bool upFirst = upscaleFirst && !(scale > 2.001);
         if (interp && interpScale > 1)
         {
             // 整段一次 RIFE 成本 ≈ 【新增】帧数 × 每帧(按面积)。
@@ -28,7 +34,18 @@ public static class VideoPipeline
             // 【新增】的帧做推理:N 帧做 k 倍补帧 → 新增 (k-1)N 帧、输出 kN-1 帧。
             // 于是旧写法在 k=2 时把成本高估 2 倍、k=4 时高估 1.33 倍,高倍率补帧的 ETA 被显著拉长。
             // 常数 0.09 秒/帧(1080p)保持不动 —— 本机批量实测 RIFE v4.13 ≈0.102 秒/输出帧,同量级。
-            s += Math.Max(1, interpScale - 1) * frames * 0.09 * areaN;
+            // 新增帧数两种顺序都一样(超分保帧数)= src × (k-1);变的是【每帧单价】。
+            double add = Math.Max(1, interpScale - 1) * src * 0.09;
+            if (upFirst && up && scale > 1.001)
+            {
+                // 新顺序:补帧在【超分后的帧】上做 → 单价按放大后的面积算(实测 1080p 0.10 → 2160p 0.35 秒/输出帧,
+                // 与 scale²=4 倍的面积量级相符);超分则只跑源帧数(见下面 up 分支)。
+                s += add * areaN * scale * scale;
+            }
+            else
+            {
+                s += add * areaN;
+            }
             frames *= interpScale;
         }
         if (up && scale > 1.001)
@@ -36,7 +53,9 @@ public static class VideoPipeline
             // 超分逐帧成本:1080p 单帧 waifu2x≈0.18s / realesrgan≈0.45s,按面积缩放
             double per = engine switch { "waifu2x" => 0.18, _ => 0.45 };
             per *= areaN * Math.Max(0.5, scale / 1.0);
-            s += frames * per;
+            // 新顺序:超分只跑【源帧数】(补帧排在超分之后,不再让超分帧数翻倍)——这是新顺序省钱的全部来源。
+            // 旧顺序:超分跑补帧后的帧数 frames(= src × 倍率),与改动前逐字一致。
+            s += (upFirst && interp && interpScale > 1 ? src : frames) * per;
         }
         if (videoDenoise > 0) s *= 1.05;              // 降噪滤镜
         s += frames * 0.12;                           // 合成编码(平均)
