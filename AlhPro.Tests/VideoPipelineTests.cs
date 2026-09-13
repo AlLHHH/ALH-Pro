@@ -97,7 +97,7 @@ public class VideoPipelineTests
     [Fact]
     public void Estimate_adds_batch_startup_overhead_when_free_ram_known()
     {
-        const double perBatch = 3.0;   // = VideoPipeline.AssumedEngineStartupSecondsPerBatch(待实测标定)
+        const double perBatch = 1.15;   // = VideoPipeline.AssumedEngineStartupSecondsPerBatch(2026-09-13 真机标定:1 帧目录直量 1.0~1.3s)
         // 10s×30fps = 300 帧、不补帧 → 补帧后总帧数 300 ≤ 400 → 按用户口径【单批】
         // (设备好 10.4G;旧公式完全不含这一次引擎启动)
         double withRam = VideoPipeline.EstimateProcessSeconds(10, 30, 1920, 1080, up: true, 2.0, "waifu2x",
@@ -111,7 +111,7 @@ public class VideoPipelineTests
     [Fact]
     public void Estimate_short_clip_counts_exactly_one_batch()
     {
-        const double perBatch = 3.0;
+        const double perBatch = 1.15;   // = 上面的真机标定值(常数若再改,这两处必须一起改)
         // 5s×30fps = 150 帧 ≤ 400 → 1 批(这正是"短素材不为几十帧反复启动引擎"的收益)
         double withRam = VideoPipeline.EstimateProcessSeconds(5, 30, 1920, 1080, up: true, 2.0, "waifu2x",
             interp: false, 2, dedup: false, 0, freeRamGB: 10.4);
