@@ -501,12 +501,18 @@ public static class VideoService
             bool upscaleFirst = AlhPro.Core.VideoPipeline.UpscaleRunsFirst(doUpscale, scale, frameInterp, upscaleShrink1x);
             if (!AlhPro.Core.VideoPipeline.UpscaleFirstEnabled)
                 AppLogger.Info($"阶段顺序判定:{AlhPro.Core.VideoPipeline.UpscaleFirstDisabledReason}");
+            // 【Q1 · 2026-09-13】上面这行只是【回退值】(全局开关口径)。真正的顺序在去重结果/补帧倍率确定后
+            // 由 AlhPro.Core.PipelineOrderPlan 按**实测单价**判定(超分贵就先超分,补帧在放大帧上做太贵就先补帧);
+            // 判定的日志会另打一行「顺序判定:… → 选择 X 顺序」(可审计)。这里的进度区间/早期日志仍按回退值打印,
+            // 判定点之后 upscaleFirst 会被覆写,而进度区间(interpPctBase/Span)在第 3) 块之前就已确定 ——
+            // 见判定点处的注释(两点都为"旧顺序"口径,避免进度条先跳后倒退)。
             // 进度区间随【实际执行的顺序】走(阶段名必须与真正在跑的阶段一致,不允许张冠李戴):
             //   新顺序:超分 10~45、补帧 45~90;旧顺序保持原口径:补帧 10~45、超分 45~90。
             int interpPctBase = upscaleFirst ? 45 : 10;
             int interpPctSpan = upscaleFirst ? 45 : 35;
-            AppLogger.Info($"阶段顺序:{(upscaleFirst ? "超分 → 补帧(1x/2x 新顺序)" : "补帧 → 超分(旧顺序)")}"
-                + $"(up={doUpscale}/shrink1x={upscaleShrink1x}/scale={scale:0.###},interp={frameInterp},超分是否执行={upscaleRuns})");
+            AppLogger.Info($"阶段顺序(回退值,待 Q1 自动判定):{(upscaleFirst ? "超分 → 补帧" : "补帧 → 超分")}"
+                + $"(up={doUpscale}/shrink1x={upscaleShrink1x}/scale={scale:0.###},interp={frameInterp},超分是否执行={upscaleRuns})"
+                + $" —— 真正的顺序由 AlhPro.Core.PipelineOrderPlan 按实测单价在补帧/超分都确定后判定(见「顺序判定:…」那行)");
             // ===== 设备选择映射诊断(编号错位排查命门):设置 GpuIndex → 实际引擎 gpuId → 设备名 =====
             try
             {
@@ -1518,6 +1524,34 @@ public static class VideoService
                     segStart = c;
                 }
                 if (segStart < frameCount) segBounds.Add((segStart, frameCount));
+                // 【任务 Q1 · 2026-09-13】阶段顺序不再靠全局开关(常量 false),改为**按实测单价自动判定**:
+                // 超分单帧成本 u 与"补帧在源分辨率/放大后分辨率的单帧成本"比较,谁便宜谁先跑。
+                // 判据/成本表/安全边际(节省 <15% 不切换)/未实测组合回退,全在 AlhPro.Core.PipelineOrderPlan
+                // (纯函数 + 单测,成本表每个数字都标了 2026-09-13 真机实测出处)。
+                // 只有"超分与补帧都要真跑"时顺序才有意义;其余情况保持 upscaleFirst 的原值(全局开关口径)。
+                if (doUpscale && frameInterp && upscaleRuns)
+                {
+                    double upScaleNow = upscaleShrink1x ? 2.0 : scale;   // 引擎实际跑的倍率(1x 缩回 = 按 2x 跑再缩回)
+                    double areaScaleNow = upscaleShrink1x ? 1.0 : scale; // 补帧真正吃到的帧相对源帧的放大倍数(缩回后 = 1)
+                    var orderPlan = AlhPro.Core.PipelineOrderPlan.Decide(engine, model, upScaleNow, interpScale,
+                        srcW, srcH, frameCount, areaScale: areaScaleNow);
+                    upscaleFirst = orderPlan.UpscaleFirst;
+                    // 【进度区间必须跟着"真正执行的顺序"走】否则进度条会先按旧顺序跳到 45% 再倒退
+                    // (H 任务注释里点名的老问题)。这里就在判定点重算,闭包/后续阶段读到的都是新值;
+                    // upBase/upEnd 在超分块里读的是"当时的 upscaleFirst"→ 也自动跟着变。
+                    interpPctBase = upscaleFirst ? 45 : 10;
+                    interpPctSpan = upscaleFirst ? 45 : 35;
+                    AppLogger.Info(orderPlan.LogLine);
+                    if (!orderPlan.UpscaleFirst && orderPlan.Measured && orderPlan.SavingsSeconds > 0)
+                        AppLogger.Info($"顺序判定说明:新顺序虽然更省但只省 {orderPlan.SavingsPercent:0.#}%(< 15% 安全边际)→ 保持旧顺序,避免临界抖动");
+                    // 【任务 Q2】两阶段批计划:两个阶段的输入分辨率不同,各自按自己的面积算每批帧数,分别落日志。
+                    // (补帧阶段的"每批帧数"是等效参考值 —— 它实际按转场分段跑,见 RenderPolicy.PlanStageBatches)
+                    foreach (var sp in AlhPro.Core.RenderPolicy.PlanStageBatches(SafeRender.FreeRamGB, frameCount,
+                                 areaScaleNow, interpScale, srcW, srcH, upscaleFirst, fastMode, diskTight))
+                        AppLogger.Info($"批计划[{sp.Stage}]({sp.Order}):输入 {sp.InputWidth}×{sp.InputHeight}"
+                            + $"(面积系数 {sp.AreaFactor:0.###})→ 每批 {sp.FramesPerBatch} 帧 × 预计 {sp.BatchCount} 批"
+                            + $"(阶段输入 {sp.StageInputFrames} 帧{(sp.Advisory ? ",等效参考值" : "")})");
+                }
                 frameScale = frameCount > 0 ? Math.Min(6.0, (double)origCountEst / frameCount) : 1.0;
                 bool v4Model = IsV4Model(interpModel);
                 // ===== 方案 C(真实时间轴插值/对齐丝滑):「密度还原 → 整段一次 RIFE → 帧数精确对齐」=====
