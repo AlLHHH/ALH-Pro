@@ -2700,9 +2700,11 @@ public static class VideoService
             var muxInput = $"-framerate {frInput} -i \"{framePattern}\"";
             await EnsureHwProbeAsync(ffmpeg, ct);
             var encoder = PickVideoEncoder(gpuId, codecPref);
-            // 【编码最优解·解码侧】硬编生效时,瓶颈会从编码器转到"软件解码 JPG 序列"(4K 实测 ≈39.6 fps);
-            // NVDEC(mjpeg_cuvid)实测 4595 fps、端到端 +52%。探测已确认本机可用(EnsureHwProbeAsync)且当前是
-            // nvenc 才加 —— 软编时加了也没用(实测只快 2%),不加反而少一个失败面。
+            // 【编码最优解·解码侧】硬编生效时,瓶颈会从编码器转到"软件解码 JPG 序列"(4K 实测 ≈39.6 fps)。
+            // ⚠【2026-09-13 真机基准:**旧性能数字已无法复现,勿再引用**】这里原来写「NVDEC 实测 4595 fps、
+            // 端到端 +52%」—— 本机同条件重测是 **cuvid 192.68 fps vs 软解 193.99 fps(硬解无收益)**,
+            // 4595/+52% 那组数字在本机复现不出来(见 HwJpegDecode 的说明)。所以**不再据此主张硬解收益**:
+            // 启用条件仍是"硬编生效 + 探测实测通过",纯属"能过就用"(结果不受影响,只影响速度口径)。
             // 只有【实测通过(Usable)】才加硬解:其余三态(未探/确定不支持/探测超时)一律走软解 ——
             // 与改动前的 bool=false 行为完全一致(见 HwJpegDecode 的三态说明)。
             if (_hwJpegDecode == HwJpegDecode.Usable && encoder.Contains("nvenc", StringComparison.OrdinalIgnoreCase))
@@ -3927,7 +3929,13 @@ public static class VideoService
     /// 【为什么必须有前提】实测(2026-09-11,200 帧 4K JPG 序列):软编时瓶颈是编码器本身——
     /// 软件解码 39.6 fps / NVDEC 4595 fps,但 `libx264 veryfast` 端到端只有 34.5→35.1 fps(+2%,等于没用);
     /// 而硬编(NVENC)生效后瓶颈才会转移到软件解码 JPG,此时 NVDEC 才有价值(调研实测 86.5→131.7 fps,+52%)。
-    /// 所以只在【已有可用 nvenc】时才探测、才启用;探测口径与硬编一致:用真实解码器+真实编码参数真编出有效文件。
+    /// ⚠【任务 O5 · 2026-09-13 真机基准:上面这组数字**本机无法复现,勿再引用**】
+    ///   同机同条件重测(生产帧 4:2:0):**cuvid 192.68 fps vs 软解 193.99 fps** —— 硬解**没有收益**;
+    ///   4595 fps / +52% 在本机复现不出来(不排除是别的机器/别的素材/别的 pix_fmt 下的旧数据)。
+    ///   **结论:维持"不启用硬解"**;下面这条探测链路继续保留(它保证"能过才用、错判只掉性能不掉结果"),
+    ///   但**不再据它主张任何性能收益**。另:探测素材必须与生产一致用 4:2:0 —— 4:4:4 时 cuvid 会无限重试挂死
+    ///   (实测 120 秒 0 帧、stderr 长到 46MB),所以 6 秒超时判"不可用"是**正确动作**,不是误判。
+    /// 所以只在【已有可用 nvenc】时才探测;探测口径与硬编一致:用真实解码器+真实编码参数真编出有效文件。
     /// 【消费点口径一律不变】只有 `== Usable` 才加 `-c:v mjpeg_cuvid`(合帧)、才在耗时拆分里标"NVDEC 硬解";
     /// 其余三态都是"走软解",与改动前的 bool=false 完全一致。</summary>
     private static HwJpegDecode _hwJpegDecode = HwJpegDecode.NotProbed;
@@ -4165,8 +4173,13 @@ public static class VideoService
                 var probeOut = Path.Combine(EngineService.TempRoot, $"imgup_decprobe_{Guid.NewGuid():N}.mp4");
                 try
                 {
+                    // 【任务 O5 · 2026-09-13】探测素材必须与生产一致用 **4:2:0**:
+                    // 生产 JPG 帧序列是 4:2:0(拆帧/超分输出都是 yuv420p 系),而 ffmpeg mjpeg 编码器在
+                    // 不给 -pix_fmt 时对 testsrc 会选 4:4:4 —— 实测 **4:4:4 + cuvid 会无限重试挂死**
+                    // (120 秒 0 帧、stderr 长到 46MB),于是"6 秒超时判不可用"看起来像误判,其实是探测素材选错了。
+                    // 现在显式钉成 yuv420p,与真实合帧的解码路径同口径(超时判定的含义也就随之正确)。
                     await RunAsync(decFfmpeg,
-                        $"-y -f lavfi -i \"testsrc=size=1280x720:rate=30:duration=0.4\" -frames:v 8 -q:v 2 \"{probeJpgPattern}\"", null, ct);
+                        $"-y -f lavfi -i \"testsrc=size=1280x720:rate=30:duration=0.4\" -frames:v 8 -q:v 2 -pix_fmt yuv420p \"{probeJpgPattern}\"", null, ct);
                     var probeOne = probeJpgPattern.Replace("_%03d.jpg", "_001.jpg");
                     if (File.Exists(probeOne) && new FileInfo(probeOne).Length > 0)
                     {
@@ -4210,9 +4223,12 @@ public static class VideoService
                                 _hwJpegDecode = HwJpegDecode.ProbeTimeout;
                                 AppLogger.Warn($"硬件解码探测:NVDEC(mjpeg_cuvid)【探测超时(6 秒)未完成 —— 不得解读为"
                                     + $"「本机不支持硬解」】({head})。本次按保守处理:合帧走软件解码"
-                                    + $"(4K 实测约 25 ms/帧 ≈39.6 fps;历史实测硬解可到 4595 fps、端到端 +52%)。"
+                                    + "(软解 4K 约 25 ms/帧 ≈39.6 fps)。"
+                                    + "【2026-09-13 更正】旧文案这里写「历史实测硬解可到 4595 fps、端到端 +52%」——"
+                                    + "该数字**本机同条件重测复现不出来**(cuvid 192.68 fps vs 软解 193.99 fps,硬解无收益),"
+                                    + "故本机不主张硬解收益;超时只是『没拿到结论』,按软解继续不影响结果。"
                                     + "要确认这台机器到底行不行,必须真机手工复测 —— 见本探测处的 TODO(探测命令与真实合帧命令"
-                                    + "还有两处不一致,且 6 秒这个上限本身也可能是超时太快)。");
+                                    + "还有两处不一致)。");
                             }
                             else
                             {
