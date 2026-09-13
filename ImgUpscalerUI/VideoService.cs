@@ -1262,6 +1262,7 @@ public static class VideoService
                 double interpIdleSec = 0;
                 int segNo = 0;
                 int releasedConsumed = 0;   // 本阶段已按段释放的输入帧数(审计用)
+                int interpCleanupLogged = 0;   // 【R1】已写进日志区的清理进度(每累计 800 帧一行,避免刷屏)
                 // 【G-补2 · 2026-09-13】阶段末之后【马上】还有一整批收尾:把补帧输出的 PNG 全部重编码成 JPG
                 // (ReencodeDirPngToJpg(framesFinal),耗时正比于帧数 —— 用户那条 2668 帧要跑几分钟)。
                 // 这条 ETA 只按补帧引擎自己的帧数外推,不知道后面还有这一步;于是最后一两帧时它会算成
@@ -1375,6 +1376,15 @@ public static class VideoService
                         // 纯提示:删除时机/并发/处理顺序一律未动。
                         if (delThisSeg > 0)
                             progress.Report((segPct, $"本段已释放 {delThisSeg} 帧临时文件(累计 {releasedConsumed} 帧)"));
+                        // 【R1 · 2026-09-13 用户反馈:"我没有看到什么清理的字样啊 左下角日志处要显示 还要无感"】
+                        // 上面那条是【状态行】提示,真机确认它会被 UI 的 100ms 节流吞掉(所以用户压根没见过)。
+                        // 这里补一条【走左下角日志区】的合并记录:每累计 800 帧才一行(`· ` 前缀 → UI 端在节流之前
+                        // 就把它追加进日志区、不动步骤行、不改进度条、不用警告色),长片全程也就几行:看得见、不刷屏。
+                        if (releasedConsumed - interpCleanupLogged >= 800)
+                        {
+                            interpCleanupLogged = releasedConsumed;
+                            progress.Report((segPct, $"· 临时文件清理:补帧阶段已释放 {releasedConsumed} 帧输入帧(用完即删,省临时盘)"));
+                        }
                     }
                 }
                 var interpCount = EnumerateFrameFiles(segOutDir).Count();   // 补帧输出可能是 png(旧)或 jpg(新边转边存),统一按两种数
@@ -1546,8 +1556,19 @@ public static class VideoService
                         AppLogger.Info($"顺序判定说明:新顺序虽然更省但只省 {orderPlan.SavingsPercent:0.#}%(< 15% 安全边际)→ 保持旧顺序,避免临界抖动");
                     // 【任务 Q2】两阶段批计划:两个阶段的输入分辨率不同,各自按自己的面积算每批帧数,分别落日志。
                     // (补帧阶段的"每批帧数"是等效参考值 —— 它实际按转场分段跑,见 RenderPolicy.PlanStageBatches)
-                    foreach (var sp in AlhPro.Core.RenderPolicy.PlanStageBatches(SafeRender.FreeRamGB, frameCount,
-                                 areaScaleNow, interpScale, srcW, srcH, upscaleFirst, fastMode, diskTight))
+                    var stagePlans = AlhPro.Core.RenderPolicy.PlanStageBatches(SafeRender.FreeRamGB, frameCount,
+                        areaScaleNow, interpScale, srcW, srcH, upscaleFirst, fastMode, diskTight);
+                    // 【R3 · 用户要求"日志也要显示本次处理分别一批多少个帧"】处理【开始时】一行说清两阶段每批多少帧
+                    // (沿用既有「超分批决策:」那行的风格,不新造格式)。旧顺序下补帧批天然大于超分批(见 PlanStageBatches 注释)。
+                    {
+                        var ipPlan = stagePlans.FirstOrDefault(s => s.Stage == "补帧");
+                        var upPlan = stagePlans.FirstOrDefault(s => s.Stage == "超分");
+                        AppLogger.Info($"本次处理:补帧阶段每批 {ipPlan.FramesPerBatch} 帧(输入 {ipPlan.InputWidth}×{ipPlan.InputHeight})、"
+                            + $"超分阶段每批 {upPlan.FramesPerBatch} 帧(输入 {upPlan.InputWidth}×{upPlan.InputHeight}"
+                            + (upscaleFirst ? $"→输出 {ipPlan.InputWidth}×{ipPlan.InputHeight})" : ")")
+                            + $" —— 顺序={(upscaleFirst ? "超分→补帧" : "补帧→超分")};每批帧数按各阶段【输入+输出并存的像素量】缩放(1080p 为基准)");
+                    }
+                    foreach (var sp in stagePlans)
                         AppLogger.Info($"批计划[{sp.Stage}]({sp.Order}):输入 {sp.InputWidth}×{sp.InputHeight}"
                             + $"(面积系数 {sp.AreaFactor:0.###})→ 每批 {sp.FramesPerBatch} 帧 × 预计 {sp.BatchCount} 批"
                             + $"(阶段输入 {sp.StageInputFrames} 帧{(sp.Advisory ? ",等效参考值" : "")})");
@@ -1818,7 +1839,11 @@ public static class VideoService
                 // (补帧→超分 顺序下超分读的就是补帧输出,即"补帧后总帧数")。
                 // 【任务 Q2】还把本阶段输入帧的分辨率传进去:每批帧数按面积反比缩放(1080p 基准),
                 // 让"输入帧 + 本批输出帧并存"的峰值临时盘/内存不随分辨率暴涨(4K 源每帧像素是 1080p 的 4 倍)。
-                var batchPlan = SafeRender.GetVideoBatchPlan(frameCount, total, fastMode, diskTight, srcW, srcH);
+                // 【任务 R3】还传本阶段的【输出】分辨率:峰值 = "输入帧 + 本批输出帧并存",
+                // 超分阶段输出是放大 scale² 倍的帧 → 这部分必须算进去(否则超分批偏大、峰值被低估)。
+                var batchPlan = SafeRender.GetVideoBatchPlan(frameCount, total, fastMode, diskTight, srcW, srcH,
+                    (int)Math.Max(1, Math.Round(srcW * (upscaleShrink1x ? 2.0 : Math.Max(1.0, scale)))),
+                    (int)Math.Max(1, Math.Round(srcH * (upscaleShrink1x ? 2.0 : Math.Max(1.0, scale)))));
                 int batchSize = batchPlan.BatchSize;
                 // 【日志必须能解释批数】档位 / 源帧数 / 补帧后总帧数 / 本阶段输入 / 每批帧数 / 预计批数 / 命中规则,
                 // 全部一行写清(PlanVideoBatches 的 Rule 里也带着每条门槛的实际取值与依据)。
@@ -1832,6 +1857,7 @@ public static class VideoService
                 using var sem = new SemaphoreSlim(fastMode ? 1 : SafeRender.GetVideoConcurrency());   // 兼容模式:单批防显存竞争
                 int doneFrames = 0;
                 int releasedInputFrames = 0;   // 已按【批】释放的输入帧数(边用边删;审计日志用)
+                int upCleanupLogged = 0;       // 【R1】已写进日志区的清理进度(每累计 800 帧一行,避免刷屏)
                 var tasks = new System.Collections.Generic.List<Task>();
                 // 按【唯一帧(组)数】切批(非槽数):每批引擎正好处理 batchSize 个唯一帧 → 磁盘峰值=今天一致。
                 var batchGroups = new System.Collections.Generic.List<System.Collections.Generic.List<(int rep, List<int> slots)>>();
@@ -2207,6 +2233,14 @@ public static class VideoService
                                 {
                                     progress?.Report((upBase + (int)((upEnd - upBase) * Volatile.Read(ref doneFrames) / Math.Max(1, total)),
                                         $"本批已释放 {relCnt} 帧临时文件(累计 {Volatile.Read(ref releasedInputFrames)} 帧)"));
+                                    // 【R1】同一条信息再走一遍【左下角日志区】(`· ` 前缀 → UI 在节流之前就追加,
+                                    // 不会被吞;不动步骤行/进度条/警告色)。每累计 800 帧才一行,长片几行,无感。
+                                    int relTotal = Volatile.Read(ref releasedInputFrames);
+                                    int lastLogged = Volatile.Read(ref upCleanupLogged);
+                                    if (relTotal - lastLogged >= 800
+                                        && Interlocked.CompareExchange(ref upCleanupLogged, relTotal, lastLogged) == lastLogged)
+                                        progress?.Report((upBase + (int)((upEnd - upBase) * Volatile.Read(ref doneFrames) / Math.Max(1, total)),
+                                            $"· 临时文件清理:超分阶段已释放 {relTotal} 帧输入帧(逐批删,用完即删,省临时盘)"));
                                 }
                                 catch { }
                             }

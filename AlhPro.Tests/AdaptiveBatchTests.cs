@@ -109,7 +109,7 @@ public class AdaptiveBatchTests
         Assert.Equal(1920, oUp.InputWidth);
         Assert.Equal(3600, oUp.StageInputFrames);        // 超分读补帧输出
         Assert.Equal(1800, oIp.StageInputFrames);
-        Assert.Equal(400, oUp.FramesPerBatch);
+        Assert.Equal(160, oUp.FramesPerBatch);          // R3:超分阶段按"输入+输出并存"的峰值算 → 160(< 补帧阶段 400)
         Assert.True(oIp.Advisory);                       // 补帧按转场分段跑 → 每批帧数是等效参考值
 
         // 新顺序:超分阶段输入 = 源帧;补帧阶段输入 = 放大 2x 的帧(面积 ×4 → 每批帧数显著更小)
@@ -150,10 +150,10 @@ public class AdaptiveBatchTests
     /// <summary>报告里那张对照表的**数字本身**钉住(设备好 10.4G、源 1800 帧 = 长片 → 档位基准 400、2x 超分、2x 补帧)。
     /// 每行 [源分辨率] → 旧顺序[超分/补帧] + 新顺序[超分/补帧] 的每批帧数。</summary>
     [Theory]
-    [InlineData(960, 448, 400, 400, 400, 400)]     // 小图:全被"档位上限 400"兜住(面积系数 >1 但不许超过档位基准)
-    [InlineData(1920, 1080, 400, 400, 400, 100)]   // 基准:旧顺序不变;新顺序补帧侧面积 ×4 → 100
-    [InlineData(2560, 1440, 225, 225, 225, 56)]    // 2.5K:面积系数 0.5625 → 225;新顺序补帧侧 14.7Mpx → 56
-    [InlineData(3840, 2160, 100, 100, 100, 50)]    // 4K:面积系数 0.25 → 100;新顺序补帧侧 33Mpx → 25 被 50 下界兜住
+    [InlineData(960, 448, 400, 400, 400, 400)]     // 小图:全被"档位上限 400"兜住
+    [InlineData(1920, 1080, 160, 400, 160, 100)]   // 基准[R3]:超分阶段峰值=源+源×4 → 160;补帧阶段=源 → 400(**补帧批 > 超分批**)
+    [InlineData(2560, 1440, 90, 225, 90, 56)]      // 2.5K:超分峰值系数 0.225 → 90;补帧 225;新顺序补帧侧 56
+    [InlineData(3840, 2160, 50, 100, 50, 50)]      // 4K:超分峰值系数 0.1 → 40 被 50 下界兜住;补帧 100;新顺序补帧 25→50
     public void Report_table_numbers_are_pinned(int w, int h, int oldUp, int oldIp, int newUp, int newIp)
     {
         var oldOrder = RenderPolicy.PlanStageBatches(10.4, 1800, 2.0, 2, w, h, upscaleFirst: false);
@@ -162,5 +162,25 @@ public class AdaptiveBatchTests
         Assert.Equal(oldIp, oldOrder.Single(s => s.Stage == "补帧").FramesPerBatch);
         Assert.Equal(newUp, newOrder.Single(s => s.Stage == "超分").FramesPerBatch);
         Assert.Equal(newIp, newOrder.Single(s => s.Stage == "补帧").FramesPerBatch);
+    }
+
+    /// <summary>【R3 · 用户要求「补帧分批要比超分大」】旧顺序下:补帧阶段输入=输出=源面积(批大)、
+    /// 超分阶段输入=源 + 输出=放大 scale²(两者并存 → 批小)⇒ **补帧批 &gt; 超分批**;
+    /// 新顺序下方向相反(超分阶段吃源帧、补帧阶段吃放大帧)。这条不许退化成"两阶段一样大"。</summary>
+    [Theory]
+    [InlineData(1920, 1080, 2.0)]
+    [InlineData(3840, 2160, 2.0)]
+    [InlineData(1920, 1080, 4.0)]
+    public void Interp_batch_is_larger_than_upscale_batch_in_old_order(int w, int h, double scale)
+    {
+        var oldOrder = RenderPolicy.PlanStageBatches(10.4, 1800, scale, 2, w, h, upscaleFirst: false);
+        int ip = oldOrder.Single(s => s.Stage == "补帧").FramesPerBatch;
+        int up = oldOrder.Single(s => s.Stage == "超分").FramesPerBatch;
+        Assert.True(ip > up, $"旧顺序:补帧每批 {ip} 必须大于超分每批 {up}");
+
+        var newOrder = RenderPolicy.PlanStageBatches(10.4, 1800, scale, 2, w, h, upscaleFirst: true);
+        int nip = newOrder.Single(s => s.Stage == "补帧").FramesPerBatch;
+        int nup = newOrder.Single(s => s.Stage == "超分").FramesPerBatch;
+        Assert.True(nup >= nip, $"新顺序:超分每批 {nup} 应不小于补帧每批 {nip}(方向相反)");
     }
 }

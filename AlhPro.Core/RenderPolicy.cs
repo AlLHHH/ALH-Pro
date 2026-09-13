@@ -156,6 +156,26 @@ public static class RenderPolicy
         return Math.Clamp(scaled, WeakDeviceFramesPerBatch, tierFrames);
     }
 
+    /// <summary>【任务 R3 · 2026-09-13 用户要求"补帧分批要比超分大"】按**"输入帧 + 本批输出帧并存"的像素量**
+    /// (峰值口径)缩放每批帧数:系数 = 1080p 面积 ÷ ((输入面积 + 输出面积) / 2),
+    /// 仍钳到 [50, 档位基准]。没给输出尺寸时退回"只看输入面积"的旧口径(与 2 参重载等价)。
+    /// 【为什么必须看输出面积】超分阶段输入是源分辨率帧、**输出是放大 scale² 倍的帧**,两者同时存在
+    /// (峰值临时盘/内存就是这两者的和)。只看输入会让超分阶段的批偏大 —— 4K/2x 下峰值可达 1080p 的 2.5 倍。
+    /// 【方向核对(用户要的方向)】旧顺序下:补帧阶段输入=输出=源面积 → 系数 1.0(批大);
+    /// 超分阶段 (源 + 源×scale²)/2 → 系数 1/((1+scale²)/2)(批小)⇒ **补帧批 > 超分批** ✓;
+    /// 新顺序下:超分阶段 (源 + 源×scale²)/2(批小)、补帧阶段输入=输出=放大后面积 → 系数 1/scale² ⇒
+    /// **超分批 > 补帧批**(方向相反,同样是"按各阶段自己的像素量算"的自然结果)。
+    /// 【待实测标定】面积口径是近似(引擎可能按 2 的幂跑再缩回;磁盘/内存的并存比例也未实测)。</summary>
+    public static int ScaleFramesForArea(int tierFrames, int inW, int inH, int outW, int outH)
+    {
+        if (inW <= 0 || inH <= 0 || tierFrames <= 0) return tierFrames;
+        if (outW <= 0 || outH <= 0) return ScaleFramesForArea(tierFrames, inW, inH);
+        double avgPixels = (((double)inW * inH) + ((double)outW * outH)) / 2.0;
+        double factor = Math.Clamp(ReferencePixels1080p / avgPixels, 1.0 / 64, 64.0);
+        int scaled = (int)Math.Round(tierFrames * factor);
+        return Math.Clamp(scaled, WeakDeviceFramesPerBatch, tierFrames);
+    }
+
     /// <summary>批次决策结果:每批帧数、批数、以及"为什么是这个数"(供日志/事后验收)。</summary>
     public readonly record struct VideoBatchPlan(
         int BatchSize, int BatchCount, int SourceFrames, int PostInterpFrames, int TierBaseFrames,
@@ -178,7 +198,7 @@ public static class RenderPolicy
     /// 【不设批数上限】仍成立:限批数只能让每批帧数随素材线性变大,同屏临时帧(输入+输出并存)跟着涨 ——
     ///  与"峰值不暴涨"直接冲突(旧注释里的论证保持不变)。</summary>
     public static VideoBatchPlan PlanVideoBatches(double freeRamGB, int sourceFrames, int postInterpFrames,
-        bool fastMode = false, bool diskTight = false, int srcW = 0, int srcH = 0)
+        bool fastMode = false, bool diskTight = false, int srcW = 0, int srcH = 0, int outW = 0, int outH = 0)
     {
         if (sourceFrames < 0) sourceFrames = 0;
         if (postInterpFrames < sourceFrames) postInterpFrames = sourceFrames;   // 补帧后帧数 ≥ 源帧数(倍率 ≥1)
@@ -211,9 +231,15 @@ public static class RenderPolicy
         // 【优先级(自上而下,写死在这里,别再各写一套)】
         //   ① 设备档位 → 基准帧数;② 面积缩放(钳 [50, 档位基准]);③ fastMode/diskTight 各减半(钳 ≥50);
         //   ④ 短素材单批(设备 ≥ 正常 且 补帧后 ≤400)→ 覆盖前面全部(整片一批,批大小无意义)。
-        int areaFrames = ScaleFramesForArea(baseFrames, srcW, srcH);
+        int areaFrames = ScaleFramesForArea(baseFrames, srcW, srcH, outW, outH);
         if (areaFrames != baseFrames)
-            rule += $";输入 {srcW}×{srcH}(面积系数 {AreaFactor(srcW, srcH):0.###}×)→ 每批 {areaFrames} 帧";
+        {
+            double avgPixels = srcW > 0 && srcH > 0 && outW > 0 && outH > 0
+                ? (((double)srcW * srcH) + ((double)outW * outH)) / 2.0
+                : (srcW > 0 && srcH > 0 ? (double)srcW * srcH : 0);
+            rule += $";输入 {srcW}×{srcH}{((outW > 0 && outH > 0) ? $"→输出 {outW}×{outH}(峰值像素 {(long)avgPixels / 1_000_000.0:0.##} Mpx)" : "")}"
+                + $"(峰值面积系数 {ReferencePixels1080p / Math.Max(1.0, avgPixels):0.###}×)→ 每批 {areaFrames} 帧";
+        }
         batch = areaFrames;
         bool halvedFast = false, halvedDisk = false;
         // ⑥ 兼容模式/临时盘紧:减半保护保留,但不得破坏用户给的 50 下界
@@ -299,14 +325,14 @@ public static class RenderPolicy
         int upIn = upscaleFirst ? sourceFrames : postInterp;
         int upW = upscaleFirst ? srcW : srcW;   // 旧顺序的超分输入是补帧输出 → 仍是源分辨率
         int upH = upscaleFirst ? srcH : srcH;
-        var up = PlanVideoBatches(freeRamGB, sourceFrames, upIn, fastMode, diskTight, upW, upH);
+        var up = PlanVideoBatches(freeRamGB, sourceFrames, upIn, fastMode, diskTight, upW, upH, hiW, hiH);
         list.Add(new StageBatchPlan("超分", upscaleFirst ? "新顺序(超分→补帧)" : "旧顺序(补帧→超分)",
             upIn, upW, upH, AreaFactor(upW, upH), up.BatchSize, up.BatchCount, Advisory: false, Note: up.Rule));
 
         // 补帧阶段:输入帧数 = 源帧(旧顺序)/ 源帧(新顺序,超分不增减帧数);分辨率 = 源 / 放大后
         int ipW = upscaleFirst ? hiW : srcW;
         int ipH = upscaleFirst ? hiH : srcH;
-        var ip = PlanVideoBatches(freeRamGB, sourceFrames, upscaleFirst ? sourceFrames : postInterp, fastMode, diskTight, ipW, ipH);
+        var ip = PlanVideoBatches(freeRamGB, sourceFrames, upscaleFirst ? sourceFrames : postInterp, fastMode, diskTight, ipW, ipH, ipW, ipH);
         list.Add(new StageBatchPlan("补帧", upscaleFirst ? "新顺序(超分→补帧)" : "旧顺序(补帧→超分)",
             sourceFrames, ipW, ipH, AreaFactor(ipW, ipH), ip.BatchSize, ip.BatchCount, Advisory: true,
             Note: ip.Rule + ";补帧阶段实际按转场分段跑,此每批帧数为等效参考值"));
