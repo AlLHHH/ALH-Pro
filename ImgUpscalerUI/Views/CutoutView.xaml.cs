@@ -154,24 +154,15 @@ public sealed partial class CutoutView : UserControl
         if (BgVal != null) BgVal.Opacity = autoThr ? 0.35 : 0.7;
     }
 
-    // 当前计算设备:-1 = CPU(下拉最后一项)
-    /// <summary>当前计算设备(全局设置):-1=CPU,≥0=GPU 编号。
-    /// 【尊重用户选择】= 用户在下拉框选的引擎 -g 编号(选独显就独显、选核显就核显);仅当编号无效/设备表未枚举时
-    /// 才用 ResolveEngineGpu 的推荐(通常独显)兜底,绝不强制纠正用户选择。</summary>
+    // 当前计算设备(全局设置):-1 = CPU;≥0 = GPU 编号。
     private int CurrentGpuId
     {
-        get
-        {
-            if (AppSettings.GpuIndex < 0) return -1;   // 用户主动选 CPU
-            try
-            {
-                var devs = ALHPro.VulkanCheck.Devices;
-                if (devs.Count > 0 && devs.Any(d => d.Id == AppSettings.GpuIndex))
-                    return AppSettings.GpuIndex;   // 尊重用户选择(含核显)
-            }
-            catch { }
-            return EngineService.ResolveEngineGpu(AppSettings.GpuIndex);   // 编号无效/表空 → 推荐(通常独显)
-        }
+        // 【H1 · 2026-09-13 自检修】这里原来自己写了一份"编号是否在设备表里"的解析 —— 图片页/抠图页/本页各一份,
+        // 三份彼此重复。现已删掉:判定只保留唯一权威入口 EngineService.ResolveEngineGpu,它内部调已单测的
+        // AlhPro.Core.DeviceRouting.ResolveEngineDevice(含"编号不在表→换表内设备、绝不落 CPU"与
+        // "撞号到核显且表里另有独显→换最佳独显")。三份重复解析正是"选独显却跑核显"反复出现的成因:
+        // 各改一半就会分叉,而分叉时没有任何测试能发现 —— 上一版公告说的"统一到 DeviceRouting"就是这么落空的。
+        get => EngineService.ResolveEngineGpu(AppSettings.GpuIndex);
     }
 
     // 抠图推理设备:【强制 CPU】——AI 抠图用 GPU(DirectML)会占满显卡,导致整个电脑卡顿(实测);

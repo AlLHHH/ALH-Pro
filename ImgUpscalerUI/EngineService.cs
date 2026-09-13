@@ -97,9 +97,32 @@ public static partial class EngineService
     /// 措辞规则集中在 AlhPro.Core.ProbeDiagnosis,并有单测守着"坏帧不许甩锅给驱动"这条约束。</summary>
     public static string LastProbeUserMessage { get; private set; } = "";
 
+    /// <summary>【F2 · 2026-09-13 自检修】"要用的那张卡"是不是纯 NVIDIA 且非 50 系 —— 即可以走免探测快速通道的那种卡。
+    /// 与旧的 <c>!HasNonNvidiaGpu()</c>(看整机有没有 A/I 卡)不同:混显笔记本(Intel 核显 + N 卡)现在也能走快速通道,
+    /// 因为它要用的本来就是那张 N 卡 —— 旧判据让这类机器在每个首次任务上白等一次生产帧尺寸探测(最坏 60 秒)。
+    /// 三条判据:名字是 NVIDIA、不是 D3D12 转译层(经转译层跑 ncnn 输出损坏帧)、不是 Blackwell(50 系)。
+    /// 【拿不准就返回 false】设备表为空/编号越界/名字为空 → 一律老实真机探测:多花最坏 15~60 秒可接受,
+    /// "误判为可用 → 用户拿到损坏帧"不可接受(判错方向的代价不对称)。
+    /// 注:本函数只搬动"要不要探测"的判据,探测本身仍是同一套生产帧尺寸口径(不新增第二套判据)。</summary>
+    private static bool TargetGpuIsPlainNvidia(int gpuId)
+    {
+        try
+        {
+            string? name = null;
+            int i = 0;
+            foreach (var d in VulkanCheck.Devices)
+            {
+                if (i++ == gpuId) { name = d.Name; break; }
+            }
+            return AlhPro.Core.GpuName.IsNvidia(name)
+                && !AlhPro.Core.GpuName.IsD3D12Translation(name)
+                && !AlhPro.Core.GpuName.IsBlackwell(name);
+        }
+        catch { return false; }
+    }
     public static async Task<bool> IsWaifu2xNcnnUsableAsync(int gpuId, CancellationToken ct)
     {
-        if (!IsBlackwellGpu() && !HasNonNvidiaGpu()) return true;
+        if (TargetGpuIsPlainNvidia(gpuId)) return true;   // F2:按"要用的那张卡"判定(见 TargetGpuIsPlainNvidia)
         // 统一走"生产帧尺寸"探测并共享同一份结论缓存(原先这里另有一套 1×1/320×240 小图缓存,
         // 小图在 Blackwell 上会假通过 —— 两套缓存还可能给出互相矛盾的结论,故合并为一套)。
         return await EnsureNcnnProbeAsync("waifu2x", gpuId, null, ct).ConfigureAwait(false);
@@ -118,7 +141,15 @@ public static partial class EngineService
 
     // 【引擎身份键】realesrgan 会被规整成 realesrgan / realesrgan2026(见 RealEsrganEngineId):
     // 新旧引擎共用同一个键的话,旧版在 50 系上"出坏帧"的结论会把新引擎一起判死。
-    private static string NcnnVerdictKey(string engine, int gpuId) => EngineId(engine) + "|" + gpuId;
+    // 【F1 · 2026-09-13 自检修:键里补上"模型"维度】旧键只有 engine|gpu,于是"animevideov3 实测通过"
+    // 会给 x4plus(实测最慢、最易出坏帧的那支)背书 —— 同一张卡上不同模型的可用性本来就不一样,
+    // 结论缓存 7 天,等于长期拿别人的体检报告。现在键 = engine|gpu|model(null/空 = 引擎级结论,如 waifu2x)。
+    // 【副作用(可接受)】旧键(没有模型段)读不到,等价于"没测过" → 首次处理时自动重测一次;
+    // 这正是想要的语义:结论本来就该按模型算。RIFE 那条键里本来就带模型(见 RifeProbeKey),不受影响。
+    // 键格式的【唯一实现】在 AlhPro.Core.NcnnVerdictKey(纯函数,有单测):
+    // 键的拼法与前缀匹配必须成对,否则会表现成"写进去读不出来"→ 每次都重测、诊断包里永远"未测"。
+    private static string NcnnVerdictKey(string engine, int gpuId, string? model)
+        => AlhPro.Core.NcnnVerdictKey.For(EngineId(engine), gpuId, model);
 
     /// <summary>探测结论落盘文件(与其他设置同在 settings 目录)。首行是格式说明,便于人工核查。</summary>
     private static string NcnnProbeCacheFile => ParaPaths.SettingsFile("ncnn-probe.txt");
@@ -171,9 +202,9 @@ public static partial class EngineService
 
     /// <summary>取已缓存的 ncnn 可用性结论。null = 没测过(调用方回退保守启发式)。
     /// 首次调用把落盘结论合并进进程内,之后纯内存查表(零 I/O)。全程 try/catch:缓存坏了绝不能影响处理。</summary>
-    public static bool? TryGetNcnnVerdict(string engine, int gpuId)
+    public static bool? TryGetNcnnVerdict(string engine, int gpuId, string? model = null)
     {
-        var key = NcnnVerdictKey(engine, gpuId);
+        var key = NcnnVerdictKey(engine, gpuId, model);
         try
         {
             lock (_ncnnVerdictLock)
@@ -200,8 +231,9 @@ public static partial class EngineService
             var parts = new System.Collections.Generic.List<string>();
             foreach (var eng in new[] { "realesrgan", "waifu2x" })
             {
-                var v = TryGetNcnnVerdict(eng, gpuId);
-                parts.Add($"{EngineId(eng)}={(v.HasValue ? (v.Value ? "实测可用→走 ncnn" : "实测不可用→走 ONNX") : "未测(首次处理时自动实测)")}");
+                var v = TryGetEngineVerdictSummary(eng, gpuId);
+                int measured = CountCachedModels(eng, gpuId);
+                parts.Add($"{EngineId(eng)}={(v.HasValue ? (v.Value ? $"实测可用→走 ncnn({measured} 支模型全通过)" : $"实测不可用→走 ONNX({measured} 支模型中有失败)") : "未测(首次处理时自动实测)")}");
             }
             return string.Join(" ", parts);
         }
@@ -213,9 +245,9 @@ public static partial class EngineService
     public static string NcnnProbeCacheFilePath => NcnnProbeCacheFile;
 
     /// <summary>记录探测结论(进程内 + 落盘)。落盘失败只记日志,绝不影响处理。</summary>
-    private static void SaveNcnnVerdict(string engine, int gpuId, bool ok, string detail)
+    private static void SaveNcnnVerdict(string engine, int gpuId, string? model, bool ok, string detail)
     {
-        var key = NcnnVerdictKey(engine, gpuId);
+        var key = NcnnVerdictKey(engine, gpuId, model);
         System.Collections.Generic.List<string> lines = new();
         lock (_ncnnVerdictLock)
         {
@@ -258,10 +290,10 @@ public static partial class EngineService
         // ②一次探测要 ~15 秒,而图片路径上一个任务可能总共只要 2 秒 —— 不能先白等 15 秒;
         // ③真出问题还有引擎自身的"输出全黑 → 该设备判不可用 + 降级链"兜底(见 IsEngineGpuUsableAsync)。
         // 50 系 / AMD / Intel 核显一律照旧真机探测,该走的自适应一点不少。
-        if (!force && !IsBlackwellGpu() && !HasNonNvidiaGpu()) return true;
+        if (!force && TargetGpuIsPlainNvidia(gpuId)) return true;   // F2:同上,改为按目标卡判定
         if (!force)
         {
-            var cached = TryGetNcnnVerdict(engine, gpuId);
+            var cached = TryGetNcnnVerdict(engine, gpuId, model);
             if (cached.HasValue)
             {
                 AppLogger.Info($"[探测] {engine} GPU({gpuId}/{SafeDeviceName(gpuId)})沿用已缓存结论:" +
@@ -280,7 +312,7 @@ public static partial class EngineService
         bool ok = await IsEngineGpuUsableAsync(engine, gpuId, ct, fullFrame: true, model: model,
             (k, d) => { failKind = k; failDetail = d; }).ConfigureAwait(false);
         // 结论按【引擎|GPU】记账(决策键);明细带上失败形态 —— 诊断包里一眼能分出"初始化即崩"还是"出图但坏帧"。
-        SaveNcnnVerdict(engine, gpuId, ok,
+                    SaveNcnnVerdict(engine, gpuId, model, ok,
             (ok ? "probe ok" : "probe failed: " + AlhPro.Core.ProbeDiagnosis.ShortName(failKind))
             + $"; model={model ?? "(default)"}");
         if (ok)
@@ -320,7 +352,7 @@ public static partial class EngineService
         bool ok = await IsRifeGpuUsableAsync(rifeExe, model, gpuId, ct,
             (k, d) => { failKind = k; failDetail = d; },
             frameW <= 0 ? 320 : frameW, frameH <= 0 ? 240 : frameH).ConfigureAwait(false);
-        SaveNcnnVerdict(key, gpuId, ok,
+        SaveNcnnVerdict(key, gpuId, null, ok,
             (ok ? "rife probe ok" : "rife probe failed: " + AlhPro.Core.ProbeDiagnosis.ShortName(failKind)) + $"; model={model}");
         if (ok)
         {
@@ -368,11 +400,55 @@ public static partial class EngineService
     /// 并且在 RTX 5060 Laptop 上**实测补帧与超分探测都通过**。再按显卡型号预判,只会让"没走探测的路径"
     /// 白白退回慢得多的 ONNX(用户感受就是"50 系上超分/补帧莫名很慢",且没有任何提示)。
     /// 所以:引擎是 2026 重编版 → 不再按型号预判(交给真机探测与缓存结论);仍是旧引擎 → 保持原保守行为不变。</summary>
+    /// <summary>【F1 · 2026-09-13】把"这个引擎在这张卡上"的结论按【全部已测模型】汇总。
+    /// 键现在是 engine|gpu|model,所以"能不能用"必须汇总而不是查单一键:
+    /// 只要有一支模型实测不可用 → false(保守);全部已测模型都通过 → true;一支都没测过 → null(交给启发式)。
+    /// 旧键(无模型段)读不到 = 未测 → 首次处理自动重测,符合"结论按模型算"的语义。</summary>
+    public static bool? TryGetEngineVerdictSummary(string engine, int gpuId)
+    {
+        try
+        {
+            var oks = new System.Collections.Generic.List<bool>();
+            lock (_ncnnVerdictLock)
+            {
+                EnsureNcnnVerdictsLoaded_NoLock();
+                foreach (var kv in _ncnnVerdicts)
+                {
+                    if (kv.Value is null) continue;
+                    if (!AlhPro.Core.NcnnVerdictKey.BelongsTo(kv.Key, EngineId(engine), gpuId)) continue;
+                    oks.Add(kv.Value.Ok);
+                }
+            }
+            return AlhPro.Core.NcnnVerdictKey.Summarize(oks);
+        }
+        catch { return null; }
+    }
+
+    /// <summary>该引擎+GPU 上已缓存了几支模型的结论(自检报告里说明"结论覆盖面",避免只看一句"可用"却不知测了哪支)。</summary>
+    private static int CountCachedModels(string engine, int gpuId)
+    {
+        try
+        {
+            int n = 0;
+            lock (_ncnnVerdictLock)
+            {
+                EnsureNcnnVerdictsLoaded_NoLock();
+                foreach (var kv in _ncnnVerdicts)
+                    if (AlhPro.Core.NcnnVerdictKey.BelongsTo(kv.Key, EngineId(engine), gpuId)) n++;
+            }
+            return n;
+        }
+        catch { return 0; }
+    }
+
     public static bool NcnnGpuRisky(string engine, int gpuId, bool treatBlackwellAsRiskyWithoutProbe = true)
     {
         try
         {
-            var v = TryGetNcnnVerdict(engine, gpuId);
+            // F1:结论现在按 engine|gpu|model 存,这里问的是"这个引擎在这张卡上能不能用" ——
+            // 故按该引擎+GPU 的【全部已测模型】汇总:只要有一支实测不可用就按风险算(保守),
+            // 全部已测模型都通过才算可用;一支都没测过 → 走下面的启发式(与原来完全一致)。
+            var v = TryGetEngineVerdictSummary(engine, gpuId);
             if (v.HasValue) return !v.Value;
         }
         catch { }
@@ -399,27 +475,9 @@ public static partial class EngineService
         catch { return false; }
     }
 
-    /// <summary>是否存在非 NVIDIA 显卡(AMD/Intel,含核显):驱动差异大,需要真机探测兜底。</summary>
-    private static bool HasNonNvidiaGpu()
-    {
-        if (_nonNvidiaCache.HasValue) return _nonNvidiaCache.Value;
-        try
-        {
-            var names = new System.Collections.Generic.List<string>();
-            try { names.AddRange(VulkanCheck.Devices.Select(d => d.Name)); } catch { }
-            try { names.AddRange(GpuInfo.GetAdapterNames()); } catch { }
-            bool hasNv = names.Any(n => n.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase)
-                || n.Contains("GeForce", StringComparison.OrdinalIgnoreCase));
-            bool hasOther = names.Any(n =>
-                n.Contains("AMD", StringComparison.OrdinalIgnoreCase)
-                || n.Contains("Radeon", StringComparison.OrdinalIgnoreCase)
-                || n.Contains("Intel", StringComparison.OrdinalIgnoreCase)
-                || n.Contains("Arc", StringComparison.OrdinalIgnoreCase));
-            _nonNvidiaCache = hasOther || (!hasNv && names.Count > 0);
-        }
-        catch { _nonNvidiaCache = false; }
-        return _nonNvidiaCache.Value;
-    }
+    // 【F2 · 2026-09-13】这里原来有个 HasNonNvidiaGpu()(判"整机有没有 A/I 卡"),
+    // 它已经被 TargetGpuIsPlainNvidia(gpuId)(按【要用的那张卡】判定)取代,自检确认零调用者 → 删除。
+    // 留着它的风险不是体积,而是以后有人又把它当判据用:混显笔记本会因此永远走不了免探测快速通道。
 
     /// <summary>ncnn 引擎的 -g 编号 → DirectML 设备号。
     /// 双卡机(AMD 核显 + NVIDIA 独显 / Intel 核显 + 独显等)上,Vulkan 引擎枚举顺序与 DirectML(DXGI)
@@ -493,20 +551,29 @@ public static partial class EngineService
     /// </summary>
     public static int ResolveEngineGpu(int settingsIndex)
     {
-        if (settingsIndex < 0) return -1;   // 用户主动选 CPU
+        // 【H1 · 2026-09-13 自检修:真正接上已单测的判定】
+        // 此前这里自己写了一套解析,而 AlhPro.Core.DeviceRouting.ResolveEngineDevice(有单测)【生产代码零调用】——
+        // v1.3.4 公告宣称的"设备判定统一到 DeviceRouting"实际没生效(公告与实现不符)。
+        // 现在这里只做"取设备表 + 留痕",判定全部交给那份纯函数:
+        //   ① settingsIndex < 0 → 用户主动选 CPU,原样尊重;
+        //   ② 编号在表里 → 原样返回;但若它恰好是【核显】且表里另有独显(陈旧注册表索引撞号的典型症状)
+        //      → 换成最佳独显并留痕日志 ← 这正是"选独显却跑核显"的根治点,旧代码这里不会纠正;
+        //   ③ 编号不在表里 → 换表内设备(绝不落 CPU;转译层设备照传会输出损坏帧,必须先换);
+        //   ④ 表为空(未枚举)→ 才允许按数量兜底,-1 只可能出现在这一路。
         try
         {
+            var list = new System.Collections.Generic.List<(int Id, string Name)>();
             var devs = VulkanCheck.Devices;
-            if (devs.Count > 0)
-                foreach (var d in devs)
-                    if (d.Id == settingsIndex) return settingsIndex;   // 尊重用户选择(核显就核显)
-            // 编号不在表/表空:用推荐(通常独显),绝不落 CPU
-            int rec = GpuInfo.GetRecommendedEngineId();
-            if (rec >= 0) return rec;
-            if (devs.Count > 0) return devs[0].Id;
+            if (devs != null)
+                foreach (var d in devs) list.Add((d.Id, d.Name ?? ""));
+            var (id, remapped) = AlhPro.Core.DeviceRouting.ResolveEngineDevice(
+                settingsIndex, list, GpuInfo.EngineDeviceCount);
+            if (remapped)
+                AppLogger.Info($"[设备] 设置里的计算设备 #{settingsIndex} 不是可用设备/或撞号到核显 → 已改用 #{id}"
+                    + $"({SafeDeviceName(id)});判定见 AlhPro.Core.DeviceRouting(有单测)");
+            return id;
         }
-        catch { }
-        return settingsIndex < GpuInfo.EngineDeviceCount ? settingsIndex : -1;   // 兜底
+        catch { return settingsIndex < GpuInfo.EngineDeviceCount ? settingsIndex : -1; }   // 兜底
     }
 
     /// <summary>把"请求的计算设备编号"解析成应实际使用的 DirectML 设备号——经 ResolveEngineGpu(尊重用户)

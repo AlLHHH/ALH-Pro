@@ -473,22 +473,14 @@ public sealed partial class VideoView : UserControl
     }
 
     // 当前计算设备(全局设置):-1 = CPU;≥0 = GPU 编号。
-    // 【尊重用户选择】计算设备编号 = 用户在下拉框选的引擎 -g 编号(选独显就独显、选核显就核显,不做强制纠正);
-    // 仅当编号无效/设备表未枚举时,用 ResolveEngineGpu 的推荐(通常独显)兜底,绝不因此悄悄跑错卡。
     private int CurrentGpuId
     {
-        get
-        {
-            if (AppSettings.GpuIndex < 0) return -1;   // 用户主动选 CPU
-            try
-            {
-                var devs = VulkanCheck.Devices;
-                if (devs.Count > 0 && devs.Any(d => d.Id == AppSettings.GpuIndex))
-                    return AppSettings.GpuIndex;   // 尊重用户选择(含核显)
-            }
-            catch { }
-            return EngineService.ResolveEngineGpu(AppSettings.GpuIndex);   // 编号无效/表空 → 用推荐(通常独显)
-        }
+        // 【H1 · 2026-09-13 自检修】这里原来自己写了一份"编号是否在设备表里"的解析 —— 图片页/抠图页/本页各一份,
+        // 三份彼此重复。现已删掉:判定只保留唯一权威入口 EngineService.ResolveEngineGpu,它内部调已单测的
+        // AlhPro.Core.DeviceRouting.ResolveEngineDevice(含"编号不在表→换表内设备、绝不落 CPU"与
+        // "撞号到核显且表里另有独显→换最佳独显")。三份重复解析正是"选独显却跑核显"反复出现的成因:
+        // 各改一半就会分叉,而分叉时没有任何测试能发现 —— 上一版公告说的"统一到 DeviceRouting"就是这么落空的。
+        get => EngineService.ResolveEngineGpu(AppSettings.GpuIndex);
     }
 
     /// <summary>焦点是否在文本输入控件上(此时 Del/PasDel 应交给输入框,不触发列表删除)。</summary>
@@ -870,19 +862,22 @@ public sealed partial class VideoView : UserControl
         {
             if (x4plusModel)
             {
-                bool isLight = esrModel.Contains("general-x4v3");
-                EsrganModelHint.Text = isLight
-                    ? "⚠ 该模型只有 4x 权重:选 2x/3x 会按 4x 超分后再缩回(画面不变形,但耗时可观)。它是轻量通用模型,4x 直出反而更划算"
-                    : "⚠ 该模型只有 4x 权重:选 2x/3x 会按 4x 超分后再缩回(画面不变形,但耗时与 4x 相同)";
+                // 【2026-09-13 用户要求】去掉 ⚠ 图标(红色告警样式也一并去掉,见 VideoView.xaml 里改用 HintText 样式)。
+                // 两分支原本是两套说法,现统一为同一句,原因:
+                //   ①「轻量通用」是旧称呼(v1.3.5 起该模型已改名「通用」,耗时档现为「快」);
+                //   ②「4x 直出反而更划算」与实测不符 —— 2x 目标下引擎照样全量算 4x、耗时与直接出 4x 完全相同
+                //      (本机 1080p 实测 general-x4v3 4.62 秒/帧、x4plus-anime 11.4 秒/帧、x4plus 33.8 秒/帧),
+                //      唯一差别只是输出尺寸更大、写盘与编码更久。
+                EsrganModelHint.Text = "该模型只有 4x 权重:选 2x/3x 会按 4x 超分后再缩回(画面不变形,耗时与 4x 相同)";
                 EsrganModelHint.Visibility = Visibility.Visible;
             }
             else EsrganModelHint.Visibility = Visibility.Collapsed;
         }
         if (x4plusModel)
         {
-            ScaleHint.Text = "⚠ 该模型只有 4x 权重(实测 1080p 源约 14.5 秒/帧,比 animevideov3 慢 17 倍):"
-                + "选 2x/3x 时会内部按 4x 超分再精确缩回(耗时与 4x 相同、画面不会变形);"
-                + "想要最高细节可直接选 4x(1080p 源即 7680×4320 的 8K,文件与编码时间都大很多)。画质优先的长片更推荐 realesr-animevideov3";
+            // 【2026-09-13 用户要求】「放大倍数」那一栏不再显示这段"4x 权重/缩回"的说明 —— 它和模型下拉正下方
+            // 那条提示(EsrganModelHint)说的是同一件事,两处重复显示属于冗余。此处删掉赋值即可:
+            // ScaleHint 保留上面 scaleIdx 分支生成的"倍率本身"的说明(1x~2x 较快、倍率越高越慢…)。
         }
         InterpModelCombo.IsEnabled = interp;
         // 非 2 的幂倍率(3x/12x/16x)仅 v4 架构模型支持;其余模型按 2x 级联(置灰+已选回退)。
@@ -1290,9 +1285,10 @@ public sealed partial class VideoView : UserControl
         public int Model { get; set; }         // 补帧模型索引(InterpModelCombo)
         public int UpWaifu2xModel { get; set; }   // 视频超分 waifu2x 模型索引(VideoWaifu2xModelCombo)
         public int UpEsrganModel { get; set; }    // 视频超分 Real-ESRGAN 模型索引(VideoEsrganModelCombo)
-        // 【序号迁移标记(2026-09-12)】视频超分模型下拉换过一次顺序:自转的 general-x4v3 从序号 3 上移到 2
-        // (与「超慢」的 x4plus 对调)。下拉存的是序号,老文件必须换算一次。
-        // 读到 ModelOrderRev < 1 就做一次 2↔3 互换并把标记写回 1 —— 只换一次,之后用户自己选的序号不再被改动。
+        // 【序号迁移标记(2026-09-12 起,共两次调整)】视频超分模型下拉换过两次顺序:
+        //   Rev1(09-12):general-x4v3 从序号 3 上移到 2(x4plus「超慢」对调);
+        //   Rev2(09-13):general-x4v3 再上移到 1(x4plus-anime 对调),即 animevideov3 正下方。
+        // 下拉存的是序号,老文件必须逐级换算;读到 Rev<2 就补做缺的那几步并写回 2 —— 只换一次,之后不再改动。
         public int ModelOrderRev { get; set; }
         public int InterpScale { get; set; }
         public bool Target { get; set; }
@@ -1385,10 +1381,21 @@ public sealed partial class VideoView : UserControl
     /// 返回 true 表示"做过改动"(调用方据此决定是否立即写回盘)。</summary>
     private static bool MigrateEsrganModelOrder(VideoSettings d)
     {
-        if (d is null || d.ModelOrderRev >= 1) return false;
-        if (d.UpEsrganModel == 2) d.UpEsrganModel = 3;
-        else if (d.UpEsrganModel == 3) d.UpEsrganModel = 2;
-        d.ModelOrderRev = 1;
+        if (d is null || d.ModelOrderRev >= 2) return false;
+        // Rev 1(2026-09-12):x4plus(超慢) ↔ general-x4v3 —— 把 general-x4v3 从最末尾上移到「超慢」之前
+        if (d.ModelOrderRev < 1)
+        {
+            if (d.UpEsrganModel == 2) d.UpEsrganModel = 3;
+            else if (d.UpEsrganModel == 3) d.UpEsrganModel = 2;
+            d.ModelOrderRev = 1;
+        }
+        // Rev 2(2026-09-13,用户要求):x4plus-anime ↔ general-x4v3 —— 把 general-x4v3 移到 animevideov3 正下方
+        if (d.ModelOrderRev < 2)
+        {
+            if (d.UpEsrganModel == 1) d.UpEsrganModel = 2;
+            else if (d.UpEsrganModel == 2) d.UpEsrganModel = 1;
+            d.ModelOrderRev = 2;
+        }
         return true;
     }
 
@@ -1458,7 +1465,7 @@ public sealed partial class VideoView : UserControl
                 return;
             }
             if (list.Count == 0) { if (File.Exists(PresetFile)) File.Delete(PresetFile); return; }
-            foreach (var p in list) if (p?.Params != null) p.Params.ModelOrderRev = 1;
+            foreach (var p in list) if (p?.Params != null) p.Params.ModelOrderRev = 2;
             Directory.CreateDirectory(Path.GetDirectoryName(PresetFile)!);
             File.WriteAllText(PresetFile, System.Text.Json.JsonSerializer.Serialize(list));
         }
@@ -1518,7 +1525,14 @@ public sealed partial class VideoView : UserControl
         //   保留细节 40(CAS)、边缘抗锯齿 45(新参数才真的在削锯齿)、去模糊归零(视频侧已移除)、锐化收到 20。
         // 【Rev 4 · 2026-09】降噪方式入选预设:结合模式(空间+时间)已证实优于单一方式
         // (仅时间擦不掉单帧噪点:实测把 hqdn3d 空间参数翻倍,平坦噪点 0.77→0.77 无变化)。
-        ( "动漫通用", 4, new Func<VideoSettings>(() => new VideoSettings
+        // 【Rev 5 · 2026-09-13】降噪改为默认【关闭】(用户反馈"降噪感太强、发假、塑料感、没有棱角")。
+        // 实测依据(同一动漫帧 / 1080p+JPEG q35 输入 / 输出归一到 2160p 与 8K 真值比,棱角=真值强边缘上的平均梯度):
+        //   不降噪 + animevideov3 : 棱角 78.3 / detail 36.2
+        //   降噪(结合·弱)+ 同模型 : 棱角 71.7 / detail 33.1   ← 弱档就削掉 8.4% 棱角
+        //   降噪(结合·中)+ x4plus-anime : 棱角 84.9(不降噪同模型 90.7)→ 削 6.4%
+        // 结论:降噪对本预设的目标素材(动漫)是"净损棱角"的一步,故默认关掉;压缩严重/噪点明显的素材
+        //       用户可自行在「视频降噪」里打开(开关与三档、三种方式都保留,只是不再默认替用户开)。
+        ( "动漫通用", 5, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = true, Up = true, Engine = 1, Scale = 1, Gpu = 0,
             Interp = true, Model = 0, UpWaifu2xModel = 1, UpEsrganModel = 0, InterpScale = 2,
@@ -1529,7 +1543,7 @@ public sealed partial class VideoView : UserControl
             DedupMotionComp = true, DedupOnlyTrueHold = true, ManualProtectSmallMotion = true, DedupPhaseAlign = true,
             PostSharpen = 20, PostClarity = 25, PostUsm = 40, PostDetail = 40, PostDeblur = 0, PostAa = 45,
             Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
-            FastMode = false, Mute = false, VideoDenoiseOn = true, VideoDenoiseStrong = 1, DenoiseKind = 0,
+            FastMode = false, Mute = false, VideoDenoiseOn = false, VideoDenoiseStrong = -1, DenoiseKind = 0,
         })),
         ( "去重补帧4x", 1, new Func<VideoSettings>(() => new VideoSettings
         {
@@ -2117,7 +2131,7 @@ public sealed partial class VideoView : UserControl
             if (imported.Count == 0) { AppLogger.Warn("导入预设:文件无内容"); return 0; }
             // 【导入也要过一遍序号迁移】旧版导出的 .alhpreset 里超分模型是**旧序号**(3=轻量通用),
             // 而 SavePresets 会统一盖"新序号"章;不先换算就会把"轻量"当成"超慢"存下来(点一下预设慢 17 倍)。
-            // 新版导出的文件自带 ModelOrderRev=1,过这里不会被动。
+            // 新版导出的文件自带 ModelOrderRev=2,过这里不会被动。
             int migrated = 0;
             foreach (var p in imported)
                 if (p?.Params != null && MigrateEsrganModelOrder(p.Params)) migrated++;
@@ -2241,7 +2255,7 @@ public sealed partial class VideoView : UserControl
     /// 同时顺序随下拉调整:2=general-x4v3、3=超慢(x4plus)。改这里必须与 XAML 同步改,否则显示与实跑不符。
     /// 【2026-09-13】去掉末尾的"(轻量)":v1.3.5 已把该项在下拉里改叫「通用 · realesr-general-x4v3(5MB · 中)」,
     /// 摘要却还印着「(轻量)」—— 用户正是看到"轻量"以为这支不行,才要求把预设模型换成动漫那支。摘要必须与下拉同口径。</summary>
-    private static string[] UpEsrganModelNames = { "动漫·animevideov3", "动漫·x4plus-anime", "通用·general-x4v3(中)", "通用·x4plus(超慢)" };
+    private static string[] UpEsrganModelNames = { "动漫·animevideov3", "通用·general-x4v3(快)", "动漫·x4plus-anime", "通用·x4plus(超慢)" };
     private static string UpWaifu2xModelName(int idx) => idx >= 0 && idx < UpWaifu2xModelNames.Length ? UpWaifu2xModelNames[idx] : "通用·cunet";
     private static string UpEsrganModelName(int idx) => idx >= 0 && idx < UpEsrganModelNames.Length ? UpEsrganModelNames[idx] : "动漫·animevideov3";
 
@@ -2285,7 +2299,7 @@ public sealed partial class VideoView : UserControl
             // 【盖章:本版写出来的文件一律是新序号】CollectVideoParams 每次都 new 一个 VideoSettings,
             // ModelOrderRev 默认 0;若不在这里盖章,下次启动 LoadSettings 的迁移会以为"这还是老文件"→
             // 又把 2↔3 换一遍,轻量/超慢在两次启动之间来回横跳(实测过一次,必须钉住)。
-            d.ModelOrderRev = 1;
+            d.ModelOrderRev = 2;
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile)!);
             File.WriteAllText(SettingsFile, System.Text.Json.JsonSerializer.Serialize(d));
         }
