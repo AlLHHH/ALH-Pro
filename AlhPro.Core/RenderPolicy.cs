@@ -203,6 +203,33 @@ public static class RenderPolicy
             halvedFast, halvedDisk, full);
     }
 
+    /// <summary>一批的编号与槽位区间(1-based 序号)。用于日志/诊断,保证"分子(批号)与分母(批数)一定一致"。</summary>
+    public readonly record struct VideoBatchInfo(int Number, int SlotCount, int StartSlot, int EndSlot);
+
+    /// <summary>把"每批的槽位数"变成带编号的批次清单(纯函数,可单测)。
+    /// 【为什么要有它 —— 真机 bug 2026-09-13】超分批日志原来在 async 任务里现算 `第 {bi+1}/{batchCount} 批`,
+    /// 而 `bi` 是 **for 循环变量**(C# 里 for 的循环变量只有一个、被所有闭包共享;foreach 才是每轮一份)。
+    /// 任务在 finally 里读到的往往是"循环已经推进、甚至已经结束"之后的值 —— 实测日志出现
+    /// 「超分批 13/12(槽位 2640~2666)」与「超分批 2/12(槽位 0~239)」:槽位区间是对的(它是每轮局部量),
+    /// 只有编号被读晚了(偏移 +1/+2)。把编号在【启动任务之前】定格成这份不可变清单,闭包就再也改不动它。
+    /// 【不变量(有单测)】编号 1..N 严格递增;区间首尾相接(无空洞、无重叠);末批 EndSlot == 总槽位数-1。
+    /// 【区间含义】Start/End 是按"本批槽位数"推算的【名义区间】(与切批用的前缀和同一口径);
+    /// 日志里另按该批【实际槽位号】打印 min~max —— 去重后重复帧的槽位可能离代表帧很远(同组成员不连续),
+    /// 这时两者会不同,不是错,是两种口径。</summary>
+    public static IReadOnlyList<VideoBatchInfo> DescribeBatches(IReadOnlyList<int> batchSlotCounts)
+    {
+        var list = new List<VideoBatchInfo>();
+        if (batchSlotCounts == null) return list;
+        int acc = 0;
+        for (int i = 0; i < batchSlotCounts.Count; i++)
+        {
+            int n = Math.Max(0, batchSlotCounts[i]);
+            list.Add(new VideoBatchInfo(i + 1, n, acc, acc + Math.Max(0, n - 1)));
+            acc += n;
+        }
+        return list;
+    }
+
     /// <summary>减半但【不破用户下界】:结果钳到 ≥ WeakDeviceFramesPerBatch(50)。</summary>
     private static int HalveWithFloor(int frames) => Math.Max(WeakDeviceFramesPerBatch, frames / 2);
 
