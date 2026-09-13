@@ -1711,11 +1711,23 @@ public static class VideoService
                 // "仅首批写自检日志"(batchStartSlot==0)在非首批误触发、超分 ETA 的基准也跟着错。
                 // 前缀和对批次序号单调,三个用途一次修好。
                 var batchStartSlots = new int[batchCount];
+                var batchSlotCounts = new int[batchCount];
                 for (int bi = 0, acc = 0; bi < batchCount; bi++)
                 {
                     batchStartSlots[bi] = acc;
-                    foreach (var g in batchGroups[bi]) acc += g.slots.Count;
+                    int cnt = 0;
+                    foreach (var g in batchGroups[bi]) cnt += g.slots.Count;
+                    batchSlotCounts[bi] = cnt;
+                    acc += cnt;
                 }
+                // 【J 修复 · 2026-09-13 批号越界(13/12)】批号+区间在这里【一次性定格】成不可变清单:
+                // 原来日志在 async 任务里现算 `第 {bi+1}/{batchCount} 批`,而 `bi` 是 for 循环变量 ——
+                // C# 里 for 的循环变量只有一个、被所有闭包共享(foreach 才是每轮一份),任务在 finally 里
+                // 读到的往往是"循环已推进、甚至已结束"后的值 → 真机日志出现「超分批 13/12(槽位 2640~2666)」
+                // 与「超分批 2/12(槽位 0~239)」:槽位区间是对的(每轮局部量),只有编号被读晚(偏移 +1/+2)。
+                // 注意:**实际只跑了 12 批**(batchCount=12,槽位区间连续覆盖 0~2666),不是多起了一次引擎 ——
+                // 那是显示口径问题,引擎启动次数没有变化。
+                var batchInfos = AlhPro.Core.RenderPolicy.DescribeBatches(batchSlotCounts);
                 // 超分阶段自己的 ETA 时钟 + 休息/暂停累计(这两段时间不产出任何帧,必须从耗时里扣掉)
                 var srStageStart = DateTime.UtcNow;
                 double srIdleSec = 0;
@@ -1732,6 +1744,10 @@ public static class VideoService
                 {
                     ct.ThrowIfCancellationRequested();
                     var curPG = batchGroups[bi];
+                    // 【J 修复】本批的编号/区间取【定格快照】:闭包只捕获这个局部量,捕获不到 for 循环变量 bi
+                    // (bi 会被所有任务共享,日志里读它必然读晚 → "13/12")。分母 batchCount 与 batchInfos.Count
+                    // 同源同值,所以分子永远 ≤ 分母。
+                    var batchInfo = batchInfos[bi];
                     // 该批全部槽位(代表 + 重复),用于进度/ETA 按槽位记账、finally 按槽位删源帧。
                     var batchSlots = new List<int>();
                     foreach (var g in curPG) batchSlots.AddRange(g.slots);
@@ -1757,7 +1773,7 @@ public static class VideoService
                             foreach (var g in curPG)
                                 File.Copy(upFiles[g.rep], Path.Combine(batchIn, Path.GetFileName(upFiles[g.rep])), true);
                             progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
-                                $"超分 已处理 {batchStartSlot} 帧 / 共 {total} 帧(批次 {bi + 1}/{batchCount}){EtaStr(batchStartSlot, total, (DateTime.UtcNow - srStageStart).TotalSeconds - srIdleSec)}..."));
+                                $"超分 已处理 {batchStartSlot} 帧 / 共 {total} 帧(批次 {batchInfo.Number}/{batchCount}){EtaStr(batchStartSlot, total, (DateTime.UtcNow - srStageStart).TotalSeconds - srIdleSec)}..."));
                             // 引擎真的开始出活时再报一句(带【实际启动耗时】),此后回到引擎自己的逐帧口径
                             // ("超分 第 N 帧 / 共 M 帧")。只报一次:降级链可能在同一批里再起进程(GPU→换卡→…)。
                             int upReadyReported = 0;
@@ -1767,8 +1783,8 @@ public static class VideoService
                                 try
                                 {
                                     progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
-                                        $"第 {bi + 1}/{batchCount} 批:超分引擎已就绪(启动 {sec:0.0}s),开始处理本批 {curPG.Count} 个唯一帧…"));
-                                    AppLogger.Info($"第 {bi + 1}/{batchCount} 批:超分引擎已就绪(启动 {sec:0.0}s,本批 {curPG.Count} 个唯一帧,帧号 {batchStartSlot}~{batchSlots[^1]})");
+                                        $"第 {batchInfo.Number}/{batchCount} 批:超分引擎已就绪(启动 {sec:0.0}s),开始处理本批 {curPG.Count} 个唯一帧…"));
+                                    AppLogger.Info($"第 {batchInfo.Number}/{batchCount} 批:超分引擎已就绪(启动 {sec:0.0}s,本批 {curPG.Count} 个唯一帧,帧号 {batchStartSlot}~{batchSlots[^1]})");
                                 }
                                 catch { }
                             };
@@ -1798,7 +1814,7 @@ public static class VideoService
                                     ? "正在创建超分推理会话(稳定引擎 ONNX)"
                                     : $"启动超分引擎(约 {upStartSec:0.#} 秒,首次较慢)";
                                 progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
-                                    $"第 {bi + 1}/{batchCount} 批:{upStarting};本批 {curPG.Count} 个唯一帧…"));
+                                    $"第 {batchInfo.Number}/{batchCount} 批:{upStarting};本批 {curPG.Count} 个唯一帧…"));
                             }
                             if (onnxModelPath != null)
                             {
@@ -1835,7 +1851,7 @@ public static class VideoService
                                             $"⚠ 本机无可用 GPU 加速(DirectML 不可用),超分已降级为 CPU——速度会变得特别慢(可能慢数倍)。建议更新显卡驱动后重启软件再试"));
                                 }
                                 progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
-                                    $"超分(稳定引擎) 批次 {bi + 1}/{batchCount}{EtaStr(batchStartSlot, total, (DateTime.UtcNow - srStageStart).TotalSeconds - srIdleSec)}..."));
+                                    $"超分(稳定引擎) 批次 {batchInfo.Number}/{batchCount}{EtaStr(batchStartSlot, total, (DateTime.UtcNow - srStageStart).TotalSeconds - srIdleSec)}..."));
                                 await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
                                     upGpu < 0 ? (upOnnxDml ? -2 : -1) : -2, srProgress, ct, onnxModelPath,
                                     batchStartSlot, total, pauseWait, upPctLoArg, upPctHiArg);   // 用户主动选 CPU(-1)强制 CPU;探测失败(upOnnxDml)用 -2=DirectML GPU 自动;正常 GPU 也 -2 自适应;pauseWait=ONNX/CPU 也能暂停
@@ -2038,7 +2054,7 @@ public static class VideoService
                                 try { File.Delete(upFiles[si]); relCnt++; } catch { /* 删不掉不影响正确性:阶段收尾还会再扫一次 */ }
                             }
                             Interlocked.Add(ref releasedInputFrames, relCnt);
-                            AppLogger.Info($"[临时清理] 超分批 {bi + 1}/{batchCount}(槽位 {batchSlots[0]}~{batchSlots[^1]})完成:已释放" +
+                            AppLogger.Info($"[临时清理] 超分批 {batchInfo.Number}/{batchCount}(槽位 {batchSlots[0]}~{batchSlots[^1]})完成:已释放" +
                                 (upscaleFirst ? "源帧" : "补帧帧") + $" {relCnt} 帧(本阶段累计 {Volatile.Read(ref releasedInputFrames)} 帧;目录 {Path.GetFileName(upInput)})");
                             // 【界面可见性 · 2026-09-13】逐批清盘过去只写 AppLogger,界面上完全看不到"边跑边释放临时帧"
                             // (长素材批数多,用户只看到盘在掉、界面无任何动静)。这里就地更新一条轻提示:
