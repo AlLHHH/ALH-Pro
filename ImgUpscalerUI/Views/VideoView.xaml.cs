@@ -4877,6 +4877,16 @@ public sealed partial class VideoView : UserControl
                 encSecondsAcc += (DateTime.Now - encSegStart.Value).TotalSeconds;
                 encSegStart = null;
             }
+            // 【R1 · 用户要求:清盘/清理这类信息要显示在左下角日志区、并且"无感"】
+            // 带 `· ` 前缀的消息在【节流 return 之前】处理:
+            //   · 不会被下面那条 100ms 节流吞掉(真机确认过"本批已释放 N 帧"这类提示会被吞,用户压根没见过);
+            //   · 只往日志区追加一行(与 ▶ 阶段 / ✓ 完成 同一块),不动步骤行、不动进度条、不改 pct → 不抢注意力;
+            //   · 前缀是低调的 `· `,不是警告级别(不进 ⚠ 黄字那套)。
+            if (t.msg.StartsWith("· ", StringComparison.Ordinal))
+            {
+                Log(t.msg);
+                return;
+            }
             // ===== 节流(修复长视频"未响应"):补帧/超分每帧都 Report,Progress<T> 不合并、
             // 每个回调都跑重活(正则+字符串+O(N²) 计数+日志重建),100k+ 帧会把 UI 线程塞死。
             // 100ms 内只刷一次界面(约 10 次/秒,足够平滑),但最后 99% 总处理(收尾不漏)。
