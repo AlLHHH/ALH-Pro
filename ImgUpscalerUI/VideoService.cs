@@ -399,14 +399,17 @@ public static class VideoService
         // v1.2.1 起中间帧改为 JPG(质量 0.85,单帧体积约为 PNG 的 1/3),故单帧估算按 JPG 折算;
         // 峰值帧数 = 补帧后帧数(放大不减帧数,只增单帧大小);单帧大小按 源分辨率 × 放大倍率² 估算(JPG 压缩好,系数压低)。
         (int srcW, int srcH) = await ProbeSizeAsync(inputVideo);
-        double srcFrameMB = 1.0 * ((double)srcW * srcH) / (1920.0 * 1080.0);   // 源帧 JPG≈1MB/1080p,按面积线性
-        if (srcFrameMB < 0.5) srcFrameMB = 0.5;
+        double srcFrameMB = AlhPro.Core.TempSpaceEstimate.SourceFrameMegabytes(srcW, srcH);   // 源帧 JPG≈1MB/1080p,按面积线性
         double outMult = doUpscale ? (upscaleShrink1x ? 2.0 : Math.Max(1.0, scale)) : 1.0;
         // 放大后单帧(中间帧 JPG):像素×outMult²,放大内容趋于平滑,JPG 压缩好,系数压低;不低于源帧尺寸
-        double outFrameMB = Math.Max(srcFrameMB, srcFrameMB * outMult * outMult * 0.18);
-        if (outFrameMB < 0.5) outFrameMB = 0.5;
+        // 【任务 O3 · 2026-09-13】补帧输出改"引擎直出 JPG"后**单帧体积变大**:实测 238 KB → 737 KB
+        // (3.1×,引擎 q≈100 vs 程序内 q0.96)—— 峰值帧就是补帧输出帧,所以补帧开着时单帧估算要乘这个系数,
+        // 否则"临时空间预估"低估约 3 倍(而这一项正是"长视频跑出 200 多 G"的教训来源)。公式已抽到
+        // AlhPro.Core.TempSpaceEstimate(纯逻辑 + 单测:面积/倍率/补帧系数单调、下限保护)。
+        double outFrameMB = AlhPro.Core.TempSpaceEstimate.PeakFrameMegabytes(srcW, srcH, outMult, frameInterp);
         long peakFrames = frameInterp ? (long)Math.Ceiling((double)baseFrames * interpScale) : baseFrames;   // 峰值帧数=放大后帧数
-        double needBytes = peakFrames * outFrameMB * 1024.0 * 1024.0 * 1.6;   // 与 AvailableFreeSpace 同单位:字节
+        // 与 AvailableFreeSpace 同单位:字节(改为走同一个纯函数,防止两处口径漂移)
+        double needBytes = AlhPro.Core.TempSpaceEstimate.NeedBytes(peakFrames, outFrameMB);
         double needGB = needBytes / (1024.0 * 1024.0 * 1024.0);
         string tempRoot = PickTempRoot();
         // 【长视频明确提示】处理前主动显示临时空间预估,让用户知道"预计需要 X GB"(不只磁盘紧张时才提示)
@@ -3310,7 +3313,11 @@ public static class VideoService
                         bool anyFrame = false;
                         // 【按帧对应】收集被抽到的黑帧(不再 break:要知道具体是哪些帧,才能逐帧比对其源帧)
                         var badFrames = new System.Collections.Generic.List<string>();
-                        foreach (var f in Directory.EnumerateFiles(watchDir, "*.png").Take(4))
+                        // 【任务 O3】引擎直出 JPG 后这里是 .jpg(旧行为是 .png)→ 两种都要数,否则"0 帧/黑帧"防御会误判
+                        foreach (var f in Directory.EnumerateFiles(watchDir, "*.*")
+                            .Where(x => x.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+                                     || x.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+                                     || x.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)).Take(4))
                         {
                             anyFrame = true;
                             try { if (EngineService.IsBlackPngStrict(f)) { anyBad = true; badFrames.Add(f); } } catch { }
@@ -3326,7 +3333,7 @@ public static class VideoService
                         else
                         {
                             // 帧数残缺检测:统计输出目录实际帧数,若远少于目标帧数(如 < 一半)判残缺 → 降级
-                            int outCount = Directory.EnumerateFiles(watchDir, "*.png").Count();
+                            int outCount = EnumerateFrameFiles(watchDir).Count();
                             if (watchTotal > 4 && outCount < watchTotal * 0.5)
                             {
                                 AppLogger.Info($"⚠ 降级:补帧 GPU {g} 输出残缺(仅 {outCount}/{watchTotal} 帧,疑似引擎静默丢帧),走 ONNX→换卡 重算该段(不落 CPU)");
@@ -3418,8 +3425,12 @@ public static class VideoService
                 }
                 finalOut = Path.Combine(workDir, $"seg_{start}_{end}_out");
                 Directory.CreateDirectory(finalOut);
+                // 【任务 O3 · 2026-09-13】补帧输出改【引擎直出 JPG】(`-f frame_%06d.jpg`):
+                // 实测 119 帧 PNG 18.650s vs JPG 8.353s(省 86.5ms/帧,2668 帧约省 5 分钟),
+                // 且直出 JPG 对 PNG 的 PSNR 48.907 dB —— 比程序内 PNG→JPG(q0.96)还高 1.56 dB(引擎 q≈100)。
+                // 代价:中间帧体积 238→737 KB/帧(3.1×),已算进"临时空间预估"(见 ProcessVideoAsync 开头的口径)。
                 await RunRifeAsync(
-                    $"-i \"{segIn}\" -o \"{finalOut}\" -n {targetFrames} -f \"frame_%06d.png\" -m {interpModel} -g {gpuArg}{ttaArgs}{SafeRender.GetEngineThreadArgs()}",
+                    $"-i \"{segIn}\" -o \"{finalOut}\" -n {targetFrames} -f \"frame_%06d.jpg\" -m {interpModel} -g {gpuArg}{ttaArgs}{SafeRender.GetEngineThreadArgs()}",
                     gpuId, targetFrames, finalOut);
             }
             else
@@ -3438,7 +3449,7 @@ public static class VideoService
                     var curOut = Path.Combine(workDir, $"seg_{start}_{end}_p{pass++}");
                     Directory.CreateDirectory(curOut);
                     await RunRifeAsync(
-                        $"-i \"{finalOut}\" -o \"{curOut}\" -f \"frame_%06d.png\" -m {interpModel} -g {gpuArg}{ttaArgs}{SafeRender.GetEngineThreadArgs()}",
+                        $"-i \"{finalOut}\" -o \"{curOut}\" -f \"frame_%06d.jpg\" -m {interpModel} -g {gpuArg}{ttaArgs}{SafeRender.GetEngineThreadArgs()}",
                         gpuId, outLen, curOut);
                     // 临时文件控制:上一级级联输出(旧 finalOut)已被这一级吃完,删除释放磁盘(级联高倍率时中间级非常大)
                     if (finalOut != segIn)
@@ -3453,18 +3464,28 @@ public static class VideoService
             // 单帧段:直接复制,不插值
             finalOut = Path.Combine(workDir, $"seg_{start}_{end}_out");
             Directory.CreateDirectory(finalOut);
-            File.Copy(Path.Combine(segIn, "frame_000001.jpg"), Path.Combine(finalOut, "frame_000001.png"), true);
+            File.Copy(Path.Combine(segIn, "frame_000001.jpg"), Path.Combine(finalOut, "frame_000001.jpg"), true);
         }
 
-        var files = Directory.EnumerateFiles(finalOut, "*.png")
+        var files = EnumerateFrameFiles(finalOut)
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase);
         foreach (var f in files)
         {
-            // 【峰值优化】补帧 PNG 拷进 frames_final 时立即转 JPG(不再全量 PNG 累积到最后统一转):
-            // 补帧过程 frames_final 全程 JPG,峰值大幅降。文件名保持 frame_{globalIdx}.jpg 序号连续。
+            // 【任务 O3】引擎现在是【直出 JPG】(见上面的 -f),所以这里是"搬"而不是"转":
+            // 省掉整段 PNG 解码 + q0.96 重编码(实测省 86.5ms/帧),画质还更好(引擎 q≈100,+1.56 dB)。
+            // 仅当输出真是 PNG 时(ONNX 补帧路径、旧引擎)才走原来的转码。
             var dst = Path.Combine(framesFinal, $"frame_{globalIdx++:D6}.jpg");
-            try { EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality); }
-            catch { try { File.Copy(f, dst, true); } catch { } }
+            if (f.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+            {
+                try { EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality); }
+                catch { try { File.Copy(f, dst, true); } catch { } }
+            }
+            else
+            {
+                // 同名同扩展名直接搬(跨目录 Move;失败退回复制),不再解码重编码
+                try { File.Move(f, dst, overwrite: true); }
+                catch { try { File.Copy(f, dst, true); } catch { } }
+            }
         }
         try { Directory.Delete(segIn, true); } catch { }
         if (finalOut != segIn) { try { Directory.Delete(finalOut, true); } catch { } }
