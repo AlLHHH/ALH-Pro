@@ -95,16 +95,20 @@ public static class VideoService
     /// 用于一开始就显示合理的预计剩余(偏保守,随时间慢慢对齐),而不是从小变大校准。
     /// 【实测校准】同配置在 PerfMemory 有历史实测秒/帧时,用实测重算覆盖固定常数估算(越用越准)。
     /// postFx=是否启用了后处理(与记录端指纹一致,否则查不到导致校准失效)。
-    /// upscaleFirst=「超分 → 补帧」的新阶段顺序(1x/2x);默认 false 保持旧口径,4x 不要传 true。
     /// freeRamGB/uniqueFrames=【2026-09-13 新增】把"每批引擎启动开销 × 批数"算进估算(长素材的批数
     /// 一多,原公式系统性偏乐观)。不知道空闲内存就传 0 = 保持旧口径(不猜档位);uniqueFrames 传 0
-    /// 表示"还没去重,按源帧数估"。估算出的批数口径与真正执行时一致:都走 RenderPolicy.PlanVideoBatches。</summary>
+    /// 表示"还没去重,按源帧数估"。估算出的批数口径与真正执行时一致:都走 RenderPolicy.PlanVideoBatches。
+    /// 【H · 2026-09-13】**阶段顺序不由调用方决定**:一律取单一事实来源
+    /// `AlhPro.Core.VideoPipeline.UpscaleRunsFirst(...)`(当前恒 false = 旧顺序「补帧 → 超分」)。
+    /// 原先这里有个 `upscaleFirst` 形参、UI 自己算一份判据(写法还与管线不同)→ 管线回退后 UI 仍在按
+    /// "根本不会执行的新顺序"估时间,是"预计时间不准"的来源之一。现在参数已删除,UI 无从再传错。</summary>
     public static double EstimateProcessSeconds(double duration, double fps, int w, int h,
         bool up, double scale, string engine, bool interp, int interpScale, bool dedup, int videoDenoise,
-        bool postFx = false, bool upscaleFirst = false,
-        double freeRamGB = 0, int uniqueFrames = 0)
+        bool postFx = false, double freeRamGB = 0, int uniqueFrames = 0)
     {
         var sf = SafeRender.Profile == SafeRender.DeviceProfile.UltraLow ? 6.0 : 1.0;
+        // 顺序 = 单一事实来源(管线实际执行的那个顺序);管线侧同一处旋钮见 ProcessVideoAsync 的阶段顺序判定。
+        bool upscaleFirst = AlhPro.Core.VideoPipeline.UpscaleRunsFirst(up, scale, interp);
         double core = AlhPro.Core.VideoPipeline.EstimateProcessSeconds(duration, fps, w, h, up, scale, engine, interp, interpScale, dedup, videoDenoise, sf, upscaleFirst, freeRamGB, uniqueFrames);
         // 【实测校准】查同配置历史秒/帧(1080p 基准),命中则按"源帧数×实测×面积"重算;与固定估算加权(各50%)。
         // 注意:PerfMemory 记录时按【源帧数】归一(不乘补帧倍率),这里也用源帧数 src,避免补帧任务被重复放大。
@@ -482,7 +486,7 @@ public static class VideoService
             // 而补帧在 4320p 上是 0.76~1.09s/输出帧、在源分辨率上只有 0.10s/输出帧 —— 先补帧能把补帧按便宜价跑。
             // 顺序分档的依据是"补帧单价随分辨率涨得比超分快",不是越新越好。
             bool upscaleRuns = doUpscale && !(scale <= 1.001 && !upscaleShrink1x);   // 超分阶段是否真的会执行
-            // 【2026-09-13 实测回退:暂不启用新顺序】原判据为 frameInterp && upscaleRuns && !(scale > 2.001)(1x/2x 走新顺序)。
+            // 【2026-09-13 实测回退:暂不启用新顺序】原判据为 frameInterp && upscaleRuns && !(scale > 2.001)。
             // 回退依据(用户真机日志:3 秒 / 72 帧 / 1080p / 超分 realesr-animevideov3 2x / 补帧 rife-v4.13 4x):
             //   超分实测 72 帧 20.1s = 279 ms/帧 —— 不是开发期 harness 测到的 0.70 s/帧(那次给引擎传了 -j 1:1:1,
             //   把超分成本高估约 2.5 倍,而"先超分更划算"的全部依据就是"超分贵");补帧搬到 3840×2160 后实测仅 1.83 帧/秒。
@@ -491,7 +495,11 @@ public static class VideoService
             //   1) 用 SafeRender.GetEngineThreadArgs() 同款线程参数,实测"补帧倍率 × 超分倍率 × 片长"矩阵;
             //   2) 按单帧成本之比(而不是"输出帧数超过多少")给门限 —— 帧数越大亏得越多,帧数阈值方向是反的。
             // 另注:StageProgressPct 的「超分」分支仍是旧口径(45~90),启用前需一并改为随顺序,否则进度条会跳到 45% 再倒退。
-            bool upscaleFirst = false;
+            // 【H · 2026-09-13 单一事实来源】顺序判据只在 AlhPro.Core.VideoPipeline.UpscaleRunsFirst 里定义一处,
+            // 管线与 UI 的 ETA 都必须调它 —— 免得再出现"管线回退了、UI 还在按新顺序估"这种各写一份的老问题。
+            bool upscaleFirst = AlhPro.Core.VideoPipeline.UpscaleRunsFirst(doUpscale, scale, frameInterp, upscaleShrink1x);
+            if (!AlhPro.Core.VideoPipeline.UpscaleFirstEnabled)
+                AppLogger.Info($"阶段顺序判定:{AlhPro.Core.VideoPipeline.UpscaleFirstDisabledReason}");
             // 进度区间随【实际执行的顺序】走(阶段名必须与真正在跑的阶段一致,不允许张冠李戴):
             //   新顺序:超分 10~45、补帧 45~90;旧顺序保持原口径:补帧 10~45、超分 45~90。
             int interpPctBase = upscaleFirst ? 45 : 10;
