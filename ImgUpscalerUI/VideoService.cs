@@ -2545,7 +2545,9 @@ public static class VideoService
             // 【编码最优解·解码侧】硬编生效时,瓶颈会从编码器转到"软件解码 JPG 序列"(4K 实测 ≈39.6 fps);
             // NVDEC(mjpeg_cuvid)实测 4595 fps、端到端 +52%。探测已确认本机可用(EnsureHwProbeAsync)且当前是
             // nvenc 才加 —— 软编时加了也没用(实测只快 2%),不加反而少一个失败面。
-            if (HwJpegDecodeUsable && encoder.Contains("nvenc", StringComparison.OrdinalIgnoreCase))
+            // 只有【实测通过(Usable)】才加硬解:其余三态(未探/确定不支持/探测超时)一律走软解 ——
+            // 与改动前的 bool=false 行为完全一致(见 HwJpegDecode 的三态说明)。
+            if (_hwJpegDecode == HwJpegDecode.Usable && encoder.Contains("nvenc", StringComparison.OrdinalIgnoreCase))
             {
                 muxInput = "-c:v mjpeg_cuvid " + muxInput;
                 AppLogger.Info("合帧解码:改用 NVDEC 硬件解码 JPG 序列(解码不再是瓶颈)");
@@ -2664,7 +2666,7 @@ public static class VideoService
                 // 相减得到纯滤镜成本,三者都写清楚(2026-09-13:原来是混在一起报的,导致用户拿含解码的数去优化滤镜)。
                 if (!string.IsNullOrEmpty(vfChainBody))
                 {
-                    bool hwJpeg = HwJpegDecodeUsable && encUsed.Contains("nvenc", StringComparison.OrdinalIgnoreCase);
+                    bool hwJpeg = _hwJpegDecode == HwJpegDecode.Usable && encUsed.Contains("nvenc", StringComparison.OrdinalIgnoreCase);
                     var (perFrameFull, perFrameDecode) = await SampleFilterChainCostPerFrameAsync(
                         encFfmpeg, framePattern, vfChainBody, frBase, hwJpeg, ct);
                     if (perFrameFull >= 0)
@@ -3718,12 +3720,35 @@ public static class VideoService
     private static bool _hwProbed;
     private static readonly object _hwLock = new();
 
-    /// <summary>本会话已实测"能硬件解码 JPG 序列"(NVDEC mjpeg_cuvid)的标志。
+    /// <summary>NVDEC(JPG 序列硬解)探测结果。**三态**:只有 <see cref="Usable"/> 才会启用硬解,
+    /// 其余一律走软解(保守行为不变);分出 <see cref="ProbeTimeout"/> 只是为了【诊断能分清】
+    /// "确定不支持"与"我们自己的 6 秒硬超时(结论未知)"。
+    /// 【为什么必须分】真机日志里 8/8 次都只有一句
+    /// `硬件解码探测:NVDEC(mjpeg_cuvid)不可用(The operation was canceled.)` —— 而那句
+    /// `The operation was canceled.` 是 .NET `OperationCanceledException` 的默认文案,来自
+    /// `VideoService.RunAsync` 里 `if (ct.IsCancellationRequested) throw new OperationCanceledException();`
+    /// 即【我们自己的 6 秒超时】,不是 ffmpeg/驱动报"不支持"。旧写法把它写成"不可用",于是读日志的人
+    /// (包括我们自己)会把"探测超时"当成"本机不支持硬解" —— 结论方向就错了。</summary>
+    private enum HwJpegDecode
+    {
+        /// <summary>还没探(本机没有可用 NVENC 时根本不会探;或探测被外层取消打断)。</summary>
+        NotProbed,
+        /// <summary>实测通过:8 帧 JPG 序列真的解出来并编出有效文件(唯一会启用硬解的状态)。</summary>
+        Usable,
+        /// <summary>确定不可用:命令真跑完但报错/输出无效(exit≠0、输出解不开、帧数不足等)。</summary>
+        Unsupported,
+        /// <summary>探测超时(6 秒硬超时被触发,进程被我们杀掉):**结论未知** —— 既不能当支持,也不能当不支持。</summary>
+        ProbeTimeout,
+    }
+
+    /// <summary>本会话 NVDEC(JPG 序列硬解)的探测结论(三态,见 <see cref="HwJpegDecode"/> 的说明)。
     /// 【为什么必须有前提】实测(2026-09-11,200 帧 4K JPG 序列):软编时瓶颈是编码器本身——
     /// 软件解码 39.6 fps / NVDEC 4595 fps,但 `libx264 veryfast` 端到端只有 34.5→35.1 fps(+2%,等于没用);
     /// 而硬编(NVENC)生效后瓶颈才会转移到软件解码 JPG,此时 NVDEC 才有价值(调研实测 86.5→131.7 fps,+52%)。
-    /// 所以只在【已有可用 nvenc】时才探测、才启用;探测口径与硬编一致:用真实解码器+真实编码参数真编出有效文件。</summary>
-    private static bool HwJpegDecodeUsable;
+    /// 所以只在【已有可用 nvenc】时才探测、才启用;探测口径与硬编一致:用真实解码器+真实编码参数真编出有效文件。
+    /// 【消费点口径一律不变】只有 `== Usable` 才加 `-c:v mjpeg_cuvid`(合帧)、才在耗时拆分里标"NVDEC 硬解";
+    /// 其余三态都是"走软解",与改动前的 bool=false 完全一致。</summary>
+    private static HwJpegDecode _hwJpegDecode = HwJpegDecode.NotProbed;
 
     /// <summary>某个硬件编码器实测可用的【调用配方】:用哪个 ffmpeg + 是否必须去掉 -preset。
     /// 只记"哪个编码器能用"是不够的:同一张卡在不同 ffmpeg 上的 NVENC 支持不同(旧 ffmpeg 打不开的 NVENC,
@@ -3936,7 +3961,7 @@ public static class VideoService
             }
         }
         // ===== NVDEC(JPG 序列硬件解码)探测 =====
-        // 只在【已有可用 nvenc】时才探:软编时瓶颈是编码器本身,硬解救不了(见 HwJpegDecodeUsable 的实测)。
+        // 只在【已有可用 nvenc】时才探:软编时瓶颈是编码器本身,硬解救不了(见 HwJpegDecode 的实测)。
         // 【2026-09-12 加固,三个改动都是踩过的坑】
         //  ① 用【真会去编码的那个 ffmpeg】探(encFfmpeg 的配方来源),而不是永远用主 ffmpeg ——
         //     主 ffmpeg 能过、实际编码用的是备用 ffmpeg8 时,探测结论对不上真实路径。
@@ -3971,6 +3996,20 @@ public static class VideoService
                         bool decodedOk = false;
                         try
                         {
+                            // 【TODO(只记录,未实施 · 2026-09-13 调查结论)】探测命令与【真实合帧命令】有两处不一致,
+                            // 真机复测硬解时必须按这两条去找原因(改它们前必须先有实测,否则会把"探测误判"变成"合帧挂死"):
+                            //   ① 编码参数【没套配方】:这里用 `EncoderArgs(nvEnc)`(含 -preset p4),而真实合帧用的是
+                            //      `encMuxArgs = recipe?.NoPreset == true ? StripPreset(muxArgs) : muxArgs`(见本文件合帧处)。
+                            //      → 在"需放宽参数才可用(备用 ffmpeg)"的机器上,探测编的参数 ≠ 真实编的参数,探测更易失败。
+                            //   ② 输入形态不完全一致:这里多了 `-f image2 -start_number 1`,且固定 720p/30fps/8 帧;
+                            //      真实合帧是 `-framerate {fr} -i "frame_%06d.jpg"`(见 muxInput)。→ "序列形态"确实是要探的
+                            //      (实测 20 帧 cuvid 命令永不结束),但固定小分辨率/固定帧数是否等价,未验证。
+                            //   真机手工复测三步(只计时,不产成品;机器空闲时做):
+                            //     a) 纯解码形态:`ffmpeg -v error -framerate 30 -c:v mjpeg_cuvid -i "帧目录\frame_%06d.jpg"
+                            //        -frames:v 200 -f null -` → 这条就卡 = cuvid+image2 序列在本机确实不可用;
+                            //     b) 组合形态:把 a) 的 `-f null -` 换成「真实 nvenc 编码参数 → mp4, -frames:v 8」→
+                            //        a) 快 b) 卡 = 卡在"cuvid 解码 + NVENC 编码同进程"这一组合(与是否解码无关);
+                            //     c) 用 `-progress pipe:1` 记"首帧到首输出"的时间 → 判断 6 秒上限是否过紧。
                             await RunAsync(decFfmpeg,
                                 $"-y -c:v mjpeg_cuvid -f image2 -framerate 30 -start_number 1 -i \"{probeJpgPattern}\" " +
                                 $"-frames:v 8 {EncoderArgs(nvEnc)} \"{probeOut}\"", null, decCts.Token);
@@ -3978,12 +4017,39 @@ public static class VideoService
                         }
                         catch (Exception ex) when (!ct.IsCancellationRequested)
                         {
-                            AppLogger.Info($"硬件解码探测:NVDEC(mjpeg_cuvid)不可用({ex.Message.Split('\n')[0]})—— 合帧走软件解码(不影响结果,只影响速度)");
+                            // 【I · 2026-09-13 诊断分清两种失败】本 catch 只排除【外层 ct】(用户取消/停止),
+                            // 所以走到这里且 decCts 已到期 = **我们自己的 6 秒硬超时**;否则是命令真跑失败。
+                            // 旧代码一律写成"不可用(The operation was canceled.)",读日志的人只会得到
+                            // "本机不支持硬解"这个【错误结论】(真机 8/8 次都是这种)。
+                            bool probeTimedOut = decCts.IsCancellationRequested;
+                            string head = ex.Message.Split('\n')[0];
+                            if (probeTimedOut)
+                            {
+                                _hwJpegDecode = HwJpegDecode.ProbeTimeout;
+                                AppLogger.Warn($"硬件解码探测:NVDEC(mjpeg_cuvid)【探测超时(6 秒)未完成 —— 不得解读为"
+                                    + $"「本机不支持硬解」】({head})。本次按保守处理:合帧走软件解码"
+                                    + $"(4K 实测约 25 ms/帧 ≈39.6 fps;历史实测硬解可到 4595 fps、端到端 +52%)。"
+                                    + "要确认这台机器到底行不行,必须真机手工复测 —— 见本探测处的 TODO(探测命令与真实合帧命令"
+                                    + "还有两处不一致,且 6 秒这个上限本身也可能是超时太快)。");
+                            }
+                            else
+                            {
+                                _hwJpegDecode = HwJpegDecode.Unsupported;
+                                AppLogger.Info($"硬件解码探测:NVDEC(mjpeg_cuvid)不可用({head})—— 合帧走软件解码(不影响结果,只影响速度)");
+                            }
                         }
                         if (decodedOk)
                         {
-                            HwJpegDecodeUsable = true;
+                            _hwJpegDecode = HwJpegDecode.Usable;
                             AppLogger.Info($"硬件解码探测:NVDEC(mjpeg_cuvid)可用(8 帧序列实测通过)—— 合帧将用硬件解码 JPG 序列({nvEnc})");
+                        }
+                        else if (_hwJpegDecode == HwJpegDecode.NotProbed)
+                        {
+                            // 命令没抛异常但输出不合格(0 帧/解不开/帧数不足)→ 明确记"确定不可用"。
+                            // 旧代码这条路径【一行日志都不打】,诊断时看不出探过没探过。
+                            _hwJpegDecode = HwJpegDecode.Unsupported;
+                            AppLogger.Info("硬件解码探测:NVDEC(mjpeg_cuvid)不可用(命令跑完但输出不合格:0 帧/解不开/帧数不足)"
+                                + "—— 合帧走软件解码(不影响结果,只影响速度)");
                         }
                     }
                 }
@@ -3999,13 +4065,22 @@ public static class VideoService
                 }
             }
         }
-        catch { /* 探测失败 = 不可用,保持 false,合帧照旧走软件解码 */ }
+        catch { /* 探测过程本身异常 = 结论未知:保持 NotProbed(与"保守走软解"一致),合帧照旧走软件解码 */ }
         // 诊断:记录本机可用/不可用的硬件编码器(排查"为什么没走 GPU 编码"一眼可见)
         lock (_hwLock)
         {
             AppLogger.Info("硬件编码器探测:" + (WorkingHwEncoders.Count > 0
                 ? "可用 [" + string.Join(", ", WorkingHwEncoders) + "]"
                 : "全部不可用(将用 CPU 软编)"));
+            // 【I · 2026-09-13】NVDEC(JPG 序列硬解)探测结论也按【三态】写一行 —— 这样诊断包里一眼能分清
+            // "没探(本机无可用 NVENC)"、"确定不支持"、"探测超时(结论未知)"与"可用",不必再靠读异常文案猜。
+            AppLogger.Info("JPG 序列硬解码(NVDEC)探测结论:" + _hwJpegDecode switch
+            {
+                HwJpegDecode.Usable => "可用(合帧将用 -c:v mjpeg_cuvid)",
+                HwJpegDecode.Unsupported => "确定不可用(命令报错或输出不合格)→ 合帧走软件解码",
+                HwJpegDecode.ProbeTimeout => "探测超时(6 秒未完成,【结论未知,不等于不支持】)→ 合帧走软件解码",
+                _ => "未探测(本机没有可用 NVENC,或探测被取消)→ 合帧走软件解码",
+            });
             // 【备用 ffmpeg 缺失要说清】内置主 ffmpeg 需要 NVIDIA 驱动 ≥610 才能开 NVENC;
             // 驱动较旧(实测 572.83)的机器是靠 engines\ffmpeg8\ffmpeg.exe 这个备用包兜住的。
             // 而 engines\ 是 gitignore、deploy.ps1 也不同步 —— 漏拷一次,硬编就静默消失,用户只会觉得"变慢了"。
