@@ -5188,36 +5188,25 @@ public static class VideoService
                     Fps = 0, Confidence = 0.3,
                     Summary = "素材几乎无变化(整段接近静止)",
                 };
-            // 事件间隔(帧数):转场/长静止镜头会产生离群间隔 → 以中位数为锚裁剪 [0.5m, 2m]
+            // 事件间隔(帧数):转场/长静止镜头会产生离群间隔 → 由 Core 以中位数为锚裁剪 [0.5m, 2m]
             var gaps = new System.Collections.Generic.List<double>();
             for (int j = 1; j < events.Count; j++) gaps.Add(events[j] - events[j - 1]);
-            gaps.Sort();
-            double med = gaps[gaps.Count / 2];
-            var trimmed = gaps.Where(g => g >= med * 0.5 && g <= med * 2.0).ToList();
-            if (trimmed.Count < 3) trimmed = gaps;
-            double meanGap = trimmed.Average();
-            if (meanGap < 1.2)
+            // 【任务 M5 · 2026-09-13】置信度算法迁到 Core(纯逻辑 + 单测,含"有拍数却低置信"回归用例):
+            //   一致性 = 间隔落在【中位数 ± max(1 帧, 20% 周期)】的占比(原为均值 ±1 帧);
+            //   稳定性 = 1 − MAD/中位数(原为 1 − σ/均值);有效事件占比惩罚开方弱化(原为线性)。
+            //   判定阈值一个不动:均衡 0.5 / 激进 0.35 / 保守 0.7 + 常见拍数。
+            var sc = AlhPro.Core.ContentFpsConfidence.Compute(gaps, inFps);
+            if (sc.Continuous)
                 return new ContentFpsInfo
                 {
                     Fps = inFps, Confidence = 0.25,
                     Summary = "素材几乎连续运动(无保持帧,内容帧率≈输入帧率)",
                 };
-            double fc = Math.Clamp(inFps / meanGap, 0.5, inFps);
-            // 置信度 = 间隔一致性(±1 帧内占比) × 间隔稳定性(1 - 变异系数):
-            // 1拍N 素材间隔几乎定值(σ/μ 小)→ 高;间隔忽大忽小(1/2/3 混杂)→ 低
-            int near = trimmed.Count(g => Math.Abs(g - meanGap) <= 1.0);
-            double meanSq = trimmed.Sum(g => (g - meanGap) * (g - meanGap)) / Math.Max(1, trimmed.Count);
-            double sigma = Math.Sqrt(meanSq);
-            double cv = meanGap > 0 ? sigma / meanGap : 1.0;
-            double conf = Math.Clamp(
-                (double)near / Math.Max(1, trimmed.Count) * Math.Max(0.0, 1.0 - cv)
-                * (double)trimmed.Count / Math.Max(1, gaps.Count), 0, 1);
-            int period = (int)Math.Round(meanGap);
-            string confTxt = conf >= 0.7 ? "高" : conf >= 0.45 ? "中" : "低";
+            string confTxt = sc.Confidence >= 0.7 ? "高" : sc.Confidence >= 0.45 ? "中" : "低";
             return new ContentFpsInfo
             {
-                Fps = fc, Period = period, Confidence = conf,
-                Summary = $"内容节奏≈{fc:0.##} fps(间隔≈{meanGap:0.##} 帧,置信度{confTxt})",
+                Fps = sc.ContentFps, Period = sc.Period, Confidence = sc.Confidence,
+                Summary = $"内容节奏≈{sc.ContentFps:0.##} fps(间隔≈{sc.MeanGap:0.##} 帧,中位 {sc.MedianGap:0.##} 帧,置信度{confTxt})",
             };
         }
         catch (Exception ex)
