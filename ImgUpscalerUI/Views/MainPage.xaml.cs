@@ -1895,17 +1895,11 @@ public sealed partial class MainPage : Page
             line.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = " — " + desc });
             content.Children.Add(line);
         }
-        // 【2026-09-13 用户要求】特别致谢(个人条目):名字由用户提供并明确要求加入致谢名单。
-        // 【为什么不写在上面那个 modelLinks 列表里】那张表是"模型/引擎 + 项目地址"的格式,每一行都带 URL;
-        // 而用户只给了名字、没说具体贡献,编造事由或硬塞一个链接都是不诚实的 → 单列一行,只写名字。
-        // 若之后用户说明贡献内容(测试/反馈/提供素材等),再把描述补在这一行。
-        content.Children.Add(new TextBlock
-        {
-            Text = "特别致谢:记住羡鱼",
-            FontSize = 11,
-            Opacity = 0.85,
-            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-        });
+        // 【2026-09-13】个人致谢不写在这里 —— 关于页的「特别致谢(不分先后)」名单是【自动扫描程序目录 thanks\ 文件夹】
+        // 生成的:文件名 = 显示的网名,`.txt` = 只写名字、`.png/.jpg` = 带头像。新增一位只需在 thanks\ 放一个文件。
+        // 「记住羡鱼」就是这么加的:thanks\记住羡鱼.txt(仓库两处:ImgUpscalerUI\thanks\ 与 发布版\thanks\)。
+        // 【踩过的坑】不要像本文件早先那样直接 content.Children.Add 一行文本:会和既有名单重复显示,
+        // 而且以后加头像/排序都没地方挂 —— 走 thanks\ 才是这套名单的设计口径。
         // 许可声明可直接点开
         var noticesPath = Path.Combine(AppContext.BaseDirectory, "THIRD_PARTY_NOTICES.txt");
         if (File.Exists(noticesPath))
