@@ -1187,7 +1187,11 @@ public static class VideoService
             // (ncnn 原卡、换另一张卡、ONNX DirectML、黑帧回退、残缺重算)都只读 segIn —— 故这些帧可证明已消费。
             async Task InterpStageAsync(string segSrcDir, string segOutDir, int probeW, int probeH)
             {
-                progress?.Report((interpPctBase, $"RIFE 补帧({interpScale}x,源 {frameCount} 帧 → 输出 {(long)Math.Round((double)((frameCount - 1) * interpScale)) + 1} 帧,模型 {interpModel})..."));
+                // 【任务 N】这里印的"输出 N 帧"改成用【真实倍率 mult】算的帧数守恒目标:
+                // 2x + 未去重时 = (源帧数-1)×2+1(真机那次是 855 → 1709);末段不再产出末帧冻结副本。
+                int multStage = AlhPro.Core.VideoPipeline.InterpMultiplier(interpScale, frameScale);
+                long expectStage = AlhPro.Core.VideoPipeline.InterpOutputFrameCount(frameCount, multStage);
+                progress?.Report((interpPctBase, $"RIFE 补帧({interpScale}x,源 {frameCount} 帧 → 输出 {expectStage} 帧,模型 {interpModel})..."));
                 if (interpScale >= 4)
                     AppLogger.Warn($"⚠ 高倍率补帧({interpScale}x):输出帧数是源 {interpScale} 倍,处理耗时会明显变长,属正常,请耐心等待(非卡死)");
                 // ===== RIFE GPU 探测(任何可能静默 hang 的设备都不放过,不预检白等 8 分钟)=====
@@ -1294,13 +1298,13 @@ public static class VideoService
                     if (frameDurs != null && preserveRhythm)
                     {
                         finalDurs ??= new System.Collections.Generic.List<double>();
-                        double per = interpScale;
-                        int perN = Math.Max(1, (int)Math.Round(per));
-                        for (int k = s; k < e; k++)
-                        {
-                            double d = Math.Max(0.0005, frameDurs[k] / per);
-                            for (int m = 0; m < perN; m++) finalDurs.Add(d);
-                        }
+                        // 【任务 N · 2026-09-13】展开倍率用补帧【真实倍率 mult】(= round(interpScale×frameScale)),
+                        // 不是 interpScale:RIFE 每段就是按 `-n = 段长×mult` 产出,表必须与文件数同口径
+                        // (旧实现在去重时表长只有文件数的一半 → AlignDurationsToCount 用均值补尾 → 尾部时间轴失真)。
+                        // 末段的末源帧只展开 1 条(承载尾部容积的整段时长):
+                        // 于是"表长 == 文件数 == (源帧数-1)×mult+1",帧数守恒(见 Core.AppendExpandedDurations)。
+                        int multExpand = AlhPro.Core.VideoPipeline.InterpMultiplier(interpScale, frameScale);
+                        AlhPro.Core.VideoPipeline.AppendExpandedDurations(finalDurs, frameDurs, s, e, multExpand, isLastSeg);
                     }
                     globalIdx = await InterpSegmentAsync(rifeExe, segSrcDir, segOutDir, s, e, interpScale,
                         interpModel, timeStep, tta, interpGpu, globalIdx, segProg, ct, frameScale,
@@ -2549,10 +2553,22 @@ public static class VideoService
             if (frameInterp && outFps > 0.01)
             {
                 int finalNDiag = Directory.EnumerateFiles(framesFinal, "*.jpg").Count();
-                AppLogger.Info($"补帧诊断: 去重后 {frameCount} 帧,输出 {finalNDiag} 帧,interpScale={interpScale},"
+                // 【任务 N】把"帧数守恒目标"一并打出来:mult = 补帧真实倍率(round(interpScale×frameScale)),
+                // 目标 = (源帧数-1)×mult+1(真机那次 = (855-1)×2+1 = 1709)。
+                int multDiag = AlhPro.Core.VideoPipeline.InterpMultiplier(interpScale, frameScale);
+                long expectDiag = AlhPro.Core.VideoPipeline.InterpOutputFrameCount(frameCount, multDiag);
+                AppLogger.Info($"补帧诊断: 去重后 {frameCount} 帧,输出 {finalNDiag} 帧(倍率 mult={multDiag},帧数守恒目标 {expectDiag} 帧),interpScale={interpScale},"
                     + $"finalDurs={(finalDurs != null ? finalDurs.Count : -1)},frameDurs={(frameDurs != null ? frameDurs.Count : -1)},"
                     + $"preserveRhythm={preserveRhythm},VFR素材={vfrPassthrough},去重={dedup},"
                     + $"时间轴={(vfrSetpts != null ? "VFR(setpts)" : "均匀")}");
+                // 【任务 N · 帧数守恒自检】只在"不会被别的机制调整帧数"的路径上判:
+                //   · VFR 路径【不做】合帧前的"帧数对齐"(那会破坏时间轴)→ 少了就是被丢了(任务 N 的丢帧)、
+                //     多了就是末帧冻结副本没去掉,两种情况都让"2x 不再是 2x",必须吵;
+                //   · 去重(密度还原)/指定输出帧率/韵律重采样那几条路径帧数本就不等于本式,不参与判定。
+                bool countCheckApplies = vfrPassthrough && vfrSetpts != null && tempoSrcIdx == null && frameScale <= 1.001;
+                if (countCheckApplies && finalNDiag != expectDiag)
+                    AppLogger.Warn($"⚠ 帧数守恒自检:输出 {finalNDiag} 帧 ≠ 目标 {expectDiag} 帧(({frameCount}-1)×{multDiag}+1);"
+                        + "补帧倍率会因此对不上(2x 不等于 2x)、或成片尾部少了内容");
             }
             string vfArg, videoMap;
             string vfChainBody = "";   // 非运动模糊分支才有独立的 -vf 链;运动模糊走 filter_complex,不做抽样
@@ -2630,7 +2646,28 @@ public static class VideoService
             // 时长表输出(VFR):setpts 已在滤镜链构造处接入(精确重映射时间轴,精度=输出时基)。
             // 注:曾用 concat demuxer + duration,实测其内部 image2 时基固定 25fps,0.0333/0.1 被
             // 量化成 0.04/0.08/0.12(30fps 素材半段快 20%),故改为 setpts。
-            var muxInput = $"-framerate {fr} -i \"{framePattern}\"";
+            // 【任务 N · 2026-09-13 关键修复】setpts 的**量化格子 = image2 输入的时基 = 1/(-framerate)**:
+            // 标称帧率是"帧数÷时长"(真机那次 1710/29.6667 = 57.64 → 一格 0.017349s),而这条 VFR 时间轴里
+            // 最短的一格只有 0.016686s —— **比一格还短** → 相邻两帧被折算到同一个时基整数格(重复 PTS)→
+            // 被编码/封装丢掉:实测"日志说 1710 帧、文件里只有 1646 帧"(丢 64),成片里那 64 个"双倍长间隔"
+            // 就是丢帧留下的空档 → 2x 补帧实际只有 1.925x,软件自己的输出校验也告警(55.52 vs 预期 57.64)。
+            // 修法:VFR 时把输入时基细化到"最短帧时长的一半以内"(Core.VfrInputFramerate),再用
+            // Core.CountTimestampCollisions 复算撞格数;若仍有撞格,再细化到 1ms(1000fps)。
+            // CFR 分支一字未改:此时 frInput == fr。
+            string frInput = fr;
+            if (vfrSetpts != null && finalDurs != null && finalDurs.Count > 0)
+            {
+                double c0 = AlhPro.Core.VideoPipeline.CountTimestampCollisions(finalDurs, frBase);
+                double need = AlhPro.Core.VideoPipeline.VfrInputFramerate(finalDurs, frBase);
+                if (AlhPro.Core.VideoPipeline.CountTimestampCollisions(finalDurs, need) > 0) need = 1000;
+                frInput = need.ToString("0.######", inv);
+                int c1 = AlhPro.Core.VideoPipeline.CountTimestampCollisions(finalDurs, need);
+                double minDur = finalDurs.Where(d => d > 0 && double.IsFinite(d)).DefaultIfEmpty(0).Min();
+                AppLogger.Info($"VFR 时基核算:{finalDurs.Count} 帧时长表,最短 {minDur * 1000:0.###}ms / 标称一格 {1000.0 / Math.Max(0.01, frBase):0.###}ms"
+                    + $" → 标称帧率下预计撞格(相邻帧同一时间戳=会被丢帧){c0:0} 帧;输入时基改用 {frInput} fps → 撞格 {c1:0} 帧"
+                    + (c1 == 0 ? "(0 = 不再丢帧)" : " ⚠ 仍有撞格:时长表可能异常"));
+            }
+            var muxInput = $"-framerate {frInput} -i \"{framePattern}\"";
             await EnsureHwProbeAsync(ffmpeg, ct);
             var encoder = PickVideoEncoder(gpuId, codecPref);
             // 【编码最优解·解码侧】硬编生效时,瓶颈会从编码器转到"软件解码 JPG 序列"(4K 实测 ≈39.6 fps);
@@ -3002,7 +3039,10 @@ public static class VideoService
 
     /// <summary>对 [start, end) 帧区间跑一次 RIFE,输出合并到 framesFinal(帧号全局递增)。返回新的全局帧号。
     /// frameScale = 原帧数/去重后帧数(补帧按原素材帧率补足,去重不降低输出帧率/缩短时长)。
-    /// globalTarget &gt; 0 时(末段):-n = 全局目标帧数 - 已输出帧数,保证最后锚点帧精确落在最后一帧。
+    /// globalTarget &gt; 0 **只对末段传非 0**(主流程 `isLastSeg ? globalTarget : 0`),它在方法里当"这是末段"的标志用。
+    /// 【任务 N · 2026-09-13 更正口径】末段的 -n 取"本段自然产量" (段长-1)×mult+1(见 Core.InterpSegmentTarget),
+    /// **不是**"全局目标 − 已输出"这种差值算法 —— 差值算法在"各段非末段按 段长×mult 产出"时数值恰好相等
+    /// ((总帧数-1)×mult+1),但表/文件数的对齐由 Core 的纯函数统一保证,不再依赖两处各算一遍。
     /// appendTailCopy = true(末段,非 VFR):给 RIFE 追加末帧副本,让最后一段真实插值,
     /// 避免 RIFE -n 把末帧复制成 3 帧(尾部"卡住");副本产生的冻结帧由合帧对齐裁掉。</summary>
     /// <summary>从 RIFE 命令行参数里解析出 ONNX 补帧所需的输入目录/输出目录/目标帧数;解析失败返回 false。</summary>
@@ -3321,9 +3361,14 @@ public static class VideoService
                 int targetFrames;
                 // 关键修复(源码验证):rife -n 是【整个序列的总目标帧数】,目录模式下 -s 被忽略、时间步按帧索引均分;
                 // -n 必须是输入帧数的【整数倍】,否则帧间距不均匀 → "全程轻微漏帧/judder"(用户实测症状)。
-                // 故用"整数倍率"取整:mult = round(interpScale × frameScale),-n = 本段输入帧数 × mult(保证可被整除)。
-                int mult = Math.Max(1, (int)Math.Round(interpScale * frameScale));
-                targetFrames = Math.Max(segLen + 1, segLen * mult);
+                // 【任务 N 更正】-n = 输入帧数 × mult 时,多出来的那 1 帧是 RIFE 把末帧复制出来的"冻结帧"
+                // (它只为让最后一段有真实插值,靠合帧前的"帧数对齐"裁掉);VFR 路径不做帧数对齐(要保时间轴),
+                // 于是整片比设计目标多 1 帧(真机实测 1710 vs (855-1)×2+1=1709)。现在末段直接要"自然产量"
+                // (段长-1)×mult+1 —— 时间步按 (帧数-1)/(输出-1) 均分,2x 时步长恰好 0.5,间距仍然均匀。
+                int mult = AlhPro.Core.VideoPipeline.InterpMultiplier(interpScale, frameScale);
+                bool lastSeg = globalTarget > 0;   // 主流程只对末段传非 0(见本方法 doc:globalTarget 的语义)
+                targetFrames = Math.Max(segLen + 1,
+                    AlhPro.Core.VideoPipeline.InterpSegmentTarget(segLen, mult, lastSeg));
                 if (appendTailCopy)
                 {
                     // 尾部插值修正:追加末帧副本(锚点 +1,目标帧数 +倍率),
@@ -4323,6 +4368,13 @@ public static class VideoService
     private static int ReencodeDirPngToJpg(string dir, int edgeSmooth,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct, int curPct)
     {
+        // 【任务 N · 2026-09-13 回答"真机上为什么一条『整理帧(JPG)』都没有"】
+        // 这条进度只在【待整理目录里真的存在 .png】时才会发(核心循环只遍历 *.png);
+        // 而引擎正常路径都是"写入时就地转 JPG"(超分 :1969-1973、补帧 :3382-3384、补回 :5748),
+        // 三个调用点(旧顺序补帧输出、超分输出兜底、合帧前统一)因此基本都是空跑 ——
+        // 整条视频 0 条"整理帧"日志是**正常**的,不是日志丢了。
+        // 唯一能让 PNG 留在目录里的是"某帧就地转换失败 → File.Copy 原 PNG 兜底"(:1983)、
+        // 以及 AA 开启时"已是 JPG 的帧走 AA"那条(那条文案是「边缘抗锯齿 已处理 N 帧」,不是这两处)。
         // curPct = 【edgeSmooth == 0 时】这条整理步骤要"挂在"哪个进度百分比上(只换文字,不推进也不回退):
         //   这一步没有自己的进度区间,硬塞一个区间会与相邻阶段打架(见 ReencodeDirPngToJpgCore 的说明)。
         //   edgeSmooth > 0 时忽略它 —— AA 那条路径的文案与百分比区间保持原样(有实测依据,不许改)。

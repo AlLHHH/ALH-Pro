@@ -295,4 +295,121 @@ public static class VideoPipeline
         }
         catch { return null; }
     }
+
+    // ===== 【任务 N · 2026-09-13】补帧"帧数守恒"与 VFR 时间轴的时基(纯逻辑,全部可单测) =====
+    //
+    // 真机现象(2x 超分 + 2x 补帧 + 智能去重 + VFR 自动,855 帧 VFR 素材):
+    //   日志自称"输出 1710 帧 / 编码 帧数=1710",`ffprobe -count_frames` 实测 **nb_frames=1646** ——
+    //   少了 64 帧,恰好等于成片里"双倍长间隔"的个数(2x 补帧实际只有 1.925x),软件自己的输出校验也告警
+    //   「帧率 55.52 vs 预期 57.64」(55.52 = 1646 / 29.6667)。
+    // 根因(定量对得上):**setpts 的量化格子 = image2 输入的时基 = 1/`-framerate`**,而当时的标称帧率
+    //   fr = 帧数 ÷ 时长 = 1710/29.6667 = **57.64**,即一格 0.017349s;VFR 时间轴里"最短的一格"
+    //   (1/60 × 归一化 ≈ **0.016686s**)**比一格还短** → 相邻两帧被折算到同一个时基整数格
+    //   (重复 PTS)→ 被编码/封装丢掉。丢帧数 = 帧数 ×(1 − 时长/一格)= 1710 ×(1 − 0.016686×57.64)
+    //   ≈ **65 ≈ 实测 64**;成片中那 64 个"双倍长间隔"就是丢帧留下的空档。
+    // 结论:**VFR(带时长表)时,输入时基必须比"最短帧时长"更细**,否则时间轴再正确也留不住帧。
+    // 下面 CountTimestampCollisions 就是这条判据的可执行形式(在真机上没跑之前,它先用纯数学复算对账)。
+
+    /// <summary>补帧的"每源帧展开帧数"倍率 mult = round(倍率 × 密度还原系数)。
+    /// RIFE 每段就是按 `-n = 段长 × mult` 产出,时长表也必须按同一个 mult 展开;
+    /// 旧实现用 `interpScale` 展开,只有 frameScale==1(未去重)时才自洽。</summary>
+    public static int InterpMultiplier(double interpScale, double frameScale)
+    {
+        double m = interpScale * frameScale;
+        if (!double.IsFinite(m) || m < 1) return 1;
+        return Math.Max(1, (int)Math.Round(m));
+    }
+
+    /// <summary>一段补帧输入应产出的帧数。**末段用"自然产量" (段长-1)×mult+1**:
+    /// RIFE 被要求产出 `段长×mult` 时,最后 1 帧是把末帧复制出来的"冻结帧"(它的存在只为让最后一段
+    /// 得到真实插值,最终靠合帧前的"帧数对齐"裁掉)。VFR 路径不做帧数对齐(要保时间轴),于是整片会
+    /// 比设计目标多 1 帧(真机实测 1710 vs (855-1)×2+1=1709)—— 这里直接从源头不产出它。
+    /// 【为什么非末段仍按 段长×mult】各段是拼起来的:Σ(非末段 L×mult) + ((末段 L-1)×mult+1)
+    /// = (总帧数-1)×mult+1,与整片目标严格相等(见 InterpOutputFrameCount 与单测)。</summary>
+    public static int InterpSegmentTarget(int segLen, int mult, bool lastSegment)
+    {
+        int m = Math.Max(1, mult);
+        if (segLen <= 1) return m > 1 ? m : 1;
+        return lastSegment ? (segLen - 1) * m + 1 : segLen * m;
+    }
+
+    /// <summary>整片补帧输出的目标帧数 = (源帧数-1)×mult+1(帧数守恒)。
+    /// A 拍 N 素材 30fps 源、2x 补帧:855 帧 → 1709 帧(= 用户的验收式)。</summary>
+    public static long InterpOutputFrameCount(int sourceFrames, int mult)
+    {
+        if (sourceFrames <= 0) return 0;
+        return (long)(sourceFrames - 1) * Math.Max(1, mult) + 1;
+    }
+
+    /// <summary>把源帧时长表按补帧倍率展开成"输出帧时长表"(供 setpts 重定时),返回追加的条目数。
+    /// 每源帧展开 mult 条、每条 = 该源帧时长 / mult(总时长严格不变);
+    /// **末段的最后一个源帧只展开 1 条**,承载它(尾部容积)的整段时长 —— 与 InterpSegmentTarget 配套,
+    /// 保证"表长 == 文件数 == (源帧数-1)×mult+1"。</summary>
+    public static int AppendExpandedDurations(List<double> dst, IReadOnlyList<double> srcDurs, int s, int e, int mult, bool lastSegment)
+    {
+        if (dst == null) return 0;
+        int m = Math.Max(1, mult);
+        int added = 0;
+        for (int k = Math.Max(0, s); k < Math.Min(e, srcDurs.Count); k++)
+        {
+            bool tailFrame = lastSegment && k == srcDurs.Count - 1;
+            int copies = tailFrame ? 1 : m;
+            double d = Math.Max(0.0005, srcDurs[k] / copies);
+            for (int i = 0; i < copies; i++) { dst.Add(d); added++; }
+        }
+        return added;
+    }
+
+    /// <summary>VFR(setpts)时 image2 输入该用的 `-framerate`:保证一个时基格 ≤ 最短帧时长的一半。
+    /// 时基格 = 1/framerate,而 setpts 会把"目标秒数 ÷ 时基"折算成整数 → 格子比最短帧还粗时,
+    /// 相邻两帧撞进同一格(重复 PTS)→ 被丢掉(真机实测 1710 → 1646)。取 2 倍安全系数:
+    /// 每帧至少推进 2 格,量化抖动只占帧时长的 25% 以下且不累积(每帧的目标时间是绝对量)。
+    /// 返回 ceil,并保证不低于标称帧率(不许把时基变粗)——CFR 路径不调用它。</summary>
+    public static double VfrInputFramerate(IReadOnlyList<double> durs, double nominalFps)
+    {
+        double minD = double.MaxValue;
+        if (durs != null)
+            foreach (var d in durs)
+                if (d > 0 && double.IsFinite(d) && d < minD) minD = d;
+        double byDur = minD == double.MaxValue ? 0 : 2.0 / minD;
+        double nom = nominalFps > 0 && double.IsFinite(nominalFps) ? nominalFps : 1.0;
+        return Math.Clamp(Math.Ceiling(Math.Max(nom, byDur)), 1.0, 100000.0);
+    }
+
+    /// <summary>按 ffmpeg setpts 的换算法模拟"每一帧落在哪个时基格",返回**与前帧撞格**(PTS 相同,
+    /// 会被编码/封装丢掉)的帧数。0 = 这套时间轴在此时基下不会丢帧。
+    /// 与 BuildVfrSetptsExpr 逐字同口径:相邻时长差 &lt;1e-5 视为同一段,段内
+    /// 目标时间 = 段起点累计 + (帧序号 − 段首)×段时长,再除以时基 1/framerate 取整数(截断)。
+    /// 【用途】两个:①新增实现在选输入时基前先自检(有撞格就再细化);②单测拿真机那组时长表复算,
+    /// 与实测"丢 64 帧"对账(有它就不必靠猜)。</summary>
+    public static int CountTimestampCollisions(IReadOnlyList<double> durs, double framerate)
+    {
+        if (durs == null || durs.Count < 2 || !(framerate > 0) || !double.IsFinite(framerate)) return 0;
+        // 非法时长(NaN/±Inf/非正)一律不判:这种表根本到不了 setpts —— BuildVfrSetptsExpr 的入口守卫
+        // 已经把它挡回"均匀时间轴"了。这里按同一契约返回 0,避免用垃圾值算出一堆假"撞格"。
+        foreach (var d in durs)
+            if (!double.IsFinite(d) || d <= 0) return 0;
+        double tb = 1.0 / framerate;
+        int collisions = 0;
+        bool havePrev = false;
+        long prev = 0;
+        int segStart = 0;
+        double segDur = durs[0];
+        double acc = 0;
+        for (int n = 0; n < durs.Count; n++)
+        {
+            if (n > segStart && Math.Abs(durs[n] - segDur) >= 1e-5)
+            {
+                acc += segDur * (n - segStart);
+                segStart = n;
+                segDur = durs[n];
+            }
+            double t = acc + (n - segStart) * segDur;
+            long pts = (long)(t / tb);
+            if (havePrev && pts == prev) collisions++;
+            prev = pts;
+            havePrev = true;
+        }
+        return collisions;
+    }
 }
