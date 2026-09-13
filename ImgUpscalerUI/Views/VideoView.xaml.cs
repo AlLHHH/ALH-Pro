@@ -4344,6 +4344,20 @@ public sealed partial class VideoView : UserControl
         return "";
     }
 
+    /// <summary>阶段在"整体进度百分比"里的区间(闭区间概念:lo = 起点、hi = 终点),与
+    /// `VideoService.StageProgressPct` 和上面 etaRegex 的 fine 映射【逐字一致】。
+    /// 用于 K2 的"当前阶段剩余"下限推算:阶段内比例 = (pctFine − lo) ÷ (hi − lo)。
+    /// 认不出("" / "post")返回 (0,0) = 不参与下限(拿不准就不给)。
+    /// 【顺序敏感】"按源时间轴插帧"在 EtaStageKey 里归 interp,而它的区间与补帧相同(10~45)✓。</summary>
+    private static (double lo, double hi) StageSpanOf(string stageKey) => stageKey switch
+    {
+        "split" => (2, 5),
+        "interp" => (10, 45),
+        "up" => (45, 90),
+        "enc" => (96, 100),
+        _ => (0, 0),
+    };
+
     private async void RunBtn_Click(object sender, RoutedEventArgs e)
     {
         // 防重入:处理中(含前置诊断扫描期间)禁止再次点击,避免并发启动两套处理循环
@@ -4777,6 +4791,11 @@ public sealed partial class VideoView : UserControl
         // 当前处理阶段键(拆帧/补帧/超分/编码):阶段切换时才允许重置上面的单调基准 ——
         // 各阶段快慢本来差一个量级(4K 任务实测编码占 9376s/总共 9806s),不重置会让 ETA 停在旧阶段的乐观值上。
         string etaStageKey = "";
+        // 【K2 · 2026-09-13】当前阶段的计时起点(阶段切换时重置):用于算"当前阶段剩余",
+        // 作为"本片剩余/整批剩余"的下限 —— 否则按"已用÷进度"外推会在慢阶段末尾崩到 0
+        // (真机:编码阶段自己还要 3.7 分钟,本片剩余却显示 0:30)。
+        DateTime etaStageStartAt = DateTime.Now;
+        double etaStageStartIdle = 0;
         // 编码阶段计时:经验库只记"处理阶段"耗时,编码/封装必须单独切出来(见任务结束处记账)。
         // 按【每段增量】累加而不是记"第一次进入编码的时刻":多视频批次里后续视频还要回到处理阶段,
         // 只记起点会把它们的处理时间也一起当成编码扣掉,处理阶段耗时就只剩第一个视频的。
@@ -4969,6 +4988,33 @@ public sealed partial class VideoView : UserControl
                 double etaProgress = Math.Min(99.9,
                     (doneAll + t.pct / 100.0) / Math.Max(1, items.Length) * 100.0);
                 double initRemain = etaInitTotal - workElapsed;   // 初始估算的剩余(偏保守,线性递减)
+                // ===== 【K2】当前阶段剩余(整片剩余的下限)=====
+                // 阶段切换(如 超分→编码)是【合法跳变】:进度占比法在慢阶段会把剩余"追认"上去,
+                // 此时重置单调基准(只认得出阶段才重置,空串不动,避免个别消息反复清零)。
+                // 注意这段【不放在下面的 1 秒节流里】:"本片剩余"也要用它当下限,必须在外层作用域可见;
+                // 顺带让阶段切换的检测不受 1 秒节流影响(更及时)。
+                {
+                    var stageKeyNow = EtaStageKey(t.msg);
+                    if (stageKeyNow.Length > 0 && stageKeyNow != etaStageKey)
+                    {
+                        etaStageKey = stageKeyNow;
+                        lastEtaShown = -1;
+                        lastItemEtaShown = -1;
+                        // 【K2】新阶段:重置"本阶段剩余"的计时起点(阶段切换是合法的基准重置点)
+                        etaStageStartAt = now;
+                        etaStageStartIdle = idleSeconds;
+                    }
+                }
+                double stageRemain = 0;
+                {
+                    var (lo, hi) = StageSpanOf(etaStageKey);
+                    if (hi > lo && pctFine >= lo)
+                    {
+                        double ratio = Math.Clamp((pctFine - lo) / (hi - lo), 0, 1);
+                        double stageNet = (now - etaStageStartAt).TotalSeconds - Math.Max(0, idleSeconds - etaStageStartIdle);
+                        stageRemain = AlhPro.Core.EtaText.StageRemainingSeconds(ratio, stageNet);
+                    }
+                }
                 // ===== ETA:整体进度占比(main 方案,跨阶段平滑,无跳变) =====
                 // 已用时间 ÷ 进度% → 总时长,再减已用 = 剩余。补帧→超分→编码换阶段时,
                 // 进度占比连续(pct 不回退),ETA 单调下降,不会出现"补帧 1 分钟→超分 8 分钟"的跳变;
@@ -4977,15 +5023,6 @@ public sealed partial class VideoView : UserControl
                 if (now - lastEtaAt >= TimeSpan.FromSeconds(1))
                 {
                     lastEtaAt = now;
-                    // 阶段切换(如 超分→编码)是【合法跳变】:进度占比法在慢阶段会把剩余"追认"上去,
-                    // 此时重置单调基准(只认得出阶段才重置,空串不动,避免个别消息反复清零)。
-                    var stageKeyNow = EtaStageKey(t.msg);
-                    if (stageKeyNow.Length > 0 && stageKeyNow != etaStageKey)
-                    {
-                        etaStageKey = stageKeyNow;
-                        lastEtaShown = -1;
-                        lastItemEtaShown = -1;
-                    }
                     double remain;
                     if (etaProgress >= 1.0 && workElapsed > 3)
                     {
@@ -4998,9 +5035,10 @@ public sealed partial class VideoView : UserControl
                     // 轻平滑:70% 真实 + 30% 历史(偏重真实,避免"编码快结束还显示 34 秒"的滞后)
                     if (lastEtaShown > 0 && remain > 0)
                         remain = 0.7 * remain + 0.3 * lastEtaShown;
-                    // 单调约束:同一阶段内剩余只许变小 —— 进度只有零点几个百分点时微小抖动会把
-                    // "已用÷进度"的推算放大成剧烈变化,表现为"越等越久"。取上次值即可消除。
-                    if (lastEtaShown > 0 && remain > lastEtaShown) remain = lastEtaShown;
+                    // 单调(同阶段内只许变小)+ 【K2 硬下限】(整片剩余 ≥ 当前阶段剩余)——
+                    // 规则抽到 Core.EtaText.ClampWholeRemaining(有单测)。下限优先于单调:
+                    // 阶段还要几分钟是实测的确定信息,不能被"只许变小"这个观感优化压死。
+                    remain = AlhPro.Core.EtaText.ClampWholeRemaining(remain, stageRemain, lastEtaShown);
                     lastEtaShown = remain;
                     batchEtaTxt = done + active > 1 && remain > 5
                         ? $" · 整批剩余 {FormatTime(remain)}"
@@ -5010,7 +5048,7 @@ public sealed partial class VideoView : UserControl
                 {
                     // 早期(进度<2%)没有帧数消息:用初始估算线性递减展示;同样只许减小
                     double remain = initRemain;
-                    if (lastEtaShown > 0 && remain > lastEtaShown) remain = lastEtaShown;
+                    remain = AlhPro.Core.EtaText.ClampWholeRemaining(remain, 0, lastEtaShown);
                     lastEtaShown = remain;
                     batchEtaTxt = done + active > 1 && remain > 5 ? $" · 整批剩余 {FormatTime(remain)}" : "";
                 }
@@ -5031,8 +5069,9 @@ public sealed partial class VideoView : UserControl
                         double itemRemain = itemElapsed * (100.0 / Math.Min(99.9, pctFine) - 1.0);
                         if (lastItemEtaShown > 0 && itemRemain > 0)
                             itemRemain = 0.7 * itemRemain + 0.3 * lastItemEtaShown;
-                        // 单调约束:本片剩余与整批同规则 —— 片内进度低时抖动同样会把它推上去
-                        if (lastItemEtaShown > 0 && itemRemain > lastItemEtaShown) itemRemain = lastItemEtaShown;
+                        // 【K2】单调 + 硬下限:本片剩余同样不得低于"当前阶段剩余"(与整批同一规则、同一函数)——
+                        // 真机 bug:编码阶段还有 3.7 分钟,本片剩余却显示 0:30。
+                        itemRemain = AlhPro.Core.EtaText.ClampWholeRemaining(itemRemain, stageRemain, lastItemEtaShown);
                         lastItemEtaShown = itemRemain;
                         it.EtaText = itemRemain > 5 ? "本片剩余 " + FormatTime(itemRemain) : "";
                     }
