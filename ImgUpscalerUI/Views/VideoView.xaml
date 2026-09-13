@@ -1022,7 +1022,7 @@
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
                                     <Button x:Name="AnalyzeDupBtn" Content="分析重复帧" FontSize="11" Padding="8,4"
                                             Click="AnalyzeDupBtn_Click"
-                                            ToolTipService.ToolTip="全文分析当前视频的重复帧分布(与处理时同一套检测算法,数字一致)"/>
+                                            ToolTipService.ToolTip="全文分析当前视频的重复帧分布(只做预估,不精确):为求速度会把画面缩到 400 宽灰度再采样,且智能模式这里用「自适应判据」预估,而真正处理时走「拍数识别+网格采样」——所以数字是估计值,与处理结果可能有小幅差异"/>
                                     <Button x:Name="ApplyDupBtn" Content="据此设置去重" FontSize="11" Padding="8,4"
                                             Click="ApplyDupBtn_Click"
                                             ToolTipService.ToolTip="按分析结果推荐去重模式/强度,并自动勾选去重"/>
