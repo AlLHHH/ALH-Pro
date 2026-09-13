@@ -108,6 +108,70 @@ public static class VideoPipeline
         return rFrameRate / avgFrameRate >= VfrRateRatioThreshold;
     }
 
+    // ===== VFR 时间轴的两个决策(2026-09-13 修「可变帧率静默失效」时抽出,纯函数、有单测)=====
+    // 【事故】原代码在"智能去重-未采用拍数识别"分支里【无条件】frameDurs = null —— 即使素材是 VFR
+    // (vfrPassthrough=true)也把源时长表丢掉;而下游 preserveRhythm 仍为 true,于是合帧只好静默造一张
+    // 均匀表 → 成片退化成纯 CFR(源可变时间轴 100% 丢失:成片变速 + 画面相对声音最大滞后数百 ms),
+    // 日志却照打「时长保护(VFR) … vfrSetpts=有」。
+    // 把"建不建表""有没有真的用上表"抽成下面两个纯函数,就是为了让这类静默退化不可能再复发(有测试)。
+
+    /// <summary>拆帧阶段:是否需要"源帧时长表"。【需要 = 素材是 VFR(要保留可变节奏)或开着去重
+    /// (删帧后必须靠表把被删帧的时长归并回保留帧,否则时间轴被压缩 → 变速)】。
+    /// 【为什么条件里必须带 vfrPassthrough】这正是事故点:VFR 素材 + 该分支"一帧不删"时,旧代码仍把表丢掉,
+    /// 合帧拿不到源节奏 → 静默 CFR。带上它 = 只要判定是 VFR 就一定建表。</summary>
+    public static bool NeedsFrameDurations(bool dedup, bool vfrPassthrough) => dedup || vfrPassthrough;
+
+    /// <summary>合帧阶段:是否真的用上了 VFR 时间轴。【preserveRhythm=false 或没有可用时长表 → false】
+    /// 注意 `preserveRhythm && !UsesVfrTimeline(...)` = 【回退均匀时间轴】:调用方必须打 warn 并把
+    /// 「时长保护(VFR)」「可变帧率时间轴」这类文案去掉 —— 否则日志和界面都在骗用户(事故的第二个成因)。</summary>
+    public static bool UsesVfrTimeline(bool preserveRhythm, int finalDursCount) => preserveRhythm && finalDursCount > 0;
+
+    /// <summary>帧间隔(VFR)统计:把"一组相邻帧的 PTS 间隔"浓缩成可判定的几个数(纯函数,有单测)。
+    /// 判定规则与 2026-09-13 之前 VideoService.ProbeVfrAsync 抽查分支里的内联写法【逐字一致】
+    /// (先 maxG &gt; minG×1.5 且 maxG &gt; 0.5ms,否则看变异系数 cv &gt; 0.25)—— 抽出来只是为了让
+    /// 判定可测、并把 maxG/minG/cv 写进日志(旧代码只在命中时打一行,漏判时什么都看不到)。
+    /// 【为什么需要它】手机/录屏素材的 r_frame_rate÷avg_frame_rate 可能只有 1.04(远离 2.0 门槛),
+    /// 单靠比值信号会漏判;而"间隔里散着若干个双倍长的间隔"这类形态用 CV / max-min 比一看就出来 ——
+    /// 前提是这段间隔落在被抽查的窗口里(全片直方图见报告里的方案,未实现)。</summary>
+    public readonly record struct FrameGapStats(int Count, double MinGap, double MaxGap, double AvgGap,
+        double MaxOverMin, double Cv, bool VfrByRatio, bool VfrByCv)
+    {
+        /// <summary>是否判为可变帧率(任一路命中)。间隔样本少于 7 个时一律 false(帧太少无法判断)。</summary>
+        public bool IsVfr => VfrByRatio || VfrByCv;
+
+        /// <summary>一句话诊断(写日志用):把判定依据的原始数字都带上,便于复盘为什么判/没判。</summary>
+        public string Summary =>
+            $"间隔样本 {Count},min {MinGap * 1000:0.##}ms,max {MaxGap * 1000:0.##}ms,均值 {AvgGap * 1000:0.##}ms,"
+            + $"max/min {MaxOverMin:0.##},cv {Cv:0.###} → {(IsVfr ? "VFR" : "CFR")}"
+            + $"(比值判据 {VfrByRatio},cv 判据 {VfrByCv})";
+    }
+
+    /// <summary>帧间隔直方图式判定(见 FrameGapStats 的说明)。gaps 为相邻帧 PTS 差(秒,升序)。
+    /// 非正/非有限(NaN)的间隔一律忽略(与调用点的 `if (g &gt; 0)` 过滤同口径),剩下的样本少于 7 个 → 一律判 CFR。</summary>
+    public static FrameGapStats AnalyzeFrameGaps(IReadOnlyList<double> gaps)
+    {
+        var g2 = new List<double>();
+        if (gaps != null)
+            foreach (var g in gaps)
+                if (g > 0 && double.IsFinite(g)) g2.Add(g);
+        if (g2.Count < 7) return new FrameGapStats(g2.Count, 0, 0, 0, 0, 0, false, false);
+        double minG = g2[0], maxG = g2[0], sum = 0;
+        foreach (var g in g2)
+        {
+            if (g < minG) minG = g;
+            if (g > maxG) maxG = g;
+            sum += g;
+        }
+        double avgG = sum / g2.Count;
+        double maxOverMin = minG > 0 ? maxG / minG : double.PositiveInfinity;
+        double varSum = 0;
+        foreach (var g in g2) { double d = g - avgG; varSum += d * d; }
+        double cv = avgG > 0 ? Math.Sqrt(varSum / g2.Count) / avgG : 0;
+        bool byRatio = maxG > minG * 1.5 && maxG > 0.0005;   // 0.5ms 以下的抖动忽略(噪声)
+        bool byCv = cv > 0.25;                              // 间隔波动 >25% → 视为可变帧率
+        return new FrameGapStats(g2.Count, minG, maxG, avgG, maxOverMin, cv, byRatio, byCv);
+    }
+
     /// <summary>合并被删帧的时长到其前面最近的保留帧(逐条前移;durs 会被原地修改)。</summary>
     public static void MergeDurations(List<double> durs, System.Collections.Generic.IEnumerable<int> dropped, int totalCount)
     {
