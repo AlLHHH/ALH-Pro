@@ -2272,9 +2272,13 @@ public static partial class EngineService
             catch { /* 探不到尺寸就走单张路径,由引擎报错 */ }
             int safeWholeTile = Math.Max(tileSize * 3, tileSize);   // 整图直跑安全上限(能整跑就不分块,省启动开销)
             if (iw > safeWholeTile || ih > safeWholeTile)
+            {
                 // 分块拼接(SetPixel 羽化 + 合成 + 保存)很吃 CPU,放后台线程,避免卡 UI
-                return await Task.Run(() => UpscaleTiledAsync(input, output, engine, model,
+                var tiled = await Task.Run(() => UpscaleTiledAsync(input, output, engine, model,
                     scale, noise, gpuId, tta, progress, ct, tileSize)).ConfigureAwait(false);
+                GuardSilentBlackOutput(input, tiled, engine, model, 4);   // 【O1③】拼好的成品同样要过黑帧防线
+                return tiled;
+            }
         }
 
         if (engine == "waifu2x")
@@ -2312,6 +2316,7 @@ public static partial class EngineService
                 await Task.Run(() => ResizeImage(output, output, scale / engineScale), ct)
                     .ConfigureAwait(false);
             }
+            GuardSilentBlackOutput(input, output, engine, model, engineScale);   // 【O1③】exit=0 却整帧全黑 → 抛可读错误
             return output;
         }
         if (engine == "realcugan")
@@ -2343,6 +2348,7 @@ public static partial class EngineService
                 await Task.Run(() => ResizeImage(output, output, scale / engineScale), ct)
                     .ConfigureAwait(false);
             }
+            GuardSilentBlackOutput(input, output, engine, model, engineScale);   // 【O1③】Real-ESRGAN 缺权重时会画全黑且 exit=0
             return output;
         }
     }
@@ -2652,6 +2658,57 @@ public static partial class EngineService
         return false;
     }
 
+    /// <summary>【任务 O1 ③ · 2026-09-13】"引擎 exit=0 却整帧全黑"的防线(单图/分块路径)。
+    /// 为什么必须加:实测 Real-ESRGAN 在缺 x1 权重时**不报错**,只是把整张图画成全黑(mean=0/uniq=1),
+    /// 而单图路径此前没有任何黑帧防线 → 黑图被静默保存成"超分结果"。
+    /// 判据复用既有纯函数:FrameInspect.IsSilentBlackFailure(输出缺陷帧 且 源帧不是缺陷帧)
+    /// —— 源帧本来就是黑场(片头/夜景/淡入淡出)时不算引擎故障,不误杀。
+    /// 【视频(批量)路径不在这里拦】那条路径已有逐帧黑帧链(检测 → ONNX 重算 → 回退源帧),
+    /// 抛异常反而会绕过它;那里只记日志(见 UpscaleDirAsync 的黑帧提示)。</summary>
+    internal static void GuardSilentBlackOutput(string input, string output, string engine, string model, int engineScale)
+    {
+        try
+        {
+            if (!File.Exists(output)) return;
+            if (new FileInfo(output).Length == 0) return;          // 空/坏帧由既有校验处理,不在这里判
+            bool outBlack = IsBlackPng(output);                    // 读不出的算缺陷(failIsDefect: true)
+            if (!outBlack) return;
+            bool inBlack = IsBlackPngStrict(input);                // 源帧黑场?只判"真近黑",不把没写完当黑
+            if (!AlhPro.Core.FrameInspect.IsSilentBlackFailure(inBlack, outBlack)) return;
+            string msg = $"超分引擎输出全黑帧(引擎退出码 0 却整帧全黑):引擎={engine},模型={model},引擎倍数={engineScale}x。"
+                + "这通常说明该模型缺少对应倍率的权重(实测:模型只有 x2/x3/x4 时下发 -s 1 会画成纯黑且不报错),"
+                + "或显卡驱动/引擎在该尺寸下静默失败。已中止本次输出,请换模型或换倍率后重试(不会把黑图当结果保存)。";
+            AppLogger.Warn($"⚠ {msg}");
+            throw new InvalidOperationException(msg);
+        }
+        catch (InvalidOperationException) { throw; }               // 上面那条要抛出去,不能被下面的 catch 吞掉
+        catch (Exception ex) { AppLogger.Warn($"⚠ 黑帧防线判定失败(忽略,不阻塞):{ex.Message.Split('\n')[0]}"); }
+    }
+
+    /// <summary>【任务 O1 ③ · 批量路径只提示不抛】抽样最多 3 帧:输出是缺陷帧而对应源帧不是 → 记 Warn。
+    /// 为什么不抛:视频上层已有逐帧黑帧链(检测 → ONNX 重算 → 回退源帧),在这里抛会绕过它;
+    /// 但"引擎 exit=0 却出黑帧"必须留下可检索的线索(真机就是这么静默出过坏片的)。
+    /// 单图路径没这条链,所以那边由 GuardSilentBlackOutput 直接抛可读错误。</summary>
+    private static void ProbeBatchBlackOutputHint(string inDir, string outDir, string engine, string model, int engineScale)
+    {
+        try
+        {
+            foreach (var o in EnumerateImageFiles(outDir).OrderBy(f => f, StringComparer.OrdinalIgnoreCase).Take(3))
+            {
+                if (!IsBlackPng(o)) continue;
+                string stem = Path.GetFileNameWithoutExtension(o);
+                string src = Path.Combine(inDir, stem + ".png");
+                if (!File.Exists(src)) src = Path.Combine(inDir, stem + ".jpg");
+                bool srcBlack = File.Exists(src) && IsBlackPngStrict(src);
+                if (!AlhPro.Core.FrameInspect.IsSilentBlackFailure(srcBlack, true)) continue;
+                AppLogger.Warn($"⚠ 抽样发现全黑输出帧({Path.GetFileName(o)}):引擎={engine}/{model},引擎倍数={engineScale}x,exit=0 无报错 —— "
+                    + "疑似该模型缺少对应倍率的权重(或引擎在该尺寸下静默失败);视频链会走黑帧降级(ONNX 重算/回退源帧)");
+                return;
+            }
+        }
+        catch { /* 抽样判定失败不影响流程 */ }
+    }
+
     /// <summary>检测单个 PNG 是否近全黑(95% 以上像素 RGB 和 < 24)。internal:视频补帧/层批复用(黑帧=GPU 队列异常兼容症状)。
     /// 同步把"读不出的帧"(0 字节 / 空 / 损坏)视为缺陷帧返回 true —— ncnn-vulkan 在 50 系/部分驱动上会静默输出 0KB 空帧
     /// (退出码 0 不报错),若这里返回 false,空帧会被当成正常帧放行,一路传到合帧导致"找不到 frame_%06d.jpg"。
@@ -2793,11 +2850,17 @@ public static partial class EngineService
         //   而原生 -s 4 时相关 0.999;realesr-animevideov3 两种倍数都是 1.000 —— 引擎是按"模型原生倍率"
         //   计算分块贴回位置的,倍率不匹配时贴回就偏了。视频里表现为"每帧都偏一点、边缘还错",不报任何错。
         // 图片路径一直是按 4x 跑再缩回的(见 UpOneTileAsync 的注释),视频路径此前漏了这一步。
-        int engineScale;
-        if (engine == "waifu2x") engineScale = CeilPowerOfTwo(scale);
-        else if (model.Contains("x4plus", StringComparison.OrdinalIgnoreCase)
-                 || model.Contains("general-x4v3", StringComparison.OrdinalIgnoreCase)) engineScale = 4;   // 4x 专用权重:必须按原生 4x 跑,x4plus 与自转的 general-x4v3 同理
-        else engineScale = Math.Clamp((int)Math.Ceiling(scale), 1, 4);
+        // 【任务 O1 · 2026-09-13】判定收成唯一来源 Core.EngineScalePolicy:
+        //   旧实现 here 是 `Math.Clamp((int)Math.Ceiling(scale), 1, 4)`,scale ≤ 1 时正好落到 1 →
+        //   给没有 x1 权重的模型下发 `-s 1` → **输出全黑且 exit=0 不报错**(真机实测)。
+        //   现在 Real-ESRGAN 分支绝不返回 1:目标 ≤1x 改走"2x 放大后缩回"(与图片侧同一个手法)。
+        var scalePolicy = AlhPro.Core.EngineScalePolicy.Decide(engine, model, scale);
+        int engineScale = scalePolicy.EngineScale;
+        if (scalePolicy.Reason.Length > 0)
+        {
+            AppLogger.Warn($"⚠ 超分倍数护栏:{engine} / {model} → 引擎按 {engineScale}x 跑(目标 {scale:0.##}x)。{scalePolicy.Reason}");
+            progress?.Report((0, $"⚠ {scalePolicy.Reason}"));
+        }
 
         if (engine == "waifu2x")
         {
@@ -2857,6 +2920,8 @@ public static partial class EngineService
         }
 
         var outCount = Directory.EnumerateFiles(outputDir).Count();
+        // 【任务 O1 ③】批量路径的静默黑帧提示(只记日志,交上层黑帧链处理)
+        ProbeBatchBlackOutputHint(inputDir, outputDir, engine, model, engineScale);
         if (outCount == 0)
             throw new InvalidOperationException("引擎批处理未生成输出");
     }
