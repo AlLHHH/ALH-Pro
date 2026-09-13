@@ -1512,6 +1512,10 @@ public sealed partial class VideoView : UserControl
         //   同名官方预设;不提 Rev,老机器上那份 Rev5 预设会继续带着 PostAa=45 生效,用户改了也白改。
         //   只提这两个真的改了 PostAa 的预设(通用画质增强/anime通用);「去重补帧4x」的 PostAa 本来就是 0,
         //   没改就不提 Rev —— 提了只会白白覆盖用户对它其它参数的自定义(见 EnsureBuiltinPresets 注释)。
+        //   【口径收窄(用户 2026-09-13 明确)】只清「边缘抗锯齿」这一项 ——
+        //   锐化 20 / 清晰 25 / 钝化蒙版 35 / 保留细节 40【全部保持原值,不许顺手清零】:
+        //   用户说的"导出视频自带去雾"的观感来源正是清晰/锐化这类后处理(视频页本来就没有去雾功能,
+        //   去雾只存在于图片页),那几档要保留;真正要去掉的只有最后那一项边缘抗锯齿。
         ( "通用画质增强 不含补帧", 6, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = false, Up = true, Engine = 1, Scale = 1, Gpu = 0,
@@ -1545,6 +1549,7 @@ public sealed partial class VideoView : UserControl
         //   这一档在 4K/4320p 上每帧"解码 → 逐像素 3×3 边缘平滑 → 重编码 JPG",是纯观感项、又是最贵的一步;
         //   默认不再替用户开,想开的人自己拉滑条(实现与滑条都保留)。
         //   【必须提 Rev】不提则老机器上的 Rev5 预设继续按 PostAa=45 跑(见 EnsureBuiltinPresets)。
+        //   【口径收窄】只清 AA:锐化 20 / 清晰 25 / 钝化蒙版 40 / 保留细节 40 保持原值(用户明确要保留)。
         ( "动漫通用", 6, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = true, Up = true, Engine = 1, Scale = 1, Gpu = 0,
