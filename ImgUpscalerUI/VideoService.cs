@@ -1187,6 +1187,27 @@ public static class VideoService
             // (ncnn 原卡、换另一张卡、ONNX DirectML、黑帧回退、残缺重算)都只读 segIn —— 故这些帧可证明已消费。
             async Task InterpStageAsync(string segSrcDir, string segOutDir, int probeW, int probeH)
             {
+                // 【任务 O2 · 2026-09-13】8K 级输入下 ncnn RIFE 会**静默输出全黑帧**(真机实测
+                // 7680×4320 + -n 119 → 117/119 全黑,exit=0 无报错;1080p/2160p 同命令 0 黑帧)。
+                // 与其白跑一遍再靠事后抽样抓黑帧(还有抽样漏掉的风险),不如按尺寸预检直接改走稳定引擎(ONNX)。
+                var sizeVerdict = AlhPro.Core.InterpSizePolicy.JudgeInputSize(probeW, probeH);
+                bool forceOnnxInterp = sizeVerdict.RefuseNcnn;
+                if (forceOnnxInterp)
+                {
+                    AppLogger.Warn($"⚠ 补帧输入尺寸预检:{sizeVerdict.Reason} → 本阶段改用稳定引擎(ONNX)补帧,不交给 ncnn");
+                    progress?.Report((interpPctBase, $"⚠ 补帧输入 {probeW}×{probeH} 属于 ncnn 已知故障尺寸(会静默出全黑帧),改用稳定引擎(ONNX)..."));
+                }
+                else if (sizeVerdict.Warn)
+                {
+                    AppLogger.Warn($"⚠ 补帧输入尺寸提示:{sizeVerdict.Reason}");
+                }
+                // 【O2 · 1 帧目录 + -n 2 崩溃护栏】RIFE 至少要两帧输入、且目标帧数必须大于输入帧数
+                // (真机实测"1 帧目录 + `-n 2`"→ 0xC0000005 访问违例)。本仓调用点**本就不可达**:
+                // 单帧段走"直接复制不进引擎"、且 `-n` 有 `segLen + 1` 下限(见下方 InterpSegmentAsync),
+                // 这里只做防御性提示,不改变控制流。
+                if (AlhPro.Core.InterpSizePolicy.IsDegenerateSegmentInput(frameCount, (int)Math.Min(int.MaxValue, globalTarget)))
+                    AppLogger.Warn($"⚠ 补帧入参护栏:输入 {frameCount} 帧 / 目标 {globalTarget} 帧构成退化入参"
+                        + "(RIFE 至少需 2 帧输入且目标 > 输入,实测会崩 0xC0000005);本阶段按逐帧复制处理,不给引擎");
                 // 【任务 N】这里印的"输出 N 帧"改成用【真实倍率 mult】算的帧数守恒目标:
                 // 2x + 未去重时 = (源帧数-1)×2+1(真机那次是 855 → 1709);末段不再产出末帧冻结副本。
                 int multStage = AlhPro.Core.VideoPipeline.InterpMultiplier(interpScale, frameScale);
@@ -1310,7 +1331,8 @@ public static class VideoService
                         interpModel, timeStep, tta, interpGpu, globalIdx, segProg, ct, frameScale,
                         isLastSeg ? globalTarget : 0,
                         false,   // appendTailCopy = false
-                        segOnEngineReady);   // 引擎"已就绪"上报(只上报,不改处理)
+                        segOnEngineReady,   // 引擎"已就绪"上报(只上报,不改处理)
+                        forceOnnx: forceOnnxInterp);   // 【O2】8K 级输入:跳过 ncnn(实测静默全黑),直接走稳定引擎
                     // ===== 批处理清盘(边用边删):本段输入帧已证明消费完,立刻释放,不等整阶段结束 =====
                     // 依据:InterpSegmentAsync 段首就把 frame_{s+1}..frame_{e}(恰好 e-s 帧,不含下一段的首帧)
                     // 复制进了它自己的 segIn 目录;其后 ncnn 原卡/换卡、ONNX DirectML、黑帧回退、残缺重算
@@ -3215,7 +3237,7 @@ public static class VideoService
     private static async Task<int> InterpSegmentAsync(string rife, string framesOut, string framesFinal,
         int start, int end, int interpScale, string interpModel, double? timeStep, bool tta, int gpuId, int globalIdx,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct, double frameScale = 1.0, long globalTarget = 0,
-        bool appendTailCopy = false, Action<double>? onEngineReady = null)
+        bool appendTailCopy = false, Action<double>? onEngineReady = null, bool forceOnnx = false)
     {
         int segLen = end - start;
         var workDir = Path.GetDirectoryName(framesFinal)!;
@@ -3246,6 +3268,15 @@ public static class VideoService
                     return true;
                 }
                 return false;
+            }
+            // 【任务 O2】已知 ncnn 在本段输入尺寸下会**静默输出全黑帧**(8K 级,真机实测 117/119 全黑、exit=0):
+            // 直接走稳定引擎(ONNX),既不白跑一遍、也不给"事后抽样没抓到"留机会。
+            if (forceOnnx)
+            {
+                if (await TryOnnxAsync().ConfigureAwait(false)) return;
+                throw new InvalidOperationException(
+                    "补帧输入分辨率过大(8K 级):ncnn 引擎在该尺寸下会静默输出全黑帧(实测 7680×4320 → 117/119 全黑、退出码 0),"
+                    + "而稳定引擎(ONNX)当前不可用。请改选「不补帧」,或降低超分倍数/换用较低分辨率素材后重试。");
             }
             // 降级链:ONNX 优先 → 换另一块 GPU(ncnn)重跑 → 无卡可换则报错(不回落 CPU)。
             async Task TryDegradeAsync(int? altGpu)
@@ -3374,6 +3405,8 @@ public static class VideoService
                 bool lastSeg = globalTarget > 0;   // 主流程只对末段传非 0(见本方法 doc:globalTarget 的语义)
                 targetFrames = Math.Max(segLen + 1,
                     AlhPro.Core.VideoPipeline.InterpSegmentTarget(segLen, mult, lastSeg));
+                // 【任务 O2】-n 下限再兜一层:实测"1 帧目录 + -n 2"必崩(0xC0000005),且 -n 必须大于输入帧数
+                targetFrames = Math.Max(targetFrames, segLen + 1);
                 if (appendTailCopy)
                 {
                     // 尾部插值修正:追加末帧副本(锚点 +1,目标帧数 +倍率),
