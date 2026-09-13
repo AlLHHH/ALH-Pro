@@ -4521,6 +4521,15 @@ public static class VideoService
         //     "防整机卡"策略(与 ApplyProcessPriority 同一条思路)。
         // 【未真机实测】本机禁止占显卡/跑基准,所以"12 是否最优"没有实测数据 —— 要动这个上限必须先测出
         //   "AA 步骤耗时 vs 线程数"的曲线(本条注释只说明现状依据,不代表已标定)。
+        // 【任务 O6 · 2026-09-13 现场核对"到底是不是真并行"】(真机基准:2668 帧串行 ≈81~83 s、
+        //   12 线程 ≈17~18 s;并行扩展比 GDI+ 4.5× / PIL 6.8×)逐行核对结论:**生产路径本来就是并行,无需改**:
+        //   · 本函数(PNG→JPG;AA=0 与 AA>0 都走这里,抗锯齿在 ConvertPngToJpg 内部做)= `Parallel.ForEach`
+        //     + 下面这行 `threads2 = Clamp(ProcessorCount-2, 2, 12)`;
+        //   · 「已经是 JPG 的帧做 AA」那条分支(ReencodeDirPngToJpg ② 段)同样用 `Parallel.ForEach` +
+        //     `Clamp(ProcessorCount-2, 2, 12)`。
+        //   所以真机测到的 81~83 s 对应的是**串行复刻**,不代表生产路径(生产是 12 路并行 ≈17~18 s)。
+        //   **本次不制造假优化**:没有哪条路是串行的;唯一"可再快"的方向是抬高 12 这个上限或改掉 CPU 85% 封顶,
+        //   但 12 路已贴着 85% 的额度(见上),动它必须先真机测出"AA 耗时 vs 线程数"的曲线。
         int threads2 = Math.Clamp(Environment.ProcessorCount - 2, 2, 12);
         var opts = new System.Threading.Tasks.ParallelOptions
         {
