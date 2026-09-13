@@ -230,23 +230,20 @@ public static class VideoService
                     ptsList.Add(t);
             }
             if (ptsList.Count < 8) return false;   // 帧太少无法判断(视作非 VFR)
-            // 间隔统计分析:若最大间隔 ≈ 最小间隔的 1.5 倍以上 → 帧率不均匀(VFR)
+            // 间隔统计分析:交给 AlhPro.Core.VideoPipeline.AnalyzeFrameGaps(纯函数、有单测)——
+            // 判定规则与抽走前的内联写法逐字一致(max/min > 1.5 且 max > 0.5ms,否则 cv > 0.25),
+            // 但它把"为什么判/没判"的原始数字一并带出来,【无论命中与否都写日志】:
+            // 旧代码只在命中比值信号时打一行,漏判时日志里什么都没有(手机素材 r/avg 只有 1.04 的形态
+            // 就是这样被漏掉的 —— 只有"间隔里散着双倍长间隔"落在抽查窗口内才靠 cv 侥幸命中)。
             var gaps = new System.Collections.Generic.List<double>();
             for (int i = 1; i < ptsList.Count; i++)
             {
                 double g = ptsList[i] - ptsList[i - 1];
                 if (g > 0) gaps.Add(g);
             }
-            if (gaps.Count < 7) return false;
-            double minG = gaps.Min(), maxG = gaps.Max();
-            double avgG = gaps.Average();
-            if (avgG <= 0) return false;
-            // 判定:(1) 最大/最小间隔比 > 1.5 → 明显不均匀;(2) 或间隔相对标准差大
-            if (maxG > minG * 1.5 && maxG > 0.0005) return true;   // 0.5ms 以下的抖动忽略(噪声)
-            double varSum = 0;
-            foreach (var g in gaps) { double d = g - avgG; varSum += d * d; }
-            double cv = Math.Sqrt(varSum / gaps.Count) / avgG;   // 变异系数
-            return cv > 0.25;   // 间隔波动 >25% → 视为可变帧率
+            var stat = AlhPro.Core.VideoPipeline.AnalyzeFrameGaps(gaps);
+            AppLogger.Info($"可变帧率判定(前 {ptsList.Count} 帧 PTS 抽查):{stat.Summary}");
+            return stat.IsVfr;
         }
         catch { return false; }
     }
@@ -648,7 +645,18 @@ public static class VideoService
                         progress?.Report((4, $"智能检测({defaultGateName}):{cfInfo.Summary},原样保留..."));
                         frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs, scaleVfDenoise,
                             framesIn, progress, ct, origCountEst);
-                        frameDurs = null;
+                        // 【C1 修复 · 2026-09-13】这里原来【无条件】frameDurs = null —— 即使素材是 VFR
+                        // (vfrPassthrough=true)也把源时长表丢掉;而下游 preserveRhythm 仍为 true(见下方注释),
+                        // 于是合帧只能【静默】造一张均匀表 → 成片退化成纯 CFR:源的可变时间轴 100% 丢失,
+                        // 表现就是"成片变速 + 画面相对声音最大滞后几百 ms",而日志照打「时长保护(VFR)…vfrSetpts=有」。
+                        // 本分支"一帧不删":frameCount == 源帧数,与 BuildFrameDurationsAsync 的 showinfo 序列
+                        // 一一对应,故可以直接用源表(同一命令已在源文件上复现过:855 项、35 个 0.0667 长间隔)。
+                        // 判据走 Core.NeedsFrameDurations(有单测):VFR 素材 或 开着去重 就必须建表。
+                        frameDurs = AlhPro.Core.VideoPipeline.NeedsFrameDurations(dedup, vfrPassthrough)
+                            ? await BuildFrameDurationsAsync(ffmpeg, inputVideo, trimArgs, scaleVf, ct)
+                            : null;
+                        AppLogger.Info($"拆帧(智能-未采用拍数,不采样):帧数 {frameCount},源时长表 "
+                            + $"{(frameDurs != null ? frameDurs.Count + " 项" : "未建")}(VFR 素材={vfrPassthrough},去重={dedup})");
                         effectiveFps = inFps;
                         tempoSrcIdx = null;
                         progress?.Report((5, $"已拆出 {frameCount} 帧(智能-未采用拍数,不采样)"));
@@ -683,7 +691,13 @@ public static class VideoService
                         progress?.Report((3, "动漫-全动画:不做节奏处理,原样输出..."));
                         frameCount = await ExtractFramesCoreAsync(ffmpeg, inputVideo, trimArgs,
                             scaleVfDenoise, framesIn, progress, ct, origCountEst);
-                        frameDurs = null;
+                        // 【C1 同类修复】这条分支同样是【整帧抽取、一帧不删】(不是网格采样的子集),
+                        // 所以和上面"智能-未采用拍数"一样可以直接用源表 —— 旧代码丢表 → VFR 素材静默变 CFR。
+                        frameDurs = AlhPro.Core.VideoPipeline.NeedsFrameDurations(dedup, vfrPassthrough)
+                            ? await BuildFrameDurationsAsync(ffmpeg, inputVideo, trimArgs, scaleVf, ct)
+                            : null;
+                        AppLogger.Info($"拆帧(动漫-全动画,不采样):帧数 {frameCount},源时长表 "
+                            + $"{(frameDurs != null ? frameDurs.Count + " 项" : "未建")}(VFR 素材={vfrPassthrough},去重={dedup})");
                         effectiveFps = inFps;
                         progress?.Report((5, $"已拆出 {frameCount} 帧(全动画,不采样)"));
                     }
@@ -2273,16 +2287,25 @@ public static class VideoService
                         AppLogger.Info($"帧数对齐(时长=源):裁尾 {dropN} 帧");
                     }
                 }
-                int finalN = Directory.EnumerateFiles(framesFinal, "*.jpg").Count();
-                AppLogger.Info($"补帧诊断: 去重后 {frameCount} 帧,输出 {finalN} 帧,interpScale={interpScale},finalDurs={(finalDurs != null ? finalDurs.Count : -1)}");
+                // 注:这条"补帧诊断"曾经只挂在本 if 里(条件含 !vfrPassthrough && frameDurs == null),
+                // 于是【用户一开 VFR 它就永远不打】—— 正是它灭掉了"时长表为空"的唯一线索。
+                // 现在改成无条件打(见下方紧接的一段),这里不再重复。
             }
             // 只有"内容时间轴不均匀(真 VFR 素材 或 去重删过帧)+ 需要保护"才用 setpts 保留原始节奏(输出 VFR);
             // 普通 CFR 素材(未去重)一律均匀输出(原×倍率)——避免 setpts 精度问题引入抖动。
+            // 【C2 · 2026-09-13】"回退均匀表"不许再静默:旧代码在表为空时就地造一张均匀表,日志照打
+            // 「时长保护(VFR)」、界面照显示「可变帧率时间轴」—— 用户拿着"变速 + 音画不同步"的成片,
+            // 日志里却一行异常都没有(真机事故的第二个成因)。现在回退必须打 warn,且文案改口径。
+            bool fellBackToUniform = false;
+            string fallbackWhy = "";
             if (targetFps == null && preserveRhythm)
             {
                 int finalFileCount = Directory.EnumerateFiles(framesFinal, "*.jpg").Count();
                 if (finalDurs == null || finalDurs.Count == 0)
                 {
+                    fellBackToUniform = true;
+                    fallbackWhy = $"没有可用的帧时长表(finalDurs={(finalDurs == null ? "null" : "0 项")},"
+                        + $"源表 frameDurs={(frameDurs != null ? frameDurs.Count + " 项" : "null")},去重后帧数 {frameCount})";
                     finalDurs = new System.Collections.Generic.List<double>();
                     for (int i = 0; i < finalFileCount; i++) finalDurs.Add(muxDur / Math.Max(1, finalFileCount));
                 }
@@ -2300,17 +2323,52 @@ public static class VideoService
                 vfrSetpts = BuildVfrSetptsExpr(finalDurs);
                 if (vfrSetpts == null)
                 {
+                    // 段数 >400(每个"时长不同的连续段"算一段)或表里有非法值 → 退化成均匀时间轴。
+                    // 【真机可触发】帧时长逐帧都不同的素材(抖动型 VFR)段数会超过 400 —— 这条路同样必须吵。
+                    fellBackToUniform = true;
+                    fallbackWhy = $"帧时长表无法生成 setpts 表达式(段数 >400 或含非法值,{finalDurs.Count} 项)";
                     finalDurs = new System.Collections.Generic.List<double>();
                     for (int i = 0; i < finalFileCount; i++) finalDurs.Add(muxDur / Math.Max(1, finalFileCount));
                     vfrSetpts = BuildVfrSetptsExpr(finalDurs);
                 }
-                AppLogger.Info($"时长保护(VFR): 帧={finalFileCount}, muxDur={muxDur:0.###}, 总时长={finalDurs.Sum():0.###}, vfrSetpts={(vfrSetpts != null ? "有" : "无")}");
-                if (vfrSetpts != null)
-                    progress?.Report((96, $"混合编码({outFps.ToString("0.##", inv)} fps,可变帧率时间轴 {muxDur:0.###}s)..."));
+                bool useVfrTimeline = !fellBackToUniform
+                    && AlhPro.Core.VideoPipeline.UsesVfrTimeline(preserveRhythm, finalDurs.Count);
+                if (useVfrTimeline)
+                {
+                    AppLogger.Info($"时长保护(VFR): 帧={finalFileCount}, muxDur={muxDur:0.###}, 总时长={finalDurs.Sum():0.###}, vfrSetpts={(vfrSetpts != null ? "有" : "无")}");
+                    if (vfrSetpts != null)
+                        progress?.Report((96, $"混合编码({outFps.ToString("0.##", inv)} fps,可变帧率时间轴 {muxDur:0.###}s)..."));
+                }
+                else
+                {
+                    // 【口径必须如实】回退后不许再说「时长保护(VFR)」「可变帧率时间轴」——那是骗人。
+                    // 源为 VFR 时把后果写清楚(变速 + 音画不同步),并给出用户能做的动作。
+                    AppLogger.Warn($"⚠ 可变帧率时间轴【回退为均匀时间轴】:{fallbackWhy};"
+                        + $"preserveRhythm={preserveRhythm},VFR 素材={vfrPassthrough},去重={dedup},"
+                        + $"目标帧率={(targetFps?.ToString("0.##", inv) ?? "未指定")}。"
+                        + (vfrPassthrough
+                            ? "源是可变帧率(VFR)素材:回退成均匀时间轴会让成片变速、并随时间与音频逐渐错位(音画不同步);"
+                              + "想保留源时间轴请检查源文件的帧时间戳是否过于零碎(逐帧都不同会让段数超过 400 上限)。"
+                            : "源按固定帧率处理,成片时间轴均匀(影响仅限于「该保留的节奏没有保留」这一种)。"));
+                    progress?.Report((96, $"⚠ 可变帧率时间轴不可用(时长表缺失或段数超限),已按均匀时间轴编码 {muxDur:0.###}s"
+                        + (vfrPassthrough ? " —— 源为 VFR,成片可能变速/音画不同步" : "")));
+                }
             }
             else
             {
                 AppLogger.Info($"时长保护(均匀): muxDur={muxDur:0.###}, baseFps={baseFps:0.##}");
+            }
+            // ===== 补帧/时长表诊断:【无条件打】(2026-09-13) =====
+            // 旧代码把它挂在 `frameInterp && !vfrPassthrough && frameDurs == null` 的分支里 ——
+            // 恰恰是"用户开了 VFR"(最需要看清时长表状态的场景)时它永远不打,唯一线索就此消失。
+            // 现在只要补帧真的跑了就打,并把"源表/最终表/节奏判定"的原始状态全带上。
+            if (frameInterp && outFps > 0.01)
+            {
+                int finalNDiag = Directory.EnumerateFiles(framesFinal, "*.jpg").Count();
+                AppLogger.Info($"补帧诊断: 去重后 {frameCount} 帧,输出 {finalNDiag} 帧,interpScale={interpScale},"
+                    + $"finalDurs={(finalDurs != null ? finalDurs.Count : -1)},frameDurs={(frameDurs != null ? frameDurs.Count : -1)},"
+                    + $"preserveRhythm={preserveRhythm},VFR素材={vfrPassthrough},去重={dedup},"
+                    + $"时间轴={(vfrSetpts != null ? "VFR(setpts)" : "均匀")}");
             }
             string vfArg, videoMap;
             string vfChainBody = "";   // 非运动模糊分支才有独立的 -vf 链;运动模糊走 filter_complex,不做抽样
