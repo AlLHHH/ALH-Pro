@@ -4845,8 +4845,12 @@ public static class VideoService
         finally { try { Directory.Delete(dir, true); } catch { } }
     }
 
-    /// <summary>全文分析:缩到 400 宽灰度拆帧,复用处理阶段同一套 DetectDupFramesWithSsim / DetectDupFramesAdaptive,
-    /// 再算按时间轴的重复分布 → 预览数字与处理结果同口径(分辨率近似,算法一致)。</summary>
+    /// <summary>全文分析:缩到 400 宽灰度拆帧,复用处理阶段的 DetectDupFramesWithSsim / DetectDupFramesAdaptive,
+    /// 再算按时间轴的重复分布。
+    /// 【任务 M4 · 2026-09-13 更正口径】旧注释与界面提示曾写「与处理时同一套检测算法、数字一致」——**不成立**:
+    ///   ① 这里缩到 400 宽灰度(采样格 4),处理时用原分辨率;
+    ///   ② 智能模式这里走 DetectDupFramesAdaptive,而处理时走「拍数识别+网格采样」(识别不出才回退帧差+SSIM)。
+    /// 所以它只用于「看分布/估个大概」,数字与处理结果可能有小幅差异 —— 界面提示文案已同步改成"预估"。</summary>
     private static async Task<DupProfile> AnalyzeDupAsync(string ffmpeg, string videoPath,
         int dedupMode, double dedupAnimeThr, int dedupSmartMode, bool motionComp, bool dedupOnlyTrueHold, CancellationToken ct)
     {
@@ -5770,16 +5774,20 @@ public static class VideoService
         double segSsim = 0.92, segSad = 5.0;
 
         // 三档 = 整体力度系数(0.7 保守 / 1.0 均衡 / 1.5 激进):在"自适应基准"上整体放大/缩小删除倾向
-        double force = smartMode switch { 1 => 1.5, 2 => 0.7, _ => 1.0 };
-        sadThr = Math.Clamp(sadThr * force, 1.0, 7.0);
+        // 【任务 M4】系数与四个缩放公式已迁到 AlhPro.Core.DedupTier(一个来源 + 单测保证严格单调)。
+        // ⚠ 注意:本函数【不是】智能模式的执行路径 —— 智能先去跑拍数识别 + 网格采样,识别不出时走
+        //   「回退帧差+SSIM」(同样按 DedupTier 力度缩放),只有"全文分析"按钮等少数入口才调用本函数。
+        //   所以三档差异的落地证明要看回退路径的日志(智能检测(...)回退帧差+SSIM:力度 ×1.5/×1.0/×0.7 ...)。
+        double force = AlhPro.Core.DedupTier.Force(smartMode);
+        sadThr = AlhPro.Core.DedupTier.ScaleSad(sadThr, force);
         // 只删真定格(与主判重一致):SSIM 阈值设 ≥0.99 下限(均衡档 0.99,激进 0.985,保守 0.995),
         // 相似但连续运动的帧不再被当重复删;人物定格交给"镜头运动补偿判据"(对齐残差极小)识别。
         // 注:上一版下限 0.995 过严 → 拍2素材只删到 22.6fps,现放宽到 0.99(拍N 重复帧结构相同度约 0.99x)。
-        ssimThr = Math.Max(1.0 - (1.0 - ssimThr) * force, smartMode == 1 ? 0.985 : smartMode == 2 ? 0.995 : 0.99);
-        smartProtect = Math.Clamp(smartProtect * force, 0.05, 0.60);
-        segSsim = Math.Max(1.0 - (1.0 - segSsim) * force, smartMode == 1 ? 0.985 : smartMode == 2 ? 0.995 : 0.99);
-        segSad = Math.Clamp(segSad * force, 2.0, 8.0);
-        string forceName = smartMode switch { 1 => "激进", 2 => "保守", _ => "均衡" };
+        ssimThr = AlhPro.Core.DedupTier.ScaleSsim(ssimThr, force, smartMode);
+        smartProtect = AlhPro.Core.DedupTier.ScaleProtect(smartProtect, force);
+        segSsim = AlhPro.Core.DedupTier.ScaleSsim(segSsim, force, smartMode);
+        segSad = AlhPro.Core.DedupTier.ScaleSegSad(segSad, force);
+        string forceName = AlhPro.Core.DedupTier.Name(smartMode);
         // 静止段占比自适应:近静态相邻对占比 ≥25% 才启用段合并(防高动态素材误删)
         bool segOn = pairCount >= 5 && (double)nStaticAdj / Math.Max(1, pairCount) >= 0.25;
         progress?.Report((3, $"智能去重:自适应(重复占比 {dupRatio:0%},动态中位 {median:0.0}),力度:{(force == 1.0 ? "均衡" : forceName)} ×{force:0.#}{(segOn ? "+静止段合并" : "")}..."));
