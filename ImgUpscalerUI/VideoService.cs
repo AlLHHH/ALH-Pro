@@ -1457,7 +1457,22 @@ public static class VideoService
                 // ===== 统一 JPG:帧准备/补帧完成后,把 framesFinal 从引擎 PNG 重编码成 JPG(降临时盘)=====
                 // 下游超分(读 framesFinal)/缩放/对齐/合帧统一读 .jpg;引擎 I/O 仍按各自 .png 契约(读取处不改)。
                 // 目录已是 JPG(未补帧,直接复制 framesIn)则空跑。
-                ReencodeDirPngToJpg(framesFinal);
+                // 【G · 2026-09-13】这一整批重编码【耗时正比于帧数】(用户那条 2668 帧要跑几十秒~几分钟),
+                // 过去它无进度、不可取消(调的是 1 参重载 → progress/ct 都是默认值),界面只停在上一阶段的
+                // "预计还剩几秒",用户看到的却是卡死。现在:传 progress + ct(可取消),并上报中性文案
+                // "整理帧(JPG) 第 N / M 帧"(沿用本阶段的当前百分比,只换文字不回退;AA 关着也照发)。
+                // 耗时计入 LastFrameReencodeSeconds(它本来就含在"处理阶段"墙钟里,现在也有日志可核对了)。
+                {
+                    int prepPct = interpPctBase + interpPctSpan;   // 本阶段的当前口径(= 补帧/帧准备结束的百分比)
+                    var reencWatch = System.Diagnostics.Stopwatch.StartNew();
+                    int reencFrames = ReencodeDirPngToJpg(framesFinal, 0, progress, ct, prepPct);
+                    reencWatch.Stop();
+                    LastFrameReencodeSeconds = reencWatch.Elapsed.TotalSeconds;
+                    LastFrameReencodeFrames = reencFrames;
+                    if (reencFrames > 0)
+                        AppLogger.Info($"整理帧(JPG):{reencFrames} 帧 / {LastFrameReencodeSeconds:0.#} 秒"
+                            + $"({LastFrameReencodeSeconds * 1000 / reencFrames:0} ms/帧;引擎 PNG → JPG 降临时盘,完工后进入超分阶段)");
+                }
             }
             else
             {
@@ -2089,7 +2104,16 @@ public static class VideoService
                     // 超分输出必须全是 .jpg:InterpSegmentAsync 按 frame_%06d.jpg 读输入(文件名硬编码 .jpg),
                     // 而超分异常回退路径可能在 upOutput 留下 .png(见本阶段的 File.Copy 兜底)。这里统一成 JPG,
                     // 正常路径(引擎直出 JPG)是空跑,不会重编码。
-                    ReencodeDirPngToJpg(upOutput);
+                    // 【G】同样传 progress + ct(可取消)并上报"整理帧(JPG)"进度;百分比沿用超分阶段结束值 upEnd。
+                    {
+                        var reencWatch = System.Diagnostics.Stopwatch.StartNew();
+                        int reencFrames = ReencodeDirPngToJpg(upOutput, 0, progress, ct, upEnd);
+                        reencWatch.Stop();
+                        LastFrameReencodeSeconds = reencWatch.Elapsed.TotalSeconds;
+                        LastFrameReencodeFrames = reencFrames;
+                        if (reencFrames > 0)
+                            AppLogger.Info($"整理帧(JPG):{reencFrames} 帧 / {LastFrameReencodeSeconds:0.#} 秒(超分输出兜底 PNG → JPG)");
+                    }
                     Directory.CreateDirectory(framesInterp);
                     // RIFE GPU 探测按【补帧真正要处理的尺寸】做:新顺序下 = 超分后的尺寸
                     // (1x 缩回后 = 源尺寸;2x = 源×2)。探测结论带尺寸进缓存 key,不会与源尺寸那次的结论互相顶替。
@@ -2137,13 +2161,32 @@ public static class VideoService
             // 【边缘抗锯齿也在这里做】见 ReencodeDirPngToJpg 的注释:ffmpeg sab 在 4K 上要 4.88 秒/帧,
             // 换成这套 C# 并行实现约 0.1 秒/帧,而且与"本来就要做的 JPG 编码"合并,不多一代损失。
             var aaWatch = System.Diagnostics.Stopwatch.StartNew();
-            ReencodeDirPngToJpg(framesFinal, postAa, progress, ct);
+            // 【G】这里也传 curPct:AA 关(默认)时核心循环会发"整理帧(JPG) 第 N / M 帧"。
+            // curPct 取【上一步实际报过的百分比】,避免百分比回退:
+            //   · 跑过"缩放到自定义分辨率"时它报的是 92→98,故本步挂 98;
+            //   · 否则取帧阶段结束口径(= 90:旧顺序"超分 45~90"、新顺序"补帧 45~90"都收在这里,
+            //     与 StageProgressPct 的阶段划分一致;不能直接引用 upEnd/upBase —— 那两个局部量在超分块里,
+            //     出了块就不可见)。
+            int framePhaseEndPct = Math.Max(interpPctBase + interpPctSpan, 90);
+            int prepPct2 = (outWidth is > 0 && outHeight is > 0)
+                ? 98
+                : framePhaseEndPct;
+            int reencFrames2 = ReencodeDirPngToJpg(framesFinal, postAa, progress, ct, prepPct2);
             aaWatch.Stop();
             LastFramePostProcSeconds = postAa > 0 ? aaWatch.Elapsed.TotalSeconds : 0;
+            LastFrameReencodeSeconds = aaWatch.Elapsed.TotalSeconds;
+            LastFrameReencodeFrames = reencFrames2;
             if (postAa > 0)
             {
                 AppLogger.Info($"画面后处理:边缘抗锯齿(强度 {postAa},C# 按帧并行)耗时 {aaWatch.Elapsed.TotalSeconds:0.#} 秒"
                     + " —— 该档原先在 ffmpeg 滤镜链里(4K 实测 4.88 秒/帧),现不再计入'编码/封装'");
+            }
+            else if (reencFrames2 > 0)
+            {
+                // AA 关着时这仍是一整批 PNG→JPG 重编码(耗时正比于帧数),过去完全不计时不记帧数;
+                // 现在留一行,便于把"补帧跑完之后那段空白"归因清楚(ETA/经验库复盘也要用它)。
+                AppLogger.Info($"整理帧(JPG):{reencFrames2} 帧 / {LastFrameReencodeSeconds:0.#} 秒"
+                    + $"({LastFrameReencodeSeconds * 1000 / reencFrames2:0} ms/帧;合帧前的最后一次统一 JPG,之后进入编码)");
             }
 
             // 5) 合帧 + 音频
@@ -3691,6 +3734,16 @@ public static class VideoService
     /// 与其它滤镜串起来是 4.88 秒/帧,去掉它只要 0.10 秒/帧,这项拆分就是为了让这种事下次一眼可见)。</summary>
     public static double LastFramePostProcSeconds { get; private set; }
 
+    /// <summary>最近一次"整理帧(JPG)"(把引擎输出的 PNG 整批重编码成 JPG,降临时盘)这一步的耗时(秒)与帧数。
+    /// 【为什么要记】这一步耗时正比于帧数(用户那条 2668 帧要跑几十秒~几分钟),过去既无进度也不计时:
+    /// 用户看到补帧到 2667/2668 后"卡很久",ETS 还显示"预计还剩几秒"(阶段内 ETA 只按补帧引擎的产出外推,
+    /// 不知道后面还有这一步)。现在有进度文案(整理帧(JPG) 第 N / M 帧)+ 这组数字可核对。
+    /// 口径:它是"处理阶段"墙钟的一部分(一直都算在里面),只是过去没有任何地方报出来。</summary>
+    public static double LastFrameReencodeSeconds { get; private set; }
+
+    /// <summary>最近一次"整理帧(JPG)"处理的帧数(0 = 该目录本来就没有 PNG,整段空跑)。</summary>
+    public static int LastFrameReencodeFrames { get; private set; }
+
     /// <summary>最近一次合帧里【后处理滤镜链本身】的每帧成本(秒/帧,抽样实测;已减掉 JPG 解码那份)。
     /// 用途:诊断"这条片子慢在滤镜还是编码"—— 2026-09-13 之前报的数里混着解码,会误导优化方向。</summary>
     public static double LastPostFilterCostPerFrame { get; private set; }
@@ -4076,7 +4129,6 @@ public static class VideoService
     // 单帧重编码失败时保留原帧内容(复制改名),保证帧号连续可解码、合帧不中断。
     // 中间帧 JPG 质量保持 0.96(近无损,画质优先;不降低以免影响最终成片效果)。
     private const float VideoFrameJpgQuality = 0.96f;
-    private static void ReencodeDirPngToJpg(string dir) => ReencodeDirPngToJpg(dir, 0, null, default);
 
     /// <summary>把帧目录里的中间帧统一成 JPG(降临时盘),可选顺带做「边缘抗锯齿」。
     /// <param name="edgeSmooth">0 = 只转格式;1~100 = 在写 JPG 前对同一张位图做一次抗锯齿(与图片页同语义)。
@@ -4097,16 +4149,19 @@ public static class VideoService
     ///   本步骤【不】额外做的:黑帧判定只在 A 分支顺带做(B 分支不为查黑再解码一遍)。
     /// 【已知可再提速但会改画质语义 → 只列方案、本次未改】把 AA 挪到超分/缩放【之前】(在源分辨率上做):
     ///   单帧成本随面积下降明显,但"放大前削锯齿"与"放大后削锯齿"是两种画面,须用户看对比图再定。
-    private static void ReencodeDirPngToJpg(string dir, int edgeSmooth,
-        IProgress<(int pct, string msg)>? progress, CancellationToken ct)
+    private static int ReencodeDirPngToJpg(string dir, int edgeSmooth,
+        IProgress<(int pct, string msg)>? progress, CancellationToken ct, int curPct)
     {
+        // curPct = 【edgeSmooth == 0 时】这条整理步骤要"挂在"哪个进度百分比上(只换文字,不推进也不回退):
+        //   这一步没有自己的进度区间,硬塞一个区间会与相邻阶段打架(见 ReencodeDirPngToJpgCore 的说明)。
+        //   edgeSmooth > 0 时忽略它 —— AA 那条路径的文案与百分比区间保持原样(有实测依据,不许改)。
         // ① 先记下"本来就已经是 JPG"的帧:PNG 转完之后无从区分,所以要提前抓
         string[] preexistingJpg = Array.Empty<string>();
         if (edgeSmooth > 0)
         {
             try { preexistingJpg = Directory.EnumerateFiles(dir, "*.jpg").ToArray(); } catch { }
         }
-        ReencodeDirPngToJpgCore(dir, edgeSmooth, progress, ct, 93, 95);
+        int pngCount = ReencodeDirPngToJpgCore(dir, edgeSmooth, progress, ct, 93, 95, curPct);
         // ② 本就已经是 JPG 的帧:就地做一次抗锯齿(先在内存里编完再覆盖原路径,绝不半写坏)
         if (edgeSmooth > 0 && preexistingJpg.Length > 0)
         {
@@ -4130,11 +4185,13 @@ public static class VideoService
             }
             catch (OperationCanceledException) { throw; }
         }
+        return pngCount;
     }
 
-    /// <summary>PNG → JPG(可选抗锯齿)。分两遍扫,保持原有"坏帧补同尺寸占位、保帧号连续"的行为。</summary>
-    private static void ReencodeDirPngToJpgCore(string dir, int edgeSmooth,
-        IProgress<(int pct, string msg)>? progress, CancellationToken ct, int pctFrom, int pctTo)
+    /// <summary>PNG → JPG(可选抗锯齿)。分两遍扫,保持原有"坏帧补同尺寸占位、保帧号连续"的行为。
+    /// 返回处理的 PNG 帧数(0 = 目录里本来就没有 PNG)。</summary>
+    private static int ReencodeDirPngToJpgCore(string dir, int edgeSmooth,
+        IProgress<(int pct, string msg)>? progress, CancellationToken ct, int pctFrom, int pctTo, int curPct)
     {
         int refW = 0, refH = 0;
         try
@@ -4214,12 +4271,30 @@ public static class VideoService
                 catch { }
                 try { File.Delete(png); } catch { }
                 int d = Interlocked.Increment(ref done);
-                if (edgeSmooth > 0 && (d % 20 == 0 || d == pngs.Length))
-                    progress?.Report((pctFrom + (int)((pctTo - pctFrom) * (double)d / Math.Max(1, pngs.Length)),
-                        $"边缘抗锯齿 已处理 {d} 帧 / 共 {pngs.Length} 帧"));
+                if (edgeSmooth > 0)
+                {
+                    // AA 路径(edgeSmooth > 0):文案与百分比区间【保持原样不动】(2026-09-12 实测依据:4K 下
+                    // ffmpeg sab 4.88 秒/帧 → 换成这套 C# 并行实现约 0.1 秒/帧,那条路径的进度口径不许改)。
+                    if (d % 20 == 0 || d == pngs.Length)
+                        progress?.Report((pctFrom + (int)((pctTo - pctFrom) * (double)d / Math.Max(1, pngs.Length)),
+                            $"边缘抗锯齿 已处理 {d} 帧 / 共 {pngs.Length} 帧"));
+                }
+                else if (d % 20 == 0 || d == pngs.Length)
+                {
+                    // 【G · 2026-09-13】AA 关(官方预设现已默认清 0)时这条路径原来【一条进度都不发】:
+                    // 整批整理帧期间界面只停在上一阶段的"预计还剩几秒",补帧跑到 2667/2668 之后就像卡死
+                    // (真机反馈)。现在发中性文案"整理帧(JPG) 第 N / M 帧":
+                    //   · 沿用【当前进度百分比】curPct —— 只换文字,不推进也不回退:这一步没有自己的进度区间,
+                    //     硬塞一个区间会与相邻阶段(缩放 92~98 / 编码 96~100)打架,反而让进度条乱跳;
+                    //   · 文案不带"共"字 → UI 的 etaRegex(要求"第 N 帧 / 共 M 帧")匹配不上 → 不抢步骤行、不改写它;
+                    //   · 不含"完成"二字 → 不会被 UI 当成阶段结束行(否则会清掉当前步骤行);
+                    //   · 每 20 帧一条 + 末帧一条,和 AA 路径同频(不刷屏)。
+                    progress?.Report((curPct, $"整理帧(JPG) 第 {d} / {pngs.Length} 帧"));
+                }
             });
         }
         catch (OperationCanceledException) { throw; }
+        return pngs.Length;
     }
 
     /// <summary>
