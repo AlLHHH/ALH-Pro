@@ -1503,7 +1503,16 @@ public sealed partial class VideoView : UserControl
         //   改名时漏改的旧标签(已在 UpEsrganModelNames 改成「(中)」),但模型本身照用户要求换掉。
         //   这一条与 Rev 3 的取舍相反(Rev 3 以"预设名叫「通用」就该配通用模型"为由换成 general-x4v3),
         //   本次以用户偏好为准。若要退回:把下面 UpEsrganModel 改回 2 并**再提一次 Rev**,不提则老机器不刷新。
-        ( "通用画质增强 不含补帧", 5, new Func<VideoSettings>(() => new VideoSettings
+        // 【Rev 6 · 2026-09-13】按用户要求:官方预设的「边缘抗锯齿」一律清零(PostAa 45 → 0)。
+        //   理由:该档是当前唯一"纯为观感"的高成本项 —— 它跑在最终最大分辨率上(4x = 4320p),
+        //   每帧要做"解码 → 逐像素 3×3 边缘平滑 → 重编码 JPG",4K 单帧约 1.19 秒(并行后约 0.1 秒/帧),
+        //   用户实测长素材上这一步占掉可观时间。默认不再替用户开,想开的人在界面里自己拉这条滑条
+        //   (「边缘抗锯齿」滑条与全部实现都保留,只是不再默认给 45)。
+        //   【必须提 Rev · 与 Rev 4 同理】EnsureBuiltinPresets 只在 OfficialRev < rev 时才覆盖老用户的
+        //   同名官方预设;不提 Rev,老机器上那份 Rev5 预设会继续带着 PostAa=45 生效,用户改了也白改。
+        //   只提这两个真的改了 PostAa 的预设(通用画质增强/anime通用);「去重补帧4x」的 PostAa 本来就是 0,
+        //   没改就不提 Rev —— 提了只会白白覆盖用户对它其它参数的自定义(见 EnsureBuiltinPresets 注释)。
+        ( "通用画质增强 不含补帧", 6, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = false, Up = true, Engine = 1, Scale = 1, Gpu = 0,
             Interp = false, Model = 0, UpWaifu2xModel = 0, UpEsrganModel = 0, InterpScale = 0,
@@ -1512,7 +1521,7 @@ public sealed partial class VideoView : UserControl
             Scene = false, SceneThr = 0.3, TimeStep = 0.5, Tta = false, OutDir = "", CustomW = "1920", CustomH = "1080",
             DedupAlgo = 0, DedupHi = 12, DedupLo = 5, DedupFrac = 0.33, DedupSadThr = 3, DedupSsimThr = 0.97, ContentFps = 0,
             DedupMotionComp = true, DedupOnlyTrueHold = true, ManualProtectSmallMotion = true, DedupPhaseAlign = true,
-            PostSharpen = 20, PostClarity = 25, PostUsm = 35, PostDetail = 40, PostDeblur = 0, PostAa = 45,
+            PostSharpen = 20, PostClarity = 25, PostUsm = 35, PostDetail = 40, PostDeblur = 0, PostAa = 0,
             Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
             FastMode = false, Mute = false, VideoDenoiseOn = false, VideoDenoiseStrong = -1, DenoiseKind = 0,
         })),
@@ -1532,7 +1541,11 @@ public sealed partial class VideoView : UserControl
         //   降噪(结合·中)+ x4plus-anime : 棱角 84.9(不降噪同模型 90.7)→ 削 6.4%
         // 结论:降噪对本预设的目标素材(动漫)是"净损棱角"的一步,故默认关掉;压缩严重/噪点明显的素材
         //       用户可自行在「视频降噪」里打开(开关与三档、三种方式都保留,只是不再默认替用户开)。
-        ( "动漫通用", 5, new Func<VideoSettings>(() => new VideoSettings
+        // 【Rev 6 · 2026-09-13】按用户要求:「边缘抗锯齿」清零(45 → 0),与本文件另一个官方预设同批改。
+        //   这一档在 4K/4320p 上每帧"解码 → 逐像素 3×3 边缘平滑 → 重编码 JPG",是纯观感项、又是最贵的一步;
+        //   默认不再替用户开,想开的人自己拉滑条(实现与滑条都保留)。
+        //   【必须提 Rev】不提则老机器上的 Rev5 预设继续按 PostAa=45 跑(见 EnsureBuiltinPresets)。
+        ( "动漫通用", 6, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = true, Up = true, Engine = 1, Scale = 1, Gpu = 0,
             Interp = true, Model = 0, UpWaifu2xModel = 1, UpEsrganModel = 0, InterpScale = 2,
@@ -1541,10 +1554,13 @@ public sealed partial class VideoView : UserControl
             Scene = false, SceneThr = 0.3, TimeStep = 0.5, Tta = false, OutDir = "", CustomW = "1920", CustomH = "1080",
             DedupAlgo = 3, DedupHi = 12, DedupLo = 5, DedupFrac = 0.33, DedupSadThr = 3, DedupSsimThr = 0.97, ContentFps = 0,
             DedupMotionComp = true, DedupOnlyTrueHold = true, ManualProtectSmallMotion = true, DedupPhaseAlign = true,
-            PostSharpen = 20, PostClarity = 25, PostUsm = 40, PostDetail = 40, PostDeblur = 0, PostAa = 45,
+            PostSharpen = 20, PostClarity = 25, PostUsm = 40, PostDetail = 40, PostDeblur = 0, PostAa = 0,
             Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
             FastMode = false, Mute = false, VideoDenoiseOn = false, VideoDenoiseStrong = -1, DenoiseKind = 0,
         })),
+        // 【Rev 保持 1 · 2026-09-13 核过】这个预设的「边缘抗锯齿」本来就是 0(PostAa = 0,整组后处理全 0),
+        //   本次"官方预设 AA 一律清零"对它【没有任何改动】,故【刻意不提 Rev】:
+        //   提 Rev 只会把用户对它其它参数的自定义整份覆盖掉(EnsureBuiltinPresets 的覆盖规则),得不偿失。
         ( "去重补帧4x", 1, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = true, Up = false, Engine = 0, Scale = 1, Gpu = 0,

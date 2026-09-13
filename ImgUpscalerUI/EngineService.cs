@@ -2966,25 +2966,33 @@ public static partial class EngineService
         SaveJpegViaGdi(img, jpgPath, quality);
     }
 
-    /// <summary>对【已存在的 JPG】就地做一次「边缘抗锯齿」(写临时文件再替换,绝不半写坏原帧)。
+    /// <summary>对【已存在的 JPG】就地做一次「边缘抗锯齿」。
     /// 用途:帧目录里本来就已经是 JPG 的帧(未超分/未补帧、或引擎直接给 JPG 的路径)也要吃到这一档,
-    /// 否则同一个开关在不同管线分支下效果不一致。</summary>
+    /// 否则同一个开关在不同管线分支下效果不一致。
+    /// 【提速·2026-09-13,不改画质】旧实现写 `原文件.aa.jpg` 再 File.Copy 覆盖原帧:同一份 JPG 要多付
+    /// "写临时 + 读临时 + 写原文件"三轮全文件 I/O(4K 每帧 2~4MB,12 路并行时是实打实的盘带宽),
+    /// 还会在帧目录里多留一批临时文件(临时盘本来就紧张)。现在先在【内存】里把 JPG 编完,
+    /// 再用一次 File.WriteAllBytes 覆盖原路径:同一个编码器、同一个 quality、同一批像素 → 输出字节不变,
+    /// 而"编码失败/抛异常时原帧一个字节都没被碰"这个安全性反而更强(旧实现在 Copy 阶段原帧已被截断)。
+    /// 注意:仍是"就地覆盖",不引入半写风险 —— WriteAllBytes 前原文件已完整编码在内存里。</summary>
     public static void ApplyEdgeSmoothToJpeg(string jpgPath, int strength, float quality)
     {
-        var tmp = jpgPath + ".aa.jpg";
-        try
+        byte[] bytes;
+        using (var bmp = new System.Drawing.Bitmap(jpgPath))
         {
-            using (var bmp = new System.Drawing.Bitmap(jpgPath))
-            {
-                ApplyEdgeSmoothInMemory(bmp, strength);
-                SaveJpegViaGdi(bmp, tmp, quality);
-            }
-            File.Copy(tmp, jpgPath, overwrite: true);
+            ApplyEdgeSmoothInMemory(bmp, strength);
+            bytes = EncodeJpegToBytes(bmp, quality);
         }
-        finally
-        {
-            try { File.Delete(tmp); } catch { /* 清理失败忽略 */ }
-        }
+        File.WriteAllBytes(jpgPath, bytes);
+    }
+
+    /// <summary>把位图编码成 JPG 字节(GDI+、24bppRgb、同一质量参数 —— 与 SaveJpegViaGdi 同一条编码路径),
+    /// 供"就地覆盖原帧"的场景先在内存里拿到完整字节(见 ApplyEdgeSmoothToJpeg)。</summary>
+    private static byte[] EncodeJpegToBytes(System.Drawing.Bitmap bmp, float quality)
+    {
+        using var ms = new MemoryStream();
+        SaveJpegViaGdi(bmp, ms, quality);
+        return ms.ToArray();
     }
 
     /// <summary>
@@ -3064,16 +3072,24 @@ public static partial class EngineService
     /// <summary>System.Drawing 编码 JPG 的回退路径:转成无 alpha 的 24bppRgb 再编码,规避 GDI+ 对 ARGB 的色偏。</summary>
     private static void SaveJpegViaGdi(System.Drawing.Bitmap bmp, string jpgPath, float quality = 0.92f)
     {
+        using var fs = File.Create(jpgPath);
+        SaveJpegViaGdi(bmp, fs, quality);
+    }
+
+    /// <summary>同 SaveJpegViaGdi,但写到任意流:就地覆盖原帧的场景要"先在内存里编完再落盘",
+    /// 只能走流(见 ApplyEdgeSmoothToJpeg / EncodeJpegToBytes)。编码器与质量参数与路径版完全一致。</summary>
+    private static void SaveJpegViaGdi(System.Drawing.Bitmap bmp, Stream stream, float quality)
+    {
         using var rgb = new System.Drawing.Bitmap(bmp.Width, bmp.Height, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
         using (var g = System.Drawing.Graphics.FromImage(rgb))
             g.DrawImage(bmp, 0, 0, bmp.Width, bmp.Height);
         var codec = System.Drawing.Imaging.ImageCodecInfo.GetImageEncoders()
             .FirstOrDefault(c => c.FormatID == System.Drawing.Imaging.ImageFormat.Jpeg.Guid);
-        if (codec == null) { rgb.Save(jpgPath, System.Drawing.Imaging.ImageFormat.Jpeg); return; }
+        if (codec == null) { rgb.Save(stream, System.Drawing.Imaging.ImageFormat.Jpeg); return; }
         using var enc = new System.Drawing.Imaging.EncoderParameters(1);
         enc.Param[0] = new System.Drawing.Imaging.EncoderParameter(
             System.Drawing.Imaging.Encoder.Quality, (long)Math.Round(Math.Clamp(quality, 0.1f, 1.0f) * 100.0));
-        rgb.Save(jpgPath, codec, enc);
+        rgb.Save(stream, codec, enc);
     }
 
     /// <summary>PNG 无损保存并指定压缩级别(0-9:低=快/文件大,高=慢/文件小;不影响画质)。</summary>
@@ -4104,7 +4120,6 @@ public static partial class EngineService
     {
         int w = bmp.Width, h = bmp.Height;
         if (w < 3 || h < 3) return;
-        double mix = strength / 100.0 * 0.55;
         var rect = new System.Drawing.Rectangle(0, 0, w, h);
         var data = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadWrite,
             System.Drawing.Imaging.PixelFormat.Format32bppArgb);
@@ -4131,9 +4146,11 @@ public static partial class EngineService
                     }
                 }
             }
-            EdgeSmoothChannel(r, w, h, mix);
-            EdgeSmoothChannel(g, w, h, mix);
-            EdgeSmoothChannel(b, w, h, mix);
+            // 逐通道边缘平滑:纯逻辑已抽到 AlhPro.Core.EdgeSmooth(可单测:边界列/平坦区/舍入都有断言钉住)。
+            // 语义与抽走前逐字节一致,只是把"每像素 9 次 clamp + 9 次索引乘加"换成"内部像素无 clamp"的快路径。
+            AlhPro.Core.EdgeSmooth.Channel(r, w, h, strength);
+            AlhPro.Core.EdgeSmooth.Channel(g, w, h, strength);
+            AlhPro.Core.EdgeSmooth.Channel(b, w, h, strength);
             unsafe
             {
                 byte* p0 = (byte*)data.Scan0.ToPointer();
@@ -4157,39 +4174,11 @@ public static partial class EngineService
         }
     }
 
-    /// <summary>单通道边缘平滑:边缘像素 = 原值 + (3×3 均值 - 原值) × mix;局部对比度低于阈值视为平坦区,不动。</summary>
-    private static void EdgeSmoothChannel(byte[] src, int w, int h, double mix)
-    {
-        const int edgeThreshold = 16;   // 中心与邻域最大差超过该值才算边缘
-        var orig = new byte[src.Length];
-        Buffer.BlockCopy(src, 0, orig, 0, src.Length);
-        for (int y = 0; y < h; y++)
-        {
-            int rowBase = y * w;
-            for (int x = 0; x < w; x++)
-            {
-                int center = orig[rowBase + x];
-                int sum = 0, maxDiff = 0, cnt = 0;
-                for (int dy = -1; dy <= 1; dy++)
-                {
-                    int yy = Math.Clamp(y + dy, 0, h - 1) * w;
-                    for (int dx = -1; dx <= 1; dx++)
-                    {
-                        int xx = Math.Clamp(x + dx, 0, w - 1);
-                        int v = orig[yy + xx];
-                        sum += v;
-                        cnt++;
-                        int d = v > center ? v - center : center - v;
-                        if (d > maxDiff) maxDiff = d;
-                    }
-                }
-                if (maxDiff < edgeThreshold) continue;   // 平坦区:不动
-                int mean = sum / cnt;
-                int outV = center + (int)Math.Round((mean - center) * mix);
-                src[rowBase + x] = (byte)Math.Clamp(outV, 0, 255);
-            }
-        }
-    }
+    // 单通道边缘平滑的算法已【迁到】AlhPro.Core.EdgeSmooth.Channel(纯逻辑 + 单测钉住:边界列、平坦区、
+    // 舍入都与朴素实现逐字节比对,见 AlhPro.Tests.EdgeSmoothTests)。
+    // 【为什么不留一份在这里】两份同样的算法必然会分叉 —— 一份被改画面变了、另一份没变,而这一档的语义
+    // 就是"成片画质",必须在唯一一处定义、并有测试保护。原实现(每像素 9 次 Math.Clamp)的等价性
+    // 由测试里的朴素参考实现覆盖。
 
     /// <summary>
     /// 用 WinRT 图像解码器把任意图片转码为标准 8 位 PNG(临时目录)。
