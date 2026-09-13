@@ -1901,7 +1901,7 @@ public sealed partial class MainPage : Page
         // 若之后用户说明贡献内容(测试/反馈/提供素材等),再把描述补在这一行。
         content.Children.Add(new TextBlock
         {
-            Text = "特别致谢:羡鱼",
+            Text = "特别致谢:记住羡鱼",
             FontSize = 11,
             Opacity = 0.85,
             TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
