@@ -1541,6 +1541,12 @@ public static class VideoService
                 // 因此这里**只出日志、不改行为**(默认不开填平)。详见本次提交说明的【仅方案】。
                 {
                     var flatPlan = AlhPro.Core.TimelineFlattenPlan.Decide(frameDurs, effectiveFps, interpScale);
+                    // 【S2 · 2026-09-13 用户复测修正口径】真正要修的是**切点混合帧**(实测鬼影比 0.647/0.692 +
+                    // 一帧严重软化 B[57] lapvar 仅源帧 7.8%),而不是"缺口里填运动"(缺口内部几乎无变化:
+                    // 实测 0.871/0.150,填与不填视觉等价)。判据 = 帧差 ≥25 且(拉普拉斯能量比 ≤0.6 或帧差 ≥50)【待实测标定】。
+                    // 现有 interp 路径本就按转场分段跑(segBounds 来自 cuts)→ RIFE 侧不会跨切混合;这条保护是给
+                    // "按时轴逐槽 φ 插值"的排程用的(Core.CutAwareSchedule:切点上强制拷贝、不许合成)。
+                    AppLogger.Info($"时间轴:检测到 {cuts.Count} 处场景切换,已按切点对齐(不生成跨切混合帧;判定阈值【待实测标定】)");
                     AppLogger.Info(flatPlan.LogLine + (flatPlan.Flatten
                         ? $" → 可填平(缺口 {flatPlan.GapCount} 处,目标 {flatPlan.TargetFps:0.##}fps);合成步骤尚未接入,本次仍按原样输出"
                         : ""));
