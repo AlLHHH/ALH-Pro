@@ -339,6 +339,10 @@ public sealed partial class VideoView : UserControl
     // 「输入帧率」框里那个值是从哪个视频探测来的(null = 无来源/用户手填):
     // 用于在开始处理时识别"框里还留着上一个视频的帧率"的残留(输入帧率参与节奏换算,残留会算错结果)。
     private VideoItem? _inputFpsOwner;
+    // 【任务 P】"用户刚点过的那个视频"(含已完成的)。列表是多选模式,点一个"已选中"的项会变成"取消选中",
+    // 而选择变化回调在"没选中"时按设计清空帧率框 —— 记住它才能在取消选中的情况下仍显示它的帧率。
+    // 该字段只在"列表清空 / 删掉该项 / 列表已不含它"时被清掉(清掉后框才允许为空)。
+    private VideoItem? _lastClickedItem;
     private int _gpuCount;
 
     // ---- 暂停/恢复:暂停后停在下一个视频之前,可删除"未处理"的项目 ----
@@ -2643,6 +2647,10 @@ public sealed partial class VideoView : UserControl
         try
         {
             item.FpsProbe = await Task.Run(() => VideoService.ProbeFps(item.Path) ?? "");
+            // 【任务 P】这个视频正好是「输入帧率」框的来源(框里那个值的 owner,或用户刚点过的那个)→ 同步刷新框,
+            // 否则重拖/覆盖同名文件后,框里会留着旧帧率(而它参与节奏换算)。
+            if (ReferenceEquals(_inputFpsOwner, item) || ReferenceEquals(_lastClickedItem, item))
+                SetInputFpsText(item.FpsProbe, item);
             _ = LoadItemDurationAsync(item);
             _ = ProbeVfrAsync(item);
             _ = ProbeDupAsync(item);
@@ -3078,6 +3086,8 @@ public sealed partial class VideoView : UserControl
         _videos.Remove(item);
         if (ReferenceEquals(_selected, item)) _selected = null;
         if (ReferenceEquals(_previewItem, item)) _previewItem = null;
+        // 【任务 P】删掉的正是"用户点过的那个视频"→ 清掉记忆,否则框会一直显示一个已删除视频的帧率
+        if (ReferenceEquals(_lastClickedItem, item)) _lastClickedItem = null;
         // 删掉的正是「当前选中项」或「输入帧率框当前值的来源视频」→ 这两处派生值立刻清空。
         // 该框是"某个视频"的派生值,删完后若还留着(选中事件不保证重发),用户接着拖入新视频
         // 就会看到【上一个视频】的帧率 —— 而它参与节奏换算(内容帧率 = 输入帧率 ÷ 拍数),会算错去重/补帧。
@@ -3308,6 +3318,7 @@ public sealed partial class VideoView : UserControl
         _videos.Clear();
         _selected = null;
         _previewItem = null;
+        _lastClickedItem = null;   // 【任务 P】列表清空 → 连"点过的那个视频"的记忆一起清掉,框才允许为空
         VideoInfo.Text = "未选择视频";
         SetInputFpsText("", null);   // 「输入帧率」是某个视频的派生值,列表清空就不许留在界面上(会带进下一个视频)
         if (wasCount > 0) Log($"清空了视频列表(共 {wasCount} 个)");
@@ -3396,12 +3407,38 @@ public sealed partial class VideoView : UserControl
         var sel = VideoList.SelectedItems.Count > 0
             ? VideoList.SelectedItems[^1] as VideoItem : null;
         _selected = sel;
+        if (sel != null) _lastClickedItem = sel;   // 【任务 P】记住用户点过的项(取消选中时还要用它)
         UpdateListButtons();
         VideoInfo.Text = sel != null ? $"{sel.Name}\n{sel.Info}" : "未选择视频";
+        // 【任务 P · 用户报障修复】Multiple 模式下"点一个已选中的项"= 取消选中 → 旧代码在这里把框清空,
+        // 用户看到的就是「激活/选中以后依然空的」。现在按纯策略决定显示来源:
+        //   有选中项 → 用它;没选中但记得"刚点过的那一项" → **仍显示那一项的帧率**(已完成的视频也算);
+        //   两者都没有(列表刚清空/删完) → 才留空(空 = 处理时按该视频自动探测,语义正确)。
         // 传【局部 sel】而不是字段 _selected:探测期间用户又改选中/删项时,
         // await 之后再读字段会把 A 的帧率写进 B 的输入框(异步竞态)。
-        await SyncInputFpsAsync(sel);
+        var src = AlhPro.Core.InputFpsSyncPolicy.Decide(VideoList.SelectedItems.Count, HasLastClickedInList());
+        await SyncInputFpsAsync(src == AlhPro.Core.InputFpsSyncPolicy.Source.Selection ? sel : LastClickedInList());
         _ = RefreshVideoOutSpec();
+    }
+
+    /// <summary>_lastClickedItem 是否仍然在列表里(防"已删除的视频"的帧率留在框里)。</summary>
+    private bool HasLastClickedInList() => _lastClickedItem != null && _videos.Contains(_lastClickedItem);
+    private VideoItem? LastClickedInList() => HasLastClickedInList() ? _lastClickedItem : null;
+
+    /// <summary>【任务 P】点击"激活"某个视频 → 把「输入帧率」框显示成该视频的实测帧率(含**已处理完成**的项)。
+    /// 为什么必须单独有这条路径:①列表是多选模式,点一个"已选中"的项在 SelectionChanged 里表现为"取消选中",
+    /// 而那里过去会清空该框 —— 这正是用户报的"激活以后依然空的";②已完成的项在旧代码里没有任何回填路径
+    /// (回填只在"选中变化"和"入列时待处理恰好 1 个"时发生)。ItemClick 不依赖选中状态:点谁显示谁。
+    /// 【归属不变】框的来源仍记成被点的那个视频(_inputFpsOwner):处理时的残留防线照旧要求
+    /// owner 必须是本次要处理的第一个视频,否则忽略并写日志 —— 显示放开、取值口径一点没放宽。</summary>
+    private async void VideoList_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is not VideoItem clicked) return;
+        _lastClickedItem = clicked;
+        if (string.IsNullOrEmpty(clicked.FpsProbe))
+            await SyncInputFpsAsync(clicked);          // 缓存为空(入列时探测失败)→ 现探一次
+        else
+            SetInputFpsText(clicked.FpsProbe, clicked); // 用入列时探到的值(无 ffprobe 开销)
     }
 
     /// <summary>把「输入帧率」框同步为指定视频的实测帧率;<paramref name="item"/> 为 null = 清空该框。

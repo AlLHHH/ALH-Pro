@@ -272,6 +272,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="输入帧率" VerticalAlignment="Center"/>
                             <TextBox x:Name="InputFpsBox" Grid.Column="1" Text="30"
+                                     PlaceholderText="空 = 按该视频自动探测"
                                      IsSpellCheckEnabled="False" TextChanged="Text_Changed"/>
                         </Grid>
                         <Button x:Name="FpsIndividualBtn" Content="单独调整各视频帧率" Visibility="Collapsed"
@@ -838,6 +839,7 @@
                       PointerCaptureLost="VideoGridHost_PointerCaptureLost"
                       AllowDrop="True" DragOver="DropBorder_DragOver" Drop="DropBorder_Drop">
                     <ListView x:Name="VideoList" SelectionMode="Multiple" SelectionChanged="VideoList_SelectionChanged"
+                              IsItemClickEnabled="True" ItemClick="VideoList_ItemClick"
                               Background="Transparent" BorderThickness="0"
                               CanDragItems="True" CanReorderItems="True"
                               DoubleTapped="VideoList_DoubleTapped" KeyDown="VideoList_KeyDown"

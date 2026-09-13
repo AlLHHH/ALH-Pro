@@ -140,8 +140,11 @@ public static class VideoService
         {
             try
             {
+                // 【任务 P】同时取 avg_frame_rate 与 r_frame_rate:VFR 素材的 avg 实测可能是 `0/0`
+                // (旧实现这时会把 "0/0" 原样返回 → 输入框里显示非数字),解析交给 Core.FfprobeFps(纯逻辑 + 单测):
+                // avg 无效就自动看 r(容器最大帧率),两个都无效才返回 null(= 留空,处理时按该视频自动探测)。
                 var psi = AudioService.NewFfmpegPsi(ffprobe, $"-v error -select_streams v:0 " +
-                                $"-show_entries stream=avg_frame_rate -of csv=p=0 \"{videoPath}\"");
+                                $"-show_entries stream=avg_frame_rate,r_frame_rate -of csv=p=0 \"{videoPath}\"");
                 psi.RedirectStandardOutput = true;
                 psi.RedirectStandardError = true;
                 using var p = Process.Start(psi);
@@ -149,13 +152,8 @@ public static class VideoService
                 var o = p.StandardOutput.ReadToEnd().Trim();
                 if (o.Length > 0)
                 {
-                    var m = System.Text.RegularExpressions.Regex.Match(o, @"(\d+)/(\d+)");
-                    if (m.Success)
-                    {
-                        long num = long.Parse(m.Groups[1].Value), den = long.Parse(m.Groups[2].Value);
-                        if (den > 0) return (num / (double)den).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
-                    }
-                    return o;
+                    var parsed = AlhPro.Core.FfprobeFps.Parse(o);
+                    if (parsed != null) return parsed;
                 }
             }
             catch { }
