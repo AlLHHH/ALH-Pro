@@ -4101,12 +4101,12 @@ public sealed partial class VideoView : UserControl
                         if (dur <= 0) continue;   // 时长未知:下面两项估算(耗时/占盘)都依赖时长
                         double fps = 30;
                         try { if (double.TryParse(VideoService.ProbeFps(it.Path), NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var pf) && pf > 0) fps = pf; } catch { }
-                        // 阶段顺序口径与 ProcessVideoAsync 一致:1x(scale 已按 2 计)/2x 走「超分 → 补帧」,
-                        // 3x/4x(scale>2.001)保持「补帧 → 超分」——ETA 公式必须与真正执行的顺序同源,否则估算失真。
-                        bool upscaleFirstEta = upOn && interpOn
-                            && !(scale <= 1.001 && !upscaleShrink1x) && !(scale > 2.001);
+                        // 【H · 2026-09-13】阶段顺序不再由界面自己算:EstimateProcessSeconds 内部一律取
+                        // AlhPro.Core.VideoPipeline.UpscaleRunsFirst(...)(单一事实来源,当前 = 旧顺序)。
+                        // 原先这里自己写了一份判据(还带 "1x/2x 走新顺序" 的假设),管线回退后它就一直在按
+                        // 根本不会执行的顺序估时间 —— 这正是"预计时间不准"的来源之一。
                         totalSec += VideoService.EstimateProcessSeconds(dur, fps, w, h,
-                            upOn, scale, engine, interpOn, interpScale, dedupOn, 0, postFx: false, upscaleFirst: upscaleFirstEta,
+                            upOn, scale, engine, interpOn, interpScale, dedupOn, 0, postFx: false,
                             freeRamGB: SafeRender.FreeRamGB);   // 传空闲内存 → 估算里计入"每批引擎启动开销 × 批数"
                         // 占盘(JPG 中间帧峰值,与 C3 一致):源帧≈1MB/1080p,放大后×倍率²×0.18
                         double srcMB = 1.0 * ((double)w * h) / (1920.0 * 1080.0); if (srcMB < 0.5) srcMB = 0.5;
@@ -4719,14 +4719,12 @@ public sealed partial class VideoView : UserControl
                 double fps = double.TryParse(fpsS, NumberStyles.Float, inv, out var pf) && pf > 0 ? pf : 30;
                 var (w, h) = await VideoService.ProbeSizeAsync(it.Path);
                 totalFramesEst += (int)Math.Max(1, dur * fps);
-                // 阶段顺序口径同 ProcessVideoAsync:1x(upscaleShrink1x,内部按 2x)/2x → 「超分 → 补帧」;
-                // 3x/4x(scale>2.001)保持「补帧 → 超分」。传错会让 ETA 与实际执行的阶段顺序各说各话。
-                double effScaleEta = upscaleShrink1x ? 2.0 : scale;
-                bool upscaleFirstEta = up && interp && !(scale <= 1.001 && !upscaleShrink1x) && !(effScaleEta > 2.001);
+                // 【H · 2026-09-13】阶段顺序同样交给单一事实来源(见 VideoService.EstimateProcessSeconds 的注释):
+                // 界面不再自己算"是否走新顺序"——那份判据会与管线各写一份,回退时必然漏改一处。
                 etaInitTotal += VideoService.EstimateProcessSeconds(dur, fps, w, h,
                     up, upscaleShrink1x ? 2.0 : scale, engine, interp, interpScale, dedupOn,
                     DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex + 1 : 0,
-                    postSP + postCL + postUM + postDB + postAA > 0, upscaleFirstEta,
+                    postSP + postCL + postUM + postDB + postAA > 0,
                     SafeRender.FreeRamGB);   // 传空闲内存 → 估算里计入"每批引擎启动开销 × 批数"
             }
             catch { etaInitTotal += 60; }

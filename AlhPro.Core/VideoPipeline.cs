@@ -10,6 +10,45 @@ namespace AlhPro.Core;
 /// </summary>
 public static class VideoPipeline
 {
+    // ===== 阶段顺序的【单一事实来源】(2026-09-13 新增,任务 H)=====
+    // 【为什么要它】"1x/2x 走「超分 → 补帧」新顺序"这个判据一度被写在两处:VideoService 的管线里一处、
+    // UI 的 ETA 估算里又各写一份(而且写法还不一样)。2026-09-13 管线侧实测回退成旧顺序后,
+    // UI 忘了跟着改 → **界面上给的预计时间在算一个根本不会执行的顺序**,这正是"预计时间不准"的来源之一。
+    // 现在:是否走新顺序只有下面这一个开关 + 一个纯函数,管线和 UI 都必须走它,不许各写一份。
+
+    /// <summary>「超分 → 补帧」新顺序总开关。【当前 = false(已回退)】。
+    /// 【为什么回退】2026-09-13 用户真机日志(3 秒 / 72 帧 / 1080p / realesr-animevideov3 2x / rife-v4.13 4x):
+    /// 超分实测 72 帧 20.1s = 279 ms/帧(开发期 harness 测到的 0.70 s/帧高估了约 2.5 倍,而"先超分更划算"
+    /// 的全部依据就是"超分贵"),补帧搬到 3840×2160 后只有 1.83 帧/秒 → 该作业净亏,且随帧数线性增长。
+    /// 【重新启用前必须做的两件事】① 用 SafeRender.GetEngineThreadArgs() 同款线程参数实测
+    /// "补帧倍率 × 超分倍率 × 片长"矩阵;② 按单帧成本之比(而非"帧数超过多少")给门限。
+    /// 另外:启用时还要同步改 StageProgressPct 的超分区间与各处进度区间,否则进度条会先跳后倒退。</summary>
+    public const bool UpscaleFirstEnabled = false;
+
+    /// <summary>回退原因(写进日志/诊断用,单一来源,避免各处各写一句)。</summary>
+    public const string UpscaleFirstDisabledReason =
+        "新顺序「超分 → 补帧」已于 2026-09-13 实测回退(4x 补帧/短视频上净亏:超分实测 279 ms/帧而非预估的 0.70 s/帧)," +
+        "当前一律按旧顺序「补帧 → 超分」执行";
+
+    /// <summary>本次任务实际是否走「超分 → 补帧」新顺序(纯函数,单一事实来源:管线与 ETA 都必须调它)。
+    /// 条件与回退前的原判据一致,只是多了总开关:
+    ///   ① 总开关开启(当前恒 false);② 真的要补帧;③ 超分阶段真的会执行(1x 缩回也算执行);
+    ///   ④ 超分倍数 ≤ 2.001(3x/4x 等一律旧顺序 —— 补帧单价随分辨率涨得比超分快,先补帧能把补帧按便宜价跑)。
+    /// 【为什么把"超分是否执行"也收进来】VideoService 里原本用 `doUpscale && !(scale <= 1.001 && !shrink1x)`
+    /// 算 upscaleRuns,这里按同一口径复刻,避免两处条件漂移。</summary>
+    public static bool UpscaleRunsFirst(bool up, double scale, bool interp, bool shrink1x = false)
+    {
+        // 总开关关着 → 一律旧顺序(当前恒走这一行:上面 UpscaleFirstEnabled = false)。
+        if (!UpscaleFirstEnabled) return false;
+        // 【下面这段是"开关打开之后"的真实判据,必须留着】与回退前的原判据逐字一致:
+        //   ① 真的要补帧;② 超分阶段真的会执行(1x 缩回也算执行);③ 超分倍数 ≤ 2.001。
+        // 因为 UpscaleFirstEnabled 是 const,编译器会把这里判成"不可达代码"(CS0162)——
+        // 这是刻意的(代码要为"重新启用"保留),用 pragma 就地抑制,免得给构建新增警告。
+#pragma warning disable CS0162
+        bool upscaleRuns = up && !(scale <= 1.001 && !shrink1x);   // 与 VideoService 的 upscaleRuns 同口径
+        return interp && upscaleRuns && !(scale > 2.001);
+#pragma warning restore CS0162
+    }
     /// <summary>每批超分引擎进程的"启动 + 模型加载"固定开销(秒/批)【待实测标定】。
     /// 【依据(本机只读日志,2026-09-13)】
     ///  · 19:00:16→19:00:33 单批 72 帧:引擎启动 → 引擎完成 = 17.1s(整阶段 20.1s / 72 帧 = 279 ms/帧);
