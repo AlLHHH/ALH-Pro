@@ -2849,37 +2849,24 @@ public static class VideoService
     /// 现三档都是"空间 nlmeans + 时间 hqdn3d"组合,并按档位同步放大;参数格式 hqdn3d=亮度空间:色度空间:亮度时间:色度时间。</summary>
     private static string VideoDenoiseFilter(int strength, int kind = 0)
     {
-        // kind: 0=两者结合(默认,兼容旧设置) 1=仅空间 nlmeans 2=仅时间 hqdn3d
-        // 【结合模式为什么空间只用"轻"档】用户素材实测(1080p 2 秒):空间参数调重是拿细节换收益 ——
-        //   nlmeans 强 + hqdn3d 强 : 平坦噪点 0.66 / 抖动 1.419 / 细节 19.0
-        //   nlmeans 弱 + hqdn3d 强 : 平坦噪点 0.69 / 抖动 1.396 / 细节 20.7  ← 采用(抖动更低、细节多 9%)
-        // 所以结合模式下三档只放大【时间维】,空间固定轻档;「仅空间」模式下强度照旧作用于 nlmeans。
-        // 【仅时间模式擦不干净单帧噪点】实测把 hqdn3d 空间参数从 8 拉到 16,平坦噪点 0.77→0.77 纹丝不动 ——
-        // 它那部分机制天生就弱,这是"部分噪点去不干净"的根因,不是参数没调好(要用结合模式才能清掉)。
-        string spatialFor = strength switch
-        {
-            2 => "nlmeans=s=5:p=5:r=5",
-            _ => "nlmeans=s=5:p=3:r=5",
-        };
-        string spatialOnly = strength switch
-        {
-            1 => "nlmeans=s=5:p=3:r=5",
-            2 => "nlmeans=s=5:p=5:r=5",
-            _ => "nlmeans=s=7:p=7:r=7",
-        };
-        string temporal = strength switch
-        {
-            1 => "hqdn3d=4:3:6:4",
-            2 => "hqdn3d=8:6:12:8",
-            _ => "hqdn3d=12:10:12:8",
-        };
-        return kind switch
-        {
-            1 => spatialOnly,
-            2 => temporal,
-            _ => spatialFor + "," + temporal,
-        };
+        // 【任务 M1 · 2026-09-13 口径变更:整体削弱,弱档大削弱】参数表已迁到
+        // AlhPro.Core.VideoDenoise(纯逻辑 + 单测:三档严格单调、仅空间/仅时间与组合档同表同步)。
+        // 新表:弱 = nlmeans s3p3r3 + hqdn3d 2:1.5:3:2 / 中 = s3p3r3 + hqdn3d 4:3:6:4 / 强 = 原【中】档整套。
+        // ⚠ 旧注释里「结合模式下三档只放大时间维、空间固定轻档」的说法已作废
+        //   (新表空间维也按档位分两级:弱/中 s3p3r3、强 s5p5r5),故旧 inline 参数表已整段删除。
+        //   「老用户选强 = 强度变轻一档」是本次有意为之(实测强档已过降噪),不做设置迁移。
+        return AlhPro.Core.VideoDenoise.Filter(strength, kind);
     }
+
+    // ===== 历史实测留档(代码不再走这里;现行参数表见 AlhPro.Core.VideoDenoise)=====
+    // kind: 0=两者结合(默认,兼容旧设置) 1=仅空间 nlmeans 2=仅时间 hqdn3d
+    // 【结合模式为什么空间只用"轻"档】用户素材实测(1080p 2 秒):空间参数调重是拿细节换收益 ——
+    //   nlmeans 强 + hqdn3d 强 : 平坦噪点 0.66 / 抖动 1.419 / 细节 19.0
+    //   nlmeans 弱 + hqdn3d 强 : 平坦噪点 0.69 / 抖动 1.396 / 细节 20.7  ← 采用(抖动更低、细节多 9%)
+    // 【仅时间模式擦不干净单帧噪点】实测把 hqdn3d 空间参数从 8 拉到 16,平坦噪点 0.77→0.77 纹丝不动 ——
+    // 它那部分机制天生就弱,这是"部分噪点去不干净"的根因,不是参数没调好(要用结合模式才能清掉)。
+    // 【迁移前 inline 参数表】spatialFor: 2→s5p5r5,其他→s5p3r5;spatialOnly: 1→s5p3r5,2→s5p5r5,其他→s7p7r7;
+    // temporal: 1→4:3:6:4, 2→8:6:12:8, 其他→12:10:12:8(「强」就是这一行)。
 
     /// <summary>降噪方式的中文名(日志/提示用,措辞与界面下拉项一致)。</summary>
     private static string DenoiseKindName(int kind) => kind switch
