@@ -1588,7 +1588,7 @@ public static class VideoService
                 // finally 删源帧按【本批显式槽位列表】删(槽位不再连续,:1448 的 start..end 区间写法失效)。
                 // 关键:源帧一个都不动(决策①=B)——fallback 三处(:1394/:1404/:1437)都要读 upFiles[i]。
                 // batchSize 按【唯一帧(组)数】切批(组的重复槽 = 纯拷贝,不占引擎输入/PNG 峰值)——
-                // 磁盘峰值与今天一致,GetVideoBatchSize() 的显存/内存墙校准继续有效。
+                // 磁盘峰值与今天一致,批大小按用户口径(设备档位 + 素材长度)算,见下方「超分批决策」日志。
                 // 先按文件长度分组(重复帧长度必然相同),只在同长度组内算哈希 → 长度唯一的帧(绝大多数)不读内容。
                 // repIdx[i] = 槽位 i 的代表槽(自身 = 无重复);repOf/group 供切批与回填用。
                 int[] repIdx = new int[total];
@@ -1639,17 +1639,23 @@ public static class VideoService
                 int dupCount = total - uniqueCount;
                 if (dupCount > 0)
                     AppLogger.Info($"超分去重:{total} 帧中 {dupCount} 帧与已处理帧字节相同,已复用结果(省 {Math.Round(100.0 * dupCount / total, 1)}% 超分算力)");
-                // ===== 批次决策:把【素材规模】算进去(2026-09-13)=====
-                // 规则与依据全在 AlhPro.Core.RenderPolicy.PlanVideoBatches(纯函数、有单测):
-                //  · 内存基准 = 原来的 VideoBatchSize(空闲内存档)一字不改,它仍是安全上界;
-                //  · fastMode / diskTight 的"减半"【仍然生效】(基准与"短素材单批上限"一起减半);
-                //  · 唯一帧数 ≤ 单批上限(默认 240) → 单批跑完,不再为小素材反复启动引擎;
-                //  · 长素材【不设批数上限】:批数 = ⌈唯一帧数÷每批帧数⌉,限批数只能让每批帧数随素材线性变大,
-                //    同屏临时帧(输入+输出并存)会跟着涨 → 与"峰值盘/内存不能暴涨"的硬约束冲突(已上报,未擅自实现)。
-                var batchPlan = SafeRender.GetVideoBatchPlan(uniqueCount, fastMode, diskTight);
+                // ===== 批次决策:设备档位 + 视频长度 + 补帧后总帧数(2026-09-13 按用户口径重定)=====
+                // 用户口径:「处理前按当前设备来看;设备正常+视频短+补帧完的帧总数少 → 完全可以不分批;
+                // 设备好+视频长 → 批内扩大(200/400 帧);设备差 → 最低 50 一批」。
+                // 规则与门槛全在 AlhPro.Core.RenderPolicy.PlanVideoBatches(纯函数、有单测):
+                //  · 设备档位 = 空闲内存(<4G 差 / 4~8G 正常 / ≥8G 好;不新造探测);
+                //  · 设备 ≥ 正常 且 补帧后总帧数 ≤ 400 → 单批;
+                //  · 设备好:源帧数 ≥ 900(≈30s@30fps) → 400 帧/批,否则 200;
+                //  · 设备正常:沿用既有内存档(120/180);设备差:50(用户下界);
+                //  · fastMode/diskTight 减半保留,但钳到 ≥ 50(用户下界优先)。
+                // sourceFrames = 去重后的源帧数(视频长度口径);postInterpFrames = total = 本阶段实际输入帧数
+                // (补帧→超分 顺序下超分读的就是补帧输出,即"补帧后总帧数")。
+                var batchPlan = SafeRender.GetVideoBatchPlan(frameCount, total, fastMode, diskTight);
                 int batchSize = batchPlan.BatchSize;
-                AppLogger.Info($"超分批决策:{total} 槽位 / 唯一 {uniqueCount} 帧 → 每批 {batchSize} 帧 × 预计 {batchPlan.BatchCount} 批;"
-                    + $"依据:{batchPlan.Reason}(空闲内存档 {batchPlan.MemoryBatchSize} 帧/批,兼容模式={fastMode},临时盘紧={diskTight},单批豁免={batchPlan.SingleBatchByShortClip})");
+                // 【日志必须能解释批数】档位 / 源帧数 / 补帧后总帧数 / 本阶段输入 / 每批帧数 / 预计批数 / 命中规则,
+                // 全部一行写清(PlanVideoBatches 的 Rule 里也带着每条门槛的实际取值与依据)。
+                AppLogger.Info($"超分批决策:档位={batchPlan.Tier}(空闲内存 {SafeRender.FreeRamGB:0.#}G)→ 每批 {batchSize} 帧;"
+                    + $"本阶段输入 {total} 帧;兼容模式={fastMode},临时盘紧={diskTight};命中规则:{batchPlan.Rule}");
                 // 唯一帧/组按槽号升序排列(保持时间轴顺序);补齐孤立的唯一槽(无重复的帧)
                 for (int i = 0; i < total; i++)
                     if (repIdx[i] == i && !groupsByRep.ContainsKey(i))
