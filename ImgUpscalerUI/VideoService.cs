@@ -588,10 +588,18 @@ public static class VideoService
                 }
             }
             bool nlmeansOn = videoDenoise >= 1 && !denoiseViaModel;
+            // 【L · 2026-09-13】waifu2x 模型自带降噪的 -n 值:按【最终下发给引擎的倍率】判,不按 UI 档位想当然。
+            // 引擎侧 waifu2x 会把倍率向上取到 2 的幂(EngineService: engineScale = CeilPowerOfTwo(scale)),
+            // 而"1x 缩回"(upscaleShrink1x)实际是按 2x 跑再缩回 → 引擎倍率同样是 2。
+            // 用这同一个表达式算"引擎倍率",1x 护栏才不会失守(1x 下 -n -1 配 -s 1 必崩,见 Core.Waifu2x 的说明)。
+            int waifu2xNoiseArg = AlhPro.Core.Waifu2x.NoiseLevelFor(
+                videoDenoise, AlhPro.Core.PathUtil.CeilPowerOfTwo(upscaleShrink1x ? 2.0 : scale));
             if (videoDenoise >= 1 && denoiseViaModel)
-                AppLogger.Info($"视频降噪:交由 waifu2x 引擎自带降噪档(-n {videoDenoise})处理(不叠 nlmeans,更对症且不额外耗时)");
+                AppLogger.Info($"视频降噪:交由 waifu2x 引擎自带降噪档(-n {waifu2xNoiseArg};UI 档位 {videoDenoise}=弱/中/强 → -n 0/1/2)处理"
+                    + "(不叠 nlmeans,更对症且不额外耗时)");
             else if (videoDenoise <= 0 && denoiseViaModel)
-                AppLogger.Info($"视频降噪:未开启,但 waifu2x 引擎仍用模型自带 {Waifu2xNoiseLevel(0)} 档降噪(实测压缩素材 PSNR/SSIM 双升,干净素材基本无损)");
+                AppLogger.Info($"视频降噪:未开启(关)→ waifu2x 引擎不再启用模型自带降噪(-n {waifu2xNoiseArg}"
+                    + $"{(waifu2xNoiseArg == AlhPro.Core.Waifu2x.NoiseOff ? "" : ";注意:1x 档为规避引擎崩溃只能退到最轻档 0")})");
             // ===== HDR / 广色域适配:源为 HDR(PQ/HLG)或宽色域(≠BT.709)→ 拆帧时转成 BT.709 SDR(避免偏色/掉信息),黄字提示 =====
             (string? hdrDesc, string? hdrVf) = await ProbeHdrToSdrAsync(inputVideo, ct);
             if (hdrVf != null)
@@ -1860,7 +1868,7 @@ public static class VideoService
                             else
                             {
                                 await EngineService.UpscaleDirAsync(batchIn, batchOut, engine, model,
-                                    upScale, denoiseViaModel ? Waifu2xNoiseLevel(videoDenoise) : 0, upGpu, false, srProgress, ct,   // waifu2x 引擎:用它的 -n(模型自带降噪,更对症且不额外耗时)≥2 档,见 Waifu2xNoiseLevel
+                                    upScale, denoiseViaModel ? waifu2xNoiseArg : 0, upGpu, false, srProgress, ct,   // waifu2x 引擎:用它的 -n(模型自带降噪);值由 Core.Waifu2x.NoiseLevelFor(UI 档位, 引擎倍率) 算出(单调 + 1x 护栏)
                                     SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1),   // 显卡家族感知分块(视频超分专用);兼容模式再减半(显存占用约降 4 倍)
                                     watchStage: "超分",   // 逐帧汇报(像补帧一样显示"超分 第 N 帧 / 共 M 帧")
                                     globalBaseFrames: batchStartSlot, globalTotalFrames: total,   // 百分比按全局帧数算,预计时间才准
@@ -2881,15 +2889,15 @@ public static class VideoService
         _ => "nlmeans + hqdn3d(空间域与时间域联合降噪)",
     };
 
-    /// <summary>waifu2x 模型自带降噪档(-n)的取值:用户显式选的 1/3 档照用,没开(0)也至少给 2 档。
-    /// 【为什么默认给 2 —— 实测,真实动画帧 960×540→1080p】
-    ///   压缩素材(h264 crf30):n2 比 n0 PSNR 35.68→36.23、SSIM 0.9434→0.9654(双升);
-    ///   干净素材:n2 比 n0 PSNR 略降 0.94 但 SSIM 反升 0.037、细节(拉普拉斯方差)不降 —— 基本无损。
-    /// 而 n0 时 waifu2x 只剩纯放大:细节仅为 bicubic 的约 2 倍(对比 realesr-animevideov3 的 7 倍),
-    /// 用户观感就是"waifu 好像只是单纯放大了"(真机反馈点到,数据同样支持)。
-    /// 代价为零:降噪是模型自带能力,不额外多跑一遍。
-    /// 数据与对比图:_qa\ab_waifu\REPORT.md</summary>
-    private static int Waifu2xNoiseLevel(int chosen) => chosen >= 1 ? chosen : 2;
+    /// <summary>waifu2x 模型自带降噪档(-n)的映射已【迁到】<see cref="AlhPro.Core.Waifu2x.NoiseLevelFor"/>
+    /// (纯逻辑 + 单测:档位严格单调、关真关、1x 不下发 -n -1)。
+    /// 【口径变更 2026-09-13(任务 L,用户要求)】旧实现是 `chosen >= 1 ? chosen : 2`:
+    ///   · "关"关不掉(未勾选仍下发 -n 2);· 档位非单调(不勾=2 档、弱=1 档、中=2 档、强=3 档)。
+    /// 现在是 关→-1、弱→0、中→1、强→2(严格递增),调用点按【最终下发给引擎的倍率】判 1x 护栏。
+    /// 【旧默认 -n 2 的实测数据(保留备查,但不再是默认)】真实动画帧 960×540→1080p:
+    ///   压缩素材(h264 crf30)n2 比 n0 PSNR 35.68→36.23、SSIM 0.9434→0.9654(双升);
+    ///   干净素材 n2 比 n0 PSNR 略降 0.94 但 SSIM 反升 0.037、细节(拉普拉斯方差)不降 —— 基本无损。
+    ///   数据与对比图:_qa\ab_waifu\REPORT.md。用户按观感决定"关"必须是真关,故不再默认替用户开。</summary>
 
     /// <summary>
     /// freezedetect 检测冻结(静止)段:返回 (开始秒, 结束秒) 列表。
