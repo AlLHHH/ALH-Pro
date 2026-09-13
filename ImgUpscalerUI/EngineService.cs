@@ -1205,7 +1205,8 @@ public static partial class EngineService
     private static async Task<string> RunAsync(string exe, string args,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct,
         string stage = "", int totalFrames = 0, string? watchDir = null,
-        int watchBase = 0, int watchGlobalTotal = 0, int pctLo = 0, int pctHi = 0)
+        int watchBase = 0, int watchGlobalTotal = 0, int pctLo = 0, int pctHi = 0,
+        Action<double>? onEngineReady = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -1237,6 +1238,19 @@ public static partial class EngineService
         // 引擎不输出百分比时(目录模式),轮询输出目录已生成帧数,像补帧那样逐帧报告
         using var watchCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
+        // ===== 引擎"已就绪"回调(2026-09-13 新增)=====
+        // "已就绪" = 引擎真的跑起来了(首次产出输出 / 首帧落盘,说明进程启动 + 模型加载已完成、开始出活)。
+        // 调用方靠它把界面上的"正在启动引擎(约 N 秒…)"换成带【实际启动耗时】的一句:批次之间的进程启动
+        // 停顿因此变成用户看得见的进度,不再像卡死。处理顺序/参数/并发一律不变,只是多报一行进度。
+        // 只报一次(降级链可能在同一批里再起进程):Interlocked 抢位,后到的直接丢弃。
+        int readySignaled = 0;
+        void SignalEngineReady()
+        {
+            if (onEngineReady == null) return;
+            if (Interlocked.Exchange(ref readySignaled, 1) != 0) return;
+            try { onEngineReady((DateTime.Now - startTime).TotalSeconds); } catch { }
+        }
+
         var log = new StringBuilder();
         var lockObj = new object();
         int maxPct = 0;
@@ -1247,7 +1261,7 @@ public static partial class EngineService
         long lastFrameTicks = DateTime.Now.Ticks;
         var watchTask = (watchDir != null && totalFrames > 0 && stage.Length > 0)
             ? WatchDirProgressAsync(watchDir, stage, totalFrames, progress, watchCts.Token, watchBase, watchGlobalTotal,
-                () => { lastOutTicks = DateTime.Now.Ticks; lastFrameTicks = DateTime.Now.Ticks; },   // 完成帧回调:刷新本引擎私有看门狗时间戳
+                () => { lastOutTicks = DateTime.Now.Ticks; lastFrameTicks = DateTime.Now.Ticks; SignalEngineReady(); },   // 完成帧回调:刷新本引擎私有看门狗时间戳(首帧落盘 = 引擎已就绪)
                 pctLo, pctHi)
             : Task.CompletedTask;
         // 引擎无进度输出时(部分模型/CPU 软算):每 4 秒若有变化就渐 +1(上限 98),避免进度条"空→满"跳变。
@@ -1276,9 +1290,10 @@ public static partial class EngineService
 
         void OnChunk(string chunk)
         {
+            bool firstOutput = false;
             lock (lockObj)
             {
-                sawAnyOutput = true;
+                if (!sawAnyOutput) { sawAnyOutput = true; firstOutput = true; }
                 if (chunk.Length > 0) lastOutTicks = DateTime.Now.Ticks;
                 log.Append(chunk);
                 if (log.Length > 4096) log.Remove(0, log.Length - 4096); // 只保留尾部,防内存膨胀
@@ -1293,6 +1308,8 @@ public static partial class EngineService
                     }
                 }
             }
+            // 首次产出 = 引擎已就绪(模型加载完、开始出活):在锁外回调,不占着引擎输出的读取锁
+            if (firstOutput) SignalEngineReady();
         }
 
         var drainOut = DrainAsync(p.StandardOutput, OnChunk, ct);
@@ -1880,7 +1897,8 @@ public static partial class EngineService
     private static async Task RunEngFallbackGpuAsync(string exe, string args,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct,
         string stage = "", int totalFrames = 0, string? watchDir = null,
-        int watchBase = 0, int watchGlobalTotal = 0, int pctLo = 0, int pctHi = 0)
+        int watchBase = 0, int watchGlobalTotal = 0, int pctLo = 0, int pctHi = 0,
+        Action<double>? onEngineReady = null)
     {
         bool usesGpu = System.Text.RegularExpressions.Regex.IsMatch(args, @"-g\s+[0-9]+");
         string runArgs = args;
@@ -1893,7 +1911,7 @@ public static partial class EngineService
         }
         try
         {
-            await RunAsync(exe, runArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal, pctLo, pctHi).ConfigureAwait(false);
+            await RunAsync(exe, runArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal, pctLo, pctHi, onEngineReady).ConfigureAwait(false);
             return;
         }
         catch (InvalidOperationException ex) when (!usesGpu)
@@ -1917,7 +1935,7 @@ public static partial class EngineService
             var gpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g 0");
             try
             {
-                await RunAsync(exe, gpuArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal, pctLo, pctHi).ConfigureAwait(false);
+                await RunAsync(exe, gpuArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal, pctLo, pctHi, onEngineReady).ConfigureAwait(false);
             }
             catch (InvalidOperationException gpuEx)
             {
@@ -1951,7 +1969,7 @@ public static partial class EngineService
                         progress?.Report((0, $"⚠ GPU 引擎失败,重试 {r}/{GpuRetryTimes} 次(仍失败才降级)..."));
                         try
                         {
-                            await RunAsync(exe, args, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal, pctLo, pctHi).ConfigureAwait(false);
+                            await RunAsync(exe, args, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal, pctLo, pctHi, onEngineReady).ConfigureAwait(false);
                             return;
                         }
                         catch (InvalidOperationException retryEx)
@@ -1986,7 +2004,7 @@ public static partial class EngineService
                     progress?.Report((0, $"⚠ 显存不足,自动降低分块 {tCur}→{tHalved} 重试(更快更稳)..."));
                     try
                     {
-                        await RunAsync(exe, oomArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal, pctLo, pctHi).ConfigureAwait(false);
+                        await RunAsync(exe, oomArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal, pctLo, pctHi, onEngineReady).ConfigureAwait(false);
                         return;
                     }
                     catch (InvalidOperationException oomEx)
@@ -2014,7 +2032,7 @@ public static partial class EngineService
                 var altArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", $"-g {altGpu.Value}");
                 try
                 {
-                    await RunAsync(exe, altArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal, pctLo, pctHi).ConfigureAwait(false);
+                    await RunAsync(exe, altArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal, pctLo, pctHi, onEngineReady).ConfigureAwait(false);
                     return;
                 }
                 catch (InvalidOperationException ex2)
@@ -2090,7 +2108,8 @@ public static partial class EngineService
     public static async Task<List<string>> InterpLayerBatchAsync(string rifeExe,
         IEnumerable<(string a, string b)> pairs, string workDir, int gpuId, CancellationToken ct,
         string model = null, bool tta = false, double? timestep = null,
-        IProgress<(int pct, string msg)>? progress = null, string? watchStage = null)
+        IProgress<(int pct, string msg)>? progress = null, string? watchStage = null,
+        Action<double>? onEngineReady = null)
     {
         var pairList = new List<(string a, string b)>(pairs);
         if (pairList.Count == 0) return new List<string>();
@@ -2110,7 +2129,7 @@ public static partial class EngineService
         var args = $"-i \"{inDir}\" -o \"{outDir}\" -f \"frame_%06d.png\"{modelArgs}{timeArgs} -g {gpuId}{ttaArgs}{SafeRender.GetEngineThreadArgs()}";
         // 层批进度:watchStage 非空时轮询 outDir 帧数(逐帧报告"按源时间轴插帧 第 N 帧")
         string watchStageNow = watchStage ?? "";
-        try { await RunAsync(rifeExe, args, progress, ct, watchStageNow, 0, watchStage != null ? outDir : null).ConfigureAwait(false); }
+        try { await RunAsync(rifeExe, args, progress, ct, watchStageNow, 0, watchStage != null ? outDir : null, 0, 0, 0, 0, onEngineReady).ConfigureAwait(false); }
         catch (InvalidOperationException ex) when (gpuId >= 0)
         {
             // 「补帧绝不落 CPU」:原先这里用 -g -1 重跑 ncnn-CPU,直接违反该约定,而且 CPU 补帧慢到
@@ -2121,7 +2140,7 @@ public static partial class EngineService
             if (altGpu == null) throw;
             AppLogger.Info($"降级:任意 t 层批 GPU{gpuId} 失败({ex.Message.Split('\n')[0]}),改用 GPU{altGpu}(不落 CPU)");
             await RunAsync(rifeExe, System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", $"-g {altGpu}"),
-                progress, ct, watchStageNow, 0, watchStage != null ? outDir : null).ConfigureAwait(false);
+                progress, ct, watchStageNow, 0, watchStage != null ? outDir : null, 0, 0, 0, 0, onEngineReady).ConfigureAwait(false);
         }
         // 输出序列:out[0]=a1, out[1]=mid1, out[2]=b1, out[3]=mid(b1,a2) 丢弃, out[4]=a2, out[5]=mid2 ...
         // mid_i 的 1-based 文件序号 = 4i-2(0-based 索引 4i-3)
@@ -2704,7 +2723,8 @@ public static partial class EngineService
         int tileSize = 0, string? watchStage = null,
         int globalBaseFrames = 0, int globalTotalFrames = 0,
         bool preTiled = false, string outFormat = "png",
-        int pctLo = 0, int pctHi = 0)
+        int pctLo = 0, int pctHi = 0,
+        Action<double>? onEngineReady = null)
     {
         // 【引擎直出 JPG:4K 下实测省 31% 的超分耗时】
         // 实测(2026-09-11,RTX 4060 Laptop,waifu2x models-cunet 2x,1920×1080→3840×2160,同参数同素材各跑 2 次):
@@ -2744,7 +2764,7 @@ public static partial class EngineService
             {
                 try
                 {
-                    await RunEngFallbackGpuAsync(exe, buildArgs(t), progress, ct, watchStage ?? "", watchTotal, watchDir, globalBaseFrames, globalTotalFrames, pctLo, pctHi).ConfigureAwait(false);
+                    await RunEngFallbackGpuAsync(exe, buildArgs(t), progress, ct, watchStage ?? "", watchTotal, watchDir, globalBaseFrames, globalTotalFrames, pctLo, pctHi, onEngineReady).ConfigureAwait(false);
                     return;
                 }
                 catch (Exception ex) when (attempts < 3 && IsVramOom(ex))

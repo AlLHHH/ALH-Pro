@@ -108,4 +108,94 @@ public class RenderPolicyTests
     {
         Assert.Equal(expected, RenderPolicy.VideoBatchSize(freeRam));
     }
+
+    // ---------- PlanVideoBatches:把【素材规模】纳入批次决策(2026-09-13) ----------
+    // 守护三件事:① 短素材必须单批(不再为几十帧反复启动引擎);② 每批帧数【绝不】超过内存档基准
+    // (峰值盘/内存不因"规模修正"上涨);③ fastMode/diskTight 的减半仍然生效。
+
+    [Fact]
+    public void PlanVideoBatches_short_clip_single_batch()
+    {
+        // 唯一帧 60、空闲内存 10.4G(内存基准 240):1 批。每批帧数是"上限",内存基准本来就有富余,
+        // 保持 240 不往下收窄(收窄只会白白多切几批);关键是【批数 = 1】——不再为 60 帧启动两次引擎。
+        var p = RenderPolicy.PlanVideoBatches(10.4, 60);
+        Assert.Equal(1, p.BatchCount);
+        Assert.Equal(240, p.BatchSize);
+        Assert.Equal(240, p.MemoryBatchSize);
+        Assert.True(p.SingleBatchByShortClip);
+    }
+
+    [Fact]
+    public void PlanVideoBatches_short_clip_low_ram_raises_up_to_cap_only()
+    {
+        // 空闲内存 1.0G(内存基准 25)但素材只有 100 帧:短素材单批 → 1 批,
+        // 每批 100 帧仍在"今天已在用的最大批 240"以内(峰值不超过既有最坏情况)
+        var p = RenderPolicy.PlanVideoBatches(1.0, 100);
+        Assert.Equal(1, p.BatchCount);
+        Assert.Equal(100, p.BatchSize);
+        Assert.True(p.BatchSize <= RenderPolicy.MaxFramesPerBatch);
+        Assert.True(p.SingleBatchByShortClip);
+    }
+
+    [Fact]
+    public void PlanVideoBatches_short_clip_cap_is_halved_by_fast_and_disk_flags()
+    {
+        // 130 帧:正常单批;开了兼容模式(上限 240→120)→ 130 > 120,退回内存基准(120)→ 2 批。
+        // 减半必须仍然生效(防爆盘/弱机),不许被"短素材单批"吃掉。
+        var normal = RenderPolicy.PlanVideoBatches(10.4, 130);
+        Assert.Equal(1, normal.BatchCount);
+        var fast = RenderPolicy.PlanVideoBatches(10.4, 130, fastMode: true);
+        Assert.Equal(120, fast.BatchSize);
+        Assert.Equal(2, fast.BatchCount);
+        Assert.True(fast.HalvedForFastMode);
+        var both = RenderPolicy.PlanVideoBatches(10.4, 130, fastMode: true, diskTight: true);
+        Assert.Equal(60, both.BatchSize);
+        Assert.Equal(3, both.BatchCount);
+        Assert.True(both.HalvedForFastMode && both.HalvedForDiskTight);
+    }
+
+    [Fact]
+    public void PlanVideoBatches_long_clip_uses_memory_baseline_no_frame_inflation()
+    {
+        // 唯一帧 3420、空闲内存 10.4G → 每批 240(=内存基准,不因素材长而放大) → 15 批。
+        // 【这条断言就是"不设批数上限"的守护】:批数随素材线性增长是刻意的 —— 限批数只能让每批帧数
+        // 变大,同屏临时帧(输入+输出)会跟着涨,峰值盘/内存就守不住了(见 PlanVideoBatches 注释)。
+        var p = RenderPolicy.PlanVideoBatches(10.4, 3420);
+        Assert.Equal(240, p.BatchSize);
+        Assert.Equal(15, p.BatchCount);
+        Assert.False(p.SingleBatchByShortClip);
+        var tight = RenderPolicy.PlanVideoBatches(10.4, 3420, diskTight: true);
+        Assert.Equal(120, tight.BatchSize);
+        Assert.Equal(29, tight.BatchCount);
+    }
+
+    [Fact]
+    public void PlanVideoBatches_never_exceeds_absolute_per_batch_ceiling()
+    {
+        // 任意内存档 + 任意素材规模:每批帧数都不超过 MaxFramesPerBatch(= 今天内存档的最大批),
+        // 也就是"短素材单批豁免"永远不会把同屏临时帧推高到今天已在用的水平之上。
+        foreach (var ram in new[] { 0.5, 1.0, 2.0, 3.0, 5.0, 7.0, 9.0, 32.0 })
+            foreach (var n in new[] { 0, 1, 60, 240, 241, 1000, 3417, 100_000 })
+            {
+                var p = RenderPolicy.PlanVideoBatches(ram, n);
+                Assert.True(p.BatchSize <= RenderPolicy.MaxFramesPerBatch,
+                    $"ram={ram} n={n} → 每批 {p.BatchSize} 帧,超过绝对上限 {RenderPolicy.MaxFramesPerBatch}");
+                Assert.True(p.BatchSize >= RenderPolicy.MinFramesPerBatch, $"ram={ram} n={n} → 每批帧数低于下限");
+                Assert.True(p.BatchCount >= 1);
+                // 批数 × 每批帧数必须覆盖全部唯一帧(切批不许漏帧)
+                if (n > 0) Assert.True((long)p.BatchCount * p.BatchSize >= n, $"ram={ram} n={n} 切批覆盖不足");
+            }
+    }
+
+    [Fact]
+    public void PlanVideoBatches_batch_count_is_monotonic_in_frame_count()
+    {
+        int prev = 0;
+        for (int n = 0; n <= 5000; n += 37)
+        {
+            var p = RenderPolicy.PlanVideoBatches(10.4, n);
+            Assert.True(p.BatchCount >= prev, $"帧数增加后批数反而减少了(n={n})");
+            prev = p.BatchCount;
+        }
+    }
 }

@@ -10,14 +10,31 @@ namespace AlhPro.Core;
 /// </summary>
 public static class VideoPipeline
 {
+    /// <summary>每批超分引擎进程的"启动 + 模型加载"固定开销(秒/批)【待实测标定】。
+    /// 【依据(本机只读日志,2026-09-13)】
+    ///  · 19:00:16→19:00:33 单批 72 帧:引擎启动 → 引擎完成 = 17.1s(整阶段 20.1s / 72 帧 = 279 ms/帧);
+    ///  · 同一晚 19:12 那一轮(同样 realesrgan 2x、240 帧/批):每批引擎耗时 15.7~16.4s(≈67 ms/帧),
+    ///    而只剩 60 帧的末批只要 4.1s —— 说明"帧数少但耗时并不等比下降",固定开销客观存在;
+    ///  · 现有日志无法把它精确分离:批次是并发跑的(2~3 批在飞),引擎/驱动的着色器缓存冷热不同,
+    ///    各轮的模型与倍率也不一样。两个观测只能把它夹在"热启动 ≈ 0.1s"与"冷启动 ≈ 10s"之间。
+    /// 【取值】3.0s = 上述区间的保守中值,宁可把"长素材偏乐观"的偏差收掉一部分,也不虚报精度。
+    /// 【验证方式(真机空闲后)】同一素材跑两种批大小(如 240 帧/批 vs 60 帧/批),用
+    /// "引擎完成"日志的耗时做两点线性拟合(批数 × 启动开销 + 帧数 × 每帧成本)即可标定。
+    /// 未标定前不要把本常数当实测值引用。</summary>
+    public const double AssumedEngineStartupSecondsPerBatch = 3.0;
+
     /// <summary>估算整个视频处理流程的大致秒数(用于处理前"预计剩余时间")。slowFactor=弱机放大系数(默认 1)。
     /// upscaleFirst=「超分 → 补帧」的新阶段顺序(1x/2x 走这条,见 VideoService.ProcessVideoAsync 的阶段顺序说明):
     /// 超分先按【源帧数】跑,补帧在放大后的帧上做(单价按放大后的面积算)。
     /// 默认 false = 旧顺序「补帧 → 超分」,与改动前逐字一致;scale&gt;2.001(4x 等)在函数内一律钳回旧顺序
-    /// —— 阶段顺序只对 1x/2x 生效,钳住可保证"估算口径"与真正执行的顺序不会各说各话。</summary>
+    /// —— 阶段顺序只对 1x/2x 生效,钳住可保证"估算口径"与真正执行的顺序不会各说各话。
+    /// freeRamGB/uniqueFrames=【2026-09-13 新增】批数与每批帧数的入参(走 RenderPolicy.PlanVideoBatches,
+    /// 与真正执行时同一套规则):freeRamGB&lt;=0 = 不知道内存档 → 不加批启动开销(保持旧口径,不猜);
+    /// uniqueFrames&lt;=0 = 还没去重 → 按源帧数估。</summary>
     public static double EstimateProcessSeconds(double duration, double fps, int w, int h,
         bool up, double scale, string engine, bool interp, int interpScale, bool dedup, int videoDenoise,
-        double slowFactor = 1.0, bool upscaleFirst = false)
+        double slowFactor = 1.0, bool upscaleFirst = false,
+        double freeRamGB = 0, int uniqueFrames = 0)
     {
         int src = (int)Math.Max(1, duration * fps);
         double s = src * 0.02 + 1.5;                 // 拆帧(含引擎启动)
@@ -58,6 +75,20 @@ public static class VideoPipeline
             s += (upFirst && interp && interpScale > 1 ? src : frames) * per;
         }
         if (videoDenoise > 0) s *= 1.05;              // 降噪滤镜
+        // ===== 每批引擎启动的固定开销(2026-09-13 新增)=====
+        // 超分/补帧都是【按批】重新起一次引擎进程(每批一次进程启动 + 模型加载),而上面的公式只有"每帧成本";
+        // 素材一长就被切成十几批(批数 = ⌈唯一帧数 ÷ 每批帧数⌉),这笔固定开销完全没进估算 →
+        // 长素材的预计时间系统性偏乐观(用户看到"还剩 5 分钟"却跑了半小时),而且批数越多偏得越狠。
+        // 【只在水/内存档可知时计入】不知道空闲内存就不知道批大小、更算不出批数,硬套一个默认档位等于编数据;
+        // freeRamGB<=0 时保持旧口径(调用方没传 = 老行为,一字不变)。
+        // 【为什么只算超分批、不算补帧段】补帧的分段取决于转场识别/去重结果(段数在估算时还不知道),
+        // 这里只能覆盖"超分批"这一笔 —— 所以本项仍是【下限】,不是完整开销(见 AssumedEngineStartupSecondsPerBatch)。
+        if (up && scale > 1.001 && freeRamGB > 0)
+        {
+            int uniq = uniqueFrames > 0 ? uniqueFrames : src;
+            var plan = RenderPolicy.PlanVideoBatches(freeRamGB, uniq);
+            s += plan.BatchCount * AssumedEngineStartupSecondsPerBatch;
+        }
         s += frames * 0.12;                           // 合成编码(平均)
         if (slowFactor > 1) s *= slowFactor;          // 弱机(CPU 兜底)明显更慢
         return s * 1.15;                              // 略保守:从大往小对齐,不从小变大

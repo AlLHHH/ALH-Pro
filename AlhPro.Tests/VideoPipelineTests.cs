@@ -88,6 +88,66 @@ public class VideoPipelineTests
         Assert.True(at2New != at2Old, "2.0x 边界必须真的按新顺序算");
     }
 
+    // ---------- EstimateProcessSeconds:每批引擎启动开销(2026-09-13 新增)----------
+    // 【为什么必须钉住】原公式只有"每帧成本",完全不知道有【批次】这回事:长素材被切成十几批、
+    // 每批重启一次引擎进程,这笔固定开销一分钱没算 → "预计还剩 5 分钟"实际跑半小时。
+    // 口径必须与真正执行时同源:批数一律走 RenderPolicy.PlanVideoBatches。
+
+    [Fact]
+    public void Estimate_adds_batch_startup_overhead_when_free_ram_known()
+    {
+        const double perBatch = 3.0;   // = VideoPipeline.AssumedEngineStartupSecondsPerBatch(待实测标定)
+        // 10s×30fps = 300 帧,空闲内存 10.4G → 每批 240 → 2 批(旧公式完全不含这 2 次引擎启动)
+        double withRam = VideoPipeline.EstimateProcessSeconds(10, 30, 1920, 1080, up: true, 2.0, "waifu2x",
+            interp: false, 2, dedup: false, 0, freeRamGB: 10.4);
+        double noRam = VideoPipeline.EstimateProcessSeconds(10, 30, 1920, 1080, up: true, 2.0, "waifu2x",
+            interp: false, 2, dedup: false, 0);
+        Assert.Equal(VideoPipeline.AssumedEngineStartupSecondsPerBatch, perBatch, 9);   // 常数若被改动,本测试必须一起改
+        Assert.Equal(2 * perBatch * 1.15, withRam - noRam, 6);   // 收尾统一 ×1.15(与既有口径一致)
+    }
+
+    [Fact]
+    public void Estimate_short_clip_counts_exactly_one_batch()
+    {
+        const double perBatch = 3.0;
+        // 5s×30fps = 150 帧 ≤ 单批上限 → 1 批(这正是"短素材不为几十帧反复启动引擎"的收益)
+        double withRam = VideoPipeline.EstimateProcessSeconds(5, 30, 1920, 1080, up: true, 2.0, "waifu2x",
+            interp: false, 2, dedup: false, 0, freeRamGB: 10.4);
+        double noRam = VideoPipeline.EstimateProcessSeconds(5, 30, 1920, 1080, up: true, 2.0, "waifu2x",
+            interp: false, 2, dedup: false, 0);
+        Assert.Equal(1 * perBatch * 1.15, withRam - noRam, 6);
+    }
+
+    [Fact]
+    public void Estimate_batch_overhead_grows_with_batch_count()
+    {
+        // 长素材批数多 → 加回的开销也更多(单调),而不是一个固定常数
+        double shortClip = VideoPipeline.EstimateProcessSeconds(5, 30, 1920, 1080, up: true, 2.0, "waifu2x",
+            interp: false, 2, dedup: false, 0, freeRamGB: 10.4)
+            - VideoPipeline.EstimateProcessSeconds(5, 30, 1920, 1080, up: true, 2.0, "waifu2x",
+            interp: false, 2, dedup: false, 0);
+        // 60s×30fps = 1800 帧 → 8 批(⌈1800/240⌉)
+        double longClip = VideoPipeline.EstimateProcessSeconds(60, 30, 1920, 1080, up: true, 2.0, "waifu2x",
+            interp: false, 2, dedup: false, 0, freeRamGB: 10.4)
+            - VideoPipeline.EstimateProcessSeconds(60, 30, 1920, 1080, up: true, 2.0, "waifu2x",
+            interp: false, 2, dedup: false, 0);
+        Assert.Equal(8 * VideoPipeline.AssumedEngineStartupSecondsPerBatch * 1.15, longClip, 6);
+        Assert.True(longClip > shortClip, "批数多的长素材必须比短素材摊到更多启动开销");
+    }
+
+    [Fact]
+    public void Estimate_no_batch_overhead_without_free_ram_or_upscale()
+    {
+        // 没传空闲内存(= 老调用方)= 不猜内存档、不加批次开销,与改动前逐字一致
+        double a = VideoPipeline.EstimateProcessSeconds(60, 30, 1920, 1080, up: true, 2.0, "waifu2x", interp: false, 2, dedup: false, 0);
+        double b = VideoPipeline.EstimateProcessSeconds(60, 30, 1920, 1080, up: true, 2.0, "waifu2x", interp: false, 2, dedup: false, 0, freeRamGB: 0);
+        Assert.Equal(a, b, 9);
+        // 不超分就没有超分批 → 传了内存也不加钱(不虚报)
+        double noUpA = VideoPipeline.EstimateProcessSeconds(60, 30, 1920, 1080, up: false, 1.0, "waifu2x", interp: false, 2, dedup: false, 0);
+        double noUpB = VideoPipeline.EstimateProcessSeconds(60, 30, 1920, 1080, up: false, 1.0, "waifu2x", interp: false, 2, dedup: false, 0, freeRamGB: 10.4);
+        Assert.Equal(noUpA, noUpB, 9);
+    }
+
     // ---------- MergeDurations ----------
     [Fact]
     public void MergeDurations_merges_dropped_frames_into_previous_kept()

@@ -642,6 +642,8 @@ public static class EsrganOnnxService
                 $"ONNX 超分:无法把 GPU 编号 {gpuId} 映射到可用的 DirectML 设备(不降级到慢速 CPU)——"
                 + "请在设置里重新选择显卡后重试;若反复出现,建议更新显卡驱动。");
         // 预创建独立会话池(每个并行 worker 一个;绕开共享缓存锁,支持并发 Run)
+        // 计时起点:用于"会话已就绪(启动 X.Xs)"这一行进度(每批都会重建会话 = 每批一笔固定开销)。
+        var poolStartAt = DateTime.UtcNow;
         var sessions = new Microsoft.ML.OnnxRuntime.InferenceSession?[concurrency];
         // 每个会话【真实】所在的 DirectML 设备号(-1 = 该会话其实是 CPU 会话)。绝不靠"想要 GPU"推断:
         // CPU 会话推理成功后若去清零 GPU 连击,设备级熔断就永远无法触发(见 RunTile 的 C-4 说明)。
@@ -724,6 +726,20 @@ public static class EsrganOnnxService
             sessionDml = new[] { sessionDml[keep] };
             concurrency = 1;
         }
+        // 【让"批间停顿"可见】本批的推理会话已建好 = 稳定引擎"已就绪"(会话创建 + 首帧前的准备是秒级固定开销)。
+        // 视频链路每批都要走一遍这里,不说明的话用户只看到进度条在批与批之间不动,像卡死。
+        // 只加一行进度上报(附实际耗时),推理参数/并行度/顺序一律不变。
+        try
+        {
+            // 百分比口径与【本批第一帧】完全相同(下面逐帧进度 d=1 时的公式):既不回退也不虚跳,
+            // 免得这条"已就绪"把 ETA 的单调基准拽回去(界面 ETA 是"进度占比外推",百分比回退=剩余时间回退)。
+            int readyPct = pctLo > 0 && pctHi > pctLo
+                ? (int)Math.Clamp(pctLo + (globalBaseFrames + 1) * (double)(pctHi - pctLo) / Math.Max(1, globalTotalFrames), pctLo, pctHi)
+                : globalTotalFrames > 0 ? (int)Math.Clamp((globalBaseFrames + 1) * 100.0 / globalTotalFrames, 0, 100) : 0;
+            progress?.Report((readyPct,
+                $"超分(稳定引擎)已就绪(会话启动 {(DateTime.UtcNow - poolStartAt).TotalSeconds:0.0}s,{concurrency} 路),开始处理本批 {files.Length} 帧…"));
+        }
+        catch { }
         try
         {
             int done = 0;

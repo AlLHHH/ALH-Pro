@@ -95,13 +95,17 @@ public static class VideoService
     /// 用于一开始就显示合理的预计剩余(偏保守,随时间慢慢对齐),而不是从小变大校准。
     /// 【实测校准】同配置在 PerfMemory 有历史实测秒/帧时,用实测重算覆盖固定常数估算(越用越准)。
     /// postFx=是否启用了后处理(与记录端指纹一致,否则查不到导致校准失效)。
-    /// upscaleFirst=「超分 → 补帧」的新阶段顺序(1x/2x);默认 false 保持旧口径,4x 不要传 true。</summary>
+    /// upscaleFirst=「超分 → 补帧」的新阶段顺序(1x/2x);默认 false 保持旧口径,4x 不要传 true。
+    /// freeRamGB/uniqueFrames=【2026-09-13 新增】把"每批引擎启动开销 × 批数"算进估算(长素材的批数
+    /// 一多,原公式系统性偏乐观)。不知道空闲内存就传 0 = 保持旧口径(不猜档位);uniqueFrames 传 0
+    /// 表示"还没去重,按源帧数估"。估算出的批数口径与真正执行时一致:都走 RenderPolicy.PlanVideoBatches。</summary>
     public static double EstimateProcessSeconds(double duration, double fps, int w, int h,
         bool up, double scale, string engine, bool interp, int interpScale, bool dedup, int videoDenoise,
-        bool postFx = false, bool upscaleFirst = false)
+        bool postFx = false, bool upscaleFirst = false,
+        double freeRamGB = 0, int uniqueFrames = 0)
     {
         var sf = SafeRender.Profile == SafeRender.DeviceProfile.UltraLow ? 6.0 : 1.0;
-        double core = AlhPro.Core.VideoPipeline.EstimateProcessSeconds(duration, fps, w, h, up, scale, engine, interp, interpScale, dedup, videoDenoise, sf, upscaleFirst);
+        double core = AlhPro.Core.VideoPipeline.EstimateProcessSeconds(duration, fps, w, h, up, scale, engine, interp, interpScale, dedup, videoDenoise, sf, upscaleFirst, freeRamGB, uniqueFrames);
         // 【实测校准】查同配置历史秒/帧(1080p 基准),命中则按"源帧数×实测×面积"重算;与固定估算加权(各50%)。
         // 注意:PerfMemory 记录时按【源帧数】归一(不乘补帧倍率),这里也用源帧数 src,避免补帧任务被重复放大。
         try
@@ -1155,6 +1159,27 @@ public static class VideoService
                         $"补帧 第 {globalIdx - 1} 帧 / 共 {globalTarget} 帧(段 {segNo}/{segBounds.Count})" +
                         EtaStr(globalIdx - 1 - interpBase, globalTarget - interpBase,
                             (DateTime.UtcNow - interpStageStart).TotalSeconds - interpIdleSec)));
+                    // 【让"段间停顿"可见】每一段都是【一次新的 RIFE 进程】(启动 + 模型加载是秒级固定开销,
+                    // 高倍率非 v4 模型还要级联多次),先说明"正在启动补帧引擎";引擎真出帧后再报"已就绪(启动 X.Xs)"。
+                    // 文案不含「完成」二字:UI 会把含"完成"的进度行改写成"✓ …"并清掉当前步骤行。
+                    // 只加两行进度上报,段划分/阶段顺序/引擎参数/并发一律不变。
+                    {
+                        double segStartSec = AlhPro.Core.VideoPipeline.AssumedEngineStartupSecondsPerBatch;   // 待实测标定
+                        progress?.Report((interpPctBase + (int)((double)interpPctSpan * segNo / segBounds.Count),
+                            $"第 {segNo}/{segBounds.Count} 段:启动补帧引擎(约 {segStartSec:0.#} 秒,首次较慢;本段 {e - s} 帧)…"));
+                    }
+                    int segReadyReported = 0;
+                    Action<double> segOnEngineReady = sec =>
+                    {
+                        if (Interlocked.Exchange(ref segReadyReported, 1) != 0) return;
+                        try
+                        {
+                            progress?.Report((interpPctBase + (int)((double)interpPctSpan * segNo / segBounds.Count),
+                                $"第 {segNo}/{segBounds.Count} 段:补帧引擎已就绪(启动 {sec:0.0}s),开始本段 {e - s} 帧…"));
+                            AppLogger.Info($"第 {segNo}/{segBounds.Count} 段:补帧引擎已就绪(启动 {sec:0.0}s,本段帧 {s + 1}~{e})");
+                        }
+                        catch { }
+                    };
                     // 处理过程也做降温休息检查(单个长视频也能中途休息)
                     var interpIdleT0 = DateTime.UtcNow;
                     await SafeRender.RestIfDueAsync(interpPctBase + (int)((double)interpPctSpan * segNo / segBounds.Count), progress, ct);
@@ -1176,7 +1201,8 @@ public static class VideoService
                     globalIdx = await InterpSegmentAsync(rifeExe, segSrcDir, segOutDir, s, e, interpScale,
                         interpModel, timeStep, tta, interpGpu, globalIdx, segProg, ct, frameScale,
                         isLastSeg ? globalTarget : 0,
-                        false);   // appendTailCopy = false
+                        false,   // appendTailCopy = false
+                        segOnEngineReady);   // 引擎"已就绪"上报(只上报,不改处理)
                     // ===== 批处理清盘(边用边删):本段输入帧已证明消费完,立刻释放,不等整阶段结束 =====
                     // 依据:InterpSegmentAsync 段首就把 frame_{s+1}..frame_{e}(恰好 e-s 帧,不含下一段的首帧)
                     // 复制进了它自己的 segIn 目录;其后 ncnn 原卡/换卡、ONNX DirectML、黑帧回退、残缺重算
@@ -1523,10 +1549,10 @@ public static class VideoService
                 Directory.CreateDirectory(upOutput);
                 var upFiles = Directory.EnumerateFiles(upInput, "*.jpg")
                     .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
-                // 批大小/并发按"安全渲染"墙自适应(内存/显存墙越小越保守)
-                int batchSize = SafeRender.GetVideoBatchSize();
-                if (fastMode) batchSize = Math.Max(8, batchSize / 2);   // 兼容模式:帧批减半,内存峰值更低(弱设备)
-                if (diskTight) batchSize = Math.Max(8, batchSize / 2);   // 临时盘偏紧:批再减半,降低同屏临时帧峰值(防爆盘)
+                // 批大小/并发按"安全渲染"墙自适应(内存/显存墙越小越保守)。
+                // 【2026-09-13】批大小改为在算出"唯一帧数"之后再定(见下方 PlanVideoBatches 调用点)——
+                // 旧口径只看空闲内存、不知道素材规模,几十帧的小素材在低内存档上也会被切成好几批,
+                // 每批重新启动一次引擎进程(启动+模型加载是秒级固定开销),用户看到的就是"批间停顿几秒"。
                 var total = upFiles.Length;
                 // ===== 相同帧只超分一次(无损提速;决策①=B 决策②=拷贝)=====
                 // 原理:InterpLayerBatchAsync 的 slotSrc 会把同一源文件写进多个输出槽(:4076 静止帧对 / :4079 phi≤0.001 /
@@ -1589,6 +1615,17 @@ public static class VideoService
                 int dupCount = total - uniqueCount;
                 if (dupCount > 0)
                     AppLogger.Info($"超分去重:{total} 帧中 {dupCount} 帧与已处理帧字节相同,已复用结果(省 {Math.Round(100.0 * dupCount / total, 1)}% 超分算力)");
+                // ===== 批次决策:把【素材规模】算进去(2026-09-13)=====
+                // 规则与依据全在 AlhPro.Core.RenderPolicy.PlanVideoBatches(纯函数、有单测):
+                //  · 内存基准 = 原来的 VideoBatchSize(空闲内存档)一字不改,它仍是安全上界;
+                //  · fastMode / diskTight 的"减半"【仍然生效】(基准与"短素材单批上限"一起减半);
+                //  · 唯一帧数 ≤ 单批上限(默认 240) → 单批跑完,不再为小素材反复启动引擎;
+                //  · 长素材【不设批数上限】:批数 = ⌈唯一帧数÷每批帧数⌉,限批数只能让每批帧数随素材线性变大,
+                //    同屏临时帧(输入+输出并存)会跟着涨 → 与"峰值盘/内存不能暴涨"的硬约束冲突(已上报,未擅自实现)。
+                var batchPlan = SafeRender.GetVideoBatchPlan(uniqueCount, fastMode, diskTight);
+                int batchSize = batchPlan.BatchSize;
+                AppLogger.Info($"超分批决策:{total} 槽位 / 唯一 {uniqueCount} 帧 → 每批 {batchSize} 帧 × 预计 {batchPlan.BatchCount} 批;"
+                    + $"依据:{batchPlan.Reason}(空闲内存档 {batchPlan.MemoryBatchSize} 帧/批,兼容模式={fastMode},临时盘紧={diskTight},单批豁免={batchPlan.SingleBatchByShortClip})");
                 // 唯一帧/组按槽号升序排列(保持时间轴顺序);补齐孤立的唯一槽(无重复的帧)
                 for (int i = 0; i < total; i++)
                     if (repIdx[i] == i && !groupsByRep.ContainsKey(i))
@@ -1658,6 +1695,20 @@ public static class VideoService
                                 File.Copy(upFiles[g.rep], Path.Combine(batchIn, Path.GetFileName(upFiles[g.rep])), true);
                             progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
                                 $"超分 已处理 {batchStartSlot} 帧 / 共 {total} 帧(批次 {bi + 1}/{batchCount}){EtaStr(batchStartSlot, total, (DateTime.UtcNow - srStageStart).TotalSeconds - srIdleSec)}..."));
+                            // 引擎真的开始出活时再报一句(带【实际启动耗时】),此后回到引擎自己的逐帧口径
+                            // ("超分 第 N 帧 / 共 M 帧")。只报一次:降级链可能在同一批里再起进程(GPU→换卡→…)。
+                            int upReadyReported = 0;
+                            Action<double> upOnEngineReady = sec =>
+                            {
+                                if (Interlocked.Exchange(ref upReadyReported, 1) != 0) return;
+                                try
+                                {
+                                    progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
+                                        $"第 {bi + 1}/{batchCount} 批:超分引擎已就绪(启动 {sec:0.0}s),开始处理本批 {curPG.Count} 个唯一帧…"));
+                                    AppLogger.Info($"第 {bi + 1}/{batchCount} 批:超分引擎已就绪(启动 {sec:0.0}s,本批 {curPG.Count} 个唯一帧,帧号 {batchStartSlot}~{batchSlots[^1]})");
+                                }
+                                catch { }
+                            };
                             // 视频超分:50系/无独显/手动CPU + Real-ESRGAN/waifu2x + ONNX 模型在 → 走 ONNX 逐帧(不走会崩的 ncnn-vulkan)
                             string? onnxModelPath = null;
                             if (upGpu < 0)
@@ -1672,6 +1723,20 @@ public static class VideoService
                                 onnxModelPath = EsrganOnnxService.ResolveEsrganOnnxPath(model);
                             else if (engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx || ncnnUnreliable || fastMode))
                                 onnxModelPath = EsrganOnnxService.FindWaifu2xModel(model);
+                            // 【让"批间停顿"可见】本批的计算引擎还没起来 —— ncnn 是"进程启动 + 模型加载",
+                            // ONNX 稳定引擎是"每批新建 DirectML 推理会话",两者都是秒级固定开销。
+                            // 先如实说明"正在启动(约 N 秒)",别让进度条与文案在这几秒里一动不动
+                            // (用户唯一的感受就是"卡死")。文案刻意不含「完成」二字:UI 会把含"完成"的
+                            // 进度行改写成"✓ …"并清掉当前步骤行,会误判成阶段结束。
+                            // 只加这一行进度上报:处理顺序/参数/并发一律不变。
+                            {
+                                double upStartSec = AlhPro.Core.VideoPipeline.AssumedEngineStartupSecondsPerBatch;   // 待实测标定
+                                string upStarting = onnxModelPath != null
+                                    ? "正在创建超分推理会话(稳定引擎 ONNX)"
+                                    : $"启动超分引擎(约 {upStartSec:0.#} 秒,首次较慢)";
+                                progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
+                                    $"第 {bi + 1}/{batchCount} 批:{upStarting};本批 {curPG.Count} 个唯一帧…"));
+                            }
                             if (onnxModelPath != null)
                             {
                                 if (batchStartSlot == 0)   // 仅首批写自检日志(视频批多,避免刷屏)
@@ -1721,7 +1786,8 @@ public static class VideoService
                                     watchStage: "超分",   // 逐帧汇报(像补帧一样显示"超分 第 N 帧 / 共 M 帧")
                                     globalBaseFrames: batchStartSlot, globalTotalFrames: total,   // 百分比按全局帧数算,预计时间才准
                                     outFormat: "jpg",   // 引擎直出 JPG:4K 实测 2.98→2.02 秒/帧(省 31%),且省掉下面整段 PNG 解码+q96 重编码
-                                    pctLo: upPctLoArg, pctHi: upPctHiArg);   // 新顺序(超分排第一)逐帧区间 10~45;旧顺序 0/0=原有 45~90 口径不变
+                                    pctLo: upPctLoArg, pctHi: upPctHiArg,   // 新顺序(超分排第一)逐帧区间 10~45;旧顺序 0/0=原有 45~90 口径不变
+                                    onEngineReady: upOnEngineReady);   // 引擎真的开始出活时回报"已就绪(启动 X.Xs)"(只上报,不改处理)
                             }
                             // 【峰值优化】本批超分 PNG 立即转 JPG 再落 upOutput(不再全量 PNG 累积到最后统一转):
                             // 超分过程中只有"当前批的 PNG"存在,upOutput 全程 JPG,峰值降 70%+。
@@ -2758,10 +2824,20 @@ public static class VideoService
             int concurrency = wantGpu ? (SafeRender.EffectiveVramGB >= 12 ? 3 : 2) : 1;
             if (concurrency > pairs) concurrency = Math.Max(1, pairs);
             Microsoft.ML.OnnxRuntime.InferenceSession[] sessions;
+            // 【让"段间停顿"可见】ONNX 路线每次调用都要新建 DirectML 会话(实测同样是秒级开销):
+            // 建会话前先报一行"正在启动",建好后报"已就绪(启动 X.Xs)" —— 与 ncnn 引擎的启动提示同口径,
+            // 让用户知道这几秒是在建推理会话,而不是卡死。只多两行进度上报,处理逻辑一字不改。
+            var onnxStartAt = DateTime.UtcNow;
+            progress?.Report((0, $"补帧(ONNX 稳定引擎):正在创建 {concurrency} 路推理会话(约数秒)…"));
+            AppLogger.Info($"补帧(ONNX 稳定引擎):正在创建 {concurrency} 路推理会话(每段一次,秒级固定开销)");
             try { sessions = RifeOnnxService.CreateSessions(concurrency, dmlGpu); }
             catch (InvalidOperationException) { throw; }
             catch { sessions = new Microsoft.ML.OnnxRuntime.InferenceSession[] { RifeOnnxService.CreateSessions(1, dmlGpu)[0] }; }
             concurrency = sessions.Length;
+            // 注:本方法在视频链路里的 progress 是【段级包装器】(它会把消息重写成"补帧 第 N 帧 / 共 M 帧"),
+            // 故"已就绪"这句话在界面上仍显示为帧号文案;真正让停顿可见的是日志这一行与段级包装器外的提示。
+            progress?.Report((0, $"补帧(ONNX 稳定引擎)已就绪(会话启动 {(DateTime.UtcNow - onnxStartAt).TotalSeconds:0.0}s,{concurrency} 路),开始处理 {totalOut} 帧…"));
+            AppLogger.Info($"补帧(ONNX 稳定引擎)已就绪:会话启动 {(DateTime.UtcNow - onnxStartAt).TotalSeconds:0.0}s,{concurrency} 路,目标 {totalOut} 帧");
 
             bool onnxDead = EsrganOnnxService.DmlDeviceDead;   // 设备已摘除:剩余帧复制原帧(不落 CPU)
             int abortFlag = 0;
@@ -2865,7 +2941,7 @@ public static class VideoService
     private static async Task<int> InterpSegmentAsync(string rife, string framesOut, string framesFinal,
         int start, int end, int interpScale, string interpModel, double? timeStep, bool tta, int gpuId, int globalIdx,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct, double frameScale = 1.0, long globalTarget = 0,
-        bool appendTailCopy = false)
+        bool appendTailCopy = false, Action<double>? onEngineReady = null)
     {
         int segLen = end - start;
         var workDir = Path.GetDirectoryName(framesFinal)!;
@@ -2918,7 +2994,7 @@ public static class VideoService
                 try
                 {
                     var gArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", $"-g {g}");
-                    await RunAsync(rife, gArgs, progress, ct, "补帧", watchTotal, watchDir).ConfigureAwait(false);
+                    await RunAsync(rife, gArgs, progress, ct, "补帧", watchTotal, watchDir, onEngineReady).ConfigureAwait(false);
                     // 黑帧/0帧防御:GPU 输出全黑(vkQueueSubmit 失败但退出码 0)【或不输出任何帧(空跑,退出码 0)】
                     // → 走 ONNX→换卡 降级重跑该段。0帧正是"补帧失败,未生成插帧"的根因(RIFE exit=0 却无输出,须兜底降级)。
                     // 补充【残缺帧数防御】:RIFE 偶发"只输出第 1 帧就 exit 0"(AMD 6750 GRE 实测 140→1 帧,间歇性)——
@@ -5184,6 +5260,31 @@ public static class VideoService
                     {
                         if (ct.IsCancellationRequested) throw new OperationCanceledException(ct);
                         var batch = curNodes.Skip(off).Take(LayerBatch).ToList();
+                        // 【让"层批停顿"可见】每个层批也是一次新的 RIFE 进程(启动 + 模型加载是秒级固定开销):
+                        // 先报"正在启动",引擎真出帧后报"已就绪(启动 X.Xs)"(回调只认第一次产出)。
+                        // 只多两行进度上报,层批划分/引擎参数/并发一律不变。
+                        // 百分比沿用"上一批结束时的口径"(midDone 折算):两条消息都不许把进度往回落,
+                        // 否则界面的进度占比法 ETA 会跟着回退(已就绪消息尤其容易写错成固定低值)。
+                        int frAtStart = Math.Min(slotTotal, (int)((double)midDone / Math.Max(1, midNeed) * slotTotal));
+                        int lbStartPct = 10 + (int)(35.0 * frAtStart / slotTotal);
+                        int layerBatchNo = off / LayerBatch + 1;
+                        int layerBatchAll = (curNodes.Count + LayerBatch - 1) / LayerBatch;
+                        {
+                            double lbStartSec = AlhPro.Core.VideoPipeline.AssumedEngineStartupSecondsPerBatch;   // 待实测标定
+                            progress?.Report((lbStartPct,
+                                $"第 {layerBatchNo}/{layerBatchAll} 层批(第 {lv} 层):启动补帧引擎(约 {lbStartSec:0.#} 秒,首次较慢;本批 {batch.Count} 帧对)…"));
+                        }
+                        int lbReadyReported = 0;
+                        Action<double> lbOnEngineReady = sec =>
+                        {
+                            if (Interlocked.Exchange(ref lbReadyReported, 1) != 0) return;
+                            try
+                            {
+                                progress?.Report((lbStartPct, $"第 {layerBatchNo}/{layerBatchAll} 层批(第 {lv} 层):补帧引擎已就绪(启动 {sec:0.0}s),开始处理 {batch.Count} 帧对…"));
+                                AppLogger.Info($"第 {layerBatchNo}/{layerBatchAll} 层批(第 {lv} 层):补帧引擎已就绪(启动 {sec:0.0}s,{batch.Count} 帧对)");
+                            }
+                            catch { }
+                        };
                         // 层批内逐帧进度:轮询输出文件数 → 映射到全局"已处理 X/共 Y 帧"
                         // 【修复 跨批跳格】旧代码 gf=k/batch.Count*slotTotal 只看当前批(batch 开始时 k 归 0,
                         //  进度会跳回/跳格,用户以为卡死)。改为用"批前已累计 midDone + 当前批已生成 k"折算,
@@ -5201,7 +5302,8 @@ public static class VideoService
                         var mids = await EngineService.InterpLayerBatchAsync(rife,
                             batch.Select(nd => (nd.a, nd.b)),
                             Path.Combine(workTmp, $"D{depth}_L{lv}_{off / LayerBatch}"), gpuId, ct, interpModel, tta,
-                            progress: layerProg, watchStage: "按源时间轴插帧");
+                            progress: layerProg, watchStage: "按源时间轴插帧",
+                            onEngineReady: lbOnEngineReady);   // 只上报"引擎已就绪",不改层批划分/引擎参数
                         for (int k = 0; k < batch.Count; k++)
                         {
                             var nd = batch[k];
@@ -6211,7 +6313,8 @@ public static class VideoService
     /// </summary>
     private static async Task RunAsync(string exe, string args,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct,
-        string stage = "", int totalFrames = 0, string? watchDir = null)
+        string stage = "", int totalFrames = 0, string? watchDir = null,
+        Action<double>? onEngineReady = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -6224,6 +6327,7 @@ public static class VideoService
             WorkingDirectory = Path.GetDirectoryName(exe) ?? ".",
         };
         using var p = Process.Start(psi) ?? throw new InvalidOperationException("无法启动: " + exe);
+        var engineStartAt = DateTime.Now;   // "引擎已就绪"的实际启动耗时(= 进程启动 + 模型加载)
         SafeRender.ApplyProcessPriority(p);   // 处理时降优先级,防整机卡(可设置关闭)
         App.ActiveProcesses.Register(p);
         var lockObj = new object();
@@ -6244,16 +6348,28 @@ public static class VideoService
         long lastLiveTicks = DateTime.Now.Ticks;   // 最近一次"确认在干活"的时刻
         // 引擎不输出进度时(如 rife),轮询输出目录已生成的文件数来逐帧报告
         using var watchCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        // ===== "引擎已就绪"回调(2026-09-13 新增;与 EngineService.RunAsync 的同名回调同口径)=====
+        // 首次产出(首帧落盘 / 首条 stdout)= 进程启动 + 模型加载已完成、开始出活 → 回调一次真实耗时。
+        // 调用方据此把界面上的"正在启动补帧引擎(约 N 秒…)"换成带实际耗时的一句,批/段之间的停顿
+        // 因此可见;处理顺序/参数/并发一律不变。ffmpeg 调用点不传回调(传 null 时本函数零开销)。
+        int readySignaled = 0;
+        void SignalEngineReady()
+        {
+            if (onEngineReady == null) return;
+            if (Interlocked.Exchange(ref readySignaled, 1) != 0) return;
+            try { onEngineReady((DateTime.Now - engineStartAt).TotalSeconds); } catch { }
+        }
         var watchTask = (watchDir != null && totalFrames > 0 && stage.Length > 0)
             ? WatchDirProgressAsync(watchDir, stage, totalFrames, progress, watchCts.Token,
                 // 有新帧落盘 = 确实在出活 → 喂狗。补帧引擎可能长时间不打印 stdout,只看 stdout 静默会误杀。
-                () => { lock (lockObj) { sawAnyOutput = true; lastLiveTicks = DateTime.Now.Ticks; } })
+                () => { lock (lockObj) { sawAnyOutput = true; lastLiveTicks = DateTime.Now.Ticks; } SignalEngineReady(); })
             : Task.CompletedTask;
         void OnChunk(string chunk)
         {
+            bool firstOutput = false;
             lock (lockObj)
             {
-                sawAnyOutput = true;
+                if (!sawAnyOutput) { sawAnyOutput = true; firstOutput = true; }
                 if (chunk.Length > 0) lastLiveTicks = DateTime.Now.Ticks;
                 var chunkAt = DateTime.UtcNow;
                 double gap = (chunkAt - lastChunkAt).TotalSeconds;
@@ -6298,6 +6414,8 @@ public static class VideoService
                     }
                 }
             }
+            // 首次产出 = 引擎已就绪(模型加载完、开始出活):在锁外回调,不占着输出的读取锁
+            if (firstOutput) SignalEngineReady();
         }
         var drainOut = DrainAsync(p.StandardOutput, OnChunk, ct);
         var drainErr = DrainAsync(p.StandardError, OnChunk, ct);
