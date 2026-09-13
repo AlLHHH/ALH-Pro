@@ -923,18 +923,11 @@ public sealed partial class UpscaleView : UserControl
     /// 才用 ResolveEngineGpu 的推荐(通常独显)兜底,绝不强制纠正用户选择。</summary>
     private int CurrentGpuId
     {
-        get
-        {
-            if (AppSettings.GpuIndex < 0) return -1;   // 用户主动选 CPU
-            try
-            {
-                var devs = ALHPro.VulkanCheck.Devices;
-                if (devs.Count > 0 && devs.Any(d => d.Id == AppSettings.GpuIndex))
-                    return AppSettings.GpuIndex;   // 尊重用户选择(含核显)
-            }
-            catch { }
-            return EngineService.ResolveEngineGpu(AppSettings.GpuIndex);   // 编号无效/表空 → 推荐(通常独显)
-        }
+        // 【H1 · 2026-09-13】这里原来自己写了一份"编号是否在设备表里"的解析(与另两页各一份、彼此重复),
+        // 现已删掉:判定只保留唯一权威入口 EngineService.ResolveEngineGpu(它内部调已单测的
+        // AlhPro.Core.DeviceRouting.ResolveEngineDevice —— 含"编号不在表→换表内设备""撞号到核显→换最佳独显")。
+        // 重复解析正是"选独显却跑核显"这类问题反复出现的成因:三份各改一半就分叉。
+        get => EngineService.ResolveEngineGpu(AppSettings.GpuIndex);
     }
 
     private void UpdateRunState()

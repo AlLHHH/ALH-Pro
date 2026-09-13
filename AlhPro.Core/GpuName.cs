@@ -32,6 +32,21 @@ public static class GpuName
     /// <summary>设备名集合里是否存在 Blackwell(多卡机:只要有一张 50 系就按 50 系走)。</summary>
     public static bool AnyIsBlackwell(IEnumerable<string?> names) => names.Any(IsBlackwell);
 
+    /// <summary>该显卡名是否是 NVIDIA 卡(消费级 GeForce / 专业 Quadro、RTX/GTX 各代,含移动版)。
+    /// 【为什么需要它 · F2,2026-09-13 自检】原来的"免探测快速通道"判据是 <c>!HasNonNvidiaGpu()</c>,
+    /// 它看的是【整机】有没有 AMD/Intel 显卡,而不是"要用的那张卡":混显笔记本(Intel 核显 + N 卡)
+    /// 因此永远走不了快速通道 —— 每个首次任务都要白等一次生产帧尺寸探测(最坏 60 秒),
+    /// 而它们要用的恰恰就是那张纯 NVIDIA 独显。改为按目标 gpuId 的那张卡判定后,这个函数就是第一步。
+    /// 实测口径:本机与用户机器上真实枚举到的设备名(见 AlhPro.Tests/GpuNameNvidiaTests)。
+    /// 注意:它【不排除】D3D12 转译层那种伪装名(名字里确实有 NVIDIA),调用方必须再排除
+    /// <see cref="IsD3D12Translation"/> —— 否则会把"跑起来出损坏帧"的设备当成可用。</summary>
+    public static bool IsNvidia(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return false;
+        return Regex.IsMatch(name, @"\b(NVIDIA|GeForce|Quadro|RTX|GTX|Tesla)\b",
+                             RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    }
+
     /// <summary>D3D12 转译层(Mesa Dozen 等)伪装成的"Vulkan"设备,名字形如
     /// "Microsoft Direct3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)"。ncnn 会把它当普通 Vulkan 设备枚举、
     /// 编号还夹在原生设备中间,但经其计算的补帧/超分输出是【损坏帧】(真机:插值帧整帧红噪点+底部黑带,

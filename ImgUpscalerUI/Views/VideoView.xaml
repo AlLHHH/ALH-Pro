@@ -53,16 +53,18 @@
                               ToolTipService.ToolTip="Real-ESRGAN 模型(动漫/通用)。标「超慢」的 realesrgan-x4plus 只有 4x 权重:1080p 源实测约 14.5 秒/帧(比 animevideov3 慢 17 倍),建议只在图片上用"
                               SelectionChanged="Combo_Changed">
                         <ComboBoxItem Content="动漫 · realesr-animevideov3（4MB · 快）" Tag="realesr-animevideov3"/>
+                        <ComboBoxItem Content="通用 · realesr-general-x4v3（5MB · 快）" Tag="realesr-general-x4v3"/>
+                        <!-- 【顺序 · 2026-09-13 用户要求】自转的 general-x4v3 移到 animevideov3 正下方(第 2 位),
+                             耗时档写作「快」(本机 1080p 实测:animevideov3 2.1 秒/帧、general-x4v3 4.6 秒/帧、
+                             x4plus-anime 11.4 秒/帧、x4plus 33.8 秒/帧 —— 它只比最快那支慢一倍,比另两支快得多)。
+                             ⚠【移动 = 改了序号,必须同步迁移已存序号】下拉项存的是序号(index),历史共两次调整:
+                               旧序 0=animevideov3 1=x4plus-anime 2=x4plus(超慢) 3=general-x4v3
+                               Rev1 0=animevideov3 1=x4plus-anime 2=general-x4v3  3=x4plus(超慢)
+                               Rev2 0=animevideov3 1=general-x4v3  2=x4plus-anime 3=x4plus(超慢)  ← 本版
+                             迁移在 VideoView.xaml.cs 的 MigrateEsrganModelOrder(读设置、读预设都走它;
+                             按 Rev 逐级做:Rev1 换 2↔3,Rev2 换 1↔2,老文件从 Rev0 一路换到 2)。
+                             不迁移的后果:老用户"存的 1 = x4plus-anime"会静默变成 1 = general-x4v3(点一下预设就换模型)。 -->
                         <ComboBoxItem Content="动漫 · realesrgan-x4plus-anime（9MB · 中）" Tag="realesrgan-x4plus-anime"/>
-                        <!-- 【顺序 · 2026-09-12 用户要求】自转的 general-x4v3 上移到「超慢」之前,耗时档由「快」改为「中」,
-                             标签里不再写「轻量通用」(它已经在主列表里了,不必再标注"轻量")。
-                             为什么上移:它只有 5MB、是 4x 原生权重,比 x4plus 快得多;原先压在最末尾,用户第一眼看不到。
-                             ⚠【移动 = 改了序号,必须同步迁移已存序号】下拉项存的是序号(index):
-                                旧序 0=animevideov3 1=x4plus-anime 2=x4plus(超慢) 3=general-x4v3
-                                新序 0=animevideov3 1=x4plus-anime 2=general-x4v3 3=x4plus(超慢)
-                             迁移在 VideoView.xaml.cs 的 MigrateEsrganModelOrder(读设置、读预设都走它,一次性 2↔3 互换)。
-                             不迁移的后果:老用户"存的 3 = 轻量模型"会静默变成 3 = 超慢(1080p 实测 14.5 秒/帧,慢 17 倍)。 -->
-                        <ComboBoxItem Content="通用 · realesr-general-x4v3（5MB · 中）" Tag="realesr-general-x4v3"/>
                         <!-- 「通用 · realesrgan-x4plus」保留可选,但红字标出"超慢"(用户要求:不删除、只警示)。
                              依据(2026-09-11 本机 4060 Laptop 实测,源 1920×1080 每帧):x4plus 14.48s / x4plus-anime 4.84s /
                              animevideov3 0.84s;x4plus 还有"只有 4x 权重"的问题(选 2x 也照样全量算 4x 再缩回)。
@@ -76,9 +78,11 @@
                             </StackPanel>
                         </ComboBoxItem>
                     </ComboBox>
-                    <!-- 4x 专用权重模型的提示(用户要求:放在模型下拉正下方) -->
-                    <TextBlock x:Name="EsrganModelHint" Visibility="Collapsed" TextWrapping="Wrap" FontSize="12"
-                               Foreground="#E5484D" Margin="0,2,0,0"/>
+                    <!-- 4x 专用权重模型的提示(用户要求:放在模型下拉正下方)
+                         【2026-09-13 用户要求】这条不再是"红色警告":改用普通提示样式(中性灰 HintText)、文案里也不带 ⚠ 图标。
+                         它说明的是"该模型只有 4x 权重"这一事实,不是错误,没必要用告警色吓人。 -->
+                    <TextBlock x:Name="EsrganModelHint" Visibility="Collapsed" TextWrapping="Wrap"
+                               Style="{StaticResource HintText}" Margin="0,2,0,0"/>
 
                     <TextBlock Text="放大倍数" Style="{StaticResource SectionTitle}"/>
                     <RadioButtons x:Name="VideoScaleRadios" SelectedIndex="1" ToolTipService.ToolTip="输出放大倍数(3x 内部按引擎支持倍数处理)"
