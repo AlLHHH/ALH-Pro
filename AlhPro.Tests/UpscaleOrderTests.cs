@@ -69,7 +69,7 @@ public class UpscaleOrderTests
         //  素材 10s×30fps=300 帧、补帧 4x、设备好(10.4G):
         //    旧顺序(真实执行):补帧后 1200 帧 > 400 → 不单批;且源 300<900 但补帧后 1200 ≥1200 → 视频长 → 400 帧/批 → 3 批
         //    新顺序(当前不会执行):超分侧输入=源 300 帧 ≤400 → 单批 1 批
-        const double perBatch = 3.0;   // = VideoPipeline.AssumedEngineStartupSecondsPerBatch(待实测标定)
+        const double perBatch = 1.15;   // = VideoPipeline.AssumedEngineStartupSecondsPerBatch(2026-09-13 真机标定:1.0~1.3s)
         double oldOrder = VideoPipeline.EstimateProcessSeconds(10, 30, 1920, 1080, up: true, 2.0, "waifu2x",
             interp: true, 4, dedup: false, 0, upscaleFirst: false, freeRamGB: 10.4)
             - VideoPipeline.EstimateProcessSeconds(10, 30, 1920, 1080, up: true, 2.0, "waifu2x",
