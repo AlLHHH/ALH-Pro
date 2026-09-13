@@ -92,6 +92,14 @@ public static class FrameInspect
         return true;
     }
 
+    /// <summary>【任务 O1 · 2026-09-13】引擎"退出码 0 却整帧全黑"的判定(纯逻辑,可单测)。
+    /// 判据 = 【输出是缺陷帧】且【同一张的输入(源帧)不是缺陷帧】:
+    /// 源帧本来就是黑场(片头黑场/淡入淡出/夜戏)时不算引擎故障,否则就是引擎静默出了坏片。
+    /// 真机依据:Real-ESRGAN 传 `-s 1`(模型无 x1 权重)时输出纯黑(mean=0/uniq=1)**且 exit=0 无报错**,
+    /// ncnn-vulkan 的 vkQueueSubmit 失败也是同款形态 —— 都靠这条把它抓出来,不允许静默进成片。</summary>
+    public static bool IsSilentBlackFailure(bool inputIsDefective, bool outputIsDefective)
+        => outputIsDefective && !inputIsDefective;
+
     /// <summary>根据采样步长,计算需采样的像素总数(图片可能很大,只采一部分;与引擎侧一致)。
     /// 步长 = max(4, min(w,h)/32),保证至少采到一部分像素,避免 TINY 图(如 1×1)采样点过少。
     /// </summary>
