@@ -721,8 +721,12 @@
                                 Style="{StaticResource AccentButtonStyle}"
                                 HorizontalAlignment="Stretch" MinHeight="48"
                                 IsEnabled="False" Click="RunBtn_Click"/>
-                        <TextBlock x:Name="RunHint" Text="⚠ 至少启用一项处理(超分或补帧)"
+                        <TextBlock x:Name="RunHint" Text="⚠ 至少启用一项处理(超分、补帧或去重)"
                                    Foreground="#E8A33D" FontSize="11" TextWrapping="Wrap"
+                                   TextAlignment="Center" Visibility="Collapsed"/>
+                        <!-- 只勾去重(不超分不补帧)时的说明:导出成片的帧率=内容帧率、时长不变 -->
+                        <TextBlock x:Name="DedupOnlyHint" Text="※ 只启用去重:成片帧率会变成素材的内容帧率(时长不变,不放大也不补帧)"
+                                   Style="{StaticResource HintText}" TextWrapping="Wrap"
                                    TextAlignment="Center" Visibility="Collapsed"/>
                         <!-- 耗时提示(黄色):启用耗时功能时提示处理时间会增加 -->
                         <TextBlock x:Name="SpeedHint" Text=""

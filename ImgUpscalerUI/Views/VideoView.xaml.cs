@@ -517,11 +517,19 @@ public sealed partial class VideoView : UserControl
 
     private void UpdateRunState()
     {
-        bool anyWork = UpscaleToggle.IsChecked == true || InterpToggle.IsChecked == true;
+        // 【任务 M2 · 2026-09-13】去重可以单独跑(不超分、不补帧):只勾去重也允许开始处理。
+        // 下游本来就支持"只去重导出"(拆帧→去重→按内容帧率合帧,时长不变),这里只是把入口放开。
+        bool anyWork = UpscaleToggle.IsChecked == true || InterpToggle.IsChecked == true
+            || DedupCheck.IsChecked == true;
         RunBtn.IsEnabled = _videos.Count > 0 && !_running && anyWork;
-        // 提示放到"开始处理"按钮下方:两项都关时提醒,避免用户找不到原因
+        // 提示放到"开始处理"按钮下方:三项都关时提醒,避免用户找不到原因
         if (RunHint != null)
             RunHint.Visibility = _videos.Count > 0 && !_running && !anyWork
+                ? Visibility.Visible : Visibility.Collapsed;
+        // 只勾去重(超分/补帧都关)时说明会导出什么:帧率变成内容帧率、时长不变
+        if (DedupOnlyHint != null)
+            DedupOnlyHint.Visibility = _videos.Count > 0 && !_running && anyWork
+                && UpscaleToggle.IsChecked != true && InterpToggle.IsChecked != true
                 ? Visibility.Visible : Visibility.Collapsed;
         // 耗时提示(黄色):启用耗时的功能时,提示处理时间会增加(开什么显示什么)
         if (SpeedHint != null)

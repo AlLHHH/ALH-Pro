@@ -6265,7 +6265,7 @@ public static class VideoService
             AppLogger.Info($"去重过强拦截:原 {origEst} 帧只剩 {frameCount} 帧(低于 15%)→ 拒绝处理,防输出只有几帧");
             throw new DedupTooStrongException(
                 $"去重过强:原 {origEst} 帧只剩 {frameCount} 帧。素材画面变化太小时去重会几乎删光帧," +
-                "导致输出视频只有几帧(打不开/没有补帧效果)。请关闭去重,或把去重强度调低。");
+                "导致输出视频只有几帧(打不开/没有补帧效果)。请降低去重强度,或改用动漫/内容帧率模式。");
         }
     }
 
