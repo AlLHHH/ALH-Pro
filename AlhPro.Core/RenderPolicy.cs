@@ -129,6 +129,33 @@ public static class RenderPolicy
          : freeRamGB >= NormalDeviceFreeRamGB ? DeviceTier.Normal
          : DeviceTier.Weak;
 
+    // ===== 面积缩放(任务 Q2 · 2026-09-13)=5====
+    /// <summary>面积基准:1080p = 1920×1080 = 2 073 600 px(2.07 Mpx)。批大小按"输入像素"反比缩放时的基准面积。
+    /// (与 PipelineOrderPlan 的成本表基准同一个数 —— 那里直接引用本常量,避免两处各写一份。)</summary>
+    public const double ReferencePixels1080p = 1920.0 * 1080.0;
+
+    /// <summary>输入分辨率 → 每批帧数的面积系数(1.0 = 1080p;&gt;1 = 比 1080p 小,同批像素量下可以多放帧;
+    /// &lt;1 = 每帧更大,必须少放帧)。
+    /// 【为什么需要它 —— 任务 Q2】批次大小原先只按"设备档位 × 帧数"定,**没有按分辨率缩放**:
+    /// 4K 源每帧像素是 1080p 的 4 倍,同样的"每批 200 帧"意味着同屏临时盘/内存也放大 ~4 倍 —— 峰值随分辨率暴涨。
+    /// 【取整与钳位】非法分辨率返回 1.0(不缩放);系数钳到 [1/64, 64] 防病态输入。</summary>
+    public static double AreaFactor(int width, int height)
+    {
+        if (width <= 0 || height <= 0) return 1.0;
+        return Math.Clamp(ReferencePixels1080p / ((double)width * height), 1.0 / 64, 64.0);
+    }
+
+    /// <summary>把"档位基准帧数"按输入面积缩放,并钳到 [50, 档位基准]。
+    /// 【上界为什么是"档位基准"】50/120/180/200/400 本身就是任务 E 定的每批上限;不越过它,
+    /// 才能在"更小分辨率"上仍不越任务 E 的口径(也不会把 fastMode/diskTight 已减半的结果再抬回去)。
+    /// 【待实测标定】反比缩放是面积口径的近似:没有实测的"每批帧数 vs 分辨率"峰值曲线。</summary>
+    public static int ScaleFramesForArea(int tierFrames, int width, int height)
+    {
+        if (width <= 0 || height <= 0 || tierFrames <= 0) return tierFrames;
+        int scaled = (int)Math.Round(tierFrames * AreaFactor(width, height));
+        return Math.Clamp(scaled, WeakDeviceFramesPerBatch, tierFrames);
+    }
+
     /// <summary>批次决策结果:每批帧数、批数、以及"为什么是这个数"(供日志/事后验收)。</summary>
     public readonly record struct VideoBatchPlan(
         int BatchSize, int BatchCount, int SourceFrames, int PostInterpFrames, int TierBaseFrames,
@@ -151,7 +178,7 @@ public static class RenderPolicy
     /// 【不设批数上限】仍成立:限批数只能让每批帧数随素材线性变大,同屏临时帧(输入+输出并存)跟着涨 ——
     ///  与"峰值不暴涨"直接冲突(旧注释里的论证保持不变)。</summary>
     public static VideoBatchPlan PlanVideoBatches(double freeRamGB, int sourceFrames, int postInterpFrames,
-        bool fastMode = false, bool diskTight = false)
+        bool fastMode = false, bool diskTight = false, int srcW = 0, int srcH = 0)
     {
         if (sourceFrames < 0) sourceFrames = 0;
         if (postInterpFrames < sourceFrames) postInterpFrames = sourceFrames;   // 补帧后帧数 ≥ 源帧数(倍率 ≥1)
@@ -180,6 +207,14 @@ public static class RenderPolicy
             rule = $"设备差(空闲内存 {freeRamGB:0.#}G < {NormalDeviceFreeRamGB:0.#}G)→ 用户下界 {baseFrames} 帧/批";
         }
         int batch = baseFrames;
+        // ⑦ 面积缩放(任务 Q2):输入分辨率越大 → 每批帧数越少,让"输入帧 + 本批输出帧并存"的峰值不随分辨率暴涨。
+        // 【优先级(自上而下,写死在这里,别再各写一套)】
+        //   ① 设备档位 → 基准帧数;② 面积缩放(钳 [50, 档位基准]);③ fastMode/diskTight 各减半(钳 ≥50);
+        //   ④ 短素材单批(设备 ≥ 正常 且 补帧后 ≤400)→ 覆盖前面全部(整片一批,批大小无意义)。
+        int areaFrames = ScaleFramesForArea(baseFrames, srcW, srcH);
+        if (areaFrames != baseFrames)
+            rule += $";输入 {srcW}×{srcH}(面积系数 {AreaFactor(srcW, srcH):0.###}×)→ 每批 {areaFrames} 帧";
+        batch = areaFrames;
         bool halvedFast = false, halvedDisk = false;
         // ⑥ 兼容模式/临时盘紧:减半保护保留,但不得破坏用户给的 50 下界
         if (fastMode) { batch = HalveWithFloor(batch); halvedFast = true; }
@@ -232,6 +267,51 @@ public static class RenderPolicy
 
     /// <summary>减半但【不破用户下界】:结果钳到 ≥ WeakDeviceFramesPerBatch(50)。</summary>
     private static int HalveWithFloor(int frames) => Math.Max(WeakDeviceFramesPerBatch, frames / 2);
+
+    // ===== 两个阶段各自的批计划(任务 Q2 要求 2)=====
+    /// <summary>某一个阶段的批计划(含该阶段的输入分辨率/面积系数/每批帧数/批数/是否"仅供参考")。</summary>
+    public readonly record struct StageBatchPlan(
+        string Stage, string Order, int StageInputFrames, int InputWidth, int InputHeight, double AreaFactor,
+        int FramesPerBatch, int BatchCount, bool Advisory, string Note);
+
+    /// <summary>给出「本次顺序下两个阶段各自的批计划」—— 两阶段输入分辨率不同,必须各算各的(任务 Q2)。
+    /// 【旧顺序(补帧→超分)】
+    ///   · 补帧阶段:输入 = 源帧(分辨率 = 源),每批帧数按**源面积**算;
+    ///   · 超分阶段:输入 = 补帧输出(帧数 = 源×补帧倍率,分辨率仍 = 源)→ 按源面积算,但总帧数大 k 倍。
+    /// 【新顺序(超分→补帧)】
+    ///   · 超分阶段:输入 = 源帧(分辨率 = 源);
+    ///   · 补帧阶段:输入 = 超分输出(帧数 = 源帧数,但每帧像素 ×scale²)→ **每批帧数按放大后的面积算,显著更小**。
+    /// 【Advisory 的含义】补帧阶段实际是按【转场分段】跑的(一段一次 RIFE 调用,不按批大小切),
+    ///   所以它的"每批帧数/批数"是**等效参考值**(用于峰值估算与报告对照),不是执行参数;
+    ///   超分阶段才是真正按每批帧数切批的阶段。两行都会写进日志,便于真机核对。
+    /// 【待实测标定】面积反比是近似;scale² 也是近似(引擎可能按 2 的幂跑再缩回)。</summary>
+    public static IReadOnlyList<StageBatchPlan> PlanStageBatches(double freeRamGB, int sourceFrames, double scale,
+        int interpScale, int srcW, int srcH, bool upscaleFirst, bool fastMode = false, bool diskTight = false)
+    {
+        if (sourceFrames < 0) sourceFrames = 0;
+        int k = interpScale < 1 ? 1 : interpScale;
+        int postInterp = sourceFrames * k;
+        int hiW = (int)Math.Max(1, Math.Round(srcW * (scale > 0 ? scale : 1)));
+        int hiH = (int)Math.Max(1, Math.Round(srcH * (scale > 0 ? scale : 1)));
+        var list = new List<StageBatchPlan>();
+
+        // 超分阶段:输入帧数 = 源帧(新顺序)/ 补帧输出(旧顺序);分辨率都按"它读的那批帧"算
+        int upIn = upscaleFirst ? sourceFrames : postInterp;
+        int upW = upscaleFirst ? srcW : srcW;   // 旧顺序的超分输入是补帧输出 → 仍是源分辨率
+        int upH = upscaleFirst ? srcH : srcH;
+        var up = PlanVideoBatches(freeRamGB, sourceFrames, upIn, fastMode, diskTight, upW, upH);
+        list.Add(new StageBatchPlan("超分", upscaleFirst ? "新顺序(超分→补帧)" : "旧顺序(补帧→超分)",
+            upIn, upW, upH, AreaFactor(upW, upH), up.BatchSize, up.BatchCount, Advisory: false, Note: up.Rule));
+
+        // 补帧阶段:输入帧数 = 源帧(旧顺序)/ 源帧(新顺序,超分不增减帧数);分辨率 = 源 / 放大后
+        int ipW = upscaleFirst ? hiW : srcW;
+        int ipH = upscaleFirst ? hiH : srcH;
+        var ip = PlanVideoBatches(freeRamGB, sourceFrames, upscaleFirst ? sourceFrames : postInterp, fastMode, diskTight, ipW, ipH);
+        list.Add(new StageBatchPlan("补帧", upscaleFirst ? "新顺序(超分→补帧)" : "旧顺序(补帧→超分)",
+            sourceFrames, ipW, ipH, AreaFactor(ipW, ipH), ip.BatchSize, ip.BatchCount, Advisory: true,
+            Note: ip.Rule + ";补帧阶段实际按转场分段跑,此每批帧数为等效参考值"));
+        return list;
+    }
 
     /// <summary>「先超分再补帧」顺序的批计划(两侧帧数/分辨率不同 → 分开算,不共用一套参数)。
     /// 【为什么单独一个函数】该顺序下:超分阶段输入 = 源帧(分辨率=源),补帧阶段输入 = 超分输出

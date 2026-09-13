@@ -1782,7 +1782,9 @@ public static class VideoService
                 //  · fastMode/diskTight 减半保留,但钳到 ≥ 50(用户下界优先)。
                 // sourceFrames = 去重后的源帧数(视频长度口径);postInterpFrames = total = 本阶段实际输入帧数
                 // (补帧→超分 顺序下超分读的就是补帧输出,即"补帧后总帧数")。
-                var batchPlan = SafeRender.GetVideoBatchPlan(frameCount, total, fastMode, diskTight);
+                // 【任务 Q2】还把本阶段输入帧的分辨率传进去:每批帧数按面积反比缩放(1080p 基准),
+                // 让"输入帧 + 本批输出帧并存"的峰值临时盘/内存不随分辨率暴涨(4K 源每帧像素是 1080p 的 4 倍)。
+                var batchPlan = SafeRender.GetVideoBatchPlan(frameCount, total, fastMode, diskTight, srcW, srcH);
                 int batchSize = batchPlan.BatchSize;
                 // 【日志必须能解释批数】档位 / 源帧数 / 补帧后总帧数 / 本阶段输入 / 每批帧数 / 预计批数 / 命中规则,
                 // 全部一行写清(PlanVideoBatches 的 Rule 里也带着每条门槛的实际取值与依据)。

@@ -352,11 +352,13 @@ public static class SafeRender
     /// 还把"源帧数(视频长度)"与"补帧后总帧数"算进去 —— 短素材不分批、设备好则批内扩大(200/400)、
     /// 设备差最低 50 一批。规则与门槛全在 RenderPolicy.PlanVideoBatches 里(纯函数、可单测)。
     /// 【frameCount 传什么】"补帧→超分"顺序(当前启用)下超分阶段读的是补帧输出,故 postInterpFrames
-    /// 传超分阶段的实际输入帧数;sourceFrames 传去重后的源帧数(视频长度口径)。</summary>
+    /// 传超分阶段的实际输入帧数;sourceFrames 传去重后的源帧数(视频长度口径)。
+    /// 【任务 Q2 · 2026-09-13】新增 srcW/srcH = **本阶段输入帧的分辨率**:每批帧数按面积反比缩放
+    /// (1080p 为基准),让同屏临时盘/内存不随分辨率暴涨。两阶段分辨率不同 → 调用方各自传自己的。</summary>
     public static AlhPro.Core.RenderPolicy.VideoBatchPlan GetVideoBatchPlan(
-        int sourceFrames, int postInterpFrames, bool fastMode, bool diskTight)
+        int sourceFrames, int postInterpFrames, bool fastMode, bool diskTight, int srcW = 0, int srcH = 0)
     {
-        return AlhPro.Core.RenderPolicy.PlanVideoBatches(FreeRamGB, sourceFrames, postInterpFrames, fastMode, diskTight);
+        return AlhPro.Core.RenderPolicy.PlanVideoBatches(FreeRamGB, sourceFrames, postInterpFrames, fastMode, diskTight, srcW, srcH);
     }
 
     /// <summary>视频超分的并行批数(同时几个引擎实例):按显存/内存/核数自动定。
