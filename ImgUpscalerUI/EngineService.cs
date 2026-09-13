@@ -1205,7 +1205,7 @@ public static partial class EngineService
     private static async Task<string> RunAsync(string exe, string args,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct,
         string stage = "", int totalFrames = 0, string? watchDir = null,
-        int watchBase = 0, int watchGlobalTotal = 0)
+        int watchBase = 0, int watchGlobalTotal = 0, int pctLo = 0, int pctHi = 0)
     {
         var psi = new ProcessStartInfo
         {
@@ -1247,7 +1247,8 @@ public static partial class EngineService
         long lastFrameTicks = DateTime.Now.Ticks;
         var watchTask = (watchDir != null && totalFrames > 0 && stage.Length > 0)
             ? WatchDirProgressAsync(watchDir, stage, totalFrames, progress, watchCts.Token, watchBase, watchGlobalTotal,
-                () => { lastOutTicks = DateTime.Now.Ticks; lastFrameTicks = DateTime.Now.Ticks; })   // 完成帧回调:刷新本引擎私有看门狗时间戳
+                () => { lastOutTicks = DateTime.Now.Ticks; lastFrameTicks = DateTime.Now.Ticks; },   // 完成帧回调:刷新本引擎私有看门狗时间戳
+                pctLo, pctHi)
             : Task.CompletedTask;
         // 引擎无进度输出时(部分模型/CPU 软算):每 4 秒若有变化就渐 +1(上限 98),避免进度条"空→满"跳变。
         // 【关键修复】watchDir(目录轮询)场景禁用空闲心跳:它会 10 秒内把进度虚推到 96~98%,
@@ -1879,7 +1880,7 @@ public static partial class EngineService
     private static async Task RunEngFallbackGpuAsync(string exe, string args,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct,
         string stage = "", int totalFrames = 0, string? watchDir = null,
-        int watchBase = 0, int watchGlobalTotal = 0)
+        int watchBase = 0, int watchGlobalTotal = 0, int pctLo = 0, int pctHi = 0)
     {
         bool usesGpu = System.Text.RegularExpressions.Regex.IsMatch(args, @"-g\s+[0-9]+");
         string runArgs = args;
@@ -1892,7 +1893,7 @@ public static partial class EngineService
         }
         try
         {
-            await RunAsync(exe, runArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
+            await RunAsync(exe, runArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal, pctLo, pctHi).ConfigureAwait(false);
             return;
         }
         catch (InvalidOperationException ex) when (!usesGpu)
@@ -1916,7 +1917,7 @@ public static partial class EngineService
             var gpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g 0");
             try
             {
-                await RunAsync(exe, gpuArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
+                await RunAsync(exe, gpuArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal, pctLo, pctHi).ConfigureAwait(false);
             }
             catch (InvalidOperationException gpuEx)
             {
@@ -1950,7 +1951,7 @@ public static partial class EngineService
                         progress?.Report((0, $"⚠ GPU 引擎失败,重试 {r}/{GpuRetryTimes} 次(仍失败才降级)..."));
                         try
                         {
-                            await RunAsync(exe, args, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
+                            await RunAsync(exe, args, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal, pctLo, pctHi).ConfigureAwait(false);
                             return;
                         }
                         catch (InvalidOperationException retryEx)
@@ -1985,7 +1986,7 @@ public static partial class EngineService
                     progress?.Report((0, $"⚠ 显存不足,自动降低分块 {tCur}→{tHalved} 重试(更快更稳)..."));
                     try
                     {
-                        await RunAsync(exe, oomArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
+                        await RunAsync(exe, oomArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal, pctLo, pctHi).ConfigureAwait(false);
                         return;
                     }
                     catch (InvalidOperationException oomEx)
@@ -2013,7 +2014,7 @@ public static partial class EngineService
                 var altArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", $"-g {altGpu.Value}");
                 try
                 {
-                    await RunAsync(exe, altArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal).ConfigureAwait(false);
+                    await RunAsync(exe, altArgs, progress, ct, stage, totalFrames, watchDir, watchBase, watchGlobalTotal, pctLo, pctHi).ConfigureAwait(false);
                     return;
                 }
                 catch (InvalidOperationException ex2)
@@ -2152,10 +2153,13 @@ public static partial class EngineService
 
     /// <summary>轮询输出目录已生成的帧数,逐帧报告"超分 第 N 帧 / 共 M 帧"(目录模式引擎不输出百分比)。
     /// baseFrames=本批起始的全局已处理帧数,globalTotal=全局总帧数:百分比按全局算,预计时间才准。
+    /// pctLo/pctHi=该阶段的百分比区间(默认 0/0=按 stage 名取原有区间):视频链路 1x/2x 改了阶段顺序
+    /// (超分在补帧之前)后,超分必须落 10~45 而不是 45~90,故区间必须由调用方显式指定,不能按名字硬编码。
     /// onFrameDone=完成一帧回调(刷新本引擎私有看门狗时间戳,不刷全局——防并发"喂狗")。</summary>
     private static async Task WatchDirProgressAsync(string dir, string stage, int totalFrames,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct,
-        int baseFrames = 0, int globalTotal = 0, System.Action? onFrameDone = null)
+        int baseFrames = 0, int globalTotal = 0, System.Action? onFrameDone = null,
+        int pctLo = 0, int pctHi = 0)
     {
         int lastCount = 0;
         while (!ct.IsCancellationRequested)
@@ -2169,9 +2173,11 @@ public static partial class EngineService
                     onFrameDone?.Invoke();   // 实质完成帧:刷新本引擎私有看门狗时间戳(不再刷全局,防并发喂狗)
                     int done = baseFrames + count;
                     int gt = globalTotal > 0 ? globalTotal : totalFrames;
-                    int pct = stage == "超分"
-                        ? Math.Clamp(45 + done * 45 / Math.Max(1, gt), 45, 90)
-                        : Math.Clamp(done * 90 / Math.Max(1, gt), 1, 90);
+                    int pct = pctLo > 0 && pctHi > pctLo
+                        ? Math.Clamp(pctLo + done * (pctHi - pctLo) / Math.Max(1, gt), pctLo, pctHi)
+                        : stage == "超分"
+                            ? Math.Clamp(45 + done * 45 / Math.Max(1, gt), 45, 90)
+                            : Math.Clamp(done * 90 / Math.Max(1, gt), 1, 90);
                     progress?.Report((pct, $"{stage} 第 {Math.Min(done, gt)} 帧 / 共 {gt} 帧"));
                 }
             }
@@ -2688,13 +2694,17 @@ public static partial class EngineService
     /// <summary>
     /// 目录批处理超分:一次引擎启动处理目录内全部图片(视频逐帧超分用,避免每帧启动引擎)。
     /// 输出文件名与输入同名;非引擎原生倍数(如 1.5x/3x)先按引擎倍数放大,再批量缩放到目标倍数。
+    /// pctLo/pctHi = watchStage 逐帧进度的百分比区间(0/0 = 沿用按阶段名硬编码的原区间)。
+    /// 【为什么必须由调用方传】视频链路 1x/2x 改为「超分 → 补帧」后,超分排在阶段最前,必须落在 10~45;
+    /// 而按名字硬编码的 45~90 是"补帧在前"时代的口径 —— 阶段名不变、区间变了,故不能按名字推。
     /// </summary>
     public static async Task UpscaleDirAsync(string inputDir, string outputDir, string engine, string model,
         double scale, int noise, int gpuId, bool tta,
         IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default,
         int tileSize = 0, string? watchStage = null,
         int globalBaseFrames = 0, int globalTotalFrames = 0,
-        bool preTiled = false, string outFormat = "png")
+        bool preTiled = false, string outFormat = "png",
+        int pctLo = 0, int pctHi = 0)
     {
         // 【引擎直出 JPG:4K 下实测省 31% 的超分耗时】
         // 实测(2026-09-11,RTX 4060 Laptop,waifu2x models-cunet 2x,1920×1080→3840×2160,同参数同素材各跑 2 次):
@@ -2734,7 +2744,7 @@ public static partial class EngineService
             {
                 try
                 {
-                    await RunEngFallbackGpuAsync(exe, buildArgs(t), progress, ct, watchStage ?? "", watchTotal, watchDir, globalBaseFrames, globalTotalFrames).ConfigureAwait(false);
+                    await RunEngFallbackGpuAsync(exe, buildArgs(t), progress, ct, watchStage ?? "", watchTotal, watchDir, globalBaseFrames, globalTotalFrames, pctLo, pctHi).ConfigureAwait(false);
                     return;
                 }
                 catch (Exception ex) when (attempts < 3 && IsVramOom(ex))
