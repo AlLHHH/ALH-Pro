@@ -85,9 +85,20 @@ public static class VideoPipeline
         // 这里只能覆盖"超分批"这一笔 —— 所以本项仍是【下限】,不是完整开销(见 AssumedEngineStartupSecondsPerBatch)。
         if (up && scale > 1.001 && freeRamGB > 0)
         {
-            int uniq = uniqueFrames > 0 ? uniqueFrames : src;
-            var plan = RenderPolicy.PlanVideoBatches(freeRamGB, uniq);
-            s += plan.BatchCount * AssumedEngineStartupSecondsPerBatch;
+            int srcFrames = uniqueFrames > 0 ? uniqueFrames : src;
+            // 【批数口径必须与真正执行的顺序一致】
+            //  · 旧顺序(补帧→超分,当前启用):超分阶段读的是【补帧输出】→ 批数按"补帧后总帧数"算;
+            //  · 新顺序(超分→补帧,当前关闭):超分阶段读的是【源帧】、补帧在放大后的帧上跑 →
+            //    两侧帧数/分辨率都不同,走 PlanUpscaleFirstBatches 单独算(取它的超分侧批数)。
+            int batchCount;
+            if (upFirst && interp && interpScale > 1)
+                batchCount = RenderPolicy.PlanUpscaleFirstBatches(freeRamGB, srcFrames, scale, interpScale).UpscaleBatchCount;
+            else
+            {
+                int postInterp = (interp && interpScale > 1) ? srcFrames * interpScale : srcFrames;
+                batchCount = RenderPolicy.PlanVideoBatches(freeRamGB, srcFrames, postInterp).BatchCount;
+            }
+            s += batchCount * AssumedEngineStartupSecondsPerBatch;
         }
         s += frames * 0.12;                           // 合成编码(平均)
         if (slowFactor > 1) s *= slowFactor;          // 弱机(CPU 兜底)明显更慢

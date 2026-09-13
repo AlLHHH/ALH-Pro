@@ -72,7 +72,7 @@ public sealed partial class MainPage : Page
             AppLogger.Info($"安全渲染:模式={(SafeRender.Mode == 0 ? "自动" : "自定义")}," +
                 $"显存墙 {SafeRender.EffectiveVramGB:0.#} GB(总 {SafeRender.TotalVramGB:0.#} GB / 空闲 {SafeRender.FreeVramText})," +
                 $"分块 {SafeRender.GetTileSize()}(ONNX {SafeRender.GetOnnxTileSize()}),内存墙 {SafeRender.EffectiveRamGB:0.#} GB," +
-                $"视频批 {SafeRender.GetVideoBatchSize()} 帧/批,CPU {SafeRender.EffectiveCpuLevel switch { 1 => "低", 2 => "中", _ => "高" }}({SafeRender.CpuCoreCount} 核)," +
+                $"视频批基准 {SafeRender.GetVideoBatchSize()} 帧/批(实际每批 50~400,按素材长度定),CPU {SafeRender.EffectiveCpuLevel switch { 1 => "低", 2 => "中", _ => "高" }}({SafeRender.CpuCoreCount} 核)," +
                 $"CPU硬上限 {SafeRender.GetEffectiveCpuCapPct():0}%(处理前系统占用 {SafeRender.IdleCpuLoad * 100:0}%)," +
                 $"降温休息={(SafeRender.RestEnabled ? "开(1小时/15分钟)" : "关")}");
             // Vulkan 自检:后台跑完,无 GPU 自动切 CPU。弹窗「设备检测」只对低配设备(无GPU/显存<6/内存<8/核数≤4)
@@ -2741,7 +2741,7 @@ public sealed partial class MainPage : Page
             RefreshCpuCap();   // 自动/自定义切换:CPU 上限滑条锁定 85%(自动)或恢复可拖(自定义)
             var modeTxt = SafeRender.Mode == 1 ? "" : "当前生效(自动):";
             applyText.Text = $"{modeTxt}显存墙 {SafeRender.EffectiveVramGB:0.#} GB → 分块 {SafeRender.GetTileSize()} · " +
-                $"内存墙 {SafeRender.EffectiveRamGB:0.#} GB → 每批 {SafeRender.GetVideoBatchSize()} 帧 · CPU {CpuName(SafeRender.EffectiveCpuLevel)}";
+                $"内存墙 {SafeRender.EffectiveRamGB:0.#} GB → 每批基准 {SafeRender.GetVideoBatchSize()} 帧(实际 50~400,按素材长度)· CPU {CpuName(SafeRender.EffectiveCpuLevel)}";
             SafeRender.Save();
             AppLogger.Info($"安全渲染设置已保存:模式={(SafeRender.Mode == 0 ? "自动" : "自定义")}," +
                 $"显存墙 {SafeRender.EffectiveVramGB:0.#} GB,内存墙 {SafeRender.EffectiveRamGB:0.#} GB," +

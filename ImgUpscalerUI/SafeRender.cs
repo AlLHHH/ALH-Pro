@@ -348,12 +348,15 @@ public static class SafeRender
         return AlhPro.Core.RenderPolicy.VideoBatchSize(FreeRamGB);
     }
 
-    /// <summary>视频逐帧超分的【素材规模感知】批次决策(2026-09-13 新增):除空闲内存外,
-    /// 还把"唯一帧数"算进去——短素材单批跑完(不为几十帧重复启动引擎),长素材按内存基准切批。
-    /// 内存基准与 fastMode/diskTight 减半的语义全部保留在 RenderPolicy.PlanVideoBatches 里(纯函数、可单测)。</summary>
-    public static AlhPro.Core.RenderPolicy.VideoBatchPlan GetVideoBatchPlan(int uniqueFrames, bool fastMode, bool diskTight)
+    /// <summary>视频逐帧超分的【批次决策】(2026-09-13 按用户口径重定):除空闲内存(→设备档位)外,
+    /// 还把"源帧数(视频长度)"与"补帧后总帧数"算进去 —— 短素材不分批、设备好则批内扩大(200/400)、
+    /// 设备差最低 50 一批。规则与门槛全在 RenderPolicy.PlanVideoBatches 里(纯函数、可单测)。
+    /// 【frameCount 传什么】"补帧→超分"顺序(当前启用)下超分阶段读的是补帧输出,故 postInterpFrames
+    /// 传超分阶段的实际输入帧数;sourceFrames 传去重后的源帧数(视频长度口径)。</summary>
+    public static AlhPro.Core.RenderPolicy.VideoBatchPlan GetVideoBatchPlan(
+        int sourceFrames, int postInterpFrames, bool fastMode, bool diskTight)
     {
-        return AlhPro.Core.RenderPolicy.PlanVideoBatches(FreeRamGB, uniqueFrames, fastMode, diskTight);
+        return AlhPro.Core.RenderPolicy.PlanVideoBatches(FreeRamGB, sourceFrames, postInterpFrames, fastMode, diskTight);
     }
 
     /// <summary>视频超分的并行批数(同时几个引擎实例):按显存/内存/核数自动定。

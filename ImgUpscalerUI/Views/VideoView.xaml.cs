@@ -4688,10 +4688,19 @@ public sealed partial class VideoView : UserControl
         SafeRender.RefreshIdleCpu();   // 处理前采样系统占用(引擎未启动,读数=其他软件真实占用)→ CPU 上限自适应
         {
             double fr = SafeRender.FreeRamGB;
+            // 【口径 2026-09-13 变更】每批帧数不再"只看空闲内存"的一个固定值:还看【源帧数】与【补帧后总帧数】
+            // (短素材不分批 / 设备好+长片 200~400 / 设备差 50)。这里只报"内存档基准"与设备档位;
+            // 真正生效的每批帧数与批数,在每个任务处理前写进日志(「超分批决策:…命中规则:…」),不再在这里冒充。
+            var tier = AlhPro.Core.RenderPolicy.TierFor(fr);
+            string tierTxt = tier switch
+            {
+                AlhPro.Core.RenderPolicy.DeviceTier.Strong => "设备好",
+                AlhPro.Core.RenderPolicy.DeviceTier.Normal => "设备正常",
+                _ => "设备差",
+            };
             int bs = SafeRender.GetVideoBatchSize();
-            // 批次只按空闲内存定档(显存峰值由分块大小界定);空闲显存照实写"未实测",不再伪造数值误导排查
-            Log($"资源自检:空闲内存 {fr:0.#} GB / 空闲显存 {SafeRender.FreeVramText} → 视频批 {bs} 帧/批");
-            AppLogger.Info($"资源自检:空闲内存 {fr:0.#} GB / 空闲显存 {SafeRender.FreeVramText} → 视频批 {bs} 帧/批");
+            Log($"资源自检:空闲内存 {fr:0.#} GB / 空闲显存 {SafeRender.FreeVramText} → {tierTxt};内存档基准 {bs} 帧/批(实际每批 50~400,按素材长度定)");
+            AppLogger.Info($"资源自检:空闲内存 {fr:0.#} GB / 空闲显存 {SafeRender.FreeVramText} → {tierTxt}(内存档基准 {bs} 帧/批;实际每批帧数/批数见各任务的「超分批决策」日志)");
         }
         // 预计时间:全局平均速度(已用时间 ÷ 已完成进度 → 总时长估计,再减已用 = 剩余)
         // 预计总时长初始估算:根据启用的处理项 + 每个视频的时长/帧率/分辨率,

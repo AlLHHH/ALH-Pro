@@ -1,4 +1,5 @@
 using AlhPro.Core;
+using System;
 using Xunit;
 
 namespace AlhPro.Tests;
@@ -109,93 +110,199 @@ public class RenderPolicyTests
         Assert.Equal(expected, RenderPolicy.VideoBatchSize(freeRam));
     }
 
-    // ---------- PlanVideoBatches:把【素材规模】纳入批次决策(2026-09-13) ----------
-    // 守护三件事:① 短素材必须单批(不再为几十帧反复启动引擎);② 每批帧数【绝不】超过内存档基准
-    // (峰值盘/内存不因"规模修正"上涨);③ fastMode/diskTight 的减半仍然生效。
+    // ---------- PlanVideoBatches:设备档位 + 视频长度 + 补帧后总帧数(2026-09-13 用户口径) ----------
+    // 守护用户给的四条:① 设备正常/好 + 短素材 → 不分批;② 设备好 + 视频长 → 批内扩大到 400;
+    // ③ 设备好 + 视频不长 → 200;④ 设备差 → 最低 50 一批(全档位下界,减半也不许破)。
 
-    [Fact]
-    public void PlanVideoBatches_short_clip_single_batch()
+    [Theory]
+    [InlineData(0.5, RenderPolicy.DeviceTier.Weak)]
+    [InlineData(3.9, RenderPolicy.DeviceTier.Weak)]
+    [InlineData(4.0, RenderPolicy.DeviceTier.Normal)]     // 边界:4G 属正常
+    [InlineData(7.9, RenderPolicy.DeviceTier.Normal)]
+    [InlineData(8.0, RenderPolicy.DeviceTier.Strong)]     // 边界:8G 属好(与既有内存档同一条线)
+    [InlineData(32.0, RenderPolicy.DeviceTier.Strong)]
+    public void TierFor_uses_free_ram_boundaries(double freeRam, RenderPolicy.DeviceTier expected)
     {
-        // 唯一帧 60、空闲内存 10.4G(内存基准 240):1 批。每批帧数是"上限",内存基准本来就有富余,
-        // 保持 240 不往下收窄(收窄只会白白多切几批);关键是【批数 = 1】——不再为 60 帧启动两次引擎。
-        var p = RenderPolicy.PlanVideoBatches(10.4, 60);
-        Assert.Equal(1, p.BatchCount);
-        Assert.Equal(240, p.BatchSize);
-        Assert.Equal(240, p.MemoryBatchSize);
-        Assert.True(p.SingleBatchByShortClip);
+        Assert.Equal(expected, RenderPolicy.TierFor(freeRam));
     }
 
     [Fact]
-    public void PlanVideoBatches_short_clip_low_ram_raises_up_to_cap_only()
+    public void PlanVideoBatches_short_clip_on_normal_or_good_device_is_single_batch()
     {
-        // 空闲内存 1.0G(内存基准 25)但素材只有 100 帧:短素材单批 → 1 批,
-        // 每批 100 帧仍在"今天已在用的最大批 240"以内(峰值不超过既有最坏情况)
-        var p = RenderPolicy.PlanVideoBatches(1.0, 100);
-        Assert.Equal(1, p.BatchCount);
-        Assert.Equal(100, p.BatchSize);
-        Assert.True(p.BatchSize <= RenderPolicy.MaxFramesPerBatch);
-        Assert.True(p.SingleBatchByShortClip);
-    }
-
-    [Fact]
-    public void PlanVideoBatches_short_clip_cap_is_halved_by_fast_and_disk_flags()
-    {
-        // 130 帧:正常单批;开了兼容模式(上限 240→120)→ 130 > 120,退回内存基准(120)→ 2 批。
-        // 减半必须仍然生效(防爆盘/弱机),不许被"短素材单批"吃掉。
-        var normal = RenderPolicy.PlanVideoBatches(10.4, 130);
+        // 用户口径:设备正常/好 + 视频短 + 补帧后帧数少 → 完全不分批。
+        // 5s×30fps=150 帧、不补帧 → 补帧后总帧数 150 ≤ 400 → 1 批(设备正常/好都成立)
+        var normal = RenderPolicy.PlanVideoBatches(6.0, 150, 150);
         Assert.Equal(1, normal.BatchCount);
-        var fast = RenderPolicy.PlanVideoBatches(10.4, 130, fastMode: true);
-        Assert.Equal(120, fast.BatchSize);
-        Assert.Equal(2, fast.BatchCount);
-        Assert.True(fast.HalvedForFastMode);
-        var both = RenderPolicy.PlanVideoBatches(10.4, 130, fastMode: true, diskTight: true);
-        Assert.Equal(60, both.BatchSize);
-        Assert.Equal(3, both.BatchCount);
-        Assert.True(both.HalvedForFastMode && both.HalvedForDiskTight);
+        Assert.True(normal.SingleBatch);
+        Assert.Equal(RenderPolicy.DeviceTier.Normal, normal.Tier);
+        var strong = RenderPolicy.PlanVideoBatches(16.0, 150, 150);
+        Assert.Equal(1, strong.BatchCount);
+        Assert.True(strong.SingleBatch);
+        // 边界:补帧后恰为 400 → 仍单批;401 → 不再单批
+        Assert.True(RenderPolicy.PlanVideoBatches(16.0, 100, 400).SingleBatch);
+        Assert.False(RenderPolicy.PlanVideoBatches(16.0, 101, 401).SingleBatch);
     }
 
     [Fact]
-    public void PlanVideoBatches_long_clip_uses_memory_baseline_no_frame_inflation()
+    public void PlanVideoBatches_weak_device_keeps_user_floor_of_50()
     {
-        // 唯一帧 3420、空闲内存 10.4G → 每批 240(=内存基准,不因素材长而放大) → 15 批。
-        // 【这条断言就是"不设批数上限"的守护】:批数随素材线性增长是刻意的 —— 限批数只能让每批帧数
-        // 变大,同屏临时帧(输入+输出)会跟着涨,峰值盘/内存就守不住了(见 PlanVideoBatches 注释)。
-        var p = RenderPolicy.PlanVideoBatches(10.4, 3420);
-        Assert.Equal(240, p.BatchSize);
-        Assert.Equal(15, p.BatchCount);
-        Assert.False(p.SingleBatchByShortClip);
-        var tight = RenderPolicy.PlanVideoBatches(10.4, 3420, diskTight: true);
-        Assert.Equal(120, tight.BatchSize);
-        Assert.Equal(29, tight.BatchCount);
+        // 设备差:每批 50(用户下界)。设备差不享受"短素材单批"(用户只对"设备正常"说了不分批),
+        // 只按 50 帧/批切 —— 200 帧 → 4 批,且每批恰好 50。
+        var weak = RenderPolicy.PlanVideoBatches(2.0, 200, 200);
+        Assert.Equal(RenderPolicy.DeviceTier.Weak, weak.Tier);
+        Assert.Equal(RenderPolicy.WeakDeviceFramesPerBatch, weak.BatchSize);
+        Assert.Equal(4, weak.BatchCount);
+        Assert.False(weak.SingleBatch);
     }
 
     [Fact]
-    public void PlanVideoBatches_never_exceeds_absolute_per_batch_ceiling()
+    public void PlanVideoBatches_strong_device_200_and_400_thresholds()
     {
-        // 任意内存档 + 任意素材规模:每批帧数都不超过 MaxFramesPerBatch(= 今天内存档的最大批),
-        // 也就是"短素材单批豁免"永远不会把同屏临时帧推高到今天已在用的水平之上。
-        foreach (var ram in new[] { 0.5, 1.0, 2.0, 3.0, 5.0, 7.0, 9.0, 32.0 })
-            foreach (var n in new[] { 0, 1, 60, 240, 241, 1000, 3417, 100_000 })
-            {
-                var p = RenderPolicy.PlanVideoBatches(ram, n);
-                Assert.True(p.BatchSize <= RenderPolicy.MaxFramesPerBatch,
-                    $"ram={ram} n={n} → 每批 {p.BatchSize} 帧,超过绝对上限 {RenderPolicy.MaxFramesPerBatch}");
-                Assert.True(p.BatchSize >= RenderPolicy.MinFramesPerBatch, $"ram={ram} n={n} → 每批帧数低于下限");
-                Assert.True(p.BatchCount >= 1);
-                // 批数 × 每批帧数必须覆盖全部唯一帧(切批不许漏帧)
-                if (n > 0) Assert.True((long)p.BatchCount * p.BatchSize >= n, $"ram={ram} n={n} 切批覆盖不足");
-            }
+        // 设备好 + 视频不长(源 <900 且补帧后 <1200)→ 200 帧/批
+        var shortish = RenderPolicy.PlanVideoBatches(16.0, 300, 600);
+        Assert.Equal(RenderPolicy.StrongDeviceFramesPerBatch, shortish.BatchSize);
+        Assert.Equal(3, shortish.BatchCount);                       // 600/200
+        // 设备好 + 视频长(按补帧后总帧数命中:真机那条 855 源帧 → 补帧后 3420)→ 400 帧/批
+        var longByVolume = RenderPolicy.PlanVideoBatches(16.0, 855, 3420);
+        Assert.Equal(RenderPolicy.StrongDeviceLargeFramesPerBatch, longByVolume.BatchSize);
+        Assert.Equal(9, longByVolume.BatchCount);                   // 3420/400(旧口径是 15 批)
+        // 设备好 + 视频长(按时长命中:源帧数 ≥900)
+        var longBySource = RenderPolicy.PlanVideoBatches(16.0, 900, 900);
+        Assert.Equal(RenderPolicy.StrongDeviceLargeFramesPerBatch, longBySource.BatchSize);
     }
 
     [Fact]
-    public void PlanVideoBatches_batch_count_is_monotonic_in_frame_count()
+    public void PlanVideoBatches_normal_device_uses_existing_memory_tier()
     {
-        int prev = 0;
-        for (int n = 0; n <= 5000; n += 37)
+        // 设备正常 = 沿用既有内存档(4~6G→120、6~8G→180),素材够长时不走单批豁免
+        var p120 = RenderPolicy.PlanVideoBatches(5.0, 2000, 4000);
+        Assert.Equal(120, p120.BatchSize);
+        Assert.Equal(34, p120.BatchCount);                          // ⌈4000/120⌉
+        var p180 = RenderPolicy.PlanVideoBatches(7.5, 2000, 4000);
+        Assert.Equal(180, p180.BatchSize);
+        Assert.Equal(23, p180.BatchCount);                          // ⌈4000/180⌉
+    }
+
+    [Fact]
+    public void PlanVideoBatches_halving_keeps_user_floor_of_50()
+    {
+        // fastMode/diskTight 减半保护保留:200→100、400→200、180→90
+        Assert.Equal(100, RenderPolicy.PlanVideoBatches(16.0, 300, 600, fastMode: true).BatchSize);
+        Assert.Equal(200, RenderPolicy.PlanVideoBatches(16.0, 855, 3420, fastMode: true).BatchSize);
+        Assert.Equal(90, RenderPolicy.PlanVideoBatches(7.5, 2000, 4000, diskTight: true).BatchSize);
+        Assert.Equal(50, RenderPolicy.PlanVideoBatches(7.5, 2000, 4000, diskTight: true, fastMode: true).BatchSize);   // 90→45 被 50 挡住
+        // ⚠ 冲突点:设备差基准 50,减半(25)被用户下界挡住 → 该档减半不生效(报告里已如实说明)
+        var weakFast = RenderPolicy.PlanVideoBatches(2.0, 500, 500, fastMode: true);
+        Assert.Equal(RenderPolicy.WeakDeviceFramesPerBatch, weakFast.BatchSize);
+        Assert.True(weakFast.HalvedForFastMode);
+        // 单批豁免在减半之后生效:600 帧在设备好档上被减半后仍是单批(豁免按补帧后总帧数判)
+        Assert.True(RenderPolicy.PlanVideoBatches(16.0, 300, 400, fastMode: true).SingleBatch);
+    }
+
+    [Fact]
+    public void PlanVideoBatches_invariants_hold_for_every_tier_and_size()
+    {
+        // 不变量(任意档位/任意规模/任意模式都成立):
+        //  ① 每批帧数 ≥ 用户下界 50(减半也不许破);
+        //  ② 每批帧数 ≤ 用户给的最大批 400;
+        //  ③ 批数 ≥ 1,且 批数 × 每批帧数 ≥ 补帧后总帧数(切批不许漏帧)。
+        foreach (var ram in new[] { 0.5, 1.0, 3.9, 4.0, 5.0, 7.9, 8.0, 16.0, 64.0 })
+            foreach (var src in new[] { 0, 1, 60, 240, 400, 900, 899, 5000 })
+                foreach (var post in new[] { 0, 1, 72, 400, 401, 1200, 1199, 3420, 100_000 })
+                {
+                    var p = RenderPolicy.PlanVideoBatches(ram, src, post);
+                    Assert.True(p.BatchSize >= RenderPolicy.WeakDeviceFramesPerBatch,
+                        $"ram={ram} src={src} post={post} → 每批 {p.BatchSize} 帧,低于用户下界 50");
+                    Assert.True(p.BatchSize <= RenderPolicy.StrongDeviceLargeFramesPerBatch,
+                        $"ram={ram} src={src} post={post} → 每批 {p.BatchSize} 帧,超过用户给的最大批 400");
+                    Assert.True(p.BatchCount >= 1);
+                    int effPost = Math.Max(src, post);
+                    if (effPost > 0)
+                        Assert.True((long)p.BatchCount * p.BatchSize >= effPost,
+                            $"ram={ram} src={src} post={post} 切批覆盖不足");
+                }
+    }
+
+    [Fact]
+    public void PlanVideoBatches_batch_count_is_monotonic_within_each_rule_branch()
+    {
+        // 【口径变了,断言跟着改】旧口径是"批数随帧数单调不减";用户新口径里**故意**存在台阶:
+        // 设备好档上源帧数跨过 900(或补帧后跨过 1200)= "视频长" → 每批从 200 扩到 400,批数会**下降**
+        // (这正是"批内扩大"的目的:减少引擎进程启动次数)。所以单调性只能在同一条规则分支内断言。
+        // 设备好(10.4G)、补帧后=源帧数:
+        //  · 401..899 帧:200 帧/批 → 批数随帧数单调不减;
+        //  · 900..:400 帧/批 → 同样单调不减。
+        int prevA = 0;
+        for (int n = 401; n < 900; n += 11)
         {
-            var p = RenderPolicy.PlanVideoBatches(10.4, n);
-            Assert.True(p.BatchCount >= prev, $"帧数增加后批数反而减少了(n={n})");
-            prev = p.BatchCount;
+            var p = RenderPolicy.PlanVideoBatches(10.4, n, n);
+            Assert.Equal(RenderPolicy.StrongDeviceFramesPerBatch, p.BatchSize);
+            Assert.True(p.BatchCount >= prevA, $"200/批 分支内批数回退(n={n})");
+            prevA = p.BatchCount;
         }
+        int prevB = 0;
+        for (int n = 900; n <= 6000; n += 37)
+        {
+            var p = RenderPolicy.PlanVideoBatches(10.4, n, n);
+            Assert.Equal(RenderPolicy.StrongDeviceLargeFramesPerBatch, p.BatchSize);
+            Assert.True(p.BatchCount >= prevB, $"400/批 分支内批数回退(n={n})");
+            prevB = p.BatchCount;
+        }
+    }
+
+    [Fact]
+    public void PlanVideoBatches_long_clip_stepdown_is_intentional()
+    {
+        // 钉住这条"台阶"本身,免得以后有人当 bug 修掉:899 帧 → 5 批(200/批);900 帧 → 3 批(400/批)。
+        // 依据是用户口径"设备好 视频长 考虑批内扩大"——批数下降是刻意的收益,不是回退。
+        var justUnder = RenderPolicy.PlanVideoBatches(10.4, 899, 899);
+        Assert.Equal(200, justUnder.BatchSize);
+        Assert.Equal(5, justUnder.BatchCount);
+        var atThreshold = RenderPolicy.PlanVideoBatches(10.4, 900, 900);
+        Assert.Equal(400, atThreshold.BatchSize);
+        Assert.Equal(3, atThreshold.BatchCount);
+        Assert.True(atThreshold.BatchCount < justUnder.BatchCount);
+    }
+
+    [Fact]
+    public void PlanVideoBatches_single_batch_exemption_stepdown_is_intentional()
+    {
+        // 另一条台阶:补帧后 400 帧 → 单批(1 批);401 帧 → 设备好档 200/批 → 3 批。
+        // 依据是用户口径"补帧完的帧总数少 完全可以不分批"。
+        Assert.Equal(1, RenderPolicy.PlanVideoBatches(10.4, 400, 400).BatchCount);
+        Assert.Equal(3, RenderPolicy.PlanVideoBatches(10.4, 401, 401).BatchCount);
+    }
+
+    // ---------- PlanUpscaleFirstBatches:「先超分再补帧」两侧分开算(该顺序当前关闭,只做准备+单测) ----------
+
+    [Fact]
+    public void PlanUpscaleFirstBatches_computes_both_sides_separately()
+    {
+        // 2x 超分 + 2x 补帧、源 600 帧、设备好(16G)、视频不长(源 600 < 900 → 200 帧/批)
+        var p = RenderPolicy.PlanUpscaleFirstBatches(16.0, 600, scale: 2.0, interpScale: 2);
+        Assert.Equal(RenderPolicy.DeviceTier.Strong, p.Tier);
+        Assert.Equal(200, p.UpscaleFramesPerBatch);                 // 超分侧:输入=源帧
+        Assert.Equal(3, p.UpscaleBatchCount);                       // ⌈600/200⌉
+        Assert.Equal(50, p.InterpFramesPerBatch);                   // 补帧侧:200 ÷ 2² = 50(每帧像素 ×4)
+        Assert.Equal(12, p.InterpBatchCount);                       // ⌈600/50⌉
+        Assert.Equal(600, p.SourceFrames);
+        Assert.Equal(1200, p.PostInterpFrames);
+        // 两侧参数【必须不同】:这正是"不能共用同一套批参数"的体现
+        Assert.NotEqual(p.UpscaleFramesPerBatch, p.InterpFramesPerBatch);
+    }
+
+    [Fact]
+    public void PlanUpscaleFirstBatches_interp_side_respects_floor_and_area()
+    {
+        // 4x 超分:面积 ×16 → 补帧侧每批被面积压到 50(下界),不许更低
+        var p4 = RenderPolicy.PlanUpscaleFirstBatches(16.0, 800, scale: 4.0, interpScale: 4);
+        Assert.Equal(RenderPolicy.WeakDeviceFramesPerBatch, p4.InterpFramesPerBatch);
+        // 1x 超分(面积不变):两侧每批帧数相同
+        var p1 = RenderPolicy.PlanUpscaleFirstBatches(16.0, 800, scale: 1.0, interpScale: 2);
+        Assert.Equal(p1.UpscaleFramesPerBatch, p1.InterpFramesPerBatch);
+        // 弱机:超分侧 50 → 补帧侧也钳在 50(下界),不会因为面积换算掉到 50 以下
+        var weak = RenderPolicy.PlanUpscaleFirstBatches(2.0, 800, scale: 2.0, interpScale: 2);
+        Assert.Equal(RenderPolicy.WeakDeviceFramesPerBatch, weak.UpscaleFramesPerBatch);
+        Assert.Equal(RenderPolicy.WeakDeviceFramesPerBatch, weak.InterpFramesPerBatch);
     }
 }
