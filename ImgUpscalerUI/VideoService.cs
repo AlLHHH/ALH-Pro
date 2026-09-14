@@ -1690,6 +1690,8 @@ public static class VideoService
                 // 超分单帧成本 u 与"补帧在源分辨率/放大后分辨率的单帧成本"比较,谁便宜谁先跑。
                 // 判据/成本表/安全边际(节省 <15% 不切换)/未实测组合回退,全在 AlhPro.Core.PipelineOrderPlan
                 // (纯函数 + 单测,成本表每个数字都标了 2026-09-13 真机实测出处)。
+                // 【任务 W】这三组数字(超分单价表 / 补帧锚点表 / 安全边际)**都可被在线参数覆盖**;
+                // 未配置(null)时逐个回落上面的内置值,行为与改动前逐字一致(见 AlhPro.Core.ParamProfileRuntime)。
                 // 只有"超分与补帧都要真跑"时顺序才有意义;其余情况保持 upscaleFirst 的原值(全局开关口径)。
                 if (doUpscale && frameInterp && upscaleRuns)
                 {
@@ -1709,7 +1711,7 @@ public static class VideoService
                     uOrderSavingsPercent = orderPlan.SavingsPercent;
                     uOrderMeasured = orderPlan.Measured;
                     if (!orderPlan.UpscaleFirst && orderPlan.Measured && orderPlan.SavingsSeconds > 0)
-                        AppLogger.Info($"顺序判定说明:新顺序虽然更省但只省 {orderPlan.SavingsPercent:0.#}%(< 15% 安全边际)→ 保持旧顺序,避免临界抖动");
+                        AppLogger.Info($"顺序判定说明:新顺序虽然更省但只省 {orderPlan.SavingsPercent:0.#}%(< {AlhPro.Core.ParamProfileRuntime.OrderSwitchMinSavingsPercent:0.#}% 安全边际)→ 保持旧顺序,避免临界抖动");
                     // 【任务 Q2】两阶段批计划:两个阶段的输入分辨率不同,各自按自己的面积算每批帧数,分别落日志。
                     // (补帧阶段的"每批帧数"是等效参考值 —— 它实际按转场分段跑,见 RenderPolicy.PlanStageBatches)
                     var stagePlans = AlhPro.Core.RenderPolicy.PlanStageBatches(SafeRender.FreeRamGB, frameCount,
@@ -6327,6 +6329,8 @@ public static class VideoService
     /// 【失败怎么办】任一环节失败 → 返回空指标 ⇒ Detect 得到 0 处切点 ⇒ "不做切点保护"。
     /// 这个降级**等于改动前的行为**(旧路径本来就不做切点保护),不会让处理失败、也不会改变 CFR 路径。
     /// 【待实测标定】采样高度(192)与 SceneCutJudge 的阈值(帧差 ≥25/≥50、拉普拉斯比 ≤0.6)都需真机复测:
+    /// 【任务 W】这三个阈值现在**经覆盖层读**(<see cref="AlhPro.Core.ParamProfileRuntime"/>),未配置在线参数时
+    /// 就是上面这几个内置值(行为逐字不变)。
     /// 阈值是在**原分辨率**上标定的(实测 58.68 / 0.474),换到 192 行采样后绝对量级会变。</summary>
     private static async Task<(double[] diff, double[]? lapVar)> ComputeSceneCutMetricsAsync(
         string ffmpeg, string framesDir, int srcW, int srcH, int frameCount, CancellationToken ct)

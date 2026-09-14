@@ -15,7 +15,13 @@ namespace AlhPro.Core;
 /// 真正的合成仍走仓库既有原语(逐槽 `-s` 插帧);接线状态见 VideoService 的注释与本次提交说明。</summary>
 public static class TimelineFlattenPlan
 {
-    /// <summary>相邻间隔偏离"中位间隔"超过这个比例 → 视为缺口/顿挫。【待实测标定】</summary>
+    /// <summary>相邻间隔偏离"中位间隔"超过这个比例 → 视为缺口/顿挫。【待实测标定】
+    /// 【任务 W · 联网核对】**外部没有任何公开的"缺口容差比例"可参照** —— 社区工具不按"与中位间隔比"
+    /// 判缺口:最接近的同类工具 ddfi-rife 走的是"**先删重复帧 → 得到真 VFR → 用真时间戳重算目标帧时刻 → 再转 CFR**"
+    /// (<https://github.com/Mr-Z-2697/ddfi-rife>:Remove duplicated frames → Interpolate → Extract timestamps →
+    /// "Correct" the interpolated video with calculated timestamps → Convert to CFR)。
+    /// 也就是说业界把"时间戳"当**事实**来用,而不是像本类这样"先判有没有缺口、再决定要不要填平"。
+    /// 因此 0.25 保持本工程口径,**不据外部资料调整**;差别与建议见 <see cref="ExternalPractice"/> 的说明。</summary>
     public const double GapToleranceRatio = 0.25;
 
     /// <summary>时长/时刻比较用的小量(秒)。</summary>
@@ -32,14 +38,17 @@ public static class TimelineFlattenPlan
     }
 
     /// <summary>按源帧时长表 + 内容帧率 + 补帧倍率决定"是否填平"以及目标时间轴参数。
-    /// 缺口判定:逐个间隔与**中位数**比较,偏离超过 <see cref="GapToleranceRatio"/> 记一处;
-    /// **一处都没有 = 均匀源(CFR/无顿挫)→ 不填平**(保证既有行为不变)。</summary>
+    /// 缺口判定:逐个间隔与**中位数**比较,偏离超过容差比例记一处;
+    /// **一处都没有 = 均匀源(CFR/无顿挫)→ 不填平**(保证既有行为不变)。
+    /// 【任务 W】容差比例改为**经覆盖层读**(<see cref="ParamProfileRuntime.TimelineGapToleranceRatio"/>);
+    /// 覆盖层为 null(默认/离线/全部单测)→ 取 <see cref="GapToleranceRatio"/>,**返回的 Plan 逐字段、逐字不变**。</summary>
     public static Plan Decide(IReadOnlyList<double>? frameDurs, double contentFps, int interpScale)
     {
         int n = frameDurs?.Count ?? 0;
         if (n < 3) return new Plan(false, 0, 0, 0, 0, n, "源时长表不足(≤2 帧)");
         if (interpScale < 2) return new Plan(false, 0, 0, 0, 0, n, "未开补帧");
         if (!(contentFps > 0)) return new Plan(false, 0, 0, 0, 0, n, "内容帧率未知");
+        double gapToleranceRatio = ParamProfileRuntime.TimelineGapToleranceRatio;
         double total = 0;
         foreach (var d in frameDurs!)
         {
@@ -52,7 +61,7 @@ public static class TimelineFlattenPlan
         if (!(median > 0)) return new Plan(false, 0, 0, 0, 0, n, "中位间隔非正");
         int gaps = 0;
         foreach (var d in frameDurs!)
-            if (Math.Abs(d - median) / median > GapToleranceRatio) gaps++;
+            if (Math.Abs(d - median) / median > gapToleranceRatio) gaps++;
         if (gaps == 0) return new Plan(false, 0, 0, total, 0, n, "间隔均匀(无缺口)");
         double targetFps = contentFps * interpScale;
         int targetFrames = Math.Max(2, (int)Math.Round(total * targetFps));
