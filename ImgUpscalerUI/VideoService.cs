@@ -387,6 +387,16 @@ public static class VideoService
         double uOrderSavingsSeconds = 0;
         double uOrderSavingsPercent = 0;
         bool uOrderMeasured = false;
+        // ===== 【任务 X3】"各阶段毫秒每帧"专用秒表 =====
+        // 【为什么不复用 UMark/uWatch】uStageTimes 里"补帧+超分"本来就是**一项**(两种阶段顺序都跑完才封口),
+        // 拿它算不出"补帧 vs 超分"各自多快 —— 而那正是用户要的("一眼判断是素材变大还是软件变慢")。
+        // 这里另起两只独立秒表,只包住两个子阶段,**不动既有计时的任何语义**(UMark 该记什么还记什么)。
+        // 两个调用点互斥(旧顺序在 3) 块、新顺序在 4.2) 块),所以补帧这只 Stopwatch 用 Start/Stop 累计即可。
+        var xInterpWatch = new System.Diagnostics.Stopwatch();
+        var xUpscaleWatch = new System.Diagnostics.Stopwatch();
+        long xUpscaleFrames = 0;   // 超分阶段【输入】帧数(超分保帧数、不增减 → 结算时用它算该阶段 ms/帧)
+        // 【任务 X1/X2】"批大小"结论行是否已在【处理开始】打进界面日志区(打了就不在超分阶段重复打)。
+        bool xBatchLineShown = false;
 
         // 手动模式新增可调判据(默认保持原行为):局部动作保护/参考帧窗口/采样粒度/变化块判线
         dedupProtect = Math.Clamp(dedupProtect, 0.05, 0.60);
@@ -1712,6 +1722,11 @@ public static class VideoService
                     uOrderMeasured = orderPlan.Measured;
                     if (!orderPlan.UpscaleFirst && orderPlan.Measured && orderPlan.SavingsSeconds > 0)
                         AppLogger.Info($"顺序判定说明:新顺序虽然更省但只省 {orderPlan.SavingsPercent:0.#}%(< {AlhPro.Core.ParamProfileRuntime.OrderSwitchMinSavingsPercent:0.#}% 安全边际)→ 保持旧顺序,避免临界抖动");
+                    // 【任务 X1】界面日志区只放【结论短句】:完整判据(u / r_lo / r_hi / 门槛秒数 / 成本表出处)
+                    // 已经由上面两行 AppLogger 写进诊断文件 —— 用户真机就是被那一长串挡住、没找到结论的。
+                    // 文案规则(不含"完成"/不含"第 N 帧 / 共 M 帧"/≤60 汉字)由 Core.LogShortText 负责并被单测钉住。
+                    progress?.Report((6, "· " + AlhPro.Core.LogShortText.ClampToChineseLimit(
+                        $"顺序:{AlhPro.Core.LogShortText.OrderShortText(orderPlan, AlhPro.Core.ParamProfileRuntime.OrderSwitchMinSavingsPercent)}")));
                     // 【任务 Q2】两阶段批计划:两个阶段的输入分辨率不同,各自按自己的面积算每批帧数,分别落日志。
                     // (补帧阶段的"每批帧数"是等效参考值 —— 它实际按转场分段跑,见 RenderPolicy.PlanStageBatches)
                     var stagePlans = AlhPro.Core.RenderPolicy.PlanStageBatches(SafeRender.FreeRamGB, frameCount,
@@ -1736,6 +1751,23 @@ public static class VideoService
                         AppLogger.Info($"批计划[{sp.Stage}]({sp.Order}):输入 {sp.InputWidth}×{sp.InputHeight}"
                             + $"(面积系数 {sp.AreaFactor:0.###})→ 每批 {sp.FramesPerBatch} 帧 × 预计 {sp.BatchCount} 批"
                             + $"(阶段输入 {sp.StageInputFrames} 帧{(sp.Advisory ? ",等效参考值" : "")})");
+                    // ===== 【任务 X1/X2】界面日志区:"每批多少帧/几批"提前到【处理开始】,并且只用一句短话 =====
+                    // 【为什么要挪(T 之前的口径)】用户真机找不着批次信息:它原来要等超分阶段开始才写(而且是长句)。
+                    // 【诚实口径(任务 X2 明确要求)】补帧阶段**实际是按转场分段跑的**(一段一次 RIFE 调用,
+                    //   不按批大小切,见 RenderPolicy.PlanStageBatches 的 Advisory 说明)→ 这里如实写"按转场分段",
+                    //   只把"等效每批 N 帧"当参考值报出来,不让人误解成它真的在分批。
+                    {
+                        var ipUi = stagePlans.FirstOrDefault(s => s.Stage == "补帧");
+                        var upUi = stagePlans.FirstOrDefault(s => s.Stage == "超分");
+                        string ipTxt = ipUi.Advisory
+                            ? $"补帧按转场分段(等效每批 {ipUi.FramesPerBatch} 帧)"
+                            : $"补帧 {ipUi.FramesPerBatch} 帧/批 ×{ipUi.BatchCount} 批";
+                        progress?.Report((6, "· " + AlhPro.Core.LogShortText.ClampToChineseLimit(
+                            $"批大小:{ipTxt}、超分 {upUi.FramesPerBatch} 帧/批 ×{upUi.BatchCount} 批"
+                            + $"(设备档:{AlhPro.Core.LogShortText.DeviceTierShortText(SafeRender.FreeRamGB, perfScore)}"
+                            + ";批数为预计)")));
+                        xBatchLineShown = true;
+                    }
                 }
                 frameScale = frameCount > 0 ? Math.Min(6.0, (double)origCountEst / frameCount) : 1.0;
                 bool v4Model = IsV4Model(interpModel);
@@ -1778,14 +1810,23 @@ public static class VideoService
                             + (flattenActive || flatPlan.Flatten ? $"【平滑时间轴:按真实时长 {flatPlan.TotalSeconds:0.###}s 重铺】" : "")
                             + $";倍率 {interpScale}x(有效倍率 mult={AlhPro.Core.VideoPipeline.InterpMultiplier(interpScale, frameScale):0.##})";
                         AppLogger.Info(census);
-                        progress?.Report((6, "· " + census));
+                        // 【任务 X1/X3】界面只放一句压缩后的结论(长台账留在文件日志里):
+                        // 一行同时给出「源分辨率 + 三段帧数 + 输出帧数/帧率」—— 用户明确要"一眼看懂 + 便于对比快慢"。
+                        progress?.Report((6, "· " + AlhPro.Core.LogShortText.ClampToChineseLimit(
+                            $"源 {srcW}×{srcH} · 帧数:源 {origCountEst} → 去重后 {frameCount} → 补帧后 {globalTarget}"
+                            + $"(输出 {planOutFrames} 帧 @{planOutFps:0.#}fps{(flattenActive || flatPlan.Flatten ? "·平滑时间轴" : "")})")));
                     }
                     // ===== 旧顺序(3x/4x/不实际超分):补帧在这里跑 =====
                     // 输入 framesIn(源帧)、输出 framesFinal;RIFE 探测尺寸 = 源尺寸(srcW×srcH)——与改动前逐字一致。
                     // 新顺序(1x/2x)不在这里跑:同一份 InterpStageAsync 被推迟到超分阶段之后调用
                     // (输入 upOutput(超分输出)、输出 framesInterp、探测尺寸=超分后的真实尺寸)。
                     if (!upscaleFirst)
+                    {
+                        // 【任务 X3】只包住补帧阶段本身(Start/Stop 累计;新顺序那次调用在 4.2) 块,两处互斥)
+                        xInterpWatch.Start();
                         await InterpStageAsync(framesIn, framesFinal, srcW, srcH);
+                        xInterpWatch.Stop();
+                    }
                 }
                 }
             }
@@ -1852,6 +1893,7 @@ public static class VideoService
             }
             else if (doUpscale)
             {
+                xUpscaleWatch.Start();   // 【任务 X3】超分阶段墙钟起点(与 UMark 无关的独立计时,只用于"每帧耗时"统计)
                 // 【进度动态分段】超分区间随【实际阶段顺序】走,阶段名与真正在跑的阶段必须一致:
                 //   新顺序(1x/2x,超分在前)  → 超分 10~45、补帧 45~90;
                 //   旧顺序(3x/4x,补帧在前)  → 补帧 10~45、超分 45~90(原口径一字不改)。
@@ -2055,6 +2097,8 @@ public static class VideoService
                 // 全部一行写清(PlanVideoBatches 的 Rule 里也带着每条门槛的实际取值与依据)。
                 AppLogger.Info($"超分批决策:档位={batchPlan.Tier}(空闲内存 {SafeRender.FreeRamGB:0.#}G)→ 每批 {batchSize} 帧;"
                     + $"本阶段输入 {total} 帧;兼容模式={fastMode},临时盘紧={diskTight};命中规则:{batchPlan.Rule}");
+                // 【任务 X3】定格本阶段输入帧数(超分保帧数、不增减 → 结算时用它算"超分 ms/帧")。
+                xUpscaleFrames = total;
                 // 唯一帧/组按槽号升序排列(保持时间轴顺序);补齐孤立的唯一槽(无重复的帧)
                 for (int i = 0; i < total; i++)
                     if (repIdx[i] == i && !groupsByRep.ContainsKey(i))
@@ -2075,6 +2119,14 @@ public static class VideoService
                 }
                 if (curBG.Count > 0) batchGroups.Add(curBG);
                 int batchCount = batchGroups.Count;
+                // 【任务 X1/X2】界面:批大小结论**只在【处理开始】打一次**;这里仅在"开始那行没打过"时补一句短句
+                // (例如只超分不补帧:顺序/批计划那块根本没执行,界面若不打就等于没有批次信息)。
+                // 【为什么放在这里】批数要报**真实值**(按去重后的唯一帧组数切出来的),上面那条 plan 里的是【预计值】;
+                // 命中规则/档位依据/面积系数等解释性内容一律留在上面那条文件日志里,不上界面。
+                if (!xBatchLineShown)
+                    progress?.Report((upBase, "· " + AlhPro.Core.LogShortText.ClampToChineseLimit(
+                        $"批大小:超分 {batchSize} 帧/批 ×{batchCount} 批"
+                        + $"(设备档:{AlhPro.Core.LogShortText.DeviceTierShortText(SafeRender.FreeRamGB, perfScore)})")));
                 // 每批的起始槽位 = 【确定性前缀和】(前面各批的槽位数之和),不再读 doneFrames。
                 // doneFrames 只在批次【结束】时累加,而批次是并行跑的(SemaphoreSlim(GetVideoConcurrency()) 允许多批在飞),
                 // 所以"批次开始时读 doneFrames"读到的是别的批次的进度 → 进度计数器来回跳(诊断包里 65→131→199→33→2→7→11)、
@@ -2509,6 +2561,7 @@ public static class VideoService
                     + $"({(srSec > 0.001 ? total / srSec : 0):0.##} 帧/秒) · 路线={(upOnnxDml ? "ONNX 稳定引擎(DirectML)" : "ncnn-Vulkan")}");
             }
                 progress?.Report((upEnd, $"帧超分完成({total} 帧)" + StageElapsed()));
+                xUpscaleWatch.Stop();   // 【任务 X3】超分阶段墙钟到此为止(下面新顺序的补帧另有秒表,不许算进来)
                 // ===== 4.2) 新顺序(1x/2x)的补帧阶段:读超分输出(upOutput)、写 frames_interp =====
                 // 与 3) 块里的旧顺序调用点是【同一个 InterpStageAsync】,只是输入/输出目录与探测尺寸不同 ——
                 // 补帧方法、分段(segBounds)、帧数对齐(globalTarget)、时长表(finalDurs)全部照旧,不分叉。
@@ -2539,7 +2592,9 @@ public static class VideoService
                     }
                     catch { }
                     AppLogger.Info($"[阶段顺序] 超分阶段完成({total} 帧)→ 进入补帧阶段(输入 = 超分输出 {Path.GetFileName(upOutput)} {probeW}×{probeH},{total} 帧)");
+                    xInterpWatch.Start();   // 【任务 X3】新顺序的补帧阶段(与旧顺序那次互斥,Start/Stop 累计)
                     await InterpStageAsync(upOutput, framesInterp, probeW, probeH);
+                    xInterpWatch.Stop();
                     framesFinal = framesInterp;   // 编码/合帧继续读 framesFinal(= 补帧输出)
                 }
             }
@@ -3199,6 +3254,31 @@ public static class VideoService
                     ? $"约 {(uTempFreeFirst - uTempFreeMin) / (1024.0 * 1024 * 1024):0.##} GB"
                       + $"(口径:初始剩余 − 采样到的最小剩余,共 {uTempSamples} 个采样点 → 是下界)"
                     : $"未采集(采样点 {uTempSamples} 个,拿不到临时盘剩余空间)";
+                // 界面短句用同一份数字,但不带口径解释(解释留在上面的文件行里)
+                string uPeakShort = uTempSamples >= 2 && uTempFreeFirst >= 0 && uTempFreeMin >= 0
+                    ? $"约 {(uTempFreeFirst - uTempFreeMin) / (1024.0 * 1024 * 1024):0.##} GB"
+                    : "未采集";
+                // ===== 【任务 X3】各阶段"帧数 / 耗时 / 毫秒每帧"(统一格式;用户点名的最高价值项)=====
+                // 目的:用户以后能一眼判断"是素材变大还是软件变慢"。
+                // 【计时口径】补帧/超分用 X3 那两只独立秒表(各自只包住该子阶段);准备/后处理/编码取 uStageTimes 同名项;
+                //   "合计"= uTotal。**不动** UMark/uWatch 的既有语义(它们照旧记"补帧+超分"这一整项)。
+                // 【帧数口径】准备 = 拆出的源帧数;补帧 = 最终帧数(超分保帧数、不增减;±1 帧级差由帧数对齐/尾帧容积微调);
+                //   超分 = 本阶段输入帧数(xUpscaleFrames,在超分批决策处定格);后处理/编码 = 最终帧数。
+                // 拿不到的写"未采集",不编数字。
+                double xPrepSec = uStageTimes.FirstOrDefault(t => t.Name == "准备(拆帧+去重)").Seconds;
+                double xPostSec = uStageTimes.FirstOrDefault(t => t.Name == "后处理/缩放/合帧准备").Seconds;
+                double xEncStageSec = uStageTimes.FirstOrDefault(t => t.Name == "编码/封装").Seconds;
+                double xInterpSec = xInterpWatch.Elapsed.TotalSeconds;
+                double xUpscaleSec = xUpscaleWatch.Elapsed.TotalSeconds;
+                long xInterpFrames = frameInterp && xInterpSec > 0 ? uFinalFrames : 0;
+                long xUpFrames = doUpscale && xUpscaleSec > 0 ? xUpscaleFrames : 0;
+                string xCostPrep = AlhPro.Core.LogShortText.StageCostShort("准备", xPrepSec, origCountEst);
+                // 【区分"没开"与"开了但没跑"】doUpscale/frameInterp 是用户选项(没开);选项开着却根本没走到那个阶段
+                // (例如 1x 直接跳过超分)→ 写"未跑",不写成"未采集"(后者是"测不到"的意思,两回事)。
+                string xCostIp = AlhPro.Core.LogShortText.StageCostOrSkipped("补帧", frameInterp, xInterpSec > 0, xInterpSec, xInterpFrames);
+                string xCostUp = AlhPro.Core.LogShortText.StageCostOrSkipped("超分", doUpscale, xUpscaleSec > 0, xUpscaleSec, xUpFrames);
+                string xCostPost = AlhPro.Core.LogShortText.StageCostShort("后处理", xPostSec, uFinalFrames);
+                string xCostEnc = AlhPro.Core.LogShortText.StageCostShort("编码", xEncStageSec, uFinalFrames);
                 AppLogger.Info("===== 本次统计 =====");
                 AppLogger.Info($"· 阶段耗时:{uStages} | 收尾 {uWatch.Elapsed.TotalSeconds:0.#}s | 合计 {uTotal:0.#}s(墙钟 {taskWatch.Elapsed.TotalSeconds:0.#}s)");
                 AppLogger.Info($"· 帧数台账:源 {origCountEst} 帧 → 去重后 {frameCount} 帧 → 补帧/超分后 {uFinalFrames} 帧;"
@@ -3208,6 +3288,11 @@ public static class VideoService
                 AppLogger.Info($"· 实际输出:{uFinalFrames} 帧 / {uOutDur:0.###} s / 平均 {uOutFps:0.##} fps"
                     + $"({Path.GetFileName(outputVideo)},{LastVideoEncoderInfo}" +
                     (uEncSec > 0 ? $",编码 {uEncSec:0.#}s" : ",编码耗时未采集") + ")");
+                // 【任务 X3】各阶段每帧成本(界面同数字;文件里多写一行帧数口径,便于事后核对)
+                AppLogger.Info($"· 每帧耗时:{xCostPrep} · {xCostIp} · {xCostUp} · {xCostPost} · {xCostEnc}"
+                    + $"(帧数口径:准备=拆出源帧、补帧=最终帧数、超分=本阶段输入帧、后处理/编码=最终帧数);"
+                    + $"补帧/超分用的是各自的独立秒表(墙钟,含引擎探测/兼容性回退的等待)");
+                // 【任务 X1 · 界面与文件的最后一行对得上】上面每一行都写文件;下面四行是界面版(只留结论)。
                 // 【任务 U 补充 · 为"音画滞后仍在几十 ms、无黑帧"这条要求提供**可核验的数字**】
                 // 画面时长 vs 源容器时长(填平时由"帧率保险"把它钉到 muxDur,理论差 ≤ 半帧);
                 // 音频流时长单独问 ffprobe —— 画面/音频各自与源容器的差就是"音画滞后"的上界。
@@ -3229,19 +3314,26 @@ public static class VideoService
                         : "成片时长未采集";
                     AppLogger.Info($"· 音画/黑帧:{vidDiffTxt};{avTxt};"
                         + $"输出端黑场自检{(uBlackSeg.Length > 0 ? "⚠ 含全黑片段 " + uBlackSeg : "✓ 无全黑片段")}");
-                    progress?.Report((100, $"· 音画:{(uOutDur > 0.01 ? $"画面 {uOutDur:0.###}s vs 源 {muxDur:0.###}s" : "未采集")}"
+                    progress?.Report((100, "· " + AlhPro.Core.LogShortText.ClampToChineseLimit(
+                        $"音画:{(uOutDur > 0.01 ? $"画面 {uOutDur:0.###}s / 源 {muxDur:0.###}s" : "未采集")}"
                         + (mute ? ";静音(无音轨)" : audioDur > 0.01 ? $";音频 {audioDur:0.###}s" : ";音频未采集")
-                        + $";黑场自检{(uBlackSeg.Length > 0 ? "⚠ 有全黑片段" : "✓ 无黑帧")}"));
+                        + (uBlackSeg.Length > 0 ? ";黑场 ⚠ 有" : ";黑场 ✓ 无"))));
                 }
                 AppLogger.Info($"· 顺序判定:{uOrderLog}" + (uOrderMeasured
                     ? $"(预估节省 {uOrderSavingsSeconds:0.#}s / {uOrderSavingsPercent:0.#}%)"
                     : "") + ";【实际 vs 预估:未采集】反事实对照要换另一顺序再跑一遍,本次没有跑,不编数字");
-                // 界面只放三条短行(带 · 前缀 → 走左下角日志区,不挤状态行、不动进度条)
-                progress?.Report((100, $"· 本次统计:合计 {uTotal:0.#}s;补帧+超分 {uStageTimes.FirstOrDefault(t => t.Name == "补帧+超分").Seconds:0.#}s;"
-                    + $"输出 {uFinalFrames} 帧 / {uOutDur:0.###}s"));
-                progress?.Report((100, $"· 临时盘峰值 {uPeak};清理释放 {uReleasedFrames} 帧临时文件"));
-                if (uOrderMeasured)
-                    progress?.Report((100, $"· 顺序判定:{uOrderLog}(预估节省 {uOrderSavingsPercent:0.#}%;实际对照未采集)"));
+                // ===== 【任务 X1/X3】界面日志区:结算只放四行【结论】(带 `· ` 前缀 → 左下角日志区,不挤状态行、不动进度条)=====
+                // 【为什么不在这里再报一遍顺序】顺序结论已经在【处理开始】打过一句短话 —— 同一信息不重复上界面
+                //   (完整判据 + "实际 vs 预估未采集"仍在上面的文件行里,一个字都没少)。
+                // 【为什么不报命中规则/面积系数/取较低者/门槛清单】那些是解释性内容,用户真机反馈"界面一坨、
+                //   结论反而找不到" → 一律只写 AppLogger 文件(见 Core.RenderPolicy 生成的那几条长行)。
+                progress?.Report((100, "· " + AlhPro.Core.LogShortText.ClampToChineseLimit($"耗时:{xCostPrep} · {xCostIp}")));
+                progress?.Report((100, "· " + AlhPro.Core.LogShortText.ClampToChineseLimit(
+                    $"耗时:{xCostUp} · {xCostPost} · {xCostEnc} · 合计 {uTotal:0.#}s")));
+                progress?.Report((100, "· " + AlhPro.Core.LogShortText.ClampToChineseLimit(
+                    $"输出:{uFinalFrames} 帧"
+                    + (uOutDur > 0.01 ? $" / {uOutDur:0.###}s / {uOutFps:0.##} fps" : "(时长/帧率未采集)")
+                    + $";临时盘峰值 {uPeakShort};清理 {uReleasedFrames} 帧临时文件")));
             }
             // 【修复】原先是先 Report("完成 ⚠ 输出校验:…") 紧接着又 Report("完成")——后者把前者覆盖掉,
             // 而 UI 只在进度 <99% 时做节流,所以那条 ⚠ 用户永远看不到(输出异常被静默吞掉)。合并成一条。
