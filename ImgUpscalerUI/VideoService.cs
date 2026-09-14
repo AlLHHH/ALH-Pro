@@ -3063,6 +3063,7 @@ public static class VideoService
             string encMuxArgs = recipe?.NoPreset == true ? StripPreset(muxArgs) : muxArgs;
             // 编码实测计时:诊断包用于分辨"CPU 软编慢"还是"硬编用户慢在解 JPG"(见编码性能实测分析)
             double uEncSec = 0, uOutDur = 0, uOutFps = 0;   // 【任务 U】结算用:编码耗时 / 成片时长 / 成片帧率
+            string uBlackSeg = "";                          // 【任务 U 补充】输出端黑场自检结果(空 = 无黑场)
             var encSw = System.Diagnostics.Stopwatch.StartNew();
             string encUsed = LastVideoEncoderInfo;
             try
@@ -3174,6 +3175,7 @@ public static class VideoService
                 // 所以后处理滤镜产生的黑帧能一路进成片且零日志 —— 用户实际就是这样报上来的。
                 // 这里在成片落盘后扫一遍,把黑场位置写进日志与任务提示,让它再也藏不住。
                 string blackSeg = await ScanBlackSegmentsAsync(outputVideo, ct).ConfigureAwait(false);
+                uBlackSeg = blackSeg;   // 【任务 U 补充】结算行要用它报"有无黑帧"
                 if (blackSeg.Length > 0) warn += $"成片含全黑片段({blackSeg});";
                 AppLogger.Info($"输出校验:{Path.GetFileName(outputVideo)} 帧率 {fpsOut:0.##}fps,时长 {durOut:0.###}s" +
                     (warn.Length > 0 ? " ⚠ " + warn : " ✓"));
@@ -3204,6 +3206,31 @@ public static class VideoService
                 AppLogger.Info($"· 实际输出:{uFinalFrames} 帧 / {uOutDur:0.###} s / 平均 {uOutFps:0.##} fps"
                     + $"({Path.GetFileName(outputVideo)},{LastVideoEncoderInfo}" +
                     (uEncSec > 0 ? $",编码 {uEncSec:0.#}s" : ",编码耗时未采集") + ")");
+                // 【任务 U 补充 · 为"音画滞后仍在几十 ms、无黑帧"这条要求提供**可核验的数字**】
+                // 画面时长 vs 源容器时长(填平时由"帧率保险"把它钉到 muxDur,理论差 ≤ 半帧);
+                // 音频流时长单独问 ffprobe —— 画面/音频各自与源容器的差就是"音画滞后"的上界。
+                // 拿不到的一律写"未采集",不编数。
+                {
+                    double audioDur = 0;
+                    if (!mute)
+                    {
+                        try { audioDur = await ProbeStreamDurationSecondsAsync(outputVideo, "a:0", ct).ConfigureAwait(false); }
+                        catch { }
+                    }
+                    string avTxt = mute
+                        ? "静音输出(无音轨,不适用)"
+                        : audioDur > 0.01
+                            ? $"音频流 {audioDur:0.###}s(与成片容器 {uOutDur:0.###}s 差 {(audioDur - uOutDur) * 1000:0}ms)"
+                            : "音频流时长未采集";
+                    string vidDiffTxt = uOutDur > 0.01
+                        ? $"成片容器 {uOutDur:0.###}s vs 源容器 {muxDur:0.###}s(差 {(uOutDur - muxDur) * 1000:0}ms,理论 ≤ 半帧)"
+                        : "成片时长未采集";
+                    AppLogger.Info($"· 音画/黑帧:{vidDiffTxt};{avTxt};"
+                        + $"输出端黑场自检{(uBlackSeg.Length > 0 ? "⚠ 含全黑片段 " + uBlackSeg : "✓ 无全黑片段")}");
+                    progress?.Report((100, $"· 音画:{(uOutDur > 0.01 ? $"画面 {uOutDur:0.###}s vs 源 {muxDur:0.###}s" : "未采集")}"
+                        + (mute ? ";静音(无音轨)" : audioDur > 0.01 ? $";音频 {audioDur:0.###}s" : ";音频未采集")
+                        + $";黑场自检{(uBlackSeg.Length > 0 ? "⚠ 有全黑片段" : "✓ 无黑帧")}"));
+                }
                 AppLogger.Info($"· 顺序判定:{uOrderLog}" + (uOrderMeasured
                     ? $"(预估节省 {uOrderSavingsSeconds:0.#}s / {uOrderSavingsPercent:0.#}%)"
                     : "") + ";【实际 vs 预估:未采集】反事实对照要换另一顺序再跑一遍,本次没有跑,不编数字");
@@ -4147,6 +4174,35 @@ public static class VideoService
             }
             catch { return 0.0; }
         });
+    }
+
+    /// <summary>【任务 U 补充】取某一路流的时长(秒);拿不到返回 0。
+    /// 【为什么需要它】"音画滞后仍在几十 ms"这类要求必须**有可核验的数字**:成片容器时长只能说明画面,
+    /// 音频流自己多长要单独问 ffprobe(容器 duration 取的是最长的流,两者不同才是滞后)。
+    /// <paramref name="streamSelector"/> 形如 "a:0"(音频第 0 路)/"v:0"(视频)。
+    /// 流级 duration 缺失(VFR/无 duration 标签)时回退 -show_format 的容器时长(如实按容器口径报,不编数)。</summary>
+    private static async Task<double> ProbeStreamDurationSecondsAsync(string videoPath, string streamSelector, CancellationToken ct = default)
+    {
+        var ff = FfmpegPath;
+        if (ff == null) return 0;
+        var dir = Path.GetDirectoryName(ff);
+        var ffprobe = dir != null ? Path.Combine(dir, "ffprobe.exe") : null;
+        if (ffprobe == null || !File.Exists(ffprobe)) return 0;
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        try
+        {
+            var path = AudioService.FfmpegSafePath(videoPath);
+            var lines = await RunCaptureAsync(ffprobe,
+                $"-v error -select_streams {streamSelector} -show_entries stream=duration -of csv=p=0 \"{path}\"", ct)
+                .ConfigureAwait(false);
+            foreach (var l in lines)
+            {
+                if (double.TryParse(l.Trim(), System.Globalization.NumberStyles.Float, inv, out double d) && d > 0)
+                    return d;
+            }
+        }
+        catch { }
+        return 0;
     }
 
     /// <summary>真实画面时长(帧数 ÷ 平均帧率),比容器 duration 精确:
