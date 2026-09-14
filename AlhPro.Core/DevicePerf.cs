@@ -71,9 +71,12 @@ public static class DevicePerf
         if (measured)
         {
             double mps = measuredSecondsPerFrame1080p!.Value;
-            score = mps <= FastSecondsPerFrame1080p ? PerfScore.Fast
-                : mps <= NormalSecondsPerFrame1080p ? PerfScore.Normal : PerfScore.Slow;
-            sb.Append($"实测吞吐 {mps:0.###} 秒/帧@1080p(阈值 ≤{FastSecondsPerFrame1080p:0.##} 快 / ≤{NormalSecondsPerFrame1080p:0.##} 正常)");
+            // 【任务 V】两条阈值可被在线参数覆盖(未配置时回落既有常量 → 行为逐字不变)
+            double fastThr = ParamProfileRuntime.PerfFastSecondsPerFrame;
+            double normThr = ParamProfileRuntime.PerfNormalSecondsPerFrame;
+            score = mps <= fastThr ? PerfScore.Fast
+                : mps <= normThr ? PerfScore.Normal : PerfScore.Slow;
+            sb.Append($"实测吞吐 {mps:0.###} 秒/帧@1080p(阈值 ≤{fastThr:0.##} 快 / ≤{normThr:0.##} 正常)");
         }
         else
         {
