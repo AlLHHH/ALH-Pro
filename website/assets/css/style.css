@@ -800,7 +800,7 @@ h2.is-in .wtok { opacity: 1; transform: none; }
     transition-delay: 0ms !important;
   }
 
-  .hero-inner > *, .hero .badges li, .aurora-blob, .wtok, .t-title-plain,
+  .hero-inner > *, .hero .badges li, .aurora-blob, .wtok, .t-title-plain, .t-rise,
   .page-progress > i, .aurora, .hero-inner,
   [data-reveal], [data-reveal-group] > *, .card, .card::after {
     opacity: 1 !important;
@@ -969,12 +969,14 @@ h2.is-in .wtok { opacity: 1; transform: none; }
 }
 .fr-ticks { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between; }
 .fr-ticks i { width: 3px; height: 7px; border-radius: 1.5px; background: var(--line-strong); }
-/* 偶数刻度是"生成"出来的中间帧:循环亮起 */
-.fr-after .fr-ticks i:nth-child(even) { animation: frInsert 3.6s var(--ease) infinite; }
+/* 偶数刻度是"生成"出来的中间帧:循环亮起。
+   只动 opacity / scaleY —— 不能动 `background`,它是重绘属性,每帧都要重绘
+   (静态审计会把它标成违规,也是滚动期 Paint 的来源之一)。 */
+.fr-after .fr-ticks i:nth-child(even) { background: var(--accent); animation: frInsert 3.6s var(--ease) infinite; }
 @keyframes frInsert {
-  0%, 10%  { background: var(--line-strong); transform: scaleY(.6); }
-  40%, 88% { background: var(--accent); transform: scaleY(1.3); }
-  100%     { background: var(--line-strong); transform: scaleY(.6); }
+  0%, 10%  { opacity: .28; transform: scaleY(.6); }
+  40%, 88% { opacity: 1; transform: scaleY(1.3); }
+  100%     { opacity: .28; transform: scaleY(.6); }
 }
 
 /* ---------- ③ 去重:6 帧里有一半跟前一帧一模一样,被划掉删除,帧数 6 → 3 ---------- */
@@ -1128,7 +1130,7 @@ h2.is-in .wtok { opacity: 1; transform: none; }
 }
 .demo-long .lg-cells i {
   width: 12px; height: 12px; border-radius: 3px;
-  background: var(--line-strong); opacity: .5;
+  background: var(--accent); opacity: .35;
   animation: lgCell 5.2s linear infinite;
 }
 .demo-long .lg-cells i:nth-child(1) { animation-delay: 0s; }
@@ -1142,9 +1144,9 @@ h2.is-in .wtok { opacity: 1; transform: none; }
 .demo-long .lg-cells i:nth-child(9) { animation-delay: 3.36s; }
 .demo-long .lg-cells i:nth-child(10) { animation-delay: 3.78s; }
 @keyframes lgCell {
-  0%        { opacity: .5; background: var(--line-strong); transform: scale(.8); }
-  10%, 80%  { opacity: 1; background: var(--accent); transform: scale(1); }
-  100%      { opacity: .5; background: var(--line-strong); transform: scale(.8); }
+  0%        { opacity: .35; transform: scale(.8); }
+  10%, 80%  { opacity: 1; transform: scale(1); }
+  100%      { opacity: .35; transform: scale(.8); }
 }
 
 /* ---------- 减少动态效果:不播循环,冻结在"前后对比"那一帧 ----------

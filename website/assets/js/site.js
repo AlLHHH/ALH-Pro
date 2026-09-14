@@ -338,10 +338,25 @@
       return;
     }
 
-    // 用 threshold 而不是放大 rootMargin:只有"看得见一大半"时才播,
-    // 同一时刻在播的演示更少,滚动期的合成压力也更小
+    // 用 threshold 而不是放大 rootMargin:只有"看得见一大半"时才播。
+    // 再给每个演示一个 90ms 的启动错开:6 个演示同时进入视口时,
+    // 几十条无限动画在同一帧启动会造成一个明显的帧尖峰(实测 >16.7ms 帧 0→2~3),
+    // 错开后启动成本被摊到几百毫秒里,尖峰消失。
     var io = new IntersectionObserver(function (entries) {
-      entries.forEach(function (e) { e.target.classList.toggle('is-live', e.isIntersecting); });
+      entries.forEach(function (e) {
+        var d = e.target;
+        if (e.isIntersecting) {
+          if (d.__demoTimer) { return; }
+          var idx = demos.indexOf(d);
+          d.__demoTimer = window.setTimeout(function () {
+            d.__demoTimer = 0;
+            d.classList.add('is-live');
+          }, 60 + (idx < 0 ? 0 : idx) * 90);
+        } else {
+          if (d.__demoTimer) { window.clearTimeout(d.__demoTimer); d.__demoTimer = 0; }
+          d.classList.remove('is-live');
+        }
+      });
     }, { rootMargin: '0px', threshold: 0.35 });
 
     demos.forEach(function (d) { io.observe(d); });
