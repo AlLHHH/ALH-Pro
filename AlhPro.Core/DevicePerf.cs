@@ -71,9 +71,9 @@ public static class DevicePerf
         if (measured)
         {
             double mps = measuredSecondsPerFrame1080p!.Value;
-            // 【任务 V】两条阈值可被在线参数覆盖(未配置时回落既有常量 → 行为逐字不变)
-            double fastThr = ParamProfileRuntime.PerfFastSecondsPerFrame;
-            double normThr = ParamProfileRuntime.PerfNormalSecondsPerFrame;
+            // 【2026-09-14】两条阈值原先经"在线参数覆盖层"读,该功能整体删除后直接取本类常量(逐字等价)
+            double fastThr = FastSecondsPerFrame1080p;
+            double normThr = NormalSecondsPerFrame1080p;
             score = mps <= fastThr ? PerfScore.Fast
                 : mps <= normThr ? PerfScore.Normal : PerfScore.Slow;
             sb.Append($"实测吞吐 {mps:0.###} 秒/帧@1080p(阈值 ≤{fastThr:0.##} 快 / ≤{normThr:0.##} 正常)");

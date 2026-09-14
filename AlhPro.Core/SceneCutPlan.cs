@@ -60,13 +60,13 @@ public static class SceneCutJudge
 
     /// <summary>逐对判定:第 i 对 = 源帧 i → i+1。<paramref name="lapVar"/> 可为 null(只按帧差判)。
     /// 返回 true = 这一对之间存在**硬切**,插值必须绕开(不做跨切混合)。
-    /// 【任务 W】三个阈值改为**经覆盖层读**(<see cref="ParamProfileRuntime"/>):在线参数可覆盖;覆盖层为 null
-    /// (默认/离线/全部单测)→ 取上面那三个常量,行为与改动前逐字一致。</summary>
+    /// 【2026-09-14】三个阈值原先经"在线参数覆盖层"(ParamProfileRuntime)读,该功能整体删除后直接取
+    /// 上面那三个常量 —— 与"覆盖层为 null 时回落常量"逐字等价,判定行为一个字节都没变。</summary>
     public static bool IsCut(double meanAbsDiff, double? lapVarPrev, double? lapVarCur)
     {
-        double diffThreshold = ParamProfileRuntime.SceneCutDiffThreshold;
-        double strongDiffThreshold = ParamProfileRuntime.SceneCutStrongDiffThreshold;
-        double lapDropRatio = ParamProfileRuntime.SceneCutLapDropRatio;
+        double diffThreshold = DiffThreshold;
+        double strongDiffThreshold = StrongDiffThreshold;
+        double lapDropRatio = LapDropRatio;
         if (!double.IsFinite(meanAbsDiff) || meanAbsDiff < diffThreshold) return false;
         if (meanAbsDiff >= strongDiffThreshold) return true;
         if (lapVarPrev is > 0 && lapVarCur is >= 0)

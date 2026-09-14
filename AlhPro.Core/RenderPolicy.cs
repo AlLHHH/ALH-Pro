@@ -159,15 +159,14 @@ public static class RenderPolicy
     {
         var perfTier = TierForPerf(perf);
         var effective = (DeviceTier)Math.Min((int)memoryTier, (int)perfTier);
-        // 【任务 V】这四个数字是"可被在线参数配置覆盖"的少数几项之一:
-        // ParamProfileRuntime 里没有配置(null,默认)时**逐个回落到既有常量**,所以行为与改动前逐字一致。
-        int cap = ParamProfileRuntime.StrongLongBatchFrames;
+        // 【2026-09-14】这四个数字原先经"在线参数覆盖层"(ParamProfileRuntime)读,该功能整体删除后
+        // 直接读本文件常量 —— 与"覆盖层为 null 时回落常量"逐字等价,批大小行为一个字节都没变。
         if (effective == DeviceTier.Strong)
             return longClip && perf == PerfScore.Fast && freeRamGB >= StrongDeviceFreeRamGB
-                ? cap                                                        // 700(可覆盖)
-                : ParamProfileRuntime.StrongBatchFrames;                      // 350(可覆盖)
-        if (effective == DeviceTier.Normal) return ParamProfileRuntime.NormalBatchFrames;   // 300(可覆盖)
-        return ParamProfileRuntime.WeakBatchFrames;                                          // 50(可覆盖,仍是全档位下界)
+                ? StrongDeviceLargeFramesPerBatch     // 700
+                : StrongDeviceFramesPerBatch;         // 350
+        if (effective == DeviceTier.Normal) return NormalDeviceFramesPerBatch;   // 300
+        return WeakDeviceFramesPerBatch;                                         // 50(仍是全档位下界)
     }
 
     // ===== 面积缩放(任务 Q2 · 2026-09-13)=5====
