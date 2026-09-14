@@ -3,18 +3,32 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
 <title>ALH Pro — 本地 AI 视频/图片处理工具(超分 · 补帧 · 抠图 · 音频增强)</title>
 <meta name="description" content="ALH Pro 是一款在你自己的电脑上运行的 AI 视频/图片处理工具:超分(Real-ESRGAN / waifu2x)、补帧(RIFE)、AI 抠图、音频增强、视频去重。全程本地处理,不上传任何文件。支持 Windows 10/11 x64。">
-<meta name="theme-color" content="#f6f7f9">
+<meta name="theme-color" content="#06080f" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#eef2f9" media="(prefers-color-scheme: light)">
 <link rel="icon" href="assets/img/logo.png" type="image/png">
 <link rel="stylesheet" href="assets/css/style.css">
 <!-- 可选:上线后按需打开下面这行(把域名换成你的真实域名)
 <link rel="canonical" href="https://example.com/">
 -->
+<script>
+/* 标记「JS 可用」:需要 JS 才启用的动效都挂在 html.has-js 下。
+   万一 site.js 没能加载或执行,3 秒后自动摘掉这个标记,
+   页面回到「无 JS 也完整可读」的状态(内容不会被永久隐藏)。 */
+document.documentElement.classList.add('has-js');
+setTimeout(function () {
+  if (!document.documentElement.hasAttribute('data-site-ready')) {
+    document.documentElement.classList.remove('has-js');
+  }
+}, 3000);
+</script>
 <script src="assets/js/site.js" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
+<div class="scroll-progress" aria-hidden="true"><i></i></div>
 
 <header class="site-header">
   <div class="wrap header-inner">
@@ -37,61 +51,113 @@
   </div>
 </header>
 
-<section class="hero">
-  <div class="wrap">
-    <h1>在你自己的电脑上,做 AI 视频 / 图片处理</h1>
-    <p class="lede">
-      ALH Pro 是一款 Windows 桌面软件:把模糊的老番、老照片变清晰(超分),把卡顿的视频变流畅(补帧),
-      一键去掉图片背景(抠图),还能把电话录音、老磁带里的声音变清楚(音频增强),顺带处理动漫片源里的重复帧。
-      <strong>全部处理都在您的电脑上完成:不注册账号、不上传文件。</strong>
-    </p>
-    <ul class="badges">
-      <li class="badge badge-ok">全程本地运行</li>
-      <li class="badge badge-ok">不上传任何文件</li>
-      <li class="badge">个人 / 非商用免费</li>
-      <li class="badge">Windows 10 / 11 x64</li>
-      <li class="badge badge-brand">当前版本 v1.3.6</li>
-    </ul>
-    <div class="btn-row">
-      <a class="btn" href="download.html">下载最新版 v1.3.6</a>
-      <a class="btn btn-ghost" href="tutorial.html">看使用教程</a>
-    </div>
-    <p class="btn-note small">安装包约 827 MB(完整版约 2.4 GB,含全部模型)。首次安装请留出磁盘空间与几分钟时间。</p>
-
-    <div class="note">
-      <p><span class="note-title">如实告知:</span>软件里只有三处会联网 —— 检查新版本、拉取广告素材、拉取界面提示文案。
-      这三处都不传输您的文件、文件名、路径、画面或设备信息,而且任何一处失败都不影响软件功能(全部有内置兜底)。
-      细节见 <a href="privacy.html">隐私说明</a>。</p>
-    </div>
-  </div>
-</section>
+<nav class="page-toc" id="page-toc" aria-label="本页章节" hidden></nav>
 
 <main id="main">
-  <div class="wrap">
+
+  <section class="hero">
+    <div class="aurora" aria-hidden="true">
+      <span class="aurora-blob b1"></span>
+      <span class="aurora-blob b2"></span>
+      <span class="aurora-blob b3"></span>
+    </div>
+
+    <div class="wrap hero-inner">
+      <h1 class="hero-title">
+        <span class="line">在你自己的电脑上,</span>
+        <span class="line">做 <span class="grad">AI 视频 / 图片处理</span></span>
+      </h1>
+
+      <p class="lede">
+        ALH Pro 是一款 Windows 桌面软件:把模糊的老番、老照片变清晰(超分),把卡顿的视频变流畅(补帧),
+        一键去掉图片背景(抠图),还能把电话录音、老磁带里的声音变清楚(音频增强),顺带处理动漫片源里的重复帧。
+        <strong>全部处理都在您的电脑上完成:不注册账号、不上传文件。</strong>
+      </p>
+
+      <ul class="badges">
+        <li class="badge badge-ok">全程本地运行</li>
+        <li class="badge badge-ok">不上传任何文件</li>
+        <li class="badge">个人 / 非商用免费</li>
+        <li class="badge">Windows 10 / 11 x64</li>
+        <li class="badge badge-brand">当前版本 v1.3.6</li>
+      </ul>
+
+      <div class="btn-row">
+        <a class="btn btn-primary" href="download.html">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.6v10.2"/><path d="M7.8 10.2L12 14.4l4.2-4.2"/><path d="M4.6 17.2v2.6h14.8v-2.6"/></svg>
+          下载最新版 v1.3.6
+        </a>
+        <a class="btn btn-ghost" href="tutorial.html">看使用教程</a>
+      </div>
+      <p class="btn-note small">安装包约 827 MB(完整版约 2.4 GB,含全部模型)。首次安装请留出磁盘空间与几分钟时间。</p>
+
+      <ul class="hero-specs">
+        <li>
+          <span class="spec-num"><span class="count" data-count="0.25" data-dec="2">0.25</span><i>秒 / 帧</i></span>
+          <span class="spec-label">1080p 动漫超分实测(作者 RTX 4060 Laptop)</span>
+        </li>
+        <li>
+          <span class="spec-num"><span class="count" data-count="3" data-dec="0">3</span><i>处</i></span>
+          <span class="spec-label">仅有的联网行为,失败都有内置兜底</span>
+        </li>
+        <li>
+          <span class="spec-num"><span class="count" data-count="827" data-dec="0">827</span><i>MB</i></span>
+          <span class="spec-label">标准版安装包体积(完整版约 2.4 GB)</span>
+        </li>
+        <li>
+          <span class="spec-num"><span class="count" data-count="0" data-dec="0">0</span><i>次</i></span>
+          <span class="spec-label">上传文件 / 注册账号 / 登录云端</span>
+        </li>
+      </ul>
+
+      <div class="note">
+        <p><span class="note-title">如实告知:</span>软件里只有三处会联网 —— 检查新版本、拉取广告素材、拉取界面提示文案。
+        这三处都不传输您的文件、文件名、路径、画面或设备信息,而且任何一处失败都不影响软件功能(全部有内置兜底)。
+        细节见 <a href="privacy.html">隐私说明</a>。</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap content">
 
     <h2>这是给谁用的</h2>
-    <div class="grid">
+    <div class="grid" data-reveal-group>
       <div class="card">
+        <span class="card-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 3.2l1.9 5.1 5.1 1.9-5.1 1.9L11 17.2 9.1 12.1 4 10.2l5.1-1.9z"/><path d="M18.4 15.4l.7 1.9 1.9.7-1.9.7-.7 1.9-.7-1.9-1.9-.7 1.9-.7z"/></svg>
+        </span>
         <h3>想让老番、老片变清晰的动漫爱好者</h3>
         <p>动漫 / 插画走 waifu2x 路线,线条和色块更干净;配合“去重复帧”,补帧结果更准、文件更小。</p>
       </div>
       <div class="card">
+        <span class="card-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.6" width="18" height="14.8" rx="2.6"/><circle cx="8.6" cy="10.2" r="1.5"/><path d="M4.2 17.6l4.6-4.6 3.4 3.4 3-2.6 4.6 4.6"/></svg>
+        </span>
         <h3>要放大照片、修图的人</h3>
         <p>照片 / 实拍走 Real-ESRGAN 路线,1x 超分(只变清晰不放大)到 4x 放大都支持,可批量处理。</p>
       </div>
       <div class="card">
+        <span class="card-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.6" y="2.6" width="18.8" height="18.8" rx="4" stroke-dasharray="3.2 2.6" opacity=".45"/><circle cx="12" cy="9.6" r="2.7"/><path d="M6.8 17.6c.9-2.7 3-4.1 5.2-4.1s4.3 1.4 5.2 4.1"/></svg>
+        </span>
         <h3>要批量去背景做素材的人</h3>
         <p>6 款抠图模型,人像、产品、动漫各有合适的一支;支持批量、边缘羽化与边缘增强,输出透明 PNG。</p>
       </div>
       <div class="card">
+        <span class="card-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2l7.2 3.1v5.2c0 4.5-3 7.9-7.2 9.3-4.2-1.4-7.2-4.8-7.2-9.3V6.3z"/><path d="M9 12.1l2.2 2.2 4-4.4"/></svg>
+        </span>
         <h3>不放心把素材传到云端的人</h3>
         <p>素材处理全程在本机完成,不需要登录,不经过任何服务器。处理重要素材前请自行备份原文件。</p>
       </div>
     </div>
 
     <h2 id="features">能做什么</h2>
-    <div class="grid">
+    <div class="grid grid-3" data-reveal-group>
       <div class="card">
+        <span class="card-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-7 7"/><path d="M10 20H4v-6"/><path d="M4 20l7-7"/></svg>
+        </span>
         <h3>图片 / 视频超分</h3>
         <ul>
           <li>动漫插画:waifu2x(cunet / upconv_7_anime)</li>
@@ -102,6 +168,9 @@
         </ul>
       </div>
       <div class="card">
+        <span class="card-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.6" y="6.4" width="4.6" height="11.2" rx="1.6" opacity=".45"/><rect x="16.8" y="6.4" width="4.6" height="11.2" rx="1.6" opacity=".45"/><path d="M12 7.4v9.2" stroke-dasharray="2.4 2.2"/></svg>
+        </span>
         <h3>视频补帧(变流畅)</h3>
         <ul>
           <li>RIFE 引擎,默认 v4.13,可选多支模型</li>
@@ -111,6 +180,9 @@
         </ul>
       </div>
       <div class="card">
+        <span class="card-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="3.4" width="12.2" height="12.2" rx="2.6"/><rect x="8.4" y="8.4" width="12.2" height="12.2" rx="2.6" opacity=".45"/><path d="M4.6 19.4L19.4 4.6"/></svg>
+        </span>
         <h3>去除重复帧(动漫必备)</h3>
         <ul>
           <li>智能检测(自动估节奏)、动漫模式(去一拍二 / 三 / 四)、手动模式</li>
@@ -119,6 +191,9 @@
         </ul>
       </div>
       <div class="card">
+        <span class="card-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.6" y="2.6" width="18.8" height="18.8" rx="4" stroke-dasharray="3.2 2.6" opacity=".45"/><circle cx="12" cy="9.6" r="2.7"/><path d="M6.8 17.6c.9-2.7 3-4.1 5.2-4.1s4.3 1.4 5.2 4.1"/></svg>
+        </span>
         <h3>AI 抠图</h3>
         <ul>
           <li>U²-Net(通用 / 轻量)、ISNet(精细边缘 / 动漫)、BiRefNet(高精度 / 完整版)共 6 款模型</li>
@@ -127,6 +202,9 @@
         </ul>
       </div>
       <div class="card">
+        <span class="card-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.2v3.6"/><path d="M8 6.4v11.2"/><path d="M12 9.2v5.6"/><path d="M16 4.6v14.8"/><path d="M20 10.6v2.8"/></svg>
+        </span>
         <h3>音频处理</h3>
         <ul>
           <li>AI 升采样率:8k / 16k / 22k / 32k 低采样率源 → 48 kHz</li>
@@ -136,6 +214,9 @@
         </ul>
       </div>
       <div class="card">
+        <span class="card-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.4 17.6a8 8 0 1 1 15.2 0"/><path d="M12 13.6l3.8-3.8"/><circle cx="12" cy="14.2" r="1.4" fill="currentColor" stroke="none"/></svg>
+        </span>
         <h3>长视频也敢跑</h3>
         <ul>
           <li>显存 / 内存 / CPU 占用按本机配置自动调节</li>
@@ -147,27 +228,27 @@
     </div>
 
     <h2 id="speed">速度大概什么水平(本机实测)</h2>
-    <p>下面是我们自己机器上的实测数字,直接列出来,不做夸张宣传。速度取决于显卡、模型和素材,请只当作量级参考。</p>
-    <div class="table-scroll">
-      <table>
-        <caption class="muted small" style="caption-side:bottom;text-align:left;padding-top:8px;">
+    <p data-reveal>下面是我们自己机器上的实测数字,直接列出来,不做夸张宣传。速度取决于显卡、模型和素材,请只当作量级参考。</p>
+    <div class="table-scroll" data-reveal>
+      <table class="table-speed">
+        <caption class="table-caption">
           实测环境:RTX 4060 Laptop(笔记本独显);1080p 源。换成别的显卡或模型,数字会明显不同。
         </caption>
         <thead>
           <tr><th>处理</th><th>分辨率</th><th>模型 / 设置</th><th class="td-center">实测速度</th></tr>
         </thead>
         <tbody>
-          <tr><td>超分</td><td>1080p 源</td><td>realesr-animevideov3 2x(动漫视频常用)</td><td class="td-center">约 0.25 秒 / 帧</td></tr>
-          <tr><td>超分</td><td>1080p 源</td><td>realesr-animevideov3 4x</td><td class="td-center">约 0.30 秒 / 帧</td></tr>
-          <tr><td>超分</td><td>1080p 源</td><td>realesr-general-x4v3 4x(轻量通用)</td><td class="td-center">约 0.46 秒 / 帧</td></tr>
-          <tr><td>超分</td><td>1080p 源</td><td>realesrgan-x4plus 4x(质量优先)</td><td class="td-center">约 15 秒 / 帧(明显偏慢)</td></tr>
-          <tr><td>补帧</td><td>1080p</td><td>RIFE v4.13</td><td class="td-center">约 0.08 秒 / 输出帧</td></tr>
-          <tr><td>补帧</td><td>2160p(4K)</td><td>RIFE v4.13</td><td class="td-center">约 0.28 秒 / 输出帧</td></tr>
-          <tr><td>参考作业</td><td>1080p,72 帧素材(约 2.4 秒)</td><td>4 倍补帧 + 2 倍超分</td><td class="td-center">全程约 53.7 秒</td></tr>
+          <tr><td>超分</td><td>1080p 源</td><td>realesr-animevideov3 2x(动漫视频常用)</td><td class="td-center">约 <span class="count" data-count="0.25" data-dec="2">0.25</span> 秒 / 帧</td></tr>
+          <tr><td>超分</td><td>1080p 源</td><td>realesr-animevideov3 4x</td><td class="td-center">约 <span class="count" data-count="0.30" data-dec="2">0.30</span> 秒 / 帧</td></tr>
+          <tr><td>超分</td><td>1080p 源</td><td>realesr-general-x4v3 4x(轻量通用)</td><td class="td-center">约 <span class="count" data-count="0.46" data-dec="2">0.46</span> 秒 / 帧</td></tr>
+          <tr><td>超分</td><td>1080p 源</td><td>realesrgan-x4plus 4x(质量优先)</td><td class="td-center">约 <span class="count" data-count="15" data-dec="0">15</span> 秒 / 帧(明显偏慢)</td></tr>
+          <tr><td>补帧</td><td>1080p</td><td>RIFE v4.13</td><td class="td-center">约 <span class="count" data-count="0.08" data-dec="2">0.08</span> 秒 / 输出帧</td></tr>
+          <tr><td>补帧</td><td>2160p(4K)</td><td>RIFE v4.13</td><td class="td-center">约 <span class="count" data-count="0.28" data-dec="2">0.28</span> 秒 / 输出帧</td></tr>
+          <tr><td>参考作业</td><td>1080p,72 帧素材(约 2.4 秒)</td><td>4 倍补帧 + 2 倍超分</td><td class="td-center">全程约 <span class="count" data-count="53.7" data-dec="1">53.7</span> 秒</td></tr>
         </tbody>
       </table>
     </div>
-    <div class="note note-warn">
+    <div class="note note-warn" data-reveal>
       <p><span class="note-title">请不要把这些数字当成承诺:</span>
       上面是作者本机的实测结果,不是所有电脑都能达到。没有独立显卡时,软件会自动改用 CPU 计算,慢几倍到十几倍属于正常现象;
       高倍率补帧、4K 素材、x4plus 这类“质量优先”模型都会明显变慢。长视频请先用一小段样片试跑。</p>
@@ -183,7 +264,7 @@
     </ol>
 
     <h2 id="privacy">您的文件不会离开这台电脑</h2>
-    <ul>
+    <ul data-reveal>
       <li><strong>不上传:</strong>图片、视频、音频的内容与中间文件全部在本机处理,不上传到任何服务器。</li>
       <li><strong>不传文件名 / 路径 / 画面 / 机型:</strong>软件不会把您的文件名、文件路径、画面内容或显卡机型等信息发出去。</li>
       <li><strong>不需要账号:</strong>没有注册、没有登录、没有云端记录。</li>
@@ -191,10 +272,10 @@
         三者都只请求公开的文本 / 图片,并且失败时全部有内置兜底,不影响任何处理功能。</li>
       <li><strong>诊断包是您主动生成的:</strong>“导出诊断包”会打包本机日志与设备信息,<em>只保存在本机</em>,发不发、发给谁由您决定。</li>
     </ul>
-    <p>完整说明(含每次联网的目标域名与传输内容)见 <a href="privacy.html">隐私说明</a>。</p>
+    <p data-reveal>完整说明(含每次联网的目标域名与传输内容)见 <a href="privacy.html">隐私说明</a>。</p>
 
     <h2 id="license">免费、许可与致谢</h2>
-    <ul>
+    <ul data-reveal>
       <li><strong>免费范围:</strong>个人 / 非商用用途免费下载、安装、使用(公益性质)。软件内有合作方广告位以维持开发与维护成本,不做个性化推荐,可关闭。</li>
       <li><strong>禁止事项:</strong>未经作者书面许可,不得商用、售卖、再分发、重新打包发布,也不得去除或篡改署名与版权声明。</li>
       <li><strong>第三方开源组件:</strong>软件集成了 waifu2x、Real-ESRGAN、RIFE、U²-Net、ISNet、BiRefNet、rembg、FFmpeg、ONNX Runtime、Windows App SDK、Demucs、LavaSR 等开源项目,
@@ -203,10 +284,10 @@
     </ul>
 
     <h2 id="requirements">电脑要求(一句话版)</h2>
-    <p>Windows 10(1809 及以上)/ Windows 11,64 位系统;.NET 运行库已内置,<strong>不需要单独安装 .NET</strong>。
+    <p data-reveal>Windows 10(1809 及以上)/ Windows 11,64 位系统;.NET 运行库已内置,<strong>不需要单独安装 .NET</strong>。
       建议使用独立显卡(NVIDIA RTX 30 / 40 系最稳),没有独显也能用,只是会慢一些。完整清单与校验方法见 <a href="download.html#requirements">下载页</a>。</p>
 
-    <div class="note note-ok">
+    <div class="note note-ok" data-reveal>
       <p><span class="note-title">下载遇到困难?</span>
       本页提供的下载入口只有官方 GitHub Releases 与百度网盘两处。如果你的网络访问 GitHub 比较困难,请直接用百度网盘下载完整版。
       常见问题(下载慢、显卡兼容、杀毒软件提示、结果不符合预期)都整理在 <a href="faq.html">常见问题</a> 里。</p>

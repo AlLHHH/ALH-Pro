@@ -3,15 +3,29 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
 <title>常见问题 FAQ — ALH Pro(下载慢 / 显卡兼容 / 装不上 / 杀软误报 / 结果不对)</title>
 <meta name="description" content="ALH Pro 常见问题:下载慢或下不动、首次启动像卡死、杀毒软件报毒、提示缺少 .NET、显卡兼容性对照表、处理很慢、抠图缺模型、补帧果冻、音频分离很慢、是否收费与能否商用。">
-<meta name="theme-color" content="#f6f7f9">
+<meta name="theme-color" content="#06080f" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#eef2f9" media="(prefers-color-scheme: light)">
 <link rel="icon" href="assets/img/logo.png" type="image/png">
 <link rel="stylesheet" href="assets/css/style.css">
+<script>
+/* 标记「JS 可用」:需要 JS 才启用的动效都挂在 html.has-js 下。
+   万一 site.js 没能加载或执行,3 秒后自动摘掉这个标记,
+   页面回到「无 JS 也完整可读」的状态(内容不会被永久隐藏)。 */
+document.documentElement.classList.add('has-js');
+setTimeout(function () {
+  if (!document.documentElement.hasAttribute('data-site-ready')) {
+    document.documentElement.classList.remove('has-js');
+  }
+}, 3000);
+</script>
 <script src="assets/js/site.js" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
+<div class="scroll-progress" aria-hidden="true"><i></i></div>
 
 <header class="site-header">
   <div class="wrap header-inner">
@@ -34,15 +48,27 @@
   </div>
 </header>
 
-<main id="main">
-  <div class="wrap">
+<nav class="page-toc" id="page-toc" aria-label="本页章节" hidden></nav>
 
-    <h1 class="page-title">常见问题</h1>
-    <p class="page-meta">点标题展开答案 · 想按功能一步步学,请看 <a href="tutorial.html">使用教程</a></p>
+<main id="main">
+
+  <section class="hero hero--page">
+    <div class="aurora" aria-hidden="true">
+      <span class="aurora-blob b1"></span>
+      <span class="aurora-blob b2"></span>
+      <span class="aurora-blob b3"></span>
+    </div>
+    <div class="wrap hero-inner">
+      <h1 class="hero-title">常见问题</h1>
+      <p class="page-meta">点标题展开答案 · 想按功能一步步学,请看 <a href="tutorial.html">使用教程</a></p>
+    </div>
+  </section>
+
+  <div class="wrap content">
 
     <h2 id="download-group">下载与安装</h2>
 
-    <details id="slow">
+    <details data-reveal id="slow">
       <summary>下载很慢、或者中途断了怎么办?</summary>
       <div class="details-body">
         <p>按下面顺序试,一般三步之内就能解决:</p>
@@ -60,7 +86,7 @@
       </div>
     </details>
 
-    <details id="firstrun">
+    <details data-reveal id="firstrun">
       <summary>双击安装包后没反应,是卡死了吗?</summary>
       <div class="details-body">
         <p>多半不是。安装包体积很大(完整版约 2.4 GB),Windows 安全软件首次运行时会完整扫描它,这段时间界面可能迟迟不出现,
@@ -70,7 +96,7 @@
       </div>
     </details>
 
-    <details id="antivirus">
+    <details data-reveal id="antivirus">
       <summary>杀毒软件报毒 / 提示“未知发布者”,怎么办?</summary>
       <div class="details-body">
         <p>先说明事实:安装包<strong>没有购买商业代码签名证书</strong>,所以 Windows 与部分安全软件会提示“未知发布者”,
@@ -88,7 +114,7 @@
       </div>
     </details>
 
-    <details id="dotnet">
+    <details data-reveal id="dotnet">
       <summary>需要先装 .NET 吗?提示缺少运行库怎么办?</summary>
       <div class="details-body">
         <p><strong>正常不需要。</strong>ALH Pro 的安装包是自包含的(self-contained .NET 8),运行库已经打在包里,
@@ -105,7 +131,7 @@
       </div>
     </details>
 
-    <details id="install-dir">
+    <details data-reveal id="install-dir">
       <summary>能装到别的盘吗?需要管理员权限吗?</summary>
       <div class="details-body">
         <p>默认装到当前用户目录 <code>C:\Users\你的用户名\AppData\Local\Programs\ALH Pro</code>,<strong>不需要管理员权限</strong>
@@ -115,7 +141,7 @@
       </div>
     </details>
 
-    <details id="platform">
+    <details data-reveal id="platform">
       <summary>支持 32 位系统、Windows 7、Mac 或手机吗?</summary>
       <div class="details-body">
         <p>都不支持。ALH Pro 是 <strong>Windows 10 / 11 的 64 位(x64)桌面程序</strong>:
@@ -123,7 +149,7 @@
       </div>
     </details>
 
-    <details id="upgrade">
+    <details data-reveal id="upgrade">
       <summary>怎么升级?需要先卸载旧版、重新下模型吗?</summary>
       <div class="details-body">
         <p>不需要卸载,也不需要重新装模型。<strong>直接下载新安装包覆盖安装即可</strong>:程序会被新版覆盖,引擎、模型与设置原样保留。
@@ -135,7 +161,7 @@
 
     <h2 id="perf-group">显卡与速度</h2>
 
-    <details id="gpu">
+    <details data-reveal id="gpu">
       <summary>我的显卡能用吗?(兼容性对照表)</summary>
       <div class="details-body">
         <p><strong>图例:</strong>🟢 稳定加速 ｜ 🟡 能用但可能降级 ｜ 🔶 慢(CPU) ｜ <strong>?</strong> 存疑·可能不能用 ｜ <strong>✗</strong> 不能使用</p>
@@ -170,7 +196,7 @@
       </div>
     </details>
 
-    <details id="50series">
+    <details data-reveal id="50series">
       <summary>RTX 50 系(5060 / 5070 等)为什么会被提示走了“兼容路线”?</summary>
       <div class="details-body">
         <p>50 系是较新的架构,部分内置引擎(基于 ncnn-Vulkan)在早期驱动上与它不完全兼容。软件已经自动适配:
@@ -180,7 +206,7 @@
       </div>
     </details>
 
-    <details id="driver">
+    <details data-reveal id="driver">
       <summary>提示“驱动偏旧 / 改走兼容路线”,一定要更新驱动吗?</summary>
       <div class="details-body">
         <p>不是必须,但<strong>更新显卡驱动后重启软件,通常能恢复完整的 GPU 加速</strong>。老驱动(2021 年以前)的 30 / 20 / 16 系与部分 AMD 显卡上,
@@ -189,7 +215,7 @@
       </div>
     </details>
 
-    <details id="slow-processing">
+    <details data-reveal id="slow-processing">
       <summary>处理很慢,正常吗?</summary>
       <div class="details-body">
         <p>先看下面几条最常见的“慢”的原因:</p>
@@ -205,7 +231,7 @@
       </div>
     </details>
 
-    <details id="estimate">
+    <details data-reveal id="estimate">
       <summary>大概多久能跑完一段视频?有参考数据吗?</summary>
       <div class="details-body">
         <p>我们只提供自己实测过的量级(测试机为 RTX 4060 Laptop):</p>
@@ -221,7 +247,7 @@
 
     <h2 id="feature-group">功能与效果</h2>
 
-    <details id="model">
+    <details data-reveal id="model">
       <summary>AI 抠图提示“模型未安装”,怎么装?</summary>
       <div class="details-body">
         <p>安装包不含抠图模型(约 1.4 GB),需要单独补。两种办法:</p>
@@ -235,7 +261,7 @@
       </div>
     </details>
 
-    <details id="wrong-algo">
+    <details data-reveal id="wrong-algo">
       <summary>放大后图发糊 / 变得像画出来的,是哪里设错了?</summary>
       <div class="details-body">
         <ul>
@@ -247,7 +273,7 @@
       </div>
     </details>
 
-    <details id="cutout-edge">
+    <details data-reveal id="cutout-edge">
       <summary>抠图边缘粗糙 / 缺了一块,怎么调?</summary>
       <div class="details-body">
         <ul>
@@ -260,7 +286,7 @@
       </div>
     </details>
 
-    <details id="jelly">
+    <details data-reveal id="jelly">
       <summary>补帧之后画面有“果冻”扭曲 / 动作反而怪?</summary>
       <div class="details-body">
         <ul>
@@ -272,7 +298,7 @@
       </div>
     </details>
 
-    <details id="no-audio">
+    <details data-reveal id="no-audio">
       <summary>输出的视频没有声音?</summary>
       <div class="details-body">
         <p>最常见的原因是勾了「<strong>静音</strong>」——这个选项是为“只要画面”的场景准备的。取消勾选后重新处理即可。
@@ -280,7 +306,7 @@
       </div>
     </details>
 
-    <details id="audio-upsample">
+    <details data-reveal id="audio-upsample">
       <summary>音频“升采样率”好像没效果?</summary>
       <div class="details-body">
         <p>这个功能只对<strong>低采样率源</strong>(8k / 16k / 22k / 32k,例如电话录音、老磁带)真的有作用,AI 会补出缺失的高频。
@@ -288,7 +314,7 @@
       </div>
     </details>
 
-    <details id="missing-engine">
+    <details data-reveal id="missing-engine">
       <summary>状态栏显示“引擎缺失”或处理直接报错?</summary>
       <div class="details-body">
         <ol>
@@ -299,7 +325,7 @@
       </div>
     </details>
 
-    <details id="disk">
+    <details data-reveal id="disk">
       <summary>提示磁盘空间不足 / 临时文件占用很大?</summary>
       <div class="details-body">
         <p>视频处理需要在临时目录保存大量中间帧,长视频可能占用几十 GB 甚至更多。软件会:</p>
@@ -314,7 +340,7 @@
 
     <h2 id="license-group">收费与授权</h2>
 
-    <details id="price">
+    <details data-reveal id="price">
       <summary>软件收费吗?要注册账号吗?</summary>
       <div class="details-body">
         <p><strong>个人 / 非商用使用免费</strong>,不需要注册、不需要登录、没有会员与内购,也没有功能被锁在付费墙后。
@@ -322,7 +348,7 @@
       </div>
     </details>
 
-    <details id="ads">
+    <details data-reveal id="ads">
       <summary>广告能关掉吗?广告会读取我的信息吗?</summary>
       <div class="details-body">
         <p>可以。广告卡右上角「✕」可隐藏当前这一条;「设置 → 本次运行不显示广告」勾上后,本次运行不再显示(重启软件会自动恢复显示;
@@ -332,7 +358,7 @@
       </div>
     </details>
 
-    <details id="commercial">
+    <details data-reveal id="commercial">
       <summary>能商用吗?可以打包发给别人 / 上传到别的平台吗?</summary>
       <div class="details-body">
         <p>不可以。<strong>未经作者书面许可,禁止商用、售卖、出租、捆绑销售、以获利为目的的再分发,也禁止重新打包、改名后发布到其它渠道</strong>,
@@ -343,7 +369,7 @@
       </div>
     </details>
 
-    <details id="donate">
+    <details data-reveal id="donate">
       <summary>打赏有什么用?不打赏会少功能吗?</summary>
       <div class="details-body">
         <p>打赏完全自愿,<strong>不影响任何功能</strong>,不构成购买,也不提供额外特权或优先支持,且不支持退还。
@@ -353,7 +379,7 @@
 
     <h2 id="privacy-group">隐私与联网</h2>
 
-    <details id="upload">
+    <details data-reveal id="upload">
       <summary>软件会把我的文件传到服务器吗?</summary>
       <div class="details-body">
         <p><strong>不会。</strong>图片、视频、音频的处理全部在你的电脑上完成,不上传文件内容、不传文件名、不传文件路径、不传画面/音频,
@@ -362,7 +388,7 @@
       </div>
     </details>
 
-    <details id="net">
+    <details data-reveal id="net">
       <summary>那软件为什么还要联网?都请求了什么?</summary>
       <div class="details-body">
         <p>只有三件事,而且都不涉及你的文件与设备信息:</p>
@@ -376,7 +402,7 @@
       </div>
     </details>
 
-    <details id="offline">
+    <details data-reveal id="offline">
       <summary>断网 / 内网环境能用吗?</summary>
       <div class="details-body">
         <p>能用。所有处理都是本机计算,不需要联网。联网的三件事(更新检查、广告素材、提示文案)失败时会被静默跳过:
@@ -385,7 +411,7 @@
       </div>
     </details>
 
-    <details id="diag">
+    <details data-reveal id="diag">
       <summary>反馈问题时让我导出的“诊断包”里有什么?会不会被自动上传?</summary>
       <div class="details-body">
         <p>诊断包里是<strong>本机日志、设备信息与设置</strong>(用于定位问题),它<strong>只保存在你的电脑上</strong>,
@@ -395,7 +421,7 @@
 
     <h2 id="other-group">其它</h2>
 
-    <details id="feedback">
+    <details data-reveal id="feedback">
       <summary>遇到问题想反馈,怎样最快解决?</summary>
       <div class="details-body">
         <p>带上这些信息,基本一轮就能定位:</p>
@@ -409,7 +435,7 @@
       </div>
     </details>
 
-    <details id="docs-mismatch">
+    <details data-reveal id="docs-mismatch">
       <summary>教程描述和我在软件里看到的不一样?</summary>
       <div class="details-body">
         <p>软件更新较快,个别页面文字与教程正文可能有先后差异。<a href="changelog.html">更新日志</a> 里记录了每个版本的界面与默认值调整
@@ -417,7 +443,7 @@
       </div>
     </details>
 
-    <div class="note">
+    <div class="note" data-reveal>
       <p>这里没找到你的问题?请先看 <a href="tutorial.html">使用教程</a>,或阅读
         <a href="privacy.html">隐私说明</a> / <a href="licenses.html">开源许可与致谢</a> /
         <a href="changelog.html">更新日志</a>。</p>

@@ -3,15 +3,29 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
 <title>隐私说明 — ALH Pro(三处联网行为如实列出)</title>
 <meta name="description" content="ALH Pro 隐私说明:文件处理全程在本机完成,不上传文件内容、文件名、路径、画面或设备信息。软件只有三处联网行为:检查更新、拉取广告素材、拉取界面提示文案;失败均有内置兜底,不影响任何功能。">
-<meta name="theme-color" content="#f6f7f9">
+<meta name="theme-color" content="#06080f" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#eef2f9" media="(prefers-color-scheme: light)">
 <link rel="icon" href="assets/img/logo.png" type="image/png">
 <link rel="stylesheet" href="assets/css/style.css">
+<script>
+/* 标记「JS 可用」:需要 JS 才启用的动效都挂在 html.has-js 下。
+   万一 site.js 没能加载或执行,3 秒后自动摘掉这个标记,
+   页面回到「无 JS 也完整可读」的状态(内容不会被永久隐藏)。 */
+document.documentElement.classList.add('has-js');
+setTimeout(function () {
+  if (!document.documentElement.hasAttribute('data-site-ready')) {
+    document.documentElement.classList.remove('has-js');
+  }
+}, 3000);
+</script>
 <script src="assets/js/site.js" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
+<div class="scroll-progress" aria-hidden="true"><i></i></div>
 
 <header class="site-header">
   <div class="wrap header-inner">
@@ -34,15 +48,27 @@
   </div>
 </header>
 
+<nav class="page-toc" id="page-toc" aria-label="本页章节" hidden></nav>
+
 <main id="main">
-  <div class="wrap">
 
-    <h1 class="page-title">隐私说明</h1>
-    <p class="page-meta">
-      适用软件版本:v1.3.6 及以后 · 本页内容与软件内「关于 → 隐私政策」指向同一套事实,并已把三项联网行为全部列全
-    </p>
+  <section class="hero hero--page">
+    <div class="aurora" aria-hidden="true">
+      <span class="aurora-blob b1"></span>
+      <span class="aurora-blob b2"></span>
+      <span class="aurora-blob b3"></span>
+    </div>
+    <div class="wrap hero-inner">
+      <h1 class="hero-title">隐私说明</h1>
+      <p class="page-meta">
+        适用软件版本:v1.3.6 及以后 · 本页内容与软件内「关于 → 隐私政策」指向同一套事实,并已把三项联网行为全部列全
+      </p>
+    </div>
+  </section>
 
-    <div class="note note-ok">
+  <div class="wrap content">
+
+    <div class="note note-ok" data-reveal>
       <p><span class="note-title">一句话结论:</span>
       <strong>你的图片、视频、音频处理全部在你自己的电脑上完成,不上传到任何服务器。</strong>
       软件不需要注册账号,不收集个人信息,不做使用行为统计,也没有云端记录。
@@ -51,8 +77,8 @@
     </div>
 
     <h2 id="never">一、软件不会做的事</h2>
-    <p>以下这些都是<strong>明确不做</strong>的,不是“尽量不做”:</p>
-    <ul>
+    <p data-reveal>以下这些都是<strong>明确不做</strong>的,不是“尽量不做”:</p>
+    <ul data-reveal>
       <li><strong>不上传你的文件内容:</strong>图片、视频、音频,以及处理过程中产生的中间帧、临时文件,全部留在本机。</li>
       <li><strong>不上传文件名、不上传文件路径:</strong>软件不会把你处理了什么文件、文件放在哪个目录发出去。</li>
       <li><strong>不上传画面或音频数据:</strong>不会有任何“抽帧上传”“预览上传”“云端加速”之类的事情。</li>
@@ -62,12 +88,12 @@
     </ul>
 
     <h2 id="network">二、会自动发生的联网行为(仅此三项,全部列在下面)</h2>
-    <p>这三项都不传输你的个人信息、设备信息或文件信息。它们的共同点是:只从公开仓库取回<strong>公开文本或公开图片</strong>,
+    <p data-reveal>这三项都不传输你的个人信息、设备信息或文件信息。它们的共同点是:只从公开仓库取回<strong>公开文本或公开图片</strong>,
       请求走 HTTPS,请求头里只有一个固定的程序标识与软件版本号(形如 <code>ALHPro/1.3.6</code>)——
       这是 HTTP 请求本身要求的头部,不含文件名、路径、画面或机型。</p>
 
     <h3 id="net-update">1. 更新检查(查询最新版本号)</h3>
-    <ul>
+    <ul data-reveal>
       <li><strong>什么时候:</strong>启动软件时自动检查一次(检测到新版本会提示你;<strong>不自动下载、不自动安装</strong>)。</li>
       <li><strong>请求到哪里:</strong>
         <code>api.github.com</code>(GitHub 官方接口);
@@ -78,7 +104,7 @@
     </ul>
 
     <h3 id="net-ad">2. 广告素材拉取(界面广告位的文案与图片)</h3>
-    <ul>
+    <ul data-reveal>
       <li><strong>什么时候:</strong>启动软件时、以及运行期间定时刷新(用于更新界面下方广告位的文案与图片)。</li>
       <li><strong>请求到哪里(按顺序尝试,任一成功即停):</strong>
         <code>cdn.jsdelivr.net</code>(公共 CDN 镜像)、
@@ -93,7 +119,7 @@
     </ul>
 
     <h3 id="net-hint">3. 界面提示文案拉取(底部状态栏的提示条)</h3>
-    <ul>
+    <ul data-reveal>
       <li><strong>什么时候:</strong>启动软件时、以及运行期间每约 10 分钟刷新一次(提示条本身每 30 秒在本地轮换,轮换不联网)。</li>
       <li><strong>请求到哪里:</strong>与上一条相同的一组地址,请求的是公开仓库里的
         <code>hint1.json</code>、<code>hint2.json</code>… 这些<strong>纯文本提示文件</strong>。</li>
@@ -103,7 +129,7 @@
     </ul>
 
     <h4>三项联网行为速查</h4>
-    <div class="table-scroll">
+    <div class="table-scroll" data-reveal>
       <table>
         <thead>
           <tr><th>行为</th><th>触发时机</th><th>目标地址</th><th>传输内容</th><th>失败后果</th></tr>
@@ -133,17 +159,17 @@
         </tbody>
       </table>
     </div>
-    <p><strong>结论:</strong>三项全部是“只读地取回公开内容”,没有任何一项会把你的数据发出去;
+    <p data-reveal><strong>结论:</strong>三项全部是“只读地取回公开内容”,没有任何一项会把你的数据发出去;
       三项全部失败(例如断网、内网、GitHub 不可达)时,软件的功能与画质<strong>完全不受影响</strong>。</p>
 
-    <div class="note">
+    <div class="note" data-reveal>
       <p><span class="note-title">想彻底禁止软件联网?</span>
       可以在 Windows 防火墙或安全软件里禁止 <code>ALHPro.exe</code> 联网。禁止后软件仍可正常处理素材,
       只是不会提示新版本、广告位与提示条使用内置内容。</p>
     </div>
 
     <h2 id="click">三、只有你主动点击 / 主动选择时才会发生的联网</h2>
-    <ul>
+    <ul data-reveal>
       <li><strong>打开问卷或反馈入口:</strong>只有在你自己点击时才会用浏览器打开对应网页(例如问卷平台),该页面由第三方按<strong>它自己的隐私政策</strong>处理数据;
         软件不代你提交、不读取结果。</li>
       <li><strong>点“去下载 / 网盘下载 / 查看更新详情”:</strong>用浏览器打开 GitHub 发布页或百度网盘,同样是你的主动操作,之后发生的一切由该网站的规则决定。</li>
@@ -151,7 +177,7 @@
     </ul>
 
     <h2 id="local-files">四、软件在本机产生、但不会外发的文件</h2>
-    <ul>
+    <ul data-reveal>
       <li><strong>设置与预设:</strong>保存在 <code>%LOCALAPPDATA%</code> 下的本地文件,记录你选择的参数;</li>
       <li><strong>日志:</strong>记录运行过程与报错,用于你自己排查问题,保存在本机;</li>
       <li><strong>临时文件:</strong>视频处理的中间帧等,处理完毕后自动清理,并在启动时清理历史残留;</li>
@@ -161,7 +187,7 @@
     </ul>
 
     <h2 id="thirdparty">五、第三方与开源组件</h2>
-    <ul>
+    <ul data-reveal>
       <li><strong>开源引擎与模型:</strong>waifu2x、Real-ESRGAN、RIFE、U²-Net、ISNet、BiRefNet、FFmpeg、ONNX Runtime、Demucs、LavaSR 等
         全部以<strong>本地进程 / 本地库</strong>方式调用,不会向它们的作者或任何第三方传输你的数据。它们各自的许可与版权见
         <a href="licenses.html">开源许可与致谢</a>。</li>
@@ -171,14 +197,14 @@
     </ul>
 
     <h2 id="site">六、关于本站(这个网站)</h2>
-    <ul>
+    <ul data-reveal>
       <li>本站是<strong>纯静态页面</strong>(只有 HTML / CSS 和一点本地 JS),<strong>不加载任何第三方脚本、统计代码、在线字体或境外 CDN 资源</strong>;</li>
       <li>本站不设置 Cookie、不使用本地存储记录你,页面脚本不写入任何标识;</li>
       <li>服务器(主机商)会按行业惯例记录基础访问日志(如 IP、时间、浏览器标识),用于运维与安全防护,本站不将这些日志用于统计画像或广告投放。</li>
     </ul>
 
     <h2 id="changes">七、变更与联系</h2>
-    <ul>
+    <ul data-reveal>
       <li>软件功能变化若涉及联网行为,我们会在版本更新说明中写明,并同步更新本页与软件内的隐私政策;</li>
       <li>你随时可以卸载软件;卸载后本机不再有该软件的数据(你可以自行删除 <code>%LOCALAPPDATA%</code> 下的设置与日志目录);</li>
       <li>关于本说明的疑问,可通过软件内「关于 → 联系方式」反馈。</li>

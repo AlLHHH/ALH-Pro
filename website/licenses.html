@@ -3,15 +3,29 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
 <title>开源许可与致谢 — ALH Pro(第三方组件许可声明)</title>
 <meta name="description" content="ALH Pro 的版权与许可说明:软件本体采用自创专有许可(个人/非商用免费);集成的 waifu2x、Real-ESRGAN、RIFE、U²-Net、ISNet、BiRefNet、rembg、FFmpeg、ONNX Runtime、Demucs、LavaSR 等开源组件的许可、版权与源码地址逐条列出,并附致谢名单。">
-<meta name="theme-color" content="#f6f7f9">
+<meta name="theme-color" content="#06080f" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#eef2f9" media="(prefers-color-scheme: light)">
 <link rel="icon" href="assets/img/logo.png" type="image/png">
 <link rel="stylesheet" href="assets/css/style.css">
+<script>
+/* 标记「JS 可用」:需要 JS 才启用的动效都挂在 html.has-js 下。
+   万一 site.js 没能加载或执行,3 秒后自动摘掉这个标记,
+   页面回到「无 JS 也完整可读」的状态(内容不会被永久隐藏)。 */
+document.documentElement.classList.add('has-js');
+setTimeout(function () {
+  if (!document.documentElement.hasAttribute('data-site-ready')) {
+    document.documentElement.classList.remove('has-js');
+  }
+}, 3000);
+</script>
 <script src="assets/js/site.js" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
+<div class="scroll-progress" aria-hidden="true"><i></i></div>
 
 <header class="site-header">
   <div class="wrap header-inner">
@@ -34,15 +48,27 @@
   </div>
 </header>
 
+<nav class="page-toc" id="page-toc" aria-label="本页章节" hidden></nav>
+
 <main id="main">
-  <div class="wrap">
 
-    <h1 class="page-title">开源许可与致谢</h1>
-    <p class="page-meta">
-      本页与随软件发布的 <code>THIRD_PARTY_NOTICES.txt</code> 内容一致,用于满足各开源项目许可中「保留版权声明与许可文本」的要求
-    </p>
+  <section class="hero hero--page">
+    <div class="aurora" aria-hidden="true">
+      <span class="aurora-blob b1"></span>
+      <span class="aurora-blob b2"></span>
+      <span class="aurora-blob b3"></span>
+    </div>
+    <div class="wrap hero-inner">
+      <h1 class="hero-title">开源许可与致谢</h1>
+      <p class="page-meta">
+        本页与随软件发布的 <code>THIRD_PARTY_NOTICES.txt</code> 内容一致,用于满足各开源项目许可中「保留版权声明与许可文本」的要求
+      </p>
+    </div>
+  </section>
 
-    <div class="note">
+  <div class="wrap content">
+
+    <div class="note" data-reveal>
       <p><span class="note-title">先分清两件事:</span>
       ① <strong>ALH Pro 软件本体</strong>采用作者自创的专有许可(个人 / 非商用免费,源码可见但不是标准开源许可);
       ② <strong>软件集成的开源引擎与模型</strong>(waifu2x、Real-ESRGAN、RIFE、FFmpeg 等)版权归各原作者所有,遵循它们各自的许可
@@ -50,9 +76,9 @@
     </div>
 
     <h2 id="alh">一、ALH Pro 软件本体许可</h2>
-    <p>ALH Pro 采用<strong>自创专有许可</strong>(<strong>不是</strong> MIT、Apache-2.0、GPL 等任何标准开源许可)。
+    <p data-reveal>ALH Pro 采用<strong>自创专有许可</strong>(<strong>不是</strong> MIT、Apache-2.0、GPL 等任何标准开源许可)。
       源码按「源码可见(Source-available)」方式公开,供学习与研究;<strong>版权归 AlL.H 所有,保留所有权利(All Rights Reserved)</strong>。</p>
-    <div class="table-scroll">
+    <div class="table-scroll" data-reveal>
       <table>
         <thead><tr><th>范围</th><th>说明</th></tr></thead>
         <tbody>
@@ -77,14 +103,14 @@
         </tbody>
       </table>
     </div>
-    <p class="small muted">许可原文随软件发布(<code>LICENSE</code>),也可在公开仓库
+    <p class="small muted" data-reveal>许可原文随软件发布(<code>LICENSE</code>),也可在公开仓库
       <a href="https://github.com/AlLHHH/ALH-Pro">AlLHHH/ALH-Pro</a> 根目录查看;软件内「关于」页同样提供完整声明。</p>
 
     <h2 id="third-party">二、第三方组件许可声明(逐条)</h2>
-    <p class="small">以下内容与随软件附带的 <code>THIRD_PARTY_NOTICES.txt</code> 对应,包含完整源码获取方式。
+    <p class="small" data-reveal>以下内容与随软件附带的 <code>THIRD_PARTY_NOTICES.txt</code> 对应,包含完整源码获取方式。
       <strong>如分发本软件,请保留该文件与本页所列的版权、许可信息。</strong></p>
 
-    <div class="lic">
+    <div class="lic" data-reveal>
       <h3>1. waifu2x-ncnn-vulkan(超分引擎)</h3>
       <dl>
         <dt>项目</dt><dd>github.com/nihui/waifu2x-ncnn-vulkan</dd>
@@ -94,7 +120,7 @@
       </dl>
     </div>
 
-    <div class="lic">
+    <div class="lic" data-reveal>
       <h3>2. Real-ESRGAN-ncnn-vulkan(超分引擎)</h3>
       <dl>
         <dt>项目</dt><dd>github.com/xinntao/Real-ESRGAN;github.com/nihui/realesrgan-ncnn-vulkan</dd>
@@ -103,7 +129,7 @@
       </dl>
     </div>
 
-    <div class="lic">
+    <div class="lic" data-reveal>
       <h3>3. RIFE-ncnn-vulkan(视频补帧引擎)</h3>
       <dl>
         <dt>项目</dt><dd>github.com/hzwer/arXiv2020-RIFE;github.com/nihui/rife-ncnn-vulkan</dd>
@@ -112,7 +138,7 @@
       </dl>
     </div>
 
-    <div class="lic">
+    <div class="lic" data-reveal>
       <h3>4. U²-Net(抠图模型)</h3>
       <dl>
         <dt>论文</dt><dd>U²-Net: Going Deeper with Nested U-Structure for Salient Object Detection</dd>
@@ -122,7 +148,7 @@
       </dl>
     </div>
 
-    <div class="lic">
+    <div class="lic" data-reveal>
       <h3>5. ISNet / DIS(抠图模型)</h3>
       <dl>
         <dt>项目</dt><dd>github.com/xuebinqin/DIS</dd>
@@ -131,7 +157,7 @@
       </dl>
     </div>
 
-    <div class="lic">
+    <div class="lic" data-reveal>
       <h3>6. BiRefNet(抠图模型,完整版 / 精简版)</h3>
       <dl>
         <dt>项目</dt><dd>github.com/ZhengPeng7/BiRefNet</dd>
@@ -140,7 +166,7 @@
       </dl>
     </div>
 
-    <div class="lic">
+    <div class="lic" data-reveal>
       <h3>7. rembg(ONNX 模型封装与转换工具)</h3>
       <dl>
         <dt>项目</dt><dd>github.com/danielgatis/rembg</dd>
@@ -149,7 +175,7 @@
       </dl>
     </div>
 
-    <div class="lic">
+    <div class="lic" data-reveal>
       <h3>8. FFmpeg(视频拆帧 / 合成 / 裁剪 / 检测 / 音频滤镜)</h3>
       <dl>
         <dt>项目</dt><dd>ffmpeg.org;github.com/FFmpeg/FFmpeg</dd>
@@ -160,7 +186,7 @@
       </dl>
     </div>
 
-    <div class="lic">
+    <div class="lic" data-reveal>
       <h3>9. Microsoft ONNX Runtime(抠图 / 超分 / 补帧 / 音频 AI 推理)</h3>
       <dl>
         <dt>项目</dt><dd>github.com/microsoft/onnxruntime</dd>
@@ -169,7 +195,7 @@
       </dl>
     </div>
 
-    <div class="lic">
+    <div class="lic" data-reveal>
       <h3>10. Windows App SDK / WinUI 3 / Windows UI Library</h3>
       <dl>
         <dt>项目</dt><dd>github.com/microsoft/WindowsAppSDK</dd>
@@ -178,7 +204,7 @@
       </dl>
     </div>
 
-    <div class="lic">
+    <div class="lic" data-reveal>
       <h3>11. .NET 8</h3>
       <dl>
         <dt>项目</dt><dd>github.com/dotnet/runtime</dd>
@@ -189,7 +215,7 @@
 
     <h3>音频 AI 模型</h3>
 
-    <div class="lic">
+    <div class="lic" data-reveal>
       <h3>12. HT-Demucs(音乐源分离:人声 / 伴奏 / 其他)</h3>
       <dl>
         <dt>算法项目</dt><dd>github.com/adefossez/demucs</dd>
@@ -201,7 +227,7 @@
       </dl>
     </div>
 
-    <div class="lic">
+    <div class="lic" data-reveal>
       <h3>13. LavaSR(音频真超分辨率:低采样率源 → 48 kHz)</h3>
       <dl>
         <dt>项目</dt><dd>LavaSR(Sharma 等,Interspeech 2026;官网 sharma-kunal.github.io/LavaSR)</dd>
@@ -212,7 +238,7 @@
       </dl>
     </div>
 
-    <div class="lic">
+    <div class="lic" data-reveal>
       <h3>14. RIFE 补帧 ONNX 模型(rife49.onnx)</h3>
       <dl>
         <dt>算法</dt><dd>RIFE(github.com/hzwer/arXiv2020-RIFE,MIT)</dd>
@@ -221,7 +247,7 @@
       </dl>
     </div>
 
-    <div class="lic">
+    <div class="lic" data-reveal>
       <h3>15. 超分 ONNX 模型(50 系显卡 / 无独显设备的稳定路线)</h3>
       <dl>
         <dt>模型与上游</dt><dd>RealESRGAN_x4plus.onnx、realesr-animevideov3.onnx → 上游 Real-ESRGAN(xinntao,<strong>BSD 3-Clause</strong>);
@@ -232,7 +258,7 @@
     </div>
 
     <h2 id="full-text">三、许可全文与源码获取</h2>
-    <ul>
+    <ul data-reveal>
       <li><strong>随软件附带:</strong>发布版内含 <code>THIRD_PARTY_NOTICES.txt</code> 与许可全文
         (<code>MIT.txt</code>、<code>BSD-3-Clause.txt</code>、<code>Apache-2.0.txt</code>、<code>GPLv3.txt</code>),
         FFmpeg 的 GPLv3 全文另以 <code>COPYING.GPLv3</code> 随附;</li>
@@ -244,7 +270,7 @@
         <a href="https://ffmpeg.org/download.html" rel="nofollow">ffmpeg.org/download.html</a>。</li>
     </ul>
 
-    <div class="note note-warn">
+    <div class="note note-warn" data-reveal>
       <p><span class="note-title">分发时必须保留的内容(许可要求):</span>
       Real-ESRGAN 的模型权重与算法按 <strong>BSD 3-Clause</strong> 分发、ncnn 运行时按 <strong>MIT</strong> 分发、FFmpeg 按 <strong>GPLv3</strong> 分发 ——
       这些许可都要求在分发时<strong>保留版权声明与许可文本</strong>。因此:</p>
@@ -256,20 +282,20 @@
     </div>
 
     <h2 id="thanks">四、致谢</h2>
-    <p>感谢以下朋友对 ALH Pro 的支持与反馈(名单取自软件内 <code>thanks</code> 目录,按软件内原样列出):</p>
-    <ul class="names">
+    <p data-reveal>感谢以下朋友对 ALH Pro 的支持与反馈(名单取自软件内 <code>thanks</code> 目录,按软件内原样列出):</p>
+    <ul class="names" data-reveal-group>
       <li>1c0ay</li>
       <li>f1ower</li>
       <li>JNyxn</li>
       <li>小野寺小咲☁️</li>
       <li>记住羡鱼</li>
     </ul>
-    <p>同样感谢上面逐条列出的所有开源项目的作者与维护者 ——
+    <p data-reveal>同样感谢上面逐条列出的所有开源项目的作者与维护者 ——
       没有 waifu2x、Real-ESRGAN、RIFE、U²-Net、ISNet、BiRefNet、rembg、FFmpeg、ONNX Runtime、Demucs、LavaSR 这些项目,
       就不会有 ALH Pro。</p>
 
     <h2 id="declare">五、其它声明</h2>
-    <ul>
+    <ul data-reveal>
       <li><strong>广告说明(合规告知):</strong>本软件为免费软件,通过界面广告位展示合作方广告以维持开发与维护成本。
         广告内容由广告主提供、作者按合规要求审核后展示,并带有可识别的「推广」角标;
         广告<strong>不做个性化推荐</strong>,不读取设备标识或使用记录,也不会把你的数据上传给广告方。可随时关闭,不影响软件任何功能。</li>
