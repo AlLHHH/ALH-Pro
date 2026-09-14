@@ -422,4 +422,76 @@ public static class RenderPolicy
         return new UpscaleFirstBatchPlan(up.BatchSize, up.BatchCount, interpPer, interpCount,
             sourceFrames, postInterp, up.Tier, rule);
     }
+
+    // ===================== F3:ONNX 显存策略(并发路数 / 分块真降档) =====================
+
+    /// <summary>ONNX(DirectML)逐帧推理的【并行会话路数】—— 按"可用显存"动态定,不再按"总显存档位"一刀切。
+    ///
+    /// 【要修的事】真机诊断(RTX 5060 Laptop 8GB / 16GB 内存):8GB 卡的有效显存墙只有 6.0GB,
+    /// 旧口径只按 <c>EffectiveVramGB</c> 判档(≥12→3 路、否则 2 路)⇒ 这台机器照样开 2 路,
+    /// 两路各持一份 DirectML 推理工作集,于是 ONNX 超分侧反复 E_OUTOFMEMORY(0x8007000E),
+    /// 每个失败帧都回退成"源帧缩放"(等于没放大,用户看到的却是"成功")。
+    ///
+    /// 【新口径】预算 = min(有效显存, 实测空闲显存)—— 空闲显存只有当调用方【确实实测到】时才参与
+    /// (AMD/Intel 上那是估算值,SafeRender 的注释明确警告过不能拿它当判据;故用 <c>double?</c> 表达
+    /// "没实测就别传")。预算 ≥12GB 才 3 路,≥8GB 才 2 路,否则 1 路。
+    ///
+    /// 【取舍(用速度换不失败)】路数减少 = 吞吐下降(实测 2 路 ≈1.25x,故从 2 路退到 1 路约慢 20%)。
+    /// 这是刻意的:一次 E_OUTOFMEMORY 会让该帧彻底失去超分(回退源帧缩放),比慢 20% 糟得多;
+    /// 而显存充裕的机器(预算 ≥8GB)口径不变,不为其降速。</summary>
+    public static int OnnxSessionConcurrency(bool wantGpu, double effectiveVramGB, double? freeVramGBMeasured)
+    {
+        if (!wantGpu) return 1;   // 明确要 CPU:多会话只是把 CPU 抢成几份,总时间不变、内存翻倍
+        double budget = effectiveVramGB;
+        if (freeVramGBMeasured.HasValue && freeVramGBMeasured.Value > 0)
+            budget = Math.Min(budget, freeVramGBMeasured.Value);
+        if (budget >= 12) return 3;
+        if (budget >= 8) return 2;
+        return 1;
+    }
+
+    /// <summary>写进日志的"路数依据"一行(排查"为什么只开 1 路"时必须一眼看到输入值)。</summary>
+    public static string OnnxConcurrencyRule(bool wantGpu, double effectiveVramGB, double? freeVramGBMeasured)
+    {
+        if (!wantGpu) return "明确使用 CPU → 固定 1 路(多路只会把 CPU 抢成几份)";
+        // 一律一位小数:显存是按 MiB 报的,格式化掉小数会让"6.0GB 墙"看起来像"6GB 总量"(排查时最容易看错的一处)
+        string free = freeVramGBMeasured.HasValue && freeVramGBMeasured.Value > 0
+            ? $"{freeVramGBMeasured.Value:0.0}GB(已实测)"
+            : "未实测(不参与判定)";
+        double budget = freeVramGBMeasured.HasValue && freeVramGBMeasured.Value > 0
+            ? Math.Min(effectiveVramGB, freeVramGBMeasured.Value) : effectiveVramGB;
+        return $"有效显存 {effectiveVramGB:0.0}GB / 空闲显存 {free} → 预算 {budget:0.0}GB;"
+             + $"档位口径:预算 ≥12GB→3 路、≥8GB→2 路、否则 1 路";
+    }
+
+    /// <summary>ONNX 分块的【真降档阶梯】(F3):整图/大块在显存不足时按 自动 → 512 → 256 → 128 逐级真降重试。
+    ///
+    /// 【要修的事】v1.3.5 公告的"显存不足自动降分块 auto→512→256→128 真降档"只落在【ncnn 引擎路径】
+    /// (EngineService.RunEngAsync,真机日志里那句"显存不足,分块 512→256 在 GPU 上重试"就是它);
+    /// ONNX(DirectML)路径**从来没有**这条:分块由 TileFor(显存) 算一次,失败就抛,
+    /// 逐帧 worker 只好把该帧"回退源帧缩放"—— 诊断包里"ONNX 超分几十次失败、超分等于没放大"就是这么来的。
+    /// 本函数把阶梯补齐,ONNX 侧 OOM 也能先降块重试,而不是立刻放弃整帧。
+    ///
+    /// 【取舍(用速度换不失败)】块越小,每块固定的 DirectML 往返 + 张量拷贝开销重复得越多
+    /// (实测 1080p:整帧 480ms vs 512 分块 1078ms)。所以阶梯【只在失败后】走,正常帧一字不变;
+    /// 且最低到 <see cref="MinOnnxTile"/> 就停(再小纯亏,显存收益已趋平)。
+    /// 元素严格递减(不会拿同一块重试),首元素永远是调用方算出来的自动档。</summary>
+    public static int[] OnnxTileLadder(int autoTile)
+    {
+        int cur = Math.Max(1, autoTile);
+        var res = new System.Collections.Generic.List<int>(4) { cur };
+        foreach (int step in OnnxTileLadderSteps)
+        {
+            if (step >= cur) continue;   // 只往更小降:不重复、也不为了"降档"反而变大
+            res.Add(step);
+            cur = step;
+        }
+        return res.ToArray();
+    }
+
+    /// <summary>ONNX 降档阶梯的档位(与 ncnn 路径的 512→256→128 同口径,便于日志对照)。</summary>
+    public static readonly int[] OnnxTileLadderSteps = { 512, 256, 128 };
+
+    /// <summary>ONNX 分块下限:再小就没有意义(块越小 Run 次数越多,显存收益已趋平)。</summary>
+    public const int MinOnnxTile = 128;
 }
