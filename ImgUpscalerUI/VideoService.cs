@@ -354,6 +354,39 @@ public static class VideoService
             stageWatch.Restart();
             return s;
         }
+        // ===== 【任务 U】"本次处理"数据台账:阶段耗时 / 帧数 / 临时盘 / 清理量 / 顺序判定 =====
+        // 【为什么另起一套计时】stageWatch 被 StageElapsed() 反复 Restart(那是给"阶段内即时提示"用的),
+        // 拿它做分阶段统计必然串味;这里用独立的表 + 独立秒表,不动既有计时的任何语义。
+        // 【诚实口径】下面每一项都写明"怎么测的";测不到的项一律打"未采集",绝不填假值。
+        var uStageTimes = new System.Collections.Generic.List<(string Name, double Seconds)>();
+        var uWatch = System.Diagnostics.Stopwatch.StartNew();
+        void UMark(string name)
+        {
+            uStageTimes.Add((name, uWatch.Elapsed.TotalSeconds));
+            uWatch.Restart();
+        }
+        // 临时盘采样:每次读一次临时目录所在盘的**剩余空间**,记录初始值与最小值 →
+        // 峰值占用 = 初始剩余 − 最小剩余。采样点只有下面三处(帧准备/补帧+超分后/编码前),
+        // 所以它是"采样下界",不是逐秒峰值 —— 日志里会照实写明口径。
+        long uTempFreeFirst = -1, uTempFreeMin = -1;
+        int uTempSamples = 0;
+        void USampleTemp()
+        {
+            try
+            {
+                long free = new System.IO.DriveInfo(PickTempRoot()).AvailableFreeSpace;
+                if (uTempFreeFirst < 0) uTempFreeFirst = free;
+                if (uTempFreeMin < 0 || free < uTempFreeMin) uTempFreeMin = free;
+                uTempSamples++;
+            }
+            catch { /* 拿不到盘信息 → 该项标"未采集" */ }
+        }
+        long uReleasedFrames = 0;   // 各阶段"边用边删"释放的临时帧总数(补帧 + 超分)
+        // 顺序判定结论(在 3) 块里算,结算时要与实测耗时一起报出来 → 必须先声明)
+        string uOrderLog = "";
+        double uOrderSavingsSeconds = 0;
+        double uOrderSavingsPercent = 0;
+        bool uOrderMeasured = false;
 
         // 手动模式新增可调判据(默认保持原行为):局部动作保护/参考帧窗口/采样粒度/变化块判线
         dedupProtect = Math.Clamp(dedupProtect, 0.05, 0.60);
@@ -1166,6 +1199,9 @@ public static class VideoService
                 }
                 catch { /* 统计失败不影响主流程 */ }
             }
+            // 【任务 U】阶段①统计:拆帧(+降噪)+ 去重 到此结束
+            UMark("准备(拆帧+去重)");
+            USampleTemp();
 
             // 指定输出帧率时:自动算够补帧倍率(不再用固定倍率,保证"填多少最终就多少")。
             // 内容帧率在去重后已确定,目标帧率 ÷ 内容帧率 = 需要的倍率,向上取整。
@@ -1448,6 +1484,7 @@ public static class VideoService
                         catch { /* 删不掉不影响正确性:阶段收尾还会再扫一次 */ }
                     }
                     releasedConsumed += delThisSeg;
+                    uReleasedFrames += delThisSeg;   // 【任务 U】清理释放台账(补帧阶段)
                     AppLogger.Info($"[临时清理] 补帧段 {segNo}/{segBounds.Count}(帧 {s + 1}~{e})完成:已释放" +
                         (upscaleFirst ? "超分输出帧" : "源帧") + $" {delThisSeg} 帧(本阶段累计 {releasedConsumed} 帧;目录 {Path.GetFileName(segSrcDir)})");
                     if (progress != null)
@@ -1667,6 +1704,10 @@ public static class VideoService
                     interpPctBase = upscaleFirst ? 45 : 10;
                     interpPctSpan = upscaleFirst ? 45 : 35;
                     AppLogger.Info(orderPlan.LogLine);
+                    uOrderLog = orderPlan.LogLine;
+                    uOrderSavingsSeconds = orderPlan.SavingsSeconds;
+                    uOrderSavingsPercent = orderPlan.SavingsPercent;
+                    uOrderMeasured = orderPlan.Measured;
                     if (!orderPlan.UpscaleFirst && orderPlan.Measured && orderPlan.SavingsSeconds > 0)
                         AppLogger.Info($"顺序判定说明:新顺序虽然更省但只省 {orderPlan.SavingsPercent:0.#}%(< 15% 安全边际)→ 保持旧顺序,避免临界抖动");
                     // 【任务 Q2】两阶段批计划:两个阶段的输入分辨率不同,各自按自己的面积算每批帧数,分别落日志。
@@ -1717,6 +1758,26 @@ public static class VideoService
                     // 末段 RIFE -n 补足,使最后锚点帧精确落在最后一帧(避免合帧裁剪吞尾帧)。
                     globalTarget = Math.Max(frameCount + 1,
                         (long)Math.Round((double)((fpsMode == 1 ? frameCount : origCountEst) - 1) * interpScale) + 1);
+                    // ===== 【任务 U】处理开始时的"帧数台账"一行摘要 =====
+                    // 【口径】源帧数 = 探测到的原始总帧数 origCountEst(去重前);去重后 = frameCount;
+                    // 补帧后 = globalTarget(本任务补帧的**输出目标帧数**);超分**不增减帧数**(超分保帧数,
+                    // 帧号一一对应)→ "超分后帧数"与"补帧后帧数"同口径,写清楚免得被读成两笔账;
+                    // 目标输出帧率:用户指定优先,否则按输出基准公式(A 内容×倍率 / B 原×倍率)【预计】;
+                    // 预计输出总帧数 = globalTarget(下游"帧数对齐/尾帧容积"还会做 ±1 帧级微调,已标注【预计】)。
+                    {
+                        double planOutFps = targetFps is > 0
+                            ? targetFps.Value
+                            : (fpsMode == 1 ? effectiveFps : Math.Max(effectiveFps, inFps)) * interpScale;
+                        if (flattenActive || flatPlan.Flatten) planOutFps = flatPlan.TargetFps;
+                        long planOutFrames = (flattenActive || flatPlan.Flatten) ? flatPlan.TargetFrames : globalTarget;
+                        string census = $"本次处理帧数台账:源 {origCountEst} 帧 → 去重后 {frameCount} 帧 → 补帧后 {globalTarget} 帧"
+                            + $";超分不增减帧数(超分后同为 {globalTarget} 帧);目标输出帧率【预计】{planOutFps:0.##} fps;"
+                            + $"预计输出总帧数【预计】{planOutFrames} 帧"
+                            + (flattenActive || flatPlan.Flatten ? $"【平滑时间轴:按真实时长 {flatPlan.TotalSeconds:0.###}s 重铺】" : "")
+                            + $";倍率 {interpScale}x(有效倍率 mult={AlhPro.Core.VideoPipeline.InterpMultiplier(interpScale, frameScale):0.##})";
+                        AppLogger.Info(census);
+                        progress?.Report((6, "· " + census));
+                    }
                     // ===== 旧顺序(3x/4x/不实际超分):补帧在这里跑 =====
                     // 输入 framesIn(源帧)、输出 framesFinal;RIFE 探测尺寸 = 源尺寸(srcW×srcH)——与改动前逐字一致。
                     // 新顺序(1x/2x)不在这里跑:同一份 InterpStageAsync 被推迟到超分阶段之后调用
@@ -1744,6 +1805,7 @@ public static class VideoService
                     int delCnt = 0;
                     foreach (var f in Directory.EnumerateFiles(framesIn, "*.jpg")) { File.Delete(f); delCnt++; }
                     AppLogger.Info($"[临时清理] 已释放源帧目录 framesIn({delCnt} 帧),后续超分/合帧不再需要");
+                    uReleasedFrames += delCnt;   // 【任务 U】清理释放台账(补帧阶段的源帧目录)
                 }
                 catch { /* 清理失败忽略,不中断 */ }
 
@@ -2360,6 +2422,7 @@ public static class VideoService
                                 try { File.Delete(upFiles[si]); relCnt++; } catch { /* 删不掉不影响正确性:阶段收尾还会再扫一次 */ }
                             }
                             Interlocked.Add(ref releasedInputFrames, relCnt);
+                            Interlocked.Add(ref uReleasedFrames, relCnt);   // 【任务 U】清理释放台账(超分阶段)
                             AppLogger.Info($"[临时清理] 超分批 {batchInfo.Number}/{batchCount}(槽位 {batchSlots[0]}~{batchSlots[^1]})完成:已释放" +
                                 (upscaleFirst ? "源帧" : "补帧帧") + $" {relCnt} 帧(本阶段累计 {Volatile.Read(ref releasedInputFrames)} 帧;目录 {Path.GetFileName(upInput)})");
                             // 【界面可见性 · 2026-09-13】逐批清盘过去只写 AppLogger,界面上完全看不到"边跑边释放临时帧"
@@ -2478,6 +2541,9 @@ public static class VideoService
                     framesFinal = framesInterp;   // 编码/合帧继续读 framesFinal(= 补帧输出)
                 }
             }
+            // 【任务 U】阶段②统计:补帧 + 超分(两种阶段顺序都已跑完)+ 临时盘采样(处理中段)
+            UMark("补帧+超分");
+            USampleTemp();
 
             // 4.5) 自定义输出分辨率:超分/补帧后批量缩放到精确 W×H(未超分时也生效,相当于统一尺寸)
             if (outWidth is > 0 && outHeight is > 0)
@@ -2862,6 +2928,9 @@ public static class VideoService
                 if (suggest != interpScale && suggest <= 8)
                     progress?.Report((96, $"内容帧率仅 {effectiveFps:0.##} fps,当前输出 {outFps:0.##} fps 可能仍卡,建议补帧 {suggest:0}x"));
             }
+            // 【任务 U】阶段③统计:自定义缩放 / 对齐 / 抗锯齿 等"合帧前收尾"
+            UMark("后处理/缩放/合帧准备");
+            USampleTemp();
             progress?.Report((96, $"ffmpeg 合成视频({outFps.ToString("0.##", inv)} fps)..."));
             var framePattern = Path.Combine(framesFinal, "frame_%06d.jpg");
             // 6 位小数:83.376 这类非整数帧率用 0.## 会被量化成 83.38,长视频会累积微小漂移(10 分钟约 9ms)
@@ -2993,6 +3062,7 @@ public static class VideoService
             string encFfmpeg = recipe?.Ffmpeg ?? ffmpeg;
             string encMuxArgs = recipe?.NoPreset == true ? StripPreset(muxArgs) : muxArgs;
             // 编码实测计时:诊断包用于分辨"CPU 软编慢"还是"硬编用户慢在解 JPG"(见编码性能实测分析)
+            double uEncSec = 0, uOutDur = 0, uOutFps = 0;   // 【任务 U】结算用:编码耗时 / 成片时长 / 成片帧率
             var encSw = System.Diagnostics.Stopwatch.StartNew();
             string encUsed = LastVideoEncoderInfo;
             try
@@ -3043,6 +3113,7 @@ public static class VideoService
                 // ===== 编码实测回报(resolve "编码慢" 是 CPU 软编线程限制还是硬编解 JPG 瓶颈)=====
                 encSw.Stop();
                 double encSec = encSw.Elapsed.TotalSeconds;
+                uEncSec = encSec;
                 double encFps = encSec > 0.01 ? encTotal / encSec : 0;
                 AppLogger.Info($"编码实测:编码器={LastVideoEncoderInfo},帧数={encTotal},耗时={encSec:0.##}s,实测={encFps:0.#}fps{(!encUsed.StartsWith("libx264") && !encUsed.StartsWith("libx265") ? "(硬编)" : "(CPU 软编)")}");
                 // 【把"解码""滤镜""编码"三者分开报】"编码/封装"这个数里混着 ffmpeg 的后处理滤镜与 JPG 解码
@@ -3090,6 +3161,7 @@ public static class VideoService
                 double fpsOut = 30;
                 if (double.TryParse(ProbeFps(outputVideo), System.Globalization.NumberStyles.Float, inv, out var fo) && fo > 0)
                     fpsOut = fo;
+                uOutDur = durOut; uOutFps = fpsOut;   // 【任务 U】结算用(拿不到就让结算标"未采集")
                 string warn = "";
                 // 允差 = max(3%, 1 拍):尾帧保留/拍型取整可能差 1 拍,小素材上显示 5% 是正常的,不可算 bug
                 double oneBeat = Math.Max(0.01, 1.0 / Math.Max(1, outFps));
@@ -3108,6 +3180,40 @@ public static class VideoService
                 outWarn = warn;
             }
             catch { /* 校验失败不影响完成 */ }
+            // ===== 【任务 U】处理结束的"本次统计"一行(含各阶段实测耗时 / 帧数 / 临时盘 / 清理量 / 顺序判定) =====
+            // 【诚实口径】每一项都写明来源;测不到的项一律写"未采集",**不填假数**:
+            //   · 阶段耗时 = 独立秒表在 5 个锚点打点(准备/补帧+超分/后处理/编码/输出校验),不串用 StageElapsed 的表;
+            //   · 临时盘峰值 = "初始剩余 − 观测到的最小剩余",采样点 3 处 → 是**采样下界**,不是逐秒峰值;
+            //   · 顺序判定的"实际 vs 预估"对照【未采集】—— 反事实(换另一顺序再跑一遍)本次没有跑,不编数字。
+            UMark("编码/封装");
+            {
+                double uTotal = uStageTimes.Sum(t => t.Seconds) + uWatch.Elapsed.TotalSeconds;
+                string uStages = string.Join(" | ", uStageTimes.Select(t => $"{t.Name} {t.Seconds:0.#}s"));
+                int uFinalFrames = 0;
+                try { uFinalFrames = Directory.EnumerateFiles(framesFinal, "*.jpg").Count(); } catch { }
+                string uPeak = uTempSamples >= 2 && uTempFreeFirst >= 0 && uTempFreeMin >= 0
+                    ? $"约 {(uTempFreeFirst - uTempFreeMin) / (1024.0 * 1024 * 1024):0.##} GB"
+                      + $"(口径:初始剩余 − 采样到的最小剩余,共 {uTempSamples} 个采样点 → 是下界)"
+                    : $"未采集(采样点 {uTempSamples} 个,拿不到临时盘剩余空间)";
+                AppLogger.Info("===== 本次统计 =====");
+                AppLogger.Info($"· 阶段耗时:{uStages} | 收尾 {uWatch.Elapsed.TotalSeconds:0.#}s | 合计 {uTotal:0.#}s(墙钟 {taskWatch.Elapsed.TotalSeconds:0.#}s)");
+                AppLogger.Info($"· 帧数台账:源 {origCountEst} 帧 → 去重后 {frameCount} 帧 → 补帧/超分后 {uFinalFrames} 帧;"
+                    + $"输出标称 {outFps:0.##} fps(实际 {frBase:0.##} fps)");
+                AppLogger.Info($"· 清理释放:补帧 + 超分两阶段「边用边删」共 {uReleasedFrames} 帧临时文件");
+                AppLogger.Info($"· 临时盘峰值:{uPeak}");
+                AppLogger.Info($"· 实际输出:{uFinalFrames} 帧 / {uOutDur:0.###} s / 平均 {uOutFps:0.##} fps"
+                    + $"({Path.GetFileName(outputVideo)},{LastVideoEncoderInfo}" +
+                    (uEncSec > 0 ? $",编码 {uEncSec:0.#}s" : ",编码耗时未采集") + ")");
+                AppLogger.Info($"· 顺序判定:{uOrderLog}" + (uOrderMeasured
+                    ? $"(预估节省 {uOrderSavingsSeconds:0.#}s / {uOrderSavingsPercent:0.#}%)"
+                    : "") + ";【实际 vs 预估:未采集】反事实对照要换另一顺序再跑一遍,本次没有跑,不编数字");
+                // 界面只放三条短行(带 · 前缀 → 走左下角日志区,不挤状态行、不动进度条)
+                progress?.Report((100, $"· 本次统计:合计 {uTotal:0.#}s;补帧+超分 {uStageTimes.FirstOrDefault(t => t.Name == "补帧+超分").Seconds:0.#}s;"
+                    + $"输出 {uFinalFrames} 帧 / {uOutDur:0.###}s"));
+                progress?.Report((100, $"· 临时盘峰值 {uPeak};清理释放 {uReleasedFrames} 帧临时文件"));
+                if (uOrderMeasured)
+                    progress?.Report((100, $"· 顺序判定:{uOrderLog}(预估节省 {uOrderSavingsPercent:0.#}%;实际对照未采集)"));
+            }
             // 【修复】原先是先 Report("完成 ⚠ 输出校验:…") 紧接着又 Report("完成")——后者把前者覆盖掉,
             // 而 UI 只在进度 <99% 时做节流,所以那条 ⚠ 用户永远看不到(输出异常被静默吞掉)。合并成一条。
             progress?.Report((100, (outWarn.Length > 0 ? "完成 ⚠ " + outWarn : "完成") + StageElapsed()));
