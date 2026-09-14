@@ -1151,6 +1151,7 @@ public sealed partial class VideoView : UserControl
         FormatCombo.SelectedIndex = 0;
         FastModeCheck.IsChecked = false;
         if (SmoothTimelineCheck != null) SmoothTimelineCheck.IsChecked = true;   // 【S3】重置 = 回到默认(开)
+        if (OnlineParamsCheck != null) OnlineParamsCheck.IsChecked = false;      // 【V】重置 = 回到默认(关:不联网)
         // 补全剩余参数(真正"重置所有"):视频降噪/后处理杂色/抗锯齿/去频闪/VFR/去重智能/微动防线/静音
         DenoiseToggle.IsChecked = false;
         DenoiseStrongRadios.SelectedIndex = 0;
@@ -1361,6 +1362,11 @@ public sealed partial class VideoView : UserControl
         /// <summary>【任务 S3】平滑时间轴:统一输出帧率并按场景切换对齐(默认开)。
         /// 旧设置文件里没有这个字段 → 反序列化后保留属性初始值 = true(即默认开),不会把用户的旧设置变成关。</summary>
         public bool SmoothTimeline { get; set; } = true;
+        /// <summary>【任务 V】在线获取最优参数配置(只下载配置、不上传任何数据)。
+        /// **默认 false**:界面宣称「全程本地运行,隐私不联网」,开启后本软件会联网 —— 所以默认不开,
+        /// 由用户自己决定;关着时完全走内置参数表(离线可用、行为与改动前一致)。
+        /// 旧设置文件没有该字段 → 保留初始值 false。</summary>
+        public bool OnlineParams { get; set; } = false;
         public bool Mute { get; set; }
         public bool VideoDenoiseOn { get; set; }
         public int VideoDenoiseStrong { get; set; }
@@ -1744,6 +1750,7 @@ public sealed partial class VideoView : UserControl
         if (d.Format is 0 or 1) FormatCombo.SelectedIndex = d.Format;
         FastModeCheck.IsChecked = d.FastMode;
         SmoothTimelineCheck.IsChecked = d.SmoothTimeline;   // 【S3】旧设置文件无此字段 → 保留界面默认(勾选)
+        OnlineParamsCheck.IsChecked = d.OnlineParams;       // 【V】旧设置文件无此字段 → 保留界面默认(不勾选)
         MuteCheck.IsChecked = d.Mute;
         DenoiseToggle.IsChecked = d.VideoDenoiseOn;
         if (d.VideoDenoiseStrong is >= 0 and <= 2) DenoiseStrongRadios.SelectedIndex = d.VideoDenoiseStrong;
@@ -2403,6 +2410,7 @@ public sealed partial class VideoView : UserControl
             Format = FormatCombo.SelectedIndex >= 0 ? FormatCombo.SelectedIndex : 0,
             FastMode = FastModeCheck.IsChecked == true,
             SmoothTimeline = SmoothTimelineCheck.IsChecked == true,   // 【S3】
+            OnlineParams = OnlineParamsCheck.IsChecked == true,       // 【V】
             Mute = MuteCheck.IsChecked == true,
             VideoDenoiseOn = DenoiseToggle.IsChecked == true,
             VideoDenoiseStrong = DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex : -1,
@@ -4738,6 +4746,12 @@ public sealed partial class VideoView : UserControl
         var qualityNow = QualityCombo.SelectedIndex == 5 ? 0 : QualityCombo.SelectedIndex;
         var fastNow = FastModeCheck.IsChecked == true;
         var smoothTimelineNow = SmoothTimelineCheck.IsChecked == true;   // 【S3】平滑时间轴(默认开)
+        // 【任务 V】在线参数:fire-and-forget —— 短超时(5 秒)/多端点各试一次/失败静默回内置,
+        // **绝不阻塞界面、绝不阻塞本任务**。关掉(默认)= 立刻回到内置表,连请求都不发。
+        // 【时序如实说明】拉取可能在本任务的批计划算完之后才返回 → 本次任务可能仍用上一次生效的参数;
+        // 当前到底用的哪套,以日志里的「参数来源:…」行为准(缓存未过期时根本不发请求)。
+        var onlineParamsNow = OnlineParamsCheck.IsChecked == true;
+        _ = ParamProfileService.RefreshAsync(onlineParamsNow);
         var codecNow = CodecCombo.SelectedIndex == 1 ? 2 : 0;   // 0=H.264,1=H.265
         var bitrateNow = ParseBitrate();
         var vfrModeNow = VfrModeRadios.SelectedIndex;
@@ -5188,6 +5202,7 @@ public sealed partial class VideoView : UserControl
             $"输出基准={(FpsBaseCombo.SelectedIndex == 0 ? "真实时间轴(原帧率×倍率)" : "匀速(内容×倍率)")} | " +
             $"兼容模式={(FastModeCheck.IsChecked == true ? "开" : "关")} | " +   // 文案与界面控件名一致(界面叫「兼容模式」,内部字段仍叫 FastMode)
             $"平滑时间轴={(SmoothTimelineCheck.IsChecked == true ? "开" : "关")} | " +   // 【S3】
+            $"在线参数={(OnlineParamsCheck.IsChecked == true ? "开" : "关(用内置参数)")} | " +   // 【V】
             $"VFR={(VfrModeRadios.SelectedIndex == 0 ? $"自动({(items.Any(i => i.IsVfr) ? "检测到可变帧率" : "未检测到")})" : "不启用")}");
         var trimmedCount = items.Count(i => i.IsTrimmed);
         if (trimmedCount > 0)
