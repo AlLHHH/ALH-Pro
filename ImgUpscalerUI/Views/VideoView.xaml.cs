@@ -335,6 +335,22 @@ public sealed partial class VideoView : UserControl
     private string? _customOutDir;
     private bool _suppressEvents;
     private bool _settingsLoaded;   // LoadSettings 完成后才允许保存(防构造/加载期的 -1 值污染 video-settings.json)
+    // 【启动崩溃修复 · 2026-09-14】XAML 解析是否已完成(解析期 = InitializeComponent() 还没返回)。
+    //   InitializeComponent() 是**同步**加载 XBF:逐个元素创建 + 赋初值。只要元素在 XAML 里带了初值
+    //   (IsChecked="True" / SelectedIndex="0" / Value=...),WinUI 就在赋值那一刻**同步**派发
+    //   Checked/SelectionChanged/ValueChanged —— 而此刻"排在它后面"的控件**还没被创建**,事件链路里
+    //   任何读那些控件的代码都是空引用。实测(带符号构建真启动,堆栈带行号):
+    //     XAML:691 SmoothTimelineCheck IsChecked="True" → Options_Changed → OnOptionChanged()
+    //     → UpdateOptions() → UpdateRunState() → VideoView.xaml.cs:528 `RunBtn.IsEnabled`
+    //     (RunBtn 声明在 XAML:734,解析到 691 时还不存在)→ NullReferenceException
+    //     → 异常从 IsChecked 的 setter 冒出 → WinUI 报 "Failed to assign to property
+    //       'ToggleButton.IsChecked'" → XamlParseException 0x802B000A → 视频页加载失败
+    //     → 进程退出码 0xC000027B(stowed exception)。
+    //   故:解析期一律不处理参数变化事件 —— 这样整条链路(含今后新增控件的读点)永远不会在控件没建好时
+    //   被触发;InitializeComponent() 一返回就置 true,设置恢复与用户点勾选框/滑块/下拉的行为和日志完全不变。
+    //   (为什么不用 _suppressEvents 的初值来挡:LoadSettings 有两条提前 return 的路径不会把它复位成 false,
+    //    会让交互永久失效;本标志位在构造函数里无条件置 true,没有任何"忘了复位"的风险。)
+    private bool _uiReady;
     private VideoItem? _selected;
     // 「输入帧率」框里那个值是从哪个视频探测来的(null = 无来源/用户手填):
     // 用于在开始处理时识别"框里还留着上一个视频的帧率"的残留(输入帧率参与节奏换算,残留会算错结果)。
@@ -353,6 +369,7 @@ public sealed partial class VideoView : UserControl
     public VideoView()
     {
         this.InitializeComponent();
+        _uiReady = true;   // XAML 解析已完成(此后所有控件都已创建);见 _uiReady 字段说明
         // 【第 3 项】确保"DirectML 是否可用"这件事已经有结论(幂等兜底):
         // MainPage 的启动自检只在"存在超分 ONNX 模型(ESRGAN x4plus)"时才调用 EnsureDmlProbeAsync,
         // 而那台机器若只装了 waifu2x/动漫模型(视频超分实际用的就是它们),探测从未发生 →
@@ -749,8 +766,15 @@ public sealed partial class VideoView : UserControl
 
     private void OnOptionChanged()
     {
+        // 【启动崩溃修复 · 2026-09-14】XAML 解析期一律直接返回 —— 根因与证据见 _uiReady 字段说明。
+        //   解析期(XBF 边创建边赋初值)派发的事件不能处理:此刻排在后面的控件还没建好,
+        //   链路里读它们(RunBtn/PauseBtn/ResumeBtn/VideoList/SpeedHint… 都在 XAML 611 行之后)
+        //   就是空引用,异常会从属性赋值里冒出来 → 整页加载失败 → 应用启动即崩。
+        //   解析期不做参数联动/写盘是本页**既有语义**(修复前靠 InterpHint 哨兵拦掉 611 行之前的全部事件);
+        //   本标志位把它变成"拦掉全部",于是新增控件再也不会引入这类崩溃。
+        if (!_uiReady) return;
         if (_suppressEvents) return;
-        // XAML 解析期 Slider.Value 等赋值会提前触发事件,此时后续控件未创建
+        // 保留历史哨兵(InterpHint 声明在 XAML 611 行):双保险,行为不变
         if (InterpHint == null) return;
         // 处理中修改参数:只提示一次(本批是开始时快照,不追溯;避免刷屏)
         if (_cts != null && !_midRunWarned)
@@ -2409,8 +2433,15 @@ public sealed partial class VideoView : UserControl
             Codec = CodecCombo.SelectedIndex >= 0 ? CodecCombo.SelectedIndex : 0,
             Format = FormatCombo.SelectedIndex >= 0 ? FormatCombo.SelectedIndex : 0,
             FastMode = FastModeCheck.IsChecked == true,
-            SmoothTimeline = SmoothTimelineCheck.IsChecked == true,   // 【S3】
-            OnlineParams = OnlineParamsCheck.IsChecked == true,       // 【V】
+            // 【2026-09-14 启动崩溃修复】这两个是较晚新增的复选框,这里保留"控件未创建时按界面默认值记"的兜底
+            //   (平滑时间轴默认开、在线参数默认关),避免万一有别的路径在控件没建好时收集参数、
+            //   把 null 记成"关"而覆盖用户设置。
+            //   ⚠ 注意:它**不是**本次启动崩溃的解 —— 真正抛异常的是 VideoView.xaml.cs:528
+            //   `RunBtn.IsEnabled`(经 XAML:691 → OnOptionChanged → UpdateOptions → UpdateRunState),
+            //   而 SaveSettings/CollectVideoParams 这条路在解析期已被 `!_settingsLoaded` 提前拦掉。
+            //   根因证据与整体拦截见 _uiReady 字段说明。
+            SmoothTimeline = SmoothTimelineCheck == null || SmoothTimelineCheck.IsChecked == true,   // 【S3】
+            OnlineParams = OnlineParamsCheck != null && OnlineParamsCheck.IsChecked == true,       // 【V】
             Mute = MuteCheck.IsChecked == true,
             VideoDenoiseOn = DenoiseToggle.IsChecked == true,
             VideoDenoiseStrong = DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex : -1,
