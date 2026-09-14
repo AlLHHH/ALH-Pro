@@ -55,4 +55,41 @@ public static class GpuFault
         }
         return false;
     }
+
+    /// <summary>【F3】是否为"显存/内存不足"(E_OUTOFMEMORY 0x8007000E 这一类)导致的失败。
+    ///
+    /// 【为什么要单独分一类】显存不足是【可以靠降档救回来】的失败:ONNX 侧的分块越小,DirectML 的工作集越小,
+    /// 同一次推理就大概率能过。而设备被摘除(887A0005/6)是【不可恢复】的,重试只会白等 —— 两者处置完全相反,
+    /// 所以判据必须分开:调用方(EsrganOnnxService 的分块降档阶梯)只对"显存不足"降档重试。
+    ///
+    /// 【与 887A 的关系】设备摘除的文案里偶尔也带 alloc 字样,故这里先排除持续性设备错误(互斥,可单测钉住):
+    /// 判成"显存不足"去降档重试,会把一次设备摘除变成"整批帧逐级重试 4 次 × 每帧十几块"的白等。
+    ///
+    /// 【判宽的代价不对称】判窄(漏掉 OOM)→ 该帧直接回退源帧缩放(等于没放大);
+    /// 判宽(把别的瞬时错误也当 OOM)→ 多降一次块重试,最坏白花几十秒。故厂商/运行时的各种写法都收进来。</summary>
+    public static bool IsVramShortage(Exception ex)
+    {
+        if (IsPersistentDeviceError(ex)) return false;   // 设备摘除优先:那不是"降档能救"的失败
+        for (Exception? e = ex; e != null; e = e.InnerException)
+        {
+            // 数值判据:DirectML/ONNX 显存不足最常见的码就是 E_OUTOFMEMORY(0x8007000E)。
+            // 与持续性设备错误一样,放在"消息为空就 continue"【之前】—— 内层异常常常没有可读消息,但 HResult 是真的。
+            if ((uint)e.HResult == 0x8007000Eu) return true;
+            var s = e.Message;
+            if (string.IsNullOrEmpty(s)) continue;
+            if (s.Contains("8007000E", StringComparison.OrdinalIgnoreCase)
+                || s.Contains("E_OUTOFMEMORY", StringComparison.OrdinalIgnoreCase)
+                || s.Contains("out of memory", StringComparison.OrdinalIgnoreCase)
+                || s.Contains("OutOfMemory", StringComparison.OrdinalIgnoreCase)
+                || s.Contains("not enough memory", StringComparison.OrdinalIgnoreCase)
+                || s.Contains("insufficient memory", StringComparison.OrdinalIgnoreCase)
+                || s.Contains("failed to allocate", StringComparison.OrdinalIgnoreCase)
+                || s.Contains("vkAllocateMemory", StringComparison.OrdinalIgnoreCase)
+                || s.Contains("显存不足", StringComparison.Ordinal)
+                || s.Contains("内存资源不足", StringComparison.Ordinal)
+                || s.Contains("内存不足", StringComparison.Ordinal))
+                return true;
+        }
+        return false;
+    }
 }

@@ -153,6 +153,32 @@ public static class EsrganOnnxService
         if (device >= 0) Strikes(domain).TryRemove(device, out _);
     }
 
+    /// <summary>该设备当前的连续瞬时失败计数(0 = 没有记录)。只给日志节流用(F4):
+    /// "已连续 N 次失败"这句只在【刚达上限】那一次报,之后每帧再失败不再重复 —— 逐帧刷同一句会把
+    /// 诊断日志刷满(真机诊断包 694 条 WARN 里 676 条是它),真正的线索反而被埋掉。</summary>
+    internal static int TransientStrikeCount(int device, DmlDomain domain = DmlDomain.Video)
+        => device >= 0 && Strikes(domain).TryGetValue(device, out var n) ? n : 0;
+
+    /// <summary>把单帧 ONNX 失败归成一句可汇总的短标签(F4)。汇总按"原因 × 帧数"出,
+    /// 明细(整条异常正文)不再逐帧写 —— 日志里留一行"本批 352 帧因 DirectML 显存不足回退源帧缩放"
+    /// 比 352 行同文重复有用得多。</summary>
+    private static string ClassifyOnnxFailure(Exception ex)
+    {
+        if (AlhPro.Core.GpuFault.IsPersistentDeviceError(ex)) return "GPU 设备被摘除/挂死";
+        if (AlhPro.Core.GpuFault.IsVramShortage(ex)) return "DirectML 显存不足";
+        string m = ex.Message.Split('\n')[0];
+        // 只认精确记号:写成 Contains("Inf") 会把 "inference failed" 这类正常文案误标成"数值异常"。
+        if (m.Contains("NaN", StringComparison.Ordinal) || m.Contains("Infinity", StringComparison.Ordinal)
+            || m.Contains("±Inf", StringComparison.Ordinal))
+            return "输出数值异常(NaN/Inf)";
+        if (m.Contains("形状", StringComparison.Ordinal) || m.Contains("尺寸", StringComparison.Ordinal))
+            return "输入/输出尺寸异常";
+        if (m.Contains("会话", StringComparison.Ordinal)
+            || m.Contains("session", StringComparison.OrdinalIgnoreCase))
+            return "推理会话不可用";
+        return "其它推理异常";
+    }
+
     /// <summary>该设备是否已因连续瞬时失败被判定不可用(本进程内)。用于在建会话/推理之前快速失败——
     /// 这是原 _dmlBad 闩锁里唯一有用的那半(不重复注定失败的调用),去掉的是它"转 CPU"的落点。</summary>
     internal static bool DmlDeviceUnusable(int device, DmlDomain domain = DmlDomain.Video)
@@ -613,11 +639,18 @@ public static class EsrganOnnxService
         bool auto = gpuId == -2;
         // 决定会话数:GPU 走 2 路并行(DirectML 多会话);CPU 保持 1(CPU 多会话每帧建会增加开销)
         bool wantGpu = auto ? true : gpuId >= 0;
-        // 大显存(12G+)ONNX 逐帧超分用 3 路并行(5070 Ti 等更有算力,多活能让 GPU 更饱和);小显存保持 2,避免爆显存
-        int concurrency = wantGpu ? (SafeRender.EffectiveVramGB >= 12 ? 3 : 2) : 1;
-        // 【诊断】把 ONNX 路线的实际配置写进日志:排查"GPU 占用低/慢"时要看它(路数少 = GPU 吃不饱)
+        // 【F3】并行路数按【可用显存】动态定(旧口径只看"有效显存≥12 才 3 路,否则 2 路"):
+        // 真机诊断(RTX 5060 Laptop 8GB,显存墙 6.0GB)上 8GB 卡照样开 2 路 → 每路各持一份 DirectML 工作集
+        // → 反复 E_OUTOFMEMORY(0x8007000E) → 逐帧回退源帧缩放(用户看到的是"成功",实际超分等于没放大)。
+        // 新口径:预算 = min(有效显存, 实测空闲显存),≥12GB→3 路、≥8GB→2 路、否则 1 路。
+        // 取舍(用速度换不失败):路数减少会让吞吐下降(实测 2 路 ≈1.25x),但一次爆显存丢掉的是整帧的超分结果。
+        double? freeVramMeasured = SafeRender.FreeVramMeasured ? SafeRender.FreeVramGB : null;
+        int concurrency = AlhPro.Core.RenderPolicy.OnnxSessionConcurrency(wantGpu, SafeRender.EffectiveVramGB, freeVramMeasured);
+        // 【诊断】把 ONNX 路线的实际配置写进日志:排查"GPU 占用低/慢"时要看它(路数少 = GPU 吃不饱);
+        // 同时把"为什么是这么多路"的依据(有效/空闲显存 → 预算 → 档位)一并写出,免得只看到一个数字无从判断。
         AppLogger.Info($"ONNX 超分路线:{(wantGpu ? "DirectML GPU" : "CPU")},并行 {concurrency} 路会话"
-            + $"(有效显存 {SafeRender.EffectiveVramGB:0.#}GB;分块大小见下一条「大图分块」日志)");
+            + $"(依据:{AlhPro.Core.RenderPolicy.OnnxConcurrencyRule(wantGpu, SafeRender.EffectiveVramGB, freeVramMeasured)};"
+            + "分块大小见下一条「大图分块」日志)");
         // 【熔断快速失败】DirectML 已被系统摘除/挂死(887A0005/887A0006):本进程内不可能恢复,再建会话、再逐帧试
         // 都必然失败。立刻抛出让调用方按【批次】回退源帧(几十秒),而不是每批重来一遍(几小时)。
         // wantGpu=false 表示调用方明确要 CPU(本机无 GPU 可用)——那是唯一允许用 CPU 的场景,不在此列。
@@ -748,6 +781,13 @@ public static class EsrganOnnxService
             // 置中止标志,等 WhenAll 收齐后再统一抛出。
             int abortFlag = 0;
             Exception? fatal = null;
+            // 【F4 日志卫生】逐帧失败不再逐帧打 WARN:真机诊断包里 694 条 WARN 有 676 条是同一句
+            // "ONNX 超分失败(DirectML 设备 N 连续 3 次推理失败…)——该帧回退为源帧缩放",把真正有用的线索
+            // (黑帧/补帧降级那 8 条)埋掉了。改成【每批一次汇总】+ 一行明细(样本帧名 + 原因分类)。
+            // 既有统计口径(帧号/进度/去重/失败计数)一字不变:这里只是把"写日志"从每帧一次改成每批一次。
+            int fallbackFrames = 0;                                   // 本批因推理失败回退源帧缩放的帧数
+            var fallbackReasons = new System.Collections.Concurrent.ConcurrentDictionary<string, int>();
+            var fallbackSamples = new System.Collections.Concurrent.ConcurrentQueue<string>();
             // 【正确并行】每个 worker 独占一个 session, worker 之间分片处理帧 —— 保证同一个 session
             // 同一时刻只被一个 worker 用(同一 InferenceSession 不能并发 Run,否则 AccessViolation/OnnxRuntimeException)。
             var workers = new System.Threading.Tasks.Task[concurrency];
@@ -785,7 +825,10 @@ public static class EsrganOnnxService
                             // 【单帧偶发失败 = 缩放源帧,不跑 CPU 推理】尺寸必须与正常输出一致:直接 File.Copy 会往
                             // 输出目录混进低分辨率帧,ffmpeg 按第一帧声明流头 → 成片花屏、退出码 0、日志无迹可查。
                             // 缩放只要几十毫秒;CPU 神经网络推理要几十秒/帧,一批 240 帧就是几小时。
-                            AppLogger.Warn($"ONNX 超分失败({ex.Message.Split('\n')[0]})——该帧回退为源帧缩放(不跑慢速 CPU)");
+                            // 【F4】这里只计数,不再逐帧打日志(汇总在 WhenAll 之后一次发出,见下)。
+                            Interlocked.Increment(ref fallbackFrames);
+                            fallbackReasons.AddOrUpdate(ClassifyOnnxFailure(ex), 1, (_, v) => v + 1);
+                            if (fallbackSamples.Count < 20) fallbackSamples.Enqueue(System.IO.Path.GetFileName(files[i]));
                             try { WriteResizedFallback(files[i], outPath, scale); }
                             catch { try { File.Copy(files[i], outPath, true); } catch { } }
                         }
@@ -815,6 +858,22 @@ public static class EsrganOnnxService
                 }, ct);
             }
             await System.Threading.Tasks.Task.WhenAll(workers).ConfigureAwait(false);
+            // 【F4】本批汇总:一行 WARN(用户/诊断包最先看到的那条)+ 一行明细(只进诊断日志,含样本帧名与原因分类)。
+            // 「本批 N/M 帧因 <主因> 回退源帧缩放」比 N 条同文重复有用得多:一眼能判断是"显存不足"还是"设备被摘除",
+            // 也一眼能看出这一批到底坏了多少帧(旧日志要把 N 条重复行数一遍才知道)。
+            if (fallbackFrames > 0)
+            {
+                var reasons = fallbackReasons.OrderByDescending(kv => kv.Value).ToList();
+                string main = reasons.Count > 0 ? $"{reasons[0].Key}({reasons[0].Value} 帧)" : "未知原因";
+                string rest = reasons.Count > 1
+                    ? ";其余原因:" + string.Join("、", reasons.Skip(1).Select(kv => $"{kv.Key}({kv.Value} 帧)"))
+                    : "";
+                AppLogger.Warn($"⚠ ONNX 超分:本批 {fallbackFrames}/{files.Length} 帧因 {main} 回退源帧缩放(不跑慢速 CPU)"
+                    + rest + "——明细只记一条(见下一条诊断日志),不再逐帧刷屏");
+                AppLogger.Info($"ONNX 超分本批回退明细:样本帧 {string.Join(",", fallbackSamples)}"
+                    + (fallbackFrames > fallbackSamples.Count ? $" 等共 {fallbackFrames} 帧" : "")
+                    + ";" + string.Join("、", reasons.Select(kv => $"{kv.Key}={kv.Value}")));
+            }
             // 设备永久失效:把真正的病因抛给调用方(而不是被吞掉后让上层以为这批"跑完了")
             if (fatal != null)
                 throw new InvalidOperationException($"ONNX 超分中止:GPU 设备已失效({fatal.Message.Split('\n')[0]})", fatal);
@@ -864,21 +923,48 @@ public static class EsrganOnnxService
         // 于是绝大多数图片/视频帧(不透明)一律按 512 分块。实测 8GB 卡上 1024 才是最优点且未溢出、还更快
         // (见 AlhPro.Core.RenderPolicy.OnnxTileSize 的实测锚点与"为什么上限就钉 1024")。
         const int Overlap = 64;   // 32→64:分块共享上下文更多,接缝过渡带更宽、高纹理更难看出"分块"(代价:边缘计算略增)
-        int tile = TileFor(sw, sh);
-        if (sw > tile || sh > tile)
+        // ===== 【F3】分块真降档阶梯(auto → 512 → 256 → 128)=====
+        // 【要修的事】v1.3.5 公告的"显存不足自动降分块 auto→512→256→128 真降档"实际只做在【ncnn 引擎路径】
+        // (EngineService.RunEngAsync —— 日志里那句"显存不足,分块 512→256 在 GPU 上重试"就是它)。
+        // ONNX(DirectML)路径从来没有这条:TileFor() 按显存只算一次,失败就直接抛,逐帧 worker 只好把该帧
+        // "回退源帧缩放"(尺寸对、但等于没放大)。真机诊断(RTX 5060 Laptop 8GB)里 ONNX 侧几十次
+        // E_OUTOFMEMORY(0x8007000E)后整段等于没超分,根因就在这里。现在补上:显存不足 → 真降块重试,
+        // 只有整条阶梯都失败才把异常抛给调用方(调用方再按帧回退)。
+        // 【取舍(用速度换不失败)】块越小,每次 Run 的固定开销(DirectML 往返 + 张量拷贝)重复得越多
+        // (实测 1080p:整帧 480ms vs 512 分块 1078ms)→ 所以阶梯【只在失败后】走,正常帧一字不变;
+        // 最低到 AlhPro.Core.RenderPolicy.MinOnnxTile(128)就停(再小纯亏,显存收益已趋平)。
+        // 设备摘除(887A0005/6)不降档:那是不可恢复故障,必须原样上抛走熔断。
+        int autoTile = TileFor(sw, sh);
+        var tileLadder = AlhPro.Core.RenderPolicy.OnnxTileLadder(autoTile);
+        for (int li = 0; li < tileLadder.Length; li++)
         {
-            RunCoreTiled(src, output, scale, modelPath, gpuId, progress, ct, tile, Overlap, sessionOverride, dmlDeviceHint);
-            return;
+            int tile = tileLadder[li];
+            try
+            {
+                if (sw > tile || sh > tile)
+                {
+                    RunCoreTiled(src, output, scale, modelPath, gpuId, progress, ct, tile, Overlap, sessionOverride, dmlDeviceHint);
+                }
+                else
+                {
+                    // 单块(整图 ≤ Tile):直接推理
+                    using var tileBmp = RunTile(src, modelPath, gpuId, ct, sessionOverride, dmlDeviceHint);
+                    int tW = tileBmp.Width, tH = tileBmp.Height;
+                    if (Math.Abs(tW - ow) > 1 || Math.Abs(tH - oh) > 1)
+                        SaveScaled(tileBmp, output, ow, oh);
+                    else
+                        tileBmp.Save(output, System.Drawing.Imaging.ImageFormat.Png);
+                }
+                progress?.Report((100, "完成"));
+                return;
+            }
+            catch (Exception ex) when (li + 1 < tileLadder.Length
+                && AlhPro.Core.GpuFault.IsVramShortage(ex))   // 只对"显存不足"降档;设备摘除原样上抛
+            {
+                AppLogger.Warn($"⚠ ONNX 超分:显存不足,分块 {tile}→{tileLadder[li + 1]} 真降档重试"
+                    + $"(图像 {sw}×{sh},自动档 {autoTile};原因:{ex.Message.Split('\n')[0]}。不是卡住,是自动降分块保出图)");
+            }
         }
-
-        // 单块(整图 ≤ Tile):直接推理
-        using var tileBmp = RunTile(src, modelPath, gpuId, ct, sessionOverride, dmlDeviceHint);
-        int tW = tileBmp.Width, tH = tileBmp.Height;
-        if (Math.Abs(tW - ow) > 1 || Math.Abs(tH - oh) > 1)
-            SaveScaled(tileBmp, output, ow, oh);
-        else
-            tileBmp.Save(output, System.Drawing.Imaging.ImageFormat.Png);
-        progress?.Report((100, "完成"));
     }
 
     private static int TileFor(int w, int h)
@@ -1336,7 +1422,10 @@ public static class EsrganOnnxService
                     // 【C-2 附带修复】原先这条分支直接抛,连击表一次都不写 → 一块真坏掉的 DML 设备会被【逐帧】
                     // 白试(每帧一次注定失败的推理 + 每帧一条同样的日志)。现在把失败记在【真实 DML 号】上:
                     // 连吃 3 次后调用方(VideoService 的 AnyDmlDeviceUnusable)会让整批立即停手、按批次回退源帧。
-                    if (NoteDmlTransientFailure(dmDevice))
+                    // 【F4 日志卫生】上面那条"已连续 N 次失败"只在"刚刚达上限"这一次报(计数 == 上限),
+                    // 之后每帧再失败不再重复同一句 —— 真机诊断包 694 条 WARN 里 676 条是这一句,
+                    // 把黑帧/补帧降级那 8 条真正有用的线索埋掉了。抛异常的行为一字不变。
+                    if (NoteDmlTransientFailure(dmDevice) && TransientStrikeCount(dmDevice) == DmlTransientStrikes)
                         AppLogger.Warn($"⚠ ONNX 超分:DirectML 设备 {dmDevice} 连续 {DmlTransientStrikes} 次推理失败,本进程内视为不可用——"
                             + "剩余帧按批次回退源帧(不降级到慢速 CPU);请重启软件后重试");
                     throw new InvalidOperationException($"ONNX 超分失败(并行会话): {ex.Message}", ex);
