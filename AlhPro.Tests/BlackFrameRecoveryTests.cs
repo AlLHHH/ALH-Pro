@@ -41,18 +41,20 @@ public class BlackFrameRecoveryTests
     }
 
     [Fact]
-    public void IsRealDefect_black_output_with_normal_sources_is_a_defect()
+    public void IsRealDefect_black_output_with_bright_sources_is_a_defect()
     {
+        // 两端源帧都不是黑场,而插值帧整帧近黑 → 不是插值能产生的画面(GPU 队列异常的真机形态)
         Assert.True(BlackFrameRecovery.IsRealDefect(true, false, false));
-        Assert.True(BlackFrameRecovery.IsRealDefect(true, true, false));    // 一端黑也判(另一端不是黑场 → 插值不该整帧黑)
-        Assert.True(BlackFrameRecovery.IsRealDefect(true, false, true));
     }
 
     [Fact]
-    public void IsRealDefect_both_sources_near_black_is_content_not_fault()
+    public void IsRealDefect_a_single_near_black_neighbour_exempts_as_content()
     {
-        // 两端都近黑(片头黑场/淡入淡出/夜戏):输出近黑是内容,不能误判成 GPU 故障
-        // (误判的代价是任务白失败一次,所以这里必须严格)
+        // 【口径】任一端源帧本来就近黑 = 素材内容(片头黑场/淡入淡出/夜戏/闪黑),放行。
+        // 依据:判重的代价是"换路重算出来还是近黑 → 复查仍判缺陷 → 整条任务失败"，
+        // 而"一端黑一端亮"的帧对几乎只出现在硬切黑场/淡出处(那里插值本就无意义)。
+        Assert.False(BlackFrameRecovery.IsRealDefect(true, true, false));
+        Assert.False(BlackFrameRecovery.IsRealDefect(true, false, true));
         Assert.False(BlackFrameRecovery.IsRealDefect(true, true, true));
     }
 
@@ -61,6 +63,18 @@ public class BlackFrameRecoveryTests
     {
         Assert.False(BlackFrameRecovery.IsRealDefect(false, false, false));
         Assert.False(BlackFrameRecovery.IsRealDefect(false, true, true));
+    }
+
+    [Fact]
+    public void IsRealDefect_only_fires_when_no_neighbour_is_near_black()
+    {
+        // 穷举 8 种组合,把口径钉死:唯一的"真缺陷"= 输出近黑 + 两端都不近黑
+        int defects = 0;
+        foreach (bool outBlack in new[] { true, false })
+            foreach (bool aBlack in new[] { true, false })
+                foreach (bool bBlack in new[] { true, false })
+                    if (BlackFrameRecovery.IsRealDefect(outBlack, aBlack, bBlack)) defects++;
+        Assert.Equal(1, defects);
     }
 
     [Fact]

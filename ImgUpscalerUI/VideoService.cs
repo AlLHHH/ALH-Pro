@@ -2358,9 +2358,22 @@ public static class VideoService
                                     : engine == "waifu2x" ? EsrganOnnxService.FindWaifu2xModel(model) : null;
                                 if (onnxB != null)
                                 {
+                                    // 【设备要说真话】这段文案以前直接写"ONNX DirectML",可它的判据只是"ONNX 模型文件在"
+                                    // (复核报告点名):EsrganOnnxService 只是【尝试】挂 DirectML,挂不上会静默建 CPU 会话、
+                                    // 照样打印同一句话。这里把【解析出来的真实设备号】一并写进日志,含解析失败的情形。
+                                    string dmlText;
+                                    try
+                                    {
+                                        int dmlHere = upGpu >= 0
+                                            ? EngineService.ResolveDmlDevice(upGpu) : EsrganOnnxService.DmlFallbackOk;
+                                        dmlText = dmlHere >= 0 ? $"DirectML 设备 #{dmlHere}"
+                                            : "DirectML 设备解析失败(会退到 CPU 会话,详见后续「会话实际设备」日志)";
+                                    }
+                                    catch { dmlText = "DirectML 设备解析异常(详见后续「会话实际设备」日志)"; }
                                     progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
-                                        $"⚠ 检测到黑帧(批次 {start}~{batchSlots[^1]},GPU 输出异常),该批改用 ONNX DirectML 引擎重处理..." + StageElapsed()));
-                                    AppLogger.Warn($"⚠ 批次 {start}~{batchSlots[^1]} 输出黑帧(ncnn-vulkan GPU 队列异常)——改用 ONNX DirectML({Path.GetFileNameWithoutExtension(onnxB)}) 重跑该批");
+                                        $"⚠ 检测到黑帧(批次 {start}~{batchSlots[^1]},GPU 输出异常),该批改用 ONNX 引擎重处理..." + StageElapsed()));
+                                    AppLogger.Warn($"⚠ 批次 {start}~{batchSlots[^1]} 输出黑帧(ncnn-vulkan GPU 队列异常)——改用 ONNX 稳定引擎"
+                                        + $"({Path.GetFileNameWithoutExtension(onnxB)},目标 {dmlText}) 重跑该批");
                                     ncnnUnreliable = true;   // 标记:ncnn-GPU 超分不可靠 → 后续批次直接走 ONNX,不再每批先 ncnn 失败再降级(用户② 4060 黑帧重跑 282 分钟的根因)
                                     try { Directory.Delete(batchOut, true); } catch { }
                                     Directory.CreateDirectory(batchOut);
@@ -3582,9 +3595,23 @@ public static class VideoService
             // 关键不变量:输出帧号严格用 InterpFraming 预分配(串行时完全一致),帧号精确连续、不重不漏,
             // 否则合帧缺号/乱序 → 整段视频黑帧/花屏(已用单测钉住 ComputeLayout)。
             var (per, totalOut) = AlhPro.Core.InterpFraming.ComputeLayout(Math.Max(1, target), pairs);
-            // 设备号:经 ResolveDmlDevice 锁定独显(编号命中核显→换独显),绝不落在核显上补帧。
-            int dmlGpu = AppSettings.GpuIndex >= 0 ? EngineService.ResolveDmlDevice(AppSettings.GpuIndex) : EsrganOnnxService.DmlFallbackOk;
-            if (dmlGpu < 0) { AppLogger.Warn("⚠ 补帧 ONNX:无可用 DirectML 设备,取消补帧"); return; }
+            // 【任务级选卡 · 修形参未使用】形参 gpuId 此前【从未被引用】(恒按全局 AppSettings.GpuIndex 解析),
+            // 于是"本次任务选了哪张卡"在 ONNX 补帧这条路上被忽略(H 系列自检点名的缺陷)。
+            // 现在:gpuId>=0(具体的引擎编号)= 按它解析;gpuId<0(-2 自动 / -1)= 才回落到全局设置与启动探测结论
+            // (-1 不表示"落 CPU":补帧绝不落 CPU 是硬约定,这里一律按自动处理)。
+            // 【设备解析的真实语义,注释按实现改】ResolveDmlDevice 在"名称匹配不到"时【返回 -1】,
+            // 不会自行改到别的卡(自检 H2:注释曾承诺"编号命中核显→换独显",与实现相反)——
+            // 返回 -1 时下面的告警会把原因说清并放弃本段补帧,绝不静默落 CPU 或换到未选定的卡。
+            int engineGpu = gpuId >= 0 ? gpuId : AppSettings.GpuIndex;
+            int dmlGpu = engineGpu >= 0
+                ? EngineService.ResolveDmlDevice(engineGpu)
+                : EsrganOnnxService.DmlFallbackOk;
+            if (dmlGpu < 0)
+            {
+                AppLogger.Warn($"⚠ 补帧 ONNX:无可用 DirectML 设备(引擎编号 {engineGpu} 解析失败,或 DirectML 已被摘除)"
+                    + "—— 本段不补帧(不落慢速 CPU)。请在「计算设备」里重新选一张卡,或重启软件后重试");
+                return;
+            }
 
             // 并发度受显存墙约束;DirectML session 非线程安全 → 每 worker 独占会话,绝不能共用/并发 Run。
             // 【F3】路数改按"可用显存"动态定(不再是"8GB 卡也开 2 路"):真机诊断里 8GB 卡(显存墙 6.0GB)
@@ -3601,6 +3628,7 @@ public static class VideoService
             var onnxStartAt = DateTime.UtcNow;
             progress?.Report((0, $"补帧(ONNX 稳定引擎):正在创建 {concurrency} 路推理会话(约数秒)…"));
             AppLogger.Info($"补帧(ONNX 稳定引擎):正在创建 {concurrency} 路推理会话(每段一次,秒级固定开销);"
+                + $"目标设备:DirectML #{dmlGpu}(解析自引擎编号 {engineGpu});"
                 + $"路数依据:{AlhPro.Core.RenderPolicy.OnnxConcurrencyRule(wantGpu, SafeRender.EffectiveVramGB, freeVramMeasured)}");
             try { sessions = RifeOnnxService.CreateSessions(concurrency, dmlGpu); }
             catch (InvalidOperationException) { throw; }
@@ -3738,7 +3766,8 @@ public static class VideoService
             {
                 if (RifeOnnxService.Available() && TryGetRifeOnnxFrames(args, out var onnxIn, out var onnxOut, out var onnxTarget))
                 {
-                    AppLogger.Info("✅ 补帧降级:改用 ONNX DirectML(rife49.onnx,DirectML GPU)重算该段");
+                    AppLogger.Info("✅ 补帧降级:改用 ONNX 稳定引擎(rife49.onnx)重算该段 —— 真实设备号见紧随其后的「补帧(ONNX 稳定引擎):正在创建…目标设备」一行"
+                        + "(文案不写死 DirectML:挂不上 DML 时会静默落 CPU,只有那一行报的是实话)");
                     progress?.Report((0, "⚠ 补帧改用 ONNX 稳定模型(DirectML GPU)重算..."));
                     await RifeOnnxInterpDirAsync(onnxIn!, onnxOut!, onnxTarget, -2, watchTotal, watchDir, ct, progress).ConfigureAwait(false);
                     return true;
@@ -6267,6 +6296,7 @@ public static class VideoService
         // 现在:检出即换路重算(见 RerouteBlackSlotsAsync),换不动就抛异常让任务失败 —— 绝不放行。
         int blackDefects = 0;      // 命中的缺陷帧数(判据见 AlhPro.Core.BlackFrameRecovery.IsRealDefect)
         int blackChecked = 0;      // 已抽样检查的帧数(日志用:说清"查了多少",不说就等于没查)
+        int blackExempts = 0;      // 近黑但按"素材本来就是黑场"放行的帧数(必须留痕,见 IsRealDefect 说明)
         int missingMids = 0;       // 引擎没产出、被 InterpLayerBatchAsync 兜底成"左端点副本"的节点数(只记日志)
         var blackSamples = new System.Collections.Generic.List<string>();   // 少量样本(只进日志,便于定位)
         if (slots.Count > 0)
@@ -6377,7 +6407,9 @@ public static class VideoService
                         // 真机形态是"某一次引擎调用整体输出黑帧(GPU 队列异常,退出码仍 0)",块 ≤384 帧 →
                         // 块内均匀抽样必然命中;而旧的"整段只抽前 6 帧"在几千~几万帧的层批里等于没查
                         // (黑片实测长 40~360 帧 → 6 帧抽样命中概率极低,这就是黑帧穿到成片的直接原因)。
-                        // 判据:输出近黑【且】两端源帧不都是近黑(两端都黑 = 素材本来就是黑场/淡入淡出,不算故障)。
+                        // 判据:输出近黑【且】两端源帧都不是近黑(任一端本来就是黑场 = 素材内容:片头黑场/淡入淡出/夜戏;
+                        // 判重的代价是换路重算后仍判缺陷 → 整条任务失败,见 Core.BlackFrameRecovery.IsRealDefect 的取舍说明)。
+                        // 放行的帧数会单独记一行日志(不静默)。
                         foreach (int bk in AlhPro.Core.DefectSampling.Plan(mids.Count))
                         {
                             if (bk >= batch.Count) break;
@@ -6388,7 +6420,10 @@ public static class VideoService
                                 var bnd = batch[bk];
                                 if (!AlhPro.Core.BlackFrameRecovery.IsRealDefect(true,
                                         EngineService.IsBlackPngStrict(bnd.a), EngineService.IsBlackPngStrict(bnd.b)))
+                                {
+                                    blackExempts++;   // 相邻源帧本来就黑 = 素材内容(不静默:末尾统一记一行)
                                     continue;
+                                }
                                 blackDefects++;
                                 if (blackSamples.Count < 8)
                                     blackSamples.Add($"第 {lv} 层第 {layerBatchNo}/{layerBatchAll} 层批·帧对 {bnd.p}");
@@ -6440,13 +6475,23 @@ public static class VideoService
                     if (!EngineService.IsBlackPng(bfile)) continue;
                     bool aBlack = bp + 1 < files.Length && EngineService.IsBlackPngStrict(files[bp]);
                     bool bBlack = bp + 1 < files.Length && EngineService.IsBlackPngStrict(files[bp + 1]);
-                    if (!AlhPro.Core.BlackFrameRecovery.IsRealDefect(true, aBlack, bBlack)) continue;
+                    if (!AlhPro.Core.BlackFrameRecovery.IsRealDefect(true, aBlack, bBlack))
+                    {
+                        blackExempts++;   // 相邻源帧本来就黑 = 素材内容(不静默:下面统一记一行)
+                        continue;
+                    }
                     blackDefects++;
                     if (blackSamples.Count < 8) blackSamples.Add($"{Path.GetFileName(bfile)}(帧对 {bp})");
                 }
                 catch { }
             }
         }
+        // 【放行必须留痕】把"按素材黑场放行"的帧数写进日志:否则"这次为什么没换路"在诊断包里无从判断
+        // (这也是复核报告点名的要求:豁免与否要给出依据)。口径 = 任一端源帧本来就近黑,见 IsRealDefect。
+        if (blackExempts > 0)
+            AppLogger.Info($"{stageName}:黑帧自检 —— 抽样检出近黑中间帧 {blackExempts} 帧,但其相邻源帧本来就近黑"
+                + "(素材黑场/淡入淡出/夜戏)→ 按素材内容放行(与超分段 ShouldExemptAsSourceBlack 同一思路,"
+                + "口径放宽到「相邻任一端」);这批帧不是 GPU 故障,不触发换路)");
         bool anyBlack = blackDefects > 0;   // 返回值口径不变(平滑时间轴那条路用它决定是否回退分段补帧)
         if (missingMids > 0)
             AppLogger.Info($"{stageName}:引擎未产出的节点 {missingMids} 个(已按「左端点副本」兜底,不是黑帧;"
@@ -6513,14 +6558,18 @@ public static class VideoService
         progress?.Report((40, $"⚠ 检出黑帧:按同一时间轴换引擎重算 {slots.Count} 帧(不把黑帧交给成片)…"));
 
         // 换路档位:ONNX 可用?有别的卡?模型支持任意时间步? —— 计划本身是纯逻辑(可单测),见 AlhPro.Core.BlackFrameRecovery.Plan
+        // 【任务级选卡】优先用【本次任务选定的那块卡】(ncnn 的 -g 编号 gpuId → DirectML 设备号),
+        // 只有 gpuId<0(自动/未指定)才回落到全局设置与启动探测结论 —— 否则"任务里选了另一张卡"时,
+        // 换路会跑到别的卡上去,与"换卡"档位的语义直接冲突。
+        int engineGpu = gpuId >= 0 ? gpuId : AppSettings.GpuIndex;
         int dmlGpu = -1;
         bool onnxUsable = false;
         try
         {
             if (RifeOnnxService.Available() && !EsrganOnnxService.DmlDeviceDead)
             {
-                dmlGpu = AppSettings.GpuIndex >= 0
-                    ? EngineService.ResolveDmlDevice(AppSettings.GpuIndex) : EsrganOnnxService.DmlFallbackOk;
+                dmlGpu = engineGpu >= 0
+                    ? EngineService.ResolveDmlDevice(engineGpu) : EsrganOnnxService.DmlFallbackOk;
                 onnxUsable = dmlGpu >= 0;
             }
         }
@@ -6538,8 +6587,19 @@ public static class VideoService
         int stillBad = blackDefects;   // 换路后复查仍为真缺陷的帧数(全失败时保持"原始检出数",不编数字)
         var rerouteDirs = new System.Collections.Generic.List<string>();   // 换路临时目录(失败时清干净)
         if (steps.Length == 0)
-            AppLogger.Warn($"⚠ 黑帧换路:本机没有可用的换路档位(ONNX 补帧引擎/第二块显卡都没有;模型 {interpModel} "
-                + $"{(v4Model ? "" : "非 v4,不支持单对 -s ")}不支持任意时间步)—— 只能按失败收尾");
+        {
+            // 【说清"为什么没得换"】原先这句只笼统说"没有可用档位",排查时看不出是模型缺失、设备解析失败
+            // 还是根本没第二块卡(复核报告点名:H1/H2 的设备路由在名字匹配不到时会返回 -1,用户看到的却是别的说法)。
+            var why = new System.Collections.Generic.List<string>();
+            if (!RifeOnnxService.Available()) why.Add("未找到 ONNX 补帧模型 rife49.onnx");
+            else if (EsrganOnnxService.DmlDeviceDead)
+                why.Add("DirectML 设备已被系统摘除/挂死(本进程内不可恢复,需重启软件)");
+            else if (dmlGpu < 0)
+                why.Add($"无法把 GPU 编号 {engineGpu} 解析成可用的 DirectML 设备(名称匹配不到时按 -1 处理,不会自行改卡)");
+            if (!altGpu.HasValue) why.Add("本机没有第二块显卡可换");
+            else if (!v4Model) why.Add($"补帧模型 {interpModel} 非 v4 架构,单对 -s 会被引擎忽略,换卡也无意义");
+            AppLogger.Warn($"⚠ 黑帧换路:没有可用的换路档位 —— {string.Join(";", why)};只能按失败收尾");
+        }
         foreach (var step in steps)
         {
             if (ct.IsCancellationRequested) throw new OperationCanceledException(ct);
@@ -6691,7 +6751,7 @@ public static class VideoService
     /// <summary>换路重算后的【逐帧复查】:这批帧就是要交付的帧,所以默认【全查】(不抽样)。
     /// 全查成本 = 每帧一次解码(1080p 约 15ms);只有槽数极大(&gt;4000)时才退回抽样计划,
     /// 避免给已经出故障的任务再压上几分钟的纯解码时间(抽样口径与自检同一套,见 Core.DefectSampling)。
-    /// 返回仍为真缺陷的帧数;判据与自检一致:输出近黑【且】两端源帧不都是近黑。</summary>
+    /// 返回仍为真缺陷的帧数;判据与自检一致:输出近黑【且】两端源帧都不是近黑(任一端近黑 = 素材黑场,放行)。</summary>
     private static int VerifyReroutedSlots(System.Collections.Generic.List<(int i, int j, double phi)> slots,
         string[] files, string[] slotSrc)
     {

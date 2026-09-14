@@ -160,12 +160,15 @@ public static class EsrganOnnxService
         => device >= 0 && Strikes(domain).TryGetValue(device, out var n) ? n : 0;
 
     /// <summary>把单帧 ONNX 失败归成一句可汇总的短标签(F4)。汇总按"原因 × 帧数"出,
-    /// 明细(整条异常正文)不再逐帧写 —— 日志里留一行"本批 352 帧因 DirectML 显存不足回退源帧缩放"
-    /// 比 352 行同文重复有用得多。</summary>
+    /// 明细(整条异常正文)不再逐帧写 —— 日志里留一行"本批 352 帧因显存/内存不足回退源帧缩放"
+    /// 比 352 行同文重复有用得多。
+    /// 【不在这里断言设备】标签只描述【异常性质】,不说"跑在 DirectML 上":本类会话可能是
+    /// "想要 GPU 但 DML 没挂上,实际是 CPU 会话"(复核报告点名:文案里"稳定引擎/ONNX"不等于 DirectML)。
+    /// 设备由调用方的汇总行单独报真话(见本类 UpscaleDirAsync 的 `本批会话实际设备:`)。</summary>
     private static string ClassifyOnnxFailure(Exception ex)
     {
         if (AlhPro.Core.GpuFault.IsPersistentDeviceError(ex)) return "GPU 设备被摘除/挂死";
-        if (AlhPro.Core.GpuFault.IsVramShortage(ex)) return "DirectML 显存不足";
+        if (AlhPro.Core.GpuFault.IsVramShortage(ex)) return "显存/内存不足(E_OUTOFMEMORY 类)";
         string m = ex.Message.Split('\n')[0];
         // 只认精确记号:写成 Contains("Inf") 会把 "inference failed" 这类正常文案误标成"数值异常"。
         if (m.Contains("NaN", StringComparison.Ordinal) || m.Contains("Infinity", StringComparison.Ordinal)
@@ -868,10 +871,19 @@ public static class EsrganOnnxService
                 string rest = reasons.Count > 1
                     ? ";其余原因:" + string.Join("、", reasons.Skip(1).Select(kv => $"{kv.Key}({kv.Value} 帧)"))
                     : "";
+                // 【设备要说真话】不能只写"ONNX/稳定引擎"就算交代了:那是【尝试】挂 DirectML 的路径,
+                // 挂不上会静默建出 CPU 会话照样打同样的文案(复核报告点名)。这里直接报本批会话【实际】落在哪:
+                // 真 DML 设备号(几个会话)还是 CPU —— 排查时不必再去上文翻会话创建日志对号。
+                int dmlSessions = sessionDml.Count(x => x >= 0);
+                string deviceText = !wantGpu ? "CPU(调用方明确指定)"
+                    : dmlSessions > 0 ? $"DirectML 设备 #{dmDevice} × {dmlSessions} 路(会话实际所在设备)"
+                    : $"CPU(想要 GPU 但 DirectML 设备 #{dmDevice} 未挂上,见上文会话创建告警)";
                 AppLogger.Warn($"⚠ ONNX 超分:本批 {fallbackFrames}/{files.Length} 帧因 {main} 回退源帧缩放(不跑慢速 CPU)"
-                    + rest + "——明细只记一条(见下一条诊断日志),不再逐帧刷屏");
+                    + rest + $";本批会话实际设备:{deviceText}"
+                    + "——明细只记一条(见下一条诊断日志),不再逐帧刷屏");
                 AppLogger.Info($"ONNX 超分本批回退明细:样本帧 {string.Join(",", fallbackSamples)}"
                     + (fallbackFrames > fallbackSamples.Count ? $" 等共 {fallbackFrames} 帧" : "")
+                    + ";本批会话实际设备:" + deviceText
                     + ";" + string.Join("、", reasons.Select(kv => $"{kv.Key}={kv.Value}")));
             }
             // 设备永久失效:把真正的病因抛给调用方(而不是被吞掉后让上层以为这批"跑完了")
