@@ -18,10 +18,16 @@ public sealed record ParamProfile
     /// <summary>适用范围说明(自由文本,仅进日志,不参与判定)。例如 "1080p 源 / NVIDIA 40 系 / 模型 rife-v4.26"。</summary>
     public string Scope { get; init; } = "";
 
-    // ===== ① 超分单价表(秒/帧 @1080p,按"引擎|模型|倍率"键;缺失的键一律回退内置表)=====
+    // ===== ① 超分单价表(秒/帧 @1080p,按"引擎|模型键|倍率"键;缺失的键一律回退内置表)=====
+    /// <summary>键格式 = `引擎|模型键|倍率`,例如 `realesrgan|x4plus|4`、`waifu2x|cunet|2`。
+    /// 【任务 W】两侧都做归一:写引擎侧全名(`realesrgan|realesrgan-x4plus|4`)与写模型键等价,见
+    /// <see cref="PipelineOrderPlan.CanonicalUpscaleKey"/>。**内置表由实测表派生**,不存在第二份数字。</summary>
     public Dictionary<string, double> UpscaleSecondsPerFrame1080p { get; init; } = new();
 
     // ===== ② 补帧单价表(秒/输出帧 @1080p,按"面积档"键,如 "1080p"/"4k")=====
+    /// <summary>键 = 锚点名:`1080p` / `2160p`(别名 `4k`)/ `4320p`(别名 `8k`),可选 `1440p`。
+    /// 【任务 W】只有被覆盖的锚点会被替换;**`1440p` 未实测,只有在线配置真的给了它才会插入锚点表**
+    /// (否则不许凭空造一个中间锚点,那会把 1080p~2160p 之间的分段内插整体带偏)。</summary>
     public Dictionary<string, double> InterpSecondsPerFrame1080p { get; init; } = new();
 
     // ===== ③ 批次档位基准与上限(帧)=====
@@ -43,29 +49,25 @@ public sealed record ParamProfile
     public double PerfFastSecondsPerFrame { get; init; } = 0.30;
     public double PerfNormalSecondsPerFrame { get; init; } = 1.00;
 
-    /// <summary>内置默认表 = 仓库现有的实测/口径常量(与各处 const 同源,避免两套数字)。</summary>
+    /// <summary>内置默认表 = 仓库现有的实测/口径常量(与各处 const 同源,避免两套数字)。
+    /// 【任务 W 的重要修正】①②两张单价表原先在本文件里**各写了一份旧数字**,与
+    /// <see cref="PipelineOrderPlan.UpscaleRates"/> 的实测表**互相矛盾**:
+    /// 旧内置写 `realesrgan|realesrgan-x4plus|4 = 0.24`、`waifu2x|models-cunet|2 = 0.25`,
+    /// 而真机实测是 **x4plus 4x ≈ 14.8~15.5 秒/帧、cunet 2x ≈ 0.369 秒/帧**(相差 60 倍 / 1.5 倍)。
+    /// 现在两张表**都由实测常量派生**(<see cref="PipelineOrderPlan.BuiltInUpscaleMap"/> /
+    /// <see cref="PipelineOrderPlan.BuiltInInterpMap"/>),既是"以真机实测为准",也杜绝了第二份数字。
+    /// 【不确定度】x4plus 那格只有 12 帧样本(区间最宽),其余见各自 Provenance。</summary>
     public static ParamProfile BuiltIn => new()
     {
         Version = "builtin",
         Scope = "内置默认(仓库既有实测与用户口径)",
-        UpscaleSecondsPerFrame1080p = new()
-        {
-            ["realesrgan|realesrgan-x4plus|4"] = 0.24,   // 真机实测 0.24~0.6 秒/帧(见 EngineService 探测注释)
-            ["realesrgan|realesrgan-x4plus-anime|4"] = 0.24,
-            ["waifu2x|models-cunet|2"] = 0.25,
-            ["waifu2x|models-upconv_7_anime_style_art_rgb|2"] = 0.25,
-        },
-        InterpSecondsPerFrame1080p = new()
-        {
-            ["1080p"] = 0.10,
-            ["1440p"] = 0.20,
-            ["2160p"] = 0.35,
-        },
+        UpscaleSecondsPerFrame1080p = PipelineOrderPlan.BuiltInUpscaleMap(),
+        InterpSecondsPerFrame1080p = PipelineOrderPlan.BuiltInInterpMap(),
         WeakBatchFrames = RenderPolicy.WeakDeviceFramesPerBatch,
         NormalBatchFrames = RenderPolicy.NormalDeviceFramesPerBatch,
         StrongBatchFrames = RenderPolicy.StrongDeviceFramesPerBatch,
         StrongLongBatchFrames = RenderPolicy.StrongDeviceLargeFramesPerBatch,
-        OrderSwitchMinSavingsPercent = 15.0,
+        OrderSwitchMinSavingsPercent = PipelineOrderPlan.MinSavingsPercent,
         TimelineGapToleranceRatio = TimelineFlattenPlan.GapToleranceRatio,
         SceneCutDiffThreshold = SceneCutJudge.DiffThreshold,
         SceneCutStrongDiffThreshold = SceneCutJudge.StrongDiffThreshold,
@@ -271,4 +273,43 @@ public static class ParamProfileRuntime
     public static double SceneCutStrongDiffThreshold => Current?.SceneCutStrongDiffThreshold ?? SceneCutJudge.StrongDiffThreshold;
     public static double SceneCutLapDropRatio => Current?.SceneCutLapDropRatio ?? SceneCutJudge.LapDropRatio;
     public static double TimelineGapToleranceRatio => Current?.TimelineGapToleranceRatio ?? TimelineFlattenPlan.GapToleranceRatio;
+
+    /// <summary>【任务 W】顺序判定的安全边际(省略参数时的取值)。</summary>
+    public static double OrderSwitchMinSavingsPercent
+        => Current?.OrderSwitchMinSavingsPercent ?? PipelineOrderPlan.MinSavingsPercent;
+
+    /// <summary>【任务 W】补帧锚点覆盖表(null = 没有任何覆盖 → 调用方原样用实测锚点数组)。
+    /// 只在"覆盖层非 null 且表非空"时返回非 null,避免给热路径制造无谓的对象分配。</summary>
+    internal static IReadOnlyDictionary<string, double>? InterpAnchorOverrides
+    {
+        get
+        {
+            var cur = Current;
+            if (cur == null) return null;
+            var m = cur.InterpSecondsPerFrame1080p;
+            return m != null && m.Count > 0 ? m : null;
+        }
+    }
+
+    /// <summary>【任务 W】查"该引擎 × 该模型 × 该引擎倍率"的**在线**超分单价(秒/帧 @1080p)。
+    /// 命中返回该值(并把出处写进 <paramref name="source"/>);没配 / 没命中 / 键格式不对 → null
+    /// (调用方回落内置实测表)。键两侧都做归一,见 <see cref="PipelineOrderPlan.CanonicalUpscaleKey"/>。</summary>
+    public static double? TryUpscaleSecondsPerFrame1080p(string? engine, string? model, int engineScale, out string source)
+    {
+        source = "";
+        var cur = Current;
+        if (cur?.UpscaleSecondsPerFrame1080p is not { Count: > 0 } table) return null;
+        string want = PipelineOrderPlan.CanonicalUpscaleKey(engine, model, engineScale);
+        foreach (var kv in table)
+        {
+            // 归一是幂等的:表里的键(无论写引擎侧全名还是模型键)都收敛到同一个规范形式再比
+            string? got = PipelineOrderPlan.CanonicalUpscaleKeyFromTableKey(kv.Key);
+            if (got != null && string.Equals(got, want, StringComparison.Ordinal))
+            {
+                source = $"在线参数 v{cur.Version}(超分单价键 {kv.Key})";
+                return kv.Value;
+            }
+        }
+        return null;
+    }
 }

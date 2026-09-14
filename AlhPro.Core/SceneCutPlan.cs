@@ -11,26 +11,66 @@ namespace AlhPro.Core;
 /// 【本类的作用】给 S1 的"按时轴逐槽插值"提供**切点清单**,使得**切点上永远不生成 φ∈(0,1) 的混合帧**。
 /// 【阈值依据(【待实测标定】)】判据 = `mean|diff| ≥ DiffThreshold` **且** (`拉普拉斯能量下降比例 ≥ LapDropRatio`
 /// 或 `mean|diff| ≥ StrongDiffThreshold`):实测量级 mean|diff| 58.68 / lapvar 比 0.474,取
-/// diff ≥ 25、强切 ≥ 50、lapvar 比 ≤ 0.6 作为初值(需真机更多样本标定)。</summary>
+/// diff ≥ 25、强切 ≥ 50、lapvar 比 ≤ 0.6 作为初值(需真机更多样本标定)。
+///
+/// ==== 【任务 W · 2026-09-14】联网核对"外部怎么做",结论逐条写在这里(出处见 ExternalPractice) ====
+/// ① **"切点不插值"确实是业界做法**,而且是**唯一**做法(本项目原先只是推断,现在有逐条出处):
+///    · Hybrid(RIFE 的集成方)作者 Selur:**"The scene change detection basically just cuts the scene into
+///      chunks, feeds these chunks into RIFE and then adds duplicates around the scene changes to meet the
+///      desired frame rate."**(<https://forum.selur.net/thread-3940.html>,帖 #14,第 2 页)—— 即"分段 + 切点补重复帧";
+///    · VSGAN-tensorrt-docker(VapourSynth 里做 VFI 的参考工程)的标准写法就是"切点处用**原始帧**替换插值帧":
+///      `clip = core.akarin.Select([clip, clip_orig], clip_sc, "x._SceneChangeNext 1 0 ?")`
+///      (<https://github.com/styler00dollar/VSGAN-tensorrt-docker>)—— 与我们的
+///      <see cref="CutAwareSchedule"/>"切点强制拷贝、绝不合成"**同一条规则**。
+/// ② **没有更好的做法**:Selur 明确说 RIFE 本身"blindly interpolating",想改成"预测末帧再插值"只能去改 RIFE 的代码;
+///    唯一被提到的替代是"切点做混合(morph)",而那正是**没有切点保护时的默认坏行为**——
+///    Selur 的原话:"If you want morphing on scene changes instead, simply disable the scene change detection."
+/// ③ **阈值标定参照**(我们 diff≥25 的量级是对的):
+///    · PySceneDetect `ContentDetector` 默认 `threshold = 27.0`,度量口径正是"0~255 量级的平均像素变化"
+///      (HSV 加权 dHue/dSat/dLum),<https://www.scenedetect.com/docs/latest/api/detectors.html> —— 27 与我们的 25 同量级;
+///    · Selur / VSGAN 用的 `misc.SCDetect` 默认 `threshold=0.10`(归一化口径,**不能直接换算到 0~255**)。
+/// ④ **已知残差(业界同样没解决)**:切点强制拷贝 = 该处重复一帧,在**摇镜**上会被看成"末帧卡一下"
+///    (forum.selur.net thread-3940 里用户的原话抱怨);这是"宁可不插、也不出鬼影"的代价,不是我们的缺陷。
+/// ⑤ **【仅建议,未实施】切点最小间距(滞回)**:PySceneDetect 默认 `min_scene_len = 15` 帧
+///    (同一出处)—— 我们目前**没有**这条,闪光/频闪素材会连判多个切点 → 连出多次强制拷贝。
+///    加它会改变"哪些帧不再被保护"(= 画面语义变化),所以只写建议,见 <see cref="ExternalPractice"/>。</summary>
 public static class SceneCutJudge
 {
-    /// <summary>帧差阈值(mean|diff|,0~255 量级)。实测切点 58.68。【待实测标定】</summary>
+    /// <summary>帧差阈值(mean|diff|,0~255 量级)。实测切点 58.68。【待实测标定】
+    /// 【任务 W · 外部标定参照】PySceneDetect `ContentDetector` 默认 `threshold = 27.0`,度量为"0~255 量级的
+    /// 平均像素变化(HSV 加权)"(<https://www.scenedetect.com/docs/latest/api/detectors.html>)—— 25 与 27 同量级。
+    /// 【不确定度】**口径不完全相同**:PySceneDetect 在**原分辨率**按 HSV 三通道加权算,我们在**192 行灰度采样**上算
+    /// (<see cref="SceneCutMetrics.SampleHeight"/>);降采样会同时压低帧差,所以同一个 25 在本工程里**更敏感**
+    /// (更容易判切)= 偏保守方向(多出几次"强制拷贝",不会出鬼影)。要精确对齐只能真机复测,未做。</summary>
     public const double DiffThreshold = 25.0;
 
-    /// <summary>强切阈值:帧差足够大时不必再看拉普拉斯。【待实测标定】</summary>
+    /// <summary>强切阈值:帧差足够大时不必再看拉普拉斯。【待实测标定】
+    /// 【任务 W】**外部没有对应的"二级阈值"设计**可参照:PySceneDetect 只有一个阈值 + (AdaptiveDetector)
+    /// 一条"与滚动均值之比"的自适应判据;Selur/VSGAN 走 `misc.SCDetect` 的单一归一化阈值。
+    /// 所以本值纯属本工程口径,**不据外部资料调整**(避免拿"没有出处"的数字改判据)。</summary>
     public const double StrongDiffThreshold = 50.0;
 
-    /// <summary>拉普拉斯能量下降比例阈值:新帧能量 / 旧帧能量 ≤ 此值视为"画面结构突然变简"(切场典型)。实测 0.474。【待实测标定】</summary>
+    /// <summary>拉普拉斯能量下降比例阈值:新帧能量 / 旧帧能量 ≤ 此值视为"画面结构突然变简"(切场典型)。实测 0.474。
+    /// 【任务 W】**外部没有"用拉普拉斯能量比判切"的做法**(主流是直方图 / HSV 通道差 / 感知哈希 / 神经网络分类器,
+    /// 见 <see cref="ExternalPractice"/>);本值只能靠本工程实测,不据外部资料调整。【待实测标定】
+    /// 外部对"快摇镜头误判"的解法不是清晰度比,而是**自适应(与局部滚动均值比)**:PySceneDetect
+    /// `AdaptiveDetector` 默认 `adaptive_threshold=3.0` / `min_content_val=15.0` / `window_width=2`。
+    /// 那条路会改变"哪些对被判为切点" ⇒ 属画面语义变化,只写建议(见 <see cref="ExternalPractice"/>)。</summary>
     public const double LapDropRatio = 0.6;
 
     /// <summary>逐对判定:第 i 对 = 源帧 i → i+1。<paramref name="lapVar"/> 可为 null(只按帧差判)。
-    /// 返回 true = 这一对之间存在**硬切**,插值必须绕开(不做跨切混合)。</summary>
+    /// 返回 true = 这一对之间存在**硬切**,插值必须绕开(不做跨切混合)。
+    /// 【任务 W】三个阈值改为**经覆盖层读**(<see cref="ParamProfileRuntime"/>):在线参数可覆盖;覆盖层为 null
+    /// (默认/离线/全部单测)→ 取上面那三个常量,行为与改动前逐字一致。</summary>
     public static bool IsCut(double meanAbsDiff, double? lapVarPrev, double? lapVarCur)
     {
-        if (!double.IsFinite(meanAbsDiff) || meanAbsDiff < DiffThreshold) return false;
-        if (meanAbsDiff >= StrongDiffThreshold) return true;
+        double diffThreshold = ParamProfileRuntime.SceneCutDiffThreshold;
+        double strongDiffThreshold = ParamProfileRuntime.SceneCutStrongDiffThreshold;
+        double lapDropRatio = ParamProfileRuntime.SceneCutLapDropRatio;
+        if (!double.IsFinite(meanAbsDiff) || meanAbsDiff < diffThreshold) return false;
+        if (meanAbsDiff >= strongDiffThreshold) return true;
         if (lapVarPrev is > 0 && lapVarCur is >= 0)
-            return lapVarCur.Value / lapVarPrev.Value <= LapDropRatio;
+            return lapVarCur.Value / lapVarPrev.Value <= lapDropRatio;
         return true;   // 帧差已过阈值但拿不到拉普拉斯 → 保守判为切点(宁可少插一帧,也不出鬼影)
     }
 
