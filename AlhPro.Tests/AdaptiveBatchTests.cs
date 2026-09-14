@@ -36,13 +36,13 @@ public class AdaptiveBatchTests
     [Fact]
     public void Plan_frames_per_batch_follow_area_inverse()
     {
-        // 设备好(10.4G)+ 长片(1800 帧 ≥ 900)→ 档位基准 400
+        // 设备好(10.4G)+ 长片(1800 帧 ≥ 900)→ 档位基准 700(【任务 T】400 → 700)
         var p1080 = RenderPolicy.PlanVideoBatches(10.4, 1800, 1800, false, false, 1920, 1080);
         var p2160 = RenderPolicy.PlanVideoBatches(10.4, 1800, 1800, false, false, 3840, 2160);
         var pSmall = RenderPolicy.PlanVideoBatches(10.4, 1800, 1800, false, false, 960, 448);
-        Assert.Equal(400, p1080.BatchSize);
-        Assert.Equal(100, p2160.BatchSize);
-        Assert.Equal(400, pSmall.BatchSize);                 // 小图被档位上限挡住(不放大)
+        Assert.Equal(700, p1080.BatchSize);
+        Assert.Equal(175, p2160.BatchSize);                  // 【T 口径变更】700 ÷ 4(旧 400 ÷ 4 = 100)
+        Assert.Equal(700, pSmall.BatchSize);                 // 小图被档位上限挡住(不放大)
         Assert.Equal(p1080.BatchSize / 4, p2160.BatchSize);
         Assert.True(p2160.BatchCount > p1080.BatchCount);    // 每批更小 → 批数更多
     }
@@ -62,10 +62,10 @@ public class AdaptiveBatchTests
     [Fact]
     public void Existing_rules_still_apply_on_top_of_area_scaling()
     {
-        // 4K + 兼容模式:400 →(面积)100 →(减半)50
+        // 4K + 兼容模式:700 →(面积)175 →(减半)87
         var fast = RenderPolicy.PlanVideoBatches(10.4, 1800, 1800, fastMode: true, diskTight: false, 3840, 2160);
-        Assert.Equal(50, fast.BatchSize);
-        // 4K + 兼容 + 盘紧:100 → 50 → 50(下界优先,第二个减半不再生效)
+        Assert.Equal(87, fast.BatchSize);
+        // 4K + 兼容 + 盘紧:175 → 87 → 50(下界优先,第二个减半后 43 被 50 挡住)
         var both = RenderPolicy.PlanVideoBatches(10.4, 1800, 1800, fastMode: true, diskTight: true, 3840, 2160);
         Assert.Equal(50, both.BatchSize);
         // 短素材(补帧后 ≤400)+ 设备正常 → 单批,面积缩放不影响(整片一批)
@@ -109,7 +109,7 @@ public class AdaptiveBatchTests
         Assert.Equal(1920, oUp.InputWidth);
         Assert.Equal(3600, oUp.StageInputFrames);        // 超分读补帧输出
         Assert.Equal(1800, oIp.StageInputFrames);
-        Assert.Equal(160, oUp.FramesPerBatch);          // R3:超分阶段按"输入+输出并存"的峰值算 → 160(< 补帧阶段 400)
+        Assert.Equal(280, oUp.FramesPerBatch);          // R3:超分阶段按"输入+输出并存"的峰值算 → 【T 口径变更】280(< 补帧阶段 700)
         Assert.True(oIp.Advisory);                       // 补帧按转场分段跑 → 每批帧数是等效参考值
 
         // 新顺序:超分阶段输入 = 源帧;补帧阶段输入 = 放大 2x 的帧(面积 ×4 → 每批帧数显著更小)
@@ -120,7 +120,7 @@ public class AdaptiveBatchTests
         Assert.Equal(3840, nIp.InputWidth);
         Assert.Equal(2160, nIp.InputHeight);
         Assert.Equal(0.25, nIp.AreaFactor, 6);
-        Assert.Equal(100, nIp.FramesPerBatch);
+        Assert.Equal(175, nIp.FramesPerBatch);           // 【T 口径变更】700 × 0.25(旧 400 × 0.25 = 100)
         Assert.True(nIp.FramesPerBatch < oIp.FramesPerBatch, "新顺序补帧阶段的每批帧数必须显著更小");
     }
 
@@ -147,13 +147,14 @@ public class AdaptiveBatchTests
             >= oldOrder.Single(s => s.Stage == "补帧").InputWidth);
     }
 
-    /// <summary>报告里那张对照表的**数字本身**钉住(设备好 10.4G、源 1800 帧 = 长片 → 档位基准 400、2x 超分、2x 补帧)。
-    /// 每行 [源分辨率] → 旧顺序[超分/补帧] + 新顺序[超分/补帧] 的每批帧数。</summary>
+    /// <summary>报告里那张对照表的**数字本身**钉住(设备好 10.4G、源 1800 帧 = 长片 → 【T】档位基准 700、2x 超分、2x 补帧)。
+    /// 每行 [源分辨率] → 旧顺序[超分/补帧] + 新顺序[超分/补帧] 的每批帧数。
+    /// 【任务 T 口径变更】整体按 700/400 = 1.75 倍换算后再套 50 下界与"档位上限"钳位。</summary>
     [Theory]
-    [InlineData(960, 448, 400, 400, 400, 400)]     // 小图:全被"档位上限 400"兜住
-    [InlineData(1920, 1080, 160, 400, 160, 100)]   // 基准[R3]:超分阶段峰值=源+源×4 → 160;补帧阶段=源 → 400(**补帧批 > 超分批**)
-    [InlineData(2560, 1440, 90, 225, 90, 56)]      // 2.5K:超分峰值系数 0.225 → 90;补帧 225;新顺序补帧侧 56
-    [InlineData(3840, 2160, 50, 100, 50, 50)]      // 4K:超分峰值系数 0.1 → 40 被 50 下界兜住;补帧 100;新顺序补帧 25→50
+    [InlineData(960, 448, 700, 700, 700, 700)]     // 小图:全被"档位上限 700"兜住
+    [InlineData(1920, 1080, 280, 700, 280, 175)]   // 基准[R3]:超分阶段峰值=源+源×4 → 280;补帧阶段=源 → 700(**补帧批 > 超分批**)
+    [InlineData(2560, 1440, 158, 394, 158, 98)]    // 2.5K:超分峰值系数 0.225 → 158;补帧 394;新顺序补帧侧 98
+    [InlineData(3840, 2160, 70, 175, 70, 50)]      // 4K:超分峰值系数 0.1 → 70;补帧 175;新顺序补帧 43.75→被 50 下界兜住
     public void Report_table_numbers_are_pinned(int w, int h, int oldUp, int oldIp, int newUp, int newIp)
     {
         var oldOrder = RenderPolicy.PlanStageBatches(10.4, 1800, 2.0, 2, w, h, upscaleFirst: false);

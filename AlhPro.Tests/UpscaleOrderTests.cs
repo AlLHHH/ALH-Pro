@@ -67,7 +67,8 @@ public class UpscaleOrderTests
         // 批数取值也必须跟着同一个顺序(任务 E 的批数分支:新顺序按超分侧输入=源帧数算,
         // 旧顺序按补帧后总帧数算)。这里用同一素材把两个顺序的"批启动开销"差额钉住:
         //  素材 10s×30fps=300 帧、补帧 4x、设备好(10.4G):
-        //    旧顺序(真实执行):补帧后 1200 帧 > 400 → 不单批;且源 300<900 但补帧后 1200 ≥1200 → 视频长 → 400 帧/批 → 3 批
+        //    旧顺序(真实执行):补帧后 1200 帧 > 400 → 不单批;且源 300<900 但补帧后 1200 ≥1200 → 视频长
+        //      → 【T 口径变更】700 帧/批 → ⌈1200/700⌉ = 2 批(旧口径 ⌈1200/400⌉=3)
         //    新顺序(当前不会执行):超分侧输入=源 300 帧 ≤400 → 单批 1 批
         const double perBatch = 1.15;   // = VideoPipeline.AssumedEngineStartupSecondsPerBatch(2026-09-13 真机标定:1.0~1.3s)
         double oldOrder = VideoPipeline.EstimateProcessSeconds(10, 30, 1920, 1080, up: true, 2.0, "waifu2x",
@@ -78,7 +79,7 @@ public class UpscaleOrderTests
             interp: true, 4, dedup: false, 0, upscaleFirst: true, freeRamGB: 10.4)
             - VideoPipeline.EstimateProcessSeconds(10, 30, 1920, 1080, up: true, 2.0, "waifu2x",
             interp: true, 4, dedup: false, 0, upscaleFirst: true);
-        Assert.Equal(3 * perBatch * 1.15, oldOrder, 6);   // 旧顺序 3 批
+        Assert.Equal(2 * perBatch * 1.15, oldOrder, 6);   // 旧顺序 2 批(【T】700 帧/批)
         Assert.Equal(1 * perBatch * 1.15, newOrder, 6);   // 新顺序 1 批(超分侧单批)
         Assert.NotEqual(oldOrder, newOrder);
     }

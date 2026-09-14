@@ -410,13 +410,42 @@ public static class VideoService
         // AlhPro.Core.TempSpaceEstimate(纯逻辑 + 单测:面积/倍率/补帧系数单调、下限保护)。
         double outFrameMB = AlhPro.Core.TempSpaceEstimate.PeakFrameMegabytes(srcW, srcH, outMult, frameInterp);
         long peakFrames = frameInterp ? (long)Math.Ceiling((double)baseFrames * interpScale) : baseFrames;   // 峰值帧数=放大后帧数
-        // 与 AvailableFreeSpace 同单位:字节(改为走同一个纯函数,防止两处口径漂移)
-        double needBytes = AlhPro.Core.TempSpaceEstimate.NeedBytes(peakFrames, outFrameMB);
+        // ===== 【任务 T】设备性能档 + 峰值守门按"每批帧数"重算 =====
+        // ① 性能档优先用 PerfMemory 的实测"秒/帧 @1080p"(指纹与 ETA 同口径:引擎/倍率/面积档/去重/降噪/后处理);
+        //    没有记录 → DevicePerf 回退纯内存档。核数/已实测显存只做单向收紧(见 Core.DevicePerf)。
+        AlhPro.Core.PerfScore perfScore;
+        double? perfMeasured;
+        int perfBatchFrames;
+        string perfReason;
+        {
+            string perfKey = PerfMemory.Fingerprint(engine, scale, 1920, 1080, interpScale, dedupMode > 0, videoDenoise, postFx: false);
+            double? measured = null;
+            try { measured = PerfMemory.PerFrameFor(perfKey); } catch { }
+            perfScore = SafeRender.GetPerfScore(measured, out perfReason);
+            perfMeasured = measured;
+            // ② 预估守门必须按**新上限**重算:批上限 700(旧 400)意味着"输入帧 + 本批输出帧并存"的同屏峰值
+            //    也跟着涨 —— 先按当前性能档算一个**候选批大小**(diskTight=false,即不叠加减半),把它算进预估。
+            //    这里算的是"最大值口径":真实批大小只会 ≤ 它(diskTight 命中时减半),所以守门是保守的。
+            int srcFramesEst = (int)Math.Min(int.MaxValue, Math.Max(0, baseFrames));
+            int peakFramesEst = (int)Math.Min(int.MaxValue, Math.Max(0, peakFrames));
+            int guardOutW = (int)Math.Max(1, Math.Round(srcW * outMult));
+            int guardOutH = (int)Math.Max(1, Math.Round(srcH * outMult));
+            var guardPlan = AlhPro.Core.RenderPolicy.PlanVideoBatches(SafeRender.FreeRamGB, srcFramesEst, peakFramesEst,
+                false, false, srcW, srcH, guardOutW, guardOutH, perfScore);
+            perfBatchFrames = guardPlan.BatchSize;
+        }
+        // 与 AvailableFreeSpace 同单位:字节(改为走同一个纯函数,防止两处口径漂移)。
+        // 【任务 T】把"每批并存帧"(batchFrames)计入:只抬批上限不抬预估 = 只抬上限不给守门(用户硬约束禁止)。
+        double needBytes = AlhPro.Core.TempSpaceEstimate.NeedBytes(peakFrames, outFrameMB, perfBatchFrames, srcFrameMB);
         double needGB = needBytes / (1024.0 * 1024.0 * 1024.0);
         string tempRoot = PickTempRoot();
         // 【长视频明确提示】处理前主动显示临时空间预估,让用户知道"预计需要 X GB"(不只磁盘紧张时才提示)
         progress?.Report((0, $"临时空间预估:本任务预计需要约 {needGB:0.#} GB(补帧/超分临时帧),临时目录 {tempRoot}"));
         AppLogger.Info($"临时空间预估:约需 {needGB:0.#} GB(源 {srcW}×{srcH},补帧 {interpScale}x,超分 {scale}x),临时目录 {tempRoot}");
+        // 【任务 T】守门日志:把"按哪个每批帧数算的、性能档是哪一档、依据是什么"写清楚,便于真机核对
+        AppLogger.Info($"峰值守门:性能档={perfScore}({(perfMeasured is { } mp ? $"实测 {mp:0.###} 秒/帧@1080p" : "无实测→回退内存档")}),"
+            + $"按每批 {perfBatchFrames} 帧算峰值(输入 {srcFrameMB:0.##}MB/帧 + 输出 {outFrameMB:0.##}MB/帧并存 ×{perfBatchFrames} 帧 + 全片 {peakFrames} 帧)"
+            + $" → 约 {needGB:0.#} GB(含 {AlhPro.Core.TempSpaceEstimate.SafetyFactor:0.#}× 安全系数);依据:{perfReason}");
         var workDir = Path.Combine(tempRoot, $"imgup_video_{Guid.NewGuid():N}");
         // 【长视频临时盘水位】磁盘紧张标志:预估需要 ≥ 剩余空间 45% → 降批大小(减少同屏临时帧,防爆盘)。
         // 自动分批清理:凡批次完成即删已用帧(下方 finally),这里额外按剩余空间收紧批大小,降低峰值占用。
@@ -1643,16 +1672,22 @@ public static class VideoService
                     // 【任务 Q2】两阶段批计划:两个阶段的输入分辨率不同,各自按自己的面积算每批帧数,分别落日志。
                     // (补帧阶段的"每批帧数"是等效参考值 —— 它实际按转场分段跑,见 RenderPolicy.PlanStageBatches)
                     var stagePlans = AlhPro.Core.RenderPolicy.PlanStageBatches(SafeRender.FreeRamGB, frameCount,
-                        areaScaleNow, interpScale, srcW, srcH, upscaleFirst, fastMode, diskTight);
+                        areaScaleNow, interpScale, srcW, srcH, upscaleFirst, fastMode, diskTight, perfScore);
                     // 【R3 · 用户要求"日志也要显示本次处理分别一批多少个帧"】处理【开始时】一行说清两阶段每批多少帧
                     // (沿用既有「超分批决策:」那行的风格,不新造格式)。旧顺序下补帧批天然大于超分批(见 PlanStageBatches 注释)。
+                    // 【任务 T 要求 5】同一行里把"性能档位(依据)+ 每批帧数 + 批数"合并进来。
                     {
                         var ipPlan = stagePlans.FirstOrDefault(s => s.Stage == "补帧");
                         var upPlan = stagePlans.FirstOrDefault(s => s.Stage == "超分");
-                        AppLogger.Info($"本次处理:补帧阶段每批 {ipPlan.FramesPerBatch} 帧(输入 {ipPlan.InputWidth}×{ipPlan.InputHeight})、"
-                            + $"超分阶段每批 {upPlan.FramesPerBatch} 帧(输入 {upPlan.InputWidth}×{upPlan.InputHeight}"
+                        AppLogger.Info($"本次处理:补帧阶段每批 {ipPlan.FramesPerBatch} 帧 × {ipPlan.BatchCount} 批(输入 {ipPlan.InputWidth}×{ipPlan.InputHeight})、"
+                            + $"超分阶段每批 {upPlan.FramesPerBatch} 帧 × {upPlan.BatchCount} 批(输入 {upPlan.InputWidth}×{upPlan.InputHeight}"
                             + (upscaleFirst ? $"→输出 {ipPlan.InputWidth}×{ipPlan.InputHeight})" : ")")
-                            + $" —— 顺序={(upscaleFirst ? "超分→补帧" : "补帧→超分")};每批帧数按各阶段【输入+输出并存的像素量】缩放(1080p 为基准)");
+                            + $" —— 顺序={(upscaleFirst ? "超分→补帧" : "补帧→超分")};性能档位={perfScore}"
+                            + $"({(perfMeasured is { } mp2 ? $"实测 {mp2:0.###} 秒/帧@1080p" : "无实测→回退内存档")}"
+                            + $";空闲内存 {SafeRender.FreeRamGB:0.#}G;核数 {SafeRender.CpuCoreCount}"
+                            + $";显存 {(SafeRender.FreeVramMeasured ? $"{SafeRender.TotalVramGB:0.#}G(已实测)" : "未实测")})"
+                            + $";每批帧数按各阶段【输入+输出并存的像素量】缩放(1080p 为基准)");
+                        AppLogger.Info($"性能档判定依据:{perfReason}");
                     }
                     foreach (var sp in stagePlans)
                         AppLogger.Info($"批计划[{sp.Stage}]({sp.Order}):输入 {sp.InputWidth}×{sp.InputHeight}"
@@ -1929,8 +1964,29 @@ public static class VideoService
                 // 超分阶段输出是放大 scale² 倍的帧 → 这部分必须算进去(否则超分批偏大、峰值被低估)。
                 var batchPlan = SafeRender.GetVideoBatchPlan(frameCount, total, fastMode, diskTight, srcW, srcH,
                     (int)Math.Max(1, Math.Round(srcW * (upscaleShrink1x ? 2.0 : Math.Max(1.0, scale)))),
-                    (int)Math.Max(1, Math.Round(srcH * (upscaleShrink1x ? 2.0 : Math.Max(1.0, scale)))));
+                    (int)Math.Max(1, Math.Round(srcH * (upscaleShrink1x ? 2.0 : Math.Max(1.0, scale)))),
+                    perfScore);
                 int batchSize = batchPlan.BatchSize;
+                // 【任务 T 要求 4:峰值守门必须按**最终生效的**批上限复算】上面那份预估用的是"候选批大小"
+                // (diskTight=false 时的最大值);这里批大小已定稿,再用它重算一次并**真的**判一次剩余空间 ——
+                // 批上限 400→700(×1.75)后"输入帧 + 本批输出帧并存"的同屏峰值同倍数上涨,不复算就是漏守门。
+                try
+                {
+                    double needBytesFinal = AlhPro.Core.TempSpaceEstimate.NeedBytesForBatch(
+                        peakFrames, outFrameMB, batchSize, srcFrameMB);
+                    double needGBFinal = needBytesFinal / (1024.0 * 1024.0 * 1024.0);
+                    var driveNow = new System.IO.DriveInfo(PickTempRoot());
+                    double freeNow = driveNow.AvailableFreeSpace;
+                    AppLogger.Info($"峰值守门复算(超分阶段定稿批大小):每批 {batchSize} 帧 → 预计 {needGBFinal:0.#} GB"
+                        + $"(全片 {peakFrames} 帧 + 每批并存 {batchSize} 帧),临时盘剩余 {freeNow / (1024 << 20):0}GB");
+                    if (freeNow < needBytesFinal)
+                        throw new System.IO.IOException(
+                            $"临时磁盘空间不足:{driveNow.Name} 仅剩 {freeNow / (1024 << 20):0}GB,"
+                            + $"本任务按当前批大小({batchSize} 帧/批)预计需要约 {needGBFinal:0}GB。"
+                            + "请清理磁盘、降低补帧/超分倍率,或把视频放到其它盘后再处理。");
+                }
+                catch (System.IO.IOException) { throw; }
+                catch { /* 探测失败不影响处理(与改动前一致:拿不到剩余空间就不做这道判定) */ }
                 // 【日志必须能解释批数】档位 / 源帧数 / 补帧后总帧数 / 本阶段输入 / 每批帧数 / 预计批数 / 命中规则,
                 // 全部一行写清(PlanVideoBatches 的 Rule 里也带着每条门槛的实际取值与依据)。
                 AppLogger.Info($"超分批决策:档位={batchPlan.Tier}(空闲内存 {SafeRender.FreeRamGB:0.#}G)→ 每批 {batchSize} 帧;"
