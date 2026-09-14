@@ -9,7 +9,16 @@
 
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="300"/>
+            <!-- 【宽度 300 → 410 · 2026-09-14 用户反馈"下拉框被遮挡"】
+                 根因:本页左栏固定 300px,ComboBox 拉伸后只有 268px,内部留白 + 下拉箭头占约 56px,
+                 真正能放文字的只有 ~212px。而超分模型下拉最长两项用界面字体(微软雅黑 14px)实测:
+                   「通用 · realesr-general-wdn-x4v3（5MB · 快）」 = 310px
+                   「动漫 · realesrgan-x4plus-anime（9MB · 中）」 = 304px
+                   「通用 · realesrgan-x4plus（41MB · 超慢）」   = 278px  ← 用户截图里被裁的就是它
+                 所以 300 一直是不够的(只是"超慢"那三个红字最容易看出来)。410 能让最长项(310)完整放下:
+                   410 − 约 32(卡片/滚动条留白) = 378 的 ComboBox → 减去 56 = 322 可用 > 310 ✓
+                 右栏是 `*`,窗口小的时候右栏先缩,不会把右栏挤坏。 -->
+            <ColumnDefinition Width="410"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
@@ -45,20 +54,31 @@
                     <TextBlock x:Name="VideoModelLabel" Text="超分模型" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="VideoWaifu2xModelCombo" ToolTipService.ToolTip="waifu2x 模型(动漫/通用/现实)"
                               SelectionChanged="Combo_Changed">
+                        <!-- 【标签长度 · 2026-09-14】第 2 项原来写全名 `models-upconv_7_anime_style_art_rgb`,
+                             界面字体实测 398px —— 比加宽后的下拉(可用 ~322px)还长,必然被裁。
+                             改成 `upconv_7_anime`:与「预设摘要」里既有的叫法(`动漫·upconv_7_anime`,
+                             见 VideoView.xaml.cs 的 UpWaifu2xModelNames)一致,长度 ~250px 可完整显示。
+                             Tag 仍是引擎要的目录全名,不受显示名影响。 -->
                         <ComboBoxItem Content="通用 · models-cunet（24MB · 中）" Tag="models-cunet"/>
-                        <ComboBoxItem Content="动漫 · models-upconv_7_anime_style_art_rgb（5MB · 快）" Tag="models-upconv_7_anime_style_art_rgb"/>
-                        <ComboBoxItem Content="现实 · models-upconv_7_photo（5MB · 快）" Tag="models-upconv_7_photo"/>
+                        <ComboBoxItem Content="动漫 · upconv_7_anime（5MB · 快）" Tag="models-upconv_7_anime_style_art_rgb"/>
+                        <ComboBoxItem Content="现实 · upconv_7_photo（5MB · 快）" Tag="models-upconv_7_photo"/>
                     </ComboBox>
                     <ComboBox x:Name="VideoEsrganModelCombo" Visibility="Collapsed"
                               ToolTipService.ToolTip="Real-ESRGAN 模型(动漫/通用)。标「超慢」的 realesrgan-x4plus 只有 4x 权重:1080p 源实测约 14.5 秒/帧(比 animevideov3 慢 17 倍),建议只在图片上用"
                               SelectionChanged="Combo_Changed">
-                        <ComboBoxItem Content="动漫 · realesr-animevideov3（4MB · 快）" Tag="realesr-animevideov3"/>
-                        <ComboBoxItem Content="通用 · realesr-general-x4v3（5MB · 快）" Tag="realesr-general-x4v3"/>
+                        <!-- 【标签长度 · 2026-09-14 用户反馈"下拉框被遮挡"】左栏内部留白吃掉约 104px,
+                             即使左栏加宽到 410,ComboBox 也只有 306px ⇒ 文字可用宽度 ~250px。
+                             用界面字体(微软雅黑 14px)实测带厂商前缀的老写法最长达 310px,收起状态必被裁。
+                             所以去掉冗余前缀(`realesr-` / `realesrgan-` / `models-`;引擎名由上面的
+                             「超分引擎」与 ToolTip 说明,预设摘要里也一直是这个短叫法),现在最长 ~240px ✓。
+                             ⚠ 读模型名一律走 Tag(引擎要的全名),不许改成读 Content —— 见 VideoView.xaml.cs 的 SelModel。 -->
+                        <ComboBoxItem Content="动漫 · animevideov3（4MB · 快）" Tag="realesr-animevideov3"/>
+                        <ComboBoxItem Content="通用 · general-x4v3（5MB · 快）" Tag="realesr-general-x4v3"/>
                         <!-- ↓ 第 3 项(序号 2):自转的带降噪通用模型。**这一行绝不能少** ——
                              2026-09-14 重排时曾漏掉它(只留了注释),结果下拉里 5 项变 4 项,
                              而 VideoModelOrder 仍按 5 项映射(Rev2 的 4→新 2),老用户存的序号会被解释成错的模型。
                              是"看真实界面截图"才发现的;以后改这个下拉,必须用界面确认 5 项都在且顺序如上。 -->
-                        <ComboBoxItem Content="通用 · realesr-general-wdn-x4v3（5MB · 快）" Tag="realesr-general-wdn-x4v3"/>
+                        <ComboBoxItem Content="通用 · general-wdn-x4v3（5MB · 快）" Tag="realesr-general-wdn-x4v3"/>
                         <!-- 【顺序 · Rev3 · 2026-09-14 用户要求】整个下拉按**速度与体积**排(快/小 → 慢/大):
                              0 realesr-animevideov3 4MB 0.26~0.30 秒/帧
                              1 realesr-general-x4v3  5MB 0.458 秒/帧
@@ -71,7 +91,7 @@
                              MigrateEsrganModelOrder 调用它;读设置与读预设都走那条路。
                              不迁移的后果:老用户"存的 2 = x4plus-anime"会静默变成 2 = wdn-x4v3。
                              以后若再调顺序:必须 +1 Rev、加一段映射、同步改这里与 UpEsrganModelNames。 -->
-                        <ComboBoxItem Content="动漫 · realesrgan-x4plus-anime（9MB · 中）" Tag="realesrgan-x4plus-anime"/>
+                        <ComboBoxItem Content="动漫 · x4plus-anime（9MB · 中）" Tag="realesrgan-x4plus-anime"/>
                         <!-- 「通用 · realesrgan-x4plus」按体积(41MB)与耗时(最慢)排在最后,并红字标出"超慢"
                              (用户要求:不删除、只警示)。
                               依据(2026-09-11 本机 4060 Laptop 实测,源 1920×1080 每帧):x4plus 14.48s / x4plus-anime 4.84s /
@@ -80,7 +100,7 @@
                         <ComboBoxItem Tag="realesrgan-x4plus">
                             <!-- 「慢」直接在括号里改成红字「超慢」,不再另挂一个红字标记(用户:冗余了) -->
                             <StackPanel Orientation="Horizontal" Spacing="0">
-                                <TextBlock Text="通用 · realesrgan-x4plus（41MB · " VerticalAlignment="Center"/>
+                                <TextBlock Text="通用 · x4plus（41MB · " VerticalAlignment="Center"/>
                                 <TextBlock Text="超慢" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="#E5484D"/>
                                 <TextBlock Text="）" VerticalAlignment="Center"/>
                             </StackPanel>
