@@ -32,15 +32,12 @@ namespace AlhPro.Core;
 /// ==== 安全边际 ====
 /// 预估节省 **&lt; 15%** 时**不切换**(避免在临界点上抖动/来回翻),理由写进日志。
 ///
-/// ==== 【任务 W · 2026-09-14】把「在线参数(任务 V)」真正接到本判据上 ====
-/// 本类的三组数字(超分单价表 / 补帧锚点表 / 安全边际)**都可以被在线配置覆盖**:
-///   · 超分单价:键 `引擎|模型|倍率`(见 <see cref="CanonicalUpscaleKey"/>);
-///   · 补帧锚点:键 `1080p` / `2160p` / `4320p`(可选 `1440p` / `4k` / `8k` 别名);
-///   · 安全边际:字段 `orderSwitchMinSavingsPercent`。
-/// 覆盖层为 null(默认/离线)→ **逐个回落本文件的实测常量**,行为与改动前逐字一致(有单测钉住)。
-/// 【为什么"在线表"优先于"实测表"】在线表的**唯一来源**就是这份实测表(`ParamProfile.BuiltIn` 由
-/// <see cref="BuiltInUpscaleMap"/> / <see cref="BuiltInInterpMap"/> 派生,不存在第二份数字);
-/// 在线只是允许作者在**不改客户端**的前提下发布"更准的标定"(例如补测了 12 帧样本的 x4plus)。
+/// ==== 【2026-09-14 在线参数功能整体删除后的口径】====
+/// 本类原先有"三组数字可被在线配置覆盖"的一层(超分单价表 / 补帧锚点表 / 安全边际)—— 那份"在线最优参数"
+/// 功能已被用户判定为**累赘**并整体删除(界面复选框、设置项、联网拉取服务、覆盖层全部删掉)。
+/// 现在这里**只读内置实测表**:<see cref="UpscaleRates"/> 与 <see cref="InterpAnchorSeconds"/> /
+/// <see cref="InterpAnchorPixels"/>,每一格都标着真机实测出处。删除前后**行为逐字一致**:
+/// 覆盖层原本只在"配置成功"时才生效,默认(null)就是回落这些常量(见当时的单测口径)。
 /// 备注:外部社区从未发布过这类"超分秒/帧"标定表(见 <c>ExternalPractice</c> 的说明),
 /// 所以这张表的权威来源只能是本仓库的真机实测。</summary>
 public static class PipelineOrderPlan
@@ -61,18 +58,19 @@ public static class PipelineOrderPlan
     /// <summary>安全边际:预估节省低于它就不切换顺序(15%)。
     /// 【出处】本仓库口径(任务 Q1),**外部没有可参照的公开数值** —— 社区工具(SVP/Flowframes/Hybrid)
     /// 根本不做"按实测单价自动选阶段顺序"这件事,所以这条边际只能自定义。【不确定度】无外部对照,
-    /// 15% 是"避免在临界点抖动"的经验值;可被在线参数 `orderSwitchMinSavingsPercent` 覆盖。</summary>
+    /// 15% 是"避免在临界点抖动"的经验值。(原先还有"在线参数可覆盖"这一层,该功能已于 2026-09-14 删除。)</summary>
     public const double MinSavingsPercent = 15.0;
 
-    /// <summary>「安全边际」的哨兵值:把本值(或省略参数)传给 <see cref="Decide(CostInput,double,int,int,int,int,double,double)"/>
-    /// = **用当前在线参数**(没有在线参数时就是 <see cref="MinSavingsPercent"/>)。
+    /// <summary>「安全边际」的哨兵值:把本值(或省略参数)传给
+    /// <see cref="Decide(CostInput,double,int,int,int,int,double,double)"/> = 用内置
+    /// <see cref="MinSavingsPercent"/>;显式传 ≥0 的具体值 = 完全听调用方(单测大量依赖这条)。
     /// 【为什么要哨兵】既有调用方全部省略该参数,而成百上千行单测显式传具体值(如 5.0)——
-    /// 用 `<0` 当哨兵既不动那些断言(它们传的都是 ≥0),又让"省略 = 跟随覆盖层"这条语义天然成立。</summary>
-    public const double UseRuntimeMinSavings = -1.0;
+    /// 用 `<0` 当哨兵既不动那些断言,又让"省略 = 用内置边际"这条语义天然成立。</summary>
+    public const double UseBuiltInMinSavings = -1.0;
 
     /// <summary>超分单价表的一行(秒/帧 @1080p 源)。
-    /// 【任务 W 新增 <paramref name="Engine"/>】只为构造"在线参数表"的键 `引擎|模型|倍率`;
-    /// 判定逻辑一个字节都没用到它(键以外的一切都不变)。</summary>
+    /// <paramref name="Engine"/> 记录该行属于哪个引擎(判定只按 <paramref name="ModelKey"/> + 倍率匹配;
+    /// 它原是为"在线参数表的键 `引擎|模型|倍率`"而加,在线参数功能已删除,保留只为可读性与将来扩展)。</summary>
     public readonly record struct UpscaleRate(string Engine, string ModelKey, int EngineScale,
         double SecondsPerFrame1080p, string Provenance);
 
@@ -90,9 +88,9 @@ public static class PipelineOrderPlan
     };
 
     /// <summary>把模型名归一到成本表的键(与表里的 ModelKey 对应);认不出返回 null。
-    /// 【任务 W】同时接受**官方仓库里的下划线写法**(`RealESRGAN_x4plus_anime_6B`,
+    /// 同时接受**官方仓库里的下划线写法**(`RealESRGAN_x4plus_anime_6B`,
     /// 见 <https://github.com/xinntao/Real-ESRGAN/blob/master/docs/model_zoo.md>)——
-    /// 在线参数表的键由人手写,照抄官方名是很自然的写法,不许因为"下划线 vs 连字符"就查不到。</summary>
+    /// 引擎侧名与界面显示名写法不一,不许因为"下划线 vs 连字符"就查不到实测表。</summary>
     public static string? NormalizeModel(string? model)
     {
         string m = model ?? "";
@@ -107,76 +105,12 @@ public static class PipelineOrderPlan
         return null;
     }
 
-    /// <summary>把引擎名归一到键的前缀(`realesrgan` / `waifu2x`);认不出就返回小写去空格的原串。
-    /// engine 为空时**按模型键反推**(cunet / upconv_7_photo 属于 waifu2x,其余属于 realesrgan)——
-    /// 这样三参重载(既有的、被单测使用的那个)也能命中在线参数表。</summary>
-    public static string NormalizeEngine(string? engine, string? modelKey)
-    {
-        string e = (engine ?? "").Trim().ToLowerInvariant();
-        if (e.Contains("waifu", StringComparison.Ordinal)) return "waifu2x";
-        if (e.Contains("esrgan", StringComparison.Ordinal) || e.Contains("realesr", StringComparison.Ordinal)) return "realesrgan";
-        if (e.Length > 0) return e;
-        return modelKey is "cunet" or "upconv_7_photo" ? "waifu2x" : "realesrgan";
-    }
-
-    /// <summary>【在线参数表的键】`引擎|模型键|倍率`(全小写、无空格)。
-    /// 键**两侧都做归一**:写 `realesrgan|x4plus|4` 与写 `realesrgan|realesrgan-x4plus|4` 等价
-    /// (后者是引擎侧模型名,作者可能照抄 UI 界面上的名字),避免"键写对了却查不到"这种哑巴问题。</summary>
-    public static string CanonicalUpscaleKey(string? engine, string? model, int engineScale)
-        => CanonicalUpscaleKeyFromParts(engine, model, engineScale.ToString());
-
-    /// <summary>归一一个"在线参数表里已有的键"。键不符合 `引擎|模型|倍率` 三段式 → null(忽略该键)。</summary>
-    public static string? CanonicalUpscaleKeyFromTableKey(string? tableKey)
-    {
-        if (string.IsNullOrWhiteSpace(tableKey)) return null;
-        var parts = tableKey!.Split('|');
-        if (parts.Length != 3) return null;
-        if (!int.TryParse(parts[2].Trim(), out int scale)) return null;
-        return CanonicalUpscaleKeyFromParts(parts[0], parts[1], scale.ToString());
-    }
-
-    private static string CanonicalUpscaleKeyFromParts(string? engine, string? model, string scaleText)
-    {
-        string? mk = NormalizeModel(model);
-        string modelPart = (mk ?? (model ?? "").Trim().ToLowerInvariant());
-        return $"{NormalizeEngine(engine, mk)}|{modelPart}|{scaleText.Trim()}";
-    }
-
-    /// <summary>内置超分单价表(`引擎|模型键|倍率` → 秒/帧@1080p),**由 <see cref="UpscaleRates"/> 派生**。
-    /// 【为什么派生】任务 V 的 <c>ParamProfile.BuiltIn</c> 原先自己写了一份"0.24/0.24/0.25"的旧表,
-    /// 与这里的实测表(x4plus=15.145)**互相矛盾** —— 同一件事两套数字正是要消灭的东西。
-    /// 现在内置表就是实测表的另一种写法,在线配置只需覆盖它想改的那几行。</summary>
-    public static Dictionary<string, double> BuiltInUpscaleMap()
-    {
-        var d = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-        foreach (var r in UpscaleRates)
-            d[$"{r.Engine}|{r.ModelKey}|{r.EngineScale}"] = r.SecondsPerFrame1080p;
-        return d;
-    }
-
-    /// <summary>内置补帧单价表(锚点名 → 秒/输出帧),**由 <see cref="InterpAnchorPixels"/> /
-    /// <see cref="InterpAnchorSeconds"/> 派生**(同样为了"一件事只有一套数字")。
-    /// 只列三个真机实测锚点;1440p 没有实测、不写死(需要时由在线配置补一个 `1440p` 键)。</summary>
-    public static Dictionary<string, double> BuiltInInterpMap() => new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["1080p"] = InterpAnchorSeconds[0],
-        ["2160p"] = InterpAnchorSeconds[1],
-        ["4320p"] = InterpAnchorSeconds[2],
-    };
-
-    /// <summary>查"该模型 × 该引擎倍率"的实测超分单价(秒/帧 @1080p 源);没实测过返回 null(调用方回退旧顺序)。
-    /// 【任务 W】本重载不传引擎 → 引擎按模型键反推(<see cref="NormalizeEngine"/>),在线参数表**照样命中**。</summary>
+    /// <summary>查"该模型 × 该引擎倍率"的实测超分单价(秒/帧 @1080p 源);没实测过返回 null(调用方回退旧顺序),
+    /// 出处写进 <paramref name="provenance"/>。
+    /// 【口径】只认本仓库真机实测表 <see cref="UpscaleRates"/> —— "在线参数表"随该功能于 2026-09-14 删除,
+    /// 原先的"引擎|模型键|倍率"键与两侧归一(`NormalizeEngine` / `CanonicalUpscaleKey*`)也一并删掉了。</summary>
     public static double? LookupUpscaleSecondsPerFrame(string? model, int engineScale, out string provenance)
-        => LookupUpscaleSecondsPerFrame(null, model, engineScale, out provenance);
-
-    /// <summary>查超分单价(秒/帧 @1080p 源)。**先在线参数表、后内置实测表**;两处都没有 → null + 出处说明。
-    /// 覆盖层为 null 时,结果与"只看内置表"逐字一致(有单测)。</summary>
-    public static double? LookupUpscaleSecondsPerFrame(string? engine, string? model, int engineScale, out string provenance)
     {
-        // ① 在线参数(任务 V/W)优先:键 = 引擎|模型键|倍率,两侧都做归一
-        double? online = ParamProfileRuntime.TryUpscaleSecondsPerFrame1080p(engine, model, engineScale, out string onlineSrc);
-        if (online.HasValue) { provenance = onlineSrc; return online; }
-        // ② 内置实测表
         string? key = NormalizeModel(model);
         if (key != null)
             foreach (var r in UpscaleRates)
@@ -193,47 +127,16 @@ public static class PipelineOrderPlan
         return secondsPerFrame1080p * (srcPixels / ReferencePixels1080p);
     }
 
-    /// <summary>补帧锚点名称 → 面积(px),按"锚点表的顺序"给出;`1080p` 兼收 `4k`、`4320p` 兼收 `8k` 别名。</summary>
-    private static readonly (string Name, string? Alias, long Pixels)[] InterpAnchorNames =
-    {
-        ("1080p", null, 1920L * 1080),
-        ("1440p", null, 2560L * 1440),
-        ("2160p", "4k", 3840L * 2160),
-        ("4320p", "8k", 7680L * 4320),
-    };
-
-    /// <summary>【任务 W】解析"实际生效的补帧锚点表":覆盖层为 null(或一个锚点都没覆盖)→ **原样返回
-    /// <see cref="InterpAnchorPixels"/> / <see cref="InterpAnchorSeconds"/> 两个数组**(行为逐字不变)。
-    /// 有覆盖时:三个实测锚点按覆盖值替换;`1440p` **只在覆盖层真的给了它时**才插入
-    /// (没实测过的锚点不许凭空造一个数字出来 —— 那会把 1080p~2160p 之间的内插整体带偏)。</summary>
-    public static (long[] Pixels, double[] Seconds) ResolveInterpAnchors()
-    {
-        var o = ParamProfileRuntime.InterpAnchorOverrides;
-        if (o == null || o.Count == 0) return (InterpAnchorPixels, InterpAnchorSeconds);
-        bool any = false;
-        foreach (var a in InterpAnchorNames)
-            if (o.ContainsKey(a.Name) || (a.Alias != null && o.ContainsKey(a.Alias))) { any = true; break; }
-        if (!any) return (InterpAnchorPixels, InterpAnchorSeconds);
-
-        var px = new List<long>(4);
-        var sc = new List<double>(4);
-        foreach (var a in InterpAnchorNames)
-        {
-            int idx = Array.FindIndex(InterpAnchorPixels, p => p == a.Pixels);
-            bool has = o.TryGetValue(a.Name, out double v) || (a.Alias != null && o.TryGetValue(a.Alias, out v));
-            if (idx >= 0) { px.Add(a.Pixels); sc.Add(has ? v : InterpAnchorSeconds[idx]); }   // 三个实测锚点始终在表里
-            else if (has) { px.Add(a.Pixels); sc.Add(v); }                                    // 1440p:只在被覆盖时插入
-        }
-        return (px.ToArray(), sc.ToArray());
-    }
-
-    /// <summary>补帧"每个输出帧"的成本(秒):按面积在**实际生效的锚点**之间分段线性内插,
-    /// 区间外按相邻段斜率外推(带极小值兜底)。锚点表可被在线参数覆盖(见 <see cref="ResolveInterpAnchors"/>)。
+    /// <summary>补帧"每个输出帧"的成本(秒):按面积在**三个真机实测锚点**之间分段线性内插,
+    /// 区间外按相邻段斜率外推(带极小值兜底)。
     /// 【口径出处】三个锚点 0.0807 / 0.2776 / 0.5186 秒/输出帧 = 2026-09-13 真机实测(1080p / 2160p / 4320p);
-    /// **外部没有任何公开的"补帧秒/帧"表可参照**(见 <c>ExternalPractice</c>)。</summary>
+    /// **外部没有任何公开的"补帧秒/帧"表可参照**(见 <c>ExternalPractice</c>)。
+    /// (原先锚点表可被"在线参数"覆盖、另有一个 `ResolveInterpAnchors()` 解析函数与 `1440p` 可选锚点 ——
+    /// 那些都随在线参数功能于 2026-09-14 删除;删掉后这里读的就是下面两个实测数组本身。)</summary>
     public static double InterpSecondsPerOutputFrame(long pixels)
     {
-        var (px, sc) = ResolveInterpAnchors();
+        long[] px = InterpAnchorPixels;
+        double[] sc = InterpAnchorSeconds;
         if (pixels <= 0) return sc[0];
         // 低于最小锚点:用第一段斜率外推(小图不会更贵,但不许算出 0/负数)
         if (pixels <= px[0]) return Math.Max(MinInterpSecondsPerFrame, sc[0] - (px[0] - pixels) * (sc[1] - sc[0]) / (px[1] - px[0]));
@@ -269,12 +172,13 @@ public static class PipelineOrderPlan
     /// <param name="interpScale">补帧倍率(1 = 不补帧 → 顺序无意义)。
     /// <param name="srcW"/><param name="srcH">源分辨率。
     /// <param name="sourceFrames">源帧数(只影响两侧总成本的绝对值,N 会被约掉,不影响判据;给 0 也能判)。</param>
-    /// <param name="minSavingsPercent">安全边际;省略(= <see cref="UseRuntimeMinSavings"/>)→ 用当前在线参数/内置。</param>
+    /// <param name="minSavingsPercent">安全边际;省略(= <see cref="UseBuiltInMinSavings"/>)→ 用内置
+    /// <see cref="MinSavingsPercent"/>。</param>
     public static Decision Decide(string? engine, string? model, double scale, int interpScale, int srcW, int srcH, int sourceFrames = 900,
-        double areaScale = 0, double minSavingsPercent = UseRuntimeMinSavings)
+        double areaScale = 0, double minSavingsPercent = UseBuiltInMinSavings)
     {
         int engineScale = Math.Max(1, AlhPro.Core.EngineScalePolicy.Decide(engine ?? "", model ?? "", scale).EngineScale);
-        double? up = LookupUpscaleSecondsPerFrame(engine, model, engineScale, out string prov);
+        double? up = LookupUpscaleSecondsPerFrame(model, engineScale, out string prov);
         var cost = new CostInput(NormalizeModel(model) ?? "?", engineScale, up != null, up ?? 0);
         var d = Decide(cost, scale, interpScale, srcW, srcH, sourceFrames, minSavingsPercent, areaScale);
         return up == null ? d with { Reason = $"{NormalizeModel(model) ?? (model ?? "?")} @ {engineScale}x(实测出处:{prov})" } : d;
@@ -283,12 +187,12 @@ public static class PipelineOrderPlan
     /// <summary>按给定成本判定(可注入成本 → 单测能覆盖"边际不足"等边界)。
     /// 规则:①补帧倍率 &lt;2 → 顺序无意义,旧顺序;②成本未实测 → 旧顺序【待实测标定】;
     /// ③按判据算两侧总成本并比较;④新顺序更省但节省 &lt; 安全边际% → 仍保持旧顺序(边际不足)。
-    /// 【任务 W】<paramref name="minSavingsPercent"/> 省略(= <see cref="UseRuntimeMinSavings"/>)时
-    /// 读 <see cref="ParamProfileRuntime.OrderSwitchMinSavingsPercent"/>;显式传具体值(含 0)则**完全听调用方**。</summary>
+    /// <paramref name="minSavingsPercent"/> 省略(= <see cref="UseBuiltInMinSavings"/>)时用内置
+    /// <see cref="MinSavingsPercent"/>;显式传具体值(含 0)则**完全听调用方**。</summary>
     public static Decision Decide(CostInput cost, double scale, int interpScale, int srcW, int srcH, int sourceFrames = 900,
-        double minSavingsPercent = UseRuntimeMinSavings, double areaScale = 0)
+        double minSavingsPercent = UseBuiltInMinSavings, double areaScale = 0)
     {
-        if (minSavingsPercent < 0) minSavingsPercent = ParamProfileRuntime.OrderSwitchMinSavingsPercent;
+        if (minSavingsPercent < 0) minSavingsPercent = MinSavingsPercent;
         int k = interpScale < 1 ? 1 : interpScale;
         // areaScale = 补帧真正吃到的那批帧相对源帧的放大倍数("1x 缩回"时超分后帧会被缩回原尺寸 → 传 1.0;
         // 不传(=0)就用 scale。它只影响"放大后面积",不影响超分单价查表用的引擎倍率。)

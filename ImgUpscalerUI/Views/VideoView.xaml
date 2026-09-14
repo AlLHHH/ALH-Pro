@@ -693,13 +693,6 @@
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
                     <TextBlock x:Name="SmoothTimelineHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
                                Text="统一输出帧率并按场景切换对齐,避免播放顿挫与切点拖影(默认开;不需要时可关掉)"/>
-                    <!-- 【任务 V · 2026-09-13】在线参数配置。默认**关闭** —— 界面宣称「全程本地运行,隐私不联网」,
-                         开启后会联网下载一份配置(只下载、不上传任何数据),所以默认不开、由用户自己决定。 -->
-                    <CheckBox x:Name="OnlineParamsCheck" Content="在线获取最优参数（只下载配置,不上传任何数据）"
-                              ToolTipService.ToolTip="从项目仓库下载一份最优参数配置(超分/补帧单价、批次档位上限、时间轴与切点阈值、设备性能档阈值),用来微调内置默认值。只下载、不上传:不带任何用户数据、文件名、路径或机型信息;拉不到就继续用内置参数,离线完全可用。默认关闭:开启后本软件会联网(仅下载这一份配置)。"
-                              Checked="Options_Changed" Unchecked="Options_Changed"/>
-                    <TextBlock x:Name="OnlineParamsHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
-                               Text="只下载一份参数配置,不上传任何数据;默认关闭,关着时完全用内置参数(离线可用)"/>
 
                     <!-- 参数预设:整套超分/后处理/补帧/去重参数快照,一键保存/应用 -->
                     <TextBlock Text="参数预设" Style="{StaticResource SectionTitle}"/>

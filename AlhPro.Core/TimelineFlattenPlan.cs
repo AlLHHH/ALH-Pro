@@ -40,15 +40,15 @@ public static class TimelineFlattenPlan
     /// <summary>按源帧时长表 + 内容帧率 + 补帧倍率决定"是否填平"以及目标时间轴参数。
     /// 缺口判定:逐个间隔与**中位数**比较,偏离超过容差比例记一处;
     /// **一处都没有 = 均匀源(CFR/无顿挫)→ 不填平**(保证既有行为不变)。
-    /// 【任务 W】容差比例改为**经覆盖层读**(<see cref="ParamProfileRuntime.TimelineGapToleranceRatio"/>);
-    /// 覆盖层为 null(默认/离线/全部单测)→ 取 <see cref="GapToleranceRatio"/>,**返回的 Plan 逐字段、逐字不变**。</summary>
+    /// 【2026-09-14】容差比例原先经"在线参数覆盖层"(ParamProfileRuntime)读,该功能整体删除后直接取
+    /// <see cref="GapToleranceRatio"/> —— 与"覆盖层为 null 时回落常量"逐字等价,判定行为一个字节都没变。</summary>
     public static Plan Decide(IReadOnlyList<double>? frameDurs, double contentFps, int interpScale)
     {
         int n = frameDurs?.Count ?? 0;
         if (n < 3) return new Plan(false, 0, 0, 0, 0, n, "源时长表不足(≤2 帧)");
         if (interpScale < 2) return new Plan(false, 0, 0, 0, 0, n, "未开补帧");
         if (!(contentFps > 0)) return new Plan(false, 0, 0, 0, 0, n, "内容帧率未知");
-        double gapToleranceRatio = ParamProfileRuntime.TimelineGapToleranceRatio;
+        double gapToleranceRatio = GapToleranceRatio;
         double total = 0;
         foreach (var d in frameDurs!)
         {
