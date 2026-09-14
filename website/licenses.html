@@ -127,6 +127,12 @@ setTimeout(function () {
         <dt>项目</dt><dd>github.com/xinntao/Real-ESRGAN;github.com/nihui/realesrgan-ncnn-vulkan</dd>
         <dt>许可</dt><dd>MIT License(nihui 引擎包装层);<strong>BSD 3-Clause License(模型与算法,xinntao)</strong></dd>
         <dt>版权</dt><dd>nihui(2021)/ Xintao Wang 等(2021)</dd>
+        <dt>模型</dt><dd>realesr-animevideov3(x2/x3/x4)、realesrgan-x4plus、realesrgan-x4plus-anime、realesr-general-x4v3 均取自上游官方发行版;
+          realesr-general-wdn-x4v3 取自上游官方 release v0.2.5.0
+          (<a href="https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.5.0" rel="nofollow">权重与发布说明</a>,
+          作者 xinntao 发布)。上游只提供 PyTorch 权重、从未提供该模型的 ncnn 版本,
+          本项目将其转换为 ncnn 与 ONNX 格式后随软件分发;<strong>转换不改变许可</strong>,
+          仍为 BSD 3-Clause(版权 Xintao Wang 等,2021),转换工具链 pnnx / ncnn 为 BSD 3-Clause(Tencent)。</dd>
       </dl>
     </div>
 
@@ -252,6 +258,7 @@ setTimeout(function () {
       <h3>15. 超分 ONNX 模型(50 系显卡 / 无独显设备的稳定路线)</h3>
       <dl>
         <dt>模型与上游</dt><dd>RealESRGAN_x4plus.onnx、realesr-animevideov3.onnx → 上游 Real-ESRGAN(xinntao,<strong>BSD 3-Clause</strong>);
+          realesr-general-wdn-x4v3.onnx → 上游 Real-ESRGAN(xinntao,<strong>BSD 3-Clause</strong>,由本项目从官方权重自行导出);
           waifu2x-cunet2x.onnx → 上游 waifu2x(nagadomi,MIT)</dd>
         <dt>ONNX 转换</dt><dd>由社区 ONNX 转换项目导出(deepghs / tidus2102 系列转换项目,MIT)</dd>
         <dt>许可</dt><dd>各模型权重版权归上游作者,许可按上游条目执行</dd>
