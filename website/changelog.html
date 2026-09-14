@@ -25,7 +25,6 @@ setTimeout(function () {
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
-<div class="scroll-progress" aria-hidden="true"><i></i></div>
 
 <header class="site-header">
   <div class="wrap header-inner">
@@ -53,16 +52,11 @@ setTimeout(function () {
 <main id="main">
 
   <section class="hero hero--page">
-    <div class="aurora" aria-hidden="true">
-      <span class="aurora-blob b1"></span>
-      <span class="aurora-blob b2"></span>
-      <span class="aurora-blob b3"></span>
-    </div>
     <div class="wrap hero-inner">
       <h1 class="hero-title">更新日志</h1>
       <p class="page-meta">
-        最新版本 <strong>v1.3.6</strong>(2026-09-13)· 点每个版本展开细节 · 升级方式:
-        <a href="download.html#upgrade">直接覆盖安装</a>,不用卸载、不用重下模型
+        最新版本 <strong>v1.3.6</strong>,发布于 2026-09-13。点击各版本可展开细节。升级方式:
+        <a href="download.html#upgrade">直接覆盖安装</a>,无需卸载,也不必重新下载模型。
       </p>
     </div>
   </section>
@@ -70,14 +64,13 @@ setTimeout(function () {
   <div class="wrap content">
 
     <div class="note" data-reveal>
-      <p><span class="note-title">怎么读这份日志:</span>
-      每条里凡是会<strong>影响你已有设置</strong>或需要<strong>重新调整参数</strong>的改动,都会单独标出。
-      我们也会把「这一版没变什么」写清楚,避免你白折腾。</p>
+      <p><span class="note-title">阅读说明:</span>
+      凡是会<strong>影响已有设置</strong>或需要<strong>重新调整参数</strong>的改动,都会单独标注;本版未变更的部分也会一并说明。</p>
     </div>
 
     <h2 id="v136">v1.3.6 <span class="small muted">2026-09-13 · 预设模型调整 + 补帧倍率显示修复</span></h2>
     <details open data-reveal>
-      <summary>这一版改了什么(两条都是“看着小、实际会误导人”的问题)</summary>
+      <summary>本版改动:预设模型调整与补帧倍率显示修复</summary>
       <div class="details-body">
         <ul>
           <li><strong>官方预设「通用画质增强 不含补帧」的超分模型换成 realesr-animevideov3</strong>(与「动漫通用」同款)。
@@ -95,7 +88,7 @@ setTimeout(function () {
 
     <h2 id="v135">v1.3.5 <span class="small muted">2026-09-12 · 补帧引擎重编 + 界面稳定性 + 全面自检修复</span></h2>
     <details data-reveal>
-      <summary>建议所有用户更新:修掉“跑到一半界面卡死”、50 系补帧不再只能等驱动</summary>
+      <summary>建议所有用户更新:修复界面卡死,50 系补帧不再依赖驱动更新</summary>
       <div class="details-body">
         <ul>
           <li><strong>补帧引擎重编:</strong>用与实拍超分同一套 2025 / 2026 版 ncnn 源码重新编译 RIFE,
@@ -136,7 +129,7 @@ setTimeout(function () {
 
     <h2 id="v133">v1.3.3 <span class="small muted">2026-09-08 · 稳定性 / 兼容性 / 速度增强</span></h2>
     <details data-reveal>
-      <summary>修了一批“看起来能用、实际会翻车”的隐性 bug,并给视频处理提速</summary>
+      <summary>修复一批隐性缺陷,并提升视频处理速度</summary>
       <div class="details-body">
         <ul>
           <li><strong>探测看门狗(治“处理卡死只能强杀”):</strong>开始处理前会用 ffmpeg 完整扫一遍视频(查转场 / 可变帧率 / 色彩空间),
@@ -162,7 +155,7 @@ setTimeout(function () {
 
     <h2 id="v132">v1.3.2 <span class="small muted">2026-09-07 · 视频稳定性加固 + 补帧降级链 + 设备识别修复</span></h2>
     <details data-reveal>
-      <summary>重点是黑帧 / 黑屏、补帧残缺,以及“明明能用却提示无法用 GPU”</summary>
+      <summary>重点修复黑帧、黑屏、补帧残缺与显卡误判</summary>
       <div class="details-body">
         <ul>
           <li><strong>兼容模式对 NVIDIA 卡也走 ONNX:</strong>视频超分勾选「兼容模式」后(无论是否 N 卡)直接用 ONNX DirectML 稳定引擎,
@@ -182,7 +175,7 @@ setTimeout(function () {
 
     <h2 id="v131">v1.3.1 <span class="small muted">2026-09-06 · 更新弹窗 + 提示 / 广告区强化</span></h2>
     <details data-reveal>
-      <summary>让用户不容易漏掉新版本;界面提示与广告改为随机轮播</summary>
+      <summary>版本提示更醒目;界面提示与广告改为随机轮播</summary>
       <div class="details-body">
         <ul>
           <li>检测到新版本 → 延迟 10 分钟弹出升级弹窗(显示新版本号 + 去下载 / 网盘下载按钮),取代原来不醒目的小提示条;
@@ -197,7 +190,7 @@ setTimeout(function () {
 
     <h2 id="v130">v1.3.0 <span class="small muted">2026-09-05 · 自检驱动 + 始终用显卡 + 稳定性</span></h2>
     <details data-reveal>
-      <summary>新增启动自检;明确“能用显卡就用显卡”;兼容模式与看门狗按设备档次自适应</summary>
+      <summary>新增启动自检;优先使用显卡;兼容模式与看门狗按设备档次自适应</summary>
       <div class="details-body">
         <ul>
           <li><strong>启动自检(全新):</strong>首次启动或版本更新后弹出设备自检,逐项检测(显卡 / 显存·驱动·内存·CPU / 最佳独显 / 可用性 /
@@ -217,7 +210,7 @@ setTimeout(function () {
 
     <h2 id="v120-v122">v1.2.0 – v1.2.2 <span class="small muted">2026-09-04 – 09-05 · 预设 / 省盘 / 兼容适配</span></h2>
     <details data-reveal>
-      <summary>官方预设上线、长视频不再爆盘也不卡死、双卡机选卡修正</summary>
+      <summary>官方预设上线;长视频磁盘占用与卡死问题修复;双卡设备选卡修正</summary>
       <div class="details-body">
         <ul>
           <li><strong>v1.2.2:</strong>修复双卡机上“选独显却跑核显”(设备编号与引擎真实编号颠倒);修复“输出整片冻结 / 灰屏”;
@@ -259,7 +252,7 @@ setTimeout(function () {
       </div>
     </details>
 
-    <h2 id="known">已知限制(诚实说明)</h2>
+    <h2 id="known">已知限制</h2>
     <ul data-reveal>
       <li>音频 AI 分离优先用显卡(DirectML)加速;无显卡或驱动不兼容时用 CPU,约 1.5 分钟 / 分钟音频。</li>
       <li>音频“升采样率”只对低采样率源(8k / 16k / 22k / 32k)真的有效;44.1 kHz 音乐本身已是全频带,无需升采样,请改用「增强」。</li>
@@ -268,8 +261,8 @@ setTimeout(function () {
     </ul>
 
     <div class="note" data-reveal>
-      <p><span class="note-title">想看更细的?</span>
-      本页是面向用户的摘要。逐条的技术细节(含实测数据与自检结论)记录在公开仓库的
+      <p><span class="note-title">技术细节:</span>
+      本页是面向用户的摘要。逐条技术细节与实测数据记录在公开仓库的
       <code>RELEASE_NOTES.md</code> 与 <code>release_history.json</code> 中,
       仓库地址:<a href="https://github.com/AlLHHH/ALH-Pro">github.com/AlLHHH/ALH-Pro</a>。</p>
     </div>

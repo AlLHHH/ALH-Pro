@@ -25,7 +25,6 @@ setTimeout(function () {
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
-<div class="scroll-progress" aria-hidden="true"><i></i></div>
 
 <header class="site-header">
   <div class="wrap header-inner">
@@ -53,14 +52,9 @@ setTimeout(function () {
 <main id="main">
 
   <section class="hero hero--page">
-    <div class="aurora" aria-hidden="true">
-      <span class="aurora-blob b1"></span>
-      <span class="aurora-blob b2"></span>
-      <span class="aurora-blob b3"></span>
-    </div>
     <div class="wrap hero-inner">
       <h1 class="hero-title">常见问题</h1>
-      <p class="page-meta">点标题展开答案 · 想按功能一步步学,请看 <a href="tutorial.html">使用教程</a></p>
+      <p class="page-meta">点击标题展开答案。按功能逐步学习请查阅 <a href="tutorial.html">使用教程</a>。</p>
     </div>
   </section>
 
@@ -73,23 +67,22 @@ setTimeout(function () {
       <div class="details-body">
         <p>按下面顺序试,一般三步之内就能解决:</p>
         <ol>
-          <li><strong>走百度网盘。</strong>完整版(约 2.4 GB,含全部模型)在
-            <a href="https://pan.baidu.com/s/1_heewIWeoPpWQKPJv9blew?pwd=yxfd">网盘</a> 上,国内通常最快(提取码 <code>yxfd</code>)。</li>
+          <li><strong>使用百度网盘。</strong>完整版(约 2.4 GB,含全部模型)在
+            <a href="https://pan.baidu.com/s/1_heewIWeoPpWQKPJv9blew?pwd=yxfd">网盘</a> 上,国内通常最快,提取码 <code>yxfd</code>。</li>
           <li><strong>给 GitHub 链接加加速前缀。</strong>在下载链接前拼一个公开镜像前缀,例如
             <code>https://gh-proxy.com/</code> + 原始下载链接,整条变成
             <code>https://gh-proxy.com/https://github.com/AlLHHH/ALH-Pro/releases/download/...</code>。
             免费、不用注册;镜像的可用性会变化,可以再换 <code>ghproxy.net</code>、<code>ghproxy.com</code> 等前缀。</li>
           <li><strong>错峰下载。</strong>清早或深夜通常比晚高峰稳,大文件支持断点续传,断了可以接着下。</li>
         </ol>
-        <p class="small muted">镜像站是第三方公共服务,本项目无法保证其长期可用,也不对其内容负责。下载完成后请核对文件名、大小与
-          <a href="download.html#checksum">SHA256</a>。</p>
+        <p class="small muted">镜像站是第三方公共服务,本项目无法保证其长期可用,也不对其内容负责。下载完成后请核对文件名、大小与 <a href="download.html#checksum">SHA256</a>。</p>
       </div>
     </details>
 
     <details data-reveal id="firstrun">
       <summary>双击安装包后没反应,是卡死了吗?</summary>
       <div class="details-body">
-        <p>多半不是。安装包体积很大(完整版约 2.4 GB),Windows 安全软件首次运行时会完整扫描它,这段时间界面可能迟迟不出现,
+        <p>多半不是。安装包体积较大,完整版约 2.4 GB,Windows 安全软件首次运行时会完整扫描,这段时间界面可能迟迟不出现,
           <strong>等 1~2 分钟属正常;第一次扫描完成后,以后打开就快了</strong>。</p>
         <p>如果等了几分钟仍然没有任何窗口,可以:①在任务管理器里看有没有安装程序进程在占 CPU / 磁盘;②把安装包复制到本地非系统盘再试;
           ③先按 <a href="download.html#checksum">SHA256</a> 确认安装包完整(下载损坏也会导致双击无反应)。</p>
@@ -108,7 +101,7 @@ setTimeout(function () {
           <li>如果文件被直接删除或隔离,请恢复并信任后重试;若反复被删,请把<strong>报毒名称与截图</strong>反馈给我们,便于进一步排查。</li>
         </ol>
         <div class="note note-warn">
-          <p><strong>请务必只从官方渠道下载</strong>(本页顶部的 GitHub Releases 与作者百度网盘)。
+          <p><strong>请只从官方渠道下载</strong>,即本页顶部的 GitHub Releases 与作者百度网盘。
             第三方下载站、网盘转发、“绿色版”等来源的安装包可能被重新打包,那种情况下的报毒就真的不能信任了。</p>
         </div>
       </div>
@@ -162,7 +155,7 @@ setTimeout(function () {
     <h2 id="perf-group">显卡与速度</h2>
 
     <details data-reveal id="gpu">
-      <summary>我的显卡能用吗?(兼容性对照表)</summary>
+      <summary>我的显卡能用吗?</summary>
       <div class="details-body">
         <p><strong>图例:</strong>🟢 稳定加速 ｜ 🟡 能用但可能降级 ｜ 🔶 慢(CPU) ｜ <strong>?</strong> 存疑·可能不能用 ｜ <strong>✗</strong> 不能使用</p>
         <p class="small">「画质增强 / 去重 / 转场识别 / 果冻修复 / 降噪」为纯 CPU 处理,任何显卡都一样,不随显卡变化;
@@ -197,7 +190,7 @@ setTimeout(function () {
     </details>
 
     <details data-reveal id="50series">
-      <summary>RTX 50 系(5060 / 5070 等)为什么会被提示走了“兼容路线”?</summary>
+      <summary>RTX 50 系为什么会被提示走了“兼容路线”?</summary>
       <div class="details-body">
         <p>50 系是较新的架构,部分内置引擎(基于 ncnn-Vulkan)在早期驱动上与它不完全兼容。软件已经自动适配:
           <strong>检测到 50 系时会自动选择稳定的引擎路线(ONNX / DirectML),显卡仍然参与加速(不是退回纯 CPU),输出结果不受影响</strong>,
@@ -234,14 +227,13 @@ setTimeout(function () {
     <details data-reveal id="estimate">
       <summary>大概多久能跑完一段视频?有参考数据吗?</summary>
       <div class="details-body">
-        <p>我们只提供自己实测过的量级(测试机为 RTX 4060 Laptop):</p>
+        <p>以下为本机实测的量级,测试机为 RTX 4060 Laptop:</p>
         <ul>
           <li>1080p 超分:动漫视频常用模型约 <strong>0.25 秒/帧</strong>(4x 约 0.30 秒/帧),轻量通用模型 4x 约 0.46 秒/帧,质量优先的 x4plus 约 15 秒/帧;</li>
           <li>1080p 补帧:约 <strong>0.08 秒/输出帧</strong>;2160p(4K)约 0.28 秒/输出帧;</li>
           <li>一个真实作业:1080p、72 帧素材(约 2.4 秒),做 <strong>4 倍补帧 + 2 倍超分,全程约 53.7 秒</strong>。</li>
         </ul>
-        <p class="small muted">这些是我们自己机器上的数字,不是承诺。换显卡、换模型、换素材差别可能很大,请以软件内的预计剩余时间为准,
-          并先用样片试跑。</p>
+        <p class="small muted">以上为本机实测数字,并非承诺。更换显卡、模型或素材后差别可能较大,请以软件内显示的预计剩余时间为准,并先用样片试跑。</p>
       </div>
     </details>
 
@@ -444,9 +436,7 @@ setTimeout(function () {
     </details>
 
     <div class="note" data-reveal>
-      <p>这里没找到你的问题?请先看 <a href="tutorial.html">使用教程</a>,或阅读
-        <a href="privacy.html">隐私说明</a> / <a href="licenses.html">开源许可与致谢</a> /
-        <a href="changelog.html">更新日志</a>。</p>
+      <p>如果这里没有你要找的问题,请查阅 <a href="tutorial.html">使用教程</a>、<a href="privacy.html">隐私说明</a>、<a href="licenses.html">开源许可与致谢</a> 或 <a href="changelog.html">更新日志</a>。</p>
     </div>
 
   </div>

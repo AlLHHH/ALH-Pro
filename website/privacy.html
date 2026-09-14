@@ -25,7 +25,6 @@ setTimeout(function () {
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
-<div class="scroll-progress" aria-hidden="true"><i></i></div>
 
 <header class="site-header">
   <div class="wrap header-inner">
@@ -53,11 +52,6 @@ setTimeout(function () {
 <main id="main">
 
   <section class="hero hero--page">
-    <div class="aurora" aria-hidden="true">
-      <span class="aurora-blob b1"></span>
-      <span class="aurora-blob b2"></span>
-      <span class="aurora-blob b3"></span>
-    </div>
     <div class="wrap hero-inner">
       <h1 class="hero-title">隐私说明</h1>
       <p class="page-meta">
@@ -69,11 +63,11 @@ setTimeout(function () {
   <div class="wrap content">
 
     <div class="note note-ok" data-reveal>
-      <p><span class="note-title">一句话结论:</span>
+      <p><span class="note-title">结论:</span>
       <strong>你的图片、视频、音频处理全部在你自己的电脑上完成,不上传到任何服务器。</strong>
       软件不需要注册账号,不收集个人信息,不做使用行为统计,也没有云端记录。
       软件里只有<strong>三处</strong>会联网 —— 检查更新、拉取广告素材、拉取界面提示文案 ——
-      它们既不涉及你的文件,也不涉及你的设备信息,而且任何一处失败都<strong>不影响任何功能</strong>(全部有内置兜底)。</p>
+      它们既不涉及你的文件,也不涉及你的设备信息,任何一处失败都<strong>不影响任何功能</strong>,全部有内置兜底。</p>
     </div>
 
     <h2 id="never">一、软件不会做的事</h2>
@@ -87,12 +81,12 @@ setTimeout(function () {
       <li><strong>没有账号体系:</strong>不注册、不登录、不绑定手机号/邮箱,因此也没有云端历史记录。</li>
     </ul>
 
-    <h2 id="network">二、会自动发生的联网行为(仅此三项,全部列在下面)</h2>
+    <h2 id="network">二、会自动发生的联网行为</h2>
     <p data-reveal>这三项都不传输你的个人信息、设备信息或文件信息。它们的共同点是:只从公开仓库取回<strong>公开文本或公开图片</strong>,
       请求走 HTTPS,请求头里只有一个固定的程序标识与软件版本号(形如 <code>ALHPro/1.3.6</code>)——
       这是 HTTP 请求本身要求的头部,不含文件名、路径、画面或机型。</p>
 
-    <h3 id="net-update">1. 更新检查(查询最新版本号)</h3>
+    <h3 id="net-update">1. 更新检查</h3>
     <ul data-reveal>
       <li><strong>什么时候:</strong>启动软件时自动检查一次(检测到新版本会提示你;<strong>不自动下载、不自动安装</strong>)。</li>
       <li><strong>请求到哪里:</strong>
@@ -103,7 +97,7 @@ setTimeout(function () {
       <li><strong>失败会怎样:</strong>静默忽略,不做任何提示,软件照常使用。</li>
     </ul>
 
-    <h3 id="net-ad">2. 广告素材拉取(界面广告位的文案与图片)</h3>
+    <h3 id="net-ad">2. 广告素材拉取</h3>
     <ul data-reveal>
       <li><strong>什么时候:</strong>启动软件时、以及运行期间定时刷新(用于更新界面下方广告位的文案与图片)。</li>
       <li><strong>请求到哪里(按顺序尝试,任一成功即停):</strong>
@@ -115,10 +109,10 @@ setTimeout(function () {
       <li><strong>传输什么:</strong>只取回公开的广告文案与图片。<strong>广告不含个性化推荐</strong>,
         不读取你的设备标识、不读取你的处理记录,也不向广告方回传任何数据。</li>
       <li><strong>失败会怎样:</strong>静默忽略,广告位不显示,功能完全不受影响。</li>
-      <li><strong>不想看广告:</strong>点广告卡右上角「✕」隐藏这一条;或在「设置 → 本次运行不显示广告」勾选(本次运行生效,重启恢复;目前没有永久关闭开关)。</li>
+      <li><strong>不想看广告:</strong>点广告卡右上角「✕」可隐藏该条;或在「设置 → 本次运行不显示广告」中勾选,本次运行生效,重启后恢复显示。目前没有永久关闭开关。</li>
     </ul>
 
-    <h3 id="net-hint">3. 界面提示文案拉取(底部状态栏的提示条)</h3>
+    <h3 id="net-hint">3. 界面提示文案拉取</h3>
     <ul data-reveal>
       <li><strong>什么时候:</strong>启动软件时、以及运行期间每约 10 分钟刷新一次(提示条本身每 30 秒在本地轮换,轮换不联网)。</li>
       <li><strong>请求到哪里:</strong>与上一条相同的一组地址,请求的是公开仓库里的
@@ -163,7 +157,7 @@ setTimeout(function () {
       三项全部失败(例如断网、内网、GitHub 不可达)时,软件的功能与画质<strong>完全不受影响</strong>。</p>
 
     <div class="note" data-reveal>
-      <p><span class="note-title">想彻底禁止软件联网?</span>
+      <p><span class="note-title">禁止软件联网的方法:</span>
       可以在 Windows 防火墙或安全软件里禁止 <code>ALHPro.exe</code> 联网。禁止后软件仍可正常处理素材,
       只是不会提示新版本、广告位与提示条使用内置内容。</p>
     </div>
@@ -196,7 +190,7 @@ setTimeout(function () {
       <li><strong>问卷平台:</strong>仅在你点击时打开,数据由该平台按自身政策处理,与本软件无关。</li>
     </ul>
 
-    <h2 id="site">六、关于本站(这个网站)</h2>
+    <h2 id="site">六、关于本站</h2>
     <ul data-reveal>
       <li>本站是<strong>纯静态页面</strong>(只有 HTML / CSS 和一点本地 JS),<strong>不加载任何第三方脚本、统计代码、在线字体或境外 CDN 资源</strong>;</li>
       <li>本站不设置 Cookie、不使用本地存储记录你,页面脚本不写入任何标识;</li>
