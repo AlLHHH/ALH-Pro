@@ -25,7 +25,6 @@ setTimeout(function () {
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
-<div class="scroll-progress" aria-hidden="true"><i></i></div>
 
 <header class="site-header">
   <div class="wrap header-inner">
@@ -53,15 +52,10 @@ setTimeout(function () {
 <main id="main">
 
   <section class="hero hero--page">
-    <div class="aurora" aria-hidden="true">
-      <span class="aurora-blob b1"></span>
-      <span class="aurora-blob b2"></span>
-      <span class="aurora-blob b3"></span>
-    </div>
     <div class="wrap hero-inner">
       <h1 class="hero-title">使用教程</h1>
       <p class="page-meta">
-        面向普通用户,不需要任何 AI 或剪辑知识 · 遇到报错、卡顿、结果不对,先看 <a href="faq.html">常见问题</a>
+        面向普通用户,不需要 AI 或剪辑基础。遇到报错、卡顿或结果异常,请先查阅 <a href="faq.html">常见问题</a>。
       </p>
     </div>
   </section>
@@ -69,26 +63,26 @@ setTimeout(function () {
   <div class="wrap content">
 
     <div class="note" data-reveal>
-      <p><span class="note-title">说明:</span>本页内容来自软件随附的《使用教程》(正文更新于 v1.1 界面),
-      之后版本的界面调整(例如新增的官方预设、去重默认档、兼容模式等)见 <a href="changelog.html">更新日志</a>。
+      <p><span class="note-title">说明:</span>本页内容来自软件随附的《使用教程》,正文更新于 v1.1 界面;
+      之后版本的界面调整见 <a href="changelog.html">更新日志</a>。
       如果界面文字与本页描述略有出入,以软件内的说明与提示为准。</p>
     </div>
 
     <nav class="toc" aria-label="本页目录" data-reveal>
       <strong>本页目录</strong>
       <ol>
-        <li><a href="#before">开始前先看三处</a></li>
-        <li><a href="#cutout-models">抠图模型怎么装(很多人卡在这)</a></li>
+        <li><a href="#before">开始前的准备</a></li>
+        <li><a href="#cutout-models">抠图模型安装</a></li>
         <li><a href="#image">图片放大</a></li>
         <li><a href="#cutout">AI 抠图</a></li>
-        <li><a href="#video">视频处理(超分 / 补帧 / 去重)</a></li>
+        <li><a href="#video">视频处理:超分、补帧与去重</a></li>
         <li><a href="#audio">音频处理</a></li>
-        <li><a href="#output">输出格式怎么选</a></li>
-        <li><a href="#tips">省时间的几个习惯</a></li>
+        <li><a href="#output">输出格式选择</a></li>
+        <li><a href="#tips">效率建议</a></li>
       </ol>
     </nav>
 
-    <h2 id="before">开始前先看三处</h2>
+    <h2 id="before">开始前的准备</h2>
     <ol>
       <li>左侧导航 = 四个页面:<strong>图片放大 / AI 抠图 / 视频处理 / 音频处理</strong>,各管各的,互不干扰。</li>
       <li>页面左边一列是设置,右边是结果区。所有参数改完即时生效,<strong>先调好再点「开始处理」</strong>。</li>
@@ -96,10 +90,10 @@ setTimeout(function () {
         不兼容的显卡会自动改走兼容路线,功能不受影响,只是速度有差异。</li>
     </ol>
 
-    <h2 id="cutout-models">抠图模型怎么装(很多人卡在这,先看)</h2>
-    <p data-reveal>软件安装包<strong>不含</strong> AI 抠图模型(约 1.4 GB,在单独的模型包里)。没装模型时,「AI 抠图」页会显示黄色提示。</p>
+    <h2 id="cutout-models">抠图模型安装</h2>
+    <p data-reveal>软件安装包<strong>不含</strong> AI 抠图模型。模型单独打包,约 1.4 GB。未安装模型时,「AI 抠图」页会显示黄色提示。</p>
     <p data-reveal><strong>方式一(推荐):</strong>安装软件时,在「选择附加任务」页勾选「下载并安装模型包(来自 GitHub)」,安装程序会自动下载并放好。</p>
-    <p data-reveal><strong>方式二(下载失败或已装完软件时):</strong>下载 <code>models_v1.0.zip</code>(内含中文安装说明),解压到:</p>
+    <p data-reveal><strong>方式二(下载失败或已装完软件时):</strong>下载 <code>models_v1.0.zip</code>,其中含中文安装说明,解压到:</p>
 <pre data-reveal><code>程序目录\engines\rembg\
     birefnet-lite.onnx
     birefnet.onnx
@@ -110,9 +104,9 @@ setTimeout(function () {
     <ul data-reveal>
       <li><strong>程序目录</strong>怎么找:右键桌面「ALH Pro」图标 → “打开文件所在位置”(默认是
         <code>C:\Users\用户名\AppData\Local\Programs\ALH Pro</code>)。</li>
-      <li><strong>6 个 .onnx 直接放进 rembg 里</strong>,不要再套一层文件夹(这是最常见的装错方式)。</li>
+      <li><strong>6 个 .onnx 直接放进 rembg 目录</strong>,不要再套一层文件夹。</li>
       <li>装好怎么验证:AI 抠图页左上角的黄色提示消失 = 成功。</li>
-      <li>嫌麻烦:直接用<a href="download.html#files">完整版(含模型)</a>,双击安装,装完所有功能直接可用。</li>
+      <li>也可以直接使用<a href="download.html#files">完整版</a>,安装后所有功能立即可用。</li>
     </ul>
 
     <h2 id="image">图片放大</h2>
@@ -120,11 +114,11 @@ setTimeout(function () {
 
     <h3>第 1 步:添加图片</h3>
     <ul data-reveal>
-      <li>点「添加图片(可多选)」或直接把文件拖进去(支持 PNG / JPG / WebP / BMP,支持多张批量);</li>
+      <li>点「添加图片(可多选)」或直接把文件拖入,支持 PNG / JPG / WebP / BMP 与多张批量处理;</li>
       <li>在列表里选中一张后,效果预览和参数都只针对这一张显示。</li>
     </ul>
 
-    <h3>第 2 步:选算法(关键)</h3>
+    <h3>第 2 步:选择算法</h3>
     <div class="table-scroll" data-reveal>
       <table>
         <thead><tr><th>素材类型</th><th>选哪个</th></tr></thead>
@@ -134,8 +128,8 @@ setTimeout(function () {
         </tbody>
       </table>
     </div>
-    <p class="note note-warn" data-reveal><span class="note-title">选错算法效果会明显变差:</span>
-      动漫图用 Real-ESRGAN 会发糊,照片用 waifu2x 会偏“画”。拿不准时两种各试一小张,对比后再批量。</p>
+    <p class="note note-warn" data-reveal><span class="note-title">算法选择:</span>
+      动漫图使用 Real-ESRGAN 会发糊,照片使用 waifu2x 会偏“画”。可用单张图片各试一次,对比后再批量处理。</p>
     <p data-reveal>waifu2x 下面还有两个模型:</p>
     <ul data-reveal>
       <li><strong>cunet(通用)</strong>:画质优先;</li>
@@ -144,26 +138,26 @@ setTimeout(function () {
 
     <h3>第 3 步:选倍数</h3>
     <ul data-reveal>
-      <li><strong>1x 超分(2x 放大后缩回)</strong>:只变清晰、不放大尺寸 —— 最常用的推荐档;</li>
-      <li><strong>2x / 3x / 4x</strong>:直接放大。列表里<strong>灰色的项 = 当前模型不支持</strong>(由引擎决定,不是软件限制)。</li>
+      <li><strong>1x 超分</strong>:2x 放大后缩回,只提升清晰度、不放大尺寸,是最常用的推荐档;</li>
+      <li><strong>2x / 3x / 4x</strong>:直接放大。列表里<strong>灰色的项表示当前模型不支持</strong>,由引擎决定。</li>
     </ul>
 
-    <h3>第 4 步:降噪(可选)</h3>
+    <h3>第 4 步:降噪</h3>
     <ul data-reveal>
       <li>降噪级别:不降噪 / 弱 / 中 / 强。图上如果有明显的压缩块、噪点,开「中」;图本身很干净就用「不降噪」。</li>
       <li>照片模式另有「预处理降噪」:照片噪点多时勾上,强度选弱~中即可,太强线条会糊。</li>
     </ul>
     <p class="small muted" data-reveal>补充:如果素材本身没有压缩噪点,强档降噪反而会把真实的细节磨掉,建议从“关 / 弱”开始试。</p>
 
-    <h3>第 5 步:高级(可选)</h3>
-    <p data-reveal>默认不用动。图太灰 → 试「清晰」;图发虚 → 试「去模糊」;线条有锯齿 → 试「边缘抗锯齿」。</p>
-    <p data-reveal><strong>一次只加一项,看效果再叠加,别全开。</strong></p>
+    <h3>第 5 步:高级选项</h3>
+    <p data-reveal>默认无需调整。画面发灰可试「清晰」,画面发虚可试「去模糊」,线条有锯齿可试「边缘抗锯齿」。</p>
+    <p data-reveal><strong>建议每次只增加一项,确认效果后再叠加。</strong></p>
 
     <h3>结果</h3>
     <ul data-reveal>
       <li>输出目录默认与源图同目录(可以改);</li>
       <li>多张图会自动建子文件夹,不用管;</li>
-      <li>格式默认 JPG(通用);需要透明背景选 PNG;JPG 质量 85~95 即可,再高文件大一圈、效果基本看不出差别。</li>
+      <li>格式默认 JPG;需要透明背景选择 PNG。JPG 质量 85~95 即可,更高只会增大文件体积,画质差异难以察觉。</li>
     </ul>
 
     <h2 id="cutout">AI 抠图</h2>
@@ -186,31 +180,30 @@ setTimeout(function () {
         </tbody>
       </table>
     </div>
-    <p class="small muted" data-reveal>提示:AI 抠图固定使用 CPU 计算(避免占满显卡导致整机卡顿),所以数量多时请耐心等待。</p>
+    <p class="small muted" data-reveal>AI 抠图固定使用 CPU 计算,以避免占满显卡导致整机卡顿,批量处理时耗时较长。</p>
 
-    <h3>第 3 步:参数(先别动,看效果再调)</h3>
+    <h3>第 3 步:参数微调</h3>
     <ul data-reveal>
       <li><strong>前景 / 背景阈值</strong>:主体与背景颜色接近时,适当降低前景阈值、提高背景阈值;拿不准就勾「自适应阈值」;</li>
-      <li><strong>边缘羽化</strong>:数值越大,边缘过渡越柔和(抠毛发、半透明边缘时调);</li>
+      <li><strong>边缘羽化</strong>:数值越大,边缘过渡越柔和,适合抠毛发与半透明边缘;</li>
       <li><strong>边缘增强</strong>:边缘太毛糙时提高;</li>
       <li><strong>边缘清理</strong>:边缘有碎点、杂色时开启。</li>
     </ul>
 
-    <h3>第 4 步:看效果</h3>
+    <h3>第 4 步:查看效果</h3>
     <p data-reveal>右侧预览区处理完就能直接看;按住「查看原图」可以对比前后。彩色预览 = 原图 × 蒙版,棋盘格 = 透明区域。</p>
 
     <h3>结果</h3>
     <p data-reveal>保存到输出目录(默认与源图同目录,多张自动分子文件夹)。格式与图片放大共用设置,<strong>要透明背景记得选 PNG</strong>。</p>
 
-    <h2 id="video">视频处理(超分 / 补帧 / 去重)</h2>
-    <p data-reveal><strong>你要做什么:</strong>视频超分(变清晰)/ 补帧(变流畅)/ 去重(删掉重复帧,动漫片源必备)。流程:添加视频 → 勾选要做的处理 → 设参数 → 开始。</p>
-    <p class="note note-warn" data-reveal><span class="note-title">注意:</span>至少要勾上「超分」或「补帧」其中一项才能开始处理;
-      只想做去重的话,也要同时勾上补帧 —— 去重本身属于预处理步骤。</p>
+    <h2 id="video">视频处理:超分、补帧与去重</h2>
+    <p data-reveal><strong>功能说明:</strong>视频超分用于提升清晰度,补帧用于提升流畅度,去重用于删除重复帧。流程:添加视频 → 勾选处理项 → 设置参数 → 开始。</p>
+    <p class="note note-warn" data-reveal><span class="note-title">注意:</span>至少要勾选「超分」或「补帧」其中一项才能开始处理。只做去重时需同时勾选补帧,去重属于预处理步骤。</p>
 
     <h3>第 1 步:添加视频</h3>
-    <p data-reveal>拖入或点列表添加,支持 MP4 / MKV / MOV / WebM,可多视频批量。每个视频可以单独裁剪(在右侧时间线上拖动),也可以单独设置帧率。</p>
+    <p data-reveal>拖入或点击列表添加,支持 MP4 / MKV / MOV / WebM 与多视频批量。每个视频可在右侧时间线上单独裁剪,也可单独设置帧率。</p>
 
-    <h3>第 2 步:视频超分(可选)</h3>
+    <h3>第 2 步:视频超分</h3>
     <div class="table-scroll" data-reveal>
       <table>
         <thead><tr><th>素材</th><th>引擎</th></tr></thead>
@@ -221,12 +214,12 @@ setTimeout(function () {
       </table>
     </div>
     <ul data-reveal>
-      <li>倍数:<strong>1x 超分 = 只变清晰、不改变尺寸</strong>(建议先试);1.5x / 2x 以上是放大,也可以选「自定义分辨率」精确指定输出宽高。</li>
-      <li><strong>倍率越高越慢、显存占用越大</strong>。笔记本或老显卡建议先用 1x~2x 试一小段。</li>
+      <li>倍数:<strong>1x 超分只提升清晰度、不改变尺寸</strong>,建议先试;1.5x / 2x 以上为放大,也可选择「自定义分辨率」精确指定输出宽高。</li>
+      <li><strong>倍率越高,耗时与显存占用越大</strong>。笔记本或较旧的显卡建议先用 1x~2x 试一小段。</li>
     </ul>
 
-    <h3>第 3 步:补帧(RIFE,可选)</h3>
-    <p data-reveal><strong>补帧 = 在原有帧之间“脑补”出中间帧,让动作更流畅。</strong>动漫 24fps 补到 60fps、电视 25/30fps 补到 60fps,都是常见用途。</p>
+    <h3>第 3 步:补帧</h3>
+    <p data-reveal><strong>补帧会在原有帧之间生成中间帧,让动作更流畅。</strong>动漫 24fps 补到 60fps、电视 25/30fps 补到 60fps 都是常见用途。</p>
     <ul data-reveal>
       <li><strong>模型</strong>:默认「通用画质最新(RIFE v4.13)」就行。老素材处理结果不正常时,换其它模型档位再试。</li>
       <li><strong>帧率</strong>:点「视频帧率」展开。默认是「各视频默认帧率」= 每个视频按自己的原始帧率处理,什么都不用设;
@@ -239,11 +232,11 @@ setTimeout(function () {
       <li><strong>可变帧率(VFR)</strong>:默认「自动」。录屏、手机、监控这类帧间隔不均匀的素材会自动按原节奏处理,不用管。</li>
     </ul>
 
-    <h3>第 4 步:去除重复帧(动漫必备,可选)</h3>
-    <p data-reveal><strong>去重 = 删除静止 / 重复的画面</strong>(动画里一张画停 3 帧那种),只保留真实内容帧。用途:让补帧更准确、文件更小。</p>
+    <h3>第 4 步:去除重复帧</h3>
+    <p data-reveal><strong>去重会删除静止与重复的画面</strong>,只保留真实内容帧,可让补帧更准确、文件更小。</p>
     <ul data-reveal>
-      <li><strong>智能检测(默认)</strong>:自动估节奏,不用管。策略有 均衡(推荐)/ 激进(删得多)/ 保守(几乎不误删);</li>
-      <li><strong>动漫模式</strong>:你确定片源是“一拍几”的时候用,选对应档位(一拍二 / 三 / 四);</li>
+      <li><strong>智能检测(默认)</strong>:自动估计节奏,无需干预。策略有均衡(推荐)、激进(删除较多)与保守(几乎不误删);</li>
+      <li><strong>动漫模式</strong>:在确定片源为一拍二 / 三 / 四时选择对应档位;</li>
       <li><strong>手动模式</strong>:高级用户用,默认别碰;</li>
       <li>建议勾上「<strong>相位自动对齐</strong>」,防止抽到中间帧。</li>
     </ul>
@@ -258,43 +251,43 @@ setTimeout(function () {
     </ul>
 
     <h3>兼容模式</h3>
-    <p data-reveal>勾上后会自动降低显存占用,防止爆显存 / 卡死,画质基本不变。<strong>没有独立显卡、显存小、或者处理不稳定时勾上</strong>,其它场景不用开。</p>
+    <p data-reveal>勾选后会自动降低显存占用,避免显存不足或卡死,画质基本不变。<strong>没有独立显卡、显存较小或处理不稳定时勾选</strong>,其它场景无需开启。</p>
 
-    <h3>可选后处理(按需)</h3>
+    <h3>可选后处理</h3>
     <ul data-reveal>
-      <li><strong>果冻修复</strong>:补帧产生的“果冻”(快速运动处画面扭曲)会盖上一层真实运动模糊,动作更自然;</li>
+      <li><strong>果冻修复</strong>:对补帧产生的画面扭曲叠加真实运动模糊,动作更自然;</li>
       <li><strong>光流调整</strong>:改变补帧的光流敏感度(果冻多就调低,动作卡就调高);</li>
       <li><strong>转场识别</strong>:检测到镜头切换处不插帧,避免鬼影。</li>
     </ul>
 
     <h2 id="audio">音频处理</h2>
-    <p data-reveal><strong>你要做什么:</strong>音频超分(低采样率 → 48kHz 变清晰)/ 增强(人声更清晰)/ AI 分离(拆人声与伴奏)/ 降噪。流程:添加音频 → 勾选要做的处理 → 开始处理,支持批量。</p>
+    <p data-reveal><strong>功能说明:</strong>音频处理包含升采样率、增强、人声与伴奏分离以及降噪。流程:添加音频 → 勾选处理项 → 开始处理,支持批量。</p>
 
-    <h3>AI 升采样率(可选)</h3>
+    <h3>AI 升采样率</h3>
     <p data-reveal>勾「AI 升采样率(低采样率源 → 48kHz)」:电话录音、老磁带这类 8k / 16k / 22k / 32k 的低采样率音频,AI 会补出缺失的高频并提升到 48kHz,听得出来变清晰。
       44.1k 以上的正常音乐本身已是全频带,软件会自动跳过,不会报错。</p>
 
-    <h3>增强(可选)</h3>
-    <p data-reveal>给人声加一点优化,咬字更清晰、层次更好:强度有 关 / 柔和(推荐)/ 标准 / 强力。勾选后作用到最终输出,不会单独出文件。</p>
+    <h3>增强</h3>
+    <p data-reveal>对人声做优化处理,使咬字更清晰、层次更好。强度有关、柔和(推荐)、标准与强力四档。勾选后作用于最终输出,不会单独生成文件。</p>
 
-    <h3>AI 分离(人声 / 伴奏)(可选)</h3>
+    <h3>AI 分离:人声与伴奏</h3>
     <p data-reveal>用神经网络把人声和伴奏拆开,可多选:</p>
     <ul data-reveal>
       <li><strong>提取人声</strong>:只要歌声(去掉伴奏);</li>
       <li><strong>去人声(卡拉OK伴奏)</strong>:只要伴奏(去掉歌声);</li>
       <li><strong>分离</strong>:导出人声 + 伴奏两个文件;</li>
-      <li><strong>自定义组合(选轨道 + 调音量)</strong>:勾选要输出的轨道(人声 / 伴奏 / 其他 1 / 其他 2,可同时输出),每轨单独调音量(0~200%),适合做混音。</li>
+      <li><strong>自定义组合</strong>:勾选要输出的轨道(人声 / 伴奏 / 其他 1 / 其他 2,可同时输出),每轨单独调整音量 0~200%,适合混音。</li>
     </ul>
-    <p data-reveal>注意:AI 分离会优先用显卡加速(DirectML);没有显卡或显卡不可用时用 CPU 计算,一首歌大约几到十几分钟,请耐心等待。</p>
+    <p data-reveal>AI 分离优先使用显卡加速(DirectML);没有可用显卡时使用 CPU 计算,一首歌约需几分钟至十几分钟。</p>
 
-    <h3>降噪(可选)</h3>
+    <h3>降噪</h3>
     <ul data-reveal>
-      <li>适合处理录制的音频:去底噪、电流声、压缩噪点;</li>
+      <li>适用于录制的音频:去除底噪、电流声与压缩噪点;</li>
       <li>选项:关 / 弱(推荐)/ 中 / 强(重降噪,可能有损失);</li>
-      <li>对已经混好的音乐别开强档,可能削掉细节。</li>
+      <li>已经混音完成的音乐不建议使用强档,可能损失细节。</li>
     </ul>
 
-    <h3>音色调整(可选)</h3>
+    <h3>音色调整</h3>
     <ul data-reveal>
       <li><strong>响度归一(音量统一)</strong>:多首音量忽大忽小的时候勾上,听感更稳;</li>
       <li><strong>低切(去低频隆隆声)</strong>:去掉低频轰鸣 / 底噪;</li>
@@ -307,7 +300,7 @@ setTimeout(function () {
       <li>拖动波形两端的把手 → 只处理选中的时间段。</li>
     </ul>
 
-    <h2 id="output">输出格式怎么选</h2>
+    <h2 id="output">输出格式选择</h2>
     <div class="table-scroll" data-reveal>
       <table>
         <thead><tr><th>场景</th><th>建议</th></tr></thead>
@@ -323,18 +316,17 @@ setTimeout(function () {
     </div>
     <p class="small muted" data-reveal>输出目录默认与源文件同目录,批量处理会自动建子文件夹,原文件不会被覆盖。</p>
 
-    <h2 id="tips">省时间的几个习惯</h2>
+    <h2 id="tips">效率建议</h2>
     <ol>
-      <li><strong>先用一小段样片试跑。</strong>截取 5~10 秒、几十帧,把模型和倍率确认好再整段跑,能省掉大量返工时间。</li>
+      <li><strong>先用一小段样片试跑。</strong>截取 5~10 秒、几十帧,确认模型与倍率后再整段处理,可减少返工。</li>
       <li><strong>动漫片源先开去重再补帧。</strong>重复帧先去干净,补帧结果更准,文件也更小。</li>
-      <li><strong>老电脑从 1x 超分 / 2x 补帧起步。</strong>觉得画面够用就别往上加,倍率越高代价越大。</li>
-      <li><strong>看状态栏和日志。</strong>软件会明确写出现在用的是显卡还是 CPU、是否降级、还剩多久;遇到“看起来卡住”时先看日志。</li>
+      <li><strong>较旧的电脑从 1x 超分 / 2x 补帧起步。</strong>画面够用即可,倍率越高代价越大。</li>
+      <li><strong>留意状态栏与日志。</strong>其中会写明当前使用显卡还是 CPU、是否降级以及预计剩余时间;疑似卡住时先查看日志。</li>
       <li><strong>处理重要素材前先备份原文件</strong>,并留意临时磁盘空间。</li>
     </ol>
 
     <div class="note" data-reveal>
-      <p>本页没提到的问题(装不上、下载慢、显卡兼容、杀毒软件拦截、结果不符合预期等),请看
-        <a href="faq.html">常见问题</a>;每个版本改了什么,见 <a href="changelog.html">更新日志</a>。</p>
+      <p>本页未覆盖的问题,请查阅 <a href="faq.html">常见问题</a>;各版本变更见 <a href="changelog.html">更新日志</a>。</p>
     </div>
 
   </div>

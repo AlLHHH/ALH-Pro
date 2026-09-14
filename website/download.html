@@ -25,7 +25,6 @@ setTimeout(function () {
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
-<div class="scroll-progress" aria-hidden="true"><i></i></div>
 
 <header class="site-header">
   <div class="wrap header-inner">
@@ -53,17 +52,11 @@ setTimeout(function () {
 <main id="main">
 
   <section class="hero hero--page">
-    <div class="aurora" aria-hidden="true">
-      <span class="aurora-blob b1"></span>
-      <span class="aurora-blob b2"></span>
-      <span class="aurora-blob b3"></span>
-    </div>
     <div class="wrap hero-inner">
       <h1 class="hero-title">下载 ALH Pro</h1>
       <p class="page-meta">
-        当前版本 <strong>v1.3.6</strong>(2026-09-13,预设模型调整 + 补帧倍率显示修复)·
-        这一版改了什么见 <a href="changelog.html">更新日志</a> ·
-        安装或使用遇到问题先看 <a href="faq.html">常见问题</a>
+        当前版本 <strong>v1.3.6</strong>,发布于 2026-09-13:预设模型调整与补帧倍率显示修复。
+        完整更新内容见 <a href="changelog.html">更新日志</a>;安装或使用问题请先查阅 <a href="faq.html">常见问题</a>。
       </p>
       <div class="cta-row">
         <a class="btn btn-primary" href="https://github.com/AlLHHH/ALH-Pro/releases/latest">
@@ -72,14 +65,14 @@ setTimeout(function () {
         </a>
         <a class="btn btn-ghost" href="https://pan.baidu.com/s/1_heewIWeoPpWQKPJv9blew?pwd=yxfd">百度网盘完整版(约 2.4 GB)</a>
       </div>
-      <p class="btn-note small">下载完成后,建议顺手对一下本页下方的 SHA256 校验值。</p>
+      <p class="btn-note small">下载完成后建议核对下方的 SHA256 校验值。</p>
     </div>
   </section>
 
   <div class="wrap content">
 
     <div class="note note-ok" data-reveal>
-      <p><span class="note-title">先看结论:</span>只想要基本功能(超分、补帧、去重、音频处理)→ 下载<strong>标准版</strong>;
+      <p><span class="note-title">下载建议:</span>只想要基本功能(超分、补帧、去重、音频处理)→ 下载<strong>标准版</strong>;
       要用 <strong>AI 抠图</strong>又嫌装模型麻烦 → 直接下载<strong>完整版</strong>(约 2.4 GB,装完所有功能直接可用);
       已经装了软件、只差抠图模型 → 单独下载<strong>模型包</strong>。</p>
     </div>
@@ -117,13 +110,13 @@ setTimeout(function () {
     </div>
 
     <div class="note note-warn" data-reveal>
-      <p><span class="note-title">如实告知:</span>目前安装包与模型包只托管在
+      <p><span class="note-title">下载渠道:</span>目前安装包与模型包只托管在
       <strong>GitHub Releases</strong> 与<strong>百度网盘</strong>两处,本站没有国内直链镜像。
-      如果你的网络访问 GitHub 困难,请直接用上方百度网盘链接下载完整版。
+      如果访问 GitHub 困难,请直接使用上方百度网盘链接下载完整版。
       <strong>下载只需要这一次访问 GitHub;软件安装完成后,日常使用不需要任何加速器。</strong></p>
     </div>
 
-    <h2 id="checksum">校验下载的文件(SHA256)</h2>
+    <h2 id="checksum">文件校验</h2>
     <p data-reveal>安装包体积大,下载过程中可能出现损坏,也可能被第三方替换过。用 SHA256 校验值对一下,几秒钟就能确认文件是否完整、是否就是官方发布的那一个。</p>
 
     <div class="table-scroll" data-reveal>
@@ -163,8 +156,8 @@ setTimeout(function () {
     <p class="small muted" data-reveal>哈希值随每个版本一起发布。如果你看到的是「待填入」,说明该版本的校验值尚未公布,
       此时请以官方发布页显示的附件信息为准。</p>
 
-    <h3 id="how-to-verify">怎么校验(Windows 自带工具,不用装任何软件)</h3>
-    <p data-reveal>下载完成后,在<strong>文件所在的文件夹</strong>里打开 PowerShell(在文件夹空白处按住 Shift 点右键 → “在此处打开 PowerShell 窗口” / “在终端中打开”),然后执行:</p>
+    <h3 id="how-to-verify">校验方法</h3>
+    <p data-reveal>下载完成后,在<strong>文件所在的文件夹</strong>中打开 PowerShell:在文件夹空白处按住 Shift 点击右键,选择“在此处打开 PowerShell 窗口”或“在终端中打开”,然后执行:</p>
 
     <div class="copy-row" data-reveal>
       <code id="cmd-ps">Get-FileHash .\ALHPro_v1.3.6_Setup.exe -Algorithm SHA256</code>
@@ -207,7 +200,7 @@ setTimeout(function () {
 
     <h2 id="install">安装步骤</h2>
     <ol>
-      <li><strong>下载安装包</strong>(标准版或完整版),建议顺手对一下 SHA256。</li>
+      <li><strong>下载安装包</strong>(标准版或完整版),并核对 SHA256。</li>
       <li><strong>双击运行。</strong>默认安装位置是当前用户目录
         <code>C:\Users\你的用户名\AppData\Local\Programs\ALH Pro</code>,不需要管理员权限;想装到别处可以自己改,选 Program Files 时会要求管理员权限。</li>
       <li><strong>一路“下一步”。</strong>在「选择附加任务」页会出现一个可选项「下载并安装模型包(约 1.4 GB,来自 GitHub)」——
@@ -215,7 +208,7 @@ setTimeout(function () {
       <li><strong>如果没勾模型包、之后要用 AI 抠图:</strong>下载 <code>models_v1.0.zip</code>,把里面的 6 个 <code>.onnx</code> 文件
         <strong>直接解压到</strong> <code>程序目录\engines\rembg\</code>(不要再套一层文件夹)。模型装好的标志:AI 抠图页左上角的黄色提示消失。
         详细图文见 <a href="tutorial.html#cutout-models">使用教程</a>。</li>
-      <li><strong>首次启动请耐心等 1~2 分钟。</strong>Windows 的安全软件会完整扫描程序和安装包,这段时间双击后可能“没反应”,不是卡死;
+      <li><strong>首次启动需等待 1~2 分钟。</strong>Windows 的安全软件会完整扫描程序和安装包,这段时间双击后可能“没反应”,并非卡死;
         等第一次扫描完成后,以后启动就快了。</li>
       <li><strong>开始使用:</strong>左侧选功能(图片放大 / AI 抠图 / 视频处理 / 音频处理)→ 添加素材 → 调整参数 → 点「开始处理」。</li>
     </ol>
@@ -227,7 +220,7 @@ setTimeout(function () {
       <li>软件内「设置」可以勾选「不再提示更新」;默认情况下启动时会检查一次是否有新版本(见 <a href="privacy.html#network">隐私说明 · 联网行为</a>)。</li>
     </ul>
 
-    <h2 id="slow">下载慢 / 下不动怎么办</h2>
+    <h2 id="slow">下载速度慢或中断</h2>
     <div class="table-scroll" data-reveal>
       <table>
         <thead>
@@ -254,9 +247,9 @@ setTimeout(function () {
     </div>
     <p class="small muted" data-reveal>镜像站是第三方公共服务,本项目无法保证其长期可用,也不对其内容负责,请认准下载到的文件名与大小,并按要求核对 SHA256。</p>
 
-    <h2 id="firstrun">首次运行被安全软件拦截 / 提示“未知发布者”?</h2>
+    <h2 id="firstrun">安全软件拦截与“未知发布者”提示</h2>
     <p data-reveal>安装包<strong>没有购买商业代码签名证书</strong>,所以 Windows 与部分安全软件可能提示“未知发布者”,或对安装包、解压行为做出拦截提示。
-      这是未签名软件的常见现象,不代表文件有毒。建议的做法是:</p>
+      这是未签名软件的常见现象,不代表文件含恶意代码。建议按以下顺序处理:</p>
     <ol>
       <li>先按上文核对 SHA256,确认文件就是官方发布的那一个;</li>
       <li>确认无误后,在安全软件里选择“允许 / 信任”,或把安装包与程序目录加入白名单;</li>
@@ -265,7 +258,7 @@ setTimeout(function () {
     </ol>
 
     <div class="note" data-reveal>
-      <p><span class="note-title">找不到下载入口?</span>
+      <p><span class="note-title">官方下载渠道</span>
       本站只提供官方渠道:GitHub Releases 与作者的百度网盘。请勿从第三方下载站、网盘分享或“绿色版”渠道获取安装包——
       这类来源的软件可能被修改或捆绑其他内容,本项目的许可也<strong>不允许</strong>他人重新打包分发。</p>
     </div>
