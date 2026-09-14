@@ -1038,7 +1038,12 @@ h2.is-in .wtok { opacity: 1; transform: none; }
   46%, 80% { opacity: 0; }
   100%     { opacity: 1; }
 }
-.demo-cut .ct-subject { position: absolute; inset: 0; z-index: 3; color: var(--accent); }
+/* 【2026-09-14 修「主体被裁」】原来只有 `position:absolute; inset:0`,没给尺寸 ——
+   而 SVG 是**替换元素**:width/height 为 auto 时按自身 viewBox 的宽高比取尺寸,inset 的拉伸对它无效。
+   实测:面板 299×76,SVG 被撑成 **297×152**(高 2 倍),圆头落在 33~84px(刚出下沿)、
+   身体落在 92~137px(完全在面板外被 overflow 裁掉)—— 用户看到的就是"只剩半个头、没有身子"。
+   显式给 100%/100% 后 SVG 铺满面板,再由默认 preserveAspectRatio=xMidYMid meet 把 152×78 等比居中放入。 */
+.demo-cut .ct-subject { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; color: var(--accent); }
 .demo-cut .ct-marquee {
   position: absolute; left: 50%; top: 50%; z-index: 4;
   width: 66px; height: 54px; margin: -27px 0 0 -33px;
