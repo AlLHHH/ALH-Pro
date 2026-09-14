@@ -9,16 +9,14 @@
 
     <Grid>
         <Grid.ColumnDefinitions>
-            <!-- 【宽度 300 → 410 · 2026-09-14 用户反馈"下拉框被遮挡"】
-                 根因:本页左栏固定 300px,ComboBox 拉伸后只有 268px,内部留白 + 下拉箭头占约 56px,
-                 真正能放文字的只有 ~212px。而超分模型下拉最长两项用界面字体(微软雅黑 14px)实测:
-                   「通用 · realesr-general-wdn-x4v3（5MB · 快）」 = 310px
-                   「动漫 · realesrgan-x4plus-anime（9MB · 中）」 = 304px
-                   「通用 · realesrgan-x4plus（41MB · 超慢）」   = 278px  ← 用户截图里被裁的就是它
-                 所以 300 一直是不够的(只是"超慢"那三个红字最容易看出来)。410 能让最长项(310)完整放下:
-                   410 − 约 32(卡片/滚动条留白) = 378 的 ComboBox → 减去 56 = 322 可用 > 310 ✓
-                 右栏是 `*`,窗口小的时候右栏先缩,不会把右栏挤坏。 -->
-            <ColumnDefinition Width="410"/>
+            <!-- 【宽度回退 410 → 300 · 2026-09-14 用户反馈】
+                 加宽面板会把右侧任务列表挤窄,用户要求"缩回去、改成把括号内容简写"。
+                 于是恢复原宽,并把该面板里**所有**超过可用宽度的标签统一缩写
+                 (可用宽度 ≈ 300 − 32(面板留白) − 56(边框+下拉箭头) = 212px,用界面字体实测):
+                   旧「通用 · general-wdn-x4v3（5MB · 快）」258px → 新「通用 · wdn-x4v3（快）」~161px
+                   旧「nlmeans + hqdn3d（空间域与时间域联合降噪,推荐）」355px → 新「nlmeans + hqdn3d（推荐）」~150px
+                 体积/耗时档没丢:改放模型下拉的 ToolTip(悬停可见),见下面 VideoEsrganModelCombo。 -->
+            <ColumnDefinition Width="300"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
@@ -59,12 +57,12 @@
                              改成 `upconv_7_anime`:与「预设摘要」里既有的叫法(`动漫·upconv_7_anime`,
                              见 VideoView.xaml.cs 的 UpWaifu2xModelNames)一致,长度 ~250px 可完整显示。
                              Tag 仍是引擎要的目录全名,不受显示名影响。 -->
-                        <ComboBoxItem Content="通用 · models-cunet（24MB · 中）" Tag="models-cunet"/>
-                        <ComboBoxItem Content="动漫 · upconv_7_anime（5MB · 快）" Tag="models-upconv_7_anime_style_art_rgb"/>
-                        <ComboBoxItem Content="现实 · upconv_7_photo（5MB · 快）" Tag="models-upconv_7_photo"/>
+                        <ComboBoxItem Content="通用 · cunet（24MB·中）" Tag="models-cunet"/>
+                        <ComboBoxItem Content="动漫 · upconv_7_anime（快）" Tag="models-upconv_7_anime_style_art_rgb"/>
+                        <ComboBoxItem Content="现实 · upconv_7_photo（快）" Tag="models-upconv_7_photo"/>
                     </ComboBox>
                     <ComboBox x:Name="VideoEsrganModelCombo" Visibility="Collapsed"
-                              ToolTipService.ToolTip="Real-ESRGAN 模型(动漫/通用)。标「超慢」的 realesrgan-x4plus 只有 4x 权重:1080p 源实测约 14.5 秒/帧(比 animevideov3 慢 17 倍),建议只在图片上用"
+                              ToolTipService.ToolTip="Real-ESRGAN 模型(动漫/通用),按速度与体积从快到慢排列&#x0a;动漫 · animevideov3  4MB  1080p 约 0.26~0.30 秒/帧&#x0a;通用 · general-x4v3   5MB  约 0.458 秒/帧&#x0a;通用 · wdn-x4v3      5MB  约 0.460 秒/帧(游戏/动漫素材细节更多)&#x0a;动漫 · x4plus-anime  9MB  约 3.85 秒/帧&#x0a;通用 · x4plus       41MB  约 15 秒/帧(超慢,建议只在图片上用;且只有 4x 权重)"
                               SelectionChanged="Combo_Changed">
                         <!-- 【标签长度 · 2026-09-14 用户反馈"下拉框被遮挡"】左栏内部留白吃掉约 104px,
                              即使左栏加宽到 410,ComboBox 也只有 306px ⇒ 文字可用宽度 ~250px。
@@ -72,13 +70,13 @@
                              所以去掉冗余前缀(`realesr-` / `realesrgan-` / `models-`;引擎名由上面的
                              「超分引擎」与 ToolTip 说明,预设摘要里也一直是这个短叫法),现在最长 ~240px ✓。
                              ⚠ 读模型名一律走 Tag(引擎要的全名),不许改成读 Content —— 见 VideoView.xaml.cs 的 SelModel。 -->
-                        <ComboBoxItem Content="动漫 · animevideov3（4MB · 快）" Tag="realesr-animevideov3"/>
-                        <ComboBoxItem Content="通用 · general-x4v3（5MB · 快）" Tag="realesr-general-x4v3"/>
+                        <ComboBoxItem Content="动漫 · animevideov3（快）" Tag="realesr-animevideov3"/>
+                        <ComboBoxItem Content="通用 · general-x4v3（快）" Tag="realesr-general-x4v3"/>
                         <!-- ↓ 第 3 项(序号 2):自转的带降噪通用模型。**这一行绝不能少** ——
                              2026-09-14 重排时曾漏掉它(只留了注释),结果下拉里 5 项变 4 项,
                              而 VideoModelOrder 仍按 5 项映射(Rev2 的 4→新 2),老用户存的序号会被解释成错的模型。
                              是"看真实界面截图"才发现的;以后改这个下拉,必须用界面确认 5 项都在且顺序如上。 -->
-                        <ComboBoxItem Content="通用 · general-wdn-x4v3（5MB · 快）" Tag="realesr-general-wdn-x4v3"/>
+                        <ComboBoxItem Content="通用 · wdn-x4v3（快）" Tag="realesr-general-wdn-x4v3"/>
                         <!-- 【顺序 · Rev3 · 2026-09-14 用户要求】整个下拉按**速度与体积**排(快/小 → 慢/大):
                              0 realesr-animevideov3 4MB 0.26~0.30 秒/帧
                              1 realesr-general-x4v3  5MB 0.458 秒/帧
@@ -91,7 +89,7 @@
                              MigrateEsrganModelOrder 调用它;读设置与读预设都走那条路。
                              不迁移的后果:老用户"存的 2 = x4plus-anime"会静默变成 2 = wdn-x4v3。
                              以后若再调顺序:必须 +1 Rev、加一段映射、同步改这里与 UpEsrganModelNames。 -->
-                        <ComboBoxItem Content="动漫 · x4plus-anime（9MB · 中）" Tag="realesrgan-x4plus-anime"/>
+                        <ComboBoxItem Content="动漫 · x4plus-anime（中）" Tag="realesrgan-x4plus-anime"/>
                         <!-- 「通用 · realesrgan-x4plus」按体积(41MB)与耗时(最慢)排在最后,并红字标出"超慢"
                              (用户要求:不删除、只警示)。
                               依据(2026-09-11 本机 4060 Laptop 实测,源 1920×1080 每帧):x4plus 14.48s / x4plus-anime 4.84s /
@@ -100,7 +98,7 @@
                         <ComboBoxItem Tag="realesrgan-x4plus">
                             <!-- 「慢」直接在括号里改成红字「超慢」,不再另挂一个红字标记(用户:冗余了) -->
                             <StackPanel Orientation="Horizontal" Spacing="0">
-                                <TextBlock Text="通用 · x4plus（41MB · " VerticalAlignment="Center"/>
+                                <TextBlock Text="通用 · x4plus（" VerticalAlignment="Center"/>
                                 <TextBlock Text="超慢" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="#E5484D"/>
                                 <TextBlock Text="）" VerticalAlignment="Center"/>
                             </StackPanel>
@@ -146,7 +144,7 @@
                     <TextBlock x:Name="DenoiseKindLabel" Text="降噪算法" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="DenoiseKindCombo" SelectedIndex="0" SelectionChanged="Combo_Changed"
                               ToolTipService.ToolTip="nlmeans + hqdn3d = 空间域与时间域联合降噪(默认):实测帧间抖动 −25%、细节保留 90%,综合最优&#x0a;nlmeans = 仅空间域降噪:去除单帧噪点,对细纹理有一定平滑作用(实测细节保留 71%)&#x0a;hqdn3d = 仅时间域降噪:去除帧间闪烁与颗粒,细节保留最佳,但不处理单帧噪点(实测其空间参数加倍后单帧噪点无变化),快速运动场景可能产生拖影">
-                        <ComboBoxItem Content="nlmeans + hqdn3d（空间域与时间域联合降噪,推荐）"/>
+                        <ComboBoxItem Content="nlmeans + hqdn3d（推荐）"/>
                         <ComboBoxItem Content="nlmeans（仅空间域降噪）"/>
                         <ComboBoxItem Content="hqdn3d（仅时间域降噪）"/>
                     </ComboBox>
@@ -362,7 +360,7 @@
                     <StackPanel x:Name="VfrPanel" Spacing="8" Margin="0,8,0,4" Visibility="Collapsed">
                         <RadioButtons x:Name="VfrModeRadios" SelectedIndex="0"
                                       SelectionChanged="Combo_Changed">
-                            <RadioButton Content="自动(检测到可变帧率素材时启用,推荐)"/>
+                            <RadioButton Content="自动(VFR 素材时启用,推荐)"/>
                             <RadioButton Content="不启用(全部按常规方式处理)"/>
                         </RadioButtons>
                         <TextBlock x:Name="VfrHintText" Text="可变帧率(VFR)视频的帧间隔不均匀,常见于录屏、手机拍摄与监控画面。若按固定帧率拆帧,帧间隔不均匀处的时间轴会被压缩或拉伸,导致播放时快时慢。
@@ -619,7 +617,7 @@
                             ToolTipService.ToolTip="进阶参数,一般不用动"/>
                     <StackPanel x:Name="AdvancedPanel" Spacing="10" Margin="0,8,0,4" Visibility="Collapsed">
                             <TextBlock Text="光流调整" Style="{StaticResource SectionTitle}"/>
-                            <CheckBox x:Name="TtaCheck" Content="开启高质量(减少运动伪影,更清晰)" ToolTipService.ToolTip="高质量(TTA):反复推演减少补帧的跳步/扭曲伪影。⚠ 开启后会严重增加导出时间(约慢 5~7 倍)。默认关闭(追求速度);画质优先可手动开启"
+                            <CheckBox x:Name="TtaCheck" Content="开启高质量(减少伪影)" ToolTipService.ToolTip="高质量(TTA):反复推演减少补帧的跳步/扭曲伪影。⚠ 开启后会严重增加导出时间(约慢 5~7 倍)。默认关闭(追求速度);画质优先可手动开启"
                                       Checked="Options_Changed" Unchecked="Options_Changed"/>
                             <TextBlock Text="⚠ 开启后会严重增加导出时间" Style="{StaticResource HintText}" TextWrapping="Wrap"/>
 
@@ -711,7 +709,7 @@
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
-                    <CheckBox x:Name="FastModeCheck" Content="兼容模式（适合配置较低的设备）" ToolTipService.ToolTip="勾选后自动降低显存占用、防止爆显存/卡死,画质与功能基本不受影响;配置好的设备可不开"
+                    <CheckBox x:Name="FastModeCheck" Content="兼容模式（低配设备）" ToolTipService.ToolTip="勾选后自动降低显存占用、防止爆显存/卡死,画质与功能基本不受影响;配置好的设备可不开"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
                     <TextBlock x:Name="FastModeHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
                                Text="给配置较低/没独显的电脑用的:自动降低显存占用、防止爆显存,画质和功能基本不受影响"/>
