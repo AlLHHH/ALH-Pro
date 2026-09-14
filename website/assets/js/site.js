@@ -246,15 +246,27 @@
   }
 
   /* ==========================================================================
-     §6 章节标题逐词浮现
-     中文按字、拉丁按词;只处理纯文本节点,含子元素的标题退回整块淡入。
+     §6 章节标题:遮罩上滑 + 逐词浮现
+     先把整个标题包进 .t-mask > .t-rise(overflow 隐藏 + 整块上滑 = "遮罩上滑"),
+     再把纯文本标题拆成一个个 .wtok 做逐词错开。
+     用 block 级包裹而不是给每个字加 overflow:后者会让行内块基线退化成底边,
+     数字与单位会错位(实测过)。标题含子元素时只做遮罩上滑,不拆词。
      ========================================================================== */
   var LATIN = /[A-Za-z0-9]/;
 
-  function splitTitle(h2) {
-    if (h2.querySelector('*')) { h2.classList.add('t-title-plain'); return; }
+  function wrapTitle(h2) {
+    var mask = document.createElement('span');
+    mask.className = 't-mask';
+    var rise = document.createElement('span');
+    rise.className = 't-rise';
+    while (h2.firstChild) { rise.appendChild(h2.firstChild); }
+    mask.appendChild(rise);
+    h2.appendChild(mask);
+    return rise;
+  }
 
-    var text = h2.textContent;
+  function splitInto(rise) {
+    var text = rise.textContent;
     if (!text || !text.trim()) { return; }
 
     var frag = document.createDocumentFragment();
@@ -282,15 +294,18 @@
     }
     if (buf) { push(buf); }
 
-    h2.textContent = '';
-    h2.appendChild(frag);
+    rise.textContent = '';
+    rise.appendChild(frag);
   }
 
   function initTitles() {
     var titles = $('main h2');
     if (!titles.length) { return; }
 
-    titles.forEach(splitTitle);
+    titles.forEach(function (h2) {
+      var rise = wrapTitle(h2);
+      if (!rise.querySelector('*')) { splitInto(rise); }
+    });
 
     if (!hasIO || reduced()) {
       titles.forEach(function (h) { h.classList.add('is-in'); });
@@ -306,6 +321,30 @@
     }, { rootMargin: '0px 0px -8% 0px', threshold: 0 });
 
     titles.forEach(function (h) { io.observe(h); });
+  }
+
+  /* ==========================================================================
+     §6.5 功能演示:进入视口才播,离开立刻暂停
+     演示全是 CSS 无限循环动画,默认 `animation-play-state: paused`;
+     这里用 IO(不订阅 scroll)按可见性切 .is-live。
+     离开视口就停 —— 既不浪费电,也不让它们在滚动时参与合成。
+     ========================================================================== */
+  function initDemos() {
+    var demos = $('.demo');
+    if (!demos.length) { return; }
+
+    if (!hasIO) {
+      demos.forEach(function (d) { d.classList.add('is-live'); });
+      return;
+    }
+
+    // 用 threshold 而不是放大 rootMargin:只有"看得见一大半"时才播,
+    // 同一时刻在播的演示更少,滚动期的合成压力也更小
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { e.target.classList.toggle('is-live', e.isIntersecting); });
+    }, { rootMargin: '0px', threshold: 0.35 });
+
+    demos.forEach(function (d) { io.observe(d); });
   }
 
   /* ==========================================================================
@@ -606,6 +645,7 @@
 
     safe(initReveal);
     safe(initTitles);
+    safe(initDemos);
     safe(initCounters);
     safe(initCardGlow);
     safe(initFlow);
