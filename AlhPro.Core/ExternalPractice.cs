@@ -262,14 +262,22 @@ public static class ExternalPractice
     /// <https://github.com/nihui/waifu2x-ncnn-vulkan></summary>
     public const string Waifu2xNcnnVulkanLicense = "【待核实】本次未取得逐字许可文本";
 
-    /// <summary>[未核实·如实记录]**"是否还有许可允许商用/再分发、而我们尚未纳入的模型"这一问,本次没能给出候选**。
-    /// 已确认的是:**我们现在用的这一族本身就已满足"可商用 + 可再分发"**(见上面两条许可),
-    /// 所以"可再分发的选择"并不缺。另被考虑的常见动漫视频超分替代是 Real-CUGAN(bilibili/ailab),
-    /// 但本次**未能取到它的逐字许可文本**(GitHub API 对该仓库返回 403、本机到 github.com 的直连也不稳),
-    /// 因此**不做任何推荐、也不写任何数字** —— 按本工程口径,"没出处"就不能进参数表。
-    /// 【下次要做的话】把 Real-CUGAN / Real-CUGAN-ncnn-vulkan 的 LICENSE 与权重许可靠下来再谈。</summary>
+    /// <summary>[2026-09-14 更新]**结论刷新**:当初写的是"未取到 Real-CUGAN 的逐字许可文本";
+    /// 这次把两边都查清了(逐字,见下)——
+    ///   · **Real-CUGAN**:代码仓库 `bilibili/ailab` 的 `Real-CUGAN/LICENSE` 是 **MIT(c) 2022 bilibili**
+    ///     (2022-02-01 加入),但 `Real-CUGAN/weights_v3/` 里**只有一个 README**,全文是
+    ///     "Please download the weight files from netdisks and put them here." ⇒ **权重不在仓库、上游对权重
+    ///     没有给出任何书面许可**。可再分发的实际来源是第三方移植 `nihui/realcugan-ncnn-vulkan`(MIT,c) 2019 nihui),
+    ///     那是"别人转的",不等于权重作者授权 ⇒ **结论不变:不做推荐**。
+    ///   · **`realesr-general-wdn-x4v3`**:权重是上游官方 release v0.2.5.0 的资产(作者 xinntao 本人发布,
+    ///     SHA256 1641F8C4…),项目许可 **BSD 3-Clause(c) 2021 Xintao Wang**,README 与 docs 里**没有任何**
+    ///     "仅研究/禁商用"表述 ⇒ 与在用的 general-x4v3 同族同许可,**可以随包分发**,已于 2026-09-14 接线
+    ///     (自转 ncnn;同架构、同 bin 字节数,实测单价 0.460 秒/帧 @1080p)。
+    ///   · 同类坑提醒:`cszn/SRMD`、`cszn/RealSR` 两个权重来源仓库**都没有 LICENSE 文件**,并不比 Real-CUGAN 干净。</summary>
     public const string NoVerifiedAdditionalRedistributableModel =
-        "未取得 Real-CUGAN 等替代模型的逐字许可文本 ⇒ 不做推荐;现有模型(BSD-3/MIT)已可再分发";
+        "许可逐字核实(2026-09-14):Real-CUGAN 代码 MIT 但上游权重未附许可 ⇒ 不推荐;"
+        + "realesr-general-wdn-x4v3 取自官方 BSD-3 release ⇒ 已纳入(许可与在用模型同族);"
+        + "SRMD / RealSR 的权重来源仓库无 LICENSE ⇒ 同样不推荐";
 
     // ============ ⑤ 显存 → 分块/批次:外部**没有**可用表 ============
 

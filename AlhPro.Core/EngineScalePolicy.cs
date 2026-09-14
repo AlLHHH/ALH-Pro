@@ -13,16 +13,23 @@ namespace AlhPro.Core;
 /// (与 1x 缩回同一手法:`ShrinkRatio = 目标/引擎倍数`,调用方已有的缩放步骤直接生效)。</summary>
 public static class EngineScalePolicy
 {
-    /// <summary>x4plus 系(含自转的 general-x4v3)只有 4x 权重:必须按原生 4x 跑再缩回。</summary>
+    /// <summary>x4plus 系(含自转的 general-x4v3、带降噪的 general-wdn-x4v3)只有 4x 权重:
+    /// 必须按原生 4x 跑再缩回。
+    /// 【2026-09-14 补 wdn】自转的 `realesr-general-wdn-x4v3`(官方 BSD-3 权重 pth→ncnn)与 general-x4v3 同架构、
+    /// 同样只有 4x 权重。**不在这里登记会出事**:它既不含 "x4plus" 也不含 "general-x4v3"(名字是
+    /// general-**wdn**-x4v3),会被当成普通模型 → 目标 2x 时下发 `-s 2`。实测该路径下输出与双三次的
+    /// PSNR 只有 ~14 dB(官方 general-x4v3 走 `-s 2` 同样 13.92 dB),即"用 4x 权重按 2x 贴图"的坏路径;
+    /// 登记后固定走 4x + 缩回,与既有 x4plus 家族一致。</summary>
     public static bool Is4xOnlyModel(string model)
     {
         string m = model ?? "";
         return m.Contains("x4plus", StringComparison.OrdinalIgnoreCase)
-            || m.Contains("general-x4v3", StringComparison.OrdinalIgnoreCase);
+            || m.Contains("general-x4v3", StringComparison.OrdinalIgnoreCase)
+            || m.Contains("wdn-x4v3", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>该模型有没有原生 1x 权重。实测:Real-ESRGAN 全家(x4plus / x4plus-anime / general-x4v3 /
-    /// animevideov3)都**没有** x1(animevideov3 只有 x2/x3/x4)→ 全部为 false。</summary>
+    /// 自转的 general-wdn-x4v3 / animevideov3)都**没有** x1(animevideov3 只有 x2/x3/x4)→ 全部为 false。</summary>
     public static bool ModelHasNative1x(string engine, string model) => false;
 
     /// <summary>引擎倍数决策结果。<paramref name="ShrinkRatio"/> = 目标倍数 ÷ 引擎倍数

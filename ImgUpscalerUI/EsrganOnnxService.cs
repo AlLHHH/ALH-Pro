@@ -86,11 +86,30 @@ public static class EsrganOnnxService
         return null;
     }
 
+    /// <summary>自转的带降噪通用模型 ONNX(engines/realesrgan/ realesr-general-wdn-x4v3.onnx;4.9MB)。
+    /// 【2026-09-14】为什么必须单独找它:ONNX 侧原来只有「动漫 animevideov3」与「通用 x4plus」两份,
+    /// 用户在 50 系/无独显设备上选了 wdn,若按通用分支回退到 x4plus,就会【静默换成另一支模型】
+    /// (x4plus 慢 30 倍且更平)——与 ncnn 侧选择的画质不符。所以补这份 ONNX(4x 原生,与 ncnn 侧同一权重)。</summary>
+    public static string? FindWdnModel()
+    {
+        var root = Path.Combine(EngineService.EnginesDir, "realesrgan");
+        foreach (var f in new[] { "realesr-general-wdn-x4v3.onnx", "realesr_general_wdn_x4v3.onnx" })
+        {
+            foreach (var found in Directory.EnumerateFiles(root, f, SearchOption.AllDirectories))
+                return found;
+            var direct = Path.Combine(root, f);
+            if (File.Exists(direct)) return direct;
+        }
+        return null;
+    }
+
     /// <summary>按所选 Real-ESRGAN 模型名解析对应的 ONNX 模型路径:动漫模型(名字含 anime,如 animevideov3/x4plus-anime)
-    /// → 优先动漫 ONNX(保持动漫画质),无则通用;通用模型(x4plus)→ 通用 ONNX,若无通用 ONNX 则回退动漫 ONNX
-    /// (风险设备上"能用"优先于"画质精确",避免硬走会崩的 ncnn-GPU)。</summary>
+    /// → 优先动漫 ONNX(保持动漫画质),无则通用;自转的 wdn-x4v3 → 优先它自己的 ONNX;通用模型(x4plus)→
+    /// 通用 ONNX,若无通用 ONNX 则回退动漫 ONNX(风险设备上"能用"优先于"画质精确",避免硬走会崩的 ncnn-GPU)。</summary>
     public static string? ResolveEsrganOnnxPath(string model)
     {
+        if (model.Contains("wdn-x4v3", StringComparison.OrdinalIgnoreCase))
+            return FindWdnModel() ?? FindModel() ?? FindAnimeVideoModel();
         if (model.Contains("anime", StringComparison.OrdinalIgnoreCase))
             return FindAnimeVideoModel() ?? FindModel();
         return FindModel() ?? FindAnimeVideoModel();

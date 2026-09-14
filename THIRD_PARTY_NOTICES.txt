@@ -19,6 +19,14 @@ ALH Pro — 第三方组件许可声明
    许可: MIT License(nihui 引擎包装层)
          BSD 3-Clause License(模型与算法,xinntao)
    版权: nihui(2021)/ Xintao Wang 等(2021)
+   模型: realesr-animevideov3(x2/x3/x4)、realesrgan-x4plus、realesrgan-x4plus-anime、
+         realesr-general-x4v3 —— 均取自上游官方发布;
+         realesr-general-wdn-x4v3 —— 取自上游官方 release v0.2.5.0
+         (https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.5.0,作者 xinntao 发布,
+         SHA256 1641F8C4464B9F097C9FDDA5589273713F67CF59F3D909E0BD688F0CEE269DCA),
+         上游只提供 PyTorch 权重,本项目将其转换为 ncnn 格式(param/bin)与 ONNX 后随软件分发;
+         转换不改变许可:仍为 BSD 3-Clause,版权归 Xintao Wang 等(2021),
+         转换工具 pnnx/ncnn 为 BSD 3-Clause(Tencent)。
 
 3. RIFE-ncnn-vulkan(视频补帧引擎)
    项目: https://github.com/hzwer/arXiv2020-RIFE
