@@ -128,12 +128,12 @@ public class VideoPipelineTests
             interp: false, 2, dedup: false, 0, freeRamGB: 10.4)
             - VideoPipeline.EstimateProcessSeconds(5, 30, 1920, 1080, up: true, 2.0, "waifu2x",
             interp: false, 2, dedup: false, 0);
-        // 60s×30fps = 1800 帧、设备好(10.4G)、视频长(源 1800 ≥ 900)→ 用户口径 400 帧/批 → ⌈1800/400⌉ = 5 批
+        // 60s×30fps = 1800 帧、设备好(10.4G)、视频长(源 1800 ≥ 900)→ 【T 口径变更】700 帧/批 → ⌈1800/700⌉ = 3 批
         double longClip = VideoPipeline.EstimateProcessSeconds(60, 30, 1920, 1080, up: true, 2.0, "waifu2x",
             interp: false, 2, dedup: false, 0, freeRamGB: 10.4)
             - VideoPipeline.EstimateProcessSeconds(60, 30, 1920, 1080, up: true, 2.0, "waifu2x",
             interp: false, 2, dedup: false, 0);
-        Assert.Equal(5 * VideoPipeline.AssumedEngineStartupSecondsPerBatch * 1.15, longClip, 6);
+        Assert.Equal(3 * VideoPipeline.AssumedEngineStartupSecondsPerBatch * 1.15, longClip, 6);
         Assert.True(longClip > shortClip, "批数多的长素材必须比短素材摊到更多启动开销");
     }
 
@@ -141,7 +141,8 @@ public class VideoPipelineTests
     public void Estimate_batch_count_follows_interp_multiplied_frame_total()
     {
         // 用户点名要算【补帧后总帧数】:同样 10s 素材,补帧 4x 后总帧数 ×4 → 单批豁免不再成立,
-        // 批数随之变多(估算里能看出这笔账)。5s×30fps=150 帧 → 补帧 4x = 600 帧 > 400 → 设备好按 200/批 → 3 批。
+        // 批数随之变多(估算里能看出这笔账)。5s×30fps=150 帧 → 补帧 4x = 600 帧 > 400 → 
+        // 【T 口径变更】设备好按 350/批 → ⌈600/350⌉ = 2 批(旧口径 ⌈600/200⌉=3)。
         double noInterpWithRam = VideoPipeline.EstimateProcessSeconds(5, 30, 1920, 1080, up: true, 2.0, "waifu2x",
             interp: false, 2, dedup: false, 0, freeRamGB: 10.4);
         double noInterpNoRam = VideoPipeline.EstimateProcessSeconds(5, 30, 1920, 1080, up: true, 2.0, "waifu2x",
@@ -151,7 +152,7 @@ public class VideoPipelineTests
             interp: true, 4, dedup: false, 0, freeRamGB: 10.4);
         double interpNoRam = VideoPipeline.EstimateProcessSeconds(5, 30, 1920, 1080, up: true, 2.0, "waifu2x",
             interp: true, 4, dedup: false, 0);
-        Assert.Equal(3 * VideoPipeline.AssumedEngineStartupSecondsPerBatch * 1.15, interpWithRam - interpNoRam, 6);
+        Assert.Equal(2 * VideoPipeline.AssumedEngineStartupSecondsPerBatch * 1.15, interpWithRam - interpNoRam, 6);
     }
 
     [Fact]

@@ -66,15 +66,18 @@ public static class RenderPolicy
     /// <summary>视频逐帧超分的批大小(帧):只按【空闲内存】决定(空余不足→小批=内存峰值低、稳)。
     /// 不再看空闲显存:批大小决定的是每批缓冲在磁盘/内存里的帧数,显存峰值由 VideoTileSize(分块)界定,
     /// 与批大小无关;而空闲显存在 AMD/Intel 上无法真测,拿估算值砍批次只会白白损失吞吐。
-    /// 空闲内存由 GlobalMemoryStatusEx 实测,跨厂商可靠。</summary>
+    /// 空闲内存由 GlobalMemoryStatusEx 实测,跨厂商可靠。
+    /// 【任务 T · 2026-09-13 口径变更】中/高档数字整体上调(120/180/240 → 300/300/700):
+    /// 这一列现在只用于"内存压力"的展示与兜底(UI 日志 `SafeRender.GetVideoBatchSize()`),
+    /// 真正决定每批帧数的是 <see cref="PlanVideoBatches"/> 的"内存档 × 性能档"(见那里)。</summary>
     public static int VideoBatchSize(double freeRamGB)
     {
         if (freeRamGB <= 1.5) return 25;     // 极端紧张
         if (freeRamGB <= 2.5) return 40;
         if (freeRamGB <= 4) return 60;
-        if (freeRamGB <= 6) return 120;
-        if (freeRamGB <= 8) return 180;      // 中档
-        return 240;                          // 空余内存 >8G:最快
+        if (freeRamGB <= 6) return NormalDeviceFramesPerBatch;      // 【T】120 → 300
+        if (freeRamGB <= 8) return NormalDeviceFramesPerBatch;      // 【T】180 → 300
+        return StrongDeviceLargeFramesPerBatch;                     // 【T】240 → 700(空余内存 >8G:最快档)
     }
 
     // ===== 批次口径(2026-09-13 按用户口径重定;旧的 240/8 口径已作废)=====
@@ -100,11 +103,20 @@ public static class RenderPolicy
     /// (含 fastMode/diskTight 减半)算出来的每批帧数都不许低于它。</summary>
     public const int WeakDeviceFramesPerBatch = 50;
 
-    /// <summary>设备好 + 视频不长:每批 200 帧(用户给定)。</summary>
-    public const int StrongDeviceFramesPerBatch = 200;
+    /// <summary>设备正常(内存档或性能档判定为"正常"):每批 300 帧。【任务 T · 2026-09-13 口径变更】
+    /// 旧口径是"沿用内存档 120/180"。【依据】用户在任务 T 里的口径「Normal 120/180 → 300」;
+    /// 300 仍低于"设备好+长片"的 700,峰值(输入帧+本批输出帧并存)只有它的 3/7。【待实测标定】</summary>
+    public const int NormalDeviceFramesPerBatch = 300;
 
-    /// <summary>设备好 + 视频长("批内扩大"):每批 400 帧(用户给定)。</summary>
-    public const int StrongDeviceLargeFramesPerBatch = 400;
+    /// <summary>设备好 + 视频不长:每批 350 帧。【任务 T · 2026-09-13 口径变更】旧口径 200。
+    /// 【依据】用户口径「Strong 短片 200 → 350」。【待实测标定】</summary>
+    public const int StrongDeviceFramesPerBatch = 350;
+
+    /// <summary>设备好 + 视频长("批内扩大"):每批 700 帧。【任务 T · 2026-09-13 口径变更】旧口径 400(×1.75)。
+    /// 【硬条件】只有"性能档 = Fast 且空闲内存 ≥ <see cref="StrongDeviceFreeRamGB"/> 才给" ——
+    /// 见 <see cref="TierBaseFrames"/>;上界抬高同时必须抬高**峰值守门**(见 TempSpaceEstimate.NeedBytes
+    /// 的"每批并存帧"项),不允许只抬上限不给守门。【待实测标定】</summary>
+    public const int StrongDeviceLargeFramesPerBatch = 700;
 
     /// <summary>「视频长」门槛之一(按时长):源帧数 ≥ 900(≈30 秒 @30fps)。【依据】用户点名的"短素材"是
     /// 72 帧/3 秒;900 帧(30 秒)是"明显属于长片"的下限。【待实测标定】</summary>
@@ -128,6 +140,32 @@ public static class RenderPolicy
         => freeRamGB >= StrongDeviceFreeRamGB ? DeviceTier.Strong
          : freeRamGB >= NormalDeviceFreeRamGB ? DeviceTier.Normal
          : DeviceTier.Weak;
+
+    /// <summary>【任务 T】把"性能档"(实测吞吐等)折成与内存档同序的档位,便于取两者**较低**者。</summary>
+    public static DeviceTier TierForPerf(PerfScore score)
+        => score switch
+        {
+            PerfScore.Fast => DeviceTier.Strong,
+            PerfScore.Normal => DeviceTier.Normal,
+            _ => DeviceTier.Weak,
+        };
+
+    /// <summary>【任务 T】档位基准帧数(优先级链的第 ① 步):内存档与性能档**取较低者**,再按"视频长不长"取大档。
+    /// 【为什么取较低者】内存不够却"测得快"时,大批会把同屏临时帧顶爆(峰值随批线性涨);
+    /// 反过来内存够大但"测得慢"(例如 ONNX 落 CPU 8 秒/帧)时,大批只会让每批跑得更久、峰值占盘更久。
+    /// 【700 的硬条件】只有 性能档=Fast **且** 空闲内存 ≥ <see cref="StrongDeviceFreeRamGB"/> 才可能取到 700:
+    /// 内存档取较低者已经蕴含这一条(Strong 内存档 = ≥8G),这里再显式判一次,免得日后有人改坏。</summary>
+    public static int TierBaseFrames(DeviceTier memoryTier, PerfScore perf, double freeRamGB, bool longClip)
+    {
+        var perfTier = TierForPerf(perf);
+        var effective = (DeviceTier)Math.Min((int)memoryTier, (int)perfTier);
+        if (effective == DeviceTier.Strong)
+            return longClip && perf == PerfScore.Fast && freeRamGB >= StrongDeviceFreeRamGB
+                ? StrongDeviceLargeFramesPerBatch   // 700
+                : StrongDeviceFramesPerBatch;       // 350
+        if (effective == DeviceTier.Normal) return NormalDeviceFramesPerBatch;   // 300
+        return WeakDeviceFramesPerBatch;                                         // 50(全档位下界)
+    }
 
     // ===== 面积缩放(任务 Q2 · 2026-09-13)=5====
     /// <summary>面积基准:1080p = 1920×1080 = 2 073 600 px(2.07 Mpx)。批大小按"输入像素"反比缩放时的基准面积。
@@ -187,44 +225,50 @@ public static class RenderPolicy
     /// 【规则(自上而下,命中即止)】
     ///   ① 设备档位 = TierFor(空闲内存):&lt;4G 差 / 4~8G 正常 / ≥8G 好;
     ///   ② 设备 ≥ 正常 且 补帧后总帧数 ≤ SingleBatchMaxPostInterpFrames(400)→ 完全不分批(batchCount=1);
-    ///   ③ 设备好:源帧数 ≥ LongClipMinSourceFrames(900,视频长)→ 400 帧/批;否则 200 帧/批;
-    ///   ④ 设备正常:沿用既有内存档 VideoBatchSize(120/180 —— 仓库里既有的实测标定表);
-    ///   ⑤ 设备差:50 帧/批(用户下界);
-    ///   ⑥ fastMode / diskTight 各自把每批帧数减半(既有的防爆盘/弱机保护),再【钳到 ≥ 50】。
+    ///   ③ 【任务 T 口径变更】档位基准 = (内存档 × 性能档)取较低者 → 长片 700 / 短片 350 / 正常 300 / 差 50
+    ///      (见 <see cref="TierBaseFrames"/>);"性能档"来自 <see cref="DevicePerf"/>:优先用实测吞吐,
+    ///      没有实测数据时回退纯内存档。700 还要求"性能档 = Fast **且** 空闲内存 ≥ 8G"。
+    ///   ④ fastMode / diskTight 各自把每批帧数减半(既有的防爆盘/弱机保护),再【钳到 ≥ 50】。
     ///      ⚠ 冲突点(已如实报告、未自行决定别的折中):在"设备差(基准 50)"档上,减半(→25)会被 50 下界
-    ///      挡住 = 该档减半不生效;其余档位(200→100、400→200、180→90、120→60)减半照常生效。
+    ///      挡住 = 该档减半不生效;其余档位(700→350、350→175、300→150)减半照常生效。
     ///   批数 = ⌈补帧后总帧数 ÷ 每批帧数⌉(不分批时 = 1;这是【预计值】,真正切批按去重后的唯一帧组数,
     ///   由调用方按实际结果再记一行日志)。
     /// 【不设批数上限】仍成立:限批数只能让每批帧数随素材线性变大,同屏临时帧(输入+输出并存)跟着涨 ——
-    ///  与"峰值不暴涨"直接冲突(旧注释里的论证保持不变)。</summary>
+    ///  与"峰值不暴涨"直接冲突(旧注释里的论证保持不变)。
+    /// 【任务 T 要求 4:抬上限必须同时抬峰值守门】批上限 400 → 700(×1.75)后,"输入帧 + 本批输出帧并存"
+    ///  的同屏量同倍数上涨 —— 所以调用方的临时空间预估必须把**每批帧数**算进去
+    ///  (见 TempSpaceEstimate.NeedBytes 的 batchFrames 项与 VideoService 的守门复算),不允许只抬上限。</summary>
     public static VideoBatchPlan PlanVideoBatches(double freeRamGB, int sourceFrames, int postInterpFrames,
-        bool fastMode = false, bool diskTight = false, int srcW = 0, int srcH = 0, int outW = 0, int outH = 0)
+        bool fastMode = false, bool diskTight = false, int srcW = 0, int srcH = 0, int outW = 0, int outH = 0,
+        PerfScore? perf = null)
     {
         if (sourceFrames < 0) sourceFrames = 0;
         if (postInterpFrames < sourceFrames) postInterpFrames = sourceFrames;   // 补帧后帧数 ≥ 源帧数(倍率 ≥1)
         var tier = TierFor(freeRamGB);
-        // ① 每批帧数基准(用户口径)
-        int baseFrames;
+        // 【任务 T】没给性能档 → 回退纯内存档(任务 T 要求 1);给了就用它,并与内存档取较低者。
+        var score = perf ?? DevicePerf.FromRam(freeRamGB);
+        // 「视频长」= 时长长(源帧数)或补帧后体量大(总帧数):两者任一命中就按"批内扩大"处理
+        bool longClip = sourceFrames >= LongClipMinSourceFrames || postInterpFrames >= LongClipMinPostInterpFrames;
+        // ① 每批帧数基准 = 档位基准(内存档 × 性能档,取较低者)
+        int baseFrames = TierBaseFrames(tier, score, freeRamGB, longClip);
         string rule;
-        if (tier == DeviceTier.Strong)
         {
-            // 「视频长」= 时长长(源帧数)或补帧后体量大(总帧数):两者任一命中就按 400 帧/批扩大
-            bool longClip = sourceFrames >= LongClipMinSourceFrames || postInterpFrames >= LongClipMinPostInterpFrames;
-            baseFrames = longClip ? StrongDeviceLargeFramesPerBatch : StrongDeviceFramesPerBatch;
-            rule = $"设备好(空闲内存 {freeRamGB:0.#}G ≥ {StrongDeviceFreeRamGB:0.#}G)+ "
+            var effTier = (DeviceTier)Math.Min((int)tier, (int)TierForPerf(score));
+            string effTxt = effTier switch
+            {
+                DeviceTier.Strong => "好",
+                DeviceTier.Normal => "正常",
+                _ => "差",
+            };
+            rule = $"档位=内存{(tier == DeviceTier.Strong ? "好" : tier == DeviceTier.Normal ? "正常" : "差")}"
+                + $"(空闲内存 {freeRamGB:0.#}G)×性能{score}({(perf.HasValue ? "实测/外部给定" : "无实测→回退内存档")})"
+                + $" → 取较低者={effTxt} → "
                 + (longClip
                     ? $"视频长(源 {sourceFrames} 帧 ≥ {LongClipMinSourceFrames} 或补帧后 {postInterpFrames} 帧 ≥ {LongClipMinPostInterpFrames})→ 批内扩大到 {baseFrames} 帧/批"
-                    : $"视频不长(源 {sourceFrames} 帧 < {LongClipMinSourceFrames} 且补帧后 {postInterpFrames} 帧 < {LongClipMinPostInterpFrames})→ {baseFrames} 帧/批");
-        }
-        else if (tier == DeviceTier.Normal)
-        {
-            baseFrames = Math.Max(WeakDeviceFramesPerBatch, VideoBatchSize(freeRamGB));   // 既有内存档(≥50 恒成立)
-            rule = $"设备正常(空闲内存 {freeRamGB:0.#}G)→ 沿用既有内存档 {baseFrames} 帧/批";
-        }
-        else
-        {
-            baseFrames = WeakDeviceFramesPerBatch;
-            rule = $"设备差(空闲内存 {freeRamGB:0.#}G < {NormalDeviceFreeRamGB:0.#}G)→ 用户下界 {baseFrames} 帧/批";
+                    : $"视频不长(源 {sourceFrames} 帧 < {LongClipMinSourceFrames} 且补帧后 {postInterpFrames} 帧 < {LongClipMinPostInterpFrames})→ {baseFrames} 帧/批")
+                + (baseFrames == StrongDeviceLargeFramesPerBatch
+                    ? $"(700 的硬条件:性能档 Fast 且空闲内存 ≥ {StrongDeviceFreeRamGB:0.#}G,当前 {freeRamGB:0.#}G 满足)"
+                    : "");
         }
         int batch = baseFrames;
         // ⑦ 面积缩放(任务 Q2):输入分辨率越大 → 每批帧数越少,让"输入帧 + 本批输出帧并存"的峰值不随分辨率暴涨。
@@ -245,8 +289,11 @@ public static class RenderPolicy
         // ⑥ 兼容模式/临时盘紧:减半保护保留,但不得破坏用户给的 50 下界
         if (fastMode) { batch = HalveWithFloor(batch); halvedFast = true; }
         if (diskTight) { batch = HalveWithFloor(batch); halvedDisk = true; }
-        // ② 不分批:设备 ≥ 正常 且 补帧后总帧数少(≤ 用户给的最大批)
-        bool single = tier != DeviceTier.Weak && postInterpFrames > 0 && postInterpFrames <= SingleBatchMaxPostInterpFrames;
+        // ② 不分批:档位 ≥ 正常 且 补帧后总帧数少(≤ 用户给的最大批)
+        // 【任务 T】"档位"取"内存档 × 性能档"较低者(与基准帧数同一口径):实测很慢的机器即使内存够大,
+        // 也不该因为"整片一批"而让每批跑得又久又占盘。
+        bool single = Math.Min((int)tier, (int)TierForPerf(score)) >= (int)DeviceTier.Normal
+            && postInterpFrames > 0 && postInterpFrames <= SingleBatchMaxPostInterpFrames;
         if (single) batch = Math.Max(batch, postInterpFrames);
         int count = postInterpFrames <= 0 ? 1 : (int)Math.Min(int.MaxValue, ((long)postInterpFrames + batch - 1) / batch);
         string halveTxt = (halvedFast, halvedDisk) switch
@@ -312,7 +359,8 @@ public static class RenderPolicy
     ///   超分阶段才是真正按每批帧数切批的阶段。两行都会写进日志,便于真机核对。
     /// 【待实测标定】面积反比是近似;scale² 也是近似(引擎可能按 2 的幂跑再缩回)。</summary>
     public static IReadOnlyList<StageBatchPlan> PlanStageBatches(double freeRamGB, int sourceFrames, double scale,
-        int interpScale, int srcW, int srcH, bool upscaleFirst, bool fastMode = false, bool diskTight = false)
+        int interpScale, int srcW, int srcH, bool upscaleFirst, bool fastMode = false, bool diskTight = false,
+        PerfScore? perf = null)
     {
         if (sourceFrames < 0) sourceFrames = 0;
         int k = interpScale < 1 ? 1 : interpScale;
@@ -325,14 +373,14 @@ public static class RenderPolicy
         int upIn = upscaleFirst ? sourceFrames : postInterp;
         int upW = upscaleFirst ? srcW : srcW;   // 旧顺序的超分输入是补帧输出 → 仍是源分辨率
         int upH = upscaleFirst ? srcH : srcH;
-        var up = PlanVideoBatches(freeRamGB, sourceFrames, upIn, fastMode, diskTight, upW, upH, hiW, hiH);
+        var up = PlanVideoBatches(freeRamGB, sourceFrames, upIn, fastMode, diskTight, upW, upH, hiW, hiH, perf);
         list.Add(new StageBatchPlan("超分", upscaleFirst ? "新顺序(超分→补帧)" : "旧顺序(补帧→超分)",
             upIn, upW, upH, AreaFactor(upW, upH), up.BatchSize, up.BatchCount, Advisory: false, Note: up.Rule));
 
         // 补帧阶段:输入帧数 = 源帧(旧顺序)/ 源帧(新顺序,超分不增减帧数);分辨率 = 源 / 放大后
         int ipW = upscaleFirst ? hiW : srcW;
         int ipH = upscaleFirst ? hiH : srcH;
-        var ip = PlanVideoBatches(freeRamGB, sourceFrames, upscaleFirst ? sourceFrames : postInterp, fastMode, diskTight, ipW, ipH, ipW, ipH);
+        var ip = PlanVideoBatches(freeRamGB, sourceFrames, upscaleFirst ? sourceFrames : postInterp, fastMode, diskTight, ipW, ipH, ipW, ipH, perf);
         list.Add(new StageBatchPlan("补帧", upscaleFirst ? "新顺序(超分→补帧)" : "旧顺序(补帧→超分)",
             sourceFrames, ipW, ipH, AreaFactor(ipW, ipH), ip.BatchSize, ip.BatchCount, Advisory: true,
             Note: ip.Rule + ";补帧阶段实际按转场分段跑,此每批帧数为等效参考值"));
@@ -355,13 +403,13 @@ public static class RenderPolicy
     ///   (max(50, 超分侧每批帧数 ÷ scale²)),保持"同批像素量"同量级;补帧倍率只决定【输出】总帧数,不改变批大小。
     /// 【待实测标定】scale² 是面积口径的近似,没有实测的分块/显存峰值曲线;50 是用户下界(与主口径同一条)。</summary>
     public static UpscaleFirstBatchPlan PlanUpscaleFirstBatches(double freeRamGB, int sourceFrames, double scale,
-        int interpScale, bool fastMode = false, bool diskTight = false)
+        int interpScale, bool fastMode = false, bool diskTight = false, PerfScore? perf = null)
     {
         if (sourceFrames < 0) sourceFrames = 0;
         int isc = interpScale < 1 ? 1 : interpScale;
         int postInterp = sourceFrames * isc;
         // 超分侧:它要处理的就是源帧数 → 主口径里"补帧后总帧数"传源帧数
-        var up = PlanVideoBatches(freeRamGB, sourceFrames, sourceFrames, fastMode, diskTight);
+        var up = PlanVideoBatches(freeRamGB, sourceFrames, sourceFrames, fastMode, diskTight, 0, 0, 0, 0, perf);
         // 补帧侧:按面积反比缩小每批帧数(每帧像素 ≈ scale² 倍)
         double area = scale > 1 ? scale * scale : 1.0;
         int interpPer = Math.Max(WeakDeviceFramesPerBatch, (int)Math.Round(up.BatchSize / area));

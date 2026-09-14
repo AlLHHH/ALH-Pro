@@ -349,17 +349,37 @@ public static class SafeRender
     }
 
     /// <summary>视频逐帧超分的【批次决策】(2026-09-13 按用户口径重定):除空闲内存(→设备档位)外,
-    /// 还把"源帧数(视频长度)"与"补帧后总帧数"算进去 —— 短素材不分批、设备好则批内扩大(200/400)、
-    /// 设备差最低 50 一批。规则与门槛全在 RenderPolicy.PlanVideoBatches 里(纯函数、可单测)。
+    /// 还把"源帧数(视频长度)"与"补帧后总帧数"算进去 —— 短素材不分批、批内扩大、设备差最低 50 一批。
+    /// 规则与门槛全在 RenderPolicy.PlanVideoBatches 里(纯函数、可单测)。
     /// 【frameCount 传什么】"补帧→超分"顺序(当前启用)下超分阶段读的是补帧输出,故 postInterpFrames
     /// 传超分阶段的实际输入帧数;sourceFrames 传去重后的源帧数(视频长度口径)。
     /// 【任务 Q2 · 2026-09-13】新增 srcW/srcH = **本阶段输入帧的分辨率**:每批帧数按面积反比缩放
-    /// (1080p 为基准),让同屏临时盘/内存不随分辨率暴涨。两阶段分辨率不同 → 调用方各自传自己的。</summary>
+    /// (1080p 为基准),让同屏临时盘/内存不随分辨率暴涨。两阶段分辨率不同 → 调用方各自传自己的。
+    /// 【任务 T · 2026-09-13】新增 perf = 设备性能档(优先取实测吞吐,见 Core.DevicePerf):
+    /// 传 null 时 PlanVideoBatches 内部回退纯内存档(行为与"没有实测数据"一致)。</summary>
     public static AlhPro.Core.RenderPolicy.VideoBatchPlan GetVideoBatchPlan(
         int sourceFrames, int postInterpFrames, bool fastMode, bool diskTight,
-        int srcW = 0, int srcH = 0, int outW = 0, int outH = 0)
+        int srcW = 0, int srcH = 0, int outW = 0, int outH = 0,
+        AlhPro.Core.PerfScore? perf = null)
     {
-        return AlhPro.Core.RenderPolicy.PlanVideoBatches(FreeRamGB, sourceFrames, postInterpFrames, fastMode, diskTight, srcW, srcH, outW, outH);
+        return AlhPro.Core.RenderPolicy.PlanVideoBatches(FreeRamGB, sourceFrames, postInterpFrames, fastMode, diskTight, srcW, srcH, outW, outH, perf);
+    }
+
+    /// <summary>【任务 T】归一"设备性能档":只用仓库现有的数据(空闲内存 / 实测吞吐 / 核数 / **已实测**显存),
+    /// 不新造昂贵探测。实测吞吐优先用 `PerfMemory` 的"秒/帧 @1080p"(由调用方查好传入 ——
+    /// 指纹键依赖引擎/倍率/去重等参数,只有调用方知道);没有记录就回退纯内存档。
+    /// 显存只认"真测到"的那份(nvidia-smi;AMD/Intel 测不到 → 不参与判定)。</summary>
+    public static AlhPro.Core.PerfScore GetPerfScore(double? measuredSecondsPerFrame1080p, out string reason)
+    {
+        double? vram = null;
+        bool measured = false;
+        try
+        {
+            if (TotalVramGB > 0) { vram = TotalVramGB; measured = true; }
+        }
+        catch { }
+        return AlhPro.Core.DevicePerf.Score(FreeRamGB, CpuCoreCount, measuredSecondsPerFrame1080p,
+            out reason, vram, measured);
     }
 
     /// <summary>视频超分的并行批数(同时几个引擎实例):按显存/内存/核数自动定。
