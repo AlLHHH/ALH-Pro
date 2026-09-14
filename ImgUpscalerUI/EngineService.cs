@@ -2688,26 +2688,38 @@ public static partial class EngineService
         catch (Exception ex) { AppLogger.Warn($"⚠ 黑帧防线判定失败(忽略,不阻塞):{ex.Message.Split('\n')[0]}"); }
     }
 
-    /// <summary>【任务 O1 ③ · 批量路径只提示不抛】抽样最多 3 帧:输出是缺陷帧而对应源帧不是 → 记 Warn。
+    /// <summary>【任务 O1 ③ · 批量路径只提示不抛】抽样检查输出帧:输出是缺陷帧而对应源帧不是 → 记 Warn。
     /// 为什么不抛:视频上层已有逐帧黑帧链(检测 → ONNX 重算 → 回退源帧),在这里抛会绕过它;
     /// 但"引擎 exit=0 却出黑帧"必须留下可检索的线索(真机就是这么静默出过坏片的)。
-    /// 单图路径没这条链,所以那边由 GuardSilentBlackOutput 直接抛可读错误。</summary>
+    /// 单图路径没这条链,所以那边由 GuardSilentBlackOutput 直接抛可读错误。
+    /// 【F2 · 2026-09-14 抽样加密】原先只抽【前 3 帧】(且一命中就 return):批内中后部的坏帧必然漏检
+    /// (这不是唯一的防线 —— 视频链路还会逐帧判黑,那里会走降级;但"引擎静默出坏片"的线索不该只靠运气命中)。
+    /// 现在改成与补帧/补回同一套口径(AlhPro.Core.DefectSampling):均匀分散 + 首尾必查,上下限 8~48,
+    /// 每 32 帧至少 1 帧;本方法只记日志(不降级),故开销上限 = 每批 ≤48 次解码(约 0.7 秒),可忽略。
+    /// 判据不变:输出缺陷【且】同名源帧不缺陷(FrameInspect.IsSilentBlackFailure)。</summary>
     private static void ProbeBatchBlackOutputHint(string inDir, string outDir, string engine, string model, int engineScale)
     {
         try
         {
-            foreach (var o in EnumerateImageFiles(outDir).OrderBy(f => f, StringComparer.OrdinalIgnoreCase).Take(3))
+            var outs = EnumerateImageFiles(outDir).OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
+            int hits = 0;
+            string firstHit = "";
+            foreach (int k in AlhPro.Core.DefectSampling.Plan(outs.Count))
             {
+                var o = outs[k];
                 if (!IsBlackPng(o)) continue;
                 string stem = Path.GetFileNameWithoutExtension(o);
                 string src = Path.Combine(inDir, stem + ".png");
                 if (!File.Exists(src)) src = Path.Combine(inDir, stem + ".jpg");
                 bool srcBlack = File.Exists(src) && IsBlackPngStrict(src);
                 if (!AlhPro.Core.FrameInspect.IsSilentBlackFailure(srcBlack, true)) continue;
-                AppLogger.Warn($"⚠ 抽样发现全黑输出帧({Path.GetFileName(o)}):引擎={engine}/{model},引擎倍数={engineScale}x,exit=0 无报错 —— "
-                    + "疑似该模型缺少对应倍率的权重(或引擎在该尺寸下静默失败);视频链会走黑帧降级(ONNX 重算/回退源帧)");
-                return;
+                hits++;
+                if (firstHit.Length == 0) firstHit = Path.GetFileName(o);
             }
+            if (hits > 0)
+                AppLogger.Warn($"⚠ 抽样发现全黑输出帧({AlhPro.Core.DefectSampling.Describe(outs.Count, hits)},"
+                    + $"首个 {firstHit}):引擎={engine}/{model},引擎倍数={engineScale}x,exit=0 无报错 —— "
+                    + "疑似该模型缺少对应倍率的权重(或引擎在该尺寸下静默失败);视频链会走黑帧降级(ONNX 重算/回退源帧)");
         }
         catch { /* 抽样判定失败不影响流程 */ }
     }
