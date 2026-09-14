@@ -1,21 +1,44 @@
 /* ============================================================================
    ALH Pro 官网 · 样式表
-   目标:克制、专业、像成熟产品官网(参考 Stripe / Linear / Vercel / Resend 一类
-   站点的通行做法,不照抄任何具体站)。
+   目标:动效丰富、但**滚动期一帧都不掉**。成熟产品的观感 + 高性能的实现。
    纯静态、零外部依赖:没有 CDN、没有在线字体、没有图标字体、没有图片纹理。
 
-   八条硬规则(改样式前先读一遍)
-     1. 底色只用中性灰阶,不掺品牌色相;层级靠 surface 的明度差,不靠彩色
-     2. 只有一个强调色,占比很小:只用于链接、主按钮、当前态
-     3. 渐变只在极小面积出现一次(主按钮),不用于标题与大面积背景
-     4. 边框统一 1px 低对比;阴影只做"提升"不做"发光",不用彩色光晕
-     5. 入场动效只有"淡入 + 位移 ≤ 8px",时长 240ms,一次性
-     6. 同组元素错开 40ms/级,最多 4 级;悬停位移 ≤ 1px
-     7. 不做逐词浮现、鼠标跟随光晕、漂浮光斑、滚动视差、滚动劫持
-     8. prefers-reduced-motion 下关掉全部位移与动画,只留颜色变化
+   ─────────────────────────────────────────────────────────────────────────
+   滚动性能铁律(改样式前必读;每条都有实测依据,见仓库外的性能报告)
+     1. 滚动路径上**只允许动 `transform` 与 `opacity`**。
+        不动 box-shadow / background-position / width / height / top / left(feature: 触发重排或重绘)。
+     2. **禁止任何 `backdrop-filter`**。实测:大面积用它会让滚动期 UpdateLayer 涨到 16 倍、
+        Paint 3.4 倍、RasterTask 3.3 倍、主线程任务时长 2.3 倍(见 §0 注释里的对比数字)。
+        吸顶栏改用「近不透明实色」——在纯色底上肉眼几乎无差别。
+     3. **禁止在滚动相关代码里调用任何 scroll API**(scrollTo / scrollIntoView / scrollTop = …)。
+        实测:滚动处理器里的 `scrollIntoView({behavior:'smooth'})` 会让向下滚动时 scrollY
+        回退 51~63 帧、"被拽着走";去掉后回退帧 = 0。这就是"牵引感"的唯一来源。
+     4. 滚动联动优先用 **CSS 滚动驱动动画**(`animation-timeline: scroll()/view()`):
+        它跑在合成器上、不占主线程、不需要 scroll 事件。不支持的引擎用 `@supports` 降级为静态。
+     5. `will-change` 只给"真的每帧在动"的极少数元素,并且**离开视口就摘掉**(IO 控制)。
+     6. 入场的错开 ≤60ms/级、时长 200~600ms、缓动走 `--ease`。
+     7. 悬停位移 ≤2px;悬停只改颜色/边框/阴影。
+     8. `prefers-reduced-motion: reduce` 下关掉全部位移与动画(见 §20)。
+     9. 长列表用 `content-visibility: auto` 做分区隔离(见 §17)。
 
-   组织方式:§1 设计令牌(改主题只改这里)→ §2 基础 → … → §18 减少动效
+   组织方式:§0 性能基线 → §1 设计令牌 → §2 基础 → … → §19 响应式 → §20 减少动效
    ============================================================================ */
+
+/* ===========================================================================
+   §0 实测基线(同一台机器、同一段脚本滚轮输入、3 秒窗口、取 3 次中位数)
+      指标                        d9de0c9(玻璃+大面积 backdrop-filter)   a21e681(无动效)
+      UpdateLayoutTree(样式重算)  1198 次 / 142.6ms                       358 次 / 19.4ms
+      Paint                       1950 次                               573 次
+      RasterTask                  1032 次 / 30.1ms                       309 次 / 12.4ms
+      UpdateLayer                 30828 次 / 14.7ms                      1900 次 / 1.4ms
+      PrePaint                     784 次 / 49.9ms                       678 次 / 23.9ms
+      主线程 TaskDuration          606ms                                 259ms
+      向下滚动时的 scrollY 回退     63 次 / 525px                         51 次 / 425px
+      禁用页面 scrollIntoView 后回退 0 次                                  0 次
+      → 结论:回退(牵引感)100% 来自滚动处理器里的 scrollIntoView;
+        卡顿来自大面积 backdrop-filter(UpdateLayer 16 倍);
+        与强制同步布局无关(Layout 次数 31 vs 41,反而更少)。
+   =========================================================================== */
 
 /* ===========================================================================
    §1 设计令牌
@@ -29,17 +52,19 @@
   --header-h: 60px;
   --toc-h: 44px;
 
-  /* 圆角:克制,不做大圆角气泡 */
+  /* 圆角 */
   --radius-sm: 8px;
   --radius: 12px;
   --pill: 999px;
 
-  /* 时间与曲线:统一 150~240ms,ease-out 系 */
+  /* 时间与曲线 */
   --ease: cubic-bezier(.22, .61, .36, 1);
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
   --t-fast: 150ms;
-  --t: 240ms;
+  --t: 260ms;
+  --t-slow: 420ms;
 
-  /* 字体:全部系统字体栈 */
+  /* 字体 */
   --font: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC",
           "Hiragino Sans GB", "Source Han Sans SC", "Noto Sans CJK SC", sans-serif;
   --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Consolas, "Courier New", monospace;
@@ -55,14 +80,17 @@
 
   --fg: #f4f4f5;
   --fg-soft: #a9a9b0;
-  --muted: #8a8a93;          /* 对比度在 surface 上 ≈5.5:1,不再是勉强及格的 4.5 */
+  --muted: #8a8a93;
 
   --accent: #7da2ff;          /* 低饱和蓝,可当正文链接色 */
   --accent-top: #89adff;      /* 仅主按钮的极小渐变 */
   --accent-bottom: #6f97fa;
-  --accent-ink: #0a0a0b;      /* 强调色块上的文字 */
+  --accent-ink: #0a0a0b;
   --accent-soft: rgba(125, 162, 255, .13);
   --accent-line: rgba(125, 162, 255, .32);
+  --glow: rgba(125, 162, 255, .16);       /* 卡片跟随高光 */
+  --aurora-1: rgba(125, 162, 255, .16);   /* 首屏光斑 */
+  --aurora-2: rgba(162, 116, 255, .14);
 
   --ok: #5ecb9a;
   --ok-soft: rgba(94, 203, 154, .10);
@@ -74,8 +102,10 @@
 
   --shadow-1: 0 1px 2px rgba(0, 0, 0, .40);
   --shadow-2: 0 2px 8px rgba(0, 0, 0, .45);
-  --header-bg: rgba(10, 10, 11, .82);
-  --plate: rgba(255, 255, 255, .92);   /* logo.png 是浅色底图,给它一块浅色垫板 */
+  --shadow-3: 0 8px 24px rgba(0, 0, 0, .50);
+  /* 吸顶栏:近不透明实色,刻意不用 backdrop-filter(滚动期最贵的一项) */
+  --header-bg: rgba(10, 10, 11, .94);
+  --plate: rgba(255, 255, 255, .92);
   --body-bg: #0a0a0b;
 }
 
@@ -92,7 +122,7 @@
 
     --fg: #111827;
     --fg-soft: #4b5563;
-    --muted: #5b636d;        /* 在 surface-2 上 ≈5.2:1,保证 code/表格头里的次要文字也达标 */
+    --muted: #5b636d;
 
     --accent: #2b5cd9;
     --accent-top: #3465e0;
@@ -100,6 +130,9 @@
     --accent-ink: #ffffff;
     --accent-soft: rgba(43, 92, 217, .08);
     --accent-line: rgba(43, 92, 217, .26);
+    --glow: rgba(43, 92, 217, .10);
+    --aurora-1: rgba(43, 92, 217, .10);
+    --aurora-2: rgba(124, 58, 237, .08);
 
     --ok: #0f7a52;
     --ok-soft: rgba(15, 122, 82, .07);
@@ -111,7 +144,8 @@
 
     --shadow-1: 0 1px 2px rgba(17, 24, 39, .05);
     --shadow-2: 0 2px 8px rgba(17, 24, 39, .07);
-    --header-bg: rgba(250, 250, 250, .86);
+    --shadow-3: 0 8px 24px rgba(17, 24, 39, .10);
+    --header-bg: rgba(250, 250, 250, .95);
     --plate: #ffffff;
     --body-bg: #fafafa;
   }
@@ -124,8 +158,8 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  /* 只影响锚点/程序化滚动,不影响滚轮手感;不做任何滚动劫持 */
   scroll-behavior: smooth;
-  /* 平滑锚点跳转时让开吸顶栏(有章节条时再多让一条) */
   scroll-padding-top: calc(var(--header-h) + 20px);
   background: var(--body-bg);
 }
@@ -146,34 +180,15 @@ body {
 
 img { max-width: 100%; height: auto; }
 
-a {
-  color: var(--accent);
-  text-decoration: none;
-  text-underline-offset: 3px;
-  transition: color var(--t-fast) var(--ease);
-}
+a { color: var(--accent); text-decoration: none; text-underline-offset: 3px; transition: color var(--t-fast) var(--ease); }
 a:hover { text-decoration: underline; }
 
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-  border-radius: 6px;
-}
-
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
 ::selection { background: var(--accent-soft); color: var(--fg); }
 
-/* ---------- §2.1 标题与正文节奏 ---------- */
-h1, h2, h3, h4 {
-  color: var(--fg);
-  line-height: 1.25;
-  letter-spacing: -.011em;
-  text-wrap: balance;
-}
-h2 {
-  font-size: clamp(23px, 2.6vw, 30px);
-  font-weight: 700;
-  margin: 60px 0 14px;
-}
+/* ---------- §2.1 标题与正文 ---------- */
+h1, h2, h3, h4 { color: var(--fg); line-height: 1.25; letter-spacing: -.011em; text-wrap: balance; }
+h2 { font-size: clamp(23px, 2.6vw, 30px); font-weight: 700; margin: 60px 0 14px; }
 h2:first-child { margin-top: 0; }
 h3 { font-size: 18.5px; font-weight: 650; margin: 32px 0 10px; }
 h4 { font-size: 16.5px; font-weight: 650; margin: 24px 0 8px; }
@@ -185,7 +200,6 @@ li::marker { color: var(--muted); }
 strong { color: var(--fg); font-weight: 650; }
 em { font-style: normal; color: var(--fg-soft); }
 
-/* 阅读行宽上限:中文约 66~72 字/行 */
 main p, main li { max-width: 74ch; }
 main .grid p, main .grid li, main .card p, main .card li { max-width: none; }
 
@@ -193,267 +207,251 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 44px 0; }
 
 /* ---------- §2.2 行内代码 / 代码块 ---------- */
 code, kbd, samp {
-  font-family: var(--mono);
-  font-size: .88em;
-  font-variant-numeric: tabular-nums;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: .1em .38em;
-  word-break: break-word;
+  font-family: var(--mono); font-size: .88em; font-variant-numeric: tabular-nums;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px;
+  padding: .1em .38em; word-break: break-word;
 }
-pre {
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 16px 18px;
-  overflow-x: auto;
-  line-height: 1.65;
-}
+pre { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; overflow-x: auto; line-height: 1.65; }
 pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-space: pre; }
 
 /* ===========================================================================
    §3 布局容器
    =========================================================================== */
-.wrap {
-  width: 100%;
-  max-width: var(--wrap);
-  margin: 0 auto;
-  padding-left: var(--pad);
-  padding-right: var(--pad);
-}
+.wrap { width: 100%; max-width: var(--wrap); margin: 0 auto; padding-left: var(--pad); padding-right: var(--pad); }
 .content { padding-top: 48px; padding-bottom: 88px; }
 
-.sr-only {
-  position: absolute;
-  width: 1px; height: 1px;
-  padding: 0; margin: -1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-  border: 0;
-}
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
 .skip-link {
-  position: absolute;
-  left: -9999px;
-  top: 0;
-  z-index: 60;
-  background: var(--surface);
-  color: var(--fg);
-  padding: 11px 16px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  position: absolute; left: -9999px; top: 0; z-index: 60;
+  background: var(--surface); color: var(--fg); padding: 11px 16px;
+  border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
 }
 .skip-link:focus { left: 12px; top: 12px; }
 
 /* ===========================================================================
-   §4 吸顶导航(滚动时只改下边框,不做位移、不做阴影跳变)
+   §4 顶部滚动进度条
+   由 CSS 滚动驱动动画 `animation-timeline: scroll(root)` 驱动 ——
+   跑在合成器上,零 JS、零 scroll 事件、不占主线程。
+   不支持的引擎:整条隐藏(@supports 降级),不留空壳。
+   =========================================================================== */
+.page-progress {
+  position: fixed; left: 0; top: 0; right: 0; height: 2px;
+  z-index: 70; pointer-events: none; display: none;
+}
+.page-progress > i {
+  display: block; height: 100%; width: 100%;
+  transform: scaleX(0); transform-origin: 0 50%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-top));
+}
+@supports (animation-timeline: scroll()) {
+  .page-progress { display: block; }
+  .page-progress > i {
+    animation: progressGrow linear both;
+    animation-timeline: scroll(root block);
+  }
+}
+@keyframes progressGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+/* ===========================================================================
+   §5 吸顶导航(近不透明实色,刻意不用 backdrop-filter)
    =========================================================================== */
 .site-header {
-  position: sticky;
-  top: 0;
-  z-index: 50;
+  position: sticky; top: 0; z-index: 50;
   background: var(--header-bg);
   border-bottom: 1px solid transparent;
-  backdrop-filter: saturate(150%) blur(10px);
-  -webkit-backdrop-filter: saturate(150%) blur(10px);
   transition: border-color var(--t) var(--ease);
 }
 .site-header.is-stuck { border-bottom-color: var(--line); }
 
-.header-inner {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  min-height: var(--header-h);
-  flex-wrap: wrap;
-}
+.header-inner { display: flex; align-items: center; gap: 14px; min-height: var(--header-h); flex-wrap: wrap; }
 
-/* ---------- §4.1 品牌 ---------- */
-.brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--fg);
-  font-weight: 650;
-  font-size: 16px;
-  white-space: nowrap;
-}
+.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--fg); font-weight: 650; font-size: 16px; white-space: nowrap; }
 .brand:hover { text-decoration: none; }
-.brand-logo {
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
-  border: 1px solid var(--line);
-  background: var(--plate);
-  padding: 2px;
-}
+.brand-logo { width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--line); background: var(--plate); padding: 2px; transition: transform var(--t) var(--ease-out); }
+.brand:hover .brand-logo { transform: translateY(-1px); }
 .brand-sub { font-size: 12px; font-weight: 400; color: var(--muted); }
 
-/* ---------- §4.2 主导航 ---------- */
-.site-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  margin-left: auto;
-}
+.site-nav { display: flex; flex-wrap: wrap; gap: 2px; margin-left: auto; }
 .site-nav a {
-  display: inline-block;
-  padding: 7px 12px;
-  border-radius: var(--radius-sm);
-  color: var(--fg-soft);
-  font-size: 14.5px;
-  white-space: nowrap;
+  display: inline-block; padding: 7px 12px; border-radius: var(--radius-sm);
+  color: var(--fg-soft); font-size: 14.5px; white-space: nowrap;
   transition: color var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease);
 }
 .site-nav a:hover { color: var(--fg); background: var(--surface-2); text-decoration: none; }
 .site-nav a[aria-current="page"] { color: var(--fg); font-weight: 600; background: var(--surface-2); }
 
-/* ---------- §4.3 手机端汉堡按钮 ---------- */
 .nav-toggle {
-  display: none;
-  margin-left: auto;
-  align-items: center;
-  gap: 9px;
-  padding: 8px 13px;
-  font: inherit;
-  font-size: 14px;
-  color: var(--fg-soft);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
+  display: none; margin-left: auto; align-items: center; gap: 9px; padding: 8px 13px;
+  font: inherit; font-size: 14px; color: var(--fg-soft); background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer;
   transition: border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
 }
 .nav-toggle:hover { border-color: var(--line-strong); color: var(--fg); }
-.nav-toggle-bars,
-.nav-toggle-bars::before,
-.nav-toggle-bars::after {
-  display: block;
-  width: 16px;
-  height: 2px;
-  border-radius: 2px;
-  background: currentColor;
+.nav-toggle-bars, .nav-toggle-bars::before, .nav-toggle-bars::after {
+  display: block; width: 16px; height: 2px; border-radius: 2px; background: currentColor;
   transition: transform var(--t) var(--ease), opacity var(--t-fast) var(--ease);
 }
 .nav-toggle-bars { position: relative; }
-.nav-toggle-bars::before,
-.nav-toggle-bars::after { content: ""; position: absolute; left: 0; }
+.nav-toggle-bars::before, .nav-toggle-bars::after { content: ""; position: absolute; left: 0; }
 .nav-toggle-bars::before { top: -5px; }
 .nav-toggle-bars::after { top: 5px; }
 .nav-toggle[aria-expanded="true"] .nav-toggle-bars { background: transparent; }
 .nav-toggle[aria-expanded="true"] .nav-toggle-bars::before { transform: translateY(5px) rotate(45deg); }
 .nav-toggle[aria-expanded="true"] .nav-toggle-bars::after { transform: translateY(-5px) rotate(-45deg); }
 
-/* 仅在 JS 可用时才折叠导航;禁用 JS 时导航始终可见(可换行) */
 @media (max-width: 900px) {
   .has-js .nav-toggle { display: inline-flex; }
   .has-js .site-nav {
-    display: flex;
-    width: 100%;
-    margin: 0 0 12px;
-    padding-top: 8px;
-    border-top: 1px solid var(--line);
-    flex-direction: column;
-    align-items: stretch;
-    max-height: 0;
-    overflow: hidden;
-    opacity: 0;
-    visibility: hidden;
+    display: flex; width: 100%; margin: 0 0 12px; padding-top: 8px;
+    border-top: 1px solid var(--line); flex-direction: column; align-items: stretch;
+    max-height: 0; overflow: hidden; opacity: 0; visibility: hidden;
     transition: max-height 300ms var(--ease), opacity var(--t-fast) var(--ease), visibility 300ms;
   }
-  .has-js .site-nav.is-open {
-    max-height: min(72vh, 460px);
-    overflow: auto;
-    opacity: 1;
-    visibility: visible;
-  }
+  .has-js .site-nav.is-open { max-height: min(72vh, 460px); overflow: auto; opacity: 1; visibility: visible; }
   .has-js .site-nav a { padding: 11px 14px; }
 }
 
 /* ===========================================================================
-   §5 页内章节条(由 JS 依据 h2[id] 生成;安静的文字导航,不做胶囊高亮)
+   §6 页内章节条(JS 依据 h2[id] 生成;当前章节高亮 + 横向平滑跟随)
+   注意:跟随只作用于这条**内部横向滚动容器**,绝不调用页面级 scroll API。
    =========================================================================== */
 .page-toc {
-  position: sticky;
-  top: var(--header-h);
-  z-index: 45;
+  position: sticky; top: var(--header-h); z-index: 45;
   background: var(--header-bg);
-  backdrop-filter: saturate(150%) blur(10px);
-  -webkit-backdrop-filter: saturate(150%) blur(10px);
   border-bottom: 1px solid var(--line);
 }
 .page-toc[hidden] { display: none; }
 .page-toc-track {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  min-height: var(--toc-h);
-  overflow-x: auto;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
+  display: flex; align-items: center; gap: 0; min-height: var(--toc-h);
+  overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
 }
 .page-toc-track::-webkit-scrollbar { display: none; }
 .page-toc a {
-  flex: 0 0 auto;
-  padding: 5px 11px;
-  border-radius: 6px;
-  font-size: 13.5px;
-  color: var(--muted);
-  white-space: nowrap;
-  transition: color var(--t-fast) var(--ease);
+  position: relative; flex: 0 0 auto; padding: 5px 11px; border-radius: 6px;
+  font-size: 13.5px; color: var(--muted); white-space: nowrap;
+  transition: color var(--t) var(--ease);
 }
 .page-toc a:hover { color: var(--fg); background: var(--surface-2); text-decoration: none; }
 .page-toc a[aria-current="true"] { color: var(--fg); font-weight: 600; }
+/* 高亮下划短横:进入当前态时 scaleX 展开 */
+.page-toc a::after {
+  content: ""; position: absolute; left: 11px; right: 11px; bottom: 1px; height: 2px;
+  border-radius: 2px; background: var(--accent);
+  transform: scaleX(0); transform-origin: 50% 50%;
+  transition: transform var(--t) var(--ease-out);
+}
+.page-toc a[aria-current="true"]::after { transform: scaleX(1); }
 
 /* ===========================================================================
-   §6 首屏
+   §7 首屏
+   光斑 = 预渲染的 CSS 径向渐变 + **只动 transform**;不用 `filter: blur`
+   (大面积 filter 每帧重算,是典型的滚动杀手)。离开视口由 JS 暂停动画。
    =========================================================================== */
 .hero {
+  position: relative;
   padding: clamp(52px, 7vw, 88px) 0 clamp(40px, 5vw, 60px);
   border-bottom: 1px solid var(--line);
+  overflow: hidden;                 /* 裁掉光斑溢出,避免横向滚动条 */
 }
 .hero--page { padding: clamp(38px, 5vw, 60px) 0 clamp(28px, 3.5vw, 40px); }
+.hero-inner { position: relative; z-index: 2; }
 
-/* ---------- §6.1 标题:不套渐变,靠字号与行高建立层级 ---------- */
+.aurora { position: absolute; inset: -15% -5% -25%; z-index: 1; pointer-events: none; }
+.aurora-blob { position: absolute; border-radius: 50%; display: block; }
+.aurora-blob.b1 {
+  width: 56vw; height: 56vw; min-width: 320px; min-height: 320px; left: -12%; top: -26%;
+  background: radial-gradient(circle closest-side, var(--aurora-1), transparent 70%);
+  animation: auroraA 26s var(--ease) infinite alternate;
+}
+.aurora-blob.b2 {
+  width: 48vw; height: 48vw; min-width: 280px; min-height: 280px; right: -10%; top: -14%;
+  background: radial-gradient(circle closest-side, var(--aurora-2), transparent 70%);
+  animation: auroraB 32s var(--ease) infinite alternate;
+}
+.aurora-blob.b3 {
+  width: 42vw; height: 26vw; min-width: 260px; min-height: 180px; left: 30%; bottom: -20%;
+  background: radial-gradient(circle closest-side, var(--aurora-1), transparent 72%);
+  opacity: .65;
+  animation: auroraA 38s var(--ease) infinite alternate-reverse;
+}
+/* 只动 transform / opacity → 全部在合成器完成 */
+@keyframes auroraA {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  50%  { transform: translate3d(5%, 4%, 0) scale(1.08); }
+  to   { transform: translate3d(-3%, 7%, 0) scale(.97); }
+}
+@keyframes auroraB {
+  from { transform: translate3d(0, 0, 0) scale(1.05); }
+  50%  { transform: translate3d(-6%, 5%, 0) scale(.95); }
+  to   { transform: translate3d(3%, 9%, 0) scale(1.07); }
+}
+/* 首屏离开视口 → 暂停光斑动画;同时摘掉 will-change,释放合成层与显存 */
+.aurora-blob { will-change: auto; }
+.hero.is-live .aurora-blob { will-change: transform; }
+.hero:not(.is-live) .aurora-blob { animation-play-state: paused; }
+
+/* 视差:CSS 滚动驱动动画(view()),同样零 JS、不占主线程。
+   注意这里用 **2D translate**:`translate3d` 会强制元素生成独立合成层,
+   对"一次入场/一次性滚过"的元素来说反而更贵(实测 UpdateLayer 涨到 16 倍)。 */
+@supports (animation-timeline: view()) {
+  .aurora {
+    animation: auroraParallax linear both;
+    animation-timeline: view();
+    animation-range: exit 0% exit 100%;
+  }
+  .hero-inner {
+    animation: heroExit linear both;
+    animation-timeline: view();
+    animation-range: exit 0% exit 60%;
+  }
+}
+@keyframes auroraParallax { from { transform: translateY(0); } to { transform: translateY(70px); } }
+@keyframes heroExit { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-26px); opacity: .55; } }
+
+/* ---------- §7.1 首屏入场(一次性,分行/逐个错开) ---------- */
+@keyframes heroIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+.has-js .hero-inner > * { opacity: 0; animation: heroIn 620ms var(--ease-out) both; }
+.has-js .hero-inner > *:nth-child(1) { animation-delay: 40ms; }
+.has-js .hero-inner > *:nth-child(2) { animation-delay: 140ms; }
+.has-js .hero-inner > *:nth-child(3) { animation-delay: 240ms; }
+.has-js .hero-inner > *:nth-child(4) { animation-delay: 330ms; }
+.has-js .hero-inner > *:nth-child(5) { animation-delay: 400ms; }
+.has-js .hero-inner > *:nth-child(6) { animation-delay: 470ms; }
+.has-js .hero-inner > *:nth-child(7) { animation-delay: 540ms; }
+.has-js .hero-inner > *:nth-child(8) { animation-delay: 610ms; }
+/* 徽标容器不参与整块动画,让 li 逐个进 */
+.has-js .hero-inner > .badges { opacity: 1; animation: none; }
+.has-js .hero .badges li { opacity: 0; animation: heroIn 520ms var(--ease-out) both; }
+.has-js .hero .badges li:nth-child(1) { animation-delay: 330ms; }
+.has-js .hero .badges li:nth-child(2) { animation-delay: 390ms; }
+.has-js .hero .badges li:nth-child(3) { animation-delay: 450ms; }
+.has-js .hero .badges li:nth-child(4) { animation-delay: 510ms; }
+.has-js .hero .badges li:nth-child(5) { animation-delay: 570ms; }
+
 .hero-title {
   margin: 0 0 18px;
   font-size: clamp(34px, 5vw, 54px);
-  font-weight: 700;
-  line-height: 1.14;
-  letter-spacing: -.022em;
+  font-weight: 700; line-height: 1.14; letter-spacing: -.022em;
 }
 .hero-title .line { display: block; }
 .hero--page .hero-title { font-size: clamp(29px, 4vw, 42px); }
 
-.hero .lede {
-  font-size: clamp(16px, 1.7vw, 18px);
-  line-height: 1.8;
-  color: var(--fg-soft);
-  margin: 0 0 26px;
-  max-width: 68ch;
-}
+.hero .lede { font-size: clamp(16px, 1.7vw, 18px); line-height: 1.8; color: var(--fg-soft); margin: 0 0 26px; max-width: 68ch; }
 .hero .lede strong { color: var(--fg); }
 
-/* ---------- §6.2 首屏数据条:1px 分隔线由 gap 露出底色形成 ---------- */
+/* ---------- §7.2 首屏数据条 ---------- */
 .hero-specs {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1px;
-  margin: 36px 0 0;
-  padding: 0;
-  list-style: none;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--line);
-  overflow: hidden;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px;
+  margin: 36px 0 0; padding: 0; list-style: none;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--line); overflow: hidden;
 }
 .hero-specs li { margin: 0; max-width: none; padding: 18px 20px; background: var(--surface); }
+/* 数字用行内流对齐(不用 flex):配合 .count 的固定宽度,
+   既保证"0.25 秒 / 帧"的基线对齐,又让数字变化不触发父级重排 */
 .spec-num {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
+  display: block;
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
   font-size: clamp(22px, 2.6vw, 27px);
@@ -462,68 +460,61 @@ pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-spa
   letter-spacing: -.02em;
   color: var(--fg);
 }
-.spec-num i { font-style: normal; font-size: .52em; font-weight: 500; color: var(--muted); }
+.spec-num i { font-style: normal; font-size: .52em; font-weight: 500; color: var(--muted); margin-left: 4px; }
 .spec-label { display: block; margin-top: 8px; font-size: 13.5px; line-height: 1.6; color: var(--muted); max-width: none; }
 
-@media (min-width: 760px) {
-  .hero-specs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-}
+@media (min-width: 760px) { .hero-specs { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 
 /* ===========================================================================
-   §7 卡片网格:平面 + 1px 细边框 + 极浅阴影;悬停只改边框与阴影
+   §8 卡片网格:平面 + 1px 细边框 + 极浅阴影;进入 viewport 时轻微放大 1.02→1
    =========================================================================== */
-.grid {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  margin: 22px 0 8px;
-}
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); margin: 22px 0 8px; }
 .grid-3 { grid-template-columns: repeat(auto-fit, minmax(288px, 1fr)); }
 
 .card {
-  padding: 20px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
-  box-shadow: var(--shadow-1);
-  transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease);
+  position: relative; overflow: hidden; padding: 20px;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); box-shadow: var(--shadow-1);
+  transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease), transform var(--t) var(--ease-out);
 }
 @media (hover: hover) and (pointer: fine) {
-  .card:hover { border-color: var(--line-strong); box-shadow: var(--shadow-2); }
+  .card:hover { border-color: var(--line-strong); box-shadow: var(--shadow-2); transform: translateY(-2px); }
 }
+/* 鼠标跟随高光:一个固定大小的圆,只改 transform 位移(不动渐变、不触发布局) */
+.card::after {
+  content: ""; position: absolute; left: 0; top: 0; width: 340px; height: 340px;
+  margin: -170px 0 0 -170px; border-radius: 50%; pointer-events: none; opacity: 0;
+  background: radial-gradient(circle closest-side, var(--glow), transparent 72%);
+  transform: translate(var(--gx, 50%), var(--gy, 0%));
+  transition: opacity var(--t) var(--ease);
+}
+@media (hover: hover) and (pointer: fine) {
+  .card:hover::after { opacity: 1; }
+}
+.card > * { position: relative; z-index: 1; }
 .card h3 { margin: 0 0 8px; font-size: 17.5px; }
 .card p { margin: 8px 0 0; color: var(--fg-soft); font-size: 15px; }
 .card ul { margin: 10px 0 0; padding-left: 20px; color: var(--fg-soft); font-size: 14.6px; }
 .card .tag { font-size: 12.5px; color: var(--muted); display: block; margin-top: 10px; }
 
-/* 图标:1px 细边框的方形容器,默认中性色,不着色不发光 */
 .card-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  margin: 0 0 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  color: var(--fg-soft);
-  transition: color var(--t) var(--ease), border-color var(--t) var(--ease);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; margin: 0 0 14px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--fg-soft);
+  transition: color var(--t) var(--ease), border-color var(--t) var(--ease), transform var(--t) var(--ease-out);
 }
 .card-icon svg { width: 19px; height: 19px; display: block; }
 @media (hover: hover) and (pointer: fine) {
-  .card:hover .card-icon { color: var(--accent); border-color: var(--accent-line); }
+  .card:hover .card-icon { color: var(--accent); border-color: var(--accent-line); transform: translateY(-1px); }
 }
 
 /* ===========================================================================
-   §8 提示块:1px 细边框 + 左侧 2px 语义色条,不做玻璃与发光
+   §9 提示块
    =========================================================================== */
 .note {
-  margin: 22px 0;
-  padding: 16px 20px;
-  border: 1px solid var(--line);
-  border-left: 2px solid var(--line-strong);
-  border-radius: var(--radius);
-  background: var(--surface);
+  margin: 22px 0; padding: 16px 20px;
+  border: 1px solid var(--line); border-left: 2px solid var(--line-strong);
+  border-radius: var(--radius); background: var(--surface);
 }
 .note > :first-child { margin-top: 0; }
 .note > :last-child { margin-bottom: 0; }
@@ -535,15 +526,9 @@ pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-spa
 p.note { padding: 14px 18px; }
 
 /* ===========================================================================
-   §9 表格
+   §10 表格
    =========================================================================== */
-.table-scroll {
-  overflow-x: auto;
-  margin: 20px 0;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
-}
+.table-scroll { overflow-x: auto; margin: 20px 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 14.8px; }
 th, td { border-bottom: 1px solid var(--line); padding: 11px 14px; text-align: left; vertical-align: top; }
 thead th { background: var(--surface-2); font-weight: 650; color: var(--fg); white-space: nowrap; }
@@ -552,26 +537,20 @@ tbody tr:hover { background: var(--surface-2); }
 tbody tr:last-child td { border-bottom: 0; }
 td code { font-size: .86em; }
 .td-center { text-align: center; white-space: nowrap; }
-/* 实测速度表:数字等宽对齐即可,不着色 */
+/* 实测速度表:数字等宽 + 计数动画时字宽不跳动 */
 .table-speed td:last-child { font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.table-caption {
-  caption-side: bottom;
-  text-align: left;
-  padding: 12px 14px 0;
-  font-size: 13.6px;
-  color: var(--muted);
-}
+.table-speed .count { font-weight: 600; color: var(--fg); }
+/* 计数元素:JS 会给出与最终文本等宽的固定宽度,让"每帧改一次数字"不影响外部布局。
+   注意**不能**用 `contain: size` —— 尺寸隔离会让元素失去内容基线,
+   行内块的基线退化成底边,数字与单位的对齐会错位(实测过,截图可见)。
+   固定宽度已经足够:元素尺寸不变 → 父级排版不重算。 */
+.count { display: inline-block; font-variant-numeric: tabular-nums; }
+.table-caption { caption-side: bottom; text-align: left; padding: 12px 14px 0; font-size: 13.6px; color: var(--muted); }
 
 /* ===========================================================================
-   §10 页内目录卡(教程页)
+   §11 页内目录卡(教程页)
    =========================================================================== */
-.toc {
-  margin: 24px 0;
-  padding: 18px 20px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
-}
+.toc { margin: 24px 0; padding: 18px 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 .toc > strong { display: block; margin-bottom: 8px; font-size: 13px; font-weight: 650; color: var(--muted); }
 .toc ol { columns: 2; column-gap: 32px; margin: 0; padding-left: 20px; font-size: 15px; }
 .toc li { margin: 4px 0; max-width: none; break-inside: avoid; }
@@ -580,42 +559,21 @@ td code { font-size: .86em; }
 @media (max-width: 620px) { .toc ol { columns: 1; } }
 
 /* ===========================================================================
-   §11 折叠块(FAQ / 更新日志):高度过渡即可
+   §12 折叠块(FAQ / 更新日志):高度过渡
    =========================================================================== */
-details {
-  margin: 10px 0;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
-  transition: border-color var(--t) var(--ease);
-}
+details { margin: 10px 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); transition: border-color var(--t) var(--ease); }
 details[open] { border-color: var(--line-strong); }
-@media (hover: hover) and (pointer: fine) {
-  details:hover { border-color: var(--line-strong); }
-}
+@media (hover: hover) and (pointer: fine) { details:hover { border-color: var(--line-strong); } }
 summary {
-  display: flex;
-  gap: 12px;
-  align-items: baseline;
-  padding: 15px 18px;
-  cursor: pointer;
-  font-weight: 650;
-  font-size: 16px;
-  line-height: 1.6;
-  list-style: none;
-  transition: color var(--t-fast) var(--ease);
+  display: flex; gap: 12px; align-items: baseline; padding: 15px 18px;
+  cursor: pointer; font-weight: 650; font-size: 16px; line-height: 1.6;
+  list-style: none; transition: color var(--t-fast) var(--ease);
 }
 summary::-webkit-details-marker { display: none; }
 summary::before {
-  content: "";
-  flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
-  margin-top: .45em;
-  border-right: 1.5px solid var(--muted);
-  border-bottom: 1.5px solid var(--muted);
-  transform: rotate(-45deg);
-  transition: transform var(--t) var(--ease);
+  content: ""; flex: 0 0 auto; width: 7px; height: 7px; margin-top: .45em;
+  border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted);
+  transform: rotate(-45deg); transition: transform var(--t) var(--ease);
 }
 details[open] > summary::before { transform: rotate(45deg); }
 summary:hover { color: var(--accent); }
@@ -627,115 +585,81 @@ summary .when { color: var(--muted); font-weight: 400; font-size: 13.5px; margin
 .details-body.is-animating { overflow: hidden; }
 
 /* ===========================================================================
-   §12 按钮:悬停只改颜色/边框 + 位移 ≤1px;主按钮是页面上唯一一处渐变
+   §13 按钮:悬停位移 ≤2px;主按钮是页面上唯一一处渐变,并带光泽扫过
    =========================================================================== */
 .btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  padding: 12px 20px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  color: var(--fg);
-  font: inherit;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 1.4;
-  cursor: pointer;
+  position: relative; overflow: hidden;
+  display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+  padding: 12px 20px; border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong); background: var(--surface); color: var(--fg);
+  font: inherit; font-size: 15px; font-weight: 600; line-height: 1.4; cursor: pointer;
   transition: background-color var(--t) var(--ease), border-color var(--t) var(--ease),
-              color var(--t) var(--ease), transform var(--t) var(--ease),
-              box-shadow var(--t) var(--ease);
+              color var(--t) var(--ease), transform var(--t) var(--ease-out), box-shadow var(--t) var(--ease);
 }
 .btn:hover { text-decoration: none; }
 .btn svg { width: 18px; height: 18px; flex: 0 0 auto; }
 
-.btn-primary {
-  border-color: transparent;
-  background-image: linear-gradient(180deg, var(--accent-top), var(--accent-bottom));
-  color: var(--accent-ink);
-}
+.btn-primary { border-color: transparent; background-image: linear-gradient(180deg, var(--accent-top), var(--accent-bottom)); color: var(--accent-ink); }
 .btn-ghost { background: var(--surface); color: var(--fg); }
 
-@media (hover: hover) and (pointer: fine) {
-  .btn:hover { transform: translateY(-1px); box-shadow: var(--shadow-2); }
-  .btn-ghost:hover { background: var(--surface-2); border-color: var(--line-strong); }
-  .btn-primary:hover { box-shadow: var(--shadow-2); }
+/* 光泽扫过:只在 hover 时跑一次,且只动 transform */
+.btn-primary::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(100deg, transparent 26%, rgba(255, 255, 255, .5) 50%, transparent 74%);
+  transform: translateX(-130%);
 }
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); }
+  .btn-ghost:hover { background: var(--surface-2); border-color: var(--line-strong); }
+  .btn-primary:hover::after { animation: btnShine 760ms var(--ease-out); }
+}
+@keyframes btnShine { from { transform: translateX(-130%); } to { transform: translateX(130%); } }
 
 .btn-row, .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0 8px; }
 .cta-row { margin: 22px 0 0; }
 .btn-note { color: var(--muted); font-size: 13.6px; margin-top: 8px; max-width: 74ch; }
 
 /* ===========================================================================
-   §13 徽标:统一中性描边,只有版本号用强调色
+   §14 徽标 / 页内 meta
    =========================================================================== */
-.badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 20px 0 4px;
-  padding: 0;
-  list-style: none;
-}
+.badges { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0 4px; padding: 0; list-style: none; }
 .badges li { margin: 0; max-width: none; }
 .badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
-  border-radius: var(--pill);
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--fg-soft);
-  font-size: 13.5px;
-  font-weight: 500;
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px;
+  border-radius: var(--pill); border: 1px solid var(--line); background: var(--surface);
+  color: var(--fg-soft); font-size: 13.5px; font-weight: 500;
 }
 .badge svg { width: 14px; height: 14px; }
-.badge-ok { color: var(--fg-soft); }
 .badge-brand { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); font-weight: 600; }
 .badge-warn { color: var(--warn); border-color: var(--warn-line); }
 
-.page-meta {
-  color: var(--muted);
-  font-size: 14.8px;
-  margin: 0;
-  padding: 0;
-  max-width: 74ch;
-}
+.page-meta { color: var(--muted); font-size: 14.8px; margin: 0; padding: 0; max-width: 74ch; }
 .page-meta code { font-size: .9em; }
 
 /* ===========================================================================
-   §14 复制行 / 许可条目 / 名单
+   §15 复制行 / 许可条目 / 名单
    =========================================================================== */
 .copy-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; }
 .copy-btn {
-  font: inherit;
-  font-size: 13.6px;
-  font-weight: 500;
-  padding: 6px 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--fg-soft);
-  cursor: pointer;
+  font: inherit; font-size: 13.6px; font-weight: 500; padding: 6px 12px;
+  border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--surface);
+  color: var(--fg-soft); cursor: pointer;
   transition: border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
 }
 .copy-btn:hover { border-color: var(--line-strong); color: var(--fg); }
 .copy-btn.is-done { border-color: var(--ok-line); color: var(--ok); background: var(--ok-soft); }
 
+/* 长列表分区隔离:视口外的条目跳过渲染(licenses 页 15 条,页面很长) */
 .lic {
-  margin: 10px 0;
-  padding: 18px 20px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
+  margin: 10px 0; padding: 18px 20px;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
   box-shadow: var(--shadow-1);
-  transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease);
+  transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease), transform var(--t) var(--ease-out);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 150px;
 }
 @media (hover: hover) and (pointer: fine) {
-  .lic:hover { border-color: var(--line-strong); box-shadow: var(--shadow-2); }
+  .lic:hover { border-color: var(--line-strong); box-shadow: var(--shadow-2); transform: translateY(-2px); }
 }
 .lic h3 { margin: 0 0 6px; font-size: 16.5px; }
 .lic dl { margin: 8px 0 0; display: grid; grid-template-columns: 92px 1fr; gap: 4px 14px; font-size: 14.5px; }
@@ -743,43 +667,92 @@ summary .when { color: var(--muted); font-weight: 400; font-size: 13.5px; margin
 .lic dd { margin: 0; color: var(--fg-soft); word-break: break-word; }
 
 .names { display: flex; flex-wrap: wrap; gap: 10px; padding: 0; list-style: none; margin: 18px 0; }
-.names li {
-  margin: 0;
-  max-width: none;
-  padding: 6px 15px;
-  border: 1px solid var(--line);
-  border-radius: var(--pill);
-  background: var(--surface);
-  font-size: 15px;
-}
+.names li { margin: 0; max-width: none; padding: 6px 15px; border: 1px solid var(--line); border-radius: var(--pill); background: var(--surface); font-size: 15px; transition: transform var(--t) var(--ease-out), border-color var(--t) var(--ease); }
+@media (hover: hover) and (pointer: fine) { .names li:hover { transform: translateY(-2px); border-color: var(--accent-line); } }
 
 /* ===========================================================================
-   §15 滚动进入动画:淡入 + 位移 8px、240ms、组内 40ms/级错开(最多 4 级)
-   只触发一次;元素进入视口后立即取消观察
+   §16 滚动进入动画
+   位移 12px + 轻微放大 1.02→1 + 淡入;只在进入视口时触发一次,随即 unobserve。
+   只动 transform / opacity → 合成器友好。
    =========================================================================== */
 .has-js [data-reveal],
 .has-js [data-reveal-group] > * {
   opacity: 0;
-  transform: translateY(8px);
-  transition: opacity var(--t) var(--ease), transform var(--t) var(--ease);
-  transition-delay: calc(var(--d, 0) * 40ms);
+  transform: translateY(12px);
+  transition: opacity var(--t-slow) var(--ease-out), transform var(--t-slow) var(--ease-out);
+  transition-delay: calc(var(--d, 0) * 60ms);
 }
 .has-js [data-reveal].is-in,
 .has-js [data-reveal-group] > *.is-in {
   opacity: 1;
-  transform: none;
+  transform: translateY(0);
 }
+/* 卡片用"轻微放大 → 归位"入场。
+   单独写一条规则、不用 var():在 transform 里放 var() 会让每次样式重算都要重新代入,
+   实测滚动期的样式重算总时长会明显变长。 */
+.has-js .card[data-reveal],
+.has-js [data-reveal-group] > .card { transform: translateY(12px) scale(1.02); }
+.has-js .card[data-reveal].is-in,
+.has-js [data-reveal-group] > .card.is-in { transform: translateY(0) scale(1); }
 
 /* ===========================================================================
-   §16 页脚
+   §17 章节标题:逐词浮现 + 短横线展开
    =========================================================================== */
-.site-footer {
-  padding: 40px 0 44px;
-  font-size: 14.2px;
-  color: var(--muted);
-  border-top: 1px solid var(--line);
-  background: var(--surface);
+h2 { position: relative; padding-top: 20px; }
+h2::before {
+  content: ""; position: absolute; left: 0; top: 0; width: 44px; height: 3px; border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-top));
+  transform: scaleX(0); transform-origin: 0 50%;
+  transition: transform 520ms var(--ease-out);
 }
+h2.is-in::before { transform: scaleX(1); }
+h2:first-child { padding-top: 18px; }
+
+.wtok {
+  display: inline-block; opacity: 0; transform: translateY(.38em);
+  transition: opacity 460ms var(--ease-out), transform 460ms var(--ease-out);
+  transition-delay: calc(var(--wi, 0) * 22ms);
+}
+h2.is-in .wtok { opacity: 1; transform: none; }
+/* 标题里含子元素(如更新日志的日期徽标)时退回整块淡入 */
+.t-title-plain { opacity: 0; transform: translateY(10px); transition: opacity 460ms var(--ease-out), transform 460ms var(--ease-out); }
+.t-title-plain.is-in { opacity: 1; transform: none; }
+
+/* ===========================================================================
+   §18 步骤流:竖线随滚动逐条点亮
+   连接线走 scaleY(合成器);序号节点只改颜色/边框(小面积重绘)
+   =========================================================================== */
+.flow { list-style: none; counter-reset: flowstep; padding-left: 0; margin: 24px 0; }
+.flow > li { position: relative; counter-increment: flowstep; margin: 0; padding: 0 0 26px 60px; max-width: 74ch; }
+.flow > li:last-child { padding-bottom: 0; }
+.flow > li::before {
+  content: counter(flowstep);
+  position: absolute; left: 0; top: 0; width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--surface);
+  font-family: var(--mono); font-size: 14px; font-weight: 600; color: var(--muted);
+  transition: color 420ms var(--ease), border-color 420ms var(--ease),
+              background-color 420ms var(--ease), box-shadow 420ms var(--ease);
+}
+.flow > li::after {
+  content: ""; position: absolute; left: 16px; top: 38px; bottom: 2px; width: 2px; border-radius: 2px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-top));
+  transform: scaleY(0); transform-origin: 50% 0;
+  transition: transform 560ms var(--ease-out);
+}
+.flow > li:last-child::after { display: none; }
+.flow > li.is-lit::before {
+  color: var(--accent-ink); border-color: transparent;
+  background-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+.flow > li.is-lit::after { transform: scaleY(1); }
+.flow > li > :first-child { margin-top: 6px; }
+
+/* ===========================================================================
+   §19 页脚 / 小工具类 / 响应式
+   =========================================================================== */
+.site-footer { padding: 40px 0 44px; font-size: 14.2px; color: var(--muted); border-top: 1px solid var(--line); background: var(--surface); }
 .footer-links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0 0 16px; padding: 0; list-style: none; }
 .footer-links li { margin: 0; max-width: none; }
 .footer-links a { color: var(--fg-soft); }
@@ -789,31 +762,17 @@ summary .when { color: var(--muted); font-weight: 400; font-size: 13.5px; margin
 .icp a { color: var(--muted); }
 .icp a:hover { color: var(--accent); }
 
-/* ===========================================================================
-   §17 小工具类与响应式
-   =========================================================================== */
 .muted { color: var(--muted); }
 .small { font-size: 13.8px; }
 .nowrap { white-space: nowrap; }
 .stack > * + * { margin-top: 12px; }
 .center { text-align: center; }
 .hash { font-family: var(--mono); font-size: 13px; word-break: break-all; white-space: normal; }
-.timeline-ver {
-  font-family: var(--mono);
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-radius: 6px;
-  padding: 2px 8px;
-  margin-right: 8px;
-}
+.timeline-ver { font-family: var(--mono); font-size: 13.5px; font-weight: 600; color: var(--accent); background: var(--accent-soft); border-radius: 6px; padding: 2px 8px; margin-right: 8px; }
 .icon { width: 18px; height: 18px; flex: 0 0 auto; }
 .inline-icon { width: 16px; height: 16px; vertical-align: -3px; margin-right: 5px; }
 
-@media (max-width: 900px) {
-  .header-inner { gap: 10px; }
-}
+@media (max-width: 900px) { .header-inner { gap: 10px; } }
 
 @media (max-width: 720px) {
   :root { --pad: 16px; }
@@ -830,6 +789,9 @@ summary .when { color: var(--muted); font-weight: 400; font-size: 13.5px; margin
   table { font-size: 14px; }
   th, td { padding: 9px 11px; }
   .hero-specs li { padding: 16px; }
+  .flow > li { padding-left: 50px; }
+  .flow > li::before { width: 30px; height: 30px; font-size: 13px; }
+  .flow > li::after { left: 14px; top: 34px; }
 }
 
 @media (min-width: 721px) and (max-width: 1080px) {
@@ -837,7 +799,7 @@ summary .when { color: var(--muted); font-weight: 400; font-size: 13.5px; margin
 }
 
 /* ===========================================================================
-   §18 减少动态效果:关掉全部位移与动画,只保留颜色变化
+   §20 减少动态效果:关掉全部位移与动画,只保留颜色变化
    =========================================================================== */
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
@@ -850,28 +812,37 @@ summary .when { color: var(--muted); font-weight: 400; font-size: 13.5px; margin
     transition-delay: 0ms !important;
   }
 
-  [data-reveal],
-  [data-reveal-group] > * {
+  .hero-inner > *, .hero .badges li, .aurora-blob, .wtok, .t-title-plain,
+  .page-progress > i, .aurora, .hero-inner,
+  [data-reveal], [data-reveal-group] > *, .card, .card::after {
     opacity: 1 !important;
     transform: none !important;
-    transition: none !important;
+    animation: none !important;
   }
-
-  .btn:hover { transform: none !important; }
+  /* 滚动驱动动画也要关掉,否则会随滚动产生位移 */
+  .page-progress > i { display: none !important; }
+  h2::before { transform: scaleX(1) !important; transition: none !important; }
+  .flow > li::after { transform: scaleY(1) !important; }
+  .flow > li::before { transition: none !important; }
+  .card::after, .btn-primary::after { display: none !important; }
+  .card:hover, .lic:hover, .names li:hover, .btn:hover, .card:hover .card-icon { transform: none !important; }
 }
 
 /* ===========================================================================
-   §19 打印
+   §21 打印
    =========================================================================== */
 @media print {
-  .site-header, .page-toc, .nav-toggle, .btn, .copy-btn, .skip-link { display: none !important; }
+  .site-header, .page-toc, .page-progress, .nav-toggle, .aurora,
+  .btn, .copy-btn, .skip-link { display: none !important; }
   html, body { background: #fff !important; color: #000 !important; }
   .card, .note, .lic, details, .table-scroll, .hero-specs, .hero-specs li {
     background: #fff !important;
     box-shadow: none !important;
     border-color: #ccc !important;
+    content-visibility: visible !important;
   }
   .hero-specs { gap: 0; }
+  [data-reveal], [data-reveal-group] > *, .wtok, .t-title-plain { opacity: 1 !important; transform: none !important; }
   h2 { page-break-after: avoid; }
   details { break-inside: avoid; }
   details > .details-body { display: block !important; height: auto !important; }
