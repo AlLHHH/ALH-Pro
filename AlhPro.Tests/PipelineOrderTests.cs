@@ -145,6 +145,7 @@ public class PipelineOrderTests
     [InlineData("realesrgan-x4plus", "x4plus")]
     [InlineData("realesrgan-x4plus-anime", "x4plus-anime")]   // 若先判 x4plus 会误判成 15.145s/帧
     [InlineData("realesr-general-x4v3", "general-x4v3")]
+    [InlineData("realesr-general-wdn-x4v3", "wdn-x4v3")]      // 【2026-09-14】名字是 general-wdn-x4v3,不含 general-x4v3
     [InlineData("models-cunet", "cunet")]
     [InlineData("models-upconv_7_photo", "upconv_7_photo")]
     [InlineData("whatever", null)]
@@ -162,6 +163,11 @@ public class PipelineOrderTests
         // waifu2x cunet 2x(噪声三档中值)+ upconv_7_photo 2x
         Assert.Equal(0.3685, PipelineOrderPlan.LookupUpscaleSecondsPerFrame("models-cunet", 2, out _)!.Value, 6);
         Assert.Equal(1.288, PipelineOrderPlan.LookupUpscaleSecondsPerFrame("models-upconv_7_photo", 2, out _)!.Value, 6);
+        // 【2026-09-14】自转的 wdn-x4v3:有自己的单价行(0.460),不许借 general-x4v3 的 0.458 蒙过去
+        Assert.Equal(0.460, PipelineOrderPlan.LookupUpscaleSecondsPerFrame("realesr-general-wdn-x4v3", 4, out var provW)!.Value, 6);
+        Assert.Contains("2026-09-14", provW);
+        // 它没有 2x 权重(与 general-x4v3 同族),查表也必须是"无实测"而不是回退到别的倍率
+        Assert.Null(PipelineOrderPlan.LookupUpscaleSecondsPerFrame("realesr-general-wdn-x4v3", 2, out _));
         // "1x 缩回"的面积与倍率分开传:engine 倍率仍按 2x 查表(areaScale 只影响放大后面积)
         var shrink = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus", 2.0, 2, W1080, H1080, 1800, areaScale: 1.0);
         Assert.Equal(15.145, shrink.UpscalePerFrame, 6);

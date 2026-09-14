@@ -77,6 +77,14 @@
                                 <TextBlock Text="）" VerticalAlignment="Center"/>
                             </StackPanel>
                         </ComboBoxItem>
+                        <!-- 【Rev 3 · 2026-09-14】新增「通用 · realesr-general-wdn-x4v3」:官方 BSD-3 权重
+                             `realesr-general-wdn-x4v3.pth`(v0.2.5.0 release,作者 xinntao 本人发布)由我自转成 ncnn
+                             (官方 ncnn 包从来没转这支)。同架构、同 bin 字节数,实测 20 帧批跑耗时比 general-x4v3 只差
+                             0.42%(13.07 vs 13.02 s),单价按锚点折算 0.460 秒/帧。
+                             ⚠【顺序契约】本项**追加在末尾(index 4)**,前 4 项的序号完全不变 ⇒ 老用户已存的序号
+                             不需要任何迁移(Rev1/Rev2 那种"移动 = 换序号"的情况这次没有)。以后若再插到中间,
+                             必须同步扩 MigrateEsrganModelOrder,见上面 Rev2 的说明。 -->
+                        <ComboBoxItem Content="通用 · realesr-general-wdn-x4v3（5MB · 快）" Tag="realesr-general-wdn-x4v3"/>
                     </ComboBox>
                     <!-- 4x 专用权重模型的提示(用户要求:放在模型下拉正下方)
                          【2026-09-13 用户要求】这条不再是"红色警告":改用普通提示样式(中性灰 HintText)、文案里也不带 ⚠ 图标。

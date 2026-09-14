@@ -81,6 +81,7 @@ public static class PipelineOrderPlan
         new("realesrgan", "animevideov3", 2, 0.2605, "2026-09-13 实测 0.252~0.269"),
         new("realesrgan", "animevideov3", 4, 0.297,  "2026-09-13 实测 0.294~0.300"),
         new("realesrgan", "general-x4v3", 4, 0.458,  "2026-09-13 实测 0.455~0.461"),
+        new("realesrgan", "wdn-x4v3", 4, 0.460,      "2026-09-14 实测:20 帧 1080p 目录批跑 wdn/general 耗时比 1.0042(13.07 vs 13.02 s),按 general-x4v3 锚点 0.458 折算;两者同架构、bin 字节数完全相同(4,853,320 B)"),
         new("realesrgan", "x4plus", 4, 15.145,       "2026-09-13 实测 14.82~15.47;【仅 12 帧样本,不确定性最大】"),
         new("realesrgan", "x4plus-anime", 4, 3.85,   "2026-09-13 实测 ≈3.3~4.4(区间较宽,取中值)"),
         new("waifu2x", "cunet", 2, 0.3685,            "2026-09-13 实测 -n0 0.368~0.370 / -n1 0.373~0.383 / -n2 0.353~0.364(三档中值)"),
@@ -98,6 +99,10 @@ public static class PipelineOrderPlan
             || m.Contains("x4plus_anime", StringComparison.OrdinalIgnoreCase)) return "x4plus-anime";   // 必须先于 x4plus 判
         if (m.Contains("x4plus", StringComparison.OrdinalIgnoreCase)) return "x4plus";
         if (m.Contains("animevideov3", StringComparison.OrdinalIgnoreCase)) return "animevideov3";
+        // 【2026-09-14】自转的带降噪变体:名字是 general-**wdn**-x4v3,不含 "general-x4v3",
+        // 所以要单独判(顺序无所谓,但必须在最后那个 null 之前)。
+        if (m.Contains("wdn-x4v3", StringComparison.OrdinalIgnoreCase)
+            || m.Contains("wdn_x4v3", StringComparison.OrdinalIgnoreCase)) return "wdn-x4v3";
         if (m.Contains("general-x4v3", StringComparison.OrdinalIgnoreCase)
             || m.Contains("general_x4v3", StringComparison.OrdinalIgnoreCase)) return "general-x4v3";
         if (m.Contains("upconv_7_photo", StringComparison.OrdinalIgnoreCase)) return "upconv_7_photo";

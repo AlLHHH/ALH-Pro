@@ -104,6 +104,8 @@ ALH Pro — 第三方组件许可声明
 15. 超分 ONNX 模型(50 系显卡/无独显设备的稳定路线)
     - RealESRGAN_x4plus.onnx / realesr-animevideov3.onnx
       → 上游 Real-ESRGAN(xinntao,BSD 3-Clause)
+    - realesr-general-wdn-x4v3.onnx → 上游 Real-ESRGAN(xinntao,BSD 3-Clause);
+      由本项目自行从官方 .pth 导出(见上「模型权重来源与版权明细」A)
     - waifu2x-cunet2x.onnx → 上游 waifu2x(nagadomi,MIT)
     由社区 ONNX 转换项目导出(deepghs / tidus2102 系列转换项目,MIT);
     各模型权重版权归上游作者,许可按上游条目执行。
@@ -118,6 +120,15 @@ A. 图片超分模型
   - realesrgan-x4plus / realesr-animevideov3 系(.bin/.param)
     算法: Real-ESRGAN(xinntao,BSD 3-Clause)https://github.com/xinntao/Real-ESRGAN
     引擎内置模型: 随 realesrgan-ncnn-vulkan 官方发行版,版权 xinntao
+  - realesr-general-wdn-x4v3(.bin/.param 与 .onnx)——【2026-09-14 新增,本项目自行转换】
+    来源: 上游官方 release v0.2.5.0 的权重 realesr-general-wdn-x4v3.pth
+          https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.5.0(作者 xinntao 发布)
+          SHA256 1641F8C4464B9F097C9FDDA5589273713F67CF59F3D909E0BD688F0CEE269DCA
+    上游只提供 PyTorch 权重、且从未提供该模型的 ncnn 版本;本项目用 PyTorch(torch 2.x)→
+    TorchScript → pnnx(BSD 3-Clause, ncnn 工具链)→ ncnnoptimize 转换得到 .param/.bin,
+    并用 torch.onnx 导出 .onnx。转换仅为格式变化,不改变许可与版权:
+    许可 BSD 3-Clause License(模型与算法,xinntao);版权 Xintao Wang 等(2021)。
+    转换过程与数值一致性验证记录见仓库 _pth2ncnn/README.md(引擎输出 vs PyTorch 输出 46~48 dB)。
   - waifu2x-cunet2x.onnx / RealESRGAN_x4plus.onnx / realesr-animevideov3.onnx
     由社区 ONNX 转换项目导出(deepghs / tidus2102 等,MIT),权重版权归上游作者。
 

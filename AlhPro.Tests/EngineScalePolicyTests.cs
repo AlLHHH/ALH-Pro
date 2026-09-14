@@ -17,7 +17,7 @@ public class EngineScalePolicyTests
     public void RealEsrgan_never_gets_engine_scale_one()
     {
         string[] models = { "realesr-animevideov3", "realesrgan-x4plus", "realesrgan-x4plus-anime",
-                            "realesr-general-x4v3", "unknown-model" };
+                            "realesr-general-x4v3", "realesr-general-wdn-x4v3", "unknown-model" };
         for (double want = 0.25; want <= 4.001; want += 0.25)
             foreach (var m in models)
             {
@@ -38,6 +38,12 @@ public class EngineScalePolicyTests
     [InlineData("realesrgan-x4plus", 2.0, 4, 0.5)]
     [InlineData("realesrgan-x4plus-anime", 3.0, 4, 0.75)]
     [InlineData("realesr-general-x4v3", 2.0, 4, 0.5)]
+    // 【2026-09-14 自转的 wdn-x4v3】名字不含 "general-x4v3",若漏登记就会被当成普通模型 → 目标 2x 时下发 -s 2,
+    // 实测那条路径的输出与双三次 PSNR 只有 ~14 dB(官方 general-x4v3 走 -s 2 同样 13.92 dB)= 坏路径。
+    // 这三条就是钉住"它必须按原生 4x 跑再缩回"。
+    [InlineData("realesr-general-wdn-x4v3", 2.0, 4, 0.5)]
+    [InlineData("realesr-general-wdn-x4v3", 4.0, 4, 1.0)]
+    [InlineData("realesr-general-wdn-x4v3", 1.0, 4, 0.25)]
     public void RealEsrgan_scale_is_pinned(string model, double want, int expectEngine, double expectRatio)
     {
         var d = EngineScalePolicy.Decide("realesrgan", model, want);

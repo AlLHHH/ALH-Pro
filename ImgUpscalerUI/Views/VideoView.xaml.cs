@@ -890,10 +890,12 @@ public sealed partial class VideoView : UserControl
         // (与图片路径既有做法一致,见 EngineService 的视频/图片 dir 路径 engineScale 处理),几何与画质都正确,
         // 耗时可忽略(-s 2 = 17.5s vs -s 4 = 18.1s)。此处只负责把这件事讲清楚。
         string esrModel = (VideoEsrganModelCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
-        // 【4x 专用权重】x4plus / x4plus-anime / 自转的 general-x4v3 都只有 4x 权重:
+        // 【4x 专用权重】x4plus / x4plus-anime / 自转的 general-x4v3 / 自转的 general-wdn-x4v3 都只有 4x 权重:
         // 选 2x/3x 会内部按 4x 跑再缩回(画面正确,但耗时与 4x 相同)。提示直接放在模型下拉正下方(用户要求)。
+        // 【2026-09-14 补 wdn】名字是 general-**wdn**-x4v3,既不含 "x4plus" 也不含 "general-x4v3",必须单独判,
+        // 否则这条提示不显示、且 Core.EngineScalePolicy 会误判成普通模型(那条已同步修)。
         bool x4plusModel = up && SelectedEngineIsReal
-            && (esrModel.Contains("x4plus") || esrModel.Contains("general-x4v3"));
+            && (esrModel.Contains("x4plus") || esrModel.Contains("general-x4v3") || esrModel.Contains("wdn-x4v3"));
         if (EsrganModelHint != null)
         {
             if (x4plusModel)
@@ -2317,7 +2319,8 @@ public sealed partial class VideoView : UserControl
     /// 同时顺序随下拉调整:2=general-x4v3、3=超慢(x4plus)。改这里必须与 XAML 同步改,否则显示与实跑不符。
     /// 【2026-09-13】去掉末尾的"(轻量)":v1.3.5 已把该项在下拉里改叫「通用 · realesr-general-x4v3(5MB · 中)」,
     /// 摘要却还印着「(轻量)」—— 用户正是看到"轻量"以为这支不行,才要求把预设模型换成动漫那支。摘要必须与下拉同口径。</summary>
-    private static string[] UpEsrganModelNames = { "动漫·animevideov3", "通用·general-x4v3(快)", "动漫·x4plus-anime", "通用·x4plus(超慢)" };
+    /// 【2026-09-14】追加第 5 项(自转的 wdn-x4v3)。**追加在末尾**:前 4 项序号不变,老用户已存序号无需迁移。</summary>
+    private static string[] UpEsrganModelNames = { "动漫·animevideov3", "通用·general-x4v3(快)", "动漫·x4plus-anime", "通用·x4plus(超慢)", "通用·wdn-x4v3(快)" };
     private static string UpWaifu2xModelName(int idx) => idx >= 0 && idx < UpWaifu2xModelNames.Length ? UpWaifu2xModelNames[idx] : "通用·cunet";
     private static string UpEsrganModelName(int idx) => idx >= 0 && idx < UpEsrganModelNames.Length ? UpEsrganModelNames[idx] : "动漫·animevideov3";
 
