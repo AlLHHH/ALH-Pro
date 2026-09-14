@@ -28,6 +28,7 @@ setTimeout(function () {
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
+<div class="page-progress" aria-hidden="true"><i></i></div>
 
 <header class="site-header">
   <div class="wrap header-inner">
@@ -55,6 +56,12 @@ setTimeout(function () {
 <main id="main">
 
   <section class="hero">
+    <div class="aurora" aria-hidden="true">
+      <span class="aurora-blob b1"></span>
+      <span class="aurora-blob b2"></span>
+      <span class="aurora-blob b3"></span>
+    </div>
+
     <div class="wrap hero-inner">
       <h1 class="hero-title">
         <span class="line">在你自己的电脑上,</span>
@@ -86,19 +93,19 @@ setTimeout(function () {
 
       <ul class="hero-specs">
         <li>
-          <span class="spec-num">0.25<i>秒 / 帧</i></span>
+          <span class="spec-num"><span class="count" data-count="0.25" data-dec="2">0.25</span><i>秒 / 帧</i></span>
           <span class="spec-label">1080p 动漫超分,RTX 4060 Laptop 实测</span>
         </li>
         <li>
-          <span class="spec-num">3<i>处</i></span>
+          <span class="spec-num"><span class="count" data-count="3" data-dec="0">3</span><i>处</i></span>
           <span class="spec-label">自动联网行为,已全部列出,失败均有兜底</span>
         </li>
         <li>
-          <span class="spec-num">827<i>MB</i></span>
+          <span class="spec-num"><span class="count" data-count="827" data-dec="0">827</span><i>MB</i></span>
           <span class="spec-label">标准版安装包体积</span>
         </li>
         <li>
-          <span class="spec-num">0<i>次</i></span>
+          <span class="spec-num"><span class="count" data-count="0" data-dec="0">0</span><i>次</i></span>
           <span class="spec-label">上传文件 / 注册账号 / 登录云端</span>
         </li>
       </ul>
@@ -231,13 +238,13 @@ setTimeout(function () {
           <tr><th>处理</th><th>分辨率</th><th>模型 / 设置</th><th class="td-center">实测速度</th></tr>
         </thead>
         <tbody>
-          <tr><td>超分</td><td>1080p 源</td><td>realesr-animevideov3 2x(动漫视频常用)</td><td class="td-center">约 0.25 秒 / 帧</td></tr>
-          <tr><td>超分</td><td>1080p 源</td><td>realesr-animevideov3 4x</td><td class="td-center">约 0.30 秒 / 帧</td></tr>
-          <tr><td>超分</td><td>1080p 源</td><td>realesr-general-x4v3 4x(轻量通用)</td><td class="td-center">约 0.46 秒 / 帧</td></tr>
-          <tr><td>超分</td><td>1080p 源</td><td>realesrgan-x4plus 4x(质量优先)</td><td class="td-center">约 15 秒 / 帧,明显慢于其它模型</td></tr>
-          <tr><td>补帧</td><td>1080p</td><td>RIFE v4.13</td><td class="td-center">约 0.08 秒 / 输出帧</td></tr>
-          <tr><td>补帧</td><td>2160p(4K)</td><td>RIFE v4.13</td><td class="td-center">约 0.28 秒 / 输出帧</td></tr>
-          <tr><td>参考作业</td><td>1080p,72 帧素材(约 2.4 秒)</td><td>4 倍补帧 + 2 倍超分</td><td class="td-center">全程约 53.7 秒</td></tr>
+          <tr><td>超分</td><td>1080p 源</td><td>realesr-animevideov3 2x(动漫视频常用)</td><td class="td-center">约 <span class="count" data-count="0.25" data-dec="2">0.25</span> 秒 / 帧</td></tr>
+          <tr><td>超分</td><td>1080p 源</td><td>realesr-animevideov3 4x</td><td class="td-center">约 <span class="count" data-count="0.30" data-dec="2">0.30</span> 秒 / 帧</td></tr>
+          <tr><td>超分</td><td>1080p 源</td><td>realesr-general-x4v3 4x(轻量通用)</td><td class="td-center">约 <span class="count" data-count="0.46" data-dec="2">0.46</span> 秒 / 帧</td></tr>
+          <tr><td>超分</td><td>1080p 源</td><td>realesrgan-x4plus 4x(质量优先)</td><td class="td-center">约 <span class="count" data-count="15" data-dec="0">15</span> 秒 / 帧,明显慢于其它模型</td></tr>
+          <tr><td>补帧</td><td>1080p</td><td>RIFE v4.13</td><td class="td-center">约 <span class="count" data-count="0.08" data-dec="2">0.08</span> 秒 / 输出帧</td></tr>
+          <tr><td>补帧</td><td>2160p(4K)</td><td>RIFE v4.13</td><td class="td-center">约 <span class="count" data-count="0.28" data-dec="2">0.28</span> 秒 / 输出帧</td></tr>
+          <tr><td>参考作业</td><td>1080p,72 帧素材(约 2.4 秒)</td><td>4 倍补帧 + 2 倍超分</td><td class="td-center">全程约 <span class="count" data-count="53.7" data-dec="1">53.7</span> 秒</td></tr>
         </tbody>
       </table>
     </div>
