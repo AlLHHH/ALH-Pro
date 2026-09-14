@@ -3,15 +3,29 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
 <title>更新日志 — ALH Pro(v1.3.6 及历史版本)</title>
 <meta name="description" content="ALH Pro 更新日志:每个版本改了什么、修复了什么、有没有需要用户重新调整参数的地方。最新版本 v1.3.6(2026-09-13)。">
-<meta name="theme-color" content="#f6f7f9">
+<meta name="theme-color" content="#06080f" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#eef2f9" media="(prefers-color-scheme: light)">
 <link rel="icon" href="assets/img/logo.png" type="image/png">
 <link rel="stylesheet" href="assets/css/style.css">
+<script>
+/* 标记「JS 可用」:需要 JS 才启用的动效都挂在 html.has-js 下。
+   万一 site.js 没能加载或执行,3 秒后自动摘掉这个标记,
+   页面回到「无 JS 也完整可读」的状态(内容不会被永久隐藏)。 */
+document.documentElement.classList.add('has-js');
+setTimeout(function () {
+  if (!document.documentElement.hasAttribute('data-site-ready')) {
+    document.documentElement.classList.remove('has-js');
+  }
+}, 3000);
+</script>
 <script src="assets/js/site.js" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
+<div class="scroll-progress" aria-hidden="true"><i></i></div>
 
 <header class="site-header">
   <div class="wrap header-inner">
@@ -34,23 +48,35 @@
   </div>
 </header>
 
+<nav class="page-toc" id="page-toc" aria-label="本页章节" hidden></nav>
+
 <main id="main">
-  <div class="wrap">
 
-    <h1 class="page-title">更新日志</h1>
-    <p class="page-meta">
-      最新版本 <strong>v1.3.6</strong>(2026-09-13)· 点每个版本展开细节 · 升级方式:
-      <a href="download.html#upgrade">直接覆盖安装</a>,不用卸载、不用重下模型
-    </p>
+  <section class="hero hero--page">
+    <div class="aurora" aria-hidden="true">
+      <span class="aurora-blob b1"></span>
+      <span class="aurora-blob b2"></span>
+      <span class="aurora-blob b3"></span>
+    </div>
+    <div class="wrap hero-inner">
+      <h1 class="hero-title">更新日志</h1>
+      <p class="page-meta">
+        最新版本 <strong>v1.3.6</strong>(2026-09-13)· 点每个版本展开细节 · 升级方式:
+        <a href="download.html#upgrade">直接覆盖安装</a>,不用卸载、不用重下模型
+      </p>
+    </div>
+  </section>
 
-    <div class="note">
+  <div class="wrap content">
+
+    <div class="note" data-reveal>
       <p><span class="note-title">怎么读这份日志:</span>
       每条里凡是会<strong>影响你已有设置</strong>或需要<strong>重新调整参数</strong>的改动,都会单独标出。
       我们也会把「这一版没变什么」写清楚,避免你白折腾。</p>
     </div>
 
     <h2 id="v136">v1.3.6 <span class="small muted">2026-09-13 · 预设模型调整 + 补帧倍率显示修复</span></h2>
-    <details open>
+    <details open data-reveal>
       <summary>这一版改了什么(两条都是“看着小、实际会误导人”的问题)</summary>
       <div class="details-body">
         <ul>
@@ -68,7 +94,7 @@
     </details>
 
     <h2 id="v135">v1.3.5 <span class="small muted">2026-09-12 · 补帧引擎重编 + 界面稳定性 + 全面自检修复</span></h2>
-    <details>
+    <details data-reveal>
       <summary>建议所有用户更新:修掉“跑到一半界面卡死”、50 系补帧不再只能等驱动</summary>
       <div class="details-body">
         <ul>
@@ -100,7 +126,7 @@
     </details>
 
     <h2 id="v134">v1.3.4 <span class="small muted">2026-09-11</span></h2>
-    <details>
+    <details data-reveal>
       <summary>这一版没有单独发布说明,相关修复已一并收录在 v1.3.5 中</summary>
       <div class="details-body">
         <p>v1.3.5 是在 v1.3.4 那批修复的基础上又打的一次包,v1.3.4 的内容也已包含在内,因此不再单列。
@@ -109,7 +135,7 @@
     </details>
 
     <h2 id="v133">v1.3.3 <span class="small muted">2026-09-08 · 稳定性 / 兼容性 / 速度增强</span></h2>
-    <details>
+    <details data-reveal>
       <summary>修了一批“看起来能用、实际会翻车”的隐性 bug,并给视频处理提速</summary>
       <div class="details-body">
         <ul>
@@ -135,7 +161,7 @@
     </details>
 
     <h2 id="v132">v1.3.2 <span class="small muted">2026-09-07 · 视频稳定性加固 + 补帧降级链 + 设备识别修复</span></h2>
-    <details>
+    <details data-reveal>
       <summary>重点是黑帧 / 黑屏、补帧残缺,以及“明明能用却提示无法用 GPU”</summary>
       <div class="details-body">
         <ul>
@@ -155,7 +181,7 @@
     </details>
 
     <h2 id="v131">v1.3.1 <span class="small muted">2026-09-06 · 更新弹窗 + 提示 / 广告区强化</span></h2>
-    <details>
+    <details data-reveal>
       <summary>让用户不容易漏掉新版本;界面提示与广告改为随机轮播</summary>
       <div class="details-body">
         <ul>
@@ -170,7 +196,7 @@
     </details>
 
     <h2 id="v130">v1.3.0 <span class="small muted">2026-09-05 · 自检驱动 + 始终用显卡 + 稳定性</span></h2>
-    <details>
+    <details data-reveal>
       <summary>新增启动自检;明确“能用显卡就用显卡”;兼容模式与看门狗按设备档次自适应</summary>
       <div class="details-body">
         <ul>
@@ -190,7 +216,7 @@
     </details>
 
     <h2 id="v120-v122">v1.2.0 – v1.2.2 <span class="small muted">2026-09-04 – 09-05 · 预设 / 省盘 / 兼容适配</span></h2>
-    <details>
+    <details data-reveal>
       <summary>官方预设上线、长视频不再爆盘也不卡死、双卡机选卡修正</summary>
       <div class="details-body">
         <ul>
@@ -206,7 +232,7 @@
     </details>
 
     <h2 id="v110-v113">v1.1.0 – v1.1.3 <span class="small muted">2026-09-02 – 09-03 · 音频页 / 50 系适配 / 提速</span></h2>
-    <details>
+    <details data-reveal>
       <summary>新增音频处理页与 50 系适配;移除许可不明的引擎;临时文件与超分提速</summary>
       <div class="details-body">
         <ul>
@@ -224,7 +250,7 @@
     </details>
 
     <h2 id="v100">v1.0.0 <span class="small muted">首个正式版</span></h2>
-    <details>
+    <details data-reveal>
       <summary>图片超分、AI 抠图、视频超分 / 补帧 / 去重的首个完整版本</summary>
       <div class="details-body">
         <p>从早期的 v0.3 / v0.5 预览版迭代而来:v1.0 起把「图片放大、AI 抠图、视频处理」整合到统一界面,
@@ -234,14 +260,14 @@
     </details>
 
     <h2 id="known">已知限制(诚实说明)</h2>
-    <ul>
+    <ul data-reveal>
       <li>音频 AI 分离优先用显卡(DirectML)加速;无显卡或驱动不兼容时用 CPU,约 1.5 分钟 / 分钟音频。</li>
       <li>音频“升采样率”只对低采样率源(8k / 16k / 22k / 32k)真的有效;44.1 kHz 音乐本身已是全频带,无需升采样,请改用「增强」。</li>
       <li>视频超分 / 补帧在老电脑上慢是物理限制,建议用 waifu2x 与 1x~2x 倍率起步。</li>
       <li>AI 抠图固定使用 CPU(避免占满显卡导致整机卡顿),图片多时需要耐心等待。</li>
     </ul>
 
-    <div class="note">
+    <div class="note" data-reveal>
       <p><span class="note-title">想看更细的?</span>
       本页是面向用户的摘要。逐条的技术细节(含实测数据与自检结论)记录在公开仓库的
       <code>RELEASE_NOTES.md</code> 与 <code>release_history.json</code> 中,

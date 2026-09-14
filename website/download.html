@@ -3,15 +3,29 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
 <title>下载 ALH Pro v1.3.6 — 安装包 / 完整版 / 模型包与 SHA256 校验</title>
 <meta name="description" content="下载 ALH Pro v1.3.6:标准版安装包(约 827 MB)、完整版(约 2.4 GB,含全部模型)、AI 抠图模型包(约 1.4 GB)。含系统要求、安装步骤与 SHA256 校验方法。">
-<meta name="theme-color" content="#f6f7f9">
+<meta name="theme-color" content="#06080f" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#eef2f9" media="(prefers-color-scheme: light)">
 <link rel="icon" href="assets/img/logo.png" type="image/png">
 <link rel="stylesheet" href="assets/css/style.css">
+<script>
+/* 标记「JS 可用」:需要 JS 才启用的动效都挂在 html.has-js 下。
+   万一 site.js 没能加载或执行,3 秒后自动摘掉这个标记,
+   页面回到「无 JS 也完整可读」的状态(内容不会被永久隐藏)。 */
+document.documentElement.classList.add('has-js');
+setTimeout(function () {
+  if (!document.documentElement.hasAttribute('data-site-ready')) {
+    document.documentElement.classList.remove('has-js');
+  }
+}, 3000);
+</script>
 <script src="assets/js/site.js" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
+<div class="scroll-progress" aria-hidden="true"><i></i></div>
 
 <header class="site-header">
   <div class="wrap header-inner">
@@ -34,24 +48,44 @@
   </div>
 </header>
 
+<nav class="page-toc" id="page-toc" aria-label="本页章节" hidden></nav>
+
 <main id="main">
-  <div class="wrap">
 
-    <h1 class="page-title">下载 ALH Pro</h1>
-    <p class="page-meta">
-      当前版本 <strong>v1.3.6</strong>(2026-09-13,预设模型调整 + 补帧倍率显示修复)·
-      这一版改了什么见 <a href="changelog.html">更新日志</a> ·
-      安装或使用遇到问题先看 <a href="faq.html">常见问题</a>
-    </p>
+  <section class="hero hero--page">
+    <div class="aurora" aria-hidden="true">
+      <span class="aurora-blob b1"></span>
+      <span class="aurora-blob b2"></span>
+      <span class="aurora-blob b3"></span>
+    </div>
+    <div class="wrap hero-inner">
+      <h1 class="hero-title">下载 ALH Pro</h1>
+      <p class="page-meta">
+        当前版本 <strong>v1.3.6</strong>(2026-09-13,预设模型调整 + 补帧倍率显示修复)·
+        这一版改了什么见 <a href="changelog.html">更新日志</a> ·
+        安装或使用遇到问题先看 <a href="faq.html">常见问题</a>
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/AlLHHH/ALH-Pro/releases/latest">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.6v10.2"/><path d="M7.8 10.2L12 14.4l4.2-4.2"/><path d="M4.6 17.2v2.6h14.8v-2.6"/></svg>
+          下载标准版(约 827 MB)
+        </a>
+        <a class="btn btn-ghost" href="https://pan.baidu.com/s/1_heewIWeoPpWQKPJv9blew?pwd=yxfd">百度网盘完整版(约 2.4 GB)</a>
+      </div>
+      <p class="btn-note small">下载完成后,建议顺手对一下本页下方的 SHA256 校验值。</p>
+    </div>
+  </section>
 
-    <div class="note note-ok">
+  <div class="wrap content">
+
+    <div class="note note-ok" data-reveal>
       <p><span class="note-title">先看结论:</span>只想要基本功能(超分、补帧、去重、音频处理)→ 下载<strong>标准版</strong>;
       要用 <strong>AI 抠图</strong>又嫌装模型麻烦 → 直接下载<strong>完整版</strong>(约 2.4 GB,装完所有功能直接可用);
       已经装了软件、只差抠图模型 → 单独下载<strong>模型包</strong>。</p>
     </div>
 
     <h2 id="files">下载文件</h2>
-    <div class="table-scroll">
+    <div class="table-scroll" data-reveal>
       <table>
         <thead>
           <tr><th>文件</th><th>大小</th><th>包含内容</th><th>下载入口</th></tr>
@@ -82,7 +116,7 @@
       </table>
     </div>
 
-    <div class="note note-warn">
+    <div class="note note-warn" data-reveal>
       <p><span class="note-title">如实告知:</span>目前安装包与模型包只托管在
       <strong>GitHub Releases</strong> 与<strong>百度网盘</strong>两处,本站没有国内直链镜像。
       如果你的网络访问 GitHub 困难,请直接用上方百度网盘链接下载完整版。
@@ -90,9 +124,9 @@
     </div>
 
     <h2 id="checksum">校验下载的文件(SHA256)</h2>
-    <p>安装包体积大,下载过程中可能出现损坏,也可能被第三方替换过。用 SHA256 校验值对一下,几秒钟就能确认文件是否完整、是否就是官方发布的那一个。</p>
+    <p data-reveal>安装包体积大,下载过程中可能出现损坏,也可能被第三方替换过。用 SHA256 校验值对一下,几秒钟就能确认文件是否完整、是否就是官方发布的那一个。</p>
 
-    <div class="table-scroll">
+    <div class="table-scroll" data-reveal>
       <table>
         <thead>
           <tr><th>文件</th><th>SHA256(小写十六进制)</th></tr>
@@ -126,33 +160,33 @@
             (生成方式见仓库 打包工具/README_校验和.md),可在下方「校验方法」里补一句说明。
          =================================================================== -->
 
-    <p class="small muted">哈希值随每个版本一起发布。如果你看到的是「待填入」,说明该版本的校验值尚未公布,
+    <p class="small muted" data-reveal>哈希值随每个版本一起发布。如果你看到的是「待填入」,说明该版本的校验值尚未公布,
       此时请以官方发布页显示的附件信息为准。</p>
 
     <h3 id="how-to-verify">怎么校验(Windows 自带工具,不用装任何软件)</h3>
-    <p>下载完成后,在<strong>文件所在的文件夹</strong>里打开 PowerShell(在文件夹空白处按住 Shift 点右键 → “在此处打开 PowerShell 窗口” / “在终端中打开”),然后执行:</p>
+    <p data-reveal>下载完成后,在<strong>文件所在的文件夹</strong>里打开 PowerShell(在文件夹空白处按住 Shift 点右键 → “在此处打开 PowerShell 窗口” / “在终端中打开”),然后执行:</p>
 
-    <div class="copy-row">
+    <div class="copy-row" data-reveal>
       <code id="cmd-ps">Get-FileHash .\ALHPro_v1.3.6_Setup.exe -Algorithm SHA256</code>
       <button class="copy-btn" type="button" data-copy="cmd-ps">复制命令</button>
     </div>
-    <p class="small muted">把命令里的文件名换成你实际下载的文件名(例如完整版或 models_v1.0.zip)。</p>
+    <p class="small muted" data-reveal>把命令里的文件名换成你实际下载的文件名(例如完整版或 models_v1.0.zip)。</p>
 
-    <p>习惯用 CMD(命令提示符)的话,等价命令是:</p>
-    <div class="copy-row">
+    <p data-reveal>习惯用 CMD(命令提示符)的话,等价命令是:</p>
+    <div class="copy-row" data-reveal>
       <code id="cmd-cmd">certutil -hashfile ALHPro_v1.3.6_Setup.exe SHA256</code>
       <button class="copy-btn" type="button" data-copy="cmd-cmd">复制命令</button>
     </div>
 
-    <p>命令行会输出一串 64 位的十六进制字符,把它和本页表格里的值逐字符对照:</p>
-    <ul>
+    <p data-reveal>命令行会输出一串 64 位的十六进制字符,把它和本页表格里的值逐字符对照:</p>
+    <ul data-reveal>
       <li><strong>完全一致</strong> → 文件完整、与官方发布的一致,可以放心安装。</li>
       <li><strong>不一致</strong> → 文件可能下载损坏或被篡改。<strong>请不要安装</strong>,删除后重新下载;仍然不一致就别运行它。</li>
     </ul>
-    <p class="small muted">对照时注意:大小写不影响结果(有的工具输出大写),空格和换行不影响。</p>
+    <p class="small muted" data-reveal>对照时注意:大小写不影响结果(有的工具输出大写),空格和换行不影响。</p>
 
     <h2 id="requirements">系统要求</h2>
-    <div class="table-scroll">
+    <div class="table-scroll" data-reveal>
       <table>
         <thead>
           <tr><th>项目</th><th>要求</th></tr>
@@ -187,14 +221,14 @@
     </ol>
 
     <h3 id="upgrade">从旧版本升级</h3>
-    <ul>
+    <ul data-reveal>
       <li>直接下载新安装包<strong>覆盖安装</strong>即可:引擎、模型与设置都会保留,<strong>不需要先卸载</strong>,也不需要重新下载模型。</li>
       <li>设置、预设、处理记录保存在 <code>%LOCALAPPDATA%</code>,覆盖安装不会动它们。</li>
       <li>软件内「设置」可以勾选「不再提示更新」;默认情况下启动时会检查一次是否有新版本(见 <a href="privacy.html#network">隐私说明 · 联网行为</a>)。</li>
     </ul>
 
     <h2 id="slow">下载慢 / 下不动怎么办</h2>
-    <div class="table-scroll">
+    <div class="table-scroll" data-reveal>
       <table>
         <thead>
           <tr><th>情况</th><th>可以试的办法</th></tr>
@@ -218,10 +252,10 @@
         </tbody>
       </table>
     </div>
-    <p class="small muted">镜像站是第三方公共服务,本项目无法保证其长期可用,也不对其内容负责,请认准下载到的文件名与大小,并按要求核对 SHA256。</p>
+    <p class="small muted" data-reveal>镜像站是第三方公共服务,本项目无法保证其长期可用,也不对其内容负责,请认准下载到的文件名与大小,并按要求核对 SHA256。</p>
 
     <h2 id="firstrun">首次运行被安全软件拦截 / 提示“未知发布者”?</h2>
-    <p>安装包<strong>没有购买商业代码签名证书</strong>,所以 Windows 与部分安全软件可能提示“未知发布者”,或对安装包、解压行为做出拦截提示。
+    <p data-reveal>安装包<strong>没有购买商业代码签名证书</strong>,所以 Windows 与部分安全软件可能提示“未知发布者”,或对安装包、解压行为做出拦截提示。
       这是未签名软件的常见现象,不代表文件有毒。建议的做法是:</p>
     <ol>
       <li>先按上文核对 SHA256,确认文件就是官方发布的那一个;</li>
@@ -230,7 +264,7 @@
         更多问答见 <a href="faq.html#antivirus">常见问题 · 杀毒软件报毒 / 拦截</a>。</li>
     </ol>
 
-    <div class="note">
+    <div class="note" data-reveal>
       <p><span class="note-title">找不到下载入口?</span>
       本站只提供官方渠道:GitHub Releases 与作者的百度网盘。请勿从第三方下载站、网盘分享或“绿色版”渠道获取安装包——
       这类来源的软件可能被修改或捆绑其他内容,本项目的许可也<strong>不允许</strong>他人重新打包分发。</p>
