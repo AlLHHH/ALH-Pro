@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>常见问题 FAQ — ALH Pro(下载慢 / 显卡兼容 / 装不上 / 杀软误报 / 结果不对)</title>
+<meta name="description" content="ALH Pro 常见问题:下载慢或下不动、首次启动像卡死、杀毒软件报毒、提示缺少 .NET、显卡兼容性对照表、处理很慢、抠图缺模型、补帧果冻、音频分离很慢、是否收费与能否商用。">
+<meta name="theme-color" content="#f6f7f9">
+<link rel="icon" href="assets/img/logo.png" type="image/png">
+<link rel="stylesheet" href="assets/css/style.css">
+<script src="assets/js/site.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到主要内容</a>
+
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="index.html">
+      <img class="brand-logo" src="assets/img/logo.png" alt="ALH Pro 标志" width="30" height="30">
+      <span>ALH&nbsp;Pro<span class="brand-sub"> 本地 AI 处理</span></span>
+    </a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav">
+      <span class="nav-toggle-bars" aria-hidden="true"></span>菜单
+    </button>
+    <nav class="site-nav" id="site-nav" aria-label="主导航">
+      <a href="index.html">首页</a>
+      <a href="download.html">下载</a>
+      <a href="tutorial.html">使用教程</a>
+      <a href="faq.html" aria-current="page">常见问题</a>
+      <a href="privacy.html">隐私说明</a>
+      <a href="licenses.html">开源许可</a>
+      <a href="changelog.html">更新日志</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <div class="wrap">
+
+    <h1 class="page-title">常见问题</h1>
+    <p class="page-meta">点标题展开答案 · 想按功能一步步学,请看 <a href="tutorial.html">使用教程</a></p>
+
+    <h2 id="download-group">下载与安装</h2>
+
+    <details id="slow">
+      <summary>下载很慢、或者中途断了怎么办?</summary>
+      <div class="details-body">
+        <p>按下面顺序试,一般三步之内就能解决:</p>
+        <ol>
+          <li><strong>走百度网盘。</strong>完整版(约 2.4 GB,含全部模型)在
+            <a href="https://pan.baidu.com/s/1_heewIWeoPpWQKPJv9blew?pwd=yxfd">网盘</a> 上,国内通常最快(提取码 <code>yxfd</code>)。</li>
+          <li><strong>给 GitHub 链接加加速前缀。</strong>在下载链接前拼一个公开镜像前缀,例如
+            <code>https://gh-proxy.com/</code> + 原始下载链接,整条变成
+            <code>https://gh-proxy.com/https://github.com/AlLHHH/ALH-Pro/releases/download/...</code>。
+            免费、不用注册;镜像的可用性会变化,可以再换 <code>ghproxy.net</code>、<code>ghproxy.com</code> 等前缀。</li>
+          <li><strong>错峰下载。</strong>清早或深夜通常比晚高峰稳,大文件支持断点续传,断了可以接着下。</li>
+        </ol>
+        <p class="small muted">镜像站是第三方公共服务,本项目无法保证其长期可用,也不对其内容负责。下载完成后请核对文件名、大小与
+          <a href="download.html#checksum">SHA256</a>。</p>
+      </div>
+    </details>
+
+    <details id="firstrun">
+      <summary>双击安装包后没反应,是卡死了吗?</summary>
+      <div class="details-body">
+        <p>多半不是。安装包体积很大(完整版约 2.4 GB),Windows 安全软件首次运行时会完整扫描它,这段时间界面可能迟迟不出现,
+          <strong>等 1~2 分钟属正常;第一次扫描完成后,以后打开就快了</strong>。</p>
+        <p>如果等了几分钟仍然没有任何窗口,可以:①在任务管理器里看有没有安装程序进程在占 CPU / 磁盘;②把安装包复制到本地非系统盘再试;
+          ③先按 <a href="download.html#checksum">SHA256</a> 确认安装包完整(下载损坏也会导致双击无反应)。</p>
+      </div>
+    </details>
+
+    <details id="antivirus">
+      <summary>杀毒软件报毒 / 提示“未知发布者”,怎么办?</summary>
+      <div class="details-body">
+        <p>先说明事实:安装包<strong>没有购买商业代码签名证书</strong>,所以 Windows 与部分安全软件会提示“未知发布者”,
+          或对“大体积未签名安装包 + 解压大量文件”这种典型行为给出拦截 / 误报提示。这是未签名软件很常见的现象。</p>
+        <p>建议顺序:</p>
+        <ol>
+          <li>先核对 <a href="download.html#checksum">SHA256</a>,确认文件与官方发布的一致;</li>
+          <li>一致的话,在安全软件里选择“允许 / 信任 / 加入白名单”,或把程序目录加入排除项;</li>
+          <li>如果文件被直接删除或隔离,请恢复并信任后重试;若反复被删,请把<strong>报毒名称与截图</strong>反馈给我们,便于进一步排查。</li>
+        </ol>
+        <div class="note note-warn">
+          <p><strong>请务必只从官方渠道下载</strong>(本页顶部的 GitHub Releases 与作者百度网盘)。
+            第三方下载站、网盘转发、“绿色版”等来源的安装包可能被重新打包,那种情况下的报毒就真的不能信任了。</p>
+        </div>
+      </div>
+    </details>
+
+    <details id="dotnet">
+      <summary>需要先装 .NET 吗?提示缺少运行库怎么办?</summary>
+      <div class="details-body">
+        <p><strong>正常不需要。</strong>ALH Pro 的安装包是自包含的(self-contained .NET 8),运行库已经打在包里,
+          不需要你另外安装 .NET,也不需要 Visual C++ 运行库。</p>
+        <p>如果仍然遇到与运行库相关的提示,按这个顺序排查:</p>
+        <ol>
+          <li>确认系统是 <strong>64 位 Windows 10(1809 / 内部版本 17763 及以上)或 Windows 11</strong>。比这更旧的系统,
+            安装程序会直接拦下(装上也运行不了)。</li>
+          <li>确认下载的安装包完整(体积对得上、SHA256 对得上),损坏的安装包会出现解压 / 加载失败。</li>
+          <li>个别系统组件缺失时,可以到微软官网自行安装
+            <strong>.NET 8 Desktop Runtime(x64)</strong> 后再启动软件。</li>
+          <li>仍然不行:在「设置 → 诊断日志」导出日志包反馈给我们,日志里通常能直接看出原因。</li>
+        </ol>
+      </div>
+    </details>
+
+    <details id="install-dir">
+      <summary>能装到别的盘吗?需要管理员权限吗?</summary>
+      <div class="details-body">
+        <p>默认装到当前用户目录 <code>C:\Users\你的用户名\AppData\Local\Programs\ALH Pro</code>,<strong>不需要管理员权限</strong>
+          (这也是默认位置的用意:避免写不进 Program Files 导致模型装不上)。</p>
+        <p>安装向导里可以改成其它目录;如果选 Program Files,安装程序会请求管理员权限。装在系统盘之外也可以,不影响功能。
+          处理视频时会在临时目录产生中间帧,临时文件位置可以在「设置」里指定,建议指向空闲空间最大的盘。</p>
+      </div>
+    </details>
+
+    <details id="platform">
+      <summary>支持 32 位系统、Windows 7、Mac 或手机吗?</summary>
+      <div class="details-body">
+        <p>都不支持。ALH Pro 是 <strong>Windows 10 / 11 的 64 位(x64)桌面程序</strong>:
+          32 位 Windows、Windows 7 及更早系统、macOS、Linux、iOS / Android 均无法运行,也没有对应的版本计划。</p>
+      </div>
+    </details>
+
+    <details id="upgrade">
+      <summary>怎么升级?需要先卸载旧版、重新下模型吗?</summary>
+      <div class="details-body">
+        <p>不需要卸载,也不需要重新装模型。<strong>直接下载新安装包覆盖安装即可</strong>:程序会被新版覆盖,引擎、模型与设置原样保留。
+          设置、预设、处理记录保存在 <code>%LOCALAPPDATA%</code>,覆盖安装不会动到它们。</p>
+        <p>有个例外请留意:如果某个版本调整了后处理参数的“机理”,旧预设里的数值含义可能变过,
+          该版本的更新说明里会专门提醒(<a href="changelog.html">更新日志</a> 会写清楚)。</p>
+      </div>
+    </details>
+
+    <h2 id="perf-group">显卡与速度</h2>
+
+    <details id="gpu">
+      <summary>我的显卡能用吗?(兼容性对照表)</summary>
+      <div class="details-body">
+        <p><strong>图例:</strong>🟢 稳定加速 ｜ 🟡 能用但可能降级 ｜ 🔶 慢(CPU) ｜ <strong>?</strong> 存疑·可能不能用 ｜ <strong>✗</strong> 不能使用</p>
+        <p class="small">「画质增强 / 去重 / 转场识别 / 果冻修复 / 降噪」为纯 CPU 处理,任何显卡都一样,不随显卡变化;
+          「音频增强 / 分离(Demucs)」用显卡(DirectML)加速,无显卡时自动用 CPU;「音频升采样率」目前用 CPU;
+          「AI 抠图」固定用 CPU(避免占满显卡导致整机卡顿)。</p>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>显卡</th><th>图片超分</th><th>视频超分</th><th>视频补帧</th><th>画质增强</th><th>AI 抠图</th>
+                <th>去重</th><th>转场</th><th>果冻修复</th><th>音频升采样</th><th>音频增强/分离</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>RTX 40 系 / 30 系</td><td class="td-center">🟢</td><td class="td-center">🟢</td><td class="td-center">🟢</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">🟢</td></tr>
+              <tr><td>RTX 50 系(Blackwell)</td><td class="td-center">🟡</td><td class="td-center">🟡</td><td class="td-center">🟡</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">🟢</td></tr>
+              <tr><td>RTX 20 系</td><td class="td-center">🟡</td><td class="td-center">🟡</td><td class="td-center">🟢</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">🟢</td></tr>
+              <tr><td>GTX 16 系</td><td class="td-center">🟢</td><td class="td-center">🟢</td><td class="td-center">🟢</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">🟢</td></tr>
+              <tr><td>GTX 10 系</td><td class="td-center">🟡</td><td class="td-center">🟡</td><td class="td-center">🟢</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">🟢</td></tr>
+              <tr><td>GTX 6/7/8/9 系</td><td class="td-center">?</td><td class="td-center">?</td><td class="td-center">?</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">?</td></tr>
+              <tr><td>AMD 独显(较新)</td><td class="td-center">🟡</td><td class="td-center">🟡</td><td class="td-center">🟡</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">🟡</td></tr>
+              <tr><td>AMD 老卡</td><td class="td-center">?</td><td class="td-center">?</td><td class="td-center">?</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">?</td></tr>
+              <tr><td>Intel Arc</td><td class="td-center">🟡</td><td class="td-center">🟡</td><td class="td-center">🟡</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">🟡</td></tr>
+              <tr><td>核显(Intel / AMD)</td><td class="td-center">🔶</td><td class="td-center">🔶</td><td class="td-center">🔶</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">🔶</td></tr>
+              <tr><td>无独显(纯 CPU)</td><td class="td-center">🔶</td><td class="td-center">🔶</td><td class="td-center">🔶</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">CPU</td><td class="td-center">🔶</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small muted">启动时软件会自动检测 GPU:有独立显卡且引擎兼容就自动启用;不兼容时自动改走稳定的兼容路线,
+          输出结果不受影响,只是速度有差别。想确认自己走的是哪条路,看页面上方的设备提示(例如“自动使用兼容加速(DirectML)”)。</p>
+      </div>
+    </details>
+
+    <details id="50series">
+      <summary>RTX 50 系(5060 / 5070 等)为什么会被提示走了“兼容路线”?</summary>
+      <div class="details-body">
+        <p>50 系是较新的架构,部分内置引擎(基于 ncnn-Vulkan)在早期驱动上与它不完全兼容。软件已经自动适配:
+          <strong>检测到 50 系时会自动选择稳定的引擎路线(ONNX / DirectML),显卡仍然参与加速(不是退回纯 CPU),输出结果不受影响</strong>,
+          页面上会有明确提示(例如“已按此显卡自动选用稳定引擎处理”)。你不需要手动设置。</p>
+        <p>从 v1.3.5 起,补帧引擎已用新版 ncnn 源码重编,50 系不再只能等驱动修复。</p>
+      </div>
+    </details>
+
+    <details id="driver">
+      <summary>提示“驱动偏旧 / 改走兼容路线”,一定要更新驱动吗?</summary>
+      <div class="details-body">
+        <p>不是必须,但<strong>更新显卡驱动后重启软件,通常能恢复完整的 GPU 加速</strong>。老驱动(2021 年以前)的 30 / 20 / 16 系与部分 AMD 显卡上,
+          引擎可能起不来,软件会自动降级(慢但稳)。</p>
+        <p>另外内置的视频编码器(NVENC)需要较新的 NVIDIA 驱动,驱动过旧时软件会改用 CPU 软编码并提示你 —— 不更新也能跑,只是慢。</p>
+      </div>
+    </details>
+
+    <details id="slow-processing">
+      <summary>处理很慢,正常吗?</summary>
+      <div class="details-body">
+        <p>先看下面几条最常见的“慢”的原因:</p>
+        <ul>
+          <li><strong>是不是在用 CPU?</strong>CPU 模式比 GPU 慢几倍到十几倍。看页面上方的设备提示,以及状态栏 / 日志里写的实际计算设备。</li>
+          <li><strong>倍率是不是太高?</strong>4x 超分 / 8x 以上补帧的耗时和磁盘占用会成倍上升。老电脑建议先试 1x 超分、2x 补帧。</li>
+          <li><strong>模型是不是“质量优先”那类?</strong>同样 1080p 超分,动漫视频常用的轻量模型每帧约 0.25 秒,而 x4plus 这类质量模型约 15 秒/帧,
+            差距非常大。先用轻量模型试效果。</li>
+          <li><strong>素材是不是 4K / 高帧率?</strong>4K 补帧单输出帧大约是 1080p 的 3 倍多耗时。</li>
+          <li><strong>音频分离本身慢。</strong>优先用显卡(DirectML)加速;没有可用显卡时用 CPU,一首歌几到十几分钟。</li>
+        </ul>
+        <p>状态栏会显示进度与已用时间;v1.3.3 起四个阶段都有各自的剩余时间估计。建议<strong>先用一小段样片试跑</strong>,确认参数和耗时再整段处理。</p>
+      </div>
+    </details>
+
+    <details id="estimate">
+      <summary>大概多久能跑完一段视频?有参考数据吗?</summary>
+      <div class="details-body">
+        <p>我们只提供自己实测过的量级(测试机为 RTX 4060 Laptop):</p>
+        <ul>
+          <li>1080p 超分:动漫视频常用模型约 <strong>0.25 秒/帧</strong>(4x 约 0.30 秒/帧),轻量通用模型 4x 约 0.46 秒/帧,质量优先的 x4plus 约 15 秒/帧;</li>
+          <li>1080p 补帧:约 <strong>0.08 秒/输出帧</strong>;2160p(4K)约 0.28 秒/输出帧;</li>
+          <li>一个真实作业:1080p、72 帧素材(约 2.4 秒),做 <strong>4 倍补帧 + 2 倍超分,全程约 53.7 秒</strong>。</li>
+        </ul>
+        <p class="small muted">这些是我们自己机器上的数字,不是承诺。换显卡、换模型、换素材差别可能很大,请以软件内的预计剩余时间为准,
+          并先用样片试跑。</p>
+      </div>
+    </details>
+
+    <h2 id="feature-group">功能与效果</h2>
+
+    <details id="model">
+      <summary>AI 抠图提示“模型未安装”,怎么装?</summary>
+      <div class="details-body">
+        <p>安装包不含抠图模型(约 1.4 GB),需要单独补。两种办法:</p>
+        <ol>
+          <li>重新运行安装包,在「选择附加任务」页勾选「下载并安装模型包」;</li>
+          <li>或手动下载 <code>models_v1.0.zip</code>,把里面的 6 个 <code>.onnx</code> 文件<strong>直接解压到</strong>
+            <code>程序目录\engines\rembg\</code>(不要再套一层文件夹)。</li>
+        </ol>
+        <p>装好的标志:AI 抠图页左上角的黄色提示消失。完整步骤见
+          <a href="tutorial.html#cutout-models">使用教程 · 抠图模型怎么装</a>。实在嫌麻烦就用完整版安装包(含全部模型)。</p>
+      </div>
+    </details>
+
+    <details id="wrong-algo">
+      <summary>放大后图发糊 / 变得像画出来的,是哪里设错了?</summary>
+      <div class="details-body">
+        <ul>
+          <li><strong>动漫图发糊</strong> → 检查算法是不是选成了 Real-ESRGAN;动漫 / 插画应该用 <strong>waifu2x</strong>。</li>
+          <li><strong>照片显得很“画”</strong> → 检查是不是用了 waifu2x;照片 / 实拍应该用 <strong>Real-ESRGAN</strong>。</li>
+          <li><strong>图发虚、有马赛克</strong> → 倍率可能偏高,或超分引擎选错;先试 <strong>1x 超分</strong>(只变清晰不放大)。</li>
+          <li><strong>细节被磨掉了</strong> → 降噪档位太强。干净素材请用“不降噪 / 弱”,强档只适合压缩噪点明显的素材。</li>
+        </ul>
+      </div>
+    </details>
+
+    <details id="cutout-edge">
+      <summary>抠图边缘粗糙 / 缺了一块,怎么调?</summary>
+      <div class="details-body">
+        <ul>
+          <li>提高「边缘增强」,或换成 <strong>ISNet 精细边缘</strong>(人像 / 产品)、<strong>ISNet 动漫</strong>(动漫插画);</li>
+          <li>背景与主体颜色接近时,适当降低前景阈值、提高背景阈值,或勾「自适应阈值」;</li>
+          <li>抠毛发、半透明边缘时调高「边缘羽化」;</li>
+          <li>边缘有碎点杂色时开启「边缘清理」。</li>
+        </ul>
+        <p>小提示:先用一张图把参数调好,再点批量,避免整批返工。</p>
+      </div>
+    </details>
+
+    <details id="jelly">
+      <summary>补帧之后画面有“果冻”扭曲 / 动作反而怪?</summary>
+      <div class="details-body">
+        <ul>
+          <li>勾上「<strong>果冻修复</strong>」,给快速运动处盖一层真实运动模糊,观感更自然;</li>
+          <li>调「<strong>光流调整</strong>」:果冻多就调低,动作卡就调高;</li>
+          <li>开启「<strong>转场识别</strong>」,镜头切换处不插帧,避免鬼影;</li>
+          <li>动漫片源建议先开「<strong>去除重复帧</strong>」再补帧,并把倍率降到 2x~4x 试效果。</li>
+        </ul>
+      </div>
+    </details>
+
+    <details id="no-audio">
+      <summary>输出的视频没有声音?</summary>
+      <div class="details-body">
+        <p>最常见的原因是勾了「<strong>静音</strong>」——这个选项是为“只要画面”的场景准备的。取消勾选后重新处理即可。
+          另外注意:如果源视频本身就是无声的(例如某些无声素材),输出自然也没有声音。</p>
+      </div>
+    </details>
+
+    <details id="audio-upsample">
+      <summary>音频“升采样率”好像没效果?</summary>
+      <div class="details-body">
+        <p>这个功能只对<strong>低采样率源</strong>(8k / 16k / 22k / 32k,例如电话录音、老磁带)真的有作用,AI 会补出缺失的高频。
+          44.1 kHz 及以上的音乐本身已是全频带,软件会自动跳过,不会报错,也不会有变化 —— 这种情况请改用「增强」。</p>
+      </div>
+    </details>
+
+    <details id="missing-engine">
+      <summary>状态栏显示“引擎缺失”或处理直接报错?</summary>
+      <div class="details-body">
+        <ol>
+          <li>检查软件目录下的 <code>engines</code> 文件夹是否完整(通常是安装包解压不完整或被安全软件删了文件);</li>
+          <li>重新运行安装包覆盖安装一次,一般即可修复(设置与模型不会丢);</li>
+          <li>仍然报错:打开「设置 → 诊断日志」看具体错误,或导出诊断包反馈给我们。</li>
+        </ol>
+      </div>
+    </details>
+
+    <details id="disk">
+      <summary>提示磁盘空间不足 / 临时文件占用很大?</summary>
+      <div class="details-body">
+        <p>视频处理需要在临时目录保存大量中间帧,长视频可能占用几十 GB 甚至更多。软件会:</p>
+        <ul>
+          <li>处理前<strong>预估所需空间</strong>,不足时提前中止并提示(不会偷偷写满磁盘);</li>
+          <li>用完即删中间文件,并在启动时清理历史残留;</li>
+          <li>允许在「设置」里指定<strong>临时文件位置</strong> —— 空间紧张时请指向空闲最大的盘。</li>
+        </ul>
+        <p>另外建议把输出目录也放在剩余空间充足的分区,避免处理到最后一步才失败。</p>
+      </div>
+    </details>
+
+    <h2 id="license-group">收费与授权</h2>
+
+    <details id="price">
+      <summary>软件收费吗?要注册账号吗?</summary>
+      <div class="details-body">
+        <p><strong>个人 / 非商用使用免费</strong>,不需要注册、不需要登录、没有会员与内购,也没有功能被锁在付费墙后。
+          软件内有合作方广告位以维持开发与维护成本,广告不做个性化推荐,可以在设置里关闭(见下一条)。</p>
+      </div>
+    </details>
+
+    <details id="ads">
+      <summary>广告能关掉吗?广告会读取我的信息吗?</summary>
+      <div class="details-body">
+        <p>可以。广告卡右上角「✕」可隐藏当前这一条;「设置 → 本次运行不显示广告」勾上后,本次运行不再显示(重启软件会自动恢复显示;
+          目前没有“永久关闭广告”的开关)。关闭广告<strong>不影响软件的任何功能</strong>。</p>
+        <p>广告素材(文案与图片)从公开仓库拉取用于界面展示,这个过程<strong>不传输你的任何信息</strong>,也不读取设备标识或使用记录,
+          不做个性化推荐。详见 <a href="privacy.html#network">隐私说明</a>。</p>
+      </div>
+    </details>
+
+    <details id="commercial">
+      <summary>能商用吗?可以打包发给别人 / 上传到别的平台吗?</summary>
+      <div class="details-body">
+        <p>不可以。<strong>未经作者书面许可,禁止商用、售卖、出租、捆绑销售、以获利为目的的再分发,也禁止重新打包、改名后发布到其它渠道</strong>,
+          以及去除或篡改软件内的署名与版权声明。个人学习、研究、日常处理素材完全没问题。</p>
+        <p>软件本体采用作者自创的专有许可(源码可见,但不是 MIT / Apache / GPL 这类标准开源许可);
+          随软件集成的第三方开源组件(waifu2x、Real-ESRGAN、RIFE、FFmpeg 等)仍遵循各自的许可,详见
+          <a href="licenses.html">开源许可与致谢</a>。</p>
+      </div>
+    </details>
+
+    <details id="donate">
+      <summary>打赏有什么用?不打赏会少功能吗?</summary>
+      <div class="details-body">
+        <p>打赏完全自愿,<strong>不影响任何功能</strong>,不构成购买,也不提供额外特权或优先支持,且不支持退还。
+          打赏只用于支持作者继续更新、修复与维护本项目。请理性打赏、量力而行;未成年人请在监护人知情同意下操作。</p>
+      </div>
+    </details>
+
+    <h2 id="privacy-group">隐私与联网</h2>
+
+    <details id="upload">
+      <summary>软件会把我的文件传到服务器吗?</summary>
+      <div class="details-body">
+        <p><strong>不会。</strong>图片、视频、音频的处理全部在你的电脑上完成,不上传文件内容、不传文件名、不传文件路径、不传画面/音频,
+          也不传显卡机型等设备信息。软件没有账号体系,不收集个人信息,也不做使用行为统计。</p>
+        <p>完整说明(包括软件里哪三处会联网、每次联网做什么)见 <a href="privacy.html">隐私说明</a>。</p>
+      </div>
+    </details>
+
+    <details id="net">
+      <summary>那软件为什么还要联网?都请求了什么?</summary>
+      <div class="details-body">
+        <p>只有三件事,而且都不涉及你的文件与设备信息:</p>
+        <ol>
+          <li><strong>检查更新</strong>:启动时查询最新版本号,有新版本会提示你(不自动下载、不自动安装);</li>
+          <li><strong>拉取广告素材</strong>:获取界面广告位的文案与图片;</li>
+          <li><strong>拉取界面提示文案</strong>:获取底部状态栏的提示条内容。</li>
+        </ol>
+        <p>另外,点“问卷 / 更新下载”这类链接时是<strong>你自己主动</strong>打开外部网页。以上所有请求失败都会被静默忽略,
+          全部有内置兜底(提示有内置文案、广告区直接隐藏),不影响任何处理功能。</p>
+      </div>
+    </details>
+
+    <details id="offline">
+      <summary>断网 / 内网环境能用吗?</summary>
+      <div class="details-body">
+        <p>能用。所有处理都是本机计算,不需要联网。联网的三件事(更新检查、广告素材、提示文案)失败时会被静默跳过:
+          提示条会显示内置的默认文案,广告区隐藏,更新检查不做提示。功能与画质不受任何影响。</p>
+        <p>只有下载安装包、下载模型包需要联网。</p>
+      </div>
+    </details>
+
+    <details id="diag">
+      <summary>反馈问题时让我导出的“诊断包”里有什么?会不会被自动上传?</summary>
+      <div class="details-body">
+        <p>诊断包里是<strong>本机日志、设备信息与设置</strong>(用于定位问题),它<strong>只保存在你的电脑上</strong>,
+          软件不会自动发送给任何人。是否发给我们、发给谁,完全由你决定;不想发也可以只截取日志里的报错行。</p>
+      </div>
+    </details>
+
+    <h2 id="other-group">其它</h2>
+
+    <details id="feedback">
+      <summary>遇到问题想反馈,怎样最快解决?</summary>
+      <div class="details-body">
+        <p>带上这些信息,基本一轮就能定位:</p>
+        <ol>
+          <li>软件版本号(「关于」页可看)与你的 Windows 版本;</li>
+          <li>显卡型号 + 驱动版本;</li>
+          <li>你做了什么操作、期望结果与实际结果;</li>
+          <li>「设置 → 诊断日志」里的相关日志,或直接用「导出诊断包」生成 zip。</li>
+        </ol>
+        <p>反馈渠道:软件内「关于 → 联系方式」或社区(见软件内说明)。</p>
+      </div>
+    </details>
+
+    <details id="docs-mismatch">
+      <summary>教程描述和我在软件里看到的不一样?</summary>
+      <div class="details-body">
+        <p>软件更新较快,个别页面文字与教程正文可能有先后差异。<a href="changelog.html">更新日志</a> 里记录了每个版本的界面与默认值调整
+          (例如去重的默认档位、广告开关的行为、图片后处理参数的机理变化等)。如果发现明显的说明错误,欢迎反馈,我们会尽快更正。</p>
+      </div>
+    </details>
+
+    <div class="note">
+      <p>这里没找到你的问题?请先看 <a href="tutorial.html">使用教程</a>,或阅读
+        <a href="privacy.html">隐私说明</a> / <a href="licenses.html">开源许可与致谢</a> /
+        <a href="changelog.html">更新日志</a>。</p>
+    </div>
+
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <ul class="footer-links">
+      <li><a href="index.html">首页</a></li>
+      <li><a href="download.html">下载</a></li>
+      <li><a href="tutorial.html">使用教程</a></li>
+      <li><a href="faq.html">常见问题</a></li>
+      <li><a href="privacy.html">隐私说明</a></li>
+      <li><a href="licenses.html">开源许可与致谢</a></li>
+      <li><a href="changelog.html">更新日志</a></li>
+    </ul>
+    <p class="footer-legal">
+      ALH Pro — 本地 AI 视频 / 图片处理工具。软件版权归 AlL.H 所有,第三方组件版权归各原作者所有。
+    </p>
+    <!-- 备案号占位:上线前必须替换为真实备案号,并保持链接到 https://beian.miit.gov.cn/ (详见 index.html 里的完整说明) -->
+    <p class="icp">©2026 ALH Pro · <a href="https://beian.miit.gov.cn/" rel="nofollow">京ICP备XXXXXXXX号</a></p>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>更新日志 — ALH Pro(v1.3.6 及历史版本)</title>
+<meta name="description" content="ALH Pro 更新日志:每个版本改了什么、修复了什么、有没有需要用户重新调整参数的地方。最新版本 v1.3.6(2026-09-13)。">
+<meta name="theme-color" content="#f6f7f9">
+<link rel="icon" href="assets/img/logo.png" type="image/png">
+<link rel="stylesheet" href="assets/css/style.css">
+<script src="assets/js/site.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到主要内容</a>
+
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="index.html">
+      <img class="brand-logo" src="assets/img/logo.png" alt="ALH Pro 标志" width="30" height="30">
+      <span>ALH&nbsp;Pro<span class="brand-sub"> 本地 AI 处理</span></span>
+    </a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav">
+      <span class="nav-toggle-bars" aria-hidden="true"></span>菜单
+    </button>
+    <nav class="site-nav" id="site-nav" aria-label="主导航">
+      <a href="index.html">首页</a>
+      <a href="download.html">下载</a>
+      <a href="tutorial.html">使用教程</a>
+      <a href="faq.html">常见问题</a>
+      <a href="privacy.html">隐私说明</a>
+      <a href="licenses.html">开源许可</a>
+      <a href="changelog.html" aria-current="page">更新日志</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <div class="wrap">
+
+    <h1 class="page-title">更新日志</h1>
+    <p class="page-meta">
+      最新版本 <strong>v1.3.6</strong>(2026-09-13)· 点每个版本展开细节 · 升级方式:
+      <a href="download.html#upgrade">直接覆盖安装</a>,不用卸载、不用重下模型
+    </p>
+
+    <div class="note">
+      <p><span class="note-title">怎么读这份日志:</span>
+      每条里凡是会<strong>影响你已有设置</strong>或需要<strong>重新调整参数</strong>的改动,都会单独标出。
+      我们也会把「这一版没变什么」写清楚,避免你白折腾。</p>
+    </div>
+
+    <h2 id="v136">v1.3.6 <span class="small muted">2026-09-13 · 预设模型调整 + 补帧倍率显示修复</span></h2>
+    <details open>
+      <summary>这一版改了什么(两条都是“看着小、实际会误导人”的问题)</summary>
+      <div class="details-body">
+        <ul>
+          <li><strong>官方预设「通用画质增强 不含补帧」的超分模型换成 realesr-animevideov3</strong>(与「动漫通用」同款)。
+            原模型是自转的 realesr-general-x4v3,摘要里还印着旧标签「(轻量)」,现在下拉里显示的名称已统一。
+            该预设基线提升到 <strong>Rev 5</strong>,升级后会<strong>自动刷新这一条</strong>;你自己另存的预设一律不动。</li>
+          <li><strong>修「去重补帧4x」预设摘要显示成 2x</strong>(实际上任何补帧倍率都可能显示错一档):
+            摘要里打印的是下拉【序号】(0~5)而不是倍率,序号 2(真值 4x)显示成 “2x”,序号 0(真值 2x)更会显示成 “0x”,
+            会让人以为自己选错了档。现在序号与倍率收敛成一份映射(<strong>序号 0/1/2/3/4/5 = 2x/3x/4x/8x/12x/16x</strong>),
+            预设摘要、耗时预估、输出规格全部走这份映射,并补了单元测试钉住这类抄写事故。</li>
+          <li><strong>16x 补帧现在也会提示「高倍率」</strong>:此前判断高倍率的条件漏了 16x,最高倍率反而没有耗时提示,已改为按倍率判定(≥8x)。</li>
+        </ul>
+        <p class="note"><strong>本版不改变实际处理结果:</strong>同样的设置下,输出与 v1.3.5 完全一致,修的是“显示与实跑对不上”。</p>
+      </div>
+    </details>
+
+    <h2 id="v135">v1.3.5 <span class="small muted">2026-09-12 · 补帧引擎重编 + 界面稳定性 + 全面自检修复</span></h2>
+    <details>
+      <summary>建议所有用户更新:修掉“跑到一半界面卡死”、50 系补帧不再只能等驱动</summary>
+      <div class="details-body">
+        <ul>
+          <li><strong>补帧引擎重编:</strong>用与实拍超分同一套 2025 / 2026 版 ncnn 源码重新编译 RIFE,
+            50 系与较新驱动不再“只能等驱动修复”。输出与旧引擎数值等价(1080p PSNR 76.9 dB、4K 82.1 dB,肉眼无差),速度略快(1080p 3.03 秒 → 2.94 秒)。</li>
+          <li><strong>“开了去重就卡死”的真因已从根上修:</strong>日志区滚动条与自动折行互掐造成界面布局循环 ——
+            卡住的是界面,后台任务其实一直在正常跑。四页日志区的滚动条改为常驻、去掉面板高度动画、滚动改到下一帧执行。</li>
+          <li><strong>自愈兜底:</strong>万一还有别的成因,一旦检出布局循环会自动停用界面日志刷新(日志继续写文件、任务照常跑完),
+            不会再出现“界面死了只能重启、把任务一起打断”。</li>
+          <li><strong>引擎被挂死时不再永久卡住:</strong>看门狗强制终止后的“等管道结束”加了 5 秒上限,收不回来就明确失败并提示重启。</li>
+          <li><strong>显存不足的“自动降分块”以前是空转</strong>(日志写着降档、参数一字没改、只是白跑 3 次),现在真的按 auto → 512 → 256 → 128 降档重试。</li>
+          <li><strong>修“点一次停止就永久变慢”:</strong>取消不再被误判成硬件编码损坏(此前会在本次运行内永久拉黑硬编,之后全走 CPU 软编)。</li>
+          <li><strong>备用 ffmpeg 缺失会明确预警:</strong>驱动较旧的机器靠它兜底,缺了会静默变慢且日志毫无线索,现在会直接提示。</li>
+          <li><strong>去重分析全程可见、随时可停:</strong>「帧差 + SSIM」这条路径此前既不报进度也不响应停止,现在有逐帧进度与日志心跳,点停止立即中断。开去重时的默认档改为「智能检测」。</li>
+          <li><strong>预设两处 bug 修复:</strong>把列表切成“按名字 / 按最近修改”后点「应用预设」会套用<em>另一条</em>;
+            自建的同名预设会被官方基线<em>整份覆盖</em>(现在只标记为官方,参数一个字不动)。</li>
+          <li><strong>预设文件损坏不再静默覆盖你的数据</strong>(先备份 <code>.bak</code> + 本次运行只读保护);音频页「记住上次参数」以前永远失效,已修。</li>
+          <li><strong>设置里的广告开关改为「本次运行不显示广告」:</strong>默认不勾,只对本次运行生效,重启自动恢复显示(仍然没有永久关闭广告的开关)。</li>
+          <li><strong>老 GTX 分档改准:</strong>GTX 10 系(Pascal)与 GTX 600/700/800/900 系分开 —— GTX 10 系用 ncnn-Vulkan 完全可用,不再一律劝退。</li>
+          <li><strong>「检测兼容性」不再用小图糊弄自己:</strong>改走与处理流水线完全相同的入口(生产帧尺寸 + 真实模型 + 结论缓存),
+            不会再出现“小图检测通过、真跑起来才出问题”。</li>
+          <li><strong>视频页超分模型下拉调整:</strong>轻量通用模型(realesr-general-x4v3,5 MB)上移到「超慢」之前、耗时档改「中」;已保存的模型选择会自动换算,不会静默变成超慢。</li>
+        </ul>
+        <p class="note note-warn"><strong>⚠ 需要你动手的一处:</strong>图片后处理有六个锐化类档位各自换了机理(不再是一个旋钮拧六遍),
+          「减少杂色」由两档改为连续力度,「去雾」「边缘增强」强度重新定标。
+          <strong>预设里存的是数值 —— 数值没变、效果和以前不一样</strong>,请在图片页重新调一次并另存。
+          附带的好消息:<strong>4K 导出提速约 19 倍</strong>(「边缘抗锯齿」换成软件自己的实现,实测 4.88 秒/帧 → 0.26 秒/帧)。</p>
+      </div>
+    </details>
+
+    <h2 id="v134">v1.3.4 <span class="small muted">2026-09-11</span></h2>
+    <details>
+      <summary>这一版没有单独发布说明,相关修复已一并收录在 v1.3.5 中</summary>
+      <div class="details-body">
+        <p>v1.3.5 是在 v1.3.4 那批修复的基础上又打的一次包,v1.3.4 的内容也已包含在内,因此不再单列。
+          机器可读的版本记录可在公开仓库的 <code>release_history.json</code> 中查看。</p>
+      </div>
+    </details>
+
+    <h2 id="v133">v1.3.3 <span class="small muted">2026-09-08 · 稳定性 / 兼容性 / 速度增强</span></h2>
+    <details>
+      <summary>修了一批“看起来能用、实际会翻车”的隐性 bug,并给视频处理提速</summary>
+      <div class="details-body">
+        <ul>
+          <li><strong>探测看门狗(治“处理卡死只能强杀”):</strong>开始处理前会用 ffmpeg 完整扫一遍视频(查转场 / 可变帧率 / 色彩空间),
+            这一步以前没有超时保护、连「停止」都停不下来。现在加了看门狗(启动静默 90 秒 / 运行静默 120 秒自动掐掉并提示)。</li>
+          <li><strong>修 x4plus 系超分输出全黑帧:</strong>个别卡(尤其 RTX 50 系新驱动)用 realesrgan-x4plus 时会静默输出全黑帧(退出码 0、毫无报错),
+            根源是引擎线程档位过高,现封顶 8 → 6。</li>
+          <li><strong>回退帧统一缩放,治“看不出但真的翻车的花屏”:</strong>超分失败回退原帧时先统一尺寸再写入,避免混入异尺寸帧导致 ffmpeg 静默产出花屏成片。</li>
+          <li><strong>硬编探测修复:</strong>硬件编码探测以前只编 1 帧就被判“无效”而静默禁用,导致明明有硬编却一直走更慢的 CPU 软编;现在会多编几帧(≥5)。</li>
+          <li><strong>视频超分提速(相同帧只超分一次):</strong>视频里内容完全一样的帧(录屏静止画面、动漫一拍二/一拍三)按内容哈希去重,
+            相同帧只算一次、其余直接复用结果 —— <strong>无损提速</strong>,输出与逐帧超分完全一致,静止素材越多省得越多。</li>
+          <li><strong>预计时间更准(四个阶段都有 ETA):</strong>修正了“一个时钟被超分独用”的根因(以前把拆帧 / 去重 / 补帧的耗时也计入超分速率);
+            现在每阶段用各自的净耗时时钟(扣除休息与暂停)。</li>
+          <li><strong>GPU 识别修正(治“有独显却走 CPU / 走错路”):</strong>修复「注册表枚举」与「引擎枚举」编号可能错位的问题
+            (双卡 AMD 核显 + NVIDIA 独显的机器上尤其明显),以及专业卡被误判成 50 系的风险。</li>
+          <li><strong>不轻易掉 CPU,掉的时候明确提示:</strong>GPU 可用性探测改为 3 次重试 + 更宽松的超时,一次驱动抽风不再把独显判成不可用;
+            万一真的降到 CPU,会明确提示“速度会变得特别慢”。</li>
+          <li><strong>排查手段加强:</strong>超分 / 编码实际走的是什么设备(ncnn-GPU / ONNX-DirectML / ONNX-CPU)全部记进诊断包,
+            自检结论与诊断包也一并加强。</li>
+          <li>赞赏提示更克制(冷却调整为 10 小时,且只有认真看了赞赏码才触发)。</li>
+        </ul>
+      </div>
+    </details>
+
+    <h2 id="v132">v1.3.2 <span class="small muted">2026-09-07 · 视频稳定性加固 + 补帧降级链 + 设备识别修复</span></h2>
+    <details>
+      <summary>重点是黑帧 / 黑屏、补帧残缺,以及“明明能用却提示无法用 GPU”</summary>
+      <div class="details-body">
+        <ul>
+          <li><strong>兼容模式对 NVIDIA 卡也走 ONNX:</strong>视频超分勾选「兼容模式」后(无论是否 N 卡)直接用 ONNX DirectML 稳定引擎,
+            避开 ncnn-Vulkan 偶发黑帧;检测到黑帧后本次视频后续批次不再重跑 ncnn,直接改用 ONNX。</li>
+          <li><strong>编码器不再优先用不可靠的 QSV:</strong>Intel 核显硬编在“独显 + 核显”双卡机上容易输出无效文件,现在仅在无其它可用硬编时兜底;
+            编码器探测分辨率也从 320×240 提高到 1280×720。</li>
+          <li><strong>补帧降级链:</strong>固定使用选定的独立显卡,失败 / 黑帧 / 0 帧时按「显卡 → ONNX(DirectML)→ 换卡」降级,
+            不静默掉到慢速 CPU;并新增“输出帧数远少于目标帧数即触发降级”,防止把残缺当成功。</li>
+          <li><strong>修复独显被误判成 CPU:</strong>显卡编号稀疏(如 1、2)时会被错误当成无效设备,导致“明明有独显却报无独显 / 走 CPU”,现已按引擎设备表判断。</li>
+          <li><strong>Real-ESRGAN 探测超时放宽 5 秒 → 15 秒</strong>,并在探测时显示“正在检测显卡兼容性(约 15 秒)…”,冷启动慢的卡不再被误判为卡死。</li>
+          <li><strong>视频帧转 JPG 直接走 GDI</strong>,不再刷“WinRT JPG 编码不可用”的日志,更快更可靠。</li>
+          <li><strong>与视频页参数记忆相关的修复:</strong>码率 / 格式 / 编码等下拉的“记住上次”恢复生效;补帧倍率 12x / 16x 也能被正确记住。</li>
+          <li>新版本提示改回顶部横幅(不再弹窗打断),点「去下载 / 网盘下载」跳转,点 ✕ 本次不再显示。</li>
+        </ul>
+      </div>
+    </details>
+
+    <h2 id="v131">v1.3.1 <span class="small muted">2026-09-06 · 更新弹窗 + 提示 / 广告区强化</span></h2>
+    <details>
+      <summary>让用户不容易漏掉新版本;界面提示与广告改为随机轮播</summary>
+      <div class="details-body">
+        <ul>
+          <li>检测到新版本 → 延迟 10 分钟弹出升级弹窗(显示新版本号 + 去下载 / 网盘下载按钮),取代原来不醒目的小提示条;
+            检测始终指向最新发布版。每次启动都尽力检查到“确定结果”:被墙会自动换镜像端点并多轮重试。</li>
+          <li>点「本次不再提示」→ 本次运行不再弹;设置里新增「不再提示更新」开关(可随时取消恢复)。</li>
+          <li>状态栏提示条放宽(不再截断)且常驻不可删除;<strong>提示与广告都改为随机轮播</strong>,并避开最近显示过的 4 条,减少重复感。</li>
+          <li>提示 / 广告数量改为自适应:在仓库新增文件即自动多轮播,无需发版。</li>
+          <li>广告卡关闭按钮与“赞助商”角标位置优化,不再压住标题文字。</li>
+        </ul>
+      </div>
+    </details>
+
+    <h2 id="v130">v1.3.0 <span class="small muted">2026-09-05 · 自检驱动 + 始终用显卡 + 稳定性</span></h2>
+    <details>
+      <summary>新增启动自检;明确“能用显卡就用显卡”;兼容模式与看门狗按设备档次自适应</summary>
+      <div class="details-body">
+        <ul>
+          <li><strong>启动自检(全新):</strong>首次启动或版本更新后弹出设备自检,逐项检测(显卡 / 显存·驱动·内存·CPU / 最佳独显 / 可用性 /
+            DirectML·ONNX 超分 / 超分补帧引擎 / 各功能模型),全部通过后显示正式自检报告,点「确定」才进主界面。
+            报告里功能与引擎逐项用 ✓ / ✗ 标注,设置页可「重新检测」「打开引擎目录」。</li>
+          <li><strong>始终用显卡:</strong>通用引擎的降级链去掉“GPU → CPU”(失败改为明确报错并给出建议);
+            计算设备下拉移除 CPU 选项,默认取自检实测出的最佳独显;<strong>你手动选定的有效独显不会被覆盖</strong>。
+            核显只作为“底牌”兜底(仅当独显全部不可用时),并会黄色提示处理变慢。</li>
+          <li><strong>大显存机型吃满显卡:</strong>ONNX 超分分块显存自适应(512 → 768)+ 3 路并行,GPU 占用与速度显著提升。</li>
+          <li><strong>兼容模式加强:</strong>自动降低分块与批大小防止爆显存卡死,对风险显卡强制走 ONNX 稳定路线,同时尊重你选择的倍率、不乱降。</li>
+          <li><strong>黄字提醒更全:</strong>黑帧降级、显存不足自动降分块、高倍率补帧(4x+)、走 ONNX、临时盘紧张等都会提示,让你知道“为什么慢 / 在重试 / 不是卡死”。</li>
+          <li><strong>源兼容:</strong>HDR / 广色域源自动转 BT.709 SDR(避免偏色与信息丢失);超大图加入尺寸与内存保护(不再 OOM);
+            MKV 无损音轨不再被强制转 AAC;视频分辨率超 4K 或帧率超 240 时给出黄色提示。</li>
+        </ul>
+      </div>
+    </details>
+
+    <h2 id="v120-v122">v1.2.0 – v1.2.2 <span class="small muted">2026-09-04 – 09-05 · 预设 / 省盘 / 兼容适配</span></h2>
+    <details>
+      <summary>官方预设上线、长视频不再爆盘也不卡死、双卡机选卡修正</summary>
+      <div class="details-body">
+        <ul>
+          <li><strong>v1.2.2:</strong>修复双卡机上“选独显却跑核显”(设备编号与引擎真实编号颠倒);修复“输出整片冻结 / 灰屏”;
+            修复 h264_nvenc 在旧驱动上反复白跑(检测到驱动过旧即降级并提示更新);临时文件残留清理更彻底(此前可能累计几十上百 GB)。</li>
+          <li><strong>v1.2.1:</strong>长视频临时盘占用从 200 多 GB 降到约 1/5 ~ 1/10(中间帧统一用近无损 JPG);
+            处理前按分辨率预估所需磁盘并提前警告 / 中止;添加图片、视频不再让界面卡死(耗时操作移到后台线程)。</li>
+          <li><strong>v1.2.0:</strong>新增官方预设(视频「去重补帧4x」、图片「通用变清晰」「清晰MAX」),新装 / 更新后自动带上;
+            图片超分增强算法重写(真去雾、真去模糊,区分清晰 / 锐化 / 钝化蒙版 / 细节增强 / 边缘增强的不同作用);
+            消除 ONNX 路径超分的“拼贴接缝”;显存不足先降低分块留在 GPU 重试(不直接掉到慢速 CPU)。</li>
+        </ul>
+      </div>
+    </details>
+
+    <h2 id="v110-v113">v1.1.0 – v1.1.3 <span class="small muted">2026-09-02 – 09-03 · 音频页 / 50 系适配 / 提速</span></h2>
+    <details>
+      <summary>新增音频处理页与 50 系适配;移除许可不明的引擎;临时文件与超分提速</summary>
+      <div class="details-body">
+        <ul>
+          <li><strong>v1.1.0(大版本):</strong>全新「音频处理」页面 —— AI 升采样率(低采样率源 → 48 kHz)、增强、AI 分离(人声 / 伴奏,可自定义多轨与音量)、链式处理;
+            50 系显卡(Blackwell)全面适配(自动走 ONNX 稳定路线、新版 waifu2x 引擎);
+            <strong>移除 Real-CUGAN</strong> —— 其官方仓库未附开源许可且无授权联系渠道,为合规分发不再包含(超分只保留 MIT / BSD-3 许可的 waifu2x 与 Real-ESRGAN)。</li>
+          <li><strong>v1.1.1:</strong>修复视频选 Real-ESRGAN 一点开始就崩溃、GPU 黑块 + CPU 不可用的死循环、大视频处理到一半“磁盘空间不足”、
+            音频超分输出“时长砍半 + 变单声道”等问题;设置新增「临时文件位置」。</li>
+          <li><strong>v1.1.2:</strong>新增更新弹窗、一键导出诊断包、GPU 自动选择升级为“实测验证”;
+            音频 AI 分离 / 增强接入显卡加速(此前固定 CPU,一首歌几十分钟);修复临时磁盘预检单位错配(历史“爆盘”根因)。</li>
+          <li><strong>v1.1.3:</strong>消除超分“一块一块”的接缝与黑帧;大图超分提速;临时文件峰值显著下降;超分开放模型选择;
+            音频「真超分辨率」改名为更直白的「AI 升采样率」。</li>
+        </ul>
+      </div>
+    </details>
+
+    <h2 id="v100">v1.0.0 <span class="small muted">首个正式版</span></h2>
+    <details>
+      <summary>图片超分、AI 抠图、视频超分 / 补帧 / 去重的首个完整版本</summary>
+      <div class="details-body">
+        <p>从早期的 v0.3 / v0.5 预览版迭代而来:v1.0 起把「图片放大、AI 抠图、视频处理」整合到统一界面,
+          并在后续版本中逐步加入批量管理、去重复帧、音频处理与设备自检。
+          各版本的软件包与发布记录见<a href="https://github.com/AlLHHH/ALH-Pro/releases">公开仓库的发布页</a>。</p>
+      </div>
+    </details>
+
+    <h2 id="known">已知限制(诚实说明)</h2>
+    <ul>
+      <li>音频 AI 分离优先用显卡(DirectML)加速;无显卡或驱动不兼容时用 CPU,约 1.5 分钟 / 分钟音频。</li>
+      <li>音频“升采样率”只对低采样率源(8k / 16k / 22k / 32k)真的有效;44.1 kHz 音乐本身已是全频带,无需升采样,请改用「增强」。</li>
+      <li>视频超分 / 补帧在老电脑上慢是物理限制,建议用 waifu2x 与 1x~2x 倍率起步。</li>
+      <li>AI 抠图固定使用 CPU(避免占满显卡导致整机卡顿),图片多时需要耐心等待。</li>
+    </ul>
+
+    <div class="note">
+      <p><span class="note-title">想看更细的?</span>
+      本页是面向用户的摘要。逐条的技术细节(含实测数据与自检结论)记录在公开仓库的
+      <code>RELEASE_NOTES.md</code> 与 <code>release_history.json</code> 中,
+      仓库地址:<a href="https://github.com/AlLHHH/ALH-Pro">github.com/AlLHHH/ALH-Pro</a>。</p>
+    </div>
+
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <ul class="footer-links">
+      <li><a href="index.html">首页</a></li>
+      <li><a href="download.html">下载</a></li>
+      <li><a href="tutorial.html">使用教程</a></li>
+      <li><a href="faq.html">常见问题</a></li>
+      <li><a href="privacy.html">隐私说明</a></li>
+      <li><a href="licenses.html">开源许可与致谢</a></li>
+      <li><a href="changelog.html">更新日志</a></li>
+    </ul>
+    <p class="footer-legal">
+      ALH Pro — 本地 AI 视频 / 图片处理工具。软件版权归 AlL.H 所有,第三方组件版权归各原作者所有。
+    </p>
+    <!-- 备案号占位:上线前必须替换为真实备案号,并保持链接到 https://beian.miit.gov.cn/ (详见 index.html 里的完整说明) -->
+    <p class="icp">©2026 ALH Pro · <a href="https://beian.miit.gov.cn/" rel="nofollow">京ICP备XXXXXXXX号</a></p>
+  </div>
+</footer>
+</body>
+</html>
