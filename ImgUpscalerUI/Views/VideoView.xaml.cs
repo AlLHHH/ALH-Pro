@@ -1414,30 +1414,19 @@ public sealed partial class VideoView : UserControl
     /// <summary>预设文件路径(%LOCALAPPDATA%\ALHPro\settings\video-presets.json)。</summary>
     private static string PresetFile => ParaPaths.SettingsFile("video-presets.json");
 
-    /// <summary>视频超分模型下拉的**一次性序号迁移**(2026-09-12 下拉顺序调整:general-x4v3 上移到「超慢」之前)。
-    /// 旧序 2=x4plus(超慢) / 3=general-x4v3;新序 2=general-x4v3 / 3=x4plus(超慢) → 两个序号互换。
+    /// <summary>视频超分模型下拉的**一次性序号迁移**。
     /// 【为什么必须做】这个下拉存的是**序号**:不迁移的话,老用户"存的 3 = 轻量模型"会静默变成
     /// "3 = 超慢(x4plus)"——1080p 实测 14.5 秒/帧、比 animevideov3 慢 17 倍,用户什么都没改却突然慢十几倍,
     /// 而界面上完全看不出异常(下拉里那一项就叫"通用")。
-    /// 【为什么带标记】不能每次读都换:换完会写回文件,标记置 1 后就不再动 —— 否则每次启动来回横跳。
+    /// 【为什么带标记】不能每次读都换:换完会写回文件,标记前进后就不再动 —— 否则每次启动来回横跳。
+    /// 【序号映射本身已抽到 AlhPro.Core.VideoModelOrder】纯函数 + 单测(Rev0/1/2 → 3、幂等、越界兜底),
+    /// 这里只负责读写设置字段;Rev 历史与每次换位的原因写在那个类的注释里。
     /// 返回 true 表示"做过改动"(调用方据此决定是否立即写回盘)。</summary>
     private static bool MigrateEsrganModelOrder(VideoSettings d)
     {
-        if (d is null || d.ModelOrderRev >= 2) return false;
-        // Rev 1(2026-09-12):x4plus(超慢) ↔ general-x4v3 —— 把 general-x4v3 从最末尾上移到「超慢」之前
-        if (d.ModelOrderRev < 1)
-        {
-            if (d.UpEsrganModel == 2) d.UpEsrganModel = 3;
-            else if (d.UpEsrganModel == 3) d.UpEsrganModel = 2;
-            d.ModelOrderRev = 1;
-        }
-        // Rev 2(2026-09-13,用户要求):x4plus-anime ↔ general-x4v3 —— 把 general-x4v3 移到 animevideov3 正下方
-        if (d.ModelOrderRev < 2)
-        {
-            if (d.UpEsrganModel == 1) d.UpEsrganModel = 2;
-            else if (d.UpEsrganModel == 2) d.UpEsrganModel = 1;
-            d.ModelOrderRev = 2;
-        }
+        if (d is null || d.ModelOrderRev >= AlhPro.Core.VideoModelOrder.CurrentRev) return false;
+        d.UpEsrganModel = AlhPro.Core.VideoModelOrder.Migrate(d.UpEsrganModel, d.ModelOrderRev, out int rev);
+        d.ModelOrderRev = rev;
         return true;
     }
 
@@ -1507,7 +1496,8 @@ public sealed partial class VideoView : UserControl
                 return;
             }
             if (list.Count == 0) { if (File.Exists(PresetFile)) File.Delete(PresetFile); return; }
-            foreach (var p in list) if (p?.Params != null) p.Params.ModelOrderRev = 2;
+            // 盖章用当前 Rev(不能写死数字,理由同 SaveSettings 里那段:Rev 一变,写死的值会让新序号被再迁移一次)
+            foreach (var p in list) if (p?.Params != null) p.Params.ModelOrderRev = AlhPro.Core.VideoModelOrder.CurrentRev;
             Directory.CreateDirectory(Path.GetDirectoryName(PresetFile)!);
             File.WriteAllText(PresetFile, System.Text.Json.JsonSerializer.Serialize(list));
         }
@@ -2319,8 +2309,11 @@ public sealed partial class VideoView : UserControl
     /// 同时顺序随下拉调整:2=general-x4v3、3=超慢(x4plus)。改这里必须与 XAML 同步改,否则显示与实跑不符。
     /// 【2026-09-13】去掉末尾的"(轻量)":v1.3.5 已把该项在下拉里改叫「通用 · realesr-general-x4v3(5MB · 中)」,
     /// 摘要却还印着「(轻量)」—— 用户正是看到"轻量"以为这支不行,才要求把预设模型换成动漫那支。摘要必须与下拉同口径。</summary>
-    /// 【2026-09-14】追加第 5 项(自转的 wdn-x4v3)。**追加在末尾**:前 4 项序号不变,老用户已存序号无需迁移。</summary>
-    private static string[] UpEsrganModelNames = { "动漫·animevideov3", "通用·general-x4v3(快)", "动漫·x4plus-anime", "通用·x4plus(超慢)", "通用·wdn-x4v3(快)" };
+    /// 【2026-09-14 Rev3】下拉改为**按速度与体积排**(快/小 → 慢/大):
+    ///   0 动漫·animevideov3(4MB) 1 通用·general-x4v3(5MB) 2 通用·wdn-x4v3(5MB) 3 动漫·x4plus-anime(9MB) 4 通用·x4plus(41MB 超慢)。
+    /// 换位对应 VideoModelOrder Rev3 的迁移(2→3、3→4、4→2);这里必须与 XAML 的项顺序严格一一对应,
+    /// 否则预设摘要会印出与实际不同的模型(此前就踩过:数组漏了一项,序号 3 显示成别的模型)。</summary>
+    private static string[] UpEsrganModelNames = { "动漫·animevideov3", "通用·general-x4v3(快)", "通用·wdn-x4v3(快)", "动漫·x4plus-anime", "通用·x4plus(超慢)" };
     private static string UpWaifu2xModelName(int idx) => idx >= 0 && idx < UpWaifu2xModelNames.Length ? UpWaifu2xModelNames[idx] : "通用·cunet";
     private static string UpEsrganModelName(int idx) => idx >= 0 && idx < UpEsrganModelNames.Length ? UpEsrganModelNames[idx] : "动漫·animevideov3";
 
@@ -2361,10 +2354,13 @@ public sealed partial class VideoView : UserControl
         try
         {
             var d = CollectVideoParams();
-            // 【盖章:本版写出来的文件一律是新序号】CollectVideoParams 每次都 new 一个 VideoSettings,
+            // 【盖章:本版写出来的文件一律是**当前 Rev** 的序号】CollectVideoParams 每次都 new 一个 VideoSettings,
             // ModelOrderRev 默认 0;若不在这里盖章,下次启动 LoadSettings 的迁移会以为"这还是老文件"→
-            // 又把 2↔3 换一遍,轻量/超慢在两次启动之间来回横跳(实测过一次,必须钉住)。
-            d.ModelOrderRev = 2;
+            // 又按老映射换一遍序号,模型在两次启动之间来回横跳(实测过一次,必须钉住)。
+            // ⚠ 这里**必须**引用 VideoModelOrder.CurrentRev,不能写死数字 —— 2026-09-14 换顺序(Rev3)时,
+            //   写死的 2 会让"用户新选的 wdn(新序 2)"在下次启动被当成 Rev2 的 2 再换一次 → 变成 x4plus-anime,
+            //   即"什么都没改却换了模型"。写死版本号 = 埋一颗定时炸弹。
+            d.ModelOrderRev = AlhPro.Core.VideoModelOrder.CurrentRev;
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile)!);
             File.WriteAllText(SettingsFile, System.Text.Json.JsonSerializer.Serialize(d));
         }
