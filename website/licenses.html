@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>开源许可与致谢 — ALH Pro(第三方组件许可声明)</title>
+<meta name="description" content="ALH Pro 的版权与许可说明:软件本体采用自创专有许可(个人/非商用免费);集成的 waifu2x、Real-ESRGAN、RIFE、U²-Net、ISNet、BiRefNet、rembg、FFmpeg、ONNX Runtime、Demucs、LavaSR 等开源组件的许可、版权与源码地址逐条列出,并附致谢名单。">
+<meta name="theme-color" content="#f6f7f9">
+<link rel="icon" href="assets/img/logo.png" type="image/png">
+<link rel="stylesheet" href="assets/css/style.css">
+<script src="assets/js/site.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到主要内容</a>
+
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="index.html">
+      <img class="brand-logo" src="assets/img/logo.png" alt="ALH Pro 标志" width="30" height="30">
+      <span>ALH&nbsp;Pro<span class="brand-sub"> 本地 AI 处理</span></span>
+    </a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav">
+      <span class="nav-toggle-bars" aria-hidden="true"></span>菜单
+    </button>
+    <nav class="site-nav" id="site-nav" aria-label="主导航">
+      <a href="index.html">首页</a>
+      <a href="download.html">下载</a>
+      <a href="tutorial.html">使用教程</a>
+      <a href="faq.html">常见问题</a>
+      <a href="privacy.html">隐私说明</a>
+      <a href="licenses.html" aria-current="page">开源许可</a>
+      <a href="changelog.html">更新日志</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <div class="wrap">
+
+    <h1 class="page-title">开源许可与致谢</h1>
+    <p class="page-meta">
+      本页与随软件发布的 <code>THIRD_PARTY_NOTICES.txt</code> 内容一致,用于满足各开源项目许可中「保留版权声明与许可文本」的要求
+    </p>
+
+    <div class="note">
+      <p><span class="note-title">先分清两件事:</span>
+      ① <strong>ALH Pro 软件本体</strong>采用作者自创的专有许可(个人 / 非商用免费,源码可见但不是标准开源许可);
+      ② <strong>软件集成的开源引擎与模型</strong>(waifu2x、Real-ESRGAN、RIFE、FFmpeg 等)版权归各原作者所有,遵循它们各自的许可
+      (MIT / BSD-3-Clause / Apache-2.0 / GPLv3 等)。第 ② 部分<strong>不受</strong>本软件许可的约束,也不因被集成而改变。</p>
+    </div>
+
+    <h2 id="alh">一、ALH Pro 软件本体许可</h2>
+    <p>ALH Pro 采用<strong>自创专有许可</strong>(<strong>不是</strong> MIT、Apache-2.0、GPL 等任何标准开源许可)。
+      源码按「源码可见(Source-available)」方式公开,供学习与研究;<strong>版权归 AlL.H 所有,保留所有权利(All Rights Reserved)</strong>。</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>范围</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>允许</strong></td>
+            <td>个人 / 非商业用途免费下载、安装、使用;用于个人学习、研究、日常图片 / 视频 / 音频处理。</td>
+          </tr>
+          <tr>
+            <td><strong>禁止</strong><br><span class="small muted">(未经作者书面许可)</span></td>
+            <td>复制、修改、再分发;<strong>以任何形式重新打包、改名、发布、上传到第三方渠道</strong>;商业用途(售卖、出租、捆绑销售、用于任何盈利性项目);
+              去除或篡改软件内的署名、版权声明、开源组件许可声明;反向工程后用于再分发。</td>
+          </tr>
+          <tr>
+            <td><strong>免责</strong></td>
+            <td>软件按「现状」(AS-IS)提供,不附带任何明示或默示的担保(含适销性、特定用途适用性、不侵权);
+              作者不对因使用本软件产生的任何直接或间接损失负责。处理重要或不可再生的素材前,请务必自行备份原文件。</td>
+          </tr>
+          <tr>
+            <td><strong>第三方</strong></td>
+            <td>本许可仅约束 ALH Pro 自身的原创部分,<strong>不影响</strong>所集成开源组件的原有许可。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="small muted">许可原文随软件发布(<code>LICENSE</code>),也可在公开仓库
+      <a href="https://github.com/AlLHHH/ALH-Pro">AlLHHH/ALH-Pro</a> 根目录查看;软件内「关于」页同样提供完整声明。</p>
+
+    <h2 id="third-party">二、第三方组件许可声明(逐条)</h2>
+    <p class="small">以下内容与随软件附带的 <code>THIRD_PARTY_NOTICES.txt</code> 对应,包含完整源码获取方式。
+      <strong>如分发本软件,请保留该文件与本页所列的版权、许可信息。</strong></p>
+
+    <div class="lic">
+      <h3>1. waifu2x-ncnn-vulkan(超分引擎)</h3>
+      <dl>
+        <dt>项目</dt><dd>github.com/nihui/waifu2x-ncnn-vulkan</dd>
+        <dt>算法</dt><dd>waifu2x(nagadomi)github.com/nagadomi/waifu2x</dd>
+        <dt>许可</dt><dd>MIT License(引擎包装与模型权重);BSD 3-Clause(ncnn 运行时)</dd>
+        <dt>版权</dt><dd>nihui(2023)/ nagadomi(2015)</dd>
+      </dl>
+    </div>
+
+    <div class="lic">
+      <h3>2. Real-ESRGAN-ncnn-vulkan(超分引擎)</h3>
+      <dl>
+        <dt>项目</dt><dd>github.com/xinntao/Real-ESRGAN;github.com/nihui/realesrgan-ncnn-vulkan</dd>
+        <dt>许可</dt><dd>MIT License(nihui 引擎包装层);<strong>BSD 3-Clause License(模型与算法,xinntao)</strong></dd>
+        <dt>版权</dt><dd>nihui(2021)/ Xintao Wang 等(2021)</dd>
+      </dl>
+    </div>
+
+    <div class="lic">
+      <h3>3. RIFE-ncnn-vulkan(视频补帧引擎)</h3>
+      <dl>
+        <dt>项目</dt><dd>github.com/hzwer/arXiv2020-RIFE;github.com/nihui/rife-ncnn-vulkan</dd>
+        <dt>许可</dt><dd>MIT License(RIFE 算法,Copyright Megvii Inc.);MIT License(引擎包装层,nihui);BSD 3-Clause(ncnn 运行时)</dd>
+        <dt>版权</dt><dd>Zhewei Huang 等(2022)/ nihui(2020)</dd>
+      </dl>
+    </div>
+
+    <div class="lic">
+      <h3>4. U²-Net(抠图模型)</h3>
+      <dl>
+        <dt>论文</dt><dd>U²-Net: Going Deeper with Nested U-Structure for Salient Object Detection</dd>
+        <dt>项目</dt><dd>github.com/xuebinqin/U-2-Net</dd>
+        <dt>许可</dt><dd>Apache License 2.0</dd>
+        <dt>版权</dt><dd>Xuebin Qin 等(2020)</dd>
+      </dl>
+    </div>
+
+    <div class="lic">
+      <h3>5. ISNet / DIS(抠图模型)</h3>
+      <dl>
+        <dt>项目</dt><dd>github.com/xuebinqin/DIS</dd>
+        <dt>许可</dt><dd>Apache License 2.0</dd>
+        <dt>版权</dt><dd>Xuebin Qin 等(2021)</dd>
+      </dl>
+    </div>
+
+    <div class="lic">
+      <h3>6. BiRefNet(抠图模型,完整版 / 精简版)</h3>
+      <dl>
+        <dt>项目</dt><dd>github.com/ZhengPeng7/BiRefNet</dd>
+        <dt>许可</dt><dd>MIT License</dd>
+        <dt>版权</dt><dd>Zheng Peng 等(2024)</dd>
+      </dl>
+    </div>
+
+    <div class="lic">
+      <h3>7. rembg(ONNX 模型封装与转换工具)</h3>
+      <dl>
+        <dt>项目</dt><dd>github.com/danielgatis/rembg</dd>
+        <dt>许可</dt><dd>MIT License(工具本身;模型按其各自上游许可分发)</dd>
+        <dt>版权</dt><dd>Daniel Gatis(2020)</dd>
+      </dl>
+    </div>
+
+    <div class="lic">
+      <h3>8. FFmpeg(视频拆帧 / 合成 / 裁剪 / 检测 / 音频滤镜)</h3>
+      <dl>
+        <dt>项目</dt><dd>ffmpeg.org;github.com/FFmpeg/FFmpeg</dd>
+        <dt>构建</dt><dd>BtbN(github.com/BtbN/FFmpeg-Builds,gpl 变体)</dd>
+        <dt>许可</dt><dd><strong>GNU GPL version 3</strong>(构建启用 --enable-gpl --enable-version3);许可全文随发布版附带(<code>COPYING.GPLv3</code>)</dd>
+        <dt>版权</dt><dd>FFmpeg 开发团队</dd>
+        <dt>说明</dt><dd>本软件以<strong>独立进程</strong>方式调用 ffmpeg / ffprobe,未与其链接;依 GPLv3 第 6 条提供对应源码获取途径(见上方项目地址)。</dd>
+      </dl>
+    </div>
+
+    <div class="lic">
+      <h3>9. Microsoft ONNX Runtime(抠图 / 超分 / 补帧 / 音频 AI 推理)</h3>
+      <dl>
+        <dt>项目</dt><dd>github.com/microsoft/onnxruntime</dd>
+        <dt>许可</dt><dd>MIT License</dd>
+        <dt>版权</dt><dd>Microsoft Corporation</dd>
+      </dl>
+    </div>
+
+    <div class="lic">
+      <h3>10. Windows App SDK / WinUI 3 / Windows UI Library</h3>
+      <dl>
+        <dt>项目</dt><dd>github.com/microsoft/WindowsAppSDK</dd>
+        <dt>许可</dt><dd>MIT License</dd>
+        <dt>版权</dt><dd>Microsoft Corporation</dd>
+      </dl>
+    </div>
+
+    <div class="lic">
+      <h3>11. .NET 8</h3>
+      <dl>
+        <dt>项目</dt><dd>github.com/dotnet/runtime</dd>
+        <dt>许可</dt><dd>MIT License</dd>
+        <dt>版权</dt><dd>Microsoft Corporation</dd>
+      </dl>
+    </div>
+
+    <h3>音频 AI 模型</h3>
+
+    <div class="lic">
+      <h3>12. HT-Demucs(音乐源分离:人声 / 伴奏 / 其他)</h3>
+      <dl>
+        <dt>算法项目</dt><dd>github.com/adefossez/demucs</dd>
+        <dt>模型</dt><dd>htdemucs.onnx、htdemucs_ft_vocals.onnx(人声微调版,官方 fine-tune)</dd>
+        <dt>ONNX 导出</dt><dd>github.com/StemSplitio/htdemucs-onnx</dd>
+        <dt>许可</dt><dd>MIT License(Demucs 算法 / 模型;ONNX 导出项目 MIT)</dd>
+        <dt>版权</dt><dd>adefossez / Meta AI(2022)/(StemSplitio 2024)</dd>
+        <dt>说明</dt><dd>伴奏轨 = 原曲 − 人声(残差);ft_vocals 为人声微调版本。</dd>
+      </dl>
+    </div>
+
+    <div class="lic">
+      <h3>13. LavaSR(音频真超分辨率:低采样率源 → 48 kHz)</h3>
+      <dl>
+        <dt>项目</dt><dd>LavaSR(Sharma 等,Interspeech 2026;官网 sharma-kunal.github.io/LavaSR)</dd>
+        <dt>模型</dt><dd>backbone.onnx、spec_head.onnx、denoiser_core.onnx(可选)</dd>
+        <dt>许可</dt><dd>Apache License 2.0(核心)/ MIT License(部分扩展)</dd>
+        <dt>版权</dt><dd>Kunal Sharma 等(2026)</dd>
+        <dt>说明</dt><dd>本软件中 LavaSR 的 DSP 管线(STFT / mel / ISTFT / Linkwitz-Riley 合并)为原创 C# 实现。</dd>
+      </dl>
+    </div>
+
+    <div class="lic">
+      <h3>14. RIFE 补帧 ONNX 模型(rife49.onnx)</h3>
+      <dl>
+        <dt>算法</dt><dd>RIFE(github.com/hzwer/arXiv2020-RIFE,MIT)</dd>
+        <dt>ONNX 导出</dt><dd>github.com/yuvraj108c/rife-onnx(MIT)</dd>
+        <dt>版权</dt><dd>yuvraj108c(2024)/ Megvii Inc.</dd>
+      </dl>
+    </div>
+
+    <div class="lic">
+      <h3>15. 超分 ONNX 模型(50 系显卡 / 无独显设备的稳定路线)</h3>
+      <dl>
+        <dt>模型与上游</dt><dd>RealESRGAN_x4plus.onnx、realesr-animevideov3.onnx → 上游 Real-ESRGAN(xinntao,<strong>BSD 3-Clause</strong>);
+          waifu2x-cunet2x.onnx → 上游 waifu2x(nagadomi,MIT)</dd>
+        <dt>ONNX 转换</dt><dd>由社区 ONNX 转换项目导出(deepghs / tidus2102 系列转换项目,MIT)</dd>
+        <dt>许可</dt><dd>各模型权重版权归上游作者,许可按上游条目执行</dd>
+      </dl>
+    </div>
+
+    <h2 id="full-text">三、许可全文与源码获取</h2>
+    <ul>
+      <li><strong>随软件附带:</strong>发布版内含 <code>THIRD_PARTY_NOTICES.txt</code> 与许可全文
+        (<code>MIT.txt</code>、<code>BSD-3-Clause.txt</code>、<code>Apache-2.0.txt</code>、<code>GPLv3.txt</code>),
+        FFmpeg 的 GPLv3 全文另以 <code>COPYING.GPLv3</code> 随附;</li>
+      <li><strong>MIT:</strong> <a href="https://opensource.org/licenses/MIT" rel="nofollow">opensource.org/licenses/MIT</a></li>
+      <li><strong>BSD-3-Clause:</strong> <a href="https://opensource.org/licenses/BSD-3-Clause" rel="nofollow">opensource.org/licenses/BSD-3-Clause</a></li>
+      <li><strong>Apache-2.0:</strong> <a href="https://www.apache.org/licenses/LICENSE-2.0" rel="nofollow">apache.org/licenses/LICENSE-2.0</a></li>
+      <li><strong>GPLv3:</strong> <a href="https://www.gnu.org/licenses/gpl-3.0.txt" rel="nofollow">gnu.org/licenses/gpl-3.0.txt</a></li>
+      <li><strong>源码:</strong>各项目的仓库地址见上方逐条声明;FFmpeg 对应源码见
+        <a href="https://ffmpeg.org/download.html" rel="nofollow">ffmpeg.org/download.html</a>。</li>
+    </ul>
+
+    <div class="note note-warn">
+      <p><span class="note-title">分发时必须保留的内容(许可要求):</span>
+      Real-ESRGAN 的模型权重与算法按 <strong>BSD 3-Clause</strong> 分发、ncnn 运行时按 <strong>MIT</strong> 分发、FFmpeg 按 <strong>GPLv3</strong> 分发 ——
+      这些许可都要求在分发时<strong>保留版权声明与许可文本</strong>。因此:</p>
+      <ul>
+        <li>随软件附带的 <code>THIRD_PARTY_NOTICES.txt</code> 与许可全文文件<strong>不得删除或改写</strong>;</li>
+        <li>本页与仓库中的声明文件是同一份事实的来源,便于你在任何时候核对;</li>
+        <li>本项目的许可<strong>不允许</strong>他人重新打包分发;若你获得了书面许可进行分发,同样需要连同上述声明一并提供。</li>
+      </ul>
+    </div>
+
+    <h2 id="thanks">四、致谢</h2>
+    <p>感谢以下朋友对 ALH Pro 的支持与反馈(名单取自软件内 <code>thanks</code> 目录,按软件内原样列出):</p>
+    <ul class="names">
+      <li>1c0ay</li>
+      <li>f1ower</li>
+      <li>JNyxn</li>
+      <li>小野寺小咲☁️</li>
+      <li>记住羡鱼</li>
+    </ul>
+    <p>同样感谢上面逐条列出的所有开源项目的作者与维护者 ——
+      没有 waifu2x、Real-ESRGAN、RIFE、U²-Net、ISNet、BiRefNet、rembg、FFmpeg、ONNX Runtime、Demucs、LavaSR 这些项目,
+      就不会有 ALH Pro。</p>
+
+    <h2 id="declare">五、其它声明</h2>
+    <ul>
+      <li><strong>广告说明(合规告知):</strong>本软件为免费软件,通过界面广告位展示合作方广告以维持开发与维护成本。
+        广告内容由广告主提供、作者按合规要求审核后展示,并带有可识别的「推广」角标;
+        广告<strong>不做个性化推荐</strong>,不读取设备标识或使用记录,也不会把你的数据上传给广告方。可随时关闭,不影响软件任何功能。</li>
+      <li><strong>打赏说明:</strong>完全自愿,不影响任何功能,不构成购买,不提供额外特权或优先支持,不支持退还。</li>
+      <li><strong>第三方软件免责:</strong>软件集成的开源引擎、模型与组件,其行为、稳定性与许可由各自作者负责,与本软件作者无涉。</li>
+    </ul>
+
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <ul class="footer-links">
+      <li><a href="index.html">首页</a></li>
+      <li><a href="download.html">下载</a></li>
+      <li><a href="tutorial.html">使用教程</a></li>
+      <li><a href="faq.html">常见问题</a></li>
+      <li><a href="privacy.html">隐私说明</a></li>
+      <li><a href="licenses.html">开源许可与致谢</a></li>
+      <li><a href="changelog.html">更新日志</a></li>
+    </ul>
+    <p class="footer-legal">
+      ALH Pro — 本地 AI 视频 / 图片处理工具。软件版权归 AlL.H 所有,第三方组件版权归各原作者所有。
+    </p>
+    <!-- 备案号占位:上线前必须替换为真实备案号,并保持链接到 https://beian.miit.gov.cn/ (详见 index.html 里的完整说明) -->
+    <p class="icp">©2026 ALH Pro · <a href="https://beian.miit.gov.cn/" rel="nofollow">京ICP备XXXXXXXX号</a></p>
+  </div>
+</footer>
+</body>
+</html>

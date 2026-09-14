@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ALH Pro — 本地 AI 视频/图片处理工具(超分 · 补帧 · 抠图 · 音频增强)</title>
+<meta name="description" content="ALH Pro 是一款在你自己的电脑上运行的 AI 视频/图片处理工具:超分(Real-ESRGAN / waifu2x)、补帧(RIFE)、AI 抠图、音频增强、视频去重。全程本地处理,不上传任何文件。支持 Windows 10/11 x64。">
+<meta name="theme-color" content="#f6f7f9">
+<link rel="icon" href="assets/img/logo.png" type="image/png">
+<link rel="stylesheet" href="assets/css/style.css">
+<!-- 可选:上线后按需打开下面这行(把域名换成你的真实域名)
+<link rel="canonical" href="https://example.com/">
+-->
+<script src="assets/js/site.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到主要内容</a>
+
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="index.html">
+      <img class="brand-logo" src="assets/img/logo.png" alt="ALH Pro 标志" width="30" height="30">
+      <span>ALH&nbsp;Pro<span class="brand-sub"> 本地 AI 处理</span></span>
+    </a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav">
+      <span class="nav-toggle-bars" aria-hidden="true"></span>菜单
+    </button>
+    <nav class="site-nav" id="site-nav" aria-label="主导航">
+      <a href="index.html" aria-current="page">首页</a>
+      <a href="download.html">下载</a>
+      <a href="tutorial.html">使用教程</a>
+      <a href="faq.html">常见问题</a>
+      <a href="privacy.html">隐私说明</a>
+      <a href="licenses.html">开源许可</a>
+      <a href="changelog.html">更新日志</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <h1>在你自己的电脑上,做 AI 视频 / 图片处理</h1>
+    <p class="lede">
+      ALH Pro 是一款 Windows 桌面软件:把模糊的老番、老照片变清晰(超分),把卡顿的视频变流畅(补帧),
+      一键去掉图片背景(抠图),还能把电话录音、老磁带里的声音变清楚(音频增强),顺带处理动漫片源里的重复帧。
+      <strong>全部处理都在您的电脑上完成:不注册账号、不上传文件。</strong>
+    </p>
+    <ul class="badges">
+      <li class="badge badge-ok">全程本地运行</li>
+      <li class="badge badge-ok">不上传任何文件</li>
+      <li class="badge">个人 / 非商用免费</li>
+      <li class="badge">Windows 10 / 11 x64</li>
+      <li class="badge badge-brand">当前版本 v1.3.6</li>
+    </ul>
+    <div class="btn-row">
+      <a class="btn" href="download.html">下载最新版 v1.3.6</a>
+      <a class="btn btn-ghost" href="tutorial.html">看使用教程</a>
+    </div>
+    <p class="btn-note small">安装包约 827 MB(完整版约 2.4 GB,含全部模型)。首次安装请留出磁盘空间与几分钟时间。</p>
+
+    <div class="note">
+      <p><span class="note-title">如实告知:</span>软件里只有三处会联网 —— 检查新版本、拉取广告素材、拉取界面提示文案。
+      这三处都不传输您的文件、文件名、路径、画面或设备信息,而且任何一处失败都不影响软件功能(全部有内置兜底)。
+      细节见 <a href="privacy.html">隐私说明</a>。</p>
+    </div>
+  </div>
+</section>
+
+<main id="main">
+  <div class="wrap">
+
+    <h2>这是给谁用的</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>想让老番、老片变清晰的动漫爱好者</h3>
+        <p>动漫 / 插画走 waifu2x 路线,线条和色块更干净;配合“去重复帧”,补帧结果更准、文件更小。</p>
+      </div>
+      <div class="card">
+        <h3>要放大照片、修图的人</h3>
+        <p>照片 / 实拍走 Real-ESRGAN 路线,1x 超分(只变清晰不放大)到 4x 放大都支持,可批量处理。</p>
+      </div>
+      <div class="card">
+        <h3>要批量去背景做素材的人</h3>
+        <p>6 款抠图模型,人像、产品、动漫各有合适的一支;支持批量、边缘羽化与边缘增强,输出透明 PNG。</p>
+      </div>
+      <div class="card">
+        <h3>不放心把素材传到云端的人</h3>
+        <p>素材处理全程在本机完成,不需要登录,不经过任何服务器。处理重要素材前请自行备份原文件。</p>
+      </div>
+    </div>
+
+    <h2 id="features">能做什么</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>图片 / 视频超分</h3>
+        <ul>
+          <li>动漫插画:waifu2x(cunet / upconv_7_anime)</li>
+          <li>真实照片:Real-ESRGAN</li>
+          <li>1x 超分(只变清晰不放大)到 4x 放大</li>
+          <li>降噪(弱 / 中 / 强)、去雾、锐化、去模糊、边缘抗锯齿等后处理</li>
+          <li>批量处理,输出 JPG / PNG</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>视频补帧(变流畅)</h3>
+        <ul>
+          <li>RIFE 引擎,默认 v4.13,可选多支模型</li>
+          <li>输出帧率 = 原帧率 × 倍率(2x / 3x / 4x / 8x / 12x / 16x)</li>
+          <li>可变帧率(VFR)录屏、手机、监控素材自动按原节奏处理</li>
+          <li>果冻修复、光流调整、转场识别,减少鬼影与扭曲</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>去除重复帧(动漫必备)</h3>
+        <ul>
+          <li>智能检测(自动估节奏)、动漫模式(去一拍二 / 三 / 四)、手动模式</li>
+          <li>支持相位自动对齐,避免抽到中间帧</li>
+          <li>去重 + 补帧:时长保持与源一致(尾帧保留),帧率 = 内容帧率 × 倍率</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>AI 抠图</h3>
+        <ul>
+          <li>U²-Net(通用 / 轻量)、ISNet(精细边缘 / 动漫)、BiRefNet(高精度 / 完整版)共 6 款模型</li>
+          <li>前景 / 背景阈值、边缘羽化、边缘增强、边缘清理</li>
+          <li>彩色预览(原图 × 蒙版,棋盘格 = 透明区域)</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>音频处理</h3>
+        <ul>
+          <li>AI 升采样率:8k / 16k / 22k / 32k 低采样率源 → 48 kHz</li>
+          <li>增强:人声 / 伴奏分别优化后重混</li>
+          <li>AI 分离(Demucs):提取人声、去人声(卡拉OK)、分离或自定义多轨输出</li>
+          <li>降噪、响度归一、低切、清晰增强,输出 WAV / FLAC / MP3</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>长视频也敢跑</h3>
+        <ul>
+          <li>显存 / 内存 / CPU 占用按本机配置自动调节</li>
+          <li>处理时降低进程优先级、支持设备降温休息</li>
+          <li>临时文件自动清理,处理前预估磁盘占用,不足会提前提示</li>
+          <li>批量队列:拖拽排序、完成置灰、只处理选中项</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2 id="speed">速度大概什么水平(本机实测)</h2>
+    <p>下面是我们自己机器上的实测数字,直接列出来,不做夸张宣传。速度取决于显卡、模型和素材,请只当作量级参考。</p>
+    <div class="table-scroll">
+      <table>
+        <caption class="muted small" style="caption-side:bottom;text-align:left;padding-top:8px;">
+          实测环境:RTX 4060 Laptop(笔记本独显);1080p 源。换成别的显卡或模型,数字会明显不同。
+        </caption>
+        <thead>
+          <tr><th>处理</th><th>分辨率</th><th>模型 / 设置</th><th class="td-center">实测速度</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>超分</td><td>1080p 源</td><td>realesr-animevideov3 2x(动漫视频常用)</td><td class="td-center">约 0.25 秒 / 帧</td></tr>
+          <tr><td>超分</td><td>1080p 源</td><td>realesr-animevideov3 4x</td><td class="td-center">约 0.30 秒 / 帧</td></tr>
+          <tr><td>超分</td><td>1080p 源</td><td>realesr-general-x4v3 4x(轻量通用)</td><td class="td-center">约 0.46 秒 / 帧</td></tr>
+          <tr><td>超分</td><td>1080p 源</td><td>realesrgan-x4plus 4x(质量优先)</td><td class="td-center">约 15 秒 / 帧(明显偏慢)</td></tr>
+          <tr><td>补帧</td><td>1080p</td><td>RIFE v4.13</td><td class="td-center">约 0.08 秒 / 输出帧</td></tr>
+          <tr><td>补帧</td><td>2160p(4K)</td><td>RIFE v4.13</td><td class="td-center">约 0.28 秒 / 输出帧</td></tr>
+          <tr><td>参考作业</td><td>1080p,72 帧素材(约 2.4 秒)</td><td>4 倍补帧 + 2 倍超分</td><td class="td-center">全程约 53.7 秒</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note note-warn">
+      <p><span class="note-title">请不要把这些数字当成承诺:</span>
+      上面是作者本机的实测结果,不是所有电脑都能达到。没有独立显卡时,软件会自动改用 CPU 计算,慢几倍到十几倍属于正常现象;
+      高倍率补帧、4K 素材、x4plus 这类“质量优先”模型都会明显变慢。长视频请先用一小段样片试跑。</p>
+    </div>
+
+    <h2 id="start">三步开始</h2>
+    <ol>
+      <li><strong>下载安装。</strong>标准版安装包约 827 MB;要用「AI 抠图」再装模型包(约 1.4 GB),或直接下载完整版(约 2.4 GB,装完所有功能可用)。安装不需要管理员权限,一路“下一步”即可。
+        详见 <a href="download.html">下载页</a>。</li>
+      <li><strong>添加素材、选算法。</strong>左侧选功能(图片放大 / AI 抠图 / 视频处理 / 音频处理) → 添加文件 → 选算法与倍率。
+        动漫插画选 waifu2x、照片选 Real-ESRGAN,选错效果会明显变差,对照表见 <a href="tutorial.html">使用教程</a>。</li>
+      <li><strong>点“开始处理”。</strong>输出默认与源文件同目录,多文件会自动建子文件夹。处理过程有进度与预计剩余时间,可随时停止。</li>
+    </ol>
+
+    <h2 id="privacy">您的文件不会离开这台电脑</h2>
+    <ul>
+      <li><strong>不上传:</strong>图片、视频、音频的内容与中间文件全部在本机处理,不上传到任何服务器。</li>
+      <li><strong>不传文件名 / 路径 / 画面 / 机型:</strong>软件不会把您的文件名、文件路径、画面内容或显卡机型等信息发出去。</li>
+      <li><strong>不需要账号:</strong>没有注册、没有登录、没有云端记录。</li>
+      <li><strong>三处联网行为如实列出:</strong>①启动时检查新版本;②拉取界面广告素材;③拉取界面提示文案。
+        三者都只请求公开的文本 / 图片,并且失败时全部有内置兜底,不影响任何处理功能。</li>
+      <li><strong>诊断包是您主动生成的:</strong>“导出诊断包”会打包本机日志与设备信息,<em>只保存在本机</em>,发不发、发给谁由您决定。</li>
+    </ul>
+    <p>完整说明(含每次联网的目标域名与传输内容)见 <a href="privacy.html">隐私说明</a>。</p>
+
+    <h2 id="license">免费、许可与致谢</h2>
+    <ul>
+      <li><strong>免费范围:</strong>个人 / 非商用用途免费下载、安装、使用(公益性质)。软件内有合作方广告位以维持开发与维护成本,不做个性化推荐,可关闭。</li>
+      <li><strong>禁止事项:</strong>未经作者书面许可,不得商用、售卖、再分发、重新打包发布,也不得去除或篡改署名与版权声明。</li>
+      <li><strong>第三方开源组件:</strong>软件集成了 waifu2x、Real-ESRGAN、RIFE、U²-Net、ISNet、BiRefNet、rembg、FFmpeg、ONNX Runtime、Windows App SDK、Demucs、LavaSR 等开源项目,
+        版权归各原作者所有,遵循各自许可(MIT / BSD-3-Clause / Apache-2.0 / GPLv3 等)。逐条声明与源码地址见 <a href="licenses.html">开源许可与致谢</a>。</li>
+      <li><strong>致谢:</strong>感谢为本项目提供反馈与支持的每一位朋友(名单见<a href="licenses.html#thanks">开源许可与致谢</a>页)。</li>
+    </ul>
+
+    <h2 id="requirements">电脑要求(一句话版)</h2>
+    <p>Windows 10(1809 及以上)/ Windows 11,64 位系统;.NET 运行库已内置,<strong>不需要单独安装 .NET</strong>。
+      建议使用独立显卡(NVIDIA RTX 30 / 40 系最稳),没有独显也能用,只是会慢一些。完整清单与校验方法见 <a href="download.html#requirements">下载页</a>。</p>
+
+    <div class="note note-ok">
+      <p><span class="note-title">下载遇到困难?</span>
+      本页提供的下载入口只有官方 GitHub Releases 与百度网盘两处。如果你的网络访问 GitHub 比较困难,请直接用百度网盘下载完整版。
+      常见问题(下载慢、显卡兼容、杀毒软件提示、结果不符合预期)都整理在 <a href="faq.html">常见问题</a> 里。</p>
+    </div>
+
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <ul class="footer-links">
+      <li><a href="index.html">首页</a></li>
+      <li><a href="download.html">下载</a></li>
+      <li><a href="tutorial.html">使用教程</a></li>
+      <li><a href="faq.html">常见问题</a></li>
+      <li><a href="privacy.html">隐私说明</a></li>
+      <li><a href="licenses.html">开源许可与致谢</a></li>
+      <li><a href="changelog.html">更新日志</a></li>
+    </ul>
+    <p class="footer-legal">
+      ALH Pro — 本地 AI 视频 / 图片处理工具。软件版权归 AlL.H 所有,第三方组件版权归各原作者所有。
+    </p>
+    <!-- ===================================================================
+         备案号占位:上线前必须替换下面这一行。
+         ① 把 京ICP备XXXXXXXX号 换成工信部备案系统下发的真实备案号(省简称 + ICP备 + 数字 + 号);
+         ② 按《互联网信息服务管理办法》要求,备案号需链接到工信部备案系统 https://beian.miit.gov.cn/ ;
+         ③ 若你所在省份要求同时展示公安联网备案号,可在本行后追加:
+            <p class="icp"><a href="https://beian.mps.gov.cn/">京公网安备 XXXXXXXXXXXXXX 号</a></p>
+         =================================================================== -->
+    <p class="icp">©2026 ALH Pro · <a href="https://beian.miit.gov.cn/" rel="nofollow">京ICP备XXXXXXXX号</a></p>
+  </div>
+</footer>
+</body>
+</html>
