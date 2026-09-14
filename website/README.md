@@ -33,7 +33,7 @@
 
 ```
 website/
-├── index.html          首页:是什么、给谁用、能做什么、实测速度、隐私摘要、许可摘要
+├── index.html          首页:是什么、给谁用、能做什么、三步开始、隐私摘要、许可摘要、电脑要求
 ├── download.html       下载:安装包 / 完整版 / 模型包、系统要求、安装步骤、SHA256 校验方法、下载慢怎么办
 ├── tutorial.html       使用教程:抠图模型安装、图片放大、AI 抠图、视频处理、音频处理、输出格式
 ├── faq.html            常见问题:下载慢 / 装不上 / 杀软误报 / 显卡兼容对照表 / 结果不对 / 收费与授权 / 隐私
@@ -55,7 +55,11 @@ website/
 > `data-reveal` = 该区块滚动进入时淡入上移 12px;`data-reveal-group` = 放在容器上,
 > 让子元素按 60ms 依次错开(最多 4 级);
 > `data-count="0.25" data-dec="2"` = 进入视口时从 0 滚到该值(JS 会按最终文本长度给出固定宽度,
-> 避免每帧改数字把整页拖去重排);
+> 避免每帧改数字把整页拖去重排)。**首页已按用户要求不再出现任何速度数字,目前没有元素用它**,
+> 机制留着,以后要加数字卡直接用;
+> `.demo` = 首页「功能概览」里的循环演示:默认 `animation-play-state: paused`,只有进入视口
+> (JS 加 `.is-live`)才播,离开视口立刻暂停;`prefers-reduced-motion: reduce` 下冻结在"前后对比"那一帧。
+> **每个演示都必须带文字标签**(`.demo-tag` / `.demo-cap`)—— 纯图形动画用户看不懂,这是实测反馈;
 > `main .content` 下的一级 `<ol>` 会自动变成"步骤流"(竖线随滚动点亮),不想如此请加 `class="no-flow"`;
 > `.page-progress` 与 `.aurora` 分别由 CSS `animation-timeline: scroll()/view()` 驱动,零 JS。
 > `html.has-js` 由 `<head>` 里的一小段内联脚本加上;万一 `site.js` 没加载成功,3 秒后会自动摘掉它,
@@ -222,7 +226,7 @@ server {
 |---|---|
 | `changelog.html` | 新增一条版本记录(含“要不要重新调参”的提示) |
 | `download.html` | 文件大小、版本号、SHA256 三个值;若有新增/改名附件也要改 |
-| `index.html` | 首页版本号、下载按钮文案、实测速度表(有新数据才改) |
+| `index.html` | 首页版本号、下载按钮文案、功能演示的说明文字 |
 | `privacy.html` | 若**联网行为有变化**(新增接口、换域名、改频率),必须同步更新;否则不动 |
 | `faq.html` | 按用户反馈持续补充(最常被问到的问题放前面) |
 
@@ -247,6 +251,6 @@ server {
 | 更新日志 | `RELEASE_NOTES.md`、`release_history.json`、`ImgUpscalerUI/ImgUpscalerUI.csproj`(当前版本号) |
 | 隐私说明(三处联网行为与域名) | `ImgUpscalerUI/UpdateChecker.cs`、`AdFetcher.cs`、`TipFetcher.cs` |
 | 许可与致谢 | `THIRD_PARTY_NOTICES.txt`、`LICENSE`、`声明.md`、`licenses/`、`ImgUpscalerUI/thanks/` |
-| 实测速度数据 | 作者本机实测(RTX 4060 Laptop)—— 页面已注明机器与“不作为承诺” |
+| 首屏数字卡 / FAQ 速度量级 | 作者本机实测(RTX 4060 Laptop)—— 页面已注明机器与“不作为承诺”;首页的“实测速度表”段落按用户要求已删除,不要再加回来 |
 
 作者:AlL.H

@@ -91,6 +91,7 @@
   --glow: rgba(125, 162, 255, .16);       /* 卡片跟随高光 */
   --aurora-1: rgba(125, 162, 255, .16);   /* 首屏光斑 */
   --aurora-2: rgba(162, 116, 255, .14);
+  --demo-bg: #2b3140;                     /* 功能演示里"未抠图"的实色背景 */
 
   --ok: #5ecb9a;
   --ok-soft: rgba(94, 203, 154, .10);
@@ -133,6 +134,7 @@
     --glow: rgba(43, 92, 217, .10);
     --aurora-1: rgba(43, 92, 217, .10);
     --aurora-2: rgba(124, 58, 237, .08);
+    --demo-bg: #d9dee7;
 
     --ok: #0f7a52;
     --ok-soft: rgba(15, 122, 82, .07);
@@ -440,30 +442,9 @@ pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-spa
 .hero .lede { font-size: clamp(16px, 1.7vw, 18px); line-height: 1.8; color: var(--fg-soft); margin: 0 0 26px; max-width: 68ch; }
 .hero .lede strong { color: var(--fg); }
 
-/* ---------- §7.2 首屏数据条 ---------- */
-.hero-specs {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px;
-  margin: 36px 0 0; padding: 0; list-style: none;
-  border: 1px solid var(--line); border-radius: var(--radius);
-  background: var(--line); overflow: hidden;
-}
-.hero-specs li { margin: 0; max-width: none; padding: 18px 20px; background: var(--surface); }
-/* 数字用行内流对齐(不用 flex):配合 .count 的固定宽度,
-   既保证"0.25 秒 / 帧"的基线对齐,又让数字变化不触发父级重排 */
-.spec-num {
-  display: block;
-  font-family: var(--mono);
-  font-variant-numeric: tabular-nums;
-  font-size: clamp(22px, 2.6vw, 27px);
-  font-weight: 600;
-  line-height: 1.15;
-  letter-spacing: -.02em;
-  color: var(--fg);
-}
-.spec-num i { font-style: normal; font-size: .52em; font-weight: 500; color: var(--muted); margin-left: 4px; }
-.spec-label { display: block; margin-top: 8px; font-size: 13.5px; line-height: 1.6; color: var(--muted); max-width: none; }
-
-@media (min-width: 760px) { .hero-specs { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+/* ---------- §7.2 (已删除)首屏数据条 ----------
+   原来首屏那排"0.25 秒/帧 · 3 处 · 827 MB · 0 次"数字卡按用户要求删除
+   (实测速度表也一并删掉了 —— 官网不再出现速度数字),这里不再保留样式。 */
 
 /* ===========================================================================
    §8 卡片网格:平面 + 1px 细边框 + 极浅阴影;进入 viewport 时轻微放大 1.02→1
@@ -537,15 +518,11 @@ tbody tr:hover { background: var(--surface-2); }
 tbody tr:last-child td { border-bottom: 0; }
 td code { font-size: .86em; }
 .td-center { text-align: center; white-space: nowrap; }
-/* 实测速度表:数字等宽 + 计数动画时字宽不跳动 */
-.table-speed td:last-child { font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.table-speed .count { font-weight: 600; color: var(--fg); }
 /* 计数元素:JS 会给出与最终文本等宽的固定宽度,让"每帧改一次数字"不影响外部布局。
    注意**不能**用 `contain: size` —— 尺寸隔离会让元素失去内容基线,
    行内块的基线退化成底边,数字与单位的对齐会错位(实测过,截图可见)。
    固定宽度已经足够:元素尺寸不变 → 父级排版不重算。 */
 .count { display: inline-block; font-variant-numeric: tabular-nums; }
-.table-caption { caption-side: bottom; text-align: left; padding: 12px 14px 0; font-size: 13.6px; color: var(--muted); }
 
 /* ===========================================================================
    §11 页内目录卡(教程页)
@@ -672,31 +649,34 @@ summary .when { color: var(--muted); font-weight: 400; font-size: 13.5px; margin
 
 /* ===========================================================================
    §16 滚动进入动画
-   位移 12px + 轻微放大 1.02→1 + 淡入;只在进入视口时触发一次,随即 unobserve。
-   只动 transform / opacity → 合成器友好。
+   位移 22px + 淡入,时长 380ms;同组 80ms 依次错开(最多 4 级)。
+   只在进入视口时触发一次,随即 unobserve。只动 transform / opacity。
+   "轻微缩放 0.98→1"**只给卡片**:实测把它套到全部入场元素(教程页 51 个)会让
+   每个元素在过渡期反复重绘,主线程耗时 +67ms;只给卡片就基本零成本。
    =========================================================================== */
 .has-js [data-reveal],
 .has-js [data-reveal-group] > * {
   opacity: 0;
-  transform: translateY(12px);
-  transition: opacity var(--t-slow) var(--ease-out), transform var(--t-slow) var(--ease-out);
-  transition-delay: calc(var(--d, 0) * 60ms);
+  transform: translateY(22px);
+  transition: opacity 380ms var(--ease-out), transform 380ms var(--ease-out);
+  transition-delay: calc(var(--d, 0) * 80ms);
 }
 .has-js [data-reveal].is-in,
 .has-js [data-reveal-group] > *.is-in {
   opacity: 1;
   transform: translateY(0);
 }
-/* 卡片用"轻微放大 → 归位"入场。
-   单独写一条规则、不用 var():在 transform 里放 var() 会让每次样式重算都要重新代入,
-   实测滚动期的样式重算总时长会明显变长。 */
 .has-js .card[data-reveal],
-.has-js [data-reveal-group] > .card { transform: translateY(12px) scale(1.02); }
+.has-js [data-reveal-group] > .card { transform: translateY(22px) scale(.98); }
 .has-js .card[data-reveal].is-in,
 .has-js [data-reveal-group] > .card.is-in { transform: translateY(0) scale(1); }
 
 /* ===========================================================================
-   §17 章节标题:逐词浮现 + 短横线展开
+   §17 章节标题:遮罩上滑 + 逐词浮现 + 分隔线渐显
+   外层 .t-mask 负责"遮罩"(overflow 隐藏),内层 .t-rise 整块上滑,
+   再叠加每个词的小幅上移淡入 —— 全程只动 transform / opacity。
+   用 block 级包裹而不是给每个字加 overflow:后者会让行内块的基线退化成底边,
+   数字与单位会错位(实测过,截图可见)。
    =========================================================================== */
 h2 { position: relative; padding-top: 20px; }
 h2::before {
@@ -705,18 +685,27 @@ h2::before {
   transform: scaleX(0); transform-origin: 0 50%;
   transition: transform 520ms var(--ease-out);
 }
+/* 分隔线:整行细线随标题入场从左侧展开,右端渐隐 */
+h2::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
+  background: linear-gradient(90deg, var(--line-strong), transparent 78%);
+  transform: scaleX(0); transform-origin: 0 50%;
+  transition: transform 640ms var(--ease-out) 80ms;
+}
 h2.is-in::before { transform: scaleX(1); }
+h2.is-in::after { transform: scaleX(1); }
 h2:first-child { padding-top: 18px; }
 
+.t-mask { display: block; overflow: hidden; padding-bottom: .08em; margin-bottom: -.08em; }
+.t-rise { display: block; transform: translateY(105%); transition: transform 560ms var(--ease-out); }
+h2.is-in .t-rise { transform: translateY(0); }
+
 .wtok {
-  display: inline-block; opacity: 0; transform: translateY(.38em);
-  transition: opacity 460ms var(--ease-out), transform 460ms var(--ease-out);
+  display: inline-block; opacity: 0; transform: translateY(.5em);
+  transition: opacity 420ms var(--ease-out), transform 420ms var(--ease-out);
   transition-delay: calc(var(--wi, 0) * 22ms);
 }
 h2.is-in .wtok { opacity: 1; transform: none; }
-/* 标题里含子元素(如更新日志的日期徽标)时退回整块淡入 */
-.t-title-plain { opacity: 0; transform: translateY(10px); transition: opacity 460ms var(--ease-out), transform 460ms var(--ease-out); }
-.t-title-plain.is-in { opacity: 1; transform: none; }
 
 /* ===========================================================================
    §18 步骤流:竖线随滚动逐条点亮
@@ -788,7 +777,6 @@ h2.is-in .wtok { opacity: 1; transform: none; }
   .btn { width: 100%; }
   table { font-size: 14px; }
   th, td { padding: 9px 11px; }
-  .hero-specs li { padding: 16px; }
   .flow > li { padding-left: 50px; }
   .flow > li::before { width: 30px; height: 30px; font-size: 13px; }
   .flow > li::after { left: 14px; top: 34px; }
@@ -835,15 +823,366 @@ h2.is-in .wtok { opacity: 1; transform: none; }
   .site-header, .page-toc, .page-progress, .nav-toggle, .aurora,
   .btn, .copy-btn, .skip-link { display: none !important; }
   html, body { background: #fff !important; color: #000 !important; }
-  .card, .note, .lic, details, .table-scroll, .hero-specs, .hero-specs li {
+  .card, .note, .lic, details, .table-scroll, .demo {
     background: #fff !important;
     box-shadow: none !important;
     border-color: #ccc !important;
     content-visibility: visible !important;
   }
-  .hero-specs { gap: 0; }
-  [data-reveal], [data-reveal-group] > *, .wtok, .t-title-plain { opacity: 1 !important; transform: none !important; }
+  [data-reveal], [data-reveal-group] > *, .wtok, .t-rise { opacity: 1 !important; transform: none !important; }
   h2 { page-break-after: avoid; }
   details { break-inside: avoid; }
   details > .details-body { display: block !important; height: auto !important; }
+}
+
+/* ===========================================================================
+   §22 功能演示:6 个自动循环播放的小动画(首页「功能概览」)
+   约束与做法
+     · 纯 CSS + 内联 SVG,零外部资源、零图片文件;
+     · 只动 `transform` / `opacity`(SVG 里同样是 transform / stroke-dashoffset),
+       不逐帧改 DOM、不动画大半径 filter;
+     · 每个演示 3.8~5.2s 一轮、`infinite`;**默认暂停,进入视口由 JS 加 `.is-live` 才播**,
+       离开视口立刻回到暂停(省电、也不参与滚动期开销);
+     · `prefers-reduced-motion: reduce` 下不播循环,而是**冻结在循环中间那一帧** ——
+       正好是"前后对比"的两态(见文件末尾的 @media 块);
+     · 配色、圆角、线宽全部复用 §1 的令牌,深浅两套自动跟随。
+   =========================================================================== */
+.demo {
+  position: relative;
+  height: 78px;
+  margin: 0 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+/* 极轻的网格底衬,把演示画面"托"起来 */
+.demo::before {
+  content: "";
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 14px 14px;
+  opacity: .6;
+}
+.demo-note { margin: 10px 0 0; font-size: 13.2px; line-height: 1.6; color: var(--muted); max-width: none; }
+.demo svg { display: block; }
+.demo-art { color: var(--fg-soft); }
+
+/* 演示里的小标签 / 小说明 —— 每个动画都要能一眼看出"这一半是什么、前后差在哪"。
+   没有文字的纯图形动画,用户看不懂(实测反馈),所以每个演示都必须带标签。 */
+.demo-tag {
+  display: inline-block; flex: 0 0 auto;
+  padding: 1px 6px; border-radius: 4px;
+  font-size: 9.5px; font-weight: 650; line-height: 1.6; letter-spacing: .02em;
+  color: var(--muted); background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  white-space: nowrap;
+}
+.demo-tag-ok { color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); }
+.demo-cap { font-size: 9.5px; font-weight: 650; letter-spacing: .02em; color: var(--muted); white-space: nowrap; }
+.demo-cap-ok { color: var(--accent); }
+
+/* 默认不播;进入视口(JS 加 .is-live)才播。
+   必须用 !important:各演示自己的 `animation:` 简写会把 animation-play-state
+   重置成 running,而它们的特异度(0,2,0)高于这里的 `.demo *`(0,1,0)。 */
+.demo, .demo * { animation-play-state: paused !important; }
+.demo.is-live, .demo.is-live * { animation-play-state: running !important; }
+
+/* ---------- ① 超分:同一张图,左边 640×360 原片(只剩大色块),右边 4x 之后(顺滑) ----------
+   原来那版是"两张几乎一样的线稿互相擦除",看不出变化 —— 改成左右并排对比:
+   左边故意做小、做糊、叠一层像素格;右边是同图放大后的干净版本。两边都带文字标注。 */
+.demo-up { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 8px 10px; }
+.up-side { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.up-shot {
+  position: relative; display: block; overflow: hidden;
+  border-radius: 4px; background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.up-shot svg { width: 100%; height: 100%; }
+/* 原片:小 + 糊 + 一层"像素格",让"细节丢了"看得见 */
+.up-shot-s { width: 46px; height: 30px; filter: blur(1.1px) saturate(.5); opacity: .85; }
+.up-shot-s::after {
+  content: ""; position: absolute; inset: 0;
+  background-image:
+    repeating-linear-gradient(90deg, var(--bg) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(0deg, var(--bg) 0 1px, transparent 1px 4px);
+  opacity: .45;
+}
+/* 超分后:同一张图,尺寸放大、线条干净(轻微呼吸表示"刚处理完") */
+.up-shot-l { width: 96px; height: 48px; animation: upPop 4.6s var(--ease) infinite; }
+@keyframes upPop {
+  0%, 10%   { transform: scale(1); }
+  48%, 86%  { transform: scale(1.035); }
+  100%      { transform: scale(1); }
+}
+/* 中间那颗走动的点是"正在处理"的提示 */
+.up-arrow {
+  position: relative; display: inline-flex; align-items: center;
+  padding-left: 20px; font-size: 10px; font-weight: 700; letter-spacing: .02em;
+  color: var(--accent);
+}
+.up-arrow::before {
+  content: ""; position: absolute; left: 0; top: 50%; width: 16px; height: 1px;
+  background: var(--accent-line);
+}
+.up-arrow i {
+  position: absolute; left: 0; top: 50%; width: 5px; height: 5px; margin-top: -2.5px;
+  border-radius: 50%; background: var(--accent);
+  animation: upDot 2.2s var(--ease) infinite;
+}
+@keyframes upDot {
+  0%        { transform: translateX(0); opacity: 0; }
+  18%, 78%  { opacity: 1; }
+  100%      { transform: translateX(16px); opacity: 0; }
+}
+
+/* ---------- ② 补帧:同一个球,上行 24fps 一跳一跳,下行 60fps 连续顺滑 ----------
+   球在同一根轨道上走,靠"跳 vs 走"的对比说明补帧;下行多出来的刻度 = 新生成的中间帧。 */
+.demo-frame { display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 8px 10px; }
+.fr-row { display: flex; align-items: center; gap: 8px; height: 26px; }
+.fr-row .demo-tag { flex: 0 0 68px; text-align: center; }
+.fr-track { position: relative; flex: 1 1 auto; height: 24px; }
+.fr-line { position: absolute; left: 0; right: 0; top: 8px; height: 1px; background: var(--line-strong); }
+.fr-run { position: absolute; left: 0; top: 2px; width: 100%; height: 12px; }
+.fr-ball { position: absolute; left: 0; top: 0; width: 12px; height: 12px; border-radius: 50%; }
+/* 注意:位移必须加在 `.fr-run`(宽度 = 整条轨道)上,不能加在 12px 的球上 ——
+   translateX 的百分比是相对"元素自己"的宽度算的,加在球上 = 100% - 12px = 0,球根本不会动
+   (实测踩到过:采样 800ms 位移恒为 0)。 */
+.fr-raw .fr-run { animation: frStep 3.6s infinite; }
+.fr-after .fr-run { animation: frGlide 3.6s var(--ease) infinite; }
+.fr-raw .fr-ball { background: var(--muted); }
+.fr-after .fr-ball { background: var(--accent); }
+/* 关键:原片用 steps() 走 —— 位置一格一格跳;补帧后是 linear/cubic 连续走 */
+@keyframes frStep {
+  0%   { transform: translateX(0); animation-timing-function: steps(6, end); }
+  45%  { transform: translateX(calc(100% - 12px)); animation-timing-function: steps(6, end); }
+  55%  { transform: translateX(calc(100% - 12px)); animation-timing-function: steps(6, end); }
+  100% { transform: translateX(0); }
+}
+@keyframes frGlide {
+  0%   { transform: translateX(0); }
+  45%  { transform: translateX(calc(100% - 12px)); }
+  55%  { transform: translateX(calc(100% - 12px)); }
+  100% { transform: translateX(0); }
+}
+.fr-ticks { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between; }
+.fr-ticks i { width: 3px; height: 7px; border-radius: 1.5px; background: var(--line-strong); }
+/* 偶数刻度是"生成"出来的中间帧:循环亮起 */
+.fr-after .fr-ticks i:nth-child(even) { animation: frInsert 3.6s var(--ease) infinite; }
+@keyframes frInsert {
+  0%, 10%  { background: var(--line-strong); transform: scaleY(.6); }
+  40%, 88% { background: var(--accent); transform: scaleY(1.3); }
+  100%     { background: var(--line-strong); transform: scaleY(.6); }
+}
+
+/* ---------- ③ 去重:6 帧里有一半跟前一帧一模一样,被划掉删除,帧数 6 → 3 ---------- */
+.demo-dup { display: flex; align-items: center; justify-content: center; padding: 8px 10px; }
+.dp-strip { display: flex; gap: 5px; margin-top: 14px; }
+.dp-cell {
+  position: relative; display: block; width: 26px; height: 26px;
+  border-radius: 4px; background: var(--surface); overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.dp-cell svg { width: 100%; height: 100%; }
+/* 偶数是重复帧:画面淡下去 + 划一道斜线。
+   注意淡出必须加在**里面的图**上,不能加在整格上 —— 整格 opacity 会把划线的 ::after
+   一起变淡(实测截图里几乎看不见红线),而"帧框留着、画面划掉"也更贴近真实语义。 */
+.dp-cell:nth-child(even) svg { animation: dpDrop 4.4s var(--ease) infinite; }
+.dp-cell:nth-child(even)::after {
+  content: ""; position: absolute; left: -12%; right: -12%; top: 50%; height: 1.5px;
+  background: var(--danger); transform-origin: 50% 50%;
+  animation: dpStrike 4.4s var(--ease) infinite;
+}
+@keyframes dpDrop {
+  0%, 16%   { opacity: 1; }
+  40%, 84%  { opacity: .14; }
+  100%      { opacity: 1; }
+}
+@keyframes dpStrike {
+  0%, 16%   { opacity: 0; transform: rotate(-20deg) scaleX(0); }
+  40%, 84%  { opacity: 1; transform: rotate(-20deg) scaleX(1); }
+  100%      { opacity: 0; transform: rotate(-20deg) scaleX(0); }
+}
+/* 左上角这句跟着一起换:原片 6 帧 → 去重后 3 帧 */
+.dp-tag-a, .dp-tag-b { position: absolute; left: 8px; top: 7px; }
+.dp-tag-a { animation: dpTagA 4.4s var(--ease) infinite; }
+.dp-tag-b { opacity: 0; animation: dpTagB 4.4s var(--ease) infinite; }
+@keyframes dpTagA {
+  0%, 16%   { opacity: 1; }
+  40%, 84%  { opacity: 0; }
+  100%      { opacity: 1; }
+}
+@keyframes dpTagB {
+  0%, 16%   { opacity: 0; }
+  40%, 84%  { opacity: 1; }
+  100%      { opacity: 0; }
+}
+
+/* ---------- ④ 抠图:实色背景淡出,露出棋盘格(透明) ---------- */
+.demo-cut .ct-check {
+  position: absolute; inset: 0; z-index: 1;
+  background-image:
+    repeating-conic-gradient(var(--line-strong) 0% 25%, transparent 0% 50%);
+  background-size: 12px 12px;
+}
+.demo-cut .ct-solid {
+  position: absolute; inset: 0; z-index: 2; background: var(--demo-bg);
+  animation: ctClear 4.8s var(--ease) infinite;
+}
+@keyframes ctClear {
+  0%, 18%  { opacity: 1; }
+  46%, 80% { opacity: 0; }
+  100%     { opacity: 1; }
+}
+.demo-cut .ct-subject { position: absolute; inset: 0; z-index: 3; color: var(--accent); }
+.demo-cut .ct-marquee {
+  position: absolute; left: 50%; top: 50%; z-index: 4;
+  width: 66px; height: 54px; margin: -27px 0 0 -33px;
+  border: 1px dashed var(--accent); border-radius: 6px;
+  opacity: 0; animation: ctMark 4.8s var(--ease) infinite;
+}
+@keyframes ctMark {
+  0%, 24%  { opacity: 0; transform: scale(1.06); }
+  48%, 80% { opacity: .9; transform: scale(1); }
+  100%     { opacity: 0; transform: scale(1.06); }
+}
+/* 左上角说明跟着背景一起换:原图(有背景) → 背景已抠掉 */
+.demo-cut .ct-tag-a, .demo-cut .ct-tag-b { position: absolute; left: 8px; top: 7px; }
+.demo-cut .ct-tag-a { animation: ctTagA 4.8s var(--ease) infinite; }
+.demo-cut .ct-tag-b { opacity: 0; animation: ctTagB 4.8s var(--ease) infinite; }
+@keyframes ctTagA {
+  0%, 18%  { opacity: 1; }
+  46%, 80% { opacity: 0; }
+  100%     { opacity: 1; }
+}
+@keyframes ctTagB {
+  0%, 18%  { opacity: 0; }
+  46%, 80% { opacity: 1; }
+  100%     { opacity: 0; }
+}
+
+/* ---------- ⑤ 音频增强:上行"噪、抖",下行"干净、平滑",两行都写明是哪一段 ---------- */
+.demo-audio { display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 8px 10px; }
+.demo-audio .au-row {
+  display: flex; align-items: center; justify-content: flex-start; gap: 6px;
+  height: 26px; position: relative; z-index: 2;
+}
+.demo-audio .au-row .demo-tag { flex: 0 0 48px; text-align: center; }
+.demo-audio .au-row i {
+  display: block; width: 5px; height: 20px; border-radius: 2px;
+  background: var(--fg-soft); transform-origin: 50% 50%;
+}
+.demo-audio .au-noisy i { background: var(--muted); }
+.demo-audio .au-clean i { background: var(--accent); }
+/* 噪声:每根柱子各自的周期与幅度都不一样,看起来"乱抖"。
+   周期刻意放慢到 420~880ms —— 150~410ms 的抖动画在滚动期会明显增加帧尖峰
+   (实测 index 有 3 帧 >16.7ms、最长 25ms),放慢后既不影响"乱"的观感又便宜。 */
+.demo-audio .au-noisy i:nth-child(1) { animation: auJit 620ms linear infinite alternate; }
+.demo-audio .au-noisy i:nth-child(2) { animation: auJit 780ms linear infinite alternate-reverse; }
+.demo-audio .au-noisy i:nth-child(3) { animation: auJit 460ms linear infinite alternate; }
+.demo-audio .au-noisy i:nth-child(4) { animation: auJit 880ms linear infinite alternate-reverse; }
+.demo-audio .au-noisy i:nth-child(5) { animation: auJit 420ms linear infinite alternate; }
+.demo-audio .au-noisy i:nth-child(6) { animation: auJit 820ms linear infinite alternate-reverse; }
+.demo-audio .au-noisy i:nth-child(7) { animation: auJit 540ms linear infinite alternate; }
+.demo-audio .au-noisy i:nth-child(8) { animation: auJit 700ms linear infinite alternate-reverse; }
+.demo-audio .au-noisy i:nth-child(9) { animation: auJit 440ms linear infinite alternate; }
+.demo-audio .au-noisy i:nth-child(10) { animation: auJit 860ms linear infinite alternate-reverse; }
+.demo-audio .au-noisy i:nth-child(11) { animation: auJit 600ms linear infinite alternate; }
+@keyframes auJit { from { transform: scaleY(.18); } to { transform: scaleY(1); } }
+/* 增强后:统一周期 + 依次相位,形成一道平滑推进的波形 */
+.demo-audio .au-clean i { animation: auWave 1.1s var(--ease) infinite alternate; }
+.demo-audio .au-clean i:nth-child(1)  { animation-delay: -.00s; }
+.demo-audio .au-clean i:nth-child(2)  { animation-delay: -.10s; }
+.demo-audio .au-clean i:nth-child(3)  { animation-delay: -.20s; }
+.demo-audio .au-clean i:nth-child(4)  { animation-delay: -.30s; }
+.demo-audio .au-clean i:nth-child(5)  { animation-delay: -.40s; }
+.demo-audio .au-clean i:nth-child(6)  { animation-delay: -.50s; }
+.demo-audio .au-clean i:nth-child(7)  { animation-delay: -.60s; }
+.demo-audio .au-clean i:nth-child(8)  { animation-delay: -.70s; }
+.demo-audio .au-clean i:nth-child(9)  { animation-delay: -.80s; }
+.demo-audio .au-clean i:nth-child(10) { animation-delay: -.90s; }
+.demo-audio .au-clean i:nth-child(11) { animation-delay: -1.00s; }
+@keyframes auWave { from { transform: scaleY(.28); } to { transform: scaleY(.94); } }
+
+/* ---------- ⑥ 长视频:进度条推进 + 分批格子逐个填满 ---------- */
+.lg-tag { position: absolute; left: 8px; top: 7px; z-index: 3; }
+.demo-long .lg-bar {
+  position: absolute; left: 14px; right: 14px; top: 32px; z-index: 2; height: 6px;
+  border-radius: 3px; background: var(--line); overflow: hidden;
+}
+.demo-long .lg-bar b {
+  display: block; height: 100%; width: 100%; border-radius: 3px;
+  background: var(--accent); transform-origin: 0 50%;
+  animation: lgFill 5.2s linear infinite;
+}
+@keyframes lgFill {
+  0%   { transform: scaleX(0); }
+  88%  { transform: scaleX(1); }
+  100% { transform: scaleX(0); }
+}
+.demo-long .lg-cells {
+  position: absolute; left: 14px; right: 14px; bottom: 11px; z-index: 2;
+  display: flex; justify-content: space-between;
+}
+.demo-long .lg-cells i {
+  width: 12px; height: 12px; border-radius: 3px;
+  background: var(--line-strong); opacity: .5;
+  animation: lgCell 5.2s linear infinite;
+}
+.demo-long .lg-cells i:nth-child(1) { animation-delay: 0s; }
+.demo-long .lg-cells i:nth-child(2) { animation-delay: .42s; }
+.demo-long .lg-cells i:nth-child(3) { animation-delay: .84s; }
+.demo-long .lg-cells i:nth-child(4) { animation-delay: 1.26s; }
+.demo-long .lg-cells i:nth-child(5) { animation-delay: 1.68s; }
+.demo-long .lg-cells i:nth-child(6) { animation-delay: 2.10s; }
+.demo-long .lg-cells i:nth-child(7) { animation-delay: 2.52s; }
+.demo-long .lg-cells i:nth-child(8) { animation-delay: 2.94s; }
+.demo-long .lg-cells i:nth-child(9) { animation-delay: 3.36s; }
+.demo-long .lg-cells i:nth-child(10) { animation-delay: 3.78s; }
+@keyframes lgCell {
+  0%        { opacity: .5; background: var(--line-strong); transform: scale(.8); }
+  10%, 80%  { opacity: 1; background: var(--accent); transform: scale(1); }
+  100%      { opacity: .5; background: var(--line-strong); transform: scale(.8); }
+}
+
+/* ---------- 减少动态效果:不播循环,冻结在"前后对比"那一帧 ----------
+   做法:把动画时长还原成真实周期,用负的 animation-delay 把它停在循环中点,
+   再 paused 住 —— 每个演示都同时呈现"改前 / 改后"两态,而不是一片空白。 */
+@media (prefers-reduced-motion: reduce) {
+  /* 选择器把 .is-live 两种形态都写上,确保压过上面的"播放中"规则 */
+  .demo, .demo *, .demo.is-live, .demo.is-live * {
+    /* 只改时长/延迟/播放状态,保留各自的 animation-name 与缓动 */
+    animation-duration: var(--ffz-dur, 4s) !important;
+    animation-delay: var(--ffz-at, -2s) !important;
+    animation-iteration-count: 1 !important;
+    animation-play-state: paused !important;
+    animation-fill-mode: both !important;
+    transition: none !important;
+  }
+  /* 每个演示挑一个"前后都在"的时刻 */
+  .demo-up .up-shot-l { --ffz-dur: 4.6s; --ffz-at: -2.4s; }                 /* 放大到位 */
+  .demo-up .up-arrow i { --ffz-dur: 2.2s; --ffz-at: -1.1s; }                /* 走到一半 */
+  .demo-frame .fr-raw .fr-run, .demo-frame .fr-after .fr-run { --ffz-dur: 3.6s; --ffz-at: -.9s; }
+  .demo-frame .fr-after .fr-ticks i:nth-child(even) { --ffz-dur: 3.6s; --ffz-at: -1.7s; }   /* 中间帧亮着 */
+  .demo-dup .dp-cell:nth-child(even) svg { --ffz-dur: 4.4s; --ffz-at: -2s; }    /* 重复帧已淡掉 */
+  /* ::after 不受上面 `.demo *` 那条选择器管辖,得单独写一遍 */
+  .demo-dup .dp-cell:nth-child(even)::after {
+    animation-duration: 4.4s !important;
+    animation-delay: -2s !important;
+    animation-iteration-count: 1 !important;
+    animation-play-state: paused !important;
+    animation-fill-mode: both !important;
+  }
+  .demo-dup .dp-tag-a, .demo-dup .dp-tag-b { --ffz-dur: 4.4s; --ffz-at: -2s; }   /* 停在"去重后:3 帧" */
+  .demo-cut .ct-solid { --ffz-dur: 4.8s; --ffz-at: -1.35s; }                /* 背景淡到一半 */
+  .demo-cut .ct-marquee { --ffz-dur: 4.8s; --ffz-at: -1.9s; }
+  .demo-cut .ct-tag-a, .demo-cut .ct-tag-b { --ffz-dur: 4.8s; --ffz-at: -2.2s; }
+  .demo-audio .au-noisy i { --ffz-dur: 300ms; --ffz-at: -150ms; }
+  .demo-audio .au-clean i { --ffz-dur: 1.1s; --ffz-at: -.55s; }
+  .demo-long .lg-bar b { --ffz-dur: 5.2s; --ffz-at: -2.3s; }
+  .demo-long .lg-cells i { --ffz-dur: 5.2s; --ffz-at: -1.2s; }
+  /* 波形/抖动用 alternate,减动态下也停在中间高度 */
+  .demo-audio .au-noisy i, .demo-audio .au-clean i { animation-direction: alternate !important; }
 }
