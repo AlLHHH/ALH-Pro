@@ -687,6 +687,12 @@
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
                     <TextBlock x:Name="FastModeHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
                                Text="给配置较低/没独显的电脑用的:自动降低显存占用、防止爆显存,画质和功能基本不受影响"/>
+                    <!-- 【任务 S3 · 2026-09-13】平滑时间轴(默认开):统一输出帧率 + 场景切换对齐 -->
+                    <CheckBox x:Name="SmoothTimelineCheck" Content="平滑时间轴" IsChecked="True"
+                              ToolTipService.ToolTip="统一输出帧率并按场景切换对齐,避免播放顿挫与切点拖影。只在源时间轴不均匀(有顿挫)时才生效——源本来就均匀时完全不改变行为。代价:源里本来静止的缺口处会插出轻微软化(实测约 6%;不会为了掩盖它偷偷加锐化)"
+                              Checked="Options_Changed" Unchecked="Options_Changed"/>
+                    <TextBlock x:Name="SmoothTimelineHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
+                               Text="统一输出帧率并按场景切换对齐,避免播放顿挫与切点拖影(默认开;不需要时可关掉)"/>
 
                     <!-- 参数预设:整套超分/后处理/补帧/去重参数快照,一键保存/应用 -->
                     <TextBlock Text="参数预设" Style="{StaticResource SectionTitle}"/>

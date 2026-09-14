@@ -325,6 +325,10 @@ public static class VideoService
         double contentFps = 0,   // 内容帧率模式(去重模型 7):按 fc 时间网格均匀采样,不做逐帧判定;≤0=报错
         double animeHoldN = 0,   // 动漫模式(去重模型 2):动画帧率变种"一拍N"(2/3/2.5=混合拍二+三/4/5/6;0/1=不采样=内容帧率=输入帧率)
         bool tempoResample = false,   // 节奏重采样(实验):任意 t 插帧按关键帧真实时长分布(自研任意 t 方案)
+        // 【任务 S3 · 2026-09-13】「平滑时间轴」:统一输出帧率并按场景切换对齐,避免播放顿挫与切点拖影。
+        // 默认开(用户实测口径:"填平后开头 1~3 秒的顿挫感消失")。**关上 = 与改动前逐字一致**(见下方接线处)。
+        // 【已知代价(照实写,不靠偷偷加锐化找补)】源里"本来静止"的缺口处会插出轻微软化(小样实测中位 ≈6%)。
+        bool smoothTimeline = true,
         Func<Task>? pauseWait = null)
     {
         // 静态报告字段清零:防止上一个视频的去重摘要/编码器信息残留在下一个视频的显示里
@@ -1183,6 +1187,13 @@ public static class VideoService
             double frameScale = 1.0;
             long globalTarget = 0;
             int globalIdx = 1;
+            // 【任务 S1 · 2026-09-13】"平滑时间轴(按时轴填平)"的状态:必须声明在 3) 块之外 ——
+            // 合成在 InterpStageAsync 里发生(两种阶段顺序共用一个调用点),而下游"帧数对齐 / 帧率口径 /
+            // 时长保护"都读它。**flattenActive 为 false 时,老路径一个字节都不变**(硬要求)。
+            bool flattenActive = false;
+            AlhPro.Core.TimelineFlattenPlan.Plan flatPlan = default;
+            int flattenForcedCopies = 0;   // 因切点被强制改拷贝的槽数(审计用)
+            int flattenCuts = 0;           // 检出的场景硬切处数(审计用)
 
             // 3b) 分段补帧(RIFE)本体 —— 局部函数,两种阶段顺序共用同一份实现,只有"输入/输出目录 + 探测帧尺寸"不同:
             //   · 旧顺序(3x/4x/不实际超分):输入 framesIn(源帧)、输出 framesFinal,在 3) 块里原地调用;
@@ -1253,6 +1264,57 @@ public static class VideoService
                     {
                         AppLogger.Info($"✅ RIFE {interpModel} GPU({gpuId})真机探测通过({probeW}×{probeH})→ 使用 ncnn-Vulkan 补帧(未因 50 系而禁用)");
                     }
+                }
+                // ===== 【任务 S1 核心】"平滑时间轴"合成:按真实 PTS 逐槽合成,取代按段 `-n` 均匀铺帧 =====
+                // 触发前提(缺一不可;任一不满足 → 原样落到下面的分段路径,老行为一个字节不变):
+                //   ① 判定"可填平"(源时长表有缺口)且用户在选项里开着「平滑时间轴」→ flatPlan.Flatten(见 3) 块);
+                //   ② 本阶段输入帧数与时长表一一对应(否则索引不可信,直接放弃);
+                //   ③ 补帧引擎走 ncnn-Vulkan(interpGpu ≥ 0)且不是"8K 级强制 ONNX"的尺寸 —— 因为逐槽合成用的是
+                //      层批原语(EngineService.InterpLayerBatchAsync),它只有 ncnn 一条路;探针失败/ONNX 路线下
+                //      **不做填平**,回退到分段路径(那里有完整的 ONNX/换卡/黑帧降级链);
+                //   ④ 合成结果帧数必须**恰好等于** flatPlan.TargetFrames(不符 → 清掉半成品,回退分段路径)。
+                // 【复用而非新写:并发与降级链】槽位→帧的落盘走 FlattenTimelineAsync → EmitSlotFramesAsync,
+                // 后者就是"补回(还原源时间轴)"在用的同一套层批原语与并发结构(InterpLayerBatchAsync:
+                // 一批帧对平铺成目录序列、一次引擎进程跑完,二叉树逐层细分,每层一次引擎调用)——
+                // 本任务**没有**新写并发/降级链;黑帧检出、帧数校验、失败回退在这里补齐。
+                if (flatPlan.Flatten && !forceOnnxInterp && interpGpu >= 0 && flatPlan.TargetFrames >= 2)
+                {
+                    int targetN = flatPlan.TargetFrames;
+                    progress?.Report((interpPctBase, $"平滑时间轴:按真实时间轴合成 {targetN} 帧(目标 {flatPlan.TargetFps:0.##} fps)..."));
+                    try
+                    {
+                        var fres = await FlattenTimelineAsync(ffmpeg, rifeExe, segSrcDir, segOutDir, probeW, probeH,
+                            frameCount, frameDurs, flatPlan, interpGpu, interpModel, tta, progress, ct);
+                        if (fres.written != targetN)
+                            throw new InvalidOperationException($"合成帧数 {fres.written} ≠ 目标 {targetN} 帧");
+                        if (fres.anyBlack)
+                            throw new InvalidOperationException("合成输出检出黑帧(GPU 队列异常)");
+                        flattenActive = true;
+                        flattenCuts = fres.cuts;
+                        flattenForcedCopies = fres.forcedCopies;
+                        globalTarget = targetN;
+                        globalIdx = fres.written + 1;
+                        frameScale = 1.0;        // 时间轴已由真实 PTS 直接给出,不再有"原密度缩放"这一步
+                        frameDurs = null;        // 输出是均匀时间轴 → 下游不许再按源时长表铺 PTS(见"时长保护")
+                        preserveRhythm = false;  // 同上:填平 = 把时间轴变均匀,不再走 VFR setpts 那条路
+                        AppLogger.Info($"平滑时间轴:合成完成 —— 输出 {fres.written} 帧 @ {flatPlan.TargetFps:0.##} fps"
+                            + $"(源 {frameCount} 帧 / 真实时长 {flatPlan.TotalSeconds:0.###}s);场景硬切 {fres.cuts} 处、"
+                            + $"因切点强制拷贝 {fres.forcedCopies} 槽(不生成跨切混合帧);落在源帧上的槽直接拷贝、不调引擎");
+                        progress?.Report((interpPctBase + interpPctSpan, $"补帧完成({fres.written} 帧,平滑时间轴)" + StageElapsed()));
+                        return;
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // 失败/半成品 → 先清干净再回退:半截帧留在输出目录会让分段路径的帧号重号
+                        try { foreach (var f in Directory.EnumerateFiles(segOutDir, "*.*")) File.Delete(f); } catch { }
+                        AppLogger.Warn($"⚠ 平滑时间轴合成失败({ex.Message.Split('\n')[0]})→ 回退分段补帧"
+                            + "(走既有 ncnn→ONNX→换卡 降级链,行为与改动前一致)");
+                    }
+                }
+                else if (flatPlan.Flatten)
+                {
+                    AppLogger.Info("平滑时间轴:判定可填平,但本次不做逐槽合成(补帧引擎走 ONNX 路线,或尺寸预检按 8K 级处理) "
+                        + "→ 按分段补帧输出(行为与改动前一致;ONNX 逐对路径不支持任意时间步)");
                 }
                 // 补帧阶段自己的 ETA 时钟:segProg 会用全局帧号重建消息文本,引擎内部那层加不上 ETA,只能在这里算。
                 // base = 本阶段开始前已写出的帧数(前一趟/补洞留下的),速率只对"本阶段真正产出的帧"计算,
@@ -1534,21 +1596,28 @@ public static class VideoService
                     segStart = c;
                 }
                 if (segStart < frameCount) segBounds.Add((segStart, frameCount));
-                // 【任务 S】"按时轴填平"计划(用户亲测有效:「小样填平没有震颤了」)。
+                // 【任务 S】"按时轴填平"(= 输出统一帧率)的判定。
                 // 判定 = 源时长表有缺口(间隔偏离中位数 >25%)且开了补帧;CFR 源一律不填平(行为逐字不变)。
-                // 【当前接线状态】本次只接入【判定 + 日志】+ 纯函数计划器(有单测);
-                // 真正"按 MapTargetFrame 给出的 srcIdx0/srcIdx1/φ 逐槽 -s φ 合成"的那一步**尚未**接到生产路径,
-                // 因此这里**只出日志、不改行为**(默认不开填平)。详见本次提交说明的【仅方案】。
+                // 【S1 接线状态(本次已接入合成)】这里只做**判定**并把计划存进 flatPlan;真正的合成在
+                // InterpStageAsync 里(每个目标时刻按真实 PTS 取源帧对 + φ:落在源帧上直接拷贝,否则交既有
+                // 层批原语合成),是否真的走那条路还要看补帧引擎探针结果 —— 见 InterpStageAsync 的接线注释。
+                // 【口径修正(S2 用户复测)】填平的收益是**消除 VFR 的不均匀节奏(33.3ms 顿挫)**,
+                // 不是"往缺口里填运动"(缺口内部几乎无变化,实测 0.871/0.150,填与不填视觉等价)。
                 {
-                    var flatPlan = AlhPro.Core.TimelineFlattenPlan.Decide(frameDurs, effectiveFps, interpScale);
+                    var plan = AlhPro.Core.TimelineFlattenPlan.Decide(frameDurs, effectiveFps, interpScale);
                     // 【S2 · 2026-09-13 用户复测修正口径】真正要修的是**切点混合帧**(实测鬼影比 0.647/0.692 +
                     // 一帧严重软化 B[57] lapvar 仅源帧 7.8%),而不是"缺口里填运动"(缺口内部几乎无变化:
                     // 实测 0.871/0.150,填与不填视觉等价)。判据 = 帧差 ≥25 且(拉普拉斯能量比 ≤0.6 或帧差 ≥50)【待实测标定】。
                     // 现有 interp 路径本就按转场分段跑(segBounds 来自 cuts)→ RIFE 侧不会跨切混合;这条保护是给
                     // "按时轴逐槽 φ 插值"的排程用的(Core.CutAwareSchedule:切点上强制拷贝、不许合成)。
                     AppLogger.Info($"时间轴:检测到 {cuts.Count} 处场景切换,已按切点对齐(不生成跨切混合帧;判定阈值【待实测标定】)");
-                    AppLogger.Info(flatPlan.LogLine + (flatPlan.Flatten
-                        ? $" → 可填平(缺口 {flatPlan.GapCount} 处,目标 {flatPlan.TargetFps:0.##}fps);合成步骤尚未接入,本次仍按原样输出"
+                    if (plan.Flatten && smoothTimeline)
+                        flatPlan = plan;   // 只有"确实要填平"才留下计划;否则下游一律走老路径(逐字不变)
+                    AppLogger.Info(plan.LogLine + (plan.Flatten
+                        ? (smoothTimeline
+                            ? $" → 本次【平滑时间轴】已启用:每个目标时刻按真实 PTS 取源帧对 + φ 合成(落在源帧上直接拷贝);"
+                              + "有场景硬切时切点两侧强制同场景拷贝,不生成跨帧混合(鬼影)帧"
+                            : " → 【平滑时间轴】已在选项里关闭,本次按原样输出(与改动前一致)")
                         : ""));
                 }
                 // 【任务 Q1 · 2026-09-13】阶段顺序不再靠全局开关(常量 false),改为**按实测单价自动判定**:
@@ -2452,6 +2521,10 @@ public static class VideoService
                     : effectiveFps;
             // 节奏重采样:输出帧率由 tempo 路径精确给出(覆盖公式估算)
             if (tempoResample && tempoOutFps > 0) baseFps = tempoOutFps;
+            // 【任务 S1】平滑时间轴:输出网格就是"目标帧率"(= 内容帧率 × 补帧倍率),标称帧率必须按它来,
+            // 否则会被下面的公式估成别的数(内容帧率模式/新顺序都可能算出不一样的 baseFps);
+            // 而**是否真的走了填平**由 flattenActive 决定(探针失败/ONNX 路线会回退,那时不许改口径)。
+            if (flattenActive) baseFps = flatPlan.TargetFps;
             double outFps = baseFps;
             // 视频滤镜链:后处理(锐化/清晰/…) → 果冻修复 → 运动模糊 → 去抖 → 可选 fps 重映射
             var preParts = new System.Collections.Generic.List<string>();
@@ -2509,7 +2582,7 @@ public static class VideoService
             double muxDur = 0;
             // 帧数精确对齐(v4 + 均匀输出):补/裁到"(真实原帧数-1)×倍率+1"——
             // 这样 时长 = (帧数-1) ÷ (原帧率×倍率) = 真实时长,末帧 PTS = 原末帧,不需要 -t 裁尾(裁尾会吞最后一帧)。
-            if (v4Interp && targetFps == null && !vfrPassthrough && !tempoResample && trueFrames > 0)
+            if (v4Interp && targetFps == null && !vfrPassthrough && !tempoResample && trueFrames > 0 && !flattenActive)
             {
                 long expBase = fpsMode == 1 ? frameCount
                     : (inFpsOverride is > 0 && probedFps > 0 && Math.Abs(inFpsOverride.Value - probedFps) / probedFps > 0.01
@@ -2545,7 +2618,10 @@ public static class VideoService
             // ===== B 版(修正):时长=源容器 —— 多余时长给"最后一帧加长"(VFR 末帧 PTS 延到源容器时长),
             // 不复制"尾帧定格"(7 帧一样的观感差);播放器在末帧停留=与源尾帧容积一致,内容速度不变。 =====
             double tailGapSec = 0;
-            if (frameInterp && outFps > 0.01 && !vfrPassthrough && frameDurs == null)
+            // 【任务 S1】flattenActive 时输出是"均匀时间轴 + 目标帧数"两条都定死了:既不能再被"帧数对齐"改帧数
+            // (上面已排除),也要走这段"尾帧容积"把"帧数 ÷ 源容器时长"的差折进标称帧率 —— 否则总时长会短多半帧。
+            // 条件里的 `|| flattenActive` 只对"VFR 直通 + 填平"这一种组合放宽,不是填平时逐字不变。
+            if (frameInterp && outFps > 0.01 && (!vfrPassthrough || flattenActive) && frameDurs == null)
             {
                 var seqA = Directory.EnumerateFiles(framesFinal, "*.jpg")
                     .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
@@ -2573,9 +2649,11 @@ public static class VideoService
                             AppLogger.Info($"尾帧容积:成片比源容器短 {gap * 1000:0}ms(均匀时间轴,折进标称帧率修正)");
                         }
                     }
-                    else if (gap < -0.005)
+                    else if (gap < -0.005 && !flattenActive)
                     {
                         // 多出(超容器):裁多余帧(保留尾帧)
+                        // 【任务 S1】flattenActive 时**不裁**:输出帧数必须恰好等于判定给出的目标帧数(硬要求);
+                        // 这条分支只在"帧数多于容器时长"时才可能进,而填平时 gap 恒为正(见上方尾帧容积的推导)。
                         int dropN = (int)Math.Round(-gap * outFps);
                         for (int i = seqA.Count - 1; i >= Math.Max(1, seqA.Count - dropN); i--)
                         {
@@ -2670,7 +2748,13 @@ public static class VideoService
                 AppLogger.Info($"补帧诊断: 去重后 {frameCount} 帧,输出 {finalNDiag} 帧(倍率 mult={multDiag},帧数守恒目标 {expectDiag} 帧),interpScale={interpScale},"
                     + $"finalDurs={(finalDurs != null ? finalDurs.Count : -1)},frameDurs={(frameDurs != null ? frameDurs.Count : -1)},"
                     + $"preserveRhythm={preserveRhythm},VFR素材={vfrPassthrough},去重={dedup},"
-                    + $"时间轴={(vfrSetpts != null ? "VFR(setpts)" : "均匀")}");
+                    + $"时间轴={(vfrSetpts != null ? "VFR(setpts)" : "均匀")}"
+                    // 【任务 S1】填平时"帧数守恒目标"不是 (源帧数-1)×倍率+1,而是 round(真实时长×目标帧率):
+                    // 必须把真正的目标写出来,否则上面那个数字会误导排查(它只是老路径的口径)。
+                    + (flattenActive
+                        ? $";【平滑时间轴】目标帧数 {flatPlan.TargetFrames}(@ {flatPlan.TargetFps:0.##} fps,真实时长 {flatPlan.TotalSeconds:0.###}s),"
+                          + $"场景硬切 {flattenCuts} 处、切点强制拷贝 {flattenForcedCopies} 槽"
+                        : ""));
                 // 【任务 N · 帧数守恒自检】只在"不会被别的机制调整帧数"的路径上判:
                 //   · VFR 路径【不做】合帧前的"帧数对齐"(那会破坏时间轴)→ 少了就是被丢了(任务 N 的丢帧)、
                 //     多了就是末帧冻结副本没去掉,两种情况都让"2x 不再是 2x",必须吵;
@@ -5760,11 +5844,18 @@ public static class VideoService
     /// 用 RIFE 任意时间步直插(-s,量化 φ 分桶,每桶一次引擎批)在每个关键帧对间的**精确 t** 生成中间帧。
     /// 时空重采样(慢段密插/快段疏插/时长=原),独立实现,不依赖第三方任意 t 接口。
     /// (旧实现为 0.5 二分级联:只能 dyadic 时刻 + 多层累计误差;直接 -s 一次到位,快且准。)</summary>
-    private static async Task<(int frameCount, double outFps)> RunTempoResampleAsync(string rife,
+    /// 【任务 S1 · 2026-09-13 复用点】本方法同时是「平滑时间轴」的合成原语:调用方可用
+    /// <paramref name="planSlots"/>/<paramref name="planSlotSrc"/> 直接给出**外部排程**(每个输出槽是要拷源帧、
+    /// 还是在某对源帧之间插值),此时本方法只负责"把排程变成真实帧"—— 层批并发、静止帧对保护、引擎缺帧兜底、
+    /// 黑帧提示、JPG 落盘全部照旧,**不另写一套**(用户硬要求)。不传外部排程时,行为与改动前逐字一致。
+    private static async Task<(int frameCount, double outFps, bool anyBlack)> RunTempoResampleAsync(string rife,
         string framesIn, string framesFinal, int frameCount, double inFps,
         System.Collections.Generic.List<int>? srcIdx, int interpScale, double? targetFps,
         int gpuId, double srcDur, string interpModel, bool tta,
-        IProgress<(int pct, string msg)>? progress, CancellationToken ct)
+        IProgress<(int pct, string msg)>? progress, CancellationToken ct,
+        IReadOnlyList<(int i, int j, double phi)>? planSlots = null, string[]? planSlotSrc = null,
+        Func<int, int>? slotsInPair = null, string stageName = "按源时间轴插帧",
+        bool preferFileCopyForJpgSlot = false)
     {
         var files = Directory.EnumerateFiles(framesIn, "*.jpg")
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -5772,7 +5863,7 @@ public static class VideoService
         if (n < 2)
         {
             foreach (var f in files) File.Copy(f, Path.Combine(framesFinal, Path.GetFileName(f)), true);
-            return (n, inFps);
+            return (n, inFps, false);
         }
         var idx = srcIdx ?? Enumerable.Range(0, n).ToList();
         // 关键帧源时刻:按保留帧在原源轴上的位置,归一化到"源视频已处理时长" srcDur(避免尾部静止段截断时间轴)
@@ -5782,6 +5873,9 @@ public static class VideoService
         double F = targetFps ?? inFps * interpScale;
         // 输出帧数 = 源轴真实帧数(idx 跨度,不再 round(T×F)+1:对整帧率会多 1 帧 → ×倍率后多出 1 拍 → 裁尾="少几帧")
         int outN = Math.Max(2, idx[^1] + 1);
+        // 【任务 S1】外部排程(平滑时间轴)时,输出帧数由排程表给出(它已按 round(真实时长×目标帧率) 定好)
+        bool externalPlan = planSlots != null && planSlotSrc != null && planSlotSrc.Length > 0;
+        if (externalPlan) outN = planSlotSrc!.Length;
         // 每输出槽 → 源帧路径:端点直接映射;中间槽逐槽单对 -s 精确时间步。
         // 关键教训(rife-ncnn-vulkan):【目录模式忽略 -s】(-s 只对单对 -0/-1/-o 有效);
         // -n 的输出含端点且中间帧数不稳定(实测 -n 6 = [A,3中间,B,B]);故任意 t
@@ -5797,6 +5891,19 @@ public static class VideoService
             pairEqCache[i] = v;
             return v;
         }
+        if (externalPlan)
+        {
+            // 【任务 S1】平滑时间轴:槽位/拷贝槽/输出帧数全部由 Core.CutAwareSchedule 排好 ——
+            // 切点上的槽在上游已被改写成"拷前一场景帧 / 从新场景帧开始",这里**不可能**收到跨切点的 φ∈(0,1) 槽。
+            for (int j = 0; j < outN; j++)
+            {
+                slotSrc[j] = planSlotSrc![j];
+                if (string.IsNullOrEmpty(slotSrc[j])) slotSrc[j] = files[Math.Min(j, n - 1)];   // 兜底:宁可重复不可空
+            }
+            slots.AddRange(planSlots!);
+        }
+        else
+        {
         for (int j = 0; j < outN; j++)
         {
             double t = T * j / (outN - 1);
@@ -5808,6 +5915,7 @@ public static class VideoService
             if (phi <= 0.001) slotSrc[j] = files[i];
             else if (phi >= 0.999) slotSrc[j] = files[i + 1];
             else slots.Add((i, j, phi));
+        }
         }
         var tempoTempDirs = new System.Collections.Generic.List<string>();
         int slotDone = 0;
@@ -5830,8 +5938,10 @@ public static class VideoService
             var depthGroups = activePairs
                 .Select(p =>
                 {
-                    int dist = Math.Max(1, idx[p + 1] - idx[p]);
-                    int k = Math.Max(2, (int)Math.Round(dist * scaleF));
+                    // 【任务 S1】外部排程时深度按"该源帧对内部**实际要插几帧**"算(不再用 idx 距 × 倍率猜)
+                    int k0 = slotsInPair != null ? slotsInPair(p)
+                        : (int)Math.Round(Math.Max(1, idx[p + 1] - idx[p]) * scaleF);
+                    int k = Math.Max(2, k0);
                     int d = 1;
                     while ((1 << d) < k) d++;
                     d = Math.Min(d, 4);
@@ -5895,12 +6005,12 @@ public static class VideoService
                                 int k = int.Parse(m.Groups[1].Value);
                                 int gf = Math.Min(slotTotal, (int)((double)(midDone + k) / Math.Max(1, midNeed) * slotTotal));
                                 progress.Report((10 + (int)(35.0 * gf / slotTotal),
-                                    $"按源时间轴插帧 已处理 {gf} 帧 / 共 {slotTotal} 帧(源 {n} 帧·目标 {F:0.##} fps)"));
+                                    $"{stageName} 已处理 {gf} 帧 / 共 {slotTotal} 帧(源 {n} 帧·目标 {F:0.##} fps)"));
                             });
                         var mids = await EngineService.InterpLayerBatchAsync(rife,
                             batch.Select(nd => (nd.a, nd.b)),
                             Path.Combine(workTmp, $"D{depth}_L{lv}_{off / LayerBatch}"), gpuId, ct, interpModel, tta,
-                            progress: layerProg, watchStage: "按源时间轴插帧",
+                            progress: layerProg, watchStage: stageName,
                             onEngineReady: lbOnEngineReady);   // 只上报"引擎已就绪",不改层批划分/引擎参数
                         for (int k = 0; k < batch.Count; k++)
                         {
@@ -5918,7 +6028,7 @@ public static class VideoService
                         midDone += batch.Count;
                         int fr = Math.Min(slotTotal, (int)((double)midDone / Math.Max(1, midNeed) * slotTotal));
                         progress?.Report((10 + (int)(35.0 * fr / slotTotal),
-                            $"按源时间轴插帧 已处理 {fr} 帧 / 共 {slotTotal} 帧(源 {n} 帧·目标 {F:0.##} fps)"));
+                            $"{stageName} 已处理 {fr} 帧 / 共 {slotTotal} 帧(源 {n} 帧·目标 {F:0.##} fps)"));
                     }
                     curNodes = nextNodes;
                 }
@@ -5946,6 +6056,9 @@ public static class VideoService
         // 黑帧提示(GPU 队列异常兼容症状):层批中间帧有全黑 → 只提示,不自动重跑整段(成本高)。
         // 【不再建议"改用 CPU 设备"】"补帧绝不落 CPU"是本产品的硬约定(CPU 补帧慢到用户以为卡死),
         // 引导用户去选 CPU 等于让他自己撞进那条被明令禁止的路径。
+        // 【任务 S1】把结论作为返回值交回调用方:平滑时间轴那条路会在检出黑帧时**回退分段补帧**
+        // (那里有 ncnn→ONNX→换卡 的完整降级链),而"补回"这条路保持既有行为(只提示)。
+        bool anyBlack = false;
         {
             int checkedN = 0;
             foreach (var (p, f) in pairMids.SelectMany(kv => kv.Value))
@@ -5954,6 +6067,7 @@ public static class VideoService
                 try
                 {
                     if (!EngineService.IsBlackPng(f)) continue;
+                    anyBlack = true;
                     progress?.Report((40, "⚠ 补回输出含黑帧(GPU 队列异常),建议更新显卡驱动或换一张显卡后重试"));
                     AppLogger.Info("⚠ 补回层批输出含黑帧(GPU 队列异常)— 建议更新显卡驱动/换卡后重试");
                     break;
@@ -5966,6 +6080,13 @@ public static class VideoService
         for (int j = 0; j < outN; j++)
         {
             var dst = Path.Combine(framesFinal, $"frame_{++written:D6}.jpg");
+            if (preferFileCopyForJpgSlot && slotSrc[j].EndsWith(".jpg", StringComparison.OrdinalIgnoreCase))
+            {
+                // 【任务 S1】"落在源帧上"的槽必须**逐字节原样**落地:再走一次 q0.96 重编码纯属白丢画质
+                // (用户口径:φ=0 的槽"直接拷贝该源帧(不调引擎)")。拷不动(占用/权限)→ 落回既有重编码路径。
+                try { File.Copy(slotSrc[j], dst, true); continue; }
+                catch { }
+            }
             try { EngineService.ConvertPngToJpg(slotSrc[j], dst, VideoFrameJpgQuality); }
             catch (Exception ex)
             {
@@ -5976,8 +6097,168 @@ public static class VideoService
         // 输出写完才允许清理临时目录
         foreach (var d in tempoTempDirs) { try { Directory.Delete(d, true); } catch { } }
         double fps = written > 1 ? (written - 1) / T : F;
-        AppLogger.Info($"按源时间轴插帧:关键帧 {n}(源号 {idx[0]}..{idx[^1]}) → 输出 {written} 帧 @ {fps:0.##} fps(目标 {F:0.##}),时长 {T:0.###}s,逐槽-s {slots.Count} 次(静止对 {pairEqCache.Count(e => e.Value)})");
-        return (written, fps);
+        AppLogger.Info($"{stageName}:关键帧 {n}(源号 {idx[0]}..{idx[^1]}) → 输出 {written} 帧 @ {fps:0.##} fps(目标 {F:0.##}),时长 {T:0.###}s,逐槽-s {slots.Count} 次(静止对 {pairEqCache.Count(e => e.Value)})");
+        return (written, fps, anyBlack);
+    }
+
+    /// <summary>【任务 S2 · 生产接线这半】算全片"逐对相邻源帧"的图像指标(帧差 + 拉普拉斯能量),
+    /// 喂给 <see cref="AlhPro.Core.SceneCutJudge.Detect"/> 判场景硬切。
+    /// 【为什么交给 ffmpeg 一条灰色 rawvideo 通道】逐帧用 GDI+ 解码采样要按帧付解码开销(几千帧就是几十秒);
+    /// 交给 ffmpeg 做 `-vf scale=…,format=gray -f rawvideo` = 一次解码 + 一次降采样,落一个临时 raw 文件,
+    /// 再**按帧流式读**算指标(常驻内存只有 2 帧);算完即删(不留垃圾)。采样尺寸见 Core.SceneCutMetrics。
+    /// 【失败怎么办】任一环节失败 → 返回空指标 ⇒ Detect 得到 0 处切点 ⇒ "不做切点保护"。
+    /// 这个降级**等于改动前的行为**(旧路径本来就不做切点保护),不会让处理失败、也不会改变 CFR 路径。
+    /// 【待实测标定】采样高度(192)与 SceneCutJudge 的阈值(帧差 ≥25/≥50、拉普拉斯比 ≤0.6)都需真机复测:
+    /// 阈值是在**原分辨率**上标定的(实测 58.68 / 0.474),换到 192 行采样后绝对量级会变。</summary>
+    private static async Task<(double[] diff, double[]? lapVar)> ComputeSceneCutMetricsAsync(
+        string ffmpeg, string framesDir, int srcW, int srcH, int frameCount, CancellationToken ct)
+    {
+        var (sw, sh) = AlhPro.Core.SceneCutMetrics.SampleSize(srcW, srcH);
+        if (sw < 3 || sh < 3 || frameCount < 2) return (Array.Empty<double>(), null);
+        string raw = Path.Combine(Path.GetDirectoryName(framesDir) ?? ".", $"scenecut_{Guid.NewGuid():N}.gray");
+        try
+        {
+            var args = $"-y -framerate 1 -i \"{Path.Combine(framesDir, "frame_%06d.jpg")}\" "
+                + $"-vf \"scale={sw}:{sh},format=gray\" -f rawvideo -pix_fmt gray \"{raw}\"";
+            await RunAsync(ffmpeg, args, null, ct, "场景切换检测").ConfigureAwait(false);
+            var fi = new FileInfo(raw);
+            int frameBytes = sw * sh;
+            if (!fi.Exists || fi.Length < (long)frameBytes * 2) return (Array.Empty<double>(), null);
+            int avail = (int)Math.Min(int.MaxValue, fi.Length / frameBytes);
+            int n = Math.Min(frameCount, avail);
+            if (n < 2) return (Array.Empty<double>(), null);
+            var diff = new double[n - 1];
+            var lap = new double[n];
+            var prev = new byte[frameBytes];
+            var cur = new byte[frameBytes];
+            int done = 0;
+            using (var fs = new FileStream(raw, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16))
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    if (ct.IsCancellationRequested) break;
+                    if (await ReadExactAsync(fs, cur).ConfigureAwait(false) != frameBytes) break;
+                    AlhPro.Core.SceneCutMetrics.MeasurePair(prev, cur, sw, sh, out double d, out _, out double? lapCur);
+                    lap[i] = lapCur ?? 0;
+                    if (i > 0) diff[i - 1] = d;
+                    Buffer.BlockCopy(cur, 0, prev, 0, frameBytes);
+                    done++;
+                }
+            }
+            if (done < 2) return (Array.Empty<double>(), null);
+            if (done != n) { Array.Resize(ref diff, done - 1); Array.Resize(ref lap, done); }
+            return (diff, lap);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            AppLogger.Info($"场景切换检测未完成({ex.Message.Split('\n')[0]})→ 本次不做切点保护(与改动前行为一致)");
+            return (Array.Empty<double>(), null);
+        }
+        finally { try { File.Delete(raw); } catch { } }
+    }
+
+    /// <summary>把缓冲读满(短读循环)。返回实际读到的字节数(&lt; 期望 = 流到头)。</summary>
+    private static async Task<int> ReadExactAsync(Stream s, byte[] buf)
+    {
+        int off = 0;
+        while (off < buf.Length)
+        {
+            int r = await s.ReadAsync(buf.AsMemory(off, buf.Length - off)).ConfigureAwait(false);
+            if (r <= 0) break;
+            off += r;
+        }
+        return off;
+    }
+
+    /// <summary>【任务 S1 核心】"平滑时间轴"合成:按**真实时间轴**逐槽合成,取代"按段 `-n` 均匀铺帧"。
+    /// 【为什么需要】用户实测口径:把时间轴"填平"(输出统一帧率)后,开头 1~3 秒的顿挫感消失 ——
+    /// 消除的是源的不均匀节奏(VFR 的 33.3ms 顿挫),不是"往缺口里填运动"(缺口内部几乎无变化,实测 0.871/0.150)。
+    /// 【怎么做】对每个目标时刻 t(均匀网格 i/目标帧率):用 <see cref="AlhPro.Core.TimelineFlattenPlan.MapTargetFrame"/>
+    /// 取**包住 t 的两张源帧 + φ**;再经 <see cref="AlhPro.Core.CutAwareSchedule"/> 做**切点对齐**:
+    ///   · t 正好落在源帧上(φ=0/1)→ 直接 File.Copy 该源帧,**不进引擎**(避免静止内容被"猜"出差异 —— 小样实测的软化就来自这里);
+    ///   · 0&lt;φ&lt;1 且这一对**不是**场景硬切 → 交既有层批原语合成;
+    ///   · 这一对**是**场景硬切 → **绝不合成**:φ&lt;0.5 拷前一场景帧、φ≥0.5 从新场景帧开始 →
+    ///     输出里不会再有"上个镜头的字叠在新镜头上"的鬼影帧(实测鬼影比 0.647/0.692),
+    ///     切点处也不再出现"只剩 7.8% 高频"的严重软化帧(那帧本来就是混合出来的)。
+    /// 【帧数/时长守恒】目标帧数 = <see cref="AlhPro.Core.TimelineFlattenPlan.Decide"/> 给出的数(round(真实时长×目标帧率)),
+    /// 而"切点对齐"只把**混合槽改写成拷贝槽**,不增删槽 → 帧数与时间轴位置都不变,
+    /// 所以不需要"在切点前后各补 1~2 帧同场景拷贝来对齐时轴"(帧数守恒是更强的约束)。
+    /// 总时长由调用方按"帧数 ÷ 源容器时长"标称(见 ProcessVideoAsync 的"帧率保险"),偏差 ≤ 半帧。
+    /// 【落地方式】完全复用"补回(还原源时间轴)"那条路的既有层批并发结构(EngineService.InterpLayerBatchAsync),
+    /// 只是把"槽位怎么排"换成上面这套 —— **没有**新写并发与降级链。
+    /// 【失败/黑帧】帧数不符、引擎检出黑帧 → 抛异常,由调用方清掉半成品并回退分段补帧(那里有完整降级链)。
+    /// 【已知代价(照实写,不靠偷偷加锐化找补)】源里"本来静止"的缺口处会插出轻微软化(小样实测中位 ≈6%);
+    /// 切点处由"糊一帧"变成"硬切两帧"——那是切点本身的性质,视觉上更对。</summary>
+    private static async Task<(int written, int cuts, int forcedCopies, bool anyBlack)> FlattenTimelineAsync(
+        string ffmpeg, string rife, string segSrcDir, string segOutDir, int probeW, int probeH,
+        int frameCount, System.Collections.Generic.List<double>? frameDurs,
+        AlhPro.Core.TimelineFlattenPlan.Plan plan, int gpuId, string interpModel, bool tta,
+        IProgress<(int pct, string msg)>? progress, CancellationToken ct)
+    {
+        if (frameDurs == null || frameDurs.Count != frameCount)
+            throw new InvalidOperationException($"源时长表与帧数不一致(时长表 {(frameDurs?.Count ?? -1)} 项 / 帧数 {frameCount})");
+        var files = Directory.EnumerateFiles(segSrcDir, "*.jpg")
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
+        if (files.Length != frameCount)
+            throw new InvalidOperationException($"合成输入 {files.Length} 帧 ≠ 时长表 {frameCount} 帧(帧号与时长表索引不可信)");
+
+        // ===== ① 先做场景硬切检测,再排槽:切点上绝不生成 φ∈(0,1) 的混合帧(任务 S2) =====
+        var (diff, lap) = await ComputeSceneCutMetricsAsync(ffmpeg, segSrcDir, probeW, probeH, frameCount, ct)
+            .ConfigureAwait(false);
+        var cuts = AlhPro.Core.SceneCutJudge.Detect(diff, lap);
+        AppLogger.Info($"时间轴:检测到 {cuts.Count} 处场景切换,已按切点对齐(不生成跨切混合帧)");
+        if (cuts.Count > 0)
+        {
+            var sb = new System.Text.StringBuilder();
+            var lapArr = lap ?? Array.Empty<double>();
+            foreach (var c in cuts.Take(8))
+            {
+                double d = c < diff.Length ? diff[c] : 0;
+                double lpPrev = c - 1 >= 0 && c - 1 < lapArr.Length ? lapArr[c - 1] : 0;
+                double lpCur = c < lapArr.Length ? lapArr[c] : 0;
+                double ratio = lpPrev > 0 ? lpCur / lpPrev : 0;
+                sb.Append($"[源帧 {c}→{c + 1} 帧差 {d:0.##} 拉普拉斯比 {ratio:0.##}] ");
+            }
+            if (cuts.Count > 8) sb.Append($"…(共 {cuts.Count} 处)");
+            AppLogger.Info($"时间轴:切点清单(采样 {AlhPro.Core.SceneCutMetrics.SampleHeight} 行,阈值【待实测标定】){sb}");
+        }
+
+        // ===== ② 排程(纯函数):每个目标槽 = 拷哪张源帧 / 在源帧对之间按 φ 合成 =====
+        var slotsPlan = AlhPro.Core.CutAwareSchedule.PlanAll(frameDurs, plan.TargetFrames, plan.TargetFps, cuts, out int forced);
+        if (slotsPlan.Count != plan.TargetFrames)
+            throw new InvalidOperationException($"时间轴排程槽数 {slotsPlan.Count} ≠ 目标帧数 {plan.TargetFrames}(映射越界)");
+
+        // ===== ③ 排程 → 槽位表(拷贝槽 / 引擎槽)=====
+        int outN = slotsPlan.Count;
+        var slotSrc = new string[outN];
+        var engineSlots = new System.Collections.Generic.List<(int i, int j, double phi)>();
+        var perPair = new System.Collections.Generic.Dictionary<int, int>();
+        int copySlots = 0;
+        for (int j = 0; j < outN; j++)
+        {
+            var s = slotsPlan[j];
+            if (s.Copy)
+            {
+                slotSrc[j] = files[Math.Clamp(s.CopyIndex, 0, files.Length - 1)];
+                copySlots++;
+                continue;
+            }
+            int i0 = Math.Clamp(s.Idx0, 0, files.Length - 2);
+            slotSrc[j] = files[i0];   // 兜底值:引擎缺帧时层批原语会退回它
+            engineSlots.Add((i0, j, s.Phi));
+            perPair[i0] = perPair.TryGetValue(i0, out var c) ? c + 1 : 1;
+        }
+        AppLogger.Info($"平滑时间轴:排程 {outN} 槽(直接拷贝 {copySlots} 槽 / 引擎合成 {engineSlots.Count} 槽;"
+            + $"其中因切点强制改拷贝 {forced} 槽);目标 {plan.TargetFps:0.##} fps、真实时长 {plan.TotalSeconds:0.###}s");
+
+        // ===== ④ 交给既有层批原语落盘(并发/降级/黑帧提示/临时目录清理都在那里)=====
+        var res = await RunTempoResampleAsync(rife, segSrcDir, segOutDir, frameCount, plan.TargetFps,
+            null, 1, plan.TargetFps, gpuId, plan.TotalSeconds, interpModel, tta, progress, ct,
+            planSlots: engineSlots, planSlotSrc: slotSrc,
+            slotsInPair: p => perPair.TryGetValue(p, out var c) ? c : 1,
+            stageName: "平滑时间轴", preferFileCopyForJpgSlot: true).ConfigureAwait(false);
+        return (res.frameCount, cuts.Count, forced, res.anyBlack);
     }
 
     /// <summary>智能模式:自适应去重——不固定阈值,先算素材相邻帧差分布,再自动定"重复帧"分界。

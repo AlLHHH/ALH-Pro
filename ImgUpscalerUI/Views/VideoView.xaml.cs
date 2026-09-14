@@ -1150,6 +1150,7 @@ public sealed partial class VideoView : UserControl
         if (BitrateRow != null) BitrateRow.Visibility = Visibility.Collapsed;
         FormatCombo.SelectedIndex = 0;
         FastModeCheck.IsChecked = false;
+        if (SmoothTimelineCheck != null) SmoothTimelineCheck.IsChecked = true;   // 【S3】重置 = 回到默认(开)
         // 补全剩余参数(真正"重置所有"):视频降噪/后处理杂色/抗锯齿/去频闪/VFR/去重智能/微动防线/静音
         DenoiseToggle.IsChecked = false;
         DenoiseStrongRadios.SelectedIndex = 0;
@@ -1357,6 +1358,9 @@ public sealed partial class VideoView : UserControl
         public int Codec { get; set; }
         public int Format { get; set; }
         public bool FastMode { get; set; }
+        /// <summary>【任务 S3】平滑时间轴:统一输出帧率并按场景切换对齐(默认开)。
+        /// 旧设置文件里没有这个字段 → 反序列化后保留属性初始值 = true(即默认开),不会把用户的旧设置变成关。</summary>
+        public bool SmoothTimeline { get; set; } = true;
         public bool Mute { get; set; }
         public bool VideoDenoiseOn { get; set; }
         public int VideoDenoiseStrong { get; set; }
@@ -1739,6 +1743,7 @@ public sealed partial class VideoView : UserControl
         if (d.Codec is >= 0 and <= 1) CodecCombo.SelectedIndex = d.Codec;
         if (d.Format is 0 or 1) FormatCombo.SelectedIndex = d.Format;
         FastModeCheck.IsChecked = d.FastMode;
+        SmoothTimelineCheck.IsChecked = d.SmoothTimeline;   // 【S3】旧设置文件无此字段 → 保留界面默认(勾选)
         MuteCheck.IsChecked = d.Mute;
         DenoiseToggle.IsChecked = d.VideoDenoiseOn;
         if (d.VideoDenoiseStrong is >= 0 and <= 2) DenoiseStrongRadios.SelectedIndex = d.VideoDenoiseStrong;
@@ -2397,6 +2402,7 @@ public sealed partial class VideoView : UserControl
             Codec = CodecCombo.SelectedIndex >= 0 ? CodecCombo.SelectedIndex : 0,
             Format = FormatCombo.SelectedIndex >= 0 ? FormatCombo.SelectedIndex : 0,
             FastMode = FastModeCheck.IsChecked == true,
+            SmoothTimeline = SmoothTimelineCheck.IsChecked == true,   // 【S3】
             Mute = MuteCheck.IsChecked == true,
             VideoDenoiseOn = DenoiseToggle.IsChecked == true,
             VideoDenoiseStrong = DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex : -1,
@@ -4731,6 +4737,7 @@ public sealed partial class VideoView : UserControl
         var denoiseKindNow = DenoiseKindCombo?.SelectedIndex ?? 0;   // 0=两者 1=仅空间 2=仅时间
         var qualityNow = QualityCombo.SelectedIndex == 5 ? 0 : QualityCombo.SelectedIndex;
         var fastNow = FastModeCheck.IsChecked == true;
+        var smoothTimelineNow = SmoothTimelineCheck.IsChecked == true;   // 【S3】平滑时间轴(默认开)
         var codecNow = CodecCombo.SelectedIndex == 1 ? 2 : 0;   // 0=H.264,1=H.265
         var bitrateNow = ParseBitrate();
         var vfrModeNow = VfrModeRadios.SelectedIndex;
@@ -5180,6 +5187,7 @@ public sealed partial class VideoView : UserControl
             $"目标帧率={(targetFps is > 0 ? $"{targetFps:0.##}fps" : "随倍率")} | " +
             $"输出基准={(FpsBaseCombo.SelectedIndex == 0 ? "真实时间轴(原帧率×倍率)" : "匀速(内容×倍率)")} | " +
             $"兼容模式={(FastModeCheck.IsChecked == true ? "开" : "关")} | " +   // 文案与界面控件名一致(界面叫「兼容模式」,内部字段仍叫 FastMode)
+            $"平滑时间轴={(SmoothTimelineCheck.IsChecked == true ? "开" : "关")} | " +   // 【S3】
             $"VFR={(VfrModeRadios.SelectedIndex == 0 ? $"自动({(items.Any(i => i.IsVfr) ? "检测到可变帧率" : "未检测到")})" : "不启用")}");
         var trimmedCount = items.Count(i => i.IsTrimmed);
         if (trimmedCount > 0)
@@ -5305,6 +5313,7 @@ public sealed partial class VideoView : UserControl
                         denoiseKind: denoiseKindNow,
                         quality: qualityNow,
                         fastMode: fastNow,
+                        smoothTimeline: smoothTimelineNow,   // 【S3】平滑时间轴:统一输出帧率 + 场景切换对齐
                         upscaleShrink1x: upscaleShrink1x,                        codecPref: codecNow,
                         customBitrateMbps: bitrateNow,
                         // 可变帧率(VFR)拆帧:默认「自动」= 加入列表时已探测(IsVfr),是 VFR 素材就自动
