@@ -321,6 +321,7 @@ public static class VideoService
         double dedupPanThr = 8, bool dedupPanOn = false,
         double dedupAnimeThr = 0.92,
         int postAa = 0,
+        int postEdge = 0,
         bool mute = false, bool allowFewFrames = false,
         int codecPref = 0, double customBitrateMbps = 0,
         bool vfrPassthrough = false,
@@ -2735,7 +2736,7 @@ public static class VideoService
             // 视频滤镜链:后处理(锐化/清晰/…) → 果冻修复 → 运动模糊 → 去抖 → 可选 fps 重映射
             var preParts = new System.Collections.Generic.List<string>();
             var postParts = new System.Collections.Generic.List<string>();
-            var postFilter = AlhPro.Core.VideoPostFilters.Build(postSharpen, postClarity, postUsm, postDetail, postAa);
+            var postFilter = AlhPro.Core.VideoPostFilters.Build(postSharpen, postClarity, postUsm, postDetail, postAa, postEdge);
             if (postFilter != null) preParts.Add(postFilter);
             // 视频降噪(空间+时间,去噪点/闪烁/压缩噪点),放最前:先降噪再锐化
             // 【已挪走】视频降噪原先挂在这里(合帧滤镜链)→ 作用在"超分后的帧"上,4K 下 1.56 秒/帧;
