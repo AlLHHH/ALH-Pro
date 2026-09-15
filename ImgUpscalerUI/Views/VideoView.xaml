@@ -218,6 +218,24 @@
                             <TextBlock x:Name="PostAaVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
+                        <!-- 【边缘增强 · 2026-09-15 新增】用户反馈"边缘糊、像没对上焦"。
+                             实测(1080p → 2x,游戏帧):官方 v3 边缘宽度 2.23px → 加 0.3 档后 2.15px、
+                             强边缘对比 52.3 → 58.0(+11%);其它模型用 0.6 档:2.24 → 2.16px、56.6 → 69.3(+22%),
+                             过冲只涨 0.35~0.73 个百分点。阈值取 8 = 只动明确边缘(平坦区/噪点/细碎纹理不动),
+                             这就是它和「锐化」(阈值 3/6、作用面更宽)的区别。
+                             默认按模型给(见 VideoView.xaml.cs 的 RecommendedEdgeBoost):v3 → 30,其它四支 → 60。 -->
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="边缘增强:只加强「明确的边缘」(阈值保护平坦区与噪点),让轮廓更利落、不再发虚。实测边缘宽度变窄、强边缘对比 +11~22%,过冲仅 +0.35~0.73 个百分点。与「锐化」的区别是作用面更窄——只碰轮廓,不碰细纹。默认随模型给:animevideov3 用 30,其它四支用 60">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="56"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="28"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="边缘增强" VerticalAlignment="Center"/>
+                            <Slider x:Name="PostEdgeSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                                    ValueChanged="Slider_Changed"/>
+                            <TextBlock x:Name="PostEdgeVal" Grid.Column="2" Text="0" TextAlignment="Right"
+                                       VerticalAlignment="Center" Style="{StaticResource HintText}"/>
+                        </Grid>
                     <!-- 【已移除「去模糊」】视频侧 ffmpeg 没有反卷积滤镜,那档本质只是"大半径锐化",
                          与「清晰」重复且名不副实;图片页的「去模糊」是真 Richardson-Lucy 反卷积,那边保留。
                          实测与理由见 _qa\ab_waifu\POSTPROC_REPORT.md -->

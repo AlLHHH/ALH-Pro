@@ -33,9 +33,15 @@ namespace AlhPro.Core;
 /// 【本文件不做的事】不做任何合并/近似 —— 需要改画面或换实现的方案一律由用户看 A/B 对比后决定。</summary>
 public static class VideoPostFilters
 {
-    /// <summary>按强度构造后处理滤镜链(顺序 = 锐化 → 清晰 → 钝化蒙版 → 保留细节);全为 0 时返回 null。
-    /// 参数范围 0-100,超出按上限钳制(与旧实现一致:锐化 ≤1.00、清晰 ≤0.50、钝化 ≤1.00、细节 ≤0.60)。</summary>
-    public static string? Build(int sharpen, int clarity, int usm, int detail, int aa = 0)
+    /// <summary>按强度构造后处理滤镜链(顺序 = 锐化 → 清晰 → 钝化蒙版 → 保留细节 → 边缘增强);全为 0 时返回 null。
+    /// 参数范围 0-100,超出按上限钳制(与旧实现一致:锐化 ≤1.00、清晰 ≤0.50、钝化 ≤1.00、细节 ≤0.60)。
+    /// 【边缘增强 edgeBoost · 2026-09-15 新增】用户反馈"边缘糊/没对上焦",实测数据(游戏帧,1080p→2x):
+    ///   官方 animevideov3 边缘宽度 2.23px / 强边缘对比 52.3 → 加 0.3 档后 2.15px / 58.0(+11%),过冲 1.05%→1.40%;
+    ///   其它模型(edge 较弱的那几支)用 0.6 档:2.24→2.16px、对比 56.6→69.3(+22%),过冲 1.23%→1.96%。
+    ///   所以界面默认按模型给 0.3 / 0.6(见 VideoView 的按模型推荐值)。
+    /// 【与"锐化"的区别】同一族机制(带阈值的 smartblur 反向强度),但**阈值取 8**:只加强明确边缘,
+    ///   平坦区/噪点/细碎纹理不动 —— 这就是实测里"边缘变窄而 detail 不掉"的原因;锐化那档阈值是 3/6,作用面更宽。</summary>
+    public static string? Build(int sharpen, int clarity, int usm, int detail, int aa = 0, int edgeBoost = 0)
     {
         var inv = CultureInfo.InvariantCulture;
         var parts = new System.Collections.Generic.List<string>();
@@ -47,6 +53,9 @@ public static class VideoPostFilters
             parts.Add($"smartblur=luma_radius=2:luma_strength=-{Math.Min(1.0, usm / 100.0).ToString("0.00", inv)}:luma_threshold=8");
         if (detail > 0)
             parts.Add($"cas=strength={Math.Min(0.60, detail / 100.0 * 0.60).ToString("0.00", inv)}");
+        // 边缘增强:阈值 8 = 只动明确边缘(实测依据见方法注释);强度 0.3/0.6 分别对应 30/60
+        if (edgeBoost > 0)
+            parts.Add($"smartblur=luma_radius=1:luma_strength=-{Math.Min(1.0, edgeBoost / 100.0).ToString("0.00", inv)}:luma_threshold=8");
         // 边缘抗锯齿不再产出 ffmpeg 滤镜(见类注释);aa 只保留形参以免调用方签名变化。
         _ = aa;
         return parts.Count > 0 ? string.Join(",", parts) : null;

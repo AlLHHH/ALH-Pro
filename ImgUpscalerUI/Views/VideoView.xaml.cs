@@ -565,7 +565,7 @@ public sealed partial class VideoView : UserControl
             if (DenoiseToggle.IsChecked == true) slow.Add("视频降噪");
             if ((int)SharpenSlider.Value > 0 || (int)ClaritySlider.Value > 0 || (int)UsmSlider.Value > 0
                 || (int)DetailSlider.Value > 0
-                || PostAaSlider.Value > 0)
+                || PostAaSlider.Value > 0 || PostEdgeSlider.Value > 0)
                 slow.Add("后处理");
             if (interp && MotionBlurCombo.SelectedIndex > 0) slow.Add("运动模糊");
             if (interp && DeShakeCheck.IsChecked == true) slow.Add("画面去抖");
@@ -693,8 +693,35 @@ public sealed partial class VideoView : UserControl
     private void Slider_Changed(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
         => OnOptionChanged();
 
+    /// <summary>按超分模型给「边缘增强」推荐强度(用户 2026-09-15 定的:v3 用 0.3,其它四支用 0.6)。
+    /// 【依据】实测 1080p→2x 游戏帧:官方 animevideov3 边缘宽度 2.23px、强边缘对比 52.3,
+    /// 加 0.3 档后 2.15px / 58.0(+11%),过冲 1.05%→1.40%;其它几支模型边缘本来就偏弱,
+    /// 用 0.6 档:2.24→2.16px、56.6→69.3(+22%),过冲 1.23%→1.96%。
+    /// 模型名走 Tag(realesr-animevideov3 / realesr-general-x4v3 / …),和管线用的是同一个字符串。</summary>
+    private static int RecommendedEdgeBoost(string? model)
+        => model != null && model.Contains("animevideov3", StringComparison.OrdinalIgnoreCase) ? 30 : 60;
+
+    /// <summary>切模型时把「边缘增强」带成推荐值。
+    /// 【判据:当前值是不是"推荐值的集合"】等于 0 / 30 / 60 就认为用户没自定义过 → 跟着模型走;
+    /// 其它数值(如用户手调成 45)一律保留。
+    /// 【为什么不用"用户是否拖过滑条"的标记】实测踩坑:初始化/载入设置时会**程序化**给滑条赋 0,
+    /// 那也会触发 Slider_Changed → 标记被误置 → 自动默认全被挡掉(真机 UIA 验证时发现切模型后仍是 0)。
+    /// 现在改成只看数值,确定性强、与初始化顺序无关。</summary>
+    private void ApplyRecommendedEdgeBoost()
+    {
+        if (PostEdgeSlider == null || VideoEsrganModelCombo == null) return;
+        var cur = (int)PostEdgeSlider.Value;
+        if (cur != 0 && cur != 30 && cur != 60) return;      // 用户自定义过 → 不动
+        var tag = (VideoEsrganModelCombo.SelectedItem as Microsoft.UI.Xaml.Controls.ComboBoxItem)?.Tag as string;
+        var want = RecommendedEdgeBoost(tag);
+        if (cur != want) PostEdgeSlider.Value = want;
+    }
+
     private void Combo_Changed(object sender, Microsoft.UI.Xaml.Controls.SelectionChangedEventArgs e)
-        => OnOptionChanged();
+    {
+        if (ReferenceEquals(sender, VideoEsrganModelCombo)) ApplyRecommendedEdgeBoost();
+        OnOptionChanged();
+    }
 
     private static void SetScaleRadioEnabled(RadioButton rb, bool on)
     {
@@ -1076,6 +1103,7 @@ public sealed partial class VideoView : UserControl
         UsmVal.Text = UsmSlider.Value.ToString("0");
         DetailVal.Text = DetailSlider.Value.ToString("0");
         PostAaVal.Text = PostAaSlider.Value.ToString("0");
+        PostEdgeVal.Text = PostEdgeSlider.Value.ToString("0");
 
         // 输出帧率提示
         var inv = CultureInfo.InvariantCulture;
@@ -1168,6 +1196,7 @@ public sealed partial class VideoView : UserControl
         UsmSlider.Value = 0;
         DetailSlider.Value = 0;
         PostAaSlider.Value = 0;
+        PostEdgeSlider.Value = 0;
         MotionBlurCombo.SelectedIndex = 0;
         DeShakeCheck.IsChecked = false;
         QualityCombo.SelectedIndex = 0;
@@ -1182,6 +1211,7 @@ public sealed partial class VideoView : UserControl
         DenoiseStrongRadios.SelectedIndex = 0;
         if (DenoiseKindCombo != null) DenoiseKindCombo.SelectedIndex = 0;
         PostAaSlider.Value = 0;
+        PostEdgeSlider.Value = 0;
         VfrModeRadios.SelectedIndex = 0;
         DedupSmartCombo.SelectedIndex = 0;
         ManualProtectSmallMotionCheck.IsChecked = true;
@@ -1202,6 +1232,7 @@ public sealed partial class VideoView : UserControl
         UsmSlider.Value = 0;
         DetailSlider.Value = 0;
         PostAaSlider.Value = 0;
+        PostEdgeSlider.Value = 0;
         _suppressEvents = false;
         UpdateOptions();
         SaveSettings();
@@ -1374,6 +1405,9 @@ public sealed partial class VideoView : UserControl
         public int PostFlicker { get; set; }
         public int PostDenoise { get; set; }
         public int PostAa { get; set; }
+        /// <summary>「边缘增强」强度 0-100(0=关)。实测依据见 VideoPostFilters.Build 注释;
+        /// 默认按模型给(animevideov3 → 30,其它四支 → 60),用户手动调过则以用户为准。</summary>
+        public int PostEdge { get; set; }
         [System.Text.Json.Serialization.JsonConverter(typeof(BoolOrIntConverter))]
         public int Jello { get; set; }
         [System.Text.Json.Serialization.JsonConverter(typeof(BoolOrIntConverter))]
@@ -1752,6 +1786,7 @@ public sealed partial class VideoView : UserControl
         if (d.PostDetail is >= 0 and <= 100) DetailSlider.Value = d.PostDetail;
         // 【已移除 去模糊】视频页没有该滑杆了(ffmpeg 无反卷积,那档名不副实);旧设置里的值忽略即可。
         if (d.PostAa is >= 0 and <= 100) PostAaSlider.Value = d.PostAa;
+        if (d.PostEdge is >= 0 and <= 100) PostEdgeSlider.Value = d.PostEdge;
         if (d.MotionBlur is >= 0 and <= 3) MotionBlurCombo.SelectedIndex = d.MotionBlur;
         DeShakeCheck.IsChecked = d.DeShake;
         if (d.Quality is >= 0 and <= 5) QualityCombo.SelectedIndex = d.Quality;
@@ -2287,7 +2322,7 @@ public sealed partial class VideoView : UserControl
             : "关闭"));
         sb.AppendLine("后处理: " +
             $"锐化{d.PostSharpen} 清晰{d.PostClarity} 钝化蒙版{d.PostUsm} 保留细节{d.PostDetail} " +
-            $"去模糊{d.PostDeblur} 边缘抗锯齿{d.PostAa}");
+            $"去模糊{d.PostDeblur} 边缘抗锯齿{d.PostAa} 边缘增强{d.PostEdge}");
         sb.AppendLine("码率: " + (d.Quality == 5 ? $"自定义 {d.BitrateMbps:0.#}Mbps" : d.Quality switch { 0 => "自动", 1 => "低", 2 => "中", 3 => "高", 4 => "极高", _ => "?" }));
         sb.AppendLine("格式: " + (d.Format == 1 ? "MKV" : "MP4") + " · " + (d.Codec == 1 ? "H.265" : "H.264"));
         if (d.FastMode) sb.AppendLine("兼容模式: 开");
@@ -2418,6 +2453,7 @@ public sealed partial class VideoView : UserControl
             PostDetail = (int)DetailSlider.Value,
             PostDeblur = 0,   // 视频页已移除「去模糊」(ffmpeg 无反卷积滤镜);字段保留仅为兼容旧设置文件
             PostAa = (int)PostAaSlider.Value,
+            PostEdge = (int)PostEdgeSlider.Value,
             MotionBlur = MotionBlurCombo.SelectedIndex,
             DeShake = DeShakeCheck.IsChecked == true,
             Quality = QualityCombo.SelectedIndex >= 0 ? QualityCombo.SelectedIndex : 0,   // -1(未选中)兜底 0,防污染设置文件
@@ -3571,7 +3607,7 @@ public sealed partial class VideoView : UserControl
         bool dedupOn = DedupCheck.IsChecked == true;
         int vdenoise = DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex + 1 : 0;
         bool postFx = (int)SharpenSlider.Value + (int)ClaritySlider.Value + (int)UsmSlider.Value
-            + (int)DetailSlider.Value + (int)PostAaSlider.Value > 0;
+            + (int)DetailSlider.Value + (int)PostAaSlider.Value + (int)PostEdgeSlider.Value > 0;
         return PerfMemory.Fingerprint(engine, scale, 1920, 1080, interpScale, dedupOn, vdenoise, postFx);
     }
 
@@ -4773,7 +4809,8 @@ public sealed partial class VideoView : UserControl
         var vfrModeNow = VfrModeRadios.SelectedIndex;
         int postSP = (int)SharpenSlider.Value, postCL = (int)ClaritySlider.Value, postUM = (int)UsmSlider.Value,
             postDT = (int)DetailSlider.Value, postDB = 0,
-            postAA = (int)PostAaSlider.Value;
+            postAA = (int)PostAaSlider.Value,
+            postEdge = (int)PostEdgeSlider.Value;   // 【边缘增强】0=关;默认由模型决定(见 RecommendedEdgeBoost)
         InitTaskStages(up, interp, dedupOn, sceneThreshold != null);
         _taskTotalCount = items.Length;
         _taskDoneCount = 0;
@@ -4803,7 +4840,7 @@ public sealed partial class VideoView : UserControl
         // 一开始就显示合理数值(偏保守,随时间慢慢对齐),不是从小变大校准
         double etaInitTotal = 0;
         var perfKey = PerfMemory.Fingerprint(engine, upscaleShrink1x ? 2.0 : scale, 1920, 1080,
-            interpScale, dedupOn, vdenoiseNow, postSP + postCL + postUM + postDB + postAA > 0);
+            interpScale, dedupOn, vdenoiseNow, postSP + postCL + postUM + postDB + postAA + postEdge > 0);
         double? perFrameHist = PerfMemory.PerFrameFor(perfKey);   // 同配置上次实测(秒/帧,1080p 基准)
         int totalFramesEst = 0;
         foreach (var it in items)
@@ -4820,7 +4857,7 @@ public sealed partial class VideoView : UserControl
                 etaInitTotal += VideoService.EstimateProcessSeconds(dur, fps, w, h,
                     up, upscaleShrink1x ? 2.0 : scale, engine, interp, interpScale, dedupOn,
                     DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex + 1 : 0,
-                    postSP + postCL + postUM + postDB + postAA > 0,
+                    postSP + postCL + postUM + postDB + postAA + postEdge > 0,
                     SafeRender.FreeRamGB);   // 传空闲内存 → 估算里计入"每批引擎启动开销 × 批数"
             }
             catch { etaInitTotal += 60; }
@@ -5228,6 +5265,7 @@ public sealed partial class VideoView : UserControl
         if ((int)UsmSlider.Value > 0) postList.Add($"钝化蒙版{(int)UsmSlider.Value}");
         if ((int)DetailSlider.Value > 0) postList.Add($"保留细节{(int)DetailSlider.Value}");
         if ((int)PostAaSlider.Value > 0) postList.Add($"边缘抗锯齿{(int)PostAaSlider.Value}");
+        if ((int)PostEdgeSlider.Value > 0) postList.Add($"边缘增强{(int)PostEdgeSlider.Value}");
         if (postList.Count > 0) Log("后处理:" + string.Join(",", postList));
         // 果冻修复(运动模糊/画面去抖,CPU 逐帧滤镜,单独记录便于诊断耗时)
         var jelloParts = new System.Collections.Generic.List<string>();
@@ -5336,6 +5374,7 @@ public sealed partial class VideoView : UserControl
                         postUsm: postUM, postDetail: postDT,
                         postDeblur: postDB,
                         postAa: postAA,
+            postEdge: postEdge,
                         mute: muteNow,
                         postMotionBlur: mblurNow,
                         postDeshake: deshakeNow,
