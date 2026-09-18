@@ -441,6 +441,65 @@ public static partial class EngineService
         catch { return 0; }
     }
 
+    /// <summary>引擎自带的 ncnn 权重是否齐全(&lt;引擎目录&gt;/models*/ 下至少有一对 .param/.bin)。
+    /// 【为什么需要它 · 2026-09-18 用户反馈"不要写什么超分模型缺失,根本就没有缺失"】
+    /// 过去判定"这个功能能不能用"是按 **ONNX 模型**算的,而 ONNX 只是 DirectML 备选路径、**不随包发布**
+    /// (N 卡上真正干活的是 ncnn 引擎 + 它自带的权重)。于是正常环境(有 ncnn、没装 ONNX)被自检报成
+    /// "超分模型 ONNX: 缺失"、功能被判"不可用",连"设备重新检测"的自检也一起显示失败 ✗。
+    /// 真正必需的是:引擎 exe + 它自己 models 目录里的权重 —— 这里就是查后者。</summary>
+    public static bool HasNcnnWeights(string? exePath)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(exePath)) return false;
+            string? dir = System.IO.Path.GetDirectoryName(exePath);
+            if (dir == null || !System.IO.Directory.Exists(dir)) return false;
+            int paramCount = 0, binCount = 0;
+            foreach (var sub in System.IO.Directory.EnumerateDirectories(dir, "models*"))
+            {
+                try
+                {
+                    paramCount += System.IO.Directory.EnumerateFiles(sub, "*.param", System.IO.SearchOption.AllDirectories).Take(64).Count();
+                    binCount += System.IO.Directory.EnumerateFiles(sub, "*.bin", System.IO.SearchOption.AllDirectories).Take(64).Count();
+                }
+                catch { }
+            }
+            return paramCount > 0 && binCount > 0;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>【给界面用】这次 EnsureNcnnProbeAsync 到底会不会**真的做实测**(会不会让用户干等)。
+    /// 判据与探测内部**逐字一致**(见 EnsureNcnnProbeAsync 开头):①纯 NVIDIA 非 Blackwell → 快速通道,秒回;
+    /// ②已有缓存结论 → 沿用,不重测;其余才真跑。
+    /// 【为什么要有它】用户反馈"正在检测 Real-ESRGAN 显卡兼容性(首次约 15~60 秒)"这句提示很烦 ——
+    /// 查下来这句话原来是**无条件**打的,而绝大多数卡(纯 NVIDIA 非 50 系)根本不实测、秒回,提示是虚的。
+    /// 现在界面只在"真的会跑"时才提示,该提示的卡(50 系/AMD/无独显)一个不少。</summary>
+    public static bool NcnnProbeWillRun(string engine, int gpuId, string? model = null)
+    {
+        try
+        {
+            if (gpuId < 0) return false;
+            if (TargetGpuIsPlainNvidia(gpuId)) return false;                       // 快速通道:不探测,直接判可用
+            if (TryGetNcnnVerdict(engine, gpuId, model).HasValue) return false;    // 已有结论:沿用缓存
+            return true;
+        }
+        catch { return true; }   // 拿不准就当"会跑":宁可多提示一次,也不能让用户对着没提示的界面干等
+    }
+
+    /// <summary>【给界面用】补帧(RIFE)这次会不会真的做实测。
+    /// 【为什么不能复用上面的判据】RIFE 探测**没有**快速通道,只认缓存(见 EnsureRifeNcnnProbeAsync)——
+    /// 用"风险启发式"判会得到 false(2026 重编版不按型号预判),于是把"真会等 10 秒"的提示藏掉,更糟。
+    /// 所以这里按探测自己的口径:该(模型+帧尺寸)已有结论就不用提示,没有就会真跑。</summary>
+    public static bool RifeProbeWillRun(string rifeExe, string model, int gpuId, int frameW, int frameH)
+    {
+        try
+        {
+            if (gpuId < 0 || string.IsNullOrEmpty(rifeExe)) return false;
+            return !TryGetNcnnVerdict(RifeProbeKey(rifeExe, model, frameW, frameH), gpuId).HasValue;
+        }
+        catch { return true; }
+    }
     public static bool NcnnGpuRisky(string engine, int gpuId, bool treatBlackwellAsRiskyWithoutProbe = true)
     {
         try

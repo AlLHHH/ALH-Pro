@@ -10,8 +10,21 @@ public static class AppSettings
     /// <summary>处理完成后自动删除项目(等 3 秒再删,留时间看完成信息)。</summary>
     public static bool AutoRemoveDone { get; set; }
 
-    /// <summary>全局计算设备(gpuId 语义):-1=CPU(软件计算),≥0=GPU 编号。三个功能页共用,设置弹窗统一修改。</summary>
+    /// <summary>全局计算设备(gpuId 语义):-1=CPU(软件计算),≥0=GPU 编号。三个功能页共用,设置弹窗统一修改。
+    /// ⚠ 编号**不是稳定身份**:实测同一台笔记本两次启动之间引擎枚举顺序会变(诊断包:同一张 NVIDIA
+    /// 先被判为 id 0、后又被判为 id 1)→ 只存编号会把任务悄悄挪到**核显**上(实测后果:ncnn 黑帧、
+    /// DirectML 也黑,只能回退源帧)。所以必须连 <see cref="GpuName"/> 一起存,启动时按名字解析编号。</summary>
     public static int GpuIndex { get; set; } = 0;
+
+    /// <summary>【预览页诊断快照 · 2026-09-18 用户要求"把预览界面的内容也加入设置里面的日志"】
+    /// 预览页的关键状态(四个视图 / 左右两条播放器的源·状态·位置·速率·静音 / 控制器状态 / 偏移副本有无),
+    /// 每次状态变化时更新一行;设置页的「设备自检报告」末尾会原样带上它 ✔
+    /// —— 这样用户导出诊断包时,预览页"为什么左侧不播 / 为什么不同步"这类问题**不用再靠猜** ✔
+    /// (用户明确要求:别写在预览页左下角,要写进设置里的日志 ✔)。</summary>
+    public static string PreviewDiag { get; set; } = "";
+    /// <summary>与 <see cref="GpuIndex"/> 配套保存的**设备名**(稳定身份)。启动自检按它在当前枚举里重新定位编号;
+    /// 名字找不到(换卡/驱动改名)→ 退回"最优秀且实测可用"的独显(核显只在没有独显时才用)。</summary>
+    public static string GpuName { get; set; } = "";
 
     /// <summary>是否已完成首次 Vulkan 自检(只跑一次,结果缓存)。</summary>
     public static bool VulkanCheckDone { get; set; }
@@ -68,12 +81,15 @@ public static class AppSettings
                 // 此前默认 0 会让"软件推荐 NVIDIA 但实际用核显"——补帧/超分极慢,用户以为卡死。
                 // 用引擎推荐编号(VulkanCheck.Devices,按 -g 编号),不用注册表索引(双卡机上两者编号可能相反)。
                 try { GpuIndex = GpuInfo.GetRecommendedEngineId(); } catch { }
+                try { GpuName = GpuInfo.GetEngineDeviceName(GpuIndex) ?? ""; } catch { }
                 return;
             }
             var d = System.Text.Json.JsonSerializer.Deserialize<Data>(File.ReadAllText(FilePath));
             if (d is null) return;
             AutoRemoveDone = d.AutoRemoveDone;
             GpuIndex = d.GpuIndex;
+            GpuName = d.GpuName ?? "";
+            PreviewDiag = d.PreviewDiag ?? "";
             // 【尊重用户选择】加载时原样读回用户保存的计算设备编号(选独显就独显、选核显就核显)。
             // 不做"归一化纠正"——设备表在此刻(启动早期)可能尚未枚举,强行远程解析会悄悄改掉用户选择;
             // 默认"选独显"由设备下拉默认选中推荐项(最佳独显)实现。
@@ -109,6 +125,8 @@ public static class AppSettings
                     {
                         AutoRemoveDone = AutoRemoveDone,
                         GpuIndex = GpuIndex,
+                        GpuName = GpuName,
+                        PreviewDiag = PreviewDiag,
                         VulkanCheckDone = VulkanCheckDone,
                         VulkanGpuOk = VulkanGpuOk,
                         SelfCheckDone = SelfCheckDone,
@@ -132,6 +150,8 @@ public static class AppSettings
     {
         public bool AutoRemoveDone { get; set; }
         public int GpuIndex { get; set; } = 0;
+        public string GpuName { get; set; } = "";
+        public string PreviewDiag { get; set; } = "";
         public bool VulkanCheckDone { get; set; }
         public bool? VulkanGpuOk { get; set; }
         public bool SelfCheckDone { get; set; }

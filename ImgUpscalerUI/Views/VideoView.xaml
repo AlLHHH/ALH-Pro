@@ -247,60 +247,60 @@
                     <StackPanel Spacing="2">
                         <Grid ColumnSpacing="8" ToolTipService.ToolTip="锐化:只提细节,带阈值保护平坦区与噪点(实测 50 档只掉 0.35 dB;旧版会让边缘区掉 4.9 dB、白边和锯齿明显)">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="56"/>
+                                <ColumnDefinition Width="78"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="28"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="锐化" VerticalAlignment="Center"/>
-                            <Slider Margin="-11,0,-11,0" x:Name="SharpenSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                            <Slider Margin="-6,0,-11,0" x:Name="SharpenSlider" Grid.Column="1" Minimum="0" Maximum="100"
                                     ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="SharpenVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
                         <Grid ColumnSpacing="8" ToolTipService.ToolTip="清晰:大半径局部对比度(只动中调,不硬吃边缘),画面更通透">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="56"/>
+                                <ColumnDefinition Width="78"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="28"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="清晰" VerticalAlignment="Center"/>
-                            <Slider Margin="-11,0,-11,0" x:Name="ClaritySlider" Grid.Column="1" Minimum="0" Maximum="100"
+                            <Slider Margin="-6,0,-11,0" x:Name="ClaritySlider" Grid.Column="1" Minimum="0" Maximum="100"
                                     ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="ClarityVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
                         <Grid ColumnSpacing="8" ToolTipService.ToolTip="钝化蒙版:只锐化超过阈值的明显边缘,平坦区完全不动。实测是唯一不伤边缘结构的锐化档(边缘 SSIM 反升),预设里给得最多">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="56"/>
+                                <ColumnDefinition Width="78"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="28"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="钝化蒙版" VerticalAlignment="Center"/>
-                            <Slider Margin="-11,0,-11,0" x:Name="UsmSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                            <Slider Margin="-6,0,-11,0" x:Name="UsmSlider" Grid.Column="1" Minimum="0" Maximum="100"
                                     ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="UsmVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
                         <Grid ColumnSpacing="8" ToolTipService.ToolTip="保留细节:对比度自适应锐化(按局部对比决定增益),设计上不产生白边,实测全档最干净(平坦区误差几乎不涨)">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="56"/>
+                                <ColumnDefinition Width="78"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="28"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="保留细节" VerticalAlignment="Center"/>
-                            <Slider Margin="-11,0,-11,0" x:Name="DetailSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                            <Slider Margin="-6,0,-11,0" x:Name="DetailSlider" Grid.Column="1" Minimum="0" Maximum="100"
                                     ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DetailVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
                         <Grid ColumnSpacing="8" ToolTipService.ToolTip="边缘抗锯齿:只削阶梯边缘和振铃(实测细节 −7%、结构指标反升)。超分后的斜线/曲线发锯就开它">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="56"/>
+                                <ColumnDefinition Width="78"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="28"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="边缘抗锯齿" VerticalAlignment="Center"/>
-                            <Slider Margin="-11,0,-11,0" x:Name="PostAaSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                            <Slider Margin="-6,0,-11,0" x:Name="PostAaSlider" Grid.Column="1" Minimum="0" Maximum="100"
                                     ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="PostAaVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
@@ -313,12 +313,12 @@
                              默认按模型给(见 VideoView.xaml.cs 的 RecommendedEdgeBoost):v3 → 30,其它四支 → 60。 -->
                         <Grid ColumnSpacing="8" ToolTipService.ToolTip="边缘增强:只加强「明确的边缘」(阈值保护平坦区与噪点),让轮廓更利落、不再发虚。实测边缘宽度变窄、强边缘对比 +11~22%,过冲仅 +0.35~0.73 个百分点。与「锐化」的区别是作用面更窄——只碰轮廓,不碰细纹。默认随模型给:animevideov3 用 30,其它四支用 60">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="56"/>
+                                <ColumnDefinition Width="78"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="28"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="边缘增强" VerticalAlignment="Center"/>
-                            <Slider Margin="-11,0,-11,0" x:Name="PostEdgeSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                            <Slider Margin="-6,0,-11,0" x:Name="PostEdgeSlider" Grid.Column="1" Minimum="0" Maximum="100"
                                     ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="PostEdgeVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
@@ -390,7 +390,7 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="帧率偏移" VerticalAlignment="Center"/>
-                            <Slider Margin="-11,0,-11,0" x:Name="FpsOffsetSlider" Grid.Column="1" Minimum="-20" Maximum="0"
+                            <Slider Margin="-6,0,-11,0" x:Name="FpsOffsetSlider" Grid.Column="1" Minimum="-20" Maximum="0"
                                     StepFrequency="1" Value="0" ValueChanged="Slider_Changed"/>
                             <Button Grid.Column="2" Content="重置" FontSize="10" Padding="10,4"
                                     Click="ResetOffsetBtn_Click"
@@ -577,7 +577,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="变化判线" VerticalAlignment="Center" FontSize="12"
                                        ToolTipService.ToolTip="一块画面变化超过这个数,才认为这块真的动了。调大=更宽松,删得更多;动漫一般 8~16,默认 12"/>
-                            <Slider Margin="-11,0,-11,0" x:Name="DedupHiSlider" ToolTipService.ToolTip="一块画面变化超过这个数才算真的动了。调大=更宽松,删得更多;动漫一般 8~16,默认 12" Grid.Column="1" Minimum="4" Maximum="24"
+                            <Slider Margin="-6,0,-11,0" x:Name="DedupHiSlider" ToolTipService.ToolTip="一块画面变化超过这个数才算真的动了。调大=更宽松,删得更多;动漫一般 8~16,默认 12" Grid.Column="1" Minimum="4" Maximum="24"
                                     StepFrequency="1" Value="12" ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DedupHiVal" Grid.Column="2" Text="12" MinWidth="32"
                                        HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
@@ -593,7 +593,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="相似判线" VerticalAlignment="Center" FontSize="12"
                                        ToolTipService.ToolTip="一块画面变化低于这个数,就算这块没变。调大=更容易算没变,删得更多;动漫一般 4~6,默认 5"/>
-                            <Slider Margin="-11,0,-11,0" x:Name="DedupLoSlider" ToolTipService.ToolTip="一块画面变化低于这个数就算没变。调大=更容易算没变,删得更多;动漫一般 4~6,默认 5" Grid.Column="1" Minimum="2" Maximum="10"
+                            <Slider Margin="-6,0,-11,0" x:Name="DedupLoSlider" ToolTipService.ToolTip="一块画面变化低于这个数就算没变。调大=更容易算没变,删得更多;动漫一般 4~6,默认 5" Grid.Column="1" Minimum="2" Maximum="10"
                                     StepFrequency="1" Value="5" ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DedupLoVal" Grid.Column="2" Text="5" MinWidth="32"
                                        HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
@@ -609,7 +609,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="重复比例" VerticalAlignment="Center" FontSize="12"
                                        ToolTipService.ToolTip="画面里至少多少比例的区域没变,才把这帧当重复帧删掉。调小=删得更多;动漫一般 0.3~0.4,默认 0.33"/>
-                            <Slider Margin="-11,0,-11,0" x:Name="DedupFracSlider" ToolTipService.ToolTip="画面里至少多少比例的区域没变,才把这帧当重复帧删掉。调小=删得更多;动漫一般 0.3~0.4,默认 0.33" Grid.Column="1" Minimum="0.1" Maximum="0.6"
+                            <Slider Margin="-6,0,-11,0" x:Name="DedupFracSlider" ToolTipService.ToolTip="画面里至少多少比例的区域没变,才把这帧当重复帧删掉。调小=删得更多;动漫一般 0.3~0.4,默认 0.33" Grid.Column="1" Minimum="0.1" Maximum="0.6"
                                     StepFrequency="0.01" Value="0.33" ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DedupFracVal" Grid.Column="2" Text="0.33" MinWidth="40"
                                        HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
@@ -625,7 +625,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="变化阈值" VerticalAlignment="Center" FontSize="12"
                                        ToolTipService.ToolTip="两帧画面整体差异超过多少,才当新画面保留。调小=保留越多,删得越少;常见 0.02 左右"/>
-                            <Slider Margin="-11,0,-11,0" x:Name="DedupSceneSlider" ToolTipService.ToolTip="两帧画面整体差异超过多少才当新画面保留。调小=保留越多,删得越少;常见 0.02 左右" Grid.Column="1" Minimum="0.001" Maximum="0.5"
+                            <Slider Margin="-6,0,-11,0" x:Name="DedupSceneSlider" ToolTipService.ToolTip="两帧画面整体差异超过多少才当新画面保留。调小=保留越多,删得越少;常见 0.02 左右" Grid.Column="1" Minimum="0.001" Maximum="0.5"
                                     StepFrequency="0.001" Value="0.01" ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DedupSceneVal" Grid.Column="2" Text="0.010" MinWidth="40"
                                        HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
@@ -641,7 +641,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="差异快筛" VerticalAlignment="Center" FontSize="12"
                                        ToolTipService.ToolTip="算法「帧差法(SAD)」:两帧画面平均差异低于多少,才进入下一步 SSIM 精确验证。调大=更多帧进入验证=删得更多;建议 2~5"/>
-                            <Slider Margin="-11,0,-11,0" x:Name="DedupSadSlider" ToolTipService.ToolTip="两帧画面平均差异低于多少,才进入下一步精确验证。调大=更多帧进入验证=删得更多;建议 2~5" Grid.Column="1" Minimum="0.5" Maximum="10"
+                            <Slider Margin="-6,0,-11,0" x:Name="DedupSadSlider" ToolTipService.ToolTip="两帧画面平均差异低于多少,才进入下一步精确验证。调大=更多帧进入验证=删得更多;建议 2~5" Grid.Column="1" Minimum="0.5" Maximum="10"
                                     StepFrequency="0.5" Value="3.0" ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DedupSadVal" Grid.Column="2" Text="3.0" MinWidth="36"
                                        HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
@@ -657,7 +657,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="相似度阈值" VerticalAlignment="Center" FontSize="12"
                                        ToolTipService.ToolTip="算法「SSIM(结构相似性)」:从亮度/对比度/结构三维衡量画面相似度,超过多少才算真重复帧。调高=更严格=删得少;调低=删得多;建议 0.95~0.99"/>
-                            <Slider Margin="-11,0,-11,0" x:Name="DedupSsimSlider" ToolTipService.ToolTip="画面结构相似度(SSIM)超过多少才算真重复帧。调高=更严格=删得少;调低=删得多;建议 0.95~0.99" Grid.Column="1" Minimum="0.90" Maximum="0.999"
+                            <Slider Margin="-6,0,-11,0" x:Name="DedupSsimSlider" ToolTipService.ToolTip="画面结构相似度(SSIM)超过多少才算真重复帧。调高=更严格=删得少;调低=删得多;建议 0.95~0.99" Grid.Column="1" Minimum="0.90" Maximum="0.999"
                                     StepFrequency="0.005" Value="0.97" ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DedupSsimVal" Grid.Column="2" Text="0.970" MinWidth="44"
                                        HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
@@ -1076,6 +1076,11 @@
 
                 <!-- 预览/裁剪覆盖层(2026-09-17 拆成两页:双击=裁剪页(只有裁剪),「预览效果」=预览页(只有预览)) -->
                 <Grid x:Name="VideoPreviewOverlay" Grid.Row="2" Visibility="Collapsed" Background="#F20D0F14">
+                    <!-- 空格 = 播放/暂停(用户反馈"部分情况下空格没用":以前只有播放器自带控件吃空格,
+                         对比模式把自带控件关了就没反应了)。做成加速键,焦点在哪都能用(输入框除外,见处理函数)。 -->
+                    <Grid.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="Space" Invoked="PreviewSpaceAccel_Invoked"/>
+                    </Grid.KeyboardAccelerators>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <!-- 唯一画面:结果在下、原片在上(对比时原片按分割线裁切,左边原片/右边结果) -->
@@ -1102,12 +1107,13 @@
                             <TextBlock x:Name="PreviewMeta" FontSize="11" Opacity="0.6" VerticalAlignment="Center"
                                        TextTrimming="CharacterEllipsis"/>
                         </StackPanel>
-                        <RadioButtons x:Name="PreviewViewRadios" Grid.Column="1" MaxColumns="3" SelectedIndex="0"
+                        <RadioButtons x:Name="PreviewViewRadios" Grid.Column="1" MaxColumns="4" SelectedIndex="0"
                                       VerticalAlignment="Center"
                                       SelectionChanged="PreviewViewRadios_SelectionChanged"
-                                      ToolTipService.ToolTip="看原片 / 看处理效果 / 左右对比(左原片右结果,中间那条线可以拖)">
+                                      ToolTipService.ToolTip="看原片 / 看处理效果 / 两者同时(整幅并排) / 左右对比(同一条画面,分割线可拖,左原片右结果)">
                             <RadioButton Content="看原片"/>
                             <RadioButton Content="看处理效果"/>
+                            <RadioButton Content="两者同时"/>
                             <RadioButton Content="左右对比"/>
                         </RadioButtons>
                         <Button x:Name="EffectZoomBtn" Grid.Column="2" Content="放大画面" FontSize="12" Padding="12,6"
@@ -1134,28 +1140,38 @@
                               PointerExited="PreviewPlayerHost_PointerExited">
                             <MediaPlayerElement x:Name="PreviewPlayer" AreTransportControlsEnabled="False"/>
                         </Grid>
-                        <!-- 对比模式:左右两半的身份标签(不然两边都是同一画面,看不出谁是谁) -->
+                        <!-- 对比模式:左右两半的身份标签(带各自的画面规格,一眼看出分辨率/帧率差在哪) -->
                         <Border x:Name="CmpLabelLeft" Visibility="Collapsed" HorizontalAlignment="Left"
                                 VerticalAlignment="Top" Margin="10" Padding="10,4" CornerRadius="4"
                                 Background="#B30D0F14" IsHitTestVisible="False">
-                            <TextBlock Text="原片" FontSize="12" Foreground="#E8ECF2"/>
+                            <TextBlock x:Name="CmpLabelLeftText" Text="原片" FontSize="12" Foreground="#E8ECF2"/>
                         </Border>
                         <Border x:Name="CmpLabelRight" Visibility="Collapsed" HorizontalAlignment="Right"
                                 VerticalAlignment="Top" Margin="10" Padding="10,4" CornerRadius="4"
                                 Background="#B3101318" IsHitTestVisible="False">
-                            <TextBlock Text="处理后" FontSize="12" Foreground="#7FB2FF"/>
+                            <TextBlock x:Name="CmpLabelRightText" Text="处理后" FontSize="12" Foreground="#7FB2FF"/>
                         </Border>
-                        <!-- 左右对比的分割线(可左右拖) -->
+                        <!-- 对比片还在后台合成时的提示(压在两层画面之上,否则会被画面盖住看不见) -->
+                        <Border x:Name="CmpBuildingText" Visibility="Collapsed" HorizontalAlignment="Center"
+                                VerticalAlignment="Top" Margin="0,56,0,0" Padding="12,5" CornerRadius="4"
+                                Background="#CC101318" IsHitTestVisible="False">
+                            <TextBlock x:Name="CmpBuildingLabel" Text="正在生成对比画面…" FontSize="12" Foreground="#E8ECF2"/>
+                        </Border>
+                        <!-- 左右对比的分割线(实线)。
+                             拖动时**线随手即时移动,画面同时按新分界裁切**(左右对比用两个播放器实时裁切,
+                             零 seek、零重合成 —— 用户要的"像 topaz 一样实时响应")。
+                             【线要通到底】原来这里给实线留了 52px 底边距(为了不压住播放条),用户反馈"线底下那部分没有了";
+                             现在拉满整高,底部被播放条盖住的部分自然看不见,不需要留边。 -->
                         <Grid x:Name="CompareSplitter" Width="28" HorizontalAlignment="Left" Visibility="Collapsed"
                               Background="Transparent"
                               PointerPressed="CompareSplitter_PointerPressed"
                               PointerMoved="CompareSplitter_PointerMoved"
                               PointerReleased="CompareSplitter_PointerReleased"
                               PointerCaptureLost="CompareSplitter_PointerReleased"
-                              ToolTipService.ToolTip="左右拖动这条线:左边原片、右边处理结果">
+                              >   <!-- 【2026-09-18 用户要求"不要有提示"】分割线的悬停提示已按用户要求移除 ✔ -->
                             <Rectangle Width="2" Fill="#FFFFFF" Opacity="0.9" HorizontalAlignment="Center"
-                                       Margin="0,0,0,52" IsHitTestVisible="False"/>
-                            <Border Width="34" Height="56" CornerRadius="16" Background="#E67FB2FF"
+                                       IsHitTestVisible="False"/>
+                            <Border x:Name="CmpSplitHandle" Width="34" Height="56" CornerRadius="16" Background="#E67FB2FF"
                                     HorizontalAlignment="Center" VerticalAlignment="Center"
                                     PointerPressed="CompareSplitter_PointerPressed"
                                     PointerMoved="CompareSplitter_PointerMoved">
@@ -1166,26 +1182,66 @@
                                 </StackPanel>
                             </Border>
                         </Grid>
+                        <!-- "目标位置"虚影线已按用户要求撤掉:用户要的是"实时滑动、实时响应"(像 topaz),
+                             所以左右对比改成两个播放器实时裁切 —— 拖动时只改两边的裁切矩形,零 seek、零重合成,
+                             线随手就动、画面同时就分;不需要"待生效位置"这种提示了。 -->
+                        <Grid x:Name="CompareSplitGhost" Width="10" HorizontalAlignment="Left" Visibility="Collapsed"
+                              IsHitTestVisible="False">
+                            <Rectangle Width="2" Fill="#FFE8A33D" Opacity="0.8" HorizontalAlignment="Center"/>
+                        </Grid>
                         <!-- 对比模式专用:一套播放控件(自己画,盖在最上层;两个播放器自带的控件都关掉) -->
+                        <!-- 布局:进度条独占一行(拉满),下一行才是 播放键 / 倍速 / 时间 —— 之前全挤在一行,太紧凑 -->
                         <Border x:Name="CompareBar" Visibility="Collapsed" VerticalAlignment="Bottom"
-                                Margin="8,0,8,8" Padding="8,4" CornerRadius="6" Background="#E6101318"
+                                Margin="8,0,8,8" Padding="14,8" CornerRadius="8" Background="#E6101318"
                                 HorizontalAlignment="Stretch" Opacity="0" IsHitTestVisible="False">
-                            <Grid ColumnSpacing="10">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <Button x:Name="CmpPlayBtn" Padding="14,3" VerticalAlignment="Center" Click="CmpPlayBtn_Click"
-                                        ToolTipService.ToolTip="播放/暂停(左右两边同步;也可以直接点画面)">
-                                    <FontIcon x:Name="CmpPlayIcon" Glyph="&#xE768;" FontSize="15"/>
-                                </Button>
-                                <Slider Margin="-11,0,-11,0" x:Name="CmpSeek" Grid.Column="1" Minimum="0" Maximum="100" Value="0"
+                            <Grid RowSpacing="6">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Slider Margin="-6,0,-11,0" x:Name="CmpSeek" Grid.Row="0" Minimum="0" Maximum="100" Value="0"
                                         StepFrequency="0.5" VerticalAlignment="Center"
                                         ValueChanged="CmpSeek_ValueChanged"
-                                        ToolTipService.ToolTip="拖动定位:左右两边同时跳到同一时刻"/>
-                                <TextBlock x:Name="CmpTime" Grid.Column="2" Text="0:00 / 0:00" FontSize="11"
-                                           VerticalAlignment="Center" MinWidth="96" TextAlignment="Right"/>
+                                        ToolTipService.ToolTip="拖动定位:对比两边同时跳到同一时刻"/>
+                                <Grid Grid.Row="1" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Button x:Name="CmpPlayBtn" Grid.Column="0" Padding="18,4" VerticalAlignment="Center"
+                                            Click="CmpPlayBtn_Click"
+                                            ToolTipService.ToolTip="播放/暂停(对比两边同步;也可以直接点画面,或按空格)">
+                                        <FontIcon x:Name="CmpPlayIcon" Glyph="&#xE768;" FontSize="16"/>
+                                    </Button>
+                                    <!-- 慢放:补帧后的片段用来看补出来的中间帧(原速1× / 慢动作2× / 4× / 8×)
+                                         放在播放键旁边(都是"怎么播"),时间单独留在最右边 —— 之前全挤在一行太紧凑 -->
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <ToggleButton x:Name="CmpRate1Btn" Content="原速1×" Tag="1" IsChecked="True" FontSize="12"
+                                                      Padding="14,4" MinWidth="80" Click="CmpRate_Click"
+                                                      ToolTipService.ToolTip="原速播放"/>
+                                        <ToggleButton x:Name="CmpRate2Btn" Content="慢动作2×" Tag="0.5" FontSize="12"
+                                                      Padding="14,4" MinWidth="80" Click="CmpRate_Click"
+                                                      ToolTipService.ToolTip="半速(2 倍慢动作)—— 看补出来的中间帧"/>
+                                        <ToggleButton x:Name="CmpRate4Btn" Content="慢动作4×" Tag="0.25" FontSize="12"
+                                                      Padding="14,4" MinWidth="80" Click="CmpRate_Click"
+                                                      ToolTipService.ToolTip="四分之一速(4 倍慢动作)"/>
+                                        <ToggleButton x:Name="CmpRate8Btn" Content="慢动作8×" Tag="0.125" FontSize="12"
+                                                      Padding="14,4" MinWidth="80" Click="CmpRate_Click"
+                                                      ToolTipService.ToolTip="八分之一速(8 倍慢动作)"/>
+                                    </StackPanel>
+                                    <!-- 静音(用户要求:**默认静音**,且按键要能正常开关)
+                                         上一版把"用户开关"和"慢动作自动静音"混成一个状态 → 慢动作下按钮怎么点都关不掉,
+                                         已拆开:按钮是唯一真相,点了就生效;想听就自己打开(慢动作下会听到变调,是用户的选择) -->
+                                    <ToggleButton x:Name="CmpMuteBtn" Grid.Column="2" FontSize="12" Padding="10,4"
+                                                  Click="CmpMute_Click" HorizontalAlignment="Right" IsChecked="True"
+                                                  ToolTipService.ToolTip="当前:静音(默认)。点一下打开声音 —— 注意慢动作下打开会听到变调">
+                                        <FontIcon x:Name="CmpMuteIcon" Glyph="&#xE74F;" FontSize="14"/>
+                                    </ToggleButton>
+                                    <TextBlock x:Name="CmpTime" Grid.Column="3" Text="0:00 / 0:00" FontSize="12"
+                                               VerticalAlignment="Center" MinWidth="110" TextAlignment="Right"/>
+                                </Grid>
                             </Grid>
                         </Border>
                     </Grid>
@@ -1306,8 +1362,11 @@
                                 <Button x:Name="SavePreviewBtn" Content="保存此预览" FontSize="12" Padding="12,7"
                                         IsEnabled="False" Click="SavePreview_Click"
                                         ToolTipService.ToolTip="把这次预览的成片保存到你指定的位置(视频文件,和全片处理同一套参数/画质)"/>
+                                <!-- 用户要求:取消做成红色按钮(破坏性动作,一眼可辨) -->
                                 <Button x:Name="EffectCancelBtn" Content="取消" FontSize="12" Padding="12,7"
-                                        IsEnabled="False" Click="EffectCancelBtn_Click"/>
+                                        IsEnabled="False" Click="EffectCancelBtn_Click"
+                                        Background="#FFE5484D" Foreground="White" BorderThickness="0"
+                                        ToolTipService.ToolTip="中止这次预览(已跑的部分会被丢掉)"/>
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                                 <ProgressBar x:Name="EffectProgress" Width="170" Minimum="0" Maximum="100" Value="0"/>

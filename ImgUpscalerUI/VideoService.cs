@@ -1443,7 +1443,13 @@ public static class VideoService
                     // 【按真实帧尺寸探】探测帧尺寸 = 本阶段真正要处理的尺寸(旧实现固定 320×240):小图能跑 ≠ 真帧能跑,
                     // 显存/着色器分块压力差一个量级,实测过"小图通过、真分辨率上静默出坏帧"的形态。
                     // 新顺序(1x/2x)下探测尺寸 = 超分后的尺寸(probeW/probeH),旧顺序 = 源尺寸(与改动前逐字一致)。
-                    progress?.Report((interpPctBase, $"正在检测补帧 GPU 兼容性(按补帧输入帧尺寸 {probeW}×{probeH} 实测,首次约 10 秒,结论会记住,失败重试一次)..."));
+                    // 【2026-09-18 用户要求:这类"正在检测…首次约 N 秒"的提示别再无脑弹】
+                    // 只有**真的会做实测**的卡(50 系/AMD/Intel/已知有风险)才提示;纯 NVIDIA 非 50 系走快速通道,
+                    // 检测秒回、无需等待,就不弹这句(免得用户以为在等 10 秒)。探测调用本身保留(它是唯一防线)。
+                    bool rifeWillRun = true;
+                    try { rifeWillRun = EngineService.RifeProbeWillRun(rifeExe, interpModel, gpuId, probeW, probeH); } catch { }
+                    if (rifeWillRun)
+                        progress?.Report((interpPctBase, $"正在检测补帧 GPU 兼容性(按补帧输入帧尺寸 {probeW}×{probeH} 实测,首次约 10 秒,结论会记住,失败重试一次)..."));
                     bool rifeOk = await EngineService.EnsureRifeNcnnProbeAsync(rifeExe, interpModel, gpuId, ct, probeW, probeH).ConfigureAwait(false);
                     if (!rifeOk)
                     {
@@ -1891,7 +1897,10 @@ public static class VideoService
                     // 结论跨任务缓存(EnsureRifeNcnnProbeAsync),同一设备不会每次任务都白等一遍探测。
                     // 【按源分辨率探】探测帧尺寸=本视频源尺寸(旧实现固定 320×240):小图能跑 ≠ 真帧能跑,
                     // 显存/着色器分块压力差一个量级,实测过"小图通过、真分辨率上静默出坏帧"的形态。
-                    progress?.Report((interpPctBase, $"正在检测补帧 GPU 兼容性(按源分辨率 {srcW}×{srcH} 实测,首次约 10 秒,结论会记住,失败重试一次)..."));
+                    bool rifeWillRun2 = true;
+                    try { rifeWillRun2 = EngineService.RifeProbeWillRun(rife, interpModel, gpuId, srcW, srcH); } catch { }
+                    if (rifeWillRun2)
+                        progress?.Report((interpPctBase, $"正在检测补帧 GPU 兼容性(按源分辨率 {srcW}×{srcH} 实测,首次约 10 秒,结论会记住,失败重试一次)..."));
                     bool rifeOk = await EngineService.EnsureRifeNcnnProbeAsync(rife, interpModel, gpuId, ct, srcW, srcH).ConfigureAwait(false);
                     if (!rifeOk)
                     {
@@ -3588,6 +3597,20 @@ public static class VideoService
             // 自定义码率模式:用户指定 Mbps(0 = 用质量档 CRF);码率也随回退保持(CPU 软编同样适用)
             double bitrateKbps = customBitrateMbps > 0 ? customBitrateMbps * 1000 : 0;
             var encArgs = EncoderArgs(encoder, quality, bitrateKbps);
+            // 【预览片段也上短 GOP,专治"拖进度条不跟手"】
+            // 一次定位必须从上一个大关键帧解起:默认 GOP 250 帧在 4K60 上约等于 0.7 秒的解码量
+            // (真机实测:拖动时排队的定位要 600~900ms 才落地 → 手感就是"不跟手")。预览片段只用来当场看,
+            // 牺牲一点文件体积把 GOP 压到 12,拖动立刻跟手。**用户成片不受影响**(成片输出不落在预览目录里)。
+            // 判定方式:输出路径落在 %TEMP%\ALHPro\preview 下 = 这就是预览片段(VideoView 的预览出口就在这里)。
+            // 为什么用路径判定而不是加参数:这里是流水线很深的内部函数,一路透传要改十几处签名,风险更大。
+            bool isPreviewClip = false;
+            try
+            {
+                isPreviewClip = outputVideo.Contains(System.IO.Path.Combine("ALHPro", "preview"),
+                                                     StringComparison.OrdinalIgnoreCase);
+            }
+            catch { }
+            if (isPreviewClip) encArgs += " -g 12";
             // MP4 加 faststart 便于流式播放;MKV 不需要。
             // 【大成片保护】faststart 会把整个 mdat 挪一遍 = 一次全文件读+写;NVMe 上几秒,但机械盘/快满的盘
             // 在用户眼里的"编码期间"可能到分钟级。预估成片超阈值(2GB)时跳过 faststart(流式首帧加载的便利
@@ -5698,7 +5721,7 @@ public static class VideoService
             // 全 bt709 素材上三个值一样,看不出问题;HDR 素材上 smpte2084 落进 prim、bt2020 落进 trc
             // → isHdr 恒为 false,tonemap 分支是死代码,宽色域只走非 tonemap 的 zscale(亮度炸白)。按 key 解析。
             var lines = await RunCaptureAsync(ffprobe,
-                $"-v error -select_streams v:0 -show_entries stream=color_space,color_primaries,color_transfer " +
+                $"-v error -select_streams v:0 -show_entries stream=color_space,color_primaries,color_transfer,color_range,pix_fmt,bits_per_raw_sample " +
                 $"-of default=nw=1 \"{video}\"", ct);
             var kv = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var ln in lines)
@@ -5706,18 +5729,63 @@ public static class VideoService
                 int eq = ln.IndexOf('=');
                 if (eq > 0) kv[ln.Substring(0, eq).Trim()] = ln.Substring(eq + 1).Trim();
             }
+            // 【2026-09-18 用户报"只开补帧画面却变亮/像变色"】先把**源素材的色彩事实**记进日志:
+            // 这类投诉最后总落在"源的 range/矩阵标记"上(全范围没打标记、bt601、bt2020 都会被按不同口径解释),
+            // 没有这行就只能靠猜。以后同类反馈:看这行 + 下面那条"已转 BT.709"告警即可定位。
+            try
+            {
+                kv.TryGetValue("color_range", out string? rng);
+                kv.TryGetValue("pix_fmt", out string? pf);
+                kv.TryGetValue("bits_per_raw_sample", out string? bps);
+                AppLogger.Info($"[色彩] 源素材色彩事实:range={rng ?? "unknown"} space={kv.GetValueOrDefault("color_space", "unknown")} " +
+                               $"primaries={kv.GetValueOrDefault("color_primaries", "unknown")} transfer={kv.GetValueOrDefault("color_transfer", "unknown")} " +
+                               $"pix_fmt={pf ?? "?"} 位深={bps ?? "?"}");
+            }
+            catch { }
             kv.TryGetValue("color_space", out string? sp);
             kv.TryGetValue("color_primaries", out string? pr);
             kv.TryGetValue("color_transfer", out string? tr);
             string space = sp ?? "", prim = pr ?? "", trc = tr ?? "";
+            // 【2026-09-18 诊断包定位到的真凶】原来只把 "unknown" 当"未知",别的值一律当"已知" ✗ ——
+            // 而 ffprobe 对**没写标记**的文件会给 **"reserved"**(保留值)/"unspecified" ✗ → 被当成
+            // "已知且不是 bt709" → **误判成广色域源 → 白加一层 zscale 色彩转换** → 后果有两种:
+            //   ① 拆帧的 mjpeg 编码器开不起来(实测 AMD RX 6650 XT 那台:"Could not open encoder before EOF",
+            //      exit -22 → frame=0 → 任务直接失败,用户以为"卡不适配",其实卡没问题:探测是"实测可用");
+            //   ② 画面整体被重新解释一遍 → 用户报的"只开补帧却整幅变亮/像变色"。
+            // 修法:①把保留值/未指定也当"未知";②"广色域"改成**白名单判定**(只认真正宽的命名),
+            //       任何没见过的字符串都不再能触发转换。
+            static bool Known(string? v) =>
+                !string.IsNullOrWhiteSpace(v)
+                && !v.Equals("unknown", StringComparison.OrdinalIgnoreCase)
+                && !v.Equals("unspecified", StringComparison.OrdinalIgnoreCase)
+                && !v.Equals("reserved", StringComparison.OrdinalIgnoreCase)
+                && !v.Equals("none", StringComparison.OrdinalIgnoreCase)
+                && !v.Equals("na", StringComparison.OrdinalIgnoreCase);
             bool isHdr = trc.Contains("smpte2084", StringComparison.OrdinalIgnoreCase)
                       || trc.Contains("arib-std-b67", StringComparison.OrdinalIgnoreCase);
-            bool primKnown = prim.Length > 0 && !prim.Equals("unknown", StringComparison.OrdinalIgnoreCase);
-            bool spaceKnown = space.Length > 0 && !space.Equals("unknown", StringComparison.OrdinalIgnoreCase);
-            bool trcKnown = trc.Length > 0 && !trc.Equals("unknown", StringComparison.OrdinalIgnoreCase);
-            bool widePrim = primKnown && !prim.Equals("bt709", StringComparison.OrdinalIgnoreCase);
-            bool wideSpace = spaceKnown && !space.Equals("bt709", StringComparison.OrdinalIgnoreCase);
-            if (!isHdr && !widePrim && !wideSpace) return (null, null);
+            bool primKnown = Known(prim);
+            bool spaceKnown = Known(space);
+            bool trcKnown = Known(trc);
+            bool widePrim = primKnown && (prim.StartsWith("bt2020", StringComparison.OrdinalIgnoreCase)
+                                       || prim.Contains("smpte432", StringComparison.OrdinalIgnoreCase)
+                                       || prim.Contains("p3", StringComparison.OrdinalIgnoreCase)
+                                       || prim.Contains("film", StringComparison.OrdinalIgnoreCase));
+            bool wideSpace = spaceKnown && (space.StartsWith("bt2020", StringComparison.OrdinalIgnoreCase)
+                                         || space.Contains("ycgco", StringComparison.OrdinalIgnoreCase)
+                                         || space.Contains("smpte", StringComparison.OrdinalIgnoreCase)
+                                         || space.Contains("fcc", StringComparison.OrdinalIgnoreCase));
+            if (!isHdr && !widePrim && !wideSpace)
+            {
+                // 【非法标记兜底 · 2026-09-18 诊断包 + 本机 ffmpeg 复现确认】
+                // 源文件把 colour 标记写成保留值(reserved)时,ffmpeg 会在"帧色彩标记 → JPG 编码器"的
+                // 自动转换处直接失败:`Invalid color space` → 拆帧 0 帧 → 任务 1~2 秒失败
+                // (诊断包里那台 AMD RX 6650 XT 的报错与本机在**N 卡**上复现出的报错一字不差 → **与显卡无关**)。
+                // 实测修法:输入侧显式把标记盖成 bt709 → exit 0、120/120 帧 ✓(叠不叠转换链都能过)。
+                // 只在"标记非法/未指定"时兜底;真正的 bt709 源不动它。
+                if (!primKnown || !spaceKnown || !trcKnown)
+                    InputColorOverride = " -color_primaries bt709 -color_trc bt709 -colorspace bt709";
+                return (null, null);
+            }
             // 安全:任一关键字段未知 → 不做转换。zscale 需要明确的输入色域/传递/矩阵,缺一即报
             // "no path between colorspaces"(Generic error in an external library),拆帧 0 帧。宁可放过,不可转坏。
             if (!primKnown || !spaceKnown || !trcKnown) return (null, null);
@@ -5730,10 +5798,20 @@ public static class VideoService
         catch { return (null, null); }
     }
 
+    /// <summary>源文件色彩标记非法(reserved/unspecified/未知)时,拆帧命令要在 -i 之前插入的颜色覆盖参数。
+    /// 由 ProbeHdrToSdrAsync 每次探测时写入(单条流水线,静态安全)。
+    /// 【实测依据】本机 ffmpeg 复现:输入标记=3(reserved)时,输出 JPG 的 mjpeg 编码器报
+    /// `Invalid color space` → `Could not open encoder before EOF` → 0 帧、exit -22;
+    /// 在输入前加 `-color_primaries bt709 -color_trc bt709 -colorspace bt709` 后 **exit 0 / 120 帧全出** ✓。</summary>
+    private static string InputColorOverride = "";
+
     private static async Task<int> ExtractFramesCoreAsync(string ffmpeg, string inputVideo, string trimArgs,
         string vfExpr, string framesDir, IProgress<(int pct, string msg)>? progress, CancellationToken ct,
         int origCountEst)
     {
+        // 【非法色彩标记兜底】由 ProbeHdrToSdrAsync 探测后写入:源标记是 reserved/unspecified 等非法值时,
+        // 在 -i 之前插入颜色覆盖,否则拆帧会在"标记→JPG 编码器"的自动转换处 `Invalid color space` 直接失败。
+        string inColor = InputColorOverride;
         // 【阶段收尾上报】ffmpeg 的进度行是周期性的,最后那一帧的 frame= 常常来不及打出(真机日志停在 66/72),
         // 于是"拆帧"看起来永远跑不满就跳到下一阶段(超分/补帧本来各有"完成"那条,只有拆帧漏了)。
         // 文案必须与 UI 的解析正则对齐:`^(?<stage>..)(?:已处理|第) N 帧 / 共 M 帧`,步骤行才会显示"已处理 N/M"。
@@ -5770,11 +5848,11 @@ public static class VideoService
             // 用户素材 ZEB.CS.B.P010.* / LZQN.CS.* 全部踩到(诊断包 18:24~18:41 四次全失败都开着降噪)。
             // 输出端强制 yuvj420p(JPEG 标准 8bit 全范围)即可,链里是什么格式都能自动转过来。
             // 同时把命令写进日志:失败时能直接对着命令行复现(诊断包里原来只有 stderr 尾巴,看不到真实命令)。
-            AppLogger.Info($"拆帧命令(硬解):-y {trimArgs} -hwaccel d3d11va -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{vfExpr}\" -pix_fmt yuvj420p -qscale:v 2 \"{pattern}\"");
+            AppLogger.Info($"拆帧命令(硬解):-y {trimArgs}{inColor} -hwaccel d3d11va -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{vfExpr}\" -pix_fmt yuvj420p -qscale:v 2 \"{pattern}\"");
             try
             {
                 await RunAsync(ffmpeg,
-                    $"-y {trimArgs} -hwaccel d3d11va -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{vfExpr}\" -pix_fmt yuvj420p -qscale:v 2 \"{pattern}\"",
+                    $"-y {trimArgs}{inColor} -hwaccel d3d11va -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{vfExpr}\" -pix_fmt yuvj420p -qscale:v 2 \"{pattern}\"",
                     progress, ct, "拆帧", origCountEst);
                 int n = Directory.EnumerateFiles(framesDir, "*.jpg").Count();
                 if (n > 0) return FinishExtract(n);
@@ -5808,7 +5886,7 @@ public static class VideoService
         }
         await RunAsync(ffmpeg,
             // 软解回退:同样强制 JPEG 标准 8bit(原因见上面硬解那条的注释)
-            $"-y {trimArgs} -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{vfExpr}\" -pix_fmt yuvj420p -qscale:v 2 \"{pattern}\"",
+            $"-y {trimArgs}{inColor} -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{vfExpr}\" -pix_fmt yuvj420p -qscale:v 2 \"{pattern}\"",
             progress, ct, "拆帧", origCountEst);
         return FinishExtract(Directory.EnumerateFiles(framesDir, "*.jpg").Count());
     }
@@ -5829,7 +5907,7 @@ public static class VideoService
             // -fps_mode passthrough 是输出选项,必须放在 -i 之后:
             // 输出时间戳=输入时间戳,不让 ffmpeg 按平均帧率补帧/复制帧(否则 VFR 变 CFR)
             var lines = await RunCaptureAsync(ffmpeg,
-                $"-y {trimArgs} -i \"{inputVideo}\" -fps_mode passthrough -vf \"{vfExpr},showinfo\" -f null NUL", ct);
+                $"-y {trimArgs}{InputColorOverride} -i \"{inputVideo}\" -fps_mode passthrough -vf \"{vfExpr},showinfo\" -f null NUL", ct);
             var pts = new List<double>();
             var inv = System.Globalization.CultureInfo.InvariantCulture;
             foreach (var l in lines)
@@ -8404,6 +8482,265 @@ public static class VideoService
     /// 运行命令,实时解析进度并报告。stage+totalFrames 非空时逐帧报告
     /// ("补帧 第 12 帧 / 共 48 帧"),由 ffmpeg 的 frame= 或引擎百分比换算。
     /// </summary>
+    // ==================== 左右对比:把「左原片 + 右处理后」合成一条对比片(2026-09-18) ====================
+    // 【为什么是"合成一条",而不是并排摆两个播放器】
+    //   两个 MediaPlayerElement = 两个解码器 + 两条时钟。用户真机反馈的五条症状全是这一个根因:
+    //   播放卡 / 有时卡死(seek 纠偏把管线拖死,实测片段卡在 1.8 秒)/ 单边卡 /
+    //   左右时间对不上(时钟漂移)/ 播放中拖进度两边不协调。合成成一条后只有一个解码器、一条时钟。
+    //
+    // 【这条命令是实测钉出来的,不要随手改】(本机 4060 Laptop + 4K 素材实测)
+    //   · 左原片用 `-ss/-t` 取到与预览片段同一区间(实测帧级准:带烧录时间码的素材,两边第一帧都是 06.000)
+    //   · 两边都过 `fps=<右片帧率>`:**这一步不能省**。补帧/去重会改变右侧帧率(实测 30 / 60 / 120),
+    //     不归一化时 hstack 的 framesync 按时间戳补帧,输出会变成 `28800/239 ≈ 120.5` 这种非标帧率;
+    //     归一到同一帧率后是干净的 CFR(实测 30/1、120/1,帧数与时长分毫不差)
+    //   · `hstack=inputs=2:shortest=1`:默认 shortest=0 会"重复短边末帧"补到长边(成片比原片短 1~3 帧很常见),
+    //     那正好就是用户抱怨过的"末帧定格"手感,所以显式要 shortest
+    //   · **半边尺寸必须是 (W/2, H/2)** —— 方案初稿写的是 `scale=W2:H`(H=原片高),那是把整幅画面
+    //     硬拉进一个竖框,实测会**横向压扁一半**(成品整帧里彩条只剩一半宽、斜线变陡,一眼就看得出变形)。
+    //     用户要的是"左右各显示一整幅、能对照同一处",所以每半边等比缩到一半 → 合成片 = W × (H/2)。
+    //   · **不要用 CUDA 滤镜**:本机 scale_cuda/overlay_cuda 虽然存在,但 scale_cuda+overlay_cuda 链实测失败(输出 17 KB)
+    //   · **不要用 pad 做等比留边**:实测把 16:9 素材按 1920x2160 的框等比缩放会变成 1920x1080 + 上下黑边,
+    //     半边画面整个缩小(PSNR 掉到 10 dB)。两个输入同源、宽高比本来就一致,纯 scale 即可(实测 PSNR 50.8 dB)
+    //   · 颜色标签沿用 EncoderArgs 那套(bt709/tv + VUI bsf):对比片与「看处理效果」里那条成片必须一致,
+    //     否则用户一眼就看出"对比模式下颜色不一样"
+    //   · 编码器/ffmpeg 一律走 HwRecipes 里实测记下的那套:**不能写死主 ffmpeg** —— 本机主 ffmpeg(N-126247)
+    //     对 NVENC 直接报"需要驱动 610 以上",硬编全不可用,真正能编的是备用 ffmpeg8
+    //   · 音频 `-map 1:a? -c:a copy`(跟随处理后那条):对比模式下本来就只出处理后的声音,
+    //     少了它用户会发现"进对比就没声音了";`?` 让无音轨的素材也能合成成功(实测两种都 exit 0)
+    //
+    // 【实测耗时(4K)】约 5~11 ms/帧 → 3 秒 60fps 约 1~2 秒、15 秒 120fps 约 8 秒、15 秒 240fps 约 20~40 秒。
+    // 全部在后台跑:正式处理那条路径零新增耗时,预览也不用等它(没合成好就先按老路走,合成好了无缝换过去)。
+
+    /// <summary>确保"硬编可用性"已探测过(对比片合成要用它挑编码器)。
+    /// 探测本身有闩锁(见 EnsureHwProbeAsync),已探过就是空操作 —— 预览跑完时它早就探过了。</summary>
+    public static async Task EnsureHwProbeReadyAsync(CancellationToken ct = default)
+    {
+        var ff = FfmpegPath;
+        if (ff == null) return;
+        try { await EnsureHwProbeAsync(ff, ct).ConfigureAwait(false); } catch { }
+    }
+
+    /// <summary>挑一个"实测真的能编"的硬编,连同它对应的那个 ffmpeg 二进制(见 HwRecipes)。
+    /// 【为什么 h264 优先于 hevc】这条片只在预览页当场播,而 Windows 上 h264 由系统自带解码器解,
+    /// hevc 要装"HEVC 视频扩展"才行 —— 挑 hevc 有可能挑出一条自己播不了的对比片(黑屏)。
+    /// 一个可用硬编都没有时返回 null,调用方退 CPU 软编。</summary>
+    private static (string? enc, string? ffmpeg, bool noPreset) PickCompareEncoder()
+    {
+        lock (_hwLock)
+        {
+            foreach (var want in new[] { "h264_nvenc", "hevc_nvenc", "h264_amf", "hevc_amf", "h264_qsv", "hevc_qsv" })
+            {
+                if (!WorkingHwEncoders.Contains(want)) continue;
+                if (HwRecipes.TryGetValue(want, out var r)) return (want, r.Ffmpeg, r.NoPreset);
+            }
+        }
+        return (null, null, false);
+    }
+
+    /// <summary>对比片合成结果:Ok=成功;Detail=成功时是编码器/尺寸/帧率摘要、失败时是原因;Width/Height=对比片尺寸。</summary>
+    public sealed record CompareClipResult(bool Ok, string Detail, int Width, int Height);
+
+    /// <summary>对比片布局:
+    /// <see cref="WholeFrames"/> = 「两者同时」整幅并排(每半边 = 整幅画面等比缩一半,合成片 W×(H/2));
+    /// <see cref="SplitLine"/> = 「左右对比」分割线(线左右各取一版画面的**同一处**,各 1:1,合成片 W×H)。</summary>
+    public enum CompareLayout { WholeFrames, SplitLine }
+
+    /// <summary>
+    /// 合成「左原片 + 右处理后」的对比片(单播放器播放用)。Ok=true 时已写出 outPath。
+    /// 失败时 Ok=false + Detail(调用方保留双播放器回退路径,并在日志里留痕)。
+    /// </summary>
+    /// <param name="startSec">预览起点(秒)—— 左原片要从这里取,才能和右侧那条预览片段同一时刻。</param>
+    /// <param name="lenSec">预览长度(秒);会被右片实际时长收窄,保证两边覆盖同一区间。</param>
+    /// <param name="layout">布局(见 <see cref="CompareLayout"/>)。</param>
+    /// <param name="splitPct">仅在 <see cref="CompareLayout.SplitLine"/> 下用:分割线位置(0~1,左原片右结果)。</param>
+    /// <summary>给"处理后"的预览片做一份**带上绝对时间偏移**的副本(纯容器层 remux,零重编码)。
+    ///
+    /// 【为什么要它 · 2026-09-18 用户提出"两个视频叠一起、线是上层遮罩、播放条同控两个"】
+    /// 那个设计要一个 MediaTimelineController 同时驱动两个播放器,而控制器要求**两条片在同一时间轴**上:
+    /// 原片(用户的源文件)从 0 开始 ✗,处理后的片段也从它自己的 0 开始 —— 两者差一个"预览起点"。
+    /// 实测(off30.mp4:首帧时间戳 30 秒)证明 **MediaPlayer 认绝对时间轴**(播放条显示 00:30/00:36)✔,
+    /// 所以只要把处理后那条的**容器时间戳整体平移 _effStart**,它就和源文件对齐了 ✔。
+    /// `-c copy` 只重写容器头(实测 1080p/6 秒 &lt;0.5 秒完成),**一帧都不重编码** ✔。
+    /// 左侧仍然播**用户的原文件本身**(零重编码、零画质损失)✔ —— 这正是方案①的价值。</summary>
+    public static async Task<bool> BuildOffsetCopyAsync(
+        string srcClipPath, double offsetSec, string outPath, CancellationToken ct = default)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        try
+        {
+            if (!File.Exists(srcClipPath) || offsetSec <= 0.05) return false;
+            try { if (File.Exists(outPath)) File.Delete(outPath); } catch { }
+            var ff = FfmpegPath ?? BackupFfmpegPath;
+            if (string.IsNullOrEmpty(ff)) return false;
+            string args = "-hide_banner -loglevel error -y -nostats "
+                        + $"-i \"{srcClipPath}\" -c copy "
+                        + $"-output_ts_offset {offsetSec.ToString("0.###", inv)} "
+                        + $"-avoid_negative_ts disabled \"{outPath}\"";
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = ff,
+                Arguments = args,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            string err = "";
+            using (var p = System.Diagnostics.Process.Start(psi))
+            {
+                if (p == null) return false;
+                var errTask = p.StandardError.ReadToEndAsync();
+                await p.WaitForExitAsync(ct).ConfigureAwait(false);
+                err = await errTask.ConfigureAwait(false);
+                if (p.ExitCode != 0 || !File.Exists(outPath))
+                {
+                    AppLogger.Warn($"偏移副本生成失败(exit={p.ExitCode}): {err}");
+                    return false;
+                }
+            }
+            // 复核:首帧时间戳必须真的平移到位 —— 不确认就别用,免得两条片错位(那正是"不协调"的根源 ✗)
+            double st = 0;
+            try
+            {
+                var probe = FindInEngines("ffmpeg", "ffprobe.exe");
+                if (!string.IsNullOrEmpty(probe))
+                {
+                    var psi2 = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = probe,
+                        Arguments = $"-v error -select_streams v -show_entries stream=start_time -of default=nw=1:nk=1 \"{outPath}\"",
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                    };
+                    using var p2 = System.Diagnostics.Process.Start(psi2);
+                    if (p2 != null)
+                    {
+                        string txt = await p2.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+                        await p2.WaitForExitAsync(ct).ConfigureAwait(false);
+                        double.TryParse(txt.Trim(), System.Globalization.NumberStyles.Float, inv, out st);
+                    }
+                }
+            }
+            catch { }
+            bool ok = st <= 0 || Math.Abs(st - offsetSec) < 0.25;   // 探不到(0)时按"命令成功"放行
+            if (!ok) AppLogger.Warn($"偏移副本时间戳不符(期望 {offsetSec:0.###},实测 {st:0.###})—— 弃用,退回单播放器方案");
+            else AppLogger.Info($"偏移副本就绪:start_time={st:0.###}s(与源文件同轴 · 零重编码 · 供左右对比双播放器同轴播放)");
+            return ok;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn("偏移副本异常:" + ex.Message);
+            return false;
+        }
+    }
+
+    public static async Task<CompareClipResult> BuildCompareClipAsync(
+        string originalPath, string processedPath, double startSec, double lenSec,
+        string outPath, IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default,
+        CompareLayout layout = CompareLayout.WholeFrames, double splitPct = 0.5)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        CompareClipResult Fail(string why) => new(false, why, 0, 0);
+        try
+        {
+            var (ow, oh) = await ProbeSizeAsync(originalPath).ConfigureAwait(false);
+            if (ow < 32 || oh < 32) return Fail("取不到原片尺寸");
+            // 右片实际时长:两边必须覆盖同一区间,否则输出会被 short=1 截在较短的那条上
+            double outDur = 0;
+            try { outDur = await ProbeDurationSeconds(processedPath).ConfigureAwait(false); } catch { }
+            if (outDur > 0.1) lenSec = Math.Min(lenSec, outDur);
+            if (lenSec < 0.2) return Fail("预览片段太短,拼不出对比片");
+            // 归一化目标帧率 = 处理后那条的帧率(补帧/去重后它才是"用户真正要看"的节奏)
+            double fps = 0;
+            var fpsTxt = ProbeFps(processedPath) ?? ProbeFps(originalPath);
+            if (fpsTxt != null) TryParseFps(fpsTxt, out fps);
+            if (fps < 1 || fps > 480) fps = 0;          // 探不到就不写 fps=(交给 ffmpeg 按输入自己定)
+            string fpsArg = fps > 0 ? "fps=" + fps.ToString("0.###", inv) + "," : "";
+            string filt; int outW, outH;
+            if (layout == CompareLayout.SplitLine)
+            {
+                // 【左右对比】线左侧 = 原片同一处的左半(1:1 裁切),线右侧 = 处理后同一条线右边(1:1)。
+                // 每边都是**原分辨率的裁切**,所以这里是"看 4K 原样"最该用的那档(并排整幅那档每边只有一半像素)。
+                // 合成片 = W×H,和原片同形状:填满画面区、分割线正落在 splitPct 处。
+                int oh2 = oh / 2 * 2;
+                double p = Math.Clamp(splitPct, 0.02, 0.98);
+                int lw = (int)Math.Round(ow * p); lw -= lw % 2;      // 左侧宽度(偶)
+                if (lw < 2) lw = 2;
+                if (ow - lw < 2) lw = ow - 2;
+                int rw = ow - lw;
+                filt = $"[0:v]{fpsArg}crop={lw}:{oh2}:0:0,setsar=1,setpts=PTS-STARTPTS[l];"
+                     + $"[1:v]{fpsArg}scale={ow}:{oh2},crop={rw}:{oh2}:{lw}:0,setsar=1,setpts=PTS-STARTPTS[r];"
+                     + "[l][r]hstack=inputs=2:shortest=1[v]";
+                outW = ow; outH = oh2;
+            }
+            else
+            {
+                // 【两者同时】每半边 = 整幅画面等比缩一半 → 合成片 = W × (H/2),分割线正好在 50%
+                int w2 = ow / 2 / 2 * 2;                    // 半边宽(yuv420p 要求偶数)
+                int h2 = oh / 4 * 2;                        // 半边高 = 原片高的一半(同样取偶数)
+                if (w2 < 16 || h2 < 16) return Fail("原片太小,拼不出左右两半");
+                string sc = $"scale={w2}:{h2},setsar=1,setpts=PTS-STARTPTS";
+                filt = $"[0:v]{fpsArg}{sc}[l];[1:v]{fpsArg}{sc}[r];[l][r]hstack=inputs=2:shortest=1[v]";
+                outW = w2 * 2; outH = h2;
+            }
+            if (outW < 32 || outH < 32) return Fail("原片太小,拼不出对比片");
+            // 进度百分比的分母用真实帧数(右片时长 × 帧率),不是拍脑袋的数
+            int total = fps > 0 ? (int)Math.Round(lenSec * fps) : 0;
+
+            var (enc, hwFfmpeg, noPreset) = PickCompareEncoder();
+            var attempts = new System.Collections.Generic.List<(string ff, string enc, bool noPreset)>();
+            if (enc != null && hwFfmpeg != null) attempts.Add((hwFfmpeg, enc, noPreset));
+            if (FfmpegPath != null) attempts.Add((FfmpegPath, "libx264", false));
+            if (attempts.Count == 0) return Fail("找不到可用的 ffmpeg");
+
+            string? lastErr = null;
+            foreach (var at in attempts)
+            {
+                if (ct.IsCancellationRequested) return Fail("已取消");
+                string encArgs = EncoderArgs(at.enc, 3);
+                if (at.noPreset) encArgs = StripPreset(encArgs);
+                // 【短 GOP,专为"拖进度条跟手"】对比片是**当场播放、随便拖**的临时片,不是交付成片:
+                //   一次定位必须从上一个大关键帧解起 —— 默认 GOP 250 帧在 4K60 上约等于 0.7 秒的解码量,
+                //   实测"定位落地"要 600~900ms;改成 12 帧后这个量级降到 ~1/20,拖动手感立竿见影。
+                //   代价:文件大一点(多几个 I 帧),对临时对比片完全可接受。用户成片**不受影响**(那条路不走这里)。
+                encArgs += " -g 12";
+                string args = "-hide_banner -loglevel error -y -nostats -progress pipe:1 "
+                    + $"-ss {startSec.ToString("0.###", inv)} -t {lenSec.ToString("0.###", inv)} "
+                    + $"-i \"{originalPath}\" -i \"{processedPath}\" "
+                    // 【2026-09-18 去掉音轨 · 治"播放中切倍速卡一下"】这条片是**当场看画面用**的对比片:
+                    // 预览界面默认就是静音(用户要求默认静音),而带音轨时每次变速 MF 都要**重采样音频 + 重定时视频**
+                    // —— 纯白干的开销,正是"切倍速那一下卡"的主要来源 ✗。画面比对不需要声音 ✓。
+                    // 「看原片 / 看处理效果」播的是源文件与预览成片,**声音与静音键在那里照旧有效** ✓,
+                    // 所以这次的静音键不是白做 —— 只是这条纯观看用的合成片不再背音轨 ✓。
+                    + $"-filter_complex \"{filt}\" -map \"[v]\" -an {encArgs} "
+                    + $"-fps_mode passthrough \"{outPath}\"";
+                try { if (File.Exists(outPath)) File.Delete(outPath); } catch { }
+                try
+                {
+                    // RunAsync 认不出阶段名时按 fr/total*90 报百分比(见 StageProgressPct 的兜底),
+                    // 这里换算回 0~100 再交给界面 —— 数字来自真实帧号,不是编出来的。
+                    IProgress<(int pct, string msg)>? scaled = progress == null ? null
+                        : new Progress<(int pct, string msg)>(t =>
+                            progress.Report((Math.Clamp(t.pct * 100 / 90, 0, 100), t.msg)));
+                    await RunAsync(at.ff, args, scaled, ct, "对比片", total).ConfigureAwait(false);
+                    // 空文件也算失败:实测"定位越界"那条 ffmpeg 会 exit 0 却写出 0 字节(exit code 骗人)
+                    if (!await ValidateVideoFileAsync(outPath, 2).ConfigureAwait(false))
+                    { lastErr = $"{at.enc} 输出无效(空文件或解不开)"; continue; }
+                    string fpsDesc = fps > 0 ? fps.ToString("0.##", inv) + "fps" : "源帧率";
+                    string layoutDesc = layout == CompareLayout.SplitLine ? $"分割线 {splitPct * 100:0}%" : "整幅并排";
+                    return new CompareClipResult(true, $"{at.enc} · {layoutDesc} · {outW}x{outH} · {fpsDesc} · {lenSec:0.##}s", outW, outH);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex) { lastErr = $"{at.enc}: {ex.Message}"; }
+            }
+            return Fail(lastErr ?? "合成失败");
+        }
+        catch (OperationCanceledException) { return Fail("已取消"); }
+        catch (Exception ex) { return Fail(ex.Message); }
+    }
+
     private static async Task RunAsync(string exe, string args,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct,
         string stage = "", int totalFrames = 0, string? watchDir = null,
