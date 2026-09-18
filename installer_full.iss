@@ -1,4 +1,4 @@
-; ALH Pro 安装脚本 (Inno Setup 6.3+)
+﻿; ALH Pro 安装脚本 (Inno Setup 6.3+)
 ; ⚠ 需要 Inno Setup 6.3 或更高版本(首次版本(2021)起支持 DownloadTemporaryFile / CreateDownloadPage)
 ;
 ; 【本脚本 = 完整版(内置模型)】与 installer.iss(本体版)的区别只有一处:
@@ -14,7 +14,7 @@
 ;   那套逻辑只存在于 installer.iss;下面的 ModelsUrl/ModelsFile 是本脚本的历史遗留定义,当前未被引用。
 
 #define MyAppName "ALH Pro"
-#define MyAppVersion "1.3.6"
+#define MyAppVersion "1.4.0"
 #define MyAppExeName "ALHPro.exe"
 ; 【构建时间戳】(ISPP 在编译时求值):用于让用户一眼分辨"同名同版本的不同构建"。
 ; 起因:同一个 1.3.4 出了多次安装包,名字完全一样、大小只差几十 MB,用户无法确认手上是哪一个。
@@ -61,7 +61,8 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/max
 SolidCompression=yes
 OutputDir=.\
-OutputBaseFilename=ALHPro_v{#MyAppVersion}_完整版_{#BuildStamp}
+; 【2026-09-16 用户要求:产物名不要时间戳】固定成 ALHPro_v{版本}_完整版.exe(理由同 installer.iss)
+OutputBaseFilename=ALHPro_v{#MyAppVersion}_完整版
 SetupIconFile=assets\icon.ico
 ; 不用管理员权限(普通用户直接装;默认用户目录,无需提权)——配合 {userpf} 无权限冲突
 PrivilegesRequired=lowest

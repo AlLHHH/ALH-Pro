@@ -1698,7 +1698,7 @@ public sealed partial class UpscaleView : UserControl
                             {
                                 try
                                 {
-                                    Log("  ⚠ 黑块修复:该显卡 ncnn 引擎黑块且 CPU 不可用,自动改用 ONNX 稳定引擎重试...");
+                                    Log("  ⚠ 引擎输出异常重试:该显卡 ncnn 引擎输出异常且 CPU 不可用,自动改用 ONNX 稳定引擎重试...");
                                     var retrySrc = converted ?? item.Path;
                                     await EsrganOnnxService.UpscaleAsync(retrySrc, outPath, scale, gpuId < 0 ? -1 : -2, progress, ct, onnxRetry);
                                     // 同主分支:重试也是 ONNX 出图,1x 缩回与"JPG 里不能装 PNG 字节"同样要收尾

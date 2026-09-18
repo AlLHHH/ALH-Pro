@@ -1154,15 +1154,38 @@ public static partial class EngineService
     /// <summary>本进程生成的临时文件(EXIF 旋转等),进程退出时统一清理,防止 temp 目录无限增长。</summary>
     private static readonly System.Collections.Concurrent.ConcurrentBag<string> _tempFiles = new();
 
+    // ===== 「处理中」总闸:任务在跑时,任何"清理临时残留"的动作一律跳过 =====
+    // 【为什么需要 · 2026-09-16 用户实测】处理长视频到一半关窗 → App 的 window.Closed 里
+    // CleanupTempDirs() 把【后台线程正在写的】imgup_video_* 工作目录整个删掉 → 线程下一次碰帧
+    // 就 DirectoryNotFoundException(frames_final),日志里看着像"任务莫名失败"。
+    // 规则:处理期间(视频管线从建工作目录到收尾全程)不许删临时文件/临时目录;残留留给下一次启动清理
+    // —— 启动有单实例 Mutex(见 App.OnLaunched),不存在第二个实例在用同一批临时文件,所以启动期是最安全的清理时机。
+    private static int _processingCount;
+
+    /// <summary>进入一个"正在使用临时目录"的处理任务。必须与 <see cref="ExitProcessing"/> 成对,放在 finally 里。</summary>
+    public static void EnterProcessing() => System.Threading.Interlocked.Increment(ref _processingCount);
+
+    /// <summary>退出处理任务(与 <see cref="EnterProcessing"/> 成对)。</summary>
+    public static void ExitProcessing()
+    {
+        if (System.Threading.Interlocked.Decrement(ref _processingCount) < 0)
+            System.Threading.Interlocked.Exchange(ref _processingCount, 0);   // 兜底:万一配对写漏,也不许把清理永久卡死
+    }
+
+    /// <summary>当前是否有处理任务在跑(关窗清理/手动「立即清理」据此跳过,避免删掉正在用的临时帧)。</summary>
+    public static bool AnyProcessing => System.Threading.Volatile.Read(ref _processingCount) > 0;
+
     /// <summary>注册一个待清理的临时文件。</summary>
     public static void RegisterTempFile(string path)
     {
         if (!string.IsNullOrEmpty(path)) _tempFiles.Add(path);
     }
 
-    /// <summary>启动或退出时清理所有已注册临时文件。</summary>
+    /// <summary>启动或退出时清理所有已注册临时文件。
+    /// 【处理中跳过】见 <see cref="AnyProcessing"/>:此时删的正是任务正在读写的中间文件。</summary>
     public static void CleanupTempFiles()
     {
+        if (AnyProcessing) return;   // 有任务在跑:一律不删(残留留给下次启动)
         foreach (var f in _tempFiles)
         {
             try { if (File.Exists(f)) File.Delete(f); } catch { }
@@ -2194,14 +2217,26 @@ public static partial class EngineService
                     int gt = globalTotal > 0 ? globalTotal : totalFrames;
                     int pct = pctLo > 0 && pctHi > pctLo
                         ? Math.Clamp(pctLo + done * (pctHi - pctLo) / Math.Max(1, gt), pctLo, pctHi)
-                        : stage == "超分"
-                            ? Math.Clamp(45 + done * 45 / Math.Max(1, gt), 45, 90)
+                        // 【兜底区间取自 Core.ProgressBands(唯一一份判据)】原先这里硬写 45~90 / 1~90,
+                        // 与 VideoService、VideoView 那几处各写一份 —— 改区间时必漏一处,用户看到的就是
+                        // "进度条与真实剩余量对不上"。调用方没传 pctLo/Hi 时,超分用自己那一段(真机实测
+                        // 超分占总时长 54%,是全线最贵的一步)。
+                        : AlhPro.Core.ProgressBands.OfStageName(stage) is var (bLo, bHi) && bHi > bLo
+                            ? Math.Clamp((int)bLo + (int)(done * (bHi - bLo) / Math.Max(1, gt)), (int)bLo, (int)bHi)
                             : Math.Clamp(done * 90 / Math.Max(1, gt), 1, 90);
                     progress?.Report((pct, $"{stage} 第 {Math.Min(done, gt)} 帧 / 共 {gt} 帧"));
                 }
             }
             catch { /* 目录尚未就绪等瞬时错误忽略 */ }
-            await Task.Delay(200, ct).ConfigureAwait(false);
+            // 【2026-09-16 用户反馈「超分进度要按帧刷新」:把 2026-09-16 审计第 7 条那个固定 1.5 秒改回**自适应**】
+            // 起因:上一版把间隔固定成 1.5 s,于是超分进度**每 1.5 秒才跳一次** —— 本机实测超分约 4.07 帧/秒,
+            // 正好等于"一次跳 6 帧",用户看到的就像"卡着不动"(补帧那条一直是 200 ms,所以补帧看着是逐帧的)。
+            // 【为什么要自适应而不是直接回到 200 ms】枚举输出目录在"上万帧在落盘"时与落盘争同一块盘的元数据,
+            // 多批并发(2~3 路)时更明显 —— 这是审计第 7 条要防的真实成本,不能一味回到 5 Hz。
+            // 做法:按**当前已产出帧数**分档 —— 小目录(头几百帧)轮询快、进度顺滑;目录大了才退避。
+            // 判据零改动:帧号/百分比/看门狗喂狗仍全在同一个分支里,一帧都不会漏报(最终值必然到达 totalFrames)。
+            int pollMs = lastCount < 800 ? 300 : lastCount < 3000 ? 800 : lastCount < 8000 ? 1500 : 3000;
+            await Task.Delay(pollMs, ct).ConfigureAwait(false);
         }
     }
 
@@ -2505,12 +2540,12 @@ public static partial class EngineService
                 : engine is "waifu2x" ? EsrganOnnxService.FindWaifu2xModel() : null;
             if (onnxModel != null)
             {
-                progress?.Report((89, "⚠ 检测到超分输出黑帧(GPU 队列异常),改用 ONNX 稳定引擎重算整图..."));
-                AppLogger.Info("⚠ 目录批量超分检测到黑块(GPU 队列异常),改用 ONNX 稳定引擎重算整图");
+                progress?.Report((89, "⚠ 该批引擎输出异常(GPU 队列问题),改用 ONNX 稳定引擎重算整图..."));
+                AppLogger.Info("⚠ 目录批量超分检测到异常输出(GPU 队列问题),改用 ONNX 稳定引擎重算整图");
                 throw new InvalidOperationException("BLACKOUT_NEED_ONNX:GPU 黑块,转用 ONNX 稳定引擎");
             }
-            progress?.Report((89, "⚠ 检测到超分输出黑帧(GPU 队列异常),改用 CPU 软解重处理受影响块..."));
-            AppLogger.Info("⚠ 目录批量超分检测到黑块(GPU 队列异常),不同引擎/模型无 ONNX 版,改用 CPU 软解重处理");
+            progress?.Report((89, "⚠ 该批引擎输出异常(GPU 队列问题),改用 CPU 软解重处理受影响块..."));
+            AppLogger.Info("⚠ 目录批量超分检测到异常输出(GPU 队列问题),不同引擎/模型无 ONNX 版,改用 CPU 软解重处理");
             foreach (var tf in Directory.EnumerateFiles(inDir, "*.png"))
             {
                 ct.ThrowIfCancellationRequested();
@@ -2666,7 +2701,7 @@ public static partial class EngineService
     /// 而单图路径此前没有任何黑帧防线 → 黑图被静默保存成"超分结果"。
     /// 判据复用既有纯函数:FrameInspect.IsSilentBlackFailure(输出缺陷帧 且 源帧不是缺陷帧)
     /// —— 源帧本来就是黑场(片头/夜景/淡入淡出)时不算引擎故障,不误杀。
-    /// 【视频(批量)路径不在这里拦】那条路径已有逐帧黑帧链(检测 → ONNX 重算 → 回退源帧),
+    /// 【视频(批量)路径不在这里拦】那条路径**已不再**对黑帧做降级(2026-09-16 裁决),这里只如实记日志;
     /// 抛异常反而会绕过它;那里只记日志(见 UpscaleDirAsync 的黑帧提示)。</summary>
     internal static void GuardSilentBlackOutput(string input, string output, string engine, string model, int engineScale)
     {
@@ -2719,7 +2754,8 @@ public static partial class EngineService
             if (hits > 0)
                 AppLogger.Warn($"⚠ 抽样发现全黑输出帧({AlhPro.Core.DefectSampling.Describe(outs.Count, hits)},"
                     + $"首个 {firstHit}):引擎={engine}/{model},引擎倍数={engineScale}x,exit=0 无报错 —— "
-                    + "疑似该模型缺少对应倍率的权重(或引擎在该尺寸下静默失败);视频链会走黑帧降级(ONNX 重算/回退源帧)");
+                    + "疑似该模型缺少对应倍率的权重(或引擎在该尺寸下静默失败);视频链**不再**对黑帧降级重算"
+                    + "(2026-09-16 裁决:素材本身可能就有黑幕),若成片异常请连同本行反馈");
         }
         catch { /* 抽样判定失败不影响流程 */ }
     }

@@ -17,7 +17,8 @@ public class EngineScalePolicyTests
     public void RealEsrgan_never_gets_engine_scale_one()
     {
         string[] models = { "realesr-animevideov3", "realesrgan-x4plus", "realesrgan-x4plus-anime",
-                            "realesr-general-x4v3", "realesr-general-wdn-x4v3", "unknown-model" };
+                            "realesr-general-x4v3", "realesr-general-wdn-x4v3", "unknown-model",
+                            "alhpro-real2x", "alhpro-game2x" };   // 末两支 = Rev4 追加的自训实验 2x
         for (double want = 0.25; want <= 4.001; want += 0.25)
             foreach (var m in models)
             {
@@ -44,12 +45,44 @@ public class EngineScalePolicyTests
     [InlineData("realesr-general-wdn-x4v3", 2.0, 4, 0.5)]
     [InlineData("realesr-general-wdn-x4v3", 4.0, 4, 1.0)]
     [InlineData("realesr-general-wdn-x4v3", 1.0, 4, 0.25)]
+    // 【2026-09-15 Rev4 · 自训的两支实验模型:只有 **2x** 原生权重】
+    // 实测(220×220 输入、-t 0、`-m models -n alhpro-real2x`):-s 2 → 440×440 正常;
+    // -s 4 → 880×880 但成图是**镜像平铺的错帧**(切成 2×2 镜像重复、下半幅偏黄),与"2x 后双三次放大"
+    // 的 PSNR 只有 7.27 dB —— 引擎按目标倍数贴回分块,而网络只放大 2x。**exit=0、零报错**。
+    // ⇒ 这几条就是钉住"它们永远按原生 2x 跑,再由上层缩放到目标尺寸"。
+    [InlineData("alhpro-real2x", 2.0, 2, 1.0)]    // 原生 2x:正常路径,不缩回
+    [InlineData("alhpro-real2x", 3.0, 2, 1.5)]    // 目标 3x → 按 2x 跑再放大
+    [InlineData("alhpro-real2x", 4.0, 2, 2.0)]    // 目标 4x → 按 2x 跑再放大(下发 -s 4 会得到错帧)
+    [InlineData("alhpro-real2x", 1.0, 2, 0.5)]    // 目标 1x → 2x 后缩回
+    [InlineData("alhpro-game2x", 2.0, 2, 1.0)]
+    [InlineData("alhpro-game2x", 4.0, 2, 2.0)]
     public void RealEsrgan_scale_is_pinned(string model, double want, int expectEngine, double expectRatio)
     {
         var d = EngineScalePolicy.Decide("realesrgan", model, want);
         Assert.Equal(expectEngine, d.EngineScale);
         Assert.Equal(expectRatio, d.ShrinkRatio, 6);
         Assert.Equal(Math.Abs(expectRatio - 1.0) > 1e-6, d.NeedsShrinkBack);
+    }
+
+    /// <summary>自训 2x 模型:原生 2x 是正常路径(不刷日志);3x/4x 才给"为什么改了倍数"的理由,
+    /// 且理由要说**实测到的那件事**(镜像平铺的错帧),不许搬 x4plus 的"全黑"来充数。</summary>
+    [Fact]
+    public void X2_only_models_rewrite_the_scale_with_an_honest_reason()
+    {
+        foreach (var m in new[] { "alhpro-real2x", "alhpro-game2x" })
+        {
+            Assert.Equal("", EngineScalePolicy.Decide("realesrgan", m, 2.0).Reason);
+            var d4 = EngineScalePolicy.Decide("realesrgan", m, 4.0);
+            Assert.Contains("2x 原生权重", d4.Reason);
+            Assert.Contains("镜像平铺", d4.Reason);
+            Assert.DoesNotContain("全黑", d4.Reason);   // 这两支在 3x/4x 上实测的是错帧,不是全黑
+            Assert.True(EngineScalePolicy.IsX2OnlyModel(m));
+            Assert.False(EngineScalePolicy.Is4xOnlyModel(m));   // 与 4x 系判定互斥
+        }
+        // 官方模型不能被误判进 2x 单独那一档
+        Assert.False(EngineScalePolicy.IsX2OnlyModel("realesr-animevideov3"));
+        Assert.False(EngineScalePolicy.IsX2OnlyModel("realesrgan-x4plus"));
+        Assert.False(EngineScalePolicy.IsX2OnlyModel(null));
     }
 
     /// <summary>1x 护栏必须给出可读理由(用户要看得懂"为什么改了倍数"),2x/4x 正常路径不要噪音。</summary>

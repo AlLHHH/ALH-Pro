@@ -29,8 +29,20 @@ public static class EngineScalePolicy
     }
 
     /// <summary>该模型有没有原生 1x 权重。实测:Real-ESRGAN 全家(x4plus / x4plus-anime / general-x4v3 /
-    /// 自转的 general-wdn-x4v3 / animevideov3)都**没有** x1(animevideov3 只有 x2/x3/x4)→ 全部为 false。</summary>
+    /// 自转的 general-wdn-x4v3 / animevideov3 / 两支自训 2x)都**没有** x1(animevideov3 只有 x2/x3/x4)→ 全部为 false。</summary>
     public static bool ModelHasNative1x(string engine, string model) => false;
+
+    /// <summary>**只有 2x 原生权重**的模型 = 两支自训模型(游戏向 / 现实向,见 <see cref="ExperimentalEsrgan"/>)。
+    /// 【为什么必须登记】2026-09-15 真机实测(本机 4060 Laptop,220×220 输入,`-t 0`,`-m models -n alhpro-real2x`):
+    ///   · `-s 2` → 440×440、正常(mean 126.43/max 254);
+    ///   · `-s 3` → 660×660、`-s 4` → 880×880,**两份都是 exit=0、没有任何报错**,
+    ///     但 `-s 4` 的成图是**镜像平铺的错帧**(画面被切成 2×2 的镜像重复,下半幅还整体偏黄),
+    ///     与"2x 成图再双三次放大"的 PSNR 只有 7.27 dB —— 即引擎按目标倍数贴回分块、而网络实际只放大 2x,
+    ///     于是把 2x 的内容当目标倍数铺了出去。**画面明显错、却不报错**,这正是本仓库最怕的那类静默故障。
+    ///   ⇒ 所以这两支必须固定按原生 2x 跑,再由上层缩放到目标尺寸(与 x4plus 系走"原生 4x + 缩回"同一手法)。
+    /// 【与 Is4xOnlyModel 的关系】两支自训模型的名字既不含 "x4plus" 也不含 "general-x4v3",
+    /// 若不在这里登记就会被当成"普通模型"→ 目标 4x 时下发 `-s 4` → 错帧。两个判定互斥(2x / 4x)。</summary>
+    public static bool IsX2OnlyModel(string model) => ExperimentalEsrgan.IsX2Only(model);
 
     /// <summary>引擎倍数决策结果。<paramref name="ShrinkRatio"/> = 目标倍数 ÷ 引擎倍数
     /// (≠1 表示调用方需要把引擎输出缩放到目标尺寸,现有代码就是 `scale / engineScale`)。
@@ -43,8 +55,8 @@ public static class EngineScalePolicy
     /// <summary>按引擎/模型/目标倍数给出"实际下发给引擎的倍数"。
     /// 【waifu2x】沿用原口径:取不小于目标的最大 2 的幂(`CeilPowerOfTwo`),它的 1x 特例(不降噪复制 /
     /// 降噪改 2x)依赖 `noise`,由调用方处理 —— 本函数不改变其行为。
-    /// 【Real-ESRGAN】**绝不返回 1**:x4plus 系固定 4;其余(animevideov3)按 ceil 到 2/3/4,
-    /// 目标 ≤1 时改走 2x 再缩回(缺 x1 权重会静默全黑,见类注释)。</summary>
+    /// 【Real-ESRGAN】**绝不返回 1**:x4plus 系固定 4;只有 2x 权重的自训模型(游戏向/现实向)固定 2;
+    /// 其余(animevideov3)按 ceil 到 2/3/4,目标 ≤1 时改走 2x 再缩回(缺 x1 权重会静默全黑,见类注释)。</summary>
     public static Decision Decide(string engine, string model, double requestedScale)
     {
         double want = requestedScale > 0 && double.IsFinite(requestedScale) ? requestedScale : 1.0;
@@ -52,6 +64,19 @@ public static class EngineScalePolicy
             return new Decision(PathUtil.CeilPowerOfTwo(want), 1.0, "");
         if (Is4xOnlyModel(model))
             return new Decision(4, want / 4.0, "");
+        // 【只有 2x 权重】固定原生 2x,再缩回目标(下发 -s 3/-s 4 会得到镜像平铺的错帧、且 exit=0 不报错)。
+        // 目标正好 2x = 正常路径,不留理由(不刷日志);其余目标才给理由,让用户看得懂"为什么改了倍数"。
+        if (IsX2OnlyModel(model))
+        {
+            if (Math.Abs(want - 2.0) < 1e-6)
+                return new Decision(2, 1.0, "");
+            // 【措辞只写实测到的事】>2x 那档实测过(3x/4x = 镜像平铺错帧);<2x 那档没测,
+            // 只陈述"没有 1x 权重"这一事实,不搬 x4plus 那些"全黑"的实测数字来吓人。
+            string why = want > 2.0
+                ? $"该模型只有 2x 原生权重(实测下发 -s {(int)want} 会输出镜像平铺的错帧、且 exit=0 不报错)"
+                : "该模型只有 2x 原生权重(没有 x1 权重)";
+            return new Decision(2, want / 2.0, why + ":改用 2x 超分后再缩放到目标尺寸");
+        }
         int eng = Math.Clamp((int)Math.Ceiling(want), 1, 4);
         if (eng <= 1)
             return new Decision(2, want / 2.0,

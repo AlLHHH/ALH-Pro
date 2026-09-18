@@ -10,45 +10,20 @@ namespace AlhPro.Core;
 /// </summary>
 public static class VideoPipeline
 {
-    // ===== 阶段顺序的【单一事实来源】(2026-09-13 新增,任务 H)=====
-    // 【为什么要它】"1x/2x 走「超分 → 补帧」新顺序"这个判据一度被写在两处:VideoService 的管线里一处、
-    // UI 的 ETA 估算里又各写一份(而且写法还不一样)。2026-09-13 管线侧实测回退成旧顺序后,
-    // UI 忘了跟着改 → **界面上给的预计时间在算一个根本不会执行的顺序**,这正是"预计时间不准"的来源之一。
-    // 现在:是否走新顺序只有下面这一个开关 + 一个纯函数,管线和 UI 都必须走它,不许各写一份。
-
-    /// <summary>「超分 → 补帧」新顺序总开关。【当前 = false(已回退)】。
-    /// 【为什么回退】2026-09-13 用户真机日志(3 秒 / 72 帧 / 1080p / realesr-animevideov3 2x / rife-v4.13 4x):
-    /// 超分实测 72 帧 20.1s = 279 ms/帧(开发期 harness 测到的 0.70 s/帧高估了约 2.5 倍,而"先超分更划算"
-    /// 的全部依据就是"超分贵"),补帧搬到 3840×2160 后只有 1.83 帧/秒 → 该作业净亏,且随帧数线性增长。
-    /// 【重新启用前必须做的两件事】① 用 SafeRender.GetEngineThreadArgs() 同款线程参数实测
-    /// "补帧倍率 × 超分倍率 × 片长"矩阵;② 按单帧成本之比(而非"帧数超过多少")给门限。
-    /// 另外:启用时还要同步改 StageProgressPct 的超分区间与各处进度区间,否则进度条会先跳后倒退。</summary>
-    public const bool UpscaleFirstEnabled = false;
-
-    /// <summary>回退原因(写进日志/诊断用,单一来源,避免各处各写一句)。</summary>
-    public const string UpscaleFirstDisabledReason =
-        "新顺序「超分 → 补帧」已于 2026-09-13 实测回退(4x 补帧/短视频上净亏:超分实测 279 ms/帧而非预估的 0.70 s/帧)," +
-        "当前一律按旧顺序「补帧 → 超分」执行";
-
-    /// <summary>本次任务实际是否走「超分 → 补帧」新顺序(纯函数,单一事实来源:管线与 ETA 都必须调它)。
-    /// 条件与回退前的原判据一致,只是多了总开关:
-    ///   ① 总开关开启(当前恒 false);② 真的要补帧;③ 超分阶段真的会执行(1x 缩回也算执行);
-    ///   ④ 超分倍数 ≤ 2.001(3x/4x 等一律旧顺序 —— 补帧单价随分辨率涨得比超分快,先补帧能把补帧按便宜价跑)。
-    /// 【为什么把"超分是否执行"也收进来】VideoService 里原本用 `doUpscale && !(scale <= 1.001 && !shrink1x)`
-    /// 算 upscaleRuns,这里按同一口径复刻,避免两处条件漂移。</summary>
-    public static bool UpscaleRunsFirst(bool up, double scale, bool interp, bool shrink1x = false)
-    {
-        // 总开关关着 → 一律旧顺序(当前恒走这一行:上面 UpscaleFirstEnabled = false)。
-        if (!UpscaleFirstEnabled) return false;
-        // 【下面这段是"开关打开之后"的真实判据,必须留着】与回退前的原判据逐字一致:
-        //   ① 真的要补帧;② 超分阶段真的会执行(1x 缩回也算执行);③ 超分倍数 ≤ 2.001。
-        // 因为 UpscaleFirstEnabled 是 const,编译器会把这里判成"不可达代码"(CS0162)——
-        // 这是刻意的(代码要为"重新启用"保留),用 pragma 就地抑制,免得给构建新增警告。
-#pragma warning disable CS0162
-        bool upscaleRuns = up && !(scale <= 1.001 && !shrink1x);   // 与 VideoService 的 upscaleRuns 同口径
-        return interp && upscaleRuns && !(scale > 2.001);
-#pragma warning restore CS0162
-    }
+    // ===== 阶段顺序的判据**只有一处**(2026-09-16 清理)=====
+    // 【本次删掉了什么】这里曾有一条旧的回退链:`const bool UpscaleFirstEnabled = false` + 纯函数
+    // `UpscaleRunsFirst(...)`(因常量恒 false ⇒ **恒返回"旧顺序"**),外加一段**零调用点**的重复判据
+    // `AutoUpscaleFirst(...)`。三者已全部删除,原因:
+    //   · 真正生效的顺序判定一直是 `AlhPro.Core.PipelineOrderPlan.Decide(...)` ——
+    //     `VideoService.ProcessVideoAsync` 在"补帧倍率/去重结果都确定后"按**真机实测单价**判定(安全边际 15%),
+    //     写「顺序判定:…」日志,并由 PipelineOrderTests 钉住。
+    //   · 旧链恒返回"旧顺序",与 Decide 的结论**可能各说各话**;留着它,等于给下一个人准备了一个
+    //     "照着交接文档把它接上 → 静默换掉渲染顺序"的陷阱(它那份判据用 0.97 系数,与 Decide 的 15% 安全边际不同)。
+    //   · 想重新启用「超分 → 补帧」:改 PipelineOrderPlan 的实测单价表/安全边际,**不要**恢复本文件里的开关。
+    // 【教训保留】原注释记的那次事故仍然有效:2026-09-13 管线侧实测回退后 UI 忘了跟着改,
+    // 导致"界面在按一个根本不会执行的顺序估时间"。现在的对策是**同一个 Decide 结论**(见 UpscaleOrderTests)。
+    // 【当前口径】`EstimateProcessSeconds` 与管线里的进度区间都按**旧顺序**取回退值;若哪天 Decide 真的
+    // 判定成新顺序,这两处必须一起改 —— UpscaleOrderTests 会因为 ETA 与判据不同源而报红。
     /// <summary>每批超分引擎进程的"启动 + 模型加载"固定开销(秒/批)【已实测标定 · 2026-09-13】。
     /// 【实测】用"1 帧目录"直接量:**1.0~1.3 秒**;240 帧批量里这笔开销占比 **&lt;1%**
     /// (所以"批数 × 启动开销"对长素材 ETA 的影响远小于原假设)。
@@ -60,6 +35,36 @@ public static class VideoPipeline
     /// `EstimateProcessSeconds` 里这一项仍是【下限】(见 :124 的说明:只覆盖"超分批"这一笔,不含补帧/编码的批)。
     /// 【若将来再标定】同一素材跑两种批大小(240 帧/批 vs 60 帧/批),拿"引擎完成"日志的耗时做两点线性拟合。</summary>
     public const double AssumedEngineStartupSecondsPerBatch = 1.15;
+
+    /// <summary>「指定输出帧率」的倍率口径 —— **唯一一份**(2026-09-16 审计第 4 条:原先散在三处、两套基数)。
+    ///
+    /// 用户选/填了一个目标帧率后,补帧要按多少倍跑?这就是全部判据:
+    ///   · 基数只能用**源帧率** `inFps`(取不到时退回内容帧率 `effectiveFps`)。
+    ///     为什么不是内容帧率:去重把帧删稀疏之后,同一批帧要靠 `frameScale`(=原帧数/内容帧数)展开回原密度,
+    ///     所以输出密度 ≈ `源帧率 × 倍率`;拿"去重后内容帧率"当基数会把倍率**算大** `frameScale` 倍,
+    ///     补出一大堆帧再被 `fps` 滤镜丢掉(纯白等,画面不变)。
+    ///   · 下限 `minScale=2`:目标帧率≈源帧率(如 60 vs 59.94)时 `ceil` 会等于 1 ⇒ 完全不补帧 ⇒
+    ///     "指定了帧率导出还是卡"。先补帧平滑、再精确缩回目标值。
+    ///   · 上限 `maxScale=8` 是硬顶(再高就越过收益拐点)。
+    ///   · 非 v4 模型只能 2 的幂(thisV4=false 时向上取 2 的幂,并同样受 8 封顶)。
+    ///
+    /// 界面预判(`VideoView.UpdateTargetFpsHint`)与处理端(`VideoService.ProcessVideoAsync`)**必须都调这里**;
+    /// 谁再自己写一份 `目标帧率 ÷ 某个帧率`,界面与实跑就会再次各说各话。</summary>
+    public static int InterpScaleForTargetFps(double targetFps, double inFps, double effectiveFps,
+        bool thisV4, int minScale = 2, int maxScale = 8)
+    {
+        double baseFps = inFps > 0.01 ? inFps : Math.Max(1.0, effectiveFps);
+        if (!double.IsFinite(targetFps) || targetFps <= 0) return Math.Max(1, minScale);
+        int need = (int)Math.Ceiling(targetFps / baseFps);
+        need = Math.Clamp(need, minScale, maxScale);
+        if (!thisV4)
+        {
+            int p = 1;
+            while (p < need) p *= 2;
+            need = Math.Min(p, maxScale);
+        }
+        return need;
+    }
 
     /// <summary>估算整个视频处理流程的大致秒数(用于处理前"预计剩余时间")。slowFactor=弱机放大系数(默认 1)。
     /// upscaleFirst=「超分 → 补帧」的新阶段顺序(1x/2x 走这条,见 VideoService.ProcessVideoAsync 的阶段顺序说明):
@@ -355,6 +360,50 @@ public static class VideoPipeline
             int copies = tailFrame ? 1 : m;
             double d = Math.Max(0.0005, srcDurs[k] / copies);
             for (int i = 0; i < copies; i++) { dst.Add(d); added++; }
+        }
+        return added;
+    }
+
+    /// <summary>【指定帧率专用】一段补帧 RIFE `-n` 应产出的**精确**帧数(分数倍率,步长 k = (目标帧数-1) ÷ (源帧数-1))。
+    /// `InterpSegmentTarget` 只吃整数倍率:`(segLen-1)×mult+1` 在整数上严格相加(见它的注释),
+    /// 但指定帧率算出来的是**分数**步长(真机:60×21.632÷518 = 2.506),再 round 成整数 3 → 总帧数
+    /// 1555 ≫ 需要的 1298,多出来的只能被合帧裁掉(尾部丢内容)。
+    ///
+    /// 【口径 · 绝对定位】第 i 段(源帧区间 [start, end)) 在**整片输出**里应累计到的帧号 = `round(end×k)`
+    /// (k = (totalOut-1)÷(totalSrc-1),末段直接 = totalOut)。于是本段 RIFE 的 `-n`
+    ///   = 该累计帧号 − 目前已经有的输出帧数(即前面各段产出之和,含首帧的那个 1)。
+    /// 这样"Σ各段 = 全局目标"是**构造性**成立的,不依赖任何舍入补偿;末段自然吸收全部舍入余量
+    /// ⇒ 合帧阶段一帧都不用裁,尾部内容不再丢。segLen ≤ 1 时退回自然产量(段内没有可插值的间隔)。</summary>
+    public static int InterpSegmentTargetExact(int segLen, int segEnd, int totalSrc, long totalOut, long producedSoFar)
+    {
+        int len = Math.Max(1, segLen);
+        if (totalSrc <= 1 || totalOut <= 0) return len + 1;
+        long cumulative = segEnd >= totalSrc
+            ? totalOut
+            // 【必须 AwayFromZero】默认的银行家舍入在恰好落在 .5 时会进位到偶数:
+            // 真机 518 帧目标 1298 帧时 segEnd×k = 1299.5 → 默认舍入给 1300,末段反而要"倒扣",帧数对账出现 ±1 抖动。
+            : (long)Math.Round(segEnd * ((double)(totalOut - 1) / (totalSrc - 1)), MidpointRounding.AwayFromZero);
+        long want = cumulative - Math.Max(0, producedSoFar);
+        return (int)Math.Min(int.MaxValue, Math.Max(len + 1, want));
+    }
+
+    /// <summary>【指定帧率专用】时间轴展开按**每段精确目标帧数**分配槽位:每源帧槽数 = targetFrames ÷ 段长,
+    /// 末段的最后一个源帧只 1 槽(与 InterpSegmentTargetExact 的末段口径一致)。
+    /// 之所以不能用整数倍率的 AppendExpandedDurations:分数步长下"表长 == 文件数"这条不变量会被破坏,
+    /// 而帧数与时长表不同源正是历史上"时长表按均值补尾 → 尾部时间轴失真"那类静默错的成因。</summary>
+    public static int AppendExpandedDurationsExact(List<double> dst, IReadOnlyList<double> srcDurs,
+        int s, int e, int targetFrames, bool lastSegment)
+    {
+        if (dst == null) return 0;
+        int lo = Math.Max(0, s), hi = Math.Min(e, srcDurs.Count);
+        int len = Math.Max(1, hi - lo);
+        int added = 0;
+        for (int k = lo; k < hi; k++)
+        {
+            bool tailFrame = lastSegment && k == srcDurs.Count - 1;
+            int slots = tailFrame ? 1 : Math.Max(1, (int)Math.Round(targetFrames / (double)len));
+            double d = Math.Max(0.0005, srcDurs[k] / slots);
+            for (int i = 0; i < slots; i++) { dst.Add(d); added++; }
         }
         return added;
     }

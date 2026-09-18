@@ -148,6 +148,32 @@ public static class RifeOnnxService
         string outputPng, int gpuId)
     {
         var model = FindModel() ?? throw new FileNotFoundException("缺少补帧模型:rife49.onnx");
+        EnsureDeviceUsable(gpuId);
+        RunCore(session, img0, img1, time, outputPng, gpuId, model);
+    }
+
+    /// <summary>【任务 · 2026-09-16 审计第 6 条】同一个会话、**源帧位图由调用方预先解好**的插帧入口。
+    ///
+    /// 为什么需要:逐对补帧的内层循环里,同一对源帧要为每个中间帧各调一次上面那个入口,于是同一张源帧
+    /// 被反复 `new Bitmap(path)` + DrawImage 复制(4x 补帧 = 3 个中间帧,同一张源帧解 3 遍;外加调用方
+    /// 每帧再判一次黑帧又解一遍)。ONNX 补帧路径上这属于纯浪费 —— ncnn 路径本来就只在段内抽样判黑。
+    ///
+    /// 语义与上面那个入口**逐字一致**(同一份守卫、同一个 RunCore、同样的像素处理),差别只有"谁负责解码":
+    /// `bmpPath` 只用于异常信息里的文件名。调用方必须在 `using` 里持有这两个位图,且不并发共享。
+    /// 像素不变性:LoadBitmap 把源图统一成 24bppRgb 全尺寸,提到循环外复用与循环内每次重解**结果相同**。</summary>
+    public static void InterpWithSession(InferenceSession session, Bitmap bmp0, Bitmap bmp1, string bmpPath,
+        float time, string outputPng, int gpuId)
+    {
+        var model = FindModel() ?? throw new FileNotFoundException("缺少补帧模型:rife49.onnx");
+        EnsureDeviceUsable(gpuId);
+        RunCore(session, bmp0, bmp1, bmpPath, time, outputPng, gpuId, model);
+    }
+
+    /// <summary>设备可用性守卫(三个入口共用一处,2026-09-16 抽出):设备已摘除/连续失败 ⇒ 快速失败,
+    /// **绝不落到 CPU**(那会把整段视频拖成几十分钟;gpuId=-1 是调用方明确要 CPU 的唯一场景)。
+    /// 原先这段在两个入口里各写一份,新增入口时极易漏掉一条判据。</summary>
+    static void EnsureDeviceUsable(int gpuId)
+    {
         if (gpuId != -1 && EsrganOnnxService.DmlDeviceDead)
             throw new InvalidOperationException(
                 "GPU(DirectML)已被系统摘除/挂死,本进程内无法恢复——已停止补帧尝试(不降级到慢速 CPU)。请重启软件后重试。");
@@ -155,7 +181,6 @@ public static class RifeOnnxService
             throw new InvalidOperationException(
                 $"GPU(DirectML 设备 {gpuId})连续多次补帧推理失败,本进程内视为不可用——已停止补帧尝试(不降级到慢速 CPU)。"
                 + "剩余帧将复制原帧;请重启软件后重试。");
-        RunCore(session, img0, img1, time, outputPng, gpuId, model);
     }
 
     /// <summary>用 ONNX 模型在 img0 与 img1 之间插 time(0~1) 帧,输出到 outputPng。gpuId&gt;=0 走 DirectML,
@@ -167,9 +192,7 @@ public static class RifeOnnxService
         // 【设备已死 = 快速失败,绝不落 CPU】887A0005/887A0006 之后本进程的 D3D 设备已被摘除,每次 DirectML 调用
         // 必然失败;这种情况转 CPU 会把整段视频静默拖到 CPU 上补帧(几十分钟起步),违反「补帧绝不落 CPU」。
         // gpuId=-1 表示调用方明确要 CPU(本机无 GPU 可用)——那是唯一允许用 CPU 的场景,不在此列。
-        if (gpuId != -1 && EsrganOnnxService.DmlDeviceDead)
-            throw new InvalidOperationException(
-                "GPU(DirectML)已被系统摘除/挂死,本进程内无法恢复——已停止补帧尝试(不降级到慢速 CPU)。请重启软件后重试。");
+        EnsureDeviceUsable(gpuId);
         // -2 = 自动选设备。PickDevice 返回的是【引擎 -g 编号】,而 BuildSession/GetSession/连击表
         // 统一用【DirectML 设备号】——所以在这里一次性解析,之后本方法内 gpuId 一律是 DML 号。
         if (gpuId == -2)
@@ -185,10 +208,7 @@ public static class RifeOnnxService
         // 连续瞬时失败已达上限:快速失败。必须在 -2 解析【之后】查——自动路径传进来的是 -2,解析前查永远命中不了,
         // 于是每对帧都白试一次"建会话 + 注定失败的推理",那正是这个检查要省掉的成本。
         // 抛出后调用方按帧复制原帧(毫秒级)。原先这里把 gpuId 改成 -1,等于一次抖动就让剩下整段视频在 CPU 上补帧。
-        if (EsrganOnnxService.DmlDeviceUnusable(gpuId))
-            throw new InvalidOperationException(
-                $"GPU(DirectML 设备 {gpuId})连续多次补帧推理失败,本进程内视为不可用——已停止补帧尝试(不降级到慢速 CPU)。"
-                + "剩余帧将复制原帧;请重启软件后重试。");
+        EnsureDeviceUsable(gpuId);
         var session = GetSession(gpuId);
         RunCore(session, img0, img1, time, outputPng, gpuId, model);
     }
@@ -198,8 +218,16 @@ public static class RifeOnnxService
     {
         using var bmp0 = LoadBitmap(img0);
         using var bmp1 = LoadBitmap(img1);
+        RunCore(session, bmp0, bmp1, img0, time, outputPng, gpuId, model);
+    }
+
+    /// <summary>与上一个 RunCore 同一份实现,只是位图由调用方提供(见 InterpWithSession 的说明):
+    /// **本方法不负责解码**,`img0ForDiag` 只用于异常信息里的文件名。调用方负责位图生命周期与不并发共享。</summary>
+    static void RunCore(InferenceSession session, Bitmap bmp0, Bitmap bmp1, string img0ForDiag, float time,
+        string outputPng, int gpuId, string model)
+    {
         if (bmp0.Width != bmp1.Width || bmp0.Height != bmp1.Height)
-            throw new InvalidOperationException("两帧尺寸不一致,无法补帧");
+            throw new InvalidOperationException($"两帧尺寸不一致,无法补帧({Path.GetFileName(img0ForDiag)})");
 
         int w = bmp0.Width, h = bmp0.Height;
         // 【C-4 ④】这个会话【确实】跑在 DirectML 上吗?由建会话时钉在会话上的标志决定,绝不用 gpuId>=0 推断:
@@ -488,6 +516,11 @@ public static class RifeOnnxService
     }
 
     // ---------- System.Drawing 工具(与电脑版 EsrganOnnxService 一致) ----------
+
+    /// <summary>供调用方**在循环外**预解源帧用的解码入口(见 InterpWithSession 的位图重载)。
+    /// 语义与内部 LoadBitmap 完全一致(24bppRgb 全尺寸、失败抛"补帧输入帧无法解码");调用方负责 Dispose。
+    /// 旧调用方是改不到的 —— 逐对补帧的失败路径本来就是"这一对按原帧复制",所以这里抛出由调用方接住即可。</summary>
+    public static Bitmap LoadFrameBitmap(string path) => LoadBitmap(path);
 
     static Bitmap LoadBitmap(string path)
     {

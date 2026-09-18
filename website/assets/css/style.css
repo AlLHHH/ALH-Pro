@@ -1,43 +1,27 @@
+@charset "UTF-8";
 /* ============================================================================
    ALH Pro 官网 · 样式表
-   目标:动效丰富、但**滚动期一帧都不掉**。成熟产品的观感 + 高性能的实现。
-   纯静态、零外部依赖:没有 CDN、没有在线字体、没有图标字体、没有图片纹理。
+   目标:动效丰富、但**滚动期一帧都不掉**。纯静态、零外部依赖(无 CDN/在线字体/图标库/图片)。
 
-   ─────────────────────────────────────────────────────────────────────────
-   滚动性能铁律(改样式前必读;每条都有实测依据,见仓库外的性能报告)
-     1. 滚动路径上**只允许动 `transform` 与 `opacity`**。
-        不动 box-shadow / background-position / width / height / top / left(feature: 触发重排或重绘)。
-     2. **禁止任何 `backdrop-filter`**。实测:大面积用它会让滚动期 UpdateLayer 涨到 16 倍、
-        Paint 3.4 倍、RasterTask 3.3 倍、主线程任务时长 2.3 倍(见 §0 注释里的对比数字)。
-        吸顶栏改用「近不透明实色」——在纯色底上肉眼几乎无差别。
-     3. **禁止在滚动相关代码里调用任何 scroll API**(scrollTo / scrollIntoView / scrollTop = …)。
-        实测:滚动处理器里的 `scrollIntoView({behavior:'smooth'})` 会让向下滚动时 scrollY
-        回退 51~63 帧、"被拽着走";去掉后回退帧 = 0。这就是"牵引感"的唯一来源。
-     4. 滚动联动优先用 **CSS 滚动驱动动画**(`animation-timeline: scroll()/view()`):
-        它跑在合成器上、不占主线程、不需要 scroll 事件。不支持的引擎用 `@supports` 降级为静态。
-     5. `will-change` 只给"真的每帧在动"的极少数元素,并且**离开视口就摘掉**(IO 控制)。
-     6. 入场的错开 ≤60ms/级、时长 200~600ms、缓动走 `--ease`。
-     7. 悬停位移 ≤2px;悬停只改颜色/边框/阴影。
-     8. `prefers-reduced-motion: reduce` 下关掉全部位移与动画(见 §20)。
-     9. 长列表用 `content-visibility: auto` 做分区隔离(见 §17)。
+   滚动性能铁律(改样式前必读)
+     1. 滚动路径上**只动 `transform` / `opacity`**,不动会重排重绘的属性(box-shadow、尺寸…)。
+     2. `backdrop-filter` **受预算管制**(§23):只给少数固定条与大块面板,半径 ≤14px,**禁止**写进
+        animation/transition,**禁止玻璃套玻璃**,≤720px 关次级面板模糊;依据见 §0(旧版 UpdateLayer ×16)。
+     3. **滚动相关代码里禁止调用任何 scroll API**(scrollTo/scrollIntoView/scrollTop=):实测会让
+        scrollY 回退 51~63 帧("牵引感"的唯一来源),去掉后回退 0 帧。
+     4. 滚动联动优先用 **CSS 滚动驱动动画**(`animation-timeline`);不支持时 `@supports` 降级。
+     5. `will-change` 只给真的每帧在动的极少数元素,离开视口就摘掉。
+     6. 入场错开 ≤60ms/级;悬停位移 ≤2px、只改颜色/边框。
+     7. `prefers-reduced-motion: reduce` 下关掉全部位移与动画(§20);长列表用 `content-visibility`(§17)。
 
-   组织方式:§0 性能基线 → §1 设计令牌 → §2 基础 → … → §19 响应式 → §20 减少动效
+   组织:§0 基线 → §1 令牌 → §2 基础 → … → §19 响应式 → §20 减少动效 → §21 打印 → §23 液态玻璃
    ============================================================================ */
 
 /* ===========================================================================
-   §0 实测基线(同一台机器、同一段脚本滚轮输入、3 秒窗口、取 3 次中位数)
-      指标                        d9de0c9(玻璃+大面积 backdrop-filter)   a21e681(无动效)
-      UpdateLayoutTree(样式重算)  1198 次 / 142.6ms                       358 次 / 19.4ms
-      Paint                       1950 次                               573 次
-      RasterTask                  1032 次 / 30.1ms                       309 次 / 12.4ms
-      UpdateLayer                 30828 次 / 14.7ms                      1900 次 / 1.4ms
-      PrePaint                     784 次 / 49.9ms                       678 次 / 23.9ms
-      主线程 TaskDuration          606ms                                 259ms
-      向下滚动时的 scrollY 回退     63 次 / 525px                         51 次 / 425px
-      禁用页面 scrollIntoView 后回退 0 次                                  0 次
-      → 结论:回退(牵引感)100% 来自滚动处理器里的 scrollIntoView;
-        卡顿来自大面积 backdrop-filter(UpdateLayer 16 倍);
-        与强制同步布局无关(Layout 次数 31 vs 41,反而更少)。
+   §0 实测基线(同机同脚本滚轮输入、3 秒窗口、3 次中位数;原始数据在 D:\deep\_verify\):
+      玻璃+大面积 backdrop-filter vs 无动效 —— UpdateLayer 30828/14.7ms vs 1900/1.4ms、Paint 1950 vs 573、
+      主线程 606ms vs 259ms。→ 卡顿来自**大面积** backdrop-filter;滚动回退 63 次/525px 全部来自
+      scrollIntoView。故 §23 只给少数层上玻璃,滚动路径上不调任何 scroll API。
    =========================================================================== */
 
 /* ===========================================================================
@@ -80,7 +64,7 @@
 
   --fg: #f4f4f5;
   --fg-soft: #a9a9b0;
-  --muted: #8a8a93;
+  --muted: #8f8f98;           /* 通透化时底子变亮,次要文字同步提 4% 亮度:最坏背景上仍 ≥4.5:1 */
 
   --accent: #7da2ff;          /* 低饱和蓝,可当正文链接色 */
   --accent-top: #89adff;      /* 仅主按钮的极小渐变 */
@@ -88,9 +72,11 @@
   --accent-ink: #0a0a0b;
   --accent-soft: rgba(125, 162, 255, .13);
   --accent-line: rgba(125, 162, 255, .32);
-  --glow: rgba(125, 162, 255, .16);       /* 卡片跟随高光 */
-  --aurora-1: rgba(125, 162, 255, .16);   /* 首屏光斑 */
-  --aurora-2: rgba(162, 116, 255, .14);
+  --glow: rgba(125, 162, 255, .035);      /* 背景层跟随光(卡片内已有一道光,这里调淡一档免得打架) */
+  --glow-card: rgba(125, 162, 255, .10);  /* 卡片内跟随光(§23.10) */
+  --hover-fill: rgba(255, 255, 255, .07); /* 幽灵按钮/药丸类 hover 时的底色:只用 background-color,不加发光 */
+  --aurora-1: rgba(120, 146, 190, .08);   /* 首屏光斑(与流动背景同步压暗,色相/饱和度不变) */
+  --aurora-2: rgba(134, 128, 180, .07);
   --demo-bg: #2b3140;                     /* 功能演示里"未抠图"的实色背景 */
 
   --ok: #5ecb9a;
@@ -105,53 +91,41 @@
   --shadow-2: 0 2px 8px rgba(0, 0, 0, .45);
   --shadow-3: 0 8px 24px rgba(0, 0, 0, .50);
   /* 吸顶栏:近不透明实色,刻意不用 backdrop-filter(滚动期最贵的一项) */
-  --header-bg: rgba(10, 10, 11, .94);
+  --header-bg: rgba(10, 10, 11, .94);      /* 不支持玻璃时的顶栏实色兜底(§23.7 用) */
   --plate: rgba(255, 255, 255, .92);
   --body-bg: #0a0a0b;
+
+  /* ---------- 液态玻璃令牌(深色主题;底色由 --surface / --bg 派生)----------
+     玻璃 = 半透明底 + 模糊 + 1px 极淡边框。2026-09 按「卡片不要那么多边缘高光」删掉了
+     顶边亮线/内高光/对角高光/外投影(令牌 --glass-edge/-soft/-inner/--glass-sheen 已删)。 */
+  --glass-panel: rgba(17, 17, 19, .44);      /* 面板玻璃底(通透靠这个 + 留白,不靠提亮底色) */
+  --glass-panel-2: rgba(23, 23, 26, .58);    /* 次级面板 / 无模糊时的替代底(比主面板实一点保可读) */
+  --glass-header: rgba(10, 10, 11, .52);     /* 顶栏玻璃底(浮层,略厚一档) */
+  --glass-header-stuck: rgba(12, 12, 15, .68); /* 吸顶后更不透明(滚动时才用,不改变高度) */
+  --glass-line: rgba(255, 255, 255, .12);    /* 面板/卡片唯一的轮廓表达:1px 极淡边框 */
+  --glass-blur: 10px;                        /* 模糊半径硬上限 14px;≤720px 调成 8px */
+  --glass-blur-strong: 12px;                 /* 顶栏专用(更厚,仍 ≤14px) */
+
+  /* ---------- 全站流动背景(低饱和冷色,极缓慢)----------
+     2026-09 按「背景不要发灰,黑一点」把 alpha 全压回一档:通透靠「面板更透 + 留白」,
+     不靠提亮底色。实测最亮背景像素 rgb(38,37,49) → rgb(26,25,32),代表点亮度 -42%~-58%。
+     4 层错开漂移(24/32/40/52s),只动 transform/opacity,仍看得出在缓慢流动。 */
+  --flow-1: rgba(122, 146, 196, .08);      /* 蓝灰 */
+  --flow-2: rgba(132, 128, 186, .07);      /* 靛 */
+  --flow-3: rgba(150, 130, 178, .06);      /* 灰紫 */
+  --flow-4: rgba(110, 150, 172, .05);      /* 青灰 */
+  --flow-sheen: rgba(255, 255, 255, .018); /* 极淡丝光 */
+  --aurora-band: rgba(148, 170, 224, .045); /* 斜向极光带 */
+  --grid-line: rgba(255, 255, 255, .022);  /* 1px 点阵格线 */
+  /* 柔光层与细节层各自的"向四周淡出"蒙版:中心有光/有细节,四角回到纯黑 */
+  --bg-mask: radial-gradient(farthest-side at 50% 46%, #000 38%, transparent 76%);
+  --detail-mask: radial-gradient(farthest-side at 50% 46%, #000 46%, transparent 120%);
 }
 
-/* ---------- §1.2 浅色(跟随系统):近白中性底 ---------- */
-@media (prefers-color-scheme: light) {
-  :root {
-    color-scheme: light;
-
-    --bg: #fafafa;
-    --surface: #ffffff;
-    --surface-2: #f4f4f5;
-    --line: rgba(17, 24, 39, .10);
-    --line-strong: rgba(17, 24, 39, .18);
-
-    --fg: #111827;
-    --fg-soft: #4b5563;
-    --muted: #5b636d;
-
-    --accent: #2b5cd9;
-    --accent-top: #3465e0;
-    --accent-bottom: #2450c4;
-    --accent-ink: #ffffff;
-    --accent-soft: rgba(43, 92, 217, .08);
-    --accent-line: rgba(43, 92, 217, .26);
-    --glow: rgba(43, 92, 217, .10);
-    --aurora-1: rgba(43, 92, 217, .10);
-    --aurora-2: rgba(124, 58, 237, .08);
-    --demo-bg: #d9dee7;
-
-    --ok: #0f7a52;
-    --ok-soft: rgba(15, 122, 82, .07);
-    --ok-line: rgba(15, 122, 82, .22);
-    --warn: #8a5a00;
-    --warn-soft: rgba(160, 105, 0, .08);
-    --warn-line: rgba(160, 105, 0, .25);
-    --danger: #b3261e;
-
-    --shadow-1: 0 1px 2px rgba(17, 24, 39, .05);
-    --shadow-2: 0 2px 8px rgba(17, 24, 39, .07);
-    --shadow-3: 0 8px 24px rgba(17, 24, 39, .10);
-    --header-bg: rgba(250, 250, 250, .95);
-    --plate: #ffffff;
-    --body-bg: #fafafa;
-  }
-}
+/* ---------- §1.2 浅色主题(已整块删除)----------
+   原来这里是一整套 `@media (prefers-color-scheme: light)` 覆盖(--bg:#fafafa / --fg:#111827 …),
+   系统浅色时会把整站刷白(手机默认浅色 → 手机上就是白的)。按用户要求「手机版网页也要黑色」:
+   **深色是唯一主题**,这里不再保留任何浅色分支。注:§21 打印样式的白底黑字是给纸张的,保留。 */
 
 /* ===========================================================================
    §2 基础重置与排版
@@ -160,6 +134,9 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  /* 深色是唯一主题:固定 dark,不随系统的浅色模式改变(手机浏览器也跟着深色)。
+     与 §1 的 :root 一致,这里再写一遍是为了让 html 元素本身的 UA 控件/滚动条也走深色。 */
+  color-scheme: dark;
   /* 只影响锚点/程序化滚动,不影响滚轮手感;不做任何滚动劫持 */
   scroll-behavior: smooth;
   scroll-padding-top: calc(var(--header-h) + 20px);
@@ -184,16 +161,18 @@ img { max-width: 100%; height: auto; }
 
 a { color: var(--accent); text-decoration: none; text-underline-offset: 3px; transition: color var(--t-fast) var(--ease); }
 a:hover { text-decoration: underline; }
+/* 正文里的链接:hover 除了下划线,颜色再提亮一档(比 --accent 亮一点点,黑底上更明显) */
+main .content a:not(.btn):hover, .note a:hover { color: var(--accent-top); }
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
 ::selection { background: var(--accent-soft); color: var(--fg); }
 
 /* ---------- §2.1 标题与正文 ---------- */
 h1, h2, h3, h4 { color: var(--fg); line-height: 1.25; letter-spacing: -.011em; text-wrap: balance; }
-h2 { font-size: clamp(23px, 2.6vw, 30px); font-weight: 700; margin: 60px 0 14px; }
+h2 { font-size: clamp(23px, 2.6vw, 30px); font-weight: 700; margin: 70px 0 20px; }
 h2:first-child { margin-top: 0; }
-h3 { font-size: 18.5px; font-weight: 650; margin: 32px 0 10px; }
-h4 { font-size: 16.5px; font-weight: 650; margin: 24px 0 8px; }
+h3 { font-size: 18.5px; font-weight: 650; margin: 36px 0 12px; }
+h4 { font-size: 16.5px; font-weight: 650; margin: 26px 0 10px; }
 
 p { margin: 12px 0; }
 ul, ol { margin: 12px 0; padding-left: 24px; }
@@ -220,7 +199,7 @@ pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-spa
    §3 布局容器
    =========================================================================== */
 .wrap { width: 100%; max-width: var(--wrap); margin: 0 auto; padding-left: var(--pad); padding-right: var(--pad); }
-.content { padding-top: 48px; padding-bottom: 88px; }
+.content { padding-top: 56px; padding-bottom: 96px; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
@@ -232,10 +211,8 @@ pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-spa
 .skip-link:focus { left: 12px; top: 12px; }
 
 /* ===========================================================================
-   §4 顶部滚动进度条
-   由 CSS 滚动驱动动画 `animation-timeline: scroll(root)` 驱动 ——
-   跑在合成器上,零 JS、零 scroll 事件、不占主线程。
-   不支持的引擎:整条隐藏(@supports 降级),不留空壳。
+   §4 顶部滚动进度条:由 CSS 滚动驱动动画驱动(合成器上跑,零 JS、零 scroll 事件);
+   不支持的引擎整条隐藏(@supports 降级)。
    =========================================================================== */
 .page-progress {
   position: fixed; left: 0; top: 0; right: 0; height: 2px;
@@ -256,7 +233,7 @@ pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-spa
 @keyframes progressGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 
 /* ===========================================================================
-   §5 吸顶导航(近不透明实色,刻意不用 backdrop-filter)
+   §5 吸顶导航(液态玻璃;材质与性能预算见 §23.2 —— 半径 ≤14px、不进动画、不嵌套)
    =========================================================================== */
 .site-header {
   position: sticky; top: 0; z-index: 50;
@@ -269,9 +246,21 @@ pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-spa
 .header-inner { display: flex; align-items: center; gap: 14px; min-height: var(--header-h); flex-wrap: wrap; }
 
 .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--fg); font-weight: 650; font-size: 16px; white-space: nowrap; }
-.brand:hover { text-decoration: none; }
-.brand-logo { width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--line); background: var(--plate); padding: 2px; transition: transform var(--t) var(--ease-out); }
-.brand:hover .brand-logo { transform: translateY(-1px); }
+.brand:hover { color: var(--accent); text-decoration: none; }
+.brand-logo {
+  width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--line); background: var(--plate); padding: 2px;
+  transition: transform var(--t) var(--ease-out);
+  animation: logoFlip 4.6s var(--ease) infinite;
+}
+/* 顶栏 logo 黑↔白:白底黑标用 filter:invert() 反相 + 转整圈做翻牌感(停在 360/720 的整数倍,不镜像)。
+   4.6s 一轮只翻两次、每次 ~320ms,其余静止;28px 的 filter+transform 成本可忽略;reduce 下 §20 整个关掉。 */
+@keyframes logoFlip {
+  0%, 40%   { filter: invert(0); transform: perspective(160px) rotateY(0deg); }
+  47%, 67%  { filter: invert(1); transform: perspective(160px) rotateY(360deg); }
+  74%, 100% { filter: invert(0); transform: perspective(160px) rotateY(720deg); }
+}
+/* hover 提示:动画占着 transform,所以这里主要靠边框提亮(reduce 下动画关掉,上移也照常生效) */
+.brand:hover .brand-logo { border-color: var(--line-strong); transform: translateY(-1px); }
 .brand-sub { font-size: 12px; font-weight: 400; color: var(--muted); }
 
 .site-nav { display: flex; flex-wrap: wrap; gap: 2px; margin-left: auto; }
@@ -315,14 +304,15 @@ pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-spa
 }
 
 /* ===========================================================================
-   §6 页内章节条(JS 依据 h2[id] 生成;当前章节高亮 + 横向平滑跟随)
-   注意:跟随只作用于这条**内部横向滚动容器**,绝不调用页面级 scroll API。
+   §6 页内章节条(JS 依据 h2[id] 生成;跟随只作用于这条**内部横向滚动容器**,绝不调页面级 scroll API)
    =========================================================================== */
 .page-toc {
   position: sticky; top: var(--header-h); z-index: 45;
   background: var(--header-bg);
   border-bottom: 1px solid var(--line);
 }
+/* 带 hidden 的一律不显示(下载弹窗靠它兜住;也防以后给类加 display 把 hidden 顶掉)。 */
+[hidden] { display: none; }
 .page-toc[hidden] { display: none; }
 .page-toc-track {
   display: flex; align-items: center; gap: 0; min-height: var(--toc-h);
@@ -346,13 +336,11 @@ pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-spa
 .page-toc a[aria-current="true"]::after { transform: scaleX(1); }
 
 /* ===========================================================================
-   §7 首屏
-   光斑 = 预渲染的 CSS 径向渐变 + **只动 transform**;不用 `filter: blur`
-   (大面积 filter 每帧重算,是典型的滚动杀手)。离开视口由 JS 暂停动画。
+   §7 首屏:光斑 = 预渲染径向渐变 + **只动 transform**(不用 filter: blur,大面积 filter 拖垮滚动)。
    =========================================================================== */
 .hero {
   position: relative;
-  padding: clamp(52px, 7vw, 88px) 0 clamp(40px, 5vw, 60px);
+  padding: clamp(58px, 7.5vw, 96px) 0 clamp(44px, 5.5vw, 68px);
   border-bottom: 1px solid var(--line);
   overflow: hidden;                 /* 裁掉光斑溢出,避免横向滚动条 */
 }
@@ -432,14 +420,14 @@ pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-spa
 .has-js .hero .badges li:nth-child(5) { animation-delay: 570ms; }
 
 .hero-title {
-  margin: 0 0 18px;
+  margin: 0 0 24px;
   font-size: clamp(34px, 5vw, 54px);
   font-weight: 700; line-height: 1.14; letter-spacing: -.022em;
 }
 .hero-title .line { display: block; }
 .hero--page .hero-title { font-size: clamp(29px, 4vw, 42px); }
 
-.hero .lede { font-size: clamp(16px, 1.7vw, 18px); line-height: 1.8; color: var(--fg-soft); margin: 0 0 26px; max-width: 68ch; }
+.hero .lede { font-size: clamp(16px, 1.7vw, 18px); line-height: 1.8; color: var(--fg-soft); margin: 0 0 34px; max-width: 68ch; }
 .hero .lede strong { color: var(--fg); }
 
 /* ---------- §7.2 (已删除)首屏数据条 ----------
@@ -449,30 +437,27 @@ pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-spa
 /* ===========================================================================
    §8 卡片网格:平面 + 1px 细边框 + 极浅阴影;进入 viewport 时轻微放大 1.02→1
    =========================================================================== */
-.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); margin: 22px 0 8px; }
+.grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); margin: 26px 0 12px; }
 .grid-3 { grid-template-columns: repeat(auto-fit, minmax(288px, 1fr)); }
 
 .card {
-  position: relative; overflow: hidden; padding: 20px;
+  position: relative; overflow: hidden; padding: 26px;
   border: 1px solid var(--line); border-radius: var(--radius);
   background: var(--surface); box-shadow: var(--shadow-1);
-  transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease), transform var(--t) var(--ease-out);
+  transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease), transform var(--t) var(--ease-out), translate var(--t) var(--ease-out);
 }
-@media (hover: hover) and (pointer: fine) {
-  .card:hover { border-color: var(--line-strong); box-shadow: var(--shadow-2); transform: translateY(-2px); }
-}
-/* 鼠标跟随高光:一个固定大小的圆,只改 transform 位移(不动渐变、不触发布局) */
-.card::after {
-  content: ""; position: absolute; left: 0; top: 0; width: 340px; height: 340px;
-  margin: -170px 0 0 -170px; border-radius: 50%; pointer-events: none; opacity: 0;
-  background: radial-gradient(circle closest-side, var(--glow), transparent 72%);
-  transform: translate(var(--gx, 50%), var(--gy, 0%));
-  transition: opacity var(--t) var(--ease);
-}
-@media (hover: hover) and (pointer: fine) {
-  .card:hover::after { opacity: 1; }
-}
+/* 2026-09:**普通卡片不做位移/换阴影/扫光**;只有"卡内有主入口按钮"的卡片给 hover 反馈(见 §23.10) */
 .card > * { position: relative; z-index: 1; }
+/* 卡片内的跟随光(光在卡片里):位置由 site.js §8b 每帧写 --mx/--my;只过渡 opacity。 */
+.card::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  opacity: 0; transition: opacity 220ms var(--ease);
+  background: radial-gradient(260px 260px at var(--mx, 50%) var(--my, 0%), var(--glow-card), transparent 62%);
+}
+@media (hover: hover) and (pointer: fine) { .card:hover::after { opacity: 1; } }
+@media not (hover: hover) and (pointer: fine), (prefers-reduced-motion: reduce) {
+  .card::after { display: none; }
+}
 .card h3 { margin: 0 0 8px; font-size: 17.5px; }
 .card p { margin: 8px 0 0; color: var(--fg-soft); font-size: 15px; }
 .card ul { margin: 10px 0 0; padding-left: 20px; color: var(--fg-soft); font-size: 14.6px; }
@@ -485,15 +470,13 @@ pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-spa
   transition: color var(--t) var(--ease), border-color var(--t) var(--ease), transform var(--t) var(--ease-out);
 }
 .card-icon svg { width: 19px; height: 19px; display: block; }
-@media (hover: hover) and (pointer: fine) {
-  .card:hover .card-icon { color: var(--accent); border-color: var(--accent-line); transform: translateY(-1px); }
-}
+/* 卡片内的图标也不再随 hover 变化(与上面同一条理由:卡片 hover 一律不变) */
 
 /* ===========================================================================
    §9 提示块
    =========================================================================== */
 .note {
-  margin: 22px 0; padding: 16px 20px;
+  margin: 30px 0 14px; padding: 20px 24px;
   border: 1px solid var(--line); border-left: 2px solid var(--line-strong);
   border-radius: var(--radius); background: var(--surface);
 }
@@ -509,12 +492,14 @@ p.note { padding: 14px 18px; }
 /* ===========================================================================
    §10 表格
    =========================================================================== */
-.table-scroll { overflow-x: auto; margin: 20px 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.table-scroll { overflow-x: auto; margin: 26px 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 14.8px; }
 th, td { border-bottom: 1px solid var(--line); padding: 11px 14px; text-align: left; vertical-align: top; }
 thead th { background: var(--surface-2); font-weight: 650; color: var(--fg); white-space: nowrap; }
 tbody tr { transition: background-color var(--t-fast) var(--ease); }
 tbody tr:hover { background: var(--surface-2); }
+/* 灰掉的「敬请期待」行不响应 hover(否则看着像能点) */
+tbody tr.is-coming-soon:hover { background: transparent; }
 tbody tr:last-child td { border-bottom: 0; }
 td code { font-size: .86em; }
 .td-center { text-align: center; white-space: nowrap; }
@@ -527,7 +512,7 @@ td code { font-size: .86em; }
 /* ===========================================================================
    §11 页内目录卡(教程页)
    =========================================================================== */
-.toc { margin: 24px 0; padding: 18px 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.toc { margin: 30px 0; padding: 22px 24px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 .toc > strong { display: block; margin-bottom: 8px; font-size: 13px; font-weight: 650; color: var(--muted); }
 .toc ol { columns: 2; column-gap: 32px; margin: 0; padding-left: 20px; font-size: 15px; }
 .toc li { margin: 4px 0; max-width: none; break-inside: avoid; }
@@ -538,11 +523,11 @@ td code { font-size: .86em; }
 /* ===========================================================================
    §12 折叠块(FAQ / 更新日志):高度过渡
    =========================================================================== */
-details { margin: 10px 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); transition: border-color var(--t) var(--ease); }
+details { margin: 14px 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); transition: border-color var(--t) var(--ease); }
 details[open] { border-color: var(--line-strong); }
 @media (hover: hover) and (pointer: fine) { details:hover { border-color: var(--line-strong); } }
 summary {
-  display: flex; gap: 12px; align-items: baseline; padding: 15px 18px;
+  display: flex; gap: 12px; align-items: baseline; padding: 18px 22px;
   cursor: pointer; font-weight: 650; font-size: 16px; line-height: 1.6;
   list-style: none; transition: color var(--t-fast) var(--ease);
 }
@@ -556,13 +541,13 @@ details[open] > summary::before { transform: rotate(45deg); }
 summary:hover { color: var(--accent); }
 summary .when { color: var(--muted); font-weight: 400; font-size: 13.5px; margin-left: auto; white-space: nowrap; }
 
-.details-body { padding: 0 18px 16px; }
+.details-body { padding: 0 22px 20px; }
 .details-body > :first-child { margin-top: 0; }
 .details-body > :last-child { margin-bottom: 0; }
 .details-body.is-animating { overflow: hidden; }
 
 /* ===========================================================================
-   §13 按钮:悬停位移 ≤2px;主按钮是页面上唯一一处渐变,并带光泽扫过
+   §13 按钮:悬停位移 ≤2px;主按钮是页面上唯一一处渐变(光泽扫过已于 2026-09 按用户要求删除)
    =========================================================================== */
 .btn {
   position: relative; overflow: hidden;
@@ -579,22 +564,44 @@ summary .when { color: var(--muted); font-weight: 400; font-size: 13.5px; margin
 .btn-primary { border-color: transparent; background-image: linear-gradient(180deg, var(--accent-top), var(--accent-bottom)); color: var(--accent-ink); }
 .btn-ghost { background: var(--surface); color: var(--fg); }
 
-/* 光泽扫过:只在 hover 时跑一次,且只动 transform */
-.btn-primary::after {
-  content: ""; position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(100deg, transparent 26%, rgba(255, 255, 255, .5) 50%, transparent 74%);
-  transform: translateX(-130%);
-}
-@media (hover: hover) and (pointer: fine) {
-  .btn:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); }
-  .btn-ghost:hover { background: var(--surface-2); border-color: var(--line-strong); }
-  .btn-primary:hover::after { animation: btnShine 760ms var(--ease-out); }
-}
-@keyframes btnShine { from { transform: translateX(-130%); } to { transform: translateX(130%); } }
+/* 点「下载」后出现的那行提示:用强调蓝 + 加粗,比旁边那些灰色说明行明显。
+   用双类名是为了压过 .btn-note 自身的 color(同类选择器下后写的才赢,顺序会变,所以直接提高优先级)。 */
+.btn-note.dl-tip { color: var(--accent); font-weight: 600; margin-top: 10px; }
 
-.btn-row, .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0 8px; }
-.cta-row { margin: 22px 0 0; }
-.btn-note { color: var(--muted); font-size: 13.6px; margin-top: 8px; max-width: 74ch; }
+/* 备用下载链接:常显下划线(站点链接默认只在 hover 时才有下划线,而这几个要一眼看出能点);
+   hover 再提亮一档(与站内其它链接的 hover 反馈同一套口径)。 */
+.dl-alt { text-decoration: underline; }
+.dl-alt:hover { color: var(--accent-top); }
+
+/* 2026-09 按用户反馈:按钮上的「光泽扫过」(`.btn-primary::after` + `@keyframes btnShine`)整段删除
+   —— 用户要求所有 hover 光效一律不要。按钮只剩"轻微上移 + 次级按钮底色变化"这点反馈。 */
+@media (hover: hover) and (pointer: fine) {
+  /* 同上:玻璃药丸的顶边高光也在 box-shadow 里,悬停不换它 */
+  .btn:hover { transform: translateY(-2px); }
+  /* 幽灵按钮 / 图标按钮:底色 + 边框色都变(只用颜色,不加高光、不加阴影) */
+  .btn-ghost:hover, .copy-btn:hover, .nav-toggle:hover { background-color: var(--hover-fill); border-color: var(--line-strong); }
+}
+
+/* 未开放/不可用的按钮(通用:`<button type="button" disabled aria-disabled="true">` + `.is-disabled`)
+   ——disabled 的按钮不派发 click、不可聚焦,所以"点了没有任何反应";这里只写视觉差异。
+   刻意不写 pointer-events:none,好让 cursor:not-allowed 真的显示出来。 */
+.btn.is-disabled,
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: .8;                  /* 半透明 = 明确的"未开放"(不压到看不清字) */
+  background-image: none;       /* 去掉主按钮的渐变,变成平面灰 */
+  background-color: var(--surface-2);
+  border-color: var(--line);
+  color: var(--fg-soft);        /* 文字仍保持可读,只是比正常按钮弱一档 */
+  box-shadow: none;
+}
+/* 禁用的按钮 hover **完全不反应**(底色/边框都不动,只有光标提示不可用) */
+.btn.is-disabled:hover,
+.btn:disabled:hover { transform: none; box-shadow: none; }
+
+.btn-row, .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin: 30px 0 14px; }
+.cta-row { margin: 28px 0 0; }
+.btn-note { color: var(--fg-soft); font-size: 13.6px; margin-top: 12px; max-width: 74ch; }
 
 /* ===========================================================================
    §14 徽标 / 页内 meta
@@ -628,7 +635,7 @@ summary .when { color: var(--muted); font-weight: 400; font-size: 13.5px; margin
 
 /* 长列表分区隔离:视口外的条目跳过渲染(licenses 页 15 条,页面很长) */
 .lic {
-  margin: 10px 0; padding: 18px 20px;
+  margin: 10px 0; padding: 22px 24px;
   border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
   box-shadow: var(--shadow-1);
   transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease), transform var(--t) var(--ease-out);
@@ -636,7 +643,8 @@ summary .when { color: var(--muted); font-weight: 400; font-size: 13.5px; margin
   contain-intrinsic-size: auto 150px;
 }
 @media (hover: hover) and (pointer: fine) {
-  .lic:hover { border-color: var(--line-strong); box-shadow: var(--shadow-2); transform: translateY(-2px); }
+  /* 同上:.lic 也按"玻璃面板 hover 不变"处理(此前是位移 + 换阴影) */
+  .lic:hover { border-color: var(--line-strong); }
 }
 .lic h3 { margin: 0 0 6px; font-size: 16.5px; }
 .lic dl { margin: 8px 0 0; display: grid; grid-template-columns: 92px 1fr; gap: 4px 14px; font-size: 14.5px; }
@@ -648,11 +656,7 @@ summary .when { color: var(--muted); font-weight: 400; font-size: 13.5px; margin
 @media (hover: hover) and (pointer: fine) { .names li:hover { transform: translateY(-2px); border-color: var(--accent-line); } }
 
 /* ===========================================================================
-   §16 滚动进入动画
-   位移 22px + 淡入,时长 380ms;同组 80ms 依次错开(最多 4 级)。
-   只在进入视口时触发一次,随即 unobserve。只动 transform / opacity。
-   "轻微缩放 0.98→1"**只给卡片**:实测把它套到全部入场元素(教程页 51 个)会让
-   每个元素在过渡期反复重绘,主线程耗时 +67ms;只给卡片就基本零成本。
+   §16 滚动进入动画:位移 22px + 淡入 380ms,进视口只触发一次;轻微缩放只给卡片。
    =========================================================================== */
 .has-js [data-reveal],
 .has-js [data-reveal-group] > * {
@@ -672,11 +676,8 @@ summary .when { color: var(--muted); font-weight: 400; font-size: 13.5px; margin
 .has-js [data-reveal-group] > .card.is-in { transform: translateY(0) scale(1); }
 
 /* ===========================================================================
-   §17 章节标题:遮罩上滑 + 逐词浮现 + 分隔线渐显
-   外层 .t-mask 负责"遮罩"(overflow 隐藏),内层 .t-rise 整块上滑,
-   再叠加每个词的小幅上移淡入 —— 全程只动 transform / opacity。
-   用 block 级包裹而不是给每个字加 overflow:后者会让行内块的基线退化成底边,
-   数字与单位会错位(实测过,截图可见)。
+   §17 章节标题:.t-mask 遮罩上滑 + 逐词上移淡入,只动 transform/opacity(用 block 级包裹,
+   而不是给每个字加 overflow —— 后者会让行内块基线塌成底边、数字错位)。
    =========================================================================== */
 h2 { position: relative; padding-top: 20px; }
 h2::before {
@@ -741,7 +742,7 @@ h2.is-in .wtok { opacity: 1; transform: none; }
 /* ===========================================================================
    §19 页脚 / 小工具类 / 响应式
    =========================================================================== */
-.site-footer { padding: 40px 0 44px; font-size: 14.2px; color: var(--muted); border-top: 1px solid var(--line); background: var(--surface); }
+.site-footer { padding: 48px 0 54px; font-size: 14.2px; color: var(--muted); border-top: 1px solid var(--line); background: var(--surface); }
 .footer-links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0 0 16px; padding: 0; list-style: none; }
 .footer-links li { margin: 0; max-width: none; }
 .footer-links a { color: var(--fg-soft); }
@@ -766,10 +767,10 @@ h2.is-in .wtok { opacity: 1; transform: none; }
 @media (max-width: 720px) {
   :root { --pad: 16px; }
   body { font-size: 16px; }
-  .content { padding-top: 36px; padding-bottom: 64px; }
-  h2 { margin-top: 46px; font-size: clamp(21px, 5.4vw, 27px); }
-  .grid, .grid-3 { grid-template-columns: 1fr; gap: 14px; }
-  .card { padding: 18px; }
+  .content { padding-top: 42px; padding-bottom: 72px; }
+  h2 { margin-top: 52px; font-size: clamp(21px, 5.4vw, 27px); }
+  .grid, .grid-3 { grid-template-columns: 1fr; gap: 18px; }
+  .card { padding: 22px; }
   .lic dl { grid-template-columns: 1fr; gap: 0; }
   .lic dt { margin-top: 8px; font-size: 13px; }
   summary { padding: 14px 15px; font-size: 15.5px; }
@@ -801,8 +802,8 @@ h2.is-in .wtok { opacity: 1; transform: none; }
   }
 
   .hero-inner > *, .hero .badges li, .aurora-blob, .wtok, .t-title-plain, .t-rise,
-  .page-progress > i, .aurora, .hero-inner,
-  [data-reveal], [data-reveal-group] > *, .card, .card::after {
+  .page-progress > i, .aurora, .hero-inner, .brand-logo,
+  [data-reveal], [data-reveal-group] > *, .card {
     opacity: 1 !important;
     transform: none !important;
     animation: none !important;
@@ -812,8 +813,8 @@ h2.is-in .wtok { opacity: 1; transform: none; }
   h2::before { transform: scaleX(1) !important; transition: none !important; }
   .flow > li::after { transform: scaleY(1) !important; }
   .flow > li::before { transition: none !important; }
-  .card::after, .btn-primary::after { display: none !important; }
-  .card:hover, .lic:hover, .names li:hover, .btn:hover, .card:hover .card-icon { transform: none !important; }
+  /* 卡片的跟随高光/扫光已在 2026-09 按用户要求删除;这里只剩其余位移类的兜底 */
+  .lic:hover, .names li:hover, .btn:hover { transform: none !important; }
 }
 
 /* ===========================================================================
@@ -836,16 +837,8 @@ h2.is-in .wtok { opacity: 1; transform: none; }
 }
 
 /* ===========================================================================
-   §22 功能演示:6 个自动循环播放的小动画(首页「功能概览」)
-   约束与做法
-     · 纯 CSS + 内联 SVG,零外部资源、零图片文件;
-     · 只动 `transform` / `opacity`(SVG 里同样是 transform / stroke-dashoffset),
-       不逐帧改 DOM、不动画大半径 filter;
-     · 每个演示 3.8~5.2s 一轮、`infinite`;**默认暂停,进入视口由 JS 加 `.is-live` 才播**,
-       离开视口立刻回到暂停(省电、也不参与滚动期开销);
-     · `prefers-reduced-motion: reduce` 下不播循环,而是**冻结在循环中间那一帧** ——
-       正好是"前后对比"的两态(见文件末尾的 @media 块);
-     · 配色、圆角、线宽全部复用 §1 的令牌,深浅两套自动跟随。
+   §22 功能演示:6 个自动循环的小动画(纯 CSS + 内联 SVG,零图片)。只动 transform/opacity;
+   默认暂停,进视口由 JS 加 .is-live 才播;reduce 下冻结在"前后对比"那一帧。
    =========================================================================== */
 .demo {
   position: relative;
@@ -1038,11 +1031,8 @@ h2.is-in .wtok { opacity: 1; transform: none; }
   46%, 80% { opacity: 0; }
   100%     { opacity: 1; }
 }
-/* 【2026-09-14 修「主体被裁」】原来只有 `position:absolute; inset:0`,没给尺寸 ——
-   而 SVG 是**替换元素**:width/height 为 auto 时按自身 viewBox 的宽高比取尺寸,inset 的拉伸对它无效。
-   实测:面板 299×76,SVG 被撑成 **297×152**(高 2 倍),圆头落在 33~84px(刚出下沿)、
-   身体落在 92~137px(完全在面板外被 overflow 裁掉)—— 用户看到的就是"只剩半个头、没有身子"。
-   显式给 100%/100% 后 SVG 铺满面板,再由默认 preserveAspectRatio=xMidYMid meet 把 152×78 等比居中放入。 */
+/* 【修「主体被裁」】SVG 是替换元素:width/height 为 auto 时按自身比例取尺寸,inset 拉伸对它无效。
+   实测面板 299×76 时 SVG 被撑成 297×152,身体落到面板外被裁;显式 100%/100% 后正常。 */
 .demo-cut .ct-subject { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; color: var(--accent); }
 .demo-cut .ct-marquee {
   position: absolute; left: 50%; top: 50%; z-index: 4;
@@ -1193,3 +1183,247 @@ h2.is-in .wtok { opacity: 1; transform: none; }
   /* 波形/抖动用 alternate,减动态下也停在中间高度 */
   .demo-audio .au-noisy i, .demo-audio .au-clean i { animation-direction: alternate !important; }
 }
+
+/* ===========================================================================
+   §22 首页「设备适配」卡档位行(纯静态 grid + 文字颜色,零动画零滤镜)。
+   不用 <table>:表格带 min-width:520px,窄屏只能靠容器横滚;两列 grid 天生不溢出。
+   =========================================================================== */
+.fit-list { margin: 12px 0 0; padding-left: 0; list-style: none; display: grid; gap: 7px; }
+/* 单独再写一条压过 `.card ul` 的 padding-left:20px / margin(它比 .fit-list 优先级高) */
+.card .fit-list { margin: 12px 0 0; padding-left: 0; }
+.card .fit-list > li {
+  margin: 0; display: grid; gap: 1px 12px;
+  grid-template-columns: 88px minmax(0, 1fr);   /* minmax(0,1fr):长串字符也撑不破右侧列 */
+  font-size: 14.5px; line-height: 1.65; color: var(--fg-soft);
+}
+.card .fit-list .fit-k { color: var(--muted); }
+.card .fit-list .fit-v { overflow-wrap: anywhere; }   /* 极窄屏兜底:长串不溢出 */
+@media (max-width: 420px) {
+  /* 窄屏:两列改单列纵向罗列,免得 88px 标签列把说明挤成窄条 */
+  .card .fit-list > li { grid-template-columns: 1fr; gap: 0; }
+  .card .fit-list .fit-k { font-size: 13.4px; }
+}
+
+/* §24 首屏 CTA:Windows 下载 + 手机版「敬请期待」灰按钮 + GitHub 图标 —— **三个入口排成一组**
+   (GitHub 图标不用 margin-left:auto 顶到整行最右,而是紧跟其后,间距即 .btn-row 的 12px gap) */
+.hero-cta { align-items: center; }
+.hero-cta button.btn { white-space: nowrap; }            /* 「手机版 · 敬请期待」不许在中间断行 */
+.hero-cta .btn-icon { padding: 12px 15px; }
+.hero-cta .btn-icon svg { width: 21px; height: 21px; }   /* 图标按钮 21px = 正文行高,与两个文字按钮同高 */
+@media (max-width: 720px) {
+  /* 手机上 .btn 会变 width:100%:两个文字按钮各占一行(同宽),图标按钮保持原大小并居中 */
+  .hero-cta { justify-content: center; }
+  .hero-cta .btn-icon { width: auto; }
+}
+
+/* ===========================================================================
+   §23 液态玻璃(顶栏 / 面板 / 全站流动背景)—— 说明与实测数据见 README「液态玻璃」行
+   硬预算:blur ≤14px(桌面 10 / 顶栏 12 / ≤720px 8~10),**绝不写进 animation/transition**;
+   **禁止玻璃套玻璃**;磨砂只给顶栏/章节条/提示块/表格容器/三列大卡;降级见 §23.5~§23.8。
+   =========================================================================== */
+
+/* ---------- §23.1 全站流动背景:底(纯黑)+ 4 层柔光(统一 --bg-mask 向四周淡出)+ 细节(§23.1b)+ 动效 ----------
+   底层就是 html 的 --body-bg;只动 transform/opacity;`z-index:-1` 要求 body 背景透明。 */
+body { background: transparent; }
+html::before, html::after,
+body::before, body::after {
+  content: ""; position: fixed; inset: -22%; z-index: -1; pointer-events: none;
+  background-repeat: no-repeat;
+  -webkit-mask-image: var(--bg-mask); mask-image: var(--bg-mask);
+  will-change: transform;
+}
+/* 1) 蓝灰(左上)+ 靛(右下);半径放大 → 过渡更柔 */
+html::before {
+  background-image:
+    radial-gradient(62% 58% at 16% 12%, var(--flow-1), transparent 82%),
+    radial-gradient(56% 52% at 86% 76%, var(--flow-2), transparent 84%);
+  animation: bgFlowA 32s var(--ease) infinite alternate;
+}
+/* 2) 灰紫(右上)+ 斜向极光带(很宽很淡,跟着这层的 40s 漂移走) */
+html::after {
+  background-image:
+    linear-gradient(112deg, transparent 36%, var(--aurora-band) 50%, transparent 64%),
+    radial-gradient(58% 50% at 82% 18%, var(--flow-3), transparent 84%);
+  animation: bgFlowB 40s var(--ease) infinite alternate;
+}
+/* 3) 中部蓝灰大斑(最快的一层,24s) */
+body::before {
+  background-image:
+    radial-gradient(66% 58% at 52% 46%, var(--flow-1), transparent 84%);
+  opacity: .75;
+  animation: bgFlowC 24s var(--ease) infinite alternate;
+}
+/* 4) 极淡丝光 + 一点青灰 */
+body::after {
+  background-image:
+    linear-gradient(104deg, transparent 40%, var(--flow-sheen) 50%, transparent 60%),
+    radial-gradient(52% 42% at 68% 88%, var(--flow-4), transparent 84%);
+  animation: bgFlowD 52s var(--ease) infinite alternate;
+}
+@keyframes bgFlowA {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  50%  { transform: translate3d(-5%, 4%, 0) scale(1.07); }
+  to   { transform: translate3d(4%, -3%, 0) scale(1.02); }
+}
+@keyframes bgFlowB {
+  from { transform: translate3d(0, 0, 0) scale(1.05); }
+  50%  { transform: translate3d(6%, -5%, 0) scale(1); }
+  to   { transform: translate3d(-4%, 5%, 0) scale(1.08); }
+}
+@keyframes bgFlowC {
+  from { transform: translate3d(0, 0, 0) scale(1.02); }
+  50%  { transform: translate3d(-6%, -4%, 0) scale(1.1); }
+  to   { transform: translate3d(5%, 4%, 0) scale(.98); }
+}
+@keyframes bgFlowD {
+  from { transform: translate3d(-3%, 0, 0); opacity: .7; }
+  50%  { transform: translate3d(2%, -2%, 0); opacity: 1; }
+  to   { transform: translate3d(4%, 2%, 0); opacity: .75; }
+}
+
+/* ---------- §23.1b 细节层:噪点 + 点阵(静态、不参与动画;元素由 site.js 建)----------
+   噪点 = 内联 data URI 的 SVG feTurbulence(stitchTiles 无缝平铺);点阵 = 两条 44px repeating-linear-gradient;
+   两者用 --detail-mask 淡出,四角因此只有 --body-bg 的纯黑。 */
+.bg-detail {
+  position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background-repeat: repeat;
+  -webkit-mask-image: var(--detail-mask); mask-image: var(--detail-mask);
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='128' height='128' filter='url(%23g)' opacity='.03'/%3E%3C/svg%3E"),
+    repeating-linear-gradient(90deg, var(--grid-line) 0 1px, transparent 1px 44px),
+    repeating-linear-gradient(0deg, var(--grid-line) 0 1px, transparent 1px 44px);
+  background-size: 128px 128px, auto, auto;
+}
+
+/* ---------- §23.2 顶栏玻璃(比卡片更厚;只改皮肤,滚动逻辑一行未动)---------- */
+.site-header {
+  background: var(--glass-header);
+  -webkit-backdrop-filter: blur(var(--glass-blur-strong)) saturate(170%);
+  backdrop-filter: blur(var(--glass-blur-strong)) saturate(170%);
+  /* 2026-09 按用户「卡片不要那么多边缘高光」:顶边亮线、底边高光、外圈投影**全部删除**,
+     浮层只靠 1px 底边压边(未吸顶时是 transparent,吸顶时见 .is-stuck)。 */
+  box-shadow: none;
+  transition: border-color var(--t) var(--ease), background-color var(--t) var(--ease);
+}
+.site-header.is-stuck {
+  background: var(--glass-header-stuck);
+  border-bottom-color: var(--glass-line);
+}
+.header-inner { position: relative; z-index: 1; }
+
+/* 页内章节条(6 个内页)与顶栏同材质:同样只留 1px 底边(基础规则里已有 border-bottom) */
+.page-toc {
+  background: var(--glass-header);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  box-shadow: none;
+}
+
+/* ---------- §23.3 面板玻璃 ----------
+   2026-09 按用户「卡片不要那么多边缘高光」:面板**不再有**外圈投影/顶边亮线/四周内高光/静态对角高光,
+   只剩「半透明底 + 模糊 + 1px 极淡边框(--glass-line)」,即干净的黑卡片。 */
+.card, .note, .table-scroll, .toc, details, .lic, .demo, .site-footer {
+  background-color: var(--glass-panel);
+  border-color: var(--glass-line);
+  box-shadow: none;
+}
+/* 卡片上那道"对角光扫过"(`.card::before` + hover 过渡)已整段删除,不要加回来 */
+/* 带色调的面板:ok / warn 淡色叠在玻璃底之上(否则被玻璃底盖掉) */
+.note-ok { background-image: linear-gradient(var(--ok-soft), var(--ok-soft)); }
+.note-warn { background-image: linear-gradient(var(--warn-soft), var(--warn-soft)); }
+/* 页脚是通栏大面板:给玻璃皮但不加模糊(面积太大,糊它不划算) */
+.site-footer { background-color: var(--glass-panel-2); }
+
+/* ---------- §23.9 背景层跟随光:很淡的冷色光,在玻璃**后面**跟着鼠标走(位置见 site.js §8)---------- */
+.pointer-glow {
+  position: fixed; left: 0; top: 0; width: 620px; height: 620px; margin: -310px 0 0 -310px;
+  z-index: -1; pointer-events: none; border-radius: 50%; opacity: 0;
+  background: radial-gradient(circle closest-side, var(--glow), transparent 72%);
+  transform: translate3d(-9999px, -9999px, 0);
+  transition: opacity var(--t) var(--ease);
+  will-change: transform;
+}
+.pointer-glow.is-on { opacity: 1; }
+@media (hover: none), (pointer: coarse), (prefers-reduced-motion: reduce) {
+  .pointer-glow { display: none !important; }
+}
+
+/* 磨砂只给这几类(见 §23 顶注) */
+.note, .table-scroll, .grid-3 > .card {
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(145%);
+  backdrop-filter: blur(var(--glass-blur)) saturate(145%);
+}
+/* `.demo` 在 `.card` 里 → 只上玻璃皮,不加模糊(避免玻璃套玻璃) */
+.demo { background-color: var(--glass-panel-2); }
+
+/* ---------- §23.4 按钮 / 药丸:轻微玻璃感(同样不加内高光,只用 1px 边框) */
+.btn-ghost, .copy-btn, .badge, .nav-toggle {
+  background-color: var(--glass-panel-2);
+  border-color: var(--glass-line);
+  box-shadow: none;
+}
+.badge-brand { border-color: var(--accent-line); }
+
+/* ---------- §23.10 可点卡片的 hover:只给"卡内有主入口按钮"的卡片(:has(.btn)),其余卡片静态 ---------- */
+@media (hover: hover) and (pointer: fine) {
+  /* 用独立的 translate(不用 transform):入场动画占着 transform 且优先级更高,translate 与它叠加 */
+  .card:has(.btn):hover { translate: 0 -2px; border-color: var(--line-strong); }
+  .card:has(.btn):hover h3 { color: var(--accent); }
+}
+.card:has(.btn):focus-within { border-color: var(--line-strong); }
+
+/* ---------- §23.5 ≤720px:降半径 + 减光斑层数 + 放慢周期 ---------- */
+@media (max-width: 720px) {
+  :root {
+    --glass-blur: 8px;                        /* 手机上模糊半径收到 8px(预算 8~10px) */
+    --glass-blur-strong: 10px;                /* 顶栏也收一档 */
+  }
+  /* 光斑 4 层 → 3 层,周期拉长(更省电更稳) */
+  html::after { display: none; }
+  html::before { animation-duration: 48s; }
+  body::before { animation-duration: 36s; }
+  body::after { animation-duration: 72s; }
+  /* 手机上关掉提示块/表格容器的模糊(每屏需采背景的层数只剩顶栏+大卡) */
+  .note, .table-scroll {
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+    background-color: var(--glass-panel-2);
+  }
+  /* 收起菜单展开:同一套玻璃皮(不加模糊,也不加高光) */
+  .has-js .site-nav.is-open {
+    background-color: var(--glass-header-stuck);
+    border-radius: var(--radius-sm);
+  }
+}
+
+/* ---------- §23.6 prefers-reduced-motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  html::before, html::after, body::before, body::after {
+    animation: none !important; transform: none !important;
+    will-change: auto !important; opacity: .7 !important;
+  }
+  .site-header, .page-toc, .card, .note, .table-scroll, .toc, details, .lic, .demo, .site-footer {
+    transition: none !important;
+  }
+}
+
+/* ---------- §23.7 不支持 backdrop-filter 的降级:给不透明替代底 ---------- */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  html, body { background: var(--body-bg); }                /* 恢复实底,盖住流动背景层 */
+  html::before, html::after, body::before, body::after { display: none; }   /* 降级时不要流动背景 */
+  .site-header, .page-toc { background: var(--header-bg); }
+  .card, .note, .table-scroll, .toc, details, .lic, .demo, .site-footer { background-color: var(--surface); }
+  .note-ok { background-image: linear-gradient(var(--ok-soft), var(--ok-soft)); }
+  .note-warn { background-image: linear-gradient(var(--warn-soft), var(--warn-soft)); }
+  .btn-ghost, .copy-btn, .badge, .nav-toggle { background-color: var(--surface); background-image: none; }
+}
+
+/* ---------- §23.8 打印 ---------- */
+@media print {
+  html::before, html::after, body::before, body::after, .bg-detail, .pointer-glow { display: none !important; }
+  .site-header, .page-toc, .card, .note, .table-scroll, .toc, details, .lic, .demo, .site-footer {
+    background: #fff !important;
+    -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+    box-shadow: none !important;
+  }
+}
+

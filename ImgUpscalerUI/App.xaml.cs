@@ -16,6 +16,25 @@ namespace ALHPro
 
         /// <summary>主窗口引用(供 FileOpenPicker 初始化等使用)。</summary>
         public static Window? MainWindow { get; private set; }
+
+        /// <summary>当前进程是否以管理员权限运行。
+        /// 【为什么要判它】Windows 的 UIPI 会**静默禁止**不同完整性级别进程之间的拖放:软件一旦以管理员身份运行,
+        /// 从资源管理器(普通权限)把文件拖进来就**毫无反应,也不会有任何报错** —— 用户实测反馈
+        /// "一部分人的电脑拖放素材不行",绝大多数就是这一条。本程序自身**不需要**管理员权限
+        /// (app.manifest 是 asInvoker,设置全写在 %LOCALAPPDATA%\ALHPro),所以这不影响任何功能,只影响拖放。
+        /// 判出来是为了**明确告知用户**(见 MainPage 的启动提示),不是去绕过系统限制 —— 那个限制绕不过去。</summary>
+        public static bool IsRunningElevated { get; } = ComputeIsRunningElevated();
+
+        private static bool ComputeIsRunningElevated()
+        {
+            try
+            {
+                using var id = System.Security.Principal.WindowsIdentity.GetCurrent();
+                return new System.Security.Principal.WindowsPrincipal(id)
+                    .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+            }
+            catch { return false; }   // 读不到就当普通权限:宁可不提示,也不误报
+        }
         private static bool _fatalDialogShown;   // 全局异常提示只弹一次(防刷屏)
         private static System.Threading.Mutex? _singleInstance;   // 单实例锁(Mutex,进程存活期间持有;退出自动释放)
 
@@ -89,6 +108,18 @@ namespace ALHPro
                         AppLogger.Warn("⚠ 检测到程序目录存在 d3dcompiler_47.dll(该 DLL 由系统自带最新版,程序目录的旧文件会冲突,导致部分机器启动报'无法定位程序输入点')——建议删除此文件后重启程序(本软件无需此文件)");
                 }
                 catch { }
+
+                // 管理员权限:拖放会被 Windows 静默禁掉(UIPI)—— 写进每一份诊断日志,便于用户反馈时一眼看出。
+                // 每份日志都带这条,是因为"拖不动"的用户往往不会主动说自己是用管理员开的。
+                try
+                {
+                    if (IsRunningElevated)
+                        AppLogger.Warn("⚠ 本程序正以【管理员权限】运行:Windows 会禁止从资源管理器拖入文件(UIPI),"
+                            + "表现为「拖进去没反应、也没有任何报错」。想用拖放请关闭后以普通权限重新打开"
+                            + "(快捷方式 → 属性 → 兼容性 → 取消勾选「以管理员身份运行」);不想重启也可以点各页面的「添加」按钮选文件。"
+                            + "本程序不需要管理员权限,处理功能完全不受影响。");
+                }
+                catch { }
             }
             catch (Exception ex) { AppLogger.Error("系统诊断记录失败", ex); }
         }
@@ -122,22 +153,50 @@ namespace ALHPro
             }
         }
 
-        /// <summary>清理临时文件残留(系统 %TEMP% 与用户自定义临时目录,imgup_*/alh_* 前缀,绝不碰用户文件)。
-        /// 返回 (删除目录数, 删除文件数, 释放字节数),供"立即清理"反馈。</summary>
-        internal static (int dirs, int files, long bytes) CleanupTempDirs()
+        /// <summary>清理临时文件残留(系统 %TEMP%、用户自定义临时目录、本软件历史用过的临时根目录;imgup_*/alh_* 前缀,绝不碰用户文件)。
+        /// 返回 (删除目录数, 删除文件数, 释放字节数, 是否因"任务处理中"整轮跳过),供"立即清理"反馈。</summary>
+        internal static (int dirs, int files, long bytes, bool skipped) CleanupTempDirs()
         {
             int dirs = 0, files = 0;
             long bytes = 0;
-            var roots = new System.Collections.Generic.List<string> { Path.GetTempPath() };
-            // 【修复 换盘/换路径后残留】自动指定路径可能落在任意"剩余最大固定盘"根目录;换盘/换自定义路径后旧盘旧目录的
-            // imgup_*/alh_* 残留不会被扫到 → 把所有固定盘根目录 + 本软件历史用过的临时根目录一并加入扫描
-            // (imgup_*/alh_* 前缀唯一,绝不碰用户文件;扫描顺序:固定盘根 → 历史根 → 当前自定义 → 当前自动)。
-            try { foreach (var d in System.IO.DriveInfo.GetDrives()) if (d.DriveType == System.IO.DriveType.Fixed && d.IsReady) { var r = d.RootDirectory.FullName; if (!roots.Contains(r)) roots.Add(r); } } catch { }
-            try { foreach (var r in ALHPro.EngineService.UsedTempRoots) if (!string.IsNullOrWhiteSpace(r) && Directory.Exists(r) && !roots.Contains(r)) roots.Add(r); } catch { }
-            try { var cfg = AppSettings.TempDir; if (!string.IsNullOrWhiteSpace(cfg) && Directory.Exists(cfg)) roots.Add(cfg); } catch { }
+            // 【修复 关窗误删正在用的临时目录 · 2026-09-16 用户实测】处理长视频时关窗,这里会把后台线程
+            // 正在写的 imgup_video_* 工作目录整个删掉 → 线程下一次碰帧就 DirectoryNotFoundException(frames_final),
+            // 日志里看着像"任务莫名失败"(用户截图里的"卡住"就是这一串的下游)。
+            // 有任务在跑就整轮跳过(含文件),残留留给下一次启动清理 —— 启动期有单实例 Mutex,是最安全的清理时机
+            // (见 OnLaunched 的后台启动任务里那次 CleanupTempDirs)。
+            if (EngineService.AnyProcessing)
+            {
+                AppLogger.Info("清理临时文件残留:当前有处理任务在跑 → 整轮跳过(绝不删正在使用的临时帧/临时目录;残留留给下次启动清理)");
+                return (0, 0, 0, true);
+            }
+            // 【修复 一打开软件就闪退 · 2026-09-16 用户实测】旧版这里把"所有固定盘根目录"也塞进了扫描列表
+            // (DriveInfo.GetDrives() → C:\ / D:\ / E:\),接着对每个 root 做 EnumerateDirectories。
+            // 而本机【枚举 D:\ 盘根】会让任意 .NET 8 进程直接 AccessViolation(退出码 0xC0000005)硬崩:
+            // CLR 打的是 "Fatal error." —— 走的是 fail-fast 直接杀进程,外层 try/catch【根本拦不住】
+            // (独立控制台程序复刻该写法,3/3 全崩;事件日志里的栈正是
+            //  FileSystemEnumerator.MoveNext → App.CleanupTempDirs → OnLaunched 的后台启动任务)。
+            // 所以这里【绝不再枚举盘根】:下面每个候选目录都要过 NormalizeCleanupRoot 把关,
+            // 盘根(X:\)/空串/不存在/解析失败一律不放行 —— 宁可漏清几个残留,也绝不闪退。
+            // 残留并不需要扫盘根:本软件写临时文件只会落在 %TEMP%、<盘>\ALHProTemp(见 EngineService
+            // "盘根不可写"那处修复)或用户自定义目录,全都由 UsedTempRoots/TempRoot/TempDir 覆盖。
+            var roots = new System.Collections.Generic.List<string>();
+            void AddCleanupRoot(string? p)
+            {
+                try
+                {
+                    var n = NormalizeCleanupRoot(p);
+                    if (n != null && !roots.Contains(n, StringComparer.OrdinalIgnoreCase)) roots.Add(n);
+                }
+                catch { }
+            }
+            AddCleanupRoot(Path.GetTempPath());
+            // 【修复 换盘/换路径后残留】自动指定路径可能落在任意"剩余最大固定盘"的 <盘>\ALHProTemp;
+            // 换盘/换自定义路径后,旧盘旧目录的 imgup_*/alh_* 残留不会被扫到 → 历史用过的根目录一并扫。
+            try { foreach (var r in ALHPro.EngineService.UsedTempRoots) AddCleanupRoot(r); } catch { }
+            try { AddCleanupRoot(AppSettings.TempDir); } catch { }
             // 【修复 崩溃/强杀后残留 200 多 G】TempRoot 会自动选"剩余最大盘",可能与 %TEMP% 不同盘——
             // 处理中途被防火墙杀/未响应强杀后,workDir(imgup_video_*) 残留在本盘不会被上面清到,累积成 200 多 G。
-            try { var tr = EngineService.TempRoot; if (!string.IsNullOrWhiteSpace(tr) && Directory.Exists(tr) && !roots.Contains(tr)) roots.Add(tr); } catch { }
+            try { AddCleanupRoot(EngineService.TempRoot); } catch { }
             foreach (var root in roots)
             {
                 try
@@ -154,6 +213,14 @@ namespace ALHPro
                     {
                         try { var fi = new FileInfo(f); bytes += fi.Length; File.Delete(f); files++; } catch { }
                     }
+                    // 【修复 imgup_* 文件永远清不掉】上面只删目录,而 imgup_ 开头还有一批【文件】
+                    // (imgup_rhythm_*.raw 节奏重采样、imgup_exif_*.png 方向转正、imgup_vk_/vkout_ 自检、
+                    //  imgup_thumb_/encprobe_/decprobe_ 等)→ 旧版只 EnumerateDirectories ⇒ 这些文件一直堆在临时盘
+                    // (实测某机器 _pipe_verify\temp 里躺了 19 个 imgup_rhythm_*.raw、5MB,从 09-13 攒到 09-16)。
+                    foreach (var f in Directory.EnumerateFiles(root, "imgup_*"))
+                    {
+                        try { var fi = new FileInfo(f); bytes += fi.Length; File.Delete(f); files++; } catch { }
+                    }
                     foreach (var f in Directory.EnumerateFiles(root, ".alh_pro_w.tmp"))
                     {
                         try { var fi = new FileInfo(f); bytes += fi.Length; File.Delete(f); files++; } catch { }
@@ -161,7 +228,22 @@ namespace ALHPro
                 }
                 catch { }
             }
-            return (dirs, files, bytes);
+            return (dirs, files, bytes, false);
+        }
+
+        /// <summary>把关"这个目录能不能拿去扫残留",返回规范化后的目录(供去重),不放行时返回 null。
+        /// 【盘根(X:\)一律不放行】—— 见 CleanupTempDirs 里的注释:本机枚举 D:\ 盘根会让进程
+        /// AccessViolation 硬崩,而且 CLR 是 fail-fast,外层 try/catch 拦不住,只能在源头掐掉。
+        /// 空串/解析失败同样不放行(宁可漏清,绝不闪退)。</summary>
+        private static string? NormalizeCleanupRoot(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return null;
+            var full = Path.GetFullPath(path).TrimEnd('\\', '/');
+            if (full.Length == 0) return null;
+            var driveRoot = Path.GetPathRoot(full)?.TrimEnd('\\', '/');
+            if (!string.IsNullOrEmpty(driveRoot) && full.Equals(driveRoot, StringComparison.OrdinalIgnoreCase)) return null;
+            if (!Directory.Exists(full)) return null;
+            return full;
         }
 
         private static long DirSize(string dir)
@@ -487,6 +569,8 @@ namespace ALHPro
             MainWindow = window;
 
             // 关闭窗口时:杀掉所有处理子进程(防止引擎孤儿)+ 清理裁剪/转码/临时文件
+            // 【2026-09-16】CleanupTempDirs 内部自带「处理中整轮跳过」闸门(见该方法开头),关窗时不会
+            // 再删掉后台线程正在用的 imgup_video_* —— 那种删法会让任务以一句 DirectoryNotFoundException 收场。
             window.Closed += (_, _) =>
             {
                 AppLogger.Info("========== 应用退出 ==========");
@@ -522,6 +606,11 @@ namespace ALHPro
                 try { AppLogger.Cleanup(); } catch { }
                 try { LogSystemDiagnostics(); } catch { }
                 try { EngineService.CleanupTempFiles(); } catch { }   // 清理上次遗留临时文件
+                // 【把临时残留清理挪到启动期 · 2026-09-16】以前只在关窗时清;关窗那次若撞上"正在处理"
+                // 会被闸门整轮跳过(见 CleanupTempDirs),清理就再没有第二个时机了 → 残留会一路攒下去。
+                // 启动期是最安全的清理时机:单实例 Mutex 已确保没有另一个实例在用同一批临时文件;
+                // 被强杀/崩溃留下的 imgup_video_* 也只有在这里才清得掉(旧实现"关窗清理"永远碰不到它们)。
+                try { CleanupTempDirs(); } catch { }
                 try { VulkanCheck.LoadOrRun(); } catch { }             // Vulkan 自检(首次)
                 try { CroppedStorage.Clean(); } catch { }              // 清理历史裁剪临时文件
             }));

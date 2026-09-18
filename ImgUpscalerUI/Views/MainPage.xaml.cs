@@ -63,6 +63,11 @@ public sealed partial class MainPage : Page
                     await ShowUpdateLogAsync(fromStartup: true);
             }
             catch { }
+            // 【2026-09-16 用户裁决:不做任何"管理员权限 / 拖放"的界面提示】
+            // 一度想过在这里弹一次"提权会让拖放失效"的说明,用户明确否掉:「这种提示没有人要」。
+            // 所以这里**刻意什么都不做**:提权状态只写诊断日志(App.xaml.cs 启动时那一条),
+            // 用户界面上一个字的提示都不加 —— 排查"拖不动"时去日志里看就够了。
+            // (契约测试 UiConsistencyTests 会断言这个弹窗没有被加回来。)
             // 【图片预设换代提醒不单独弹窗】参数调整导致"老预设数值没变、效果变了"这件事,
             // 只写在更新公告(RELEASE_NOTES.md 的当前版本那一节)里 —— 用户本来就会看更新说明,
             // 再弹一个只讲这一个滑杆的窗是二次打扰(用户明确要求:弹窗不要有,公告里写了就行)。
@@ -558,25 +563,37 @@ public sealed partial class MainPage : Page
     }
 
     // ---------- 更新检查 ----------
-    /// <summary>更新检查主循环(后台,不阻塞前台):启动立即查一次,之后每 30 分钟再查(次数少但有)。
+    /// <summary>更新检查主循环(后台,不阻塞前台)。【2026-09-17 按用户要求整改】
+    /// 用户原话:"可以弹并且启动的时候要检查,并且弹除非用户关闭则此次使用不弹,
+    /// 并且首次启动要一直检查直到有弹窗或者是当前就是最新版"。
     /// 逻辑:
-    /// ① 设置勾选「不再提示更新」→ 全程不显示;
-    /// ② 启动时若【已记录待提示的新版】(上次查到但没等到 10 分钟/没显示)→ 立即显示,不再等;
-    /// ③ 否则检查:发现新版 → 记录 PendingUpdateTag + 【延迟10分钟】再显示(给作者留传包时间);
-    /// ④ 已最新 → 无感。</summary>
+    /// ① 设置勾选「不再提示更新」→ 全程不显示(30 分钟一轮);
+    /// ② 启动先看有没有上次记录待提示的新版 → 有就直接显示;
+    /// ③ 否则检查:【发现新版立即弹】—— 原来故意等 10 分钟(给作者留上传时间),
+    ///    结果横幅会在用户正常使用时突然冒出来(用户真机反馈);现在查到就弹,点 ✕ 本次运行不再弹;
+    /// ④ 检查失败(国内常连不上 GitHub)→ 【一直重试】直到"弹出更新提示"或"确认已是最新"为止,
+    ///    前 10 次每 90 秒、之后每 5 分钟(不无限高频打扰网络);拿到结论后才回到 30 分钟例行检查。</summary>
     private async Task CheckUpdateSilentAsync()
     {
+        int failStreak = 0;
         while (true)
         {
+            bool decided = false;   // 本轮是否拿到"确定结论"(发现新版 / 已是最新)
             try
             {
-                if (AppSettings.HideUpdatePopup) { AppSettings.PendingUpdateTag = ""; await Task.Delay(TimeSpan.FromMinutes(30)).ConfigureAwait(false); continue; }
-                // 上次已记录待提示的新版(启动直接显示,不用再等 10 分钟)
+                if (AppSettings.HideUpdatePopup)
+                {
+                    AppSettings.PendingUpdateTag = "";
+                    await Task.Delay(TimeSpan.FromMinutes(30)).ConfigureAwait(false);
+                    continue;
+                }
+                // 上次已记录待提示的新版(启动直接显示,不用再等)
                 if (!string.IsNullOrWhiteSpace(AppSettings.PendingUpdateTag))
                 {
                     string pendingTag = AppSettings.PendingUpdateTag;
-                    AppSettings.PendingUpdateTag = ""; AppSettings.Save();   // 已取走,横幅显示成功后会标记不重复
+                    AppSettings.PendingUpdateTag = ""; AppSettings.Save();   // 已取走
                     DispatcherQueue.TryEnqueue(() => ShowUpdateBar(pendingTag));
+                    decided = true;
                 }
                 else
                 {
@@ -584,25 +601,31 @@ public sealed partial class MainPage : Page
                     if (r is { HasNew: true })
                     {
                         var (_, tag, _) = r.Value;
-                        AppSettings.PendingUpdateTag = tag; AppSettings.Save();   // 记录:本次延迟10分钟显示;没显示到则下次启动直接显示
-                        // 延迟 10 分钟再显示(给作者留上传时间);【测试模式 ALH_FORCE_UPDATE=1 跳过延迟,立即显示】
-                        if (Environment.GetEnvironmentVariable("ALH_FORCE_UPDATE") != "1")
-                        {
-                            try { await Task.Delay(TimeSpan.FromMinutes(10)).ConfigureAwait(false); } catch { return; }
-                        }
-                        if (!string.IsNullOrWhiteSpace(AppSettings.PendingUpdateTag))
-                        {
-                            string t = AppSettings.PendingUpdateTag;
-                            AppSettings.PendingUpdateTag = ""; AppSettings.Save();
-                            DispatcherQueue.TryEnqueue(() => ShowUpdateBar(t));
-                        }
+                        AppSettings.PendingUpdateTag = tag; AppSettings.Save();
+                        // 【改】查到就弹,不再延迟 10 分钟(否则横幅会在用户正常使用时突然出现)
+                        DispatcherQueue.TryEnqueue(() => ShowUpdateBar(tag));
+                        decided = true;
                     }
-                    // 已最新/失败 → 无感(不反复弹;下次周期再查)
+                    else if (r is not null)
+                    {
+                        AppLogger.Info($"[更新] 已是最新(v{UpdateChecker.CurrentVersion}),本轮检查结束");
+                        decided = true;
+                    }
+                    // r == null = 网络不通/接口失败 → decided 保持 false,下面重试
                 }
             }
             catch { }
-            try { await System.Threading.Tasks.Task.Delay(TimeSpan.FromMinutes(30)).ConfigureAwait(false); }
-            catch { return; }
+            if (decided)
+            {
+                failStreak = 0;
+                try { await Task.Delay(TimeSpan.FromMinutes(30)).ConfigureAwait(false); } catch { return; }
+                continue;
+            }
+            // 没拿到结论 → 一直重试(用户要求)
+            failStreak++;
+            int waitSec = failStreak <= 10 ? 90 : 300;
+            AppLogger.Info($"[更新] 第 {failStreak} 次检查没拿到结果(网络不通?),{waitSec} 秒后重试");
+            try { await Task.Delay(TimeSpan.FromSeconds(waitSec)).ConfigureAwait(false); } catch { return; }
         }
     }
 
@@ -615,7 +638,7 @@ public sealed partial class MainPage : Page
             if (_updatePromptShownThisRun) return;   // 本次运行已提醒过(用户本次点过关闭),不再重复显示
             _updatePromptShownThisRun = true;
             string cur = UpdateChecker.CurrentVersion;
-            UpdateBarText.Text = $"发现新版本 {latestTag}(当前 v{cur}) — 建议更新以获得新功能与修复。更新免费,可在 GitHub 或网盘下载;更新不会丢失您的设置。";
+            UpdateBarText.Text = $"发现新版本 {latestTag}(当前 v{cur}) — 建议更新以获得新功能与修复。更新免费,官网 / GitHub / 网盘三个渠道任选;更新不会丢失您的设置。";
             UpdateBar.Visibility = Visibility.Visible;
         }
         catch { }
@@ -710,41 +733,21 @@ public sealed partial class MainPage : Page
         }
     }
 
-    /// <summary>把远程广告图设为 AdImage;加载失败(404/网络错)自动换多个国内镜像重试,仍失败才回退本地占位图。
-    /// 解决国内 GitHub raw 图被墙:图片 URL 是 raw.githubusercontent.com(作者在 adN.json 里写的),
-    /// 直连常常超时/被墙。这里先试原图,失败换 gh-proxy/ghproxy/jsDelivr 镜像,再失败回退占位图(绝不裂图)。</summary>
-    private void SetAdImage(string? url)
+    /// <summary>把远程广告图设为 AdImage。【2026-09-17 用户要求:图片也要显示出来】
+    /// 走 AdFetcher.FetchImageToTempAsync —— 先 api.github.com contents(本机唯一稳定的通道),再 jsDelivr/镜像,
+    /// 拿到字节写进本地缓存文件再交给 BitmapImage(本地文件一定能显示,不会出现"网络图加载不出");
+    /// 全部失败才隐藏图框(不裂图)。卡片文字先渲染,图片后到就后显示。</summary>
+    private async void SetAdImage(string? url)
     {
-        var ph = AdPlaceholderImage();
-        // 图片走【多镜像】:原图 → 多个国内镜像,任一成功即用;全部失败回退占位图
-        var candidates = AdFetcher.ToMirrorUrls(url ?? "").ToList();
-        LoadAdImage(candidates, ph, 0);
-    }
-
-    /// <summary>按候选清单依次尝试加载广告图;全部失败则隐藏图片框(不显示大占位块),卡片只剩文字,干净。</summary>
-    private void LoadAdImage(System.Collections.Generic.List<string> candidates, BitmapImage? fallback, int idx)
-    {
-        if (idx >= candidates.Count)
-        {
-            try { AdImageFrame.Visibility = Visibility.Collapsed; } catch { }   // 全失败:隐藏图框,不占位
-            return;
-        }
         try
         {
-            var bmp = new BitmapImage(new Uri(candidates[idx]));
-            bmp.ImageFailed += (_, _) =>
-            {
-                // 失败 → 换下一个候选(镜像);所有失败 → 隐藏图框
-                DispatcherQueue.TryEnqueue(() => LoadAdImage(candidates, fallback, idx + 1));
-            };
+            if (string.IsNullOrWhiteSpace(url)) { AdImageFrame.Visibility = Visibility.Collapsed; return; }
+            var local = await AdFetcher.FetchImageToTempAsync(url);
+            if (string.IsNullOrWhiteSpace(local)) { AdImageFrame.Visibility = Visibility.Collapsed; return; }
+            AdImage.Source = new BitmapImage(new Uri(local));
             AdImageFrame.Visibility = Visibility.Visible;
-            AdImage.Source = bmp;
         }
-        catch
-        {
-            // 构造失败(URL 非法)→ 换下一个候选
-            LoadAdImage(candidates, fallback, idx + 1);
-        }
+        catch { try { AdImageFrame.Visibility = Visibility.Collapsed; } catch { } }
     }
 
     /// <summary>渲染当前轮播的广告卡(必须在 UI 线程)。数据为空或用户已关/本次已关 → 隐藏。</summary>
@@ -1050,6 +1053,35 @@ public sealed partial class MainPage : Page
 
     private void UpdateBarClose_Click(object sender, RoutedEventArgs e)
         => UpdateBar.Visibility = Visibility.Collapsed;
+
+    /// <summary>在更新结果后面追加三个下载渠道(官网 / GitHub / 网盘)。已是最新版本时也显示 ——
+    /// 用户反馈"检查更新后面没有官网下载",而官网是国内最稳的下载入口。</summary>
+    private void AddDownloadLinks(Microsoft.UI.Xaml.Controls.TextBlock host)
+    {
+        void Add(string text, string url)
+        {
+            var link = new Microsoft.UI.Xaml.Documents.Hyperlink
+            {
+                NavigateUri = new Uri(url),
+                UnderlineStyle = Microsoft.UI.Xaml.Documents.UnderlineStyle.Single,
+            };
+            link.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = text });
+            host.Inlines.Add(link);
+            host.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "   " });
+        }
+        Add("官网下载", WebsiteUrl);
+        Add("GitHub下载", UpdateChecker.ReleasePageUrl);
+        Add("网盘下载", NetDiskUrl);
+    }
+
+    /// <summary>「官网下载」:打开官方网站(alhpro.cn)。2026-09-16 用户要求更新提示条并列三个渠道:
+    /// 官网 / GitHub / 网盘 —— 国内直连 GitHub 常常打不开,官网与网盘是更稳的两条路。</summary>
+    private void UpdateBarSite_Click(object sender, RoutedEventArgs e)
+    {
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(WebsiteUrl) { UseShellExecute = true }); }
+        catch { /* 打开失败忽略 */ }
+        UpdateBar.Visibility = Visibility.Collapsed;
+    }
 
     private void UpdateBarNetDisk_Click(object sender, RoutedEventArgs e)
     {
@@ -1661,12 +1693,12 @@ public sealed partial class MainPage : Page
         "一、本软件收集的信息\n" +
         "本软件不收集您的个人信息。以下说明权且作为补充:软件内所有图片/视频/音频处理均在您本机完成,处理过程中产生的临时文件在处理完成后自动清理,不会上传到任何服务器。\n\n" +
         "二、联网行为(会自动发生的仅前三项,全部列在下面;第 4 项仅在您主动点击时发生)\n" +
-        "前三项是本软件会自动发生的全部联网行为。它们的共同点是:只从公开仓库取回公开的文本或图片,请求走 HTTPS,请求头里只有一个固定的程序标识与软件版本号(形如 ALHPro/1.3.6);不涉及您的文件内容、文件名、路径、画面/音频,也不涉及显卡机型等设备信息。\n" +
+        "前三项是本软件会自动发生的全部联网行为。它们的共同点是:只从公开仓库取回公开的文本或图片,请求走 HTTPS,请求头里只有一个固定的程序标识与软件版本号(形如 ALHPro/1.4.0);不涉及您的文件内容、文件名、路径、画面/音频,也不涉及显卡机型等设备信息。\n" +
         "1. 检查更新:启动软件时自动访问 GitHub 官方接口 api.github.com 查询是否有新版本(直连不通时改用镜像 gh-proxy.com 转发同一个接口),只读取公开的最新版本号;检测到新版本会提示您,不自动下载、不自动安装。\n" +
         "2. 广告素材拉取:启动软件时、以及运行期间定时刷新,按顺序尝试 cdn.jsdelivr.net、gh-proxy.com、ghproxy.net、raw.githubusercontent.com 四个地址(任一成功即停),只取回公开的广告文案与图片(adN.json 及对应广告图)用于界面广告位展示;广告不含个性化推荐,不读取您的设备标识、处理记录或使用行为,也不向广告方回传任何数据。\n" +
         "3. 界面提示文案拉取:启动软件时、以及运行期间约每 10 分钟,访问与上一条相同的一组地址,只取回公开的纯文本提示文件(hintN.json,其中可能包含一条可点击的官方链接)用于底部状态栏的提示条;提示条每 30 秒在本机轮换,轮换本身不联网。该过程同样是只读拉取,不回传您的任何信息。\n" +
         "4. 问卷入口:仅当您主动点击问卷链接时,才由浏览器打开问卷页面,由该问卷平台按其自身政策处理(本软件不代为提交、不读取结果)。\n" +
-        "另:除上述四项外,只有当您主动点击「去下载」「网盘下载」「查看更新详情」等链接(由默认浏览器打开对应网页),或您主动下载模型包时才会联网;这些完全由您的操作触发,不点击、不下载就不会发生,之后的一切由对应网站的规则决定。\n" +
+        "另:除上述四项外,只有当您主动点击「官网下载」「GitHub下载」「网盘下载」「查看更新详情」等链接(由默认浏览器打开对应网页),或您主动下载模型包时才会联网;这些完全由您的操作触发,不点击、不下载就不会发生,之后的一切由对应网站的规则决定。\n" +
         "不传输什么:以上联网行为均为只读拉取,不上传您的文件内容(图片/视频/音频,以及处理过程中产生的中间帧、临时文件)、文件名、文件路径、画面或音频数据,也不上传显卡型号、显存、驱动版本、CPU、内存、系统版本等设备信息;本软件不做使用行为统计,没有埋点、没有第三方统计 SDK。\n" +
         "补充:广告与提示文案托管在公开代码仓库及其公共镜像 / CDN 上,这些服务在技术上会看到请求来自哪台机器(IP 与请求头),这是任何网络请求都无法避免的;我们能控制的是——请求里不含您的文件信息、设备信息或使用记录。\n" +
         "失败会怎样:任一联网失败(断网、内网、GitHub 不可达)均静默忽略,改用软件内置的兜底内容(内置提示文案 / 隐藏广告位),不影响任何功能与画质。\n\n" +
@@ -1775,39 +1807,23 @@ public sealed partial class MainPage : Page
             var r = await UpdateChecker.CheckAsync();
             if (r is null)
             {
-                updateResult.Text = "网络或 GitHub 不通(国内直连慢/被限制),建议:①使用加速器或镜像 ②稍后重试 ③直接在 GitHub 仓库页面查看最新 Release";
+                updateResult.Text = "网络或 GitHub 不通(国内直连慢/被限制),建议:①使用加速器或镜像 ②稍后重试 ③直接在 GitHub 仓库页面查看最新 Release,或走官网下载";
                 updateBtn.IsEnabled = true;
                 return;
             }
             var (hasNew, tag, _) = r.Value;
-            if (hasNew)
+            // 【2026-09-17 用户反馈:检查更新后面没有官网下载】
+            // 三个下载渠道现在**无论如何都显示**(已是最新也显示):官网最稳、GitHub 常打不开、网盘兜底。
+            updateResult.Inlines.Clear();
+            updateResult.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
             {
-                updateResult.Inlines.Clear();
-                updateResult.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = $"发现新版本 {tag} · " });
-                // GitHub下载(跳 GitHub Release 页)
-                var ghLink = new Microsoft.UI.Xaml.Documents.Hyperlink
-                {
-                    NavigateUri = new Uri(UpdateChecker.ReleasePageUrl),
-                    UnderlineStyle = Microsoft.UI.Xaml.Documents.UnderlineStyle.Single,
-                };
-                ghLink.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "GitHub下载" });
-                updateResult.Inlines.Add(ghLink);
-                updateResult.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "   " });
-                // 网盘下载(跳百度网盘)
-                var ndLink = new Microsoft.UI.Xaml.Documents.Hyperlink
-                {
-                    NavigateUri = new Uri(NetDiskUrl),
-                    UnderlineStyle = Microsoft.UI.Xaml.Documents.UnderlineStyle.Single,
-                };
-                ndLink.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "网盘下载" });
-                updateResult.Inlines.Add(ndLink);
-            }
-            else
-            {
-                updateResult.Text = "已是最新版本 ✓";
-            }
+                Text = hasNew ? $"发现新版本 {tag} · " : "已是最新版本 ✓ · "
+            });
+            AddDownloadLinks(updateResult);
             updateBtn.IsEnabled = true;
         };
+        // 打开关于页时就说明"启动时已自动检查",消除"软件好像不会主动检查更新"的疑虑
+        updateResult.Text = $"启动时已自动检查更新(当前 v{UpdateChecker.CurrentVersion});点右边可立即再查一次";
         updateRow.Children.Add(updateBtn);
         updateRow.Children.Add(updateResult);
         content.Children.Add(updateRow);
@@ -2839,14 +2855,18 @@ public sealed partial class MainPage : Page
         {
             try
             {
-                var (dirs, files, bytes) = App.CleanupTempDirs();
-                AppLogger.Info($"已清理临时文件残留:目录 {dirs} 个、文件 {files} 个,释放 {bytes / 1048576.0:0.#} MB");
+                var (dirs, files, bytes, skipped) = App.CleanupTempDirs();
+                AppLogger.Info(skipped
+                    ? "清理临时文件残留:已整轮跳过(有处理任务在跑,不删正在使用的临时文件/临时目录)"
+                    : $"已清理临时文件残留:目录 {dirs} 个、文件 {files} 个,释放 {bytes / 1048576.0:0.#} MB");
                 var dlg = new ContentDialog
                 {
-                    Title = "清理完成",
+                    Title = skipped ? "已跳过清理" : "清理完成",
                     Content = new TextBlock
                     {
-                        Text = $"已清理:目录 {dirs} 个 · 文件 {files} 个,释放 {bytes / 1048576.0:0.#} MB\n当前临时位置:{(string.IsNullOrWhiteSpace(AppSettings.TempDir) ? "自动" : AppSettings.TempDir)}",
+                        Text = skipped
+                            ? "当前有任务正在处理,已跳过这次清理。\n临时帧/临时目录正在被任务使用,删掉会让这一单白跑(以前关窗时删正在用的目录,任务就会报一句「找不到路径」)。\n任务结束后再点一次「立即清理」即可。"
+                            : $"已清理:目录 {dirs} 个 · 文件 {files} 个,释放 {bytes / 1048576.0:0.#} MB\n当前临时位置:{(string.IsNullOrWhiteSpace(AppSettings.TempDir) ? "自动" : AppSettings.TempDir)}",
                         TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
                     },
                     CloseButtonText = "好的",
@@ -3287,6 +3307,39 @@ public sealed partial class MainPage : Page
                 "https://www.ifdian.net/group/eb504216a38e11f18b2852540025c377") { UseShellExecute = true });
         }
         catch { }
+    }
+
+    /// <summary>官方网站。写死在这里是因为软件源码里本来没有官网域名(只有 GitHub 链接),
+    /// 官网 = alhpro.cn(与 website/ 目录同一份站)。</summary>
+    private const string WebsiteUrl = "https://alhpro.cn/";
+
+    /// <summary>打开官方网站(用默认浏览器)。左上角整块与左下角「官方网站」按钮**共用这一处** ——
+    /// 两个入口各写一份 <c>Process.Start</c> 迟早会漂移(改一处漏一处),所以真正干活只留这一个方法。</summary>
+    private void OpenWebsite()
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(WebsiteUrl) { UseShellExecute = true });
+        }
+        catch { /* 打开失败忽略:机器没有默认浏览器等情况不该弹错打断使用 */ }
+    }
+
+    /// <summary>左上角「图标 + 软件名」整块 → 打开官方网站(用户 2026-09-16 要求)。</summary>
+    private void NavLogo_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e) => OpenWebsite();
+
+    /// <summary>左下角「官方网站」按钮 → 与左上角同一个去处(用户 2026-09-16 追加)。</summary>
+    private void Website_Click(object sender, RoutedEventArgs e) => OpenWebsite();
+
+    /// <summary>鼠标移到左上角整块 → 轻微提亮,提示「这里能点」。</summary>
+    private void NavLogo_PointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        try { NavLogo.Opacity = 0.7; } catch { }
+    }
+
+    /// <summary>鼠标移开 → 恢复原样。</summary>
+    private void NavLogo_PointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        try { NavLogo.Opacity = 1.0; } catch { }
     }
 
     private void ShowCoffeeCard()

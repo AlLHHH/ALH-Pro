@@ -249,6 +249,74 @@ public static class SafeRender
         return null;
     }
 
+    /// <summary>【诊断 · 2026-09-16 超分变慢排查】超分阶段采样 GPU 利用率。
+    /// 【为什么要有它】真机排查"超分怎么变慢了"时发现:同一台机器、同一个引擎 exe / 模型 / 参数,
+    /// 超分每帧耗时能在 68~246 ms 之间摆动,而日志里**没有任何一个数**能区分
+    /// 「GPU 没吃饱(宿主侧落盘/编码是瓶颈)」和「GPU 算力本身不够」—— 只能一遍遍手工跑基准去猜。
+    /// 有了它,下次慢的时候 `超分实测` 那行会直接带上利用率区间,一眼就能定性。
+    /// 【代价与边界】走 nvidia-smi(与空闲显存探测同一个工具与候选路径,不引新依赖),每 1.5 秒采一次;
+    /// 非 NVIDIA / 驱动异常 / 一次都没采到 → Summary() 返回 null,调用方跳过这段,**绝不影响处理**。
+    /// 后台线程只读一个数字,不写任何处理状态、不改任何控制流。
+    /// 兜底:最多跑 90 分钟就自己停(防调用方漏 Dispose)。只进日志文件,**不上界面**。</summary>
+    public static GpuUtilSampler? StartGpuUtilSampler() => GpuUtilSampler.TryStart();
+
+    /// <summary>GPU 利用率采样器(见 <see cref="StartGpuUtilSampler"/>):用 using 包住要观测的阶段即可。</summary>
+    public sealed class GpuUtilSampler : IDisposable
+    {
+        private readonly System.Threading.CancellationTokenSource _cts = new();
+        private readonly System.Collections.Generic.List<double> _samples = new();
+        private readonly object _lock = new();
+        private GpuUtilSampler() { }
+
+        internal static GpuUtilSampler? TryStart()
+        {
+            try
+            {
+                var s = new GpuUtilSampler();
+                _ = System.Threading.Tasks.Task.Run(s.LoopAsync);
+                return s;
+            }
+            catch { return null; }
+        }
+
+        private async System.Threading.Tasks.Task LoopAsync()
+        {
+            var deadline = DateTime.UtcNow.AddMinutes(90);
+            while (!_cts.IsCancellationRequested && DateTime.UtcNow < deadline)
+            {
+                try
+                {
+                    var line = RunNvidiaSmi("--query-gpu=utilization.gpu --format=csv,noheader,nounits");
+                    if (line != null && double.TryParse(line, System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out var v) && v >= 0)
+                    {
+                        lock (_lock) _samples.Add(v);
+                    }
+                }
+                catch { }
+                try { await System.Threading.Tasks.Task.Delay(1500, _cts.Token).ConfigureAwait(false); }
+                catch { return; }   // 取消 → 结束
+            }
+        }
+
+        /// <summary>"65~81%(均 73%,12 次采样)";一次都没采到(非 NVIDIA/驱动异常)返回 null。</summary>
+        public string? Summary()
+        {
+            double[] a;
+            lock (_lock) a = _samples.ToArray();
+            if (a.Length == 0) return null;
+            double min = a[0], max = a[0], sum = 0;
+            foreach (var v in a) { if (v < min) min = v; if (v > max) max = v; sum += v; }
+            return $"{min:0}~{max:0}%(均 {sum / a.Length:0}%,{a.Length} 次采样)";
+        }
+
+        public void Dispose()
+        {
+            try { _cts.Cancel(); } catch { }
+            try { _cts.Dispose(); } catch { }
+        }
+    }
+
     /// <summary>显存总量(GB):①nvidia-smi(NVIDIA 最准)②DXGI DedicatedVideoMemory(唯一跨厂商真值,
     /// AMD/Intel 独显不再被低估)③注册表 qwMemorySize(核显走这条:报告的是共享内存配额,即核显真实预算)
     /// ④保守 4.0。兜底值从 8.0 降到 4.0 是有意的:全探测失败时低估只让分块变小(慢但安全),
@@ -402,10 +470,18 @@ public static class SafeRender
         // 退回上面已按 75% 折减的有效显存门槛(v≥6 / v≥10),宁可不加这一层也不要按假数据判。
         bool vramOk2 = !FreeVramMeasured || FreeVramGB >= 3;
         bool vramOk3 = !FreeVramMeasured || FreeVramGB >= 8;
+        // 【2026-09-16 实测修正 · 门槛容差】显存墙 = 总量×0.75 是**算出来的**,换算误差会正好卡在门槛上:
+        // RTX 4060 Laptop 8GB 实报 8188 MiB → 7.996GB → ×0.75 = **5.997**,与门槛 6.0 只差 3 MB,
+        // 却让整张 8GB 卡掉回"单路"(真机日志:批号严格 1→2→3→4→5→6 串行,引擎一个接一个)。
+        // 而两路并行是实测有收益的:同一批 20 帧(1080p→2x、生产同参数),
+        //   单路 5.47s(3.66 帧/秒) vs 两路各 20 帧共 6.6s(5.97 帧/秒)= **1.63 倍**,且输出 0 黑帧。
+        // 所以显存档位比较带 0.05G(50 MB)容差:挡的仍然是"真不够"(6GB 卡墙为 4.5,落在容差之外),
+        // 挡的不该是"MiB→GB 的换算零头"。这条只影响墙落在 [5.95,6.0) 的卡 —— 也就是标称 8GB 这一档。
+        const double vramEps = 0.05;
         // 2 路:显存 ≥6G(实测到空闲时再要求空闲 ≥3G)、内存 ≥16G、核数 ≥8
-        bool two = r >= 16 && v >= 6 && vramOk2 && cores >= 8;
+        bool two = r >= 16 && v >= 6 - vramEps && vramOk2 && cores >= 8;
         // 3 路:仅 High 且更宽裕才上(显存 ≥10G、实测空闲 ≥8G、内存 ≥24G、核数 ≥16)
-        bool three = Profile == DeviceProfile.High && r >= 24 && v >= 10 && vramOk3 && cores >= 16;
+        bool three = Profile == DeviceProfile.High && r >= 24 && v >= 10 - vramEps && vramOk3 && cores >= 16;
         if (three) return 3;
         if (two) return 2;
         return 1;

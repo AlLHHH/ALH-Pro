@@ -83,6 +83,61 @@ public class EtaTextTests
         Assert.Equal("", EtaText.ForRemaining(50, 100, 0.5));    // 净耗时不足 1 秒:不给数字
     }
 
+    // ===== 2026-09-16:按"最近吞吐量"估算(用户反馈「整体预计时间不要乱写」)=====
+
+    /// <summary>**核心回归**:开局那批很慢(含引擎进程启动/模型加载)时,旧口径会把这段开销永久摊进平均速度 ⇒ 剩余时间偏大;
+    /// 按最近吞吐量估算必须收敛到真实速度。
+    /// 构造:1000 帧里前 200 帧花了 200 秒(每帧 1 秒,含开局开销),之后 100 帧只花 10 秒(每帧 0.1 秒)
+    /// ⇒ 真实剩余 ≈ 800 帧 × 0.1 = 80 秒;而累计平均口径会给出 (800)×(210/300) = 560 秒(差 7 倍)。</summary>
+    [Fact]
+    public void Recent_throughput_beats_cumulative_average_after_slow_start()
+    {
+        double cumulative = EtaText.RemainingSeconds(300, 1000, 210);
+        Assert.Equal(490, cumulative, 0);   // 旧口径:剩余 700 帧 × (210 秒 ÷ 300 帧) = 490 秒,被开局那 200 秒拖死
+
+        double byRate = EtaText.RemainingSecondsByRate(300, 1000, sampleDone: 200, sampleElapsedSec: 200,
+            cumulativeElapsedSec: 210, sampleWindowFrames: 60);
+        // 最近速率 = (300-200)/(210-200) = 10 帧/秒;权重 = min(300/60,1)×0.8 = 0.8
+        // ⇒ 混合速率 0.8×10 + 0.2×(300/210) ≈ 8.29 帧/秒 ⇒ 剩余 700 帧 ≈ 84 秒
+        // (与"真实 70~80 秒"同量级;旧口径是 490 秒)
+        Assert.InRange(byRate, 40, 130);
+        Assert.True(byRate < cumulative / 3, $"按最近速率应显著小于累计口径:rate={byRate} cum={cumulative}");
+    }
+
+    /// <summary>没有可用采样点时,必须退化成累计口径(不引入新的抖动源);不满足前置条件时返回 -1(不给数字)。</summary>
+    [Fact]
+    public void Falls_back_to_cumulative_and_keeps_the_same_guards()
+    {
+        double cum = EtaText.RemainingSeconds(100, 500, 50);
+        double same = EtaText.RemainingSecondsByRate(100, 500, sampleDone: 0, sampleElapsedSec: 0,
+            cumulativeElapsedSec: 50);
+        Assert.Equal(cum, same, 6);
+
+        Assert.Equal(-1, EtaText.RemainingSecondsByRate(3, 500, 0, 0, 50));      // done<4:不给数字
+        Assert.Equal(-1, EtaText.RemainingSecondsByRate(100, 500, 0, 0, 0.5));   // 净耗时<1 秒:不给数字
+        Assert.Equal(-1, EtaText.RemainingSecondsByRate(500, 500, 0, 0, 50));    // 已做完
+    }
+
+    /// <summary>剩余批数的"每批引擎启动"固定开销必须计入(旧口径只算每帧成本,批数多时系统性偏乐观)。</summary>
+    [Fact]
+    public void Fixed_per_batch_overhead_is_added_to_the_estimate()
+    {
+        double without = EtaText.RemainingSecondsByRate(100, 500, 0, 0, 50);
+        double with5 = EtaText.RemainingSecondsByRate(100, 500, 0, 0, 50, fixedOverheadSec: 5 * 1.15);
+        Assert.Equal(without + 5.75, with5, 6);
+    }
+
+    /// <summary>文案档位与用词与旧口径完全一致(只换数据来源,不换说法)。</summary>
+    [Fact]
+    public void By_rate_text_uses_the_same_bands()
+    {
+        // 剩余 100 帧、最近速率 10 帧/秒 ⇒ 约 10 秒
+        Assert.Equal("本阶段预计还剩 10 秒",
+            EtaText.ForRemainingByRate(100, 200, sampleDone: 0, sampleElapsedSec: 0, cumulativeElapsedSec: 10));
+        Assert.False(EtaText.ContainsVagueSeconds(
+            EtaText.ForRemainingByRate(100, 200, 0, 0, 10)));
+    }
+
     [Fact]
     public void No_band_ever_contains_vague_seconds()
     {

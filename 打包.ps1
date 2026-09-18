@@ -97,8 +97,10 @@ Say '→ 正在编译 installer.iss(约 3~6 分钟)...'
 if ($LASTEXITCODE -ne 0) { Fail "ISCC 编译失败(退出码 $LASTEXITCODE)" }
 
 # ===== ⑤ 产物报告 =====
-$latest = Get-ChildItem $root -Filter 'ALHPro_v*_本体_*.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-if (!$latest) { Fail '编译成功但没找到产物 ALHPro_v*_本体_*.exe' }
+# 【2026-09-17】产物名规则改为固定 ALHPro_v{版本}_Setup.exe:① 不带时间戳;② **必须纯 ASCII** ——
+# GitHub Release 的附件名会剥掉非 ASCII 字符(实测"本体"被吃掉,上传后变成 ALHPro_v1.4.0_.exe ⇒ 链接 404)。
+$latest = Get-ChildItem $root -Filter 'ALHPro_v*_Setup.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (!$latest) { Fail '编译成功但没找到产物 ALHPro_v*_Setup.exe' }
 $hash = (Get-FileHash $latest.FullName -Algorithm SHA256).Hash
 Say ''
 Say '✅ 打包完成'
