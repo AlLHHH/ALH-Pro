@@ -180,7 +180,11 @@
                     <TextBlock Text="控制" Style="{StaticResource SectionTitle}"/>
                     <Button x:Name="RunBtn" Content="开始处理" HorizontalAlignment="Stretch"
                             Style="{StaticResource AccentButtonStyle}" IsEnabled="False" Click="RunBtn_Click"/>
+                    <!-- 【2026-09-16 用户反馈】「强制结束」在其它页面都是红色危险按钮
+                         (视频页 / 抠图页 / 图片页都用 Background="#E5484D" Foreground="White"),
+                         只有音频页漏了这一行 —— 于是它看起来像个普通灰按钮,不像"能停任务"的那个。 -->
                     <Button x:Name="CancelBtn" Content="强制结束" HorizontalAlignment="Stretch"
+                            Background="#E5484D" Foreground="White"
                             IsEnabled="False" Click="CancelBtn_Click"/>
                     <ProgressBar x:Name="AudioProgress" Minimum="0" Maximum="100" Value="0"/>
                     <TextBlock x:Name="AudioStatus" Text="" Style="{StaticResource HintText}" TextWrapping="Wrap"/>

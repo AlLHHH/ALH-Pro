@@ -58,6 +58,80 @@ public static class EtaText
     public static bool ContainsVagueSeconds(string? text)
         => text != null && text.Contains("几秒", System.StringComparison.Ordinal);
 
+    /// <summary>【2026-09-16 用户反馈「整体预计时间不要乱写」】按**最近的实际吞吐量**估算剩余秒数。
+    ///
+    /// 【为什么要另开一条口径】旧口径(RemainingSeconds)用的是"本阶段开始至今的**累计平均**速度":
+    /// 超分/补帧都是**按批起引擎进程**,第一批量里含着"进程启动 + 模型加载 + 首帧着色器预热"
+    /// (实测每批固定开销约 1.15 秒、地板 0.75~0.92 秒;头几帧更慢)——这段开局开销会被永久摊进平均速度,
+    /// 而平均速度不会回补 ⇒ **开局给出一个明显偏大的剩余时间**,用户看到的就是"数字乱跳/一会儿一个样"。
+    /// 改用"最近 N 帧的吞吐量"外推后:开局之后很快收敛到真实速度,机器快慢变化时也跟着变。
+    ///
+    /// 【平滑与安全】完全用瞬时速率会抖,故与累计速率按权重混合:已处理帧越多,越信"最近速率"
+    /// (见 RecentWeight:低于一窗时只用累计速率 = 等价于旧口径,不引入新的抖动源)。
+    /// </summary>
+    /// <param name="done">本阶段已完成帧数。</param>
+    /// <param name="total">本阶段总帧数。</param>
+    /// <param name="sampleDone">最近一次采样的已完成帧数(0 = 还没采到,回退累计口径)。</param>
+    /// <param name="sampleElapsedSec">采样点当时的净耗时(秒)。</param>
+    /// <param name="cumulativeElapsedSec">本阶段累计净耗时(秒,含开局开销)。</param>
+    /// <param name="sampleWindowFrames">采样窗口(帧);越大越平滑、越小越灵敏。</param>
+    /// <param name="fixedOverheadSec">剩余工作里还要再付的固定开销(如剩余批数 × 每批启动);≤0 = 不考虑。</param>
+    /// <returns>剩余秒数;无法估算返回 -1(与 RemainingSeconds 同约定)。</returns>
+    public static double RemainingSecondsByRate(double done, double total, double sampleDone,
+        double sampleElapsedSec, double cumulativeElapsedSec, double sampleWindowFrames = 60,
+        double fixedOverheadSec = 0)
+    {
+        if (!double.IsFinite(done) || !double.IsFinite(total) || !(total > 0) || done >= total) return -1;
+        if (!(done >= 4) || !(cumulativeElapsedSec >= 1.0)) return -1;      // 头几帧含加载/初始化,不给数字
+        double remaining = total - done;
+
+        // 累计速率(帧/秒)——旧口径的同源量;任何情况下都作为兜底
+        double rateCum = done / cumulativeElapsedSec;
+        if (!(rateCum > 0) || !double.IsFinite(rateCum)) return -1;
+
+        // 最近速率:只在"采样点有效且确有推进"时才算
+        double rateRecent = 0;
+        if (double.IsFinite(sampleDone) && double.IsFinite(sampleElapsedSec)
+            && sampleDone > 0 && sampleDone < done && sampleElapsedSec > 0.2)
+        {
+            double r = (done - sampleDone) / (sampleElapsedSec > 0 ? (cumulativeElapsedSec - sampleElapsedSec) : 0);
+            if (double.IsFinite(r) && r > 0) rateRecent = r;
+        }
+
+        double rate;
+        if (rateRecent > 0)
+        {
+            // 权重随"已处理帧数 / 采样窗口"增长,上限 0.8:窗口没铺满时更信累计值(避免开局抖动),
+            // 铺满之后以最近速率为主 —— 这样"最近变快了"能立刻反映出来。
+            double w = Math.Clamp(done / Math.Max(1, sampleWindowFrames), 0, 1) * 0.8;
+            rate = w * rateRecent + (1 - w) * rateCum;
+        }
+        else rate = rateCum;
+
+        if (!(rate > 0) || !double.IsFinite(rate)) return -1;
+        double remain = remaining / rate + Math.Max(0, fixedOverheadSec);
+        return double.IsFinite(remain) ? remain : -1;
+    }
+
+    /// <summary>与 <see cref="RemainingSecondsByRate"/> 同口径的文案(档位与用词完全复用 ForRemaining 的规则)。</summary>
+    public static string ForRemainingByRate(double done, double total, double sampleDone,
+        double sampleElapsedSec, double cumulativeElapsedSec, string? upcoming = null,
+        double sampleWindowFrames = 60, double fixedOverheadSec = 0)
+    {
+        try
+        {
+            double remainSec = RemainingSecondsByRate(done, total, sampleDone, sampleElapsedSec,
+                cumulativeElapsedSec, sampleWindowFrames, fixedOverheadSec);
+            if (remainSec < 0) return "";
+            if (remainSec < 1)
+                return string.IsNullOrEmpty(upcoming) ? " · 本阶段即将结束" : $" · 本阶段即将结束(随后还有{upcoming})";
+            if (remainSec < 60) return $"本阶段预计还剩 {(int)remainSec} 秒";
+            if (remainSec < 3600) return $"本阶段预计还剩 {remainSec / 60:0.#} 分钟";
+            return $"本阶段预计还剩 {remainSec / 3600:0.#} 小时";
+        }
+        catch { return ""; }
+    }
+
     /// <summary>当前阶段的剩余秒数(界面侧算"整片剩余下限"用):按【阶段内已完成比例】与【阶段净耗时】外推 ——
     /// 与阶段内 ETA 同一个公式,但数据来自界面自己(阶段起点 + fine 百分比区间),
     /// 不必去解析本地化的文案(中文单位/四舍五入都会让解析失真)。

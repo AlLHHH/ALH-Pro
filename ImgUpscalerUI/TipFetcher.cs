@@ -69,10 +69,14 @@ public static class TipFetcher
         return result.ToArray();
     }
 
-    /// <summary>拉取单个提示文件原文(按实测可靠性排序:jsDelivr 最稳→gh-proxy→ghproxy→raw 最后;任一成功即返回)。
+    /// <summary>拉取单个提示文件原文。【2026-09-17】与广告同一套取数策略:
+    /// ① 先走 GitHub API Contents(本机唯一被网关放行的通道)→ ② jsDelivr → ③ gh-proxy → ④ ghproxy → ⑤ raw。
     /// 文件确实不存在(404)→ 返回 null(供调用方停止自适应拉取);其它失败返回空串(继续尝试下一端点)。</summary>
     private static async Task<string?> FetchFileRawAsync(string file)
     {
+        var viaApi = await AdFetcher.FetchViaApiAsync("hint", file).ConfigureAwait(false);
+        if (viaApi is null) return null;            // API 说没有 → 该编号不存在
+        if (viaApi.Length > 0) return viaApi;       // API 成功 → 直接用
         string[] urls =
         {
             $"https://cdn.jsdelivr.net/gh/AlLHHH/ALH-Pro@main/hint/{file}",
@@ -85,8 +89,10 @@ public static class TipFetcher
         {
             try
             {
-                _http.DefaultRequestHeaders.UserAgent.ParseAdd($"ALHPro/{UpdateChecker.CurrentVersion}");
-                var json = await _http.GetStringAsync(url).ConfigureAwait(false);
+                // 【2026-09-17 修】原来每次请求前都 DefaultRequestHeaders.UserAgent.ParseAdd(...)
+                // → 请求头里堆几十个 UserAgent 把请求搞坏;User-Agent 已在共享客户端里设过一次。
+                // 客户端也改成复用 AdFetcher 那个(已配 TLS 1.2 / 只连 IPv4 / 7 秒超时)。
+                var json = await AdFetcher.Http.GetStringAsync(url).ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(json)) return json;
             }
             catch (HttpRequestException hre)
@@ -100,7 +106,7 @@ public static class TipFetcher
                 if (!_tipWarnedOnce)
                 {
                     _tipWarnedOnce = true;
-                    AppLogger.Info("[提示] 在线提示暂时拉取不到(网络波动或访问受限);不影响软件任何功能。");
+                    // 【2026-09-17 用户要求】静默:提示拉不到就用内置默认,不写日志、不打扰
                 }
             }
         }

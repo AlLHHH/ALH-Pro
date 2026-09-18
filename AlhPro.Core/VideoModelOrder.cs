@@ -18,18 +18,27 @@ namespace AlhPro.Core;
 ///                                 1=general-x4v3  (5MB, 0.458)
 ///                                 2=wdn-x4v3      (5MB, 0.460)
 ///                                 3=x4plus-anime  (9MB, 3.85)
-///                                 4=x4plus        (41MB, 15.145, 超慢稳居最后)
+///                                 4=x4plus        (41MB, 15.87, 超慢稳居最后)
 ///     ⇒ 映射:2→3、3→4、4→2(4 是 Rev2 里刚加的 wdn,它要挪到第 2 位),0/1 不变。
+///   · Rev3 → Rev4(2026-09-15):**末尾追加**两个自训的 2x 模型(权重 pth→ncnn,用户定名见下),
+///                              老 5 项的位置一个都不动
+///                               → 0=animevideov3, 1=general-x4v3, 2=wdn-x4v3, 3=x4plus-anime, 4=x4plus,
+///                                 5=alhpro-real2x(现实向)  6=alhpro-game2x(游戏向)
+///     ⇒ 映射:**恒等**(0..4 原地不动;老文件不可能存过 5/6,越界兜底那条路照旧归 0)。
+///       之所以能恒等,是因为这次只"追加"、不"换位" —— 与 Rev2 期间加 wdn 的手法相同,
+///       也是本仓库认可的最安全的加模型方式:老用户存的序号含义不变,升级后模型不会跳。
+///      【命名 · 用户 2026-09-15 定】界面文字只许叫「游戏向」「现实向」,不出现"实验"字样;
+///      括号里写实测速度(口径与数值见 AlhPro.Core.ExperimentalEsrgan)。
 ///
 /// 【Rev2 期间的 wdn 为什么在 4 位】该模型先以"末尾追加"的方式上线(追加不动老序号,最安全);
 /// 用户随后要求按速度/体积排,才引出 Rev3 这次真正的换位。</summary>
 public static class VideoModelOrder
 {
     /// <summary>当前下拉顺序对应的 Rev。改顺序必须 +1,并同步 XAML 与 <c>UpEsrganModelNames</c>。</summary>
-    public const int CurrentRev = 3;
+    public const int CurrentRev = 4;
 
-    /// <summary>下拉项数量(0..Count-1)。</summary>
-    public const int Count = 5;
+    /// <summary>下拉项数量(0..Count-1)。Rev4 = 原 5 项 + 末尾两个自训模型(现实向 / 游戏向)。</summary>
+    public const int Count = 7;
 
     /// <summary>把某个 Rev 下保存的序号换算成当前 Rev 的序号。
     /// <paramref name="rev"/> 为该数据写入时的 Rev(读出来即 <c>ModelOrderRev</c>)。
@@ -57,6 +66,15 @@ public static class VideoModelOrder
             // Rev3:插入 wdn-x4v3 并按速度/体积重排 —— 2→3、3→4、4(=wdn)→2
             m = m switch { 2 => 3, 3 => 4, 4 => 2, _ => m };
             rev = 3;
+        }
+        if (rev < 4)
+        {
+            // Rev4:末尾追加两个自训模型(5=alhpro-real2x 现实向、6=alhpro-game2x 游戏向)⇒ **恒等映射**,老序号含义不变。
+            // 【为什么这里什么都不做也要留一段】① 版本号必须前进:不写 rev=4 的话,文件每次都"版本落后",
+            //   每次启动都重写一次设置文件;② 留一段空的映射是在明确声明"这次没有换位",
+            //   下一个人要加模型时能照着这段抄(本仓库的既有约定:Rev 与映射一一对应,注释里写清为什么恒等)。
+            // ⚠ 若日后有人把新模型**插到中间**(而不是追加),这里必须补上真正的换位映射,否则老序号会静默指向别的模型。
+            rev = 4;
         }
         newRev = rev;
         // 越界值(手改坏/未来版本回退)保守归到 0(animevideov3,最快最省那一支),不猜中间项

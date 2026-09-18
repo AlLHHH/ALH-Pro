@@ -1,4 +1,4 @@
-; ALH Pro 安装脚本 (Inno Setup 6.3+)
+﻿; ALH Pro 安装脚本 (Inno Setup 6.3+)
 ; ⚠ 需要 Inno Setup 6.3 或更高版本(首次版本(2021)起支持 DownloadTemporaryFile / CreateDownloadPage)
 ;
 ; 用法:
@@ -12,7 +12,7 @@
 ;   不勾选 = 之后手动下载模型包,解压到 程序目录\engines\rembg\ 即可。
 
 #define MyAppName "ALH Pro"
-#define MyAppVersion "1.3.6"
+#define MyAppVersion "1.4.0"
 #define MyAppExeName "ALHPro.exe"
 ; 【构建时间戳】(ISPP 在编译时求值):用于让用户一眼分辨"同名同版本的不同构建"。
 ; 起因:同一个 1.3.4 出了多次安装包,名字完全一样、大小只差几十 MB,用户无法确认手上是哪一个。
@@ -64,7 +64,13 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/max
 SolidCompression=yes
 OutputDir=.\
-OutputBaseFilename=ALHPro_v{#MyAppVersion}_本体_{#BuildStamp}
+; 【2026-09-17 产物名规则】固定 ALHPro_v{版本}_Setup.exe ——
+; ① 不带构建时间戳(用户要求;同名覆盖,官网/GitHub 的下载链接在每个版本内稳定);
+; ② 必须是**纯 ASCII**:GitHub Release 的附件名会**剥掉非 ASCII 字符**(实测把 ALHPro_v1.4.0_本体.exe
+;    上传后变成 ALHPro_v1.4.0_.exe,链接直接 404),所以用 Setup 而不是 本体 ——
+;    也与历史版本一致(v1.3.5 的附件名就是 ALHPro_v1.3.5_Setup.exe)。
+; ③ 构建时刻仍记在 VersionInfoDescription 里(文件属性可见,供排障)。
+OutputBaseFilename=ALHPro_v{#MyAppVersion}_Setup
 SetupIconFile=assets\icon.ico
 ; 不用管理员权限(普通用户直接装;默认用户目录,无需提权)——配合 {userpf} 无权限冲突
 PrivilegesRequired=lowest

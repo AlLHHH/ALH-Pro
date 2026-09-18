@@ -92,6 +92,15 @@ public static class FrameInspect
         return true;
     }
 
+    /// <summary>【2026-09-16 修复】单帧版豁免判定(带**邻域容差**):这一帧被判黑,能不能用「素材本身是黑场」解释?
+    /// 传入的是"同号源帧 / 前一帧 / 后一帧"三者各自的黑场结论(由调用方按**与输出侧同一个判据**算好)。
+    /// 【为什么需要邻域】引擎有前后帧缓冲、`-n` 又是均分时间步 ⇒ "输出帧号 → 源帧号"的映射本就有 ±1 偏移。
+    /// 真机实测(200 帧 1440p×4x 一段):被判黑的输出帧,其**同号**源帧近黑 94.9%/93.2%/93.0%(刚在 95% 线下),
+    /// 而**邻居源帧是黑的** ⇒ 只查同号会把它误判成 GPU 故障,整段白重算(ONNX 比 ncnn 慢一二十倍)。
+    /// 【安全边界】三者都是 false(越界/读不出)时必须返回 false(= 按故障处理):宁可白算一遍,不许把真故障放行。</summary>
+    public static bool IsFrameJustifiedByDarkSource(bool sameNumberIsBlack, bool previousIsBlack, bool nextIsBlack)
+        => sameNumberIsBlack || previousIsBlack || nextIsBlack;
+
     /// <summary>【任务 O1 · 2026-09-13】引擎"退出码 0 却整帧全黑"的判定(纯逻辑,可单测)。
     /// 判据 = 【输出是缺陷帧】且【同一张的输入(源帧)不是缺陷帧】:
     /// 源帧本来就是黑场(片头黑场/淡入淡出/夜戏)时不算引擎故障,否则就是引擎静默出了坏片。

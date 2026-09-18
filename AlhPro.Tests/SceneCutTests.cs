@@ -36,9 +36,18 @@ public class SceneCutTests
     [Fact]
     public void Detect_without_lapvar_uses_diff_only_and_is_conservative()
     {
-        var diffs = new List<double> { 1.0, 30.0, 60.0 };   // 30 过阈值但拿不到拉普拉斯 → 保守算切;60 强切
+        // 30 过阈值但拿不到拉普拉斯 → 保守算切;60 强切。
+        // 【2026-09-15 改】原来这两处切点是**相邻**的(1 与 2),加了"切点最小间距(滞回)"之后相邻的两处会被合并成
+        // 一处(保留先出现的),那是**刻意**的行为变化(闪光误判就是靠它压掉的,见 SceneCutHysteresisTests)。
+        // 本用例要钉的是"没有拉普拉斯时**仍然保守判切**",与间距无关 ⇒ 把两处切点拉开到间距之外(1 与 20)。
+        var diffs = Enumerable.Repeat(1.0, 21).ToList();   // 21 个帧对(下标 0..20)
+        diffs[1] = 30.0;    // 过阈值但拿不到拉普拉斯 → 保守算切
+        diffs[20] = 60.0;   // 强切
         var cuts = SceneCutJudge.Detect(diffs, null);
-        Assert.Equal(new[] { 1, 2 }, cuts.ToArray());
+        Assert.Equal(new[] { 1, 20 }, cuts.ToArray());
+        // 顺带钉住"相邻两处会被合并"(同一份数据里把间距关掉 = 加滞回之前的行为)
+        var raw = SceneCutJudge.Detect(new List<double> { 1.0, 30.0, 60.0 }, null, minSceneLen: 1);
+        Assert.Equal(new[] { 1, 2 }, raw.ToArray());
     }
 
     [Theory]

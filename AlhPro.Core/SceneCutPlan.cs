@@ -58,10 +58,36 @@ public static class SceneCutJudge
     /// 那条路会改变"哪些对被判为切点" ⇒ 属画面语义变化,只写建议(见 <see cref="ExternalPractice"/>)。</summary>
     public const double LapDropRatio = 0.6;
 
+    /// <summary>切点**最小间距(滞回)**:两处被判出的切点相距小于它时,只保留**先出现**的那一处。
+    /// 单位 = 源帧数,与 PySceneDetect 的 `min_scene_len` 同义(但"首场景也受限制"那条我们**刻意不照搬**,见下)。
+    ///
+    /// 【依据 1 · 外部成熟实现】PySceneDetect 的 `ContentDetector`/`AdaptiveDetector` 默认 `min_scene_len = 15` 帧
+    /// (<https://www.scenedetect.com/docs/latest/api/detectors.html>)。本工程早就把它记在
+    /// <see cref="ExternalPractice.PySceneDetectMinSceneLenFramesDefault"/> 里,当时标的是"**仅建议、不实施**";
+    /// 2026-09-15 按下面两类**实测误判**正式接上,取值沿用同一个 15(不引入我们自己的偏好)。
+    ///
+    /// 【依据 2 · 本工程实测的两类"连判相邻切点"误判】
+    ///   · **单帧全白闪光**(合成素材 syn_flash.mp4,第 30 帧整帧变白;192 行灰度采样口径实测):
+    ///     帧对 29→30 与 30→31 的 mean|diff| 各 **127.70 / 127.69**(远超强切档 50)
+    ///     → 旧判据给出 **2 处相邻切点** → 普通路径切出一个 **只含 1 帧的补帧段**(真机日志实测),
+    ///     为那一帧要付一次补帧引擎启动。物理上那只是**一帧闪光**,不是两次场景切换。
+    ///   · **逐帧交替的极端废片**(合成素材 syn_alternate.mp4:480 帧近黑/白逐帧交替 = 479 对,每对帧差恒 ~219):
+    ///     旧判据 **479 对判 479 处**(用户在自己的素材上报 479 对判 **478** 处,量级一致)
+    ///     → 几乎每一对都被保护 ⇒ 补帧退化成"全拷贝"(等于不插帧)。加 15 帧滞回后同一输入只剩 **32 处**。
+    ///
+    /// 【为什么是 15(而不是别的数)】①外部默认值就是 15,照抄成熟实现的默认,不带我们自己的偏好;
+    /// ②本工程实测的**真实**切点间距远大于它(合成素材两处硬切 29→30 与 59→60 相距 **30 帧**;
+    /// 真实动画 onepiece_demo.mp4 全片只有 1 处硬切)—— 15 不会合并任何一处真切点,这条**单测显式钉住**。
+    /// 【待实测标定】与 <see cref="DiffThreshold"/> 一样,15 在"快剪/闪频"类素材上仍可能偏大或偏小;
+    /// 但两个极端已被单测钉死(≤1 = 完全不抑制;大于素材长度 = 最多一处切点)。</summary>
+    public const int MinSceneLen = 15;
+
     /// <summary>逐对判定:第 i 对 = 源帧 i → i+1。<paramref name="lapVar"/> 可为 null(只按帧差判)。
     /// 返回 true = 这一对之间存在**硬切**,插值必须绕开(不做跨切混合)。
     /// 【2026-09-14】三个阈值原先经"在线参数覆盖层"(ParamProfileRuntime)读,该功能整体删除后直接取
-    /// 上面那三个常量 —— 与"覆盖层为 null 时回落常量"逐字等价,判定行为一个字节都没变。</summary>
+    /// 上面那三个常量 —— 与"覆盖层为 null 时回落常量"逐字等价,判定行为一个字节都没变。
+    /// 【注意】**本方法不带滞回**:它只管"这一对是不是切点"。相邻误判的合并见 <see cref="ApplyMinSceneLen"/>
+    /// (以及批量入口 <see cref="Detect"/>)—— 单对判据保持纯粹,才测得出"判据本身对不对"。</summary>
     public static bool IsCut(double meanAbsDiff, double? lapVarPrev, double? lapVarCur)
     {
         double diffThreshold = DiffThreshold;
@@ -74,9 +100,34 @@ public static class SceneCutJudge
         return true;   // 帧差已过阈值但拿不到拉普拉斯 → 保守判为切点(宁可少插一帧,也不出鬼影)
     }
 
+    /// <summary>对一串**升序**切点施加"最小间距"(滞回):从头依次保留,若与"上一处已保留的切点"距离
+    /// &lt; <paramref name="minSceneLen"/> 则丢弃(即保留先出现的那一处)。<paramref name="minSceneLen"/> ≤ 1 = 不抑制
+    /// (逐字等于加滞回之前的行为,便于 A/B 对照与单测钉"变的只是滞回这一件事")。
+    /// 【为什么单独暴露】普通路径在"新判据拿不到采样指标"时会回退用 ffmpeg 的 scene 判据,那份切点也要过**同一把尺子**,
+    /// 否则同一次任务里两条判据的间隔口径不一致。
+    /// 【调用方义务】输入必须升序(Detect 的输出天然升序);顺序错(后一个更小)会被当成"距离为负"而丢弃。</summary>
+    public static IReadOnlyList<int> ApplyMinSceneLen(IReadOnlyList<int> cuts, int minSceneLen = MinSceneLen)
+    {
+        if (cuts == null || cuts.Count <= 1) return cuts ?? Array.Empty<int>();
+        if (minSceneLen <= 1) return cuts;
+        var kept = new List<int>(cuts.Count);
+        foreach (var c in cuts)
+            if (kept.Count == 0 || c - kept[^1] >= minSceneLen) kept.Add(c);
+        return kept;
+    }
+
     /// <summary>批量检测:返回"硬切发生在源帧 i → i+1 之间"的 i 列表(升序、去重)。
-    /// 采样少于 2 帧 → 空(不判切,保持既有行为)。</summary>
-    public static IReadOnlyList<int> Detect(IReadOnlyList<double> meanAbsDiff, IReadOnlyList<double>? lapVar = null)
+    /// 采样少于 2 帧 → 空(不判切,保持既有行为)。
+    /// 【滞回】结果再过一遍 <see cref="ApplyMinSceneLen"/>(默认 <see cref="MinSceneLen"/> = 15 帧):
+    /// 相邻误判(单帧闪光/闪频/逐帧交替)只保留先出现的那一处。
+    /// 【与 PySceneDetect 的刻意差别:**首处切点永远保留**】PySceneDetect 对"开场不足 min_scene_len 的切点"同样会压掉
+    /// (它把第一段场景也纳入该限制)。我们不这么做,两个理由:
+    ///   ① 我们的切点是**保护点**(切点上强制拷贝、绝不合成),把片头真切点当误判压掉 = **重新引入跨切鬼影帧**,
+    ///      与本工程反复写明的"宁可不插,也不出鬼影"取舍相反;
+    ///   ② 既有契约已钉死"两帧之间真的出现巨大差异(999)时必须判切"(防"极端硬切漏保护",见 SceneCutInvarianceTests)。
+    /// 即:滞回只用来**合并相邻的误判**,不用来**裁掉片头的真切点**。</summary>
+    public static IReadOnlyList<int> Detect(IReadOnlyList<double> meanAbsDiff, IReadOnlyList<double>? lapVar = null,
+        int minSceneLen = MinSceneLen)
     {
         var cuts = new List<int>();
         int n = meanAbsDiff?.Count ?? 0;
@@ -86,7 +137,7 @@ public static class SceneCutJudge
             double? lc = lapVar != null && i + 1 < lapVar.Count ? lapVar[i + 1] : null;
             if (IsCut(meanAbsDiff![i], lp, lc)) cuts.Add(i);
         }
-        return cuts;
+        return ApplyMinSceneLen(cuts, minSceneLen);
     }
 }
 

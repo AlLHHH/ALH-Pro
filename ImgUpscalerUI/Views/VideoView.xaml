@@ -7,6 +7,39 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
+    <UserControl.Resources>
+        <!-- 【蓝色「测试」小药丸 · 2026-09-15 第二次改小】给两支**自训**模型(游戏 · game2x / 现实 · real2x)用的标记。
+             【命名 · 用户定稿】这两支在界面上写作「游戏」「现实」+ 英文名(`类别 · 名字`;
+             名字 = `game2x` / `real2x`,与权重文件名 alhpro-game2x / alhpro-real2x 的后缀一字不差),
+             **不出现"实验/实验性"字样**;括号里写**速度档**(`快`,见 Core.ExperimentalEsrgan.SpeedTier)——
+             【2026-09-16 用户定稿】"括号内要写快 而不是时间":括号与官方项用同一套词(`快`/`中`/`超慢`),
+             测出来的秒/帧数字挪到悬停提示与下拉下方那行提示里(那两处才是写数字的地方)。
+             为什么还要标记:它们不是官方权重(自己训练的),与官方互有胜负 —— 三档色偏都低于官方,
+             细节/锐度多数低于官方默认模型,所以这一项绝不能只写模型名了事。
+             小标文字仍是「测试」(用户 2026-09-15:先保留,是否改由用户定)。
+             【尺寸 · 用户 2026-09-15 收尾要求「更小更简约」】原来是 FontSize 12 + Padding 6,1 + 圆角 7 + 1px 蓝描边,
+             整行(项内文字 + 间距 6 + 药丸 33)会顶到 218px,而收起状态可用宽度只有约 212px ⇒ 会被裁。
+             现改为 **FontSize 11 + Padding 4,0 + 圆角 4 + 无描边**,药丸宽 33 → 26px。
+             【宽度 · 2026-09-16 起余量最大】项内文字现在是 `现实 · real2x（快）` / `游戏 · game2x（快）`
+             (2026-09-15 那版 `…（0.35s/帧）` 实测整行 192 / 205px;更早的中文名版 211px,压线),
+             括号里只需放一个档词,离 212px 上限更远。
+             配色也压暗一档(#2A3E63/#A8C8FF → #232E42/#8FA9D6),不再抢模型名。
+             两个样式被下面两支模型的 ComboBoxItem 共用(改一处即可,别在项里内联颜色)。 -->
+        <Style x:Key="TestBadgePill" TargetType="Border">
+            <Setter Property="Background" Value="#232E42"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Padding" Value="4,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="TestBadgeText" TargetType="TextBlock">
+            <Setter Property="Text" Value="测试"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Foreground" Value="#8FA9D6"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+    </UserControl.Resources>
+
     <Grid>
         <Grid.ColumnDefinitions>
             <!-- 【宽度回退 410 → 300 · 2026-09-14 用户反馈】
@@ -57,12 +90,15 @@
                              改成 `upconv_7_anime`:与「预设摘要」里既有的叫法(`动漫·upconv_7_anime`,
                              见 VideoView.xaml.cs 的 UpWaifu2xModelNames)一致,长度 ~250px 可完整显示。
                              Tag 仍是引擎要的目录全名,不受显示名影响。 -->
-                        <ComboBoxItem Content="通用 · cunet（24MB·中）" Tag="models-cunet"/>
-                        <ComboBoxItem Content="动漫 · upconv_7_anime（快）" Tag="models-upconv_7_anime_style_art_rgb"/>
-                        <ComboBoxItem Content="现实 · upconv_7_photo（快）" Tag="models-upconv_7_photo"/>
+                        <ComboBoxItem Content="通用 · cunet（24MB·中）" Tag="models-cunet"
+                                      ToolTipService.ToolTip="通用 · cunet:官方 waifu2x 引擎的默认模型(不指定 -m 时就是它,出处:waifu2x-ncnn-vulkan README);架构比 upconv_7 新、更慢但更干净。&#x0a;适用:通用画面,动漫与实拍都能用。&#x0a;速度:1080p 约 0.37 秒/帧(2x,-n0)。&#x0a;模型大小:24 MB。"/>
+                        <ComboBoxItem Content="动漫 · upconv_7_anime（快）" Tag="models-upconv_7_anime_style_art_rgb"
+                                      ToolTipService.ToolTip="动漫 · upconv_7_anime:官方 waifu2x 面向动漫的模型(项目定位原文「Image Super-Resolution for Anime-style art」);upconv_7 是较早的架构,比 cunet 快、画面略软。&#x0a;适用:动漫 / 线稿类图像。&#x0a;模型大小:5.3 MB。"/>
+                        <ComboBoxItem Content="现实 · upconv_7_photo（快）" Tag="models-upconv_7_photo"
+                                      ToolTipService.ToolTip="现实 · upconv_7_photo:官方 waifu2x 的照片模型(README 原文「And it supports photo.」,使用时需指定 models/photo)。&#x0a;适用:实拍照片。&#x0a;速度:1080p 约 1.29 秒/帧(2x)。&#x0a;模型大小:5.3 MB。"/>
                     </ComboBox>
                     <ComboBox x:Name="VideoEsrganModelCombo" Visibility="Collapsed"
-                              ToolTipService.ToolTip="Real-ESRGAN 模型(动漫/通用),按速度与体积从快到慢排列&#x0a;动漫 · animevideov3  4MB  1080p 约 0.26~0.30 秒/帧&#x0a;通用 · general-x4v3   5MB  约 0.458 秒/帧&#x0a;通用 · wdn-x4v3      5MB  约 0.460 秒/帧(游戏/动漫素材细节更多)&#x0a;动漫 · x4plus-anime  9MB  约 3.85 秒/帧&#x0a;通用 · x4plus       41MB  约 15 秒/帧(超慢,建议只在图片上用;且只有 4x 权重)"
+                              ToolTipService.ToolTip="Real-ESRGAN 模型(按速度与体积从快到慢排列):悬停每一项看官方说明、速度与模型大小。&#x0a;末尾两项是自训的 2x 模型(游戏 · game2x / 现实 · real2x,带蓝色「测试」标)。"
                               SelectionChanged="Combo_Changed">
                         <!-- 【标签长度 · 2026-09-14 用户反馈"下拉框被遮挡"】左栏内部留白吃掉约 104px,
                              即使左栏加宽到 410,ComboBox 也只有 306px ⇒ 文字可用宽度 ~250px。
@@ -70,37 +106,88 @@
                              所以去掉冗余前缀(`realesr-` / `realesrgan-` / `models-`;引擎名由上面的
                              「超分引擎」与 ToolTip 说明,预设摘要里也一直是这个短叫法),现在最长 ~240px ✓。
                              ⚠ 读模型名一律走 Tag(引擎要的全名),不许改成读 Content —— 见 VideoView.xaml.cs 的 SelModel。 -->
-                        <ComboBoxItem Content="动漫 · animevideov3（快）" Tag="realesr-animevideov3"/>
-                        <ComboBoxItem Content="通用 · general-x4v3（快）" Tag="realesr-general-x4v3"/>
+                        <ComboBoxItem Content="动漫 · animevideov3（快）" Tag="realesr-animevideov3"
+                                      ToolTipService.ToolTip="动漫 · animevideov3:官方把它归在「For Animation Videos」,原文描述「Anime video model with XS size」(出处:Real-ESRGAN docs/anime_video_model.md)。&#x0a;专为动漫视频训练、体积最小最快的一档,动漫长视频首选。&#x0a;速度:1080p 约 0.26~0.30 秒/帧。&#x0a;模型大小:3.8 MB(含 x2 / x3 / x4 三份权重)。&#x0a;注:官方文档写它支持 X1,但本机实测 1x 输出全黑(缺 x1 权重)⇒ 请用 2x 及以上。"/>
+                        <ComboBoxItem Content="通用 · general-x4v3（快）" Tag="realesr-general-x4v3"
+                                      ToolTipService.ToolTip="通用 · general-x4v3:官方原文「A tiny small model (consume much fewer GPU memory and time); not too strong deblur and denoise capacity」(出处:Real-ESRGAN docs/model_zoo.md)。&#x0a;体积小、显存占用低;去模糊与去噪能力偏弱。&#x0a;速度:1080p 约 0.458 秒/帧。&#x0a;模型大小:4.9 MB。"/>
                         <!-- ↓ 第 3 项(序号 2):自转的带降噪通用模型。**这一行绝不能少** ——
                              2026-09-14 重排时曾漏掉它(只留了注释),结果下拉里 5 项变 4 项,
                              而 VideoModelOrder 仍按 5 项映射(Rev2 的 4→新 2),老用户存的序号会被解释成错的模型。
                              是"看真实界面截图"才发现的;以后改这个下拉,必须用界面确认 5 项都在且顺序如上。 -->
-                        <ComboBoxItem Content="通用 · wdn-x4v3（快）" Tag="realesr-general-wdn-x4v3"/>
+                        <ComboBoxItem Content="通用 · wdn-x4v3（快）" Tag="realesr-general-wdn-x4v3"
+                                      ToolTipService.ToolTip="通用 · wdn-x4v3:权重取自上游官方 release v0.2.5.0(BSD 3-Clause,作者 xinntao 本人发布),由本项目自行转成 ncnn;官方用途同为「For General Images」。&#x0a;与 general-x4v3 同族同架构,带 WDN 去噪训练,游戏 / 动漫素材细节略多。&#x0a;速度:1080p 约 0.460 秒/帧。&#x0a;模型大小:4.9 MB。"/>
                         <!-- 【顺序 · Rev3 · 2026-09-14 用户要求】整个下拉按**速度与体积**排(快/小 → 慢/大):
                              0 realesr-animevideov3 4MB 0.26~0.30 秒/帧
                              1 realesr-general-x4v3  5MB 0.458 秒/帧
                              2 realesr-general-wdn-x4v3 5MB 0.460 秒/帧(新加,自转;实测 20 帧批跑与 general 差 0.42%)
                              3 realesrgan-x4plus-anime 9MB 3.85 秒/帧
-                             4 realesrgan-x4plus      41MB 15.145 秒/帧(超慢,稳居最后)
+                             4 realesrgan-x4plus      33.5MB 15.145 秒/帧(超慢,稳居最后)
                              ⚠【换位 = 改序号,必须迁移】Rev2 的 wdn 在第 4 位(当时是"末尾追加"最安全),
                              这次它要挪到第 2 位 ⇒ 映射 2→3、3→4、4→2,0/1 不变。
                              迁移已抽到 AlhPro.Core.VideoModelOrder(纯函数 + 单测),VideoView.xaml.cs 的
                              MigrateEsrganModelOrder 调用它;读设置与读预设都走那条路。
                              不迁移的后果:老用户"存的 2 = x4plus-anime"会静默变成 2 = wdn-x4v3。
                              以后若再调顺序:必须 +1 Rev、加一段映射、同步改这里与 UpEsrganModelNames。 -->
-                        <ComboBoxItem Content="动漫 · x4plus-anime（中）" Tag="realesrgan-x4plus-anime"/>
-                        <!-- 「通用 · realesrgan-x4plus」按体积(41MB)与耗时(最慢)排在最后,并红字标出"超慢"
+                        <ComboBoxItem Content="动漫 · x4plus-anime（中）" Tag="realesrgan-x4plus-anime"
+                                      ToolTipService.ToolTip="动漫 · x4plus-anime:官方把它归在「For Anime Images / Illustrations」,原文「Optimized for anime images; 6 RRDB blocks (smaller network)」(出处:Real-ESRGAN docs/model_zoo.md)。&#x0a;官方定位是动漫插画 / 静态图,长视频请用 animevideov3。&#x0a;速度:1080p 约 3.3~4.4 秒/帧。&#x0a;模型大小:9.0 MB。"/>
+                        <!-- 「通用 · realesrgan-x4plus」按体积(33.5MB)与耗时(最慢)排在最后,并红字标出"超慢"
                              (用户要求:不删除、只警示)。
                               依据(2026-09-11 本机 4060 Laptop 实测,源 1920×1080 每帧):x4plus 14.48s / x4plus-anime 4.84s /
                               animevideov3 0.84s;x4plus 还有"只有 4x 权重"的问题(选 2x 也照样全量算 4x 再缩回)。
                               注:本项 Content 是 StackPanel(富文本),读模型名一律走 Tag —— 不要改成读 Content。 -->
-                        <ComboBoxItem Tag="realesrgan-x4plus">
+                        <ComboBoxItem Tag="realesrgan-x4plus"
+                                      ToolTipService.ToolTip="通用 · x4plus:官方把它归在「For General Images」,原文「X4 model for general images」(出处:Real-ESRGAN docs/model_zoo.md)。&#x0a;只有 4x 权重:选 2x / 3x 也会全量按 4x 算再缩回。&#x0a;速度:1080p 约 15.9 秒/帧(本机 30 帧批跑;同机 4 次样本 10.2~19.1,差异来自笔记本 GPU 降频)。&#x0a;模型大小:33.5 MB(旧文案写的 41MB 与磁盘实测不符,已改正)。&#x0a;建议只在单张图片上用。">
                             <!-- 「慢」直接在括号里改成红字「超慢」,不再另挂一个红字标记(用户:冗余了) -->
                             <StackPanel Orientation="Horizontal" Spacing="0">
                                 <TextBlock Text="通用 · x4plus（" VerticalAlignment="Center"/>
                                 <TextBlock Text="超慢" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="#E5484D"/>
                                 <TextBlock Text="）" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </ComboBoxItem>
+                        <!-- ===== 【Rev4 · 2026-09-15】末尾**追加**两支自训的 2x 模型(序号 5=现实向、6=游戏向)=====
+                             为什么追加在最后而不是插到中间:追加不动老序号 ⇒ Rev4 的迁移是**恒等映射**,
+                             老用户存的 0~4 升级后仍然指向同一支模型(Rev2 期间加 wdn 用的也是这个手法)。
+                             【命名 · 用户 2026-09-15 定稿 · 第三次改英文名】文字要**跟已有各项同一个格式**
+                             —— `类别 · 名字（括号内速度）`(已有项:`动漫 · animevideov3（快）` / `通用 · x4plus（超慢）`),
+                             所以这两项写成 `现实 · real2x（快）` / `游戏 · game2x（快）`;
+                             类别用「游戏」/「现实」,**名字用英文**(= 权重文件名后缀 real2x / game2x),
+                             括号里写**速度档**(「快」,口径见 Core.ExperimentalEsrgan.SpeedTier)——【2026-09-16 用户定稿】"括号内要写快 而不是时间",**不许出现"实验"**。
+                             权重文件:engines\realesrgan\models\alhpro-real2x.param/.bin、alhpro-game2x.param/.bin
+                             ⚠ Tag 必须与文件名一字不差:引擎按 `models/{Tag}.param` 取权重(视频路径下发的是
+                               `-m models -n {Tag}`,见 EngineService.UpscaleDirAsync;实测这两支名字不在引擎内置表里,
+                               所以它**不会**被追加 -x{scale} 后缀)。
+                             ⚠ 只有 2x 原生权重:3x/4x 目标由 Core.EngineScalePolicy 固定按 2x 跑再放大到目标
+                               (实测给 2x 权重下发 -s 4 会输出**镜像平铺的错帧**、exit=0 不报错)。
+                             ⚠ 【R/B 缺陷 · 2026-09-15 **已修好**,别把旧说法抄回来】这两份导出权重曾经 **R/B 通道颠倒**
+                               (旧实测:源 R143/G110/B92、官方 R143/G111/B89、本模型 R94/G111/B137,画面整幅偏蓝)。
+                               本轮**重训 + 重新导出**后通道验收闸已 PASS(现实向 Δ+0.20/+0.34/+0.24、
+                               游戏向 Δ+0.11/+0.12/+0.18,判据「每通道差 小于 5」;多宽度 1920/2048/2348/2560 全过)
+                               ⇒ 界面文案里**不得再出现"偏蓝 / R-B 颠倒 / 需重新导出 / 不可用于正片"**。
+                               两处文案与 Core.ExperimentalEsrgan 里的**逐字相同**(有单测钉住),改时一起改。
+                             ⚠ Content 是 StackPanel(富文本 + 蓝色「测试」药丸),读模型名一律走 Tag —— 别改成读 Content。 -->
+                        <ComboBoxItem Tag="alhpro-real2x" AutomationProperties.Name="现实 · real2x（快）测试">
+                            <!-- 【可访问性 · 2026-09-15】这两项(以及上面的 x4plus 项)的 Content
+                                 是 StackPanel(富文本),UIA 算出来的 Name 是**空**的 —— 读屏软件念不出选了什么,
+                                 自动化脚本也只能靠猜序号。这里显式给一个名字,把"类别 · 名字/速度口径/测试标"都带上
+                                 (UIA 名字不受下拉宽度限制,所以给全,含 1080p 口径)。
+                                 【宽度 · 2026-09-15 真机截图实测】项内文字同时用于收起状态,而收起状态可用宽度约 212px
+                                 ⇒ 项内只写一个速度档词("快"),秒/帧与口径放在悬停提示与下方提示里。
+                                 【命名 · 用户定稿】文字里**不许出现"实验"**;括号里是**快慢档形容词**(「快」),不是秒/帧(那个数字放在悬停提示里)。 -->
+                            <ToolTipService.ToolTip>现实 · real2x:三档色偏都低于官方 —— 实拍 1.48(官方 6.34)、动漫帧 0.18(官方 2.73)、游戏帧 0.34(官方 2.00)。&#x0a;细节与锐度多数低于官方默认模型(实拍 59.13 对 73.66、动漫帧 1.83 对 2.06;只在游戏帧上 3.20 略高于官方 2.91)。&#x0a;适合优先要颜色准确、能接受略软画面时使用。&#x0a;通道验收(2026-09-15 重训+重新导出):引擎输出与源的逐通道均值差 R+0.20/G+0.34/B+0.24 级,判据「每通道差 小于 5」通过(旧导出那次 R/B 颠倒已修)⇒ 颜色与源一致,可直接用于正片。&#x0a;速度:1080p 约 0.35 秒/帧(40 帧 1080p 目录批跑 -j 1:1:1 -t 0 冷态,与官方 animevideov3 同档)。&#x0a;倍率:网络原生 2x(放大倍数写死在网络里)。软件的 2x/3x/4x 是目标输出尺寸:选 3x/4x 时仍按原生 2x 跑一遍、再把成片缩放到目标(不是把引擎跑两遍);实测同一段 24 帧素材超分阶段 2x=2.0s、3x=3.9s、4x=4.7s(官方 animevideov3 有原生 3x/4x 权重,同样条件只要 2.2/2.3/2.8s),画面≈2x 细节放大、清晰度不会真的变成 3x/4x。推荐用 2x。&#x0a;模型大小:2.4 MB(权重 alhpro-real2x.bin 2.29 MB + alhpro-real2x.param 2 KB,本机磁盘实测)。</ToolTipService.ToolTip>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="现实 · real2x（快）" VerticalAlignment="Center"/>
+                                <Border Style="{StaticResource TestBadgePill}">
+                                    <TextBlock Style="{StaticResource TestBadgeText}"/>
+                                </Border>
+                            </StackPanel>
+                        </ComboBoxItem>
+                        <ComboBoxItem Tag="alhpro-game2x" AutomationProperties.Name="游戏 · game2x（快）测试">
+                            <ToolTipService.ToolTip>游戏 · game2x:三档色偏都低于官方 —— 游戏帧 0.18(官方 2.00)、动漫帧 0.04(官方 2.73)、实拍 2.53(官方 6.34;最大的一档)。&#x0a;细节与锐度低于官方默认模型(游戏帧 detail 2.36 对 2.91、动漫帧 1.55 对 2.06、实拍 59.97 对 73.66),边缘更软。&#x0a;适合优先要颜色准确、能接受略软画面时使用。&#x0a;通道验收(2026-09-15 重训+重新导出):引擎输出与源的逐通道均值差 R+0.11/G+0.12/B+0.18 级,判据「每通道差 小于 5」通过(旧导出那次 R/B 颠倒已修)⇒ 颜色与源一致,可直接用于正片。&#x0a;速度:1080p 约 0.35 秒/帧(40 帧 1080p 目录批跑 -j 1:1:1 -t 0 冷态,与官方 animevideov3 同档)。&#x0a;倍率:网络原生 2x(放大倍数写死在网络里)。软件的 2x/3x/4x 是目标输出尺寸:选 3x/4x 时仍按原生 2x 跑一遍、再把成片缩放到目标(不是把引擎跑两遍);实测同一段 24 帧素材超分阶段 2x=2.0s、3x=3.9s、4x=4.7s(官方 animevideov3 有原生 3x/4x 权重,同样条件只要 2.2/2.3/2.8s),画面≈2x 细节放大、清晰度不会真的变成 3x/4x。推荐用 2x。&#x0a;模型大小:2.4 MB(权重 alhpro-game2x.bin 2.29 MB + alhpro-game2x.param 2 KB,本机磁盘实测)。</ToolTipService.ToolTip>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="游戏 · game2x（快）" VerticalAlignment="Center"/>
+                                <Border Style="{StaticResource TestBadgePill}">
+                                    <TextBlock Style="{StaticResource TestBadgeText}"/>
+                                </Border>
                             </StackPanel>
                         </ComboBoxItem>
                     </ComboBox>
@@ -165,7 +252,7 @@
                                 <ColumnDefinition Width="28"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="锐化" VerticalAlignment="Center"/>
-                            <Slider x:Name="SharpenSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                            <Slider Margin="-11,0,-11,0" x:Name="SharpenSlider" Grid.Column="1" Minimum="0" Maximum="100"
                                     ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="SharpenVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
@@ -177,7 +264,7 @@
                                 <ColumnDefinition Width="28"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="清晰" VerticalAlignment="Center"/>
-                            <Slider x:Name="ClaritySlider" Grid.Column="1" Minimum="0" Maximum="100"
+                            <Slider Margin="-11,0,-11,0" x:Name="ClaritySlider" Grid.Column="1" Minimum="0" Maximum="100"
                                     ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="ClarityVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
@@ -189,7 +276,7 @@
                                 <ColumnDefinition Width="28"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="钝化蒙版" VerticalAlignment="Center"/>
-                            <Slider x:Name="UsmSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                            <Slider Margin="-11,0,-11,0" x:Name="UsmSlider" Grid.Column="1" Minimum="0" Maximum="100"
                                     ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="UsmVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
@@ -201,7 +288,7 @@
                                 <ColumnDefinition Width="28"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="保留细节" VerticalAlignment="Center"/>
-                            <Slider x:Name="DetailSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                            <Slider Margin="-11,0,-11,0" x:Name="DetailSlider" Grid.Column="1" Minimum="0" Maximum="100"
                                     ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DetailVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
@@ -213,7 +300,7 @@
                                 <ColumnDefinition Width="28"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="边缘抗锯齿" VerticalAlignment="Center"/>
-                            <Slider x:Name="PostAaSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                            <Slider Margin="-11,0,-11,0" x:Name="PostAaSlider" Grid.Column="1" Minimum="0" Maximum="100"
                                     ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="PostAaVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
@@ -231,7 +318,7 @@
                                 <ColumnDefinition Width="28"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="边缘增强" VerticalAlignment="Center"/>
-                            <Slider x:Name="PostEdgeSlider" Grid.Column="1" Minimum="0" Maximum="100"
+                            <Slider Margin="-11,0,-11,0" x:Name="PostEdgeSlider" Grid.Column="1" Minimum="0" Maximum="100"
                                     ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="PostEdgeVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
@@ -257,19 +344,25 @@
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
 
                     <TextBlock Text="补帧模型" Style="{StaticResource SectionTitle}"/>
-                    <ComboBox x:Name="InterpModelCombo" HorizontalAlignment="Stretch" ToolTipService.ToolTip="补帧模型:通用画质最新 v4.13(推荐,最新引擎) / 通用画质 v4.6 / 动漫专用 / 高清 / 超高清 / 经典兼容"
+                    <ComboBox x:Name="InterpModelCombo" HorizontalAlignment="Stretch"
+                              ToolTipService.ToolTip="补帧模型:悬停每一项看官方说明、速度与模型大小。&#x0a;下拉已精简为两支 v4 架构模型 —— 选哪支都能用 3x/4x/12x/16x、指定帧率与「高质量 TTA」。&#x0a;以前选过 动漫专用 / 高清 / 超高清 / 经典兼容 的话,设置会自动改用 v4.13。"
                               SelectedIndex="0" SelectionChanged="Combo_Changed">
-                        <ComboBoxItem Content="通用画质最新 (RIFE v4.13)"/>
-                        <ComboBoxItem Content="通用画质 (RIFE v4.6)"/>
-                        <ComboBoxItem Content="通用画质再新 (RIFE v4.26)" IsEnabled="False" ToolTipService.ToolTip="RIFE v4.26 引擎存在兼容性问题(TTA 会卡死),已停用;请用 v4.13"/>
-                        <ComboBoxItem Content="动漫专用 (RIFE Anime)"/>
-                        <ComboBoxItem Content="高清 (RIFE HD)"/>
-                        <ComboBoxItem Content="超高清 (RIFE UHD)"/>
-                        <ComboBoxItem Content="经典兼容 (RIFE v2.3)"/>
+                        <!-- 【2026-09-16 用户裁决:只留 13 + 一个兼容性强的】下拉从 7 项精简到 2 项。
+                             删掉的 5 项:通用画质再新(v4.26 —— engines\rife 里根本没有这个目录,且 TTA 卡死早已置灰,是个僵尸项)、
+                             动漫专用(RIFE Anime)、高清(RIFE HD)、超高清(RIFE UHD)、经典兼容(RIFE v2.3)。
+                             后 4 项是老三网络架构(各 57.3 / 54.0 MB),功能砍半:只能 2x 级联,不支持 3x/4x、指定帧率与 TTA。
+                             留 v4.6 当备用的理由:与 v4.13 同架构、功能完全一样,只是旧一版 ⇒ 万一 v4.13 在某台机器上出问题,
+                             切过去不丢任何功能;反之拿老架构当备用代价太大(用户一旦选到就只能 2x)。
+                             ⚠ 序号即取值口径:0=v4.13、1=v4.6。老设置里存的 2~6 会被读设置时的范围检查挡掉 ⇒ 自动落到 0(v4.13)。
+                             权重已移到 alh-pro\_retired_rife\(装机包因此小约 226MB),要恢复就搬回 engines\rife\ 并把本段改回来。 -->
+                        <ComboBoxItem Content="通用画质最新 (RIFE v4.13)"
+                                      ToolTipService.ToolTip="通用画质最新 (RIFE v4.13):官方 RIFE 的 ncnn 实现;官方 README 的模型表最新只列到 v4.6,v4.13 比它更新(出处:rife-ncnn-vulkan README)。&#x0a;本工程推荐:支持任意帧数精确补齐、3x/4x/12x/16x 与「高质量 TTA」,最稳。&#x0a;速度:1080p 约 0.06~0.09 秒/输出帧。&#x0a;模型大小:10.3 MB。"/>
+                        <ComboBoxItem Content="通用画质 (RIFE v4.6)"
+                                      ToolTipService.ToolTip="通用画质 (RIFE v4.6):官方 README 模型表里的 4.6 版(上游 4.6)。&#x0a;与 v4.13 同架构、功能完全一样(3x/4x、指定帧率、TTA 都支持),效果与稳定性略逊;留作 v4.13 在你机器上出问题时的备用。&#x0a;模型大小:10.1 MB。"/>
                     </ComboBox>
                     <!-- 补帧模型提示:随所选模型动态更新,说明推荐/各模型的问题(选 v4.13 提示推荐,选其它提示风险) -->
                     <TextBlock x:Name="InterpModelHint" FontSize="10" Opacity="0.65" TextWrapping="Wrap"
-                               Margin="0,2,0,4" Text="通用画质 v4.13 为推荐模型(帧数精确、稳定);v4.6 较旧、动漫/高清/超高清/经典兼容为老架构,只支持 2x 级联,高倍率(3x/4x以上)与指定帧率、TTA 均不支持,建议优先用 v4.13。"/>
+                               Margin="0,2,0,4" Text="通用画质 v4.13 为推荐模型(帧数精确、稳定);v4.6 与它同架构、功能一样,是备选。两支都支持 3x/4x 与指定帧率。"/>
 
                     <Button x:Name="FpsToggleBtn" Content="视频帧率 ▾" HorizontalAlignment="Stretch"
                             Click="FpsToggleBtn_Click"
@@ -297,7 +390,7 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="帧率偏移" VerticalAlignment="Center"/>
-                            <Slider x:Name="FpsOffsetSlider" Grid.Column="1" Minimum="-20" Maximum="0"
+                            <Slider Margin="-11,0,-11,0" x:Name="FpsOffsetSlider" Grid.Column="1" Minimum="-20" Maximum="0"
                                     StepFrequency="1" Value="0" ValueChanged="Slider_Changed"/>
                             <Button Grid.Column="2" Content="重置" FontSize="10" Padding="10,4"
                                     Click="ResetOffsetBtn_Click"
@@ -342,8 +435,18 @@
                         </Grid>
                     </StackPanel>
 
+                    <!-- 【2026-09-16 用户第三次反馈定稿:倍率那排按钮里**多加一项**「指定帧率」】
+                         用户原话:「就是放在倍率下面 就和倍率一样的感觉」「不要这个多出来的界面
+                         就像是多出来一个倍率的单选按钮 输入框置灰 选择这个指定帧率的时候输入框可以输入
+                         而不是多此一举的多一个选倍率和选指定的按钮」。
+                         ⇒ 所以**没有**单独的模式按钮组(那是我上一版多做的,已删):
+                            ① 就这一组单选按钮:2x / 3x / 4x / 8x / 12x / 16x / **指定帧率**
+                            ② 下面的输入框:选倍率时**置灰**、选「指定帧率」时才可输入
+                         【序号 6 = 指定帧率】与 Core.InterpScaleMap(0~5=2x~16x)同一张契约表;
+                         读"实际倍率"一律走 VideoView.CurrentScaleIndex()(序号 6 时按上一个真实倍率算),
+                         不许直接把 SelectedIndex 丢给 InterpScaleMap.Multiplier(会落回 2x)。 -->
                     <TextBlock Text="输出倍率" Style="{StaticResource SectionTitle}"/>
-                    <RadioButtons x:Name="InterpScaleRadios" SelectedIndex="0" ToolTipService.ToolTip="补帧倍率:2x/3x/4x/8x/12x/16x(3x/12x/16x 需「通用画质」系列模型,其余模型按 2x 级联;高倍率耗时显著增加,且多数播放器不支持 >120fps 输出)"
+                    <RadioButtons x:Name="InterpScaleRadios" SelectedIndex="0" ToolTipService.ToolTip="补帧倍率:2x/3x/4x/8x/12x/16x(3x/12x/16x 需「通用画质」系列模型,其余模型按 2x 级联;高倍率耗时显著增加,且多数播放器不支持 >120fps 输出)。选「指定帧率」则直接填目标帧率,倍率由软件自动算够。"
                                   SelectionChanged="Combo_Changed">
                         <RadioButton Content="2x"/>
                         <RadioButton x:Name="Scale3xRadio" Content="3x"/>
@@ -351,40 +454,22 @@
                         <RadioButton Content="8x"/>
                         <RadioButton x:Name="Scale12xRadio" Content="12x"/>
                         <RadioButton x:Name="Scale16xRadio" Content="16x"/>
+                        <RadioButton x:Name="TargetFpsRadio" Content="指定帧率"
+                                     ToolTipService.ToolTip="直接填一个目标帧率(如 60 / 120):补帧倍率由软件按内容帧率自动算够,成片精确落到该帧率(需要「通用画质」系列模型)"/>
                     </RadioButtons>
 
-                    <Grid ColumnSpacing="8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <CheckBox x:Name="TargetFpsCheck" Content="指定输出帧率" ToolTipService.ToolTip="直接指定最终输出帧率,软件自动算够补帧倍率(如填 60,内容 12fps 会自动 5x 补到 60)"
-                                  VerticalAlignment="Center"
-                                  Checked="Options_Changed" Unchecked="Options_Changed"/>
-                        <TextBox x:Name="TargetFpsBox" Grid.Column="1"
-                                 PlaceholderText="如 60" IsEnabled="False"
-                                 IsSpellCheckEnabled="False" TextChanged="Text_Changed"/>
-                        <TextBlock x:Name="ScreenFpsHint" Grid.Column="2" FontSize="10" Opacity="0.6"
-                                   VerticalAlignment="Center" Text=""/>
-                    </Grid>
+                    <TextBox x:Name="TargetFpsBox" Margin="0,6,0,0" PlaceholderText="如 60 / 120 / 59.94"
+                             IsSpellCheckEnabled="False" TextChanged="Text_Changed"
+                             ToolTipService.ToolTip="目标输出帧率(正数,不填不能开始)—— 只有上面选中「指定帧率」时才能填"/>
+                    <TextBlock x:Name="TargetFpsHint" Style="{StaticResource HintText}" Margin="0,2,0,0"
+                               Visibility="Collapsed" Text=""/>
 
-                    <!-- 可变帧率(VFR)保护:默认自动检测(加入列表时后台探测),是 VFR 素材就自动按原节奏
-                         拆帧+按原始时间轴输出(防时快时慢);普通素材无影响,用户无须手动开启 -->
-                    <Button x:Name="VfrToggleBtn" Content="可变帧率保护 ▾" HorizontalAlignment="Stretch"
-                            Click="VfrToggleBtn_Click"
-                            ToolTipService.ToolTip="默认「自动」:加入列表时自动检测,帧间隔不均匀的素材(录屏/手机/监控)
-按原始节奏逐帧提取并按时序输出,不会时快时慢;普通视频不受影响。亦可手动指定「不启用」。"/>
-                    <StackPanel x:Name="VfrPanel" Spacing="8" Margin="0,8,0,4" Visibility="Collapsed">
-                        <RadioButtons x:Name="VfrModeRadios" SelectedIndex="0"
-                                      SelectionChanged="Combo_Changed">
-                            <RadioButton Content="自动(VFR 素材时启用,推荐)"/>
-                            <RadioButton Content="不启用(全部按常规方式处理)"/>
-                        </RadioButtons>
-                        <TextBlock x:Name="VfrHintText" Text="可变帧率(VFR)视频的帧间隔不均匀,常见于录屏、手机拍摄与监控画面。若按固定帧率拆帧,帧间隔不均匀处的时间轴会被压缩或拉伸,导致播放时快时慢。
-默认「自动」:加入列表时后台检测,是 VFR 素材就自动按其原始时间节奏逐帧提取、按原始时间轴输出,全程无需手动操作。"
-                                   Style="{StaticResource HintText}" TextWrapping="Wrap"/>
-                    </StackPanel>
+                    <!-- 【2026-09-15 用户裁决:删除整个「可变帧率保护」面板】(原为 VfrToggleBtn + VfrPanel +
+                         VfrModeRadios(自动/不启用) + VfrHintText)。理由:它唯一的选项是"不启用",而"不启用"会连带
+                         把「按真实时间戳排帧」一起关掉(那条路的判据就是它),用户拿不到任何好处、只会踩坑。
+                         现在固定为**自动**:源是 VFR 就按真实时间戳排帧,否则走常规路径 —— 判据与日志见
+                         VideoService 的 `sourceIsVfr`(ProbeVfrAsync 的时间戳判据)。
+                         VideoSettings.VfrMode/VfrExpanded 字段保留(反序列化兼容),读取忽略、写回写 0/false。 -->
 
                     <TextBlock Text="去重复帧" Style="{StaticResource SectionTitle}"/>
 
@@ -492,7 +577,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="变化判线" VerticalAlignment="Center" FontSize="12"
                                        ToolTipService.ToolTip="一块画面变化超过这个数,才认为这块真的动了。调大=更宽松,删得更多;动漫一般 8~16,默认 12"/>
-                            <Slider x:Name="DedupHiSlider" ToolTipService.ToolTip="一块画面变化超过这个数才算真的动了。调大=更宽松,删得更多;动漫一般 8~16,默认 12" Grid.Column="1" Minimum="4" Maximum="24"
+                            <Slider Margin="-11,0,-11,0" x:Name="DedupHiSlider" ToolTipService.ToolTip="一块画面变化超过这个数才算真的动了。调大=更宽松,删得更多;动漫一般 8~16,默认 12" Grid.Column="1" Minimum="4" Maximum="24"
                                     StepFrequency="1" Value="12" ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DedupHiVal" Grid.Column="2" Text="12" MinWidth="32"
                                        HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
@@ -508,7 +593,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="相似判线" VerticalAlignment="Center" FontSize="12"
                                        ToolTipService.ToolTip="一块画面变化低于这个数,就算这块没变。调大=更容易算没变,删得更多;动漫一般 4~6,默认 5"/>
-                            <Slider x:Name="DedupLoSlider" ToolTipService.ToolTip="一块画面变化低于这个数就算没变。调大=更容易算没变,删得更多;动漫一般 4~6,默认 5" Grid.Column="1" Minimum="2" Maximum="10"
+                            <Slider Margin="-11,0,-11,0" x:Name="DedupLoSlider" ToolTipService.ToolTip="一块画面变化低于这个数就算没变。调大=更容易算没变,删得更多;动漫一般 4~6,默认 5" Grid.Column="1" Minimum="2" Maximum="10"
                                     StepFrequency="1" Value="5" ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DedupLoVal" Grid.Column="2" Text="5" MinWidth="32"
                                        HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
@@ -524,7 +609,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="重复比例" VerticalAlignment="Center" FontSize="12"
                                        ToolTipService.ToolTip="画面里至少多少比例的区域没变,才把这帧当重复帧删掉。调小=删得更多;动漫一般 0.3~0.4,默认 0.33"/>
-                            <Slider x:Name="DedupFracSlider" ToolTipService.ToolTip="画面里至少多少比例的区域没变,才把这帧当重复帧删掉。调小=删得更多;动漫一般 0.3~0.4,默认 0.33" Grid.Column="1" Minimum="0.1" Maximum="0.6"
+                            <Slider Margin="-11,0,-11,0" x:Name="DedupFracSlider" ToolTipService.ToolTip="画面里至少多少比例的区域没变,才把这帧当重复帧删掉。调小=删得更多;动漫一般 0.3~0.4,默认 0.33" Grid.Column="1" Minimum="0.1" Maximum="0.6"
                                     StepFrequency="0.01" Value="0.33" ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DedupFracVal" Grid.Column="2" Text="0.33" MinWidth="40"
                                        HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
@@ -540,7 +625,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="变化阈值" VerticalAlignment="Center" FontSize="12"
                                        ToolTipService.ToolTip="两帧画面整体差异超过多少,才当新画面保留。调小=保留越多,删得越少;常见 0.02 左右"/>
-                            <Slider x:Name="DedupSceneSlider" ToolTipService.ToolTip="两帧画面整体差异超过多少才当新画面保留。调小=保留越多,删得越少;常见 0.02 左右" Grid.Column="1" Minimum="0.001" Maximum="0.5"
+                            <Slider Margin="-11,0,-11,0" x:Name="DedupSceneSlider" ToolTipService.ToolTip="两帧画面整体差异超过多少才当新画面保留。调小=保留越多,删得越少;常见 0.02 左右" Grid.Column="1" Minimum="0.001" Maximum="0.5"
                                     StepFrequency="0.001" Value="0.01" ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DedupSceneVal" Grid.Column="2" Text="0.010" MinWidth="40"
                                        HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
@@ -556,7 +641,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="差异快筛" VerticalAlignment="Center" FontSize="12"
                                        ToolTipService.ToolTip="算法「帧差法(SAD)」:两帧画面平均差异低于多少,才进入下一步 SSIM 精确验证。调大=更多帧进入验证=删得更多;建议 2~5"/>
-                            <Slider x:Name="DedupSadSlider" ToolTipService.ToolTip="两帧画面平均差异低于多少,才进入下一步精确验证。调大=更多帧进入验证=删得更多;建议 2~5" Grid.Column="1" Minimum="0.5" Maximum="10"
+                            <Slider Margin="-11,0,-11,0" x:Name="DedupSadSlider" ToolTipService.ToolTip="两帧画面平均差异低于多少,才进入下一步精确验证。调大=更多帧进入验证=删得更多;建议 2~5" Grid.Column="1" Minimum="0.5" Maximum="10"
                                     StepFrequency="0.5" Value="3.0" ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DedupSadVal" Grid.Column="2" Text="3.0" MinWidth="36"
                                        HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
@@ -572,7 +657,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="相似度阈值" VerticalAlignment="Center" FontSize="12"
                                        ToolTipService.ToolTip="算法「SSIM(结构相似性)」:从亮度/对比度/结构三维衡量画面相似度,超过多少才算真重复帧。调高=更严格=删得少;调低=删得多;建议 0.95~0.99"/>
-                            <Slider x:Name="DedupSsimSlider" ToolTipService.ToolTip="画面结构相似度(SSIM)超过多少才算真重复帧。调高=更严格=删得少;调低=删得多;建议 0.95~0.99" Grid.Column="1" Minimum="0.90" Maximum="0.999"
+                            <Slider Margin="-11,0,-11,0" x:Name="DedupSsimSlider" ToolTipService.ToolTip="画面结构相似度(SSIM)超过多少才算真重复帧。调高=更严格=删得少;调低=删得多;建议 0.95~0.99" Grid.Column="1" Minimum="0.90" Maximum="0.999"
                                     StepFrequency="0.005" Value="0.97" ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DedupSsimVal" Grid.Column="2" Text="0.970" MinWidth="44"
                                        HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
@@ -583,30 +668,24 @@
                                   IsChecked="True" FontSize="12"
                                   ToolTipService.ToolTip="帧差+SSIM 算法专用(默认开):检测到局部小动作(张嘴/眨眼/手指抖动)时判定为真变化并保留,整幅差异小也不误删。取消勾选=只看整幅差异,删得更狠,但口型/微动帧可能被误删"/>
                     </StackPanel>
-                    <!-- 转场识别(转场处不插帧)→ 用上面 SceneCheck/Slider -->
+                    <!-- 转场识别(转场处不插帧)→ 只有下面这一个勾选框(阈值滑块已于 2026-09-15 删除) -->
                     <TextBlock x:Name="DedupHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
                                Text="去重=删重复/静止帧(按节奏治理,非逐帧二分类)。智能=自动:按节奏网格+变化帧保护处理,估不准的回退保守;动漫=选档:拍一/拍二/拍三/混合,内部固定逻辑(按档网格+变化帧保护,口型/微动不删);手动=自由调参:重复帧检测/画面变化阈值/帧差+SSIM/内容帧率采样(自填值)。&#10;「转场识别」=转场处保持不插帧(检测到切换处不插帧避免鬼影)。"/>
 
-                    <CheckBox x:Name="SceneCheck" Content="转场识别(转场处不插帧)" ToolTipService.ToolTip="检测场景切换,转场处不插帧避免鬼影"
+                    <!-- 【默认关(2026-09-15 用户定调)】转场识别 = 可开可关:用户自己决定要不要切点保护。
+                         启动默认**不勾** = 与重置路径、AlhPro.Core.SceneDefaultPolicy.DefaultScene 三处一致;
+                         老用户文件里的值(bind 到 Scene)**一律保留** —— 升级不改变他的勾选(迁移只对齐版本号)。
+                         勾上与不勾都管**两条路径**(普通分段 / 平滑时间轴),不存在"某条路忽略开关"。 -->
+                    <CheckBox x:Name="SceneCheck" Content="转场识别(转场处不插帧)"
+                              ToolTipService.ToolTip="按需开启(默认不勾)。&#10;【勾上】在场景硬切处不插帧,避免「两张脸糊在一起 / 拖丝」的鬼影,并且让输出的时间轴按源片真实节奏走。实测:不勾时切点处会多出一帧半新半旧的混合帧(帧间差异仅 19.72、清晰度掉到邻帧的 32%——就是那帧鬼影);勾上后同一位置变成干净硬切(差异 82.62),成片帧数与时长完全不变(实测 179 帧 / 3.000s 前后一致)。&#10;代价:极少数被误判的位置会少插一帧(实测 1 处 = 成片 184 帧里的 2 帧变成重复帧 ≈ 1.1%,几乎看不出;已加 15 帧最小间距压制单帧闪光、逐帧交替等误判)。&#10;【不勾(取消勾选)】两条路径都不做切点保护,补帧会跨切混合:剪辑较多的素材(游戏集锦、切片、多镜头混剪)可能出现跨切鬼影。&#10;【阈值不用管:内置的,不需要调】判定用的是内置阈值(帧差 ≥25 且清晰度下降 ≥40%,帧差 ≥50 直接算切),原先那条「转场阈值」滑块已于 2026-09-15 删除(它在这些判据下根本不影响判定)。&#10;开关状态会写进日志:「▶ 参数:…转场识别=0.30…」或「…转场识别=关…」。"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
-                    <Grid ColumnSpacing="8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="转场阈值" VerticalAlignment="Center" FontSize="12"
-                                   ToolTipService.ToolTip="转场阈值:越低越敏感(容易识别到更多切换),越高只认明显切换(默认 0.30)。转场识别=勾选后检测到切换处不插帧,避免补帧跨转场产生鬼影/果冻"/>
-                        <Slider x:Name="SceneSlider" ToolTipService.ToolTip="转场阈值:越低越敏感,越高只认明显切换" Grid.Column="1" Minimum="0" Maximum="1"
-                                StepFrequency="0.05" ValueChanged="Slider_Changed"/>
-                        <TextBlock x:Name="SceneVal" Grid.Column="2" Text="0.30" MinWidth="36"
-                                   HorizontalTextAlignment="Center" VerticalAlignment="Center"
-                                   ToolTipService.ToolTip="当前转场阈值:检测到的场景切换评分需超过它才视为转场"/>
-                        <Button Grid.Column="3" Content="重置" FontSize="10" Padding="10,4"
-                                Click="ResetSceneBtn_Click"
-                                ToolTipService.ToolTip="转场阈值恢复默认 0.30"/>
-                    </Grid>
+                    <!-- 【2026-09-15 用户裁决:删除「转场阈值」滑块】(原为 TextBlock「转场阈值」+ SceneSlider +
+                         SceneVal 数值 + 重置按钮 一整块 Grid)。理由:切点判据用的是**内置阈值**
+                         (帧差 ≥25 且 清晰度下降 ≥40%,帧差 ≥50 直接算切),这条滑条在当前判据下**根本不影响判定**,
+                         只当"开关"用 —— 而开关已经由上面的「转场识别」勾选框承担,留着它只会让人以为要调。
+                         仅当内置判据拿不到采样数据、回退到 ffmpeg 的 scene 判据时,才需要这个数值:那种情况由代码用
+                         **内置默认 0.3**(`SceneThresholdBuiltIn`)顶替,用户不用管。
+                         VideoSettings.SceneThr 字段保留(老设置/老预设反序列化兼容),但读取时忽略、写回时写内置默认。 -->
 
                     <TextBlock Text="果冻修复" Style="{StaticResource SectionTitle}"/>
                     <Grid ColumnSpacing="8">
@@ -639,17 +718,11 @@
                                       Checked="Options_Changed" Unchecked="Options_Changed"/>
                             <TextBlock Text="⚠ 开启后会严重增加导出时间" Style="{StaticResource HintText}" TextWrapping="Wrap"/>
 
-                            <!-- 补帧输出帧率基准:放「高级参数」里,并提供黄色提示(不改默认推荐就是安全的) -->
-                            <TextBlock Text="补帧输出帧率基准" Style="{StaticResource SectionTitle}"/>
-                            <ComboBox x:Name="FpsBaseCombo" HorizontalAlignment="Stretch"
-                                      SelectedIndex="0" SelectionChanged="Combo_Changed">
-                                <ComboBoxItem Content="真实时间轴插值 (推荐)"
-                                              ToolTipService.ToolTip="最忠实:每个画面该出现的位置、停顿时间都跟原片完全对齐,再用 AI 补出缺失的中间帧,看起来就是原片直接变流畅了。&#10;&#10;【可能问题】① 对长时间真正静止的背景,可能被当成「缓慢移动」处理,那段会像缓慢蠕动;② 依赖去重能把每段实际停留时长认对,极度抖动/杂乱素材会判断不准。"/>
-                                <ComboBoxItem Content="匀速帧速率插值"
-                                              ToolTipService.ToolTip="所有动作按相同速度均匀补帧,视觉最顺滑、速度最快(通常单次插值完成)。&#10;&#10;【可能问题】① 不保留定格节奏,动画「同一张画停几帧」的感觉会消失;② 画面出现的时间点跟原片不完全一致,若要逐帧对接原片可能对不上。"/>
-                            </ComboBox>
-                            <TextBlock Text="⚠ 默认推荐「真实时间轴插值」。在您不了解另一个(匀速)模式的情况下,不建议使用,以免输出节奏与原片不一致。"
-                                       Foreground="#E8A33D" FontSize="11" TextWrapping="Wrap"/>
+                            <!-- 【2026-09-15 用户裁决:删除「补帧输出帧率基准」下拉】(原为 SectionTitle + FpsBaseCombo
+                                 (真实时间轴插值/匀速帧速率插值) + 一行黄色提示)。固定为**真实时间轴插值**(内部 fpsMode=2):
+                                 "匀速"档只会丢掉原片的定格节奏、让画面出现时刻与原片对不上;而且代码里 fpsMode=0 与 =2
+                                 本来就没有任何分支差别(唯一区分处早已注释掉) ⇒ 一个自己都分不清、只有坏分支的选项。
+                                 VideoSettings.FpsBase 字段保留(反序列化兼容),读取忽略、写回写 0(=真实时间轴)。 -->
                         </StackPanel>
 
                     <TextBlock x:Name="InterpHint" Style="{StaticResource HintText}"
@@ -731,12 +804,13 @@
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
                     <TextBlock x:Name="FastModeHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
                                Text="给配置较低/没独显的电脑用的:自动降低显存占用、防止爆显存,画质和功能基本不受影响"/>
-                    <!-- 【任务 S3 · 2026-09-13】平滑时间轴(默认开):统一输出帧率 + 场景切换对齐 -->
-                    <CheckBox x:Name="SmoothTimelineCheck" Content="平滑时间轴" IsChecked="True"
-                              ToolTipService.ToolTip="统一输出帧率并按场景切换对齐,避免播放顿挫与切点拖影。只在源时间轴不均匀(有顿挫)时才生效——源本来就均匀时完全不改变行为。代价:源里本来静止的缺口处会插出轻微软化(实测约 6%;不会为了掩盖它偷偷加锐化)"
-                              Checked="Options_Changed" Unchecked="Options_Changed"/>
-                    <TextBlock x:Name="SmoothTimelineHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
-                               Text="统一输出帧率并按场景切换对齐,避免播放顿挫与切点拖影(默认开;不需要时可关掉)"/>
+                    <!-- 【2026-09-15 用户定调:平滑时间轴从界面移除,固定为「开」】原控件:
+                         这里原本有一个「平滑时间轴」勾选框(默认勾选)+ 一行灰字说明,本轮**整块删除**。
+                         理由(用户原话:"平滑时间轴什么的不应该就是需要存在吗 直接默认在不就好 不要显示出来 他不开有什么功能"):
+                         它不是用户偏好,而是"输出时间轴跟源片对齐"的正确性修正 —— 只在源时间轴不均匀(有顿挫)时才动手,
+                         源本来就均匀时逐字走老路径;关掉只会让不均匀的节奏留在成片里,没有任何功能收益。
+                         实现侧固定为启用:VideoView 恒传 smoothTimeline:true;
+                         VideoSettings.SmoothTimeline 字段保留但**读取时忽略用户旧值**(见 ApplyVideoParams)。 -->
 
                     <!-- 参数预设:整套超分/后处理/补帧/去重参数快照,一键保存/应用 -->
                     <TextBlock Text="参数预设" Style="{StaticResource SectionTitle}"/>
@@ -772,6 +846,13 @@
                                 Style="{StaticResource AccentButtonStyle}"
                                 HorizontalAlignment="Stretch" MinHeight="48"
                                 IsEnabled="False" Click="RunBtn_Click"/>
+                        <!-- 预览效果:用左侧当前参数真跑一小段(默认 3 秒),在右侧预览页直接看成片 ——
+                             走的是「开始处理」同一条流水线,不降质;批量处理前先确认参数对不对,不用等全片 -->
+                        <Button x:Name="PreviewBtn" Content="预览效果"
+                                HorizontalAlignment="Stretch" MinHeight="38"
+                                Background="#FF22C55E" BorderBrush="#FF22C55E" BorderThickness="0" Foreground="#FF052E16"
+                                IsEnabled="False" Click="RunPreviewBtn_Click"
+                                ToolTipService.ToolTip="先用当前参数只处理一小段(起点 2~15 秒、长度 1~10 秒,默认 3 秒),在右侧预览页直接看处理结果。同一套流水线、同样的清晰度,只是跑得短。"/>
                         <TextBlock x:Name="RunHint" Text="⚠ 至少启用一项处理(超分、补帧或去重)"
                                    Foreground="#E8A33D" FontSize="11" TextWrapping="Wrap"
                                    TextAlignment="Center" Visibility="Collapsed"/>
@@ -993,97 +1074,293 @@
                                TextAlignment="Center" Margin="0,10,0,0"/>
                 </StackPanel>
 
-                <!-- 视频播放预览覆盖层 -->
+                <!-- 预览/裁剪覆盖层(2026-09-17 拆成两页:双击=裁剪页(只有裁剪),「预览效果」=预览页(只有预览)) -->
                 <Grid x:Name="VideoPreviewOverlay" Grid.Row="2" Visibility="Collapsed" Background="#F20D0F14">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
+                        <!-- 唯一画面:结果在下、原片在上(对比时原片按分割线裁切,左边原片/右边结果) -->
+                        <RowDefinition Height="*" MinHeight="140"/>
+                        <!-- 裁剪页控制区 -->
+                        <RowDefinition Height="Auto"/>
+                        <!-- 预览页控制区 -->
+                        <RowDefinition Height="Auto"/>
+                        <!-- 裁剪页的「重复帧」工具行(默认收起) -->
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
-                    <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" Margin="12">
-                        <TextBlock x:Name="PreviewName" VerticalAlignment="Center" FontSize="13"
-                                   TextTrimming="CharacterEllipsis" MaxWidth="380"/>
-                        <Button Content="退出预览" Click="PreviewClose_Click" FontSize="13" Padding="16,7,16,7"
-                                ToolTipService.ToolTip="退出预览"/>
-                    </StackPanel>
-                    <Grid Grid.Row="1" Margin="16">
+
+                    <!-- ① 顶栏:素材信息 | 视图三选一(仅预览页) | 放大 | 退出 -->
+                    <Grid Grid.Row="0" Margin="14,10,14,6" ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <TextBlock x:Name="PreviewName" FontSize="13" FontWeight="SemiBold"
+                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="380"/>
+                            <TextBlock x:Name="PreviewMeta" FontSize="11" Opacity="0.6" VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+                        <RadioButtons x:Name="PreviewViewRadios" Grid.Column="1" MaxColumns="3" SelectedIndex="0"
+                                      VerticalAlignment="Center"
+                                      SelectionChanged="PreviewViewRadios_SelectionChanged"
+                                      ToolTipService.ToolTip="看原片 / 看处理效果 / 左右对比(左原片右结果,中间那条线可以拖)">
+                            <RadioButton Content="看原片"/>
+                            <RadioButton Content="看处理效果"/>
+                            <RadioButton Content="左右对比"/>
+                        </RadioButtons>
+                        <Button x:Name="EffectZoomBtn" Grid.Column="2" Content="放大画面" FontSize="12" Padding="12,6"
+                                VerticalAlignment="Center" Click="EffectZoomBtn_Click"
+                                ToolTipService.ToolTip="收起下方控制区,让画面占满整页(再点一次回来)"/>
+                        <Button Grid.Column="3" Content="退出" Click="PreviewClose_Click" FontSize="13" Padding="16,7"
+                                VerticalAlignment="Center" ToolTipService.ToolTip="退出回到列表"/>
+                    </Grid>
+
+                    <!-- ② 画面区:结果播放器在下层、原片在上层(对比时把原片裁到分割线左边) -->
+                    <Grid x:Name="PlayerArea" Grid.Row="1" Margin="14,0,14,8" SizeChanged="PlayerArea_SizeChanged"
+                          Tapped="PlayerArea_Tapped" PointerMoved="PlayerArea_PointerMoved">
+                        <!-- 【2026-09-17 用户要求】提示文字放【最底层】:左边原片会自然盖住它,
+                             于是它只在"没有结果的那一半"露出来 —— 不用按钮、也不会被中间那条分割线压住。 -->
+                        <TextBlock x:Name="EffectPlayerHint" Text="点下面「开始预览」,处理结果会在这里播放"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   FontSize="12" Opacity="0.45" TextWrapping="Wrap"
+                                   TextAlignment="Center" IsHitTestVisible="False"/>
+                        <Grid x:Name="EffectPlayerHost" Visibility="Collapsed">
+                            <MediaPlayerElement x:Name="EffectPlayer" AreTransportControlsEnabled="False" Stretch="Uniform"/>
+                        </Grid>
                         <Grid x:Name="PreviewPlayerHost"
                               PointerMoved="PreviewPlayerHost_PointerMoved"
                               PointerExited="PreviewPlayerHost_PointerExited">
-                            <MediaPlayerElement x:Name="PreviewPlayer" AreTransportControlsEnabled="True"/>
+                            <MediaPlayerElement x:Name="PreviewPlayer" AreTransportControlsEnabled="False"/>
                         </Grid>
+                        <!-- 对比模式:左右两半的身份标签(不然两边都是同一画面,看不出谁是谁) -->
+                        <Border x:Name="CmpLabelLeft" Visibility="Collapsed" HorizontalAlignment="Left"
+                                VerticalAlignment="Top" Margin="10" Padding="10,4" CornerRadius="4"
+                                Background="#B30D0F14" IsHitTestVisible="False">
+                            <TextBlock Text="原片" FontSize="12" Foreground="#E8ECF2"/>
+                        </Border>
+                        <Border x:Name="CmpLabelRight" Visibility="Collapsed" HorizontalAlignment="Right"
+                                VerticalAlignment="Top" Margin="10" Padding="10,4" CornerRadius="4"
+                                Background="#B3101318" IsHitTestVisible="False">
+                            <TextBlock Text="处理后" FontSize="12" Foreground="#7FB2FF"/>
+                        </Border>
+                        <!-- 左右对比的分割线(可左右拖) -->
+                        <Grid x:Name="CompareSplitter" Width="28" HorizontalAlignment="Left" Visibility="Collapsed"
+                              Background="Transparent"
+                              PointerPressed="CompareSplitter_PointerPressed"
+                              PointerMoved="CompareSplitter_PointerMoved"
+                              PointerReleased="CompareSplitter_PointerReleased"
+                              PointerCaptureLost="CompareSplitter_PointerReleased"
+                              ToolTipService.ToolTip="左右拖动这条线:左边原片、右边处理结果">
+                            <Rectangle Width="2" Fill="#FFFFFF" Opacity="0.9" HorizontalAlignment="Center"
+                                       Margin="0,0,0,52" IsHitTestVisible="False"/>
+                            <Border Width="34" Height="56" CornerRadius="16" Background="#E67FB2FF"
+                                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                                    PointerPressed="CompareSplitter_PointerPressed"
+                                    PointerMoved="CompareSplitter_PointerMoved">
+                                <StackPanel Orientation="Horizontal" Spacing="2" HorizontalAlignment="Center"
+                                            VerticalAlignment="Center" IsHitTestVisible="False">
+                                    <FontIcon Glyph="&#xE76B;" FontSize="11" Foreground="#0D0F14"/>
+                                    <FontIcon Glyph="&#xE76C;" FontSize="11" Foreground="#0D0F14"/>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                        <!-- 对比模式专用:一套播放控件(自己画,盖在最上层;两个播放器自带的控件都关掉) -->
+                        <Border x:Name="CompareBar" Visibility="Collapsed" VerticalAlignment="Bottom"
+                                Margin="8,0,8,8" Padding="8,4" CornerRadius="6" Background="#E6101318"
+                                HorizontalAlignment="Stretch" Opacity="0" IsHitTestVisible="False">
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="CmpPlayBtn" Padding="14,3" VerticalAlignment="Center" Click="CmpPlayBtn_Click"
+                                        ToolTipService.ToolTip="播放/暂停(左右两边同步;也可以直接点画面)">
+                                    <FontIcon x:Name="CmpPlayIcon" Glyph="&#xE768;" FontSize="15"/>
+                                </Button>
+                                <Slider Margin="-11,0,-11,0" x:Name="CmpSeek" Grid.Column="1" Minimum="0" Maximum="100" Value="0"
+                                        StepFrequency="0.5" VerticalAlignment="Center"
+                                        ValueChanged="CmpSeek_ValueChanged"
+                                        ToolTipService.ToolTip="拖动定位:左右两边同时跳到同一时刻"/>
+                                <TextBlock x:Name="CmpTime" Grid.Column="2" Text="0:00 / 0:00" FontSize="11"
+                                           VerticalAlignment="Center" MinWidth="96" TextAlignment="Right"/>
+                            </Grid>
+                        </Border>
                     </Grid>
-                    <Grid x:Name="BottomCtrlPanel" Grid.Row="2" Margin="12,0,12,14" RowSpacing="8"
-                          Visibility="Collapsed"
-                          PointerEntered="BottomCtrlPanel_PointerEntered"
-                          PointerExited="BottomCtrlPanel_PointerExited">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-                        <!-- 时间信息 + 裁剪操作 -->
-                        <Grid>
+
+                    <!-- ③ 裁剪页:一条时间线 + 首尾两个把手(拖动时画面跟着跳到那个点) -->
+                    <StackPanel x:Name="TrimDeck" Grid.Row="2" Margin="14,0,14,10" Spacing="8" Visibility="Collapsed">
+                        <Grid x:Name="TrimTimeline" Height="52" Background="Transparent"
+                              SizeChanged="TrimTimeline_SizeChanged"
+                              PointerPressed="TrimTimeline_PointerPressed"
+                              PointerMoved="TrimTimeline_PointerMoved"
+                              PointerReleased="TrimTimeline_PointerReleased"
+                              PointerCaptureLost="TrimTimeline_PointerReleased"
+                              ToolTipService.ToolTip="拖左把手=入点 · 拖右把手=出点 · 拖的时候画面跟着跳到那个点">
+                            <Border Height="16" CornerRadius="4" Background="#2A3240"
+                                    Margin="0,20,0,0" VerticalAlignment="Top"/>
+                            <Border x:Name="TrimRange" Height="16" CornerRadius="4" Background="#4C8DFF"
+                                    Margin="0,20,0,0" VerticalAlignment="Top"
+                                    HorizontalAlignment="Left" Width="0"/>
+                            <Border x:Name="TrimStartThumb" Width="16" Height="26" CornerRadius="3" Background="#E8ECF2"
+                                    VerticalAlignment="Top" HorizontalAlignment="Left" Margin="0,15,0,0"/>
+                            <Border x:Name="TrimEndThumb" Width="16" Height="26" CornerRadius="3" Background="#E8ECF2"
+                                    VerticalAlignment="Top" HorizontalAlignment="Left" Margin="0,15,0,0"/>
+                            <Canvas x:Name="TrimTicks" Height="16" VerticalAlignment="Bottom"
+                                    HorizontalAlignment="Stretch" IsHitTestVisible="False"/>
+                        </Grid>
+                        <Grid ColumnSpacing="10">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock x:Name="TrimInfo" Text="未裁剪" FontSize="11" Opacity="0.7"
+                            <TextBlock x:Name="TrimInfo" Text="未裁剪" FontSize="11" Opacity="0.8"
                                        VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
-                                <Button x:Name="ClearTrimBtn" Content="清除裁剪" ToolTipService.ToolTip="清除当前视频的裁剪范围" FontSize="11"
-                                        Padding="8,4" Click="ClearTrim_Click"/>
-                                <Button x:Name="SaveTrimBtn" Content="应用裁剪" ToolTipService.ToolTip="把时间线范围应用到视频(导出即为裁剪后内容)" FontSize="11"
-                                        Padding="8,4" Click="ApplyTrim_Click"/>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <Button x:Name="DupToggleBtn" Content="重复帧 ▾" FontSize="12" Padding="12,7"
+                                        Visibility="Collapsed" Click="ToggleDup_Click"
+                                        ToolTipService.ToolTip="重复帧分布分析(只在需要治理重复帧时用,平时收起)"/>
+                                <Button x:Name="ClearTrimBtn" Content="清除裁剪" FontSize="12" Padding="12,7"
+                                        Click="ClearTrim_Click" ToolTipService.ToolTip="清除这个视频的裁剪范围(整段都保留)"/>
+                                <Button x:Name="SaveTrimBtn" Content="应用裁剪" FontSize="12" Padding="16,7"
+                                        Style="{StaticResource AccentButtonStyle}"
+                                        Click="ApplyTrim_Click"
+                                        ToolTipService.ToolTip="把这段范围应用到视频:导出时只输出这一段"/>
                             </StackPanel>
                         </Grid>
-                        <!-- 时间线:拖动两端把手设置裁剪范围 -->
-                        <Grid x:Name="Timeline" Grid.Row="1" Height="28" Background="Transparent"
-                              SizeChanged="Timeline_SizeChanged">
-                            <Border Height="6" CornerRadius="3" Background="#3A4150"
-                                    VerticalAlignment="Center" Margin="14,0"/>
-                            <Border x:Name="TrimRange" Height="6" CornerRadius="3" Background="#4C8DFF"
-                                    VerticalAlignment="Center" HorizontalAlignment="Left" Width="0"/>
-                            <Border x:Name="TrimStartThumb" Width="14" Height="20" CornerRadius="3"
-                                    Background="#E8ECF2" HorizontalAlignment="Left" VerticalAlignment="Center"
-                                    Margin="0,0,0,0" PointerPressed="TrimThumb_PointerPressed"
-                                    PointerMoved="TrimThumb_PointerMoved" PointerReleased="TrimThumb_PointerReleased"
-                                    PointerCaptureLost="TrimThumb_PointerReleased"/>
-                            <Border x:Name="TrimEndThumb" Width="14" Height="20" CornerRadius="3"
-                                    Background="#E8ECF2" HorizontalAlignment="Left" VerticalAlignment="Center"
-                                    Margin="0,0,0,0" PointerPressed="TrimThumb_PointerPressed"
-                                    PointerMoved="TrimThumb_PointerMoved" PointerReleased="TrimThumb_PointerReleased"
-                                    PointerCaptureLost="TrimThumb_PointerReleased"/>
+                    </StackPanel>
+
+                    <!-- ④ 预览页:时间线(拖起点) + 精调 + 一行动作 -->
+                    <StackPanel x:Name="PreviewDeck" Grid.Row="3" Margin="14,0,14,10" Spacing="8" Visibility="Collapsed">
+                        <Grid x:Name="PrevTimeline" Height="52" Background="Transparent"
+                              SizeChanged="PrevTimeline_SizeChanged"
+                              PointerPressed="PrevTimeline_PointerPressed"
+                              PointerMoved="PrevTimeline_PointerMoved"
+                              PointerReleased="PrevTimeline_PointerReleased"
+                              PointerCaptureLost="PrevTimeline_PointerReleased"
+                              ToolTipService.ToolTip="拖蓝线=选起点 · 拖右端白把手=改长度 · ←/→ 一帧 · PageUp/PageDown 一秒">
+                            <Border Height="16" CornerRadius="4" Background="#2A3240"
+                                    Margin="0,20,0,0" VerticalAlignment="Top"/>
+                            <Border x:Name="PrevRangeBar" Height="16" CornerRadius="4" Background="#3E6FBF"
+                                    Margin="0,20,0,0" VerticalAlignment="Top"
+                                    HorizontalAlignment="Left" Width="0"/>
+                            <Border x:Name="PrevEndGrip" Width="14" Height="24" CornerRadius="3" Background="#E8ECF2"
+                                    VerticalAlignment="Top" HorizontalAlignment="Left" Margin="0,16,0,0"/>
+                            <Grid x:Name="PrevHeadGrip" Width="20" VerticalAlignment="Top" HorizontalAlignment="Left">
+                                <Rectangle Width="2" Height="38" Fill="#7FB2FF" HorizontalAlignment="Center"
+                                           VerticalAlignment="Top" Margin="0,14,0,0"/>
+                                <Border Width="16" Height="14" CornerRadius="3" Background="#7FB2FF"
+                                        HorizontalAlignment="Center" VerticalAlignment="Top"/>
+                            </Grid>
+                            <Canvas x:Name="PrevTicks" Height="16" VerticalAlignment="Bottom"
+                                    HorizontalAlignment="Stretch" IsHitTestVisible="False"/>
                         </Grid>
-                        <!-- 重复帧预览:红色条=重复集中时段 + 两个按钮 -->
-                        <Grid Grid.Row="2" RowSpacing="6">
+
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                <TextBlock Text="起点" FontSize="11" Opacity="0.7" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="EffectStartValueText" Text="00:00.0" FontSize="12" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" MinWidth="52"/>
+                                <Button x:Name="EffectNudgeDownBtn" Content="−0.1" FontSize="11" Padding="8,4"
+                                        Click="EffectStartNudge_Click" Tag="-0.1"
+                                        ToolTipService.ToolTip="起点后退 0.1 秒(拖不准时用它)"/>
+                                <Button x:Name="EffectNudgeUpBtn" Content="+0.1" FontSize="11" Padding="8,4"
+                                        Click="EffectStartNudge_Click" Tag="0.1"
+                                        ToolTipService.ToolTip="起点前进 0.1 秒(拖不准时用它)"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                <TextBlock Text="这一段多长" FontSize="11" Opacity="0.7" VerticalAlignment="Center"/>
+                                <Button x:Name="EffectLenChip2" Content="2 秒" Tag="2" FontSize="11" Padding="10,4"
+                                        Click="EffectLenChip_Click"/>
+                                <Button x:Name="EffectLenChip3" Content="3 秒" Tag="3" FontSize="11" Padding="10,4"
+                                        Click="EffectLenChip_Click"/>
+                                <Button x:Name="EffectLenChip5" Content="5 秒" Tag="5" FontSize="11" Padding="10,4"
+                                        Click="EffectLenChip_Click"/>
+                                <Button x:Name="EffectLenChip10" Content="10 秒" Tag="10" FontSize="11" Padding="10,4"
+                                        Click="EffectLenChip_Click"/>
+                                <Button x:Name="EffectLenChip15" Content="15 秒" Tag="15" FontSize="11" Padding="10,4"
+                                        Click="EffectLenChip_Click"/>
+                            </StackPanel>
+                            <TextBlock x:Name="EffectRangeText" Grid.Column="2" Text="" FontSize="11" Opacity="0.75"
+                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                        </Grid>
+
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <Button x:Name="EffectRunBtn" Content="开始预览" FontSize="12" Padding="16,7"
+                                        Style="{StaticResource AccentButtonStyle}"
+                                        Click="EffectRunBtn_Click"
+                                        ToolTipService.ToolTip="用左侧当前参数只跑这一段(可随时「取消」;跑完自动切到对比画面播放)"/>
+                                <Button x:Name="SavePreviewBtn" Content="保存此预览" FontSize="12" Padding="12,7"
+                                        IsEnabled="False" Click="SavePreview_Click"
+                                        ToolTipService.ToolTip="把这次预览的成片保存到你指定的位置(视频文件,和全片处理同一套参数/画质)"/>
+                                <Button x:Name="EffectCancelBtn" Content="取消" FontSize="12" Padding="12,7"
+                                        IsEnabled="False" Click="EffectCancelBtn_Click"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <ProgressBar x:Name="EffectProgress" Width="170" Minimum="0" Maximum="100" Value="0"/>
+                                <TextBlock x:Name="EffectDirtyHint" Text="参数已改动 · 点「重新预览」看新效果" FontSize="11"
+                                           Foreground="#E8A33D" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                <TextBlock x:Name="EffectStatusText" Text="" FontSize="11" Opacity="0.8"
+                                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                            <ComboBox x:Name="EffectVideoCombo" Grid.Column="2" Width="210" FontSize="12"
+                                      DisplayMemberPath="Name" PlaceholderText="选择素材"
+                                      VerticalAlignment="Center"
+                                      SelectionChanged="EffectVideoCombo_SelectionChanged"
+                                      ToolTipService.ToolTip="要预览的素材:默认是右侧列表里选中的那个,也可以在这里直接换"/>
+                        </Grid>
+                    </StackPanel>
+
+                    <!-- ⑤ 裁剪页的「重复帧」工具行(默认收起) -->
+                    <Border x:Name="DupToolsPanel" Grid.Row="4" Visibility="Collapsed"
+                            Margin="14,0,14,12" Padding="10" CornerRadius="6"
+                            Background="#33222A38" BorderBrush="#3A4150" BorderThickness="1">
+                        <Grid RowSpacing="8">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                                    <TextBlock Text="重复帧" FontSize="11" Opacity="0.7" VerticalAlignment="Center"/>
-                                    <TextBlock x:Name="DupSummaryText" Text="" FontSize="11" Opacity="0.7"
+                            <TextBlock Text="重复帧:分析整片的重复帧分布,可据此一键设置去重(只影响「开始处理」时的去重策略)"
+                                       FontSize="11" Opacity="0.65" TextWrapping="Wrap"/>
+                            <Grid Grid.Row="1" RowSpacing="6">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="DupSummaryText" Text="" FontSize="11" Opacity="0.75"
                                                VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                </StackPanel>
-                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
-                                    <Button x:Name="AnalyzeDupBtn" Content="分析重复帧" FontSize="11" Padding="8,4"
-                                            Click="AnalyzeDupBtn_Click"
-                                            ToolTipService.ToolTip="全文分析当前视频的重复帧分布(只做预估,不精确):为求速度会把画面缩到 400 宽灰度再采样,且智能模式这里用「自适应判据」预估,而真正处理时走「拍数识别+网格采样」——所以数字是估计值,与处理结果可能有小幅差异"/>
-                                    <Button x:Name="ApplyDupBtn" Content="据此设置去重" FontSize="11" Padding="8,4"
-                                            Click="ApplyDupBtn_Click"
-                                            ToolTipService.ToolTip="按分析结果推荐去重模式/强度,并自动勾选去重"/>
-                                </StackPanel>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                                        <Button x:Name="AnalyzeDupBtn" Content="分析重复帧" FontSize="11" Padding="8,4"
+                                                Click="AnalyzeDupBtn_Click"
+                                                ToolTipService.ToolTip="全文分析当前视频的重复帧分布(只做预估,不精确):为求速度会把画面缩到 400 宽灰度再采样,且智能模式这里用「自适应判据」预估,而真正处理时走「拍数识别+网格采样」——所以数字是估计值,与处理结果可能有小幅差异"/>
+                                        <Button x:Name="ApplyDupBtn" Content="据此设置去重" FontSize="11" Padding="8,4"
+                                                Click="ApplyDupBtn_Click"
+                                                ToolTipService.ToolTip="按分析结果推荐去重模式/强度,并自动勾选去重"/>
+                                    </StackPanel>
+                                </Grid>
+                                <Canvas x:Name="DupStrip" Grid.Row="1" Height="10" VerticalAlignment="Center"
+                                        Background="Transparent" SizeChanged="DupStrip_SizeChanged"/>
                             </Grid>
-                            <Canvas x:Name="DupStrip" Grid.Row="1" Height="10" VerticalAlignment="Center"
-                                    Background="Transparent" SizeChanged="DupStrip_SizeChanged"/>
                         </Grid>
-                    </Grid>
+                    </Border>
                 </Grid>
             </Grid>
         </Grid>

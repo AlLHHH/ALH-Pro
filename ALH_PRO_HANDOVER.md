@@ -179,6 +179,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 
 - `发布版\ALHPro.exe` = v1.3.2.0,最近 deploy 时间含前面大部分改动。
 - `发布版\engines\rife\rife-v4.26` **已删除**。
+- 【2026-09-16】补帧下拉**精简为 2 项**(序号 0 = `通用画质最新 (RIFE v4.13)`、1 = `通用画质 (RIFE v4.6)`)。
+  另 4 支老架构模型的权重(`rife-anime` / `rife-HD` / `rife-UHD` / `rife-v2.3`,共 226.9 MB)
+  已从 `发布版\engines\rife\` **移到 `D:\deep\alh-pro\_retired_rife\发布版\engines\rife\`**
+  (装机包因此小约 226 MB;`installer.iss` 打包 `发布版\*`,搬走即生效)。
+  **恢复办法**:把目录搬回 `发布版\engines\rife\`,并在 `VideoView.xaml` 的下拉里加回对应项、
+  同步 `VideoView.xaml.cs` 的 `SelectedInterpModel` 与 `InterpModelName`(契约测试会立刻提醒)。
+  ⚠ 开发侧 `engines\rife\` 里另有更早的历史模型(`rife` / `rife-v2` / `rife-v2.4` / `rife-v3.0` 等)**未动** ——
+  deploy.ps1 用 `/XD engines` 不同步 engines,它们既不进 `发布版\` 也不进装机包。
+- 【2026-09-16】超分模型下拉(waifu2x 3 项 + Real-ESRGAN 7 项)与补帧下拉每一项都加了**悬停提示**:
+  官方说明 + 适用场景 + 模型大小。两支自训模型的体积由 `AlhPro.Core.ExperimentalEsrgan.SizeLine` 提供
+  (XAML 只是镜像,逐字一致由 `VideoModelOrderTests` 钉住)。
 - 桌面已有 `ALHPro_v1.3.2_Setup_NoCut.exe`(精简版,867MB)。
 - GitHub release `v1.3.2` 已建,资产:标准版(808MB)+ models_v1.0.zip(1410MB)。完整版(2.2GB)在百度网盘。
 - 未跟踪文件:`ALHPro_v1.3.2_Setup_NoCut.exe`、`installer_nocut.iss`、`打包工具\gen_ad_imgs.ps1`(未提交)。

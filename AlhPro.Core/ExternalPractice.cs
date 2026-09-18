@@ -147,9 +147,13 @@ public static class ExternalPractice
     /// <summary>[仅建议] PySceneDetect `AdaptiveDetector` 默认 `window_width`(前后各取几帧求滚动均值)。</summary>
     public const int PySceneDetectAdaptiveWindowWidth = 2;
 
-    /// <summary>[仅建议] PySceneDetect 默认 `min_scene_len = 15`(帧)= **切点最小间距/滞回**。
-    /// 本工程**没有**这条:闪光、频闪、快速剪辑会让多个相邻对被判为切点 → 连出多次"强制拷贝"→ 可见顿挫串。
-    /// 加上它会**改变"哪些帧不再受切点保护"**(即会重新开始跨这些帧合成)= 画面语义变化 ⇒ 只建议,不实施。
+    /// <summary>[**已接线** · 2026-09-15] PySceneDetect 默认 `min_scene_len = 15`(帧)= **切点最小间距/滞回**。
+    /// 本工程原先**没有**这条:闪光、频闪、快速剪辑会让多个相邻对被判为切点 → 连出多次"强制拷贝"→ 可见顿挫串
+    /// (实测:单帧全白闪光 → 2 处相邻切点,并切出一个**只含 1 帧**的补帧段;逐帧交替废片 → 479 对判 479 处 ⇒ 退化成全拷贝)。
+    /// 现已实施为 <see cref="SceneCutJudge.MinSceneLen"/>(取值就是这里的 15),在
+    /// <see cref="SceneCutJudge.ApplyMinSceneLen"/> 与 <see cref="SceneCutJudge.Detect"/> 里生效。
+    /// 【与 PySceneDetect 的差别】"首场景也要够长"那条我们**不照搬**:我们的切点是保护点,
+    /// 压掉片头真切点会重新引入跨切鬼影(详见 SceneCutJudge.MinSceneLen 的注释)。
     /// <https://www.scenedetect.com/docs/latest/api/detectors.html></summary>
     public const int PySceneDetectMinSceneLenFramesDefault = 15;
 

@@ -27,7 +27,8 @@
      §5 滚动进入动画(一次性)
      §6 章节标题逐词浮现
      §7 数字滚动计数
-     §8 卡片鼠标跟随光晕
+     §7b 背景细节层(噪点 + 点阵,静态)
+     §8 指针跟随光(独立背景层,在玻璃后面)
      §9 步骤流逐条点亮
      §10 FAQ / 更新日志 高度过渡
      §11 复制按钮
@@ -429,36 +430,79 @@
   }
 
   /* ==========================================================================
-     §8 卡片鼠标跟随光晕
-     只往卡片写 --gx / --gy 两个长度变量,由 CSS 喂给固定尺寸 ::after 的 transform;
-     不改渐变、不改尺寸、不触发布局。仅"有真实指针能悬停"的设备安装。
+     §7b 背景细节层:细颗粒噪点 + 1px 点阵(纯静态装饰,一次创建后不再动)
+     噪点/点阵都在 .bg-detail 的 CSS 里(data URI + 渐变),这里只建这个空 div,
+     这样不用改 7 个页面的 HTML。静态、不参与动画,建完就不再碰它。
+     ========================================================================== */
+  function initBgDetail() {
+    if (document.querySelector('.bg-detail')) { return; }
+    var el = document.createElement('div');
+    el.className = 'bg-detail';
+    el.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(el);
+  }
+
+  /* ==========================================================================
+     §8b 卡片内跟随光:只给指针所在的卡片写 --mx/--my(§23.10 的 .card::after 用)。
+     document 上一个 pointermove 代理(不给每张卡挂监听),一帧最多算一次;
+     光的显隐由 CSS :hover 控制 opacity。
      ========================================================================== */
   function initCardGlow() {
     var mqFine = window.matchMedia ? window.matchMedia('(hover: hover) and (pointer: fine)') : null;
+    if (!mqFine || !mqFine.matches || reduced() || !$('.card').length) { return; }
+
+    var cur = null, last = null, pending = false;
+
+    function draw() {
+      pending = false;
+      if (!cur || !last) { return; }
+      var r = cur.getBoundingClientRect();
+      cur.style.setProperty('--mx', (last.clientX - r.left) + 'px');
+      cur.style.setProperty('--my', (last.clientY - r.top) + 'px');
+    }
+
+    on(document, 'pointermove', function (e) {
+      var t = e.target && e.target.closest ? e.target.closest('.card') : null;
+      if (t !== cur) { cur = t; last = null; }            // 换卡:先别用上一张卡的坐标
+      if (!cur) { return; }
+      last = e;
+      if (pending) { return; }
+      pending = true;
+      window.requestAnimationFrame(draw);
+    }, { passive: true });
+  }
+
+  /* ==========================================================================
+     §8 背景层跟随光:一道很淡的冷色光,在玻璃后面跟着鼠标走(独立固定层 .pointer-glow,
+     每帧只改 transform)。只给"真指针能悬停"的设备装(触屏 / 减小动效不装)。
+     ========================================================================== */
+  function initPointerGlow() {
+    var mqFine = window.matchMedia ? window.matchMedia('(hover: hover) and (pointer: fine)') : null;
     if (!mqFine || !mqFine.matches || reduced()) { return; }
 
-    $('.card').forEach(function (card) {
-      var pending = false, last = null;
+    var el = document.createElement('div');
+    el.className = 'pointer-glow';
+    el.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(el);
 
-      function draw() {
-        pending = false;
-        if (!last) { return; }
-        var r = card.getBoundingClientRect();
-        card.style.setProperty('--gx', (last.clientX - r.left) + 'px');
-        card.style.setProperty('--gy', (last.clientY - r.top) + 'px');
-      }
+    var pending = false, last = null, shown = false;
 
-      on(card, 'pointermove', function (e) {
-        last = e;
-        if (pending) { return; }
-        pending = true;
-        window.requestAnimationFrame(draw);        // 一帧最多算一次
-      }, { passive: true });
+    function draw() {
+      pending = false;
+      if (!last) { return; }
+      el.style.transform = 'translate3d(' + last.clientX + 'px,' + last.clientY + 'px,0)';
+      if (!shown) { shown = true; el.classList.add('is-on'); }
+    }
 
-      on(card, 'pointerleave', function () {
-        card.style.removeProperty('--gx');
-        card.style.removeProperty('--gy');
-      });
+    on(document, 'pointermove', function (e) {
+      last = e;
+      if (pending) { return; }                     // 一帧最多算一次
+      pending = true;
+      window.requestAnimationFrame(draw);
+    }, { passive: true });
+
+    on(document, 'pointerleave', function () {
+      last = null; shown = false; el.classList.remove('is-on');
     });
   }
 
@@ -645,6 +689,16 @@
     });
   }
 
+  /* §13 点「下载」按钮后,在按钮下方显示那行蓝字提示(给"点了没反应"一个明确出口)。 */
+  function initDownloadHint() {
+    var tip = document.getElementById('dl-tip');
+    if (!tip) { return; }
+    var links = document.querySelectorAll('a[download]');
+    for (var i = 0; i < links.length; i++) {
+      links[i].addEventListener('click', function () { tip.hidden = false; });
+    }
+  }
+
   /* ==========================================================================
      启动:每块独立 try/catch,单块失败不影响其余
      ========================================================================== */
@@ -662,11 +716,14 @@
     safe(initTitles);
     safe(initDemos);
     safe(initCounters);
+    safe(initPointerGlow);
     safe(initCardGlow);
+    safe(initBgDetail);
     safe(initFlow);
     safe(initDetails);
     safe(initCopy);
     safe(initAnchors);
+    safe(initDownloadHint);
 
     // 锚点跳转后章节条高亮要跟上(属点击行为,不在滚动路径上)
     safe(function () {

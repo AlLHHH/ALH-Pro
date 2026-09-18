@@ -43,7 +43,7 @@ public class PipelineOrderTests
     {
         var d = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus", 4.0, 2, W1080, H1080, 1800);
         Assert.True(d.UpscaleFirst);
-        Assert.Equal(15.145, d.UpscalePerFrame, 6);                  // 实测 14.82~15.47(仅 12 帧样本)
+        Assert.Equal(15.87, d.UpscalePerFrame, 6);                   // 实测 15.87(2026-09-15,30 帧 1080p 目录批跑)
         Assert.True(d.UpscalePerFrame > d.ThresholdSecondsPerFrame); // u 超过门槛
         Assert.InRange(d.SavingsPercent, 45, 49);                    // 用户给的"省约 47%"
     }
@@ -143,7 +143,7 @@ public class PipelineOrderTests
     [Theory]
     [InlineData("realesr-animevideov3", "animevideov3")]
     [InlineData("realesrgan-x4plus", "x4plus")]
-    [InlineData("realesrgan-x4plus-anime", "x4plus-anime")]   // 若先判 x4plus 会误判成 15.145s/帧
+    [InlineData("realesrgan-x4plus-anime", "x4plus-anime")]   // 若先判 x4plus 会误判成 15.87s/帧
     [InlineData("realesr-general-x4v3", "general-x4v3")]
     [InlineData("realesr-general-wdn-x4v3", "wdn-x4v3")]      // 【2026-09-14】名字是 general-wdn-x4v3,不含 general-x4v3
     [InlineData("models-cunet", "cunet")]
@@ -155,10 +155,14 @@ public class PipelineOrderTests
     [Fact]
     public void X4plus_cost_is_not_reused_for_other_models()
     {
-        // 每张表的键(模型+倍率)都必须能查到,且 x4plus 的 15.145 不许被别的模型借走
-        Assert.Equal(15.145, PipelineOrderPlan.LookupUpscaleSecondsPerFrame("realesrgan-x4plus", 4, out _)!.Value, 6);
+        // 每张表的键(模型+倍率)都必须能查到,且 x4plus 的 15.87 不许被别的模型借走
+        Assert.Equal(15.87, PipelineOrderPlan.LookupUpscaleSecondsPerFrame("realesrgan-x4plus", 4, out _)!.Value, 6);
         Assert.Equal(0.297, PipelineOrderPlan.LookupUpscaleSecondsPerFrame("realesr-animevideov3", 4, out _)!.Value, 6);
-        Assert.Null(PipelineOrderPlan.LookupUpscaleSecondsPerFrame("realesr-animevideov3", 3, out var prov));   // 3x 没实测
+        // 【2026-09-15】animevideov3 的 3x 已实测(补上这一格),所以这里不再是"查不到"
+        Assert.Equal(0.282, PipelineOrderPlan.LookupUpscaleSecondsPerFrame("realesr-animevideov3", 3, out var prov3)!.Value, 6);
+        Assert.Contains("2026-09-15", prov3);
+        // "无实测 → 一律旧顺序【待实测标定】"这条仍然成立(换一个确实没测过的组合来钉)
+        Assert.Null(PipelineOrderPlan.LookupUpscaleSecondsPerFrame("models-cunet", 4, out var prov));
         Assert.Contains("待实测标定", prov);
         // waifu2x cunet 2x(噪声三档中值)+ upconv_7_photo 2x
         Assert.Equal(0.3685, PipelineOrderPlan.LookupUpscaleSecondsPerFrame("models-cunet", 2, out _)!.Value, 6);
@@ -170,7 +174,7 @@ public class PipelineOrderTests
         Assert.Null(PipelineOrderPlan.LookupUpscaleSecondsPerFrame("realesr-general-wdn-x4v3", 2, out _));
         // "1x 缩回"的面积与倍率分开传:engine 倍率仍按 2x 查表(areaScale 只影响放大后面积)
         var shrink = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus", 2.0, 2, W1080, H1080, 1800, areaScale: 1.0);
-        Assert.Equal(15.145, shrink.UpscalePerFrame, 6);
+        Assert.Equal(15.87, shrink.UpscalePerFrame, 6);
         Assert.Equal((long)W1080 * H1080, shrink.HiPixels);   // 缩回后补帧输入仍是源尺寸
     }
 }

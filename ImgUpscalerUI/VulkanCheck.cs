@@ -385,7 +385,9 @@ public static class VulkanCheck
                     else if (arch == "pascal") nvArch = "pascal";
                 }
             }
-            if (amdDedicated) risky = "AMD 独显补帧易间歇丢帧/黑帧";
+            // 【2026-09-17 用户反馈:不许一口咬定"是 A 卡的问题"】A 卡能不能用,取决于真机实测结论
+            // (EngineService 的 ncnn 探测),而不是型号。这里只保留"遇到异常会自动兜底"的说明,不再下结论。
+            if (amdDedicated) risky = "AMD 独显:以真机实测结论为准(ncnn 实测通过就直接用);若高倍率补帧遇到间歇丢帧/黑帧,软件会自动改用 ONNX DirectML 或 CPU";
             else if (nvArch == "blackwell") risky = "RTX 50 系:是否走 ncnn 由首次处理时真机实测决定(重编版 ncnn 已在 50 系笔记本上实测通过)";
             else if (nvArch == "oldgtx") risky = "GTX 600/700/800/900 系:驱动已停更,GPU 加速可能不完整(软件会先真机实测)";
             else if (anyIgpu && !amdDedicated && !names.Any(n => CardKind(n) == "nvidia" || CardKind(n) == "amd"))
