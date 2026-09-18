@@ -94,6 +94,73 @@ public sealed partial class MainPage : Page
                 {
                     // 确保设备表已填充:若从缓存加载(Devices 空)会导致自检/选卡误判"无 GPU",真跑一次枚举
                     if (VulkanCheck.Devices.Count == 0) VulkanCheck.ReProbe(); else VulkanCheck.RunOnce();
+                    // 【按设备名重新解析编号 · 2026-09-18 诊断包定位到的真凶】
+                    // 引擎的设备编号**不是稳定身份**:同一台笔记本两次启动之间,同一张 NVIDIA 先被判为 id 0、
+                    // 后又被判为 id 1(诊断包里两条日志白纸黑字)。老代码只把**编号**存进设置 → 编号一翻,
+                    // 存下来的 "1" 就指向了 **AMD 780M 核显** → 核显跑 ncnn → GPU 队列异常 → 黑帧;
+                    // 连 ONNX/DirectML 回退也指向核显 → 两条路都黑,最后只能回退源帧 ✗。
+                    // 现在:设置里连**设备名**一起存(名字才是稳定身份)→ 每次启动按名字在当前枚举里找编号;
+                    // 名字找不到(换卡/驱动改名)→ 用"最优秀且实测可用"的独显兜底(核显只有没独显时才用)。
+                    try
+                    {
+                        var allDevs = VulkanCheck.Devices;
+                        if (allDevs.Count > 0)
+                        {
+                            string savedName = (AppSettings.GpuName ?? "").Trim();
+                            int resolved = -1;
+                            if (savedName.Length > 0)
+                            {
+                                var hit = allDevs.Where(d => GpuNameMatches(d.Name, savedName))
+                                                 .Select(d => (int?)d.Id).FirstOrDefault();
+                                if (hit.HasValue) resolved = hit.Value;
+                            }
+                            if (resolved < 0)
+                            {
+                                // 名字没存过(老设置)或找不到(换卡了):按启动自检的最佳独显兜底
+                                resolved = await EngineService.FindBestWorkingGpuAsync();
+                                if (resolved >= 0 && savedName.Length > 0)
+                                    AppLogger.Warn($"⚠ 设置里记的设备「{savedName}」在当前设备表里找不到(换卡/驱动改名?),已改用 {resolved}: {GpuInfo.GetEngineDeviceName(resolved)}");
+                            }
+                            if (resolved >= 0 && !VulkanCheck.Devices.Any(d => d.Id == resolved))
+                            {
+                                int best = await EngineService.FindBestWorkingGpuAsync();
+                                if (best >= 0) resolved = best;
+                            }
+                            if (resolved >= 0)
+                            {
+                                string nowName = GpuInfo.GetEngineDeviceName(resolved) ?? "";
+                                if (AppSettings.GpuIndex != resolved || AppSettings.GpuName != nowName)
+                                {
+                                    AppLogger.Info($"计算设备按名字重新定位:设置里的「{savedName}」(旧编号 {AppSettings.GpuIndex}) → 现在编号 {resolved}({nowName})");
+                                    AppSettings.GpuIndex = resolved;
+                                    AppSettings.GpuName = nowName;
+                                    try { AppSettings.Save(); } catch { }
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+                    // 【拖放失效的根因自检 · 2026-09-18 用户反馈"很多设备没开管理员也不能把项目拖入"】
+                    // Windows 的 UIPI(完整性级别隔离)规定:**拖放的源与目标必须在同一权限级别**,
+                    // 一边管理员、一边普通,系统就**静默拒绝**(没有任何提示,只表现为"拖进去没反应")。
+                    // 实测根因在安装包:三个 installer 的 [Run] 少了 runasoriginaluser ✗ ——
+                    // 装完后从"完成"界面直接启动的那次,程序**继承了安装程序的管理员令牌** ✗,
+                    // 于是从那以后拖放一直失效(用户以为"没开管理员",其实是程序被提权了)。
+                    // 这里把有无提权记进日志,便于一眼判定;安装脚本已同步修好。
+                    try
+                    {
+                        bool elevated;
+                        using (var wid = System.Security.Principal.WindowsIdentity.GetCurrent())
+                            elevated = new System.Security.Principal.WindowsPrincipal(wid)
+                                .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+                        if (elevated)
+                            AppLogger.Warn("⚠ 本程序正以管理员权限运行 → Windows(UIPI)会拦截从资源管理器拖入的文件,拖放会没反应。"
+                                         + "解决:关闭本程序,用桌面快捷方式重新打开(快捷方式不要勾选「以管理员身份运行」);"
+                                         + "临时可用页面里的「添加文件/选择视频文件」按钮。");
+                        else
+                            AppLogger.Info("权限自检:以普通用户权限运行 ✓(拖放不受 UIPI 限制)");
+                    }
+                    catch { }
                     bool gpuOk = VulkanCheck.GpuAvailable;
                     MarkSelfCheckStep(0, gpuOk || GpuInfo.GetAdapterNames().Count > 0);   // ① 检测显卡(注册表现实存在则算有 GPU)
                     MarkSelfCheckStep(1, true);             // ② 显存/驱动/内存/CPU(RunOnce 报告已含)
@@ -328,6 +395,23 @@ public sealed partial class MainPage : Page
             AddReportLine(null, "· " + name + "  " + (present ? "已安装" : "缺失"), present);
     }
 
+    /// <summary>两个设备名是否指同一张卡(容忍 "(TM)"/"Intel(R)"/空白/大小写差异 —— 引擎与注册表的写法常不同)。</summary>
+    private static bool GpuNameMatches(string? a, string? b)
+    {
+        static string Norm(string? s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return "";
+            var sb = new System.Text.StringBuilder(s.Length);
+            foreach (var c in s)
+            {
+                if (char.IsLetterOrDigit(c)) sb.Append(char.ToLowerInvariant(c));
+            }
+            return sb.ToString().Replace("tm", "").Replace("r", "")
+                     .Replace("geforce", "nvidia");   // "GeForce RTX 4060" ↔ "NVIDIA GeForce RTX 4060"
+        }
+        string x = Norm(a), y = Norm(b);
+        return x.Length > 0 && y.Length > 0 && (x == y || x.Contains(y) || y.Contains(x));
+    }
     private void AddReportLine(string? label, string value, bool? ok)
     {
         var tb = new TextBlock
@@ -445,13 +529,25 @@ public sealed partial class MainPage : Page
         var list = new System.Collections.Generic.List<(string, bool)>();
         try
         {
-            list.Add(("waifu2x 引擎", EngineService.FindWaifu2x() != null));
-            list.Add(("realesrgan 引擎", EngineService.FindRealESRGAN() != null));
+            var reExe = EngineService.FindRealESRGAN();
+            var wfExe = EngineService.FindWaifu2x();
+            bool rifeExe = VideoService.RifePath != null;
+            list.Add(("waifu2x 引擎", wfExe != null));
+            list.Add(("realesrgan 引擎", reExe != null));
+            // 真正必需的是"引擎 + 它自带的 ncnn 权重"(权重在 engines/<引擎>/models*/ 里)
+            list.Add(("waifu2x 自带权重", EngineService.HasNcnnWeights(wfExe)));
+            list.Add(("realesrgan 自带权重", EngineService.HasNcnnWeights(reExe)));
             list.Add(("ffmpeg 引擎", VideoService.FfmpegPath != null));
-            list.Add(("rife 引擎", VideoService.RifePath != null));
-            list.Add(("超分模型 ONNX", ALHPro.EsrganOnnxService.FindModel() != null));
-            list.Add(("动漫模型 waifu2x", ALHPro.EsrganOnnxService.FindWaifu2xModel() != null));
-            list.Add(("补帧模型 ONNX", ALHPro.RifeOnnxService.Available()));
+            list.Add(("rife 引擎", rifeExe));
+            // 【2026-09-18 用户要求:"不要写什么超分模型缺失,根本就没有缺失"(一些设备上)
+            // 根因:ONNX 只是 DirectML **备选**路径、不随包发布,而 N 卡上真正干活的是 ncnn 引擎
+            // → 正常环境却被列成"超分模型 ONNX: 缺失"、功能判不可用、自检整体失败 ✗(用户看到的"样子不一样了")。
+            // 现在:引擎在 → **不列 ONNX 行**(缺它完全不影响使用);引擎不在 → 才列出 ONNX 备选(那时它是关键)。
+            bool reOnnx = ALHPro.EsrganOnnxService.FindModel() != null;
+            bool waifuOnnx = ALHPro.EsrganOnnxService.FindWaifu2xModel() != null;
+            if (reExe == null) list.Add(("超分模型 ONNX(DirectML 备选 · 引擎缺失时才需要)", reOnnx));
+            if (wfExe == null) list.Add(("动漫模型 waifu2x ONNX(DirectML 备选 · 引擎缺失时才需要)", waifuOnnx));
+            if (!rifeExe) list.Add(("补帧模型 ONNX(DirectML 备选 · 引擎缺失时才需要)", ALHPro.RifeOnnxService.Available()));
             list.Add(("抠图模型 rembg", EngineService.CheckEngines(out _)));
             list.Add(("音频模型 Demucs", ALHPro.AudioEnhanceService.FindModel() != null));
         }
@@ -459,14 +555,21 @@ public sealed partial class MainPage : Page
         return list.ToArray();
     }
 
-    /// <summary>各功能自检:按「引擎 exe + 模型」是否齐全判断该功能是否可用(文件存在性检查,快)。</summary>
+    /// <summary>各功能自检:按「引擎 exe + 引擎自带权重」是否齐全判断该功能是否可用(文件存在性检查,快)。
+    /// 【2026-09-18 修正】原来把 **ONNX 模型**也当成必备件((reExe &amp;&amp; reModel) || …)→
+    /// 而 ONNX 只是 DirectML 备选、不随包发布 → "有 ncnn 引擎、没装 ONNX"的正常机器被判"图片放大不可用",
+    /// 进而让"设备重新检测"的自检整体显示失败(用户报"不要写超分模型缺失 / 样子和原先不一样")。
+    /// 现在:引擎 exe + 自带权重为主,ONNX 模型只作为**额外**通路(有则更宽松,没有不影响判定)。</summary>
     private static (string name, bool ok)[] CheckFunctions()
     {
         var list = new System.Collections.Generic.List<(string, bool)>();
         try
         {
-            bool reExe = EngineService.FindRealESRGAN() != null;
-            bool wfExe = EngineService.FindWaifu2x() != null;
+            var reExePath = EngineService.FindRealESRGAN();
+            var wfExePath = EngineService.FindWaifu2x();
+            bool reExe = reExePath != null, wfExe = wfExePath != null;
+            bool reOk = reExe && EngineService.HasNcnnWeights(reExePath);   // 引擎 + 自带权重
+            bool wfOk = wfExe && EngineService.HasNcnnWeights(wfExePath);
             bool ff = VideoService.FfmpegPath != null;
             bool rifeExe = VideoService.RifePath != null;
             bool reModel = ALHPro.EsrganOnnxService.FindModel() != null;
@@ -474,10 +577,10 @@ public sealed partial class MainPage : Page
             bool rifeOnnx = ALHPro.RifeOnnxService.Available();
             bool audioModel = ALHPro.AudioEnhanceService.FindModel() != null;
             bool lavasr = ALHPro.LavaSrService.Available();
-            list.Add(("图片放大", (reExe && reModel) || (wfExe && waifuModel)));
-            list.Add(("动漫放大", wfExe && (waifuModel || reModel)));
-            list.Add(("视频超分", ff && (reExe || reModel)));
-            list.Add(("视频补帧", rifeExe && (rifeOnnx || rifeExe)));
+            list.Add(("图片放大", reOk || wfOk || reModel || waifuModel));
+            list.Add(("动漫放大", wfOk || reOk || waifuModel || reModel));
+            list.Add(("视频超分", ff && (reOk || wfOk || reModel)));
+            list.Add(("视频补帧", rifeExe || rifeOnnx));
             list.Add(("AI 抠图", EngineService.CheckEngines(out _)));   // 含 rembg 抠图模型
             list.Add(("音频增强", audioModel));
             list.Add(("音频升采样", lavasr));
@@ -2288,6 +2391,13 @@ public sealed partial class MainPage : Page
         TextBlock? reportText = null;
         string selfReport = AppSettings.SelfCheckReport;
         if (string.IsNullOrEmpty(selfReport) && AppSettings.VulkanCheckDone) selfReport = AppSettings.VulkanReport;
+        // 【2026-09-18 用户要求】把**预览界面的内容**也写进设置里的日志(明确说"别写左下角")✔
+        // 预览页每次状态变化(切视图/播放暂停/装片)都会把快照写进 AppSettings.PreviewDiag;
+        // 这里接在自检报告后面 → 报告可复制、可导出、随诊断包一起发出来 →
+        // "左右对比只有右侧在播 / 左右不同步 / 滑动不跟手" 这类问题,以后**一眼可判,不用再猜** ✔
+        if (!string.IsNullOrEmpty(AppSettings.PreviewDiag))
+            selfReport = (string.IsNullOrEmpty(selfReport) ? "" : selfReport + "\n\n")
+                       + "预览页状态快照(最近一次操作时记录)\n" + AppSettings.PreviewDiag;
         if (!string.IsNullOrEmpty(selfReport))
         {
             reportText = new TextBlock

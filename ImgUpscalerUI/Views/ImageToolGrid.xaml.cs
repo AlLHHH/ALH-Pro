@@ -34,9 +34,26 @@ public sealed partial class ImageToolGrid : UserControl
 
     public ObservableCollection<ImageItem> Items { get; } = new();
 
-    /// <summary>当前选中的图片(按选中顺序)。</summary>
+    /// <summary>当前选中的图片(按选中顺序)。
+    /// 【线程】读的是 ListView 的选中项(控件)→ 只能在 UI 线程调。后台线程调到会抛 0x8001010E
+    /// (与上面 UpdateListState 同源);这里做防御:记录一行并返回空表,不让它把整条处理流程炸掉。</summary>
     public IReadOnlyList<ImageItem> SelectedItems
-        => ImageGrid.SelectedItems.OfType<ImageItem>().ToList();
+    {
+        get
+        {
+            try
+            {
+                var dq = DispatcherQueue;
+                if (dq != null && !dq.HasThreadAccess)
+                {
+                    AppLogger.Warn("[UI] 后台线程读取了列表选中项(应在 UI 线程先快照)→ 本次按空表处理,避免抛 0x8001010E");
+                    return Array.Empty<ImageItem>();
+                }
+            }
+            catch { }
+            return ImageGrid.SelectedItems.OfType<ImageItem>().ToList();
+        }
+    }
 
     /// <summary>双击缩略图(打开大图预览)。</summary>
     public event Action<ImageItem>? ItemDoubleTapped;
@@ -191,8 +208,39 @@ public sealed partial class ImageToolGrid : UserControl
         set { _paused = value; UpdateListState(); }
     }
 
+    /// <summary>把界面刷新切回 UI 线程。
+    /// 【真机 bug 2026-09-18 用户报"超分图片最后显示失败,但结果其实已经出来了"】
+    /// 日志里的原始调用栈(0x8001010E = 应用程序调用一个已为另一线程整理的接口):
+    ///   ListViewBase.get_SelectedItems() ← ImageToolGrid.UpdateListState()
+    ///   ← ImageToolGrid.set_IsProcessing() ← UpscaleView.RunBtn_Click(…)<Task.ThrowAsync>
+    /// 也就是说:图片放大跑完后,`IsProcessing = false` 是在**后台线程**(await 之后回不到 UI 线程、
+    /// finally 落在线程池上)被赋值的,而 setter 直接调 UpdateListState() → 里面读 ImageGrid.SelectedItems
+    /// (控件)→ 抛异常 → 上层记成"界面刷新失败,已忽略并继续(不影响处理结果)" ✗
+    /// → 用户看到"失败",可图片其实早就放大好了(正是用户描述的现象)。
+    /// 修法:UpdateListState 这个**唯一收口**先判断线程,不在 UI 线程就转过去再跑 ——
+    /// 所有调用者(属性 setter、Items 变化、按钮回调、处理循环的 finally…)一次性全部安全。</summary>
+    private void RunOnUi(Action action)
+    {
+        try
+        {
+            var dq = DispatcherQueue;
+            if (dq == null || dq.HasThreadAccess) { action(); return; }
+            AppLogger.Info("[UI] 检测到后台线程调用列表刷新 → 已切回 UI 线程执行(本该在 UI 线程上调用;"
+                         + "若频繁出现说明某条 await 之后丢了上下文)");
+            dq.TryEnqueue(() => { try { action(); } catch { } });
+        }
+        catch { }
+    }
+
     private void UpdateListState()
     {
+        // 【线程】本方法读控件(ImageGrid.SelectedItems)。不在 UI 线程就直接转过去,别抛 0x8001010E。
+        try
+        {
+            var dq = DispatcherQueue;
+            if (dq != null && !dq.HasThreadAccess) { RunOnUi(UpdateListState); return; }
+        }
+        catch { }
         var n = Items.Count;
         var sel = ImageGrid.SelectedItems.OfType<ImageItem>().ToList();
         ListCount.Text = n > 0

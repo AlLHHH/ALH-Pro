@@ -1,4 +1,4 @@
-﻿; ALH Pro 安装脚本 (Inno Setup 6.3+)
+; ALH Pro 安装脚本 (Inno Setup 6.3+)
 ; ⚠ 需要 Inno Setup 6.3 或更高版本(首次版本(2021)起支持 DownloadTemporaryFile / CreateDownloadPage)
 ;
 ; 【本脚本 = 完整版(内置模型)】与 installer.iss(本体版)的区别只有一处:
@@ -100,4 +100,4 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "运行 {#MyAppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "运行 {#MyAppName}"; Flags: nowait postinstall skipifsilent runasoriginaluser

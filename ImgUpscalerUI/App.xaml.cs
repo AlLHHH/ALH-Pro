@@ -225,6 +225,40 @@ namespace ALHPro
                     {
                         try { var fi = new FileInfo(f); bytes += fi.Length; File.Delete(f); files++; } catch { }
                     }
+                    // 【2026-09-18 用户:"设置里面的清理很多东西感觉都清理不到"】实测根因:
+                    // 上面所有规则都只匹配**根目录下**的 alh_*/imgup_* ✗,而预览页那一大批文件其实在
+                    // **%TEMP%\ALHPro\preview**(preview_* 预览成片 / cmp_* 并排对比片 / seg_* 偏移副本),
+                    // 这个 "ALHPro" 子目录**从来不在扫描范围** ⇒ 用户点"立即清理"也清不掉 ✗。
+                    // 这里按**本软件自己的目录名**精确补一条:只在这个 ALHPro 目录里动手,绝不碰别处 ✔
+                    try
+                    {
+                        var appTmp = Path.Combine(root, "ALHPro");
+                        if (Directory.Exists(appTmp))
+                        {
+                            foreach (var sub in Directory.EnumerateDirectories(appTmp))
+                            {
+                                var nm = Path.GetFileName(sub);
+                                if (nm.StartsWith("preview", StringComparison.OrdinalIgnoreCase)
+                                 || nm.StartsWith("frames", StringComparison.OrdinalIgnoreCase)
+                                 || nm.StartsWith("cache", StringComparison.OrdinalIgnoreCase)
+                                 || nm.StartsWith("tmp", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    // 本软件自己的临时子目录:整目录删
+                                    try { dirs++; bytes += DirSize(sub); Directory.Delete(sub, true); } catch { }
+                                }
+                                else
+                                {
+                                    // 其它子目录:只删里面的本软件临时文件,不整目录删(防误删)
+                                    foreach (var pat in new[] { "preview_*", "cmp_*", "seg_*", "alh_*", "imgup_*" })
+                                        foreach (var f in Directory.EnumerateFiles(sub, pat))
+                                        {
+                                            try { var fi = new FileInfo(f); bytes += fi.Length; File.Delete(f); files++; } catch { }
+                                        }
+                                }
+                            }
+                        }
+                    }
+                    catch { }
                 }
                 catch { }
             }
@@ -530,11 +564,42 @@ namespace ALHPro
 
         protected override void OnLaunched(LaunchActivatedEventArgs e)
         {
+            // ===== 【拖放最优解】提权自愈:以管理员运行时,用普通权限重新拉起自己并立刻退出 =====
+            // WindowsAppSDK 官方结论:提权的 WinUI3 程序**不支持拖放**(UIPI 设计,无 API 可绕)
+            // → 本软件不需要管理员,所以"保证跑在普通权限"就是唯一正解。
+            // 这里必须在**单实例锁之前**做:否则新实例会看到旧实例还占着锁而立刻退出,变成"没人运行" ✗。
+            if (DeElevate.IsElevated() && !DeElevate.HasFlag())
+            {
+                try { AppLogger.Warn("检测到以管理员权限运行 → 拖放会被 Windows(UIPI)拦截,正在以普通权限重新启动…"); } catch { }
+                if (DeElevate.TryRelaunchNormal())
+                {
+                    try { AppLogger.Info("已启动普通权限实例,本(管理员)实例退出"); } catch { }
+                    Exit();
+                    return;
+                }
+                try { AppLogger.Warn("降权重启未成功 → 继续以管理员运行;此时请用页面里的「添加文件」按钮,不要依赖拖放"); } catch { }
+            }
+            else if (!DeElevate.IsElevated())
+            {
+                try { AppLogger.Info("权限自检:以普通用户权限运行 ✓(拖放可用)"); } catch { }
+            }
+
             // ===== 单实例锁定(Mutex):只允许一个 ALH Pro 运行 =====
             // 第二次启动:尝试已有窗口(置前),本进程退出——杜绝多实例并存互相覆盖设置文件
             // (那正是"图片格式/码率记不住"的元凶;多个旧实例持续用默认值写盘)。
             bool createdNew;
             _singleInstance = new System.Threading.Mutex(true, "ALHPro_SingleInstance_Mutex", out createdNew);
+            // 【降权的子实例】旧(管理员)实例可能还没来得及退出 → 多等一会儿再判定"已有实例",
+            // 否则会出现"旧实例退出、新实例也自杀" = 程序不见了 ✗。
+            if (!createdNew && DeElevate.HasFlag())
+            {
+                for (int i = 0; i < 40 && !createdNew; i++)
+                {
+                    System.Threading.Thread.Sleep(100);
+                    try { _singleInstance.Dispose(); } catch { }
+                    _singleInstance = new System.Threading.Mutex(true, "ALHPro_SingleInstance_Mutex", out createdNew);
+                }
+            }
             if (!createdNew)
             {
                 try
