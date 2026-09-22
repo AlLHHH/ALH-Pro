@@ -65,7 +65,7 @@
 | 项 | 实测值 | 依据 |
 |---|---|---|
 | 默认模型 | **`isnet-general-use`**（不是 `birefnet-lite`） | GPU 稳态 0.40 s/帧；`birefnet-lite` 的 DML 路已坏、CPU 要 4.9~5.4 s |
-| ETA 系数 | **0.40 秒/帧**（isnet + GPU + 1080p） | 1800 帧 ≈ 12 分钟；u2net 0.21 s、u2netp 0.19 s、isnet+CPU 1.05 s |
+| ETA 系数 | **待定**：`≥ 纯推理耗时 + 0.096 s/帧`（本机 1080p 实测：我们的三段后处理 96 ms/帧固定加成） | §一 的 0.40 s/帧是**整条 `CutoutAsync`**（含图片页后处理和写 PNG）的数字，不能直接当视频路径的推理成本；开工前补测"只出蒙版"入口的耗时 |
 | GPU 默认 | **成立**（用户已选） | isnet 2.6×、u2net 2.4×、u2netp 1.6×；但设备级失败后必须熔断走 CPU |
 | 加速杠杆 | 降分辨率预览 + 跳帧 | 推理耗时与分辨率无关（输入固定 1024/320），后处理与像素数成正比（≈78 ms/百万像素） |
 | 透明通道默认容器 | **MOV / ProRes 4444**（备选 WebM/VP9-alpha） | 实测 WebM 的 alpha 连 ffmpeg 原生 vp9 解码器都会静默丢掉；ProRes 到处都认 |
@@ -108,6 +108,7 @@
 | `ImgUpscalerUI/VideoMattingService.cs`（新） | ONNX 会话（复用 `CutoutService` 的模型注册表与缓存）+ 帧循环 + 进度心跳 + 临时盘 + 与 ffmpeg 对接（拆帧 / 透明合帧 / 换背景编码） | 与 `CutoutService`（单图）并列，互不污染 |
 | `Views/VideoMattingView.xaml(.cs)`（新） | 新板块页面，视觉语言照 `UpscaleView` / `VideoView` | "界面学习其他板块"落在这一层 |
 | `matting-settings.json`（新） | 记住上次参数（照 `cutout-settings.json` 风格） | 与其它页一致 |
+| `CutoutService` 新增"只出蒙版"入口（改） | 给定图片路径 → 直接返回**原始 float 蒙版**（推理 + 上采样到原尺寸），**不做参数后处理、不写文件、不进 `_rawMaskCache`** | **不这么做就会错两处**：① 现有 `CutoutAsync` / `PreviewMaskAsync` 都走完整 `RunCore`（含图片页的阈值/羽化/边缘增强），视频路径再套一层 `VideoMatting.PostProcessAlpha` 就是**重复后处理**；② 它们每帧都要写 PNG，1800 帧 ≈ 数 GB 临时盘。拆分点应落在 `ProcessMask` 内部（"上采样" vs "按参数处理"两段） |
 
 ---
 
