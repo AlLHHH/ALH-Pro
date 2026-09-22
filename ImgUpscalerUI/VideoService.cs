@@ -1,4 +1,4 @@
-// VideoService.cs — 视频超分 + 补帧
+﻿// VideoService.cs — 视频超分 + 补帧
 // 原理:ffmpeg 拆帧 → 逐帧图片超分 → (可选) RIFE 补帧 → ffmpeg 合帧+音频
 using System;
 using System.Diagnostics;
@@ -5634,7 +5634,7 @@ public static class VideoService
 
     /// <summary>按"实测可用"自适应选视频压缩编码器:优先厂商匹配的硬编,其次任一可用硬编,最后 libx264。
     /// codecPref:0=自动(H.264 优先) 1=强制 H.264 2=优先 H.265(hevc,更省空间,老设备可能播不了)。</summary>
-    private static string PickVideoEncoder(int gpuId, int codecPref = 0)
+    internal static string PickVideoEncoder(int gpuId, int codecPref = 0)
     {
         // 按引擎真实 -g 编号取显卡名选硬件编码器;不能用注册表顺序索引(AMD 核显+NVIDIA 独显双卡机上顺序相反)。
         var name = GpuInfo.GetEngineDeviceName(gpuId);
@@ -8608,7 +8608,7 @@ public static class VideoService
 
     /// <summary>编码参数;quality 0=自动 1=低 2=中 3=高 4=极高(CRF 值递减=画质递增,单调)。
     /// bitrateKbps &gt; 0 = 自定义码率(固定码率,替代质量档);codec 支持 H.264/H.265 各硬编 + CPU。</summary>
-    private static string EncoderArgs(string encoder, int quality = 0, double bitrateKbps = 0)
+    internal static string EncoderArgs(string encoder, int quality = 0, double bitrateKbps = 0)
     {
         int q = quality switch { 0 => 22, 1 => 26, 2 => 24, 3 => 20, 4 => 15, _ => 22 };
         int th = SafeRender.GetLibx264Threads();
@@ -9175,7 +9175,7 @@ public static class VideoService
     private static string ExtractStageLabel(string vfExpr)
         => vfExpr.Contains("custom_shader_path", StringComparison.Ordinal) ? "1x 修复(Anime4K)" : "拆帧";
 
-    private static async Task RunAsync(string exe, string args,
+    internal static async Task RunAsync(string exe, string args,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct,
         string stage = "", int totalFrames = 0, string? watchDir = null,
         Action<double>? onEngineReady = null)
