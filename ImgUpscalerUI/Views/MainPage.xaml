@@ -53,7 +53,11 @@
                         <TextBlock Text="图片放大" FontSize="13"/>
                     </ListViewItem>
                     <ListViewItem x:Name="NavCutout" Tag="cutout" Padding="14,10">
-                        <TextBlock Text="AI 抠图" FontSize="13"/>
+                        <TextBlock Text="图片抠图" FontSize="13"/>
+                    </ListViewItem>
+                    <!-- 视频抠图:独立板块(2026-09-22 用户明确要求;不并进图片抠图页) -->
+                    <ListViewItem x:Name="NavMatting" Tag="matting" Padding="14,10">
+                        <TextBlock Text="视频抠图" FontSize="13"/>
                     </ListViewItem>
                     <ListViewItem x:Name="NavVideo" Tag="video" Padding="14,10">
                         <TextBlock Text="视频处理" FontSize="13"/>

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media.Imaging;
@@ -10,6 +10,7 @@ public sealed partial class MainPage : Page
     private UpscaleView? _upView;
     private CutoutView? _cutView;
     private VideoView? _videoView;
+    private VideoMattingView? _mattingView;
     private AudioView? _audioView;
     private TutorialView? _tutorialView;
     private string _currentTag = "upscale";
@@ -581,7 +582,7 @@ public sealed partial class MainPage : Page
             list.Add(("动漫放大", wfOk || reOk || waifuModel || reModel));
             list.Add(("视频超分", ff && (reOk || wfOk || reModel)));
             list.Add(("视频补帧", rifeExe || rifeOnnx));
-            list.Add(("AI 抠图", EngineService.CheckEngines(out _)));   // 含 rembg 抠图模型
+            list.Add(("图片抠图", EngineService.CheckEngines(out _)));   // 含 rembg 抠图模型
             list.Add(("音频增强", audioModel));
             list.Add(("音频升采样", lavasr));
         }
@@ -1197,8 +1198,9 @@ public sealed partial class MainPage : Page
         _currentTag = tag;
         ContentRoot.Children.Clear();
         // 记录最近使用界面(「上次退出界面」启动模式用);切换即保存,退出时也保存(见 MainWindow_Closed)
+        // 索引口径:0=图片放大 1=图片抠图 2=视频处理 3=音频处理 4=视频抠图(见 StartupPage 注释,别再往下挤默认值)
         if (tag != "tutorial")
-            SaveLastPage(tag == "upscale" ? 0 : tag == "video" ? 2 : tag == "audio" ? 3 : 1);
+            SaveLastPage(tag switch { "upscale" => 0, "cutout" => 1, "video" => 2, "audio" => 3, "matting" => 4, _ => 1 });
         if (tag == "upscale")
         {
             AppLogger.Info("进入页面:图片放大");
@@ -1243,9 +1245,39 @@ public sealed partial class MainPage : Page
             _tutorialView ??= new TutorialView();
             ContentRoot.Children.Add(_tutorialView);
         }
+        else if (tag == "matting")
+        {
+            try
+            {
+                AppLogger.Info("进入页面:视频抠图");
+                _mattingView ??= new VideoMattingView();
+                ContentRoot.Children.Add(_mattingView);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error($"视频抠图页加载失败 HRESULT=0x{ex.HResult:X8}", ex);
+                _mattingView = null;
+                ContentRoot.Children.Add(new TextBlock
+                {
+                    Text = "视频抠图页加载失败(已记录到诊断日志):\n" + ex.Message,
+                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                    FontSize = 13,
+                    Margin = new Microsoft.UI.Xaml.Thickness(20),
+                });
+            }
+        }
+        else if (tag == "cutout")
+        {
+            AppLogger.Info("进入页面:图片抠图");
+            _cutView ??= new CutoutView();
+            _cutView.StatusChanged -= OnStatusChanged;
+            _cutView.StatusChanged += OnStatusChanged;
+            ContentRoot.Children.Add(_cutView);
+        }
         else
         {
-            AppLogger.Info("进入页面:AI 抠图");
+            // 兼容旧调用:未识别的 tag 一律回图片抠图页(启动恢复旧配置时可能带旧 tag)
+            AppLogger.Info($"进入页面:图片抠图(未识别 tag={tag})");
             _cutView ??= new CutoutView();
             _cutView.StatusChanged -= OnStatusChanged;
             _cutView.StatusChanged += OnStatusChanged;
@@ -2231,7 +2263,7 @@ public sealed partial class MainPage : Page
     private bool _coffeeViaSponsor;         // 是否从赞助提示进入打码界面
     private Microsoft.UI.Xaml.Controls.Primitives.Popup? _logPopup;     // 日志弹窗(单例守卫)
 
-    /// <summary>默认启动页:-1=上次退出界面(默认) 0=图片放大 1=AI 抠图 2=视频处理。</summary>
+    /// <summary>默认启动页:-1=上次退出界面(默认) 0=图片放大 1=图片抠图 2=视频处理 3=音频处理 4=视频抠图。</summary>
     private int _startupPage = -1;
     private static string StartupFile => ParaPaths.SettingsFile("startup-page.txt");
     // 最近一次使用的界面(切换即写,退出时也写):"上次退出界面"模式启动用
@@ -2296,15 +2328,16 @@ public sealed partial class MainPage : Page
         var pageCombo = new ComboBox { HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch };
         pageCombo.Items.Add(new ComboBoxItem { Content = "上次退出界面(默认)" });
         pageCombo.Items.Add(new ComboBoxItem { Content = "图片放大" });
-        pageCombo.Items.Add(new ComboBoxItem { Content = "AI 抠图" });
+        pageCombo.Items.Add(new ComboBoxItem { Content = "图片抠图" });
         pageCombo.Items.Add(new ComboBoxItem { Content = "视频处理" });
         pageCombo.Items.Add(new ComboBoxItem { Content = "音频处理" });
+        pageCombo.Items.Add(new ComboBoxItem { Content = "视频抠图" });
         pageCombo.SelectedIndex = _startupPage + 1;   // 下拉索引 = 模式 + 1(-1→0,0→1,…)
         pageCombo.SelectionChanged += (_, _) =>
         {
             _startupPage = pageCombo.SelectedIndex - 1;   // 还原:0→-1(上次退出),1→0(图片),…
             SaveStartupPage(_startupPage);
-            AppLogger.Info($"启动页面已设为:{_startupPage switch { -1 => "上次退出界面", 0 => "图片放大", 1 => "AI 抠图", 2 => "视频处理", _ => "音频处理" }}");
+            AppLogger.Info($"启动页面已设为:{_startupPage switch { -1 => "上次退出界面", 0 => "图片放大", 1 => "图片抠图", 2 => "视频处理", 3 => "音频处理", 4 => "视频抠图", _ => "图片抠图" }}");
         };
         content.Children.Add(pageCombo);
         content.Children.Add(new TextBlock
