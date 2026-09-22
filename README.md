@@ -8,6 +8,8 @@
 
 - 引擎:waifu2x / Real-ESRGAN / RIFE(基于 nihui/ncnn)、U²-Net / ISNet / BiRefNet(基于 ONNX Runtime)、FFmpeg
 - 系统要求:Windows 10/11 x64(无 GPU 也可用,自动降级 CPU)
+- **官网与下载:https://alhpro.cn/**(Windows 安装包 / 完整版 / 模型包 / 使用教程 / 常见问题)
+  · 仓库:https://github.com/AlLHHH/ALH-Pro
 
 ---
 
