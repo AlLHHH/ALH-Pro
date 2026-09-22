@@ -1,4 +1,4 @@
-namespace AlhPro.Core;
+﻿namespace AlhPro.Core;
 
 /// <summary>1x 修复档(不变尺寸)用的 **Anime4K 着色器**(纯逻辑:只负责拼滤镜串与路径约定,可单测)。
 ///
@@ -23,7 +23,15 @@ namespace AlhPro.Core;
 public static class Anime4k
 {
     /// <summary>随包的着色器文件名(放在 `engines\ffmpeg\shaders\` 下)。Anime4K v4-a = 修复+锐化的通用档。</summary>
-    public const string ShaderFileName = "anime4k-v4-a.glsl";
+    /// <summary>着色器相对路径(相对 ffmpeg 所在目录)。
+    /// 【2026-09-22 真机实测修 bug】**必须带 `shaders/` 子目录,而且必须用正斜杠**:
+    ///   · 只写文件名(`anime4k-v4-a.glsl`):ffmpeg 报 `Cannot read file ... No such file or directory`,退出码 -1
+    ///     —— 着色器实际在 `engines/ffmpeg/shaders/` 下,所以 1x 修复档此前在所有机器上都起不来 ✗;
+    ///   · 写成 `shaders\anime4k-v4-a.glsl`(反斜杠):反斜杠被 ffmpeg 滤镜参数解析吃掉,变成
+    ///     `shadersanime4k-v4-a.glsl`,同样报错、退出码 -1;
+    ///   · 写成 `shaders/anime4k-v4-a.glsl`(正斜杠):**退出码 0,滤镜初始化通过** ✓。
+    /// 三条都是 2026-09-22 在本机用发布版 ffmpeg 逐条实跑得出的(命令与退出码见提交说明)。</summary>
+    public const string ShaderFileName = "shaders/anime4k-v4-a.glsl";
 
     /// <summary>着色器在 ffmpeg 目录下的相对位置(报告/日志用;真正下发给 ffmpeg 的只有文件名)。</summary>
     public const string ShaderRelativePath = "shaders/anime4k-v4-a.glsl";
