@@ -2418,7 +2418,7 @@ public sealed partial class MainPage : Page
         content.Children.Add(gpuCombo);
         content.Children.Add(new TextBlock
         {
-            Text = "四个功能(图片放大 / 视频处理 / 音频处理 / AI 抠图)统一使用这里选的计算设备。编号顺序可能与引擎实际识别的设备不一致(Windows 顺序 ≠ 引擎顺序):若选某编号处理崩/慢,换其它编号实测,日志「引擎启动...设备 -g X」会显示所选编号。设备列表里没有显卡时,软件会自动改用 ONNX DirectML,再不行回退到 CPU(软件计算),不需要你手动选 CPU。音频增强/分离(Demucs)会优先用这里选的显卡(DirectML)加速,没有显卡时自动用 CPU;音频升采样率(LavaSR)目前用 CPU 计算(暂不支持显卡)。注意:AI 抠图已强制使用 CPU(GPU 推理会占满显卡导致整机卡),此处设置对抠图不生效。",
+            Text = "各功能(图片放大 / 图片抠图 / 视频抠图 / 视频处理 / 音频处理)统一使用这里选的计算设备。编号顺序可能与引擎实际识别的设备不一致(Windows 顺序 ≠ 引擎顺序):若选某编号处理崩/慢,换其它编号实测,日志「引擎启动...设备 -g X」会显示所选编号。设备列表里没有显卡时,软件会自动改用 ONNX DirectML,再不行回退到 CPU(软件计算),不需要你手动选 CPU。音频增强/分离(Demucs)会优先用这里选的显卡(DirectML)加速,没有显卡时自动用 CPU;音频升采样率(LavaSR)目前用 CPU 计算(暂不支持显卡)。注意:图片抠图固定使用 CPU(GPU 推理会占满显卡导致整机卡),此处设置对图片抠图不生效(视频抠图跟随这里选的计算设备)。",
             FontSize = 10, Opacity = 0.5,
             TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
