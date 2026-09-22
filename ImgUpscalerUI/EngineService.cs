@@ -1,4 +1,4 @@
-// EngineService.cs — 调用放大引擎的后台服务
+﻿// EngineService.cs — 调用放大引擎的后台服务
 // 支持:模型/GPU 选择、实时进度解析(引擎 stdout 中的 "xx%")、取消(杀进程)、区域放大(先裁剪再放大)
 using System;
 using System.Diagnostics;
@@ -233,7 +233,8 @@ public static partial class EngineService
             {
                 var v = TryGetEngineVerdictSummary(eng, gpuId);
                 int measured = CountCachedModels(eng, gpuId);
-                parts.Add($"{EngineId(eng)}={(v.HasValue ? (v.Value ? $"实测可用→走 ncnn({measured} 支模型全通过)" : $"实测不可用→走 ONNX({measured} 支模型中有失败)") : "未测(首次处理时自动实测)")}");
+                _ = measured;   // 新口径下"几支通过/哪支失败"由 Describe 如实写出,这里不再拼字符串
+                parts.Add(AlhPro.Core.NcnnModelVerdicts.Describe(NcnnVerdictEntries(), EngineId(eng), gpuId));
             }
             return string.Join(" ", parts);
         }
@@ -478,6 +479,19 @@ public static partial class EngineService
     /// 键现在是 engine|gpu|model,所以"能不能用"必须汇总而不是查单一键:
     /// 只要有一支模型实测不可用 → false(保守);全部已测模型都通过 → true;一支都没测过 → null(交给启发式)。
     /// 旧键(无模型段)读不到 = 未测 → 首次处理自动重测,符合"结论按模型算"的语义。</summary>
+    /// <summary>把进程内探测结论转成 Core 判定用的条目(键/是否通过/时间戳)。</summary>
+    private static System.Collections.Generic.List<AlhPro.Core.NcnnModelVerdicts.Entry> NcnnVerdictEntries()
+    {
+        var list = new System.Collections.Generic.List<AlhPro.Core.NcnnModelVerdicts.Entry>();
+        lock (_ncnnVerdictLock)
+        {
+            EnsureNcnnVerdictsLoaded_NoLock();
+            foreach (var kv in _ncnnVerdicts)
+                if (kv.Value != null) list.Add(new AlhPro.Core.NcnnModelVerdicts.Entry(kv.Key, kv.Value.Ok, kv.Value.At));
+        }
+        return list;
+    }
+
     public static bool? TryGetEngineVerdictSummary(string engine, int gpuId)
     {
         try
@@ -493,6 +507,12 @@ public static partial class EngineService
                     oks.Add(kv.Value.Ok);
                 }
             }
+            // 【2026-09-22 口径修正】引擎级只认不带模型的那条(default 探测)。
+            // 实测证据:用户 5060 机器上 anime4k 探测超时被强杀,旧口径"任一支失败即整条不可用"
+            // 把 realesrgan2026 整体判成走 ONNX ⇒ 四支自训模型(只有 ncnn 权重)全军覆没。
+            // 详见 AlhPro.Core.NcnnModelVerdicts 注释。没有 default 结论时保持旧的保守汇总(不引入回归)。
+            var engineLevel = AlhPro.Core.NcnnModelVerdicts.EngineUsable(NcnnVerdictEntries(), EngineId(engine), gpuId);
+            if (engineLevel.HasValue) return engineLevel;
             return AlhPro.Core.NcnnVerdictKey.Summarize(oks);
         }
         catch { return null; }
