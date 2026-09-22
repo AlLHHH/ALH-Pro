@@ -317,6 +317,24 @@ public static partial class EngineService
     }
 
     /// <summary>跑一次探测(不含缓存与日志结论)。见 <see cref="EnsureAnime4kProbeAsync"/> 的说明。</summary>
+    /// <summary>Anime4K 的 Vulkan 设备参数(测试钩子用)。
+    /// 【为什么要它】双显卡机(核显+独显)上 libplacebo 可能把 Vulkan 设备选到核显而卡住或失败;
+    /// libplacebo 滤镜自己没有选设备的选项(只有 inherit_device,已用 ffmpeg -h filter=libplacebo 查实),
+    /// 必须走 ffmpeg 的设备初始化。索引不能凭猜(选错就落到核显),所以给作者一个钩子:
+    /// 设 ALH_FORCE_ANIME4K_DEVICE=&lt;n&gt; 后探测会用该索引建 Vulkan 设备,并把设备参数连同完整命令写进日志,
+    /// 这样在那台机器上可以逐个索引试,不必每试一次等新构建。默认返回空串(行为与本改动前逐字一致)。</summary>
+    private static string Anime4kDeviceArgs()
+    {
+        try
+        {
+            var forced = Environment.GetEnvironmentVariable("ALH_FORCE_ANIME4K_DEVICE");
+            if (string.IsNullOrWhiteSpace(forced)) return "";
+            AppLogger.Info("[探测] Anime4K 按测试钩子指定 Vulkan 设备索引:" + forced.Trim());
+            return "-init_hw_device vulkan=alh:" + forced.Trim() + " -filter_hw_device alh ";
+        }
+        catch { return ""; }
+    }
+
     private static async Task<bool> ProbeAnime4kOnceAsync(CancellationToken ct)
     {
         try
@@ -326,7 +344,7 @@ public static partial class EngineService
             {
                 FileName = ff,
                 // -v error 让失败原因只有一两行;输入用 lavfi 合成,不碰素材
-                Arguments = $"-v error -f lavfi -i \"testsrc=size=64x64:rate=1\" -frames:v 1 " +
+                                Arguments = Anime4kDeviceArgs() + $"-v error -f lavfi -i \"testsrc=size=64x64:rate=1\" -frames:v 1 " +
                             $"-vf \"{AlhPro.Core.Anime4k.ProbeFilter}\" -f null -",
                 UseShellExecute = false,
                 CreateNoWindow = true,
