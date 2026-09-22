@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
@@ -168,7 +168,7 @@ public sealed partial class CutoutView : UserControl
         get => EngineService.ResolveEngineGpu(AppSettings.GpuIndex);
     }
 
-    // 抠图推理设备:【强制 CPU】——AI 抠图用 GPU(DirectML)会占满显卡,导致整个电脑卡顿(实测);
+    // 抠图推理设备:【强制 CPU】——图片抠图用 GPU(DirectML)会占满显卡,导致整个电脑卡顿(实测);
     // 宁慢勿卡,此功能不使用 GPU(引擎自动降级链也不走 GPU)。
     private const int CutoutGpuId = -1;
 
@@ -810,7 +810,7 @@ public sealed partial class CutoutView : UserControl
             int total = items.Length;
             TaskLogText.Text = "";
             Log($"开始抠图任务:共 {total} 张,设备=CPU");
-            Log("⚠ 本功能强制使用 CPU:AI 抠图用 GPU 会占满显卡,导致整个电脑卡顿;CPU 处理较慢但稳定流畅(设置里选 GPU 对抠图无效)。");
+            Log("⚠ 图片抠图强制使用 CPU:用 GPU 会占满显卡、整个电脑卡顿;CPU 较慢但稳定流畅(设置里选 GPU 对图片抠图无效;视频抠图跟随设置)。");
             Log($"输出目录:{outDir}");
             for (int i = 0; i < total; i++)
             {

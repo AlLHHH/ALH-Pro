@@ -1,4 +1,4 @@
-// VulkanCheck.cs — 首次启动后台自检:实测引擎能否用 GPU(Vulkan)加速。
+﻿// VulkanCheck.cs — 首次启动后台自检:实测引擎能否用 GPU(Vulkan)加速。
 // 方法:拿 waifu2x 引擎跑一张 1×1 测试图(设备 -g 0),能出图 = GPU Vulkan 可用;
 // 顺带解析引擎启动时打印的 Vulkan 设备列表(名称),生成给用户看的友好报告。
 // 结果缓存到 AppSettings(报告文本),只在首次启动执行一次,之后直接读缓存。
@@ -646,7 +646,7 @@ public static class VulkanCheck
             ? "ncnn(RIFE-Vulkan)与 ONNX 双路,首次补帧时实测选择:通过用 ncnn(最快),失败才走 ONNX DirectML\n"
             : (gpuOk ? "ncnn-Vulkan GPU 加速;若本机不可用会明确告知并改走其他路线\n" : "CPU 软算,较慢但稳\n"));
         // 抠图/音频:CPU 恒定(无需 GPU)
-        sb.Append("· AI 抠图:").Append(gpuOk ? "CPU 计算(强制),速度快,任何显卡均稳定\n" : "CPU 计算,可用,速度一般\n");
+        sb.Append("· 图片抠图:").Append(gpuOk ? "CPU 计算(强制),速度快,任何显卡均稳定\n" : "CPU 计算,可用,速度一般\n");
         sb.Append("· 音频处理:CPU 计算,任何设备均稳定\n");
 
         return sb.ToString().TrimEnd('\n');
