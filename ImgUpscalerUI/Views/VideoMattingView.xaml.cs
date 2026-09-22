@@ -388,6 +388,7 @@ public sealed partial class VideoMattingView : UserControl
         EmptyHint.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
         TaskList.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
         TaskTitle.Text = empty ? "等待任务" : $"任务列表 ({_items.Count})";
+        UpdateButtons();
     }
 
     // ---------- 开始 / 取消 ----------
@@ -472,7 +473,28 @@ public sealed partial class VideoMattingView : UserControl
         Status("视频抠图:正在取消...");
     }
 
-    private void SetRunning(bool running)
+    private void SetRunning(bool running) => UpdateButtons();
+
+    private void TaskList_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateButtons();
+
+    /// <summary>按钮灰的规则(照视频处理页):没选中就不给点「删除选中」,列表空不给点「清空」,
+    /// 没有已完成项不给点「清除已完成」;运行时除「取消」外全部禁用。</summary>
+    private void UpdateButtons()
+    {
+        bool running = _cts != null;
+        StartBtn.IsEnabled = !running;
+        CancelBtn.IsEnabled = running;
+        PickBtn.IsEnabled = !running;
+        RemoveBtn.IsEnabled = !running && TaskList.SelectedItems.Count > 0;
+        ClearBtn.IsEnabled = !running && _items.Count > 0;
+        DoneBtn.IsEnabled = !running && _done.Count > 0;
+        OutDirBtn.IsEnabled = !running;
+        ModeBgRadio.IsEnabled = !running;
+        ModeAlphaRadio.IsEnabled = !running;
+        FormatCombo.IsEnabled = !running;
+    }
+
+    private void SetRunningOld(bool running)
     {
         StartBtn.IsEnabled = !running;
         CancelBtn.IsEnabled = running;
