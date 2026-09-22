@@ -21,6 +21,8 @@ param(
     [string]$Installer,
     [string]$ModelPack,
     [switch]$WithModelPack,
+    [string]$NotesFile,
+    [switch]$NoBodyUpdate,
     [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
@@ -55,14 +57,33 @@ Say ("   SHA256  : {0}(前缀 {1})" -f $sha, $sha.Substring(0, 16))
 # 附件名必须纯 ASCII:GitHub 会剥掉非 ASCII 字符(实测"本体"被吃掉 → 链接 404)
 if ($installerItem.Name -notmatch '^[\x20-\x7E]+$') { Fail "安装包文件名含非 ASCII 字符,GitHub 会改坏附件名:$($installerItem.Name)" }
 
-# ===== ② 发布说明(取 RELEASE_NOTES.md 里当前版本那一节)=====
-$notesPath = Join-Path $root 'RELEASE_NOTES.md'
-if (!(Test-Path $notesPath)) { Fail '找不到 RELEASE_NOTES.md' }
-$md = [IO.File]::ReadAllText($notesPath, [Text.Encoding]::UTF8)
-$mm = [regex]::Match($md, "(?ms)^## v" + [regex]::Escape($Version) + ".*?(?=^## v|\z)")
-if (!$mm.Success) { Fail "RELEASE_NOTES.md 里找不到 ## v$Version 那一节(先补更新说明)" }
-$body = $mm.Value.Trim()
-Say ("   发布说明: {0} 字(取自 RELEASE_NOTES.md 的 ## v{1} 节)" -f $body.Length, $Version)
+# ===== ② 发布公告(body)=====
+# 【为什么要允许"手写公告"】GitHub 上那份"更新公告"是给用户看的第一眼东西,RELEASE_NOTES.md 那节是
+# 给软件内「更新说明」用的**流水账文体**(【新增】【修复】一堆段落),贴到 Release 页上不好读。
+# 所以取文顺序改成:① -NotesFile 指定 → ② 仓库里的「发布公告_v{版本}.md」(根目录或 _qa\)→ ③ RELEASE_NOTES 那一节。
+# 手写公告建议按这次 v1.4.1 的排法:一行加粗标题 + <sub>日期</sub> + 一句"这一版主要做什么"引用块
+# + 分小节的要点(每节 3~7 条,条目用加粗开头)+ 末尾「下载」表格 + 一句"完整日志见 RELEASE_NOTES.md"。
+$notesFrom = ''
+if (-not $NotesFile) {
+    foreach ($cand in @((Join-Path $root "发布公告_v$Version.md"),
+                        (Join-Path $root "_qa\发布公告_v$Version.md"))) {
+        if (Test-Path $cand) { $NotesFile = $cand; break }
+    }
+}
+if ($NotesFile) {
+    if (!(Test-Path $NotesFile)) { Fail "找不到公告文件:$NotesFile" }
+    $body = ([IO.File]::ReadAllText($NotesFile, [Text.Encoding]::UTF8)).Trim()
+    $notesFrom = (Split-Path -Leaf $NotesFile)
+} else {
+    $notesPath = Join-Path $root 'RELEASE_NOTES.md'
+    if (!(Test-Path $notesPath)) { Fail '找不到 RELEASE_NOTES.md' }
+    $md = [IO.File]::ReadAllText($notesPath, [Text.Encoding]::UTF8)
+    $mm = [regex]::Match($md, "(?ms)^## v" + [regex]::Escape($Version) + ".*?(?=^## v|\z)")
+    if (!$mm.Success) { Fail "RELEASE_NOTES.md 里找不到 ## v$Version 那一节(先补更新说明)" }
+    $body = $mm.Value.Trim()
+    $notesFrom = "RELEASE_NOTES.md 的 ## v$Version 节"
+}
+Say ("   发布公告: {0} 字(来自 {1})" -f $body.Length, $notesFrom)
 
 if ($DryRun) {
     Say ''
@@ -139,6 +160,19 @@ if ($r.code -eq '201') {
     $o = $g.json | ConvertFrom-Json
     $releaseId = $o.id
     Ok "复用 Release $tag(id $releaseId)"
+    # 【顺手把公告也更新掉】用户 2026-09-22 明确要求"GitHub 的更新公告要规整一点"⇒ 改完公告文件
+    # 重跑本脚本就该生效,不必去网页上手工改。只在**确实不一样**时才 PATCH;-NoBodyUpdate 可关掉。
+    if (-not $NoBodyUpdate) {
+        $oldBody = [string]$o.body
+        if ($oldBody.Trim() -ne $body.Trim()) {
+            $patch = @{ body = $body } | ConvertTo-Json -Depth 3
+            $pr = ApiJson 'PATCH' "$apiBase/releases/$releaseId" $patch
+            if ($pr.code -eq '200') { Ok ("公告已更新(旧 {0} 字 → 新 {1} 字)" -f $oldBody.Length, $body.Length) }
+            else { Say ("   ⚠ 公告更新失败(HTTP $($pr.code)):$($pr.json)") }
+        } else {
+            Say '   公告与线上一致,不动'
+        }
+    }
 } else {
     Fail "建 Release 失败(HTTP $($r.code)):$($r.json)"
 }
@@ -193,4 +227,8 @@ foreach ($a in $after) {
 }
 Say ''
 Ok "发布完成:https://github.com/$Owner/$Repo/releases/tag/$tag"
-Say '   别忘了:① 官网 download.html 的安装包直链换成这个 tag;② 老版本区加上上一版;③ 推送仓库。'
+Say '   收尾清单(官网/仓库/OSS 这几步脚本不代做):'
+Say ("     ① website\download.html:安装包与模型包的直链 tag 换成 v{0}(老版本区把上一版加进去)" -f $Version)
+Say '     ② git add -A && git commit && git push origin main'
+Say '     ③ 把 website\ 整个目录传到主机/OSS(桌面「上传到OSS_v{版本}_<日期>」那种暂存目录是我这边刷好的)'
+Say '     ④ 网盘里的「完整版」要不要同步更新,由你决定'
