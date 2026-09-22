@@ -196,16 +196,30 @@ public static class CutoutService
             smoothPct = Math.Min(66, smoothPct + 3);
             try { progress?.Report((smoothPct, "AI 分析主体... 推理中")); } catch { }
         }, null, 3000, 1500);
+        // 【GPU 前置判断】两道闸:①设备级熔断(持续性设备错误一次即置位,见 _cutoutDmlDeadDevices)
+        // ②(模型,设备)连吃 N 次失败(非设备级失败才走连击)。失败点在 session.Run,不拦住的话
+        // 每一次抠图/每一帧都要先白走一遍注定失败的 DirectML 尝试(实测每次白试 2~6 秒)。
+        bool deviceDead = EsrganOnnxService.DmlDeviceDead || IsCutoutDmlDeviceDead(gpuId);
+        bool wantGpu = gpuId >= 0 && _dmlLedger.ShouldAttempt(modelPath, gpuId, deviceDead);
+        if (gpuId >= 0 && !wantGpu && _dmlSkipNotified.TryAdd(modelPath + "|" + gpuId, true))
+        {
+            string why = IsCutoutDmlDeviceDead(gpuId) || EsrganOnnxService.DmlDeviceDead
+                ? "DirectML 设备已被摘除/挂死"
+                : $"该模型在本机 GPU 上已连续失败 {_dmlLedger.ConsecutiveFailures(modelPath, gpuId)} 次";
+            AppLogger.Info($"抠图改用 CPU:{why} —— 本进程内不再尝试 DirectML(重启软件可重试 GPU)");
+            progress?.Report((30, $"⚠ {why},本次直接用 CPU(较慢但稳定)"));
+        }
+
         try
         {
-            var session = GetOrCreateSession(modelPath, gpuId);
+            var session = GetOrCreateSession(modelPath, wantGpu ? gpuId : -1);
             ct.ThrowIfCancellationRequested();
             var inputMeta = session.InputMetadata.Keys.First();
             var inputTensor = new DenseTensor<float>(pixels, new[] { 1, 3, model.InputSize, model.InputSize });
             var inputs = new[] { NamedOnnxValue.CreateFromTensor(inputMeta, inputTensor) };
 
             // 串行 Run(同一模型+设备并发推理会冲突,用信号量保护)
-            using (var results = RunSession(session, modelPath, gpuId, inputs))
+            using (var results = RunSession(session, modelPath, wantGpu ? gpuId : -1, inputs))
             {
                 smoothTimer.Dispose();   // 推理结束:平滑计时器停止(后续由真实阶段报告)
                 ct.ThrowIfCancellationRequested();
@@ -214,13 +228,25 @@ public static class CutoutService
                 var outputTensor = SelectMaskOutput(results, model.OutputName);
                 mask = ExtractMask(outputTensor, model.LogitsOutput);
             }
+            if (wantGpu) _dmlLedger.NoteSuccess(modelPath, gpuId);   // GPU 成功 → 清零连击(偶发抖动不累积)
         }
-        catch (Exception ex) when (gpuId >= 0 && ex is not OperationCanceledException)
+        catch (Exception ex) when (wantGpu && ex is not OperationCanceledException)
         {
             // DirectML GPU 兼容适配(新驱动/老显卡/设备编号错):自动改用 CPU 重跑一次,不直接失败
-            AppLogger.Info($"降级:DirectML GPU({gpuId})失败:{ex.Message.Split('\n')[0]},改用 CPU 重试(新显卡/老显卡兼容)");
-            progress?.Report((30, "⚠ GPU 推理失败,改用 CPU 重试(较慢但稳定)..."));
-            AppLogger.Info("⚠ GPU 推理失败,改用 CPU 重试(较慢但稳定)...");
+            bool persistent = AlhPro.Core.GpuFault.IsPersistentDeviceError(ex);
+            if (persistent) _cutoutDmlDeadDevices[gpuId] = true;   // 设备级:一次即熔断(实测污染不可逆)
+            bool exhausted = _dmlLedger.NoteFailure(modelPath, gpuId) || persistent;
+            DropCachedSession(modelPath, gpuId);   // 失败的会话立刻释放:它可能占着显存,还会被下一次调用复用
+            string kind = persistent ? "GPU 设备被摘除/挂死"
+                : AlhPro.Core.GpuFault.IsVramShortage(ex) ? "显存/内存不足(E_OUTOFMEMORY 类)"
+                : "DirectML 推理失败";
+            AppLogger.Info($"降级:DirectML GPU({gpuId})失败({kind}):{ex.Message.Split('\n')[0]}"
+                + (exhausted
+                    ? " —— 本进程内抠图不再尝试 DirectML(改用 CPU;重启软件可重试 GPU)"
+                    : ",改用 CPU 重试(新显卡/老显卡兼容)"));
+            progress?.Report((30, exhausted
+                ? "⚠ GPU 不可用,本进程内该模型改用 CPU(较慢但稳定)..."
+                : "⚠ GPU 推理失败,改用 CPU 重试(较慢但稳定)..."));
             var session = GetOrCreateSession(modelPath, -1);
             ct.ThrowIfCancellationRequested();
             var inputMeta = session.InputMetadata.Keys.First();
@@ -253,6 +279,56 @@ public static class CutoutService
     // 调整参数时复用已算好的蒙版、只重跑后处理,避免每改一个滑条就重跑 8~10s 的 GPU 推理(否则抠图页"很卡")。
     // 只在缓存 > 8 张时清空,防止长会话内存累积。
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, float[,]> _rawMaskCache = new();
+
+    /// <summary>DirectML 尝试账本(纯逻辑在 AlhPro.Core.DmlAttemptLedger):同一 (模型, 设备) 连吃
+    /// <see cref="EsrganOnnxService.DmlTransientStrikeLimit"/> 次失败就不再试 GPU。
+    /// 【为什么抠图必须自己记】实测(2026-09-22,RTX 4060 Laptop,见 _qa\视频抠图_性能实测_20260922.md):
+    /// 默认模型 birefnet-lite 在本机 DirectML 上每次推理都失败(DmlFusedNode 图融合 8007000E →
+    /// DmlCommandRecorder 80004005),而失败点在 session.Run 而不是建会话 —— 不记账的话每次抠图都要
+    /// 先白走一遍注定失败的 DML 尝试(实测每帧约 1.4 秒),视频里 1800 帧就是白烧 42 分钟。
+    /// 【为什么不和超分共用连击表】上限数字共用(同源常量),表各自独立:抠图的失败成因(1024² 输入模型
+    /// 在 DML 上图融合 OOM)与超分的显存压力不同,混表会双向污染(与音频域分表的理由同理)。</summary>
+    private static readonly AlhPro.Core.DmlAttemptLedger _dmlLedger = new(EsrganOnnxService.DmlTransientStrikeLimit);
+
+    /// <summary>已经提示过"这个组合在本机 GPU 上不可用"的键,避免逐帧刷同一条日志/进度文案。</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _dmlSkipNotified = new();
+
+    /// <summary>抠图专用的【设备级】DirectML 废止标志(键 = 设备号,进程级)。
+    /// 【为什么必须按设备级、且一次就置位】实测(2026-09-22 21:09~21:11,见性能报告 §二补):
+    /// birefnet-lite 在 DML 上先报 DmlCommandRecorder 80004005,紧接着同进程内 D3D 设备被系统挂起
+    /// (`887A0005 GPU 设备实例已经被暂停`);此后**即使推理不报错也只剩 CPU 速度**——
+    /// 干净进程里 isnet 的 DML 是 406 ms,被污染后同进程里是 1048 ms(CPU 1080 ms),释放失败会话也救不回来。
+    /// 所以只要出现【持续性设备错误】就立刻认定"本进程内这台设备的 DML 不能再用于抠图",直接走 CPU
+    /// (CPU 反而更快),而不是继续白试(实测每次白试 2~6 秒)。
+    /// 【为什么不用超分那把共享的 _dmlDead】那把一旦置位会让超分/补帧整批回退源帧(等于没放大),
+    /// 抠图的一次失败不该牵连它们;两边各自记账,超分那边有自己的熔断。
+    /// 【为什么按设备号而不是全局】双卡机上 0 号卡坏了不该把 1 号卡也关掉。
+    /// 【未验证的边界】没有"冷却后自动重试"——恢复要重启软件(与超分熔断同一口径),提示里会写明。</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, bool> _cutoutDmlDeadDevices = new();
+
+    /// <summary>该设备是否已被抠图熔断(本进程内不再用于抠图推理)。</summary>
+    private static bool IsCutoutDmlDeviceDead(int gpuId)
+        => gpuId >= 0 && _cutoutDmlDeadDevices.ContainsKey(gpuId);
+
+    /// <summary>丢弃并释放某 (模型, 设备) 的缓存会话(推理失败后调用)。
+    /// 【为什么必须释放】失败的 DirectML 会话会一直挂在缓存里:①它可能占着大量显存(1024² 输入模型),
+    /// ②下一次同组合调用会拿到这个"跑起来就报错"的会话。实测同进程里 birefnet-lite 的 DML 会话失败后,
+    /// 随后 isnet 的 GPU 推理从 406 ms 掉到 1090 ms(≈CPU 速度)—— 释放失败会话是为了不让它继续占坑。
+    /// 【为什么要占信号量】同一会话不能并发 Run(见 GetOrCreateSession),别的线程可能正在用它;
+    /// 先拿到该组合的信号量再释放,才不会把别人脚下的会话抽掉。</summary>
+    private static void DropCachedSession(string modelPath, int gpuId)
+    {
+        var gate = _sessionLocks.GetOrAdd((modelPath, gpuId), _ => new SemaphoreSlim(1, 1));
+        gate.Wait();
+        try
+        {
+            if (_sessionCache.TryRemove((modelPath, gpuId), out var dead) && dead != null)
+            {
+                try { dead.Dispose(); } catch { /* 释放失败不影响后续 CPU 路径 */ }
+            }
+        }
+        finally { gate.Release(); }
+    }
 
     private static InferenceSession GetOrCreateSession(string modelPath, int gpuId)
     {
