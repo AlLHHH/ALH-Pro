@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -79,7 +79,7 @@ public static class VideoMattingService
             // ---- 1) 拆帧(复用 VideoService:它已处理 HDR→SDR、非法色彩标记兜底、硬解回退) ----
             ct.ThrowIfCancellationRequested();
             var (hdrDesc, hdrVf) = await VideoService.ProbeHdrToSdrAsync(input, ct);
-            if (!string.IsNullOrEmpty(hdrDesc)) notes.Add($"色彩:{hdrDesc}");
+            if (!string.IsNullOrEmpty(hdrDesc)) notes.Add($"色彩处理:{hdrDesc}");
             progress?.Report((3, "拆帧中..."));
             int frameCount = await VideoService.ExtractFramesCoreAsync(ffmpeg, input, trim,
                 string.IsNullOrEmpty(hdrVf) ? "null" : hdrVf, srcDir, progress, ct, 0);
@@ -92,20 +92,20 @@ public static class VideoMattingService
             int device = req.GpuId;
             if (device >= 0)
             {
-                progress?.Report((8, "实测 GPU 是否划得来..."));
+                progress?.Report((8, "正在检测计算设备性能..."));
                 double gpuMs = await TimeMaskAsync(frames[0], modelKey, device, ct);
                 double cpuMs = await TimeMaskAsync(frames[0], modelKey, -1, ct);
                 if (gpuMs > 0 && cpuMs > 0 && gpuMs >= cpuMs * 0.9)
                 {
-                    notes.Add($"GPU 实测 {gpuMs:F0} ms/帧 不优于 CPU {cpuMs:F0} ms/帧 ⇒ 本次改用 CPU");
+                    notes.Add($"计算设备:CPU · 实测 GPU {gpuMs:F0} ms/帧 未优于 CPU {cpuMs:F0} ms/帧,已选用 CPU 处理");
                     device = -1;
                 }
                 else
                 {
-                    notes.Add($"GPU 实测 {gpuMs:F0} ms/帧 vs CPU {cpuMs:F0} ms/帧 ⇒ 用 GPU");
+                    notes.Add($"计算设备:GPU(DirectML) · 实测 {gpuMs:F0} ms/帧(CPU {cpuMs:F0} ms/帧)");
                 }
             }
-            else notes.Add("按设置使用 CPU");
+            else notes.Add("计算设备:CPU(按设置)");
 
             // ---- 3) 逐帧:只出蒙版 → 后处理 → 时序稳定 → 合成/alpha ----
             var filter = new AlphaTemporalFilter(req.Stability, 1080, 1920);   // 尺寸在首帧后按真实帧尺寸重置
@@ -159,7 +159,7 @@ public static class VideoMattingService
             progress?.Report((92, "编码合成..."));
             string enc = spec.UseGlobalEncoder ? VideoService.PickVideoEncoder(req.GpuId) : spec.VideoCodec;
             string encArgs = spec.UseGlobalEncoder ? VideoService.EncoderArgs(enc) : "";
-            notes.Add($"编码器:{enc}");
+            notes.Add($"视频编码:{enc}");
 
             // 【踩过的坑】alphamerge 的输出必须【打标签】再 -map:写成 "[0:v][1:v]alphamerge" + -map "[v]"
             // 会得到 "Output with label 'v' does not exist in any defined filter graph" 并最终报
