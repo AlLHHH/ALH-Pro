@@ -338,10 +338,14 @@ public static partial class EngineService
             if (pr == null) return false;
             var errTask = pr.StandardError.ReadToEndAsync();
             pr.StandardOutput.ReadToEnd();
-            if (!pr.WaitForExit(20000))
+            // 【2026-09-22 放宽 20→60 秒】用户 5060 机器诊断包里这条结论是"无响应(超时被强杀)":
+            // 该机是 5060 Laptop + Intel 核显双显卡,首次 Vulkan 设备初始化 + 着色器编译可能远超 20 秒
+            // (同类先例见本文件探测小节:小图探测曾因"4060 首次加载 Vulkan >5s"从 5 秒放宽到 15 秒)。
+            // 下面那 2 秒后重试一次的逻辑保留不变。失败仍然只影响 Anime4K 这一支,不再牵连整条引擎。
+            if (!pr.WaitForExit(60000))
             {
                 try { pr.Kill(entireProcessTree: true); } catch { }
-                AppLogger.Warn("[探测] 1x 修复(Anime4K):探测超时(20 秒)");
+                AppLogger.Warn("[探测] 1x 修复(Anime4K):探测超时(60 秒)");
                 return false;
             }
             if (pr.ExitCode == 0) return true;
