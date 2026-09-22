@@ -14,7 +14,7 @@
 ;   那套逻辑只存在于 installer.iss;下面的 ModelsUrl/ModelsFile 是本脚本的历史遗留定义,当前未被引用。
 
 #define MyAppName "ALH Pro"
-#define MyAppVersion "1.4.0"
+#define MyAppVersion "1.4.1"
 #define MyAppExeName "ALHPro.exe"
 ; 【构建时间戳】(ISPP 在编译时求值):用于让用户一眼分辨"同名同版本的不同构建"。
 ; 起因:同一个 1.3.4 出了多次安装包,名字完全一样、大小只差几十 MB,用户无法确认手上是哪一个。
@@ -23,8 +23,10 @@
 ; 【历史遗留,本脚本当前未引用】这两个定义只在 installer.iss 的 DownloadAndExtractModels() 里用到;
 ; 完整版不下载模型,留着只为与 installer.iss 对照。本体版那边的维护规则同样适用:
 ;   ModelsUrl **必须指向一个真实存在、且确实挂了该附件的 Release**,否则"下载并安装模型包"必然 404。
-; v1.3.5 的 Release 已建好并上传 models_v1.0.zip 附件(2026-09-12),故两边都指向 v1.3.5。
-#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.3.6/models_v1.0.zip"
+; 【2026-09-22 改正】这里原本写着 v1.3.6 —— **那个 tag 根本不存在**(是个从没建过的版本号),
+; 而注释还写着"两边都指向 v1.3.5",自相矛盾。既然 v1.4.1 的 Release 已带上 models_v1.0.zip,改成它。
+; (installer.iss 里真正生效的那处仍是 v1.3.5:那份附件实测 200,不影响使用;要统一到 v1.4.1 需重打包。)
+#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.1/models_v1.0.zip"
 #define ModelsFile "models_v1.0.zip"
 ; 完整版(含模型,网盘/整包)说明:安装完成后可到软件内「使用教程」或 GitHub 说明页找完整版直链
 
