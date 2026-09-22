@@ -345,7 +345,21 @@ public static partial class EngineService
             if (!pr.WaitForExit(60000))
             {
                 try { pr.Kill(entireProcessTree: true); } catch { }
-                AppLogger.Warn("[探测] 1x 修复(Anime4K):探测超时(60 秒)");
+                // 【2026-09-22 补】超时路径过去一条 stderr 都不留,只写"无响应(超时被强杀)" ⇒
+                // 诊断包里永远分不清是"慢"、"挂死"还是"Vulkan 选错了设备(双显卡机选了核显)"。
+                // 这里把已读到的 stderr 尾部留证(限 400 字、换行压成 | 以免刷屏);并记下完整命令,
+                // 便于对着命令行复现。
+                string tail = "";
+                try
+                {
+                    var done = await Task.WhenAny(errTask, Task.Delay(1500, ct)).ConfigureAwait(false);
+                    if (done == errTask) tail = (errTask.Result ?? "").Trim();
+                }
+                catch { }
+                if (tail.Length > 400) tail = tail.Substring(tail.Length - 400);
+                AppLogger.Warn("[探测] 1x 修复(Anime4K):探测超时(60 秒)"
+                    + (tail.Length > 0 ? $" stderr 尾部:{tail.Replace("\n", " | ")}" : " (超时前无任何 stderr 输出 ⇒ 更像挂死/设备初始化卡住,不是单纯慢)"));
+                AppLogger.Info($"[探测] Anime4K 探测命令:{psi.FileName} {psi.Arguments} (cwd={psi.WorkingDirectory})");
                 return false;
             }
             if (pr.ExitCode == 0) return true;
