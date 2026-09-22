@@ -73,12 +73,24 @@ if ($DryRun) {
 # ===== ③ 取 token(git 凭据助手;不打印)=====
 $req = Join-Path $env:TEMP 'alh_relreq.txt'
 $nl = [string]([char]10)
-[IO.File]::WriteAllText($req, "protocol=https" + $nl + "host=github.com" + $nl + $nl, (New-Object System.Text.UTF8Encoding($false)))
-$env:GIT_TERMINAL_PROMPT = '0'
-$credOut = & cmd /c "git credential fill < `"$req`"" 2>&1
-$token = ($credOut | Where-Object { $_ -like 'password=*' }) -replace '^password=', ''
-if ([string]::IsNullOrWhiteSpace($token)) { Fail '拿不到 GitHub 凭据(git credential fill 没返回 password)。请先用 git 登录一次 GitHub。' }
-Say '   凭据    : 已从 git 凭据助手取到(不打印)'
+# 【凭据来源优先级】环境变量 > git 凭据助手。
+# 为什么要留环境变量这条:本机凭据管理器里那份 GitHub 登录态是**另一个账号**、对本仓库只有读权限
+# (实测 GET /repos/AlLHHH/ALH-Pro 返回 permissions.push=false)⇒ 建 Release / 上传附件会 403。
+# 用写权限账号的 PAT 时,最省事的做法是:先 `$env:GITHUB_TOKEN='ghp_...'` 再跑本脚本(或存进凭据管理器)。
+$token = $env:GITHUB_TOKEN
+if ([string]::IsNullOrWhiteSpace($token)) { $token = $env:GH_TOKEN }
+$tokenFrom = '环境变量'
+if ([string]::IsNullOrWhiteSpace($token)) {
+    $tokenFrom = 'git 凭据助手'
+    [IO.File]::WriteAllText($req, "protocol=https" + $nl + "host=github.com" + $nl + $nl, (New-Object System.Text.UTF8Encoding($false)))
+    $env:GIT_TERMINAL_PROMPT = '0'
+    $credOut = & cmd /c "git credential fill < `"$req`"" 2>&1
+    $token = ($credOut | Where-Object { $_ -like 'password=*' }) -replace '^password=', ''
+}
+if ([string]::IsNullOrWhiteSpace($token)) {
+    Fail '拿不到 GitHub 凭据:既没有 $env:GITHUB_TOKEN / $env:GH_TOKEN,git credential fill 也没返回 password。'
+}
+Say "   凭据    : 来自 $tokenFrom(不打印)"
 
 $apiBase = "https://api.github.com/repos/$Owner/$Repo"
 $authHdr = "Authorization: Bearer $token"
