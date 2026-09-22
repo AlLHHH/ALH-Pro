@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="UTF-8" ?>
+<?xml version="1.0" encoding="UTF-8" ?>
 <UserControl
     x:Class="ALHPro.Views.VideoMattingView"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -8,13 +8,12 @@
     xmlns:local="using:ALHPro.Views"
     mc:Ignorable="d">
 
-    <!-- 视频抠图:独立板块(用户要求:"单独一个界面 视频抠图,原先的还是图片抠图")。
-         骨架**照 VideoView.xaml 逐项对齐**(用户:"所有类似的界面直接复制视频处理的就行了 别右侧项目页
-         一些按钮 还有左侧宽度全都不一样"),具体三处:
-           ① 左栏宽度 322(视频页口径,不是我原来写的 300);
-           ② 右侧是【裸 Grid】<Grid Grid.Column="1" Margin="0,0,10,10"> 套 <Grid RowSpacing="8">,
-              三行 = Auto(任务摘要)/Auto(工具栏)/*(列表宿主),不是带圆角的 Border 卡片;
-           ③ 日志在【左栏底部】的小框里(不是我原来放右侧的大框),滚动条常驻(防布局循环卡死)。 -->
+    <!-- 视频抠图:独立板块。骨架照 VideoView.xaml:左栏 322 + 右侧裸 Grid(摘要/工具栏/列表宿主)。
+         用户 2026-09-22 追加要求(本轮落实):
+           ① 进度条放到「开始处理」下面(不放右侧项目页下面);
+           ② 顶部摘要用视频页那套"已处理 / 剩余"计数,不再堆"未处理/待处理";
+           ③ 主按钮与视频页完全一致:开始处理=AccentButtonStyle+MinHeight 48,取消=红底 #FFE5484D;
+           ④ 背景色加色块(白/黑/绿)+ 调色板(ColorPicker)直接选色。 -->
     <Grid Background="Transparent" AllowDrop="True" DragOver="DropArea_DragOver" Drop="DropArea_Drop">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="322"/>
@@ -44,15 +43,40 @@
                             <RadioButton x:Name="BgImageRadio" Content="图片" GroupName="MattingBg"
                                          Checked="BgMode_Changed"/>
                         </StackPanel>
-                        <Grid x:Name="BgColorRow" ColumnSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBox x:Name="BgColorBox" Text="#1E3A5F" IsSpellCheckEnabled="False"/>
-                            <TextBlock Grid.Column="1" Text="背景色" VerticalAlignment="Center" FontSize="12"
-                                       Opacity="0.7"/>
-                        </Grid>
+
+                        <!-- 纯色:三个常用色块 + 调色板(直接选任意颜色);颜色值统一写在 BgColorBox -->
+                        <StackPanel x:Name="BgColorRow" Spacing="6">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Button x:Name="SwatchWhite" Click="Swatch_Click" Tag="#FFFFFF"
+                                        ToolTipService.ToolTip="白色" Padding="0" Width="34" Height="26"
+                                        BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1">
+                                    <Border Background="White" CornerRadius="2" Width="24" Height="16"/>
+                                </Button>
+                                <Button x:Name="SwatchBlack" Click="Swatch_Click" Tag="#000000"
+                                        ToolTipService.ToolTip="黑色" Padding="0" Width="34" Height="26"
+                                        BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1">
+                                    <Border Background="Black" CornerRadius="2" Width="24" Height="16"/>
+                                </Button>
+                                <Button x:Name="SwatchGreen" Click="Swatch_Click" Tag="#00B140"
+                                        ToolTipService.ToolTip="绿幕(抠像后期常用)" Padding="0" Width="34" Height="26"
+                                        BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1">
+                                    <Border Background="#00B140" CornerRadius="2" Width="24" Height="16"/>
+                                </Button>
+                                <Button x:Name="PaletteBtn" Content="调色板" FontSize="12" Padding="10,5">
+                                    <Button.Flyout>
+                                        <Flyout>
+                                            <ColorPicker x:Name="BgColorPicker" IsAlphaEnabled="False"
+                                                         IsAlphaSliderVisible="False" IsAlphaTextInputVisible="False"
+                                                         IsHexInputVisible="True" IsColorChannelTextInputVisible="True"
+                                                         ColorChanged="BgColorPicker_ColorChanged"/>
+                                        </Flyout>
+                                    </Button.Flyout>
+                                </Button>
+                            </StackPanel>
+                            <TextBox x:Name="BgColorBox" Text="#1E3A5F" IsSpellCheckEnabled="False"
+                                     ToolTipService.ToolTip="背景色(十六进制,如 #1E3A5F);上面的色块与调色板改的也是这里"/>
+                        </StackPanel>
+
                         <Button x:Name="BgImageBtn" Content="选择背景图片..." Click="BgImage_Click"
                                 Visibility="Collapsed" HorizontalAlignment="Stretch"/>
                         <TextBlock x:Name="BgImageInfo" Text="未选择背景图片" Visibility="Collapsed"
@@ -62,10 +86,9 @@
                     <TextBlock Text="抠图模型" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="ModelCombo" HorizontalAlignment="Stretch"
                               SelectionChanged="ModelCombo_SelectionChanged"
-                              ToolTipService.ToolTip="默认 ISNet 精细边缘:本机 GPU 实测最快(约 0.26 秒/帧蒙版)、边缘最细;BiRefNet 判别力强但本机 DirectML 上会回退 CPU"/>
+                              ToolTipService.ToolTip="默认 ISNet 精细边缘:本机 GPU 实测最快、边缘最细;BiRefNet 判别力强但本机 DirectML 上会回退 CPU"/>
                     <TextBlock x:Name="ModelHint" Style="{StaticResource HintText}" TextWrapping="Wrap"/>
 
-                    <!-- 抠图参数:与视频页「视频调整 (后处理)」同款行式(78/*/28,标签与数值都不设字号) -->
                     <TextBlock Text="抠图参数" Style="{StaticResource SectionTitle}"/>
                     <Grid ColumnSpacing="8">
                         <Grid.ColumnDefinitions>
@@ -147,16 +170,28 @@
 
                         <CheckBox Grid.Row="3" Grid.ColumnSpan="2" x:Name="MuteCheck"
                                   Content="静音(输出不含音频)" FontSize="12"
-                                  ToolTipService.ToolTip="音频由输出方式决定:透明通道不带音频(叠加时通常用自己的音轨);换背景保留源音频"/>
+                                  ToolTipService.ToolTip="音频由输出方式决定:透明通道不带音频;换背景保留源音频"/>
                     </Grid>
 
+                    <!-- 主按钮:与视频页完全一致(AccentButtonStyle + MinHeight 48;取消为红底) -->
                     <Button x:Name="StartBtn" Content="开始处理" Click="Start_Click"
-                            HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
+                            Style="{StaticResource AccentButtonStyle}"
+                            HorizontalAlignment="Stretch" MinHeight="48" Margin="0,4,0,0"/>
                     <Button x:Name="CancelBtn" Content="取消" Click="Cancel_Click" IsEnabled="False"
-                            HorizontalAlignment="Stretch"/>
+                            FontSize="12" Padding="12,7" HorizontalAlignment="Stretch"
+                            Background="#FFE5484D" Foreground="White" BorderThickness="0"/>
 
-                    <!-- 日志:照视频页放在左栏底部。滚动条必须常驻(VideoView 注释里的教训:
-                         改成 Auto 会因"日志变长→折行→高度变→布局循环"把界面冻死) -->
+                    <!-- 处理进度:紧跟「开始处理」下方(用户要求:进度不该在右侧项目页下面) -->
+                    <Border Background="{StaticResource AppBgBrush}"
+                            BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
+                            CornerRadius="6" Padding="8,6">
+                        <StackPanel Spacing="6">
+                            <TextBlock x:Name="ProgressText" FontSize="11" Opacity="0.8"
+                                       TextWrapping="Wrap" Text="就绪"/>
+                            <ProgressBar x:Name="TaskBar" Minimum="0" Maximum="100" Value="0" Height="4"/>
+                        </StackPanel>
+                    </Border>
+
                     <Border Background="{StaticResource AppBgBrush}"
                             BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
                             CornerRadius="6" Padding="8,6">
@@ -178,15 +213,13 @@
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
-                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <!-- 任务摘要(视频页 TaskSummary 同款属性) -->
+                <!-- 任务摘要:与视频页同款属性(计数由 code-behind 写成"已处理 X / 剩余 Y") -->
                 <TextBlock x:Name="TaskTitle" Grid.Row="0" FontSize="12" Opacity="0.85"
                            Text="等待任务" Margin="0,0,0,6" TextTrimming="CharacterEllipsis"
                            TextWrapping="Wrap"/>
 
-                <!-- 工具栏(按钮字号/内边距照视频页) -->
                 <Grid Grid.Row="1" ColumnSpacing="8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
@@ -196,26 +229,24 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <Button x:Name="PickBtn" Content="添加视频" FontSize="12" Padding="10,5" Click="PickBtn_Click"/>
-                    <Button Grid.Column="1" x:Name="RemoveBtn" Content="删除选中" FontSize="12" Padding="10,5" IsEnabled="False"
-                            Click="Remove_Click"/>
-                    <Button Grid.Column="2" x:Name="ClearBtn" Content="清空" FontSize="12" Padding="10,5" IsEnabled="False"
-                            Click="Clear_Click"/>
-                    <Button Grid.Column="3" x:Name="DoneBtn" Content="清除已完成" FontSize="12" Padding="10,5" IsEnabled="False"
-                            Click="Done_Click" ToolTipService.ToolTip="清除所有已完成(灰)的项目"/>
+                    <Button Grid.Column="1" x:Name="RemoveBtn" Content="删除选中" FontSize="12" Padding="10,5"
+                            IsEnabled="False" Click="Remove_Click"/>
+                    <Button Grid.Column="2" x:Name="ClearBtn" Content="清空" FontSize="12" Padding="10,5"
+                            IsEnabled="False" Click="Clear_Click"/>
+                    <Button Grid.Column="3" x:Name="DoneBtn" Content="清除已完成" FontSize="12" Padding="10,5"
+                            IsEnabled="False" Click="Done_Click" ToolTipService.ToolTip="清除所有已完成(灰)的项目"/>
                     <TextBlock Grid.Column="4" Text="拖入视频即可添加" FontSize="11" Opacity="0.5"
                                VerticalAlignment="Center" HorizontalAlignment="Right"
                                TextTrimming="CharacterEllipsis"/>
                 </Grid>
 
-                <!-- 列表宿主(照视频页:AllowDrop 挂在宿主与列表上;空态叠在同一格) -->
-                <Grid Grid.Row="2" Background="Transparent" AllowDrop="True" DragOver="DropArea_DragOver" Drop="DropArea_Drop">
+                <Grid Grid.Row="2" Background="Transparent" AllowDrop="True"
+                      DragOver="DropArea_DragOver" Drop="DropArea_Drop">
                     <ListView x:Name="TaskList" SelectionMode="Multiple" SelectionChanged="TaskList_SelectionChanged"
                               IsItemClickEnabled="True" CanDragItems="True" CanReorderItems="True"
                               Background="Transparent" BorderThickness="0" AllowDrop="True"
                               DragOver="DropArea_DragOver" Drop="DropArea_Drop"
                               ToolTipService.ToolTip="">
-                        <!-- 行模板照 VideoView:120×68 缩略图 + 名称 + 状态角标 + 信息行 + 4px 进度条。
-                             抠图没有裁剪/VFR/去重概念,故不套空角标(不假装有那些状态)。 -->
                         <ListView.ItemTemplate>
                             <DataTemplate>
                                 <Grid ColumnSpacing="10" Padding="4">
@@ -249,9 +280,8 @@
                         </ListView.ItemTemplate>
                     </ListView>
 
-                    <!-- 空态:照视频页(拖入项目 + 支持格式 + 组件自检) -->
-                    <StackPanel x:Name="EmptyHint" IsHitTestVisible="False" VerticalAlignment="Center" HorizontalAlignment="Center"
-                                Spacing="6">
+                    <StackPanel x:Name="EmptyHint" IsHitTestVisible="False" VerticalAlignment="Center"
+                                HorizontalAlignment="Center" Spacing="6">
                         <TextBlock Text="＋" FontSize="34" HorizontalAlignment="Center" Opacity="0.5"/>
                         <TextBlock Text="拖入项目" HorizontalAlignment="Center" FontSize="14"/>
                         <TextBlock Text="MP4 / MKV / MOV / WebM / AVI" HorizontalAlignment="Center" FontSize="11"
@@ -260,10 +290,6 @@
                                    FontSize="11" Opacity="0.55"/>
                     </StackPanel>
                 </Grid>
-
-                <!-- 总进度(逐帧进度同时写在行内;这一条只是整体进度) -->
-                <ProgressBar Grid.Row="3" x:Name="TaskBar" Minimum="0" Maximum="100" Value="0" Height="4"
-                             Margin="0,6,0,0"/>
             </Grid>
         </Grid>
     </Grid>

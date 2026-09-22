@@ -132,6 +132,19 @@ public sealed partial class VideoMattingView : UserControl
         RefreshCodecHint();
     }
 
+    /// <summary>常用色块(白/黑/绿):只改颜色值,与调色板/文本框同一个入口。</summary>
+    private void Swatch_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button b && b.Tag is string hex) BgColorBox.Text = hex;
+    }
+
+    /// <summary>调色板选色 → 写回同一个十六进制文本框(另一条路改它也一样)。</summary>
+    private void BgColorPicker_ColorChanged(ColorPicker sender, ColorChangedEventArgs args)
+    {
+        if (!_ready) return;
+        BgColorBox.Text = $"#{args.NewColor.R:X2}{args.NewColor.G:X2}{args.NewColor.B:X2}";
+    }
+
     private void BgMode_Changed(object sender, RoutedEventArgs e)
     {
         if (!_ready) return;
@@ -387,7 +400,7 @@ public sealed partial class VideoMattingView : UserControl
         bool empty = _items.Count == 0;
         EmptyHint.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
         TaskList.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
-        TaskTitle.Text = empty ? "等待任务" : $"任务列表 ({_items.Count})";
+        TaskTitle.Text = empty ? "等待任务" : $"已处理 {_done.Count} / 剩余 {_items.Count - _done.Count}";
         UpdateButtons();
     }
 
@@ -397,7 +410,7 @@ public sealed partial class VideoMattingView : UserControl
     {
         if (_items.Count == 0)
         {
-            TaskTitle.Text = "请先添加视频。";
+            ProgressText.Text = "请先添加视频。";
             Status("视频抠图:请先添加视频");
             return;
         }
@@ -411,7 +424,7 @@ public sealed partial class VideoMattingView : UserControl
         var progress = new Progress<(int pct, string msg)>(p =>
         {
             TaskBar.Value = Math.Clamp(p.pct, 0, 100);
-            TaskTitle.Text = p.msg;
+            ProgressText.Text = p.msg;
             if (current != null)
             {
                 current.Progress = p.pct;
@@ -438,7 +451,7 @@ public sealed partial class VideoMattingView : UserControl
                 item.Info = $"{result.Frames} 帧 · {result.ElapsedSec:0.#} 秒 · {result.Device}";
                 item.OutputInfo = Path.GetFileName(result.OutputPath);
                 _done.Add(item.Path);
-                TaskTitle.Text = "完成:" + result.OutputPath;
+                ProgressText.Text = "完成:" + result.OutputPath;
                 Status($"视频抠图完成:{Path.GetFileName(result.OutputPath)} · {result.Device} · {result.ElapsedSec:0.#} 秒");
                 Log($"完成:{Path.GetFileName(result.OutputPath)}({result.Frames} 帧 / {result.ElapsedSec:0.#} 秒 / {result.Device})");
                 AppLogger.Info($"视频抠图完成:{result.OutputPath} 帧数={result.Frames} 设备={result.Device} 备注={result.Notes}");
@@ -447,7 +460,7 @@ public sealed partial class VideoMattingView : UserControl
         catch (OperationCanceledException)
         {
             if (current != null) { current.StateText = "已取消"; current.StateBadgeBrush = "#8A5A12"; current.Progress = 0; }
-            TaskTitle.Text = "已取消(临时文件已清理)。";
+            ProgressText.Text = "已取消(临时文件已清理)。";
             Status("视频抠图已取消");
         }
         catch (Exception ex)
@@ -455,7 +468,7 @@ public sealed partial class VideoMattingView : UserControl
             if (current != null) { current.StateText = "失败"; current.StateBadgeBrush = "#B3261E"; current.Progress = 0; }
             AppLogger.Error($"视频抠图失败 HRESULT=0x{ex.HResult:X8}", ex);
             Log("失败:" + ex.Message);
-            TaskTitle.Text = "处理失败:" + ex.Message;
+            ProgressText.Text = "处理失败:" + ex.Message;
             Status("视频抠图失败:" + ex.Message);
         }
         finally
@@ -469,7 +482,7 @@ public sealed partial class VideoMattingView : UserControl
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
         try { _cts?.Cancel(); } catch { }
-        TaskTitle.Text = "已请求取消,等当前帧处理完就停...";
+        ProgressText.Text = "已请求取消,等当前帧处理完就停...";
         Status("视频抠图:正在取消...");
     }
 
