@@ -12,7 +12,7 @@
          + 右侧「等待任务」任务板(工具栏 + 空态)。用户 2026-09-22 反馈原话:
          "右侧要和这个一样 功能也是 / 滑条那几个要和这个一样 / 输出文件夹 格式什么的要和这个一样
           并且在处理的上面 就是和视频处理页面一模一样的风格布局"。 -->
-    <Grid>
+    <Grid AllowDrop="True" DragOver="DropArea_DragOver" Drop="DropArea_Drop">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="300"/>
             <ColumnDefinition Width="*"/>
@@ -183,9 +183,9 @@
                     <Button Grid.Column="1" x:Name="RemoveBtn" Content="移除选中" Click="Remove_Click" FontSize="12"/>
                     <Button Grid.Column="2" x:Name="ClearBtn" Content="清空" Click="Clear_Click" FontSize="12"/>
                     <Button Grid.Column="3" x:Name="DoneBtn" Content="清除已完成" Click="Done_Click" FontSize="12"/>
-                    <TextBlock Grid.Column="5" Text="双击预览 · 拖动裁剪" FontSize="11" Opacity="0.55"
+                    <TextBlock Grid.Column="5" Text="拖入视频即可添加" FontSize="11" Opacity="0.55"
                                VerticalAlignment="Center"
-                               ToolTipService.ToolTip="视频抠图:参数在左侧;处理完成后可在输出目录找到成品"/>
+                               ToolTipService.ToolTip="把视频文件拖到窗口任意位置即可加入任务;参数在左侧;处理完成后到输出目录取成品"/>
                 </Grid>
 
                 <ListView Grid.Row="2" x:Name="TaskList" SelectionMode="Extended" BorderThickness="0"
