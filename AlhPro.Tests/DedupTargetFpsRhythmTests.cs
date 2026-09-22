@@ -17,8 +17,11 @@ namespace AlhPro.Tests;
 /// 现在判据只看"有没有真实时长表要保"(preserveRhythm),与是否指定帧率无关;指定帧率只决定"倍率补多少"。
 /// 代价必须说清楚:保节奏时输出是可变帧率时间轴,**平均帧率 = 基准帧率×倍率**(不再恰好等于指定值)——
 /// 所以日志与界面都按"平均约 N fps"上报,不许再写"输出仍精确 N fps"。
-/// 【唯一例外】「果冻修复·运动模糊」—— 那条滤镜链自带 CFR 时间重采样(minterpolate→tmix→fps),
-/// 与可变时间轴不同源,维持旧行为(照旧挂 fps 滤镜)并如实告知节奏不再保留。
+/// 【2026-09-21 唯一例外已消失】上一版这里还有一个例外:「果冻修复·运动模糊」—— 那条滤镜链自带 CFR
+/// 时间重采样(minterpolate→tmix→fps),与可变时间轴不同源,只能继续挂 fps 滤镜。整块「果冻修复」已按用户
+/// 要求从**界面与处理端一起**删除 ⇒ 判据里不再有第二个条件。下面两条用例已按新口径改写:
+/// ① 门槛只看 preserveRhythm;② 原来的"唯一例外必须告知"改成 **钉住它彻底消失**(不留"还有一条能丢节奏
+/// 的路"的错觉,也不留一条永远打不出来的死分支)。
 ///
 /// 【二 · 界面侧:取值口径只允许有一条】
 /// 「指定输出帧率」原来是"勾选框 + 手输数字",而处理端本来就会按目标帧率把倍率算够 —— 界面却把倍率那一栏置灰、
@@ -30,27 +33,32 @@ namespace AlhPro.Tests;
 /// 去重素材 / 真人把界面点一遍),只能按本仓库既定手法把源码接线钉住(同 TempSpaceGateTests / SceneSwitchCoverageTests)。</summary>
 public class DedupTargetFpsRhythmTests
 {
-    /// <summary>**核心契约**:保节奏的门槛只看 preserveRhythm(运动模糊除外),不再要求"没指定帧率"。</summary>
+    /// <summary>**核心契约**:保节奏的门槛只看 preserveRhythm,不再要求"没指定帧率";
+    /// 【2026-09-21】也不再有任何"例外组合"(运动模糊已整块删除)。</summary>
     [Fact]
     public void Target_fps_no_longer_turns_off_the_vfr_timeline()
     {
         var svc = ReadRepoFile("ImgUpscalerUI", "VideoService.cs");
+        // 标识符层面的断言只查**代码行**(注释里会写沿革:"rhythmAtMux 这个别名随之取消"这类说明必须能留)
+        var svcCode = string.Join("\n", svc.Split('\n').Where(l => !l.TrimStart().StartsWith("//")));
 
-        // ① 判据:preserveRhythm(有真实时长表要保)+ 排除运动模糊那条自带 CFR 重采样的滤镜链
-        //    (写法用 `targetFps == null`,与处理端逐字一致 —— 指定帧率不再被当成"可以丢节奏"的理由)
-        Assert.Contains("bool rhythmAtMux = preserveRhythm && (targetFps == null || postMotionBlur < 1);", svc);
+        // ① 判据只剩 preserveRhythm 一个条件(2026-09-21 起 `rhythmAtMux` 这个别名也取消了 ——
+        //    一个值两个名字会让人以为"还有第二条判据")
+        Assert.DoesNotContain("rhythmAtMux", svcCode);
+        Assert.DoesNotContain("postMotionBlur", svcCode);
+        //    **必须有**三个消费点:指定帧率分支 + 尾帧容积 + setpts 本体(少一处说明结构被改过)
+        Assert.Equal(3, Count(svcCode, @"if \(preserveRhythm\)"));
         // 老写法必须彻底消失(残一处 = 指定帧率又去吃节奏了)
-        Assert.DoesNotContain("if (targetFps == null && preserveRhythm)", svc);
-        // 三个消费点都在:指定帧率分支 + 尾帧容积 + setpts 本体(少一处说明结构被改过)
-        Assert.Equal(3, Count(svc, @"if \(rhythmAtMux\)"));
+        Assert.DoesNotContain("if (targetFps == null && preserveRhythm)", svcCode);
+        Assert.DoesNotContain("preserveRhythm && (targetFps == null", svcCode);
 
         // ② 保节奏时不许再挂 fps 滤镜:它按均匀网格重采样,挂上就把节奏抹平了
         int fpsFilter = svc.IndexOf("postParts.Add($\"fps=", StringComparison.Ordinal);
         Assert.True(fpsFilter > 0, "找不到合帧阶段挂 fps 滤镜那行");
-        Assert.Equal(1, Count(svc, @"postParts\.Add\(\$""fps="));
-        int rhythmBranch = svc.IndexOf("if (rhythmAtMux)", StringComparison.Ordinal);
+        Assert.Equal(1, Count(svcCode, @"postParts\.Add\(\$""fps="));
+        int rhythmBranch = svcCode.IndexOf("if (preserveRhythm)", StringComparison.Ordinal);
         Assert.True(rhythmBranch > 0 && rhythmBranch < fpsFilter,
-            "fps 滤镜必须挂在「非保节奏」那一支里(rhythmAtMux 判断之后)");
+            "fps 滤镜必须挂在「非保节奏」那一支里(preserveRhythm 判断之后)");
 
         // ③ 倍率只在拆帧前算一次;合帧阶段不许再"临时改倍率"—— 帧早就补完了,改了也补不出来,只会骗人
         Assert.DoesNotContain("已临时按", svc);
@@ -66,28 +74,84 @@ public class DedupTargetFpsRhythmTests
             svc);
     }
 
-    /// <summary>唯一残留的"丢节奏"组合必须有告知:指定帧率 + 运动模糊(那条链自带 CFR 重采样)。</summary>
+    /// <summary>【2026-09-21 反向契约:那条"唯一例外"必须**彻底消失**】
+    /// 它原来是「果冻修复·运动模糊」带来的副作用 —— 那条滤镜链自带 CFR 时间重采样,是唯一还能"丢掉原片节奏"
+    /// 的组合,所以配了一段 Warn + 一行界面提示。
+    ///
+    /// 功能整块删除后,若**只删控件、留下那段告知**,会变成两条都错的东西:
+    ///   ① 一段**永远打不出来**的死分支(进去的前提 `preserveRhythm && targetFps > 0` 与"进本分支"
+    ///      本身矛盾 —— 本分支就是 preserveRhythm == false 那一支);
+    ///   ② 更重要的是,它会让下一个读代码的人以为"工程里还有一条能丢节奏的路",于是去找那个不存在的开关。
+    /// 所以按本仓库对死分支的规矩(要么给出可达理由,要么删掉)一起删,并在这里钉住"删干净了":
+    /// 处理端不许再出现 motion blur 的任何处理逻辑,界面侧也不许再留这条提示文案。</summary>
     [Fact]
-    public void Only_motion_blur_still_flattens_the_rhythm_and_must_say_so()
+    public void The_motion_blur_rhythm_exception_is_gone_entirely()
     {
         var svc = ReadRepoFile("ImgUpscalerUI", "VideoService.cs");
+        var cs = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs");
+        // 【只查代码行,不查注释】沿革说明(为什么删、删了哪几样)必须能留在源码里 —— 那是给后来人看的;
+        // 这里要钉的是**活代码里**不许再引用它们(真有活引用编译期就报错了,再钉一道防有人"照着注释恢复")。
+        var svcCode = string.Join("\n", svc.Split('\n').Where(l => !l.TrimStart().StartsWith("//")));
+        var csCode = string.Join("\n", cs.Split('\n').Where(l => !l.TrimStart().StartsWith("//")));
 
-        // ① 告知必须存在,且必须是真调用(不是注释里写写)、必须是 Warn 级别 —— Info 会被当常规信息略过
-        const string warnAnchor = "又指定了「输出帧率」,且「果冻修复·运动模糊」开着";
-        int warnPos = svc.IndexOf(warnAnchor, StringComparison.Ordinal);
-        Assert.True(warnPos > 0, "「运动模糊 + 指定帧率」那条节奏告知不见了");
-        Assert.Contains("AppLogger.Warn($\"⚠ ", svc);
+        // ① 旧告知(日志 + 界面)一个都不许剩 —— 它们是与功能一起消失的用户可见文案
+        Assert.DoesNotContain("成片节奏将被均匀化", svcCode);
+        Assert.DoesNotContain("又指定了「输出帧率」,且「果冻修复·运动模糊」开着", svcCode);
 
-        // ② 必须落在「均匀时间轴」那一支里(VFR 保节奏那条路之外),否则正常保节奏时也会误报
-        int vfrInfo = svc.IndexOf("时长保护(VFR): 帧=", StringComparison.Ordinal);
-        Assert.True(vfrInfo > 0, "找不到 VFR 保留节奏那条路的日志");
-        Assert.True(vfrInfo < warnPos, "节奏告知必须在 VFR 分支之后(只在没走 VFR 时才吵)");
+        // ② 那条滤镜链本身(minterpolate→tmix→fps 的 filter_complex 图 + 它的三个变量)彻底没了
+        Assert.DoesNotContain("minterpolate=fps={subFpsStr}", svcCode);
+        Assert.DoesNotContain("maskedmerge", svcCode);
+        Assert.DoesNotContain("subFpsStr", svcCode);
+        Assert.DoesNotContain("motionFrames", svcCode);
 
-        // ③ 不只写日志:界面那行也要有(用户不会去翻日志)
-        Assert.Contains("成片节奏将被均匀化", svc);
+        // ③ 处理端形参与变量全删(不是"留着形参、忽略它"):留着就还有"哪天顺手接回去"的口子
+        Assert.DoesNotContain("postMotionBlur", svcCode);
+        Assert.DoesNotContain("postDeshake", svcCode);
+        // 连带那个"一个值两个名字"的别名也一并取消(见上面第一条用例)
+        Assert.DoesNotContain("rhythmAtMux", svcCode);
 
-        // ④ 唯一例外必须写成"运动模糊"这一个条件(而不是又放宽成"去重 + 指定帧率")
-        Assert.Contains("果冻修复·运动模糊", svc);
+        // ④ 界面侧:三个控件名不许再有**活引用**
+        Assert.DoesNotContain("MotionBlurCombo", csCode);
+        Assert.DoesNotContain("DeShakeCheck", csCode);
+        Assert.DoesNotContain("JellySlowHint", csCode);
+        Assert.DoesNotContain("mblurNow", csCode);
+        Assert.DoesNotContain("deshakeNow", csCode);
+
+        // ⑤ 但"老文件字段一律保留"这条规矩仍然成立:三个字段必须还在 VideoSettings 里(否则老设置直接读不进来)
+        Assert.Contains("public int Jello { get; set; }", csCode);
+        Assert.Contains("public int MotionBlur { get; set; }", csCode);
+        Assert.Contains("public bool DeShake { get; set; }", csCode);
+        // ⑥ 而且读取/写入两端都必须**真的不碰它们**(只删界面不删处理端 = 静默行为,本仓库最忌讳)
+        Assert.DoesNotContain("= d.MotionBlur", csCode);
+        Assert.DoesNotContain("= d.DeShake", csCode);
+        Assert.DoesNotContain("MotionBlur = MotionBlurCombo", csCode);
+        Assert.DoesNotContain("DeShake = DeShakeCheck", csCode);
+
+        // ⑦ 界面 XAML 里不许再有这三个控件(整块「果冻修复」删除,连标题与那条橙色提示一起)
+        var xaml = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml");
+        Assert.DoesNotContain("x:Name=\"MotionBlurCombo\"", xaml);
+        Assert.DoesNotContain("x:Name=\"DeShakeCheck\"", xaml);
+        Assert.DoesNotContain("x:Name=\"JellySlowHint\"", xaml);
+        Assert.DoesNotContain("Text=\"果冻修复\"", xaml);
+        Assert.DoesNotContain("运动模糊（果冻部分）", xaml);
+
+        // ⑧ 【用户给的验收判据】「视频页看不到「果冻修复」字样」+「用老设置文件启动一次,日志里不再出现
+        //    果冻/去抖相关行」。这里按**真正会被用户看到的内容**来判,而不是按整个文件扫字符串:
+        //      · XAML:去掉 XML 注释(那是给后来人看的沿革说明,不渲染)之后,一个"果冻/去抖"都不许剩;
+        //      · .cs:只查**会写进日志行**的那些语句(Log/AppLogger/progress?.Report),注释同样不算。
+        var xamlVisible = Regex.Replace(xaml, "<!--.*?-->", "", RegexOptions.Singleline);
+        Assert.DoesNotContain("果冻", xamlVisible);
+        Assert.DoesNotContain("去抖", xamlVisible);
+        Assert.DoesNotContain("运动模糊", xamlVisible);
+        foreach (var src in new[] { svc, cs })
+        foreach (var line in src.Split('\n'))
+        {
+            if (line.TrimStart().StartsWith("//")) continue;   // 沿革注释允许提到它
+            if (!line.Contains("Log(\"") && !line.Contains("Log($\"")
+                && !line.Contains("AppLogger.") && !line.Contains("progress?.Report(")) continue;
+            Assert.DoesNotContain("果冻", line);
+            Assert.DoesNotContain("去抖", line);
+        }
     }
 
     /// <summary>界面契约(2026-09-16 用户第三次反馈定稿):**不要**单独的模式按钮组 ——

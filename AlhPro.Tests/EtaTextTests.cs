@@ -220,4 +220,29 @@ public class EtaTextTests
         Assert.Equal("", EtaText.ForRemaining(100, 200, 0.5));         // 净耗时不足 1 秒
         Assert.Equal(-1, EtaText.RemainingSeconds(100, 200, 0.5), 6);
     }
+
+    // ===== 2026-09-21:「开跑前的预计用时」文案(用户反馈"预览要等很久才开始") =====
+    /// <summary>`Duration` 是"这一段**总共**大约要多久"(还没开始时给预期),与 `ForRemaining` 的
+    /// "本阶段预计还剩"(跑起来的倒计时)是两件事 —— 共用同一个三档口径,但不许互相借文案,
+    /// 否则用户会把"总共 9 分钟"读成"还剩 9 分钟"(那种误导比不给数字更糟)。</summary>
+    [Fact]
+    public void Duration_text_is_a_total_not_a_remainder()
+    {
+        Assert.Equal("9 秒", EtaText.Duration(9.4));            // 与 ForRemaining 同口径:(int) 截断
+        Assert.Equal("1.5 分钟", EtaText.Duration(90));
+        Assert.Equal("8.9 分钟", EtaText.Duration(532));        // 真机实测那次预览(3 秒素材跑了 532 秒)
+        Assert.Equal("1.5 小时", EtaText.Duration(5400));
+        // 语义必须与"还剩"区分开:两条文案不许互相包含
+        Assert.DoesNotContain("预计还剩", EtaText.Duration(532));
+        Assert.DoesNotContain("本阶段", EtaText.Duration(532));
+        // 不足 1 秒 / 非法值:不给数字(调用方直接判空跳过 —— 那种量级的活不需要预告)
+        Assert.Equal("", EtaText.Duration(0.9));
+        Assert.Equal("", EtaText.Duration(0));
+        Assert.Equal("", EtaText.Duration(-5));
+        Assert.Equal("", EtaText.Duration(double.NaN));
+        Assert.Equal("", EtaText.Duration(double.PositiveInfinity));
+        // 回归守卫:任何档位都不许出现"几秒"这种既非数字又非确定的说法(与 ForRemaining 同一条铁律)
+        foreach (double s in new[] { 1, 2, 9.9, 59, 60, 3599, 3600, 100000 })
+            Assert.False(EtaText.ContainsVagueSeconds(EtaText.Duration(s)), $"Duration({s}) 里出现了含糊的\"几秒\"");
+    }
 }

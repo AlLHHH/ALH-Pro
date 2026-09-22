@@ -28,9 +28,13 @@ public static class EngineScalePolicy
             || m.Contains("wdn-x4v3", StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>该模型有没有原生 1x 权重。实测:Real-ESRGAN 全家(x4plus / x4plus-anime / general-x4v3 /
-    /// 自转的 general-wdn-x4v3 / animevideov3 / 两支自训 2x)都**没有** x1(animevideov3 只有 x2/x3/x4)→ 全部为 false。</summary>
-    public static bool ModelHasNative1x(string engine, string model) => false;
+    /// <summary>该模型有没有原生 1x 权重。
+    /// 【2026-09-20 变更】原来恒为 false(Real-ESRGAN 全家都只有 x2/x3/x4 权重,传 `-s 1` 会**静默输出全黑帧**)。
+    /// 现在多了一种:**1x 修复模型**(同尺寸:去压缩痕 + 边缘恢复,见 <see cref="ExperimentalEsrgan.Is1xModel"/>)——
+    /// 它的网络尾层就是 3 通道、倍率写死 1 ⇒ `-s 1` 是它的**原生**用法,不是护栏,也不会有全黑问题
+    /// (⚠ 上线前必须真机跑一次 `-s 1` 确认非黑、尺寸不变 —— 这是本仓库对"静默全黑"的固定验收动作)。</summary>
+    public static bool ModelHasNative1x(string engine, string model)
+        => ExperimentalEsrgan.Is1xModel(model);
 
     /// <summary>**只有 2x 原生权重**的模型 = 两支自训模型(游戏向 / 现实向,见 <see cref="ExperimentalEsrgan"/>)。
     /// 【为什么必须登记】2026-09-15 真机实测(本机 4060 Laptop,220×220 输入,`-t 0`,`-m models -n alhpro-real2x`):
@@ -62,6 +66,16 @@ public static class EngineScalePolicy
         double want = requestedScale > 0 && double.IsFinite(requestedScale) ? requestedScale : 1.0;
         if (!string.Equals(engine, "realesrgan", StringComparison.OrdinalIgnoreCase))
             return new Decision(PathUtil.CeilPowerOfTwo(want), 1.0, "");
+        // 【1x 修复模型】倍率写死 1(同尺寸):1x 目标是它的原生用法 ⇒ 引擎倍数 1、不缩放。
+        // 【为什么可以下发 -s 1】以前禁止 -s 1 是因为**没有 x1 权重**的模型会静默输出全黑帧;
+        // 这一支的网络尾层就是 3 通道、倍率 1 ⇒ -s 1 正常(真机验收见 ModelHasNative1x 的注释)。
+        if (ExperimentalEsrgan.Is1xModel(model))
+        {
+            if (Math.Abs(want - 1.0) < 1e-6)
+                return new Decision(1, 1.0, "");
+            return new Decision(1, want,
+                $"该模型是「1x 修复(同尺寸)」模型,不能放大:目标 {want:0.##}x 请改用对应倍率的超分模型(否则只会普通放大,没有超分效果)");
+        }
         if (Is4xOnlyModel(model))
             return new Decision(4, want / 4.0, "");
         // 【只有 2x 权重】固定原生 2x,再缩回目标(下发 -s 3/-s 4 会得到镜像平铺的错帧、且 exit=0 不报错)。
@@ -72,10 +86,16 @@ public static class EngineScalePolicy
                 return new Decision(2, 1.0, "");
             // 【措辞只写实测到的事】>2x 那档实测过(3x/4x = 镜像平铺错帧);<2x 那档没测,
             // 只陈述"没有 1x 权重"这一事实,不搬 x4plus 那些"全黑"的实测数字来吓人。
+            // 【2026-09-20 1x 目标加一句实话】实测:2x 超分再缩回 1080p,detail 822、边宽 5.86px,
+            // **比原始 1080p(detail 1152 / 7.02px)还软** ⇒ 1x 目标下这条路径只会让画面更糊,
+            // 必须把结论写进理由里,并给出可执行的两条出路(换 1x 修复模型 / 把目标改成 2x)。
             string why = want > 2.0
                 ? $"该模型只有 2x 原生权重(实测下发 -s {(int)want} 会输出镜像平铺的错帧、且 exit=0 不报错)"
                 : "该模型只有 2x 原生权重(没有 x1 权重)";
-            return new Decision(2, want / 2.0, why + ":改用 2x 超分后再缩放到目标尺寸");
+            string tail = Math.Abs(want - 1.0) < 1e-6
+                ? ":改用 2x 超分后再缩放到目标尺寸(⚠ 实测这条路径比原片更软:detail 822 对原片 1152)—— 1x 想要更清晰请改用「1x 修复(同尺寸)」模型,或把目标改为 2x"
+                : ":改用 2x 超分后再缩放到目标尺寸";
+            return new Decision(2, want / 2.0, why + tail);
         }
         int eng = Math.Clamp((int)Math.Ceiling(want), 1, 4);
         if (eng <= 1)

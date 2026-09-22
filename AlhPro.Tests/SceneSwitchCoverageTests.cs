@@ -46,24 +46,27 @@ public class SceneSwitchCoverageTests
         Assert.Contains("sceneCutPairs,", svc);
 
         // 普通分段路径:整块检测挂在同一个开关之下
-        int gate = svc.IndexOf("if (sceneThreshold is > 0)", StringComparison.Ordinal);
-        Assert.True(gate > 0);
+        int gate = svc.IndexOf("if (sceneCut is { } sc)", StringComparison.Ordinal);
+        Assert.True(gate > 0, "找不到「转场识别」的开关判断(sceneCut == null = 关)");
         int detect = svc.IndexOf("AlhPro.Core.SceneCutJudge.Detect(", StringComparison.Ordinal);
         Assert.True(detect > gate, "普通路径的判据调用必须在开关判断之后");
     }
 
     /// <summary>② **开关状态在日志里看得见**(用户明确要求:`转场识别=0.30` / `关`)。
-    /// 钉:任务参数行、切成片的合成完成行、以及切点对齐行都带开关/切点信息。</summary>
+    /// 钉:任务参数行、切成片的合成完成行、以及切点对齐行都带开关/切点信息。
+    /// 【2026-09-21 口径加强】阈值滑块恢复后,这一项还必须把**这次真正生效的判据数字**印出来 ——
+    /// 用户拉了滑块到底有没有起作用,事后全靠这几行对账(唯一换算处 = AlhPro.Core.SceneThresholdMap)。</summary>
     [Fact]
     public void Switch_state_is_visible_in_the_logs()
     {
         var view = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs");
-        Assert.Contains("$\"转场识别={(sceneThreshold != null ? $\"{sceneThreshold:0.00}\" : \"关\")} | \"", view);
+        Assert.Contains("$\"转场识别={(sceneCut != null ? $\"{sceneCut.Threshold:0.00}\" : \"关\")}", view);
 
         var svc = ReadRepoFile("ImgUpscalerUI", "VideoService.cs");
-        Assert.Contains("转场识别={(sceneThreshold is > 0 ? $\"开({sceneThreshold.Value:0.00})\" : \"关\")}", svc);
-        Assert.Contains("转场识别:切点 {cuts.Count} 处", svc);                     // 普通路径:切点处数
-        Assert.Contains("时间轴:切点对齐用主流程同一份判据", svc);                 // 排帧那条路:同一份判据
+        Assert.Contains("转场识别=开({sc.Threshold:0.00})", svc);
+        Assert.Contains("生效判据 {sc.Thresholds.Text}", svc);              // 真正生效的那三个数
+        Assert.Contains("转场识别:切点 {cuts.Count} 处", svc);              // 普通路径:切点处数
+        Assert.Contains("时间轴:切点对齐用主流程同一份判据", svc);          // 排帧那条路:同一份判据
     }
 
     /// <summary>③ **开关必须还在、可开可关**(用户定调:不要做成内建强制)。</summary>
@@ -84,7 +87,10 @@ public class SceneSwitchCoverageTests
         Assert.Contains("public bool Scene { get; set; }", view);                 // 字段还在(老设置兼容)
     }
 
-    /// <summary>④ 开关的 ToolTip 必须把**开/关两种后果**都讲清(用实测数据说)。</summary>
+    /// <summary>④ 开关的 ToolTip 必须把**开/关两种后果**都讲清(用实测数据说);
+    /// 并且【2026-09-21 改口径】它必须写明"阈值现在**可调**、0.30 = 原来的内置判据" ——
+    /// 上一版这里钉的是"阈值是内置的、不需要调"(滑块已删时的措辞)。滑块恢复后那句就**说反了**:
+    /// 留着会让用户以为滑块是摆设(它正是在 2026-09-15~09-21 期间被当成假控件删掉的原因)。</summary>
     [Fact]
     public void The_tooltip_states_both_consequences_with_measured_numbers()
     {
@@ -100,9 +106,13 @@ public class SceneSwitchCoverageTests
         Assert.Contains("19.72", block);         // 实测:不勾时的混合帧帧差
         Assert.Contains("82.62", block);         // 实测:勾上后的硬切帧差
         Assert.Contains("179 帧", block);        // 实测:帧数/时长守恒
-        // 【2026-09-15 转场阈值滑块删除后的提示文字】必须写明"阈值是内置的、不需要调"(用户指定的措辞)
-        Assert.Contains("内置", block);
-        Assert.Contains("不需要调", block);
+        // 【2026-09-21 恢复滑块后的措辞】必须写明"阈值可调、所以那条滑块是真的在起作用"
+        Assert.Contains("转场阈值", block);
+        Assert.Contains("阈值现在可调了", block);
+        Assert.Contains("真的进判定", block);
+        // 旧措辞("内置的、不需要调")必须彻底消失 —— 它现在与事实相反
+        Assert.DoesNotContain("不需要调", block);
+        Assert.DoesNotContain("阈值不用管", block);
     }
 
     /// <summary>⑤ **"按真实时间戳排帧"只对 VFR 源自动生效**(用户最终裁决:CFR 走常规路径、不做时序重采样;

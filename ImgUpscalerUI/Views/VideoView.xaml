@@ -8,23 +8,22 @@
     mc:Ignorable="d">
 
     <UserControl.Resources>
-        <!-- 【蓝色「测试」小药丸 · 2026-09-15 第二次改小】给两支**自训**模型(游戏 · game2x / 现实 · real2x)用的标记。
-             【命名 · 用户定稿】这两支在界面上写作「游戏」「现实」+ 英文名(`类别 · 名字`;
-             名字 = `game2x` / `real2x`,与权重文件名 alhpro-game2x / alhpro-real2x 的后缀一字不差),
-             **不出现"实验/实验性"字样**;括号里写**速度档**(`快`,见 Core.ExperimentalEsrgan.SpeedTier)——
-             【2026-09-16 用户定稿】"括号内要写快 而不是时间":括号与官方项用同一套词(`快`/`中`/`超慢`),
+        <!-- 【蓝色「测试」小药丸 · 2026-09-15 第二次改小;2026-09-21 先撤掉、当天又按用户裁决放回】
+             【命名 · 用户 2026-09-21 第四次定稿:名字前面加 alh】四项自训模型写作 `类别 · alh+名字（快）`:
+             `现实 · alhreal2x（快）` / `游戏 · alhgame2x（快）` / `游戏 · alhgame2x-v2（快）` / `游戏 · alhgame2x-v3（快）`
+             (用户原话"改名字 前面加上alh";写法示例 `现实 alhreal2x` 由用户给出 —— alh 与名字**连写、不加连字符**)。
+             类别词仍是「游戏」/「现实」,**不出现"实验/实验性"字样**;括号里写**速度档**(`快`,见 Core.ExperimentalEsrgan.SpeedTier)——
+             【2026-09-16 用户定稿】"括号内要写快 而不是时间":括号与官方项共用一套词(`快`/`中`/`超慢`),
              测出来的秒/帧数字挪到悬停提示与下拉下方那行提示里(那两处才是写数字的地方)。
-             为什么还要标记:它们不是官方权重(自己训练的),与官方互有胜负 —— 三档色偏都低于官方,
-             细节/锐度多数低于官方默认模型,所以这一项绝不能只写模型名了事。
-             小标文字仍是「测试」(用户 2026-09-15:先保留,是否改由用户定)。
-             【尺寸 · 用户 2026-09-15 收尾要求「更小更简约」】原来是 FontSize 12 + Padding 6,1 + 圆角 7 + 1px 蓝描边,
-             整行(项内文字 + 间距 6 + 药丸 33)会顶到 218px,而收起状态可用宽度只有约 212px ⇒ 会被裁。
-             现改为 **FontSize 11 + Padding 4,0 + 圆角 4 + 无描边**,药丸宽 33 → 26px。
-             【宽度 · 2026-09-16 起余量最大】项内文字现在是 `现实 · real2x（快）` / `游戏 · game2x（快）`
-             (2026-09-15 那版 `…（0.35s/帧）` 实测整行 192 / 205px;更早的中文名版 211px,压线),
-             括号里只需放一个档词,离 212px 上限更远。
-             配色也压暗一档(#2A3E63/#A8C8FF → #232E42/#8FA9D6),不再抢模型名。
-             两个样式被下面两支模型的 ComboBoxItem 共用(改一处即可,别在项里内联颜色)。 -->
+             【宽度这笔账 · 2026-09-21 真机实测,不是估算】收起状态(组合框 235px)的像素布局:
+               内容起点 x=16(3px 蓝条)→ 文字 x=25..183 → 下拉箭头 x=207..214 ⇒ 文字右侧**只剩约 18px**。
+               行 = 蓝条 3 + 间距 6 + 文字 + 间距 6 [+ 药丸 30];自训四项最长那两行文字实测 168px,
+               带药丸要 36px ⇒ **超出 18px、药丸会被箭头裁掉**(即 2026-09-14 那次"下拉框被遮挡")。
+             【裁决 · 2026-09-21 用户选"加宽 22px"】左栏 300 → 322(见上面 ColumnDefinitions 的注释):
+               余量 18 → 40px ⇒ 药丸原样放回仍有余量 ✓
+             ⚠ 以后再动这一行:**必须量收起状态**(截图找箭头的左边缘),别只看展开的下拉 ——
+               展开态的下拉项是**按内容自动变宽**的(实测:内容 177px → 项宽 201px、内容 195px → 项宽 219px),
+               "展开态没被裁"**不等于**"收起态不会被裁"。 -->
         <Style x:Key="TestBadgePill" TargetType="Border">
             <Setter Property="Background" Value="#232E42"/>
             <Setter Property="BorderThickness" Value="0"/>
@@ -42,14 +41,18 @@
 
     <Grid>
         <Grid.ColumnDefinitions>
-            <!-- 【宽度回退 410 → 300 · 2026-09-14 用户反馈】
-                 加宽面板会把右侧任务列表挤窄,用户要求"缩回去、改成把括号内容简写"。
-                 于是恢复原宽,并把该面板里**所有**超过可用宽度的标签统一缩写
-                 (可用宽度 ≈ 300 − 32(面板留白) − 56(边框+下拉箭头) = 212px,用界面字体实测):
-                   旧「通用 · general-wdn-x4v3（5MB · 快）」258px → 新「通用 · wdn-x4v3（快）」~161px
-                   旧「nlmeans + hqdn3d（空间域与时间域联合降噪,推荐）」355px → 新「nlmeans + hqdn3d（推荐）」~150px
-                 体积/耗时档没丢:改放模型下拉的 ToolTip(悬停可见),见下面 VideoEsrganModelCombo。 -->
-            <ColumnDefinition Width="300"/>
+            <!-- 【宽度 300 → 322 · 2026-09-21 用户裁决】
+                 【为什么要加这 22px】自训四项的名字加了项目前缀 `alh`(用户 2026-09-21:"改名字 前面加上alh"),
+                 而末尾那个蓝色「测试」药丸要放回去。收起状态实测(截图找像素,不是估算):
+                   组合框宽 235px 时,内容起点 x=16(3px 蓝条)→ 文字 x=25..183 → 下拉箭头 x=207..214
+                   ⇒ 文字右侧只剩 **约 18px**;药丸要 6(间距)+30(药丸)= 36px ⇒ **放不下,硬塞会被箭头裁掉**
+                   (那正是 2026-09-14 用户抱怨过的"下拉框被遮挡")。
+                 三条出路(改类别词 / 换更小的标记 / 加宽面板)摆在用户面前,用户选了**加宽 22px**:
+                 300 → 322 ⇒ 文字右侧余量 18 → 40px,药丸放回后仍有余量 ✓
+                 【与 2026-09-14 那次"410 → 300"不矛盾】那次是 110px 的大改(右侧任务列表明显被挤窄),用户要求缩回;
+                 这次是 22px 的最小必要增量,且是用户点名选的方案。
+                 【其余标签不受影响】该面板里那些标签本来就按 ≈212px 可用宽度缩写过了,加宽只会给它们留更多余量。 -->
+            <ColumnDefinition Width="322"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
@@ -73,139 +76,25 @@
                     <CheckBox x:Name="UpscaleToggle" Content="启用超分(逐帧放大)" ToolTipService.ToolTip="逐帧 AI 放大画面"
                               IsChecked="True" Checked="Options_Changed" Unchecked="Options_Changed"/>
 
-                    <TextBlock Text="超分引擎" Style="{StaticResource SectionTitle}"/>
-                    <!-- 【顺序:Real-ESRGAN 在上、waifu2x 在下】(用户要求)列表顺序只影响界面,
-                         存盘值仍用旧约定(0=waifu2x / 1=realesrgan),转换在 VideoView 的 EngineFromStored/EngineToStored,
-                         这样老用户已保存的选择不会被翻转。 -->
-                    <RadioButtons x:Name="VideoEngineRadios" SelectedIndex="0" ToolTipService.ToolTip="超分引擎:Real-ESRGAN 会主动合成细节(动漫/写实都明显变清晰);waifu2x 只做去噪/去压缩块 —— 干净素材上看起来≈单纯放大,只适合有噪点的老片源"
-                                  SelectionChanged="Combo_Changed">
-                        <RadioButton Content="Real-ESRGAN"/>
-                        <RadioButton Content="waifu2x"/>
-                    </RadioButtons>
-                    <TextBlock x:Name="VideoModelLabel" Text="超分模型" Style="{StaticResource SectionTitle}"/>
-                    <ComboBox x:Name="VideoWaifu2xModelCombo" ToolTipService.ToolTip="waifu2x 模型(动漫/通用/现实)"
-                              SelectionChanged="Combo_Changed">
-                        <!-- 【标签长度 · 2026-09-14】第 2 项原来写全名 `models-upconv_7_anime_style_art_rgb`,
-                             界面字体实测 398px —— 比加宽后的下拉(可用 ~322px)还长,必然被裁。
-                             改成 `upconv_7_anime`:与「预设摘要」里既有的叫法(`动漫·upconv_7_anime`,
-                             见 VideoView.xaml.cs 的 UpWaifu2xModelNames)一致,长度 ~250px 可完整显示。
-                             Tag 仍是引擎要的目录全名,不受显示名影响。 -->
-                        <ComboBoxItem Content="通用 · cunet（24MB·中）" Tag="models-cunet"
-                                      ToolTipService.ToolTip="通用 · cunet:官方 waifu2x 引擎的默认模型(不指定 -m 时就是它,出处:waifu2x-ncnn-vulkan README);架构比 upconv_7 新、更慢但更干净。&#x0a;适用:通用画面,动漫与实拍都能用。&#x0a;速度:1080p 约 0.37 秒/帧(2x,-n0)。&#x0a;模型大小:24 MB。"/>
-                        <ComboBoxItem Content="动漫 · upconv_7_anime（快）" Tag="models-upconv_7_anime_style_art_rgb"
-                                      ToolTipService.ToolTip="动漫 · upconv_7_anime:官方 waifu2x 面向动漫的模型(项目定位原文「Image Super-Resolution for Anime-style art」);upconv_7 是较早的架构,比 cunet 快、画面略软。&#x0a;适用:动漫 / 线稿类图像。&#x0a;模型大小:5.3 MB。"/>
-                        <ComboBoxItem Content="现实 · upconv_7_photo（快）" Tag="models-upconv_7_photo"
-                                      ToolTipService.ToolTip="现实 · upconv_7_photo:官方 waifu2x 的照片模型(README 原文「And it supports photo.」,使用时需指定 models/photo)。&#x0a;适用:实拍照片。&#x0a;速度:1080p 约 1.29 秒/帧(2x)。&#x0a;模型大小:5.3 MB。"/>
-                    </ComboBox>
-                    <ComboBox x:Name="VideoEsrganModelCombo" Visibility="Collapsed"
-                              ToolTipService.ToolTip="Real-ESRGAN 模型(按速度与体积从快到慢排列):悬停每一项看官方说明、速度与模型大小。&#x0a;末尾两项是自训的 2x 模型(游戏 · game2x / 现实 · real2x,带蓝色「测试」标)。"
-                              SelectionChanged="Combo_Changed">
-                        <!-- 【标签长度 · 2026-09-14 用户反馈"下拉框被遮挡"】左栏内部留白吃掉约 104px,
-                             即使左栏加宽到 410,ComboBox 也只有 306px ⇒ 文字可用宽度 ~250px。
-                             用界面字体(微软雅黑 14px)实测带厂商前缀的老写法最长达 310px,收起状态必被裁。
-                             所以去掉冗余前缀(`realesr-` / `realesrgan-` / `models-`;引擎名由上面的
-                             「超分引擎」与 ToolTip 说明,预设摘要里也一直是这个短叫法),现在最长 ~240px ✓。
-                             ⚠ 读模型名一律走 Tag(引擎要的全名),不许改成读 Content —— 见 VideoView.xaml.cs 的 SelModel。 -->
-                        <ComboBoxItem Content="动漫 · animevideov3（快）" Tag="realesr-animevideov3"
-                                      ToolTipService.ToolTip="动漫 · animevideov3:官方把它归在「For Animation Videos」,原文描述「Anime video model with XS size」(出处:Real-ESRGAN docs/anime_video_model.md)。&#x0a;专为动漫视频训练、体积最小最快的一档,动漫长视频首选。&#x0a;速度:1080p 约 0.26~0.30 秒/帧。&#x0a;模型大小:3.8 MB(含 x2 / x3 / x4 三份权重)。&#x0a;注:官方文档写它支持 X1,但本机实测 1x 输出全黑(缺 x1 权重)⇒ 请用 2x 及以上。"/>
-                        <ComboBoxItem Content="通用 · general-x4v3（快）" Tag="realesr-general-x4v3"
-                                      ToolTipService.ToolTip="通用 · general-x4v3:官方原文「A tiny small model (consume much fewer GPU memory and time); not too strong deblur and denoise capacity」(出处:Real-ESRGAN docs/model_zoo.md)。&#x0a;体积小、显存占用低;去模糊与去噪能力偏弱。&#x0a;速度:1080p 约 0.458 秒/帧。&#x0a;模型大小:4.9 MB。"/>
-                        <!-- ↓ 第 3 项(序号 2):自转的带降噪通用模型。**这一行绝不能少** ——
-                             2026-09-14 重排时曾漏掉它(只留了注释),结果下拉里 5 项变 4 项,
-                             而 VideoModelOrder 仍按 5 项映射(Rev2 的 4→新 2),老用户存的序号会被解释成错的模型。
-                             是"看真实界面截图"才发现的;以后改这个下拉,必须用界面确认 5 项都在且顺序如上。 -->
-                        <ComboBoxItem Content="通用 · wdn-x4v3（快）" Tag="realesr-general-wdn-x4v3"
-                                      ToolTipService.ToolTip="通用 · wdn-x4v3:权重取自上游官方 release v0.2.5.0(BSD 3-Clause,作者 xinntao 本人发布),由本项目自行转成 ncnn;官方用途同为「For General Images」。&#x0a;与 general-x4v3 同族同架构,带 WDN 去噪训练,游戏 / 动漫素材细节略多。&#x0a;速度:1080p 约 0.460 秒/帧。&#x0a;模型大小:4.9 MB。"/>
-                        <!-- 【顺序 · Rev3 · 2026-09-14 用户要求】整个下拉按**速度与体积**排(快/小 → 慢/大):
-                             0 realesr-animevideov3 4MB 0.26~0.30 秒/帧
-                             1 realesr-general-x4v3  5MB 0.458 秒/帧
-                             2 realesr-general-wdn-x4v3 5MB 0.460 秒/帧(新加,自转;实测 20 帧批跑与 general 差 0.42%)
-                             3 realesrgan-x4plus-anime 9MB 3.85 秒/帧
-                             4 realesrgan-x4plus      33.5MB 15.145 秒/帧(超慢,稳居最后)
-                             ⚠【换位 = 改序号,必须迁移】Rev2 的 wdn 在第 4 位(当时是"末尾追加"最安全),
-                             这次它要挪到第 2 位 ⇒ 映射 2→3、3→4、4→2,0/1 不变。
-                             迁移已抽到 AlhPro.Core.VideoModelOrder(纯函数 + 单测),VideoView.xaml.cs 的
-                             MigrateEsrganModelOrder 调用它;读设置与读预设都走那条路。
-                             不迁移的后果:老用户"存的 2 = x4plus-anime"会静默变成 2 = wdn-x4v3。
-                             以后若再调顺序:必须 +1 Rev、加一段映射、同步改这里与 UpEsrganModelNames。 -->
-                        <ComboBoxItem Content="动漫 · x4plus-anime（中）" Tag="realesrgan-x4plus-anime"
-                                      ToolTipService.ToolTip="动漫 · x4plus-anime:官方把它归在「For Anime Images / Illustrations」,原文「Optimized for anime images; 6 RRDB blocks (smaller network)」(出处:Real-ESRGAN docs/model_zoo.md)。&#x0a;官方定位是动漫插画 / 静态图,长视频请用 animevideov3。&#x0a;速度:1080p 约 3.3~4.4 秒/帧。&#x0a;模型大小:9.0 MB。"/>
-                        <!-- 「通用 · realesrgan-x4plus」按体积(33.5MB)与耗时(最慢)排在最后,并红字标出"超慢"
-                             (用户要求:不删除、只警示)。
-                              依据(2026-09-11 本机 4060 Laptop 实测,源 1920×1080 每帧):x4plus 14.48s / x4plus-anime 4.84s /
-                              animevideov3 0.84s;x4plus 还有"只有 4x 权重"的问题(选 2x 也照样全量算 4x 再缩回)。
-                              注:本项 Content 是 StackPanel(富文本),读模型名一律走 Tag —— 不要改成读 Content。 -->
-                        <ComboBoxItem Tag="realesrgan-x4plus"
-                                      ToolTipService.ToolTip="通用 · x4plus:官方把它归在「For General Images」,原文「X4 model for general images」(出处:Real-ESRGAN docs/model_zoo.md)。&#x0a;只有 4x 权重:选 2x / 3x 也会全量按 4x 算再缩回。&#x0a;速度:1080p 约 15.9 秒/帧(本机 30 帧批跑;同机 4 次样本 10.2~19.1,差异来自笔记本 GPU 降频)。&#x0a;模型大小:33.5 MB(旧文案写的 41MB 与磁盘实测不符,已改正)。&#x0a;建议只在单张图片上用。">
-                            <!-- 「慢」直接在括号里改成红字「超慢」,不再另挂一个红字标记(用户:冗余了) -->
-                            <StackPanel Orientation="Horizontal" Spacing="0">
-                                <TextBlock Text="通用 · x4plus（" VerticalAlignment="Center"/>
-                                <TextBlock Text="超慢" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="#E5484D"/>
-                                <TextBlock Text="）" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </ComboBoxItem>
-                        <!-- ===== 【Rev4 · 2026-09-15】末尾**追加**两支自训的 2x 模型(序号 5=现实向、6=游戏向)=====
-                             为什么追加在最后而不是插到中间:追加不动老序号 ⇒ Rev4 的迁移是**恒等映射**,
-                             老用户存的 0~4 升级后仍然指向同一支模型(Rev2 期间加 wdn 用的也是这个手法)。
-                             【命名 · 用户 2026-09-15 定稿 · 第三次改英文名】文字要**跟已有各项同一个格式**
-                             —— `类别 · 名字（括号内速度）`(已有项:`动漫 · animevideov3（快）` / `通用 · x4plus（超慢）`),
-                             所以这两项写成 `现实 · real2x（快）` / `游戏 · game2x（快）`;
-                             类别用「游戏」/「现实」,**名字用英文**(= 权重文件名后缀 real2x / game2x),
-                             括号里写**速度档**(「快」,口径见 Core.ExperimentalEsrgan.SpeedTier)——【2026-09-16 用户定稿】"括号内要写快 而不是时间",**不许出现"实验"**。
-                             权重文件:engines\realesrgan\models\alhpro-real2x.param/.bin、alhpro-game2x.param/.bin
-                             ⚠ Tag 必须与文件名一字不差:引擎按 `models/{Tag}.param` 取权重(视频路径下发的是
-                               `-m models -n {Tag}`,见 EngineService.UpscaleDirAsync;实测这两支名字不在引擎内置表里,
-                               所以它**不会**被追加 -x{scale} 后缀)。
-                             ⚠ 只有 2x 原生权重:3x/4x 目标由 Core.EngineScalePolicy 固定按 2x 跑再放大到目标
-                               (实测给 2x 权重下发 -s 4 会输出**镜像平铺的错帧**、exit=0 不报错)。
-                             ⚠ 【R/B 缺陷 · 2026-09-15 **已修好**,别把旧说法抄回来】这两份导出权重曾经 **R/B 通道颠倒**
-                               (旧实测:源 R143/G110/B92、官方 R143/G111/B89、本模型 R94/G111/B137,画面整幅偏蓝)。
-                               本轮**重训 + 重新导出**后通道验收闸已 PASS(现实向 Δ+0.20/+0.34/+0.24、
-                               游戏向 Δ+0.11/+0.12/+0.18,判据「每通道差 小于 5」;多宽度 1920/2048/2348/2560 全过)
-                               ⇒ 界面文案里**不得再出现"偏蓝 / R-B 颠倒 / 需重新导出 / 不可用于正片"**。
-                               两处文案与 Core.ExperimentalEsrgan 里的**逐字相同**(有单测钉住),改时一起改。
-                             ⚠ Content 是 StackPanel(富文本 + 蓝色「测试」药丸),读模型名一律走 Tag —— 别改成读 Content。 -->
-                        <ComboBoxItem Tag="alhpro-real2x" AutomationProperties.Name="现实 · real2x（快）测试">
-                            <!-- 【可访问性 · 2026-09-15】这两项(以及上面的 x4plus 项)的 Content
-                                 是 StackPanel(富文本),UIA 算出来的 Name 是**空**的 —— 读屏软件念不出选了什么,
-                                 自动化脚本也只能靠猜序号。这里显式给一个名字,把"类别 · 名字/速度口径/测试标"都带上
-                                 (UIA 名字不受下拉宽度限制,所以给全,含 1080p 口径)。
-                                 【宽度 · 2026-09-15 真机截图实测】项内文字同时用于收起状态,而收起状态可用宽度约 212px
-                                 ⇒ 项内只写一个速度档词("快"),秒/帧与口径放在悬停提示与下方提示里。
-                                 【命名 · 用户定稿】文字里**不许出现"实验"**;括号里是**快慢档形容词**(「快」),不是秒/帧(那个数字放在悬停提示里)。 -->
-                            <ToolTipService.ToolTip>现实 · real2x:三档色偏都低于官方 —— 实拍 1.48(官方 6.34)、动漫帧 0.18(官方 2.73)、游戏帧 0.34(官方 2.00)。&#x0a;细节与锐度多数低于官方默认模型(实拍 59.13 对 73.66、动漫帧 1.83 对 2.06;只在游戏帧上 3.20 略高于官方 2.91)。&#x0a;适合优先要颜色准确、能接受略软画面时使用。&#x0a;通道验收(2026-09-15 重训+重新导出):引擎输出与源的逐通道均值差 R+0.20/G+0.34/B+0.24 级,判据「每通道差 小于 5」通过(旧导出那次 R/B 颠倒已修)⇒ 颜色与源一致,可直接用于正片。&#x0a;速度:1080p 约 0.35 秒/帧(40 帧 1080p 目录批跑 -j 1:1:1 -t 0 冷态,与官方 animevideov3 同档)。&#x0a;倍率:网络原生 2x(放大倍数写死在网络里)。软件的 2x/3x/4x 是目标输出尺寸:选 3x/4x 时仍按原生 2x 跑一遍、再把成片缩放到目标(不是把引擎跑两遍);实测同一段 24 帧素材超分阶段 2x=2.0s、3x=3.9s、4x=4.7s(官方 animevideov3 有原生 3x/4x 权重,同样条件只要 2.2/2.3/2.8s),画面≈2x 细节放大、清晰度不会真的变成 3x/4x。推荐用 2x。&#x0a;模型大小:2.4 MB(权重 alhpro-real2x.bin 2.29 MB + alhpro-real2x.param 2 KB,本机磁盘实测)。</ToolTipService.ToolTip>
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <TextBlock Text="现实 · real2x（快）" VerticalAlignment="Center"/>
-                                <Border Style="{StaticResource TestBadgePill}">
-                                    <TextBlock Style="{StaticResource TestBadgeText}"/>
-                                </Border>
-                            </StackPanel>
-                        </ComboBoxItem>
-                        <ComboBoxItem Tag="alhpro-game2x" AutomationProperties.Name="游戏 · game2x（快）测试">
-                            <ToolTipService.ToolTip>游戏 · game2x:三档色偏都低于官方 —— 游戏帧 0.18(官方 2.00)、动漫帧 0.04(官方 2.73)、实拍 2.53(官方 6.34;最大的一档)。&#x0a;细节与锐度低于官方默认模型(游戏帧 detail 2.36 对 2.91、动漫帧 1.55 对 2.06、实拍 59.97 对 73.66),边缘更软。&#x0a;适合优先要颜色准确、能接受略软画面时使用。&#x0a;通道验收(2026-09-15 重训+重新导出):引擎输出与源的逐通道均值差 R+0.11/G+0.12/B+0.18 级,判据「每通道差 小于 5」通过(旧导出那次 R/B 颠倒已修)⇒ 颜色与源一致,可直接用于正片。&#x0a;速度:1080p 约 0.35 秒/帧(40 帧 1080p 目录批跑 -j 1:1:1 -t 0 冷态,与官方 animevideov3 同档)。&#x0a;倍率:网络原生 2x(放大倍数写死在网络里)。软件的 2x/3x/4x 是目标输出尺寸:选 3x/4x 时仍按原生 2x 跑一遍、再把成片缩放到目标(不是把引擎跑两遍);实测同一段 24 帧素材超分阶段 2x=2.0s、3x=3.9s、4x=4.7s(官方 animevideov3 有原生 3x/4x 权重,同样条件只要 2.2/2.3/2.8s),画面≈2x 细节放大、清晰度不会真的变成 3x/4x。推荐用 2x。&#x0a;模型大小:2.4 MB(权重 alhpro-game2x.bin 2.29 MB + alhpro-game2x.param 2 KB,本机磁盘实测)。</ToolTipService.ToolTip>
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <TextBlock Text="游戏 · game2x（快）" VerticalAlignment="Center"/>
-                                <Border Style="{StaticResource TestBadgePill}">
-                                    <TextBlock Style="{StaticResource TestBadgeText}"/>
-                                </Border>
-                            </StackPanel>
-                        </ComboBoxItem>
-                    </ComboBox>
-                    <!-- 4x 专用权重模型的提示(用户要求:放在模型下拉正下方)
-                         【2026-09-13 用户要求】这条不再是"红色警告":改用普通提示样式(中性灰 HintText)、文案里也不带 ⚠ 图标。
-                         它说明的是"该模型只有 4x 权重"这一事实,不是错误,没必要用告警色吓人。 -->
-                    <TextBlock x:Name="EsrganModelHint" Visibility="Collapsed" TextWrapping="Wrap"
-                               Style="{StaticResource HintText}" Margin="0,2,0,0"/>
-
                     <TextBlock Text="放大倍数" Style="{StaticResource SectionTitle}"/>
                     <RadioButtons x:Name="VideoScaleRadios" SelectedIndex="1" ToolTipService.ToolTip="输出放大倍数(3x 内部按引擎支持倍数处理)"
                                   SelectionChanged="Combo_Changed">
-                        <RadioButton x:Name="VScale1xRadio" Content="1x 超分（2x 放大后缩回）"/>
+                        <!-- 【2026-09-21 用户定案:1x 档整体换成 Anime4K 修复】
+                             旧文案是「1x 超分（2x 放大后缩回）」—— 那条路我们自己早就实测判定是**错的用法**:
+                             缩回会把细节又缩掉(源 detail 1176 → 818,比原片还软),同类软件根本不提供这种组合。
+                             新做法:Anime4K 着色器(libplacebo + custom_shader_path)在**原分辨率**上做修复+锐化,不放大也不缩回。
+                             实测(用户自己的 1080p 片子,同帧):边宽 6.76 → **5.96**、纹理 detail 不丢、与源细节层相关 0.909、
+                             代价**平坦区噪声 1.74×**;与 Video2X 自带的 Anime4K 逐帧 44.4 dB = 同一处理。
+                             ⚠ 回退:本机探测不过(缺 Vulkan/libplacebo)时自动退回旧的「2x 超分后缩回」并写日志,绝不让整批失败。 -->
+                        <RadioButton x:Name="VScale1xRadio" Content="1x 修复"
+                                     ToolTipService.ToolTip="1x 修复(**不放大**,画面尺寸不变):两个条目二选一。&#x0a;「动漫 · Anime4K 修复(快)」= 开源着色器在原分辨率做修复+锐化,不跑超分模型,约 15 FPS@1080p,适合有压缩损伤/偏软的素材。&#x0a;「现实 · 1x 修复(中)」= 用自训的「现实 · alhreal2x」按 2x 超分后再精确缩回原尺寸,干净素材上更接近原片(PSNR 36.8 对 35.8dB、噪点 1.54× 对 1.85×),代价是要跑完整一遍 2x、慢约 5 倍。&#x0a;Anime4K 需要能用的 Vulkan 显卡(探测不过会自动改用「现实 · 1x 修复」并写日志)。"/>
                         <RadioButton x:Name="VScale2xRadio" Content="2x"/>
                         <RadioButton x:Name="VScale3xRadio" Content="3x"/>
                         <RadioButton x:Name="VScale4xRadio" Content="4x"/>
                     </RadioButtons>
-                    <TextBlock x:Name="ScaleHint" Text="1x~2x 速度较快;倍率越高越慢、显存占用越大"
+                    <!-- 【2026-09-21 再更新】1x 现在有**两个**条目(动漫 · Anime4K 修复 / 现实 · 1x 修复),
+                         这句静态兜底文案也要跟着说清"两个都在做什么" —— 运行时那行是动态的(见 OneXScaleHint)。 -->
+                    <TextBlock x:Name="ScaleHint" Text="1x 修复不放大(在「超分模型」里选:动漫用 Anime4K 着色器原分辨率修复,现实用自训模型 2x 后缩回);2x 及以上由超分模型放大,倍率越高越慢、显存占用越大"
                                Style="{StaticResource HintText}" TextWrapping="Wrap"/>
                     <Grid x:Name="CustomSizePanel" ColumnSpacing="8" Visibility="Collapsed"
                           ToolTipService.ToolTip="自定义输出分辨率:超分后精确缩放到指定宽×高(留空=按倍率)">
@@ -225,23 +114,218 @@
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
+                    <TextBlock Text="超分引擎" Style="{StaticResource SectionTitle}"/>
+                    <!-- 【顺序:Real-ESRGAN 在上、waifu2x 在下】(用户要求)列表顺序只影响界面,
+                         存盘值仍用旧约定(0=waifu2x / 1=realesrgan),转换在 VideoView 的 EngineFromStored/EngineToStored,
+                         这样老用户已保存的选择不会被翻转。 -->
+                    <RadioButtons x:Name="VideoEngineRadios" SelectedIndex="0" ToolTipService.ToolTip="超分引擎:Real-ESRGAN 会主动合成细节(动漫/写实都明显变清晰);waifu2x 只做去噪/去压缩块 —— 干净素材上看起来≈单纯放大,只适合有噪点的老片源"
+                                  SelectionChanged="Combo_Changed">
+                        <RadioButton Content="Real-ESRGAN"/>
+                        <RadioButton Content="waifu2x"/>
+                    </RadioButtons>
+                    <TextBlock x:Name="VideoModelLabel" Text="超分模型" Style="{StaticResource SectionTitle}"/>
+                    <ComboBox x:Name="VideoWaifu2xModelCombo" ToolTipService.ToolTip="waifu2x 模型(动漫/通用/现实)"
+                              SelectionChanged="Combo_Changed">
+                        <!-- 【标签长度 · 2026-09-14】第 2 项原来写全名 `models-upconv_7_anime_style_art_rgb`,
+                             界面字体实测 398px —— 比加宽后的下拉(可用 ~322px)还长,必然被裁。
+                             改成 `upconv_7_anime`:与「预设摘要」里既有的叫法(`动漫·upconv_7_anime`,
+                             见 VideoView.xaml.cs 的 UpWaifu2xModelNames)一致,长度 ~250px 可完整显示。
+                             Tag 仍是引擎要的目录全名,不受显示名影响。 -->
+                        <ComboBoxItem Content="通用 · cunet（24MB·中）" Tag="models-cunet"
+                                      ToolTipService.ToolTip="通用 · cunet:官方 waifu2x 默认模型(cunet 架构,比 upconv_7 新、更慢、更干净)。&#x0a;适用:通用画面,动漫与实拍均可。&#x0a;速度 1080p 约 0.37 秒/帧 · 模型大小 24 MB。"/>
+                        <ComboBoxItem Content="动漫 · upconv_7_anime（快）" Tag="models-upconv_7_anime_style_art_rgb"
+                                      ToolTipService.ToolTip="动漫 · upconv_7_anime:官方 waifu2x 动漫模型(upconv_7 架构,比 cunet 快、画面略软)。&#x0a;适用:动漫 / 线稿。&#x0a;模型大小 5.3 MB。"/>
+                        <ComboBoxItem Content="现实 · upconv_7_photo（快）" Tag="models-upconv_7_photo"
+                                      ToolTipService.ToolTip="现实 · upconv_7_photo:官方 waifu2x 照片模型。&#x0a;适用:实拍照片。&#x0a;速度 1080p 约 1.29 秒/帧 · 模型大小 5.3 MB。"/>
+                    </ComboBox>
+                    <ComboBox x:Name="VideoEsrganModelCombo" Visibility="Collapsed"
+                              ToolTipService.ToolTip="Real-ESRGAN 模型(按速度与体积排列)。&#x0a;末尾四项为本项目自训的 2x 模型(现实 · alhreal2x / 游戏 · alhgame2x / 游戏 · alhgame2x-v2 / 游戏 · alhgame2x-v3;名字里的 alh 与末尾那个蓝色「测试」小标都表示「这不是官方权重」)。"
+                              SelectionChanged="Combo_Changed">
+                        <!-- 【标签长度 · 2026-09-14 用户反馈"下拉框被遮挡"】左栏内部留白吃掉约 104px,
+                             即使左栏加宽到 410,ComboBox 也只有 306px ⇒ 文字可用宽度 ~250px。
+                             用界面字体(微软雅黑 14px)实测带厂商前缀的老写法最长达 310px,收起状态必被裁。
+                             所以去掉冗余前缀(`realesr-` / `realesrgan-` / `models-`;引擎名由上面的
+                             「超分引擎」与 ToolTip 说明,预设摘要里也一直是这个短叫法),现在最长 ~240px ✓。
+                             ⚠ 读模型名一律走 Tag(引擎要的全名),不许改成读 Content —— 见 VideoView.xaml.cs 的 SelModel。 -->
+                        <ComboBoxItem Content="动漫 · animevideov3（快）" Tag="realesr-animevideov3"
+                                      ToolTipService.ToolTip="动漫 · animevideov3:官方动漫视频模型(体积最小、速度最快的一档)。&#x0a;适用:动漫长视频。&#x0a;速度 1080p 约 0.26~0.30 秒/帧 · 模型大小 3.8 MB(x2 / x3 / x4)。&#x0a;无 1x 权重:1x 会输出全黑画面,请用 2x 及以上。"/>
+                        <ComboBoxItem Content="通用 · general-x4v3（快）" Tag="realesr-general-x4v3"
+                                      ToolTipService.ToolTip="通用 · general-x4v3:官方通用模型,体积小、显存占用低;去模糊与去噪能力偏弱。&#x0a;速度 1080p 约 0.46 秒/帧 · 模型大小 4.9 MB。"/>
+                        <!-- ↓ 第 3 项(序号 2):自转的带降噪通用模型。**这一行绝不能少** ——
+                             2026-09-14 重排时曾漏掉它(只留了注释),结果下拉里 5 项变 4 项,
+                             而 VideoModelOrder 仍按 5 项映射(Rev2 的 4→新 2),老用户存的序号会被解释成错的模型。
+                             是"看真实界面截图"才发现的;以后改这个下拉,必须用界面确认 5 项都在且顺序如上。 -->
+                        <ComboBoxItem Content="通用 · wdn-x4v3（快）" Tag="realesr-general-wdn-x4v3"
+                                      ToolTipService.ToolTip="通用 · wdn-x4v3:官方通用模型(带 WDN 去噪训练),细节略多。&#x0a;速度 1080p 约 0.46 秒/帧 · 模型大小 4.9 MB。"/>
+                        <!-- 【顺序 · Rev3 · 2026-09-14 用户要求】整个下拉按**速度与体积**排(快/小 → 慢/大):
+                             0 realesr-animevideov3 4MB 0.26~0.30 秒/帧
+                             1 realesr-general-x4v3  5MB 0.458 秒/帧
+                             2 realesr-general-wdn-x4v3 5MB 0.460 秒/帧(新加,自转;实测 20 帧批跑与 general 差 0.42%)
+                             3 realesrgan-x4plus-anime 9MB 3.85 秒/帧
+                             4 realesrgan-x4plus      33.5MB 15.145 秒/帧(超慢,稳居最后)
+                             ⚠【换位 = 改序号,必须迁移】Rev2 的 wdn 在第 4 位(当时是"末尾追加"最安全),
+                             这次它要挪到第 2 位 ⇒ 映射 2→3、3→4、4→2,0/1 不变。
+                             迁移已抽到 AlhPro.Core.VideoModelOrder(纯函数 + 单测),VideoView.xaml.cs 的
+                             MigrateEsrganModelOrder 调用它;读设置与读预设都走那条路。
+                             不迁移的后果:老用户"存的 2 = x4plus-anime"会静默变成 2 = wdn-x4v3。
+                             以后若再调顺序:必须 +1 Rev、加一段映射、同步改这里与 UpEsrganModelNames。 -->
+                        <ComboBoxItem Content="动漫 · x4plus-anime（中）" Tag="realesrgan-x4plus-anime"
+                                      ToolTipService.ToolTip="动漫 · x4plus-anime:官方动漫插画模型。&#x0a;适用:动漫插画 / 静态图;长视频建议用 animevideov3。&#x0a;速度 1080p 约 3.3~4.4 秒/帧 · 模型大小 9.0 MB。"/>
+                        <!-- 「通用 · realesrgan-x4plus」按体积(33.5MB)与耗时(最慢)排在最后,并红字标出"超慢"
+                             (用户要求:不删除、只警示)。
+                              依据(2026-09-11 本机 4060 Laptop 实测,源 1920×1080 每帧):x4plus 14.48s / x4plus-anime 4.84s /
+                              animevideov3 0.84s;x4plus 还有"只有 4x 权重"的问题(选 2x 也照样全量算 4x 再缩回)。
+                              注:本项 Content 是 StackPanel(富文本),读模型名一律走 Tag —— 不要改成读 Content。 -->
+                        <ComboBoxItem Tag="realesrgan-x4plus"
+                                      ToolTipService.ToolTip="通用 · x4plus:官方通用模型。&#x0a;只有 4x 权重:选 2x / 3x 也按 4x 全量计算再缩回。&#x0a;速度 1080p 约 15.9 秒/帧 · 模型大小 33.5 MB。&#x0a;建议只用于单张图片。">
+                            <!-- 「慢」直接在括号里改成红字「超慢」,不再另挂一个红字标记(用户:冗余了) -->
+                            <StackPanel Orientation="Horizontal" Spacing="0">
+                                <TextBlock Text="通用 · x4plus（" VerticalAlignment="Center"/>
+                                <TextBlock Text="超慢" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="#E5484D"/>
+                                <TextBlock Text="）" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </ComboBoxItem>
+                        <!-- ===== 【Rev4 · 2026-09-15】末尾**追加**两支自训的 2x 模型(序号 5=现实向、6=游戏向)=====
+                             为什么追加在最后而不是插到中间:追加不动老序号 ⇒ Rev4 的迁移是**恒等映射**,
+                             老用户存的 0~4 升级后仍然指向同一支模型(Rev2 期间加 wdn 用的也是这个手法)。
+                             【命名 · 用户 2026-09-15 定稿 · 第三次改英文名】文字要**跟已有各项同一个格式**
+                             —— `类别 · 名字（括号内速度）`(已有项:`动漫 · animevideov3（快）` / `通用 · x4plus（超慢）`),
+                             所以这两项写成 `现实 · alhreal2x（快）` / `游戏 · alhgame2x（快）`(2026-09-21 起名字前面加 `alh`);
+                             类别用「游戏」/「现实」,**名字用英文**(= 权重文件名后缀 real2x / game2x 前面加 alh),
+                             括号里写**速度档**(「快」,口径见 Core.ExperimentalEsrgan.SpeedTier)——【2026-09-16 用户定稿】"括号内要写快 而不是时间",**不许出现"实验"**。
+                             权重文件:engines\realesrgan\models\alhpro-real2x.param/.bin、alhpro-game2x.param/.bin
+                             ⚠ Tag 必须与文件名一字不差:引擎按 `models/{Tag}.param` 取权重(视频路径下发的是
+                               `-m models -n {Tag}`,见 EngineService.UpscaleDirAsync;实测这两支名字不在引擎内置表里,
+                               所以它**不会**被追加 -x{scale} 后缀)。
+                             ⚠ 只有 2x 原生权重:3x/4x 目标由 Core.EngineScalePolicy 固定按 2x 跑再放大到目标
+                               (实测给 2x 权重下发 -s 4 会输出**镜像平铺的错帧**、exit=0 不报错)。
+                             ⚠ 【R/B 缺陷 · 2026-09-15 **已修好**,别把旧说法抄回来】这两份导出权重曾经 **R/B 通道颠倒**
+                               (旧实测:源 R143/G110/B92、官方 R143/G111/B89、本模型 R94/G111/B137,画面整幅偏蓝)。
+                               本轮**重训 + 重新导出**后通道验收闸已 PASS(现实向 Δ+0.20/+0.34/+0.24、
+                               游戏向 Δ+0.11/+0.12/+0.18,判据「每通道差 小于 5」;多宽度 1920/2048/2348/2560 全过)
+                               ⇒ 界面文案里**不得再出现"偏蓝 / R-B 颠倒 / 需重新导出 / 不可用于正片"**。
+                               两处文案与 Core.ExperimentalEsrgan 里的**逐字相同**(有单测钉住),改时一起改。
+                             ⚠ Content 是 StackPanel(富文本),读模型名一律走 Tag —— 别改成读 Content。 -->
+                        <ComboBoxItem Tag="alhpro-real2x" AutomationProperties.Name="现实 · alhreal2x（快）测试">
+                            <!-- 【可访问性 · 2026-09-15】这几项(以及上面的 x4plus 项)的 Content 是 StackPanel(富文本),
+                                 UIA 算出来的 Name 是**空**的 —— 读屏软件念不出选了什么,自动化脚本也只能靠猜序号。
+                                 这里显式给一个名字 = 界面文字 + 药丸上的「测试」(= Core 的 MenuText + Badge,有单测钉住)。
+                                 (UIA 名字不受下拉宽度限制,所以给全。)
+                                 【命名 · 用户定稿】文字里**不许出现"实验"**;括号里是**快慢档形容词**(「快」),
+                                 不是秒/帧(那个数字放在悬停提示与下拉下方提示里)。
+                                 【宽度 · 2026-09-21】药丸占 36px(6 间距 + 30),而收起状态文字右侧只剩 18px
+                                 ⇒ 已按用户裁决把左栏 300 → 322,见文件头那条实测。 -->
+                            <ToolTipService.ToolTip>现实 · alhreal2x:自训 2x 超分模型(训练数据:实拍照片与人像)。&#x0a;留出视频实测(540p→1080p):PSNR 31.56 · SSIM 0.952 · 边缘 PSNR 21.55;色偏 游戏 0.34 / 动漫 0.18 / 实拍 1.48(判据 小于 5)。&#x0a;detail 3.55 / 2.14 / 63.44(游戏 / 动漫 / 实拍)。&#x0a;1080p 约 0.35 秒/帧 · 模型大小 2.4 MB。 倍率:原生 2x;目标 3x/4x 由 2x 成片放大。</ToolTipService.ToolTip>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Border Width="3" Height="14" CornerRadius="1.5" Background="#8FA9D6" VerticalAlignment="Center" ToolTipService.ToolTip="ALH Pro 自训模型(独立分支 models\\alhpro)"/>
+                                <TextBlock Text="现实 · alhreal2x（快）" VerticalAlignment="Center"/>
+                                <Border Style="{StaticResource TestBadgePill}">
+                                    <TextBlock Style="{StaticResource TestBadgeText}"/>
+                                </Border>
+                            </StackPanel>
+                        </ComboBoxItem>
+                        <!-- 【Rev7 · 2026-09-21 **移除**了原来的第 6 项「游戏 · alhgame2x」(v1)】
+                             用户原话:"不要训练那么多模型了 我要留两个最好的游戏 1个现实就行 后面慢慢优化"。
+                             依据(实测,三支游戏向里 v1 最弱):detail 288 对 v2 672 / v3 760、PSNR 31.62 对 32.67 / 31.99,
+                             而且它只用一段 138 帧录像训练(v2 用 26 段 942 帧)。
+                             ⚠ 这是**移除中间项** ⇒ 后面序号整体前移,VideoModelOrder Rev7 已配映射(7→6、8→7;
+                               选了被移除那支的老用户被挪到 v2 = 同族最保真的那支)。
+                             ⚠ 它的权重**仍在** `models\alhpro\alhpro-game2x.*`:Core 把它登记在 Retired 里继续认识 ——
+                               否则 EsrganModelDir 会去根目录找权重,而引擎找不到权重时 exit=0、只出坏帧。 -->
+                        <!-- 【Rev5 · 2026-09-19 追加】游戏向第二代「游戏 · alhgame2x-v2」:
+                             同一套原生 2x 配方,训练数据换成用户自己的 26 段录像(旧那支只用了一段 30 秒);
+                             留出视频实测全面超过 v1(PSNR 31.80 / SSIM 0.9767 / 边缘 PSNR 21.69 对 31.38 / 0.9681 / 21.24,
+                             锯齿代理 50.82 对 51.23),三档 detail 也都高于 v1。
+                             ⚠ 这是**追加**(v1 原样保留):VideoModelOrder Rev5 与 Rev4 之间是恒等映射。
+                             ⚠ 文案与 Core.ExperimentalEsrgan 里的 v2 分支**逐字相同**(有单测钉住),改时一起改。 -->
+                        <ComboBoxItem Tag="alhpro-game2x-v2" AutomationProperties.Name="游戏 · alhgame2x-v2（快）测试">
+                            <ToolTipService.ToolTip>游戏 · alhgame2x-v2:自训 2x 超分模型(训练数据:26 段游戏录像 · 942 帧)。&#x0a;留出视频实测(540p→1080p):PSNR 32.67 · SSIM 0.954 · 边缘 PSNR 22.67;色偏 游戏 0.21 / 动漫 0.00 / 实拍 1.27(判据 小于 5)。&#x0a;detail 2.77 / 1.68 / 70.58(游戏 / 动漫 / 实拍)。&#x0a;1080p 约 0.35 秒/帧 · 模型大小 2.4 MB。 倍率:原生 2x;目标 3x/4x 由 2x 成片放大。</ToolTipService.ToolTip>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Border Width="3" Height="14" CornerRadius="1.5" Background="#8FA9D6" VerticalAlignment="Center" ToolTipService.ToolTip="ALH Pro 自训模型(独立分支 models\\alhpro)"/>
+                                <TextBlock Text="游戏 · alhgame2x-v2（快）" VerticalAlignment="Center"/>
+                                <Border Style="{StaticResource TestBadgePill}">
+                                    <TextBlock Style="{StaticResource TestBadgeText}"/>
+                                </Border>
+                            </StackPanel>
+                        </ComboBoxItem>
+                        <!-- 【Rev6 · 2026-09-20 追加】游戏向第三代「游戏 · alhgame2x-v3(锐化优先)」:
+                             配方把像素项降到 0.5、VGG 感知抬到 2.0、并新增边缘强度项 3.0(150 分钟 / it 19458)。
+                             留出视频实测(12 用例):PSNR 31.99 · SSIM 0.953 · 边缘 PSNR 22.10;detail **760.1**、锯齿 **50.91**
+                             —— detail 与锯齿都是这几支里最好的;保真低于 v2(32.67/0.954/22.67)、高于 v1。
+                             ⚠ **短板如实写在提示里**:实拍照片 ΔB +8.85 级偏蓝(判据 小于 5)⇒ 照片请用 v2;
+                               平坦区噪声 1.42×(v2 1.18×);边缘"更有力"但宽度未变窄(4.93px 对 v2 5.04)。
+                             ⚠ 这是**追加**(v1/v2 原样保留):VideoModelOrder Rev6 与 Rev5 之间是恒等映射。
+                             ⚠ 文案与 Core.ExperimentalEsrgan 里的 v3 分支**逐字相同**(有单测钉住),改时一起改。 -->
+                        <ComboBoxItem Tag="alhpro-game2x-v3" AutomationProperties.Name="游戏 · alhgame2x-v3（快）测试">
+                            <ToolTipService.ToolTip>游戏 · alhgame2x-v3:自训 2x 超分模型(锐化优先:留出视频实测 detail 760、锯齿 50.91,两项都优于其它几支)。&#x0a;留出视频实测(540p→1080p):PSNR 31.99 · SSIM 0.953 · 边缘 PSNR 22.10;最干净的 v2 是 32.67 / 0.954 / 22.67。&#x0a;色偏 游戏 0.49 / 动漫 0.13 / 实拍 8.85(判据 小于 5:照片偏蓝,照片请用 v2);detail 3.72 / 2.28 / 77.26。&#x0a;1080p 约 0.35 秒/帧 · 模型大小 2.4 MB。 倍率:原生 2x;目标 3x/4x 由 2x 成片放大。</ToolTipService.ToolTip>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Border Width="3" Height="14" CornerRadius="1.5" Background="#8FA9D6" VerticalAlignment="Center" ToolTipService.ToolTip="ALH Pro 自训模型(独立分支 models\\alhpro)"/>
+                                <TextBlock Text="游戏 · alhgame2x-v3（快）" VerticalAlignment="Center"/>
+                                <Border Style="{StaticResource TestBadgePill}">
+                                    <TextBlock Style="{StaticResource TestBadgeText}"/>
+                                </Border>
+                            </StackPanel>
+                        </ComboBoxItem>
+                        <!-- 【Rev9 · 2026-09-21 **Anime4K 不进这个列表**】
+                             用户:"an4K 那个不在列表显示 只在选择 1x 时模型锁住 并且显示 an4K 并且给提示"。
+                             为什么它不该在列表里:它不是放大模型(没有权重、不放大),挂在列表里会让"想放大的人"选到它。
+                             所以这里**刻意没有** anime4k 项(有单测钉住"列表里不许出现它")。 -->
+                        <!-- 【Rev10 · 2026-09-21 追加】1x 档的两个模型条目(用户:"1x 也是可以选模型 加一个现实的1x模型")。
+                             ⚠ 它们是**末尾追加** ⇒ 0..7 的老序号一个都没动(VideoModelOrder Rev10 是恒等映射)。
+                             ⚠ 文案与 Core 的常量**逐字一致**(有单测钉住):Anime4k.MenuText / Upscale1x.RealMenuText。
+                             选到 1x 时,下拉里只有这两项可选,其余放大模型由代码置灰(见 VideoView.UpdateModelScaleAvailability)。 -->
+                        <ComboBoxItem Tag="anime4k" AutomationProperties.Name="动漫 · Anime4K 修复（快）">
+                            <ToolTipService.ToolTip>Anime4K:开源着色器(MIT),在**原分辨率**上做修复 + 锐化,**不放大**(1x)。&#x0a;实测(1080p 同帧):边缘过渡宽度 6.76 → 5.96px(更锐)、纹理量不丢、与源的细节相关性 0.909(增强原有细节,不是编出来);代价是平坦区噪声 1.74×,**脏素材慎用**。&#x0a;速度最快(实测约 15 FPS@1080p);需要可用的 Vulkan 显卡,探测不过会自动退回「现实 · 1x 修复」并写日志。</ToolTipService.ToolTip>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Border Width="3" Height="14" CornerRadius="1.5" Background="#5FC9A8" VerticalAlignment="Center" ToolTipService.ToolTip="Anime4K 着色器(第三方开源,MIT;随 ffmpeg 目录下发)"/>
+                                <TextBlock Text="动漫 · Anime4K 修复（快）" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </ComboBoxItem>
+                        <ComboBoxItem Tag="alhpro-real1x" AutomationProperties.Name="现实 · 1x 修复（中）">
+                            <ToolTipService.ToolTip>现实 · 1x 修复:**画面尺寸不变、不放大**。内部用自训的「现实 · alhreal2x」按 2x 超分,再精确缩回原尺寸。&#x0a;实测(2026-09-21 三素材对比):干净素材上它比 Anime4K **更接近原片**(PSNR 36.8 对 35.8dB)、噪点更低(1.54× 对 1.85×);有压缩损伤/偏软的素材上则相反。&#x0a;⚠ 速度标「中」是有依据的:它要跑**完整一遍 2x 超分**(本机约 0.35 秒/帧 @1080p),而 Anime4K 那条约 0.07 秒/帧 ⇒ 慢约 5 倍。</ToolTipService.ToolTip>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Border Width="3" Height="14" CornerRadius="1.5" Background="#8FA9D6" VerticalAlignment="Center" ToolTipService.ToolTip="自训现实模型(alhreal2x)按 2x 跑再缩回原尺寸"/>
+                                <TextBlock Text="现实 · 1x 修复（中）" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </ComboBoxItem>
+                    </ComboBox>
+                    <!-- 4x 专用权重模型的提示(用户要求:放在模型下拉正下方)
+                         【2026-09-13 用户要求】这条不再是"红色警告":改用普通提示样式(中性灰 HintText)、文案里也不带 ⚠ 图标。
+                         它说明的是"该模型只有 4x 权重"这一事实,不是错误,没必要用告警色吓人。
+                         【2026-09-21 用户:"提示太长了 导致界面被下移"】根因不是文案长度,而是**这行在有/无之间切换**:
+                            它一出现就把下面所有控件顶下去(实测 39px)。现在改成**永远占位**(MinHeight 一行,平时文字为空),
+                            切 1x ⇄ 2x 时下面的控件**一动不动** ✓。 -->
+                    <TextBlock x:Name="EsrganModelHint" TextWrapping="Wrap" MinHeight="18"
+                               Style="{StaticResource HintText}" Margin="0,2,0,0"/>
+
                     <TextBlock Text="视频降噪" Style="{StaticResource SectionTitle}"/>
-                    <CheckBox x:Name="DenoiseToggle" Content="启用视频降噪" ToolTipService.ToolTip="去视频噪点/闪烁/压缩块。两种执行方式(自动选):① 超分用 waifu2x → 交给模型自带降噪(更对症、不额外耗时),此时即使不开本开关也用 2 档(实测压缩素材提升、干净素材基本无损);② 其它情况(Real-ESRGAN / 未超分) → 拆帧阶段用 ffmpeg nlmeans 在原始分辨率上降噪(实测比放在合帧阶段快 2.5~3.5 倍)"
+                    <CheckBox x:Name="DenoiseToggle" Content="启用视频降噪" ToolTipService.ToolTip="降噪统一发生在**拆帧阶段**(源分辨率、超分之前)。顺序有依据:先降噪再放大,超分才不必去放大噪点 —— Neat Video 官方手册把 resampling 列为会改变噪声特性的效果、结论是先用它降噪;RealBasicVSR 官方也把 image pre-cleaning 放在传播之前并称其 indispensable。&#x0a;强度选「自动」时软件先给素材体检(抽 6 帧量颗粒/块效应/闪烁),**干净素材直接跳过降噪**:实测干净/轻压缩源上降噪会让成片 PSNR 掉 0.3~0.9dB(不降噪 36.23 对 现行三档 35.34~35.93)。&#x0a;引擎差异:超分引擎选 waifu2x 时用它自带的降噪档(同一套网络换权重、不额外耗时);「自动」档为了必定生效,统一走拆帧滤镜链(waifu2x 落到 ONNX 稳定引擎时模型档会失效,自动档避开这条路)。"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
                     <TextBlock x:Name="DenoiseKindLabel" Text="降噪算法" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="DenoiseKindCombo" SelectedIndex="0" SelectionChanged="Combo_Changed"
-                              ToolTipService.ToolTip="nlmeans + hqdn3d = 空间域与时间域联合降噪(默认):实测帧间抖动 −25%、细节保留 90%,综合最优&#x0a;nlmeans = 仅空间域降噪:去除单帧噪点,对细纹理有一定平滑作用(实测细节保留 71%)&#x0a;hqdn3d = 仅时间域降噪:去除帧间闪烁与颗粒,细节保留最佳,但不处理单帧噪点(实测其空间参数加倍后单帧噪点无变化),快速运动场景可能产生拖影">
-                        <ComboBoxItem Content="nlmeans + hqdn3d（推荐）"/>
-                        <ComboBoxItem Content="nlmeans（仅空间域降噪）"/>
-                        <ComboBoxItem Content="hqdn3d（仅时间域降噪）"/>
+                              ToolTipService.ToolTip="按素材的损伤类型选(不按滤镜名记)。下面括号里是**实测**:同一批帧(用户片子 6 张连续帧压 JPEG q15)相对有噪源去掉多少噪声 / 保住多少细节 / 帧间闪烁σ(有噪源 1.084,干净参照 0.703):&#x0a;· 帧间闪烁、颗粒跳动 → hqdn3d(仅时间域):弱 14%/91%/0.741 · 中 23%/84%/0.562 · 强 29%/77%/0.467 —— **保细节最好的一维**;快动作可能留拖影&#x0a;· 单帧噪点、颗粒 → nlmeans(仅空间域):弱 15%/74% · 中 19%/74% · 强 23%/61% —— 单帧最干净,但**几乎不降帧间闪烁**(1.0 上下,等于没动)&#x0a;· 两者都要 → nlmeans + hqdn3d(默认):弱 23%/74%/0.709 · 中 30%/72%/0.536 · 强 39%/58%/0.446&#x0a;⚠ 带压缩块的素材(deblock 类滤镜)目前没做,这一项列在整改清单里">
+                        <ComboBoxItem Content="nlmeans + hqdn3d（默认）"/>
+                        <ComboBoxItem Content="nlmeans（仅去除单帧噪点）"/>
+                        <ComboBoxItem Content="hqdn3d（仅去除帧间闪烁）"/>
                     </ComboBox>
                     <TextBlock x:Name="DenoiseStrongLabel" Text="降噪强度" Style="{StaticResource SectionTitle}"/>
-                    <RadioButtons x:Name="DenoiseStrongRadios" SelectedIndex="0" ToolTipService.ToolTip="越强去噪越多,但可能抹掉细纹理。结合模式下强度主要加在时间维(空间固定轻档,实测这样抖动更低、细节更多)"
-                                  SelectionChanged="Combo_Changed">
-                        <RadioButton Content="弱"/>
-                        <RadioButton Content="中"/>
-                        <RadioButton Content="强"/>
-                    </RadioButtons>
+                    <!-- 【2026-09-21 Rev2 用户:"自动不要了"】「自动（先体检素材）」已下线 ⇒ 只剩 弱 → 中 → 强,
+                         顺序与 AlhPro.Core.DenoiseStrengthOrder 的序号(**0=弱 1=中 2=强**)**必须一致**。
+                         ⚠ 这是**又改了一次序号含义**(Rev1 是 0=自动 1=弱 2=中 3=强)⇒ 老设置与老预设靠
+                           VideoSettings.VideoDenoiseRev + DenoiseStrengthOrder.Migrate 换算,别再动顺序而不 +1 Rev。
+                         ⚠ 用显式 StackPanel 而不是 RadioButtons 容器:档位读写就是直白的 IsChecked。
+                         ⚠ 单选项名字带语义(DenoiseWeak/Medium/Strong),挡住"顺序换了却忘改映射"这类错(有单测钉住)。 -->
+                    <StackPanel x:Name="DenoiseStrongPanel" Spacing="2">
+                        <RadioButton x:Name="DenoiseWeakRadio" Content="弱" GroupName="DenoiseStrong"
+                                     Checked="DenoiseStrong_Checked"
+                                     ToolTipService.ToolTip="实测(默认「nlmeans + hqdn3d」方式)**去掉 23% 噪声 · 细节保留 74% · 帧间闪烁 0.709**(有噪源 1.084)—— 日常最省心的一档,也是默认档"/>
+                        <RadioButton x:Name="DenoiseMediumRadio" Content="中" GroupName="DenoiseStrong"
+                                     Checked="DenoiseStrong_Checked"
+                                     ToolTipService.ToolTip="实测**去掉 30% 噪声 · 细节保留 72% · 帧间闪烁 0.536** —— 降噪与保细节的折中档,多数脏素材用这一档"/>
+                        <RadioButton x:Name="DenoiseStrongRadio" Content="强" GroupName="DenoiseStrong"
+                                     Checked="DenoiseStrong_Checked"
+                                     ToolTipService.ToolTip="实测**去掉 39% 噪声 · 细节保留 58% · 帧间闪烁 0.446** —— 效果最猛,代价也最实在:细节掉四成,**2026-09-13 你反馈的「发假、塑料感」就是这一档的样子**,慎用"/>
+                    </StackPanel>
 
                     <TextBlock Text="视频调整 (后处理)" Style="{StaticResource SectionTitle}"/>
                     <StackPanel Spacing="2">
@@ -257,7 +341,7 @@
                             <TextBlock x:Name="SharpenVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="清晰:大半径局部对比度(只动中调,不硬吃边缘),画面更通透">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="清晰:大半径局部对比度(只动中调,不硬吃边缘),画面更通透。&#10;【4K 实测成本】13x13 大核 unsharp 约 +29 ms/帧 —— 后处理里最贵的两档之一(编码/合帧慢的主因);不需要时可归零,能明显缩短合帧时间">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="78"/>
                                 <ColumnDefinition Width="*"/>
@@ -281,7 +365,7 @@
                             <TextBlock x:Name="UsmVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="保留细节:对比度自适应锐化(按局部对比决定增益),设计上不产生白边,实测全档最干净(平坦区误差几乎不涨)">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="保留细节:对比度自适应锐化(按局部对比决定增益),设计上不产生白边,实测全档最干净(平坦区误差几乎不涨)。&#10;【4K 实测成本】这一档约 +28 ms/帧 —— 是本软件后处理里最贵的两档之一(&#39;编码/合帧&#39;慢的主因就是它);素材越长代价越大,不需要时可归零">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="78"/>
                                 <ColumnDefinition Width="*"/>
@@ -293,18 +377,16 @@
                             <TextBlock x:Name="DetailVal" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="边缘抗锯齿:只削阶梯边缘和振铃(实测细节 −7%、结构指标反升)。超分后的斜线/曲线发锯就开它">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="78"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="28"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="边缘抗锯齿" VerticalAlignment="Center"/>
-                            <Slider Margin="-6,0,-11,0" x:Name="PostAaSlider" Grid.Column="1" Minimum="0" Maximum="100"
-                                    ValueChanged="Slider_Changed"/>
-                            <TextBlock x:Name="PostAaVal" Grid.Column="2" Text="0" TextAlignment="Right"
-                                       VerticalAlignment="Center" Style="{StaticResource HintText}"/>
-                        </Grid>
+                        <!-- 【2026-09-19 按用户要求移除这条滑条】「边缘抗锯齿」(x:Name=PostAaSlider/PostAaVal)。
+                             用户决定:性价比不够 —— 真机实测(App 自己的 C# 实现,两帧 7680×4320 引擎输出):
+                               · 效果:只改 0.8~0.9% 的像素,且只落在每条边缘的那一圈一像素细线上(差值放大 20 倍
+                                 才看得见),被改像素平均只动 1~2 个灰阶 ⇒ 1:1 看前后两图分不出差别;
+                                 细节(拉普拉斯方差)掉 13~15%@45、29%@100 —— 掉的正是它唯一碰的那批边缘像素。
+                               · 成本:单帧 3 通道 2.94 秒(8K)⇒ 12 路并行后 139 ms/帧(4K 折算 ≈27~35 ms/帧),
+                                 480 帧的预览要多花十几秒。
+                             官方预设与默认值本来就已是 0(Rev6),这条滑条只是留着手动开它的口子 ⇒ 直接移除。
+                             【只删视频页界面】实现与像素逻辑一律保留(图片页 EdgeSmooth/ApplyEdgeSmoothInMemory 仍在用,
+                             单测 EdgeSmoothTests 也还钉着);VideoSettings.PostAa 字段保留仅为兼容旧设置文件。 -->
                         <!-- 【边缘增强 · 2026-09-15 新增】用户反馈"边缘糊、像没对上焦"。
                              实测(1080p → 2x,游戏帧):官方 v3 边缘宽度 2.23px → 加 0.3 档后 2.15px、
                              强边缘对比 52.3 → 58.0(+11%);其它模型用 0.6 档:2.24 → 2.16px、56.6 → 69.3(+22%),
@@ -392,8 +474,9 @@
                             <TextBlock Text="帧率偏移" VerticalAlignment="Center"/>
                             <Slider Margin="-6,0,-11,0" x:Name="FpsOffsetSlider" Grid.Column="1" Minimum="-20" Maximum="0"
                                     StepFrequency="1" Value="0" ValueChanged="Slider_Changed"/>
-                            <Button Grid.Column="2" Content="重置" FontSize="10" Padding="10,4"
+                            <Button x:Name="FpsOffsetResetBtn" Grid.Column="2" Content="重置" FontSize="10" Padding="10,4"
                                     Click="ResetOffsetBtn_Click"
+                                    AutomationProperties.Name="重置 帧率偏移"
                                     ToolTipService.ToolTip="帧率偏移恢复为 0(各视频用原帧率)"/>
                         </Grid>
                         <TextBlock x:Name="FpsOffsetVal" FontSize="11" Opacity="0.6"
@@ -581,7 +664,11 @@
                                     StepFrequency="1" Value="12" ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DedupHiVal" Grid.Column="2" Text="12" MinWidth="32"
                                        HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
-                            <Button Grid.Column="3" Content="重置" Tag="hi" FontSize="10" Padding="10,4" Click="ResetDedupBtn_Click"/>
+                            <!-- 【2026-09-22 无障碍/自测】9 个「重置」按钮原来都没有 AutomationId,屏幕阅读器与 UIA 只能读到
+                                 一堆同名的"重置"、自动化也定位不了 ⇒ 逐个补 x:Name(给 AutomationId)+ AutomationProperties.Name(说明它重置的是哪一项)。
+                                 纯元数据,不改变任何行为与外观。 -->
+                            <Button x:Name="DedupHiResetBtn" Grid.Column="3" Content="重置" Tag="hi" FontSize="10" Padding="10,4" Click="ResetDedupBtn_Click"
+                                    AutomationProperties.Name="重置 变化判线"/>
                         </Grid>
                         <!-- 重复帧检测参数:相似判线 -->
                         <Grid x:Name="DedupLoRow" ColumnSpacing="8">
@@ -597,7 +684,8 @@
                                     StepFrequency="1" Value="5" ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DedupLoVal" Grid.Column="2" Text="5" MinWidth="32"
                                        HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
-                            <Button Grid.Column="3" Content="重置" Tag="lo" FontSize="10" Padding="10,4" Click="ResetDedupBtn_Click"/>
+                            <Button x:Name="DedupLoResetBtn" Grid.Column="3" Content="重置" Tag="lo" FontSize="10" Padding="10,4" Click="ResetDedupBtn_Click"
+                                    AutomationProperties.Name="重置 相似判线"/>
                         </Grid>
                         <!-- 重复帧检测参数:重复比例 -->
                         <Grid x:Name="DedupFracRow" ColumnSpacing="8">
@@ -613,7 +701,8 @@
                                     StepFrequency="0.01" Value="0.33" ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DedupFracVal" Grid.Column="2" Text="0.33" MinWidth="40"
                                        HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
-                            <Button Grid.Column="3" Content="重置" Tag="frac" FontSize="10" Padding="10,4" Click="ResetDedupBtn_Click"/>
+                            <Button x:Name="DedupFracResetBtn" Grid.Column="3" Content="重置" Tag="frac" FontSize="10" Padding="10,4" Click="ResetDedupBtn_Click"
+                                    AutomationProperties.Name="重置 重复比例"/>
                         </Grid>
                         <!-- 画面变化阈值参数 -->
                         <Grid x:Name="DedupSceneRow" ColumnSpacing="8" Visibility="Collapsed">
@@ -629,7 +718,8 @@
                                     StepFrequency="0.001" Value="0.01" ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DedupSceneVal" Grid.Column="2" Text="0.010" MinWidth="40"
                                        HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
-                            <Button Grid.Column="3" Content="重置" Tag="scene" FontSize="10" Padding="10,4" Click="ResetDedupBtn_Click"/>
+                            <Button x:Name="DedupSceneResetBtn" Grid.Column="3" Content="重置" Tag="scene" FontSize="10" Padding="10,4" Click="ResetDedupBtn_Click"
+                                    AutomationProperties.Name="重置 变化阈值"/>
                         </Grid>
                         <!-- 帧差+SSIM:差异快筛 -->
                         <Grid x:Name="DedupSadRow" ColumnSpacing="8" Visibility="Collapsed">
@@ -645,7 +735,8 @@
                                     StepFrequency="0.5" Value="3.0" ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DedupSadVal" Grid.Column="2" Text="3.0" MinWidth="36"
                                        HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
-                            <Button Grid.Column="3" Content="重置" Tag="sad" FontSize="10" Padding="10,4" Click="ResetDedupBtn_Click"/>
+                            <Button x:Name="DedupSadResetBtn" Grid.Column="3" Content="重置" Tag="sad" FontSize="10" Padding="10,4" Click="ResetDedupBtn_Click"
+                                    AutomationProperties.Name="重置 差异快筛"/>
                         </Grid>
                         <!-- 帧差+SSIM:相似度阈值 -->
                         <Grid x:Name="DedupSsimRow" ColumnSpacing="8" Visibility="Collapsed">
@@ -661,53 +752,76 @@
                                     StepFrequency="0.005" Value="0.97" ValueChanged="Slider_Changed"/>
                             <TextBlock x:Name="DedupSsimVal" Grid.Column="2" Text="0.970" MinWidth="44"
                                        HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
-                            <Button Grid.Column="3" Content="重置" Tag="ssim" FontSize="10" Padding="10,4" Click="ResetDedupBtn_Click"/>
+                            <Button x:Name="DedupSsimResetBtn" Grid.Column="3" Content="重置" Tag="ssim" FontSize="10" Padding="10,4" Click="ResetDedupBtn_Click"
+                                    AutomationProperties.Name="重置 相似度阈值"/>
                         </Grid>
                         <!-- 帧差+SSIM:微动防线(局部动作保护:口型/眨眼/手指) -->
                         <CheckBox x:Name="ManualProtectSmallMotionCheck" Content="微动防线(防口型/眨眼误删)" Margin="0,2,0,0"
                                   IsChecked="True" FontSize="12"
                                   ToolTipService.ToolTip="帧差+SSIM 算法专用(默认开):检测到局部小动作(张嘴/眨眼/手指抖动)时判定为真变化并保留,整幅差异小也不误删。取消勾选=只看整幅差异,删得更狠,但口型/微动帧可能被误删"/>
                     </StackPanel>
-                    <!-- 转场识别(转场处不插帧)→ 只有下面这一个勾选框(阈值滑块已于 2026-09-15 删除) -->
+                    <!-- 转场识别(转场处不插帧)→ 勾选框 + 阈值滑块(滑块 2026-09-21 加回并真的生效) -->
                     <TextBlock x:Name="DedupHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
-                               Text="去重=删重复/静止帧(按节奏治理,非逐帧二分类)。智能=自动:按节奏网格+变化帧保护处理,估不准的回退保守;动漫=选档:拍一/拍二/拍三/混合,内部固定逻辑(按档网格+变化帧保护,口型/微动不删);手动=自由调参:重复帧检测/画面变化阈值/帧差+SSIM/内容帧率采样(自填值)。&#10;「转场识别」=转场处保持不插帧(检测到切换处不插帧避免鬼影)。"/>
+                               Text="去重=删重复/静止帧(按节奏治理,非逐帧二分类)。智能=自动:按节奏网格+变化帧保护处理,估不准的回退保守;动漫=选档:拍一/拍二/拍三/混合,内部固定逻辑(按档网格+变化帧保护,口型/微动不删);手动=自由调参:重复帧检测/画面变化阈值/帧差+SSIM/内容帧率采样(自填值)。&#10;「转场识别」=转场处保持不插帧(检测到切换处不插帧避免鬼影);下面那条「转场阈值」决定&#39;多像真转场才算切&#39;(0.30=默认;调大=切点更少 ⇒ 补帧分段更少 ⇒ 引擎少启动、更快;调小=更敏感)。"/>
 
                     <!-- 【默认关(2026-09-15 用户定调)】转场识别 = 可开可关:用户自己决定要不要切点保护。
                          启动默认**不勾** = 与重置路径、AlhPro.Core.SceneDefaultPolicy.DefaultScene 三处一致;
                          老用户文件里的值(bind 到 Scene)**一律保留** —— 升级不改变他的勾选(迁移只对齐版本号)。
                          勾上与不勾都管**两条路径**(普通分段 / 平滑时间轴),不存在"某条路忽略开关"。 -->
                     <CheckBox x:Name="SceneCheck" Content="转场识别(转场处不插帧)"
-                              ToolTipService.ToolTip="按需开启(默认不勾)。&#10;【勾上】在场景硬切处不插帧,避免「两张脸糊在一起 / 拖丝」的鬼影,并且让输出的时间轴按源片真实节奏走。实测:不勾时切点处会多出一帧半新半旧的混合帧(帧间差异仅 19.72、清晰度掉到邻帧的 32%——就是那帧鬼影);勾上后同一位置变成干净硬切(差异 82.62),成片帧数与时长完全不变(实测 179 帧 / 3.000s 前后一致)。&#10;代价:极少数被误判的位置会少插一帧(实测 1 处 = 成片 184 帧里的 2 帧变成重复帧 ≈ 1.1%,几乎看不出;已加 15 帧最小间距压制单帧闪光、逐帧交替等误判)。&#10;【不勾(取消勾选)】两条路径都不做切点保护,补帧会跨切混合:剪辑较多的素材(游戏集锦、切片、多镜头混剪)可能出现跨切鬼影。&#10;【阈值不用管:内置的,不需要调】判定用的是内置阈值(帧差 ≥25 且清晰度下降 ≥40%,帧差 ≥50 直接算切),原先那条「转场阈值」滑块已于 2026-09-15 删除(它在这些判据下根本不影响判定)。&#10;开关状态会写进日志:「▶ 参数:…转场识别=0.30…」或「…转场识别=关…」。"
+                              ToolTipService.ToolTip="按需开启(默认不勾)。&#10;【勾上】在场景硬切处不插帧,避免「两张脸糊在一起 / 拖丝」的鬼影,并且让输出的时间轴按源片真实节奏走。实测:不勾时切点处会多出一帧半新半旧的混合帧(帧间差异仅 19.72、清晰度掉到邻帧的 32%——就是那帧鬼影);勾上后同一位置变成干净硬切(差异 82.62),成片帧数与时长完全不变(实测 179 帧 / 3.000s 前后一致)。&#10;代价:极少数被误判的位置会少插一帧(实测 1 处 = 成片 184 帧里的 2 帧变成重复帧 ≈ 1.1%,几乎看不出;已加 15 帧最小间距压制单帧闪光、逐帧交替等误判)。&#10;【不勾(取消勾选)】两条路径都不做切点保护,补帧会跨切混合:剪辑较多的素材(游戏集锦、切片、多镜头混剪)可能出现跨切鬼影。&#10;【阈值现在可调了(2026-09-21)】下面那条「转场阈值」滑块**真的进判定**:0.30 就是一直以来的内置判据(不动它画面一个像素都不变),调大 = 更少切点、补帧分段更少、少重启引擎(更快);调小 = 更敏感、切点更多。&#10;开关状态会写进日志:「▶ 参数:…转场识别=0.30…」或「…转场识别=关…」。"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
-                    <!-- 【2026-09-15 用户裁决:删除「转场阈值」滑块】(原为 TextBlock「转场阈值」+ SceneSlider +
-                         SceneVal 数值 + 重置按钮 一整块 Grid)。理由:切点判据用的是**内置阈值**
-                         (帧差 ≥25 且 清晰度下降 ≥40%,帧差 ≥50 直接算切),这条滑条在当前判据下**根本不影响判定**,
-                         只当"开关"用 —— 而开关已经由上面的「转场识别」勾选框承担,留着它只会让人以为要调。
-                         仅当内置判据拿不到采样数据、回退到 ffmpeg 的 scene 判据时,才需要这个数值:那种情况由代码用
-                         **内置默认 0.3**(`SceneThresholdBuiltIn`)顶替,用户不用管。
-                         VideoSettings.SceneThr 字段保留(老设置/老预设反序列化兼容),但读取时忽略、写回时写内置默认。 -->
-
-                    <TextBlock Text="果冻修复" Style="{StaticResource SectionTitle}"/>
+                    <!-- 【2026-09-21 用户要求:滑块加回来,并且让它**真的生效**】
+                         沿革(照实写,因为它删过一次):这条滑块 2026-09-15 被删,理由是"判定用的是内置阈值
+                         (帧差 ≥25 且清晰度下降 ≥40%,帧差 ≥50 直接算切),这条滑条在当前判据下根本不影响判定,
+                         只当开关用" —— 那个判断**当时是对的**:滑块的值只喂给"采样判据拿不到数据时的 ffmpeg scene
+                         回退",内置判据压根不看它,所以它就是一条**假控件**(拉它画面不变,留着只会让人以为要调)。
+                         现在它真的接进判据了 —— 用户当晚明确要求"转场阈值滑块加回来,并且要真的生效",因为
+                         切点太碎正是"转场补帧分批引擎启动太慢"的成因之一:切点越少 ⇒ 补帧段越长 ⇒ 引擎少冷启动
+                         一次(引擎每次约 1~1.2 秒,而稳态只要 72 ms/帧)。
+                         【换算口径在 AlhPro.Core.SceneThresholdMap(唯一一处,单测钉住默认档逐字一致)】:
+                           滑块 0.15 = 判据半倍(最敏感,切点更多);
+                           滑块 0.30 = 判据 1 倍 = **今天的内置值 25 / 50 / 0.60**(默认档,不拉它就等于没改);
+                           滑块 0.90 = 判据三倍(最严格,只认强转场,切点最少)。
+                         滑块原值同时还当"回退 ffmpeg scene"的阈值用(与改动前逐字一致),两者方向一致(越大越严)。 -->
                     <Grid ColumnSpacing="8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="运动模糊（果冻部分）" VerticalAlignment="Center" FontSize="12"
-                                   ToolTipService.ToolTip="给补帧产生的「果冻」(快速运动处的画面扭曲)加上真实的运动模糊,把它盖掉、让运动更自然。只在果冻强的地方生效,静止画面不受影响;弱/中/强 = 效果越强、越慢"/>
-                        <ComboBox x:Name="MotionBlurCombo" Grid.Column="1" HorizontalAlignment="Stretch"
-                                  SelectedIndex="0" SelectionChanged="Combo_Changed">
-                            <ComboBoxItem Content="关"/>
-                            <ComboBoxItem Content="弱"/>
-                            <ComboBoxItem Content="中"/>
-                            <ComboBoxItem Content="强"/>
-                        </ComboBox>
+                        <TextBlock Text="转场阈值" VerticalAlignment="Center" FontSize="12"
+                                   ToolTipService.ToolTip="它**真的决定**哪些帧对被当成场景切换(切点上不插帧)。&#10;⚠ 先勾上上面的「转场识别」它才生效(不勾时不检测切点,拉它没用)。&#10;0.30 = 默认,也就是一直以来的内置判据(帧差≥25 且清晰度下降≥40%;帧差≥50 直接算切)——不动它,画面与以前逐字一样。&#10;调大(→0.90)= 更严格:只认明显的真转场 ⇒ 切点更少、补帧段更长 ⇒ 少重启补帧引擎、更快(游戏集锦/切片这类剪辑多的素材收益明显)。&#10;调小(→0.15)= 更敏感:细微变化也算切 ⇒ 切点更多、每段更短,但每段都要多付一次引擎启动(约 1~1.2 秒)。&#10;代价:调得过大会漏掉「真转场」,那一处照常插帧、出现一帧跨切混合(鬼影)。"/>
+                        <Slider Margin="-6,0,-11,0" x:Name="SceneSlider" Grid.Column="1"
+                                Minimum="0.15" Maximum="0.9" StepFrequency="0.05" Value="0.3"
+                                ValueChanged="Slider_Changed"
+                                ToolTipService.ToolTip="0.30 = 默认(= 一直以来的内置判据);调大 = 更少切点、少重启引擎;调小 = 更敏感、切点更多"/>
+                        <TextBlock x:Name="SceneVal" Grid.Column="2" Text="0.30" MinWidth="44"
+                                   HorizontalTextAlignment="Center" VerticalAlignment="Center"/>
+                        <Button x:Name="ResetSceneBtn" Grid.Column="3" Content="重置" Tag="scene" FontSize="10" Padding="10,4" Click="ResetSceneBtn_Click"
+                                AutomationProperties.Name="重置 转场阈值"
+                                ToolTipService.ToolTip="回到默认档 0.30(= 一直以来的内置判据)"/>
                     </Grid>
-                    <CheckBox x:Name="DeShakeCheck" Content="画面去抖" ToolTipService.ToolTip="画面去抖:轻量稳定画面,减少手持拍摄的晃动"
-                              Checked="Options_Changed" Unchecked="Options_Changed"/>
-                    <TextBlock x:Name="JellySlowHint" Visibility="Collapsed"
-                               Text="⚠ 果冻修复为 CPU 逐帧滤镜,会明显增加导出时间(运动模糊最慢,画面去抖较轻)。视觉要求不高时建议关闭。"
-                               Foreground="#E8A33D" FontSize="11" TextWrapping="Wrap"/>
+                    <!-- 【2026-09-22 用户裁决:「最短补帧段」整块撤掉(规则 + 开关)】这里原来是
+                         「最短补帧段 60 帧(减少引擎启动)」勾选框。撤掉的理由(照实记,免得后人再加一遍):
+                         它确实能减少补帧引擎的冷启动次数,但**方式是拿"鬼影防线"换速度** —— 被它合并掉的切点处
+                         会照常插帧,那恰好是真转场时就插出一帧跨切混合;而用户原来那个"引擎启动太慢"的问题,
+                         用上面的「转场阈值」滑块就能解决,**且不牺牲任何保护**(调大 = 少判切点 ⇒ 引擎同样少启动,
+                         保留下来的切点照样受保护)。另外按本工程实测(引擎冷启动 1~1.2 秒、补帧约 72 ms/帧)算,
+                         一次启动的钱 ≈ 20 帧的活 ⇒ 60 帧这个门槛本身也偏保守过头。
+                         规则本体(MinSegmentLen / ApplyMinSegmentLen)已从 AlhPro.Core 删除,留档在那边。
+                         【老设置/老预设里的 SceneMinSegment 字段】不再读取也不再写出(System.Text.Json 忽略未知属性,
+                         不会影响读盘);预设快照里若带着它也无害。 -->
+
+                    <!-- 【2026-09-21 用户原话:「果冻修复那个删掉」】整块已删除,这里留沿革说明(不写清楚,后来人会又加回来):
+                         原块含四件:「果冻修复」标题、「运动模糊(果冻部分)」下拉(MotionBlurCombo)、「画面去抖」
+                         勾选框(DeShakeCheck)、橙色提示(JellySlowHint,提示"CPU 逐帧滤镜会明显增加导出时间")。
+                         【为什么整块删、而不是只删界面】它是一条 CPU 逐帧滤镜链(tmix 混合帧 / ffmpeg deshake),
+                         处理端**也已同时停用**(连形参一起删):只删界面不删处理端 = "界面上没了、处理时还在偷偷加
+                         CPU 逐帧滤镜"的静默行为,那是本仓库最忌讳的一类 bug。
+                         【老设置/老预设里的 Jello / MotionBlur / DeShake 三个字段保留】按本仓库规矩"老文件字段一律
+                         保留、只停止读取":字段结构不动(反序列化兼容 + 预设快照不丢字段),读取时忽略、写回写关。 -->
 
                     <Button x:Name="AdvancedToggleBtn" Content="高级参数 ▾" HorizontalAlignment="Stretch"
                             Click="AdvancedToggleBtn_Click"
@@ -752,8 +866,9 @@
                             <ComboBoxItem Content="极高 (文件大)"/>
                             <ComboBoxItem Content="自定义码率..."/>
                         </ComboBox>
-                        <Button Grid.Column="2" Content="重置" FontSize="10" Padding="10,4"
+                        <Button x:Name="BitrateResetBtn" Grid.Column="2" Content="重置" FontSize="10" Padding="10,4"
                                 Click="QualityReset_Click"
+                                AutomationProperties.Name="重置 码率"
                                 ToolTipService.ToolTip="码率恢复为自动"/>
                     </Grid>
                     <Grid x:Name="BitrateRow" ColumnSpacing="8" Visibility="Collapsed">
@@ -1075,9 +1190,13 @@
                 </StackPanel>
 
                 <!-- 预览/裁剪覆盖层(2026-09-17 拆成两页:双击=裁剪页(只有裁剪),「预览效果」=预览页(只有预览)) -->
-                <Grid x:Name="VideoPreviewOverlay" Grid.Row="2" Visibility="Collapsed" Background="#F20D0F14">
+                <Grid x:Name="VideoPreviewOverlay" Grid.Row="2" Visibility="Collapsed" Background="#F20D0F14"
+                      PreviewKeyDown="VideoPreviewOverlay_PreviewKeyDown">
                     <!-- 空格 = 播放/暂停(用户反馈"部分情况下空格没用":以前只有播放器自带控件吃空格,
-                         对比模式把自带控件关了就没反应了)。做成加速键,焦点在哪都能用(输入框除外,见处理函数)。 -->
+                         对比模式把自带控件关了就没反应了)。做成加速键,焦点在哪都能用(输入框除外,见处理函数)。
+                         【2026-09-19 用户实测补一刀】只要焦点落在某个按钮上,XAML 会**先把空格当成"按下这个按钮"** ⇒
+                         处理期间按空格就把「取消」按下去了 ✗。所以这里再加一层 PreviewKeyDown(隧道路由,
+                         比焦点元素的 KeyDown 更早),把空格统一改道到"播放/暂停" ✔ —— 见 VideoPreviewOverlay_PreviewKeyDown。 -->
                     <Grid.KeyboardAccelerators>
                         <KeyboardAccelerator Key="Space" Invoked="PreviewSpaceAccel_Invoked"/>
                     </Grid.KeyboardAccelerators>
@@ -1106,26 +1225,52 @@
                                        VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="380"/>
                             <TextBlock x:Name="PreviewMeta" FontSize="11" Opacity="0.6" VerticalAlignment="Center"
                                        TextTrimming="CharacterEllipsis"/>
+                            <!-- 【2026-09-19 用户要求:高分辨率素材要红字提示】预览要"大分辨率解码"两条,
+                                 素材/成片越大越容易掉帧卡顿 ⇒ 用红字直说"该担心什么 + 怎么办",不吓人、不挡操作 ✔ -->
+                            <TextBlock x:Name="PreviewLoadWarn" FontSize="11" FontWeight="SemiBold" Foreground="#FF7070"
+                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="560"
+                                       Visibility="Collapsed"/>
                         </StackPanel>
                         <RadioButtons x:Name="PreviewViewRadios" Grid.Column="1" MaxColumns="4" SelectedIndex="0"
                                       VerticalAlignment="Center"
                                       SelectionChanged="PreviewViewRadios_SelectionChanged"
-                                      ToolTipService.ToolTip="看原片 / 看处理效果 / 两者同时(整幅并排) / 左右对比(同一条画面,分割线可拖,左原片右结果)">
-                            <RadioButton Content="看原片"/>
-                            <RadioButton Content="看处理效果"/>
-                            <RadioButton Content="两者同时"/>
-                            <RadioButton Content="左右对比"/>
+                                      ToolTipService.ToolTip="看原片 / 看处理效果 / 两者同时(整幅并排,预览跑完后**后台**合成一条对比片,合好自动切过去) / 左右对比(两个播放器实时裁切,分割线可拖,左原片右结果 —— 这条**不用等**合成)">
+                            <!-- 【2026-09-22 无障碍/自测】四项原来都没有 AutomationId ⇒ 补 x:Name(注意**不能**叫
+                                 ViewOriginal/ViewEffect/ViewBoth/ViewSplit —— 那些名字已被同名的 int 常量占用,会编译冲突)。
+                                 可见文字本身就是它们给 UIA 的 Name,所以只补 id、不改显示。 -->
+                            <RadioButton x:Name="ViewOriginalRadio" Content="看原片"/>
+                            <RadioButton x:Name="ViewEffectRadio" Content="看处理效果"/>
+                            <RadioButton x:Name="ViewBothRadio" Content="两者同时"/>
+                            <RadioButton x:Name="ViewSplitRadio" Content="左右对比"/>
                         </RadioButtons>
-                        <Button x:Name="EffectZoomBtn" Grid.Column="2" Content="放大画面" FontSize="12" Padding="12,6"
-                                VerticalAlignment="Center" Click="EffectZoomBtn_Click"
-                                ToolTipService.ToolTip="收起下方控制区,让画面占满整页(再点一次回来)"/>
+                        <!-- 【2026-09-19 用户要求】原来的「放大画面」按钮(只是收起控制区,不是真缩放)已删除。
+                             改成:鼠标滚轮在画面上缩放(1~8 倍、以光标为中心),这里只留一个「还原」;
+                             还原按钮平时隐藏,只有放大过才出现 —— 不乱占地方。 -->
+                        <!-- 【2026-09-19 已按用户要求回退】这里的缩放档位(适应/50%/100%/200%/400%)是
+                             我按 Topaz 文档做的"整体缩放",**不是用户要的东西** ✗ —— 用户要的是:
+                             「两者同时」里**两侧锁同一块区域**、**中间是边界**,缩放其中一个另一个跟着到同一处。
+                             在做出那个之前,这里不再放任何缩放控件(只留「1:1 对比」)。
+                             (缩放层/裁切框等结构保留但恒为恒等变换:不缩放时行为与改动前逐帧一致 ✔) -->
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                            <!-- 【2026-09-19 用户要求:撤销实时缩放】滚轮/档位/两侧同区域缩放全部撤掉:
+                                 它带来了卡死、偶现缩放不一致、偶现左右比例不同、缩放后画面只剩一小块等问题 ✗
+                                 ⇒ 预览页回到稳定状态(遮罩左右对比 + 单播放器合成片,都是验证过多轮的);
+                                 只保留「1:1 对比」(那是**静态取帧**,不参与任何播放/布局,零风险)✔ -->
+                            <Button x:Name="PixelCmpBtn" Content="1:1 对比" FontSize="12" Padding="10,6"
+                                    VerticalAlignment="Center" Click="PixelCmpBtn_Click"
+                                    ToolTipService.ToolTip="在当前这一帧上,把「原片」和「处理后」各取一帧、按各自【原始像素 1:1】并排显示同一处画面 —— 一个像素都不重采样(真原画质)"/>
+                        </StackPanel>
                         <Button Grid.Column="3" Content="退出" Click="PreviewClose_Click" FontSize="13" Padding="16,7"
                                 VerticalAlignment="Center" ToolTipService.ToolTip="退出回到列表"/>
                     </Grid>
 
-                    <!-- ② 画面区:结果播放器在下层、原片在上层(对比时把原片裁到分割线左边) -->
+                    <!-- ② 画面区:结果播放器在下层、原片在上层(对比时把原片裁到分割线左边)
+                         【2026-09-19 结构还原】这里曾经被我包过一层"缩放层+裁切框",用户实测
+                         "播放期间换视角会黑屏 卡住" ✗ —— 本文件早有的注释就写着"视频面(SwapChainPanel)对裁切有脾气",
+                         多包的那层 + 给它设的裁切正是最可疑处 ⇒ **结构整个还原成原来的扁平结构**,缩放一并撤掉 ✔ -->
                     <Grid x:Name="PlayerArea" Grid.Row="1" Margin="14,0,14,8" SizeChanged="PlayerArea_SizeChanged"
-                          Tapped="PlayerArea_Tapped" PointerMoved="PlayerArea_PointerMoved">
+                          Tapped="PlayerArea_Tapped" PointerMoved="PlayerArea_PointerMoved"
+                          PointerWheelChanged="PlayerArea_Wheel">
                         <!-- 【2026-09-17 用户要求】提示文字放【最底层】:左边原片会自然盖住它,
                              于是它只在"没有结果的那一半"露出来 —— 不用按钮、也不会被中间那条分割线压住。 -->
                         <TextBlock x:Name="EffectPlayerHint" Text="点下面「开始预览」,处理结果会在这里播放"
@@ -1140,6 +1285,21 @@
                               PointerExited="PreviewPlayerHost_PointerExited">
                             <MediaPlayerElement x:Name="PreviewPlayer" AreTransportControlsEnabled="False"/>
                         </Grid>
+                        <!-- 【① 换视角不重装媒体 · 倒装】这两个"单视图专用"播放器常驻各自的源:
+                             CmpPlayerTop = 「看原片」(源文件)、CmpPlayerBottom = 「看处理效果」(预览成片)。
+                             它们**替代** PreviewPlayer/EffectPlayer 去服务单视图,而 PreviewPlayer/EffectPlayer
+                             从此只服务「两者同时 / 左右对比」(对比子系统一字不改)⇒ 换视角只改可见性,零装载。
+                             (指针事件与 PreviewPlayerHost 保持一致:自绘播放条靠它唤出) -->
+                        <Grid x:Name="CmpPlayerHostBottom" Visibility="Collapsed"
+                              PointerMoved="PreviewPlayerHost_PointerMoved"
+                              PointerExited="PreviewPlayerHost_PointerExited">
+                            <MediaPlayerElement x:Name="CmpPlayerBottom" AreTransportControlsEnabled="False" Stretch="Uniform"/>
+                        </Grid>
+                        <Grid x:Name="CmpPlayerHostTop" Visibility="Collapsed"
+                              PointerMoved="PreviewPlayerHost_PointerMoved"
+                              PointerExited="PreviewPlayerHost_PointerExited">
+                            <MediaPlayerElement x:Name="CmpPlayerTop" AreTransportControlsEnabled="False" Stretch="Uniform"/>
+                        </Grid>
                         <!-- 对比模式:左右两半的身份标签(带各自的画面规格,一眼看出分辨率/帧率差在哪) -->
                         <Border x:Name="CmpLabelLeft" Visibility="Collapsed" HorizontalAlignment="Left"
                                 VerticalAlignment="Top" Margin="10" Padding="10,4" CornerRadius="4"
@@ -1151,17 +1311,20 @@
                                 Background="#B3101318" IsHitTestVisible="False">
                             <TextBlock x:Name="CmpLabelRightText" Text="处理后" FontSize="12" Foreground="#7FB2FF"/>
                         </Border>
-                        <!-- 对比片还在后台合成时的提示(压在两层画面之上,否则会被画面盖住看不见) -->
+                        <!-- 对比片还在后台合成时的提示(压在两层画面之上,否则会被画面盖住看不见)
+                             【2026-09-22 文案更新】原来写「正在生成对比画面…」—— 用户读成"生成 50% 画面",
+                             因为它是和一句 `正在生成 50% 处的对比画面 37%` 配套的(两个百分号挨在一起)。
+                             现在:说清是"后台合成**一条对比片**"、给**哪个视角**用,进度只留一个百分号。
+                             文案的唯一出处是 VideoView.xaml.cs 的 CompareBuildText(改文案去那里改)。 -->
                         <Border x:Name="CmpBuildingText" Visibility="Collapsed" HorizontalAlignment="Center"
                                 VerticalAlignment="Top" Margin="0,56,0,0" Padding="12,5" CornerRadius="4"
                                 Background="#CC101318" IsHitTestVisible="False">
-                            <TextBlock x:Name="CmpBuildingLabel" Text="正在生成对比画面…" FontSize="12" Foreground="#E8ECF2"/>
+                            <TextBlock x:Name="CmpBuildingLabel" Text="正在后台合成对比片…" FontSize="12" Foreground="#E8ECF2"/>
                         </Border>
-                        <!-- 左右对比的分割线(实线)。
-                             拖动时**线随手即时移动,画面同时按新分界裁切**(左右对比用两个播放器实时裁切,
-                             零 seek、零重合成 —— 用户要的"像 topaz 一样实时响应")。
-                             【线要通到底】原来这里给实线留了 52px 底边距(为了不压住播放条),用户反馈"线底下那部分没有了";
-                             现在拉满整高,底部被播放条盖住的部分自然看不见,不需要留边。 -->
+                        <!-- 【2026-09-19 结构还原】画面区**回到原来的扁平结构**(两层画面 + 标签 + 提示 + 分割线,
+                             不再多包一层"裁切框/缩放层")。原因:用户实测"播放期间换视角会黑屏 卡住" ✗,
+                             而本文件早有的注释就写着"视频面(SwapChainPanel)对裁切有脾气"——
+                             多包的那层 + 我给它设的裁切,正是最可疑的那一处 ⇒ 结构整个还原,缩放一并撤掉 ✔ -->
                         <Grid x:Name="CompareSplitter" Width="28" HorizontalAlignment="Left" Visibility="Collapsed"
                               Background="Transparent"
                               PointerPressed="CompareSplitter_PointerPressed"
@@ -1169,22 +1332,19 @@
                               PointerReleased="CompareSplitter_PointerReleased"
                               PointerCaptureLost="CompareSplitter_PointerReleased"
                               >   <!-- 【2026-09-18 用户要求"不要有提示"】分割线的悬停提示已按用户要求移除 ✔ -->
-                            <Rectangle Width="2" Fill="#FFFFFF" Opacity="0.9" HorizontalAlignment="Center"
+                            <Rectangle Width="1.2" Fill="#FFFFFF" Opacity="0.72" HorizontalAlignment="Center"
                                        IsHitTestVisible="False"/>
-                            <Border x:Name="CmpSplitHandle" Width="34" Height="56" CornerRadius="16" Background="#E67FB2FF"
+                            <Border x:Name="CmpSplitHandle" Width="26" Height="42" CornerRadius="13" Background="#D9FFFFFF" BorderBrush="#40FFFFFF" BorderThickness="1"
                                     HorizontalAlignment="Center" VerticalAlignment="Center"
                                     PointerPressed="CompareSplitter_PointerPressed"
                                     PointerMoved="CompareSplitter_PointerMoved">
                                 <StackPanel Orientation="Horizontal" Spacing="2" HorizontalAlignment="Center"
                                             VerticalAlignment="Center" IsHitTestVisible="False">
-                                    <FontIcon Glyph="&#xE76B;" FontSize="11" Foreground="#0D0F14"/>
-                                    <FontIcon Glyph="&#xE76C;" FontSize="11" Foreground="#0D0F14"/>
+                                    <FontIcon Glyph="&#xE76B;" FontSize="9" Foreground="#FF12161C"/>
+                                    <FontIcon Glyph="&#xE76C;" FontSize="9" Foreground="#FF12161C"/>
                                 </StackPanel>
                             </Border>
                         </Grid>
-                        <!-- "目标位置"虚影线已按用户要求撤掉:用户要的是"实时滑动、实时响应"(像 topaz),
-                             所以左右对比改成两个播放器实时裁切 —— 拖动时只改两边的裁切矩形,零 seek、零重合成,
-                             线随手就动、画面同时就分;不需要"待生效位置"这种提示了。 -->
                         <Grid x:Name="CompareSplitGhost" Width="10" HorizontalAlignment="Left" Visibility="Collapsed"
                               IsHitTestVisible="False">
                             <Rectangle Width="2" Fill="#FFE8A33D" Opacity="0.8" HorizontalAlignment="Center"/>
@@ -1210,9 +1370,16 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
+                                    <!-- 【2026-09-22 无障碍】它是个纯图标按钮(FontIcon),UIA 实测 name="" ⇒ 屏幕阅读器
+                                         读出"按钮"什么都没说。补 AutomationProperties.Name(不改外观)。
+                                         【2026-09-22 用户要求"空格键的悬停提示不要有"】提示里原来还写着
+                                         "…也可以直接点画面,或按空格" —— 现在只留"点画面"这条。
+                                         注意:**空格键本身照旧能用**(见 PreviewSpaceAccel_Invoked / PreviewKeyDown),
+                                         删掉的只是那句悬停文字,不是功能。 -->
                                     <Button x:Name="CmpPlayBtn" Grid.Column="0" Padding="18,4" VerticalAlignment="Center"
                                             Click="CmpPlayBtn_Click"
-                                            ToolTipService.ToolTip="播放/暂停(对比两边同步;也可以直接点画面,或按空格)">
+                                            AutomationProperties.Name="播放或暂停"
+                                            ToolTipService.ToolTip="播放/暂停(对比两边同步;也可以直接点画面)">
                                         <FontIcon x:Name="CmpPlayIcon" Glyph="&#xE768;" FontSize="16"/>
                                     </Button>
                                     <!-- 慢放:补帧后的片段用来看补出来的中间帧(原速1× / 慢动作2× / 4× / 8×)
@@ -1236,6 +1403,7 @@
                                          已拆开:按钮是唯一真相,点了就生效;想听就自己打开(慢动作下会听到变调,是用户的选择) -->
                                     <ToggleButton x:Name="CmpMuteBtn" Grid.Column="2" FontSize="12" Padding="10,4"
                                                   Click="CmpMute_Click" HorizontalAlignment="Right" IsChecked="True"
+                                                  AutomationProperties.Name="静音开关"
                                                   ToolTipService.ToolTip="当前:静音(默认)。点一下打开声音 —— 注意慢动作下打开会听到变调">
                                         <FontIcon x:Name="CmpMuteIcon" Glyph="&#xE74F;" FontSize="14"/>
                                     </ToggleButton>
@@ -1246,8 +1414,67 @@
                         </Border>
                     </Grid>
 
-                    <!-- ③ 裁剪页:一条时间线 + 首尾两个把手(拖动时画面跟着跳到那个点) -->
-                    <StackPanel x:Name="TrimDeck" Grid.Row="2" Margin="14,0,14,10" Spacing="8" Visibility="Collapsed">
+                    <!-- 【静止帧 1:1 原画质对比 · 2026-09-19 用户要求】「两者同时 / 左右对比」里两侧都该是真原画质。
+                         物理事实:画面区只有约 900px 宽,并排两整幅 4K/8K 必然要缩 ⇒ 一条合成片**做不到**"两边都 1:1"。
+                         所以做成**静止帧**对比:在当前那一帧上,从原片与成片各裁一块【各自原生像素 1:1】的同一区域并排显示。
+                         不播视频 ⇒ 没有任何同步问题,也不动现有播放架构 ✔
+                         交互:点任一侧 = 把对比区域移到那个点(松手/点击即重新取图);「取当前帧」= 按播放器当前那一帧重取。
+                         不做缩放:1:1 就是这个面板的意义,再放大只是把像素放大,看不到新东西 ✗ -->
+                    <Grid x:Name="PixelCmpPanel" Grid.RowSpan="5" Visibility="Collapsed" Background="#F70D0F14">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="0" Margin="14,10,14,6" ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <TextBlock Text="1:1 原画质对比" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="PixelCmpTime" FontSize="11" Opacity="0.6" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <Button x:Name="PixelCmpRecapBtn" Grid.Column="1" Content="取当前帧" FontSize="12" Padding="12,6"
+                                    VerticalAlignment="Center" Click="PixelCmpRecap_Click"
+                                    ToolTipService.ToolTip="按播放器当前所在的那一帧重新取图(两边同时更新)"/>
+                            <Button Grid.Column="2" Content="关闭" FontSize="13" Padding="16,7" VerticalAlignment="Center"
+                                    Click="PixelCmpClose_Click" ToolTipService.ToolTip="退出对比(临时图会被删掉)"/>
+                        </Grid>
+                        <Grid x:Name="PixelCmpArea" Grid.Row="1" Margin="14,0,14,8"
+                              PointerPressed="PixelCmp_PointerPressed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Background="#0A0C10" BorderBrush="#2A3240" BorderThickness="1" CornerRadius="6">
+                                <Grid x:Name="PixelCmpLeftCell" SizeChanged="PixelCmpCell_SizeChanged">
+                                    <Image x:Name="PixelCmpLeftImg" Stretch="None" HorizontalAlignment="Left" VerticalAlignment="Top"/>
+                                    <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8" Padding="8,3"
+                                            CornerRadius="4" Background="#B30D0F14" IsHitTestVisible="False">
+                                        <TextBlock x:Name="PixelCmpLeftTagText" Text="原片" FontSize="11" Foreground="#E8ECF2"/>
+                                    </Border>
+                                </Grid>
+                            </Border>
+                            <Rectangle Grid.Column="1" Width="2" Fill="#7FB2FF" Margin="6,0"/>
+                            <Border Grid.Column="2" Background="#0A0C10" BorderBrush="#2A3240" BorderThickness="1" CornerRadius="6">
+                                <Grid x:Name="PixelCmpRightCell" SizeChanged="PixelCmpCell_SizeChanged">
+                                    <Image x:Name="PixelCmpRightImg" Stretch="None" HorizontalAlignment="Left" VerticalAlignment="Top"/>
+                                    <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8" Padding="8,3"
+                                            CornerRadius="4" Background="#B3101318" IsHitTestVisible="False">
+                                        <TextBlock x:Name="PixelCmpRightTagText" Text="处理后" FontSize="11" Foreground="#7FB2FF"/>
+                                    </Border>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                        <TextBlock x:Name="PixelCmpHint" Grid.Row="2" Margin="14,0,14,12" FontSize="11" Opacity="0.6"
+                                   TextWrapping="Wrap"
+                                   Text="两边都是各自的原生像素、1:1 显示,中心对的是同一处画面(处理后的分辨率更高,所以同一块区域看到的内容范围更小 —— 这正是像素级对比该有的样子)。点画面任意位置 = 换到那一处。"/>
+                    </Grid>
+
+                    <!-- ③ 裁剪页:一条时间线 + 首尾两个把手(拖动时画面跟着跳到那个点) -->                    <StackPanel x:Name="TrimDeck" Grid.Row="2" Margin="14,0,14,10" Spacing="8" Visibility="Collapsed">
                         <Grid x:Name="TrimTimeline" Height="52" Background="Transparent"
                               SizeChanged="TrimTimeline_SizeChanged"
                               PointerPressed="TrimTimeline_PointerPressed"

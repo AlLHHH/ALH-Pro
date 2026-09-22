@@ -82,17 +82,38 @@ public static class SceneCutJudge
     /// 但两个极端已被单测钉死(≤1 = 完全不抑制;大于素材长度 = 最多一处切点)。</summary>
     public const int MinSceneLen = 15;
 
+    /// <summary>【已删除 · 2026-09-22】这里原有两个成员:`MinSegmentLen = 60` 与 `ApplyMinSegmentLen(...)`
+    /// —— 「最短补帧段」,把"会让某段短于 60 帧"的切点从清单里合并掉,用来减少补帧引擎的冷启动次数。
+    ///
+    /// 【为什么整块删掉(用户裁决)】它确实能减少引擎启动,但**方式是拿"鬼影防线"去换速度**:
+    /// 被合并掉的切点处**照常插帧** ⇒ 那里可能插出一帧跨切混合。用户看过代价后判定不值:
+    /// "整块撤掉(规则 + 开关),只留转场阈值滑块"。
+    /// 【为什么滑块那条路更好(同一个目的、不牺牲保护)】「转场阈值」调大 = 少判切点 ⇒ 引擎同样少启动,
+    /// 而**保留下来的切点照样受保护**(`CutAwareSchedule` 的"切点强制拷贝、绝不合成"一字不动)。
+    /// 也就是说"减少引擎启动"这件事有一条**不牺牲任何东西**的路,就没必要再留一条牺牲保护的路。
+    /// 【60 帧这个数本身也偏保守过头】按本工程实测(引擎冷启动 1~1.2 秒、补帧约 72 ms/帧)算,
+    /// 一次启动的钱 ≈ **20 帧的活** ⇒ 20 帧就已经是"值不值得为它启一次引擎"的盈亏平衡点;
+    /// 取 60 帧等于把"所有 0.83~2.5 秒镜头上的切点保护"全部放弃,而换来的只是把启动占比从 ~46% 压到 ~22%。
+    /// 【留这段注释的理由】不然下一个人看到"引擎启动很慢"这个真问题,很可能把同一套东西再加一遍
+    /// (它的动机是真实的,错的是用来交换的东西)。</summary>
+
     /// <summary>逐对判定:第 i 对 = 源帧 i → i+1。<paramref name="lapVar"/> 可为 null(只按帧差判)。
     /// 返回 true = 这一对之间存在**硬切**,插值必须绕开(不做跨切混合)。
     /// 【2026-09-14】三个阈值原先经"在线参数覆盖层"(ParamProfileRuntime)读,该功能整体删除后直接取
     /// 上面那三个常量 —— 与"覆盖层为 null 时回落常量"逐字等价,判定行为一个字节都没变。
+    /// 【2026-09-21 恢复用户可调】新增 <paramref name="thresholds"/>:传 null(默认)= 用内置常量,
+    /// **逐字等于加这个形参之前的行为**;传值 = 用界面「转场阈值」滑块换算出来的那一组
+    /// (唯一换算处见 <see cref="SceneThresholdMap.For"/>,别在别处再算一遍)。
+    /// 判定逻辑本身一个字都没动 —— 变的只是"这三个数从哪来"。
     /// 【注意】**本方法不带滞回**:它只管"这一对是不是切点"。相邻误判的合并见 <see cref="ApplyMinSceneLen"/>
     /// (以及批量入口 <see cref="Detect"/>)—— 单对判据保持纯粹,才测得出"判据本身对不对"。</summary>
-    public static bool IsCut(double meanAbsDiff, double? lapVarPrev, double? lapVarCur)
+    public static bool IsCut(double meanAbsDiff, double? lapVarPrev, double? lapVarCur,
+        SceneCutThresholds? thresholds = null)
     {
-        double diffThreshold = DiffThreshold;
-        double strongDiffThreshold = StrongDiffThreshold;
-        double lapDropRatio = LapDropRatio;
+        var t = thresholds ?? SceneCutThresholds.BuiltIn;
+        double diffThreshold = t.Diff;
+        double strongDiffThreshold = t.StrongDiff;
+        double lapDropRatio = t.LapDrop;
         if (!double.IsFinite(meanAbsDiff) || meanAbsDiff < diffThreshold) return false;
         if (meanAbsDiff >= strongDiffThreshold) return true;
         if (lapVarPrev is > 0 && lapVarCur is >= 0)
@@ -125,9 +146,10 @@ public static class SceneCutJudge
     ///   ① 我们的切点是**保护点**(切点上强制拷贝、绝不合成),把片头真切点当误判压掉 = **重新引入跨切鬼影帧**,
     ///      与本工程反复写明的"宁可不插,也不出鬼影"取舍相反;
     ///   ② 既有契约已钉死"两帧之间真的出现巨大差异(999)时必须判切"(防"极端硬切漏保护",见 SceneCutInvarianceTests)。
-    /// 即:滞回只用来**合并相邻的误判**,不用来**裁掉片头的真切点**。</summary>
+    /// 即:滞回只用来**合并相邻的误判**,不用来**裁掉片头的真切点**。
+    /// 【2026-09-21】<paramref name="thresholds"/> 同上(见 <see cref="IsCut"/>):null = 内置判据。</summary>
     public static IReadOnlyList<int> Detect(IReadOnlyList<double> meanAbsDiff, IReadOnlyList<double>? lapVar = null,
-        int minSceneLen = MinSceneLen)
+        int minSceneLen = MinSceneLen, SceneCutThresholds? thresholds = null)
     {
         var cuts = new List<int>();
         int n = meanAbsDiff?.Count ?? 0;
@@ -135,7 +157,7 @@ public static class SceneCutJudge
         {
             double? lp = lapVar != null && i < lapVar.Count ? lapVar[i] : null;
             double? lc = lapVar != null && i + 1 < lapVar.Count ? lapVar[i + 1] : null;
-            if (IsCut(meanAbsDiff![i], lp, lc)) cuts.Add(i);
+            if (IsCut(meanAbsDiff![i], lp, lc, thresholds)) cuts.Add(i);
         }
         return ApplyMinSceneLen(cuts, minSceneLen);
     }

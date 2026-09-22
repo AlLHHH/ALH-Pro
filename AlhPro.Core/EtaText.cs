@@ -58,6 +58,23 @@ public static class EtaText
     public static bool ContainsVagueSeconds(string? text)
         => text != null && text.Contains("几秒", System.StringComparison.Ordinal);
 
+    /// <summary>把"一段预计要用多久"写成大白话(秒/分钟/小时三档),用于**开跑前**把预计时长告诉用户。
+    /// 【为什么与 ForRemaining 分开】语义不同:`ForRemaining` 说的是"还剩多久"(跑起来的倒计时),
+    /// 这里说的是"这一段**总共**大约要多久"(还没开始时的预期) —— 复用同一句"本阶段预计还剩"会让用户
+    /// 以为活儿已经跑了一半。
+    /// 【2026-09-21 新增的用途】用户反馈"预览要等很久才开始":预览故意按完整参数真跑、不降档(用户明确要求),
+    /// 所以只能把"要等多久"提前说清。数字来源与「开始处理」同一个估算函数(VideoService.EstimateProcessSeconds)。
+    /// 【口径】与 <see cref="ForRemaining"/> 同族:不足 1 秒不给数字(那种量级的活不需要预告)、
+    /// 60/3600 分界、`(int)` 截断;非法值(NaN/±∞/负数)返回空串,调用方直接判空跳过。
+    /// 【故意**不**四舍五入到"约"以外的东西】不写"预计 3.7 分钟(±…)"这类伪精度:这个数只有量级意义。</summary>
+    public static string Duration(double seconds)
+    {
+        if (!double.IsFinite(seconds) || seconds < 1) return "";
+        if (seconds < 60) return $"{(int)seconds} 秒";
+        if (seconds < 3600) return $"{seconds / 60:0.#} 分钟";
+        return $"{seconds / 3600:0.#} 小时";
+    }
+
     /// <summary>【2026-09-16 用户反馈「整体预计时间不要乱写」】按**最近的实际吞吐量**估算剩余秒数。
     ///
     /// 【为什么要另开一条口径】旧口径(RemainingSeconds)用的是"本阶段开始至今的**累计平均**速度":

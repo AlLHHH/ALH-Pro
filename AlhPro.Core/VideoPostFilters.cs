@@ -1,7 +1,6 @@
 using System.Globalization;
 
 namespace AlhPro.Core;
-
 /// <summary>视频后处理滤镜链的构造(纯字符串逻辑,从 VideoService.BuildPostFilter 抽出、可单测)。
 /// 【为什么抽出来】① 这条链直接决定成片画面,而"看着等价"的合并/改写会静默改画面 —— 必须用单测把
 /// 每一档产出的 ffmpeg 滤镜字符串【逐字】钉住;② 抽成纯函数才能把"能不能合并"这件事用测试说清楚。
@@ -33,8 +32,51 @@ namespace AlhPro.Core;
 /// 【本文件不做的事】不做任何合并/近似 —— 需要改画面或换实现的方案一律由用户看 A/B 对比后决定。</summary>
 public static class VideoPostFilters
 {
+    /// <summary>**每一档的"安全上限"**(滑块 100 对应的实际滤镜强度)。
+    /// 【2026-09-20 实测重新定标 · 为什么改】用户反馈"后处理加多了效果很奇怪、反倒很多噪点",并指出
+    /// "调到 100 其实只有 50 的量"(确实:清晰与保留细节原来在 100 处只给到上限的 50%/60%)。
+    /// 我用同一帧(素材(13) 第 20 秒,源:平坦噪声 0.32 / detail 1176 / 边宽 6.89px)把每一档
+    /// 拉到 40/60/80/100 量了一遍(脚本 `_qa\post_filter_audit.py`),结论:
+    ///   · 锐化 与 边缘增强:≤60 时噪声 0.98~1.02×(几乎零代价)⇒ 上限取 0.70;
+    ///   · 钝化蒙版:60 就 1.42×、100 到 **2.03×**(最会出噪点的一档)⇒ 上限收到 **0.50**;
+    ///   · 保留细节(cas):40 就已经 1.63×,但它是**唯一能把边缘变窄**的档(6.68px)⇒ 上限收到 0.30;
+    ///   · 清晰(13x13 unsharp):噪声不涨,但**边缘越用越宽**(40→7.75px、100→9.83px,基线 6.89)⇒ 上限收到 0.25。
+    /// ⇒ 现在滑块 **100 = 该档的安全上限**(不再出现"100 只有一半"或"100 直接把画面搞脏")。
+    /// ⚠ 老设置/老预设必须按 <see cref="MigrateStrength"/> 做等效换算,否则同一份预设的画面会变(本仓库禁止静默改画面)。</summary>
+    public static readonly IReadOnlyDictionary<string, double> SafeMax = new Dictionary<string, double>
+    {
+        ["sharpen"] = 0.70,     // OCR:滑块 100 → smartblur 负强度 0.70
+        ["clarity"] = 0.25,     // 滑块 100 → unsharp 13x13 强度 0.25
+        ["usm"] = 0.50,         // 滑块 100 → smartblur(r=2,thr=8) 负强度 0.50
+        ["detail"] = 0.30,      // 滑块 100 → cas 强度 0.30
+        ["edge"] = 0.70,        // 滑块 100 → smartblur(r=1,thr=8) 负强度 0.70
+    };
+
+    /// <summary>旧刻度(2026-09-15~2026-09-20)每一档在滑块 100 处给的实际强度 —— 只用于**老设置的等效迁移**。
+    /// 迁移公式:新值 = 旧值 × (旧上限 ÷ 新上限)(再按 0~100 钳制)。</summary>
+    private static readonly IReadOnlyDictionary<string, double> OldMax = new Dictionary<string, double>
+    {
+        ["sharpen"] = 1.00,
+        ["clarity"] = 0.50,
+        ["usm"] = 1.00,
+        ["detail"] = 0.60,
+        ["edge"] = 1.00,
+    };
+
+    /// <summary>把旧刻度的强度换算成新刻度(保证**同一份设置的实际滤镜强度不变**,即画面不变)。
+    /// 例:清晰旧值 50(实际 0.25)= 新值 100(实际 0.25);钝化蒙版旧值 50(实际 0.50)= 新值 100。
+    /// 超过新上限的旧值(如钝化蒙版旧 100 = 实际 1.00)会被钳到 100(实际 0.50)—— 这一档本来就是
+    /// 实测"会出噪点"的区间,钳制是**有意的**(并在日志里如实记录,不静默)。</summary>
+    public static int MigrateStrength(string key, int oldValue)
+    {
+        if (oldValue <= 0 || !OldMax.TryGetValue(key, out double om) || !SafeMax.TryGetValue(key, out double nm) || nm <= 0)
+            return Math.Clamp(oldValue, 0, 100);
+        double v = oldValue * (om / nm);
+        return Math.Clamp((int)Math.Round(v), 0, 100);
+    }
+
     /// <summary>按强度构造后处理滤镜链(顺序 = 锐化 → 清晰 → 钝化蒙版 → 保留细节 → 边缘增强);全为 0 时返回 null。
-    /// 参数范围 0-100,超出按上限钳制(与旧实现一致:锐化 ≤1.00、清晰 ≤0.50、钝化 ≤1.00、细节 ≤0.60)。
+    /// 参数范围 0-100,100 = <see cref="SafeMax"/> 里那档的安全上限(实测依据见该类注释)。
     /// 【边缘增强 edgeBoost · 2026-09-15 新增】用户反馈"边缘糊/没对上焦",实测数据(游戏帧,1080p→2x):
     ///   官方 animevideov3 边缘宽度 2.23px / 强边缘对比 52.3 → 加 0.3 档后 2.15px / 58.0(+11%),过冲 1.05%→1.40%;
     ///   其它模型(edge 较弱的那几支)用 0.6 档:2.24→2.16px、对比 56.6→69.3(+22%),过冲 1.23%→1.96%。
@@ -46,18 +88,25 @@ public static class VideoPostFilters
         var inv = CultureInfo.InvariantCulture;
         var parts = new System.Collections.Generic.List<string>();
         if (sharpen > 0)
-            parts.Add($"smartblur=luma_radius=1:luma_strength=-{Math.Min(1.0, sharpen / 100.0).ToString("0.00", inv)}:luma_threshold={(sharpen <= 60 ? 3 : 6)}");
+            parts.Add($"smartblur=luma_radius=1:luma_strength=-{Strength("sharpen", sharpen).ToString("0.00", inv)}:luma_threshold={(sharpen <= 60 ? 3 : 6)}");
         if (clarity > 0)
-            parts.Add($"unsharp=13:13:{Math.Min(0.50, clarity / 100.0 * 0.50).ToString("0.00", inv)}:13:13:0");
+            parts.Add($"unsharp=13:13:{Strength("clarity", clarity).ToString("0.00", inv)}:13:13:0");
         if (usm > 0)
-            parts.Add($"smartblur=luma_radius=2:luma_strength=-{Math.Min(1.0, usm / 100.0).ToString("0.00", inv)}:luma_threshold=8");
+            parts.Add($"smartblur=luma_radius=2:luma_strength=-{Strength("usm", usm).ToString("0.00", inv)}:luma_threshold=8");
         if (detail > 0)
-            parts.Add($"cas=strength={Math.Min(0.60, detail / 100.0 * 0.60).ToString("0.00", inv)}");
-        // 边缘增强:阈值 8 = 只动明确边缘(实测依据见方法注释);强度 0.3/0.6 分别对应 30/60
+            parts.Add($"cas=strength={Strength("detail", detail).ToString("0.00", inv)}");
+        // 边缘增强:阈值 8 = 只动明确边缘(实测依据见方法注释)
         if (edgeBoost > 0)
-            parts.Add($"smartblur=luma_radius=1:luma_strength=-{Math.Min(1.0, edgeBoost / 100.0).ToString("0.00", inv)}:luma_threshold=8");
+            parts.Add($"smartblur=luma_radius=1:luma_strength=-{Strength("edge", edgeBoost).ToString("0.00", inv)}:luma_threshold=8");
         // 边缘抗锯齿不再产出 ffmpeg 滤镜(见类注释);aa 只保留形参以免调用方签名变化。
         _ = aa;
         return parts.Count > 0 ? string.Join(",", parts) : null;
+    }
+
+    /// <summary>滑块值 → 实际强度(线性映射到该档的安全上限)。</summary>
+    public static double Strength(string key, int sliderValue)
+    {
+        if (!SafeMax.TryGetValue(key, out double m)) m = 1.0;
+        return Math.Min(m, Math.Max(0, sliderValue) / 100.0 * m);
     }
 }

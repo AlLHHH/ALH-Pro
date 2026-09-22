@@ -46,7 +46,7 @@ public class AnnouncementCopyTests
             Assert.DoesNotContain(bad, text);
     }
 
-    /// <summary>提到这两支自训模型时,公告里写的必须是**与界面逐字相同**的那一串(`现实 · real2x（快）`)。
+    /// <summary>提到这几支自训模型时,公告里写的必须是**与界面逐字相同**的那一串(`现实 · alhreal2x（快）`)。
     /// 【为什么逐字】公告说的名字和用户在下拉里看到的名字一旦不一致,用户就找不到公告在说哪一项。</summary>
     [Theory]
     [MemberData(nameof(SoftwareCarriers))]
@@ -66,6 +66,27 @@ public class AnnouncementCopyTests
         var text = ReadRepoFile(parts);
         Assert.Contains("0.35", text);
         Assert.Contains(ExperimentalEsrgan.SpeedText.Replace("1080p 约 ", ""), text);
+    }
+
+    /// <summary>**公告里不许把"已下线的功能"当成"新增/默认"** ——
+    /// 2026-09-21「降噪强度」的「自动（先体检素材）」下线时,三个载体都还写着"新增…并放在最上面、默认选中" ✗,
+    /// 而当时的契约只管"模型名一致"与"时间写法",拦不住这类过时 ✗(用户当场指出"公告要更新了")⇒ 补这条。
+    /// 【判据只针对措辞】**不禁止提到它** —— 新公告里本来就该写"原「自动（先体检素材）」已下线";
+    /// 禁止的是"把它当现存功能"的四种说法。以后下线任何功能,顺手把它的"新增/默认"措辞加进来即可。</summary>
+    [Theory]
+    [MemberData(nameof(AllCarriers))]
+    public void No_carrier_claims_a_removed_feature_as_new_or_default(string[] parts)
+    {
+        var text = ReadRepoFile(parts);
+        foreach (var stale in new[]
+                 {
+                     "新增「自动（先体检素材）」",
+                     "新增「**自动（先体检素材）**」",
+                     "并放在**最上面**、默认选中",
+                     "并放在最上面、默认选中",
+                     "新增「自动（先体检素材）」」",
+                 })
+            Assert.DoesNotContain(stale, text);
     }
 
     private static string ReadRepoFile(params string[] parts)
