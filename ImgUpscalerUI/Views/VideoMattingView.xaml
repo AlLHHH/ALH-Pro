@@ -189,7 +189,41 @@
                 </Grid>
 
                 <ListView Grid.Row="2" x:Name="TaskList" SelectionMode="Extended" BorderThickness="0"
-                          Background="Transparent"/>
+                          Background="Transparent" ToolTipService.ToolTip="">
+                    <!-- 行模板照 VideoView.xaml:1094-1140:120×68 缩略图 + 名称 + 状态角标 + 信息行 + 4px 进度条。
+                         抠图没有裁剪/VFR/去重这些概念,所以不套空角标,只保留「状态」一个角标 + 结果信息行。 -->
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid ColumnSpacing="10" Padding="4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Image x:Name="Thumb" Source="{Binding Thumb}" Stretch="Uniform"
+                                       Width="120" Height="68" Opacity="{Binding DoneItemOpacity}"/>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="3">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="{Binding Name}" FontSize="13"
+                                                   TextTrimming="CharacterEllipsis" Opacity="{Binding DoneItemOpacity}"/>
+                                        <Border Background="{Binding StateBadgeBrush}" CornerRadius="4" Padding="5,2"
+                                                VerticalAlignment="Center"
+                                                Visibility="{Binding StateBadgeVisibility}">
+                                            <TextBlock Text="{Binding StateText}" FontSize="10" FontWeight="SemiBold"
+                                                       Foreground="White" VerticalAlignment="Center"/>
+                                        </Border>
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding Info}" FontSize="11" Opacity="0.6"
+                                               TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{Binding OutputInfo}" FontSize="11"
+                                               Foreground="#4C8DFF" TextTrimming="CharacterEllipsis"
+                                               Visibility="{Binding OutputInfoVisibility}"/>
+                                    <ProgressBar Height="4" Maximum="100" Value="{Binding Progress}"
+                                                 Visibility="{Binding ProgressVisibility}"/>
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
 
                 <!-- 空态:照视频处理页(拖入项目 + 支持格式 + 组件自检) -->
                 <StackPanel Grid.Row="2" x:Name="EmptyHint" VerticalAlignment="Center" HorizontalAlignment="Center"

@@ -1,24 +1,77 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.ApplicationModel.DataTransfer;
 
 namespace ALHPro.Views;
 
-/// <summary>视频抠图页(独立板块,2026-09-22)。接线到 `VideoMattingService`。
+/// <summary>视频抠图任务行(照 VideoView 的 VideoItem 精简版):缩略图 + 名称 + 状态角标 + 信息行 + 进度。
+/// 【为什么不用 ListViewItem 塞字符串】视频处理页的行是富模板(120×68 缩略图 + 多行信息),
+/// 用户明确要求"右侧一模一样",所以必须走 ItemTemplate + INotifyPropertyChanged 数据绑定。</summary>
+public sealed class MattingItem : System.ComponentModel.INotifyPropertyChanged
+{
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+
+    public string Path { get; init; } = "";
+    public string Name { get; init; } = "";
+
+    private BitmapImage? _thumb;
+    public BitmapImage? Thumb
+    {
+        get => _thumb;
+        set { _thumb = value; Raise(nameof(Thumb)); }
+    }
+
+    private string _info = "待处理";
+    /// <summary>第二行:分辨率/帧率等基础信息 + 当前状态文案。</summary>
+    public string Info { get => _info; set { _info = value; Raise(nameof(Info)); } }
+
+    private string _stateText = "待处理";
+    public string StateText { get => _stateText; set { _stateText = value; Raise(nameof(StateText)); } }
+
+    private string _stateBadgeBrush = "#5A6270";
+    /// <summary>角标底色:待处理=灰、处理中=蓝、完成=绿、失败=红、取消=橙(与视频页角标同款圆角小块)。</summary>
+    public string StateBadgeBrush { get => _stateBadgeBrush; set { _stateBadgeBrush = value; Raise(nameof(StateBadgeBrush)); } }
+
+    private bool _showBadge = true;
+    public bool ShowBadge { get => _showBadge; set { _showBadge = value; Raise(nameof(StateBadgeVisibility)); } }
+    public Visibility StateBadgeVisibility => ShowBadge ? Visibility.Visible : Visibility.Collapsed;
+
+    private string _outputInfo = "";
+    /// <summary>第三行:成品路径/结果(蓝色,与视频页的 OutputInfo 同款)。</summary>
+    public string OutputInfo
+    {
+        get => _outputInfo;
+        set { _outputInfo = value; Raise(nameof(OutputInfo)); Raise(nameof(OutputInfoVisibility)); }
+    }
+    public Visibility OutputInfoVisibility => string.IsNullOrEmpty(_outputInfo) ? Visibility.Collapsed : Visibility.Visible;
+
+    private double _progress;
+    public double Progress { get => _progress; set { _progress = value; Raise(nameof(Progress)); Raise(nameof(ProgressVisibility)); } }
+    public Visibility ProgressVisibility => _progress > 0 && _progress < 100 ? Visibility.Visible : Visibility.Collapsed;
+
+    private double _doneItemOpacity = 1;
+    /// <summary>已完成/已失败的行整体降透明度(与视频页"已完成"行的视觉一致)。</summary>
+    public double DoneItemOpacity { get => _doneItemOpacity; set { _doneItemOpacity = value; Raise(nameof(DoneItemOpacity)); } }
+
+    private void Raise(string name) => PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+}
+
+/// <summary>视频抠图页(独立板块)。接线到 `VideoMattingService`。
 ///
 /// 【为什么独立成页】用户明确要求:"要的是单独一个界面 视频抠图,原先的还是图片抠图"。
-/// 两页共享的只有模型注册表(`CutoutService.Models`)与参数语义。
-///
-/// 【布局照「视频处理」页】用户给了三张对照图并要求"一模一样的风格布局":
-///   ① 右侧 = 「等待任务」任务板:工具栏(添加视频/移除选中/清空/清除已完成)+ 右侧提示 + 空态(拖入项目);
-///   ② 滑条 = 左标签 + 滑条 + 右数值 的行式,外加「重置调整」;
-///   ③ 输出 = 路径框 + 「选择输出位置...」+「码率 / 格式」组,且都在「开始处理」**上面**。
-/// 进度/结果走底部状态栏(StatusChanged,与图片抠图页同一套订阅),页面里不放日志框。
+/// 【布局与右侧任务板照「视频处理」页】用户给了对照图并要求"改 要一模一样":
+///   右侧 = 「等待任务」+ 工具栏(添加视频/删除选中/清空/清除已完成)+ 右侧提示 + 空态(拖入项目/组件自检);
+///   任务行 = ItemTemplate 富模板(120×68 缩略图 + 名称 + 状态角标 + 信息行 + 进度条),缩略图用 ffmpeg 抽帧;
+///   左栏 = 滑条行式(78/*/28)+ 重置调整;输出 = 路径框 + 选择输出位置 + 码率/格式组,都在「开始处理」上面。
+/// 进度/结果同时走底部状态栏(StatusChanged),页面里不放日志框。
 /// </summary>
 public sealed partial class VideoMattingView : UserControl
 {
@@ -26,9 +79,8 @@ public sealed partial class VideoMattingView : UserControl
     public event Action<string>? StatusChanged;
 
     private readonly string[] _containers = AlhPro.Core.MattingOutputSpecs.TransparentContainers;
-    private readonly List<string> _videos = new();
+    private readonly ObservableCollection<MattingItem> _items = new();
     private readonly List<string> _done = new();
-    private readonly Dictionary<string, ListViewItem> _rows = new();
     private string _outDir = "";
     private string _bgImage = "";
     private CancellationTokenSource? _cts;
@@ -44,8 +96,10 @@ public sealed partial class VideoMattingView : UserControl
         foreach (var m in CutoutService.Models) ModelCombo.Items.Add(m.Label);
         ModelCombo.SelectedIndex = CutoutService.DefaultModelIndex;
         BitrateCombo.SelectedIndex = 0;
-        MuteCheck.IsEnabled = false;   // 音频由输出方式决定(透明通道不带音频/换背景保留源音频),不让手动改
+        MuteCheck.IsEnabled = false;   // 音频由输出方式决定,不让手动改
         MuteCheck.IsChecked = false;
+
+        TaskList.ItemsSource = _items;
 
         ApplyModelPresets();
         UpdateLabels();
@@ -53,6 +107,7 @@ public sealed partial class VideoMattingView : UserControl
         UpdateBgVisibility();
         RefreshFormatOptions();
         RefreshEngineHint();
+        RefreshEmptyState();
         _ready = true;
     }
 
@@ -91,7 +146,7 @@ public sealed partial class VideoMattingView : UserControl
 
     private void Reset_Click(object sender, RoutedEventArgs e)
     {
-        ApplyModelPresets();          // 回到当前模型的预设档
+        ApplyModelPresets();
         StabilitySlider.Value = 50;
         UpdateLabels();
         Status("已重置抠图参数");
@@ -134,8 +189,7 @@ public sealed partial class VideoMattingView : UserControl
         BgImageInfo.Visibility = image ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    /// <summary>格式下拉随输出方式切换:换背景只有 MP4;透明通道给 MOV/ProRes 4444 与 WebM/VP9-alpha。
-    /// 选项直接来自 `MattingOutputSpecs.TransparentContainers`(规格表的第一个 = 默认档),不另写一份。</summary>
+    /// <summary>格式下拉随输出方式切换(选项取自规格表,不另写一份)。</summary>
     private void RefreshFormatOptions()
     {
         bool transparent = ModeAlphaRadio.IsChecked == true;
@@ -188,15 +242,12 @@ public sealed partial class VideoMattingView : UserControl
         WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow));
         var files = await picker.PickMultipleFilesAsync();
         if (files == null || files.Count == 0) return;
-        foreach (var f in files)
-            if (!_videos.Contains(f.Path)) _videos.Add(f.Path);
-        RefreshList();
-        Status($"视频抠图:已添加 {_videos.Count} 个视频");
+        AddVideos(files.Select(f => f.Path));
     }
 
-    // ---------- 拖放(照 VideoView 的 DropBorder_* 写法) ----------
-    // 【两个坑都是照抄过来的教训】① e.Handled = true:不标记会被外层容器再处理一次 ⇒ 拖入一次添加两次;
-    // ② 必须 await GetStorageItemsAsync():UI 线程上同步等(Result)会死锁,表现为"拖不进去"。
+    // ---------- 拖放(照 VideoView 的 DropBorder_*,两个坑一并继承) ----------
+    // ① e.Handled = true:不标记会被外层容器再处理一次 ⇒ 拖入一次添加两次;
+    // ② 必须 await GetStorageItemsAsync():UI 线程同步等(Result)会死锁,表现为"拖不进去"。
 
     private void DropArea_DragOver(object sender, DragEventArgs e)
         => e.AcceptedOperation = DataPackageOperation.Copy;
@@ -216,35 +267,96 @@ public sealed partial class VideoMattingView : UserControl
             Status("视频抠图:拖入的文件不是支持的视频格式(mp4/mov/mkv/avi/webm/m4v/wmv/ts)");
             return;
         }
+        AddVideos(files);
+    }
+
+    /// <summary>加入任务列表(去重),并后台生成缩略图。</summary>
+    private void AddVideos(IEnumerable<string> paths)
+    {
         int added = 0;
-        foreach (var p in files)
-            if (!_videos.Contains(p)) { _videos.Add(p); added++; }
-        RefreshList();
-        Status($"视频抠图:拖入 {added} 个视频(共 {_videos.Count} 个)");
+        foreach (var p in paths)
+        {
+            if (_items.Any(i => string.Equals(i.Path, p, StringComparison.OrdinalIgnoreCase))) continue;
+            var item = new MattingItem { Path = p, Name = Path.GetFileName(p) };
+            item.Info = ProbeInfo(p);
+            _items.Add(item);
+            added++;
+            _ = GenerateThumbAsync(item);
+        }
+        RefreshEmptyState();
+        Status(added > 0 ? $"视频抠图:已添加 {added} 个视频(共 {_items.Count} 个)" : "视频抠图:这些视频已经在列表里了");
+    }
+
+    /// <summary>行内第二行的基础信息(分辨率/帧率)。用已有的探测接口,不在这里现跑 ffprobe。</summary>
+    private static string ProbeInfo(string path)
+    {
+        try
+        {
+            string fps = VideoService.ProbeFps(path) ?? "?";
+            return $"帧率 {fps} · 待处理";
+        }
+        catch { return "待处理"; }
+    }
+
+    /// <summary>缩略图(照 VideoView.GenerateThumbAsync):ffmpeg 抽第 0.5 秒一帧到临时目录,
+    /// 读成 BitmapImage 后删临时文件;失败静默(没有缩略图也要能用)。</summary>
+    private async Task GenerateThumbAsync(MattingItem item)
+    {
+        try
+        {
+            var ffmpeg = VideoService.FfmpegPath;
+            if (ffmpeg == null) return;
+            var tmp = Path.Combine(EngineService.TempRoot, $"matting_thumb_{Guid.NewGuid():N}.jpg");
+            await Task.Run(() =>
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = ffmpeg,
+                    Arguments = $"-y -ss 0.5 -i \"{ALHPro.AudioService.FfmpegSafePath(item.Path)}\" -frames:v 1 -vf \"scale=240:-2\" -q:v 3 \"{ALHPro.AudioService.FfmpegSafePath(tmp)}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardError = true,
+                };
+                using var p = System.Diagnostics.Process.Start(psi);
+                if (p == null) return;
+                _ = p.StandardError.ReadToEndAsync();
+                p.WaitForExit();
+            });
+            if (!File.Exists(tmp) || new FileInfo(tmp).Length == 0) return;
+            var bmp = new BitmapImage();
+            using (var fs = new FileStream(tmp, FileMode.Open, FileAccess.Read))
+                await bmp.SetSourceAsync(fs.AsRandomAccessStream());
+            try { File.Delete(tmp); } catch { }
+            item.Thumb = bmp;
+        }
+        catch { }
     }
 
     private void Clear_Click(object sender, RoutedEventArgs e)
     {
         if (_cts != null) return;
-        _videos.Clear();
+        _items.Clear();
         _done.Clear();
-        RefreshList();
+        RefreshEmptyState();
     }
 
     private void Remove_Click(object sender, RoutedEventArgs e)
     {
         if (_cts != null) return;
-        foreach (var item in TaskList.SelectedItems.Cast<ListViewItem>().ToList())
-            if (item.Tag is string path) _videos.Remove(path);
-        RefreshList();
+        foreach (var item in TaskList.SelectedItems.Cast<MattingItem>().ToList()) _items.Remove(item);
+        RefreshEmptyState();
     }
 
     private void Done_Click(object sender, RoutedEventArgs e)
     {
         if (_cts != null) return;
-        foreach (var path in _done.ToList()) _videos.Remove(path);
+        foreach (var p in _done.ToList())
+        {
+            var it = _items.FirstOrDefault(i => i.Path == p);
+            if (it != null) _items.Remove(it);
+        }
         _done.Clear();
-        RefreshList();
+        RefreshEmptyState();
     }
 
     private async void OutDir_Click(object sender, RoutedEventArgs e)
@@ -266,42 +378,22 @@ public sealed partial class VideoMattingView : UserControl
         var file = await picker.PickSingleFileAsync();
         if (file == null) return;
         _bgImage = file.Path;
-        BgImageInfo.Text = System.IO.Path.GetFileName(_bgImage);
+        BgImageInfo.Text = Path.GetFileName(_bgImage);
     }
 
-    // ---------- 任务列表 ----------
-
-    private void RefreshList()
+    private void RefreshEmptyState()
     {
-        _rows.Clear();
-        TaskList.Items.Clear();
-        foreach (var v in _videos)
-        {
-            var item = new ListViewItem { Content = RowText(v, "待处理", -1), Tag = v };
-            _rows[v] = item;
-            TaskList.Items.Add(item);
-        }
-        EmptyHint.Visibility = _videos.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        TaskList.Visibility = _videos.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
-        TaskTitle.Text = _videos.Count == 0 ? "等待任务" : $"任务列表 ({_videos.Count})";
-    }
-
-    private static string RowText(string path, string state, int pct)
-    {
-        string name = System.IO.Path.GetFileName(path);
-        return pct >= 0 ? $"{name}   ·   {state} {pct}%" : $"{name}   ·   {state}";
-    }
-
-    private void SetRow(string path, string state, int pct = -1)
-    {
-        if (_rows.TryGetValue(path, out var item)) item.Content = RowText(path, state, pct);
+        bool empty = _items.Count == 0;
+        EmptyHint.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+        TaskList.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
+        TaskTitle.Text = empty ? "等待任务" : $"任务列表 ({_items.Count})";
     }
 
     // ---------- 开始 / 取消 ----------
 
     private async void Start_Click(object sender, RoutedEventArgs e)
     {
-        if (_videos.Count == 0)
+        if (_items.Count == 0)
         {
             ProgressText.Text = "请先添加视频。";
             Status("视频抠图:请先添加视频");
@@ -313,42 +405,51 @@ public sealed partial class VideoMattingView : UserControl
         _cts = new CancellationTokenSource();
         SetRunning(true);
         var ct = _cts.Token;
-        string current = "";
+        MattingItem? current = null;
         var progress = new Progress<(int pct, string msg)>(p =>
         {
             TaskBar.Value = Math.Clamp(p.pct, 0, 100);
             ProgressText.Text = p.msg;
-            if (current.Length > 0) SetRow(current, "处理中", p.pct);
+            if (current != null)
+            {
+                current.Progress = p.pct;
+                current.Info = $"{ProbeInfo(current.Path).Replace(" · 待处理", "")} · 处理中 {p.pct}%";
+            }
             Status("视频抠图:" + p.msg);
         });
 
         try
         {
-            foreach (var video in _videos.ToList())
+            foreach (var item in _items.ToList())
             {
                 ct.ThrowIfCancellationRequested();
-                current = video;
-                SetRow(video, "处理中", 0);
+                current = item;
+                item.StateText = "处理中"; item.StateBadgeBrush = "#2A6FD6";
+                item.Progress = 1;
                 TaskBar.Value = 0;
-                var req = BuildRequest(video);
+                var req = BuildRequest(item.Path);
                 var result = await Task.Run(() => VideoMattingService.RunAsync(req, progress, ct), ct);
                 TaskBar.Value = 100;
-                SetRow(video, $"完成 · {result.Frames} 帧 / {result.ElapsedSec:0.#} 秒 · {System.IO.Path.GetFileName(result.OutputPath)}");
-                _done.Add(video);
+                item.Progress = 100;
+                item.StateText = "完成"; item.StateBadgeBrush = "#2E7D32";
+                item.DoneItemOpacity = 0.65;
+                item.Info = $"{result.Frames} 帧 · {result.ElapsedSec:0.#} 秒 · {result.Device}";
+                item.OutputInfo = Path.GetFileName(result.OutputPath);
+                _done.Add(item.Path);
                 ProgressText.Text = "完成:" + result.OutputPath;
-                Status($"视频抠图完成:{System.IO.Path.GetFileName(result.OutputPath)} · {result.Device} · {result.ElapsedSec:0.#} 秒");
+                Status($"视频抠图完成:{Path.GetFileName(result.OutputPath)} · {result.Device} · {result.ElapsedSec:0.#} 秒");
                 AppLogger.Info($"视频抠图完成:{result.OutputPath} 帧数={result.Frames} 设备={result.Device} 备注={result.Notes}");
             }
         }
         catch (OperationCanceledException)
         {
-            if (current.Length > 0) SetRow(current, "已取消");
+            if (current != null) { current.StateText = "已取消"; current.StateBadgeBrush = "#8A5A12"; current.Progress = 0; }
             ProgressText.Text = "已取消(临时文件已清理)。";
             Status("视频抠图已取消");
         }
         catch (Exception ex)
         {
-            if (current.Length > 0) SetRow(current, "失败");
+            if (current != null) { current.StateText = "失败"; current.StateBadgeBrush = "#B3261E"; current.Progress = 0; }
             AppLogger.Error($"视频抠图失败 HRESULT=0x{ex.HResult:X8}", ex);
             ProgressText.Text = "处理失败:" + ex.Message;
             Status("视频抠图失败:" + ex.Message);
