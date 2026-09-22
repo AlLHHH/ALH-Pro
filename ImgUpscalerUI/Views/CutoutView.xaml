@@ -61,10 +61,10 @@
                     <TextBlock Text="抠图模型" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="ModelCombo" HorizontalAlignment="Stretch"
                               SelectedIndex="0" SelectionChanged="ParamsCombo_Changed"
-                              ToolTipService.ToolTip="BiRefNet 高精度:2025 年 SOTA,暗光/复杂背景/远景多人效果最好;ISNet 精细边缘经典稳定;U²-Net 轻量快速">
-                        <ComboBoxItem Content="BiRefNet 高精度 (推荐)"/>
+                              ToolTipService.ToolTip="ISNet 精细边缘:边缘/发丝最细,本机 GPU 实测最快(0.4 秒/张);BiRefNet 高精度:2025 年 SOTA,暗光/复杂背景/远景多人判别力强(但本机 DirectML 上跑不动,会回退 CPU 约 5 秒/张);U²-Net 轻量快速">
+                        <ComboBoxItem Content="BiRefNet 高精度"/>
                         <ComboBoxItem Content="BiRefNet 完整版 (复杂背景)"/>
-                        <ComboBoxItem Content="ISNet 精细边缘"/>
+                        <ComboBoxItem Content="ISNet 精细边缘 (推荐)"/>
                         <ComboBoxItem Content="ISNet 动漫"/>
                         <ComboBoxItem Content="U²-Net 通用 (简单背景)"/>
                         <ComboBoxItem Content="U²-Net 轻量 (快速,效果一般)"/>

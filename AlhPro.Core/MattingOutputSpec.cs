@@ -36,8 +36,12 @@ public sealed record MattingOutputSpec(
 /// 透明通道两种容器都装不了 aac ⇒ 必须显式指定(WebM→Opus,MOV→PCM),否则直接失败或丢音轨。</summary>
 public static class MattingOutputSpecs
 {
-    /// <summary>透明通道支持的容器(界面下拉就用这一份,避免"选项叫 ProRes、实现不认")。</summary>
-    public static readonly string[] TransparentContainers = { "webm", "mov" };
+    /// <summary>透明通道支持的容器(界面下拉就用这一份,避免"选项叫 ProRes、实现不认")。
+    /// 【第一个 = 默认档】2026-09-22 用户决定:默认给 **MOV / ProRes 4444**,
+    /// 因为 WebM 的 alpha"认不认"取决于对方的解码器 —— 实测连 ffmpeg 自己的原生 vp9 解码器都会静默丢掉
+    /// alpha(见 <see cref="MattingOutputSpecs"/> 类注释);剪完要用的素材不该赌对方解码器。
+    /// WebM 作为备选保留:体积小、网页/OBS 场景友好。</summary>
+    public static readonly string[] TransparentContainers = { "mov", "webm" };
 
     /// <summary>换背景:普通 mp4、不带 alpha(兼容性优先:微信/抖音/B站/OBS 都能播)。
     /// 编码器交给全局策略(见 <see cref="MattingOutputSpec.UseGlobalEncoder"/>),这里只钉死
@@ -51,27 +55,28 @@ public static class MattingOutputSpecs
             ExtraVideoArgs: "-movflags +faststart",
             UseGlobalEncoder: true);
 
-    /// <summary>透明通道:vp9-alpha(体积小、OBS 与常见剪辑软件认)或 ProRes 4444(画质最高、体积约十倍)。
-    /// 【mp4 必须回落 webm】mp4/mkv 标准容器装不了 alpha,照原样输出会得到"看着是黑底"的假透明。
+    /// <summary>透明通道:ProRes 4444(默认档,剪辑软件/Windows 都认)或 vp9-alpha(体积小、网页/OBS 友好)。
+    /// 【为什么不给 mp4/mkv】标准容器装不了 alpha,照原样输出会得到"看着是黑底"的假透明 ⇒ 一律归到默认档。
     /// 【vp9 的 -auto-alt-ref 0】VP9 的 alt-ref 帧会让部分播放器把 alpha 边渲染成黑边,故关掉。</summary>
     public static MattingOutputSpec ForTransparent(string? container)
         => (container ?? "").Trim().ToLowerInvariant() switch
         {
-            "mov" => new(
-                Container: "mov",
-                VideoCodec: "prores_ks",
-                PixelFormat: "yuva444p10le",
-                AudioArgs: "-c:a pcm_s16le",
-                ExtraVideoArgs: "-profile:v 4444",
-                UseGlobalEncoder: false),
-
-            // "webm" 与任何未知/装不了 alpha 的容器都落这里
-            _ => new(
+            // 只有显式点名 webm 才走 vp9-alpha
+            "webm" => new(
                 Container: "webm",
                 VideoCodec: "libvpx-vp9",
                 PixelFormat: "yuva420p",
                 AudioArgs: "-c:a libopus",
                 ExtraVideoArgs: "-auto-alt-ref 0",
+                UseGlobalEncoder: false),
+
+            // 默认档(含 "mov"/"prores"/空/未知/装不了 alpha 的容器)
+            _ => new(
+                Container: "mov",
+                VideoCodec: "prores_ks",
+                PixelFormat: "yuva444p10le",
+                AudioArgs: "-c:a pcm_s16le",
+                ExtraVideoArgs: "-profile:v 4444",
                 UseGlobalEncoder: false),
         };
 }

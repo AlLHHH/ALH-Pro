@@ -27,7 +27,9 @@ public static class CutoutService
         // 数值来源(交叉验证):rembg 官方 session 源码 + U²-Net/BiRefNet 原版 + 本地 onnx 元数据实测
         // birefnet-lite/birefnet:ImageNet 归一化 + 输出需 sigmoid;isnet-general:mean 0.5/std 1.0;
         // isnet-anime:ImageNet mean/std 1.0,输出名 mask;u2net:ImageNet,输出无固定名(取首个 [1,1,H,W])
-        new("birefnet-lite", "BiRefNet 高精度 (推荐)", "birefnet-lite.onnx",
+        // 【数组顺序别动】界面上设置里存的是【下标】(CutoutSettings.Model),重排会让老用户的选择静默漂移到别的模型;
+        // 默认模型改由 DefaultModelKey 按 key 指定(见下)。
+        new("birefnet-lite", "BiRefNet 高精度", "birefnet-lite.onnx",
             1024, 0.485f, 0.456f, 0.406f, 0.229f, 0.224f, 0.225f,
             FgPreset: 168, BgPreset: 90, FeatherPreset: 2, EdgePreset: 0, MorphPreset: 35,
             "output_image", LogitsOutput: true),
@@ -35,7 +37,7 @@ public static class CutoutService
             1024, 0.485f, 0.456f, 0.406f, 0.229f, 0.224f, 0.225f,
             FgPreset: 176, BgPreset: 96, FeatherPreset: 2, EdgePreset: 0, MorphPreset: 30,
             "output_image", LogitsOutput: true),
-        new("isnet-general-use", "ISNet 精细边缘", "isnet-general-use.onnx",
+        new("isnet-general-use", "ISNet 精细边缘 (推荐)", "isnet-general-use.onnx",
             1024, 0.5f, 0.5f, 0.5f, 1f, 1f, 1f,
             FgPreset: 152, BgPreset: 84, FeatherPreset: 1, EdgePreset: 0, MorphPreset: 28,
             "output_image"),
@@ -53,8 +55,31 @@ public static class CutoutService
             ""),
     };
 
+    /// <summary>抠图页的默认模型(按 key 指定,不靠数组下标 —— 数组顺序一变默认就漂到别的模型上)。
+    ///
+    /// 【为什么从 birefnet-lite 换成 isnet-general-use】2026-09-22 实测(RTX 4060 Laptop,
+    /// 报告 _qa/视频抠图_性能实测_20260922.md):
+    ///   · birefnet-lite(1024²)在本机 DirectML 上图融合失败(8007000E → 887A0005 设备挂起),
+    ///     每次推理都白试一遍再回退 CPU,实测量到的是 CPU 的 4.9~5.4 秒/帧;
+    ///   · isnet-general-use 在干净进程里 GPU 只要 0.40 秒/帧(比 CPU 快 2.6 倍),
+    ///     且软边像素占比 8.13% vs birefnet-lite 1.42%(头发/绒毛这类半透明边缘更细)。
+    /// 用户仍可在下拉里手动选回 BiRefNet(它的判别力在 DML 正常的机器上可能更强)。</summary>
+    public const string DefaultModelKey = "isnet-general-use";
+
+    /// <summary>默认模型在 <see cref="Models"/> 里的下标(界面下拉用)。按 key 查不到时退回 0,不抛。</summary>
+    public static int DefaultModelIndex
+    {
+        get
+        {
+            int i = Array.FindIndex(Models, m => m.Key == DefaultModelKey);
+            return i >= 0 ? i : 0;
+        }
+    }
+
     public static CutoutModel GetModel(string key)
-        => Models.FirstOrDefault(m => m.Key == key) ?? Models[0];
+        => Models.FirstOrDefault(m => m.Key == key)
+           ?? Models.FirstOrDefault(m => m.Key == DefaultModelKey)   // 未知 key → 默认模型(不是数组第 0 个)
+           ?? Models[0];
 
     /// <summary>
     /// AI 抠图主流程。

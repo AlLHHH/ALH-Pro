@@ -16,6 +16,11 @@ namespace AlhPro.Tests;
 /// 双策略漂移,而且用户机器上有硬编时凭空慢几倍。所以换背景一路只钉【容器 + pix_fmt + 音频 + faststart】,
 /// 编码器交给现有策略(UseGlobalEncoder = true)。
 ///
+/// 【默认档为什么是 MOV/ProRes 4444】2026-09-22 用户决定。实测:`ffprobe` 对带 alpha 的 VP9 WebM
+/// 仍报 `yuv420p`(alpha 靠 `alpha_mode=1` 承载),而且 **ffmpeg 自己的原生 vp9 解码器会静默丢掉 alpha**
+/// —— 只有 `-c:v libvpx-vp9` 才解得出来。既然连自家解码器都不可靠,给剪辑软件用的默认档就不该是 WebM;
+/// WebM 作为备选保留(体积小、网页/OBS 友好)。
+///
 /// 【音频为什么两种写法】实测应用惯例(`VideoService.cs:3715`):能用就 `-c:a copy`,源音频不是
 /// aac/mp3/ac3/eac3 才转 aac。而透明通道的两种容器都装不了 aac:WebM 只能 Opus/Vorbis,
 /// MOV 走 PCM —— 照抄 `-c:a copy` 会直接输出失败或丢音轨,所以这一路必须显式指定音频编码。
@@ -66,7 +71,8 @@ public class MattingOutputSpecTests
         Assert.Contains("4444", s.ExtraVideoArgs);    // 不写 profile 会编成 422(丢 alpha)
     }
 
-    /// <summary>mp4/mkv 等容器装不了 alpha:必须回落,不许"静默输出一份没 alpha 的 mp4"。</summary>
+    /// <summary>mp4/mkv 等容器装不了 alpha:必须归到默认档,不许"静默输出一份没 alpha 的 mp4"。
+    /// 默认档 = MOV/ProRes 4444(2026-09-22 用户决定,理由见 MattingOutputSpecs 注释)。</summary>
     [Theory]
     [InlineData("mp4")]
     [InlineData("mkv")]
@@ -74,12 +80,33 @@ public class MattingOutputSpecTests
     [InlineData("")]
     [InlineData("   ")]
     [InlineData(null)]
-    [InlineData("WEBM ")]      // 大小写/空格归一化后仍要认出来
-    public void Unknown_container_falls_back_to_webm_or_is_normalized(string? container)
+    [InlineData("MOV ")]      // 大小写/空格归一化后仍要认出来
+    [InlineData("prores")]    // 别名:界面/文档里叫 ProRes,实现认 prores_ks
+    public void Unsupported_or_default_container_lands_on_mov_prores4444(string? container)
+    {
+        var s = MattingOutputSpecs.ForTransparent(container);
+        Assert.Equal("mov", s.Container);
+        Assert.Equal("prores_ks", s.VideoCodec);
+    }
+
+    /// <summary>显式点名 webm 才走 vp9-alpha(大小写/空格归一化)。</summary>
+    [Theory]
+    [InlineData("webm")]
+    [InlineData("WEBM ")]
+    public void Explicit_webm_goes_to_vp9(string? container)
     {
         var s = MattingOutputSpecs.ForTransparent(container);
         Assert.Equal("webm", s.Container);
-        Assert.Equal("yuva420p", s.PixelFormat);
+        Assert.Equal("libvpx-vp9", s.VideoCodec);
+    }
+
+    /// <summary>默认档(不传容器)必须是 MOV/ProRes 4444 —— 界面不给容器选择时的行为。</summary>
+    [Fact]
+    public void Default_container_is_mov_prores4444()
+    {
+        var s = MattingOutputSpecs.ForTransparent(null);
+        Assert.Equal("mov", s.Container);
+        Assert.Equal(MattingOutputSpecs.TransparentContainers[0], s.Container);   // 下拉第一项 = 默认档
     }
 
     /// <summary>无论输入什么,透明通道一路永远不能返回"装不了 alpha"的组合。</summary>

@@ -62,6 +62,9 @@ public sealed partial class CutoutView : UserControl
         BgSlider.Value = 64;
         FeatherSlider.Value = 0;
         EdgeSlider.Value = 0;
+        // 默认模型按【key】选(不写死下标:XAML 里的 SelectedIndex="0" 只是占位,
+        // 数组顺序一变默认就漂到别的模型上)。已存过偏好的用户在 LoadSettings() 里覆盖它。
+        ModelCombo.SelectedIndex = CutoutService.DefaultModelIndex;
         LoadSettings();
         _suppressEvents = false;   // 恢复完成,此后用户改动才允许写盘
         UpdateOptions();
