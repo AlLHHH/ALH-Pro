@@ -144,13 +144,14 @@ while ($true) {
 
 ## 四、上线前必做清单(逐项打勾)
 
-1. **替换 ICP 备案号(7 个页面都要改)。**
-   每个页面页脚都是这一行(占位符):
-   ```html
-   <p class="icp">©2026 ALH Pro · <a href="https://beian.miit.gov.cn/" rel="nofollow">京ICP备XXXXXXXX号</a></p>
-   ```
-   把 `京ICP备XXXXXXXX号` 换成工信部下发的真实备案号。**备案号必须可见,并按惯例链接到
-   <https://beian.miit.gov.cn/>**。若你所在省份要求同时展示公安联网备案号,按 `index.html` 页脚注释里的写法追加一行。
+1. **~~替换 ICP 备案号~~ → 【2026-09-22 用户裁决:暂不备案,页脚只放版权行】**
+   已核实本站挂在**阿里云 OSS + 阿里云 CDN 的香港节点**(响应头 `x-oss-request-id` / `x-oss-cdn-auth`,
+   CDN 节点 `l2hk7` / `hk39`),域名没有解析到中国大陆境内服务器 ⇒ **按现行规定不需要 ICP 备案**
+   (备案针对的是"境内服务器 + 域名")。所以七个页面页脚现在只写 `©2026 ALH Pro · 保留所有权利`。
+   **没有备案就绝不展示备案号**(包括占位符)——展示假的比不展示更糟。
+   将来什么时候要补:① 把站点迁到国内主机 / 国内 CDN;② 上架应用商店或做经营性内容。
+   补的时候用 `index.html` 页脚注释里留好的模板(ICP 号链 <https://beian.miit.gov.cn/>,
+   公安联网备案号链 <https://beian.mps.gov.cn/>),七个页面一起加。
 2. **核对 `download.html` 的文件名与大小**是否与发布页一致(标准版附件名以 Release 页实际显示为准)。
 3. **确认下载链接可用:** GitHub Releases 页、百度网盘链接与提取码,以及 `models_v1.0.zip` 附件确实存在于某个已发布的 Release 上。
 4. **同步版本号。** 版本号散落在 `index.html`、`download.html`、`changelog.html`、`privacy.html`,以及各页 `<title>` / `meta description` 中 ——
