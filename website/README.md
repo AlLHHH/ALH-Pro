@@ -278,7 +278,52 @@ server {
 
 ---
 
-## 八、内容来源(改文案前先看这里)
+## 八、安全:这个站的风险面与加固清单(2026-09-22 实测)
+
+### 一、实测结论(全部在线上跑过,不是推测)
+
+| 检查项 | 实测结果 |
+|---|---|
+| 有没有可被入侵的后端 | **没有** —— 纯静态(HTML/CSS/JS),无服务器代码、无数据库、无登录、无表单提交 |
+| HTTP 明文访问 | `http://alhpro.cn/` → **301** 跳 HTTPS ✓ |
+| 安全响应头 | 均已设置:`Strict-Transport-Security: max-age=5184000`、`Content-Security-Policy: default-src 'self'; … frame-ancestors 'none'`、`X-Frame-Options: SAMEORIGIN`、`X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`、`Permissions-Policy: geolocation=(), camera=(), …` |
+| XSS 面 | 站点 JS 里**没有** `eval` / `document.write` / `innerHTML`,也**不读** `location.search`/`hash` ⇒ 没有把 URL 内容写进 DOM 的地方 |
+| 第三方脚本供应链 | 全站**零外部依赖**:页面里的外部域名全是**超链接**(GitHub / 百度网盘 / 工信部 / 许可页),没有外链脚本、字体、CDN |
+| 目录列举 | `?list-type=2`、`?prefix=` 等一律返回首页,**没有桶列举** ✓ |
+| 敏感文件 | `.git/config`、`.env`、`README.md`、`package.json`、`*.zip`、`*.bak`、`*.map`、`phpinfo.php`、`web.config` **全部 404** ✓ |
+| AccessKey 泄露 | 站点文件 + 仓库根脚本/文档 + OSS 上传目录(31 个文件)里**没有** `LTAI…` 开头的 AK,也没有 `AccessKeySecret` 字样 ✓ |
+| 源站能不能被直连(绕过 CDN) | `alhpro.oss-cn-hongkong.aliyuncs.com` → **403 拒绝匿名访问** ✓(`alh-pro`、`alhprocn` 两个名字不存在 ⇒ 404) |
+
+> 一句话:静态站没有"注入/登录/上传"这类经典入口,真正的风险不在"被黑",而在**配置**与**账单**。
+
+### 二、真正的三类风险
+
+1. **被刷流量 / 账单暴涨(最常见)** —— 别人把站上的图片/CSS 嵌到自己页面,或用脚本狂刷 CDN。
+   防护:**CDN 开「防盗链(Referer 白名单)」+ 设「用量封顶/告警」**(后者最重要)。
+2. **桶权限被人写** —— 只有当 OSS 桶权限被设成「公共读写」时,别人才可能往你桶里传文件(挂黄赌页面、篡改官网)。
+   防护:桶权限保持「**公共读**」或「**私有**」,**绝不用「公共读写」**。
+3. **被 DDoS** —— 小站几乎不会被盯上,且 CDN 有基础吸收能力;真被打,损失仍然是流量费 ⇒ 回到第 1 条的用量封顶。
+
+### 三、每个季度顺手自查一遍(5 分钟)
+
+- [ ] OSS 桶「读写权限」= 公共读 / 私有(**不是**公共读写)
+- [ ] CDN「防盗链」开着(Referer 白名单含 `*.alhpro.cn`)
+- [ ] CDN「用量封顶」+ 告警配好(日/月流量上限各一个)
+- [ ] AK 用**RAM 子账号**、只授权这一个桶;若 AK 曾出现在前端/截图/聊天里,立刻禁用重建
+- [ ] 域名:转移锁已开、自动续费已开
+- [ ] CDN 证书:有效期充足、开了到期提醒/自动续签
+- [ ] 站点文件有备份(GitHub 仓库一份 ✓,建议再打个 zip 存网盘)
+- [ ] `http://alhpro.cn/` 仍 301 到 HTTPS;首页响应头里 HSTS/CSP 仍在
+
+### 四、已知的一个小瑕疵(不是安全问题,是配置特性)
+
+`https://alhpro.cn/任意路径/` 都返回 **200 + 首页内容**(实测 `/admin/` → 200,而 `/admin`、`/admin/index.html` → 404)——
+这是 OSS 静态托管的"子目录首页"行为。**没有任何东西被暴露**;唯一影响是搜索引擎理论上会把这类 URL 当重复内容收录。
+可选修法:CDN 加一条重定向规则 —— 路径以 `/` 结尾且不等于 `/` 时 301 到 `/`。
+
+---
+
+## 九、内容来源(改文案前先看这里)
 
 本目录所有事实性内容都来自仓库内的既有文档,**不要凭印象新增数据或承诺**:
 
