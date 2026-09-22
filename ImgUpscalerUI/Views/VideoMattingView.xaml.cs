@@ -354,6 +354,17 @@ public sealed partial class VideoMattingView : UserControl
         RefreshEmptyState();
     }
 
+    /// <summary>键盘删除(照视频页 VideoList_KeyDown 的惯例):Delete / Backspace 删掉选中项,
+    /// 与「删除选中」按钮同一条逻辑(处理中不解锁)。</summary>
+    private void TaskList_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (_cts != null) return;
+        if (e.Key is not (Windows.System.VirtualKey.Delete or Windows.System.VirtualKey.Back)) return;
+        foreach (var item in TaskList.SelectedItems.Cast<MattingItem>().ToList()) _items.Remove(item);
+        RefreshEmptyState();
+        e.Handled = true;
+    }
+
     private void Remove_Click(object sender, RoutedEventArgs e)
     {
         if (_cts != null) return;

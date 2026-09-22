@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8" ?>
+﻿<?xml version="1.0" encoding="UTF-8" ?>
 <UserControl
     x:Class="ALHPro.Views.VideoMattingView"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -243,6 +243,7 @@
                 <Grid Grid.Row="2" Background="Transparent" AllowDrop="True"
                       DragOver="DropArea_DragOver" Drop="DropArea_Drop">
                     <ListView x:Name="TaskList" SelectionMode="Multiple" SelectionChanged="TaskList_SelectionChanged"
+                              KeyDown="TaskList_KeyDown"
                               IsItemClickEnabled="True" CanDragItems="True" CanReorderItems="True"
                               Background="Transparent" BorderThickness="0" AllowDrop="True"
                               DragOver="DropArea_DragOver" Drop="DropArea_Drop"
