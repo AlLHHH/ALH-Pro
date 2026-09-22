@@ -1,4 +1,4 @@
-﻿// EngineService.cs — 调用放大引擎的后台服务
+// EngineService.cs — 调用放大引擎的后台服务
 // 支持:模型/GPU 选择、实时进度解析(引擎 stdout 中的 "xx%")、取消(杀进程)、区域放大(先裁剪再放大)
 using System;
 using System.Diagnostics;
@@ -298,6 +298,10 @@ public static partial class EngineService
     public static async Task<bool> EnsureAnime4kProbeAsync(CancellationToken ct = default)
     {
         lock (_anime4kLock) { if (_anime4kOk.HasValue) return _anime4kOk.Value; }
+        // 【2026-09-23】探测之前先定"用哪台 Vulkan 设备"(自动检测,一次/会话)。
+        // 顺序不能反:探测与正式滤镜必须用**同一台设备**;先探后选就会出现"探测在 A 卡上通过、
+        // 正式滤镜在 B 卡(核显)上挂死"这种最难查的组合。
+        try { await EnsureAnime4kVulkanDeviceAsync(ct).ConfigureAwait(false); } catch { }
         // 【自审修正 · 2026-09-21】失败要**再试一次**再下结论:实测出现过"同一条命令这次失败、下次就成功"的瞬时故障
         //   (libplacebo 初始化受 GPU 当时状态影响)。原实现把瞬时失败缓存一整个会话 ⇒ 那一次之后就再也用不上 Anime4K ✗。
         bool ok = await ProbeAnime4kOnceAsync(ct).ConfigureAwait(false);
@@ -317,22 +321,111 @@ public static partial class EngineService
     }
 
     /// <summary>跑一次探测(不含缓存与日志结论)。见 <see cref="EnsureAnime4kProbeAsync"/> 的说明。</summary>
-    /// <summary>Anime4K 的 Vulkan 设备参数(测试钩子用)。
+    /// <summary>Anime4K 的 Vulkan 设备参数。
     /// 【为什么要它】双显卡机(核显+独显)上 libplacebo 可能把 Vulkan 设备选到核显而卡住或失败;
     /// libplacebo 滤镜自己没有选设备的选项(只有 inherit_device,已用 ffmpeg -h filter=libplacebo 查实),
-    /// 必须走 ffmpeg 的设备初始化。索引不能凭猜(选错就落到核显),所以给作者一个钩子:
-    /// 设 ALH_FORCE_ANIME4K_DEVICE=&lt;n&gt; 后探测会用该索引建 Vulkan 设备,并把设备参数连同完整命令写进日志,
-    /// 这样在那台机器上可以逐个索引试,不必每试一次等新构建。默认返回空串(行为与本改动前逐字一致)。</summary>
+    /// 必须走 ffmpeg 的设备初始化。
+    /// 【2026-09-23 收口:从"测试钩子"升级为"自动选择"】
+    ///   ① 环境变量 `ALH_FORCE_ANIME4K_DEVICE=&lt;n&gt;`(作者/用户手动指定)优先级最高 —— 它既是排查手段,
+    ///      也是自动选错时的逃生口;设了它会把**设备枚举结果**一起写进日志,一眼看出 n 对应哪张卡。
+    ///   ② 没设钩子时,用 <see cref="EnsureAnime4kVulkanDeviceAsync"/> 自动检测出来的索引(缓存见那里)。
+    ///   ③ 都没有 ⇒ 空串(与改动前逐字一致)。
+    /// 本机实测(单卡 4060):自动检测认为"只有一台设备"⇒ 返回空串 ⇒ 本机行为**一字未变**。</summary>
     private static string Anime4kDeviceArgs()
     {
         try
         {
             var forced = Environment.GetEnvironmentVariable("ALH_FORCE_ANIME4K_DEVICE");
-            if (string.IsNullOrWhiteSpace(forced)) return "";
-            AppLogger.Info("[探测] Anime4K 按测试钩子指定 Vulkan 设备索引:" + forced.Trim());
-            return "-init_hw_device vulkan=alh:" + forced.Trim() + " -filter_hw_device alh ";
+            if (!string.IsNullOrWhiteSpace(forced))
+            {
+                var f = forced.Trim();
+                AppLogger.Info("[探测] Anime4K 按**手动钩子** ALH_FORCE_ANIME4K_DEVICE=" + f + " 指定 Vulkan 设备索引"
+                    + "(可用索引见紧随其后的枚举结果;索引不存在时 ffmpeg 会直接报 Unable to find device with index N)");
+                return "-init_hw_device vulkan=alh:" + f + " -filter_hw_device alh ";
+            }
+            int? auto = Anime4kVulkanDeviceIndex;
+            if (auto.HasValue) return AlhPro.Core.Anime4kVulkanDevice.DeviceArgs(auto.Value);
+            return "";
         }
         catch { return ""; }
+    }
+
+    // ===== 【2026-09-23 · Anime4K 收口】自动选择 Vulkan 设备 =====
+    private static int? _anime4kDevIdx;            // null = 还没检测(或检测后决定"不指定")
+    private static bool _anime4kDevDone;           // 检测过就不再重复跑 ffmpeg
+    private static readonly object _anime4kDevLock = new();
+
+    /// <summary>自动检测出来的 Anime4K Vulkan 设备索引(null = 不指定,交给 ffmpeg 默认)。
+    /// 【供给方是 VideoService】它要把同一个索引拼进**正式合帧命令**(见 VideoService 里 muxBase 那行)——
+    /// 只把设备选对用在探测上等于没修:探测过、正式滤镜又回到"听天由命"。</summary>
+    public static int? Anime4kVulkanDeviceIndex
+    {
+        get { lock (_anime4kDevLock) return _anime4kDevIdx; }
+    }
+
+    /// <summary>枚举本机 Vulkan 设备并挑一台给 Anime4K 用(一次/会话)。
+    /// 【怎么枚举】ffmpeg 没有"只列设备"的开关,只能用 `-init_hw_device vulkan=alh` + 一条 lavfi 空源
+    /// (本机实测 443ms,不碰素材、不写文件)。`-v verbose` 会把 `GPU listing:` 整段打出来 ——
+    /// 于是"索引 ↔ 设备名"是**读出来的事实**而不是试出来的。
+    /// 【策略】见 AlhPro.Core.Anime4kVulkanDevice(单设备不指定 / 按界面选的卡 / 优先独显 NVIDIA / 分不出来就不猜)。
+    /// 【失败怎么办】任何异常都只写日志、返回 null(退回 ffmpeg 默认)—— 这一步绝不能挡住建滤镜。</summary>
+    public static async Task<int?> EnsureAnime4kVulkanDeviceAsync(CancellationToken ct = default)
+    {
+        lock (_anime4kDevLock) { if (_anime4kDevDone) return _anime4kDevIdx; }
+        int? picked = null;
+        try
+        {
+            var ff = VideoService.FfmpegPath;
+            if (string.IsNullOrEmpty(ff) || !File.Exists(ff))
+            {
+                AppLogger.Warn("[探测] Anime4K 设备枚举跳过:找不到 ffmpeg");
+            }
+            else
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = ff,
+                    Arguments = AlhPro.Core.Anime4kVulkanDevice.ListDevicesArgs,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    WorkingDirectory = Path.GetDirectoryName(ff) ?? ".",
+                };
+                using var pr = System.Diagnostics.Process.Start(psi);
+                if (pr != null)
+                {
+                    var errTask = pr.StandardError.ReadToEndAsync();   // 这条列表走 stderr
+                    pr.StandardOutput.ReadToEnd();
+                    if (!pr.WaitForExit(20000))
+                    {
+                        try { pr.Kill(entireProcessTree: true); } catch { }
+                        AppLogger.Warn("[探测] Anime4K 设备枚举超时(20 秒)——按默认设备继续");
+                    }
+                    else
+                    {
+                        var log = await errTask.ConfigureAwait(false) ?? "";
+                        var devices = AlhPro.Core.Anime4kVulkanDevice.ParseGpuListing(log);
+                        // 【谁优先】界面/设置里正在用的那张卡(AppSettings.GpuName 与 GpuIndex 是一起存的):
+                        // 处理用哪张卡、滤镜就该用哪张卡,不能各选各的。
+                        string? prefer = null;
+                        try { prefer = AppSettings.GpuName; } catch { }
+                        picked = AlhPro.Core.Anime4kVulkanDevice.Pick(devices, prefer);
+                        AppLogger.Info(AlhPro.Core.Anime4kVulkanDevice.Describe(devices, picked, prefer, "自动检测"));
+                        if (picked.HasValue)
+                            AppLogger.Info($"[探测] Anime4K 将使用 Vulkan 设备索引 {picked.Value}"
+                                + $"(参数:{AlhPro.Core.Anime4kVulkanDevice.DeviceArgs(picked.Value).Trim()};"
+                                + "本条同样会拼进正式合帧命令,保证探测与正式滤镜同一张卡)");
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn("[探测] Anime4K 设备枚举异常,按默认设备继续:" + ex.GetType().Name + ": " + ex.Message);
+        }
+        lock (_anime4kDevLock) { _anime4kDevIdx = picked; _anime4kDevDone = true; }
+        return picked;
     }
 
     private static async Task<bool> ProbeAnime4kOnceAsync(CancellationToken ct)

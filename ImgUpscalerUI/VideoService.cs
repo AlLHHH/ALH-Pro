@@ -1,4 +1,4 @@
-﻿// VideoService.cs — 视频超分 + 补帧
+// VideoService.cs — 视频超分 + 补帧
 // 原理:ffmpeg 拆帧 → 逐帧图片超分 → (可选) RIFE 补帧 → ffmpeg 合帧+音频
 using System;
 using System.Diagnostics;
@@ -3741,7 +3741,28 @@ public static class VideoService
             // ⚠ 第 0 个输入是 JPEG 序列(无元数据),真正的源在第【1】个输入上 ⇒ 必须写 1 ✔
             // 风险极低:MP4/MKV 都支持;源没有元数据/章节时是空操作 ✔
             var muxArgs = $"{videoMap} -map_metadata 1 -map_chapters 1 {audioPart} {encArgs} {vfArg}{fastFlag} \"{outTmp}\"";
-            var muxBase = $"-y {muxInput} {trimArgs} -i \"{inputVideo}\" ";
+            // 【2026-09-23 Anime4K 收口】1x 修复档要把"用哪台 Vulkan 设备"一起带给合帧命令 ——
+            // 只把设备选对用在探测上等于没修(探测在独显上过、正式滤镜又跑回核显,那台 5060 的症状就还在)。
+            // 这两个是 ffmpeg 的**全局**选项,必须放在第一个 `-i` 之前(所以拼在 muxBase 最前面,而不是 vfArg 里)。
+            // 取值来自 EngineService.Anime4kVulkanDeviceIndex:① 手动钩子 ALH_FORCE_ANIME4K_DEVICE 优先;
+            // ② 自动检测(枚举 ffmpeg 的 Vulkan 设备表 → 按界面选的卡名 / 优先独显 NVIDIA);③ 都没有 = 空串
+            // (本机单卡就是这种:行为与改动前逐字一致)。索引写错会立刻硬失败(实测 exit -19),不会静默跑错卡。
+            string animeDevArgs = "";
+            if (anime4k1x)
+            {
+                try
+                {
+                    var forced = Environment.GetEnvironmentVariable("ALH_FORCE_ANIME4K_DEVICE");
+                    animeDevArgs = !string.IsNullOrWhiteSpace(forced)
+                        ? AlhPro.Core.Anime4kVulkanDevice.DeviceArgs(int.Parse(forced.Trim(), System.Globalization.CultureInfo.InvariantCulture))
+                        : (EngineService.Anime4kVulkanDeviceIndex is int ai ? AlhPro.Core.Anime4kVulkanDevice.DeviceArgs(ai) : "");
+                    if (animeDevArgs.Length > 0)
+                        AppLogger.Info("1x 修复:合帧命令带上 Vulkan 设备参数 " + animeDevArgs.Trim()
+                            + "(与探测同一张卡;来源:" + (string.IsNullOrWhiteSpace(forced) ? "自动检测" : "手动钩子") + ")");
+                }
+                catch (Exception ex) { AppLogger.Warn("1x 修复:解析 Vulkan 设备索引失败,按默认设备继续:" + ex.Message); }
+            }
+            var muxBase = $"-y {animeDevArgs}{muxInput} {trimArgs} -i \"{inputVideo}\" ";
             // 编码阶段整体进度 96→100 随 ffmpeg 编码帧数推进(否则卡 96%,结尾预计时间虚高失真)
             int encTotal = Math.Max(1, Directory.EnumerateFiles(framesFinal, "*.jpg").Count());
             if (pauseWait != null) await pauseWait();   // 暂停:编码开始前停(已生成的帧不浪费)
@@ -5326,6 +5347,21 @@ public static class VideoService
         if (string.IsNullOrEmpty(chain)) return (-1, -1);
         string hw = hwJpegDecode ? "-c:v mjpeg_cuvid " : "";
         string fpsArg = fps.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture);
+        // 【2026-09-23 Anime4K 收口】抽样链里如果挂着 Anime4K(libplacebo),它同样要指定 Vulkan 设备 ——
+        // 否则"抽样的滤镜路径 ≠ 真实合帧的滤镜路径"(最轻则抽样失败、最重则在核显上抽出一堆假耗时)。
+        // 设备参数是全局选项 ⇒ 必须放在第一个 `-i` 之前,不能塞进 -vf。
+        string devArgs = "";
+        try
+        {
+            if (chain.Contains("libplacebo", StringComparison.OrdinalIgnoreCase))
+            {
+                var forced = Environment.GetEnvironmentVariable("ALH_FORCE_ANIME4K_DEVICE");
+                devArgs = !string.IsNullOrWhiteSpace(forced)
+                    ? AlhPro.Core.Anime4kVulkanDevice.DeviceArgs(int.Parse(forced.Trim(), System.Globalization.CultureInfo.InvariantCulture))
+                    : (EngineService.Anime4kVulkanDeviceIndex is int ai ? AlhPro.Core.Anime4kVulkanDevice.DeviceArgs(ai) : "");
+            }
+        }
+        catch { devArgs = ""; }
         async Task<double> Measure(string vf)
         {
             try
@@ -5333,7 +5369,7 @@ public static class VideoService
                 const int n = 6;
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 await RunAsync(ffmpegExe,
-                    $"-nostdin -y -v error {hw}-framerate {fpsArg} " +
+                    $"-nostdin -y -v error {devArgs}{hw}-framerate {fpsArg} " +
                     $"-start_number 1 -i \"{framePattern}\" -frames:v {n}{vf} -f null -",
                     null, ct);
                 sw.Stop();
