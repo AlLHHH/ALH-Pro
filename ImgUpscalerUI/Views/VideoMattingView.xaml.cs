@@ -84,6 +84,8 @@ public sealed partial class VideoMattingView : UserControl
     private string _outDir = "";
     private string _bgImage = "";
     private CancellationTokenSource? _cts;
+    /// <summary>上一条已写进日志的进度文案(避免同一帧被重复上报两次时写两遍)。</summary>
+    private string _lastLogged = "";
 
     /// <summary>XAML 是否已解析完。解析期 IsChecked="True" 就会触发 Checked,那时其它控件还没建出来
     /// (真机踩到过:整页加载失败,报 Failed to assign to property 'ToggleButton.IsChecked')。</summary>
@@ -436,6 +438,7 @@ public sealed partial class VideoMattingView : UserControl
         {
             TaskBar.Value = Math.Clamp(p.pct, 0, 100);
             ProgressText.Text = p.msg;
+            if (p.msg != _lastLogged) { _lastLogged = p.msg; Log(p.msg); }   // 逐帧记录(同一帧的重复上报不重复写)
             if (current != null)
             {
                 current.Progress = p.pct;
@@ -537,7 +540,14 @@ public sealed partial class VideoMattingView : UserControl
     {
         try
         {
-            VideoLogText.Text += (VideoLogText.Text.Length == 0 || VideoLogText.Text == "日志:等待任务..." ? "" : "\n") + line;
+            var text = VideoLogText.Text;
+            if (text == "日志:等待任务...") text = "";
+            text = text.Length == 0 ? line : text + "\n" + line;
+            // 【只留最近 500 行】逐帧记录意味着长视频会写几千行,TextBox 全留着会越写越卡;
+            // 日志的价值在"最近发生了什么",所以从头部裁掉(与视频页滚动框的观感一致)。
+            var lines = text.Split('\n');
+            if (lines.Length > 500) text = string.Join("\n", lines, lines.Length - 500, 500);
+            VideoLogText.Text = text;
             VideoLogScroll.ChangeView(null, VideoLogScroll.ScrollableHeight, null, true);
         }
         catch { }
