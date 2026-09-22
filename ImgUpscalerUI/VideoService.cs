@@ -5944,7 +5944,12 @@ public static class VideoService
     /// 【用途】预览页红字提示用 —— 让用户**在界面上**就知道"HDR 素材会被转成 SDR(有损)",而不是只在日志里 ✗
     /// 【口径】由 ProbeHdrToSdrAsync 在探测时写入,界面只读,不额外探测文件 ✔</summary>
     public static string? LastSourceColorSummary { get; private set; }
-    private static async Task<(string? desc, string? vf)> ProbeHdrToSdrAsync(string video, CancellationToken ct)
+    /// <summary>探测是否需要 HDR→SDR 色调映射,并返回要插进拆帧滤镜链的 vf;顺带在发现"非法色彩标记"时
+    /// 写入 <see cref="InputColorOverride"/>(拆帧命令要在 -i 之前插入颜色覆盖,否则 mjpeg 报 Invalid color space、0 帧)。
+    /// 【视频抠图也要用它】internal 开放给同程序集的 `VideoMattingService`:直接调 `ExtractFramesCoreAsync`
+    /// 而跳过本探测,就会丢掉 HDR 映射与非法标记兜底这两层处理 —— 那不是"少一个功能",是拆帧可能整批失败。
+    /// 调用顺序必须是:本探测 → 用返回的 vf 拼拆帧 vf → `ExtractFramesCoreAsync`。</summary>
+    internal static async Task<(string? desc, string? vf)> ProbeHdrToSdrAsync(string video, CancellationToken ct)
     {
         try
         {
@@ -6057,7 +6062,13 @@ public static class VideoService
     /// 在输入前加 `-color_primaries bt709 -color_trc bt709 -colorspace bt709` 后 **exit 0 / 120 帧全出** ✓。</summary>
     private static string InputColorOverride = "";
 
-    private static async Task<int> ExtractFramesCoreAsync(string ffmpeg, string inputVideo, string trimArgs,
+    /// <summary>拆帧到 `framesDir`(JPG,yuvj420p),返回帧数。含硬解回退、看门狗、阶段进度上报。
+    /// 【internal 开放给视频抠图】`VideoMattingService` 复用这一条,而不是自己拼 ffmpeg:
+    /// 它已经处理了 HDR→SDR 色调映射、非法色彩标记兜底(见 <see cref="ProbeHdrToSdrAsync"/>)、
+    /// 硬解坏编码表、进程收不回来时"不回退重跑"这些坑 —— 重写一份就是把这些坑重新踩一遍。
+    /// 【前置条件】调用前必须先跑 <see cref="ProbeHdrToSdrAsync"/>(它会写 `InputColorOverride`),
+    /// 并把返回的色调映射 vf 拼进 `vfExpr`。</summary>
+    internal static async Task<int> ExtractFramesCoreAsync(string ffmpeg, string inputVideo, string trimArgs,
         string vfExpr, string framesDir, IProgress<(int pct, string msg)>? progress, CancellationToken ct,
         int origCountEst)
     {
