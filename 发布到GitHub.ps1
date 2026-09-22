@@ -100,7 +100,7 @@ $jsonHdr = 'Accept: application/vnd.github+json'
 function ApiJson($method, $url, $jsonBody) {
     $tmp = Join-Path $env:TEMP 'alh_relbody.json'
     if ($jsonBody) { [IO.File]::WriteAllText($tmp, $jsonBody, (New-Object System.Text.UTF8Encoding($false))) }
-    $args = @('-sS', '-X', $method, '-H', $authHdr, '-H', $uaHdr, '-H', $jsonHdr,
+    $args = @('-sS', '--ssl-no-revoke', '-X', $method, '-H', $authHdr, '-H', $uaHdr, '-H', $jsonHdr,
               '-H', 'Content-Type: application/json', '--max-time', '60', '-w', "`n%{http_code}", $url)
     if ($jsonBody) { $args += @('--data-binary', "@$tmp") }
     # 【为什么包一层】$ErrorActionPreference='Stop' 时,curl 连不上会在 stderr 上抛终止错误,
@@ -155,7 +155,7 @@ function UploadAsset($path) {
     Say ("   上传 {0}({1:N1} MB)…" -f $name, ($item.Length / 1MB))
     $url = "https://uploads.github.com/repos/$Owner/$Repo/releases/$releaseId/assets?name=$name"
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    $res = & curl.exe -sS -X POST -H $authHdr -H $uaHdr -H 'Content-Type: application/octet-stream' `
+    $res = & curl.exe -sS --ssl-no-revoke -X POST -H $authHdr -H $uaHdr -H 'Content-Type: application/octet-stream' `
         --retry 3 --retry-delay 5 --max-time 0 --data-binary "@$($item.FullName)" `
         -w "`n%{http_code}" $url 2>&1
     $sw.Stop()
@@ -182,10 +182,14 @@ if ($WithModelPack) {
 # ===== ⑥ 校验:附件真的能下载吗 =====
 Say '== 校验附件 =='
 $after = ((ApiJson 'GET' "$apiBase/releases/$releaseId/assets" $null).json | ConvertFrom-Json)
+if (-not $after) { Fail 'Release 上一个附件都没有(上传没成功 —— 常见原因:上传中途断开,占位附件会被 GitHub 清掉)' }
 foreach ($a in $after) {
-    $code = (& curl.exe -sS -o NUL -I -L --max-time 30 -w '%{http_code}' $a.browser_download_url 2>&1) | Out-String
-    $code = $code.Trim()
-    Say ("   {0,-32} {1,10:N0} 字节  HTTP {2}" -f $a.name, $a.size, $code)
+    # 【必须 --ssl-no-revoke】本机(国内直连)证书吊销列表查不到 ⇒ 不带这个开关 curl 会 (35) CRYPT_E_NO_REVOCATION_CHECK
+    $prevEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $code = (& curl.exe -sS --ssl-no-revoke -o NUL -I -L --max-time 60 -w '%{http_code}' $a.browser_download_url 2>&1 | Out-String).Trim() }
+    catch { $code = 'ERR' }
+    finally { $ErrorActionPreference = $prevEap }
+    Say ("   {0,-32} {1,13:N0} 字节  state={2}  HTTP {3}" -f $a.name, $a.size, $a.state, $code)
 }
 Say ''
 Ok "发布完成:https://github.com/$Owner/$Repo/releases/tag/$tag"
