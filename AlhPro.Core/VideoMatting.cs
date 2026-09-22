@@ -138,4 +138,106 @@ public static class VideoMatting
             }
         }
     }
+
+    /// <summary>这一帧是否像场景切换(逐像素灰度差均值 ≥ 阈值)。
+    ///
+    /// 【为什么要它】时域滤波是"有记忆"的:切镜后如果继续掺上一帧的 alpha,新镜头会挂着旧镜头的形状
+    /// (可见鬼影)✗。所以调用方在每帧滤波前先问一句"这是不是切点",是就 Reset。
+    ///
+    /// 【为什么用手写帧差而不是接 SceneCutJudge】那套是给"转场检测"用的重判据(带直方图/阈值地图,
+    /// 参数是给整段视频定标的);这里只要一个够用的"该不该重置记忆"信号,而且必须在 Core 里可单测、
+    /// 不依赖 UI 设置。默认阈值 25 与 `SceneCutOptions` 的默认帧差阈值同口径,免得两边不一致。
+    /// </summary>
+    public static bool LooksLikeSceneCut(byte[] grayPrev, byte[] grayCur, double meanDiffThreshold = 25.0)
+    {
+        if (grayPrev == null || grayCur == null) return false;
+        int n = Math.Min(grayPrev.Length, grayCur.Length);
+        if (n == 0) return false;
+        long sum = 0;
+        for (int i = 0; i < n; i++) sum += Math.Abs(grayCur[i] - grayPrev[i]);
+        return sum / (double)n >= meanDiffThreshold;
+    }
+}
+
+/// <summary>alpha 的时域滤波(治"逐帧独立推理导致的边缘闪烁/呼吸")。
+///
+/// 三个机制(见 docs/2026-09-22-video-matting.md §五):
+///   ① 帧差门控的 EMA:静止区多平滑、真运动区少平滑 ⇒ 稳但不拖影;
+///   ② 切点重置:调用方用 <see cref="VideoMatting.LooksLikeSceneCut"/> 判断后调 <see cref="Reset"/>;
+///   ③ 非过渡带直通:实心/全透明像素直接取当前帧 —— 这是"不拖影"的关键,鬼影永远出现在这两类区域。
+///
+/// 【为什么用"帧差"当门控而不是光流】光流要额外模型与算力,而这里只需要区分"抖动"(值在动但形状没动)
+/// 与"真运动"(形状真的变了)。帧差在过渡带上足够表达这件事,而且零依赖、可单测。
+///
+/// 【为什么 k 有 0.9 的上限】若允许 1.0(完全不动),静止序列会永久卡在第一次的值上,
+/// 之后真运动也拉不回来(死住)。留 10% 的跟随性 = 最坏情况几十帧内跟到位,而不是永不跟。
+/// </summary>
+public sealed class AlphaTemporalFilter
+{
+    private readonly float _k;        // 平滑强度:0=不平滑,趋近 0.9=最强
+    private readonly int _n;
+    private float[]? _prev;           // 上一帧的滤波结果(记忆)
+    private float[]? _prevCur;        // 上一帧的原始输入(只为算帧差)
+    private bool _hasHistory;
+
+    /// <param name="stability">稳定档 0~100(界面滑条;设计默认 50)。</param>
+    public AlphaTemporalFilter(int stability, int w, int h)
+    {
+        _k = Math.Clamp(stability, 0, 100) / 100f * MaxBlend;
+        _n = Math.Max(1, w * h);
+    }
+
+    /// <summary>平滑上限(0~1 之间的"最多掺多少旧值")。取 0.9 而不是 1.0,理由见类注释。
+    /// 【为什么是 0.9 这个数】定标依据:静止噪声场景(stability=80)要把 8 个独立噪声像素的
+    /// 残余极差压到 0.10 以下,而"真运动"场景又必须在 1 帧内跟上大半 ——
+    /// 实测档位见 AlphaTemporalFilterTests(两条判据同时成立才放行)。</summary>
+    private const float MaxBlend = 0.9f;
+
+    /// <summary>帧差门控系数:帧差 × 它 = "跟手程度"。越大越跟手(越不抹运动)。
+    /// 取 3.5 的定标依据同 <see cref="MaxBlend"/>:静止抖动(帧差 ~0.07)门控弱、运动(帧差 ≥0.29)门控接近 1。</summary>
+    private const float GateGain = 3.5f;
+
+    /// <summary>清空历史(切点、新素材、换参数时调用)。</summary>
+    public void Reset() { _hasHistory = false; _prev = null; _prevCur = null; }
+
+    /// <summary>原地滤波一帧 alpha(长度需 ≥ 构造时的 w*h;不足则忽略、不改历史)。</summary>
+    public void Push(float[] alpha)
+    {
+        if (alpha == null || alpha.Length < _n) return;
+
+        // stability=0 ⇒ 完全不平滑,同时把记忆丢掉(下次开滑条时不该继承旧画面)
+        if (_k <= 0f) { Reset(); return; }
+
+        if (!_hasHistory || _prev == null || _prevCur == null)
+        {
+            _prev = new float[_n]; Array.Copy(alpha, _prev, _n);
+            _prevCur = new float[_n]; Array.Copy(alpha, _prevCur, _n);
+            _hasHistory = true;
+            return;   // 第一帧原样采用(没有可比的历史)
+        }
+
+        for (int i = 0; i < _n; i++)
+        {
+            float cur = alpha[i], prev = _prev[i];
+
+            // ③ 实心/全透明区直通:既避免"实心被慢慢衰减"拖出尾巴,也避免"透明被慢慢填上"粘住背景
+            if (prev <= 0.001f || prev >= 0.999f || cur <= 0.001f || cur >= 0.999f)
+            {
+                alpha[i] = cur;
+                _prev[i] = cur;
+                _prevCur![i] = cur;
+                continue;
+            }
+
+            // ① 帧差门控:差得越多越"跟手"(运动区少平滑)
+            float diff = Math.Abs(cur - _prevCur![i]);
+            float gate = Math.Clamp(diff * GateGain, 0f, 1f);
+            float w = _k * (1f - gate);
+
+            float blended = prev + (cur - prev) * (1f - w);
+            alpha[i] = blended;
+            _prev[i] = blended;
+            _prevCur[i] = cur;
+        }
+    }
 }
