@@ -5100,21 +5100,23 @@ public sealed partial class VideoView : UserControl
     // 病因:进度条拖动/时间线擦洗时**每个 ValueChanged / PointerMoved 都发一次 seek**。
     //   MediaPlayer 的一次定位在 4K/8K 上要几十~几百毫秒(要回关键帧重解码),当事件以每秒几十次涌来时,
     //   请求会排成一串 → 界面看着"不跟手",偶尔还把管线堵住(表现为"卡住/不稳定")。
-    // 做法:拖动期间只记下**最新目标**,由一个 ~120ms 的小定时器把最新那一次落地(合并掉中间的);
+    // 做法:拖动期间只记下**最新目标**,由一个 ~110ms 的小定时器把最新那一次落地(合并掉中间的);
     //   松手/单击则立即落地。拖动时画面依旧跟着走(≈8 次/秒),但不再制造 seek 风暴。
-    private Windows.Media.Playback.MediaPlayer? _seekWantMp;   // 待落地的目标播放器
-    private double _seekWantSec = -1;                          // 待落地的目标秒数(-1 = 没有)
-    private bool _seekWantVerify;                              // 落地后是否回读确认(暂停态才需要)
-    private long _seekLastApplied;                             // 上次真正落地的时刻
+    // ===== 【2026-09-23 修 · 用户:"左右预览不协调"—— 这套定位原来是**全局唯一一个槽位**】=====
+    // 旧字段是 `_seekWantMp / _seekWantSec / _seekInFlight`(三个全局量),四条播放器**共用一个槽**。
+    // 而遮罩左右对比每次定位**必须打两条**(上层原片半幅 + 下层处理后半幅,装的是同一条合成片)⇒
+    //   ① 第二条请求把第一条寄存的目标**覆盖**掉;
+    //   ② 被寄存的目标**只在位置回调里**才补发,而**暂停态不产生位置回调**(日志实证:`位置回调 0 次/5s`
+    //      能持续几分钟)⇒ 目标永久丢失;
+    //   ③ `ApplySeekNow` 的"寄存"分支**忘了起那个小定时器**(只有 `RequestSeek` 起)⇒ 连超时兜底都没有。
+    // 三条合起来的现象就是日志里那一行:`片段[停 0/3.003s] · 原片[停 2.834/3.003s] · 漂移 2834ms`
+    // —— 用户把时间线拖到开头,只有一条跳了过去,另一条还在片尾附近(中间那条线两边不是同一帧)。
+    // 现在:槽位按播放器分开(`AlhPro.Core.SeekCoalescer`,纯逻辑可单测),各自"在飞/寄存",谁也不覆盖谁;
+    // 而且**任何一次寄存都会起小定时器**(见 RequestSeek/ApplySeekNow 末尾)⇒ 没回调也不会丢。
+    private readonly AlhPro.Core.SeekCoalescer _seeks = new();
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _seekTimer;
     private bool _cmpSeekDrag;                                 // 进度条正在被拖(拖动期间不回灌位置、不逐次发 seek)
     private bool _cmpSeekHooked;                               // 进度条的 Pointer 事件是否已挂(只需一次)
-    private long _seekReqAt;                                   // 定位请求时刻(耗时埋点)
-    private double _seekReqTarget;                             // 定位目标(耗时埋点)
-    private bool _seekApplied;                                 // 该次定位是否已记过耗时
-    private bool _seekInFlight;                                // 是否已有一次定位在飞(4K 上要近 1 秒才落地)
-    private long _seekInFlightAt;                              // 该次定位发出时刻
-    private double _seekBeforePos;                             // 发定位前的位置(判定"落地"用)
     private long _playReqAt;                                   // 播放/暂停请求时刻(耗时埋点)
     private int _seekEvtCount;                                 // 诊断:本次拖动收到的滑块事件数
     private int _seekDoCount;                                  // 诊断:本次拖动实际落地的定位次数
@@ -5132,6 +5134,11 @@ public sealed partial class VideoView : UserControl
     private long _splitterTouchTick;           // 刚拖过分割线的时刻(点画面播停要避开这一下)
     private Microsoft.UI.Xaml.Media.RectangleGeometry? _playerClip;   // 复用同一个裁切对象(避免每次 new 引起重采样抖动)
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _cmpWatchdog;   // 对比模式:UI 线程看门狗(约束原片)
+    /// <summary>上次"遮罩两条对齐"的时刻(2026-09-23)。看门狗用它避免"刚对齐完又判定不同步再来一次"
+    /// —— 暂停态的 Position 读数要等 seek 落地才会更新,不设冷却就会来回触发 ✗。</summary>
+    private long _maskAlignAt;
+    /// <summary>连续多少次"停住态对齐"都没把两条纠到 120ms 以内(退避用,见 RealignMaskIfIdle)。</summary>
+    private int _maskAlignTries;
     private CancellationTokenSource? _effCts;  // 预览取消(与主界面「强制结束」等效)
     private string? _effOutPath;               // 上次预览的临时成片(换预览/离开预览页时删除)
     private string? _effStarted;               // 已经起播过的成片路径(防重复起播)
@@ -5188,7 +5195,14 @@ public sealed partial class VideoView : UserControl
     // 所以这里补一套**无条件**的地面数据:每个位置回调只做几次字段写入(零成本),由 150ms 看门狗每 5 秒
     // 打一行"回调频率 + 两个播放器的状态/位置 + 漂移 + 走了哪条分支"。下次复现一次就能直接定位。
     private long _cmpPosEvents;                // 位置回调触发次数(统计窗口内)
-    private bool _cmpSyncBranchEntered;        // 位置回调是否进了"原片同步"那段
+    private bool _cmpSyncBranchEntered;        // 位置回调里那段"原片同步"**真的动手了**(不是"只是没走单播放器")
+    // 【2026-09-23 修 · 这个字段以前是骗人的】旧写法是 `_cmpSyncBranchEntered = !_cmpSingle;` ——
+    // 它报的是"这次不是单播放器",而**同步那一段真正干活要有前提**(片段在播且没到片尾);停住态下
+    // 那段代码只做一件事:`origMp.Pause()`,位置**一个像素都不纠**。于是日志里 `进同步分支=True` 与
+    // `漂移 -1416ms` 能同时出现,读日志的人会以为"纠偏在跑但没纠住"(其实压根没跑)✗。
+    // 现在:① `进同步分支` 只在**真的进了干活的那一支**时置 true;② 另加一条 `同步动作=…`,把
+    // "为什么没动手"直接写出来(停住态/片尾/没有原片引用/单播放器都是不同的原因,排查时不必再猜)。
+    private string _cmpSyncAction = "未触发";    // 本次窗口里同步逻辑到底做了什么(如实上报)
     private double _cmpLastClipPos;            // 片段侧最近位置
     private bool _cmpLastClipPlaying;          // 片段侧最近是否在播
     private bool _cmpLastClipAtEnd;            // 片段侧最近是否在片尾
@@ -5202,6 +5216,10 @@ public sealed partial class VideoView : UserControl
     // (2026-09-18 实测:整个同步块因此从未生效,而且每个位置回调都抛一次异常 = 播放"一点点卡")。
     private Windows.Media.Playback.MediaPlayer? _origMpCache;
     private Windows.Media.Playback.MediaPlaybackSession? _origSessionCache;
+    /// <summary>【2026-09-23】`_cmpPosHandler` 挂在**哪条播放器**上(UI 线程抓好,回调里只读字段)。
+    /// 有了它,位置回调里那句"上一次定位落地了没"才能问对**这条**播放器的槽位 —— 定位合并器已经按播放器分槽,
+    /// 不带 key 就无从判断(旧实现只有一个全局槽,所以旧签名只需要一个 `pos`)。</summary>
+    private Windows.Media.Playback.MediaPlayer? _cmpPosMpCache;
     private bool _origHalfLeft;                // 没结果时的「两者同时」:原片缩 50% 摆左半格(见 ApplyOriginalHalfScale)
     private string _cmpSrcSpec = "";           // 原片规格(3840×2160 · 120fps)
     private string _cmpOutSpec = "";           // 处理后规格
@@ -5484,18 +5502,66 @@ public sealed partial class VideoView : UserControl
         catch { }
     }
 
-    /// <summary>请求定位(合并式):拖动期间高频调用也只把**最新目标**落地,不制造 seek 风暴。</summary>
+    /// <summary>请求定位(合并式):拖动期间高频调用也只把**最新目标**落地,不制造 seek 风暴。
+    /// 【2026-09-23】槽位按**这条播放器**分开(见字段说明)⇒ 左右两条各自的请求不再互相覆盖。</summary>
     private void RequestSeek(Windows.Media.Playback.MediaPlayer? mp, double seconds, bool verify)
     {
         if (mp == null || seconds < 0) return;
-        _seekWantMp = mp;
-        _seekWantSec = seconds;
-        _seekWantVerify = verify;
-        // 有定位在飞就只记目标(等它落地再发下一个)—— 4K 上一次定位实测约 1 秒才落地
-        if (SeekInFlight()) return;
-        long now = Environment.TickCount64;
-        // 距上次落地够久了就立刻落地;否则交给小定时器合并(拖动的中间位置直接被后来的覆盖)
-        if (now - _seekLastApplied >= 110) { ApplyWantedSeek(); return; }
+        SubmitSeek(mp, seconds, verify, immediate: false);
+    }
+
+    /// <summary>真正"提交"一次定位请求:交给分槽合并器判"现在发"还是"寄存"。
+    /// 【纪律】两条路径(拖动合并 / 立刻落地)**都要**在"寄存"之后起那个小定时器 ——
+    /// 旧代码只在拖动那条起,而 `ApplySeekNow` 的寄存分支不起 ⇒ 暂停态(没有位置回调)目标就永久丢了 ✗。</summary>
+    private void SubmitSeek(Windows.Media.Playback.MediaPlayer mp, double seconds, bool verify, bool immediate)
+    {
+        double before = -1;
+        try { before = mp.PlaybackSession.Position.TotalSeconds; } catch { }
+        var d = _seeks.Request(mp, seconds, verify, Environment.TickCount64, before, immediate);
+        if (d == AlhPro.Core.SeekCoalescer.Decision.ApplyNow) DoApplySeek(mp, seconds, verify);
+        else StartSeekTimer();
+    }
+
+    /// <summary>真的下发一次定位(合并器已经同意"就是现在")。</summary>
+    private void DoApplySeek(Windows.Media.Playback.MediaPlayer mp, double seconds, bool verify)
+    {
+        try
+        {
+            _seekDoCount++;                     // 诊断:本次拖动真正落地了几次定位
+            var se = mp.PlaybackSession;
+            se.Position = TimeSpan.FromSeconds(Math.Max(0, seconds));
+            // 【真机实测】暂停态连续定位会被播放器吞掉 → 只补一次(原来的 8 次循环在 4K 上会把管线拖住)
+            if (verify) _ = VerifySeekOnceAsync(mp, seconds);
+            OnUiThread(RefreshCompareBar);   // 暂停时没有位置回调,主动刷一次(否则读数不动)
+        }
+        catch { }
+    }
+
+    /// <summary>把合并器里**所有**播放器寄存的目标都补发掉(小定时器 + 落地回调都走这条)。
+    /// 【为什么先全部取走再发】取走会清掉寄存标记;若就地"取一条→发一条",而那条恰好还在飞
+    /// (会被重新寄存)⇒ `while (TakeAnyWant() != null)` 就变成死循环。所以先整批取走,再依次发。</summary>
+    private void FlushPendingSeeks()
+    {
+        try
+        {
+            var batch = new List<AlhPro.Core.SeekCoalescer.Want>(8);
+            AlhPro.Core.SeekCoalescer.Want? w;
+            while ((w = _seeks.TakeAnyWant()) != null)
+            {
+                batch.Add(w.Value);
+                if (batch.Count >= 8) break;   // 上限:四条播放器 ×2,防意外风暴
+            }
+            foreach (var one in batch)
+            {
+                if (one.Key is not Windows.Media.Playback.MediaPlayer mp) continue;
+                SubmitSeek(mp, one.Seconds, one.Verify, immediate: true);
+            }
+        }
+        catch { }
+    }
+
+    private void StartSeekTimer()
+    {
         try
         {
             _seekTimer ??= DispatcherQueue.CreateTimer();
@@ -5509,49 +5575,21 @@ public sealed partial class VideoView : UserControl
         catch { }
     }
 
-    /// <summary>是否已有一次定位在飞(超过 900ms 还没落地就当作已失败,放行下一次,免得卡死)。</summary>
-    private bool SeekInFlight()
+    /// <summary>位置回调里判断"这条播放器上一次定位落地了":落地后若还有更新的目标,立刻接着发。
+    /// 【2026-09-23 改签名:必须带上"这是哪条播放器"】旧签名只有一个 `pos`,因为当时只有**一个全局槽位**;
+    /// 现在按播放器分槽 ⇒ 拿不到 key 就无从判断。落地容差等判据全部在 `SeekCoalescer` 里(与旧实现逐字一致)。</summary>
+    private void NoteSeekMaybeLanded(Windows.Media.Playback.MediaPlayer? mp, double pos)
     {
-        if (!_seekInFlight) return false;
-        long dt = Environment.TickCount64 - _seekInFlightAt;
-        if (dt > 900) { _seekInFlight = false; return false; }
-        // 最短间隔 150ms:即使落地回调判不出来,也不会退回"每个事件一次 seek"的风暴
-        if (dt < 150) return true;
-        return _seekInFlight;
-    }
-
-    /// <summary>位置回调里判断"上一次定位落地了":落地后若还有更新的目标,立刻接着发。
-    /// 【为什么容差放宽到 0.35 秒】播放器定位落地后会吸附到帧/关键帧上,和请求值差几十毫秒是常态;
-    /// 原来只认 0.12 秒 → 判不出来 → 只能等 900ms 超时,拖动期间 1 秒才更新一次画面(实测就是这样)。
-    /// 另外"位置相对发定位前动过"也算落地(播放中定位就是这种情况)。</summary>
-    private void NoteSeekMaybeLanded(double pos)
-    {
-        if (!_seekInFlight) return;
-        bool landed = Math.Abs(pos - _seekReqTarget) < 0.35 || Math.Abs(pos - _seekBeforePos) > 0.05;
-        if (!landed) return;
-        _seekInFlight = false;
-        if (_seekReqAt > 0 && !_seekApplied)
-        {
-            _seekApplied = true;
-            LogPerf($"定位到 {_seekReqTarget:0.##}s", Environment.TickCount64 - _seekReqAt);
-        }
-        if (_seekWantSec >= 0) ApplyWantedSeek();   // 拖动期间攒下的最新目标,接着落地
+        if (mp == null) return;
+        var r = _seeks.NotePosition(mp, pos, Environment.TickCount64);
+        if (r.Landed && r.FirstReport) LogPerf($"定位到 {r.Target:0.##}s", r.ElapsedMs);
+        if (r.HasPending) FlushPendingSeeks();   // 拖动期间攒下的最新目标,接着落地
     }
 
     private void SeekTimer_Tick(object? sender, object e)
     {
         try { _seekTimer?.Stop(); } catch { }
-        ApplyWantedSeek();
-    }
-
-    private void ApplyWantedSeek()
-    {
-        var mp = _seekWantMp;
-        double sec = _seekWantSec;
-        bool verify = _seekWantVerify;
-        _seekWantMp = null; _seekWantSec = -1; _seekWantVerify = false;
-        if (mp == null || sec < 0) return;
-        ApplySeekNow(mp, sec, verify);
+        FlushPendingSeeks();
     }
 
     /// <summary>【诊断·点播放/暂停"不跟手"】分层记时,看时间花在哪一层:
@@ -5705,32 +5743,13 @@ public sealed partial class VideoView : UserControl
         if (d > 30) AppLogger.Info($"[性能] {_playTag}:③状态变→画面开始走 {d} ms(点下去到出画面共 {Environment.TickCount64 - _playT0} ms)");
     }
 
-    /// <summary>真正落地一次定位。</summary>
+    /// <summary>真正落地一次定位(单击/松手/对齐这类"别再等了"的场合)。
+    /// 【2026-09-23】改走**分槽**合并器:已有定位在飞时同样只能寄存,但**寄存之后一定起小定时器**
+    /// (旧实现这里不起 ⇒ 暂停态没有位置回调 = 目标永久丢失,这正是"一条跳了另一条没跳"的一条来源)。</summary>
     private void ApplySeekNow(Windows.Media.Playback.MediaPlayer mp, double seconds, bool verify)
     {
-        try
-        {
-            // 已有定位在飞:只记住目标(硬保险,和 RequestSeek 同一条纪律)
-            if (SeekInFlight())
-            {
-                _seekWantMp = mp; _seekWantSec = seconds; _seekWantVerify = verify;
-                return;
-            }
-            _seekInFlight = true;
-            _seekInFlightAt = Environment.TickCount64;
-            _seekLastApplied = _seekInFlightAt;
-            _seekDoCount++;                     // 诊断:本次拖动真正落地了几次定位
-            _seekReqAt = _seekLastApplied;      // 耗时埋点:从这里到"位置真的到位"用多久
-            _seekReqTarget = Math.Max(0, seconds);
-            _seekApplied = false;
-            try { _seekBeforePos = mp.PlaybackSession.Position.TotalSeconds; } catch { _seekBeforePos = -1; }
-            var se = mp.PlaybackSession;
-            se.Position = TimeSpan.FromSeconds(Math.Max(0, seconds));
-            // 【真机实测】暂停态连续定位会被播放器吞掉 → 只补一次(原来的 8 次循环在 4K 上会把管线拖住)
-            if (verify) _ = VerifySeekOnceAsync(mp, seconds);
-            OnUiThread(RefreshCompareBar);   // 暂停时没有位置回调,主动刷一次(否则读数不动)
-        }
-        catch { }
+        if (mp == null || seconds < 0) return;
+        SubmitSeek(mp, seconds, verify, immediate: true);
     }
 
     /// <summary>定位/播放落地的耗时统计(诊断用)。默认只在**超过 400ms** 时记一条 ——
@@ -6507,9 +6526,11 @@ public sealed partial class VideoView : UserControl
                 + $" · 片段[{(clipPlaying ? "播" : "停")}{(clipAtEnd ? "·片尾" : "")} {clipPos:0.###}/{clipDur:0.###}s]"
                 + $" · 原片[{(origPlaying ? "播" : "停")} {origPos:0.###}/{origDur:0.###}s]"
                 + $" · 漂移 {driftMs:0}ms · 进同步分支={_cmpSyncBranchEntered}"
+                + $" · 同步动作={_cmpSyncAction}"
                 + $" · 倍率 目标{_cmpRate:0.###} · 倍率写入/跳过 {_rateWrites}/{_rateSkip}"
                 + $" · 上次位置回调 {(_cmpPosLastAt == 0 ? -1 : now - _cmpPosLastAt)} ms 前");
             _cmpPosEvents = 0; _rateWrites = 0; _rateSkip = 0;
+            _cmpSyncAction = "未触发";
         }
         catch { }
     }
@@ -6547,6 +6568,11 @@ public sealed partial class VideoView : UserControl
                 if (!origPlaying) om.Play();
             }
             else if (origPlaying) om.Pause();   // ② 越界/片段停了 → 立刻停住原片
+            // ===== 【2026-09-23 加:停住态的兜底对齐】=====
+            // 【为什么必须有】上面那两支只管"在播"的情形;停住/片尾时**没有任何东西会纠正位置**,
+            // 而那时又拿不到位置回调(暂停不触发 PositionChanged)⇒ 两条停在不同时刻就永远停在那里。
+            // 用户实测的停住态漂移 -1416ms ~ +546ms 就是这么留下的(播放中反而只有 208ms)。
+            RealignMaskIfIdle(clipPos, os.Position.TotalSeconds, clipPlaying, origPlaying);
             // ===== 【2026-09-21 地面数据】每 5 秒一行,无条件 =====
             // 【它要回答的三个问题】① 位置回调到底有没有在跑(没跑 → 频率 0);② 跑了但走的哪条分支;
             // ③ 两个播放器各自的状态/位置/时长与漂移 —— 有这三样,"卡/不协调"就不再靠猜。
@@ -6714,7 +6740,7 @@ public sealed partial class VideoView : UserControl
                         // 【顺序要紧:落地判定必须在"拖动中不刷新"之前】
                         // 否则拖动期间这里直接 return → 合并式定位的闸门永远打不开 → 只能等 900ms 超时,
                         // 一次 1.2 秒的拖动只落地 2 次(真机实测,画面像幻灯片)。先判落地,再决定刷不刷界面。
-                        NoteSeekMaybeLanded(pos);
+                        NoteSeekMaybeLanded(_barMpCache, pos);
                         PlayWatchPositionMoved();   // 诊断:③状态变→画面真的开始走
                         // 【2026-09-19 修 · 用户:"两者同时 和看处理 切换的时候倍率不生效 依然原速"】
                         // 守护:当前正在播的那条,速率若与用户选的不一致就**立刻补回** ✔
@@ -7240,24 +7266,94 @@ public sealed partial class VideoView : UserControl
         catch (Exception ex) { AppLogger.Warn("时间轴控制器挂载异常:" + ex.Message); }
     }
 
-    /// <summary>暂停后把两条拉到同一时刻(带校验)。
-    /// 【为什么需要】暂停时不挂控制器(挂上但不启动时播放器不呈现画面 ✗),两条各自的暂停时刻会差几毫秒~几百毫秒;
-    /// 差值一大,下次起播就是"一边先动、一边还停着" ⇒ 用户报的"偶现某一边卡住/不协调" ✓
-    /// 只在差值 ≥50ms 时才动(小差值不动,避免无谓 seek 反而闪)✔</summary>
-    private async Task AlignPausedAsync()
+    /// <summary>【2026-09-23 · 修"左右预览不协调"的核心动作】把遮罩模式那**两条**播放器拉到同一时刻。
+    ///
+    /// ================= 为什么非做不可(证据链) =================
+    /// 遮罩左右对比 = 两个 `MediaPlayerElement` 装**同一条并排合成片**,上层露左半(原片)、下层露右半(处理后)。
+    /// 它**没有共享时钟**(控制器在 2026-09-19 被撤回,见 ToggleComparePlayback 里那段"⚠ 不可达"),
+    /// 于是两条各自解码、各自计时。而当时**唯一**的纠偏机制(位置回调里那段同步)有两条硬前提:
+    ///   `clipPlaying && !clipAtEnd` —— **片段停住 / 到片尾时那段代码只做一件事:`origMp.Pause()`,
+    ///   位置一个像素都不纠**。暂停又不产生位置回调(实测 `位置回调 0 次/5s` 持续几分钟)⇒
+    ///   一旦两条停在不同时刻,就**永远停在那里**。这正是用户反馈"不协调"的可量化形态:
+    ///   两份诊断包共 92 条看门狗样本里,停住态漂移 -1416ms ~ +546ms,而播放中只有 2 条样本(208ms)。
+    /// 所以:凡是"两条可能停在不同时刻"的**入口**,都要在这里收口 —— 起播前 / 暂停后 / 片尾 / 换倍率后 /
+    /// 以及看门狗在**空转时**的兜底(见 CmpWatchdog_Tick 里的 RealignMaskIfIdle)。
+    ///
+    /// ================= 为什么用"带校验的定位"而不是裸设 Position =================
+    /// 2026-09-17 的实测结论(本文件多处引用):裸设一次位置 + 立刻 Play,**那次 seek 没落地就会留下恒定偏移**
+    /// ("左边比右边早 0.几秒")。所以起播这条路必须"确认到位再播"。
+    ///
+    /// 【anchorSec 的口径】**遮罩模式两条装的是同一条 0 基点合成片** ⇒ 目标就是**同一个秒数**,
+    /// 绝不加 `_effStart`(加了就是凭空造出几秒的假偏差 —— 这个坑本文件记过两次,别再犯)。</summary>
+    /// <param name="toMin">true = 以**靠前的那条**为准(暂停/片尾用:不往前跳过没看过的内容);
+    /// false = 以**片段条(EffectPlayer)**为准(起播用:片段是主,用户停在哪就从哪继续)。</param>
+    /// <param name="thenPlay">对齐完要不要接着播(起播=true;暂停/片尾=false)。</param>
+    /// <param name="why">日志用的一句话,说明这次为什么对齐(排查时一眼看出是谁调的)。</param>
+    private async Task AlignMaskPairAsync(bool toMin, bool thenPlay, string why)
     {
         try
         {
+            if (!_maskSplitActive) return;
             var e = EffectPlayer?.MediaPlayer;
             var o = PreviewPlayer?.MediaPlayer;
+            if (e == null || o == null) return;
+            var es = e.PlaybackSession;
+            var os = o.PlaybackSession;
+            bool wasPlaying = false;
+            try { wasPlaying = es.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing; } catch { }
+            try { e.Pause(); } catch { }
+            try { o.Pause(); } catch { }
             double pe = 0, po = 0;
-            try { pe = e?.PlaybackSession?.Position.TotalSeconds ?? 0; } catch { }
-            try { po = o?.PlaybackSession?.Position.TotalSeconds ?? 0; } catch { }
-            if (Math.Abs(pe - po) < 0.05) return;
-            double t = Math.Min(pe, po);                 // 以靠前的那条为准(不往前跳过头)
-            if (e != null) await SeekAndVerifyAsync(e, t, 4).ConfigureAwait(true);
-            if (o != null) await SeekAndVerifyAsync(o, t, 4).ConfigureAwait(true);
-            Log($"[对比] 暂停对齐:两条已拉到 {t:0.###}s(此前相差 {(pe - po) * 1000:0} ms)");
+            try { pe = es.Position.TotalSeconds; } catch { }
+            try { po = os.Position.TotalSeconds; } catch { }
+            double anchor = toMin ? Math.Min(pe, po) : pe;
+            double dur = 0;
+            try { dur = es.NaturalDuration.TotalSeconds; } catch { }
+            if (dur > 0.05) anchor = Math.Clamp(anchor, 0, Math.Max(0, dur - 0.02));
+            // 【别白花时间】只有真的差着才定位:每次校验式定位都要等它落地,起播路上白等就是"按下去要等一下" ✗
+            if (Math.Abs(pe - anchor) > 0.03) await SeekAndVerifyAsync(e, anchor, 3).ConfigureAwait(true);
+            if (Math.Abs(po - anchor) > 0.03) await SeekAndVerifyAsync(o, anchor, 3).ConfigureAwait(true);
+            if (Math.Abs(pe - po) > 0.03)
+                Log($"[对比] 遮罩对齐({why}):两条已拉到 {anchor:0.###}s(此前 片段 {pe:0.###} / 原片 {po:0.###},"
+                    + $"相差 {(pe - po) * 1000:0} ms)");
+            _maskAlignAt = Environment.TickCount64;      // 看门狗据此避免"刚对齐完又对齐"(见 RealignMaskIfIdle)
+            ApplyCmpRateToAll(false);
+            if (thenPlay) PlayWatchStep("左右对比·补倍率(可能触发管线重定时)");
+            if (thenPlay || wasPlaying)
+            {
+                try { o.Play(); } catch { }    // 先原片后片段:两条都已到位,谁先返回不影响画面时刻
+                try { e.Play(); } catch { }
+                if (thenPlay) PlayWatchStep("左右对比·两条 Play() 返回");
+                PlayWatchAfterApiCall();
+            }
+            OnUiThread(() => { SetCmpPlayGlyph(thenPlay || wasPlaying); ShowCompareBarTemporarily(); });
+        }
+        catch (Exception ex) { AppLogger.Warn("遮罩对齐异常:" + ex.Message); }
+    }
+
+    /// <summary>【看门狗里的"空转兜底"】停住态(两条都没在播)时如果两条停在不同的时刻,就对齐它们。
+    /// 【为什么放在看门狗里】它是本文件里**唯一**"每 150ms 必然跑一次、且拿得到两条当前真实位置"的地方
+    /// (位置回调在暂停态根本不触发);而且它本来就只为"约束原片"存在,由它收口最自然。
+    /// 【自限三条】① 拖动中绝不插手(用户正在定位,别抢);② 刚对齐过(700ms 内)不再来一次(否则
+    /// 两条的位置读数要等 seek 落地才更新,会来回触发);③ 差 <120ms 不动(肉眼看不出的偏差不值得再 seek)。</summary>
+    private void RealignMaskIfIdle(double pe, double po, bool clipPlaying, bool origPlaying)
+    {
+        try
+        {
+            if (!_maskSplitActive) return;
+            if (clipPlaying || origPlaying) return;            // 只要有任意一条在播,就交给播放中的那套机制
+            if (_cmpSeekDrag || _ptlDrag != 0 || _dividerDrag) return;
+            long now = Environment.TickCount64;
+            long since = now - _maskAlignAt;
+            if (Math.Abs(pe - po) < 0.12) { _maskAlignTries = 0; return; }
+            if (since < 700) return;
+            // 【退避】连续 4 次都没纠到 120ms 以内(极端情形:seek 被管线反复吞掉)⇒ 退到 10 秒一次,
+            // 而且**只报一次**,免得变成"每 0.7 秒对两条播放器各 seek 一次"的隐性开销 ✗
+            if (_maskAlignTries >= 4 && since < 10000) return;
+            if (since >= 10000) _maskAlignTries = 0;
+            _maskAlignTries++;
+            Log($"[对比] 停住态两条不同步(相差 {(pe - po) * 1000:0} ms;第 {_maskAlignTries} 次)→ 主动对齐一次");
+            _ = AlignMaskPairAsync(toMin: true, thenPlay: false, "停住态兜底");
         }
         catch { }
     }
@@ -7309,6 +7405,11 @@ public sealed partial class VideoView : UserControl
                     try { PreviewPlayer.MediaPlayer?.Pause(); } catch { }
                     try { EffectPlayer.MediaPlayer?.Pause(); } catch { }
                     PlayWatchAfterApiCall();
+                    // 【2026-09-23 加】暂停**之后**把两条拉到同一时刻 ✗→✓
+                    // 两条是各自解码,暂停时刻天然差几毫秒~几百毫秒;而不对齐的话,**暂停态没有任何东西会纠正它**
+                    // (位置回调不触发 + 同步那段只在"播放中"动手)⇒ 用户盯着那张静止画面时,线两边不是同一帧,
+                    // 而且会一直错下去,直到下次起播。实测残留漂移 -1416ms ~ +546ms 就是这个(证据见 AlignMaskPairAsync)。
+                    _ = AlignMaskPairAsync(toMin: true, thenPlay: false, "暂停后");
                 }
                 else
                 {
@@ -7329,17 +7430,13 @@ public sealed partial class VideoView : UserControl
                         }
                     }
                     catch { }
-                    ApplyCmpRateToAll(false);   // 起播前把用户倍率补到两条(同一个值)✔
-                    PlayWatchStep("左右对比·补倍率(可能触发管线重定时)");
-                    // 【2026-09-19 撤回"一个时钟"改动】它引入了两个新问题(用户实测):
-                    //   ① 重播不生效 ② 左右对比里"右边倍率不生效" —— 根因是还有别的路径在给播放器直接写
-                    //   PlaybackRate(控制器挂上后这些写入会打架)✗。这一步必须**能交互验证**才能上,
-                    //   所以我先退回"两条各自播"(用户此前的状态),等能在场一起验时再上 ✔
-                    try { PreviewPlayer.MediaPlayer?.Play(); } catch { }
-                    try { EffectPlayer.MediaPlayer?.Play(); } catch { }
-                    PlayWatchAfterApiCall();
-                    PlayWatchStep("左右对比·两条 Play() 返回");
-                    ShowCompareBarTemporarily();
+                    // 【2026-09-23 改】原来这里是"ApplyCmpRateToAll + 两条各自 Play()"—— **没有对齐** ✗。
+                    // 于是"上一次播放/暂停/换倍率留下的偏差"会被原样带进这一次播放,且起播那一刻两条的
+                    // pre-roll 延迟本身也不一样(日志实测 ④点下去→位置开始前进 0ms / 16ms / 250ms 都有)⇒
+                    // 一起播起来就是"一边先动、另一边慢半拍"。现在统一交给 AlignMaskPairAsync:
+                    // 以**片段条当前位置为准**(片段是主,用户停在哪就从哪继续)两条都带校验定位到位,补倍率,再一起播。
+                    // 【2026-09-19 撤回"一个时钟"改动】的结论仍然有效:控制器不参与,倍率走普通 PlaybackRate ✔。
+                    _ = AlignMaskPairAsync(toMin: false, thenPlay: true, "起播前");
                 }
                 return;
             }
@@ -7504,7 +7601,7 @@ public sealed partial class VideoView : UserControl
                 new Microsoft.UI.Xaml.Input.PointerEventHandler((s, e) =>
                 {
                     _cmpSeekDrag = false;
-                    ApplyWantedSeek();          // 松手:把最后的目标立即落地
+                    ApplyWantedSeek();          // 松手:把最后的目标立即落地(现在是"所有槽位"一起落地)
                     // 诊断:一次拖动"滑块事件数 → 实际定位次数"(合并式定位的效果就靠这条看)
                     if (LogAllSeekStats) AppLogger.Info($"[性能] 本次拖动:滑块事件 {_seekEvtCount} 次 → 实际定位 {_seekDoCount} 次");
                     ShowCompareBarTemporarily();
@@ -7856,6 +7953,7 @@ public sealed partial class VideoView : UserControl
             {
                 _origMpCache = PreviewPlayer.MediaPlayer;
                 _origSessionCache = _origMpCache?.PlaybackSession;
+                _cmpPosMpCache = mp;   // 位置回调挂在 EffectPlayer 上(见下面 mp.PlaybackSession.PositionChanged += _cmpPosHandler)
             }
             catch { }
             if (on && !_compareSyncOn)
@@ -7883,14 +7981,19 @@ public sealed partial class VideoView : UserControl
                     _cmpPosEvents++;
                     _cmpLastClipPos = clipPos; _cmpLastClipPlaying = clipPlaying;
                     _cmpLastClipAtEnd = clipDur > 0.05 && clipPos >= clipDur - 0.03;
-                    _cmpSyncBranchEntered = !_cmpSingle;   // 本回调是否走了下面那段"原片同步"
+                    // 【2026-09-23 改口径】旧写法 `!_cmpSingle` 只是"没走单播放器",与"同步真的动手了"无关;
+                    // 这里先给一个**保守的默认值**,真进了"片段在播且没到片尾"那一支时再置 true(见下面)。
+                    _cmpSyncBranchEntered = false;
+                    _cmpSyncAction = _cmpSingle ? "单播放器(不需要)"
+                                   : (_cmpLastClipPlaying && !_cmpLastClipAtEnd) ? "(进入判定)"
+                                   : _cmpLastClipAtEnd ? "停住·片尾(不对齐)" : "停住(不对齐)";
                     _cmpPosLastAt = Environment.TickCount64;
                     // 【2026-09-21】地面数据也从这里打一次:单播放器时看门狗已 Stop,只有这条回调还在跑
                     // (它同时也驱动播放条)—— 两个调用点共用 5 秒节流,谁先到谁打,from 说明是谁。
                     MaybeLogGroundData("位置回调", clipPos, clipDur, clipPlaying, _cmpLastClipAtEnd,
                         _origSessionCache?.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing);
                     // 落地判定(必须在"拖动中不刷新"之前,否则闸门打不开 —— 见 _barPosHandler 里的说明)
-                    NoteSeekMaybeLanded(clipPos);
+                    NoteSeekMaybeLanded(_cmpPosMpCache, clipPos);
                     PlayWatchPositionMoved();   // 诊断:③状态变→画面真的开始走
                     // ① 自绘播放条(120ms 节流)
                     long now = Environment.TickCount64;
@@ -7940,6 +8043,7 @@ public sealed partial class VideoView : UserControl
                             bool clipAtEnd = clipDur > 0.05 && clipPos >= clipDur - 0.03;
                             if (clipPlaying && !clipAtEnd)
                             {
+                                _cmpSyncBranchEntered = true;   // 【2026-09-23】真的进了"会动手"的那一支
                                 if (!origPlaying) origMp.Play();
                                 // 硬保险:原片越界(超过 预览起点+预览时长+0.15s)才动一次 seek,把位置拉回边界。
                                 double boundLen = _effRealLen > 0.3 ? _effRealLen : clipDur;
@@ -7973,10 +8077,25 @@ public sealed partial class VideoView : UserControl
                                     // (clipPos > 4.7−2.738≈1.96s 时就会越过片尾)⇒ 原片被丢到片尾/夹边 ⇒ 左右对不上。
                                     // 两处必须用**同一个判据**,这正是上面那段注释(2026-09-18)记下的同一个坑。
                                     double realignTo = _maskSplitActive ? clipPos : _effStart + clipPos;
-                                    if (Math.Abs(drift) > 0.5 && nowMs - _syncHardAt > 1500)
+                                    // 【2026-09-23 阈值:遮罩模式 0.5s → 0.25s,并说明为什么】
+                                    // 实测(用户 22:35~22:40 那份日志)播放中漂移出现过 546ms / 1417ms,
+                                    // 而 ±2% 的速率微调每秒钟只追回 20ms ⇒ 0.3 秒的偏差要 **15 秒**才追平,
+                                    // 这期间左右就是"明摆着不是同一帧"。0.5s 的门槛意味着 0.25~0.5s 这段
+                                    // **永远只靠调速慢慢磨** ✗。遮罩模式两条同轴、同文件,硬对齐的目标就是
+                                    // 用户正在看的那一刻,把它降到 0.25s 让"看得见的偏差"一次性消失;
+                                    // 非遮罩(偏移副本)那条路不动(它的目标轴不同,历史结论是 0.5s)。
+                                    double hardThreshold = _maskSplitActive ? 0.25 : 0.5;
+                                    if (Math.Abs(drift) > hardThreshold && nowMs - _syncHardAt > 1500)
                                     {
                                         _syncHardAt = nowMs;
+                                        _cmpSyncAction = $"硬对齐 {drift * 1000:0}ms";
+                                        // 【2026-09-23】先把这个播放器的槽位清干净,再直接下发 ——
+                                        // 否则合并器里可能还挂着一条**更旧**的"在飞"(它的目标与这里要去的
+                                        // 位置不同),稍后补发出来就会把画面又拽回去 ✗(日志实证:硬对齐到 1.232s,
+                                        // 3 秒后读回 0.117s —— 那次定位压根没落地)。
+                                        _seeks.Clear(origMp);
                                         try { op.Position = TimeSpan.FromSeconds(realignTo); } catch { }
+                                        _ = VerifySeekOnceAsync(origMp, realignTo);   // 硬对齐也要"回读确认"(被吞就再补一次)
                                         try { op.PlaybackRate = _cmpRate; } catch { }   // 硬拉回后把用户倍率补回
                                         AppLogger.Info($"[性能] 左右同步:漂移 {drift * 1000:0} ms 过大,已一次性硬对齐"
                                             + $"(原片 → {realignTo:0.###}s;遮罩同轴={_maskSplitActive})");
@@ -8004,6 +8123,11 @@ public sealed partial class VideoView : UserControl
                                         (mustFix || nowMs - _syncRateAt > 1200))
                                     {
                                         try { op.PlaybackRate = wantRate; _syncRateAt = nowMs; _syncRateWrites++; } catch { }
+                                        _cmpSyncAction = $"调速 {wantRate:0.###}(漂移 {drift * 1000:0}ms)";
+                                    }
+                                    else if (Math.Abs(drift) <= 0.15)
+                                    {
+                                        _cmpSyncAction = "在播·已同步(不动手)";
                                     }
                                     _syncDriftMax = Math.Max(_syncDriftMax, Math.Abs(drift));
                                     // 每 5 秒记一行同步质量(排查"卡/不同步"时的地面数据)
@@ -8026,6 +8150,7 @@ public sealed partial class VideoView : UserControl
                             }
                             else
                             {
+                                _cmpSyncAction = clipAtEnd ? "停住·片尾(只暂停,不对齐)" : "停住(只暂停,不对齐)";
                                 if (origPlaying) origMp.Pause();   // 片段停了/播完 → 原片立刻停(不越过区间)
                                 // 同理:回位也要回到**用户的倍率**,不是写死的 1.0 ✗
                                 double baseRate2 = _cmpRate > 0 ? _cmpRate : 1.0;
@@ -8987,6 +9112,11 @@ public sealed partial class VideoView : UserControl
             ApplyMuteState();   // 慢动作自动静音(见 ApplyMuteState 的说明)
             ShowCompareBarTemporarily();
             Log($"对比:慢放切到 {CmpRateLabel(rate)}(PlaybackRate={rate},左右两条都设)");
+            // 【2026-09-23 加 · 证据】用户日志里换倍率那一刻的读数:`片段[播 0.515] · 原片[播 0.723] · 漂移 208ms`
+            // —— 写 PlaybackRate 会让**各条播放器各自**重新配置播放管线(本文件实测"换一次倍率画面冻结 ~455ms"),
+            // 两条重配完成时刻不同 ⇒ 换完倍率就多出一个几百毫秒的固定偏差,而 ±2% 的微调要十几秒才追平。
+            // 所以换倍率之后(遮罩模式)主动对齐一次:两条都到同一时刻,再按原状态继续播。
+            if (_maskSplitActive) _ = AlignMaskPairAsync(toMin: true, thenPlay: false, "换倍率后");
         }
         catch { }
     }
@@ -9489,6 +9619,8 @@ public sealed partial class VideoView : UserControl
         catch { }
     }
 
+    private void ApplyWantedSeek() => FlushPendingSeeks();
+
     /// <summary>把"裁切"按当前分割比例落到两个主机上(遮罩模式:上层露左半,下层露右半)。</summary>
     private static async Task SeekAndVerifyAsync(Windows.Media.Playback.MediaPlayer? mp, double seconds, int maxTries = 8)
     {
@@ -9596,6 +9728,9 @@ public sealed partial class VideoView : UserControl
                     if (mp == null || se == null) return;
                     mp.Pause();
                     se.Position = TimeSpan.Zero;
+                    // 【2026-09-23】这里是**直接赋 Position**(不经过合并器)⇒ 把两条的槽位清干净,
+                    // 否则合并器里可能还挂着一条基于旧位置的"在飞",稍后补发出来就把这次的复位拽回去 ✗
+                    _seeks.ClearAll();
                     try { PreviewPlayer.MediaPlayer?.Pause(); PreviewPlayer.MediaPlayer!.PlaybackSession.Position = TimeSpan.Zero; } catch { }
                     RefreshCompareBar();
                     Log("[对比] 预览完成:两条已复位到开头(用户要求)");
