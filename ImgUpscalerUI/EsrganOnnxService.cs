@@ -1,4 +1,4 @@
-// EsrganOnnxService.cs — Real-ESRGAN ONNX 超分(纯 C#,ONNX Runtime,无 Python)
+﻿// EsrganOnnxService.cs — Real-ESRGAN ONNX 超分(纯 C#,ONNX Runtime,无 Python)
 // 目的:ncnn-Vulkan 实测不可用时(50 系 / AMD / 无独显 / 驱动异常)的稳定超分实现 —— 走 ONNX
 // (优先 DirectML,失败落 CPU),与 ncnn 是两套完全独立的运行时。
 // 【措辞已更正】原文写"引擎文件 realesrgan-ncnn-vulkan.exe(2022)在 50 系不可用",那是"按型号猜"时代的
@@ -127,7 +127,7 @@ public static class EsrganOnnxService
     /// <summary>本进程的 DirectML 是否已永久失效(需重启软件才能恢复)。</summary>
     public static bool DmlDeviceDead => Volatile.Read(ref _dmlDead) != 0;
 
-    /// <summary>同一设备【连续】瞬时失败次数(GPU 成功一次即清零)。上限见 DmlTransientStrikes。
+    /// <summary>同一设备【连续】瞬时失败次数(GPU 成功一次即清零)。上限见 DmlTransientStrikeLimit。
     /// 【键的编号空间:DirectML 设备号】—— 全表只认 DML 号,绝不混入引擎 -g 编号(见 DmlForEngineDevice 说明)。</summary>
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, int> _dmlStrikes = new();
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, int> _audioDmlStrikes = new();
@@ -149,7 +149,9 @@ public static class EsrganOnnxService
     /// <summary>瞬时失败连击上限。达限即认定该设备在本进程内不可用,按持续性错误同样口径处理(抛可操作错误 /
     /// 回退源帧),而不是转 CPU。为什么是 3:一次重试的代价是"一块/一对帧的 CPU 推理"(秒级),连吃 3 次
     /// 说明不是偶发抖动;再试下去就是"N 帧 × CPU 推理"的几小时形状——那正是要消灭的东西。</summary>
-    private const int DmlTransientStrikes = 3;
+    /// <remarks>internal 而非 private:抠图(CutoutService)的 DML 账本要用同一份数字,
+    /// 不能再写死第二个 3 —— 两处不同步就会出现"超分已熔断、抠图还在试"或反之。</remarks>
+    internal const int DmlTransientStrikeLimit = 3;
 
     /// <summary>业务域,决定用哪张连击表。音频(HT-Demucs)的显存压力与并发模型与图片/视频超分完全不同,
     /// 失败成因(模型 OOM、输入形状)也不同,必须与视频分表,否则音频连吃 3 次失败会把图片超分/补帧
@@ -163,7 +165,7 @@ public static class EsrganOnnxService
     internal static bool NoteDmlTransientFailure(int device, DmlDomain domain = DmlDomain.Video)
     {
         if (device < 0) return false;
-        return Strikes(domain).AddOrUpdate(device, 1, (_, old) => old + 1) >= DmlTransientStrikes;
+        return Strikes(domain).AddOrUpdate(device, 1, (_, old) => old + 1) >= DmlTransientStrikeLimit;
     }
 
     /// <summary>GPU 推理成功 → 清零该设备的连击计数(偶发抖动不该累积成"设备不可用")。</summary>
@@ -204,14 +206,14 @@ public static class EsrganOnnxService
     /// <summary>该设备是否已因连续瞬时失败被判定不可用(本进程内)。用于在建会话/推理之前快速失败——
     /// 这是原 _dmlBad 闩锁里唯一有用的那半(不重复注定失败的调用),去掉的是它"转 CPU"的落点。</summary>
     internal static bool DmlDeviceUnusable(int device, DmlDomain domain = DmlDomain.Video)
-        => device >= 0 && Strikes(domain).TryGetValue(device, out var n) && n >= DmlTransientStrikes;
+        => device >= 0 && Strikes(domain).TryGetValue(device, out var n) && n >= DmlTransientStrikeLimit;
 
     /// <summary>是否【任一】设备已达连击上限。供只持有"自动"(-2)这类未解析设备号的调用方使用:
     /// 逐对/逐帧循环里认出一次就该停止白试,否则几千帧就是几千次注定失败的调用 + 几千条同样的日志。</summary>
     internal static bool AnyDmlDeviceUnusable(DmlDomain domain = DmlDomain.Video)
     {
         foreach (var kv in Strikes(domain))
-            if (kv.Value >= DmlTransientStrikes) return true;
+            if (kv.Value >= DmlTransientStrikeLimit) return true;
         return false;
     }
 
@@ -1326,7 +1328,7 @@ public static class EsrganOnnxService
         // 源帧回退,不该被图片页的失败牵连(它的失败会记在【同一个真实 DML 号】上,由调用方按批次处理)。
         if (sessionOverride == null && DmlDeviceUnusable(dmDevice))
             throw new InvalidOperationException(
-                $"GPU(DirectML 设备 {dmDevice})已连续 {DmlTransientStrikes} 次推理失败,本进程内视为不可用——"
+                $"GPU(DirectML 设备 {dmDevice})已连续 {DmlTransientStrikeLimit} 次推理失败,本进程内视为不可用——"
                 + "已停止超分尝试(不降级到慢速 CPU)。请重启软件后重试;若反复出现,建议关闭其他占用显存的程序并更新显卡驱动。");
 
         // 【并行优化】sessionOverride 非空:直接用调用方传入的独立会话(绕开共享缓存锁,支持多 session 并行),
@@ -1456,8 +1458,8 @@ public static class EsrganOnnxService
                     // 【F4 日志卫生】上面那条"已连续 N 次失败"只在"刚刚达上限"这一次报(计数 == 上限),
                     // 之后每帧再失败不再重复同一句 —— 真机诊断包 694 条 WARN 里 676 条是这一句,
                     // 把黑帧/补帧降级那 8 条真正有用的线索埋掉了。抛异常的行为一字不变。
-                    if (NoteDmlTransientFailure(dmDevice) && TransientStrikeCount(dmDevice) == DmlTransientStrikes)
-                        AppLogger.Warn($"⚠ ONNX 超分:DirectML 设备 {dmDevice} 连续 {DmlTransientStrikes} 次推理失败,本进程内视为不可用——"
+                    if (NoteDmlTransientFailure(dmDevice) && TransientStrikeCount(dmDevice) == DmlTransientStrikeLimit)
+                        AppLogger.Warn($"⚠ ONNX 超分:DirectML 设备 {dmDevice} 连续 {DmlTransientStrikeLimit} 次推理失败,本进程内视为不可用——"
                             + "剩余帧按批次回退源帧(不降级到慢速 CPU);请重启软件后重试");
                     throw new InvalidOperationException($"ONNX 超分失败(并行会话): {ex.Message}", ex);
                 }
@@ -1481,7 +1483,7 @@ public static class EsrganOnnxService
                 if (NoteDmlTransientFailure(dmDevice))
                 {
                     throw new InvalidOperationException(
-                        $"ONNX 超分失败:GPU(DirectML 设备 {dmDevice})已连续 {DmlTransientStrikes} 次推理失败,"
+                        $"ONNX 超分失败:GPU(DirectML 设备 {dmDevice})已连续 {DmlTransientStrikeLimit} 次推理失败,"
                         + "已停止尝试(不降级到慢速 CPU)。请重启软件后重试;若反复出现,多为显存不足或驱动问题——"
                         + "建议关闭其他占用显存的程序并更新显卡驱动。\n--\n" + ex.Message, ex);
                 }
