@@ -14,7 +14,7 @@
           并且在处理的上面 就是和视频处理页面一模一样的风格布局"。 -->
     <Grid AllowDrop="True" DragOver="DropArea_DragOver" Drop="DropArea_Drop">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="300"/>
+            <ColumnDefinition Width="322"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
