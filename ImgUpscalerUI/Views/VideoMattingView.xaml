@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="UTF-8" ?>
+<?xml version="1.0" encoding="UTF-8" ?>
 <UserControl
     x:Class="ALHPro.Views.VideoMattingView"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -9,34 +9,28 @@
     mc:Ignorable="d">
 
     <!-- 视频抠图:独立板块(2026-09-22 用户明确要求)。
-         与「图片抠图」是两件事,页面不合并、互不影响;共享的只有模型注册表与参数语义。 -->
+         与「图片抠图」是两件事,页面不合并、互不影响;共享的只有模型注册表与参数语义。
+         控件与排版刻意与 CutoutView / VideoView 一致:同样的 SectionTitle / HintText / 分隔线 / 参数列写法。 -->
     <Grid>
         <Grid.ColumnDefinitions>
-            <!-- 参数面板 -->
             <ColumnDefinition Width="300"/>
-            <!-- 右侧任务区 -->
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
-        <!-- ============ 参数面板 ============ -->
+        <!-- ============ 参数面板(圆角卡片,与图片抠图页同款) ============ -->
         <Border Grid.Column="0" Background="{StaticResource AppPanelBrush}"
                 BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
                 CornerRadius="12" Margin="0,0,10,10">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel Padding="14,16" Spacing="14">
 
-                    <!-- 开发中提示:这一页的处理引擎尚未接线,如实告知,别让人以为能跑 -->
-                    <Border Background="#33FF9800" BorderBrush="#66FF9800" BorderThickness="1"
-                            CornerRadius="6" Padding="10,8">
-                        <TextBlock TextWrapping="Wrap" FontSize="12"
-                                   Text="本页正在开发中:参数与默认值已就位,处理引擎(逐帧抠图 → 时序稳定 → 合成 → 编码)接线中。&#x0a;图片抠图不受影响,仍在左侧『图片抠图』页。"/>
-                    </Border>
-
                     <TextBlock Text="素材" Style="{StaticResource SectionTitle}"/>
-                    <Button x:Name="PickBtn" Content="添加视频(可多选)..." IsEnabled="False"
+                    <Button x:Name="PickBtn" Content="添加视频(可多选)..." Click="PickBtn_Click"
                             HorizontalAlignment="Stretch"/>
                     <TextBlock x:Name="FileInfo" Text="未添加视频" Style="{StaticResource HintText}"
                                TextTrimming="CharacterEllipsis"/>
+
+                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
                     <TextBlock Text="输出方式" Style="{StaticResource SectionTitle}"/>
                     <StackPanel Spacing="6">
@@ -46,45 +40,68 @@
                                      GroupName="MattingOutputMode" Checked="OutputMode_Changed"/>
                     </StackPanel>
 
-                    <!-- 背景:仅"换背景"显示 -->
                     <StackPanel x:Name="BgPanel" Spacing="8">
                         <TextBlock Text="背景" Style="{StaticResource SectionTitle}"/>
                         <StackPanel Spacing="6">
-                            <RadioButton x:Name="BgColorRadio" Content="纯色" IsChecked="True" GroupName="MattingBg"/>
-                            <RadioButton x:Name="BgImageRadio" Content="图片" GroupName="MattingBg"/>
-                            <RadioButton x:Name="BgVideoRadio" Content="视频" GroupName="MattingBg"/>
+                            <RadioButton x:Name="BgColorRadio" Content="纯色" IsChecked="True" GroupName="MattingBg"
+                                         Checked="BgMode_Changed"/>
+                            <RadioButton x:Name="BgImageRadio" Content="图片" GroupName="MattingBg"
+                                         Checked="BgMode_Changed"/>
                         </StackPanel>
-                        <TextBlock Text="纯色/图片/视频的选择与预览在接线后开放。" Style="{StaticResource HintText}" TextWrapping="Wrap"/>
+                        <Grid x:Name="BgColorRow" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="BgColorBox" Text="#1E3A5F" FontSize="12"/>
+                            <TextBlock Grid.Column="1" Text="背景色" Style="{StaticResource HintText}"
+                                       VerticalAlignment="Center"/>
+                        </Grid>
+                        <Button x:Name="BgImageBtn" Content="选择背景图片..." Click="BgImage_Click" Visibility="Collapsed"
+                                HorizontalAlignment="Stretch"/>
+                        <TextBlock x:Name="BgImageInfo" Text="未选择背景图片" Style="{StaticResource HintText}"
+                                   Visibility="Collapsed" TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
+
+                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
                     <TextBlock Text="抠图模型" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="ModelCombo" HorizontalAlignment="Stretch"
                               SelectionChanged="ModelCombo_SelectionChanged"
-                              ToolTipService.ToolTip="默认 ISNet 精细边缘:本机 GPU 实测最快(0.26 秒/帧蒙版)、边缘最细;BiRefNet 判别力强但本机 DirectML 上会回退 CPU"/>
+                              ToolTipService.ToolTip="默认 ISNet 精细边缘:本机 GPU 实测最快(约 0.26 秒/帧蒙版)、边缘最细;BiRefNet 判别力强但本机 DirectML 上会回退 CPU"/>
                     <TextBlock x:Name="ModelHint" Style="{StaticResource HintText}" TextWrapping="Wrap"/>
 
                     <TextBlock Text="抠图参数" Style="{StaticResource SectionTitle}"/>
                     <TextBlock x:Name="FgLabel" Style="{StaticResource HintText}"/>
-                    <Slider x:Name="FgSlider" Minimum="0" Maximum="255" Value="152" StepFrequency="1" ValueChanged="Param_ValueChanged"/>
+                    <Slider x:Name="FgSlider" Minimum="0" Maximum="255" Value="152" StepFrequency="1"
+                            ValueChanged="Param_ValueChanged"/>
                     <TextBlock x:Name="BgLabel" Style="{StaticResource HintText}"/>
-                    <Slider x:Name="BgSlider" Minimum="0" Maximum="255" Value="84" StepFrequency="1" ValueChanged="Param_ValueChanged"/>
+                    <Slider x:Name="BgSlider" Minimum="0" Maximum="255" Value="84" StepFrequency="1"
+                            ValueChanged="Param_ValueChanged"/>
                     <TextBlock x:Name="FeatherLabel" Style="{StaticResource HintText}"/>
-                    <Slider x:Name="FeatherSlider" Minimum="0" Maximum="20" Value="1" StepFrequency="1" ValueChanged="Param_ValueChanged"/>
-                    <TextBlock x:Name="EdgeLabel" Style="{StaticResource HintText}"/>
-                    <Slider x:Name="EdgeSlider" Minimum="0" Maximum="100" Value="0" StepFrequency="1" ValueChanged="Param_ValueChanged"/>
+                    <Slider x:Name="FeatherSlider" Minimum="0" Maximum="20" Value="1" StepFrequency="1"
+                            ValueChanged="Param_ValueChanged"/>
                     <TextBlock x:Name="MorphLabel" Style="{StaticResource HintText}"/>
-                    <Slider x:Name="MorphSlider" Minimum="0" Maximum="100" Value="28" StepFrequency="1" ValueChanged="Param_ValueChanged"/>
+                    <Slider x:Name="MorphSlider" Minimum="0" Maximum="100" Value="28" StepFrequency="1"
+                            ValueChanged="Param_ValueChanged"/>
+
+                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
                     <TextBlock Text="时序稳定" Style="{StaticResource SectionTitle}"/>
                     <TextBlock x:Name="StabilityLabel" Style="{StaticResource HintText}"/>
-                    <Slider x:Name="StabilitySlider" Minimum="0" Maximum="100" Value="50" StepFrequency="1" ValueChanged="Param_ValueChanged"/>
-                    <TextBlock Text="抖动越小越稳,但过高会让快速运动拖影;静止画面建议 50~80。" Style="{StaticResource HintText}" TextWrapping="Wrap"/>
+                    <Slider x:Name="StabilitySlider" Minimum="0" Maximum="100" Value="50" StepFrequency="1"
+                            ValueChanged="Param_ValueChanged"/>
+                    <TextBlock Text="抖动越小越稳,但过高会让快速运动拖影;静止画面建议 50~80。"
+                               Style="{StaticResource HintText}" TextWrapping="Wrap"/>
+
+                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
                     <TextBlock Text="输出" Style="{StaticResource SectionTitle}"/>
-                    <Button x:Name="OutDirBtn" Content="选择输出文件夹..." IsEnabled="False" HorizontalAlignment="Stretch"/>
+                    <Button x:Name="OutDirBtn" Content="选择输出文件夹..." Click="OutDir_Click"
+                            HorizontalAlignment="Stretch"/>
                     <TextBlock x:Name="OutDirText" Text="默认与源视频同目录" Style="{StaticResource HintText}"
                                TextTrimming="CharacterEllipsis"/>
-                    <!-- 容器:仅"透明通道"显示;默认第一项= MOV/ProRes 4444(实测到处都认) -->
+                    <!-- 容器:仅"透明通道"显示;默认第一项 = MOV/ProRes 4444(实测到处都认) -->
                     <StackPanel x:Name="ContainerPanel" Spacing="6" Visibility="Collapsed">
                         <TextBlock Text="容器" Style="{StaticResource HintText}"/>
                         <ComboBox x:Name="ContainerCombo" HorizontalAlignment="Stretch"
@@ -93,26 +110,37 @@
                                    Style="{StaticResource HintText}" TextWrapping="Wrap"/>
                     </StackPanel>
 
-                    <Button x:Name="StartBtn" Content="开始处理" IsEnabled="False"
+                    <Button x:Name="StartBtn" Content="开始处理" Click="Start_Click"
                             HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
+                    <Button x:Name="CancelBtn" Content="取消" Click="Cancel_Click" IsEnabled="False"
+                            HorizontalAlignment="Stretch"/>
                 </StackPanel>
             </ScrollViewer>
         </Border>
 
-        <!-- ============ 右侧任务区 ============ -->
-        <Grid Grid.Column="1" Margin="0,0,0,10">
-            <Border Background="{StaticResource AppPanelBrush}" BorderBrush="{StaticResource AppBorderBrush}"
-                    BorderThickness="1" CornerRadius="12">
-                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="10" Padding="24">
-                    <TextBlock Text="视频抠图" FontSize="16" HorizontalAlignment="Center"/>
-                    <TextBlock TextWrapping="Wrap" TextAlignment="Center" MaxWidth="520"
+        <!-- ============ 右侧任务区(进度 + 日志,与其它页一致) ============ -->
+        <Border Grid.Column="1" Background="{StaticResource AppPanelBrush}"
+                BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
+                CornerRadius="12" Margin="0,0,0,10">
+            <Grid Padding="14" RowSpacing="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock x:Name="TaskTitle" Text="视频抠图" FontSize="15"/>
+                <StackPanel Grid.Row="1" Spacing="6">
+                    <TextBlock x:Name="ProgressText" TextWrapping="Wrap"
                                Style="{StaticResource HintText}"
-                               Text="把视频里的人和物抠出来:&#x0a;① 换背景 —— 输出普通视频,可直接播放/发布;&#x0a;② 透明通道 —— 输出带 alpha 的视频,叠加到自己的画面上。&#x0a;&#x0a;处理引擎接线完成后,这里会显示任务列表、逐帧进度与预计用时。"/>
-                    <TextBlock TextWrapping="Wrap" TextAlignment="Center" MaxWidth="520"
-                               Style="{StaticResource HintText}"
-                               Text="图片抠图请用左侧『图片抠图』页(按张处理,支持框选与涂抹)。"/>
+                               Text="添加视频后点「开始处理」。换背景输出普通视频;透明通道输出带 alpha 的视频给剪辑软件用。"/>
+                    <ProgressBar x:Name="TaskBar" Minimum="0" Maximum="100" Value="0"/>
                 </StackPanel>
-            </Border>
-        </Grid>
+                <TextBox Grid.Row="2" x:Name="LogBox" IsReadOnly="True" AcceptsReturn="True"
+                         TextWrapping="Wrap" FontSize="12" FontFamily="Consolas"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         PlaceholderText="处理日志会显示在这里"/>
+            </Grid>
+        </Border>
     </Grid>
 </UserControl>
