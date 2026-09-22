@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
@@ -284,6 +284,7 @@ public sealed partial class VideoMattingView : UserControl
             _ = GenerateThumbAsync(item);
         }
         RefreshEmptyState();
+        Log($"+{added} 个视频(共 {_items.Count} 个)");
         Status(added > 0 ? $"视频抠图:已添加 {added} 个视频(共 {_items.Count} 个)" : "视频抠图:这些视频已经在列表里了");
     }
 
@@ -395,7 +396,7 @@ public sealed partial class VideoMattingView : UserControl
     {
         if (_items.Count == 0)
         {
-            ProgressText.Text = "请先添加视频。";
+            TaskTitle.Text = "请先添加视频。";
             Status("视频抠图:请先添加视频");
             return;
         }
@@ -409,7 +410,7 @@ public sealed partial class VideoMattingView : UserControl
         var progress = new Progress<(int pct, string msg)>(p =>
         {
             TaskBar.Value = Math.Clamp(p.pct, 0, 100);
-            ProgressText.Text = p.msg;
+            TaskTitle.Text = p.msg;
             if (current != null)
             {
                 current.Progress = p.pct;
@@ -436,22 +437,24 @@ public sealed partial class VideoMattingView : UserControl
                 item.Info = $"{result.Frames} 帧 · {result.ElapsedSec:0.#} 秒 · {result.Device}";
                 item.OutputInfo = Path.GetFileName(result.OutputPath);
                 _done.Add(item.Path);
-                ProgressText.Text = "完成:" + result.OutputPath;
+                TaskTitle.Text = "完成:" + result.OutputPath;
                 Status($"视频抠图完成:{Path.GetFileName(result.OutputPath)} · {result.Device} · {result.ElapsedSec:0.#} 秒");
+                Log($"完成:{Path.GetFileName(result.OutputPath)}({result.Frames} 帧 / {result.ElapsedSec:0.#} 秒 / {result.Device})");
                 AppLogger.Info($"视频抠图完成:{result.OutputPath} 帧数={result.Frames} 设备={result.Device} 备注={result.Notes}");
             }
         }
         catch (OperationCanceledException)
         {
             if (current != null) { current.StateText = "已取消"; current.StateBadgeBrush = "#8A5A12"; current.Progress = 0; }
-            ProgressText.Text = "已取消(临时文件已清理)。";
+            TaskTitle.Text = "已取消(临时文件已清理)。";
             Status("视频抠图已取消");
         }
         catch (Exception ex)
         {
             if (current != null) { current.StateText = "失败"; current.StateBadgeBrush = "#B3261E"; current.Progress = 0; }
             AppLogger.Error($"视频抠图失败 HRESULT=0x{ex.HResult:X8}", ex);
-            ProgressText.Text = "处理失败:" + ex.Message;
+            Log("失败:" + ex.Message);
+            TaskTitle.Text = "处理失败:" + ex.Message;
             Status("视频抠图失败:" + ex.Message);
         }
         finally
@@ -465,7 +468,7 @@ public sealed partial class VideoMattingView : UserControl
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
         try { _cts?.Cancel(); } catch { }
-        ProgressText.Text = "已请求取消,等当前帧处理完就停...";
+        TaskTitle.Text = "已请求取消,等当前帧处理完就停...";
         Status("视频抠图:正在取消...");
     }
 
@@ -481,6 +484,17 @@ public sealed partial class VideoMattingView : UserControl
         ModeBgRadio.IsEnabled = !running;
         ModeAlphaRadio.IsEnabled = !running;
         FormatCombo.IsEnabled = !running;
+    }
+
+    /// <summary>左栏底部日志(照视频处理页:小框 + 常驻滚动条)。</summary>
+    private void Log(string line)
+    {
+        try
+        {
+            VideoLogText.Text += (VideoLogText.Text.Length == 0 || VideoLogText.Text == "日志:等待任务..." ? "" : "\n") + line;
+            VideoLogScroll.ChangeView(null, VideoLogScroll.ScrollableHeight, null, true);
+        }
+        catch { }
     }
 
     private void Status(string text)
