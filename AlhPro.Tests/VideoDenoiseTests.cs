@@ -7,32 +7,33 @@ using Xunit;
 
 namespace AlhPro.Tests;
 
-/// <summary>视频降噪滤镜链的单测(任务 M1:整体削弱、弱档大削弱)。
+/// <summary>视频降噪滤镜链的单测。
 /// 【为什么必须有单测】旧实现的三个档位分散在三张 switch 表里(spatialFor / spatialOnly / temporal),
-/// 「仅空间」那一维的两档与"结合"档不同步、越界值又落到"强" —— 结果就是**档位非单调**
-/// (选"弱"不比"中"轻)。这里把三档 × 三种降噪方式全部钉死,并逐维验证单调性。
-/// 【对用户的影响(有意为之)】老用户选「强」的处理强度整体变轻一档(空间研究窗 p7→p5、
-/// 时间维 12:10:12:8→8:6:12:8),因为实测「强」已经过降噪(细节只剩一半)。</summary>
+/// 「仅空间」那一维的两档与"结合"档不同步、越界值又落到"强" —— 结果就是**档位非单调**(选"弱"不比"中"轻)。
+/// 这里把三档 × 三种降噪方式全部钉死,并逐维验证单调性。
+/// 【2026-09-21 参数表加强】用户要求"降噪效果要可观" ⇒ 旧表**每一档都更弱**(旧弱/中档的空间参数还完全相同),
+/// 实测"开了跟没开差不多"。新表的数字全部来自 `_qa\denoise_effect.py` 的实测(见 VideoDenoise 类注释),
+/// 改动时**必须连那份实测一起改** —— 界面提示里的百分比就是从那儿来的。</summary>
 public class VideoDenoiseTests
 {
     [Theory]
-    [InlineData(1, "nlmeans=s=3:p=3:r=3,hqdn3d=2:1.5:3:2")]   // 弱:最轻
-    [InlineData(2, "nlmeans=s=3:p=3:r=3,hqdn3d=4:3:6:4")]     // 中: = 旧【弱】档时间维
-    [InlineData(3, "nlmeans=s=5:p=5:r=5,hqdn3d=8:6:12:8")]    // 强: = 旧【中】档整套 ← 老用户"强"变轻一档
+    [InlineData(1, "nlmeans=s=3:p=3:r=3,hqdn3d=8:6:12:8")]      // 弱:实测降噪 23% / 细节 74% / 闪烁 0.709
+    [InlineData(2, "nlmeans=s=4:p=4:r=4,hqdn3d=16:12:24:16")]   // 中:实测降噪 30% / 细节 72% / 闪烁 0.536
+    [InlineData(3, "nlmeans=s=6:p=5:r=5,hqdn3d=24:18:36:24")]   // 强:实测降噪 39% / 细节 58% / 闪烁 0.446(代价最大的档)
     public void Combined_filter_is_pinned(int strength, string expected)
         => Assert.Equal(expected, VideoDenoise.Filter(strength, VideoDenoise.KindBoth));
 
     [Theory]
-    [InlineData(1, "nlmeans=s=3:p=3:r=3")]
-    [InlineData(2, "nlmeans=s=3:p=3:r=3")]
-    [InlineData(3, "nlmeans=s=5:p=5:r=5")]
+    [InlineData(1, "nlmeans=s=3:p=3:r=3")]   // 实测降噪 15% / 细节 74%
+    [InlineData(2, "nlmeans=s=4:p=4:r=4")]   // 实测降噪 19% / 细节 74%
+    [InlineData(3, "nlmeans=s=6:p=5:r=5")]   // 实测降噪 23% / 细节 61%
     public void Spatial_only_filter_is_pinned(int strength, string expected)
         => Assert.Equal(expected, VideoDenoise.Filter(strength, VideoDenoise.KindSpatialOnly));
 
     [Theory]
-    [InlineData(1, "hqdn3d=2:1.5:3:2")]
-    [InlineData(2, "hqdn3d=4:3:6:4")]
-    [InlineData(3, "hqdn3d=8:6:12:8")]
+    [InlineData(1, "hqdn3d=8:6:12:8")]        // 实测降噪 14% / 细节 91% / 闪烁 0.741(有噪源 1.084)
+    [InlineData(2, "hqdn3d=16:12:24:16")]     // 实测降噪 23% / 细节 84% / 闪烁 0.562
+    [InlineData(3, "hqdn3d=24:18:36:24")]     // 实测降噪 29% / 细节 77% / 闪烁 0.467
     public void Temporal_only_filter_is_pinned(int strength, string expected)
         => Assert.Equal(expected, VideoDenoise.Filter(strength, VideoDenoise.KindTemporalOnly));
 
@@ -49,17 +50,18 @@ public class VideoDenoiseTests
     }
 
     /// <summary>档位必须单调:弱 ≤ 中 ≤ 强,且相邻两档至少有一处严格变大(nlmeans 的 s/p/r、hqdn3d 的四个数)。
-    /// 【仅空间】的弱/中同为 s3p3r3 是**设计如此**(这次削弱主要落在时间维),故那一维只要求非递减。</summary>
+    /// 【2026-09-21】三种方式现在**都**要求弱→中严格变大:旧表里"仅空间"的弱/中同为 s3p3r3
+    /// (选哪档在空间降噪上一模一样)正是用户说"效果不可观"的原因之一,已修。</summary>
     [Theory]
-    [InlineData(VideoDenoise.KindBoth, true)]
-    [InlineData(VideoDenoise.KindSpatialOnly, false)]
-    [InlineData(VideoDenoise.KindTemporalOnly, true)]
-    public void Strength_is_monotonic(int kind, bool weakToMidStrict)
+    [InlineData(VideoDenoise.KindBoth)]
+    [InlineData(VideoDenoise.KindSpatialOnly)]
+    [InlineData(VideoDenoise.KindTemporalOnly)]
+    public void Strength_is_monotonic(int kind)
     {
         var weak = Numbers(VideoDenoise.Filter(1, kind));
         var mid = Numbers(VideoDenoise.Filter(2, kind));
         var strong = Numbers(VideoDenoise.Filter(3, kind));
-        AssertMonotonic(weak, mid, "弱", "中", kind, weakToMidStrict);
+        AssertMonotonic(weak, mid, "弱", "中", kind, true);
         AssertMonotonic(mid, strong, "中", "强", kind, true);
         AssertMonotonic(weak, strong, "弱", "强", kind, true);
     }

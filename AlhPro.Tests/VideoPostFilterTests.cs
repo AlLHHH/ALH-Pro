@@ -27,16 +27,45 @@ public class VideoPostFilterTests
     [Fact]
     public void Preset1_chain_is_pinned()
     {
-        // 25/100×0.50 = 0.125 → 固定两位小数(与迁移前同一份公式,逐字不变)
-        Assert.Equal(0.125, 25 / 100.0 * 0.50, 9);
-        Assert.Equal(Preset1, VideoPostFilters.Build(20, 25, 35, 40, aa: 0));
+        // 预设一的**新刻度**数值(29/50/70/80)必须产出与老刻度(20/25/35/40)**逐字相同**的滤镜链
+        // ⇒ 这就是"迁移只改数字、不改画面"的证明(2026-09-20 后处理刻度重新定标)。
+        Assert.Equal(0.125, 50 / 100.0 * VideoPostFilters.SafeMax["clarity"], 9);
+        Assert.Equal(Preset1, VideoPostFilters.Build(29, 50, 70, 80, aa: 0));
     }
 
     [Fact]
     public void Preset2_chain_is_pinned()
     {
-        Assert.Equal(0.40, 40 / 100.0, 9);
-        Assert.Equal(Preset2, VideoPostFilters.Build(20, 25, 40, 40, aa: 0));
+        Assert.Equal(0.40, 80 / 100.0 * VideoPostFilters.SafeMax["usm"], 9);
+        Assert.Equal(Preset2, VideoPostFilters.Build(29, 50, 80, 80, aa: 0));
+    }
+
+    /// <summary>**老设置/老预设的等效迁移**(2026-09-20 刻度重新定标)。
+    /// 老刻度:锐化/钝化/边缘 100→1.00,清晰 100→0.50,保留细节 100→0.60;
+    /// 新刻度(实测安全上限):0.70 / 0.25 / 0.50 / 0.30 / 0.70。
+    /// ⇒ 旧值 20/25/35/40 必须换算成 29/50/70/80,这样**同一份预设的画面强度不变**。</summary>
+    [Theory]
+    [InlineData("sharpen", 20, 29)]     // 0.20 = 29×0.0070
+    [InlineData("clarity", 25, 50)]     // 0.125 = 50×0.0025
+    [InlineData("usm", 35, 70)]         // 0.35 = 70×0.0050
+    [InlineData("detail", 40, 80)]      // 0.24 = 80×0.0030
+    [InlineData("edge", 30, 43)]        // 0.30 = 43×0.0070
+    [InlineData("edge", 60, 86)]        // 0.60 = 86×0.0070
+    [InlineData("usm", 0, 0)]           // 关着的档不动
+    public void Old_strengths_migrate_to_equivalent_new_values(string key, int oldValue, int expected)
+        => Assert.Equal(expected, VideoPostFilters.MigrateStrength(key, oldValue));
+
+    /// <summary>迁移是幂等思路上的"一次性":迁移后的值再迁一次必须不变(否则每次启动都会越迁越强)。</summary>
+    [Fact]
+    public void Migration_is_a_one_shot()
+    {
+        foreach (var key in new[] { "sharpen", "clarity", "usm", "detail", "edge" })
+        {
+            int once = VideoPostFilters.MigrateStrength(key, 40);
+            // 迁移后的值按"已经是新刻度"处理:再喂给迁移函数也不该超过 100 且不会被二次放大成别的档
+            Assert.InRange(once, 0, 100);
+            Assert.Equal(VideoPostFilters.Strength(key, once), System.Math.Min(VideoPostFilters.SafeMax[key], once / 100.0 * VideoPostFilters.SafeMax[key]), 9);
+        }
     }
 
     [Fact]
@@ -80,13 +109,13 @@ public class VideoPostFilterTests
     [Fact]
     public void Only_enabled_stages_are_emitted()
     {
-        Assert.Equal("unsharp=13:13:0.13:13:13:0,cas=strength=0.24", VideoPostFilters.Build(0, 25, 0, 40));
-        Assert.Equal("smartblur=luma_radius=1:luma_strength=-0.50:luma_threshold=3", VideoPostFilters.Build(50, 0, 0, 0));
+        Assert.Equal("unsharp=13:13:0.06:13:13:0,cas=strength=0.12", VideoPostFilters.Build(0, 25, 0, 40));
+        Assert.Equal("smartblur=luma_radius=1:luma_strength=-0.35:luma_threshold=3", VideoPostFilters.Build(50, 0, 0, 0));
     }
 
     [Theory]
-    [InlineData(100, "-1.00", 6)]   // 超上限钳到 1.00;>60 走阈值 6
-    [InlineData(200, "-1.00", 6)]
+    [InlineData(100, "-0.70", 6)]   // 【2026-09-20 新刻度】100 = 实测安全上限 0.70(旧刻度是 1.00);>60 走阈值 6
+    [InlineData(200, "-0.70", 6)]
     [InlineData(1, "-0.01", 3)]
     public void Sharpen_strength_is_capped(int value, string expected, int threshold)
     {
@@ -106,12 +135,15 @@ public class VideoPostFilterTests
     [Fact]
     public void Clarity_usm_detail_are_capped()
     {
-        // 清晰 ≤0.50、钝化 ≤1.00、细节 ≤0.60(与迁移前同一批上限)
-        Assert.Equal("unsharp=13:13:0.50:13:13:0", VideoPostFilters.Build(0, 100, 0, 0));
-        Assert.Equal("unsharp=13:13:0.50:13:13:0", VideoPostFilters.Build(0, 500, 0, 0));
-        Assert.Equal("smartblur=luma_radius=2:luma_strength=-1.00:luma_threshold=8", VideoPostFilters.Build(0, 0, 100, 0));
-        Assert.Equal("cas=strength=0.60", VideoPostFilters.Build(0, 0, 0, 100));
-        Assert.Equal("cas=strength=0.60", VideoPostFilters.Build(0, 0, 0, 999));
+        // 【2026-09-20 新刻度】每一档的 100 = 实测安全上限(依据 _qa\post_filter_audit.py 的噪声/边宽实测):
+        //   清晰 0.25(旧 0.50:100 档会把边缘从 6.89px 拉宽到 9.83px ✗)
+        //   钝化蒙版 0.50(旧 1.00:100 档平坦噪声 2.03× ✗)
+        //   保留细节 0.30(旧 0.60:40 档就已 1.63× 噪声 ✗)
+        Assert.Equal("unsharp=13:13:0.25:13:13:0", VideoPostFilters.Build(0, 100, 0, 0));
+        Assert.Equal("unsharp=13:13:0.25:13:13:0", VideoPostFilters.Build(0, 500, 0, 0));
+        Assert.Equal("smartblur=luma_radius=2:luma_strength=-0.50:luma_threshold=8", VideoPostFilters.Build(0, 0, 100, 0));
+        Assert.Equal("cas=strength=0.30", VideoPostFilters.Build(0, 0, 0, 100));
+        Assert.Equal("cas=strength=0.30", VideoPostFilters.Build(0, 0, 0, 999));
     }
 
     [Fact]

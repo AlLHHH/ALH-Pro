@@ -169,6 +169,17 @@ namespace ALHPro
                 AppLogger.Info("清理临时文件残留:当前有处理任务在跑 → 整轮跳过(绝不删正在使用的临时帧/临时目录;残留留给下次启动清理)");
                 return (0, 0, 0, true);
             }
+            // 【2026-09-19 新增 · 审计 R1】回收**上一次任务残留的引擎/ffmpeg 进程**。
+            // 为什么必须做(真机实测):任务结束后 `realesrgan-ncnn-vulkan-2026.exe` 仍存活、持续占 GPU ✗
+            //   ⇒ 同机申请 NVENC 会话失败 → App 把编码器记成坏的 → **整段任务退回 CPU 软编**(实测 1fps vs 5.5fps)✗✗
+            // 位置:放在"有任务在跑就整轮跳过"的闸门**之后** ⇒ 正在跑的任务绝不会被误杀 ✔
+            // 边界:只杀**可执行文件位于我们自己 engines/ 目录**的进程,别家软件的同名程序一律不碰 ✔
+            try
+            {
+                int n = EngineService.KillStaleEngines();
+                if (n > 0) AppLogger.Info($"回收残留引擎进程 {n} 个(它们会占着 GPU 不放,是'编码变慢/硬编不可用'的常见诱因)");
+            }
+            catch { }
             // 【修复 一打开软件就闪退 · 2026-09-16 用户实测】旧版这里把"所有固定盘根目录"也塞进了扫描列表
             // (DriveInfo.GetDrives() → C:\ / D:\ / E:\),接着对每个 root 做 EnumerateDirectories。
             // 而本机【枚举 D:\ 盘根】会让任意 .NET 8 进程直接 AccessViolation(退出码 0xC0000005)硬崩:

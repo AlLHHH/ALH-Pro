@@ -281,6 +281,80 @@ public static partial class EngineService
     /// 生成于任何探测之前、之后永不刷新;②纯 NVIDIA 非 Blackwell 机型走快速通道**从不落盘结论**。
     /// 导出诊断包时必须拿到"这一刻的真实结论",所以 force 会绕过 ①的缓存短路 与 ②的快速通道,
     /// 仍然复用同一套生产帧探测口径(不新增第二套判据)。</param>
+    // ===== 【1x 修复档 · Anime4K 着色器 · 2026-09-21】可用性探测(一次,会话内缓存) =====
+    private static bool? _anime4kOk;
+    private static readonly object _anime4kLock = new();
+
+    /// <summary>本机能不能在 1x 档用 Anime4K 着色器(`libplacebo` 滤镜 + `custom_shader_path`)。
+    /// 【为什么必须先探】libplacebo 依赖可用的 Vulkan:没有的话滤镜初始化失败 ⇒ ffmpeg 直接报错、**整批编码失败** ✗。
+    /// 所以开跑前探一次,探不过就回退到旧的「2x 超分后缩回」行为(调用点见 VideoView 的 1x 分支),绝不让任务白白失败。
+    /// 【为什么用 lavfi 合成图】不依赖任何素材、64×64 单帧,亚秒级;结果按会话缓存,不会每批重试。
+    /// 【工作目录是关键】滤镜里只能传**文件名** —— 绝对路径里的 `D:` 会被 ffmpeg 的滤镜参数解析当成选项分隔符
+    /// (实测报 "No option name near '/Video2X Qt6/...'",看着像路径不存在,其实是解析错误),
+    /// 所以必须让 ffmpeg 以**自己所在目录**为工作目录(cwd = engines\ffmpeg ⇒ 相对 `shaders\anime4k-v4-a.glsl`)。
+    /// 【上一轮的误判更正】曾把一次 "Failed initializing vulkan device" 当成"这版 ffmpeg 用不了 Anime4K";
+    /// 复测(连跑 3 次)全部通过,输出与 Video2X 自带的 Anime4K 逐帧 44.4 dB = 同一处理 ⇒ 那次是瞬时故障。</summary>
+    public static async Task<bool> EnsureAnime4kProbeAsync(CancellationToken ct = default)
+    {
+        lock (_anime4kLock) { if (_anime4kOk.HasValue) return _anime4kOk.Value; }
+        // 【自审修正 · 2026-09-21】失败要**再试一次**再下结论:实测出现过"同一条命令这次失败、下次就成功"的瞬时故障
+        //   (libplacebo 初始化受 GPU 当时状态影响)。原实现把瞬时失败缓存一整个会话 ⇒ 那一次之后就再也用不上 Anime4K ✗。
+        bool ok = await ProbeAnime4kOnceAsync(ct).ConfigureAwait(false);
+        string first = ok ? "" : "首次失败";
+        if (!ok)
+        {
+            AppLogger.Info("[探测] 1x 修复(Anime4K)首次未通过,2 秒后重试一次(该滤镜实测出现过瞬时失败)");
+            try { await Task.Delay(2000, ct).ConfigureAwait(false); } catch { }
+            ok = await ProbeAnime4kOnceAsync(ct).ConfigureAwait(false);
+        }
+        AppLogger.Info(ok
+            ? ($"[探测] 1x 修复(Anime4K {AlhPro.Core.Anime4k.ShaderFileName}):着色器可用 ✓(Vulkan + libplacebo 正常)"
+               + (first.Length > 0 ? "(重试后通过)" : ""))
+            : "[探测] 1x 修复(Anime4K):不可用 ✗(两次都失败)⇒ 1x 档改用「现实 · 1x 修复」");
+        lock (_anime4kLock) { _anime4kOk = ok; }
+        return ok;
+    }
+
+    /// <summary>跑一次探测(不含缓存与日志结论)。见 <see cref="EnsureAnime4kProbeAsync"/> 的说明。</summary>
+    private static async Task<bool> ProbeAnime4kOnceAsync(CancellationToken ct)
+    {
+        try
+        {
+            var ff = VideoService.FfmpegPath ?? throw new FileNotFoundException("未找到 ffmpeg");
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = ff,
+                // -v error 让失败原因只有一两行;输入用 lavfi 合成,不碰素材
+                Arguments = $"-v error -f lavfi -i \"testsrc=size=64x64:rate=1\" -frames:v 1 " +
+                            $"-vf \"{AlhPro.Core.Anime4k.ProbeFilter}\" -f null -",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                WorkingDirectory = Path.GetDirectoryName(ff) ?? ".",
+            };
+            using var pr = System.Diagnostics.Process.Start(psi);
+            if (pr == null) return false;
+            var errTask = pr.StandardError.ReadToEndAsync();
+            pr.StandardOutput.ReadToEnd();
+            if (!pr.WaitForExit(20000))
+            {
+                try { pr.Kill(entireProcessTree: true); } catch { }
+                AppLogger.Warn("[探测] 1x 修复(Anime4K):探测超时(20 秒)");
+                return false;
+            }
+            if (pr.ExitCode == 0) return true;
+            var err = (await errTask.ConfigureAwait(false)).Trim();
+            AppLogger.Warn($"[探测] 1x 修复(Anime4K)失败:{(err.Length > 0 ? err.Split('\n')[0] : "退出码非 0")}");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"[探测] 1x 修复(Anime4K)探测异常:{ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
     public static async Task<bool> EnsureNcnnProbeAsync(string engine, int gpuId, string? model, CancellationToken ct,
         bool force = false)
     {
@@ -1084,9 +1158,57 @@ public static partial class EngineService
         get { lock (_rootsLock) { LoadUsedTempRoots(); return _usedTempRoots.ToArray(); } }
     }
 
-    // 引擎根目录:优先 exe 旁 engines/ 目录;否则从当前目录向上逐级搜索(覆盖源码布局/输出目录)
-    public static string EnginesDir
+    /// <summary>回收"上一次任务残留的引擎 / ffmpeg 进程"(审计 R1,2026-09-19)。
+    /// 【为什么必须做】真机实测:任务结束后 `realesrgan-ncnn-vulkan-2026.exe` 仍存活、持续占着 GPU ✗
+    ///   —— 后果不是"少点显存"这么轻:它让同机的编码器申请 NVENC 会话失败,App 于是把编码器**记成坏的**,
+    ///   整段任务退回 CPU 软编(实测 1 fps vs 硬编 5.5 fps)✗✗。用户只看到"变慢了",根因却在别处。
+    /// 【安全边界(绝不能越界)】
+    ///   · 只杀**可执行文件位于我们自己的 engines/ 目录下**的进程 ⇒ 别家软件的同名 ffmpeg/引擎一律不碰 ✔
+    ///   · 读不到可执行路径的进程**不动**(保守)✔
+    ///   · 调用点都在"确认没有任务在跑"之后(见 App.CleanupTempDirs 的闸门)⇒ 不会误杀正在用的引擎 ✔</summary>
+    public static int KillStaleEngines()
     {
+        int killed = 0;
+        try
+        {
+            string engines;
+            try { engines = Path.GetFullPath(EnginesDir); } catch { return 0; }
+            if (string.IsNullOrEmpty(engines) || engines.Length < 4) return 0;
+            string[] names =
+            {
+                "realesrgan-ncnn-vulkan-2026", "realesrgan-ncnn-vulkan",
+                "rife-ncnn-vulkan-2026", "rife-ncnn-vulkan",
+                "waifu2x-ncnn-vulkan", "ffmpeg", "ffprobe",
+            };
+            int me = Environment.ProcessId;
+            foreach (var n in names)
+            {
+                System.Diagnostics.Process[] list;
+                try { list = System.Diagnostics.Process.GetProcessesByName(n); } catch { continue; }
+                foreach (var p in list)
+                {
+                    try
+                    {
+                        if (p.Id == me) continue;
+                        string path = "";
+                        try { path = p.MainModule?.FileName ?? ""; } catch { continue; }   // 读不到 → 不动它
+                        if (path.Length == 0) continue;
+                        if (!path.StartsWith(engines, StringComparison.OrdinalIgnoreCase)) continue;   // 不是我们的 → 不碰
+                        p.Kill(true);
+                        killed++;
+                        AppLogger.Info($"回收残留引擎进程:{n}(pid {p.Id}){path}");
+                    }
+                    catch { }
+                    finally { try { p.Dispose(); } catch { } }
+                }
+            }
+        }
+        catch { }
+        return killed;
+    }
+
+    // 引擎根目录:优先 exe 旁 engines/ 目录;否则从当前目录向上逐级搜索(覆盖源码布局/输出目录)
+    public static string EnginesDir    {
         get
         {
             var exeDir = AppContext.BaseDirectory;
@@ -1619,7 +1741,7 @@ public static partial class EngineService
                 }
                 else if (fullFrame)
                 {
-                    args = $"-i \"{inPng}\" -o \"{outPng}\" -s 2 -m models -n {model ?? "realesrgan-x4plus"} -t 0 -g {gpuId}{SafeRender.GetEngineThreadArgs()}";
+                    args = $"-i \"{inPng}\" -o \"{outPng}\" -s 2 -m {AlhPro.Core.EsrganModelDir.For(model)} -n {model ?? "realesrgan-x4plus"} -t 0 -g {gpuId}{SafeRender.GetEngineThreadArgs()}";
                 }
                 else
                 {
@@ -2483,7 +2605,7 @@ public static partial class EngineService
             // 与单张路径一致:realesrgan 权重基本只有 2x/4x,非原生倍率统一 4x 后高保真缩回
             int engineScale = 4;
             // -m 显式模型目录(models),-n 模型名(=realesrgan-x4plus)——显式写全,不依赖引擎默认/工作目录
-            var args = $"-i \"{input}\" -o \"{output}\" -s {engineScale} -m models -n {model} " +
+            var args = $"-i \"{input}\" -o \"{output}\" -s {engineScale} -m {AlhPro.Core.EsrganModelDir.For(model)} -n {model} " +
                 $"-t 0 -g {gpuId}{SafeRender.GetEngineThreadArgs()}";
             // 实测:realesrgan(2022 版)加 -x(TTA)会卡死(120秒无输出,引擎兼容问题)——禁用,仅 waifu2x 新版支持 TTA;
             // 50 系适配升级新版引擎后如支持再放开。
@@ -2577,7 +2699,7 @@ public static partial class EngineService
         {
             var exe = FindRealESRGAN() ?? throw new FileNotFoundException("未找到 Real-ESRGAN 引擎");
             engineScale2 = 4;
-            var args = $"-i \"{inDir}\" -o \"{outDir}\" -s {engineScale2} -m models -n {model} " +
+            var args = $"-i \"{inDir}\" -o \"{outDir}\" -s {engineScale2} -m {AlhPro.Core.EsrganModelDir.For(model)} -n {model} " +
                 $"-t 0 -g {gpuId}{SafeRender.GetEngineThreadArgs()}";
             await RunEngFallbackGpuAsync(exe, args, progress, ct).ConfigureAwait(false);
         }
@@ -3010,13 +3132,13 @@ public static partial class EngineService
         else
         {
             var exe = FindRealESRGAN() ?? throw new FileNotFoundException("未找到 Real-ESRGAN 引擎");
-            // 同单张路径:显式 -m models -n 模型名(缺 -m 会找不到模型加载失败);TTA(-x)在 2022 老引擎上会卡死,故不传
+            // 同单张路径:显式给出 -m 模型目录 + -n 模型名(缺 -m 会找不到模型加载失败);TTA(-x)在 2022 老引擎上会卡死,故不传
             // -t 0 的语义是【引擎自己决定分块大小(auto)】,不是"关闭 tiling"——实测 ncnn-vulkan 引擎帮助里写的是
             //   "-t tile-size (>=32/0=auto, default=0)",0 即 auto(旧注释写成"关闭引擎内部 tiling",与引擎语义相反)。
             // 行为不变(仍传 0):整帧直算交给引擎按显存自选分块,分块过大才会 vkQueueSubmit 失败 → 黑帧/OOM,
             // 那种情况由 RunEngAsync 的"降分块重试"与上层的黑帧降级链接住。
             // 视频帧整帧直算(OOM 时 RunEngAsync 自动降级重试/减 tile),避免逐帧"一块一块"。
-            await RunEngAsync(exe, t => $"-i \"{inputDir}\" -o \"{outputDir}\" -s {engineScale} -m models -n {model} " +
+            await RunEngAsync(exe, t => $"-i \"{inputDir}\" -o \"{outputDir}\" -s {engineScale} -m {AlhPro.Core.EsrganModelDir.For(model)} -n {model} " +
                 $"-t 0 -g {gpuId}{SafeRender.GetEngineThreadArgs()} -f {outFormat}").ConfigureAwait(false);
         }
 

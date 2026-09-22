@@ -406,6 +406,7 @@ public sealed partial class VideoView : UserControl
                 }
             }
             catch { }
+            await TestSeamOpenVideoAsync();   // 【测试缝】没设 ALH_TEST_VIDEO 时**立即返回、零副作用**(见方法注释)
         };
         // 日志区滚轮只滚日志(含 handledEventsToo:ScrollViewer 内部已处理也拦得到);
         // 滚到顶/底也吃掉滚轮,不带动外层页面滚动(用户习惯:鼠标在日志里滚动时"只滚日志")
@@ -467,6 +468,11 @@ public sealed partial class VideoView : UserControl
         QualityCombo.SelectedIndex = 0;
         FormatCombo.SelectedIndex = 0;
         CodecCombo.SelectedIndex = 0;   // 默认 H.264(必须在 InitializeComponent 后设置,否则解析期触发事件崩页面)
+        // 【默认档位 = 自动(先体检素材)】⚠ **必须放在 LoadSettings() 之前** —— 2026-09-21 踩过:
+        // 一开始把它写在 LoadSettings() 之后,于是每次启动都用"自动"覆盖用户恢复出来的档位,
+        // 紧接着 OnOptionChanged 又把被覆盖的值写回 video-settings.json ⇒ **用户的档位被静默清掉**
+        // (日志铁证:13:04:03 加载设置 → 13:04:04 写回 Strong=0)。默认值属于"初始化",不能跟在恢复之后。
+        SetDenoiseStrengthIndex(AlhPro.Core.DenoiseStrengthOrder.Weak);
         LoadSettings();
         EnsureBuiltinPresets();   // 确保自带预设(画质通用增强)存在
         UpdateOptions();
@@ -474,14 +480,47 @@ public sealed partial class VideoView : UserControl
         // 视频降噪联动:未勾选「启用视频降噪」时,强度置灰禁用
         void SetDenoiseUi(bool on)
         {
-            DenoiseStrongRadios.IsEnabled = on;
-            DenoiseStrongRadios.Opacity = on ? 1.0 : 0.5;
+            // 【注意】IsEnabled 定义在 Control 上,StackPanel 没有(2026-09-21 编译期直接报错 CS1061)⇒ 逐项设;
+            // 容器只能改透明度(灰显)。
+            foreach (var rb in new[] { DenoiseWeakRadio, DenoiseMediumRadio, DenoiseStrongRadio })
+                if (rb != null) rb.IsEnabled = on;
+            DenoiseStrongPanel.Opacity = on ? 1.0 : 0.5;
             DenoiseStrongLabel.Opacity = on ? 1.0 : 0.5;
         }
         DenoiseToggle.Checked += (_, _) => SetDenoiseUi(true);
         DenoiseToggle.Unchecked += (_, _) => SetDenoiseUi(false);
         SetDenoiseUi(DenoiseToggle.IsChecked == true);
+        // 档位默认值已在 LoadSettings() **之前**设过(见那里的说明与踩坑记录);这里只刷新那行说明。
     }
+
+    /// <summary>「降噪强度」当前档位 = <see cref="AlhPro.Core.DenoiseStrengthOrder"/> 的序号
+    /// (**0=弱 1=中 2=强**;Rev2 起自动档已下线)。没选中任何一项时按**弱**算(最轻的一档,不会白掉细节)。
+    /// 【为什么是 IsChecked 而不是 SelectedIndex】控件是显式 StackPanel + 3 个单选项,档位直接读选中状态。</summary>
+    private int DenoiseStrengthIndex()
+        => DenoiseMediumRadio?.IsChecked == true ? AlhPro.Core.DenoiseStrengthOrder.Medium
+         : DenoiseStrongRadio?.IsChecked == true ? AlhPro.Core.DenoiseStrengthOrder.Strong
+         : AlhPro.Core.DenoiseStrengthOrder.Weak;
+
+    /// <summary>设置「降噪强度」档位(传 <see cref="AlhPro.Core.DenoiseStrengthOrder"/> 的序号);越界值当「弱」。
+    /// 【2026-09-21 自查修复 · 必读】上一版这里**漏了 `case Strong`** —— 传 2(强) 会掉进 default 被设成「弱」,
+    ///   也就是"所有选了强的用户被静默降成弱" ✗。是迁移验收(存 3/Rev1 ⇒ 期望 2)把它抓出来的,
+    ///   所以这条 switch 的三个 case 一个都不能少(有单测按"三档往返"钉住)。</summary>
+    private void SetDenoiseStrengthIndex(int idx)
+    {
+        switch (idx)
+        {
+            case AlhPro.Core.DenoiseStrengthOrder.Weak: if (DenoiseWeakRadio != null) DenoiseWeakRadio.IsChecked = true; break;
+            case AlhPro.Core.DenoiseStrengthOrder.Medium: if (DenoiseMediumRadio != null) DenoiseMediumRadio.IsChecked = true; break;
+            case AlhPro.Core.DenoiseStrengthOrder.Strong: if (DenoiseStrongRadio != null) DenoiseStrongRadio.IsChecked = true; break;
+            // Rev2:越界/未知值一律当最轻的「弱」(自动档已下线,不再有"什么都不选"的状态)
+            default: if (DenoiseWeakRadio != null) DenoiseWeakRadio.IsChecked = true; break;
+        }
+    }
+
+    /// <summary>三个档位单选项共用(等价于原来 RadioButtons 的 SelectionChanged → Combo_Changed)。
+    /// Rev2 起没有"自动"档 ⇒ 不再需要刷新那行"自动会做什么"的说明。</summary>
+    private void DenoiseStrong_Checked(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+        => OnOptionChanged();
 
     /// <summary>当前计算设备是否为核显(名字识别:Intel UHD/Iris/*Intel(R) Graphics* / AMD Radeon(TM) Graphics)。
     /// 用引擎真实枚举按 -g 编号取名字(不能用注册表顺序索引——AMD 核显+NVIDIA 独显双卡机上两者顺序相反)。</summary>
@@ -583,13 +622,19 @@ public sealed partial class VideoView : UserControl
             if (DenoiseToggle.IsChecked == true) slow.Add("视频降噪");
             if ((int)SharpenSlider.Value > 0 || (int)ClaritySlider.Value > 0 || (int)UsmSlider.Value > 0
                 || (int)DetailSlider.Value > 0
-                || PostAaSlider.Value > 0 || PostEdgeSlider.Value > 0)
+                || PostEdgeSlider.Value > 0)
                 slow.Add("后处理");
-            if (interp && MotionBlurCombo.SelectedIndex > 0) slow.Add("运动模糊");
-            if (interp && DeShakeCheck.IsChecked == true) slow.Add("画面去抖");
+            // 【2026-09-21 已删】原先这里还有两行:「运动模糊」「画面去抖」(果冻修复)。整块功能按用户要求删除。
             if (slow.Count > 0 && anyWork && !_running)
             {
                 SpeedHint.Text = $"⚠ 已启用 {string.Join("、", slow)} 处理时间会增加";
+            // 【2026-09-19 审计落地】电池供电提示:用户会以为"变慢了",其实是软件在**保护设备/续航** ✔
+            try
+            {
+                if (ALHPro.SafeRender.OnBatteryPower)
+                    SpeedHint.Text += "；⚠ 正在用电池供电:已自动降低 CPU 占用以保护续航与散热(插电可获得最快速度)";
+            }
+            catch { }
                 SpeedHint.Visibility = Visibility.Visible;
             }
             else SpeedHint.Visibility = Visibility.Collapsed;
@@ -736,9 +781,11 @@ public sealed partial class VideoView : UserControl
     /// 【依据】实测 1080p→2x 游戏帧:官方 animevideov3 边缘宽度 2.23px、强边缘对比 52.3,
     /// 加 0.3 档后 2.15px / 58.0(+11%),过冲 1.05%→1.40%;其它几支模型边缘本来就偏弱,
     /// 用 0.6 档:2.24→2.16px、56.6→69.3(+22%),过冲 1.23%→1.96%。
-    /// 模型名走 Tag(realesr-animevideov3 / realesr-general-x4v3 / …),和管线用的是同一个字符串。</summary>
+    /// 模型名走 Tag(realesr-animevideov3 / realesr-general-x4v3 / …),和管线用的是同一个字符串。
+    /// 【2026-09-20 刻度改定标后同步】老刻度里"0.30 / 0.60 档"= 滑块 30 / 60;新刻度 100 = 安全上限 0.70
+    /// ⇒ 等效值 0.30/0.70=43、0.60/0.70=86(画面强度与以前一模一样,只是刻度换了)。</summary>
     private static int RecommendedEdgeBoost(string? model)
-        => model != null && model.Contains("animevideov3", StringComparison.OrdinalIgnoreCase) ? 30 : 60;
+        => model != null && model.Contains("animevideov3", StringComparison.OrdinalIgnoreCase) ? 43 : 86;
 
     /// <summary>切模型时把「边缘增强」带成推荐值。
     /// 【判据:当前值是不是"推荐值的集合"】等于 0 / 30 / 60 就认为用户没自定义过 → 跟着模型走;
@@ -750,7 +797,7 @@ public sealed partial class VideoView : UserControl
     {
         if (PostEdgeSlider == null || VideoEsrganModelCombo == null) return;
         var cur = (int)PostEdgeSlider.Value;
-        if (cur != 0 && cur != 30 && cur != 60) return;      // 用户自定义过 → 不动
+        if (cur != 0 && cur != 43 && cur != 86) return;      // 用户自定义过 → 不动(43/86 = 新刻度下的推荐档)
         var tag = (VideoEsrganModelCombo.SelectedItem as Microsoft.UI.Xaml.Controls.ComboBoxItem)?.Tag as string;
         var want = RecommendedEdgeBoost(tag);
         if (cur != want) PostEdgeSlider.Value = want;
@@ -758,8 +805,137 @@ public sealed partial class VideoView : UserControl
 
     private void Combo_Changed(object sender, Microsoft.UI.Xaml.Controls.SelectionChangedEventArgs e)
     {
-        if (ReferenceEquals(sender, VideoEsrganModelCombo)) ApplyRecommendedEdgeBoost();
+        if (!_syncingScaleModel) SyncScaleAndAnime4k(sender);
+        // 【Rev9 · 2026-09-21 修】锁定/解锁会改模型下拉的选中项(插入临时项、恢复原选择)——
+        // 那**不是**"用户换了模型",不许触发"推荐边缘增强":否则切一下 1x 就会把用户的后处理参数改掉
+        // (真机验证时实测「边缘增强」被从 0 改成 86 ✗)。_syncingScaleModel 在联动期间为 true,正好当守卫。
+        if (ReferenceEquals(sender, VideoEsrganModelCombo) && !_syncingScaleModel) ApplyRecommendedEdgeBoost();
         OnOptionChanged();
+    }
+
+    private bool _syncingScaleModel;
+    /// <summary>用户上一次在"放大档(2x/3x/4x/自定义)"里选的模型序号 —— 从 1x 切回来时恢复它。</summary>
+    private int _lastUpscaleModelIndex = -1;
+    /// <summary>用户上一次在 1x 档里选的模型序号(Anime4K / 现实 1x)—— 再切到 1x 时恢复它。</summary>
+    private int _last1xModelIndex = -1;
+    /// <summary>进 1x 之前用户选的**引擎**(Real-ESRGAN / waifu2x)—— 1x 会强制走 Real-ESRGAN,离开时恢复。</summary>
+    private int _lastEngineIndexBefore1x = -1;
+    /// <summary>1x 档是否正在"锁住引擎"(存盘时要据此写回用户的真实选择,别把强制值存下去)。</summary>
+    private bool _engineLockedFor1x;
+    /// <summary>**用户真实选的引擎**(界面序号);-1 = 还没恢复过设置。
+    /// 与 `_engineLockedFor1x` 配合:1x 强制 Real-ESRGAN 时,存盘仍写这个值(否则用户的引擎被静默改写 ✗)。</summary>
+    private int _userEngineIndex = -1;
+
+    /// <summary>**按倍率决定哪些模型可选**(2026-09-21 用户定案:"选倍率后 不支持的模型就灰掉"、"1x 也是可以选模型")。
+    ///
+    /// 【规则 · 只灰 1x 这一档】用户选的是 A 方案:2x/3x/4x 保持原状(**不减少任何现有能力**:
+    ///   4x 权重的官方模型在 2x 下仍可用,内部按 4x 跑再缩回,提示照旧);只有 **1x** 档把放大模型全部置灰,
+    ///   因为 1x 现在有自己的两个修复条目(动漫 · Anime4K 修复 / 现实 · 1x 修复),用放大模型去做 1x 才是"错的用法"。
+    ///
+    /// 【为什么同时要把引擎锁到 Real-ESRGAN —— 自审抓到的界面谎话】
+    ///   1x 的两个条目都在 **Real-ESRGAN 的模型下拉**里;若引擎选的是 waifu2x,那个下拉是**隐藏**的 ⇒
+    ///   用户看到的是 waifu2x 的三个模型(全是 2x 的、一个都没灰 ✗),而提示却写着"这里只列 1x 修复模型" ✗✗。
+    ///   ⇒ 1x 时把引擎强制切到 Real-ESRGAN 并**禁用引擎单选**(离开 1x 原样恢复),界面与实跑才一致。
+    ///
+    /// 【切倍率时当前选中项不可用怎么办】自动切到该档"上次用的那支"(没有就选第一个可用的),并写日志 ——
+    ///   **不静默**:用户能看到切换发生了什么(日志 + 下拉里高亮的那一项变了)。
+    ///
+    /// 【只改项自身的属性,不动集合】上一版往 Items 里增删过临时项,踩到 WinRT 的 E_INVALIDARG 直接把应用搞崩
+    ///   (见 Anime4kWiringTests 的契约测试)。这里只对**已存在**的项设 Visibility/IsEnabled,永远不碰集合。</summary>
+    private void UpdateModelScaleAvailability()
+    {
+        if (VideoEsrganModelCombo == null || VideoScaleRadios == null) return;
+        bool is1x = VideoScaleRadios.SelectedIndex == 0;
+
+        // ---- 引擎:1x 强制 Real-ESRGAN(见上面的说明)----
+        if (VideoEngineRadios != null)
+        {
+            if (is1x)
+            {
+                if (VideoEngineRadios.IsEnabled)
+                {
+                    _lastEngineIndexBefore1x = Math.Max(0, VideoEngineRadios.SelectedIndex);
+                    if (VideoEngineRadios.SelectedIndex != 0) VideoEngineRadios.SelectedIndex = 0;
+                    VideoEngineRadios.IsEnabled = false;
+                    VideoEngineRadios.Opacity = 0.5;
+                    Log("1x 修复档使用 Real-ESRGAN 的两个修复条目(Anime4K 着色器 / 现实 2x→缩回)⇒ 引擎已锁定");
+                }
+                _engineLockedFor1x = true;   // 存盘要据此写回用户的真实引擎(见 CollectVideoParams 的说明)
+            }
+            else if (!VideoEngineRadios.IsEnabled || _engineLockedFor1x)
+            {
+                VideoEngineRadios.IsEnabled = true;
+                VideoEngineRadios.Opacity = 1.0;
+                if (_lastEngineIndexBefore1x > 0 && _lastEngineIndexBefore1x < VideoEngineRadios.Items.Count)
+                    VideoEngineRadios.SelectedIndex = _lastEngineIndexBefore1x;
+                _lastEngineIndexBefore1x = -1;
+                _engineLockedFor1x = false;
+            }
+        }
+
+        int count = VideoEsrganModelCombo.Items.Count;
+        if (count == 0) return;
+
+        for (int i = 0; i < count; i++)
+        {
+            if (VideoEsrganModelCombo.Items[i] is not Microsoft.UI.Xaml.Controls.ComboBoxItem it) continue;
+            string tag = (it.Tag as string) ?? "";
+            bool is1xEntry = AlhPro.Core.Upscale1x.Is1xEntry(tag);
+            bool usable = is1x ? is1xEntry : !is1xEntry;
+            // 【自审后的改法】不支持的项**直接隐藏**,不只是置灰 —— 用户抱怨"要滚过 8 个用不了的才看到能用的"。
+            //   隐藏只改项自己的 Visibility(不动集合 ⇒ 不会碰 WinRT 那个 E_INVALIDARG 的雷)。
+            //   同时保留 IsEnabled/Opacity:万一某些 WinUI 版本对项 Visibility 不生效,至少还是"灰而不可选"。
+            it.Visibility = usable ? Visibility.Visible : Visibility.Collapsed;
+            it.IsEnabled = usable;
+            it.Opacity = usable ? 1.0 : 0.35;
+        }
+
+        int cur = VideoEsrganModelCombo.SelectedIndex;
+        bool curOk = cur >= 0 && cur < count
+                     && VideoEsrganModelCombo.Items[cur] is Microsoft.UI.Xaml.Controls.ComboBoxItem cit
+                     && (AlhPro.Core.Upscale1x.Is1xEntry((cit.Tag as string) ?? "") == is1x);
+        if (curOk)
+        {
+            // 记下"这一档上次用的是哪支"
+            if (is1x) _last1xModelIndex = cur; else _lastUpscaleModelIndex = cur;
+            return;
+        }
+
+        // 当前这项在新倍率下不可用 ⇒ 换成该档上次用的那支(找不到就选第一个可用的)
+        int want = is1x ? _last1xModelIndex : _lastUpscaleModelIndex;
+        int pick = -1;
+        if (want >= 0 && want < count
+            && VideoEsrganModelCombo.Items[want] is Microsoft.UI.Xaml.Controls.ComboBoxItem wit
+            && (AlhPro.Core.Upscale1x.Is1xEntry((wit.Tag as string) ?? "") == is1x))
+            pick = want;
+        else
+            for (int i = 0; i < count; i++)
+                if (AlhPro.Core.Upscale1x.Is1xEntry(((VideoEsrganModelCombo.Items[i] as Microsoft.UI.Xaml.Controls.ComboBoxItem)?.Tag as string) ?? "") == is1x)
+                { pick = i; break; }
+        if (pick < 0) return;
+        var before = (VideoEsrganModelCombo.SelectedItem as Microsoft.UI.Xaml.Controls.ComboBoxItem)?.Content?.ToString();
+        VideoEsrganModelCombo.SelectedIndex = pick;
+        var after = (VideoEsrganModelCombo.SelectedItem as Microsoft.UI.Xaml.Controls.ComboBoxItem)?.Content?.ToString();
+        Log($"倍率切换:{(is1x ? "1x 档只用修复条目" : "放大档只用放大模型")} —— 模型已自动从「{before}」切到「{after}」");
+    }
+
+    /// <summary>兼容旧名(调用点见 Combo_Changed):现在只做"按倍率刷新模型可选性"。</summary>
+    private void SyncScaleAndAnime4k(object sender)
+    {
+        if (_syncingScaleModel) return;
+        _syncingScaleModel = true;
+        try { UpdateModelScaleAvailability(); }
+        finally { _syncingScaleModel = false; }
+    }
+
+    /// <summary>1x 档的倍率提示:必须跟着**当前选中的 1x 条目**说(自审修正:原来写死 Anime4K,
+    /// 用户选「现实 · 1x 修复」时那句就是错的)。一行以内,避免把下面控件顶下去。</summary>
+    private string OneXScaleHint()
+    {
+        string tag = (VideoEsrganModelCombo?.SelectedItem as Microsoft.UI.Xaml.Controls.ComboBoxItem)?.Tag as string ?? "";
+        if (tag == AlhPro.Core.Upscale1x.RealTag) return "1x 修复:不放大(现实模型按 2x 跑再缩回原尺寸)";
+        if (tag == AlhPro.Core.Anime4k.ModelTag) return "1x 修复:不放大,用 Anime4K 着色器修复";
+        return "1x 修复:不放大(用下面选的 1x 修复模型)";
     }
 
     private static void SetScaleRadioEnabled(RadioButton rb, bool on)
@@ -872,6 +1048,8 @@ public sealed partial class VideoView : UserControl
         if (VideoWaifu2xModelCombo == null || VideoEsrganModelCombo == null) return;
         bool waifu2x = !SelectedEngineIsReal;
         VideoWaifu2xModelCombo.Visibility = waifu2x ? Visibility.Visible : Visibility.Collapsed;
+        // 【Rev9】1x 修复锁定期:模型框让位给"Anime4K 锁定牌",这里不许把它又显示回来
+        // (原先无条件 `= waifu2x ? Collapsed : Visible`,会把锁定的牌面覆盖掉 ⇒ 用户看到的是普通下拉)。
         VideoEsrganModelCombo.Visibility = waifu2x ? Visibility.Collapsed : Visibility.Visible;
         // 确保各下拉有默认选中项(首次/恢复时)
         if (VideoWaifu2xModelCombo.SelectedIndex < 0) VideoWaifu2xModelCombo.SelectedIndex = 0;
@@ -1051,18 +1229,29 @@ public sealed partial class VideoView : UserControl
         VideoModelLabel.Opacity = up ? 1.0 : 0.5;
         VideoWaifu2xModelCombo.IsEnabled = up;
         VideoWaifu2xModelCombo.Opacity = up ? 1.0 : 0.5;
+        // 【历史】Rev9 时代这里要写成 `up && !Anime4kLocked`(否则会把"锁定牌"的禁用状态覆盖掉)。
+        //   Rev10 起锁定牌那套机制已删(1x 有自己的模型条目 ⇒ 靠"隐藏不支持的项"实现),这里恢复成 `= up` 即可;
+        //   但**下拉整体可用性**仍由 UpdateModelScaleAvailability 按倍率管(它在下面紧接着被调用)。
         VideoEsrganModelCombo.IsEnabled = up;
         VideoEsrganModelCombo.Opacity = up ? 1.0 : 0.5;
-        // 自定义分辨率面板 + 倍率后果提示(随选择动态变化);索引:0=1x超分 1=2x 2=3x 3=4x 4=自定义
+        // 【2026-09-21】按当前倍率刷新"哪些模型可选"(1x 只留 1x 修复条目,其余放大模型置灰)
+        UpdateModelScaleAvailability();
+        // 自定义分辨率面板 + 倍率后果提示(随选择动态变化);索引:0=1x 修复(Anime4K) 1=2x 2=3x 3=4x 4=自定义
         var scaleIdx = VideoScaleRadios.SelectedIndex;
         CustomSizePanel.Visibility = up && scaleIdx == 4 ? Visibility.Visible : Visibility.Collapsed;
+        // 【2026-09-21 用户:"这个提示是不是也该更新了"】是的 —— 1x 档的语义从"2x 放大后缩回"换成了
+        // Anime4K 着色器修复(原分辨率、不放大、不跑超分引擎),这句提示必须跟着换,否则界面在骗人。
         ScaleHint.Text = scaleIdx switch
         {
-            0 => "1x 超分:先 2x 超分再缩回原尺寸,画质比直接放大更好,速度比 2x 略慢",
+            // 【一行 · 用户:"提示太长了 导致界面被下移"】这段在切换倍率时会实时替换,写得越长、下面被顶得越多
+            //   ⇒ 只留一句(一行放得下);完整说明在两项自己的悬停提示里(见 XAML)。
+            // 【自审修正 2026-09-21】原来这里写死"用 Anime4K 修复" —— 用户选「现实 · 1x 修复」时这句就是错的 ✗。
+            //   现在按当前选中的 1x 条目说对应的话(选放大模型时给一句通用说明)。
+            0 => OneXScaleHint(),
             2 => "⚠ 3x:耗时约 2 倍,高分辨率源明显变慢,建议 1080p 以下源使用",
             3 => "⚠ 4x:耗时约 4 倍,显存占用高,4K 源可能卡顿甚至爆显存,建议先试 2x",
             4 => "自定义输出分辨率:内部按 2x 超分,再精确缩放到指定宽×高(适合统一输出规格)",
-            _ => "1x~2x 速度较快;倍率越高越慢、显存占用越大。3x 内部按引擎支持倍数处理",
+            _ => "2x 速度较快;倍率越高越慢、显存占用越大。3x 内部按引擎支持倍数处理",
         };
         // 超分倍率可用性:waifu2x 模型权重虽为 2x,但引擎实测 -s 3/-s 4 用级联输出正常、不崩,已放开;
         // Real-ESRGAN 有对应权重,全亮
@@ -1080,7 +1269,8 @@ public sealed partial class VideoView : UserControl
         // 否则这条提示不显示、且 Core.EngineScalePolicy 会误判成普通模型(那条已同步修)。
         bool x4plusModel = up && SelectedEngineIsReal
             && (esrModel.Contains("x4plus") || esrModel.Contains("general-x4v3") || esrModel.Contains("wdn-x4v3"));
-        // 【2026-09-15 Rev4 · 自训的两支(游戏 · game2x / 现实 · real2x,蓝色「测试」标)】在下拉正下方如实说明数字:
+        // 【2026-09-15 Rev4 · 自训的三支(现实 · alhreal2x / 游戏 · alhgame2x-v2 / 游戏 · alhgame2x-v3)】在下拉正下方如实说明数字:
+        // (Rev7 · 2026-09-21:原第 4 支「游戏 · alhgame2x」已按用户要求从下拉移除,见 VideoModelOrder Rev7 的映射)
         // 提示只在悬停里(ToolTip)的话,用户不悬停就看不到,于是很容易以为"新加的两支更强"。
         // 文案与实测数字集中在 Core.ExperimentalEsrgan(不与 XAML 的 ToolTip 各写一份,免得两处数字对不上);
         // 措辞按用户要求只用**事实陈述**,不用"实验性/测试版"这类定性词。
@@ -1088,13 +1278,25 @@ public sealed partial class VideoView : UserControl
         bool experimentalModel = up && SelectedEngineIsReal && AlhPro.Core.ExperimentalEsrgan.IsExperimental(esrModel);
         if (EsrganModelHint != null)
         {
-            if (experimentalModel)
+            if (scaleIdx == 0)
+            {
+                // 【一行 · 用户:"提示太长了 导致界面被下移"】这段在切倍率时会实时替换,写得越长下面被顶得越多
+                //   ⇒ 只留一句;完整说明在两项自己的悬停提示里(见 XAML)。
+                EsrganModelHint.Text = "1x 不放大:这里只列 1x 修复模型(动漫用 Anime4K、现实用它自己的)。";
+            }
+            else if (experimentalModel)
             {
                 var eh = AlhPro.Core.ExperimentalEsrgan.Hint(esrModel);
                 if (scaleIdx is 2 or 3)   // 3x/4x:引擎会按原生 2x 跑,再由 App 放大到目标
                     eh += $"(本次目标 {scaleIdx + 1}x:会按 2x 超分后再放大到 {scaleIdx + 1}x,不是原生 {scaleIdx + 1}x 权重)";
+                // 【2026-09-22 用户追问"自训模型兼容性"时补的】这三支**只有 ncnn 权重**:
+                // 本机若走 ONNX 稳定引擎(实测 ncnn 不可用 / 勾了兼容模式 / 手选 CPU),它们用不上,
+                // 处理时会被换成官方模型。**必须在这里先说** —— 这是用户"选之前"唯一能看到的地方,
+                // 等到处理时那条提示已经晚了(而且用户会以为是自己素材的问题)。
+                if (OnnxUpscaleRouteLikely())
+                    eh += " ⚠ 本机走稳定引擎(ONNX)⇒ 这支只有 ncnn 权重,用不上(会按官方模型处理)";
                 EsrganModelHint.Text = eh;
-                EsrganModelHint.Visibility = Visibility.Visible;
+                // (提示行始终可见,只换文字,见 XAML)
             }
             else if (x4plusModel)
             {
@@ -1105,15 +1307,15 @@ public sealed partial class VideoView : UserControl
                 //      (本机 1080p 实测 general-x4v3 4.62 秒/帧、x4plus-anime 11.4 秒/帧、x4plus 33.8 秒/帧),
                 //      唯一差别只是输出尺寸更大、写盘与编码更久。
                 EsrganModelHint.Text = "该模型只有 4x 权重:选 2x/3x 会按 4x 超分后再缩回(画面不变形,耗时与 4x 相同)";
-                EsrganModelHint.Visibility = Visibility.Visible;
+                // (提示行始终可见,只换文字,见 XAML)
             }
-            else EsrganModelHint.Visibility = Visibility.Collapsed;
+            else EsrganModelHint.Text = "";   // 行永远占位(见 XAML 注释):藏起来会让下面的控件上下跳
         }
         if (x4plusModel)
         {
             // 【2026-09-13 用户要求】「放大倍数」那一栏不再显示这段"4x 权重/缩回"的说明 —— 它和模型下拉正下方
             // 那条提示(EsrganModelHint)说的是同一件事,两处重复显示属于冗余。此处删掉赋值即可:
-            // ScaleHint 保留上面 scaleIdx 分支生成的"倍率本身"的说明(1x~2x 较快、倍率越高越慢…)。
+            // ScaleHint 保留上面 scaleIdx 分支生成的"倍率本身"的说明(1x 修复做什么、倍率越高越慢…)。
         }
         InterpModelCombo.IsEnabled = interp;
         // 非 2 的幂倍率(3x/12x/16x)仅 v4 架构模型支持;其余模型按 2x 级联(置灰+已选回退)。
@@ -1171,14 +1373,8 @@ public sealed partial class VideoView : UserControl
         TargetFpsBox.Opacity = targetMode ? 1.0 : 0.5;
         // 把"会自动补多少倍、大约输出多少帧率"提前显示出来(这就是用户要的"自动倍率")
         UpdateTargetFpsHint(interp, v4Model);
-        // 果冻修复(运动模糊/去抖)只在补帧时有意义:不补帧置灰
-        MotionBlurCombo.IsEnabled = interp;
-        DeShakeCheck.IsEnabled = interp;
-        MotionBlurCombo.Opacity = interp ? 1.0 : 0.5;
-        DeShakeCheck.Opacity = interp ? 1.0 : 0.5;
-        // 果冻修复开启时提示「会增加导出时间」(运动模糊最慢):任一开启即显示
-        JellySlowHint.Visibility = interp && (MotionBlurCombo.SelectedIndex > 0 || DeShakeCheck.IsChecked == true)
-            ? Visibility.Visible : Visibility.Collapsed;
+        // 【2026-09-21 「果冻修复」整块已删】原先这里有三行:两个控件的启用/置灰 + 那条橙色
+        // 「果冻修复为 CPU 逐帧滤镜…」提示的显隐。控件本身已从 XAML 删除,这三行随之删除。
         // 视频帧率:三选一(0=各视频默认帧率 1=帧率偏移 2=单独调整)仅【多视频】才展开选择;
         // 单视频只直接改「输入帧率」框,不出现那 3 个模式选项(那是多视频才有意义的"批量"概念)。
         int fpsMode = FpsModeRadios.SelectedIndex;
@@ -1264,15 +1460,25 @@ public sealed partial class VideoView : UserControl
             ManualProtectSmallMotionCheck.Visibility = algoCoreNow == 2 ? Visibility.Visible : Visibility.Collapsed;
             // 内容帧率采样(core 3):上面的行全部隐藏,只显示内容帧率行(showFc 控制)
         }
+        // 【2026-09-21 转场阈值滑块已恢复 ⇒ 它跟着「转场识别」一起启用/禁用】
+        // ⚠ 这里的判据是 `interp && SceneCheck.IsChecked == true` —— **必须带上勾选框本身**:
+        // 滑块 2026-09-15 被删的理由就是"拉它没反应"(假控件)。它现在真的进判定,但那份判定**只在勾上
+        // 「转场识别」时才跑**(不勾 ⇒ 处理端拿到 null,根本不做切点检测)。若这里只按 interp 置灰,
+        // 用户在不勾的情况下拖它照样"没反应" —— 又变回那条被删掉的理由。置灰 + tooltip 说明才是诚实的做法。
         SceneCheck.IsEnabled = interp;
-        // （阈值滑条已删:没有可启用/禁用的阈值控件;`scene` 变量仍用于下面的提示文字）
+        bool sceneOn = interp && SceneCheck.IsChecked == true;
+        SceneSlider.IsEnabled = sceneOn;
+        SceneSlider.Opacity = sceneOn ? 1.0 : 0.5;
+        // 【2026-09-22 已删】这里原来还有「最短补帧段 60 帧」勾选框的启用/置灰 —— 整块按用户裁决撤掉。
+        // 【2026-09-21 已删】原先这里还有「果冻修复」三个控件的启用/置灰 + 那条橙色"会明显增加导出时间"提示。
+        // 整块按用户要求删除 —— 连提示一起清掉,免得界面上还留着"果冻修复"字样。
         // 快速模式:忽略 TTA(置灰提示)
         var fast = FastModeCheck.IsChecked == true;
         TtaCheck.IsEnabled = interp && !fast;
         TtaCheck.Opacity = fast ? 0.5 : 1.0;
         FastModeHint.Text = fast
-            ? "已启用:GPU 硬解拆帧、tile 减半、单批、帧批减半+批后释放内存、忽略 TTA、硬编合帧;去重/转场/果冻修复/后处理/自定义分辨率/码率/格式均不受影响"
-            : "给配置差的电脑用的:GPU 硬解拆帧、tile 减半(显存约降 4 倍)、单批处理防爆显存、帧批减半+批后释放内存、忽略 TTA、硬编合帧;去重/转场/果冻修复/后处理/自定义分辨率/码率/格式均不受影响";
+            ? "已启用:GPU 硬解拆帧、tile 减半、单批、帧批减半+批后释放内存、忽略 TTA、硬编合帧;去重/转场/后处理/自定义分辨率/码率/格式均不受影响"
+            : "给配置差的电脑用的:GPU 硬解拆帧、tile 减半(显存约降 4 倍)、单批处理防爆显存、帧批减半+批后释放内存、忽略 TTA、硬编合帧;去重/转场/后处理/自定义分辨率/码率/格式均不受影响";
 
         // 选择去重模式时自动把内置预设同步到手滑条(方便切到手动后继续微调);只在模式切换时生效
         if (dedup && dedupModel != _lastDedupModel)
@@ -1287,14 +1493,17 @@ public sealed partial class VideoView : UserControl
         DedupSceneVal.Text = DedupSceneSlider.Value.ToString("0.000", CultureInfo.InvariantCulture);
         DedupSadVal.Text = DedupSadSlider.Value.ToString("0.0", CultureInfo.InvariantCulture);
         DedupSsimVal.Text = DedupSsimSlider.Value.ToString("0.000", CultureInfo.InvariantCulture);
-        // （转场阈值数值框已随滑条一起删除）
+        // 【2026-09-21 转场阈值数值框随滑条一起恢复】显示的是**吸附到刻度后的值**(与真正送进判据的那个数一致):
+        // 界面的 Slider 会把值算成 0.30000000000000004 这类带浮点尾巴的数,直接 ToString 会显示成
+        // "0.30000000000000004" 或看不出差别的 0.30 —— 统一走 Core 的 Snap,显示值 = 生效值。
+        SceneVal.Text = AlhPro.Core.SceneThresholdMap.Snap(SceneSlider.Value)
+            .ToString("0.00", CultureInfo.InvariantCulture);
 
         // 视频调整数值
         SharpenVal.Text = SharpenSlider.Value.ToString("0");
         ClarityVal.Text = ClaritySlider.Value.ToString("0");
         UsmVal.Text = UsmSlider.Value.ToString("0");
         DetailVal.Text = DetailSlider.Value.ToString("0");
-        PostAaVal.Text = PostAaSlider.Value.ToString("0");
         PostEdgeVal.Text = PostEdgeSlider.Value.ToString("0");
 
         // 输出帧率提示
@@ -1394,16 +1603,17 @@ public sealed partial class VideoView : UserControl
         // (与 XAML 启动默认、AlhPro.Core.SceneDefaultPolicy.DefaultScene 三处必须一致)。
         // 这是"用户主动点重置"⇒ 回到默认(关)是正确语义;要保护的人自己勾上(勾了以后两条路径都生效)。
         SceneCheck.IsChecked = AlhPro.Core.SceneDefaultPolicy.DefaultScene;
-        // （阈值滑条已删:没有可重置的阈值;处理端用内置 0.3,写盘也写它）
+        // 【2026-09-21 滑块恢复 ⇒ 重置也要把它带回默认档】0.30 = 内置判据(1 倍),
+        // 即"没拉过滑块"的那个位置。(原先这里还要把「最短补帧段」开关回默认 —— 那条整块已撤,见 XAML 注释。)
+        SceneSlider.Value = SceneThresholdDefault;
         TtaCheck.IsChecked = false;
         SharpenSlider.Value = 0;
         ClaritySlider.Value = 0;
         UsmSlider.Value = 0;
         DetailSlider.Value = 0;
-        PostAaSlider.Value = 0;
         PostEdgeSlider.Value = 0;
-        MotionBlurCombo.SelectedIndex = 0;
-        DeShakeCheck.IsChecked = false;
+        // 【2026-09-21 果冻修复整块已删】原先这里重置 MotionBlurCombo / DeShakeCheck 两个控件;
+        // 控件已不存在,VideoSettings 的 Jello/MotionBlur/DeShake 三个字段也不再有任何读写点(保留仅作老文件兼容)。
         QualityCombo.SelectedIndex = 0;
         BitrateBox.Text = "";
         CodecCombo.SelectedIndex = 0;
@@ -1412,11 +1622,14 @@ public sealed partial class VideoView : UserControl
         FastModeCheck.IsChecked = false;
         // 【平滑时间轴已从界面移除(2026-09-15 用户定调),固定为启用】重置不再需要管它 —— 没有控件可重置,
         // 处理侧恒传 smoothTimeline: true(见 RunBtn_Click 的快照变量)。
-        // 补全剩余参数(真正"重置所有"):视频降噪/后处理杂色/抗锯齿/去频闪/VFR/去重智能/微动防线/静音
+        // 补全剩余参数(真正"重置所有"):视频降噪/后处理杂色/去频闪/VFR/去重智能/微动防线/静音
+        // (「抗锯齿」已不在重置范围内:该滑条 2026-09-19 从视频页移除)
         DenoiseToggle.IsChecked = false;
-        DenoiseStrongRadios.SelectedIndex = 0;
+        // 【2026-09-21 降噪整改】重置时强度默认落在「自动(先体检素材)」= 索引 3(追加在最后,老设置的 0/1/2 含义不变)。
+        // 开关本身仍默认关(2026-09-13 用户的裁决:"降噪感太强、发假、塑料感" ⇒ 不替用户默认开);
+        // 用户一旦打开开关,默认就是"自动" —— 干净素材会自动跳过,不会再白糊一层。
+        SetDenoiseStrengthIndex(AlhPro.Core.DenoiseStrengthOrder.Weak);
         if (DenoiseKindCombo != null) DenoiseKindCombo.SelectedIndex = 0;
-        PostAaSlider.Value = 0;
         PostEdgeSlider.Value = 0;
         // （「可变帧率保护」面板已删:固定为自动 — 源是 VFR 就按真实时间戳排帧,没有可重置的开关）
         DedupSmartCombo.SelectedIndex = 0;
@@ -1437,7 +1650,6 @@ public sealed partial class VideoView : UserControl
         ClaritySlider.Value = 0;
         UsmSlider.Value = 0;
         DetailSlider.Value = 0;
-        PostAaSlider.Value = 0;
         PostEdgeSlider.Value = 0;
         _suppressEvents = false;
         UpdateOptions();
@@ -1483,7 +1695,19 @@ public sealed partial class VideoView : UserControl
         Log($"去重参数「{key}」已重置为默认");
     }
 
-    // （「转场阈值」的重置按钮与处理函数 ResetSceneBtn_Click 已随滑条一起删除:阈值是内置的 0.3,不需要重置）
+    /// <summary>「转场阈值」的重置按钮(2026-09-21 随滑块一起恢复)。只重置这一项 + 同步界面与写盘,
+    /// 与去重那边"每个按钮只重置自己那一项"的口径一致(见 ResetDedupBtn_Click)。
+    /// 默认档 = 0.30 = 一直以来的内置判据 —— 重置后画面与"从没动过滑块"完全一样。</summary>
+    private void ResetSceneBtn_Click(object sender, RoutedEventArgs e)
+    {
+        _suppressEvents = true;
+        SceneSlider.Value = SceneThresholdDefault;
+        _suppressEvents = false;
+        UpdateOptions();
+        SaveSettings();
+        Log($"转场阈值已重置为默认 {SceneThresholdDefault:0.00}(= 内置判据 "
+            + $"{AlhPro.Core.SceneCutThresholds.BuiltIn.Text})");
+    }
 
     // 多视频「统一输入帧率」:一键把所有视频的输入帧率设为同一个值,并锁定右侧编辑(想个别改:点「恢复」解锁)
     private void AllFpsApplyBtn_Click(object sender, RoutedEventArgs e)
@@ -1527,7 +1751,14 @@ public sealed partial class VideoView : UserControl
     }
 
     // ---------- 参数记忆 ----------
-    // 兼容旧设置:果冻/运动模糊早期是 bool 开关,现为 0-3 档位;旧值 true→弱(1),false→关(0)
+    // 【老字段兼容转换器 · 保留】果冻/运动模糊早期在设置文件里是 bool 开关(`true`/`false`),
+    // 后来改成 0-3 档位整数;老文件里的 `true`/`false` 必须还能反序列化成功,否则整份设置直接读不出来。
+    // 【2026-09-21 果冻修复整块已删,它为什么还留着】两件与"功能是否还在"无关的事:
+    //   ① `VideoSettings.Jello` / `MotionBlur` 两个字段按本仓库规矩**必须保留**(老文件反序列化兼容、
+    //      预设快照结构不丢字段),而它们上面挂着 `[JsonConverter(typeof(BoolOrIntConverter))]` ⇒ 转换器也得留着,
+    //      删掉会让老文件里那种 `"MotionBlur": true` 直接抛异常;
+    //   ② 用户自建的预设 JSON 里同样可能存着这几行。
+    // 它现在**没有任何读写点**(读设置时忽略、写回时写 0/false),只是"让老 JSON 还能读进来"。
     private sealed class BoolOrIntConverter : System.Text.Json.Serialization.JsonConverter<int>
     {
         public override int Read(ref System.Text.Json.Utf8JsonReader reader, Type typeToConvert,
@@ -1577,7 +1808,20 @@ public sealed partial class VideoView : UserControl
         public int DedupSmart { get; set; }        // 智能策略:0均衡(默认) 1激进 2保守
         public double DedupThr { get; set; } = 0.01;
         public bool Scene { get; set; }
+        /// <summary>「转场阈值」滑块值(0.15~0.90,默认 0.30)。**一个数两层含义**:
+        /// ① 换算成切点判据(帧差/强切/拉普拉斯比)—— 唯一换算处 <c>AlhPro.Core.SceneThresholdMap</c>;
+        /// ② 采样判据不可用时,回退 ffmpeg `scene` 判据的阈值(ffmpeg 的 scene 分数本来就是 0~1)。
+        /// 【0.3 这个默认值的来历】它一直是这个字段的默认值,也是 2026-09-15 删滑块时被写死进代码的
+        /// "内置阈值";现在滑块回来了,默认档仍然是它 ⇒ 老文件里的 0.3 与新用户的默认档完全一样,
+        /// 谁都不会因为这次改动而改变画面。
+        /// 【读取时 clamp + 吸附】老文件里可能有 0~1 范围内的其它值(旧滑块时代留下的),统一吸附到刻度;
+        /// 越界值夹进刻度范围(Snap 内部做),不让一个坏数字直接影响判定。</summary>
         public double SceneThr { get; set; } = 0.3;
+        // 【2026-09-22 已删】这里原来是 `public bool SceneMinSegment`(「最短补帧段 60 帧」开关)——
+        // 用户裁决整块撤掉(规则 + 开关),见 VideoView.xaml 里那段留档。字段一并删除:
+        // 它只在我这台开发机的两次部署里落过盘,**从未发布给任何用户**;System.Text.Json 反序列化时
+        // 忽略未知属性 ⇒ 本机设置文件里若还留着 "SceneMinSegment": true,读盘不受影响、也不会报错。
+        // (⚠ 若哪天要删的是**已发布过**的字段,规矩是"保留字段、只停止读取" —— 这条不适用,因为它没发布过。)
         // 【「转场识别」默认口径的**版本标记**(2026-09-15 定稿)】**不是**"要把 Scene 改成什么"的动作指令。
         // 当前口径(SceneDefaultPolicy Rev2):**默认关**,且升级**绝不改变用户已有的勾选状态**。
         // ⚠ 历史遗留提醒:Rev1 曾一度把默认改成"开"、并强制把老用户的 Scene=false 改成 true,该口径已被用户
@@ -1620,10 +1864,18 @@ public sealed partial class VideoView : UserControl
         /// <summary>「边缘增强」强度 0-100(0=关)。实测依据见 VideoPostFilters.Build 注释;
         /// 默认按模型给(animevideov3 → 30,其它四支 → 60),用户手动调过则以用户为准。</summary>
         public int PostEdge { get; set; }
+        /// <summary>【果冻修复 · 2026-09-21 整块功能已删除】三个字段(`Jello` / `MotionBlur` / `DeShake`)
+        /// **只保留、不再使用** —— 老设置文件与老预设里可能有它们,删字段会让反序列化多出"多余属性"
+        /// (违背本仓库"老文件字段一律保留、只停止读取"的既定规矩)。
+        /// 【读取端】`ApplyVideoParams` 故意不读它们(老值再也不能把 CPU 逐帧滤镜悄悄打开);
+        /// 【写入端】`CollectVideoParams` 不再写它们 ⇒ 落盘为 0/false = 关。
+        /// 处理端连形参都已删除(见 VideoService.ProcessVideoAsync 的 postDeshake 说明),不可能再有第二条生效路径。</summary>
         [System.Text.Json.Serialization.JsonConverter(typeof(BoolOrIntConverter))]
         public int Jello { get; set; }
+        /// <summary>【果冻修复 · 已删除】见 <see cref="Jello"/>。</summary>
         [System.Text.Json.Serialization.JsonConverter(typeof(BoolOrIntConverter))]
         public int MotionBlur { get; set; }
+        /// <summary>【果冻修复 · 已删除】见 <see cref="Jello"/>。</summary>
         public bool DeShake { get; set; }
         public int Quality { get; set; }
         public double BitrateMbps { get; set; }
@@ -1641,17 +1893,77 @@ public sealed partial class VideoView : UserControl
         public bool Mute { get; set; }
         public bool VideoDenoiseOn { get; set; }
         public int VideoDenoiseStrong { get; set; }
+
+        /// <summary>降噪强度**档位顺序**的版本(见 <see cref="AlhPro.Core.DenoiseStrengthOrder"/>)。
+        /// 0/缺省 = 旧顺序(0=弱 1=中 2=强 3=自动);1 = 新顺序(0=自动 1=弱 2=中 3=强,用户要求"自动放在最上面")。
+        /// 【为什么必须有这个字段】VideoDenoiseStrong 存的是**序号** ⇒ 顺序一改,老数据的含义就变了。
+        /// 不盖章的话每次启动都会把老序号再换一遍(来回横跳),这与 ModelOrderRev / PostScaleRev 是同一套模式。</summary>
+        public int VideoDenoiseRev { get; set; }
         /// <summary>降噪方式:0=空间+时间结合(默认,兼容旧设置) 1=仅空间 nlmeans 2=仅时间 hqdn3d。</summary>
         public int DenoiseKind { get; set; }
+
+        /// <summary>**后处理刻度的版本号**(0/缺省 = 旧刻度;1 = 2026-09-20 的新刻度)。
+        /// 【为什么需要】新刻度把滑块 100 改成"该档实测安全上限"(锐化 0.70 / 清晰 0.25 / 钝化蒙版 0.50 /
+        /// 保留细节 0.30 / 边缘增强 0.70),而旧刻度每个滑块 100 处的强度不同 ⇒ 同一份老设置/老预设
+        /// 直接按新刻度解释会**静默改画面**(本仓库禁止)。所以按 VideoModelOrder 的老办法:
+        /// 版本落后的数据先做"等效强度换算"再写回,写回时带上版本号 ⇒ 只迁移一次、幂等。</summary>
+        public int PostScaleRev { get; set; }
     }
 
     private static string SettingsFile => ParaPaths.SettingsFile("video-settings.json");
 
-    /// <summary>「转场识别」的**内置阈值**(0.30;滑块已于 2026-09-15 按用户裁决删除)。
-    /// 它现在只有两个用途:① 作为"开关已打开"的载体传给处理端(`sceneThreshold` 非 null 即开启切点保护);
-    /// ② 内置判据拿不到采样数据、回退到 ffmpeg `scene` 判据时的阈值。
-    /// 与 `VideoSettings.SceneThr` 的默认值一致 —— 写盘时也写它,免得老文件里别的值反复被改写。</summary>
-    private const double SceneThresholdBuiltIn = 0.3;
+    /// <summary>「转场识别」默认档的滑块值(0.30)。**从 Core 取,不写第二份字面量** ——
+    /// 默认档必须与 <c>AlhPro.Core.SceneCutJudge</c> 的内置判据(帧差 25 / 强切 50 / 拉普拉斯比 0.60)
+    /// 逐字对应,而那个对应关系只写在 <c>AlhPro.Core.SceneThresholdMap</c> 里(有单测钉住)。
+    /// 【2026-09-21 之前这里叫 SceneThresholdBuiltIn】那时滑块被删、这个常量被当成"内置阈值"顶替滑块值;
+    /// 现在滑块回来了,它只表示"默认档的滑块位置",判据由 SceneThresholdMap 从滑块值换算。</summary>
+    private const double SceneThresholdDefault = AlhPro.Core.SceneThresholdMap.DefaultSlider;
+
+    /// <summary>后处理刻度的当前版本(见 <see cref="VideoSettings.PostScaleRev"/>)。
+    /// 1 = 2026-09-20 起:滑块 100 = 该档实测安全上限(依据 `_qa\post_filter_audit.py` 的实测)。</summary>
+    private const int PostScaleCurrentRev = 1;
+
+    /// <summary>把老刻度的 5 档后处理强度换算到新刻度(等效强度不变 ⇒ 画面不变)。
+    /// 幂等:带版本号判断,只迁移一次;迁移结果会立刻写回(调用方把我们返回的 true 当"需要保存")。</summary>
+    private static bool MigratePostStrengths(VideoSettings d)
+    {
+        if (d.PostScaleRev >= PostScaleCurrentRev) return false;
+        var before = (d.PostSharpen, d.PostClarity, d.PostUsm, d.PostDetail, d.PostEdge);
+        d.PostSharpen = AlhPro.Core.VideoPostFilters.MigrateStrength("sharpen", d.PostSharpen);
+        d.PostClarity = AlhPro.Core.VideoPostFilters.MigrateStrength("clarity", d.PostClarity);
+        d.PostUsm = AlhPro.Core.VideoPostFilters.MigrateStrength("usm", d.PostUsm);
+        d.PostDetail = AlhPro.Core.VideoPostFilters.MigrateStrength("detail", d.PostDetail);
+        d.PostEdge = AlhPro.Core.VideoPostFilters.MigrateStrength("edge", d.PostEdge);
+        d.PostScaleRev = PostScaleCurrentRev;
+        var after = (d.PostSharpen, d.PostClarity, d.PostUsm, d.PostDetail, d.PostEdge);
+        if (before != after)
+            AppLogger.Info($"[迁移] 后处理刻度按等效强度换算(滑块 100 = 安全上限):" +
+                           $"锐化 {before.Item1}→{after.Item1} · 清晰 {before.Item2}→{after.Item2} · " +
+                           $"钝化蒙版 {before.Item3}→{after.Item3} · 保留细节 {before.Item4}→{after.Item4} · " +
+                           $"边缘增强 {before.Item5}→{after.Item5}(同一份设置的画面强度不变)");
+        else
+            AppLogger.Info("[迁移] 后处理刻度版本号补写到 v1(5 档数值无需换算)");
+        return true;
+    }
+
+    /// <summary>降噪强度档位顺序迁移(2026-09-21「自动放在最上面」)。
+    /// 旧:0=弱 1=中 2=强 3=自动 → 新:0=自动 1=弱 2=中 3=强;-1(关)与越界值原样不动。
+    /// 幂等(带版本号),迁移结果立刻写回;设置与预设**两条读路径**都要调用(预设里同样按序号存)。
+    /// 【为什么不能省】不迁移的话:老"弱(0)"会变成"自动"、"中(1)"变"弱"、"强(2)"变"中"、
+    /// 老"自动(3)"变"强" —— 处理结果静默改变,界面上完全看不出来(本仓库在超分模型下拉上踩过同类坑)。</summary>
+    private static bool MigrateDenoiseStrength(VideoSettings d)
+    {
+        if (d is null || d.VideoDenoiseRev >= AlhPro.Core.DenoiseStrengthOrder.CurrentRev) return false;
+        int before = d.VideoDenoiseStrong;
+        d.VideoDenoiseStrong = AlhPro.Core.DenoiseStrengthOrder.Migrate(before, d.VideoDenoiseRev);
+        d.VideoDenoiseRev = AlhPro.Core.DenoiseStrengthOrder.CurrentRev;
+        if (before != d.VideoDenoiseStrong)
+            AppLogger.Info($"[迁移] 降噪档位序号换算(Rev{d.VideoDenoiseRev} → Rev{AlhPro.Core.DenoiseStrengthOrder.CurrentRev}):"
+                + $"{before} → {d.VideoDenoiseStrong}(实际档位:{AlhPro.Core.DenoiseStrengthOrder.Label(d.VideoDenoiseStrong)})");
+        else
+            AppLogger.Info($"[迁移] 降噪档位版本号补写到 v{AlhPro.Core.DenoiseStrengthOrder.CurrentRev}(序号无需换算)");
+        return true;
+    }
 
     // ---------- 参数预设 ----------
     /// <summary>一个视频参数预设:命名 + 保存时间 + 一套 VideoSettings 快照。上限 100 个。</summary>
@@ -1754,7 +2066,11 @@ public sealed partial class VideoView : UserControl
             if (list == null) { ProtectCorruptPresetFile("内容为 null"); return new(); }
             bool changed = false;
             foreach (var p in list)
+            {
                 if (p?.Params != null && MigrateEsrganModelOrder(p.Params)) changed = true;
+                // 【降噪档位顺序同样要迁】预设里存的也是序号,不迁移就会把"存的 0(弱)"当成"自动"。
+                if (p?.Params != null && MigrateDenoiseStrength(p.Params)) changed = true;
+            }
             if (changed) SavePresets(list);
             return list;
         }
@@ -1851,8 +2167,21 @@ public sealed partial class VideoView : UserControl
         //   ② 退回后,用户文件里那份 Rev6 的官方预设 `OfficialRev < rev` 不成立 → **不会被覆盖**,它本来存的
         //      就是 Scene=false,与新的定义逐字一致 ⇒ 方向怎么变都不会"点一下预设莫名打开/关掉转场识别";
         //   ③ 只有比 Rev6 更老(Rev5 及以前)的官方预设会按老规则被刷新一次到新基线,这正是原有设计意图。
-        //   (注:Rev7 那份定义**从未发布**(未打包未部署),所以不存在"用户文件里已经是 Rev7"的机器。)
-        ( "通用画质增强 不含补帧", 6, new Func<VideoSettings>(() => new VideoSettings
+        //   (注:Rev7 那份定义**从未打包发布**,但**在本机开发版里跑过** —— 2026-09-22 查用户预设文件时
+        //    发现它写着 OfficialRev=7/7/2,正是 09-15 那份 dev 版写进去的 ✗。原注释说"不存在已是 Rev7 的机器"
+        //    是**错的**,已按事实改正 —— 这条很要紧:因为 Rev 机制是 `existing.OfficialRev < rev` 才覆盖,
+        //    存量若已是 7,那么新基线提 6→7 就**一次都不会生效**。)
+        //
+        // 【Rev 8 · 2026-09-22 用户裁决:后处理四项降到 15】用户原话:「通用画质增强那个 那几个项目效果变成15
+        //   动漫也是 并且用户更新时也要覆盖」⇒ 锐化 / 清晰 / 钝化蒙版 / 保留细节 四项从 29/50/70/80 统一改到 **15**。
+        //   换算成实际滤镜强度(新刻度 100 = 该档安全上限):0.203/0.125/0.35/0.24 → **0.105/0.038/0.075/0.045**,
+        //   即整体明显更轻(清晰那档不到原来一半)。
+        //   【为什么提的是 8 而不是 7】① 提 7 对本机那份 OfficialRev=7 的预设**不生效**(7 < 7 不成立);
+        //   ② 对 Rev6 及更老的老用户,7 与 8 效果一样(都覆盖)。⇒ 取 8 才能**两类机器一起覆盖**,这正是用户要的
+        //   ("用户更新时也要覆盖")。
+        //   【代价照实说】这次覆盖会把用户对**这两个**官方预设的其它自定义一并重置(用户自建的预设一律不碰,
+        //   见 EnsureBuiltinPresets)。这与 Rev4/Rev6 是同一类取舍,而且是用户明确要求的。
+        ( "通用画质增强 不含补帧", 8, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = false, Up = true, Engine = 1, Scale = 1, Gpu = 0,
             Interp = false, Model = 0, UpWaifu2xModel = 0, UpEsrganModel = 0, InterpScale = 0,
@@ -1861,7 +2190,7 @@ public sealed partial class VideoView : UserControl
             Scene = false, SceneThr = 0.3, TimeStep = 0.5, Tta = false, OutDir = "", CustomW = "1920", CustomH = "1080",
             DedupAlgo = 0, DedupHi = 12, DedupLo = 5, DedupFrac = 0.33, DedupSadThr = 3, DedupSsimThr = 0.97, ContentFps = 0,
             DedupMotionComp = true, DedupOnlyTrueHold = true, ManualProtectSmallMotion = true, DedupPhaseAlign = true,
-            PostSharpen = 20, PostClarity = 25, PostUsm = 35, PostDetail = 40, PostDeblur = 0, PostAa = 0,
+            PostSharpen = 15, PostClarity = 15, PostUsm = 15, PostDetail = 15, PostDeblur = 0, PostAa = 0,
             Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
             FastMode = false, Mute = false, VideoDenoiseOn = false, VideoDenoiseStrong = -1, DenoiseKind = 0,
         })),
@@ -1889,7 +2218,9 @@ public sealed partial class VideoView : UserControl
         // 【Rev 7 → 退回 6 · 2026-09-15 当天定稿】同上面那个预设:Scene 改回 false(「转场识别」最终定为默认关、
         //   由用户自己开关),Rev 一并退回 6 —— 退回的完整理由见上一个预设处那段(核心:基线回到 Rev6 的内容,
         //   退回就不会二次覆盖用户对官方预设的自定义,也不会让"点预设"改变转场识别的勾选状态)。
-        ( "动漫通用", 6, new Func<VideoSettings>(() => new VideoSettings
+        // 【Rev 8 · 2026-09-22】与上一个预设同批:后处理四项 → 15(用户要求"动漫也是"),
+        //   理由与"为什么提 8 而不是 7"见上面「通用画质增强 不含补帧」处那段。
+        ( "动漫通用", 8, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = true, Up = true, Engine = 1, Scale = 1, Gpu = 0,
             Interp = true, Model = 0, UpWaifu2xModel = 1, UpEsrganModel = 0, InterpScale = 2,
@@ -1898,7 +2229,7 @@ public sealed partial class VideoView : UserControl
             Scene = false, SceneThr = 0.3, TimeStep = 0.5, Tta = false, OutDir = "", CustomW = "1920", CustomH = "1080",
             DedupAlgo = 3, DedupHi = 12, DedupLo = 5, DedupFrac = 0.33, DedupSadThr = 3, DedupSsimThr = 0.97, ContentFps = 0,
             DedupMotionComp = true, DedupOnlyTrueHold = true, ManualProtectSmallMotion = true, DedupPhaseAlign = true,
-            PostSharpen = 20, PostClarity = 25, PostUsm = 40, PostDetail = 40, PostDeblur = 0, PostAa = 0,
+            PostSharpen = 15, PostClarity = 15, PostUsm = 15, PostDetail = 15, PostDeblur = 0, PostAa = 0,
             Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
             FastMode = false, Mute = false, VideoDenoiseOn = false, VideoDenoiseStrong = -1, DenoiseKind = 0,
         })),
@@ -1920,6 +2251,20 @@ public sealed partial class VideoView : UserControl
             Jello = 0, MotionBlur = 0, DeShake = false, Quality = 0, BitrateMbps = 0, Codec = 0, Format = 0,
             FastMode = false, Mute = false, VideoDenoiseOn = false, VideoDenoiseStrong = -1, DenoiseKind = 0,
         })),
+        // 【2026-09-22 用户裁决:删掉这条官方预设】用户原话:「1x修复那个我不是给他删掉了吗 怎么还有」。
+        // 【查实】它确实是 2026-09-21 22:27:09 由上一个会话**新加**的官方预设(日志:
+        //   `[内置预设] 已创建官方预设「1x 修复（不放大）」(基线 Rev 1)`),不是用户自己建的;
+        //   用户今天 12:58:43 在界面上把它删了 —— 但**删不掉**:`EnsureBuiltinPresets` 的规则是
+        //   「缺失 → 用官方默认创建」⇒ 官方预设**下次启动会自己回来** ✗。
+        // 【所以正确的删除位置就在这里,不在界面上】从 BuiltinPresets() 里删掉这条,它才真正不再出现
+        //   (已在用户机器上删掉的那份也不会被重建,因为基线里已经没有它了)。
+        // 【留下的教训(写给后来人)】官方预设是"自愈"的:**在界面上删只会让它下次启动时回来**。
+        //   要真正移除一条官方预设,必须从这里删。若哪天要做"用户删了就别再建",那需要一个 tombstone
+        //   (记住"用户删过哪些官方预设"),而不是靠界面删除 —— 那是另一趟活。
+        //
+        // ~~【新增官方预设 · 2026-09-21】「1x 修复（不放大）」的原始设计与理由~~(已随本条一起删除):
+        //   1x 修复档此前没有任何官方预设覆盖,而它连超分阶段都不走(Anime4K 着色器 / 2x 缩回两条路),
+        //   用户很难看出该选哪个模型 → 给一条一键配好的。用 VideoModelOrder.Anime4kIndex(= 8) 具名常量。
     };
 
     /// <summary>确保每个官方内置预设存在,并把【参数基线过旧】的官方预设更新到新基线。
@@ -1992,7 +2337,8 @@ public sealed partial class VideoView : UserControl
     }
 
     /// <summary>【2026-09-15 · 界面清理的兼容日志】老设置/老预设里可能带着**已被删除的选项**的旧值
-    /// (`VfrMode=1` 不启用、`FpsBase=1` 匀速、`SmoothTimeline=false`、`SceneThr≠0.3`、`VfrExpanded=true`)。
+    /// (`VfrMode=1` 不启用、`FpsBase=1` 匀速、`SmoothTimeline=false`、`VfrExpanded=true`;
+    /// 2026-09-21 起又多了「果冻修复」那三个字段 `Jello`/`MotionBlur`/`DeShake`)。
     /// 这些值现在一律**按内建口径处理**(不采纳),所以只在"旧值与内建值不一致"时写一行 `[记忆] …`,
     /// 把"哪几项被忽略了"说清楚 —— 排查"我明明设过怎么没生效"时唯一的线索就是这行。
     /// **不写不发生**(值本来就是内建口径时不刷屏),**不需要新 Rev**(语义是"永久内建",写回内建值即幂等)。
@@ -2005,7 +2351,17 @@ public sealed partial class VideoView : UserControl
         if (d.VfrExpanded) items.Add("可变帧率保护面板=展开");
         if (!d.SmoothTimeline) items.Add("平滑时间轴=关");
         if (d.FpsBase != 0) items.Add($"输出帧率基准={d.FpsBase}(0=真实时间轴)");
-        if (Math.Abs(d.SceneThr - SceneThresholdBuiltIn) > 1e-9) items.Add($"转场阈值={d.SceneThr:0.###}(内置 {SceneThresholdBuiltIn:0.00})");
+        // 【2026-09-21】「转场阈值」已从"被删选项"里移除:滑块恢复 ⇒ 它重新是用户的选项,
+        // 老值会被正常采纳(见 ApplyVideoParams),不能再报"已按内建口径忽略"。
+        // 【2026-09-21 果冻修复那三个老字段也归到这一类,但**故意只写字段名、不写功能名**】
+        // 用户确认过的验收判据之一是「用老设置文件启动一次,日志里不再出现果冻/去抖相关的参数行」——
+        // 那句"参数行"指的是处理端真的把这两个滤镜挂上去时打的那一行(已删)。这里这一行是**另一回事**:
+        // 它说的是"老文件里存的这个值被忽略了",属于本仓库"不许静默改变行为"的兼容日志(同族的
+        // VfrMode/FpsBase/SmoothTimeline 都在这一行里)。所以留着它,但把措辞换成设置文件里的**字段名**:
+        // 既让用户查得到"我明明开过去抖怎么没生效",又不让日志里再出现那个已删除功能的名字。
+        if (d.MotionBlur != 0) items.Add($"MotionBlur={d.MotionBlur}(该选项已从界面删除,处理端不再使用)");
+        if (d.Jello != 0) items.Add($"Jello={d.Jello}(该选项已从界面删除,处理端不再使用)");
+        if (d.DeShake) items.Add("DeShake=开(该选项已从界面删除,处理端不再使用)");
         if (items.Count == 0) return false;
         AppLogger.Info($"[记忆] 设置里有已删除的选项,已按内建口径忽略(这些选项现在固定/不需要用户设置):"
             + string.Join("、", items));
@@ -2032,6 +2388,10 @@ public sealed partial class VideoView : UserControl
             // 迁移得先改完 d.Scene,否则界面恢复的还是老值(false)。
             bool migrated = MigrateEsrganModelOrder(d);
             if (MigrateSceneDefault(d)) migrated = true;
+            // 【后处理刻度 2026-09-20 重新定标】老设置里的 5 档强度按"等效强度"换算到新刻度
+            // (新刻度:滑块 100 = 该档实测安全上限)⇒ 同一份设置的**画面强度不变**,只是数字变了。
+            if (MigratePostStrengths(d)) migrated = true;
+            if (MigrateDenoiseStrength(d)) migrated = true;
             if (migrated)
             {
                 // 迁移日志已在各自方法里统一写过(含前后值/前后 Rev),此处只负责立刻写回盘
@@ -2077,7 +2437,15 @@ public sealed partial class VideoView : UserControl
         // 兼容旧设置:存盘沿用旧约定 0=waifu2x / 1=Real-ESRGAN / 2=Real-CUGAN(已移除,归到 Real-ESRGAN)。
         // 界面顺序已改成 Real-ESRGAN 在上(索引 0)、waifu2x 在下(索引 1),所以要经 EngineFromStored 换算,
         // 否则老用户存的选择会被顺序调整翻转。
-        if (d.Engine is >= 0 and <= 2) VideoEngineRadios.SelectedIndex = EngineFromStored(d.Engine);
+        if (d.Engine is >= 0 and <= 2)
+        {
+            VideoEngineRadios.SelectedIndex = EngineFromStored(d.Engine);
+            // 【2026-09-21 自查修复】记住"用户真实选的引擎"。1x 档会把引擎**强制**成 Real-ESRGAN 并禁用单选,
+            //   存盘时若直接读 SelectedIndex,就会把强制值写进设置 ⇒ 用户的引擎选择被静默改写 ✗
+            //   (实测:存的是 waifu2x,启动一次后变成 Real-ESRGAN)。
+            //   这里在**恢复设置时**把真实值记下来;之后只有"单选可用时的点击"才会更新它(见 Combo_Changed)。
+            _userEngineIndex = VideoEngineRadios.SelectedIndex;
+        }
         // 放大倍数索引已去掉「自定义分辨率」(4),旧设置里的 4 归到 2x(索引1),其余 0~3 照搬
         if (d.Scale is >= 0 and <= 3) VideoScaleRadios.SelectedIndex = d.Scale;
         else if (d.Scale == 4) VideoScaleRadios.SelectedIndex = 1;   // 旧「自定义分辨率」→ 2x
@@ -2088,10 +2456,13 @@ public sealed partial class VideoView : UserControl
         if (d.PostUsm is >= 0 and <= 100) UsmSlider.Value = d.PostUsm;
         if (d.PostDetail is >= 0 and <= 100) DetailSlider.Value = d.PostDetail;
         // 【已移除 去模糊】视频页没有该滑杆了(ffmpeg 无反卷积,那档名不副实);旧设置里的值忽略即可。
-        if (d.PostAa is >= 0 and <= 100) PostAaSlider.Value = d.PostAa;
+        // 【已移除 边缘抗锯齿 · 2026-09-19】滑条按用户要求删除(实测肉眼不可见、4K 每帧仍要 27~35ms);
+        //   旧预设/旧设置文件里的 PostAa 一律忽略(见 VideoSettings.PostAa 的兼容说明)。
         if (d.PostEdge is >= 0 and <= 100) PostEdgeSlider.Value = d.PostEdge;
-        if (d.MotionBlur is >= 0 and <= 3) MotionBlurCombo.SelectedIndex = d.MotionBlur;
-        DeShakeCheck.IsChecked = d.DeShake;
+        // 【2026-09-21 果冻修复整块已删】**故意不读 d.MotionBlur / d.DeShake**(原先这两行就是读它们的)。
+        // 界面控件与处理端滤镜链都已删除 ⇒ 即使老设置文件里存着"中/强"或"去抖=开",也**一个字节都不采纳** ——
+        // 否则就会出现"界面上没有了、处理时还在偷偷加 CPU 逐帧滤镜"的静默行为(本仓库最忌讳的一类 bug)。
+        // 字段本身保留在 VideoSettings 里(反序列化兼容 + 预设快照结构稳定)。
         if (d.Quality is >= 0 and <= 5) QualityCombo.SelectedIndex = d.Quality;
         if (d.BitrateMbps > 0) BitrateBox.Text = d.BitrateMbps.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
         if (d.Codec is >= 0 and <= 1) CodecCombo.SelectedIndex = d.Codec;
@@ -2103,7 +2474,8 @@ public sealed partial class VideoView : UserControl
         // 写盘时由 CollectVideoParams 按"启用"盖章,避免"老 false 又把它关掉"。
         MuteCheck.IsChecked = d.Mute;
         DenoiseToggle.IsChecked = d.VideoDenoiseOn;
-        if (d.VideoDenoiseStrong is >= 0 and <= 2) DenoiseStrongRadios.SelectedIndex = d.VideoDenoiseStrong;
+        // 【2026-09-21】强度多了第 4 项「自动」(索引 3,追加在最后 ⇒ 老的 0/1/2 含义不变、无需迁移)。
+        if (d.VideoDenoiseStrong is >= 0 and <= 3) SetDenoiseStrengthIndex(d.VideoDenoiseStrong);
         if (d.DenoiseKind is >= 0 and <= 2 && DenoiseKindCombo != null) DenoiseKindCombo.SelectedIndex = d.DenoiseKind;
         InterpToggle.IsChecked = d.Interp;
         if (d.Model is >= 0 && d.Model < InterpModelCombo.Items.Count) InterpModelCombo.SelectedIndex = d.Model;
@@ -2131,9 +2503,10 @@ public sealed partial class VideoView : UserControl
         // 【2026-09-15 起:以下三个"已被删掉的选项"一律**忽略**老设置里的值】
         //   · d.VfrMode / d.VfrExpanded —— 「可变帧率保护」面板已删,固定为"自动";
         //   · d.FpsBase —— 「补帧输出帧率基准」已删,固定为"真实时间轴";
-        //   · d.SmoothTimeline —— 「平滑时间轴」勾选框已删(见上面那行注释),固定为开;
-        //   · d.SceneThr —— 「转场阈值」滑块已删,阈值用内置常量 SceneThresholdBuiltIn。
-        // 字段本身保留(反序列化兼容);写盘时由 CollectVideoParams 写回内建值 ⇒ 老文件里的旧值不会被反复改写,
+        //   · d.SmoothTimeline —— 「平滑时间轴」勾选框已删(见上面那行注释),固定为开。
+        // 【d.SceneThr 已从这一组里移出 · 2026-09-21】「转场阈值」滑块恢复了 ⇒ 它**重新成为用户的选项**,
+        // 所以下面恢复界面时按老值回填(见 SceneThr 那行);不再是"读了也要忽略"的字段。
+        // 其余三个字段本身保留(反序列化兼容);写盘时由 CollectVideoParams 写回内建值 ⇒ 老文件里的旧值不会被反复改写,
         // 也不会让"删了控件却没删功能"这类事故发生。有旧值时写一行 [记忆] 日志(见 WarnIfLegacyTimelineOptions)。
         if (d.FpsMode is 0 or 1 or 2) FpsModeRadios.SelectedIndex = d.FpsMode;
         if (d.FpsOffset is >= -20 and <= 0) FpsOffsetSlider.Value = d.FpsOffset;
@@ -2176,7 +2549,12 @@ public sealed partial class VideoView : UserControl
         // 【d.Scene = 用户自己存的值,原样采纳】迁移(MigrateSceneDefault)只对齐版本号、**不改用户的勾选** ——
         // 升级前是勾的就还是勾的、没勾的就还是没勾的(默认值是 false,只作用于"没有历史值"的新用户/重置)。
         SceneCheck.IsChecked = d.Scene;
-        // （转场阈值滑条已删 ⇒ d.SceneThr 忽略;阈值固定用内置常量 SceneThresholdBuiltIn = 0.3)
+        // 【转场阈值滑块 · 2026-09-21 恢复读取】老设置/老预设里的 SceneThr 原样采纳(那是用户自己的选择),
+        // 只做两件保护:① 吸附到刻度(老值可能是 0~1 之间的任意数,不是刻度上的点);② Snap 内部把越界值夹进
+        // [0.15, 0.90](旧滑块时代的极小值如 0.01 会被夹到 0.15,否则判据会被拉到极端)。
+        // 【这一步为什么必须"读回来"】上一版是"忽略 d.SceneThr、写盘写内置 0.3" —— 那时的滑块不存在,
+        // 忽略是对的;现在滑块回来了,再忽略就等于"用户调过的值每次启动都被重置",那才是静默改行为。
+        SceneSlider.Value = AlhPro.Core.SceneThresholdMap.Snap(d.SceneThr);
         // 时间步:旧/非法设置回退默认 0.5(滑条最小 0.05,字段缺失会停在 0.05,与默认/重置 0.5 不一致)。
         TtaCheck.IsChecked = d.Tta;
         if (!string.IsNullOrWhiteSpace(d.OutDir) && Directory.Exists(d.OutDir))
@@ -2544,7 +2922,11 @@ public sealed partial class VideoView : UserControl
             // 新版导出的文件自带 ModelOrderRev=2,过这里不会被动。
             int migrated = 0;
             foreach (var p in imported)
+            {
                 if (p?.Params != null && MigrateEsrganModelOrder(p.Params)) migrated++;
+                // 【同上】导入的旧预设里降噪档位也是旧序号。
+                if (p?.Params != null && MigrateDenoiseStrength(p.Params)) migrated++;
+            }
             if (migrated > 0) AppLogger.Info($"导入预设:已按新下拉顺序换算 {migrated} 个预设的超分模型序号(旧序 3=轻量通用 → 新序 2)");
             var existing = LoadPresets();
             int added = 0;
@@ -2653,11 +3035,19 @@ public sealed partial class VideoView : UserControl
             : "关闭"));
         sb.AppendLine("后处理: " +
             $"锐化{d.PostSharpen} 清晰{d.PostClarity} 钝化蒙版{d.PostUsm} 保留细节{d.PostDetail} " +
-            $"去模糊{d.PostDeblur} 边缘抗锯齿{d.PostAa} 边缘增强{d.PostEdge}");
+            $"去模糊{d.PostDeblur} 边缘增强{d.PostEdge}");
         sb.AppendLine("码率: " + (d.Quality == 5 ? $"自定义 {d.BitrateMbps:0.#}Mbps" : d.Quality switch { 0 => "自动", 1 => "低", 2 => "中", 3 => "高", 4 => "极高", _ => "?" }));
         sb.AppendLine("格式: " + (d.Format == 1 ? "MKV" : "MP4") + " · " + (d.Codec == 1 ? "H.265" : "H.264"));
         if (d.FastMode) sb.AppendLine("兼容模式: 开");
-        if (d.VideoDenoiseOn) sb.AppendLine("视频降噪: 开");
+        // 【2026-09-21 整改】摘要里必须写清档位 —— 光写"开"看不出是自动还是手动,而这两者行为完全不同
+        // (自动会先体检、干净素材直接跳过;手动手不看素材一律降)。
+        if (d.VideoDenoiseOn)
+            sb.AppendLine("视频降噪: 开 · " + AlhPro.Core.DenoiseStrengthOrder.Label(d.VideoDenoiseStrong) + " · " + (d.DenoiseKind switch
+            {
+                1 => "仅去单帧噪点",
+                2 => "仅去帧间闪烁",
+                _ => "去噪点+去闪烁",
+            }));
         return sb.ToString().TrimEnd();
     }
 
@@ -2680,7 +3070,9 @@ public sealed partial class VideoView : UserControl
     ///   0 动漫·animevideov3(4MB) 1 通用·general-x4v3(5MB) 2 通用·wdn-x4v3(5MB) 3 动漫·x4plus-anime(9MB) 4 通用·x4plus(41MB 超慢)。
     /// 换位对应 VideoModelOrder Rev3 的迁移(2→3、3→4、4→2);这里必须与 XAML 的项顺序严格一一对应,
     /// 否则预设摘要会印出与实际不同的模型(此前就踩过:数组漏了一项,序号 3 显示成别的模型)。
-    /// 【2026-09-15 Rev4】末尾**追加**两支自训的 2x 模型(5 现实 · real2x、6 游戏 · game2x):
+    /// 【2026-09-15 Rev4】末尾**追加**两支自训的 2x 模型(5 现实 · alhreal2x、6 游戏 · alhgame2x;2026-09-21 起名字前缀为 alh):
+    /// 【Rev7 · 2026-09-21】"游戏 · alhgame2x"已从下拉移除 ⇒ 现在末尾三项是 real2x / alhgame2x-v2 / alhgame2x-v3。
+    /// 【不能手抄字面量】末尾这几项由 Core.ExperimentalEsrgan.All 遍历生成 ⇒ 移除/追加会**自动**跟上下拉与摘要。
     ///   追加不改老序号 ⇒ VideoModelOrder Rev4 是恒等映射。
     ///   ⚠ 这两项**不再手抄字面量**,而是由 Core.ExperimentalEsrgan.SummaryText 生成 ——
     ///   之前手抄的那版名字里带了"实验/测试"字样,被用户当场纠正("不要写实验,括号里写速度"),
@@ -2745,6 +3137,8 @@ public sealed partial class VideoView : UserControl
             //   写死的 2 会让"用户新选的 wdn(新序 2)"在下次启动被当成 Rev2 的 2 再换一次 → 变成 x4plus-anime,
             //   即"什么都没改却换了模型"。写死版本号 = 埋一颗定时炸弹。
             d.ModelOrderRev = AlhPro.Core.VideoModelOrder.CurrentRev;
+            // 降噪档位顺序版本同样盖章:否则每次启动都会被当成老数据再迁一次(来回横跳)。
+            d.VideoDenoiseRev = AlhPro.Core.DenoiseStrengthOrder.CurrentRev;
             // 【同样的盖章:SceneDefaultRev】**本版语义已改**:迁移只对齐版本号、不改用户的勾选值,
             // 所以盖章不再承担"防止被迁回去"的职责;保留它只是让"已结算过"这件事写进文件,
             // 免得每次启动都因为版本落后而重写一遍设置文件(与 ModelOrderRev 那份理由同源)。
@@ -2766,12 +3160,18 @@ public sealed partial class VideoView : UserControl
         {
             Remember = VideoRememberCheck.IsChecked == true,
             Up = UpscaleToggle.IsChecked == true,
-            Engine = EngineToStored(VideoEngineRadios.SelectedIndex),   // 存盘用旧约定(0=waifu2x/1=real),与界面顺序解耦
+            // 【2026-09-21 自查修复】1x 档会把引擎**强制**成 Real-ESRGAN 并禁用单选(见 UpdateModelScaleAvailability),
+            //   若直接存 SelectedIndex,就把用户的**真实引擎选择**改写掉了 ✗
+            //   —— 实测:存的是 waifu2x,启动一次后变成 Real-ESRGAN,而用户从没改过它(典型的"静默改设置")。
+            //   ⇒ 存 `_userEngineIndex`:它在"恢复设置时"记下真实值,之后只被"单选可用时的点击"更新。
+            Engine = EngineToStored(_userEngineIndex >= 0 ? _userEngineIndex : VideoEngineRadios.SelectedIndex),
             Scale = VideoScaleRadios.SelectedIndex,
             Gpu = AppSettings.GpuIndex,
             Interp = InterpToggle.IsChecked == true,
             Model = InterpModelCombo.SelectedIndex,
             UpWaifu2xModel = VideoWaifu2xModelCombo.SelectedIndex,   // 超分 waifu2x 模型
+            // 【Rev10 · 2026-09-21】1x 也有自己的模型条目了(Anime4K / 现实 1x)⇒ 直接存选中项即可:
+            //   下拉里每一项都是**真实存在**的模型序号(不再有"锁定期临时插入的项",那个坑已随构架去掉)。
             UpEsrganModel = VideoEsrganModelCombo.SelectedIndex,    // 超分 Real-ESRGAN 模型
             // 【2026-09-16 修复 · 评审 Critical 8】这里必须存**真实倍率序号**(0~5),不许把"指定帧率"那一项(序号 6)存进去:
             //   ① 读取端只认 0~5(见加载处的 `is >= 0 and <= 5`),存 6 会被静默丢弃 ⇒ 重启后真实倍率回退成 2x;
@@ -2805,8 +3205,9 @@ public sealed partial class VideoView : UserControl
                 System.Globalization.CultureInfo.InvariantCulture, out var cfv) && cfv > 0 ? cfv : 0,
             DedupThr = DedupSceneSlider.Value,
             Scene = SceneCheck.IsChecked == true,
-            // 【阈值写内置默认】滑条已删 ⇒ 写常量(不写死字面量之外的来源),老文件里别的值不会被反复改写。
-            SceneThr = SceneThresholdBuiltIn,
+            // 【转场阈值滑块恢复后按真实值写盘】写的是**吸附到刻度后的值** —— 与送进判据的那个数逐字一致
+            // (界面 Slider 的裸值带浮点尾巴)。这样"文件里存的是什么、下次跑的就是什么"永远对得上。
+            SceneThr = AlhPro.Core.SceneThresholdMap.Snap(SceneSlider.Value),
             Tta = TtaCheck.IsChecked == true,
             OutDir = _customOutDir ?? "",
             CustomW = CustomWidthBox.Text,
@@ -2816,10 +3217,17 @@ public sealed partial class VideoView : UserControl
             PostUsm = (int)UsmSlider.Value,
             PostDetail = (int)DetailSlider.Value,
             PostDeblur = 0,   // 视频页已移除「去模糊」(ffmpeg 无反卷积滤镜);字段保留仅为兼容旧设置文件
-            PostAa = (int)PostAaSlider.Value,
+            PostAa = 0,       // 视频页已移除「边缘抗锯齿」滑条(2026-09-19);字段保留仅为兼容旧设置文件
             PostEdge = (int)PostEdgeSlider.Value,
-            MotionBlur = MotionBlurCombo.SelectedIndex,
-            DeShake = DeShakeCheck.IsChecked == true,
+            // 【2026-09-20 必须带上版本号,否则迁移会反复执行】写盘是按界面控件重建设置对象的,
+            // 这里如果不写 rev,文件里永远是 0 ⇒ 每次启动都再乘一遍倍数(真机日志实测:
+            // 锐化 20→29→41→59…清晰 25→50→100,强度越滚越大)。rev 只在**迁移函数**里前进,
+            // 这里恒写"当前版本",保证"迁移只做一次"。
+            PostScaleRev = PostScaleCurrentRev,
+            VideoDenoiseRev = AlhPro.Core.DenoiseStrengthOrder.CurrentRev,
+            // 【2026-09-21 果冻修复整块已删】原先这里写 `MotionBlur = MotionBlurCombo.SelectedIndex,`
+            // 与 `DeShake = …`。现在**不写**这两个字段(以及同族的 Jello)= 重建出来的对象上它们是 0/false,
+            // 即"永远关着";老文件里存过的档位不会被反复带回去。字段本身保留(见 VideoSettings 的兼容说明)。
             Quality = QualityCombo.SelectedIndex >= 0 ? QualityCombo.SelectedIndex : 0,   // -1(未选中)兜底 0,防污染设置文件
             BitrateMbps = QualityCombo.SelectedIndex == 5 ? ParseBitrate() : 0,
             Codec = CodecCombo.SelectedIndex >= 0 ? CodecCombo.SelectedIndex : 0,
@@ -2838,7 +3246,7 @@ public sealed partial class VideoView : UserControl
             SmoothTimeline = true,
             Mute = MuteCheck.IsChecked == true,
             VideoDenoiseOn = DenoiseToggle.IsChecked == true,
-            VideoDenoiseStrong = DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex : -1,
+            VideoDenoiseStrong = DenoiseToggle.IsChecked == true ? DenoiseStrengthIndex() : -1,
             DenoiseKind = DenoiseKindCombo?.SelectedIndex ?? 0,
         };
     }
@@ -3979,9 +4387,9 @@ public sealed partial class VideoView : UserControl
         if (VideoScaleRadios.SelectedIndex is 0 or 4) scale = 2;   // 1x 缩回 / 自定义:内部都按 2x 超分
         int interpScale = AlhPro.Core.InterpScaleMap.Multiplier(CurrentScaleIndex());
         bool dedupOn = DedupCheck.IsChecked == true;
-        int vdenoise = DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex + 1 : 0;
+        int vdenoise = DenoiseToggle.IsChecked == true ? AlhPro.Core.DenoiseStrengthOrder.ToPipeline(DenoiseStrengthIndex()) : 0;
         bool postFx = (int)SharpenSlider.Value + (int)ClaritySlider.Value + (int)UsmSlider.Value
-            + (int)DetailSlider.Value + (int)PostAaSlider.Value + (int)PostEdgeSlider.Value > 0;
+            + (int)DetailSlider.Value + (int)PostEdgeSlider.Value > 0;
         return PerfMemory.Fingerprint(engine, scale, 1920, 1080, interpScale, dedupOn, vdenoise, postFx);
     }
 
@@ -4197,20 +4605,72 @@ public sealed partial class VideoView : UserControl
     private VideoItem? _previewItem;
     private bool _trimMode;      // true=裁剪页 false=预览页
 
+    /// <summary>
+    /// 【测试缝 · 2026-09-19】`ALH_TEST_VIDEO=<视频绝对路径>` ⇒ 启动后自动把该素材加进列表并打开预览页。
+    /// 为什么需要:自验"切视角不重装媒体"必须走到"列表里有素材 + 打开预览 + 跑出结果"这三步,
+    ///   而在**不注入鼠标键盘**的纪律下,文件选择框(FileOpenPicker)不响应 UIA ⇒ 无法自动完成第一步。
+    /// 【纪律 · 与 ALH_TEST_SPLIT 同一套】
+    ///   · 只认**环境变量**(不读任何临时文件 —— 上一个读 %TEMP% 文件的缝曾把用户的分割线按回去 ✗);
+    ///   · 每次运行只生效一次(静态闩锁),且路径必须真实存在;
+    ///   · 用户正常启动(不设该变量)时本方法第一行就返回,**零副作用** ✔
+    /// </summary>
+    private static bool _seamVideoUsed;
+
+    private async Task TestSeamOpenVideoAsync()
+    {
+        try
+        {
+            if (_seamVideoUsed) return;
+            var p = Environment.GetEnvironmentVariable("ALH_TEST_VIDEO");
+            if (string.IsNullOrWhiteSpace(p) || !File.Exists(p)) return;
+            _seamVideoUsed = true;
+            AppLogger.Info($"[测试缝] ALH_TEST_VIDEO={p} → 自动加入列表并打开预览页(仅自动化自验;不设该变量时不会执行)");
+            await AddVideosAsync(new[] { p });
+            var it = _videos.FirstOrDefault(v => string.Equals(v.Path, p, StringComparison.OrdinalIgnoreCase));
+            if (it == null) { AppLogger.Warn("[测试缝] 素材没进列表,放弃打开预览页"); return; }
+            if (!ReferenceEquals(EffectVideoCombo.ItemsSource, _videos)) EffectVideoCombo.ItemsSource = _videos;
+            EffectVideoCombo.SelectedItem = it;
+            await OpenPreviewPageAsync(it);
+            AppLogger.Info("[测试缝] 预览页已自动打开 ✔");
+        }
+        catch (Exception ex) { AppLogger.Warn("测试缝 ALH_TEST_VIDEO 失败:" + ex.Message); }
+    }
+
+
     /// <summary>两页共用的外壳:素材名/信息、装载原片、复位版式与视图。</summary>
     private void ShowOverlayShell(VideoItem item)
     {
         _previewItem = item;
         PreviewName.Text = item.Name;
         if (PreviewMeta != null) PreviewMeta.Text = string.IsNullOrWhiteSpace(item.BaseInfo) ? "" : item.BaseInfo;
-        PreviewPlayer.Source = MediaSource.CreateFromUri(new Uri(item.Path));
-        _previewLoadedPath = item.Path;   // 【记账】进预览页时装的是"用户的源文件" ✓(供"没变就不重装"判断)
-        PreviewPlayerHost.Visibility = Visibility.Visible;
-        _effZoomed = false;
+        // 【倒装】进哪个页面,就把源文件装进**那个页面用的那条播放器**:
+        //   · 裁剪页 → PreviewPlayer(旧元素,一刀不改);
+        //   · 预览页 → CmpPlayerTop(单视图专用;替换原来的 PreviewPlayer,于是切视角不必再重装)
+        if (_trimMode)
+        {
+            PreviewPlayer.Source = MediaSource.CreateFromUri(new Uri(item.Path));
+            _previewLoadedPath = item.Path;
+        }
+        else
+        {
+            CmpPlayerTop.Source = MediaSource.CreateFromUri(new Uri(item.Path));
+            _srcLoadedPath = item.Path;
+        }
+        // 四个画面主机先按"看原片"摆好(随后 ApplyPreviewView 会按真实视图再定一次稿)
+        try
+        {
+            if (PreviewPlayerHost != null) PreviewPlayerHost.Visibility = _trimMode ? Visibility.Visible : Visibility.Collapsed;
+            if (CmpPlayerHostTop != null) CmpPlayerHostTop.Visibility = _trimMode ? Visibility.Collapsed : Visibility.Visible;
+            if (CmpPlayerHostBottom != null) CmpPlayerHostBottom.Visibility = Visibility.Collapsed;
+            if (EffectPlayerHost != null) EffectPlayerHost.Visibility = Visibility.Collapsed;
+        }
+        catch { }
+        ResetZoom();                       // 重新进页面:画面从 100% 起(滚轮放大过才需要「还原」)
         _compareMode = false;
         _cmpSingle = false;   // 重新进页面:先按"没有对比片"处理(真要对比会在合好后再切过去)
         _dividerDrag = false;
         VideoPreviewOverlay.Visibility = Visibility.Visible;   // 先显示,再算裁切(否则 ActualWidth=0 算不出来)
+        try { if (VideoLogScroll != null) VideoLogScroll.Visibility = Visibility.Visible; } catch { }   // 【2026-09-19 用户要求恢复】预览页也显示左下角日志(原来按旧要求隐藏)
         ApplyPlayerClip();   // 显式整幅裁切(不能置 null:视频面上不生效,会留下上次对比的半幅裁切)
         if (CompareSplitter != null) CompareSplitter.Visibility = Visibility.Collapsed;
         SetCompareSync(false);
@@ -4243,7 +4703,9 @@ public sealed partial class VideoView : UserControl
         // 自带控件全关,自绘播放条(播放/进度/倍速)接上原片 —— 也不再多出一条风格不同的控制条。
         HideBuiltInTransportControls();
         _barOnOriginal = true;
-        _barSession = PreviewPlayer.MediaPlayer?.PlaybackSession;
+        BindViewPlayers(ViewOriginal);   // 【倒装】裁剪页的角色播放器 = PreviewPlayer(旧行为不变)
+        _barSession = _srcPlayer?.MediaPlayer?.PlaybackSession;
+        CacheBarPlayer(_srcPlayer?.MediaPlayer);
         _origMpCache = PreviewPlayer.MediaPlayer;
         _origSessionCache = _origMpCache?.PlaybackSession;
         EnsureBarSync();
@@ -4282,20 +4744,29 @@ public sealed partial class VideoView : UserControl
         try
         {
             // 优先环境变量;其次读 %TEMP%\alh_test_split.txt(便于"一次启动测多个比例"的自动化测试 ✓)
+            // 【2026-09-19 事故配套】临时文件**读到就删 + 每次运行只允许注入一次** ——
+            // 用户报「左右对比那个线为什么会自己重置」就是它造成的:残留文件让每次布局刷新都把线按回 0.5 ✗
             string? ts = Environment.GetEnvironmentVariable("ALH_TEST_SPLIT");
             if (string.IsNullOrWhiteSpace(ts))
             {
                 try
                 {
                     var f = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "alh_test_split.txt");
-                    if (File.Exists(f)) ts = File.ReadAllText(f).Trim();
+                    if (File.Exists(f))
+                    {
+                        ts = File.ReadAllText(f).Trim();
+                        try { File.Delete(f); } catch { }   // 一次性:读完即删,绝不再干扰用户 ✔
+                        _seamFromFileUsed = true;
+                    }
                 }
                 catch { }
             }
             if (!string.IsNullOrWhiteSpace(ts)
+                && !(_seamFromFileUsed && _seamAppliedOnce)
                 && double.TryParse(ts, System.Globalization.NumberStyles.Float,
                                    System.Globalization.CultureInfo.InvariantCulture, out var tv))
             {
+                _seamAppliedOnce = true;
                 _compareSplit = Math.Clamp(tv, 0.05, 0.95);
                 AppLogger.Info($"[测试缝] 分割比例设为 {_compareSplit:0.###}(仅测试用)");
             }
@@ -4311,6 +4782,7 @@ public sealed partial class VideoView : UserControl
         {
             if (PreviewViewRadios != null)
                 PreviewViewRadios.SelectedIndex = Math.Clamp(_lastViewMode, ViewOriginal, ViewSplit);
+            WarmResultPlayer(_effOutPath);   // 【倒装】结果还在:顺手预装"看处理效果"那条(切过去零装载)
         }
         else
         {
@@ -4340,16 +4812,26 @@ public sealed partial class VideoView : UserControl
 
     private void PreviewClose_Click(object sender, RoutedEventArgs e)
     {
-        PreviewPlayer.MediaPlayer?.Pause();
-        PreviewPlayer.Source = null;
+        // 【倒装】四个播放器全部停播并释放源(否则退出预览后仍可能后台解码/出声);
+        // 记账一起清空 ⇒ 下次进预览页会重新装(不会误判成"还是那条片")
+        foreach (var el in new[] { PreviewPlayer, EffectPlayer, CmpPlayerTop, CmpPlayerBottom })
+        {
+            try { el?.MediaPlayer?.Pause(); } catch { }
+            try { if (el != null) el.Source = null; } catch { }
+        }
+        _srcLoadedPath = null;
+        _resLoadedPath = null;
+        _previewLoadedPath = null;
+        _effLoadedPath = null;
         ApplyPlayerClip();
         VideoPreviewOverlay.Visibility = Visibility.Collapsed;
+        try { if (VideoLogScroll != null) VideoLogScroll.Visibility = Visibility.Visible; } catch { }   // 退出预览页:日志恢复显示 ✔
         _previewCtrlTimer?.Stop();
         DupStrip.Children.Clear();
         DupSummaryText.Text = "";
         // 预览任务:关掉整个页面时一起收走(正在跑就先取消,别留个看不见的任务在后台)
         if (_effBusy) { try { _effCts?.Cancel(); } catch { } }
-        _effZoomed = false;
+        ResetZoom();
         _dupOpen = false;
         _compareMode = false;
         _dividerDrag = false;
@@ -4378,7 +4860,237 @@ public sealed partial class VideoView : UserControl
     private double _effTimelineSpan = 30;      // 时间线代表的秒数(时长未知时先按 30 秒铺)
     private bool _effTooShort;                 // 素材太短,连最短的一段都截不出来
     private bool _effBusy;                     // 正在生成预览
-    private bool _effZoomed;                   // 放大画面:收起控制区,画面占满整页
+    // 【2026-09-19 用户要求】原「放大画面」按钮(只是收起控制区,不是真缩放)已删除,改成真正的画面缩放:
+    //   · 鼠标滚轮在画面上滚 = 以光标为中心放大/缩小(1~8 倍)
+    //   · 顶栏「还原」= 回到 100%(按钮只在放大过之后才出现)
+    //   缩放作用在 PreviewZoomLayer 上(两层画面 + 左右对比的分割线一起缩),因为它必须保持"线压在真实分界上":
+    //   裁切点会随缩放移动,线若不跟着缩放就不再对齐 ✗。标签/提示/播放条留在层外,不跟着放大 ✔
+    //   换算只有一处:screen = local × scale + pan(原点 0,0)⇒ local = (screen − pan) / scale
+    //   —— 自己算,不依赖 WinUI 是否替我们反解变换(拖线在缩放状态下照样跟手)✔
+    // ==================== 「两者同时」两侧同区域缩放(2026-09-19 用户要求) ====================
+    // 【用户口径 · 拍板】两侧显示**同样大的画面范围**(原片放大到与处理后同尺寸),锁**同一块区域**,中间是**边界**;
+    //   缩放其中一个,另一个跟着到同一处 —— 这样就能盯着某个部位比"普通放大 vs AI 超分" ✔
+    // 【结构为什么这样最稳】**两个播放器播同一条合成片**(左半=整幅原片、右半=整幅处理后)——
+    //   一条文件、一个时钟 ⇒ 结构上不可能不同帧漂移 ✔(2026-09-18 放弃的"两个文件"方案才会漂,这里不重蹈)
+    // 【变换】每个播放器**各自** Scale+Translate(共享倍率与内容中心),不是整层一起缩:
+    //   · 播放器局部坐标里,第 i 幅(左半 i=0 / 右半 i=1)的"内容点 (cx,cy)"锚点 = (半幅宽×(cx+i), 全高×cy)
+    //   · 目标 = 该侧格子中心(左格 paneW/4、右格 3·paneW/4)
+    //   · 变换 = 先按 m 缩放,再平移 (目标 − 锚点×m) ✔
+    //   · 裁切 = 反算出来的局部矩形 ((格子 − 平移) ÷ m) —— Clip 在变换之前生效,所以必须反算 ✔
+    private bool _zmOn;
+    private bool _zmWant;                    // ApplyPreviewView 登记:这个视图要不要进入该形态
+    private string? _zmWantPath;
+    // 【bug 记录 · 2026-09-19 用户:"缩放完回去 视频直接就只有一小部分了"】
+    // 根因:ApplyHostClips 拿"**当前**"裁切矩形去和画面框取交集,而那个"当前"就是它上一次写进去的结果
+    // ⇒ 交集只会越缩越小、回不去 ✗。修法:把"遮罩/分割算出来的**基准裁切**"单独记账(下面这个字段),
+    // 每次都用【基准 ∩ 画面框】重新算 —— 缩放回适应时交集自然又是整幅 ✔
+    private Windows.Foundation.Rect? _baseClipPrev;
+    // 【测试缝的一次性闩锁 · 2026-09-19 事故配套】见 ApplyPreviewView 里的说明:
+    // 临时文件只允许注入一次(读到就删),避免"每次刷新视图都把用户的线按回去"✗→✔
+    private static bool _seamAppliedOnce;
+    private static bool _seamFromFileUsed;
+    private double _zmScale = 1.0, _zmCx = 0.5, _zmCy = 0.5;
+    private string? _zmLoadedPath;
+    private bool _zmDragging; private double _zmDragX, _zmDragY, _zmOrigCx, _zmOrigCy;
+
+    /// <summary>进入/退出「两者同时」的两侧同区域缩放形态。</summary>
+    private void EnableBothZoom(bool on)
+    {
+        try
+        {
+            if (!on)
+            {
+                if (!_zmOn) return;
+                _zmOn = false;
+                // (实时缩放已撤销:缩放条已从界面移除)
+                try { PreviewPlayerHost.RenderTransform = null; EffectPlayerHost.RenderTransform = null; } catch { }
+                try { if (CompareSplitter != null) CompareSplitter.Visibility = Visibility.Collapsed; } catch { }
+                _zmLoadedPath = null;
+                ApplyPlayerClip();       // 交回原有裁切/布局逻辑
+                return;
+            }
+            string? clip = _cmpClipPath;
+            if (string.IsNullOrEmpty(clip) || !File.Exists(clip)) return;
+            if (PlayerArea == null || PlayerArea.ActualWidth < 80) return;
+            if (string.IsNullOrEmpty(_effOutPath)) return;          // 没结果:不进入
+            // 两个播放器都装同一条合成片(与遮罩左右对比同一个套路:只在"源真的不同"时装,避免闪)
+            if (!string.Equals(_zmLoadedPath, clip, StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyTimelineController(false);
+                LoadEffectSource(clip, 0, false);
+                _effLoadedPath = clip;
+                PreviewPlayer.Source = Windows.Media.Core.MediaSource.CreateFromUri(new Uri(clip));
+                _previewLoadedPath = clip;
+                _zmLoadedPath = clip;
+                try { ApplyCmpRateToAll(false); } catch { }        // 换源会把倍率打回 1.0 ⇒ 立刻补回 ✔
+                Log($"[两者同时] 两侧同源装载(同一条合成片,各自缩放):{Path.GetFileName(clip)}");
+            }
+            // 布局:两个主机都"铺满画面区"(不再像遮罩那样偏移一格);裁切与变换由 ApplyBothZoom 算 ✔
+            try
+            {
+                PreviewPlayerHost.Visibility = Visibility.Visible;
+                EffectPlayerHost.Visibility = Visibility.Visible;
+                foreach (var h in new[] { PreviewPlayerHost, EffectPlayerHost })
+                {
+                    h.Width = double.NaN; h.Height = double.NaN;
+                    h.HorizontalAlignment = HorizontalAlignment.Stretch;
+                    h.VerticalAlignment = VerticalAlignment.Stretch;
+                    h.Margin = new Thickness(0);
+                }
+                foreach (var pl in new[] { PreviewPlayer, EffectPlayer })
+                {
+                    pl.Width = double.NaN; pl.Height = double.NaN;
+                    pl.Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform;
+                }
+                if (CompareSplitter != null) CompareSplitter.Visibility = Visibility.Visible;   // 中间那条边界
+            }
+            catch { }
+            _zmOn = true;
+            _zmScale = 1.0; _zmCx = 0.5; _zmCy = 0.5;
+            // (实时缩放已撤销:缩放条已从界面移除)
+            ApplyBothZoom("进入");
+        }
+        catch (Exception ex) { Log($"两者同时-同区域缩放启用失败:{ex.Message}"); }
+    }
+
+    /// <summary>把"共享倍率 + 内容中心"落到两个播放器各自的变换与裁切上。</summary>
+    private void ApplyBothZoom(string why)
+    {
+        if (!_zmOn) return;
+        try
+        {
+            double aw = PlayerArea?.ActualWidth ?? 0, ah = PlayerArea?.ActualHeight ?? 0;
+            if (aw < 40 || ah < 40) return;
+            double half = aw / 2.0;                                  // 合成片每半幅在画面区里的宽度
+            double fh = ah;                                          // 每半幅的高度(Uniform 后按画面区高)
+            _zmScale = Math.Clamp(_zmScale, 1.0, 16.0);
+            _zmCx = Math.Clamp(_zmCx, 0, 1);
+            _zmCy = Math.Clamp(_zmCy, 0, 1);
+            var hosts = new[] { PreviewPlayerHost, EffectPlayerHost };
+            for (int i = 0; i < hosts.Length; i++)
+            {
+                var h = hosts[i];
+                if (h == null) continue;
+                double anchorX = half * (_zmCx + i), anchorY = fh * _zmCy;
+                double targetX = aw * (0.25 + 0.5 * i), targetY = ah / 2.0;
+                double tx = targetX - anchorX * _zmScale, ty = targetY - anchorY * _zmScale;
+                var tg = new Microsoft.UI.Xaml.Media.TransformGroup();
+                tg.Children.Add(new Microsoft.UI.Xaml.Media.ScaleTransform { ScaleX = _zmScale, ScaleY = _zmScale });
+                tg.Children.Add(new Microsoft.UI.Xaml.Media.TranslateTransform { X = tx, Y = ty });
+                h.RenderTransform = tg;
+                // 裁切:只露出自己那格(Clip 在变换之前生效 ⇒ 用反算矩形)
+                double cellX = i == 0 ? 0 : half, cellW = half;
+                double lx = (cellX - tx) / _zmScale, ly = (0 - ty) / _zmScale;
+                double lw = cellW / _zmScale, lh = ah / _zmScale;
+                h.Clip = new Microsoft.UI.Xaml.Media.RectangleGeometry
+                {
+                    Rect = new Windows.Foundation.Rect(lx, ly, Math.Max(1, lw), Math.Max(1, lh)),
+                };
+            }
+            // 中间那条线 = 两侧视图的边界(固定在中缝,不参与缩放)✔
+            if (CompareSplitter != null)
+            {
+                CompareSplitter.Visibility = Visibility.Visible;
+                CompareSplitter.Margin = new Thickness(Math.Round(half) - (CompareSplitter.Width / 2), 0, 0, 0);
+            }
+            try { if (CompareSplitGhost != null) CompareSplitGhost.Visibility = Visibility.Collapsed; } catch { }
+            if (why != "") Log($"[两者同时] 同区域缩放:{_zmScale:0.##}× 中心({_zmCx:0.###},{_zmCy:0.###}) · 画面区 {aw:0}x{ah:0}");
+        }
+        catch { }
+    }
+
+    /// <summary>滚轮:以光标所在那一侧的内容点为中心改倍率(两侧锁同一区域 ⇒ 另一侧跟着到同一处)✔</summary>
+    private void BothZoom_Wheel(Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        try
+        {
+            var pt = e.GetCurrentPoint(PlayerArea);
+            double delta = pt.Properties.MouseWheelDelta;
+            if (Math.Abs(delta) < 0.1) return;
+            double aw = PlayerArea.ActualWidth, ah = PlayerArea.ActualHeight;
+            if (aw < 40 || ah < 40) return;
+            double half = aw / 2.0;
+            int i = pt.Position.X < half ? 0 : 1;                       // 光标在哪一侧
+            // 光标处的内容点(该侧自己的坐标 → 归一化内容点)
+            double cx = (_zmCx + i) + (pt.Position.X - aw * (0.25 + 0.5 * i)) / (_zmScale * half) ;
+            double cy = _zmCy + (pt.Position.Y - ah / 2.0) / (_zmScale * ah);
+            double oldScale = _zmScale;
+            double next = Math.Clamp(delta > 0 ? _zmScale * 1.25 : _zmScale / 1.25, 1.0, 16.0);
+            if (Math.Abs(next - oldScale) < 0.001) { e.Handled = true; return; }
+            // 让光标下的那个内容点缩放后仍在同一屏幕位置:中心按缩放比例回推
+            double k = next / oldScale;
+            _zmCx = cx - (cx - _zmCx) / k - i * (1 - 1 / k) * 0;        // 见下方注释:两侧同锚点,直接线性回推
+            _zmCy = cy - (cy - _zmCy) / k;
+            _zmCx = Math.Clamp(_zmCx, 0, 1);
+            _zmScale = next;
+            ApplyBothZoom("");
+            e.Handled = true;
+        }
+        catch { }
+    }
+
+    private void BothZoomFit_Click(object sender, RoutedEventArgs e)
+    {
+        _zmScale = 1.0; _zmCx = 0.5; _zmCy = 0.5;
+        ApplyBothZoom("适应");
+        Log("两者同时-同区域缩放:已回到适应(两侧锁定画面中心)");
+    }
+
+    /// <summary>单画面视图的「适应」:回到整幅(缩放档位归零,平移清零)。</summary>
+    private void ZoomFit_Click(object sender, RoutedEventArgs e)
+    {
+        ResetZoom();
+        Log("画面缩放:已回到适应(整幅)");
+    }
+
+    private void BothZoom_PointerPressed(Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_zmOn || _zmScale <= 1.001) return;
+        try
+        {
+            var pt = e.GetCurrentPoint(PlayerArea);
+            _zmDragging = true;
+            _zmDragX = pt.Position.X; _zmDragY = pt.Position.Y;
+            _zmOrigCx = _zmCx; _zmOrigCy = _zmCy;
+            // (无缩放层可捕获)
+            e.Handled = true;
+        }
+        catch { }
+    }
+
+    private void BothZoom_PointerMoved(Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_zmDragging) return;
+        try
+        {
+            var pt = e.GetCurrentPoint(PlayerArea);
+            double aw = PlayerArea.ActualWidth, ah = PlayerArea.ActualHeight;
+            if (aw < 40 || ah < 40) return;
+            _zmCx = Math.Clamp(_zmOrigCx - (pt.Position.X - _zmDragX) / (_zmScale * aw / 2.0), 0, 1);
+            _zmCy = Math.Clamp(_zmOrigCy - (pt.Position.Y - _zmDragY) / (_zmScale * ah), 0, 1);
+            ApplyBothZoom("");
+            e.Handled = true;
+        }
+        catch { }
+    }
+
+    private void BothZoom_PointerReleased(Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_zmDragging) return;
+        _zmDragging = false;
+        // (无缩放层可释放)
+    }
+    // 用户明确否定:"这特么是什么 回退 我要的是边界分明 在同时两者的时候我缩放其中一个 另一个也是那个地方缩放
+    // 并且中间是边界 这样子就可以更好的看某一个部位的缩放对比"
+    // ⇒ 那个需求要的是**两侧各自独立缩放、锁同一块区域、中间是边界**(见 _qa 会话交接 §46 的计划),
+    //    与"整层一起缩"是两回事 ✗。所以整层缩放**全部关掉**(入口置空),预览页行为回到改动前 ✔
+    private const bool ZoomUiEnabled = false;   // ← 整层缩放:已废弃(保留结构,恒为恒等变换)
+    private double _zoomScale = 1.0;           // 恒等
+    private double _zoomPanX, _zoomPanY;
+    private int _zoomPct;
+    private static readonly int[] ZoomLadder = { 0, 50, 100, 200, 400, 800 };
+    private bool _panDragging;
+    private double _panStartX, _panStartY, _panOrigX, _panOrigY;
     private bool _viewSyncing;                 // 视图单选 ↔ ApplyPreviewView 防重入
     private bool _effHasResult;                // 已经跑出过成片(按钮文案变「重新预览」)
     private bool _effDirty;                    // 左侧参数改过 → 现有结果已过期,提示重新预览
@@ -4465,6 +5177,26 @@ public sealed partial class VideoView : UserControl
     private int _syncRateWrites;               // 本次统计窗口内写了几次速率
     private double _syncDriftMax;              // 本次统计窗口内最大漂移(秒)
     private long _syncHardAt;                  // 上次"漂移过大→硬对齐"的时刻(冷却 1.5s,避免反复 seek)
+    // ===== 【2026-09-21 加:预览播放的"地面数据"】=====
+    // 【为什么必须有】用户报"预览播放有延迟还会卡",而当时的日志**给不出任何可判定的数据**:
+    //   ① 起播那条 `③状态变→画面开始走` 挂在 PositionChanged 上,而该事件的节拍本身就是 ~250ms
+    //      ⇒ 四次实测全是 234/250ms = **量到的是事件节拍,不是延迟**(量程地板);而且它在第一次回调
+    //      就把观察标志关掉了 ⇒ 后面真的卡住也不会再报。
+    //   ② 位置回调里那条"近 5 秒速率调整…"只在**进了同步分支**时才打 ⇒ 没进就一片空白,
+    //      "回调没触发"与"走了另一条路"分不清(用户 2026-09-21 那次左右对比播放 13 秒,日志里
+    //      一条同步行都没有 —— 到底哪一层没跑,谁也不知道 ✗)。
+    // 所以这里补一套**无条件**的地面数据:每个位置回调只做几次字段写入(零成本),由 150ms 看门狗每 5 秒
+    // 打一行"回调频率 + 两个播放器的状态/位置 + 漂移 + 走了哪条分支"。下次复现一次就能直接定位。
+    private long _cmpPosEvents;                // 位置回调触发次数(统计窗口内)
+    private bool _cmpSyncBranchEntered;        // 位置回调是否进了"原片同步"那段
+    private double _cmpLastClipPos;            // 片段侧最近位置
+    private bool _cmpLastClipPlaying;          // 片段侧最近是否在播
+    private bool _cmpLastClipAtEnd;            // 片段侧最近是否在片尾
+    private long _groundLogAt;                 // 上次打地面数据的时刻
+    private long _cmpPosLastAt;                // 位置回调最后一次触发的时刻
+    // 【2026-09-21】倍率写入/跳过计数(地面数据里一起报):它回答"起播路上到底有没有写速率"
+    private long _rateWrites;                  // 写了几次(write 会让管线重定时 ⇒ 卡的那一下)
+    private long _rateSkip;                    // 跳过了几次(已经是目标值 ⇒ 零代价)
     // 【线程】媒体回调(媒体线程)里要用的原片播放器引用 —— 必须在 UI 线程抓好存这里,
     // 后台回调**绝不能**读 PreviewPlayer.MediaPlayer(控件属性):会抛 0x8001010E 并被 catch 吞掉
     // (2026-09-18 实测:整个同步块因此从未生效,而且每个位置回调都抛一次异常 = 播放"一点点卡")。
@@ -4480,6 +5212,7 @@ public sealed partial class VideoView : UserControl
     // 真机踩坑:媒体回调里直接读 ActiveBarSession() → 那是在后台线程上碰 MediaPlayer(控件属性)
     // → 抛"应用程序调用一个已为另一线程整理的接口",被 catch 吞掉 → 播放时播放条一直停在旧值。
     private Windows.Media.Playback.MediaPlaybackSession? _barSession;
+    private Windows.Media.Playback.MediaPlayer? _barMpCache;      // 【倒装】刚那个会话属于哪条播放器(UI 线程写,媒体回调只读;不许在回调里读控件属性)
     private Windows.Foundation.TypedEventHandler<Windows.Media.Playback.MediaPlaybackSession, object>? _barPosHandler;    // 播放条位置(单播放器视图)
     private Windows.Foundation.TypedEventHandler<Windows.Media.Playback.MediaPlaybackSession, object>? _barStateHandler;  // 播放条状态(单播放器视图)
     private Windows.Foundation.TypedEventHandler<Windows.Media.Playback.MediaPlayer, object>? _barOpenedHandler;          // 播放条:媒资打开时补读一次
@@ -4488,22 +5221,113 @@ public sealed partial class VideoView : UserControl
     private Windows.Foundation.TypedEventHandler<Windows.Media.Playback.MediaPlaybackSession, object>? _cmpPosHandler;
     private Windows.Foundation.TypedEventHandler<Windows.Media.Playback.MediaPlaybackSession, object>? _cmpStateHandler;
 
-    /// <summary>四个面板的可见性只在这里决定:裁剪页=裁剪区(+重复帧可选)、预览页=预览区;放大=全收起。</summary>
+    // ==================== 【① 倒装(2026-09-19 定稿)】四个视图各配"角色播放器" ====================
+    // 病根:四个视角共用 PreviewPlayer/EffectPlayer ⇒ 换到"需要另一个文件的视角"就必须**重装媒体**
+    // (4K 成片开一次 ≈3.5 秒:黑屏 + 卡住 + 倍率复位;铁证日志 `[性能] 切视图装片耗时 3559/4665 ms`)。
+    // 为什么是"倒装"而不是"给对比再加一对播放器":
+    //   · 对比子系统(TryMaskSplit / SetCompareSync / 看门狗 / 裁切 / CmpSeek 映射)是本文件最脆的一层,
+    //     它已经绑死在 PreviewPlayer(上半=原片半幅)/EffectPlayer(下半=处理后半幅)上 ⇒ **一字不改**才最安全;
+    //   · 于是把**单视图**挪到那对"本来就在 XAML 里、一直 Collapsed、未接线"的元素上:
+    //       看原片     → CmpPlayerTop   (常驻源文件)
+    //       看处理效果  → CmpPlayerBottom(常驻预览成片)
+    //       两者同时 / 左右对比 → PreviewPlayer / EffectPlayer(常驻合成片,原样不动)
+    //   · 结果:换视角只改"可见性 + 一次时间线对齐",**零装载** ⇒ 黑屏/卡顿从结构上消失。
+    // 纪律:**只用字段**,且只在 ApplyPreviewView 里**一次定稿** —— 绝不用"用的时候再解析"的属性
+    //   (第一次翻车的根因就是 `_compareMode`/`_cmpSingle` 会在同一方法内被改写,
+    //    导致同一个方法里不同行解析到不同的播放器)。
+    private Microsoft.UI.Xaml.Controls.MediaPlayerElement? _srcPlayer;   // 当前视图里"源文件"那条
+    private Microsoft.UI.Xaml.Controls.MediaPlayerElement? _resPlayer;   // 当前视图里"成片"那条
+    private Microsoft.UI.Xaml.Controls.Grid? _srcHost;                   // 与上面对应的画面主机(裁切/几何用)
+    private Microsoft.UI.Xaml.Controls.Grid? _resHost;
+    private string? _srcLoadedPath;      // CmpPlayerTop 当前装的是哪条片
+    private string? _resLoadedPath;      // CmpPlayerBottom 当前装的是哪条片
+    private long _viewGen;               // 切视图代数:迟到的"对齐/装片"回调一律作废(连点切换时不打架)
+
+    /// <summary>某个视图里"源文件那条 / 成片那条"分别是哪个元素 —— **纯函数**(只看入参,不读任何会被改写的状态)。
+    /// 对比视图里它们就是 PreviewPlayer/EffectPlayer(对比子系统那对);单视图里是新的一对 CmpPlayer*。</summary>
+    private void ViewPlayersOf(int mode,
+        out Microsoft.UI.Xaml.Controls.MediaPlayerElement? src,
+        out Microsoft.UI.Xaml.Controls.MediaPlayerElement? res)
+    {
+        if (_trimMode) { src = PreviewPlayer; res = EffectPlayer; return; }   // 裁剪页:只有原片,沿用旧元素(零改动)
+        bool cmp = mode == ViewBoth || mode == ViewSplit;
+        src = cmp ? PreviewPlayer : CmpPlayerTop;
+        res = cmp ? EffectPlayer : CmpPlayerBottom;
+    }
+
+    /// <summary>把"当前视图的角色播放器"一次定稿到字段(切视图路径里只调一次,之后本方法只读字段)。</summary>
+    private void BindViewPlayers(int mode)
+    {
+        ViewPlayersOf(mode, out var sp, out var rp);
+        _srcPlayer = sp;
+        _resPlayer = rp;
+        _srcHost = ReferenceEquals(sp, PreviewPlayer) ? PreviewPlayerHost : CmpPlayerHostTop;
+        _resHost = ReferenceEquals(rp, EffectPlayer) ? EffectPlayerHost : CmpPlayerHostBottom;
+    }
+
+    /// <summary>【媒体线程安全】UI 线程上抓好"自绘播放条跟的那条"的引用(回调里只读字段,不碰控件属性)。</summary>
+    private void CacheBarPlayer(Windows.Media.Playback.MediaPlayer? mp)
+    {
+        _barMpCache = mp;
+    }
+
+    /// <summary>【倒装 · 2026-09-19 用户实测"看原片里画面被那条线的遮罩切成一条"】
+    /// 把一对**在当前视图里不显示**的画面主机几何彻底归零(宽度/高度/Margin/裁切/变换/对齐/Stretch)。
+    /// 为什么必须幂等兜死:「左右对比」里这对主机会被摆成"2 倍宽 + 偏移 + 裁切"的遮罩版式
+    /// (PreviewPlayerHost.Width = vw*2、Margin=(leftPad,topPad)、Clip=(0,0,vw*ratio,vh));
+    /// 只要有任何一条路径没把它复位,切到「看原片/看处理效果」就会看到"画面被切成一条、像还带着遮罩" ✗。
+    /// 只作用于**当前不显示的那一对** ⇒ 对比视图自己的版式一个像素都不碰 ✔;ClearValue 而不是赋 NaN ⇒ 回归布局默认 ✔</summary>
+    private void NormalizeHostGeometry(Microsoft.UI.Xaml.Controls.Grid? h)
+    {
+        if (h == null) return;
+        try
+        {
+            h.ClearValue(Microsoft.UI.Xaml.FrameworkElement.WidthProperty);
+            h.ClearValue(Microsoft.UI.Xaml.FrameworkElement.HeightProperty);
+            h.HorizontalAlignment = HorizontalAlignment.Stretch;
+            h.VerticalAlignment = VerticalAlignment.Stretch;
+            h.Margin = new Thickness(0);
+            h.Clip = null;
+            h.RenderTransform = null;
+        }
+        catch { }
+    }
+
+    /// <summary>把某个播放器元素自身的尺寸/对齐也归零(遮罩逻辑曾给它们写过显式宽高/拉伸)。</summary>
+    private void NormalizePlayerElement(Microsoft.UI.Xaml.Controls.MediaPlayerElement? el)
+    {
+        if (el == null) return;
+        try
+        {
+            el.ClearValue(Microsoft.UI.Xaml.FrameworkElement.WidthProperty);
+            el.ClearValue(Microsoft.UI.Xaml.FrameworkElement.HeightProperty);
+            el.HorizontalAlignment = HorizontalAlignment.Stretch;
+            el.VerticalAlignment = VerticalAlignment.Stretch;
+            el.Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform;
+        }
+        catch { }
+    }
+
+    private static string ElName(Microsoft.UI.Xaml.Controls.MediaPlayerElement? el)
+    {
+        try { return el?.Name ?? "(无)"; } catch { return "(无)"; }
+    }
+
+    /// <summary>四个面板的可见性只在这里决定:裁剪页=裁剪区(+重复帧可选)、预览页=预览区。</summary>
     private void ApplyDeckVisibility()
     {
         try
         {
-            if (TrimDeck != null) TrimDeck.Visibility = (!_effZoomed && _trimMode) ? Visibility.Visible : Visibility.Collapsed;
-            if (PreviewDeck != null) PreviewDeck.Visibility = (!_effZoomed && !_trimMode) ? Visibility.Visible : Visibility.Collapsed;
-            if (DupToolsPanel != null) DupToolsPanel.Visibility = (!_effZoomed && _trimMode && _dupOpen) ? Visibility.Visible : Visibility.Collapsed;
+            if (TrimDeck != null) TrimDeck.Visibility = _trimMode ? Visibility.Visible : Visibility.Collapsed;
+            if (PreviewDeck != null) PreviewDeck.Visibility = !_trimMode ? Visibility.Visible : Visibility.Collapsed;
+            if (DupToolsPanel != null) DupToolsPanel.Visibility = (_trimMode && _dupOpen) ? Visibility.Visible : Visibility.Collapsed;
             if (DupToggleBtn != null)
             {
                 DupToggleBtn.Visibility = _trimMode ? Visibility.Visible : Visibility.Collapsed;
                 DupToggleBtn.Content = _dupOpen ? "重复帧 ▴" : "重复帧 ▾";
             }
             if (PreviewViewRadios != null)
-                PreviewViewRadios.Visibility = (!_effZoomed && !_trimMode) ? Visibility.Visible : Visibility.Collapsed;
-            if (EffectZoomBtn != null) EffectZoomBtn.Content = _effZoomed ? "还原" : "放大画面";
+                PreviewViewRadios.Visibility = !_trimMode ? Visibility.Visible : Visibility.Collapsed;
         }
         catch { }
     }
@@ -4535,7 +5359,21 @@ public sealed partial class VideoView : UserControl
 
     private async void EffectVideoCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (EffectVideoCombo.SelectedItem is VideoItem it && !_trimMode) await InitEffectForAsync(it);
+        if (EffectVideoCombo.SelectedItem is VideoItem it && !_trimMode)
+        {
+            await InitEffectForAsync(it);
+            // 【用户实测】在这个下拉里换素材后上面的播放器**不刷新** ⇒ 这里真的换片。
+            // 开页时给 ItemsSource/SelectedItem 也会触发一次,所以用 _previewLoadedPath 去重(只装"源真的不同")
+            if (_previewItem == null
+                || !string.Equals(_srcLoadedPath, it.Path, StringComparison.OrdinalIgnoreCase))
+            {
+                ShowOverlayShell(it);   // 换源 + 复位版式/视图(与"从列表进预览页"同一条路)
+                _effLoadedPath = null;  // 结果那条作废,免得还挂着上一条素材的成片
+                _resLoadedPath = null;  // 【倒装】同一条理由:「看处理效果」那条也要重新装(素材换了)
+                try { CmpPlayerBottom?.MediaPlayer?.Pause(); } catch { }
+                ApplyPreviewView();
+            }
+        }
     }
 
     /// <summary>切换素材:读时长(未知时探测)→ 重排时间线、区间夹回可用范围。</summary>
@@ -4608,15 +5446,20 @@ public sealed partial class VideoView : UserControl
     {
         try
         {
-            var mp = PreviewPlayer.MediaPlayer;
-            if (mp == null) return;
-            mp.Pause();   // 拖动时暂停,像剪辑软件一样"擦洗"
-            if (force) ApplySeekNow(mp, seconds, verify: true);
-            else RequestSeek(mp, seconds, verify: true);
+            // 【倒装】"原片那条" = 这个视图的角色播放器(看原片 → CmpPlayerTop;裁剪页 → PreviewPlayer)。
+            // 对比视图里画面由合成片那对负责 ⇒ 这里不动 PreviewPlayer(旧代码会把它 seek 到 _effStart,
+            // 而它装的其实是对比片 ⇒ 凭空造出"左右不协调";修它顺带治了用户报的那条)✔
+            var mp = (_compareMode ? null : _srcPlayer)?.MediaPlayer;
+            if (mp != null)
+            {
+                mp.Pause();   // 拖动时暂停,像剪辑软件一样"擦洗"
+                if (force) ApplySeekNow(mp, seconds, verify: true);
+                else RequestSeek(mp, seconds, verify: true);
+            }
             // 处理后那条一起走(没有结果/没装片就跳过)
             if (alsoResult && _effHasResult && !string.IsNullOrEmpty(_effOutPath))
             {
-                var rmp = EffectPlayer.MediaPlayer;
+                var rmp = (_compareMode ? EffectPlayer : _resPlayer)?.MediaPlayer;
                 var rse = rmp?.PlaybackSession;
                 if (rmp != null && rse != null && !_cmpSingle)
                 {
@@ -4624,6 +5467,17 @@ public sealed partial class VideoView : UserControl
                     double want = Math.Clamp(seconds - _effStart, 0, Math.Max(0, _effRealLen));
                     if (force) ApplySeekNow(rmp, want, verify: false);
                     else RequestSeek(rmp, want, verify: false);
+                    // 【遮罩模式】上层那条装的也是**同一条片**(同轴)⇒ 必须一起对,否则左右两半停在不同的帧 ✗
+                    if (_maskSplitActive)
+                    {
+                        var up = PreviewPlayer?.MediaPlayer;
+                        if (up != null && !ReferenceEquals(up, rmp))
+                        {
+                            up.Pause();
+                            if (force) ApplySeekNow(up, want, verify: false);
+                            else RequestSeek(up, want, verify: false);
+                        }
+                    }
                 }
             }
         }
@@ -4715,7 +5569,88 @@ public sealed partial class VideoView : UserControl
         _playT0 = Environment.TickCount64;
         _playT1 = 0; _playT2 = 0;
         _playWatch = true;
+        PlayWatchArmFirstFrame();
     }
+
+    /// <summary>【2026-09-21 加:真正的"跟手"指标】点下去 → **播放器的位置真的开始往前走**。
+    ///
+    /// 【为什么原来的 ③ 不够用(实测证据)】③ 挂在 `PlaybackSession.PositionChanged` 上,而该事件本身的
+    /// 节拍约 200~250ms(2026-09-22 自测实测:`位置回调 25 次/5s` = 200ms 一次)⇒ ③ 的读数恒在
+    /// 234/250/250/250 之间 = **量到的是事件节拍、不是延迟**;而且它第一次回调就把观察关掉 ⇒ 之后画面
+    /// 真冻住也不会再报 ✗。
+    /// 【第一版踩的坑,照实记】一开始挂的是 `MediaPlayer.VideoFrameAvailable` —— **它不触发**:
+    ///   2026-09-22 自测跑完整场(四个视角 + 播放/暂停 + 慢放)日志里一条 ④ 都没有 ⇒ 该事件需要
+    ///   `IsVideoFrameServerEnabled = true`(帧服务器模式),而本工程的播放器走的是普通视频面
+    ///   (`MediaPlayerElement` + SwapChainPanel),这个置位会换掉整条渲染路径 —— 不值得为一个埋点动它 ✗。
+    /// 【现在用的是什么】`CompositionTarget.Rendering`(每个渲染帧一次,≈16ms 分辨率)轮询四条播放器的
+    /// 位置:谁先比"按下那一刻"往前走了 >1ms,那一下就是"画面开始动"的近似(位置推进 = 时钟在跑 =
+    /// 解码器已经交得出帧)。只挂到第一帧推进或 5 秒超时为止,之后立刻摘掉(零长期开销)。
+    /// 【诚实的边界】"位置推进"不等于"像素已经点亮";但 ③ 只能给 200ms 的量程地板,④ 能给 16ms 的,
+    /// 两者对照着看才判断得出"延迟到底在管线里还是在渲染上"。</summary>
+    private void PlayWatchArmFirstFrame()
+    {
+        PlayWatchDisarmFirstFrame();
+        _frameLogged = false;
+        _frameWatchDeadline = _playT0 + 5000;
+        // 快照四条播放器"按下那一刻"的位置:谁先越过它,谁就是这次起播的那条
+        for (int i = 0; i < 4; i++)
+        {
+            _framePos0[i] = -1;
+            try { _framePos0[i] = FrameWatchSession(i)?.Position.TotalSeconds ?? -1; } catch { }
+        }
+        try
+        {
+            _frameTick = (_, _) =>
+            {
+                try
+                {
+                    long now = Environment.TickCount64;
+                    if (now > _frameWatchDeadline || _frameLogged) { PlayWatchDisarmFirstFrame(); return; }
+                    for (int i = 0; i < 4; i++)
+                    {
+                        double p;
+                        try { p = FrameWatchSession(i)?.Position.TotalSeconds ?? -1; } catch { continue; }
+                        if (p < 0 || _framePos0[i] < 0) continue;
+                        if (p > _framePos0[i] + 0.001)
+                        {
+                            _frameLogged = true;
+                            AppLogger.Info($"[性能] {_playTag}:④点下去→位置开始前进 {now - _playT0} ms(第 {i + 1} 条播放器;"
+                                + "这个分辨率是 ~16ms —— ③ 那条受 PositionChanged 200~250ms 节拍限制,只能当地板看)");
+                            PlayWatchDisarmFirstFrame();
+                            return;
+                        }
+                    }
+                }
+                catch { }
+            };
+            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += _frameTick;
+        }
+        catch { }
+    }
+
+    /// <summary>按序号取四条播放器的回放会话(只有"跟手"埋点用;UI 线程上调用)。</summary>
+    private Windows.Media.Playback.MediaPlaybackSession? FrameWatchSession(int i)
+    {
+        var mp = i switch
+        {
+            0 => EffectPlayer?.MediaPlayer,
+            1 => PreviewPlayer?.MediaPlayer,
+            2 => CmpPlayerTop?.MediaPlayer,
+            _ => CmpPlayerBottom?.MediaPlayer,
+        };
+        return mp?.PlaybackSession;
+    }
+
+    private void PlayWatchDisarmFirstFrame()
+    {
+        if (_frameTick != null)
+        { try { Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= _frameTick; } catch { } _frameTick = null; }
+    }
+
+    private System.EventHandler<object>? _frameTick;
+    private readonly double[] _framePos0 = new double[4];
+    private long _frameWatchDeadline;
+    private bool _frameLogged;
 
     private void PlayWatchAfterApiCall()
     {
@@ -4723,6 +5658,35 @@ public sealed partial class VideoView : UserControl
         _playT1 = Environment.TickCount64;
         long d = _playT1 - _playT0;
         if (d > 30) AppLogger.Info($"[性能] {_playTag}:①点下去→API 返回 {d} ms(素材 {_cmpLoadedW}×{_cmpLoadedH})");
+    }
+
+    /// <summary>【2026-09-21 加:起播路上的"分步计时"】用户 2026-09-21 反馈的**精确定位**是
+    /// 「按下播放/暂停后要等一下画面才动」,而且**四个视图都有** ⇒ 病根必然在四条分支**共有**的那几步上。
+    /// 现有埋点只给了三个粗粒度台阶(①API ②状态变 ③画面走),②与③之间到底花了多久、花在哪一步,
+    /// 一条证据都没有 ⇒ 只能靠猜(本仓库为这个症状已经猜过 4 轮,见 `_qa\会话交接_20260917.md` §31)。
+    /// 所以这里补"分步":每一步都按**距按下那一刻的累计毫秒**记一行,谁吃掉了时间一眼可见。
+    /// 【为什么用累计而不是步内耗时】用户感知的是"按下去到画面动"的总时长,累计值直接对上那个感受;
+    /// 步内差值可自行相减。只在 >30ms 时记(正常步骤不该刷屏),所以一次播放最多几行。</summary>
+    private void PlayWatchStep(string what)
+    {
+        if (!_playWatch) return;
+        long d = Environment.TickCount64 - _playT0;
+        if (d > 30) AppLogger.Info($"[性能] {_playTag}:· 起播分步[{what}] 累计 {d} ms");
+    }
+
+    /// <summary>把 MediaPlayer 认成名(日志用)。四个播放器按元素认,认不出就返回 ?(不抛)。</summary>
+    private string MpName(Windows.Media.Playback.MediaPlayer? mp)
+    {
+        try
+        {
+            if (mp == null) return "null";
+            if (ReferenceEquals(mp, EffectPlayer?.MediaPlayer)) return "EffectPlayer";
+            if (ReferenceEquals(mp, PreviewPlayer?.MediaPlayer)) return "PreviewPlayer";
+            if (ReferenceEquals(mp, CmpPlayerTop?.MediaPlayer)) return "CmpPlayerTop";
+            if (ReferenceEquals(mp, CmpPlayerBottom?.MediaPlayer)) return "CmpPlayerBottom";
+        }
+        catch { }
+        return "?";
     }
 
     private void PlayWatchStateChanged()
@@ -4994,12 +5958,28 @@ public sealed partial class VideoView : UserControl
                 if (string.IsNullOrWhiteSpace(tsp))
                 {
                     var f = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "alh_test_split.txt");
-                    if (File.Exists(f)) tsp = File.ReadAllText(f).Trim();
+                    if (File.Exists(f))
+                    {
+                        tsp = File.ReadAllText(f).Trim();
+                        // 【2026-09-19 事故:这个测试缝文件把用户的线"自己重置"了 ✗✗】
+                        // 用户报「左右对比那个线为什么会自己重置」——根因就是它:我自动化测试时写下的
+                        // `%TEMP%\alh_test_split.txt`(内容 0.5)留在了用户机器上,而这段代码**每刷新一次视图就读一次**
+                        // ⇒ 用户把线拖到哪儿,下一次布局刷新就被强行按回 0.5(正中)✗
+                        // 修法:临时文件**读一次就删**(一次性);再加静态闩锁 —— 每次运行最多注入一次;
+                        // 只有**环境变量**才允许"重复注入"(那是测试脚本显式设的,用户机器上不会有)✔
+                        try { File.Delete(f); } catch { }
+                        _seamFromFileUsed = true;
+                    }
                 }
                 if (!string.IsNullOrWhiteSpace(tsp)
+                    && !(_seamFromFileUsed && _seamAppliedOnce)
                     && double.TryParse(tsp, System.Globalization.NumberStyles.Float,
                                        System.Globalization.CultureInfo.InvariantCulture, out var tv2))
+                {
                     _compareSplit = Math.Clamp(tv2, 0.05, 0.95);
+                    _seamAppliedOnce = true;
+                    AppLogger.Info($"[测试缝] 分割比例设为 {_compareSplit:0.###}(一次性;此后用户拖动不再被覆盖)");
+                }
             }
             catch { }
             int mode = PreviewViewRadios?.SelectedIndex ?? ViewOriginal;
@@ -5008,9 +5988,26 @@ public sealed partial class VideoView : UserControl
             // 这种瞬时状态一律忽略:保持上一次的视图。
             if (mode < 0) mode = _lastViewMode < 0 ? ViewOriginal : _lastViewMode;
             int prevMode = _lastViewMode;   // 刚才在看哪个视图(切视图时用它做"时间线统一")
+            // 【倒装 · 一次定稿】这个视图里"源文件那条 / 成片那条"是谁 —— 本方法此后**只读字段**,
+            // 不再有任何"用的时候按 _compareMode/_cmpSingle 现算"的属性(那正是第一次翻车的根因)。
+            BindViewPlayers(mode);
+            _viewGen++;                     // 连点视图切换:迟到的"对齐/装片"回调一律作废
+            long viewGen = _viewGen;
             bool hasResult = _effHasResult || !string.IsNullOrEmpty(_effOutPath);
             bool isSplit = mode == ViewSplit;
+            // 【两者同时 → 两侧同区域缩放形态】(用户 2026-09-19 要求)只登记"要不要",真正的启用/退出收口在
+            // ApplyPlayerClip 里(那里是所有布局路径的必经之处 ⇒ 不会被后面的代码把裁切冲掉)✔
+            _zmWant = false;   // 【实时缩放已撤销】不再进入该形态(2026-09-19 用户要求)
+            _zmWantPath = _cmpClipPath;
             _compareMode = mode == ViewBoth || mode == ViewSplit;
+            UpdatePreviewLoadWarn();   // 【用户要求】高分辨率素材红字提示(解码负载)✔
+            // 【两者同时 · 方案 B —— 已按用户实测撤回】用户实测:① 切换卡 ② 右边看着仍降采样(符合事先说明:
+            // 并排每侧只有 ~775px,屏幕尺寸就是上限)③ **左边卡不动** ✗✗ 第③条是硬故障(把原片装进一个同时
+            // 被对比机制驱动的播放器,装载/起播时序打架)⇒ 立即退回原合成片路径 ✔
+            // 结论:这条路收益本就很小(屏幕每侧仍 ~775px),风险却动到播放核心 ✗
+            // ⇒ 看画质请用「1:1 对比」(静态、两侧原生像素、零重采样)✔
+            _twoFileWant = false;
+            _twoFileSrc = _previewItem?.Path; _twoFileProc = _effOutPath;
             // 【2026-09-18 架构调整(用户:"要的是实时滑动 实时响应 像 topaz 一样…能不能好好重构一下")】
             // 左右对比**不再用"烘焙一条分割片"**(每个位置要重合成,4K 上要 1~9 秒 → 拖线永远不跟手),
             // 改成**两个播放器实时裁切**:上层 = 原片(**源文件,不重编码**,裁到线的左边),
@@ -5072,8 +6069,33 @@ public sealed partial class VideoView : UserControl
                 }
             }
             catch { }
-            PreviewPlayerHost.Visibility = (_cmpSingle || mode == ViewEffect) ? Visibility.Collapsed : Visibility.Visible;
-            EffectPlayerHost.Visibility = mode == ViewOriginal ? Visibility.Collapsed : Visibility.Visible;
+            // 【倒装 · 四个画面主机的可见性一次定稿】当前视图那一对显示,**另一对只改可见性、绝不卸载**
+            // (不卸载 = 下次切回零装载 —— 这正是治"切到看处理效果黑屏卡 3.5 秒"的关键)。
+            // 对比视图照旧全部交给 PreviewPlayerHost/EffectPlayerHost(对比子系统一字不改)。
+            bool cmpView = _compareMode;
+            if (CmpPlayerHostTop != null)
+                CmpPlayerHostTop.Visibility = (!cmpView && mode == ViewOriginal) ? Visibility.Visible : Visibility.Collapsed;
+            if (CmpPlayerHostBottom != null)
+                CmpPlayerHostBottom.Visibility = (!cmpView && mode == ViewEffect && hasResult) ? Visibility.Visible : Visibility.Collapsed;
+            if (PreviewPlayerHost != null)
+                PreviewPlayerHost.Visibility = cmpView
+                    ? ((_cmpSingle || mode == ViewEffect) ? Visibility.Collapsed : Visibility.Visible)
+                    : Visibility.Collapsed;
+            if (EffectPlayerHost != null)
+                EffectPlayerHost.Visibility = (cmpView && mode != ViewOriginal) ? Visibility.Visible : Visibility.Collapsed;
+            // 【倒装 · 兜底】把**当前视图不显示**的那一对主机的几何彻底归零 —— 防止"遮罩版式"的残留
+            // 让「看原片/看处理效果」看起来像"画面被那条线切成一条"(用户实测报告)✔ 幂等、零副作用。
+            if (cmpView)
+            {
+                NormalizeHostGeometry(CmpPlayerHostTop);  NormalizePlayerElement(CmpPlayerTop);
+                NormalizeHostGeometry(CmpPlayerHostBottom); NormalizePlayerElement(CmpPlayerBottom);
+            }
+            else
+            {
+                NormalizeHostGeometry(PreviewPlayerHost);  NormalizePlayerElement(PreviewPlayer);
+                NormalizeHostGeometry(EffectPlayerHost);   NormalizePlayerElement(EffectPlayer);
+                try { if (PlayerArea != null) PlayerArea.Clip = null; } catch { }   // 遮罩模式给播放区加的裁切一并对掉
+            }
             if (CompareSplitter != null)
             {
                 // 【2026-09-18 用户:"两者同时为什么中间有左右的线"】分割线**只属于「左右对比」** ✗→✓
@@ -5093,17 +6115,22 @@ public sealed partial class VideoView : UserControl
             {
                 bool showBuild = _compareMode && !_cmpSingle && hasResult && _cmpClipRendering;
                 if (showBuild && CmpBuildingLabel != null)
-                    CmpBuildingLabel.Text = (isSplit
-                        ? $"正在生成 {(_compareSplit * 100):0}% 处的对比画面 {_cmpClipPct}%"
-                        : $"正在生成对比画面 {_cmpClipPct}%");
+                    CmpBuildingLabel.Text = CompareBuildText(isSplit, _compareSplit, _cmpClipPct);
                 CmpBuildingText.Visibility = showBuild ? Visibility.Visible : Visibility.Collapsed;
             }
             // 【播放条四个视图都用】用户 2026-09-18:"这个左右对比的播放器可以其他的也用这个" ——
             // 预览页(裁剪页除外)一律用这套自绘播放控件;播放器自带的控件全部关掉,免得两套控件打架/行为不一致。
             _barOnOriginal = mode == ViewOriginal;
-            _barSession = _barOnOriginal ? PreviewPlayer.MediaPlayer?.PlaybackSession : EffectPlayer.MediaPlayer?.PlaybackSession;
+            // 【倒装】播放条跟"这个视图里该被驱动的那条":看原片 = CmpPlayerTop、看处理效果 = CmpPlayerBottom、
+            // 两者同时/左右对比 = EffectPlayer(合成片那条)。旧写法把这条写死在 PreviewPlayer/EffectPlayer 上,
+            // 换上专用播放器后就没人驱动它了(这正是"装了也没人播起来"的那类坑)。
+            var barMp = _trimMode
+                ? PreviewPlayer.MediaPlayer
+                : (_compareMode ? EffectPlayer.MediaPlayer : (_barOnOriginal ? _srcPlayer?.MediaPlayer : _resPlayer?.MediaPlayer));
+            _barSession = barMp?.PlaybackSession;
+            CacheBarPlayer(barMp);   // 【线程】媒体回调只读字段,绝不在这里读控件属性
             // 【线程】原片播放器的引用也在 UI 线程抓好(媒体回调要用它,不能在那里读控件属性)
-            _origMpCache = PreviewPlayer.MediaPlayer;
+            _origMpCache = _compareMode ? PreviewPlayer.MediaPlayer : _srcPlayer?.MediaPlayer;
             _origSessionCache = _origMpCache?.PlaybackSession;
             HideBuiltInTransportControls();
             EnsureBarSync();
@@ -5129,11 +6156,54 @@ public sealed partial class VideoView : UserControl
             }
             // 结果还没生成时,结果区不显示(否则那半会是一块黑底,把底层提示盖掉)
             if (!hasResult && mode != ViewOriginal) EffectPlayerHost.Visibility = Visibility.Collapsed;
-            // 【结果播放器该装哪条片】看原片=不动;看处理效果=预览成片;对比=单播放器时换成对应布局的对比片。
-            // 换片是**续着播**的:记下当前时刻与播放状态,装好后定位回去(否则一切换视图就跳回开头)。
-            if (mode != ViewOriginal && hasResult)
+            // 【倒装 · 装片路由】单视图各自**常驻自己那条**(源没变就一次都不装);对比视图照旧装合成片。
+            // 「看原片」= CmpPlayerTop 装源文件、「看处理效果」= CmpPlayerBottom 装预览成片 ——
+            // 成片在预览出结果时已经"预装"过一次(见 WarmResultPlayer)⇒ 这里正常是 0 ms。
+            bool wasAutoPlay = _effAutoPlay;   // 新预览结果:装片后要自动从头播(这条要传给下面的时间线接续)
+            if (!_compareMode)
             {
-                string? want = _cmpSingle ? cmpWant : _effOutPath;
+                if (mode == ViewOriginal && _previewItem != null && CmpPlayerTop != null
+                    && !string.Equals(_srcLoadedPath, _previewItem.Path, StringComparison.OrdinalIgnoreCase))
+                {
+                    var swLoad = System.Diagnostics.Stopwatch.StartNew();
+                    CmpPlayerTop.Source = MediaSource.CreateFromUri(new Uri(_previewItem.Path));
+                    _srcLoadedPath = _previewItem.Path;
+                    swLoad.Stop();
+                    Log($"[性能] 切视图装片耗时 {swLoad.ElapsedMilliseconds} ms(源文件 → 看原片专用播放器)");
+                    StartPlaybackWhenReady(CmpPlayerTop, _previewItem.Path, 0, viewGen);
+                }
+                if (mode == ViewEffect && hasResult && !string.IsNullOrEmpty(_effOutPath) && CmpPlayerBottom != null
+                    && !string.Equals(_resLoadedPath, _effOutPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    var swLoad = System.Diagnostics.Stopwatch.StartNew();
+                    CmpPlayerBottom.Source = MediaSource.CreateFromUri(new Uri(_effOutPath!));
+                    _resLoadedPath = _effOutPath;
+                    swLoad.Stop();
+                    Log($"[性能] 切视图装片耗时 {swLoad.ElapsedMilliseconds} ms(成片 → 看处理效果专用播放器)");
+                    StartPlaybackWhenReady(CmpPlayerBottom, _effOutPath!, 0, viewGen);
+                }
+            }
+            else if (!hasResult && _previewItem != null
+                     && !string.Equals(_previewLoadedPath, _previewItem.Path, StringComparison.OrdinalIgnoreCase))
+            {
+                // 【没结果时的对比视图】旧版式是"原片摆左半格 / 裁在线的左边",那条是 PreviewPlayer 在做 ⇒
+                // 保持旧路径(把源文件放进 PreviewPlayer),于是"没跑过预览就看对比"的版式与改动前逐像素一致 ✔
+                PreviewPlayer.Source = MediaSource.CreateFromUri(new Uri(_previewItem.Path));
+                _previewLoadedPath = _previewItem.Path;
+            }
+            if (_compareMode && hasResult)
+            {
+                // 【倒装 · 2026-09-19 · 实测日志逮到的真凶】「左右对比」这条要装的是**遮罩模式真正要用的那条
+                // 并排合成片**(_cmpClipPath),不能再按 `_effOutPath`(预览成片)预装 ✗。
+                // 为什么:预览完第一条分割片**没有**单独烘焙(见 StartCompareClipBuild 里 `if (false)`),
+                // 于是「左右对比」里 `_cmpSingle` 恒为 false ⇒ 这里会按 `_effOutPath` 给 EffectPlayer 换一次源 ✗,
+                // 紧接着 TryMaskSplit 又发现"装的不是并排片"再换一次 ✗ ⇒ **每进一次「左右对比」= 两次换源**:
+                // 媒体被重新打开、两条装载完成时刻不同 ⇒ 正是用户报的"播放中切回左右对比两边不协调"✓
+                // (实测:19:37:29 / 19:37:42 / 19:37:55 每次进入都是"装片 2~3 ms + 遮罩再装一次")。
+                // 修法:这条直接装遮罩要用的那条 ⇒ 遮罩的 `effOk` 一进来就成立 ⇒ **切回左右零装载** ✔
+                bool maskWillUse = isSplit && !segOk && _cmpClipReady
+                                   && !string.IsNullOrEmpty(_cmpClipPath) && File.Exists(_cmpClipPath!);
+                string? want = maskWillUse ? _cmpClipPath : (_cmpSingle ? cmpWant : _effOutPath);
                 if (!string.IsNullOrEmpty(want) && want != _effLoadedPath)
                 {
                     double keep = 0; bool wasPlaying = false;
@@ -5147,14 +6217,23 @@ public sealed partial class VideoView : UserControl
                         }
                     }
                     catch { }
-                    _cmpLoadedW = _cmpSingle ? (isSplit ? _cmpSplitW : _cmpClipW) : 0;
-                    _cmpLoadedH = _cmpSingle ? (isSplit ? _cmpSplitH : _cmpClipH) : 0;
+                    if (maskWillUse)
+                    {
+                        _cmpLoadedW = _cmpClipW;
+                        _cmpLoadedH = _cmpClipH;
+                    }
+                    else
+                    {
+                        _cmpLoadedW = _cmpSingle ? (isSplit ? _cmpSplitW : _cmpClipW) : 0;
+                        _cmpLoadedH = _cmpSingle ? (isSplit ? _cmpSplitH : _cmpClipH) : 0;
+                    }
                     _effLoadedPath = want;
                     // 【埋点】装片(换 MediaSource)也是切视图那 0.9 秒的嫌疑之一:只有"换了片"才走这里 ✓
                     var swLoad = System.Diagnostics.Stopwatch.StartNew();
                     LoadEffectSource(want, keep, wasPlaying || _effAutoPlay);
                     swLoad.Stop();
-                    Log($"[性能] 切视图装片耗时 {swLoad.ElapsedMilliseconds} ms(仅换片时发生)");
+                    Log($"[性能] 切视图装片耗时 {swLoad.ElapsedMilliseconds} ms"
+                      + (maskWillUse ? "(并排合成片 → 遮罩那两条共用;仅换片时发生)" : "(仅换片时发生)"));
                 }
                 else if (_cmpSingle && want == _effLoadedPath)
                 {
@@ -5163,6 +6242,7 @@ public sealed partial class VideoView : UserControl
                 }
             }
             _effAutoPlay = false;
+            EnsureBarSync();   // 【重订】新装的片会换掉 PlaybackSession,老订阅会哑(不重订 ⇒ 播放条停在 0:00)
             ApplyPlayerClip();
             SetCompareSync(_compareMode);
             if (_cmpSingle) EnsureCompareWatchdog(false);   // 单播放器:没有"要约束的原片"了,看门狗下岗
@@ -5174,96 +6254,108 @@ public sealed partial class VideoView : UserControl
             // 现在:两条**都继续播**,只把藏起来的那条**静音**(声音问题由静音解决 ✓),
             // 时间线因此在结构上始终一致 → 切视角退化成"显示/隐藏"(实测 80 ms ✓)✓,
             // 播放暂停也只是一次 Play/Pause,不再排队等 seek ✓。
-            if (mode == ViewOriginal)
-            {
-                try { if (EffectPlayer.MediaPlayer != null) EffectPlayer.MediaPlayer.IsMuted = true; } catch { }
-                ApplyMuteState();   // 可见的那条按用户设置(默认静音)✓
-            }
-            else
-            {
-                ApplyMuteState();   // 可见的那条按用户设置 ✓
-                try { if (PreviewPlayer.MediaPlayer != null) PreviewPlayer.MediaPlayer.IsMuted = true; } catch { }
-            }
+            // 【静音纪律收口到 ApplyMuteState 一处】当前视图里"该出声的那条"按用户设置,
+            // **其余三条一律静音**。为什么必须这样:倒装后共有四个播放器,藏起来的那一对仍在继续播
+            // (时间线才与可见那条一致 ⇒ 切回来零 seek),所以只能靠静音保证只有一路声音 ✔
+            ApplyMuteState();
             // 播放条(四个视图同一套)刷一次:片段播完后不再有位置回调,不主动读一次会一直显示 0:00/0:00
             RefreshCompareBar();
-            // 【2026-09-18 用户要求:两条时间线统一】"播放到哪,另一个也在哪" ——
-            // 切视图时把**即将显示的那个**对到**刚才在看的那个**的同一时刻,并接上播放状态。
-            // (旧实现注释与代码是反的:它 seek 的是即将被藏起来的那个,所以切过去看到的还是旧位置)
-            if (hasResult) _ = SyncTimelineOnViewSwitchAsync(prevMode, mode);
             TryMaskSplit(isSplit);   // 【Topaz 式】左右对比走"同一条片 + 遮罩线";失败自动退回上面的常规版式 ✓
+            // 【倒装 · 四条时间线统一】把"刚才在看的那条"的时刻/播放状态接到"现在要看的这条"上,
+            // 并把**不在这个视图里的那一对暂停**(只暂停,绝不卸载)。
+            // 必须放在 TryMaskSplit **之后**:遮罩模式要知道"上层那条装的也是同一条片"(两条都要对)✔
+            if (hasResult) _ = TransferTimelineAcrossViewSwitchAsync(prevMode, mode, viewGen, wasAutoPlay);
+            // 【用户实测 2026-09-19】切回「左右对比」时线没跟到用户拖的位置:上面 ApplyPlayerClip 的 _cmpSingle 分支
+            // 是按**烘焙位置**(_cmpSplitBaked)落的线,而用户真正拖到的是 _compareSplit ⇒ 这里按它再落一次 ✔
+            if (_compareMode) RefreshSplitterPlacement();
             _lastViewMode = mode;
             UpdatePreviewDiag($"切视图 {prevMode}->{mode}");   // 【诊断】写进设置里的报告,便于事后查 ✔
         }
         catch { }
     }
 
-    /// <summary>切视图时把两条时间线统一(用户 2026-09-18 要求:"播放到哪,另一个也播放到哪")。
-    /// 口径:两个视图的原点相差 `_effStart`(预览片段 0 秒 = 原片的 _effStart 秒),所以
-    ///   原片时刻 = _effStart + 片段时刻。
-    /// 做法:以【刚才在看的那个】的时刻为"当前时刻"(它才是用户眼里正在播的那条),
-    ///      把【即将显示的那个】seek 到同一时刻,并把播放状态接过来 —— 在播就接着播,暂停就还是暂停。
-    /// 为什么不是"让两个播放器一直同步播放":两路同时出声(旧问题),而且白烧一份解码。
-    /// 只在切视图那一刻 seek 一次,零常态开销。</summary>
-    private async Task SyncTimelineOnViewSwitchAsync(int prevMode, int mode)
+    /// <summary>【倒装 · 2026-09-19】切视图后把"四条时间线"接起来(用户 2026-09-18 要求:"播放到哪,另一个也播放到哪")。
+    /// 口径:所有播放器都换算到**原片轴的绝对时刻** ——
+    ///   · 看原片那条 = 绝对秒;· 成片那条 = 绝对秒 − `_effStart`(预览片段从 _effStart 起);· 对比那条 = 同样 0 基点。
+    /// 做法:以【刚才在看的那条】的时刻与播放状态为准,把【现在要看的这条】对过去(差值 ≤0.5 秒就不 seek:
+    ///   一次定位要几百毫秒~1 秒,而 0.5 秒的起始帧偏差肉眼不可辨),然后把**不在这个视图里的那一对暂停**(不卸载)。
+    /// 为什么要暂停而不是像以前那样"藏着继续播":以前只有两个播放器,藏一个继续播等于零成本;
+    ///   现在有两对(四个),两对同时播就是四路 4K 解码 ⇒ 必然卡(本机 RTX 4060 Laptop)。
+    /// 在播就接着播、暂停就还是暂停 —— 切过去不会"卡在旧位置"也不会"自己开始播"。</summary>
+    private async Task TransferTimelineAcrossViewSwitchAsync(int prevMode, int mode, long gen, bool autoPlayed = false)
     {
         try
         {
             if (prevMode < 0 || prevMode == mode) return;   // 空视图/不是切视图(比如合成片刚就绪)就不用管
-            bool prevCompare = prevMode == ViewBoth || prevMode == ViewSplit;
-            bool nowCompare = mode == ViewBoth || mode == ViewSplit;
-            // 切到对比视图:合成片的装片逻辑自己会续上同一时刻(ApplyPreviewView 里的 keep),这里不要插手
-            if (nowCompare) return;
+            ViewPlayersOf(prevMode, out var pSrc, out var pRes);   // 【纯函数】上一刻那对,不受本方法里字段改写影响
+            var prevEl = prevMode == ViewOriginal ? pSrc : pRes;   // 上一刻"用户真正在看"的那条
+            if (prevEl == null) return;
+            var prevSe = prevEl.MediaPlayer?.PlaybackSession;
+            double abs = prevMode == ViewOriginal ? CmpPos(prevSe) : _effStart + CmpPos(prevSe);
+            bool playing = CmpPlaying(prevSe);
+            if (abs < 0) abs = 0;
 
-            var origMp = PreviewPlayer.MediaPlayer;
-            var orig = origMp?.PlaybackSession;
-            var effMp = EffectPlayer.MediaPlayer;
-            var eff = effMp?.PlaybackSession;
-            if (orig == null || eff == null) return;
-
-            // ① 刚从对比视图切出来【真机踩坑:这里必须看 prevMode,不能看 _compareMode ——
-            //    它是按"新视图"算出来的,切到看原片时已经是 false,于是会走进旧的双播放器逻辑
-            //    去对齐那个已经被藏起来的播放器,可见的那条留在旧位置(实测 2.983 vs 2.267 差了 0.7 秒)】
-            if (prevCompare)
+            // ① 先把"不在这个视图里的那一对"暂停(只暂停,绝不卸载/不清源 —— 下次切回零装载的关键)
+            bool cmpView = mode == ViewBoth || mode == ViewSplit;
+            var keepA = cmpView ? PreviewPlayer : CmpPlayerTop;
+            var keepB = cmpView ? EffectPlayer : CmpPlayerBottom;
+            foreach (var el in new[] { PreviewPlayer, EffectPlayer, CmpPlayerTop, CmpPlayerBottom })
             {
-                if (mode == ViewOriginal)
-                {
-                    // 刚才在看的是合成片(它的时间轴就是片段的时间轴)→ 把原片对到同一时刻
-                    double t = CmpPos(eff);
-                    await SeekAndVerifyAsync(origMp, _effStart + t, 2);
-                    ApplyCmpRateToAll(false);   // 原片这条也要跟上用户的倍率/静音(两播放器统一)
-                    if (CmpPlaying(eff)) { try { origMp.Play(); } catch { } }
-                }
-                // mode == ViewEffect:还是同一条片段(装片逻辑已经续上了位置),不用再动
-                return;
+                if (el == null || ReferenceEquals(el, keepA) || ReferenceEquals(el, keepB)) continue;
+                try { el.MediaPlayer?.Pause(); } catch { }
             }
 
-            // ② 看原片 ↔ 看处理效果:两个视图的原点相差 _effStart,这是用户点名要统一的那两条时间线
-            bool prevWasOriginal = prevMode == ViewOriginal;
-            double nowAbs = prevWasOriginal ? CmpPos(orig) : _effStart + CmpPos(eff);   // 原片时间轴上的"当前时刻"
-            bool playing = prevWasOriginal ? CmpPlaying(orig) : CmpPlaying(eff);
-            // 【响应优化 · 2026-09-18 实测数据支撑】切视图时:目标播放器已经在这个时刻附近就别 seek。
-            // 容差 0.15 秒太紧 ✗ —— 用户在播放中切视角时,两条时间线天然差着"刚才播过去的那 1 秒",
-            // 于是**每一次切换都触发一次精确 seek**,而本机实测**一次 seek 就要 ~1 秒**
-            // (日志:`定位到 0s 落地耗时 813/1078/1094 ms` —— 连定位到文件开头都要 1 秒,因为源素材 GOP 很大)。
-            // 结果是:切视角卡 1~2 秒 ✗,而紧接着的播放暂停要**排在这次定位后面**才状态变化 → "不跟手" ✗。
-            // 0.5 秒的偏差肉眼不可辨(它只影响"切过去那一瞬间的起始帧"),换来的是绝大多数切换**零定位** ✔。
-            var seekTargetMp = mode == ViewOriginal ? origMp : effMp;
-            double seekWant = mode == ViewOriginal ? nowAbs : Math.Max(0, nowAbs - _effStart);
-            double seekCur = -999;
-            try { seekCur = seekTargetMp.PlaybackSession.Position.TotalSeconds; } catch { }
-            double gap = Math.Abs(seekCur - seekWant);
-            var swTl = System.Diagnostics.Stopwatch.StartNew();
+            // ② 把"现在要看的这条"对到同一时刻(片段里那两条按 0 基点换算)
+            // 【例外】刚跑完预览、合成片刚落地的这一次装片:位置与播放状态由装片那条路
+            // (`_effAutoPlay` → PositionEffectAndPlayAsync/AlignAndPlayAsync)负责 ——
+            // 这里再插手会把它刚播起来的画面又按停(用户就看到"预览完不播了")✗
+            if (autoPlayed) { Log("[时间线统一] 新预览结果刚装好:位置/播放交由装片那条路,本次不做对齐"); return; }
+            ViewPlayersOf(mode, out var nSrc, out var nRes);
+            double clipT = Math.Max(0, abs - _effStart);
+            if (mode == ViewOriginal)
+            {
+                await AlignViewPlayerAsync(nSrc, abs, playing, gen);
+            }
+            else if (mode == ViewEffect)
+            {
+                await AlignViewPlayerAsync(nRes, clipT, playing, gen);
+                // 顺带把"原片那条"也带到同一时刻:两条都保持能播 ⇒ 下次切回「看原片」也不用再对齐 ✔
+                await AlignViewPlayerAsync(nSrc, abs, playing, gen);
+            }
+            else
+            {
+                await AlignViewPlayerAsync(nRes, clipT, playing, gen);                 // EffectPlayer(合成片/并排片)
+                if (_maskSplitActive) await AlignViewPlayerAsync(nSrc, clipT, playing, gen);   // 遮罩:上层装的也是同一条片
+            }
+            if (gen != _viewGen) return;   // 连点视图切换:这一轮已经过期,不要再写状态
+            ApplyCmpRateToAll(false);      // 倍率(用户选的档)在换条/换片后必须活着 ✔
+            Log($"[时间线统一] {prevMode}->{mode}: 当前时刻(原片轴)={EffTime(abs)} 播放中={playing}"
+              + $" → 已对到同一时刻(装片耗时之外只做对齐;四条播放器各自常驻自己的源)");
+        }
+        catch { }
+    }
+
+    /// <summary>把某条播放器对到目标秒(差值 ≤0.5 秒就跳过定位),并接上播放状态 + 用户倍率。
+    /// 【为什么容差是 0.5 秒】本机实测一次定位要 813~1094 ms(大素材要从关键帧解码),
+    /// 每次切换都精确定位 = 切一次卡一秒;而 0.5 秒偏差只影响"切过去那一瞬间的起始帧",肉眼不可辨 ✔</summary>
+    private async Task AlignViewPlayerAsync(Microsoft.UI.Xaml.Controls.MediaPlayerElement? el, double targetSec, bool play, long gen)
+    {
+        try
+        {
+            var mp = el?.MediaPlayer;
+            var se = mp?.PlaybackSession;
+            if (mp == null || se == null) return;
+            double cur = -999;
+            try { cur = se.Position.TotalSeconds; } catch { }
+            double gap = Math.Abs(cur - targetSec);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             bool didSeek = gap > 0.5;
-            if (didSeek) await SeekAndVerifyAsync(seekTargetMp, seekWant, 2);
-            swTl.Stop();
-            Log($"[性能] 切视图对齐:差 {gap * 1000:0} ms → {(didSeek ? "做了定位" : "跳过定位(容差内)")}"
-              + $",耗时 {swTl.ElapsedMilliseconds} ms,播放中={playing}");
-            // 播放状态接上:刚才在播 → 新的这条从同一时刻接着播(被藏起来的那个已经在上面被暂停了,不会两路出声)
-            var target = mode == ViewOriginal ? origMp : effMp;
-            ApplyCmpRateToAll(false);   // 两条时间线统一:慢放速度也跟着走,切过去不会"变快"(左右都设)
-            if (playing) { try { target.Play(); } catch { } }
-            else { try { target.Pause(); } catch { } }
-            Log($"[时间线统一] {prevMode}->{mode}: 当前时刻(原片轴)={EffTime(nowAbs)} 播放中={playing} → 已对到同一时刻");
+            if (didSeek) { await SeekAndVerifyAsync(mp, targetSec, 2); if (gen != _viewGen) return; }
+            sw.Stop();
+            Log($"[性能] 切视图对齐({ElName(el)}):差 {gap * 1000:0} ms → {(didSeek ? "做了定位" : "跳过定位(容差内)")}"
+              + $",耗时 {sw.ElapsedMilliseconds} ms,播放中={play}");
+            ApplyCmpRateToAll(false);
+            if (play) { try { mp.Play(); } catch { } } else { try { mp.Pause(); } catch { } }
         }
         catch { }
     }
@@ -5344,6 +6436,7 @@ public sealed partial class VideoView : UserControl
         try
         {
             if (CmpSeek == null) return;
+            if (_cmpSeekDrag) return;   // 【2026-09-19 修·牵引闪烁】用户正在拖:任何位置回调都不许写滑块 ✔
             var se = ActiveBarSession();
             double pos = se?.Position.TotalSeconds ?? 0;
             double d = se?.NaturalDuration.TotalSeconds ?? 0;
@@ -5385,6 +6478,42 @@ public sealed partial class VideoView : UserControl
         catch { }
     }
 
+    /// <summary>【2026-09-21 预览播放的「地面数据」】每 5 秒一行,回答五个问题:
+    ///   ① 位置回调到底有没有在跑(`位置回调 N 次/5s`;N=0 且 from=看门狗 ⇒ 回调死了);
+    ///   ② 跑了但走的哪条分支(`进同步分支`);③ 两个播放器各自的状态/位置/时长与漂移;
+    ///   ④ 倍率是"写"了还是"跳过"了(写 = 播放管线重定时 = 卡);
+    ///   ⑤ 这条数据是"谁"打出来的 —— 这一项本身就是证据(见下)。
+    ///
+    /// 【为什么要有出参 from,而且必须有两个调用点】
+    ///   看门狗(150ms)在**单播放器**模式下会自己 Stop(那正是用户最常待的视图)⇒ 只在看门狗里打,
+    ///   最需要它的场景反而没有数据 ✗;而只在位置回调里打,又永远报不出"回调根本没触发" ✗。
+    ///   所以:两个地方都调,共用一个 5 秒节流 —— 谁先到谁打,`from` 说明是谁。
+    ///   两条都活着时不会重复刷屏;信号弱的那一侧(回调死 / 看门狗停)则由 `from` 直接暴露。
+    /// 【线程】位置回调在媒体线程上,这里只读字段 + 写日志(AppLogger 是线程安全的),不碰任何控件。</summary>
+    private void MaybeLogGroundData(string from, double clipPos, double clipDur, bool clipPlaying,
+        bool clipAtEnd, bool origPlaying)
+    {
+        try
+        {
+            long now = Environment.TickCount64;
+            if (now - _groundLogAt <= 5000) return;
+            _groundLogAt = now;
+            double origPos = 0, origDur = 0;
+            try { origPos = _origSessionCache?.Position.TotalSeconds ?? 0; } catch { }
+            try { origDur = _origSessionCache?.NaturalDuration.TotalSeconds ?? 0; } catch { }
+            double driftMs = (origPos - (_maskSplitActive ? clipPos : _effStart + clipPos)) * 1000;
+            AppLogger.Info($"[地面] 预览播放({from}):位置回调 {_cmpPosEvents} 次/5s"
+                + $" · 视图={_lastViewMode} 单播放器={_cmpSingle} 遮罩={_maskSplitActive}"
+                + $" · 片段[{(clipPlaying ? "播" : "停")}{(clipAtEnd ? "·片尾" : "")} {clipPos:0.###}/{clipDur:0.###}s]"
+                + $" · 原片[{(origPlaying ? "播" : "停")} {origPos:0.###}/{origDur:0.###}s]"
+                + $" · 漂移 {driftMs:0}ms · 进同步分支={_cmpSyncBranchEntered}"
+                + $" · 倍率 目标{_cmpRate:0.###} · 倍率写入/跳过 {_rateWrites}/{_rateSkip}"
+                + $" · 上次位置回调 {(_cmpPosLastAt == 0 ? -1 : now - _cmpPosLastAt)} ms 前");
+            _cmpPosEvents = 0; _rateWrites = 0; _rateSkip = 0;
+        }
+        catch { }
+    }
+
     private void CmpWatchdog_Tick(object? sender, object e)
     {
         if (!_compareMode || _cmpSingle) { _cmpWatchdog?.Stop(); return; }   // 单播放器:没有要约束的原片,下岗
@@ -5418,8 +6547,19 @@ public sealed partial class VideoView : UserControl
                 if (!origPlaying) om.Play();
             }
             else if (origPlaying) om.Pause();   // ② 越界/片段停了 → 立刻停住原片
+            // ===== 【2026-09-21 地面数据】每 5 秒一行,无条件 =====
+            // 【它要回答的三个问题】① 位置回调到底有没有在跑(没跑 → 频率 0);② 跑了但走的哪条分支;
+            // ③ 两个播放器各自的状态/位置/时长与漂移 —— 有这三样,"卡/不协调"就不再靠猜。
+            // 放在看门狗里(150ms 一跳)而不是位置回调里:看门狗在 UI 线程且**必然**每 150ms 跑一次,
+            // 于是"回调频率为 0"也能被如实报出来(放在回调里就永远报不出"没触发"这种情况)。
+            // ===== 【2026-09-21 地面数据】交给共享的 MaybeLogGroundData(见那里的说明) =====
+            // 【为什么不能只放在这个看门狗里】看门狗在 `_cmpSingle`(单播放器)时会**自己 Stop**
+            // (见 CmpWatchdog_Tick 第一行)—— 而单播放器正是用户最常待的视图 ⇒ 放这里等于"最需要它的地方看不见"。
+            MaybeLogGroundData("看门狗", clipPos, clipDur, clipPlaying, clipAtEnd, origPlaying);
             // ③ 播放条
-            if (CmpSeek != null)
+            // 【2026-09-19 修·牵引闪烁】拖动期间**绝不回灌滑块** —— 拖动时两条都在定位,
+            // 它们的 PositionChanged 若写回滑块,就会把滑块拽到别处(用户实测"牵引闪烁到其他地方")✗→✔
+            if (CmpSeek != null && !_cmpSeekDrag)
             {
                 _cmpSeekSync = true;
                 try
@@ -5500,7 +6640,7 @@ public sealed partial class VideoView : UserControl
         try
         {
             _cmpBarTimer ??= DispatcherQueue.CreateTimer();
-            _cmpBarTimer.Interval = TimeSpan.FromMilliseconds(2500);   // 用户指定 2.5 秒
+            _cmpBarTimer.Interval = TimeSpan.FromMilliseconds(1000);   // 用户指定 2.5 秒
             _cmpBarTimer.IsRepeating = false;
             _cmpBarTimer.Tick -= CmpBarTimer_Tick;
             _cmpBarTimer.Tick += CmpBarTimer_Tick;
@@ -5521,13 +6661,14 @@ public sealed partial class VideoView : UserControl
         catch { }
     }
 
-    /// <summary>自绘播放条当前跟哪条时间线:看原片 = 原片播放器,其余(看处理效果/两者同时/左右对比)= 结果播放器。</summary>
+    /// <summary>自绘播放条当前跟哪条时间线:看原片 = 源文件那条、看处理效果 = 成片那条、
+    /// 两者同时/左右对比 = 合成片那条(EffectPlayer)。倒装后一律取 UI 线程定稿好的字段。</summary>
     private Windows.Media.Playback.MediaPlaybackSession? ActiveBarSession()
     {
         try
         {
             if (_barSession != null) return _barSession;
-            return _barOnOriginal ? PreviewPlayer.MediaPlayer?.PlaybackSession : EffectPlayer.MediaPlayer?.PlaybackSession;
+            return _barMpCache?.PlaybackSession;
         }
         catch { return null; }
     }
@@ -5542,9 +6683,14 @@ public sealed partial class VideoView : UserControl
     {
         try
         {
-            var oMp = PreviewPlayer.MediaPlayer;
-            var eMp = EffectPlayer.MediaPlayer;
-            if (oMp == null && eMp == null) return;
+            // 【倒装】四个播放器都挂同一套回调:回调里只认"当前在看的那条"(_barSession/_barMpCache,UI 线程写好的),
+            // 所以切视图不必反复订阅;不在这个视图里的那两条的播放器事件只是白刷一次,无害 ✔
+            var elems = new[] { PreviewPlayer, EffectPlayer, CmpPlayerTop, CmpPlayerBottom };
+            var oMp = PreviewPlayer?.MediaPlayer;
+            var eMp = EffectPlayer?.MediaPlayer;
+            bool any = false;
+            foreach (var el in elems) { try { if (el?.MediaPlayer != null) any = true; } catch { } }
+            if (!any) return;
             if (_barPosHandler == null)
             {
                 _barPosHandler = (s, _) =>
@@ -5570,6 +6716,31 @@ public sealed partial class VideoView : UserControl
                         // 一次 1.2 秒的拖动只落地 2 次(真机实测,画面像幻灯片)。先判落地,再决定刷不刷界面。
                         NoteSeekMaybeLanded(pos);
                         PlayWatchPositionMoved();   // 诊断:③状态变→画面真的开始走
+                        // 【2026-09-19 修 · 用户:"两者同时 和看处理 切换的时候倍率不生效 依然原速"】
+                        // 守护:当前正在播的那条,速率若与用户选的不一致就**立刻补回** ✔
+                        //   · 差值为 0 时什么都不做 ⇒ 零额外开销(写 PlaybackRate 会重配管线,实测 ~0.45s,绝不能乱写)
+                        //   · 只在 Playing 时补:暂停态写它会顿一下 ✗
+                        //   · 这条回调每秒跑几次 ⇒ 无论倍率是在哪一步丢的(重装媒体/切视图/起播),都会被兜回来 ✓
+                        try
+                        {
+                            // 【倒装】用 UI 线程存好的引用(_barMpCache):本方法跑在**媒体线程**上,
+                            // 读控件属性会抛 0x8001010E 并被 catch 吞掉(本文件已多次踩过这个坑)⇒ 绝不在这里碰控件 ✔
+                            var mpNow = _barMpCache;
+                            var seNow = mpNow?.PlaybackSession;
+                            if (seNow != null
+                                && seNow.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing)
+                            {
+                                double want = _cmpRate > 0 ? _cmpRate : 1.0;
+                                double nowRate = seNow.PlaybackRate;
+                                if (Math.Abs(nowRate - want) > 0.02 && seNow.IsSupportedPlaybackRateRange(want, want))
+                                {
+                                    seNow.PlaybackRate = want;
+                                    if (PowerShellHintDue())
+                                        Log($"[倍率守护] 已补回 {want:0.###}(此前 {nowRate:0.###};视图={_lastViewMode})");
+                                }
+                            }
+                        }
+                        catch { }
                         if (_cmpSeekDrag) return;   // 用户正在拖:不回灌位置,免得跟用户抢滑块
                         long now = Environment.TickCount64;
                         if (now - _cmpUiTick < 120) return;
@@ -5621,12 +6792,14 @@ public sealed partial class VideoView : UserControl
             ReleaseBarSync();
             try
             {
-                if (oMp != null) oMp.PlaybackSession.PositionChanged += _barPosHandler;
-                if (eMp != null) eMp.PlaybackSession.PositionChanged += _barPosHandler;
-                if (oMp != null) oMp.PlaybackSession.PlaybackStateChanged += _barStateHandler;
-                if (eMp != null) eMp.PlaybackSession.PlaybackStateChanged += _barStateHandler;
-                if (oMp != null) oMp.MediaOpened += _barOpenedHandler;
-                if (eMp != null) eMp.MediaOpened += _barOpenedHandler;
+                foreach (var el in elems)
+                {
+                    var mp = el?.MediaPlayer;
+                    if (mp == null) continue;
+                    try { mp.PlaybackSession.PositionChanged += _barPosHandler; } catch { }
+                    try { mp.PlaybackSession.PlaybackStateChanged += _barStateHandler; } catch { }
+                    try { mp.MediaOpened += _barOpenedHandler; } catch { }
+                }
                 _barSyncOn = true;
             }
             catch { }
@@ -5638,22 +6811,14 @@ public sealed partial class VideoView : UserControl
     {
         try
         {
-            var oMp = PreviewPlayer.MediaPlayer;
-            var eMp = EffectPlayer.MediaPlayer;
-            if (_barPosHandler != null)
+            foreach (var el in new[] { PreviewPlayer, EffectPlayer, CmpPlayerTop, CmpPlayerBottom })
             {
-                try { if (oMp != null) oMp.PlaybackSession.PositionChanged -= _barPosHandler; } catch { }
-                try { if (eMp != null) eMp.PlaybackSession.PositionChanged -= _barPosHandler; } catch { }
-            }
-            if (_barStateHandler != null)
-            {
-                try { if (oMp != null) oMp.PlaybackSession.PlaybackStateChanged -= _barStateHandler; } catch { }
-                try { if (eMp != null) eMp.PlaybackSession.PlaybackStateChanged -= _barStateHandler; } catch { }
-            }
-            if (_barOpenedHandler != null)
-            {
-                try { if (oMp != null) oMp.MediaOpened -= _barOpenedHandler; } catch { }
-                try { if (eMp != null) eMp.MediaOpened -= _barOpenedHandler; } catch { }
+                Windows.Media.Playback.MediaPlayer? mp = null;
+                try { mp = el?.MediaPlayer; } catch { }
+                if (mp == null) continue;
+                if (_barPosHandler != null) { try { mp.PlaybackSession.PositionChanged -= _barPosHandler; } catch { } }
+                if (_barStateHandler != null) { try { mp.PlaybackSession.PlaybackStateChanged -= _barStateHandler; } catch { } }
+                if (_barOpenedHandler != null) { try { mp.MediaOpened -= _barOpenedHandler; } catch { } }
             }
             _barSyncOn = false;
         }
@@ -5703,13 +6868,43 @@ public sealed partial class VideoView : UserControl
                 catch (Exception e) { return "读状态异常:" + e.GetType().Name; }
             }
             string Name(string? p) => string.IsNullOrEmpty(p) ? "(无)" : Path.GetFileName(p);
+            // 【几何速览】一眼看出"哪对主机还带着遮罩版式"(用户报过"看原片画面被切成一条")
+            string HostGeo(string tag, Microsoft.UI.Xaml.Controls.Grid? h)
+            {
+                try
+                {
+                    if (h == null) return $"{tag}:无";
+                    string clip = h.Clip is Microsoft.UI.Xaml.Media.RectangleGeometry rg
+                        ? $"{rg.Rect.X:0},{rg.Rect.Y:0},{rg.Rect.Width:0}x{rg.Rect.Height:0}" : "无裁切";
+                    return $"{tag}:{h.Visibility}/{h.ActualWidth:0}x{h.ActualHeight:0} 宽={(double.IsNaN(h.Width) ? -1 : h.Width):0} "
+                         + $"边距={h.Margin.Left:0},{h.Margin.Top:0} 裁={clip}";
+                }
+                catch { return tag + ":读失败"; }
+            }
             string tl = _tlCtrl == null
                 ? "未挂控制器"
                 : $"控制器:状态={_tlCtrl.State} 位置={_tlCtrl.Position.TotalSeconds:0.###} 倍率={_tlCtrl.ClockRate:0.###}";
+            string barName = "?";
+            try
+            {
+                foreach (var el2 in new[] { PreviewPlayer, EffectPlayer, CmpPlayerTop, CmpPlayerBottom })
+                    if (el2?.MediaPlayer != null && ReferenceEquals(el2.MediaPlayer, _barMpCache)) { barName = el2.Name; break; }
+            }
+            catch { }
+            // 【倒装 · 2026-09-19】诊断要把**四个**播放器都写出来:出问题时要一眼看出"是不是装错了条/没装/没播",
+            // 不用再靠猜(用户导出诊断包时这一行会原样出现)
             string line = $"[{DateTime.Now:HH:mm:ss}] {why}\n"
                         + $"  视图={PreviewViewRadios?.SelectedIndex ?? -1}(上次{_lastViewMode}) 对比模式={_compareMode} 单播放器={_cmpSingle} 拖线中={_dividerDrag} 偏移路径={_cmpSegPath != null}\n"
-                        + $"  原片  源={Name(_previewItem?.Path)} → {St(PreviewPlayer?.MediaPlayer)}\n"
-                        + $"  处理后 源={Name(_effLoadedPath)} → {St(EffectPlayer?.MediaPlayer)}\n"
+                        + $"  【倒装】角色:源={ElName(_srcPlayer)} 成片={ElName(_resPlayer)} · 播放条跟={barName} "
+                        + $"· 源记账={Name(_srcLoadedPath)} 成片记账={Name(_resLoadedPath)}\n"
+                        + $"  原片  源={Name(_previewItem?.Path)} → PreviewPlayer:{St(PreviewPlayer?.MediaPlayer)}\n"
+                        + $"  处理后 源={Name(_effLoadedPath)} → EffectPlayer:{St(EffectPlayer?.MediaPlayer)}\n"
+                        + $"  「看原片」专用 → CmpPlayerTop:{St(CmpPlayerTop?.MediaPlayer)}\n"
+                        + $"  「看处理效果」专用 → CmpPlayerBottom:{St(CmpPlayerBottom?.MediaPlayer)}\n"
+                        + "  【几何】" + HostGeo("P", PreviewPlayerHost) + " " + HostGeo("E", EffectPlayerHost) + "\n"
+                        + "        " + HostGeo("CmpTop", CmpPlayerHostTop) + " " + HostGeo("CmpBottom", CmpPlayerHostBottom) + "\n"
+                        + $"        播放区={PlayerArea?.ActualWidth ?? 0:0}x{PlayerArea?.ActualHeight ?? 0:0}"
+                        + $" 遮罩中={_maskSplitActive} 遮罩单幅={_maskVw:0}x{_maskVh:0}@{_maskPad:0} 播放区裁切={(PlayerArea?.Clip is Microsoft.UI.Xaml.Media.RectangleGeometry pg0 ? pg0.Rect.Width : -1):0}\n"
                         + $"  偏移副本={Name(_cmpSegPath)} 并排合成片={Name(_cmpClipPath)} {tl}";
             if (!string.Equals(AppSettings.PreviewDiag, line, StringComparison.Ordinal))
             {
@@ -5771,17 +6966,24 @@ public sealed partial class VideoView : UserControl
                     try { PreviewPlayerHost!.Width = double.NaN; PreviewPlayerHost.Margin = new Thickness(0); PreviewPlayerHost.Clip = null; } catch { }
                     try { EffectPlayerHost!.Width = double.NaN; EffectPlayerHost.Margin = new Thickness(0); EffectPlayerHost.Clip = null; } catch { }
                     try { if (PlayerArea != null) PlayerArea.Clip = null; } catch { }   // 退出遮罩模式:撤掉播放区裁切 ✓
-                    // 【必须还原原片播放器的源】否则离开左右对比后,「看原片」会继续显示那条**并排合成片** ✗
-                    try
-                    {
-                        if (_previewItem != null && !string.Equals(_previewLoadedPath, _previewItem.Path, StringComparison.OrdinalIgnoreCase))
-                        {
-                            PreviewPlayer.Source = Windows.Media.Core.MediaSource.CreateFromUri(new Uri(_previewItem.Path));
-                            _previewLoadedPath = _previewItem.Path;
-                        }
-                    }
-                    catch { }
-                    _effLoadedPath = null;   // 让下一次 ApplyPreviewView 按常规把该装的片重新装上
+                    // 【倒装 · 2026-09-19 删掉的两行,别再写回来】
+                    // 这里原来会「把 PreviewPlayer 换回源文件 + `_effLoadedPath = null`」✗ —— 那是**旧的**角色分配下
+                    // 的必要动作(因为「看原片」当时也吃 PreviewPlayer)。倒装后:
+                    //   · 「看原片 / 看处理效果」由 CmpPlayerTop/Bottom 负责 ⇒ PreviewPlayer 里留着的是对比用的合成片,不冲突;
+                    //   · 而这两条**一旦被卸载,下次切回「左右对比」就要重新装载两条**(4K 上又是一次黑屏卡顿,
+                    //     而且两条装载完成时刻不同 ⇒ 正是用户报的"播放中切回左右对比两边不协调"的来源之一)✗
+                    // ⇒ 现在:离开对比视图只把几何复位,**绝不卸载**(合成片留在播放器里,切回来零装载)✔
+                }
+                // 【用户实测 2026-09-19】播放中「左右对比 → 两者同时」时,遮罩几何(2 倍宽 / Margin / Clip)
+                // 偶发没被复位 ⇒ 换过去后画面尺寸乱。这里**只要不在左右对比就无条件复位**(幂等、零副作用),
+                // 把"脏几何"彻底兜死 —— 不再依赖上面那个 `_maskSplitActive` 分支一定能进来。
+                if (!isSplit)
+                {
+                    _maskSplitActive = false;
+                    _maskOnPath = null;
+                    try { PreviewPlayerHost!.Width = double.NaN; PreviewPlayerHost.Margin = new Thickness(0); PreviewPlayerHost.Clip = null; } catch { }
+                    try { EffectPlayerHost!.Width = double.NaN; EffectPlayerHost.Margin = new Thickness(0); EffectPlayerHost.Clip = null; } catch { }
+                    try { if (PlayerArea != null) PlayerArea.Clip = null; } catch { }
                 }
                 return;
             }
@@ -5936,8 +7138,9 @@ public sealed partial class VideoView : UserControl
             {
                 Rect = new Windows.Foundation.Rect(0, 0, w, h),
             };
+            _baseClipPrev = new Windows.Foundation.Rect(0, 0, w, h);   // 【基准裁切记账】同上 ✔
             if (CompareSplitter != null)
-                CompareSplitter.Margin = new Thickness(Math.Round(_maskPad + _maskVw * ratio) - (CompareSplitter.Width / 2), 0, 0, 0);
+                PlaceSplitter(_maskPad + _maskVw * ratio);   // 【缩放定稿】线按"层内坐标 → 屏幕"换算落位,自身不放大 ✔
         }
         catch { }
     }
@@ -5948,13 +7151,15 @@ public sealed partial class VideoView : UserControl
         {
             PlayWatchBegin("预览·播放/暂停");
             if (_compareMode) { ToggleComparePlayback(); return; }
-            var mp = _barOnOriginal ? PreviewPlayer.MediaPlayer : EffectPlayer.MediaPlayer;
+            // 【倒装】单视图(mode 打印出来便于事后核对)用**这个视图的角色播放器**:
+            //   看原片 → CmpPlayerTop;看处理效果 → CmpPlayerBottom(裁剪页 → PreviewPlayer,由 ViewPlayersOf 保证)
+            var mp = (_barOnOriginal ? _srcPlayer : _resPlayer)?.MediaPlayer;
             var se = mp?.PlaybackSession;
             if (mp == null || se == null) return;
             _playReqAt = Environment.TickCount64;   // 耗时埋点起点
             // 【根因修复配套】两条都继续在跑(藏起来那条只是静音)→ 播放/暂停必须**同时下发给两条** ✗→✓
             // 否则一暂停就只剩可见那条停、藏着那条继续跑,两条又拉开 → 切回来又得做一次 ~1 秒的 seek ✗。
-            var otherMp = _barOnOriginal ? EffectPlayer.MediaPlayer : PreviewPlayer.MediaPlayer;
+            var otherMp = (_barOnOriginal ? _resPlayer : _srcPlayer)?.MediaPlayer;
             if (se.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing)
             {
                 SetCmpPlayGlyph(false);   // 【跟手】先翻图标再让播放器停:视觉立刻响应,不等媒体管线
@@ -5979,8 +7184,11 @@ public sealed partial class VideoView : UserControl
                         double theirs = otherMp.PlaybackSession?.Position.TotalSeconds ?? mine;
                         double want = _barOnOriginal ? theirs + _effStart : mine + _effStart;   // 都换算到原片轴
                         double have = _barOnOriginal ? mine : theirs;
+                        // 【倒装修】老代码在"看原片"这一支写的是 `Position = theirs`(= 它自己当前的值)⇒ 是个空操作,
+                        // 两条差半秒时永远纠不回来。正确目标:把"另一条"换算到原片轴/片段轴上再落 ✔
                         if (Math.Abs(have - want) > 0.5)
-                            otherMp.PlaybackSession.Position = TimeSpan.FromSeconds(_barOnOriginal ? theirs : Math.Max(0, want));
+                            otherMp.PlaybackSession.Position = TimeSpan.FromSeconds(
+                                _barOnOriginal ? Math.Max(0, mine - _effStart) : Math.Max(0, want));
                     }
                 }
                 catch { }
@@ -6032,6 +7240,28 @@ public sealed partial class VideoView : UserControl
         catch (Exception ex) { AppLogger.Warn("时间轴控制器挂载异常:" + ex.Message); }
     }
 
+    /// <summary>暂停后把两条拉到同一时刻(带校验)。
+    /// 【为什么需要】暂停时不挂控制器(挂上但不启动时播放器不呈现画面 ✗),两条各自的暂停时刻会差几毫秒~几百毫秒;
+    /// 差值一大,下次起播就是"一边先动、一边还停着" ⇒ 用户报的"偶现某一边卡住/不协调" ✓
+    /// 只在差值 ≥50ms 时才动(小差值不动,避免无谓 seek 反而闪)✔</summary>
+    private async Task AlignPausedAsync()
+    {
+        try
+        {
+            var e = EffectPlayer?.MediaPlayer;
+            var o = PreviewPlayer?.MediaPlayer;
+            double pe = 0, po = 0;
+            try { pe = e?.PlaybackSession?.Position.TotalSeconds ?? 0; } catch { }
+            try { po = o?.PlaybackSession?.Position.TotalSeconds ?? 0; } catch { }
+            if (Math.Abs(pe - po) < 0.05) return;
+            double t = Math.Min(pe, po);                 // 以靠前的那条为准(不往前跳过头)
+            if (e != null) await SeekAndVerifyAsync(e, t, 4).ConfigureAwait(true);
+            if (o != null) await SeekAndVerifyAsync(o, t, 4).ConfigureAwait(true);
+            Log($"[对比] 暂停对齐:两条已拉到 {t:0.###}s(此前相差 {(pe - po) * 1000:0} ms)");
+        }
+        catch { }
+    }
+
     private void ToggleComparePlayback()
     {
         try
@@ -6052,11 +7282,15 @@ public sealed partial class VideoView : UserControl
                 else
                 {
                     SetCmpPlayGlyph(true);   // 【跟手】先给反馈
+                    PlayWatchStep("单播放器·已给按钮反馈");
                     if (os1.NaturalDuration.TotalSeconds > 0.05 && os1.Position >= os1.NaturalDuration - TimeSpan.FromMilliseconds(80))
                         try { os1.Position = TimeSpan.Zero; } catch { }   // 播完了再点 = 重头播
+                    PlayWatchStep("单播放器·片尾归零(seek)");
                     ApplyCmpRateToAll(false);   // 每次起播都把用户选的倍率/静音补回去(左右两条都设)
+                    PlayWatchStep("单播放器·补倍率(可能触发管线重定时)");
                     only.Play();
                     PlayWatchAfterApiCall();
+                    PlayWatchStep("单播放器·Play() 返回");
                     ShowCompareBarTemporarily();
                 }
                 return;
@@ -6071,6 +7305,7 @@ public sealed partial class VideoView : UserControl
                 if (playingNow)
                 {
                     SetCmpPlayGlyph(false);
+                    // 【2026-09-19 撤回"一个时钟"改动】恢复"两条各自暂停"(暂停态不挂控制器,避免冻结帧)✔
                     try { PreviewPlayer.MediaPlayer?.Pause(); } catch { }
                     try { EffectPlayer.MediaPlayer?.Pause(); } catch { }
                     PlayWatchAfterApiCall();
@@ -6078,16 +7313,50 @@ public sealed partial class VideoView : UserControl
                 else
                 {
                     SetCmpPlayGlyph(true);
+                    // 【2026-09-19 修 · 用户报"重播后偶尔不协调"】证据:日志里"片尾点播放…回到开头再播"
+                    // 紧接着就是"左右同步:漂移 -1282 ms 过大,已一次性硬对齐" ✗(片段总长才 2 秒!)。
+                    // 根因:这里**裸设 Position=0 后立刻 Play** —— seek 是异步的,两条未必都在归零后才起播
+                    // ⇒ 一条从头、另一条还在片尾附近 ✓。修法:两条都走**带校验的定位**(SeekAndVerifyAsync),
+                    // 确认都落到 0 再一起起播 ✔
+                    try
+                    {
+                        var seR = EffectPlayer?.MediaPlayer?.PlaybackSession;
+                        if (seR != null && seR.NaturalDuration.TotalSeconds > 0.05
+                            && seR.Position >= seR.NaturalDuration - TimeSpan.FromMilliseconds(120))
+                        {
+                            _ = ReplayFromStartAsync();   // 归零并校验 → 一起起播(不再裸设 Position)
+                            return;
+                        }
+                    }
+                    catch { }
                     ApplyCmpRateToAll(false);   // 起播前把用户倍率补到两条(同一个值)✔
+                    PlayWatchStep("左右对比·补倍率(可能触发管线重定时)");
+                    // 【2026-09-19 撤回"一个时钟"改动】它引入了两个新问题(用户实测):
+                    //   ① 重播不生效 ② 左右对比里"右边倍率不生效" —— 根因是还有别的路径在给播放器直接写
+                    //   PlaybackRate(控制器挂上后这些写入会打架)✗。这一步必须**能交互验证**才能上,
+                    //   所以我先退回"两条各自播"(用户此前的状态),等能在场一起验时再上 ✔
                     try { PreviewPlayer.MediaPlayer?.Play(); } catch { }
                     try { EffectPlayer.MediaPlayer?.Play(); } catch { }
                     PlayWatchAfterApiCall();
+                    PlayWatchStep("左右对比·两条 Play() 返回");
                     ShowCompareBarTemporarily();
                 }
                 return;
             }
-            if (_maskSplitActive) _maskSplitPlaying = true;   // 遮罩模式:这一刻才挂控制器(暂停时不挂 → 右边不会黑)✔
-            if (_maskSplitActive && _tlCtrl == null) ApplyTimelineController(true);
+            // ================= 以下两行 **当前不可达**(2026-09-21 查明) =================
+            // 【事实】上面那个 `if (_maskSplitActive) { … return; }` 分支**一定会 return**(两处出口),所以
+            // 走到这里时 `_maskSplitActive` 恒为 false ⇒ 这两行永远不执行 ⇒ **遮罩模式(左右对比)从来没有
+            // 挂过 MediaTimelineController**,两条 MediaPlayer 一直是"各自独立的时钟"。
+            // 【为什么留着而不删】它不是被遗忘的废码,而是一次**用户在场才能验的撤回**留下的挂点:
+            // 2026-09-19 试过"一个时钟(控制器)",用户实测冒出两个新问题(重播不生效 / 左右对比里右边倍率不生效),
+            // 于是撤回成"两条各自播",并写下"等能在场一起验时再上"(见上面 7150 附近那段注释)。
+            // 【它为什么值得记住】§31/§38 的定稿结论是"两个独立时钟 + 事后纠偏 = 本身就是错的路";
+            // 现在遮罩模式正是**两个独立时钟**,靠 150ms 看门狗 + 位置回调里的纠偏维持 ——
+            // 所以"左右对比播放会卡/不协调"这个老症状的**结构性隐患一直都在**,只是被纠偏压住了。
+            // 要重新启用:让上面那个 mask 分支在起播时改为调用 ApplyTimelineController(true)(而不是 return),
+            // 并且**必须用户在场**验证那两条已撤回的副作用。
+            if (_maskSplitActive) _maskSplitPlaying = true;   // ⚠ 不可达:见上方说明
+            if (_maskSplitActive && _tlCtrl == null) ApplyTimelineController(true);   // ⚠ 不可达:见上方说明
             if (TlActive && _tlCtrl != null)
             {
                 bool tlPlaying = _tlCtrl.State == Windows.Media.MediaTimelineControllerState.Running;
@@ -6179,7 +7448,7 @@ public sealed partial class VideoView : UserControl
         }
         try
         {
-            var mp = _compareMode ? EffectPlayer.MediaPlayer : (_barOnOriginal ? PreviewPlayer.MediaPlayer : EffectPlayer.MediaPlayer);
+            var mp = (_compareMode ? EffectPlayer : (_barOnOriginal ? _srcPlayer : _resPlayer))?.MediaPlayer;
             var se = mp?.PlaybackSession;
             if (mp == null || se == null) return;
             double d = 0;
@@ -6190,12 +7459,22 @@ public sealed partial class VideoView : UserControl
             bool paused = false;
             try { paused = se.PlaybackState != Windows.Media.Playback.MediaPlaybackState.Playing; } catch { }
             _seekEvtCount++;   // 诊断:本次拖动收到多少个滑块事件
-            if (_cmpSeekDrag) { RequestSeek(mp, t, verify: paused); return; }
+            if (_cmpSeekDrag)
+            {
+                RequestSeek(mp, t, verify: paused);
+                // 【2026-09-19 修 · 用户:"左右视频不同时跟随时间线"】拖动期间**两条都要跟随** ✔
+                // (上一版加了这条,但因为"位置回调还在写滑块"而出现牵引闪烁 ✗;现在滑块回灌已被全面禁止
+                //  —— 见本文件三处 `_cmpSeekDrag` 守卫 —— 所以两条同时跟随是安全的 ✓)
+                if (_compareMode && !_cmpSingle)
+                    RequestSeek(PreviewPlayer.MediaPlayer, _maskSplitActive ? t : _effStart + t, verify: paused);
+                return;
+            }
             // 单击/键盘步进:立即落地
             ApplySeekNow(mp, t, verify: paused);
-            // 对比模式还在双播放器回退时(合成片没合好),原片也要跟到同一时刻(合并式,不额外制造风暴)
-            // 【遮罩模式】两条同一条片、同轴 → 原片也定位到 t(不能再加 _effStart,否则直接错开一个片段长)✔
-            if (_compareMode && !_cmpSingle) RequestSeek(PreviewPlayer.MediaPlayer, _maskSplitActive ? t : _effStart + t, verify: false);
+            // 松手/单击:原片也落到同一时刻,而且**带校验** ——
+            // 原来这里是 verify:false(不校验)⇒ 落偏了没人纠正,实测留下 327ms 恒定偏差 ✗→✔
+            if (_compareMode && !_cmpSingle)
+                ApplySeekNow(PreviewPlayer.MediaPlayer, _maskSplitActive ? t : _effStart + t, verify: true);
             ShowCompareBarTemporarily();
         }
         catch { }
@@ -6246,11 +7525,91 @@ public sealed partial class VideoView : UserControl
     /// (进页面那一刻布局可能还没测量出宽度,ApplyPreviewView 里那次会因 w<=40 被跳过 —— 真机就是这么漏掉的)。</summary>
     private void PlayerArea_SizeChanged(object sender, SizeChangedEventArgs e)
     {
+        ApplyZoomClip();          // 裁切框跟着播放区尺寸走(放大后的画面一律裁在框内 ⇒ 不越界)✔
         ApplyPlayerClip();
         ApplyOriginalHalfScale(_origHalfLeft);
         // 【2026-09-18 用户:"中间对齐、越靠边偏移越大"= 比例误差】根因:布局变了以后我没有重算遮罩几何 ✗,
         // 于是画面按新尺寸排、线按旧尺寸算 → 中心重合、边缘发散 ✓。布局一变就**重算一次** ✔
         if (_maskSplitActive) { try { TryMaskSplit(true); } catch { } }
+        RefreshSplitterPlacement();   // 尺寸变了:线要按新的缩放换算重新落位 ✔
+    }
+
+    /// <summary>把"裁切框"设成播放区自身大小。**必须在外层**(Clip 与 RenderTransform 同层时,裁切会被一起缩放 ⇒ 等于没裁)。
+    /// 作用:滚轮放大后,画面只在框内可见,不会溢出到下面的控制区 ⇒ 用户要的"不要越界" ✔
+    /// 【2026-09-19 实测:视频面不吃这个裁切】用户截图:放大后画面越过画面框继续往右铺 ✗。
+    /// 所以这里额外做两件事并把几何打出来,便于定位:
+    ///   ① 给 PreviewZoomClip **显式尺寸**(不给的话它会被 2× 宽的子元素撑大,裁切矩形就落到错的地方)
+    ///   ② PlayerArea 也一起裁(它是这台机器上"裁视频"已验证过的那一层,见 TryMaskSplit 里的注释)
+    ///   ③ 打一行 `[缩放几何]`:框尺寸 / 裁切矩形 / 缩放层与主机的实际尺寸 —— 有数字才谈得上修</summary>
+    private void ApplyZoomClip()
+    {
+        try
+        {
+            return;   // 结构已还原:本方法停用(不再设置任何裁切)
+            double aw = PlayerArea?.ActualWidth ?? 0, ah = PlayerArea?.ActualHeight ?? 0;
+            if (aw < 2 || ah < 2) return;
+            // ① 让裁切框自己的布局尺寸就等于画面框(否则它被 2× 宽的子元素撑大,裁切矩形等于错位)
+            // (结构已还原:不再有独立裁切框)
+            // (同上)
+            //
+            //
+            var rect = new Windows.Foundation.Rect(0, 0, aw, ah);
+            //
+            // ② 播放区自己也裁(视频面在这台机器上唯一被验证过"裁得住"的一层)
+            if (PlayerArea != null)
+                PlayerArea.Clip = new Microsoft.UI.Xaml.Media.RectangleGeometry { Rect = rect };
+        }
+        catch { }
+    }
+
+    /// <summary>把缩放几何打一行日志(只在整数缩放变化时打,避免刷屏):修"越界"必须靠这些数字。</summary>
+    private int _zoomLoggedStep = -1;
+    private void LogZoomGeometry(string why)
+    {
+        try
+        {
+            return;   // 结构已还原:本方法停用
+// [停用]             if (step == _zoomLoggedStep && why != "force") return;
+// [停用]             _zoomLoggedStep = step;
+            double aw = PlayerArea?.ActualWidth ?? 0, ah = PlayerArea?.ActualHeight ?? 0;
+            string clipTxt = "(无)";
+            try
+            {
+// [已删除的缩放元素引用 · 结构还原]                 if (PreviewZoomClip?.Clip is Microsoft.UI.Xaml.Media.RectangleGeometry rg)
+// [停用]                     clipTxt = $"{rg.Rect.Width:0}x{rg.Rect.Height:0}";
+            }
+            catch { }
+            Log($"[缩放几何] {why} 缩放={_zoomScale:0.###} 平移=({_zoomPanX:0},{_zoomPanY:0}) · 画面框={aw:0}x{ah:0} · "
+// [已删除的缩放元素引用 · 结构还原]                 + $"裁切框元素={PreviewZoomClip?.ActualWidth ?? 0:0}x{PreviewZoomClip?.ActualHeight ?? 0:0} 裁切矩形={clipTxt} · "
+// [已删除的缩放元素引用 · 结构还原]                 + $"缩放层={PreviewZoomLayer?.ActualWidth ?? 0:0}x{PreviewZoomLayer?.ActualHeight ?? 0:0} · "
+                + $"原片主机={PreviewPlayerHost?.ActualWidth ?? 0:0}x{PreviewPlayerHost?.ActualHeight ?? 0:0} 裁切宽={(PreviewPlayerHost?.Clip is Microsoft.UI.Xaml.Media.RectangleGeometry pg ? pg.Rect.Width : -1):0} · "
+                + $"结果主机={EffectPlayerHost?.ActualWidth ?? 0:0}x{EffectPlayerHost?.ActualHeight ?? 0:0} · 播放区裁切={(PlayerArea?.Clip is Microsoft.UI.Xaml.Media.RectangleGeometry ag ? ag.Rect.Width : -1):0}");
+        }
+        catch { }
+    }
+
+    /// <summary>分割线落位:输入的是**缩放层内**的 x,输出到屏幕要经过 local×scale+pan ⇒ 线始终压在真实分界上,
+    /// 但它自己(线宽/把手)不跟着放大 ✔ —— 用户明确要求"分割点什么什么的都不会被带动放大"。</summary>
+    private void PlaceSplitter(double localX)
+    {
+        try
+        {
+            if (CompareSplitter == null) return;
+            double screenX = localX * _zoomScale + _zoomPanX;
+            CompareSplitter.Margin = new Thickness(Math.Round(screenX) - (CompareSplitter.Width / 2), 0, 0, 0);
+        }
+        catch { }
+    }
+
+    /// <summary>按当前分割比例重新落位(缩放/平移/尺寸变化后都要调一次)。</summary>
+    private void RefreshSplitterPlacement()
+    {
+        try
+        {
+            if (!_maskSplitActive || _maskVw <= 20) return;
+            PlaceSplitter(_maskPad + _maskVw * Math.Clamp(_compareSplit, 0, 1));
+        }
+        catch { }
     }
 
     private void ApplyCompareSplit() => ApplyPlayerClip();
@@ -6265,7 +7624,21 @@ public sealed partial class VideoView : UserControl
     {
         try
         {
-            if (PreviewPlayerHost == null) return;
+            // 【两者同时-两侧同区域缩放】总开关收口在这里(所有布局路径都会经过 ApplyPlayerClip):
+            //   形态该开就开、该关就关;开着时裁切/变换全交给 ApplyBothZoom,不让下面的逻辑把它冲掉 ✔
+            bool wantBoth = _zmWant && !string.IsNullOrEmpty(_zmWantPath) && File.Exists(_zmWantPath!);
+            if (wantBoth != _zmOn) EnableBothZoom(wantBoth);
+            // 【方案 B 收口】两者同时 = 两个文件并排(左原片 / 右成片);不满足条件就退回原合成片路径 ✔
+            bool want2f = _twoFileWant && !string.IsNullOrEmpty(_twoFileSrc) && !string.IsNullOrEmpty(_twoFileProc);
+            if (want2f != _twoFileBoth) SetTwoFileBoth(want2f);
+            if (_twoFileBoth) { ApplyTwoFileLayout(); return; }
+            if (_zmOn) { ApplyBothZoom(""); return; }
+            // 【单画面缩放条】只在「看原片 / 看处理效果」露出(对比视图各自有自己的条)✔
+            // (实时缩放已撤销:单画面缩放条一并不再出现)
+            // 【倒装】裁切要落在**当前视图的那条主机**上(_srcHost):单视图是新的 CmpPlayerHostTop、
+            // 对比视图就是 PreviewPlayerHost(与改动前完全一致)⇒ "视频面不吃 Clip=null" 的老坑一并兜住 ✔
+            var clipHost = _srcHost ?? PreviewPlayerHost;
+            if (clipHost == null) return;
             double w = PlayerArea?.ActualWidth ?? 0, h = PlayerArea?.ActualHeight ?? 0;
             if (w <= 8 || h <= 8) return;
             _playerClip ??= new Microsoft.UI.Xaml.Media.RectangleGeometry();
@@ -6320,9 +7693,10 @@ public sealed partial class VideoView : UserControl
                 return;
             }
             _playerClip.Rect = new Windows.Foundation.Rect(0, 0, x, hh);
-            PreviewPlayerHost.Clip = _playerClip;
+            clipHost.Clip = _playerClip;
+            _baseClipPrev = _playerClip.Rect;   // 【基准裁切记账】供缩放取交集用(不能读"当前"那个,会棘轮式越缩越小)✔
             if (CompareSplitter != null)
-                CompareSplitter.Margin = new Thickness(x - (CompareSplitter.Width / 2), 0, 0, 0);
+                PlaceSplitter(x);   // 【缩放定稿】x 是层内坐标 ⇒ 经缩放换算落位,线自身不放大 ✔
             if (CompareSplitGhost != null) CompareSplitGhost.Visibility = Visibility.Collapsed;   // 回退路径:裁切是实时的,不需要虚影
         }
         catch { }
@@ -6392,6 +7766,7 @@ public sealed partial class VideoView : UserControl
 
     private void CompareSplitter_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
+        if (_zmOn) return;      // 两者同时:中间那条是"边界",固定不拖动 ✔
         if (!_compareMode) return;
         _dividerDrag = true;
         _splitterTouchTick = Environment.TickCount64;
@@ -6437,7 +7812,8 @@ public sealed partial class VideoView : UserControl
         {
             double w = PlayerArea.ActualWidth, h = PlayerArea.ActualHeight;
             if (w <= 40) return;
-            double rawX = e.GetCurrentPoint(PlayerArea).Position.X;
+            // 【缩放状态下的跟手】指针坐标是在"画面区"里量的,而线与裁切都在缩放层里算 ⇒ 先换算回层内坐标
+            double rawX = ToZoomLocalX(e.GetCurrentPoint(PlayerArea).Position.X);
             // 鼠标位置 → 画面内的比例(把 Uniform 留的黑边扣掉,否则线跟手会在两端"错位")
             _compareSplit = RatioFromScreenX(rawX, w, h);
             _splitDragTick = Environment.TickCount64;   // 【跟手】记下"用户刚拖过":迟到的合成完成时不许再把线拽回去 ✓
@@ -6499,6 +7875,20 @@ public sealed partial class VideoView : UserControl
                         clipPlaying = s.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing;
                     }
                     catch { return; }
+                    // 【2026-09-21 诊断补强】先记一笔"这个回调真的跑到了"。为什么必须记:
+                    // 下面那条「近 5 秒速率调整…」原来**只在进了同步分支时**才打 ⇒ 一旦没进(引用为空 /
+                    // clipPlaying=false / 片段在片尾)日志里就一个字都没有,于是"回调根本没触发"与
+                    // "触发了但走了另一条路"**完全分不清** —— 排查"卡"时这是最要命的一种盲区。
+                    // 现在:这里只做几笔字段写入(零成本),由 150ms 看门狗每 5 秒把地面数据打出来。
+                    _cmpPosEvents++;
+                    _cmpLastClipPos = clipPos; _cmpLastClipPlaying = clipPlaying;
+                    _cmpLastClipAtEnd = clipDur > 0.05 && clipPos >= clipDur - 0.03;
+                    _cmpSyncBranchEntered = !_cmpSingle;   // 本回调是否走了下面那段"原片同步"
+                    _cmpPosLastAt = Environment.TickCount64;
+                    // 【2026-09-21】地面数据也从这里打一次:单播放器时看门狗已 Stop,只有这条回调还在跑
+                    // (它同时也驱动播放条)—— 两个调用点共用 5 秒节流,谁先到谁打,from 说明是谁。
+                    MaybeLogGroundData("位置回调", clipPos, clipDur, clipPlaying, _cmpLastClipAtEnd,
+                        _origSessionCache?.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing);
                     // 落地判定(必须在"拖动中不刷新"之前,否则闸门打不开 —— 见 _barPosHandler 里的说明)
                     NoteSeekMaybeLanded(clipPos);
                     PlayWatchPositionMoved();   // 诊断:③状态变→画面真的开始走
@@ -6573,12 +7963,23 @@ public sealed partial class VideoView : UserControl
                                     // 实测漂到 **2192 ms**(用户看到的"偶现不协调");±2% 的微调要 100 秒才追得回来,
                                     // 所以漂移大到一定程度必须**一次性硬拉回**(对齐),不能只靠调速。
                                     // 平时(≤500ms)仍然只调速、绝不 seek —— 保留"零额外解码"的设计。
+                                    // 【2026-09-21 修 · 与上面那行**同一个错误的后半截**】
+                                    // 上面已经把 drift 按遮罩模式分了两支(同轴直接比),但**硬对齐的目标**当时漏改 ✗:
+                                    // 遮罩模式两条装的是**同一条 0 基点的合成片**(证据:`[遮罩左右对比] 两条同源装载:cmp_*.mp4`
+                                    // + 本文件里"遮罩模式两条装的是同一条合成片,时间轴完全相同"那段结论),
+                                    // 此时正确的目标就是 `clipPos`;写成 `_effStart + clipPos` 会**凭空多出 _effStart 秒**
+                                    // (用户这次实测素材是 2.738s)⇒ ① 漂移不减反增,1.5 秒冷却一过就再触发 ⇒
+                                    // **播放中每 1.5 秒硬 seek 一次** = 用户说的"卡";② 目标还常常超出合成片总长
+                                    // (clipPos > 4.7−2.738≈1.96s 时就会越过片尾)⇒ 原片被丢到片尾/夹边 ⇒ 左右对不上。
+                                    // 两处必须用**同一个判据**,这正是上面那段注释(2026-09-18)记下的同一个坑。
+                                    double realignTo = _maskSplitActive ? clipPos : _effStart + clipPos;
                                     if (Math.Abs(drift) > 0.5 && nowMs - _syncHardAt > 1500)
                                     {
                                         _syncHardAt = nowMs;
-                                        try { op.Position = TimeSpan.FromSeconds(_effStart + clipPos); } catch { }
+                                        try { op.Position = TimeSpan.FromSeconds(realignTo); } catch { }
                                         try { op.PlaybackRate = _cmpRate; } catch { }   // 硬拉回后把用户倍率补回
-                                        AppLogger.Info($"[性能] 左右同步:漂移 {drift * 1000:0} ms 过大,已一次性硬对齐(原片 → {_effStart + clipPos:0.###}s)");
+                                        AppLogger.Info($"[性能] 左右同步:漂移 {drift * 1000:0} ms 过大,已一次性硬对齐"
+                                            + $"(原片 → {realignTo:0.###}s;遮罩同轴={_maskSplitActive})");
                                     }
                                     else
                                     {
@@ -6681,12 +8082,444 @@ public sealed partial class VideoView : UserControl
         catch { }
     }
 
-    /// <summary>放大画面:收起控制区,画面占满整页(再点一次回来)。</summary>
-    private void EffectZoomBtn_Click(object sender, RoutedEventArgs e)
+    /// <summary>提示类日志的限流(同一条提示 10 秒内只写一次,免得滚轮一滚就刷屏)。</summary>
+    private long _psHintTick;
+    private bool PowerShellHintDue()
     {
-        _effZoomed = !_effZoomed;
-        if (_effZoomed) _dupOpen = false;
-        ApplyDeckVisibility();
+        long now = Environment.TickCount64;
+        if (now - _psHintTick < 10_000) return false;
+        _psHintTick = now;
+        return true;
+    }
+
+    /// <summary>滚轮 = 在档位梯子上上下走一档(以光标为中心,光标下那一点保持不动)。
+    /// 【2026-09-19 改成 Topaz 语义(用户:"学习topaz的缩放")】档位以**像素**为基准:
+    ///   适应 / 50% / 100% / 200% / 400% / 800%,其中 **100% = 1 视频像素 : 1 屏幕像素(1:1)** ✔
+    ///   上一版把"适应窗口"当 1.0、最大 8 倍 ⇒ 没有 1:1 锚点、百分比也没意义 ✗</summary>
+    private void PlayerArea_Wheel(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        return;   // 【2026-09-19 用户要求:撤销实时缩放】滚轮不再缩放(见 XAML 顶栏注释:卡死/比例不一致/只剩一小块)
+        // 【别让滚轮"没反应却什么都不说"】用户实测反馈:"滚轮没有缩放" —— 其实就是当时**还没有预览结果**,
+        // 两侧没有可比的东西,所以形态没开。这里给一句明确的话,并把原因写进日志 ✔
+        try
+        {
+            if ((PreviewViewRadios?.SelectedIndex ?? -1) == ViewBoth && !_zmOn)
+            {
+                bool hasResult = _effHasResult || !string.IsNullOrEmpty(_effOutPath);
+                string tip = hasResult
+                    ? "缩放正在准备中(等两侧画面就绪),稍后再滚一次"
+                    : "先点下面「开始预览」跑一小段,再回来滚轮缩放 —— 两侧要有原片和处理后才能同区域对比";
+                if (EffectPlayerHint != null && EffectPlayerHint.Visibility == Visibility.Visible)
+                    EffectPlayerHint.Text = tip;
+                if (PowerShellHintDue()) Log($"[两者同时] 滚轮缩放未生效:{tip}");
+            }
+        }
+        catch { }
+        // 【2026-09-19 放开:单画面视图随时可缩放】用户实测"滚轮没有缩放" —— 根因是它被绑死在"必须有处理结果"上 ✗。
+        // 像 Topaz 那样:**预览窗里有画面就能缩放**。这里只排除对比视图(两者同时走 _zmOn 那条;左右对比保持"擦除"语义)✔
+        if (_compareMode) return;
+        try
+        {
+            var pt = e.GetCurrentPoint(PlayerArea);
+            double delta = pt.Properties.MouseWheelDelta;
+            if (Math.Abs(delta) < 0.1) return;
+            int idx = Array.IndexOf(ZoomLadder, _zoomPct);
+            if (idx < 0) idx = 0;
+            int nextIdx = delta > 0 ? Math.Min(ZoomLadder.Length - 1, idx + 1) : Math.Max(0, idx - 1);
+            if (nextIdx == idx) { e.Handled = true; return; }
+            double oldScale = _zoomScale <= 0.0001 ? 1 : _zoomScale;
+            _zoomPct = ZoomLadder[nextIdx];
+            double fit = ComputeFitScale();
+            double newScale = (_zoomPct <= 0 || fit <= 0) ? 1.0 : Math.Clamp((_zoomPct / 100.0) / fit, 0.02, 64);
+            // 让光标底下那个画面点不动:local = (p − pan)/scale ⇒ pan' = p − local×newScale
+            double x = pt.Position.X, y = pt.Position.Y;
+            _zoomPanX = x - (x - _zoomPanX) / oldScale * newScale;
+            _zoomPanY = y - (y - _zoomPanY) / oldScale * newScale;
+            ApplyZoom();
+            e.Handled = true;
+        }
+        catch { }
+    }
+
+    /// <summary>档位按钮:Tag = 百分比(0 = 适应窗口)。</summary>
+    private void ZoomPreset_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (sender is not FrameworkElement fe) return;
+            if (!int.TryParse(fe.Tag?.ToString() ?? "0", out int pct)) return;
+            _zoomPct = pct;
+            if (_zoomPct <= 0) { _zoomPanX = _zoomPanY = 0; }
+            ApplyZoom();
+            Log($"缩放:{(_zoomPct <= 0 ? "适应窗口" : _zoomPct + "%" + (_zoomPct == 100 ? "(1:1 原生像素)" : ""))}");
+        }
+        catch { }
+    }
+
+    /// <summary>放大后拖动画面 = 平移(两层画面一起动 ⇒ 对比时两侧永远是同一区域 ✔)。</summary>
+    private void ZoomClip_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        return;   // 实时缩放已撤销:不再拖拽平移
+        if (_zoomPct <= 0 || _zoomScale <= 1.001) return;      // 适应窗口时没有可平移的余量
+        try
+        {
+            var p = e.GetCurrentPoint(PlayerArea).Position;
+            _panDragging = true;
+            _panStartX = p.X; _panStartY = p.Y;
+            _panOrigX = _zoomPanX; _panOrigY = _zoomPanY;
+            // (无缩放层可捕获)
+            e.Handled = true;
+        }
+        catch { }
+    }
+
+    private void ZoomClip_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (_zmOn) { BothZoom_PointerMoved(e); return; }
+        if (!_panDragging) return;
+        try
+        {
+            var p = e.GetCurrentPoint(PlayerArea).Position;
+            _zoomPanX = _panOrigX + (p.X - _panStartX);
+            _zoomPanY = _panOrigY + (p.Y - _panStartY);
+            ApplyZoom();
+            e.Handled = true;
+        }
+        catch { }
+    }
+
+    private void ZoomClip_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (_zmOn) { BothZoom_PointerReleased(e); return; }
+        if (!_panDragging) return;
+        _panDragging = false;
+        // (无缩放层可释放)
+    }
+
+    private void ResetZoom()
+    {
+        _zoomPct = 0; _zoomScale = 1.0; _zoomPanX = 0; _zoomPanY = 0;
+        ApplyZoom();
+    }
+
+    /// <summary>适应窗口时"一个视频像素占几个屏幕像素" —— 有了它,百分比档位才有意义(100% = 1:1)。
+    ///   · 对比/遮罩形态:播放器放的是**并排合成片**(两幅并排),我们看到的是其中**一幅**
+    ///     ⇒ 自然宽 = 合成片宽 ÷ 2,显示宽 = _maskVw(单幅在画面框里的宽度)
+    ///   · 单播放器形态:自然宽 = 该视频的像素宽,显示宽 = Uniform 贴进画面框后的宽
+    /// 自然尺寸直接从播放器读(NaturalVideoWidth/Height),不额外探测文件 ✔</summary>
+    private double ComputeFitScale()
+    {
+        try
+        {
+            double aw = PlayerArea?.ActualWidth ?? 0, ah = PlayerArea?.ActualHeight ?? 0;
+            if (aw < 8 || ah < 8) return 0;
+            var mp = (_compareMode ? EffectPlayer : (_barOnOriginal ? _srcPlayer : _resPlayer))?.MediaPlayer;
+            double natW = 0, natH = 0;
+            try { natW = mp?.PlaybackSession?.NaturalVideoWidth ?? 0; natH = mp?.PlaybackSession?.NaturalVideoHeight ?? 0; } catch { }
+            if (natW <= 0 || natH <= 0) { natW = _cmpLoadedW > 0 ? _cmpLoadedW : 1920; natH = _cmpLoadedH > 0 ? _cmpLoadedH : 1080; }
+            if (_maskSplitActive && _maskVw > 20)
+            {
+                double perFrameW = natW / 2.0;                  // 并排合成片:一幅的像素宽
+                return perFrameW > 0 ? _maskVw / perFrameW : 0;
+            }
+            double ar = natW / Math.Max(1.0, natH);
+            double dispW = aw / ah > ar ? ah * ar : aw;          // Uniform:按较小的那个贴进去
+            return dispW / natW;
+        }
+        catch { return 0; }
+    }
+
+    /// <summary>把缩放落到界面上:先由档位算出真实倍数,再把平移钳进"画面始终铺满框"的范围。</summary>
+    private void ApplyZoom()
+    {
+        if (_compareMode && !_zmOn)
+        {
+            // 对比视图(左右对比)不走单画面缩放:保持恒等,裁切归遮罩逻辑 ✔
+            _zoomScale = 1.0; _zoomPanX = 0; _zoomPanY = 0;
+            try
+            {
+// [已删除的缩放元素引用 · 结构还原]                 if (ZoomScale != null) { ZoomScale.ScaleX = 1; ZoomScale.ScaleY = 1; }
+// [已删除的缩放元素引用 · 结构还原]                 if (ZoomPan != null) { ZoomPan.X = 0; ZoomPan.Y = 0; }
+                RefreshSplitterPlacement();
+            }
+            catch { }
+            return;
+        }
+        try
+        {
+            double fit = ComputeFitScale();
+            if (_zoomPct <= 0 || fit <= 0)
+            {
+                _zoomScale = 1.0; _zoomPanX = 0; _zoomPanY = 0;    // 适应窗口 = 当前布局的自然状态
+            }
+            else
+            {
+                _zoomScale = Math.Clamp((_zoomPct / 100.0) / fit, 0.02, 64);
+                double aw2 = PlayerArea?.ActualWidth ?? 0, ah2 = PlayerArea?.ActualHeight ?? 0;
+                if (aw2 > 1 && ah2 > 1)
+                {
+                    // 铺满:平移范围 = [宽 − 宽×缩放, 0](画面永远盖住整框 ⇒ 不露底、不越界)
+                    _zoomPanX = Math.Clamp(_zoomPanX, aw2 - aw2 * _zoomScale, 0);
+                    _zoomPanY = Math.Clamp(_zoomPanY, ah2 - ah2 * _zoomScale, 0);
+                }
+            }
+            // (缩放层已从界面移除:不再写变换)
+            //
+            // (回退后界面上没有档位文字;做"两侧各自缩放"时再加回来)
+            // ① 外层裁切框(不越界)
+            // ② 主机级裁切(这台机器上验证过"裁得住视频面"的那一层)
+            RefreshSplitterPlacement();      // 线跟着新的缩放落位(它自己不变大)✔
+            LogZoomGeometry("缩放");
+        }
+        catch { }
+    }
+
+    /// <summary>主机级裁切:矩形经缩放后正好等于画面框 ⇒ local = (框 − 平移) ÷ 缩放。
+    /// 【为什么还要这一层】用户实测:只在外层加裁切框时**画面仍然越界** ✗(视频面是独立合成层,
+    /// 不是所有祖先裁切都吃)。而"裁在主机上"是这台机器上验证过的机制 —— 遮罩左右对比就靠它 ✔</summary>
+    private void ApplyHostClips()
+    {
+        if (_compareMode) return;   // 对比视图的裁切归遮罩/两者同区域逻辑管,这里不碰
+        try
+        {
+            double s = _zoomScale <= 0.0001 ? 1 : _zoomScale;
+            double aw = PlayerArea?.ActualWidth ?? 0, ah = PlayerArea?.ActualHeight ?? 0;
+            if (aw < 2 || ah < 2) return;
+            var pane = new Windows.Foundation.Rect((0 - _zoomPanX) / s, (0 - _zoomPanY) / s, aw / s, ah / s);
+            if (EffectPlayerHost != null)
+                EffectPlayerHost.Clip = new Microsoft.UI.Xaml.Media.RectangleGeometry { Rect = pane };
+            if (PreviewPlayerHost != null)
+            {
+                // 【关键修法】基准裁切(遮罩/半幅逻辑算出来的)**单独记账**,不是读"当前"那个 ——
+                // 否则交集会像棘轮一样越缩越小,缩放回适应也回不来 ✗→✔
+                var r = _baseClipPrev ?? new Windows.Foundation.Rect(0, 0, double.MaxValue, double.MaxValue);
+                double x1 = Math.Max(r.X, pane.X), y1 = Math.Max(r.Y, pane.Y);
+                double x2 = Math.Min(r.X + r.Width, pane.X + pane.Width);
+                double y2 = Math.Min(r.Y + r.Height, pane.Y + pane.Height);
+                PreviewPlayerHost.Clip = new Microsoft.UI.Xaml.Media.RectangleGeometry
+                {
+                    Rect = new Windows.Foundation.Rect(x1, y1, Math.Max(0, x2 - x1), Math.Max(0, y2 - y1)),
+                };
+            }
+        }
+        catch { }
+    }
+
+    /// <summary>画面区坐标 → 缩放层内坐标(拖分割线必须用这个:线/裁切都在缩放层里算)。</summary>
+    private double ToZoomLocalX(double x) => (x - _zoomPanX) / (_zoomScale <= 0 ? 1 : _zoomScale);
+    private double ToZoomLocalY(double y) => (y - _zoomPanY) / (_zoomScale <= 0 ? 1 : _zoomScale);
+
+    // ==================== 静止帧 1:1 原画质对比(2026-09-19 用户要求) ====================
+    // 【为什么是静止帧,而不是"两个播放器各播各的实时 1:1"】三条理由(XAML 里也写了):
+    //   ① 画面区只有约 900px 宽,并排两整幅 4K/8K 必然要缩 ⇒ 一条合成片**做不到**"两边都 1:1" ✗
+    //   ② "两个播放器各播各的"正是 2026-09-18 反复出现"只有一边动/不协调"后**主动放弃**的架构 ✗
+    //      (见 ApplyPreviewView 里的架构注释:同一处 6 次以上修不好 = 架构错了)
+    //   ③ 像素级对比本来就该看静帧(Photoshop / Topaz 的 1:1 对比都是静帧),而且**完全不动播放架构** ✔
+    //
+    // 口径:两侧各裁【各自原生像素 1:1】的同一块"中心区域",不缩不放、一个像素都不重采样;
+    //       处理后分辨率更高 ⇒ 同一块区域内它看到的内容范围更小 —— 这正是像素级对比该有的样子 ✔
+    private bool _pxOpen;
+    private double _pxCx = 0.5, _pxCy = 0.5;               // 对比区域中心(各自画面的归一化 0~1)
+    private int _pxOrigW, _pxOrigH, _pxProcW, _pxProcH;    // 两侧原始尺寸(取图后记账,供点击换算用)
+    private int _pxLx, _pxLy, _pxRx, _pxRy, _pxCw, _pxCh;  // 两侧这次的裁切原点与尺寸(原始像素)
+    private readonly List<string> _pxTemps = new();        // 本次产生的临时图(重取/关闭时删)
+
+    private async void PixelCmpBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pxOpen) { ClosePixelCompare(); return; }
+        await OpenPixelCompareAsync();
+    }
+
+    private async Task OpenPixelCompareAsync()
+    {
+        try
+        {
+            if (_effBusy) { await ShowPauseHintAsync("正在处理/预览中 —— 等这一段跑完再来做 1:1 对比。"); return; }
+            string? proc = _effOutPath, orig = _previewItem?.Path;
+            if (string.IsNullOrEmpty(proc) || !File.Exists(proc)
+                || string.IsNullOrEmpty(orig) || !File.Exists(orig))
+            {
+                await ShowPauseHintAsync("还没有处理结果 —— 先跑一次预览,再来看 1:1 对比。");
+                return;
+            }
+            _pxCx = _pxCy = 0.5;                       // 每次打开都从画面正中心起
+            PixelCmpPanel.Visibility = Visibility.Visible;
+            _pxOpen = true;
+            await RefreshPixelCompareAsync();
+        }
+        catch (Exception ex) { Log($"1:1 对比打开失败:{ex.Message}"); }
+    }
+
+    private async void PixelCmpRecap_Click(object sender, RoutedEventArgs e)
+    {
+        PixelCmpRecapBtn.IsEnabled = false;
+        try { await RefreshPixelCompareAsync(); }
+        finally { PixelCmpRecapBtn.IsEnabled = true; }
+    }
+
+    private void PixelCmpClose_Click(object sender, RoutedEventArgs e) => ClosePixelCompare();
+
+    private void ClosePixelCompare()
+    {
+        _pxOpen = false;
+        try { PixelCmpPanel.Visibility = Visibility.Collapsed; } catch { }
+        try { PixelCmpLeftImg.Source = null; PixelCmpRightImg.Source = null; } catch { }
+        foreach (var f in _pxTemps) { try { File.Delete(f); } catch { } }
+        _pxTemps.Clear();
+    }
+
+    private void PixelCmpCell_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        // 面板第一次显示时尺寸才从 0 变成真实值 ⇒ 尺寸到位后自动补取一次(否则会取到很小的图)
+        if (!_pxOpen || _pxCw > 0) return;
+        _ = RefreshPixelCompareAsync();
+    }
+
+    /// <summary>点画面任意位置 = 把那一处画面移到对比中心,然后重新取图。</summary>
+    private async void PixelCmp_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_pxOpen || _pxCw <= 0) return;
+        try
+        {
+            var p = e.GetCurrentPoint(PixelCmpArea).Position;
+            if (p.X < PixelCmpLeftCell.ActualWidth)
+            {
+                var lp = e.GetCurrentPoint(PixelCmpLeftCell).Position;
+                if (_pxOrigW <= 0 || _pxOrigH <= 0) return;
+                _pxCx = (_pxLx + lp.X) / _pxOrigW;
+                _pxCy = (_pxLy + lp.Y) / _pxOrigH;
+            }
+            else
+            {
+                var rp = e.GetCurrentPoint(PixelCmpRightCell).Position;
+                if (_pxProcW <= 0 || _pxProcH <= 0) return;
+                _pxCx = (_pxRx + rp.X) / _pxProcW;
+                _pxCy = (_pxRy + rp.Y) / _pxProcH;
+            }
+            _pxCx = Math.Clamp(_pxCx, 0, 1);
+            _pxCy = Math.Clamp(_pxCy, 0, 1);
+            await RefreshPixelCompareAsync();
+            e.Handled = true;
+        }
+        catch { }
+    }
+
+    /// <summary>按当前那一帧 + 当前区域中心,两侧各取一张 1:1 的原生像素裁切图。</summary>
+    private async Task RefreshPixelCompareAsync()
+    {
+        try
+        {
+            string? proc = _effOutPath, orig = _previewItem?.Path;
+            if (string.IsNullOrEmpty(proc) || string.IsNullOrEmpty(orig)) return;
+            double aw = PixelCmpLeftCell?.ActualWidth ?? 0, ah = PixelCmpLeftCell?.ActualHeight ?? 0;
+            if (aw < 48 || ah < 48) { await Task.Delay(140); aw = PixelCmpLeftCell?.ActualWidth ?? 0; ah = PixelCmpLeftCell?.ActualHeight ?? 0; }
+            if (aw < 48 || ah < 48) return;
+            var (ow, oh) = await VideoService.ProbeSizeAsync(orig);
+            var (pw, ph) = await VideoService.ProbeSizeAsync(proc);
+            if (ow <= 0 || oh <= 0 || pw <= 0 || ph <= 0) { Log("1:1 对比:取不到视频尺寸,已跳过"); return; }
+            // 区域大小 = 画面格大小(1:1 时正好铺满一格),但不能超过任一侧的原始尺寸
+            int cw = (int)Math.Min(aw, Math.Min(ow, pw)) & ~1;
+            int chh = (int)Math.Min(ah, Math.Min(oh, ph)) & ~1;
+            if (cw < 32 || chh < 32) { Log($"1:1 对比:画面格太小({aw:0}x{ah:0}),已跳过"); return; }
+            double abs = PixelCmpCurrentAbsSeconds();
+            double clipT = Math.Max(0, abs - _effStart);
+            string? lt = await CropFrameAsync(orig, abs, ow, oh, cw, chh, _pxCx, _pxCy);
+            string? rt = await CropFrameAsync(proc, clipT, pw, ph, cw, chh, _pxCx, _pxCy);
+            if (lt == null || rt == null)
+            {
+                if (lt != null) { try { File.Delete(lt); } catch { } }
+                if (rt != null) { try { File.Delete(rt); } catch { } }
+                Log("1:1 对比:取帧失败(ffmpeg 没能出图)");
+                return;
+            }
+            var lb = await LoadPngAsync(lt); var rb = await LoadPngAsync(rt);
+            if (lb == null || rb == null) { Log("1:1 对比:图片读入失败"); return; }
+            // 旧临时图先留着,新的挂上去之后再删(避免出现一瞬间的空白)
+            var old = _pxTemps.ToArray(); _pxTemps.Clear();
+            _pxTemps.Add(lt); _pxTemps.Add(rt);
+            foreach (var f in old) { try { File.Delete(f); } catch { } }
+            PixelCmpLeftImg.Source = lb; PixelCmpRightImg.Source = rb;
+            _pxOrigW = ow; _pxOrigH = oh; _pxProcW = pw; _pxProcH = ph;
+            _pxCw = cw; _pxCh = chh;
+            _pxLx = CropOrigin(_pxCx, ow, cw); _pxLy = CropOrigin(_pxCy, oh, chh);
+            _pxRx = CropOrigin(_pxCx, pw, cw); _pxRy = CropOrigin(_pxCy, ph, chh);
+            PixelCmpLeftTagText.Text = $"原片 {ow}×{oh} · 1:1";
+            PixelCmpRightTagText.Text = $"处理后 {pw}×{ph} · 1:1";
+            PixelCmpTime.Text = $"第 {EffTime(abs)} 处 · 每侧 {cw}×{chh} 像素 · 缩放倍率 {(double)pw / ow:0.##}×";
+            Log($"[1:1 对比] 第 {EffTime(abs)} 处:原片裁 {cw}×{chh}@{_pxLx},{_pxLy}(源 {ow}×{oh}) · "
+                + $"处理后裁 {cw}×{chh}@{_pxRx},{_pxRy}(源 {pw}×{ph}) —— 两侧均为原生像素 1:1,零重采样");
+        }
+        catch (Exception ex) { Log($"1:1 对比取图失败:{ex.Message}"); }
+    }
+
+    /// <summary>裁切原点(把区域中心放到给定归一化位置上;贴边时夹住,不留黑边)。</summary>
+    private static int CropOrigin(double center, int frameSize, int cropSize)
+    {
+        int v = (int)Math.Round(center * frameSize - cropSize / 2.0);
+        return Math.Max(0, Math.Min(Math.Max(0, frameSize - cropSize), v));
+    }
+
+    /// <summary>当前播放位置(原片时间轴,秒)。与「看原片 / 看处理效果」两个视图统一的原点换算一致:
+    /// 原片那条是整片时间轴,处理后那条是片段内时间轴(0 = _effStart)。</summary>
+    private double PixelCmpCurrentAbsSeconds()
+    {
+        double abs = _effStart;
+        try
+        {
+            // 【倒装】按"这个视图的角色播放器"读(原来写死 PreviewPlayer/EffectPlayer)
+            var el = _lastViewMode == ViewOriginal ? _srcPlayer : _resPlayer;
+            var es = el?.MediaPlayer?.PlaybackSession;
+            if (es != null) abs = _lastViewMode == ViewOriginal ? CmpPos(es) : _effStart + CmpPos(es);
+        }
+        catch { }
+        if (double.IsNaN(abs) || abs < 0) abs = _effStart;
+        return abs;
+    }
+
+    /// <summary>从视频里裁一块原生像素区域(不缩放),输出 PNG。失败返回 null。</summary>
+    private static async Task<string?> CropFrameAsync(string file, double ss, int fw, int fh,
+        int cw, int ch, double cx, double cy)
+    {
+        var ffmpeg = VideoService.FfmpegPath;
+        if (ffmpeg == null) return null;
+        int w = Math.Min(cw, fw) & ~1, h = Math.Min(ch, fh) & ~1;
+        if (w < 16 || h < 16) return null;
+        int x = CropOrigin(cx, fw, w), y = CropOrigin(cy, fh, h);
+        string tmp = Path.Combine(Path.GetTempPath(), "ALHPro", "preview", $"px1to1_{Guid.NewGuid():N}.png");
+        try { Directory.CreateDirectory(Path.GetDirectoryName(tmp)!); } catch { }
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        string args = $"-y -v error -ss {ss.ToString("0.###", inv)} "
+                    + $"-i \"{ALHPro.AudioService.FfmpegSafePath(file)}\" -frames:v 1 "
+                    + $"-vf \"crop={w}:{h}:{x}:{y}\" \"{ALHPro.AudioService.FfmpegSafePath(tmp)}\"";
+        await Task.Run(() =>
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = ffmpeg,
+                Arguments = args,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+            };
+            using var p = System.Diagnostics.Process.Start(psi);
+            if (p == null) return;
+            _ = p.StandardError.ReadToEndAsync();
+            p.WaitForExit();
+        });
+        if (!File.Exists(tmp) || new FileInfo(tmp).Length == 0) { try { File.Delete(tmp); } catch { } return null; }
+        return tmp;
+    }
+
+    private static async Task<BitmapImage?> LoadPngAsync(string path)
+    {
+        try
+        {
+            var bmp = new BitmapImage();
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read))
+                await bmp.SetSourceAsync(fs.AsRandomAccessStream());
+            return bmp;
+        }
+        catch { return null; }
     }
 
     private async void EffectRunBtn_Click(object sender, RoutedEventArgs e)
@@ -6740,6 +8573,7 @@ public sealed partial class VideoView : UserControl
                 // 【对比片】在这里后台开合成(用户要求:预览的合成放后台跑,主观等待 0 —— 不 await)。
                 // 用 lenSec(这次真正用的长度)而不是滑块当前值:滑块可能已经被拖到别处了。
                 StartCompareClipBuild(item.Path, outPath, startSec, lenSec);
+                WarmResultPlayer(outPath);   // 【倒装】顺手预装"看处理效果"那条 ⇒ 之后切过去零装载、不黑屏
                 PlayEffectResult(outPath);
                 // 【2026-09-18 用户明确要求:"处理完两视频都应该是开头的位置"】
                 // 实测(目标轮次3):预览刚完成时读数 = 00:02.0/00:02.0 —— 因为预览会自动播到底 ✗。
@@ -6766,10 +8600,34 @@ public sealed partial class VideoView : UserControl
     }
 
     /// <summary>
-    /// 后台合成对比片(两种布局都是"一条片 + 单播放器"):
-    ///   · 先合 **左右对比**(分割线 50%,默认视图,要最先好)
-    ///   · 再合 **两者同时**(整幅并排)
-    ///   · 之后常驻等"拖完分割线松手"的请求,按新位置重合成分割片(命中缓存直接秒切)
+    /// 「对比片还在后台合成」那句提示的**唯一出处**(2026-09-22 用户原话:「生成50画面的提示词该更新了」)。
+    ///
+    /// 【旧文案的两个毛病】`正在生成 {50}% 处的对比画面 {37}%`:
+    ///   ① 说的是"**生成画面**",可后台合成的其实是一条**对比片**(左原片 + 右处理后并排),
+    ///      用户看到会以为"画面本身在生成"、像是画质过程(用户就是把它读成"生成 50% 画面"的 ✗);
+    ///   ② 两个百分号紧挨着 —— `50%` 是**分界位置**、`37%` 是**合成进度**,分不清谁是谁 ✗。
+    ///
+    /// 【新文案的两条规矩】
+    ///   · 说清"给**哪个视角**合成的":整幅并排片只服务「两者同时」;分割片只在旧路径(遮罩没顶上)才需要;
+    ///   · 只留**一个**百分号(进度);"分界 50%"改成带单位的括号注解,不再和进度混在一起。
+    ///
+    /// 【为什么会有"左右对比片"这一支】正常路径下 `左右对比` 用**两个播放器实时裁切**,
+    ///   压根不需要合成片(见 StartCompareClipBuild 里 `if (false)` 那段留档);只有遮罩模式顶不上时
+    ///   才回退到"单播放器 + 分割合成片",那一支才需要这句文案 ⇒ 保留,但必须说清是它。
+    /// </summary>
+    private static string CompareBuildText(bool splitUi, double splitPct, int pct)
+        => splitUi
+            ? $"正在后台合成左右对比片(分界 {splitPct * 100:0}%)· 进度 {pct}%"
+            : $"正在后台合成「两者同时」的对比片 · 进度 {pct}%";
+
+    /// <summary>
+    /// 后台合成对比片。
+    /// 【2026-09-22 按代码改正了这段说明】原文写的是"两种布局都是'一条片 + 单播放器'…先合左右对比(50%)
+    /// 再合两者同时",**与代码已经不符**了(会误导后来人,也会让上面那句提示文案看起来"该有 50%"):
+    ///   · 「左右对比」现在用**两个播放器实时裁切**(遮罩),**不需要**任何合成片 ⇒ 默认**只合一条**:
+    ///   · 合的是 **整幅并排**(左原片 + 右处理后并排),只服务 **「两者同时」**(单播放器、一条时钟)。
+    ///   · "分割片(按 50% 分界烘焙)"是**旧路径**的产物,只在遮罩顶不上时才需要 ——
+    ///     合成循环里那段 `if (false)` 就是它,保留调用形态便于一行打开(见 §③ 的常驻循环)。
     /// 【为什么不 await】用户明确要求"预览的合成放后台跑,主观等待 0":预览一跑完就照旧播成片,
     /// 合成好了再无缝换成合成片。合成片**不在**预览/正式处理的耗时里(实测:预览"结束"那条日志之后才开始跑)。
     /// 【代数 _cmpClipGen】换预览/离开页面后旧任务必须作废:迟到的结果会把新一次的对比片覆盖掉。
@@ -6789,19 +8647,9 @@ public sealed partial class VideoView : UserControl
         _cmpClipPct = 0;
         lock (_cmpBakeLock) { _cmpBakePendingPct = -1; }
         Log($"对比片:开始后台合成({EffTime(startSec)} 起 {lenSec:0.#} 秒,左原片 + 右处理后 · 整幅并排(「左右对比」用两个播放器实时裁切,不需要合成片))");
-        var prog = new Progress<(int pct, string msg)>(t =>
-        {
-            if (gen != _cmpClipGen) return;
-            _cmpClipPct = Math.Clamp(t.pct, 0, 100);
-            if (_compareMode && !_cmpSingle && CmpBuildingLabel != null)
-            {
-                bool splitUi = (PreviewViewRadios?.SelectedIndex ?? 0) == ViewSplit;
-                CmpBuildingLabel.Text = splitUi
-                    ? $"正在生成 {(_compareSplit * 100):0}% 处的对比画面 {_cmpClipPct}%"
-                    : $"正在生成对比画面 {_cmpClipPct}%";
-                if (CmpBuildingText != null) CmpBuildingText.Visibility = Visibility.Visible;
-            }
-        });
+        // 【2026-09-22 删掉一段死代码】这里原来还有一个 `var prog = new Progress<...>` 回调,里面写着
+        // `正在生成 {(…):0}% 处的对比画面 {…}%` —— 实测**它从来没被用**(真正的回调在 BakeCompareClipAsync 里
+        // 自己建),留着只会让"那句旧文案"随时被复制回来 ✗。文案现在只从 CompareBuildText 一处出 ✔
         _ = Task.Run(async () =>
         {
             try { Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "ALHPro", "preview")); } catch { }
@@ -6937,9 +8785,9 @@ public sealed partial class VideoView : UserControl
             {
                 bool splitUi = (PreviewViewRadios?.SelectedIndex ?? 0) == ViewSplit;
                 if (layout == VideoService.CompareLayout.SplitLine && splitUi)
-                    CmpBuildingLabel.Text = $"正在生成 {(splitPct * 100):0}% 处的对比画面 {_cmpClipPct}%";
+                    CmpBuildingLabel.Text = CompareBuildText(true, splitPct, _cmpClipPct);
                 else if (layout == VideoService.CompareLayout.WholeFrames && !splitUi)
-                    CmpBuildingLabel.Text = $"正在生成对比画面 {_cmpClipPct}%";
+                    CmpBuildingLabel.Text = CompareBuildText(false, splitPct, _cmpClipPct);
                 if (CmpBuildingText != null) CmpBuildingText.Visibility = Visibility.Visible;
             }
         }));
@@ -7041,16 +8889,46 @@ public sealed partial class VideoView : UserControl
     private void PreviewSpaceAccel_Invoked(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender,
         Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
     {
+        args.Handled = true;
+        DoPreviewSpaceToggle();
+    }
+
+    /// <summary>【2026-09-19 用户实测:"处理期间按空格键就取消了 —— 不要选中取消按钮"】
+    /// 根因:只要焦点落在某个按钮上(比如刚点过「开始预览」,或处理期间「取消」可用),XAML 会**先把空格
+    /// 当成"按下这个按钮"** —— 加速键根本轮不到 ✗。所以这里在**隧道阶段**(PreviewKeyDown:从根往下走,
+    /// 比焦点元素的 KeyDown 更早)就把空格截下来,统一改道到"播放/暂停" ✔
+    /// 作用域只有预览/裁剪页这一层(处理器挂在 VideoPreviewOverlay 上);输入框里照旧是打字 ✔</summary>
+    private void VideoPreviewOverlay_PreviewKeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
         try
         {
+            if (e.Key != Windows.System.VirtualKey.Space) return;
+            if (Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement() is TextBox) return;   // 正在输入框里打字:把空格还给它
+            e.Handled = true;          // ← 关键:吃掉,按钮就收不到"空格=点击"了(不会误触发取消/开始/退出)
+            DoPreviewSpaceToggle();
+        }
+        catch { }
+    }
+
+    /// <summary>空格键的真正动作(两个入口共用:PreviewKeyDown 抢到的那次 + 加速键那条兜底)。
+    /// 【防重复】两条入口理论上只有一条生效,但若框架把空格的加速键也送到(不同版本行为有差异),
+    /// 就会"按一下切两次 = 等于没切"。所以 150ms 内的第二次调用直接忽略(人不可能故意连按两次)✔</summary>
+    private long _spaceToggleAt;
+
+    private void DoPreviewSpaceToggle()
+    {
+        try
+        {
+            long now = Environment.TickCount64;
+            if (now - _spaceToggleAt < 150) return;
+            _spaceToggleAt = now;
             if (VideoPreviewOverlay?.Visibility != Visibility.Visible) return;  // 预览/裁剪页没开就不管
             if (Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement() is TextBox) return;   // 正在输入框里打字
-            args.Handled = true;
             // 裁剪页只有一个播放器(原片),交给通用那条(它按 _barOnOriginal 选播放器)
             if (!_trimMode && _compareMode) { CmpPlayBtn_Click(this, new RoutedEventArgs()); return; }   // 对比视图:自绘播放键那套
             // 看原片 / 看处理效果:切当前可见的那条(倍率一并补回)
             bool origView = _trimMode || (PreviewViewRadios?.SelectedIndex ?? ViewOriginal) == ViewOriginal;
-            var mp = origView ? PreviewPlayer.MediaPlayer : EffectPlayer.MediaPlayer;
+            var mp = (origView ? _srcPlayer : _resPlayer)?.MediaPlayer;
             if (mp == null) return;
             var se = mp.PlaybackSession;
             if (se == null) return;
@@ -7089,9 +8967,8 @@ public sealed partial class VideoView : UserControl
             // (结果播放器,或者"当前在看的那个")—— 而「左右对比」是**两个播放器**(左原片 + 右处理片段),
             // 原片那条**从来没被设过** → 左边一直是原速。现在:对比模式下**两条都设**,一个都不能漏。
             ApplyCmpRateToAll(force: true);
-            var mp = _compareMode
-                ? EffectPlayer.MediaPlayer
-                : (_barOnOriginal ? PreviewPlayer.MediaPlayer : EffectPlayer.MediaPlayer);
+            // 【倒装】"当前在看的那个" = 这个视图的角色播放器(看原片 = 源文件条 / 看处理效果 = 成片条)
+            var mp = (_compareMode ? EffectPlayer : (_barOnOriginal ? _srcPlayer : _resPlayer))?.MediaPlayer;
             var se = mp?.PlaybackSession;
             if (mp == null || se == null)
             {
@@ -7180,17 +9057,24 @@ public sealed partial class VideoView : UserControl
                 }
             }
         }
-        else if (_barOnOriginal) ApplyCmpRate(PreviewPlayer?.MediaPlayer, force);
-        else ApplyCmpRate(EffectPlayer?.MediaPlayer, force);
+        else
+        {
+            // 【倒装】单视图:用**这个视图的字段**(看原片 = 源文件那条 / 看处理效果 = 成片那条)
+            var one = _barOnOriginal ? _srcPlayer : _resPlayer;
+            ApplyCmpRate(one?.MediaPlayer, force);
+        }
         ApplyMuteState();
-        // 【证据】用户报过"偶现左边不生效变速" —— 每次是他亲手点倍速键(force)就把两条播放器**读回来**记一行,
+        // 【证据】用户报过"偶现左边不生效变速" —— 每次是他亲手点倍速键(force)就把相关播放器**读回来**记一行,
         // 以后再有"左边没变"的反馈,直接看这行就知道是不是真没设上。
         if (force)
         {
             double r1 = -1, r2 = -1;
-            try { r1 = PreviewPlayer?.MediaPlayer?.PlaybackSession?.PlaybackRate ?? -1; } catch { }
-            try { r2 = EffectPlayer?.MediaPlayer?.PlaybackSession?.PlaybackRate ?? -1; } catch { }
-            AppLogger.Info($"[性能] 倍率落地:原片={r1:0.###} 处理后={r2:0.###}(目标 {_cmpRate:0.###};静音={_previewMuted || _cmpRate < 0.999})");
+            try { r1 = _srcPlayer?.MediaPlayer?.PlaybackSession?.PlaybackRate ?? -1; } catch { }
+            try { r2 = _resPlayer?.MediaPlayer?.PlaybackSession?.PlaybackRate ?? -1; } catch { }
+            double rc = -1;
+            try { rc = EffectPlayer?.MediaPlayer?.PlaybackSession?.PlaybackRate ?? -1; } catch { }
+            AppLogger.Info($"[性能] 倍率落地:源文件条({ElName(_srcPlayer)})={r1:0.###} 成片条({ElName(_resPlayer)})={r2:0.###} "
+                         + $"合成片条={rc:0.###}(目标 {_cmpRate:0.###};视图={_lastViewMode};静音={_previewMuted})");
         }
         // 【埋点】把"应用倍率/静音"这一步的耗时记下来:如果它在切视图那条路上是几百毫秒,它就是那 0.9 秒的真凶
         swRate.Stop();
@@ -7206,8 +9090,26 @@ public sealed partial class VideoView : UserControl
     private void ApplyMuteState()
     {
         bool wantMute = _previewMuted;
-        try { if (PreviewPlayer?.MediaPlayer != null) PreviewPlayer.MediaPlayer.IsMuted = wantMute; } catch { }
-        try { if (EffectPlayer?.MediaPlayer != null) EffectPlayer.MediaPlayer.IsMuted = wantMute; } catch { }
+        // 【倒装 · 静音纪律只有这一处】倒装后共有四个播放器,而且"不在这个视图里的那一对"仍在继续播
+        // (只暂停"另一对";同一对里藏起来的那条继续播以保持时间线一致)⇒ 必须保证**只有一条出声**:
+        //   · 出声的那条 = 当前视图的"主那条":看原片→源文件那条、看处理效果→成片那条、
+        //     两者同时/左右对比→合成片那条(EffectPlayer)、裁剪页→PreviewPlayer;
+        //   · 其余三条一律静音 ✔(老代码用 mode==ViewOriginal / else 两分支手工静音,倒装后按"主那条"统一收口)
+        MediaPlayerElement? audioEl = _trimMode
+            ? PreviewPlayer
+            : (_compareMode ? EffectPlayer : (_barOnOriginal ? _srcPlayer : _resPlayer));
+        foreach (var el in new[] { PreviewPlayer, EffectPlayer, CmpPlayerTop, CmpPlayerBottom })
+        {
+            if (el == null) continue;
+            try
+            {
+                var mp = el.MediaPlayer;
+                if (mp == null) continue;
+                bool isAudio = ReferenceEquals(el, audioEl);
+                mp.IsMuted = isAudio ? wantMute : true;
+            }
+            catch { }
+        }
         try
         {
             if (CmpMuteIcon != null)
@@ -7241,15 +9143,34 @@ public sealed partial class VideoView : UserControl
     /// <param name="force">true = 用户刚点了倍速键,即使值相同也落一次(极少数情况下播放器自己把速率复位了)。</param></summary>
     private void ApplyCmpRate(Windows.Media.Playback.MediaPlayer? mp, bool force = false)
     {
+        long t0 = Environment.TickCount64;
         try
         {
             var se = mp?.PlaybackSession;
             if (se == null) return;
             double now = 1.0;
             try { now = se.PlaybackRate; } catch { }
-            if (!force && Math.Abs(now - _cmpRate) < 0.001) return;   // 已经是这个速率:什么都不做(快就是靠这一条)
-            if (Math.Abs(_cmpRate - 1.0) < 0.001) { se.PlaybackRate = 1.0; return; }
-            if (se.IsSupportedPlaybackRateRange(_cmpRate, _cmpRate)) se.PlaybackRate = _cmpRate;
+            if (!force && Math.Abs(now - _cmpRate) < 0.001)
+            {
+                // 【2026-09-21 埋点】"跳过"也要记一笔:否则日志里看不出"这条路到底有没有写速率",
+                // 而"起播时写一次速率的代价"正是本轮"按下播放要等一下画面才动"的首要嫌疑(见下)。
+                _rateSkip++;
+                return;   // 已经是这个速率:什么都不做(快就是靠这一条)
+            }
+            // 【2026-09-21 埋点:把"写速率"这一下的代价量出来】
+            // 已知事实(本文件多处记过、也实测过):**给 MediaPlayer 设 PlaybackRate 会让它重新配置播放管线**,
+            // 换一次倍率画面冻结实测 ~455 ms(两条顺序下发时每条约 225 ms)。而起播路上每一支都先调
+            // ApplyCmpRateToAll(false) 再 Play() ⇒ 一旦这里真的写了一次,那一下**就发生在 Play() 之前**,
+            // 表现就是用户说的"按下播放要等一下画面才动",而且四个视图都有(因为四支都调它)。
+            // 所以这一行日志要回答的就是:起播路上**写没写**、**写了几毫秒**。
+            double before = now;
+            if (Math.Abs(_cmpRate - 1.0) < 0.001) se.PlaybackRate = 1.0;
+            else if (se.IsSupportedPlaybackRateRange(_cmpRate, _cmpRate)) se.PlaybackRate = _cmpRate;
+            else return;   // 不支持该速率:不算写入
+            _rateWrites++;
+            AppLogger.Info($"[性能] 倍率写入 {MpName(mp)} {before:0.###}→{_cmpRate:0.###} · 写耗时 "
+                + $"{Environment.TickCount64 - t0} ms · 起播累计 {(_playWatch ? Environment.TickCount64 - _playT0 : -1)} ms"
+                + $" ← 这一下会让媒体管线重定时(实测换倍率冻结 ~455ms);若它落在起播路上,就是「要等一下」的来源");
         }
         catch { }
     }
@@ -7267,6 +9188,73 @@ public sealed partial class VideoView : UserControl
             Set(CmpRate8Btn, 0.125);
         }
         catch { }
+    }
+
+    /// <summary>
+    /// 【倒装】装片后的"等媒资打开"机械化处理 —— 给单视图那对专用播放器(CmpPlayerTop/Bottom)用。
+    /// 【真机踩坑】自动切视图时播放器可能还没被创建出来(`MediaPlayerElement.MediaPlayer` 为 null),
+    /// 老代码直接 return ⇒ 表现就是"装了却没播 / 画面一直不动"。这里轮询等它建出来(最多约 2 秒)。
+    /// 【为什么不在这里 seek/播】位置与播放状态**统一由 TransferTimelineAcrossViewSwitchAsync 负责** ——
+    /// 单一机制,才不会出现"两处各 seek 一次、互相打架"(那正是老代码里 3559 ms 那一类问题的温床)。
+    /// </summary>
+    private void StartPlaybackWhenReady(MediaPlayerElement el, string path, int tries, long gen)
+    {
+        try
+        {
+            if (gen != _viewGen) return;      // 连点视图切换:上一轮一律作废
+            var mp = el.MediaPlayer;
+            if (mp == null)
+            {
+                if (tries < 14)
+                {
+                    var t = DispatcherQueue.CreateTimer();
+                    t.Interval = TimeSpan.FromMilliseconds(150);
+                    t.IsRepeating = false;
+                    t.Tick += (_, _) => StartPlaybackWhenReady(el, path, tries + 1, gen);
+                    t.Start();
+                }
+                return;
+            }
+            Windows.Foundation.TypedEventHandler<Windows.Media.Playback.MediaPlayer, object>? h = null;
+            h = (_, _) =>
+            {
+                try { if (h != null) mp.MediaOpened -= h; } catch { }
+                try
+                {
+                    if (gen != _viewGen) return;
+                    ApplyCmpRateToAll(false);   // 换片后播放器速率会复位成 1.0 ⇒ 把用户选的那档补回 ✔
+                    EnsureBarSync();            // 新的 PlaybackSession 要重订,否则播放条停在 0:00
+                    Log($"[倒装] {ElName(el)} 已打开媒体:{Path.GetFileName(path)}");
+                }
+                catch { }
+            };
+            mp.MediaOpened += h;
+            try { mp.MediaFailed -= EffMediaFailed; mp.MediaFailed += EffMediaFailed; } catch { }
+            EnsureBarSync();   // MediaPlayer 现在才存在 ⇒ 补订播放条回调(否则播放条永远不刷新)
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// 【倒装 · 关键】预览一跑出结果就**顺手把成片预装**到「看处理效果」那条专用播放器上(隐藏、暂停)。
+    /// 为什么必须预装:否则用户第一次切到「看处理效果」时那条播放器才去开媒体 ⇒ 又变成
+    /// "切过去黑屏卡 3.5 秒"(那正是用户报的那个症状)。预装发生在后台合成/播放对比片的同时,
+    /// 用户看到的是"切过去立刻就有画面" ✔
+    /// </summary>
+    private void WarmResultPlayer(string? path)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path)) return;
+            if (string.Equals(_resLoadedPath, path, StringComparison.OrdinalIgnoreCase)) return;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            CmpPlayerBottom.Source = MediaSource.CreateFromUri(new Uri(path));
+            _resLoadedPath = path;
+            StartPlaybackWhenReady(CmpPlayerBottom, path, 0, _viewGen);
+            sw.Stop();
+            Log($"[性能] 预装结果播放器(看处理效果专用)耗时 {sw.ElapsedMilliseconds} ms —— 目的:切「看处理效果」零装载");
+        }
+        catch (Exception ex) { AppLogger.Warn("预装结果播放器失败(切过去会按需再装):" + ex.Message); }
     }
 
     /// <summary>
@@ -7333,17 +9321,197 @@ public sealed partial class VideoView : UserControl
     /// 【2026-09-17 用户反馈:左边比右边早 0.几秒】根因就是原来"设一次位置 + 死等 350ms 就播",
     /// 那次 seek 没落地就播起来了 → 留下一个恒定偏移。这里改成"读回来确认到位"再继续,偏移就没有了。
     /// </summary>
+    /// <summary>重播:两条都定位到 0 并**校验**落地后,再一起起播。
+    /// 【为什么不能裸设 Position】2026-09-19 用户报"重播后偶尔不协调",日志证据:
+    /// 紧跟着出现"漂移 -1282 ms"(片段总长才 2 秒)⇒ seek 未落地就 Play,一条从头、另一条还在片尾 ✗</summary>
+    private async Task ReplayFromStartAsync()
+    {
+        try
+        {
+            var e = EffectPlayer?.MediaPlayer;
+            var o = PreviewPlayer?.MediaPlayer;
+            try { e?.Pause(); } catch { }
+            try { o?.Pause(); } catch { }
+            if (e != null) await SeekAndVerifyAsync(e, 0, 6).ConfigureAwait(true);
+            if (o != null) await SeekAndVerifyAsync(o, 0, 6).ConfigureAwait(true);
+            ApplyCmpRateToAll(false);            // 起播前把用户倍率补到两条(同一个值)✔
+            SetCmpPlayGlyph(true);
+            try { o?.Play(); } catch { }
+            try { e?.Play(); } catch { }
+            Log("[对比] 片尾点播放:两条已归零并校验落地,一起重播 ✔");
+            PlayWatchAfterApiCall();
+            ShowCompareBarTemporarily();
+        }
+        catch (Exception ex) { Log($"重播失败:{ex.Message}"); }
+    }
+
+    /// <summary>高分辨率素材的预览负载提示(红字,用户要求)。
+    /// 【为什么值得提示】预览同时要"大分辨率解码"(合成片/成片可达 4K~8K),分辨率越大越容易掉帧卡顿,
+    /// 用户会把"卡"当成软件坏了 ✗ —— 说清楚"为什么卡 + 怎么办"比让用户猜强 ✔
+    /// 判定用**源素材分辨率**(列表项里已经带着,不必再探测文件);处理成片是 8K 时也单独提示 ✔
+    /// 只提示、不弹窗、不挡操作、不改任何处理行为 ✔</summary>
+    private void UpdatePreviewLoadWarn()
+    {
+        try
+        {
+            if (PreviewLoadWarn == null) return;
+            int w = 0, h = 0;
+            var m = System.Text.RegularExpressions.Regex.Match(_previewItem?.BaseInfo ?? "", @"(\d{3,5})\s*[×x]\s*(\d{3,5})");
+            if (m.Success)
+            {
+                int.TryParse(m.Groups[1].Value, out w);
+                int.TryParse(m.Groups[2].Value, out h);
+            }
+            string? txt = null;
+            if (w >= 3840)
+                txt = $"⚠ 素材 {w}×{h}(4K 以上):预览要解码这么大的画面,容易掉帧/卡顿(慢放、4x 超分时更明显)。建议用 2x 预览,看细节用「1:1 对比」";
+            else if (w >= 2560)
+                txt = $"⚠ 素材 {w}×{h} 分辨率偏高:预览解码负载较高,慢放时可能卡顿。建议用 2x,细节用「1:1 对比」看";
+            else if ((_cmpOutSpec ?? "").Contains("7680"))
+                txt = "⚠ 处理后是 8K(7680 宽):解码负载很高,可能卡顿。建议预览用 2x,细节用「1:1 对比」看";
+            // 【2026-09-19 · 审计落地】HDR/10bit 素材:让用户在界面上就知道"会被转成 SDR(有损)"✔
+            try
+            {
+                var csum = VideoService.LastSourceColorSummary;
+                if (!string.IsNullOrEmpty(csum))
+                {
+                    string hdr = $"⚠ 本素材是 {csum} —— 成片与预览会转成 SDR 8bit(自动色调映射,这一步是有损的):颜色/亮度看起来会与源不同,属预期行为";
+                    txt = string.IsNullOrEmpty(txt) ? hdr : hdr + "；" + txt;
+                }
+            }
+            catch { }
+            PreviewLoadWarn.Text = txt ?? "";
+            PreviewLoadWarn.Visibility = string.IsNullOrEmpty(txt) ? Visibility.Collapsed : Visibility.Visible;
+        }
+        catch { }
+    }
+
+    // ==================== 「两者同时」= 两个播放器各播各的文件(方案 B,2026-09-19 用户拍板) ====================
+    // 【与旧做法的区别】旧的是一条**烘焙好的并排合成片**(处理后那侧被重采样+重编码一代 ✗);
+    // 现在:左 = **原片文件**、右 = **处理成片**,各自原生像素、各自解码 ⇒ 省掉那一代损失 ✔
+    // 【必须说清的边界(已跟用户讲过)】并排时每侧只占画面区一半宽(实测约 775px),
+    //   所以屏幕上"看起来"的清晰度上限由**窗口宽度**决定,不会因为这条改动而变成 4K 那么锐 ✗ ——
+    //   要看真像素仍然用「1:1 对比」✔
+    // 【为什么用布局切半幅而不是设裁切】视频面(SwapChainPanel)对裁切有脾气(本文件多处记录过)✗;
+    //   把主机的宽度直接设成半幅、左右对齐 ⇒ 天然不越界、零裁切、最稳 ✔
+    private bool _twoFileBoth;                  // 当前是否处于"两个文件并排"形态
+    private bool _twoFileWant;
+    private string? _twoFileSrc, _twoFileProc;
+
+    private void SetTwoFileBoth(bool on)
+    {
+        try
+        {
+            if (!on)
+            {
+                if (!_twoFileBoth) return;
+                _twoFileBoth = false;
+                try
+                {
+                    foreach (var h in new[] { PreviewPlayerHost, EffectPlayerHost })
+                    {
+                        if (h == null) continue;
+                        h.Width = double.NaN; h.Height = double.NaN;
+                        h.HorizontalAlignment = HorizontalAlignment.Stretch;
+                        h.VerticalAlignment = VerticalAlignment.Stretch;
+                        h.Margin = new Thickness(0);
+                        h.Clip = null;
+                    }
+                }
+                catch { }
+                ApplyPlayerClip();     // 交回原有逻辑
+                return;
+            }
+            if (string.IsNullOrEmpty(_twoFileSrc) || string.IsNullOrEmpty(_twoFileProc)) return;
+            if (!File.Exists(_twoFileSrc) || !File.Exists(_twoFileProc)) return;
+            // 装载(只在"源真的不同"时装,避免每次布局刷新都重装 → 那正是之前卡 1 秒的原因 ✗→✔)
+            if (!string.Equals(_previewLoadedPath, _twoFileSrc, StringComparison.OrdinalIgnoreCase))
+            {
+                PreviewPlayer.Source = Windows.Media.Core.MediaSource.CreateFromUri(new Uri(_twoFileSrc));
+                _previewLoadedPath = _twoFileSrc;
+            }
+            if (!string.Equals(_effLoadedPath, _twoFileProc, StringComparison.OrdinalIgnoreCase))
+            {
+                LoadEffectSource(_twoFileProc, 0, false);
+                _effLoadedPath = _twoFileProc;
+            }
+            try
+            {
+                PreviewPlayerHost.Visibility = Visibility.Visible;
+                EffectPlayerHost.Visibility = Visibility.Visible;
+                foreach (var pl in new[] { PreviewPlayer, EffectPlayer })
+                {
+                    pl.Width = double.NaN; pl.Height = double.NaN;
+                    pl.Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform;   // 各自在自己的半幅里完整显示 ✔
+                }
+            }
+            catch { }
+            _twoFileBoth = true;
+            ApplyTwoFileLayout();
+            Log($"[两者同时·两文件] 左=原片({Path.GetFileName(_twoFileSrc)}) 右=处理后({Path.GetFileName(_twoFileProc)})"
+                + " —— 各自原生像素、各自解码,不再经过烘焙合成片");
+        }
+        catch (Exception ex) { Log($"两者同时·两文件启用失败,退回合成片:{ex.Message}"); _twoFileBoth = false; }
+    }
+
+    /// <summary>把两个播放器分别放进左右半幅(用布局,不用裁切 ⇒ 不碰视频面的裁切路径)✔</summary>
+    private void ApplyTwoFileLayout()
+    {
+        if (!_twoFileBoth) return;
+        try
+        {
+            double aw = PlayerArea?.ActualWidth ?? 0, ah = PlayerArea?.ActualHeight ?? 0;
+            if (aw < 80 || ah < 40) return;
+            double half = Math.Floor(aw / 2);
+            if (PreviewPlayerHost != null)
+            {
+                PreviewPlayerHost.Width = half; PreviewPlayerHost.Height = ah;
+                PreviewPlayerHost.HorizontalAlignment = HorizontalAlignment.Left;
+                PreviewPlayerHost.VerticalAlignment = VerticalAlignment.Top;
+                PreviewPlayerHost.Margin = new Thickness(0);
+                PreviewPlayerHost.Clip = null;      // 不裁切(宽度已限定在半幅内)✔
+            }
+            if (EffectPlayerHost != null)
+            {
+                EffectPlayerHost.Width = half; EffectPlayerHost.Height = ah;
+                EffectPlayerHost.HorizontalAlignment = HorizontalAlignment.Left;
+                EffectPlayerHost.VerticalAlignment = VerticalAlignment.Top;
+                EffectPlayerHost.Margin = new Thickness(half, 0, 0, 0);   // 靠右半幅
+                EffectPlayerHost.Clip = null;
+            }
+            // 中缝那条线 = 边界(固定,不参与任何缩放/拖动)✔
+            if (CompareSplitter != null)
+            {
+                CompareSplitter.Visibility = Visibility.Visible;
+                CompareSplitter.Margin = new Thickness(Math.Round(half) - (CompareSplitter.Width / 2), 0, 0, 0);
+            }
+        }
+        catch { }
+    }
+
+    /// <summary>把"裁切"按当前分割比例落到两个主机上(遮罩模式:上层露左半,下层露右半)。</summary>
     private static async Task SeekAndVerifyAsync(Windows.Media.Playback.MediaPlayer? mp, double seconds, int maxTries = 8)
     {
         if (mp == null) return;
         try
         {
             var se = mp.PlaybackSession;
+            // 【2026-09-22 自测逮到:这里原来每轮固定 `await Task.Delay(120)` ✗】
+            // ⇒ **每一次"校验式定位"都至少 120 ms**,哪怕它 5 ms 就落地了。两个后果:
+            //   ① 片尾重播 = 两次顺序校验 ⇒ 理论 ≥240 ms,与实测 **235 ms 吻合** ⇒ 用户感觉到的
+            //      "按下播放要等一下"主要就是**这个睡眠**,不是定位本身慢;
+            //   ② 更糟的是它**污染了所有测量**:日志里 `切视图对齐 … 耗时 120/121 ms`、以及我上一份报告里
+            //      "一次定位约 120ms" 的结论,量到的都是这个常数 ✗ —— 真实定位耗时从来没被测到过。
+            // 现在改成**短轮询 15 ms**:落地就立刻返回;重新下发 Position 的节奏仍是每 120 ms(与改前一致,
+            // 避免疯狂重设位置刷爆管线);总预算 maxTries × 120 ms 逐字不变 ⇒ **最坏情况与改前一样,只快不慢**。
             for (int i = 0; i < maxTries; i++)
             {
                 try { se.Position = TimeSpan.FromSeconds(Math.Max(0, seconds)); } catch { }
-                await Task.Delay(120);
-                try { if (Math.Abs(se.Position.TotalSeconds - seconds) < 0.06) return; } catch { }
+                for (int p = 0; p < 8; p++)   // 15ms × 8 = 120ms(与改前每轮的总等待逐字相同)
+                {
+                    await Task.Delay(15);
+                    try { if (Math.Abs(se.Position.TotalSeconds - seconds) < 0.06) return; } catch { }
+                }
             }
         }
         catch { }
@@ -7391,6 +9559,9 @@ public sealed partial class VideoView : UserControl
         // 单播放器对比:装片完成后才定位/起播(装的同时 seek 会被播放器吞掉)
         if (_cmpSingle) { _ = PositionEffectAndPlayAsync(); return; }
         if (_compareMode) { _ = AlignAndPlayAsync(); return; }
+        // 【倒装】走到这里说明"这条是合成片那条(EffectPlayer),但用户已经切到单视图了" ——
+        // 那一对此刻必须是暂停的(否则四路解码),所以**不要**把藏起来的那条播起来 ✔
+        if (!_compareMode) return;
         try
         {
             var mp = EffectPlayer.MediaPlayer;
@@ -7517,6 +9688,10 @@ public sealed partial class VideoView : UserControl
     {
         try { EffectPlayer.MediaPlayer?.Pause(); } catch { }
         try { EffectPlayer.Source = null; } catch { }
+        // 【倒装】「看处理效果」那条专用播放器也要松手:成片临时文件马上就被删了(否则播放器占着已删文件)
+        try { CmpPlayerBottom?.MediaPlayer?.Pause(); } catch { }
+        try { if (CmpPlayerBottom != null) CmpPlayerBottom.Source = null; } catch { }
+        _resLoadedPath = null;
         EffectPlayerHint.Visibility = Visibility.Visible;
         EffectProgress.Value = 0;
         _effHasResult = false;
@@ -7634,8 +9809,12 @@ public sealed partial class VideoView : UserControl
     {
         try { PreviewPlayer.AreTransportControlsEnabled = false; } catch { }
         try { EffectPlayer.AreTransportControlsEnabled = false; } catch { }
+        try { CmpPlayerTop.AreTransportControlsEnabled = false; } catch { }
+        try { CmpPlayerBottom.AreTransportControlsEnabled = false; } catch { }
         try { PreviewPlayer.TransportControls.Visibility = Visibility.Collapsed; } catch { }
         try { EffectPlayer.TransportControls.Visibility = Visibility.Collapsed; } catch { }
+        try { CmpPlayerTop.TransportControls.Visibility = Visibility.Collapsed; } catch { }
+        try { CmpPlayerBottom.TransportControls.Visibility = Visibility.Collapsed; } catch { }
         try { _previewCtrlTimer?.Stop(); } catch { }
     }
 
@@ -8480,11 +10659,17 @@ public sealed partial class VideoView : UserControl
             // waifu2x(界面第二项):从模型下拉 Tag 读模型名(默认 models-cunet)
             _ => ("waifu2x", SelModel(VideoWaifu2xModelCombo, "models-cunet")),
         };
+        // 【Rev10】「现实 · 1x 修复」**不是真模型**:它内部用自训的 alhreal2x 按 2x 跑再缩回原尺寸
+        //   ⇒ 下发给引擎的必须是真正的权重名(alhpro-real2x),否则引擎会去找一个不存在的模型
+        //     (找不到权重时 exit=0、只出坏帧 —— 本仓库踩过)。
+        if (model == AlhPro.Core.Upscale1x.RealTag)
+            model = AlhPro.Core.Upscale1x.RealEngineModel;
         // 视频降噪由现有「启用视频降噪 + 强度(弱/中/强)」统一驱动,不再单开一个 waifu2x 专用下拉(割裂):
         // waifu2x 引擎 → 强弱档直接当它的自带降噪 -n(模型更对症、不额外耗时);
         // 其它情况 → 拆帧阶段 nlmeans。映射与执行都在 VideoService 里完成。
-        // 倍率:0=1x超分(2x放大后缩回) 1=2x 2=3x 3=4x 4=自定义分辨率
+        // 倍率:0=1x 修复(Anime4K,不变尺寸) 1=2x 2=3x 3=4x 4=自定义分辨率
         bool upscaleShrink1x = false;
+        bool anime4k1x = false;   // 1x 修复档:走 Anime4K 着色器(探测通过才置 true,见下方 RunBatchAsync 里的探测)
         var scale = VideoScaleRadios.SelectedIndex switch
         {
             1 => 2,
@@ -8496,7 +10681,9 @@ public sealed partial class VideoView : UserControl
         var customRes = false;
         if (VideoScaleRadios.SelectedIndex == 0)
         {
-            // 1x超分:输出尺寸不变,但内部先 2x 超分再缩回 1x(画质比直接放大更好)
+            // 【2026-09-21 用户定案】1x 档从「2x 放大后缩回」整体换成 **Anime4K 修复**(原分辨率修复+锐化,不放大)。
+            // 这里先按"回退行为"打底(upscaleShrink1x=true):探测通过时会在 RunBatchAsync 里翻成 anime4k1x=true,
+            // 探测不过就保持旧的 2x-缩回 —— 这样"没 Vulkan 的机器"不会整批失败,也不会什么都没做。
             upscaleShrink1x = true;
         }
         else if (VideoScaleRadios.SelectedIndex == 4)
@@ -8557,9 +10744,18 @@ public sealed partial class VideoView : UserControl
         var dedupPanOn = false;
         var dedupAnimeThr = 0.0;   // 动漫模式已改为"一拍N"预设,SSIM 强度档已废弃
         var dedupThreshold = DedupSceneSlider.Value;   // 手动-scene 阈值(其他算法忽略)
-        // 【转场识别只留勾选框(2026-09-15)]阈值滑块已删:非 null = 已勾选(交给处理端开启切点保护),
-        // 数值用内置常量(判据本身用的是 Core.SceneCutJudge 的内置阈值,这个数只在回退 ffmpeg scene 时用到)。
-        double? sceneThreshold = SceneCheck.IsChecked == true && interp ? SceneThresholdBuiltIn : null;
+        // 【2026-09-21 用户要求:滑块加回来、并且**真的生效**】勾上「转场识别」时把这一组选项交给处理端:
+        //   · Threshold = 滑块值(0.15~0.90)→ 由 Core.SceneThresholdMap 换算成帧差/拉普拉斯判据
+        //     (默认档 0.30 逐字等于原来的内置值 ⇒ 不拉滑块行为不变)。
+        //   (原先这一组里还有 `MergeShortSegments` = 「最短补帧段 60 帧」勾选框 —— 2026-09-22 用户裁决整块撤掉。)
+        // 打包成一个具名记录(而不是裸 double)的理由见 AlhPro.Core.SceneCutOptions 的类注释:
+        // 这条链上的选项会成组变化,别再往那个六十多参数的签名里塞裸形参。
+        // 值先过 Snap(吸附到刻度两位小数):Slider 会把值算成 0.30000000000000004 这种带浮点尾巴的数,
+        // 不吸附就命中不了"默认档 = 内置判据"那条契约。
+        var sceneThresholdNow = AlhPro.Core.SceneThresholdMap.Snap(SceneSlider.Value);
+        AlhPro.Core.SceneCutOptions? sceneCut = SceneCheck.IsChecked == true && interp
+            ? new AlhPro.Core.SceneCutOptions(sceneThresholdNow)
+            : null;
         double? timeStep = null;   // 时间步功能已移除(引擎目录模式下 -s 无效),补帧用引擎默认时间步
         var tta = TtaCheck.IsChecked == true;
         if (!interp) targetFps = null;   // 指定输出帧率只在补帧时有意义(与去重可单独用不同)
@@ -8626,6 +10822,46 @@ public sealed partial class VideoView : UserControl
                 await tcs.Task;
             }
         }
+        // ===== 【1x 修复 · 2026-09-21 Rev10】1x 档现在有**两个**模型条目(用户:"1x 也是可以选模型 加一个现实的1x模型")=====
+        //   · 动漫 · Anime4K 修复  ⇒ 跑 libplacebo 着色器(不变尺寸;超分阶段跳过,最快)
+        //   · 现实 · 1x 修复      ⇒ 用自训的 alhreal2x 按 2x 跑,再缩回原尺寸(干净素材上实测更接近原片)
+        // Anime4K 要先探一次:探不过(缺 Vulkan/libplacebo)就**自动改用「现实 · 1x 修复」**并写日志
+        // (那条路只用引擎、不依赖 Vulkan 着色器)⇒ 缺 Vulkan 的机器一样能用 1x,不会整批失败。
+        if (VideoScaleRadios.SelectedIndex == 0 && up)
+        {
+            string m1x = (VideoEsrganModelCombo.SelectedItem as Microsoft.UI.Xaml.Controls.ComboBoxItem)?.Tag as string ?? "";
+            bool wantAnime4k = AlhPro.Core.Upscale1x.UsesAnime4kShader(m1x);
+            if (wantAnime4k && await EngineService.EnsureAnime4kProbeAsync(cts.Token))
+            {
+                anime4k1x = true;
+                upscaleShrink1x = false;
+                try { Log($"1x 修复:{AlhPro.Core.Anime4k.DisplayName} 着色器可用 ⇒ 本批在原分辨率做修复+锐化(不放大、不缩回)"); } catch { }
+            }
+            else
+            {
+                anime4k1x = false;
+                upscaleShrink1x = true;    // ← "现实 · 1x 修复"这条路:2x 超分(alhreal2x)后缩回,与用户选的那支无关
+                if (wantAnime4k)
+                {
+                    // Anime4K 不可用 ⇒ 模型框里选到 1x 条目就自动切到"现实 · 1x 修复"(同样是 1x、但不依赖 Vulkan)
+                    var tcs = new System.Threading.Tasks.TaskCompletionSource();
+                    _ = DispatcherQueue.TryEnqueue(() =>
+                    {
+                        try
+                        {
+                            for (int i = 0; i < VideoEsrganModelCombo.Items.Count; i++)
+                                if ((VideoEsrganModelCombo.Items[i] as Microsoft.UI.Xaml.Controls.ComboBoxItem)?.Tag as string
+                                    == AlhPro.Core.Upscale1x.RealTag)
+                                { VideoEsrganModelCombo.SelectedIndex = i; break; }
+                        }
+                        finally { tcs.TrySetResult(); }
+                    });
+                    await tcs.Task;
+                    try { Log("⚠ 本机 Anime4K 着色器不可用(需要可用的 Vulkan 显卡/libplacebo)⇒ 1x 已自动改用「" + AlhPro.Core.Upscale1x.RealMenuText + "」"); } catch { }
+                }
+            }
+            scaleLabel = anime4k1x ? "1x(Anime4K 修复)" : "1x(现实修饰·2x缩回)";
+        }
         // ===== 参数快照(关键):处理中切换界面【不影响本批】——以下全部在开始时一次性读取,
         // 循环/ProcessOneAsync 只使用快照变量;不这样做,处理中改编码/后处理/VFR 等会
         // 让批内后面的视频悄悄用新值(批级日志与实际不符)。
@@ -8636,9 +10872,10 @@ public sealed partial class VideoView : UserControl
         var fpsBaseNow = 2;
         var outExtNow = FormatCombo.SelectedIndex == 1 ? ".mkv" : ".mp4";
         var muteNow = MuteCheck.IsChecked == true;
-        var mblurNow = MotionBlurCombo.SelectedIndex;
-        var deshakeNow = DeShakeCheck.IsChecked == true;
-        var vdenoiseNow = DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex + 1 : 0;
+        // 【2026-09-21 果冻修复整块已删】原先这里有两个快照 `mblurNow` / `deshakeNow`,以及下面那条
+        // 「果冻修复:运动模糊弱/画面去抖(CPU 逐帧滤镜…)」的日志行。功能删除后它们一并删除 ——
+        // 日志里也不再出现"果冻/去抖"字样(验收判据之一:老设置文件启动一次,日志里不该再有这些参数行)。
+        var vdenoiseNow = DenoiseToggle.IsChecked == true ? AlhPro.Core.DenoiseStrengthOrder.ToPipeline(DenoiseStrengthIndex()) : 0;
         var denoiseKindNow = DenoiseKindCombo?.SelectedIndex ?? 0;   // 0=两者 1=仅空间 2=仅时间
         var qualityNow = QualityCombo.SelectedIndex == 5 ? 0 : QualityCombo.SelectedIndex;
         var fastNow = FastModeCheck.IsChecked == true;
@@ -8653,9 +10890,11 @@ public sealed partial class VideoView : UserControl
         // 按**源素材探测**(item.IsVfr)决定,不再有用户开关。
         int postSP = (int)SharpenSlider.Value, postCL = (int)ClaritySlider.Value, postUM = (int)UsmSlider.Value,
             postDT = (int)DetailSlider.Value, postDB = 0,
-            postAA = (int)PostAaSlider.Value,
+            // 【边缘抗锯齿滑条已删(2026-09-19)】恒 0:视频页不再有这一档(实测肉眼不可见而 4K 每帧仍要
+            // 27~35ms)。这里保留同名局部量,流水线签名与"后处理指纹"的口径都不用改(最小改动)。
+            postAA = 0,
             postEdge = (int)PostEdgeSlider.Value;   // 【边缘增强】0=关;默认由模型决定(见 RecommendedEdgeBoost)
-        InitTaskStages(up, interp, dedupOn, sceneThreshold != null);
+        InitTaskStages(up, interp, dedupOn, sceneCut != null);
         _taskTotalCount = items.Length;
         _taskDoneCount = 0;
         // 预览不动主界面底部状态行(它是正式处理的显示位;预览期间去改会让用户以为全片正在跑)
@@ -8701,7 +10940,7 @@ public sealed partial class VideoView : UserControl
                 // 界面不再自己算"是否走新顺序"(那份判据会与管线各写一份,回退时必然漏改一处)。
                 etaInitTotal += VideoService.EstimateProcessSeconds(dur, fps, w, h,
                     up, upscaleShrink1x ? 2.0 : scale, engine, interp, interpScale, dedupOn,
-                    DenoiseToggle.IsChecked == true ? DenoiseStrongRadios.SelectedIndex + 1 : 0,
+                    DenoiseToggle.IsChecked == true ? AlhPro.Core.DenoiseStrengthOrder.ToPipeline(DenoiseStrengthIndex()) : 0,
                     postSP + postCL + postUM + postDB + postAA + postEdge > 0,
                     SafeRender.FreeRamGB);   // 传空闲内存 → 估算里计入"每批引擎启动开销 × 批数"
             }
@@ -8734,6 +10973,52 @@ public sealed partial class VideoView : UserControl
             {
                 AppLogger.Info($"ETA 经验库:配置[{perfKey}] 上次实测 {perFrameHist.Value:0.###} 秒/帧(估算 {estHistory:0} 秒)低于公式估算,按公式 {etaInitTotal:0} 秒(取较大者)");
             }
+        }
+
+        // ===== 【2026-09-21 用户要求】预览开跑前先给「预计用时」 =====
+        // 用户的反馈是"预览要等很久才开始"(实测 3 秒素材跑了 532 秒)—— 等本身避免不了(预览故意按左侧
+        // **完整参数真跑**,不许降档),但**"要等多久"必须提前告诉他**:否则他面对的就是一个没有任何数字的
+        // 转圈。这里复用与「开始处理」完全相同的估算入口(VideoService.EstimateProcessSeconds,也就是
+        // "开始前诊断卡片"用的那个),并按**本次真正跑的区间长度**折算(不是整片时长)。
+        // 【为什么放在这里而不是 StartEffectPreviewAsync】这里是**参数快照读完之后**的唯一位置:
+        // 估时间用的 up/interp/scale/engine/… 与马上要跑的那一次是**同一批局部变量** ⇒ 预览的"预计"
+        // 与真正执行的参数不可能漂移(在别处再读一遍控件就会多出一份口径,那正是本仓库反复踩过的坑)。
+        if (pv != null)
+        {
+            try
+            {
+                var it0 = pv.Item;
+                double dur0 = pv.Length;                       // 只看这一段(真正的裁剪区间由处理端再夹一次)
+                double fps0 = 30;
+                if (double.TryParse(it0.FpsProbe, NumberStyles.Float, inv, out var pf0) && pf0 > 0) fps0 = pf0;
+                var (w0, h0) = await VideoService.ProbeSizeAsync(it0.Path);
+                bool postFx0 = postSP + postCL + postUM + postDB + postAA + postEdge > 0;
+                double est0 = VideoService.EstimateProcessSeconds(dur0, fps0, w0, h0,
+                    up, upscaleShrink1x ? 2.0 : scale, engine, interp, interpScale, dedupOn,
+                    vdenoiseNow, postFx0, SafeRender.FreeRamGB);
+                if (est0 > 0.5)
+                {
+                    // 文案与"本阶段预计还剩"同族:说清是**这一段**的预计,别让人误当成整片
+                    string note = $"预计约 {AlhPro.Core.EtaText.Duration(est0)}";
+                    // 三处都要写,缺一处用户就看不到:
+                    //   ① 预览页状态行 —— 立刻可见(但下一条进度消息会把它顶掉,所以还需要 ②);
+                    //   ② 播放器中央的大字提示 —— 整个跑的过程中一直在(不会被进度消息覆盖);
+                    //   ③ 左下角日志 —— 跑完还能回头对账("当时说预计多久、实际多久")。
+                    PreviewDeckStatus($"正在生成预览({EffTime(pv.Start)} 起 {pv.Length:0.#} 秒):{note}"
+                        + "(按当前参数真跑这一段,不降档;第一次还要加载引擎,可能略久)…");
+                    try
+                    {
+                        EffectPlayerHint.Text = $"正在生成预览…\n{note}"
+                            + $"\n({pv.Length:0.#} 秒素材,按左侧当前参数真跑,不降档)";
+                        EffectPlayerHint.Visibility = Visibility.Visible;
+                    }
+                    catch { }
+                    Log($"预览{note}:{pv.Length:0.#} 秒素材 · {w0}×{h0} · {fps0:0.##}fps"
+                        + $" · 超分{(up ? "开" : "关")}/补帧{(interp ? interpScale + "x" : "关")}/去重{(dedupOn ? "开" : "关")};"
+                        + "按与「开始处理」同一个估算函数算出,实测会随素材与设备浮动");
+                }
+            }
+            catch { /* 估不出来就不显示:宁可只有原来那句"正在生成预览",也不给一个假数字 */ }
         }
 
         // 预计剩余(ETA):整体进度占比法——已用时间 ÷ 进度% → 总时长,减已用 = 剩余。
@@ -9095,7 +11380,10 @@ public sealed partial class VideoView : UserControl
             $"超分={(up ? $"开({model}{AlhPro.Core.ExperimentalEsrgan.LogSuffix(model)}·{scaleLabel})" : "关")}" + (up && customRes ? $"·输出{outWidth}×{outHeight}" : "") + " | " +
             $"补帧={(interp ? $"{interpModel}·{interpScale}x{(tta ? "·TTA" : "")}·时间步{(timeStep ?? 0):0.00}" : "关")} | " +
             $"去重={dedupDesc} | " +
-            $"转场识别={(sceneThreshold != null ? $"{sceneThreshold:0.00}" : "关")} | " +
+            // 【2026-09-21】转场识别这一项不止印开关:阈值(滑块值)也印出来 ——
+            // 用户拉了滑块到底有没有生效,事后看这一行就能对上账。
+            // (原先这里还印"(最短段不限)" —— 「最短补帧段」整块已于 2026-09-22 撤掉。)
+            $"转场识别={(sceneCut != null ? $"{sceneCut.Threshold:0.00}" : "关")} | " +
             $"目标帧率={(targetFps is > 0 ? $"{targetFps:0.##}fps" : "随倍率")} | " +
             $"输出基准=真实时间轴(原帧率×倍率)(内置) | " +
             $"兼容模式={(FastModeCheck.IsChecked == true ? "开" : "关")} | " +   // 文案与界面控件名一致(界面叫「兼容模式」,内部字段仍叫 FastMode)
@@ -9113,14 +11401,10 @@ public sealed partial class VideoView : UserControl
         if ((int)ClaritySlider.Value > 0) postList.Add($"清晰{(int)ClaritySlider.Value}");
         if ((int)UsmSlider.Value > 0) postList.Add($"钝化蒙版{(int)UsmSlider.Value}");
         if ((int)DetailSlider.Value > 0) postList.Add($"保留细节{(int)DetailSlider.Value}");
-        if ((int)PostAaSlider.Value > 0) postList.Add($"边缘抗锯齿{(int)PostAaSlider.Value}");
         if ((int)PostEdgeSlider.Value > 0) postList.Add($"边缘增强{(int)PostEdgeSlider.Value}");
         if (postList.Count > 0) Log("后处理:" + string.Join(",", postList));
-        // 果冻修复(运动模糊/画面去抖,CPU 逐帧滤镜,单独记录便于诊断耗时)
-        var jelloParts = new System.Collections.Generic.List<string>();
-        if (MotionBlurCombo.SelectedIndex > 0) jelloParts.Add($"运动模糊{"弱中强"[MotionBlurCombo.SelectedIndex - 1]}");
-        if (DeShakeCheck.IsChecked == true) jelloParts.Add("画面去抖");
-        if (jelloParts.Count > 0) Log("果冻修复:" + string.Join(",", jelloParts) + "(CPU 逐帧滤镜,耗时随分辨率/帧数增加)");
+        // 【2026-09-21 已删】原先这里打一行「果冻修复:运动模糊…/画面去抖…(CPU 逐帧滤镜…)」。
+        // 整块功能按用户要求删除,日志行随之删除(不留下"处理时还在偷偷跑"的任何痕迹)。
 
         try
         {
@@ -9176,7 +11460,7 @@ public sealed partial class VideoView : UserControl
                     + (customRes ? $"_自定义{outWidth}x{outHeight}" : "")
                     + (interp ? $"_补帧{interpLabelForName}_{UpscaleView.ModelShort(interpModel)}" : "")
                     + (dedupOn ? DedupSuffix(dedupModel, dedupAnimeThr, contentFpsNow, animeHoldN) : "")
-                    + (sceneThreshold != null ? "_转场" : "");
+                    + (sceneCut != null ? "_转场" : "");
                 var outExt = outExtNow;
                 var outName = Path.GetFileNameWithoutExtension(item.Path) + suffix + outExt;
                 // 输出路径过长自动缩短(Windows 260 字符限制:中文文件名+长后缀+深目录会静默失败)
@@ -9232,7 +11516,7 @@ public sealed partial class VideoView : UserControl
                     // await 之后的 item.StatusText 等 UI 赋值仍在 UI 线程执行(ProcessOneAsync 自身带 UI 上下文)。
                     await Task.Run(() => VideoService.ProcessVideoAsync(item.Path, outPath,
                         engine, model, scale, up, interp, itemFps, interpScale, targetFps,
-                        dedupOn ? dedupModel : 0, dedupThreshold, interpModel, sceneThreshold, timeStep, tta,
+                        dedupOn ? dedupModel : 0, dedupThreshold, interpModel, sceneCut, timeStep, tta,
                         // 预览:只处理 [起点, 起点+长度] 这一段(按素材原始时间轴,与列表里的全片裁剪无关)
                         pv != null ? pv.Start : tStart,
                         pv != null ? pv.Start + pv.Length : tEnd,
@@ -9259,14 +11543,14 @@ public sealed partial class VideoView : UserControl
                         postAa: postAA,
             postEdge: postEdge,
                         mute: muteNow,
-                        postMotionBlur: mblurNow,
-                        postDeshake: deshakeNow,
+                        // 【2026-09-21 果冻修复已删】原先这里还传 `postMotionBlur: mblurNow, postDeshake: deshakeNow`。
                         videoDenoise: vdenoiseNow,
                         denoiseKind: denoiseKindNow,
                         quality: qualityNow,
                         fastMode: fastNow,
                         smoothTimeline: smoothTimelineNow,   // 【S3】平滑时间轴:统一输出帧率 + 场景切换对齐
                         upscaleShrink1x: upscaleShrink1x,                        codecPref: codecNow,
+                        anime4k1x: anime4k1x,
                         customBitrateMbps: bitrateNow,
                         // 可变帧率(VFR)拆帧:固定"自动"(面板已删)= 加入列表时已探测(IsVfr),是 VFR 素材就
                         // 按原节奏逐帧提取(时间轴保真);普通素材无影响。**没有"不启用"这个入口了**。

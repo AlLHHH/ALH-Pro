@@ -17,13 +17,13 @@ public class VideoEdgeBoostTests
     [Fact]
     public void Edge_boost_only_chain_is_the_thresholded_smartblur()
         => Assert.Equal("smartblur=luma_radius=1:luma_strength=-0.30:luma_threshold=8",
-                        VideoPostFilters.Build(0, 0, 0, 0, 0, 30));
+                        VideoPostFilters.Build(0, 0, 0, 0, 0, 43));   // 【新刻度】43 = 等效旧 30(0.30)
 
     [Theory]
-    [InlineData(30, "-0.30")]   // v3 推荐档
-    [InlineData(60, "-0.60")]   // 其它模型推荐档
-    [InlineData(100, "-1.00")]
-    [InlineData(500, "-1.00")]  // 越界钳到 1.00
+    [InlineData(43, "-0.30")]   // 【新刻度】animevideov3 推荐档(等效旧 30)
+    [InlineData(86, "-0.60")]   // 【新刻度】其它模型推荐档(等效旧 60)
+    [InlineData(100, "-0.70")]   // 【新刻度】100 = 实测安全上限 0.70
+    [InlineData(500, "-0.70")]  // 越界钳到安全上限 0.70
     public void Edge_boost_strength_mapping(int value, string strength)
     {
         var chain = VideoPostFilters.Build(0, 0, 0, 0, 0, value);
@@ -36,8 +36,9 @@ public class VideoEdgeBoostTests
     [Fact]
     public void Edge_boost_comes_after_detail_and_composes()
     {
-        var chain = VideoPostFilters.Build(0, 0, 0, 100, 0, 60)!;
-        Assert.Equal("cas=strength=0.60,smartblur=luma_radius=1:luma_strength=-0.60:luma_threshold=8", chain);
+        var chain = VideoPostFilters.Build(0, 0, 0, 100, 0, 86)!;
+        // 【新刻度】detail 100 = cas 0.30;edge 86 = 等效旧 60(0.60)
+        Assert.Equal("cas=strength=0.30,smartblur=luma_radius=1:luma_strength=-0.60:luma_threshold=8", chain);
         Assert.EndsWith("luma_threshold=8", chain);
     }
 
@@ -45,8 +46,9 @@ public class VideoEdgeBoostTests
     [Fact]
     public void Edge_boost_is_distinct_from_sharpen()
     {
-        var both = VideoPostFilters.Build(50, 0, 0, 0, 0, 60)!;
-        Assert.Contains("luma_strength=-0.50:luma_threshold=3", both);   // 锐化
+        // 【新刻度】43→0.30(阈值 3)、86→0.60(阈值 8);两者必须是两条独立滤镜
+        var both = VideoPostFilters.Build(43, 0, 0, 0, 0, 86)!;
+        Assert.Contains("luma_strength=-0.30:luma_threshold=3", both);   // 锐化
         Assert.Contains("luma_strength=-0.60:luma_threshold=8", both);   // 边缘增强
     }
 
@@ -54,7 +56,7 @@ public class VideoEdgeBoostTests
     [Fact]
     public void Edge_boost_does_not_reintroduce_the_aa_filter()
     {
-        var chain = VideoPostFilters.Build(0, 0, 0, 0, 100, 30)!;
+        var chain = VideoPostFilters.Build(0, 0, 0, 0, 100, 43)!;   // 43 = 等效旧 30
         Assert.DoesNotContain("sab", chain);
         Assert.Equal("smartblur=luma_radius=1:luma_strength=-0.30:luma_threshold=8", chain);
     }

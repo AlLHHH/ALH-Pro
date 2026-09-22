@@ -628,6 +628,18 @@ public static class VulkanCheck
           .Append(RouteOf(vEsrgan, "ncnn-Vulkan GPU 加速,快速;异常自动降级", "CPU 软算,较慢但稳")).Append('\n');
         sb.Append("· 动漫超分(waifu2x):")
           .Append(RouteOf(vWaifu, "ncnn-Vulkan GPU 加速,快速流畅", "CPU 软算,慢但稳")).Append('\n');
+        // 【2026-09-22 用户追问"自训模型兼容性"时补的一条】自训那三支**只有 ncnn 权重**,
+        // 所以"走不走到 ncnn"直接决定它们能不能用 —— 而这份报告此前只报到引擎级,
+        // 用户根本看不出"我在下拉里选的那支,在我这台机器上到底能不能跑" ✗。
+        // 结论一律按**真机实测**(vEsrgan)说;没测过就如实写"首次处理时自动实测",不按型号猜。
+        sb.Append("· 自训模型(现实 · alhreal2x / 游戏 · alhgame2x-v2 / -v3):")
+          .Append(vEsrgan.HasValue
+              ? (vEsrgan.Value
+                  ? "可用 —— 本机实测 ncnn-Vulkan 通过(这三支只有 ncnn 权重)\n"
+                  : "用不上 —— 本机实测 ncnn-Vulkan 不可用、只能走稳定引擎(ONNX),而这三支没有 ONNX 权重:选了会被换成官方模型(软件会明确提示,不会闷声换)\n")
+              : (gpuOk
+                  ? "首次处理时自动实测:ncnn 通过即可用(这三支没有 ONNX 权重,走 ONNX 时用不上)\n"
+                  : "用不上 —— 本机无可用 GPU,而这三支只有 ncnn 权重\n"));
         // 补帧:RIFE 的 ncnn 结论是【按模型】缓存的(key = rife:<模型名>),报告这里拿不到具体模型 →
         // 只如实说明"由首次补帧时的实测决定",不再断言"50 系一律走 ONNX"/"已自动适配稳定引擎(较慢)"。
         sb.Append("· 视频补帧(RIFE):").Append(onnxRife

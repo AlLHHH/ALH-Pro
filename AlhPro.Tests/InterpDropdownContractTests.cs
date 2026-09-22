@@ -69,9 +69,9 @@ public class InterpDropdownContractTests
     {
         var xaml = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml");
 
-        // waifu2x 3 项 + Real-ESRGAN 7 项(5 官方 + 2 自训)
+        // waifu2x 3 项 + Real-ESRGAN 10 项(5 官方 + 3 自训 + Rev10 追加的两个 1x 修复条目)
         AssertItemsAllHaveTooltipWithSize(ComboItems(xaml, "VideoWaifu2xModelCombo"), 3, "waifu2x");
-        AssertItemsAllHaveTooltipWithSize(ComboItems(xaml, "VideoEsrganModelCombo"), 7, "Real-ESRGAN");
+        AssertItemsAllHaveTooltipWithSize(ComboItems(xaml, "VideoEsrganModelCombo"), 10, "Real-ESRGAN");
     }
 
     /// <summary>补帧那两项同样要有提示与模型大小(精简后两项，一个都不能少)。</summary>
@@ -147,7 +147,18 @@ public class InterpDropdownContractTests
         {
             Assert.True(items[i].Contains("ToolTipService.ToolTip"),
                 $"{which} 第 {i + 1} 项没有悬停提示");
-            Assert.True(items[i].Contains("模型大小:"),
+            // 【1x 条目例外 · Rev10】「动漫 · Anime4K 修复」(libplacebo 着色器)与「现实 · 1x 修复」
+            // (内部跑 alhreal2x 再缩回)**都不是独立权重**,所以提示里天然没有「模型大小」——
+            // 要求它们写等于编一个不存在的数字。换成对等的契约:必须说清它是什么(不放大 / 怎么做),
+            // 否则用户会以为它们是普通放大模型,在 2x/4x 下选到它们。
+            bool is1xEntry = items[i].Contains($"Tag=\"{AlhPro.Core.Anime4k.ModelTag}\"")
+                             || items[i].Contains($"Tag=\"{AlhPro.Core.Upscale1x.RealTag}\"");
+            if (is1xEntry)
+            {
+                Assert.Contains("不放大", items[i]);
+                continue;
+            }
+            Assert.True(items[i].Contains("模型大小"),
                 $"{which} 第 {i + 1} 项的悬停提示里没有「模型大小」");
         }
     }

@@ -30,7 +30,7 @@
   (2026-09-16 起下拉只保留这两支 v4 模型;悬停每一项可看官方说明、适用场景与模型大小)
 - **去除重复帧(动漫必备)**:智能检测(自动估节奏)/ 动漫模式(去一拍二/三/四)/ 手动模式(内容帧率采样 / 帧差+SSIM / 重复帧检测 / 画面变化阈值),支持相位自动对齐
 - 去重后规则:输出帧率 = 内容帧率 × 补帧倍率,时长 = 源时长(尾帧恒保留)
-- 视频降噪(非局部均值)、后处理、果冻修复、光流调整、转场识别
+- 视频降噪(非局部均值)、后处理、光流调整、转场识别(含转场阈值)
 - 批量管理:完成置灰、重新激活、拖拽排序、只处理选中、完成后自动删除
 - 输出:MP4 / MKV,H.264 / H.265,码率可调,静音导出
 
@@ -51,21 +51,21 @@
 ### 显卡兼容性
 > **图例**:🟢 稳定加速 ｜ 🟡 能用但可能降级 ｜ 🔶 慢(CPU) ｜ **?** 存疑·可能不能用 ｜ **✗** 不能使用
 >
-> **说明**:「画质增强 / 去重 / 转场识别 / 果冻修复 / 降噪」为纯 CPU 处理,任何显卡相同,不随显卡变化;「音频增强/分离(Demucs)」用显卡(DirectML)加速,无显卡自动 CPU;「音频升采样率(LavaSR)」目前用 CPU;「AI 抠图」固定 CPU(避免占满显卡导致整机卡)。
+> **说明**:「画质增强 / 去重 / 转场识别 / 降噪」为纯 CPU 处理,任何显卡相同,不随显卡变化;「音频增强/分离(Demucs)」用显卡(DirectML)加速,无显卡自动 CPU;「音频升采样率(LavaSR)」目前用 CPU;「AI 抠图」固定 CPU(避免占满显卡导致整机卡)。
 
-| 显卡 | 图片超分 | 视频超分 | 视频补帧 | 画质增强 | AI抠图 | 去重 | 转场 | 果冻修复 | 音频升采样 | 音频增强/分离 |
-|---|---|---|---|---|---|---|---|---|---|---|
-| RTX 40系 / 30系 | 🟢 | 🟢 | 🟢 | CPU | CPU | CPU | CPU | CPU | CPU | 🟢 |
-| RTX 50系(Blackwell) | 🟡 | 🟡 | 🟡 | CPU | CPU | CPU | CPU | CPU | CPU | 🟢 |
-| RTX 20系 | 🟡 | 🟡 | 🟢 | CPU | CPU | CPU | CPU | CPU | CPU | 🟢 |
-| GTX 16系 | 🟢 | 🟢 | 🟢 | CPU | CPU | CPU | CPU | CPU | CPU | 🟢 |
-| GTX 10系 | 🟡 | 🟡 | 🟢 | CPU | CPU | CPU | CPU | CPU | CPU | 🟢 |
-| GTX 6/7/8/9系 | ? | ? | ? | CPU | CPU | CPU | CPU | CPU | CPU | ? |
-| AMD 独显(较新) | 🟡 | 🟡 | 🟡 | CPU | CPU | CPU | CPU | CPU | CPU | 🟡 |
-| AMD 老卡 | ? | ? | ? | CPU | CPU | CPU | CPU | CPU | CPU | ? |
-| Intel Arc | 🟡 | 🟡 | 🟡 | CPU | CPU | CPU | CPU | CPU | CPU | 🟡 |
-| 核显(Intel / AMD) | 🔶 | 🔶 | 🔶 | CPU | CPU | CPU | CPU | CPU | CPU | 🔶 |
-| 无独显(纯CPU) | 🔶 | 🔶 | 🔶 | CPU | CPU | CPU | CPU | CPU | CPU | 🔶 |
+| 显卡 | 图片超分 | 视频超分 | 视频补帧 | 画质增强 | AI抠图 | 去重 | 转场 | 音频升采样 | 音频增强/分离 |
+|---|---|---|---|---|---|---|---|---|---|
+| RTX 40系 / 30系 | 🟢 | 🟢 | 🟢 | CPU | CPU | CPU | CPU | CPU | 🟢 |
+| RTX 50系(Blackwell) | 🟡 | 🟡 | 🟡 | CPU | CPU | CPU | CPU | CPU | 🟢 |
+| RTX 20系 | 🟡 | 🟡 | 🟢 | CPU | CPU | CPU | CPU | CPU | 🟢 |
+| GTX 16系 | 🟢 | 🟢 | 🟢 | CPU | CPU | CPU | CPU | CPU | 🟢 |
+| GTX 10系 | 🟡 | 🟡 | 🟢 | CPU | CPU | CPU | CPU | CPU | 🟢 |
+| GTX 6/7/8/9系 | ? | ? | ? | CPU | CPU | CPU | CPU | CPU | ? |
+| AMD 独显(较新) | 🟡 | 🟡 | 🟡 | CPU | CPU | CPU | CPU | CPU | 🟡 |
+| AMD 老卡 | ? | ? | ? | CPU | CPU | CPU | CPU | CPU | ? |
+| Intel Arc | 🟡 | 🟡 | 🟡 | CPU | CPU | CPU | CPU | CPU | 🟡 |
+| 核显(Intel / AMD) | 🔶 | 🔶 | 🔶 | CPU | CPU | CPU | CPU | CPU | 🔶 |
+| 无独显(纯CPU) | 🔶 | 🔶 | 🔶 | CPU | CPU | CPU | CPU | CPU | 🔶 |
 
 ---
 

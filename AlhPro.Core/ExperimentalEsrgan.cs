@@ -2,12 +2,19 @@ namespace AlhPro.Core;
 
 /// <summary>两支**自训**的 Real-ESRGAN 2x 模型:**游戏向**(<see cref="Game2x"/>)与**现实向**(<see cref="Real2x"/>)。
 ///
-/// 【命名 · 2026-09-15 用户第三次定稿:名字改英文】**不得出现"实验/实验性"字样**;
-/// 下拉项文字要**跟已有那几项同一个格式** —— `类别 · 名字（括号内速度）`
+/// 【命名 · 2026-09-21 用户第四次定稿:名字前面加 `alh`】**不得出现"实验/实验性"字样**;
+/// 下拉项文字**跟已有那几项同一个格式** —— `类别 · 名字（括号内速度）`
 /// (已有项:`动漫 · animevideov3（快）` / `通用 · x4plus（超慢）`),
-/// 所以这两项写成 <see cref="MenuText"/> = `现实 · real2x（快）` / `游戏 · game2x（快）`。
-/// **类别词保留中文**(现实 / 游戏),`·` 后面那个"名字"改用英文 —— 与权重文件名(`alhpro-real2x` /
-/// `alhpro-game2x`)的后缀**一字不差**,界面上写的那支与引擎里跑的那支肉眼就能对上。
+/// 所以四项写成 <see cref="MenuText"/> = `现实 · alhreal2x（快）` / `游戏 · alhgame2x（快）` /
+/// `游戏 · alhgame2x-v2（快）` / `游戏 · alhgame2x-v3（快）`
+/// (用户原话:"改名字 前面加上alh";写法示例由用户给出 —— `现实 alhreal2x` 这样,**alh 与名字连写、中间不加连字符**)。
+/// **类别词保留中文**(现实 / 游戏),`·` 后面那个"名字"是英文并在前面加项目前缀 `alh`
+/// (<see cref="NamePrefix"/>) —— 不用看提示就知道这是本项目自训的,而不是官方 `realesr-*` 那几支。
+/// 权重文件名与下拉项的 `Tag` 仍是 `alhpro-*`,**一个字都没动**(引擎按 Tag 取权重,改名只动界面文字,不动任何功能)。
+/// 【改名连带的一件事 · 2026-09-21:药丸先撤后放】名字变长约 27px 后,末尾那个蓝色「测试」药丸一度放不下
+/// (收起状态只剩约 18px、药丸要 36px ⇒ 会被下拉箭头裁),当天先撤掉、用 `alh` 前缀当标记;
+/// 用户看到后问"测试标记呢",并在三个方案里选了**加宽左栏 22px**(300 → 322)⇒ **药丸原样放回**。
+/// 像素级实测与算式见 <see cref="MenuName"/>,XAML 文件头与对应单测里都有对应的钉子。
 /// 【括号内容 · 2026-09-16 用户定稿】"括号内要写快 而不是时间" ——
 /// 括号里放的是**速度档词**(与官方项同一套:`快` / `中` / `超慢`),即 <see cref="SpeedTier"/>;
 /// 实测的秒/帧数字(<see cref="SpeedText"/>)挪到悬停提示与下拉下方那行提示里(那两处本来就是写数字的地方)。
@@ -78,10 +85,75 @@ public static class ExperimentalEsrgan
     /// <summary>游戏向自训 2x(游戏素材色偏更准)。</summary>
     public const string Game2x = "alhpro-game2x";
 
-    /// <summary>下拉里追加的两支自训模型(顺序 = VideoModelOrder Rev4 的最后两位)。</summary>
-    public static readonly string[] All = { Real2x, Game2x };
+    /// <summary>游戏向自训 2x · **v2**(2026-09-19:同一套原生 2x 配方,训练数据换成用户自己的 26 段录像;
+    /// v1 只用了一段 30 秒录像 = 138 张)。**不替换 v1**,下拉末尾追加。
+    ///
+    /// 【实测 · 留出视频 4 段 × 2 帧(素材21/22/25/26,训练集里没有),540p→1080p,与 v1 同帧同输入】
+    ///   本支:PSNR **31.80** / SSIM **0.9767** / 边缘 PSNR **21.69** / 边缘 SSIM **0.8957** / 斜边锯齿代理 **50.82**
+    ///   v1  :31.38 / 0.9681 / 21.24 / 0.8889 / 51.23 ⇒ **四项全面超 v1,锯齿还略好**
+    ///   (同一台上 bicubic 30.32/0.9621/20.13、官方 animevideov3 30.10/0.9639/20.46)
+    ///
+    /// 【实测 · 仓库三档卡片口径(色偏 = 引擎 2x 输出 vs 源的逐通道均值最大差,判据 小于 5;
+    ///   detail = 平均 |拉普拉斯|,越高纹理越多)】
+    ///   游戏帧 色偏 +0.21/+0.46/+0.24、detail **3.39**(v1 2.52、官方 2.91)
+    ///   动漫帧 色偏 +0.17/+0.19/+0.08、detail **2.19**(v1 1.75、官方 2.06)
+    ///   实拍   色偏 -0.17/+0.54/+2.00、detail **70.78**(v1 63.82、官方 73.66)
+    ///   ⇒ 三档色偏最大 2.00 级(远低于官方 6.34)⇒ 颜色与源一致;detail 三档都高于 v1。
+    ///   ⇒ 通道验收(多宽度 1920/2048/2348/2560)尺寸 ✅ 非黑 ✅ 通道闸 PASS。
+    /// 【体积/速度】与 v1 同架构同层数 ⇒ 权重 2.29 MB + param 2 KB = 2.4 MB,速度同档(实测未单独计,见速度那段的说明)。</summary>
+    public const string Game2xV2 = "alhpro-game2x-v2";
 
-    /// <summary>蓝色小标里的字。【2026-09-15 用户:先保留「测试」】</summary>
+    /// <summary>游戏向自训 2x 第三代「锐化优先」(2026-09-20 训成,训练 tag=game3)。
+    /// 【分工】v1 = 第一代(轻、软);v2 = 最保真最干净;v3 = **最锐 + 锯齿最顺滑**(保真低于 v2、高于 v1)。
+    /// 【留出视频实测 · 12 用例(每段留出视频 3 帧,540p→1080p,与 v1/v2 同帧同口径)】
+    ///   v3:PSNR 31.99 · SSIM 0.9533 · 边缘 PSNR 22.10 · 边缘 SSIM 0.9149 · **detail 760.1** · **jag 50.91**
+    ///   v2:32.67 / 0.9544 / 22.67 / 0.9211 / 672.0 / 51.65    v1:31.62 / 0.9475 / 21.56 / 0.8983 / 288.4 / 51.12
+    ///   ⇒ **detail 与 jag 都是三支里最好的**;保真让位是**设计如此**(配方把像素项降到 0.5、感知项抬到 2.0、加边缘强度项 3.0)。
+    /// 【⚠ 已知短板 —— 必须写进提示、不许藏】①**实拍照片偏蓝**:卡片口径 ΔB **+8.85 级**(判据 小于 5),游戏/动漫帧正常
+    ///   (0.49 / 0.13);②**平坦区噪声 1.42×**(v2 1.18×)⇒ 干净素材颗粒感略强;③边缘"更有力"但**宽度未变窄**
+    ///   (540p→1080p 边宽 4.93px:v2 5.04、最锐的官方 x4plus-anime 4.09)。
+    /// 【配方】`python train_v2.py --variant game --data D:\deep\_train\data_game2 --tag game3 --scale 2
+    ///   --minutes 150 --w-pix 0.5 --w-per 2.0 --w-edge 3.0` ⇒ it 19458 / 150 分钟;
+    ///   val(保真)按设计变差:起点 0.0202 → 0.0331;锯齿代理 0.5161 对双三次 0.6411(改善 19.5%)。
+    /// 【导出验收】多宽度 1920/2048/2348/2560 尺寸 ✅ 非黑 ✅ 通道闸 PASS(ΔR+0.16/ΔG+0.27/ΔB+0.49)。</summary>
+    public const string Game2xV3 = "alhpro-game2x-v3";
+
+    /// <summary>下拉里追加的自训模型(顺序 = VideoModelOrder 末尾几位;**Rev7 起 = 3 支**)。
+    /// 【2026-09-21 用户:"不要训练那么多模型了 我要留两个最好的游戏 1个现实就行 后面慢慢优化"】
+    ///   ⇒ 留 **v2(最保真)+ v3(最锐)+ real2x**;v1(`alhpro-game2x`)从下拉移除,见 <see cref="Retired"/>。
+    ///   依据(实测):v1 是三支游戏向里最弱的一支 —— detail 288 对 v2 672 / v3 760,PSNR 31.62 对 32.67 / 31.99,
+    ///   而且它只用了一段 138 帧的录像训练(v2 用了 26 段 942 帧)。
+    /// ⚠ **1x 修复模型不在这里** —— 只有训练/导出/验收都完成后才允许进下拉(否则用户会选到不存在的模型)。</summary>
+    public static readonly string[] All = { Real2x, Game2xV2, Game2xV3 };
+
+    /// <summary>**已从下拉移除、但必须继续被认识**的自训模型(2026-09-21 退休 v1)。
+    /// 【为什么退休了还要认它】两条硬理由:
+    ///   ① 权重目录选择靠 <see cref="IsExperimental"/> —— 它住在分支目录 `models\alhpro\`,
+    ///      一旦不认它,<see cref="EsrganModelDir.For"/> 就会去根目录找 `alhpro-game2x.param`,
+    ///      而引擎**找不到权重时 exit=0、只出坏帧**(本仓库踩过这个坑),所以这里必须继续认;
+    ///   ② 老预设/老参数行里可能还带着这支 id(序号会被 <see cref="VideoModelOrder"/> 换算到 v2,
+    ///      但换算只发生在"读设置"那条路上),日志与提示仍要能正确印出它的名字。
+    /// ⇒ 权重文件**保留在 `models\alhpro\`**(2.4 MB,删了反而会让上面两条变成静默坏帧)。</summary>
+    public static readonly string[] Retired = { Game2x };
+
+    /// <summary>**1x 修复模型**(同尺寸:去压缩痕 + 边缘恢复,不放大)。
+    /// 【为什么需要】用户明确要求"1x 缩放必须存在";而实测「2x 超分 + 缩回 1x」会让画面**比原片更软**
+    /// (素材(13)第 20 秒:输出 detail 822 / 边宽 5.86px,原片 1152 / 7.02px)⇒ 1x 想要"更清晰"必须换网络。
+    /// 这也正是 Video2X 的做法:它的 1x 用 Anime4K 着色器在原分辨率做修复(实测 detail 1132 / 边宽 4.92px)。
+    /// 【网络】与 2x 同族(SRVGGNetCompact 主干,从官方权重继承),**尾层 3 通道、倍率写死 1** ⇒ `-s 1` 是原生用法。
+    /// 【状态】2026-09-20 训练中(训练 tag = fix1)。**权重 + 验收数据齐了再登记进 <see cref="All"/>**。</summary>
+    public const string Fix1x = "alhpro-fix1x";
+
+    /// <summary>是不是「1x 修复(同尺寸)」那一支 ⇒ <see cref="EngineScalePolicy"/> 据此让它走原生 `-s 1`(倍率 1、不缩放)。</summary>
+    public static bool Is1xModel(string? model)
+        => !string.IsNullOrEmpty(model) && model.Contains(Fix1x, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>蓝色小标里的字。【2026-09-15 用户:先保留「测试」】
+    /// 【2026-09-21 撤掉过一天又放回 —— 来龙去脉】四项自训模型的名字加了 `alh` 前缀后,收起状态文字右侧只剩约 18px,
+    /// 而药丸要 36px(6 间距 + 30)⇒ 当天先撤了药丸(用 `alh` 当标记);用户看到后问"测试标记呢",
+    /// 在三个方案(改类别词 / 换更小标记 / 加宽面板)里**选了加宽左栏**:`VideoView.xaml` 左栏 300 → 322,
+    /// 余量 18 → 40px ⇒ 药丸原样放回(`VideoView.xaml` 文件头有像素级实测)。
+    /// ⇒ 这个常量现在是**在用**的:XAML 里四个自训项的 AutomationProperties.Name = <see cref="MenuText"/> + 它。</summary>
     public const string Badge = "测试";
 
     /// <summary>括号里那个**速度档**「快」——【用户 2026-09-16 定稿:"新加的两个模型括号内要写快 而不是时间"】。
@@ -89,7 +161,7 @@ public static class ExperimentalEsrgan
     /// 用在**所有「模型名 + 括号」的地方**:下拉项(含收起状态)、UIA 名字、预设摘要、参数日志行。
     /// 【为什么不是秒/帧】括号的位置放的是**快慢档形容词**(与已有各项同一格式);实测数字另由
     /// <see cref="SpeedText"/> 提供,放在悬停提示与下拉下方那行提示里(那两处本来就是写数字的地方)。
-    /// 【顺带的好处】`现实 · real2x（快）` 比 `（0.35s/帧）` 短,收起状态离 212px 上限更远。</summary>
+    /// 【顺带的好处】`现实 · alhreal2x（快）` 比 `（0.35s/帧）` 短,收起状态离可用宽度上限更远(实测见 <see cref="MenuName"/>)。</summary>
     public const string SpeedTier = "快";
 
     /// <summary>实测速度的**事实数字**(两支同档,见类注释的实测表):只写"约 0.35",
@@ -97,14 +169,33 @@ public static class ExperimentalEsrgan
     /// 【只用在陈述句里】悬停提示的「速度:…」与下拉下方那行提示;不再进括号(括号里是 <see cref="SpeedTier"/>)。</summary>
     public const string SpeedText = "1080p 约 0.35 秒/帧";
 
-    /// <summary>下拉项里 `·` 后面那个"名字"部分(**按模型给**):`real2x` / `game2x`。
-    /// 【用户 2026-09-15 第三次定稿:名字要英文名】已有项那里放的就是英文的模型名
-    /// (`animevideov3` / `x4plus`…),这两支跟着用英文 —— 与权重文件名(`alhpro-real2x` /
-    /// `alhpro-game2x`)的后缀**一字不差**。
-    /// 【为什么不用全名 `alhpro-real2x`】实测整行会顶到 222 / 235px(可用只有约 212px),
-    /// 收起状态必被裁;`real2x` / `game2x` 实测 192 / 205px,放得下。前缀 `alhpro-` 只是品牌串,
-    /// 在"超分模型"这一栏里没有信息量。</summary>
-    public static string MenuName(string? model) => IsGame(model) ? "game2x" : "real2x";
+    /// <summary>下拉项里 `·` 后面那个"名字"部分(**按模型给**):`alhreal2x` / `alhgame2x` / `alhgame2x-v2` / `alhgame2x-v3`。
+    /// 【用户 2026-09-21 第四次定稿:名字前面加 `alh`】原话"改名字 前面加上alh",
+    /// 写法示例由用户给出:<see cref="NamePrefix"/> 与名字**连写**、中间不加连字符。
+    /// 名字本体仍是英文(已有项那里放的就是英文模型名 `animevideov3` / `x4plus`…)。
+    /// 【与权重文件名的关系】权重文件与引擎 Tag 是 `alhpro-real2x` / `alhpro-game2x`(**没改**),
+    /// 界面上的 `alh` 是它的简称 —— 少了 `pro` 三个字符,是为了下面这条宽度限制。
+    /// 【宽度实测 · 2026-09-21 真机(UIA 取实际渲染矩形 + 截图像素,不是估算)】
+    ///   收起状态(组合框 235px):内容起点 x=16(蓝条)→ 文字 x=25..183 → 下拉箭头 x=207..214
+    ///     ⇒ 文字右侧只剩 **约 18px**;而末尾那个「测试」药丸要 6(间距)+30 = **36px** ⇒ 放不下(会被箭头裁).
+    ///   实测文字宽(UIA 渲染值;`现实 · alhreal2x（快）` 由界面字体 14px 量出后按同字体校准):
+    ///     `现实 · alhreal2x（快）`        文字 ≈ 136px
+    ///     `游戏 · alhgame2x（快）`        文字 ≈ 148px
+    ///     `游戏 · alhgame2x-v2 / -v3（快）` 文字 ≈ **168px**(最长,占掉大部分收起宽度)
+    ///   ⇒ 【裁决 · 用户 2026-09-21】**左栏 300 → 322px**(用户在三方案里选的):余量 18 → 40px,药丸放回仍有余量。
+    ///     ⚠ 展开的下拉与收起状态**不是一回事**:展开态的下拉项**按内容自动变宽**
+    ///     (实测:内容 177px → 项宽 201px;内容 195px → 项宽 219px),
+    ///     所以"展开态没被裁"不能推出"收起态安全"—— 量宽度一律量收起状态。</summary>
+    public static string MenuName(string? model)
+        => NamePrefix + (IsV3(model) ? "game2x-v3" : IsV2(model) ? "game2x-v2" : (IsGame(model) ? "game2x" : "real2x"));
+
+    /// <summary>名字前面的项目前缀(用户 2026-09-21 定稿:"改名字 前面加上alh")。
+    /// 四支自训模型在下拉里因此长这样:`现实 · alhreal2x（快）` / `游戏 · alhgame2x（快）` /
+    /// `游戏 · alhgame2x-v2（快）` / `游戏 · alhgame2x-v3（快）`。
+    /// 【为什么连写、不带连字符】用户给的写法就是 `alhreal2x` 这样连写的;连字符还要多占约 5px,
+    /// 而这段宽度只剩十几 px 余量(实测见 <see cref="MenuName"/>)。
+    /// 【和权重文件名的关系】**只改界面文字** —— 权重文件与引擎 Tag 仍是 `alhpro-*`(引擎按 Tag 取权重)。</summary>
+    public const string NamePrefix = "alh";
 
     /// <summary>下拉项里 `类别 · 名字` 之间的分隔符(与已有各项逐字一致:前后各一个空格)。
     /// 单独提成常量,是为了让"格式对齐已有项"这件事有一条可断言的依据,而不是靠人眼比对源码。</summary>
@@ -114,12 +205,12 @@ public static class ExperimentalEsrgan
     /// 已有项的类别是 `动漫` / `通用` / `现实`,这里是 `游戏` / `现实`。</summary>
     public static string Category(string? model) => IsGame(model) ? "游戏" : "现实";
 
-    /// <summary>界面上的名字:`现实 · real2x` / `游戏 · game2x`(格式 = `类别 · 名字`,
+    /// <summary>界面上的名字:`现实 · alhreal2x` / `游戏 · alhgame2x`(格式 = `类别 · 名字`,
     /// 与 `动漫 · animevideov3` / `通用 · x4plus` 逐字同构)。用户定名,**不得出现"实验"字样**。</summary>
     public static string Label(string? model) => Category(model) + NameSeparator + MenuName(model);
 
     /// <summary>下拉项显示文字(= 收起状态显示的文字)= `类别 · 名字（括号里是速度档）`,
-    /// 逐字形如 `现实 · real2x（快）`(与 `动漫 · animevideov3（快）` 同构)。
+    /// 逐字形如 `现实 · alhreal2x（快）`(与 `动漫 · animevideov3（快）` 同构)。
     /// 与 VideoView.xaml 里 ComboBoxItem 的 Content 必须逐字一致(有契约测试)。
     /// 【2026-09-16】括号里是 <see cref="SpeedTier"/>(「快」),不是时间 —— 见该常量的说明。</summary>
     public static string MenuText(string? model) => Label(model) + "（" + SpeedTier + "）";
@@ -131,11 +222,13 @@ public static class ExperimentalEsrgan
     /// 【2026-09-16】括号里跟摘要里其它项一样是速度档(`(快)`),不写秒/帧。</summary>
     public static string SummaryText(string? model) => Category(model) + "·" + MenuName(model) + "(" + SpeedTier + ")";
 
-    /// <summary>是不是这两支自训模型。</summary>
+    /// <summary>是不是自训模型(**含已退休、已不在下拉里的那支** —— 权重目录选择与日志命名都靠它,见 <see cref="Retired"/>)。</summary>
     public static bool IsExperimental(string? model)
     {
         if (string.IsNullOrEmpty(model)) return false;
         foreach (var m in All)
+            if (model.Contains(m, StringComparison.OrdinalIgnoreCase)) return true;
+        foreach (var m in Retired)
             if (model.Contains(m, StringComparison.OrdinalIgnoreCase)) return true;
         return false;
     }
@@ -143,74 +236,70 @@ public static class ExperimentalEsrgan
     /// <summary>只有 2x 原生权重(供 <see cref="EngineScalePolicy"/> 决策引擎倍数)。</summary>
     public static bool IsX2Only(string? model) => IsExperimental(model);
 
-    /// <summary>下拉悬停提示:**事实陈述**(用户 2026-09-15 要求:不许用"实验性/测试版"这类定性词)。
-    /// 五段:①三档素材(游戏帧/动漫帧/实拍)的色偏 vs 官方与 detail vs 官方、适合什么场景;
-    ///       ②通道验收闸的实测(已修好、无偏色,给出逐通道差);③实测速度;④倍率真相
-    ///       (原生 2x、3x/4x 走"2x 跑一遍再缩放"、推荐用 2x,全部为实测);
-    ///       ⑤**模型大小**(【2026-09-16 用户要求】"悬停提示……并且最后显示模型大小",
-    ///          与官方各项的悬停同一格式,且排在**最后**)。
-    /// 【措辞纪律】只陈述实测,不写"更好/最强"这类结论性夸张;"推荐用 2x"是因为 3x/4x 实测更慢且画质≈2x 放大。
-    /// 【速度写在哪 · 2026-09-16】这里是**数字的家**(「速度:1080p 约 0.35 秒/帧」),因为悬停没有宽度限制;
-    /// 下拉项里那个括号只放速度档「快」(见 <see cref="SpeedTier"/>),两处不许互相抄串。
-    /// 【2026-09-15 收尾】过去这里写着"输出 R/B 通道颠倒、整幅偏蓝、需重新导出后才可用于正片" ——
-    /// 那是**修好之前**的事实;重训+重新导出后通道闸已 PASS,该说法必须作废(用户点名要改成修好后的真实结论)。</summary>
-    public static string ToolTip(string? model) => IsGame(model)
-        ? "游戏 · game2x:三档色偏都低于官方 —— 游戏帧 0.18(官方 2.00)、动漫帧 0.04(官方 2.73)、实拍 2.53(官方 6.34;最大的一档)。\n"
-          + "细节与锐度低于官方默认模型(游戏帧 detail 2.36 对 2.91、动漫帧 1.55 对 2.06、实拍 59.97 对 73.66),边缘更软。\n"
-          + "适合优先要颜色准确、能接受略软画面时使用。\n"
-          + "通道验收(2026-09-15 重训+重新导出):引擎输出与源的逐通道均值差 R+0.11/G+0.12/B+0.18 级,"
-          + "判据「每通道差 小于 5」通过(旧导出那次 R/B 颠倒已修)⇒ 颜色与源一致,可直接用于正片。\n"
-          + "速度:" + SpeedText + "(40 帧 1080p 目录批跑 -j 1:1:1 -t 0 冷态,与官方 animevideov3 同档)。\n"
-          + ScaleText + "\n" + SizeLine(model)
-        : "现实 · real2x:三档色偏都低于官方 —— 实拍 1.48(官方 6.34)、动漫帧 0.18(官方 2.73)、游戏帧 0.34(官方 2.00)。\n"
-          + "细节与锐度多数低于官方默认模型(实拍 59.13 对 73.66、动漫帧 1.83 对 2.06;只在游戏帧上 3.20 略高于官方 2.91)。\n"
-          + "适合优先要颜色准确、能接受略软画面时使用。\n"
-          + "通道验收(2026-09-15 重训+重新导出):引擎输出与源的逐通道均值差 R+0.20/G+0.34/B+0.24 级,"
-          + "判据「每通道差 小于 5」通过(旧导出那次 R/B 颠倒已修)⇒ 颜色与源一致,可直接用于正片。\n"
-          + "速度:" + SpeedText + "(40 帧 1080p 目录批跑 -j 1:1:1 -t 0 冷态,与官方 animevideov3 同档)。\n"
-          + ScaleText + "\n" + SizeLine(model);
+    /// <summary>下拉悬停提示(**四行以内 · 事实陈述**)。
+    /// 【2026-09-19 用户要求:提示要短、要像官方文档,不出现"本机/你"这类口水】模板:
+    ///   ① 一行身份(自训 2x + 训练数据规模);
+    ///   ② 留出视频实测(PSNR / SSIM / 边缘 PSNR)+ 三档色偏(游戏/动漫/实拍,判据 <5);
+    ///   ③ 三档 detail(平均|拉普拉斯|);
+    ///   ④ 速度 · 体积 · 倍率(共用常量)。
+    /// 【措辞纪律】只陈述实测;不写"最强/更好"这类结论;不写测量过程中的经过(口径与工具见类注释)。</summary>
+    public static string ToolTip(string? model) => IsV3(model) ? ToolTipV3 : IsV2(model) ? ToolTipV2 : IsGame(model)
+        ? "游戏 · alhgame2x:自训 2x 超分模型(训练数据:1 段游戏录像 · 138 帧)。\n"
+          + "留出视频实测(540p→1080p):PSNR 31.62 · SSIM 0.948 · 边缘 PSNR 21.56;色偏 游戏 0.18 / 动漫 0.04 / 实拍 2.53(判据 小于 5)。\n"
+          + "detail 2.52 / 1.75 / 63.82(游戏 / 动漫 / 实拍)。\n"
+          + "1080p 约 0.35 秒/帧 · " + SizeLine(model) + " " + ScaleText
+        : "现实 · alhreal2x:自训 2x 超分模型(训练数据:实拍照片与人像)。\n"
+          + "留出视频实测(540p→1080p):PSNR 31.56 · SSIM 0.952 · 边缘 PSNR 21.55;色偏 游戏 0.34 / 动漫 0.18 / 实拍 1.48(判据 小于 5)。\n"
+          + "detail 3.55 / 2.14 / 63.44(游戏 / 动漫 / 实拍)。\n"
+          + "1080p 约 0.35 秒/帧 · " + SizeLine(model) + " " + ScaleText;
 
-    /// <summary>通道验收闸的实测数字(两支共用一段说法,见类注释;同一台机器、同一个闸门口径)。
-    /// 【为什么单列】这句是"修好了"这个结论的唯一出处:两支的悬停提示与下拉下方提示都引用它,
-    /// 免得一处写"已修"、另一处还留着"整幅偏蓝、需重新导出"那种过时说法。</summary>
-    public const string ChromaText =
-        "通道验收(重训+重新导出后)通过:输出与源逐通道均值差 小于 0.4 级(判据 小于 5),旧导出那次 R/B 颠倒已修";
+    /// <summary>通道校验那句(三支共用,短句):输出与源每通道均值差 <2 级(判据 小于 5)。
+    /// 【2026-09-19 用户要求"提示要短、官方一点"】旧的"旧导出那次 R/B 颠倒已修"那段历史已删 —— 结论保留、经过不再写进提示。</summary>
+    public const string ChromaText = "通道校验:输出与源每通道均值差 小于 2 级(判据 小于 5)。";
 
-    /// <summary>倍率那段话(两支共用,内容全部是 2026-09-15 实测):
-    /// 网络原生倍数 = 2x(写死在网络里);软件的 2x/3x/4x = 目标尺寸,靠"2x 跑一遍 + 成片缩放"实现;
-    /// 实测 3x/4x 更慢且画质≈2x 放大 ⇒ 推荐用 2x。不写"跑两遍"—— 实测不是两遍(见类注释)。</summary>
-    public const string ScaleText =
-        "倍率:网络原生 2x(放大倍数写死在网络里)。软件的 2x/3x/4x 是目标输出尺寸:选 3x/4x 时仍按原生 2x 跑一遍、"
-        + "再把成片缩放到目标(不是把引擎跑两遍);实测同一段 24 帧素材超分阶段 2x=2.0s、3x=3.9s、4x=4.7s"
-        + "(官方 animevideov3 有原生 3x/4x 权重,同样条件只要 2.2/2.3/2.8s),画面≈2x 细节放大、清晰度不会真的变成 3x/4x。"
-        + "推荐用 2x。";
+    /// <summary>倍率说明(三支共用,一句话):原生 2x;目标 3x/4x 由 2x 成片放大,不重复跑引擎。
+    /// 【2026-09-19 用户要求:提示要短、要像官方文档,不出现"本机/你"这类口水】故压成一句。</summary>
+    public const string ScaleText = "倍率:原生 2x;目标 3x/4x 由 2x 成片放大。";
 
-    /// <summary>模型体积(【用户 2026-09-16 要求】"悬停提示……并且最后显示模型大小")。
-    /// 【口径】磁盘实测的 `.bin + .param`;**两支自训模型体积完全相同** ——
-    /// 同架构同层数,只换了训练数据 ⇒ 2,402,680 + 2,216 = 2,404,896 B = **2.4 MB**,
-    /// 所以这里给一个常量而不是按模型算(算了也不会不同,反而多一处会漂的数字)。
-    /// ⚠ 与官方那几项的口径一致:写小数后一位的 MB(官方项写的是 3.8 / 4.9 / 9.0 / 33.5 MB)。</summary>
-    public const string SizeText = "模型大小:2.4 MB";
+    /// <summary>模型体积(用户 2026-09-16 要求"最后显示模型大小";三支同架构 ⇒ 体积相同)。</summary>
+    public const string SizeText = "2.4 MB";
 
-    /// <summary>悬停提示最后一行:模型大小 + 权重文件名(用户要"官方提示 + 最后显示模型大小")。
-    /// 权重名按 <paramref name="model"/> 给,与引擎实际取的文件(`models/{Tag}.param/.bin`)一字不差。</summary>
-    public static string SizeLine(string? model)
-    {
-        var w = IsGame(model) ? Game2x : Real2x;
-        return SizeText + "(权重 " + w + ".bin 2.29 MB + " + w + ".param 2 KB,本机磁盘实测)。";
-    }
+    /// <summary>体积那句(三支共用)。【2026-09-19】按用户"简单、官方一点"的要求,不再列权重文件名。</summary>
+    public static string SizeLine(string? model) => "模型大小 " + SizeText + "。";
 
-    /// <summary>选中这两支时,模型下拉正下方显示的那一行(不悬停也能看见):三档色偏/detail + 速度 + 倍率建议 + 偏色已修。
-    /// 【速度 · 2026-09-16】这一行与悬停提示一样放**实测数字**(不是档词)—— 见 <see cref="SpeedTier"/> 的说明。</summary>
-    public static string Hint(string? model) => IsGame(model)
-        ? "游戏 · game2x:色偏 游戏帧 0.18 / 动漫帧 0.04 / 实拍 2.53(官方 2.00 / 2.73 / 6.34),"
-          + "detail 2.36 / 1.55 / 59.97(官方 2.91 / 2.06 / 73.66)、边缘更软;" + SpeedText
-          + ";原生 2x,推荐用 2x(3x/4x 由 2x 成片放大、更慢);" + ChromaText
-        : "现实 · real2x:色偏 实拍 1.48 / 动漫帧 0.18 / 游戏帧 0.34(官方 6.34 / 2.73 / 2.00),"
-          + "detail 59.13 / 1.83 / 3.20(官方 73.66 / 2.06 / 2.91);" + SpeedText
-          + ";原生 2x,推荐用 2x(3x/4x 由 2x 成片放大、更慢);" + ChromaText;
+    /// <summary>v2(游戏向)的悬停提示:与另外两支同一模板(身份 → 留出实测+色偏 → detail → 速度/体积/倍率)。
+    /// 数字口径见 <see cref="Game2xV2"/> 的注释;⚠ 换最终权重后要重新量卡片数字并同步这里与 XAML(两处逐字一致)。</summary>
+    private static readonly string ToolTipV2 =
+        "游戏 · alhgame2x-v2:自训 2x 超分模型(训练数据:26 段游戏录像 · 942 帧)。\n"
+        + "留出视频实测(540p→1080p):PSNR 32.67 · SSIM 0.954 · 边缘 PSNR 22.67;色偏 游戏 0.21 / 动漫 0.00 / 实拍 1.27(判据 小于 5)。\n"
+        + "detail 2.77 / 1.68 / 70.58(游戏 / 动漫 / 实拍)。\n"
+        + "1080p 约 0.35 秒/帧 · " + SizeLine(Game2xV2) + " " + ScaleText;
+    /// <summary>v2 的下拉下方那行(不悬停也看得见):与其余两支同一套字段,一句话。</summary>
+    private static readonly string HintV2 =
+        "游戏 · alhgame2x-v2:色偏 0.21 / 0.00 / 1.27 · detail 2.77 / 1.68 / 70.58(游戏 / 动漫 / 实拍) · "
+        + SpeedText + " · 原生 2x · " + ChromaText;
 
-    /// <summary>日志/参数行里跟在模型名后的括号(如 `alhpro-real2x(现实 · real2x · 快)`)。
+    /// <summary>v3(锐化优先)的悬停提示:与另外三支同一模板,但**必须把自己的短板写出来** ——
+    /// 实拍照片 ΔB 8.85 级偏蓝(所以**不能套用 ChromaText** 那句"每通道均值差 小于 2 级",那是 v1/v2/real2x 的事实)。
+    /// 数字口径见 <see cref="Game2xV3"/> 的注释。</summary>
+    private static readonly string ToolTipV3 =
+        "游戏 · alhgame2x-v3:自训 2x 超分模型(锐化优先:留出视频实测 detail 760、锯齿 50.91,两项都优于其它几支)。\n"
+        + "留出视频实测(540p→1080p):PSNR 31.99 · SSIM 0.953 · 边缘 PSNR 22.10;最干净的 v2 是 32.67 / 0.954 / 22.67。\n"
+        + "色偏 游戏 0.49 / 动漫 0.13 / 实拍 8.85(判据 小于 5:照片偏蓝,照片请用 v2);detail 3.72 / 2.28 / 77.26。\n"
+        + "1080p 约 0.35 秒/帧 · " + SizeLine(Game2xV3) + " " + ScaleText;
+
+    /// <summary>v3 的下拉下方那行:一句话,并把"照片偏蓝 → 照片用 v2"这条如实带上。</summary>
+    private static readonly string HintV3 =
+        "游戏 · alhgame2x-v3:色偏 0.49 / 0.13 / 8.85 · detail 3.72 / 2.28 / 77.26(游戏 / 动漫 / 实拍) · "
+        + SpeedText + " · 原生 2x · 照片偏蓝,照片建议用 v2";
+
+    public static string Hint(string? model) => IsV3(model) ? HintV3 : IsV2(model) ? HintV2 : IsGame(model)
+        ? "游戏 · alhgame2x:色偏 0.18 / 0.04 / 2.53 · detail 2.52 / 1.75 / 63.82(游戏 / 动漫 / 实拍) · "
+          + SpeedText + " · 原生 2x · " + ChromaText
+        : "现实 · alhreal2x:色偏 0.34 / 0.18 / 1.48 · detail 3.55 / 2.14 / 63.44(游戏 / 动漫 / 实拍) · "
+          + SpeedText + " · 原生 2x · " + ChromaText;
+
+    /// <summary>日志/参数行里跟在模型名后的括号(如 `alhpro-real2x(现实 · alhreal2x · 快)`)。
     /// 【用户 2026-09-15】这几处的括号内容统一成**类别 · 名字 · 速度档**,`类别 · 名字` 与下拉项同格式;
     /// 不再是"测试"这种定性词。界面各处显示模型名的地方都要能看出"这是哪一支、什么速度"。
     /// 【用户 2026-09-16】括号里写**速度档「快」**(<see cref="SpeedTier"/>),不写"0.35 秒/帧"那种时间;
@@ -227,4 +316,15 @@ public static class ExperimentalEsrgan
 
     private static bool IsGame(string? model)
         => !string.IsNullOrEmpty(model) && model.Contains(Game2x, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>是不是 **v2** 那支(游戏向第二代)。【为什么必须先判它】v2 的 id(`alhpro-game2x-v2`)
+    /// **包含** v1 的 id(`alhpro-game2x`),所以 <see cref="IsGame"/> 对它也为真 ⇒ 判定顺序必须是"先 v2 再 v1",
+    /// 否则下拉项、日志、悬停提示会把 v2 印成 v1 的名字(两支看起来一模一样)。</summary>
+    private static bool IsV2(string? model)
+        => !string.IsNullOrEmpty(model) && model.Contains(Game2xV2, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>是不是 **v3**(锐化优先)那支。【为什么也要单独判】三支的 id 互为前缀关系
+    /// ("alhpro-game2x" ⊂ "-v2" ⊂ 各自),判定必须**从新到旧**:v3 → v2 → v1,否则会把 v3 印成 v2 的名字。</summary>
+    private static bool IsV3(string? model)
+        => !string.IsNullOrEmpty(model) && model.Contains(Game2xV3, StringComparison.OrdinalIgnoreCase);
 }

@@ -758,12 +758,54 @@ public static class SafeRender
         // 让 ffmpeg 读 PNG/编码、AI 超分的 CPU 部分都骤降,表现为"明显比同类慢"。
         // 改为更宽松的分档:即使系统被其他软件占满,也保证软件至少有几个核能干活。
         // 兼顾:高压档仍明显让位(35%),正常空闲档给满(85%)。
-        if (sysUsed > 0.85) return 35;
-        if (sysUsed > 0.70) return 50;
-        if (sysUsed > 0.50) return 65;
-        if (sysUsed > 0.30) return 75;
-        return 85;
+        double cap;
+        if (sysUsed > 0.85) cap = 35;
+        else if (sysUsed > 0.70) cap = 50;
+        else if (sysUsed > 0.50) cap = 65;
+        else if (sysUsed > 0.30) cap = 75;
+        else cap = 85;
+        // 【2026-09-19 审计落地 · 设备风险】**电池供电时自动降档**。
+        // 为什么:笔记本用电池跑满 GPU+CPU 会 ① 掉电很快 ② 触发降频反而更慢 ③ 长期高温伤电池与散热 ✗
+        // 做法:把 CPU 上限压到 60%(且不超过原档),GPU 侧的批大小仍由显存墙控制(不动)✔
+        // 只在真在电池上时才生效,插电一切照旧 —— 不影响任何性能表现 ✔
+        try
+        {
+            if (OnBatteryPower) cap = Math.Min(cap, 60);
+        }
+        catch { }
+        return cap;
     }
+
+    /// <summary>本机是否正在**用电池供电**(桌面机/插电一律 false)。
+    /// 用 Win32 `GetSystemPowerStatus`(ACLineStatus: 0=电池 / 1=交流 / 255=未知)—— 无额外依赖、无权限要求 ✔</summary>
+    public static bool OnBatteryPower
+    {
+        get
+        {
+            try
+            {
+                var st = new SYSTEM_POWER_STATUS();
+                if (!GetSystemPowerStatus(ref st)) return false;
+                return st.ACLineStatus == 0;      // 0 = 正在使用电池
+            }
+            catch { return false; }
+        }
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct SYSTEM_POWER_STATUS
+    {
+        public byte ACLineStatus;
+        public byte BatteryFlag;
+        public byte BatteryLifePercent;
+        public byte SystemStatusFlag;
+        public int BatteryLifeTime;
+        public int BatteryFullLifeTime;
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetSystemPowerStatus(ref SYSTEM_POWER_STATUS status);
+
 
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     private struct FILETIME

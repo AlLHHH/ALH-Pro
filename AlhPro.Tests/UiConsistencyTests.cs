@@ -65,6 +65,25 @@ public class UiConsistencyTests
         }
     }
 
+    /// <summary>③ 预览页(以及整个视频页)**不许再有"按空格"的鼠标悬停提示**(2026-09-22 用户:「预览界面有空格键的
+    /// 鼠标悬停提示 这个不要有」)。只删提示文字,**按键功能照旧**(加速键 + PreviewKeyDown 两条入口都留着)——
+    /// 所以这条契约查的是"悬停提示文本",不是代码里有没有 Space。</summary>
+    [Fact]
+    public void No_tooltip_tells_the_user_to_press_space()
+    {
+        var xaml = Regex.Replace(ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml"),
+                                 @"<!--.*?-->", " ", RegexOptions.Singleline);   // 先剥注释:留档注释里提到空格是允许的
+        var tips = Regex.Matches(xaml, "ToolTipService\\.ToolTip=\"([^\"]*)\"", RegexOptions.Singleline);
+        Assert.True(tips.Count > 10, "这个页面本来有一堆悬停提示,数量对不上说明解析错了");
+        foreach (Match m in tips)
+            Assert.False(m.Groups[1].Value.Contains("空格", StringComparison.Ordinal),
+                "悬停提示里不该再出现\"空格\":" + m.Groups[1].Value);
+        // 功能不許被顺手删掉
+        var cs = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs");
+        Assert.Contains("PreviewSpaceAccel_Invoked", cs);
+        Assert.Contains("Key=\"Space\"", xaml);
+    }
+
     private static string ReadRepoFile(params string[] parts)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

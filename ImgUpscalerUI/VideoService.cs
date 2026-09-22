@@ -289,7 +289,9 @@ public static class VideoService
     /// <param name="dedupMode">去重模式(= VideoView 去重模型下拉索引+1):0=关,1=智能检测(自动识别拍数→网格采样),2=动漫模式(按拍型均匀采样),3=手动模式(按 dedupAlgo 分支)。</param>
     /// <param name="dedupThreshold">去重阈值(自定义模式,scene 分数上限)。</param>
     /// <param name="interpModel">RIFE 模型目录名(相对 engines/rife)。</param>
-    /// <param name="sceneThreshold">转场识别阈值 0~1(null=不检测;转场处不插帧)。</param>
+    /// <param name="sceneCut">「转场识别」这一组用户选项(阈值滑块;null=不检测,转场处不插帧)。
+    /// 【2026-09-21 起从 `double? sceneThreshold` 换成这个记录】理由见 <see cref="AlhPro.Core.SceneCutOptions"/>
+    /// 的类注释(避免每加一项就往六十多个形参后面接裸参数)。</param>
     /// <param name="timeStep">光流时间步 0~1(null=默认 0.5;仅 v4 架构模型生效)。</param>
     /// <param name="tta">TTA 高质量(减少光流伪影,更慢)。</param>
     /// <param name="trimStart">裁剪开始时间(秒,null=不裁剪)。</param>
@@ -301,23 +303,33 @@ public static class VideoService
     /// <param name="postDetail">后处理·保留细节 0-100(0=关;cas 自适应锐化)。</param>
     /// <param name="postDeblur">后处理·去模糊 0-100(0=关;smartblur 大半径反锐化)。</param>
     /// <param name="fastMode">兼容模式(弱设备):tile 减半降显存、单批处理防爆显存、忽略 TTA。</param>
-    /// <param name="upscaleShrink1x">1x超分:内部按 2x 超分后缩回原始尺寸(输出仍是 1x,画质更好)。</param>
-    /// <param name="postMotionBlur">果冻修复·运动模糊 0=关 1=弱 2=中 3=强(tmix 混合帧数递增)。</param>
-    /// <param name="postDeshake">果冻修复·画面去抖(deshake 轻量稳定)。</param>
+    /// <param name="upscaleShrink1x">旧 1x 行为:内部按 2x 超分后缩回原始尺寸。**只在 Anime4K 不可用时作为回退**使用
+    /// (2026-09-21 起 1x 档默认改走 <paramref name="anime4k1x"/>,因为"放大再缩回"实测比原片还软)。</param>
+    /// <param name="anime4k1x">1x 修复档:用 Anime4K 着色器(<c>libplacebo</c> + <c>custom_shader_path</c>)在**原分辨率**上
+    /// 做修复 + 锐化,不放大也不缩回。要求 <c>upscaleShrink1x=false</c>(超分阶段会被跳过 —— 见下方 1x 不超分那条分支)
+    /// 且本机 Anime4K 探测通过(探测在 UI 侧做,不过则回退到 <paramref name="upscaleShrink1x"/>)。</param>
+    /// <param name="postDeshake">【形参已删除 · 2026-09-21】原先这里是 `postMotionBlur` / `postDeshake`
+    /// 两个「果冻修复」形参。用户当晚下令「果冻修复那个删掉」⇒ 界面整块删除,**处理端同时停用**:
+    /// 只删界面不删处理端,就会变成"界面上没了、处理时还在偷偷加 CPU 逐帧滤镜"(tmix 混合 / deshake),
+    /// 是本仓库最忌讳的一类静默行为。这里连形参一起删掉,而不是留着参数忽略 —— 留着就还有"哪天有人
+    /// 顺手把它接回去"的口子,而用户要的是这块功能不存在。
+    /// 【老设置文件的三个字段 `Jello` / `MotionBlur` / `DeShake` 仍保留在 VideoSettings 里】那是
+    /// "老文件字段一律保留、只停止读取"的既定规矩(反序列化兼容 + 预设快照结构稳定),它们**不再有任何
+    /// 读写点**,也不可能再影响处理结果。</param>
     public static async Task<string> ProcessVideoAsync(
         string inputVideo, string outputVideo,
         string engine, string model, double scale, bool doUpscale,
         bool frameInterp, double? inFpsOverride, int interpScale, double? targetFps,
         int dedupMode, double dedupThreshold, string interpModel,
-        double? sceneThreshold, double? timeStep, bool tta,
+        AlhPro.Core.SceneCutOptions? sceneCut, double? timeStep, bool tta,
         double? trimStart, double? trimEnd, int gpuId,
         int? outWidth = null, int? outHeight = null,
         IProgress<(int pct, string msg)>? progress = null,
         CancellationToken ct = default,
         int postSharpen = 0, int postClarity = 0, int postUsm = 0,
         int postDetail = 0, int postDeblur = 0,
-        int postMotionBlur = 0, bool postDeshake = false,
         int videoDenoise = 0, int denoiseKind = 0, int quality = 0, bool fastMode = false, bool upscaleShrink1x = false,
+        bool anime4k1x = false,
         int dedupAlgo = 0, int dedupHi = 12, int dedupLo = 5, double dedupFrac = 0.33,
         double dedupSadThr = 3.0, double dedupSsimThr = 0.97,
         double dedupPanThr = 8, bool dedupPanOn = false,
@@ -578,8 +590,8 @@ public static class VideoService
             };
             progress?.Report((2, $"参数:超分{(doUpscale ? $"{engine}/{model} {scale:0.##}x{(upscaleShrink1x ? "(1x缩回)" : "")}" : "关")}" +
                 $";补帧{(frameInterp ? $"{interpModel} {interpScale}x{(tta ? " TTA" : "")}" + (targetFps is > 0 ? $"→{targetFps.Value:0.##}fps" : "") : "关")}" +
-                $";去重{dedupDesc};转场{(sceneThreshold ?? 0):0.##};时间步{(timeStep ?? 0):0.##};裁剪{(trimStart ?? 0):0.###}~{(trimEnd ?? 0):0.###};设备{(gpuId >= 0 ? "GPU " + gpuId : "CPU")}" + StageElapsed()));
-            AppLogger.Info($"参数详情:engine={engine},model={model},scale={scale},up={doUpscale}/{upscaleShrink1x},interp={frameInterp}/{interpModel}/{interpScale}x/{tta}/{targetFps},{timeStep},dedup={dedupMode}/{dedupAlgo}/{animeHoldN}/{contentFps}/{dedupSmartMode},scene={sceneThreshold},trim={trimStart}/{trimEnd},gpu={gpuId},out={outputVideo}");
+                $";去重{dedupDesc};转场{(sceneCut?.Threshold ?? 0):0.##};时间步{(timeStep ?? 0):0.##};裁剪{(trimStart ?? 0):0.###}~{(trimEnd ?? 0):0.###};设备{(gpuId >= 0 ? "GPU " + gpuId : "CPU")}" + StageElapsed()));
+            AppLogger.Info($"参数详情:engine={engine},model={model},scale={scale},up={doUpscale}/{upscaleShrink1x},interp={frameInterp}/{interpModel}/{interpScale}x/{tta}/{targetFps},{timeStep},dedup={dedupMode}/{dedupAlgo}/{animeHoldN}/{contentFps}/{dedupSmartMode},scene={sceneCut?.Threshold},trim={trimStart}/{trimEnd},gpu={gpuId},out={outputVideo}");
             // ===== 阶段顺序:1x/2x 走「超分 → 补帧」,3x/4x 保持「补帧 → 超分」=====
             // 【为什么】(2026-09-13 本机实测:1080p 源 240 帧,k=2 补帧,RIFE v4.13,realesr-animevideov3 2x,
             // 两序交错各 3 轮)中位 346.6s(超分→补帧) vs 411.6s(补帧→超分),新顺序快 65s ≈ 15.8%,逐档配对每档都快。
@@ -674,6 +686,33 @@ public static class VideoService
             // 若此时仍把降噪交给"模型档",用户开了「视频降噪」却等于没降噪(静默失效)。
             // 探测用的是一张合成图(不依赖已拆出的帧),且有会话缓存 —— 后面超分阶段不会因此多花时间。
             bool denoiseViaModel = doUpscale && engine == "waifu2x";
+            // ===== 【降噪·自动档 · 2026-09-21】"该不该降"由**源素材体检**决定,不再让用户猜 =====
+            // 实测依据(`_qa\降噪整改_实测_20260921.md`):干净/轻压缩的源上降噪是**净亏**
+            // (H.264 crf30 源:不降噪成片 PSNR 36.23,现行弱/中/强 = 35.93/35.75/35.34);
+            // 真噪源上才是净赚(JPEG q15:36.22 → 36.85,边缘宽度 4.04 → 3.72)。
+            // 用户自己的素材实测颗粒σ 0.00~0.34(全部落在"干净"区间)⇒ 开着降噪等于白掉细节。
+            // 【为什么自动档强制走"拆帧降噪"】waifu2x 的降噪是"模型自带档",这批一旦落到 ONNX 稳定引擎就完全不生效
+            // (静默失效,见超分阶段那条提示)。自动档既然答应"帮你判断",就不能让它可能不生效
+            // ⇒ 一律走引擎无关的拆帧滤镜链。**手动档的既有行为一个字不改**。
+            // 【2026-09-21 用户:"自动不要了"】这段是**已下线**的自动档分支 —— 界面不再有「自动」可选项,
+            //   所以 videoDenoise 永远不会 ≥ Auto(4) ⇒ 走到这里的概率为零。**保留代码不删**:逻辑与判据都还有单测
+            //   (VideoNoiseProbe / noisecheck 工具),将来要恢复自动档时把界面选项加回来即可。
+            if (videoDenoise >= AlhPro.Core.VideoDenoise.Auto)
+            {
+                var dnStats = await ProbeSourceNoiseAsync(inputVideo, ProbeContainerDurationSync(), ct);
+                var dnDec = AlhPro.Core.VideoNoiseProbe.Decide(dnStats ?? default);
+                if (dnStats.HasValue)
+                    AppLogger.Info($"视频降噪[自动]:源体检 —— 颗粒σ {dnStats.Value.Grain:0.00}"
+                        + $" · 块效应 {AlhPro.Core.VideoNoiseProbe.Fmt(dnStats.Value.Blocking)}"
+                        + $" · 闪烁σ {AlhPro.Core.VideoNoiseProbe.Fmt(dnStats.Value.Flicker)}"
+                        + $"({dnStats.Value.Frames} 帧,源分辨率、超分之前)");
+                AppLogger.Info($"视频降噪[自动]:{dnDec.Reason}");
+                progress?.Report((2, dnDec.Denoise
+                    ? $"视频降噪[自动]:检出噪点 ⇒ 本批按「{AlhPro.Core.VideoDenoise.StrengthName(dnDec.Strength)}」档降噪"
+                    : "视频降噪[自动]:源素材干净 ⇒ 本批跳过降噪(避免白掉细节)"));
+                videoDenoise = dnDec.Strength;
+                denoiseViaModel = false;   // 自动档统一走拆帧降噪:引擎无关、不会静默失效
+            }
             if (denoiseViaModel && videoDenoise >= 1)
             {
                 // 兼容模式(内部字段 fastMode)会【强制】走 ONNX 稳定引擎(见超分路由条件里的 || fastMode),
@@ -1768,13 +1807,15 @@ public static class VideoService
                     // 【历史上错在哪】两条路各自调了一次采样与判定 ⇒ 同一份判据、两次全片解码、两套口径;更糟的是
                     // "按真实时间戳排帧"那条路**无视「转场识别」开关**(用户明明关了却还有切点保护)。现在开关只管这一处。
                 var cuts = new List<int>();
-                if (sceneThreshold is > 0)
+                if (sceneCut is { } sc)
                 {
-                    progress?.Report((8, $"转场识别(阈值 {sceneThreshold.Value:0.00})..."));
-                    var th = sceneThreshold.Value.ToString("0.###", inv);
-                    // 开关状态必须看得见(用户明确要求):阈值滑块已删,这里印"开(内置值)"或"关"。
-                    AppLogger.Info($"转场识别={(sceneThreshold is > 0 ? $"开({sceneThreshold.Value:0.00})" : "关")}"
-                        + $"(判据=帧差+拉普拉斯,采样 {AlhPro.Core.SceneCutMetrics.SampleHeight} 行;内置阈值 {th} 只在采样不可用时回退 ffmpeg scene)");
+                    progress?.Report((8, $"转场识别(阈值 {sc.Threshold:0.00})..."));
+                    var th = sc.Threshold.ToString("0.###", inv);
+                    // 开关状态必须看得见(用户明确要求):除了"开/关",这一行还要印**这次真正生效的判据数字** ——
+                    // 用户拉了滑块到底有没有起作用,事后全靠这行对账(见 AlhPro.Core.SceneThresholdMap,唯一换算处)。
+                    AppLogger.Info($"转场识别=开({sc.Threshold:0.00})"
+                        + $"(判据=帧差+拉普拉斯,采样 {AlhPro.Core.SceneCutMetrics.SampleHeight} 行;"
+                        + $"生效判据 {sc.Thresholds.Text};滑块原值 {th} 只在采样不可用时回退 ffmpeg scene)");
                     string gateName = "";
                     string judgeWhy = "";
                     (double[] diff, double[]? lapVar) scMetrics = (diff: Array.Empty<double>(), lapVar: null);
@@ -1791,7 +1832,8 @@ public static class VideoService
                     {
                         // 【口径换算】Detect 给的是 i 口径(切点在源帧 i 与 i+1 之间),分段侧用"下一个源帧号" c = i + 1;
                         // 共享表 sceneCutPairs 存回 i。两处口径的换算是本块唯一的约定,别在别处再算一遍。
-                        foreach (var i in AlhPro.Core.SceneCutJudge.Detect(scMetrics.diff, scMetrics.lapVar))
+                        foreach (var i in AlhPro.Core.SceneCutJudge.Detect(scMetrics.diff, scMetrics.lapVar,
+                                     thresholds: sc.Thresholds))
                         {
                             int c = i + 1;
                             if (c > 0 && c < frameCount) cuts.Add(c);
@@ -1836,6 +1878,14 @@ public static class VideoService
                         cuts.Clear();
                         cuts.AddRange(mergedCuts);
                     }
+                    // 【最短补帧段 · 2026-09-21 曾加、2026-09-22 用户裁决整块撤掉】
+                    //   来历:用户报"转场补帧分批引擎启动太慢"(128 帧被切成 5 段、每段约 21 帧 ⇒ 约 2/3 时间
+                    //   花在反复冷启动)。当时的对策是"把会让某段短于 60 帧的切点合并掉",并把它做成了界面开关。
+                    //   撤掉的理由(用户看过代价后判定):它是**拿鬼影防线换速度** —— 被合并掉的切点处照常插帧,
+                    //   那恰好是真转场时就插出一帧跨切混合;而「转场阈值」滑块能用**不牺牲保护**的方式达到
+                    //   同一个目的(少判切点 ⇒ 引擎同样少启动,保留下来的切点照样强制拷贝)。
+                    //   ⚠ 别再把同一套东西加回来:问题(启动慢)是真的,错的是用来交换的东西。
+                    //   留档在 AlhPro.Core.SceneCutJudge 类里(原 MinSegmentLen / ApplyMinSegmentLen 的位置)。
                     if (gateName == "帧差+拉普拉斯" && cuts.Count > 0)
                     {
                         // 判据清单(只印前 8 处,长片不刷屏):本次采样的原始数就在这行,给"阈值要不要动"留证据。
@@ -1852,7 +1902,8 @@ public static class VideoService
                         }
                         if (cuts.Count > 8) sb.Append($"…(共 {cuts.Count} 处)");
                         AppLogger.Info($"转场识别:切点判据=帧差+拉普拉斯(采样 {AlhPro.Core.SceneCutMetrics.SampleHeight} 行,"
-                            + "阈值内置【待实测标定】;界面上只有「转场识别」一个勾选框,阈值滑块已于 2026-09-15 删除)"
+                            + $"生效判据 {sc.Thresholds.Text};来源=界面「转场阈值」滑块 {sc.Threshold:0.00}"
+                            + $"({AlhPro.Core.SceneThresholdMap.Describe(sc.Threshold)}))"
                             + "清单 " + sb.ToString().Trim());
                     }
                     // 【共享表落格】两条路读的就是这两行写的值:先清空再灌(不许残留上一次任务/上一次检测的结论)。
@@ -1938,11 +1989,20 @@ public static class VideoService
                     // 实测 0.871/0.150,填与不填视觉等价)。判据 = 帧差 ≥25 且(拉普拉斯能量比 ≤0.6 或帧差 ≥50)【待实测标定】。
                     // 现有 interp 路径本就按转场分段跑(segBounds 来自 cuts)→ RIFE 侧不会跨切混合;这条保护是给
                     // "按时轴逐槽 φ 插值"的排程用的(Core.CutAwareSchedule:切点上强制拷贝、不许合成)。
+                    // 【2026-09-22 修 · 自测逮到的自相矛盾】原来这里的注解是按 `cuts.Count == 0` 判的,于是
+                    // **「勾了转场识别、但这一片真的一处切点都没有」**也会打出"(注:「转场识别」未勾选 ⇒ 本次不做
+                    // 切点检测…)" ✗ —— 同一份日志里上一行刚写「转场识别=开(0.30)」,下一行就说"未勾选",自相矛盾
+                    // (2026-09-22 自测真机复现:3 秒预览、判据无切点)。两件事必须分开说:
+                    //   · sceneCut == null ⇒ **确实没检测**(用户没勾);
+                    //   · 勾了但 cuts.Count == 0 ⇒ **检测了,这片没有切点**(常见于短片段/单一场景)。
                     AppLogger.Info($"时间轴:检测到 {cuts.Count} 处场景切换,已按切点对齐(不生成跨切混合帧;判定阈值【待实测标定】)"
-                        + (cuts.Count == 0
+                        + (sceneCut == null
                             ? "(注:「转场识别」未勾选 ⇒ 本次不做切点检测;两条路径(普通分段 / 按真实时间戳排帧)读的是**同一份**切点表,"
                               + "不会出现某条路还在保护的情况)"
-                            : ""));
+                            : cuts.Count == 0
+                                ? "(注:本次**检测了**、这一片没有切点 —— 短片段或单一场景本就可能是 0 处;"
+                                  + "要让判定更敏感可把「转场阈值」调小)"
+                                : ""));
                     // 【⑤ VFR 门(用户最终裁决)】"按真实时间戳排帧"这条**内部**路径只对 VFR 源自动生效:
                     // CFR 源一律走常规处理(不做时序重采样);判不出 VFR 时按 CFR 保守处理。
                     // 判据**复用**源级 VFR 结论 vfrPassthrough(ProbeVfrAsync 的时间戳判据),不自造第二套。
@@ -1960,7 +2020,7 @@ public static class VideoService
                             ? " → 【平滑时间轴】已在选项里关闭,本次按原样输出(与改动前一致)"
                             : (sourceIsVfr
                                 ? " → 本次按真实时间戳排帧:每个目标时刻按真实 PTS 取源帧对 + φ 合成(落在源帧上直接拷贝);"
-                                  + (sceneThreshold is > 0
+                                  + (sceneCut is not null
                                       ? "有场景硬切时切点两侧强制同场景拷贝,不生成跨帧混合(鬼影)帧"
                                       : "转场识别=关 → 切点处不做保护、照常按比例插值(与改动前一致)")
                                 : " → 判定可填平,但**源不是 VFR** ⇒ 按常规路径处理(不做时序重采样,与改动前一致)"))));
@@ -2532,6 +2592,21 @@ public static class VideoService
                                                 $"ℹ 稳定引擎(ONNX)的 waifu2x 仅有 cunet 模型,已按 cunet 处理 —— 你选的「{model}」需要 ncnn 引擎;写实片源建议改选 Real-ESRGAN"));
                                         }
                                     }
+                                    // 【2026-09-22 用户追问"自训模型兼容性"时查出来的真缺口】
+                                    // 自训那三支(现实 · alhreal2x / 游戏 · alhgame2x-v2 / -v3)**只有 ncnn 权重**,
+                                    // 走 ONNX 时上面那个 ResolveEsrganOnnxPath 会把它们按"通用"分支解析成**官方模型**
+                                    // (x4plus.onnx,机器上没有就退 animevideov3.onnx)—— 而**一句提示都没有** ✗。
+                                    // 这与 RELEASE_NOTES 第 40 行与官网 changelog 写的"软件会明确告诉你…不会闷声换模型"
+                                    // **正好相反**,也违反本仓库"静默换模型是明令禁止的"这条规矩。
+                                    // 文案的唯一出处是 AlhPro.Core.ExperimentalEsrgan.OnnxFallbackNotice ——
+                                    // 它一直写着、也有单测,但**在本轮之前全仓库没有任何地方调用它**(这才是缺口本身)。
+                                    if (engine == "realesrgan" && AlhPro.Core.ExperimentalEsrgan.IsExperimental(model))
+                                    {
+                                        string selNotice = AlhPro.Core.ExperimentalEsrgan.OnnxFallbackNotice(model);
+                                        AppLogger.Warn("⚠ 视频超分:" + selNotice);
+                                        progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
+                                            selNotice));
+                                    }
                     // 视频降噪(用户那个「启用视频降噪」开关):拆帧阶段由 nlmeans 处理,超分阶段由 waifu2x 自带降噪处理。
                     // 正常情况下上面已用探测结果保证二者择一;这里兜的是【探测通过、但本批仍走了 ONNX】的边角情形
                     // (例如中途黑帧降级把 ncnnUnreliable 置位、或用户勾了兼容模式)——那时模型档不生效,
@@ -2937,29 +3012,48 @@ public static class VideoService
                 }
                 catch { /* 清理失败忽略 */ }
                 framesFinal = upOutput;   // 合帧使用超分后的帧
-                // 1x超分:2x超分后缩回原始尺寸(画质比直接 1x 更好)
+                // 1x 修复(现实那条):2x 超分后缩回原始尺寸。
+                // 【2026-09-21 优化 · 先量后改】原实现是**逐帧 C# 缩放**:每帧独立"解码 → GDI 高质量缩放 → 再编码",
+                //   而且给**每一帧**都开一个 Task(长片/4K 上几百上千个任务同时抢内存与 GDI 句柄 ✗)。
+                //   实测(`_qa\bench_shrink.py`,60 帧 1080p→540p):逐帧串行 34.0 ms/帧、逐帧并行 8.4 ms/帧、
+                //   **一条 ffmpeg 命令 4.9 ms/帧** ⇒ 改走 ffmpeg(单进程、内存有界、快 1.7~7 倍)。
+                //   ⚠ 但这只占整个 1x 时间的一小部分:2x 超分本机约 350 ms/帧(1080p),缩回约占 1~2%
+                //     —— "1x 现实这条慢"的根因是**它本来就要跑一遍 2x**,不是缩回本身(4K 素材上缩回才明显)。
+                //   ⚠ 兜底不变:ffmpeg 失败或帧数对不上 ⇒ 回退到原来的逐帧路径(源帧损坏时生成占位帧、编号不断档)。
                 if (upscaleShrink1x && origW is > 0 && origH is > 0)
                 {
                     var shFiles = EnumerateFrameFiles(framesFinal)
                         .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
-                    int doneSh = 0;
-                    var shTasks = new System.Collections.Generic.List<Task>();
-                    progress?.Report((upEnd - 2, $"1x超分:将 {shFiles.Length} 帧从 2x 缩回原始尺寸 {origW}×{origH}..."));
-                    foreach (var f in shFiles)
+                    progress?.Report((upEnd - 2, $"1x 修复:将 {shFiles.Length} 帧从 2x 缩回原始尺寸 {origW}×{origH}..."));
+                    string? shrunkDir = await TryShrinkFramesWithFfmpegAsync(
+                        ffmpeg, framesFinal, shFiles, origW.Value, origH.Value, progress, upEnd, ct);
+                    if (shrunkDir != null)
                     {
-                        ct.ThrowIfCancellationRequested();
-                        shTasks.Add(Task.Run(() =>
-                        {
-                            // ResizeImageTo 内部已兜底:源帧损坏时生成同尺寸占位帧,保持 frame_%06d 编号连续、
-                            // 可解码,合帧不中断(不删帧/不跳过,否则编号断档会截断输出)。
-                            EngineService.ResizeImageTo(f, f, origW.Value, origH.Value);
-                            int d = Interlocked.Increment(ref doneSh);
-                            if (d % 20 == 0 || d == shFiles.Length)
-                                progress?.Report((upEnd - 2 + (int)(2.0 * d / shFiles.Length),
-                                    $"1x超分 缩回中 {d} 帧 / 共 {shFiles.Length} 帧"));
-                        }, ct));
+                        AppLogger.Info($"[1x 修复] 缩回:ffmpeg 一趟走完 {shFiles.Length} 帧 "
+                            + $"(实测 4.9 ms/帧 对 逐帧 34.0 ms/帧;原逐帧路径保留为兜底)");
+                        framesFinal = shrunkDir;
                     }
-                    await Task.WhenAll(shTasks);
+                    else
+                    {
+                        AppLogger.Warn("[1x 修复] 缩回:ffmpeg 路径不可用/帧数不符 ⇒ 回退逐帧缩放(结果不受影响,只是慢一点)");
+                        int doneSh = 0;
+                        var shTasks = new System.Collections.Generic.List<Task>();
+                        foreach (var f in shFiles)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            shTasks.Add(Task.Run(() =>
+                            {
+                                // ResizeImageTo 内部已兜底:源帧损坏时生成同尺寸占位帧,保持 frame_%06d 编号连续、
+                                // 可解码,合帧不中断(不删帧/不跳过,否则编号断档会截断输出)。
+                                EngineService.ResizeImageTo(f, f, origW.Value, origH.Value);
+                                int d = Interlocked.Increment(ref doneSh);
+                                if (d % 20 == 0 || d == shFiles.Length)
+                                    progress?.Report((upEnd - 2 + (int)(2.0 * d / shFiles.Length),
+                                        $"1x 修复 缩回中 {d} 帧 / 共 {shFiles.Length} 帧"));
+                            }, ct));
+                        }
+                        await Task.WhenAll(shTasks);
+                    }
                 }
                 // 【实测速度上报】把"这一阶段到底多快"写进日志 —— 排查"慢 / GPU 占用低"时先看这里,
             // 再与上面那条探测结论行(「真机探测通过→ncnn」 或 「探测失败→改用 ONNX」)对照,
@@ -3167,26 +3261,39 @@ public static class VideoService
             // 而**是否真的走了填平**由 flattenActive 决定(探针失败/ONNX 路线会回退,那时不许改口径)。
             if (flattenActive) baseFps = flatPlan.TargetFps;
             double outFps = baseFps;
-            // 视频滤镜链:后处理(锐化/清晰/…) → 果冻修复 → 运动模糊 → 去抖 → 可选 fps 重映射
+            // 视频滤镜链:1x 修复(Anime4K) → 后处理(锐化/清晰/…) → 可选 fps 重映射 → 强制 yuv420p
+            // 【2026-09-21 已删】原先这条链里还挂着「果冻修复」的两段(minterpolate→tmix 运动模糊、deshake 去抖),
+            // 用户要求整块删除 ⇒ 现在合帧只有**一条**滤镜链,不再有按档位切换的第二张 filter_complex 图。
             var preParts = new System.Collections.Generic.List<string>();
             var postParts = new System.Collections.Generic.List<string>();
+            // 【1x 修复(Anime4K)· 2026-09-21】放在**滤镜链最前**:先在原分辨率上做修复+锐化,再做用户的后处理。
+            // 为什么在这条链里而不是单开一个阶段:它就是个 ffmpeg 滤镜(libplacebo),跟着合帧一起跑最省事,
+            // 而且合帧用的那个 ffmpeg 进程本来就把工作目录设成了自己所在目录 ⇒ 相对路径 `shaders/xxx.glsl` 可用。
+            if (anime4k1x)
+            {
+                preParts.Add(AlhPro.Core.Anime4k.FilterArgument());
+                AppLogger.Info($"1x 修复:已启用 {AlhPro.Core.Anime4k.DisplayName} 着色器(原分辨率修复+锐化,不放大;" +
+                    $"着色器 {AlhPro.Core.Anime4k.ShaderRelativePath},随 ffmpeg 目录下发)");
+            }
             var postFilter = AlhPro.Core.VideoPostFilters.Build(postSharpen, postClarity, postUsm, postDetail, postAa, postEdge);
             if (postFilter != null) preParts.Add(postFilter);
             // 视频降噪(空间+时间,去噪点/闪烁/压缩噪点),放最前:先降噪再锐化
             // 【已挪走】视频降噪原先挂在这里(合帧滤镜链)→ 作用在"超分后的帧"上,4K 下 1.56 秒/帧;
             // 现改为拆帧阶段应用(源分辨率,0.49 秒/帧,便宜 2.5~3.5 倍);waifu2x 引擎则交给模型自带降噪档。
             // 见本文件上方 scaleVf 构造处的「视频降噪:放在拆帧阶段」。
-            if (postDeshake) postParts.Add("deshake");                      // 画面去抖:轻量稳定
+            // 【2026-09-21】原先这里还有一行 `if (postDeshake) postParts.Add("deshake");`(果冻修复·画面去抖)。
+            // 整块「果冻修复」已按用户要求删除 —— 界面控件与处理端滤镜链一起删,不留"偷偷还在跑"的口子。
             // 【C3 · 2026-09-16】合帧阶段的"保节奏"判据:只要有真实时长表要保就保,
             // **不再要求"没指定帧率"** —— 指定帧率只决定"倍率补多少",不决定"要不要按真实节奏铺开"。
-            // 唯一例外是「果冻修复·运动模糊」:那条滤镜链自带 CFR 时间重采样(minterpolate→tmix→fps),
-            // 与可变时间轴不同源,只能继续挂 fps 滤镜(并在下方如实告知节奏被均匀化)。
-            bool rhythmAtMux = preserveRhythm && (targetFps == null || postMotionBlur < 1);
+            // 【2026-09-21 唯一例外已消失】原先这里还排除了「果冻修复·运动模糊」(那条滤镜链自带 CFR 时间
+            // 重采样 minterpolate→tmix→fps,与可变时间轴不同源,只能继续挂 fps 滤镜)。整块「果冻修复」已按
+            // 用户要求删除 ⇒ 判据回到**只看 preserveRhythm**,下游的 rhythmAtMux 别名也随之取消(一个值两个
+            // 名字正是"看着像还有第二条判据"的来源)。行为上:原先运动模糊关着时这条恒等于 preserveRhythm。
             // 【消费点 1/3 · 指定帧率分支】保节奏 ⇒ 输出走**可变帧率时间轴**、绝不挂 fps 滤镜;
-            // 只有不保节奏(唯一例外:果冻修复·运动模糊)才允许挂 fps 精确缩到用户选的那个值。
+            // 不保节奏时才允许挂 fps 精确缩到用户选的那个值。
             if (frameInterp && targetFps is > 0)
             {
-                if (rhythmAtMux)
+                if (preserveRhythm)
                 {
                     double avg = baseFps;
                     string why = dedup ? "去重删过帧" : "VFR 素材";
@@ -3230,12 +3337,9 @@ public static class VideoService
                     }
                 }
             }
-            // 运动模糊(1/2/3 档 → 2/3/5 子帧):用运动补偿插帧(minterpolate)沿运动方向做真实模糊,再局部应用
-            var motionFrames = postMotionBlur switch { 1 => 2, 2 => 3, 3 => 5, _ => 0 };
-            var baseFpsStr = baseFps.ToString("0.##", inv);
-            var subFpsStr = (baseFps * motionFrames).ToString("0.##", inv);
-            var preChain = string.Join(",", preParts);
-            var postChain = string.Join(",", postParts);
+            // 【2026-09-21】原先这里还有 preChain / postChain 两个"滤镜链拼串"变量 + minterpolate 的子帧数
+            // (motionFrames/baseFpsStr/subFpsStr)。它们唯一的消费者是已删除的那张运动模糊 filter_complex 图;
+            // 正常的 -vf 链一直直接用 preParts/postParts 列表(见下方 allParts)⇒ 一并删除,不留死变量。
             // ===== 时长保护(关键):不管补出多少帧,输出时长恒=原处理时长,速度恒对、不吞时间、不坏尾段 =====
             // 原理:用 setpts 把"实际输出帧"均匀铺满在"原时长"上(帧率=帧数/原时长,时长=原时长)。
             // 若直接用固定 -framerate=原帧率×倍率,一旦 RIFE 补出帧数 != 原帧数×倍率,时长就漂移
@@ -3305,7 +3409,7 @@ public static class VideoService
                         // 日志照打"末帧延长 XXms",成片一毫秒都没变(实测 111 帧源 → 441 帧 @119.47
                         // = 3.691s,源容器 3.761s → 尾部 70ms 有声无画)。均匀时间轴上"只延长末帧"
                         // 做不到,唯一能落地的手段是把这段差折进标称帧率(见下方"帧率保险")。
-                        if (rhythmAtMux)
+                        if (preserveRhythm)
                         {
                             finalDurs = new System.Collections.Generic.List<double>();
                             for (int i = 0; i < seqA.Count; i++) finalDurs.Add(1.0 / outFps);
@@ -3363,7 +3467,7 @@ public static class VideoService
             // 日志里却一行异常都没有(真机事故的第二个成因)。现在回退必须打 warn,且文案改口径。
             bool fellBackToUniform = false;
             string fallbackWhy = "";
-            if (rhythmAtMux)
+            if (preserveRhythm)
             {
                 int finalFileCount = Directory.EnumerateFiles(framesFinal, "*.jpg").Count();
                 if (finalDurs == null || finalDurs.Count == 0)
@@ -3397,7 +3501,7 @@ public static class VideoService
                     vfrSetpts = BuildVfrSetptsExpr(finalDurs);
                 }
                 bool useVfrTimeline = !fellBackToUniform
-                    && AlhPro.Core.VideoPipeline.UsesVfrTimeline(rhythmAtMux, finalDurs.Count);
+                    && AlhPro.Core.VideoPipeline.UsesVfrTimeline(preserveRhythm, finalDurs.Count);
                 if (useVfrTimeline)
                 {
                     AppLogger.Info($"时长保护(VFR): 帧={finalFileCount}, muxDur={muxDur:0.###}, 总时长={finalDurs.Sum():0.###}, vfrSetpts={(vfrSetpts != null ? "有" : "无")}");
@@ -3422,16 +3526,11 @@ public static class VideoService
             else
             {
                 AppLogger.Info($"时长保护(均匀): muxDur={muxDur:0.###}, baseFps={baseFps:0.##}");
-                // 【唯一残留的"丢节奏"组合必须告知】rhythmAtMux 为假 + 又指定了帧率 ⇒ 只剩"运动模糊"这一个原因
-                // (那条滤镜链自带 CFR 时间重采样)。不告知的话用户只会看到"成片节奏变了"却没有任何线索。
-                if (preserveRhythm && targetFps is > 0)
-                {
-                    AppLogger.Warn($"⚠ 已开启「{(dedup ? "去重" : "可变帧率(VFR)素材识别")}」又指定了「输出帧率」,且「果冻修复·运动模糊」开着:"
-                        + "运动模糊那条滤镜链会按均匀网格重采样 —— "
-                        + $"成片会按 {targetFps.Value.ToString("0.##", inv)} fps 均匀铺开,**原片的停顿长短(定格 / 慢镜的节奏)不再保留**。"
-                        + "【想保留节奏】把「果冻修复」的「运动模糊」调回「关」后重跑(那条路会走可变帧率时间轴,时长表就是为此准备的)。");
-                    progress?.Report((96, $"⚠ 运动模糊 + 指定帧率:成片节奏将被均匀化({targetFps.Value.ToString("0.##", inv)} fps),原片停顿长短不再保留"));
-                }
+                // 【2026-09-21 这块告知已随功能删除】原先这里还有一条"唯一残留的丢节奏组合":保节奏为真 +
+                // 指定了帧率 ⇒ 只剩「果冻修复·运动模糊」这一个原因(那条滤镜链自带 CFR 重采样)。整块果冻修复
+                // 已按用户要求删除,而上面那句判据现在**就是** preserveRhythm 本身 ⇒ 进到本分支时 preserveRhythm
+                // 必为假,那个 if 永远不可达。留着它会让人以为"还有一条能丢节奏的路"—— 所以连条件一起删掉,
+                // 不留"永远不打的死分支"(本仓库对死分支的规矩:要么给出可达理由,要么删)。
             }
             // ===== 补帧/时长表诊断:【无条件打】(2026-09-13) =====
             // 旧代码把它挂在 `frameInterp && !vfrPassthrough && frameDurs == null` 的分支里 ——
@@ -3474,39 +3573,23 @@ public static class VideoService
                         + "补帧倍率会因此对不上(2x 不等于 2x)、或成片尾部少了内容");
             }
             string vfArg, videoMap;
-            string vfChainBody = "";   // 非运动模糊分支才有独立的 -vf 链;运动模糊走 filter_complex,不做抽样
-            if (postMotionBlur >= 1)
-            {
-                // 局部真实运动模糊:先运动补偿插帧到 N 倍帧率,再平均 N 子帧回原帧率(沿运动方向拖尾),
-                // 用帧间差异做运动掩码,只在运动区应用,静止区保持清晰。
-                // 注意:minterpolate 输出 gbrp,链中必须转 yuv420p,否则编码器输出黑白!
-                var graph = $"[0:v]" +
-                    (preChain.Length > 0 ? preChain + "," : "") +
-                    $"split=3[o1][o2][o3];" +
-                    $"[o1]minterpolate=fps={subFpsStr}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1,tmix=frames={motionFrames},fps={baseFpsStr},format=yuv420p[b];" +
-                    $"[o2]tblend=all_mode=difference,format=gray,dilation=threshold0=0[m];" +
-                    $"[o3]format=yuv420p[o3f];" +
-                    $"[o3f][b][m]maskedmerge" +
-                    (postChain.Length > 0 ? $",{postChain}" : "") +
-                    $",format=yuv420p{(vfrSetpts != null ? "," + vfrSetpts : "")}[vout]";
-                vfArg = $" -filter_complex \"{graph}\"";
-                videoMap = "-map \"[vout]\"";
-            }
-            else
-            {
-                var allParts = new System.Collections.Generic.List<string>(preParts);
-                allParts.AddRange(postParts);
-                // 链尾强制 yuv420p:部分滤镜(如 minterpolate 输出 gbrp)不转格式会让编码器输出黑白;
-                // setpts 改时间轴放在滤镜链最后(后处理=时间维度滤镜需要先于重映射的正确 PTS)
-                vfArg = allParts.Count > 0
-                    ? $" -vf \"{string.Join(",", allParts)},format=yuv420p{(vfrSetpts != null ? "," + vfrSetpts : "")}\""
-                    : (vfrSetpts != null ? $" -vf \"format=yuv420p,{vfrSetpts}\"" : "");
-                // 供"编码阶段拆分"抽样实测滤镜链成本用(与上面 vfArg 同一份链,去掉 -vf 包装)
-                vfChainBody = allParts.Count > 0
-                    ? string.Join(",", allParts) + ",format=yuv420p" + (vfrSetpts != null ? "," + vfrSetpts : "")
-                    : (vfrSetpts != null ? "format=yuv420p," + vfrSetpts : "");
-                videoMap = "-map 0:v:0";
-            }
+            string vfChainBody = "";   // 有独立 -vf 链时才填(供"编码阶段拆分"抽样实测滤镜链成本)
+            // 【2026-09-21 果冻修复整块删除】原先这里是一个二选一:`if (postMotionBlur >= 1)` 走
+            // minterpolate 沿运动方向做真实模糊 + tmix 混合子帧 + 运动掩码局部应用(filter_complex),
+            // 否则走下面这条普通 -vf 链。用户当晚要求"果冻修复那个删掉" ⇒ 那条分支删除,合帧阶段现在
+            // **只有一条**滤镜链,不再有按档位切换的第二张复杂图(它带的 CFR 重采样副作用也一并消失)。
+            var chainParts = new System.Collections.Generic.List<string>(preParts);
+            chainParts.AddRange(postParts);
+            // 链尾强制 yuv420p:部分滤镜输出 gbrp 之类不转格式会让编码器输出黑白;
+            // setpts 改时间轴放在滤镜链最后(后处理=时间维度滤镜需要先于重映射的正确 PTS)
+            vfArg = chainParts.Count > 0
+                ? $" -vf \"{string.Join(",", chainParts)},format=yuv420p{(vfrSetpts != null ? "," + vfrSetpts : "")}\""
+                : (vfrSetpts != null ? $" -vf \"format=yuv420p,{vfrSetpts}\"" : "");
+            // 供"编码阶段拆分"抽样实测滤镜链成本用(与上面 vfArg 同一份链,去掉 -vf 包装)
+            vfChainBody = chainParts.Count > 0
+                ? string.Join(",", chainParts) + ",format=yuv420p" + (vfrSetpts != null ? "," + vfrSetpts : "")
+                : (vfrSetpts != null ? "format=yuv420p," + vfrSetpts : "");
+            videoMap = "-map 0:v:0";
             // 卡顿预防提示:内容帧率低(如 12fps)时,低倍率输出仍会卡,建议提高倍率。
             // v4(原×倍率)输出较足,不提示;v2(内容×倍率)偏低时提示。
             if (frameInterp && !v4Interp && effectiveFps * interpScale < 30)
@@ -3561,12 +3644,11 @@ public static class VideoService
             // Core.CountTimestampCollisions 复算撞格数;若仍有撞格,再细化到 1ms(1000fps)。
             // CFR 分支一字未改:此时 frInput == fr。
             string frInput = fr;
-            // 【为什么这里排除了运动模糊】`postMotionBlur >= 1` 的链自带时间维度重采样
-            // (minterpolate=fps=… → tmix → fps=…),它按"输入时间戳算出的时长 × 目标帧率"决定产出帧数:
-            // 把输入时基从 1/fr 细化到 1/120 会让它以为素材只有一半长 → 产出帧数减半(画质功能被弄坏)。
-            // 那条链自身的设计前提就是"输入是按目标帧率铺的 CFR",与 VFR 时间轴本来就不同源;
-            // 所以该组合维持原时基(**该组合仍可能撞格丢帧,属于未处理的已知空洞**),其余情况一律细化。
-            if (vfrSetpts != null && finalDurs != null && finalDurs.Count > 0 && postMotionBlur < 1)
+            // 【2026-09-21】原先这里还有一个排除项 `&& postMotionBlur < 1`:运动模糊那条链自带时间维度
+            // 重采样(minterpolate=fps=… → tmix → fps=…),把输入时基细化会让它以为素材只有一半长、产出帧数减半。
+            // 整块果冻修复已按用户要求删除 ⇒ 该组合不存在,排除项随之取消,条件只剩"确实有 VFR 时长表"。
+            // (顺带说明:那条链自己承认的"该组合仍可能撞格丢帧"这个已知空洞也一并消失了 —— 不再有那条链。)
+            if (vfrSetpts != null && finalDurs != null && finalDurs.Count > 0)
             {
                 double c0 = AlhPro.Core.VideoPipeline.CountTimestampCollisions(finalDurs, frBase);
                 double need = AlhPro.Core.VideoPipeline.VfrInputFramerate(finalDurs, frBase);
@@ -3652,7 +3734,13 @@ public static class VideoService
             var audioPart = mute ? "" : $" -map 1:a:0? {audioArgs}";
             if (!mute && muxDur > 0.01)
                 audioPart += $" -t \"{muxDur.ToString("0.######", inv)}\"";
-            var muxArgs = $"{videoMap}{audioPart} {encArgs} {vfArg}{fastFlag} \"{outTmp}\"";
+            // 【2026-09-19 撤回】曾试过加 -filter_threads 提速,实测**中性**(0.084 → 0.084 秒/帧:
+            // ffmpeg 的 JPEG 解码本身已多线程),用户要求"不要乱改" ⇒ 已删除该改动,恢复原样 ✔
+            // 【2026-09-19 审计落地 · 归档能力】透传源素材的**全局元数据与章节**。
+            // 现状:只 map 视频+第一条音轨 ⇒ 标题/艺术家/日期/注释/章节全丢 ✗(归档与留档用途的硬伤)
+            // ⚠ 第 0 个输入是 JPEG 序列(无元数据),真正的源在第【1】个输入上 ⇒ 必须写 1 ✔
+            // 风险极低:MP4/MKV 都支持;源没有元数据/章节时是空操作 ✔
+            var muxArgs = $"{videoMap} -map_metadata 1 -map_chapters 1 {audioPart} {encArgs} {vfArg}{fastFlag} \"{outTmp}\"";
             var muxBase = $"-y {muxInput} {trimArgs} -i \"{inputVideo}\" ";
             // 编码阶段整体进度 96→100 随 ffmpeg 编码帧数推进(否则卡 96%,结尾预计时间虚高失真)
             int encTotal = Math.Max(1, Directory.EnumerateFiles(framesFinal, "*.jpg").Count());
@@ -3775,7 +3863,10 @@ public static class VideoService
                 // 【输出端黑场自检】后处理与编码两个阶段原本【没有任何黑帧防线】(防线只覆盖超分引擎输出那一步),
                 // 所以后处理滤镜产生的黑帧能一路进成片且零日志 —— 用户实际就是这样报上来的。
                 // 这里在成片落盘后扫一遍,把黑场位置写进日志与任务提示,让它再也藏不住。
-                string blackSeg = await ScanBlackSegmentsAsync(outputVideo, ct).ConfigureAwait(false);
+                // 【2026-09-22】把源片与裁剪起点也传进去:让自检能区分"源自带的黑场"与"处理链产生的黑帧"
+                // (见 ScanBlackSegmentsAsync 的说明;源自带的黑场不再当缺陷报,也不再把用户叫来发日志)。
+                string blackSeg = await ScanBlackSegmentsAsync(outputVideo, ct,
+                    inputVideo, trimStart ?? 0).ConfigureAwait(false);
                 uBlackSeg = blackSeg;   // 【任务 U 补充】结算行要用它报"有无黑帧"
                 if (blackSeg.Length > 0) warn += $"成片含全黑片段({blackSeg});";
                 AppLogger.Info($"输出校验:{Path.GetFileName(outputVideo)} 帧率 {fpsOut:0.##}fps,时长 {durOut:0.###}s" +
@@ -4009,6 +4100,146 @@ public static class VideoService
         2 => "hqdn3d(仅时间域降噪)",
         _ => "nlmeans + hqdn3d(空间域与时间域联合降噪)",
     };
+
+    // ===== 【降噪·自动档 · 2026-09-21】源素材体检 =====
+    /// <summary>源素材体检(降噪「自动」档用):抽 6 帧,在**源分辨率**上量 颗粒σ / 块效应 / 闪烁σ。
+    /// 【口径与阈值同源】判据在 <see cref="AlhPro.Core.VideoNoiseProbe"/>;量法与 `_qa\denoise_source_audit.py`
+    /// 逐条对应 —— 那份 Python 脚本就是标定这套阈值的工具,改这里必须同时改它、并重跑
+    /// `_qa\降噪整改_实测_20260921.md`(干净的源上降噪是净亏、有噪的源上才净赚,两条都是实测量出来的)。
+    /// 【为什么只取中间一块】整帧 ×6 的浮点数组要几十 MB 且没必要:取居中的 960×540(源更小则整帧),
+    /// 起点**对齐到 8 的倍数** —— 块效应指标按 8 像素网格算,起点不对齐会直接把指标量错。
+    /// 【失败一律返回 null、绝不抛】调用方按"体检失败 ⇒ 不降噪"处理(见 VideoNoiseProbe.Decide 的默认值):
+    /// 抽帧都失败说明源有问题,此时"少做一步"比"多糊一层"安全,用户仍可手动选档强制降。</summary>
+    private static async Task<AlhPro.Core.VideoNoiseStats?> ProbeSourceNoiseAsync(string input, double duration, CancellationToken ct)
+    {
+        // 【两段各 3 张**连续**帧 —— 2026-09-21 从"铺 6 个时间点"改过来】
+        // 原因(真机对拍发现):按 10%~90% 铺点取帧,帧间隔十几秒,时间标准差量到的是**换镜头**而不是闪烁,
+        // 同一片段给出 19.4 这种假数(相邻帧量出来是 0.4~1.5)⇒ 闪烁那一列就成了误导。
+        // 现在:在 30% / 70% 处各抽 3 张相邻帧(一个 ffmpeg 调用就能抽完,比原来 6 次调用还便宜),
+        // 颗粒/块效应照旧合起来平均(单帧指标),闪烁按**段**算再平均(相邻才有意义)。
+        const int perBurst = 3;
+        string dir = Path.Combine(Path.GetTempPath(), "alhpro_noiseprobe_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var ff = FfmpegPath;
+            if (ff == null) return null;
+            Directory.CreateDirectory(dir);
+            var frames = new System.Collections.Generic.List<float[]>();
+            int cw = 0, ch = 0;
+            var fracs = duration > 2.0 ? new[] { 0.30, 0.70 } : new[] { 0.0 };   // 太短的片子就只有一段
+            int tag = 0;
+            foreach (var frac in fracs)
+            {
+                ct.ThrowIfCancellationRequested();
+                double t0 = duration > 2.0 ? duration * frac : 0.0;
+                int myTag = tag++;
+                var pngs = await Task.Run(() => RunFfmpegFrames(ff, input, t0, perBurst, dir, myTag), ct).ConfigureAwait(false);
+                foreach (var png in pngs)
+                {
+                    int w = 0, h = 0;
+                    var arr = await Task.Run(() => ReadGrayCrop(png, out w, out h), ct).ConfigureAwait(false);
+                    if (arr == null || w < 32 || h < 32) continue;
+                    if (frames.Count == 0) { cw = w; ch = h; }
+                    else if (w != cw || h != ch) continue;      // 尺寸不一致(源中途换分辨率)⇒ 丢掉这帧,别混着算
+                    frames.Add(arr);
+                }
+            }
+            if (frames.Count < 3 || cw == 0)
+                return new AlhPro.Core.VideoNoiseStats(double.NaN, double.NaN, 0, frames.Count);
+
+            var stats = AlhPro.Core.VideoNoiseProbe.Measure(frames, cw, ch, perBurst);
+            AppLogger.Info($"视频降噪体检:取 {stats.Frames} 帧({fracs.Length} 段 × 每段 {perBurst} 张相邻帧)、"
+                + $"{cw}×{ch}(源分辨率的居中块,起点对齐 8 像素)");
+            return stats;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"视频降噪体检失败({ex.GetType().Name}: {ex.Message})⇒ 本批按「不降噪」处理");
+            return null;
+        }
+        finally
+        {
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { /* 临时目录删不掉不影响结果 */ }
+        }
+    }
+
+    /// <summary>从 t0 起抽 n 张**连续**帧(一个 ffmpeg 调用;返回真正落盘的路径表)。
+    /// 【为什么一次抽多张】闪烁必须看相邻帧(见 ProbeSourceNoiseAsync 的说明),
+    /// 而且一次调用比"每帧起一次 ffmpeg"更便宜 —— 顺带把原来的 6 次进程启动降到 2 次。</summary>
+    private static System.Collections.Generic.List<string> RunFfmpegFrames(string ffmpeg, string input, double t0, int n, string dir, int tag)
+    {
+        var outp = new System.Collections.Generic.List<string>();
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = ffmpeg,
+                Arguments = $"-y -v error -ss {t0.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} "
+                          + $"-i \"{input}\" -frames:v {n} \"{Path.Combine(dir, $"b{tag}_%02d.png")}\"",
+                UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true,
+            };
+            using (var pr = System.Diagnostics.Process.Start(psi))
+            {
+                if (pr == null) return outp;
+                pr.StandardOutput.ReadToEnd();
+                pr.StandardError.ReadToEnd();
+                if (!pr.WaitForExit(20000)) { try { pr.Kill(entireProcessTree: true); } catch { } return outp; }
+            }
+            for (int i = 1; i <= n; i++)
+            {
+                var p = Path.Combine(dir, $"b{tag}_{i:00}.png");
+                if (File.Exists(p)) outp.Add(p);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"视频降噪体检:抽帧失败({ex.GetType().Name}: {ex.Message})");
+        }
+        return outp;
+    }
+
+    /// <summary>读一张帧文件 → 居中 960×540(不足则整帧、起点对齐 8 的倍数)的灰度 float[]。
+    /// 灰度系数与 Python 侧(PIL convert('L'))一致:0.299R + 0.587G + 0.114B。</summary>
+    private static float[]? ReadGrayCrop(string png, out int w, out int h)
+    {
+        w = 0; h = 0;
+        try
+        {
+            using var bmp = new System.Drawing.Bitmap(png);
+            if (bmp.Width < 32 || bmp.Height < 32) return null;
+            int cw = Math.Min(960, bmp.Width), ch = Math.Min(540, bmp.Height);
+            int x0 = (bmp.Width - cw) / 2, y0 = (bmp.Height - ch) / 2;
+            x0 -= x0 % 8; y0 -= y0 % 8;
+            using var crop = bmp.Clone(new System.Drawing.Rectangle(x0, y0, cw, ch),
+                System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+            var data = crop.LockBits(new System.Drawing.Rectangle(0, 0, cw, ch),
+                System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+            try
+            {
+                var g = new float[cw * ch];
+                var row = new byte[data.Stride];
+                for (int y = 0; y < ch; y++)
+                {
+                    System.Runtime.InteropServices.Marshal.Copy(IntPtr.Add(data.Scan0, y * data.Stride), row, 0, data.Stride);
+                    for (int x = 0; x < cw; x++)
+                    {
+                        int o = x * 3;   // Format24bppRgb 在内存里是 B,G,R
+                        g[y * cw + x] = 0.299f * row[o + 2] + 0.587f * row[o + 1] + 0.114f * row[o];
+                    }
+                }
+                w = cw; h = ch;
+                return g;
+            }
+            finally { crop.UnlockBits(data); }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"视频降噪体检:读帧失败({ex.GetType().Name}: {ex.Message})");
+            return null;
+        }
+    }
 
     /// <summary>waifu2x 模型自带降噪档(-n)的映射已【迁到】<see cref="AlhPro.Core.Waifu2x.NoiseLevelFor"/>
     /// (纯逻辑 + 单测:档位严格单调、关真关、1x 不下发 -n -1)。
@@ -5709,6 +5940,10 @@ public static class VideoService
     /// 用于拆帧阶段提前转换,避免输出偏色/掉信息。保守:任一关键字段未知(unknown)时不做转换(避免 zscale "no path" 报错),
     /// 返回 (null,null)。任何探测/解析失败同样返回 (null,null),不阻断流程。
     /// </summary>
+    /// <summary>最近一次探测到的"源素材是 HDR/广色域/10bit"摘要(null = 普通 SDR 8bit)。
+    /// 【用途】预览页红字提示用 —— 让用户**在界面上**就知道"HDR 素材会被转成 SDR(有损)",而不是只在日志里 ✗
+    /// 【口径】由 ProbeHdrToSdrAsync 在探测时写入,界面只读,不额外探测文件 ✔</summary>
+    public static string? LastSourceColorSummary { get; private set; }
     private static async Task<(string? desc, string? vf)> ProbeHdrToSdrAsync(string video, CancellationToken ct)
     {
         try
@@ -5740,6 +5975,23 @@ public static class VideoService
                 AppLogger.Info($"[色彩] 源素材色彩事实:range={rng ?? "unknown"} space={kv.GetValueOrDefault("color_space", "unknown")} " +
                                $"primaries={kv.GetValueOrDefault("color_primaries", "unknown")} transfer={kv.GetValueOrDefault("color_transfer", "unknown")} " +
                                $"pix_fmt={pf ?? "?"} 位深={bps ?? "?"}");
+                // 【2026-09-19 · 审计结论落地】把"这是不是 HDR / 10bit 素材"留给界面显示 ——
+                // 用户看到"成片偏灰/颜色变淡"时,根因往往就是"HDR 素材被转成 SDR"(App 有 tonemap,但那是**有损**的)✗
+                // ⇒ 让他**在界面上就看到**这件事,而不是只有日志里一行,免得以为是软件坏了 ✔
+                string trcv = kv.GetValueOrDefault("color_transfer", "").ToLowerInvariant();
+                string primv = kv.GetValueOrDefault("color_primaries", "").ToLowerInvariant();
+                bool isHdrSrc = trcv is "smpte2084" or "arib-std-b67" or "smpte428" || primv == "bt2020";
+                int bits = 0; int.TryParse(bps, out bits);
+                if (bits == 0 && pf != null)
+                {
+                    if (pf.Contains("10le") || pf.Contains("10be")) bits = 10;
+                    else if (pf.Contains("12le") || pf.Contains("12be")) bits = 12;
+                    else if (pf.Contains("p010")) bits = 10;
+                    else bits = 8;
+                }
+                LastSourceColorSummary = (isHdrSrc || bits > 8)
+                    ? $"{(isHdrSrc ? "HDR/广色域" : "")}{(bits > 8 ? (bits + "bit") : "")}（{pf ?? "?"} · transfer={trcv} · primaries={primv}）"
+                    : null;
             }
             catch { }
             kv.TryGetValue("color_space", out string? sp);
@@ -5853,7 +6105,7 @@ public static class VideoService
             {
                 await RunAsync(ffmpeg,
                     $"-y {trimArgs}{inColor} -hwaccel d3d11va -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{vfExpr}\" -pix_fmt yuvj420p -qscale:v 2 \"{pattern}\"",
-                    progress, ct, "拆帧", origCountEst);
+                    progress, ct, ExtractStageLabel(vfExpr), origCountEst);
                 int n = Directory.EnumerateFiles(framesDir, "*.jpg").Count();
                 if (n > 0) return FinishExtract(n);
                 if (canLatchHw) _hwDecodeBrokenCodecs.Add(hwCodec);   // 硬解输出 0 帧 → 该编码视为不可用
@@ -6659,6 +6911,14 @@ public static class VideoService
             // ① SAD16(16px 小图)找"大变化事件"(节奏确认用);
             // ② histDiff(蓝通道 4 步采样+均衡化)当"安全闸":网格只删"真保持帧(均衡差≤0.8)",
             //    微差帧(呼吸/微动=时间流逝)绝不丢。无固定节奏的段 = 真人连续运动 → 原样保留,一帧不删。
+            // 【2026-09-21 补上逐帧心跳 —— 任务④「去重要不要补逐帧进度」的落地】
+            // 这是**去重链上唯一一段没有进度输出的逐帧循环**:它给每一帧都做 LoadFullGray + 直方图均衡化
+            // (整帧解码),是纯 CPU 重活,却只在整个段跑完之后才报一条。本段今天**不可达**(三个调用点全部传
+            // forceGrid: true ⇒ 进的是上面那个"网格抽帧"分支,那条分支根本不解码帧、只按间隔取序号),
+            // 所以这不是当前用户能撞到的缺陷 —— 但它是一个**定时炸弹**:哪天有人把"自动识别拍数"这条路打开
+            // (forceGrid 传 false),这一段就会变成"界面卡在那里一动不动"的老毛病(本轮修的就是这类体验)。
+            // 与其留个"要记得加"的注释,不如现在就按现有风格接上同一个心跳(成本 3 行,零行为变化)。
+            var hbPick = new DedupHeartbeat(progress, "去重分析(拍数识别)", len);
             var prevFull = LoadFullGray(files[s], out var wF, out var hF, out var prevBlue4, out var bw4, out var bh4);
             var prev16 = SampleFrom(prevFull, wF, hF, 16, out var sw16, out var sh16);
             var prevEq4 = EqualizeHist(prevBlue4);
@@ -6666,6 +6926,8 @@ public static class VideoService
             var histds = new double[len - 1];
             for (int i = s + 1; i < e; i++)
             {
+                // 每 32 帧一次(取 2 的幂,判断成本可忽略):与 DetectDupFramesWithSsim / Adaptive 同一节流口径
+                if (((i - s) & 31) == 0) hbPick.Step(i - s, 0);
                 var curFull = LoadFullGray(files[i], out wF, out hF, out var curBlue4, out bw4, out bh4);
                 var cur16 = SampleFrom(curFull, wF, hF, 16, out sw16, out sh16);
                 var curEq4 = EqualizeHist(curBlue4);
@@ -6674,6 +6936,7 @@ public static class VideoService
                 histds[k] = MeanAbsDiff(prevEq4, curEq4);
                 prev16 = cur16; prevFull = curFull; prevEq4 = curEq4;
             }
+            hbPick.Done(0);
             // ===== 节奏确认(变化帧应呈固定间隔)=====
             var sorted = sads.OrderBy(v => v).ToList();
             double med = sorted[sorted.Count / 2];
@@ -6750,11 +7013,16 @@ public static class VideoService
             AppLogger.Info($"去重|[{s},{e}) 自动识别拍数={pConfirmed:0.##},删保持帧:{segKeep.Count}/{len},内容帧率≈{fc:0.#}fps");
         }
         // 3) 删除非保留帧并重命名(保持连续帧号)
+        // 【2026-09-21 补上心跳】这一段是**逐帧的文件 I/O**(删除/改名),长片上是实打实的几秒~几十秒;
+        // 之前它只在全部做完之后靠 `去重完成:` 那一条交代,中间这段时间界面上没有任何新信息。
+        // 与其它逐帧循环同族:每 1024 帧报一次(文件 I/O 比 CPU 判定快得多,所以节流更粗)。
         if (keep.Count < frameCount)
         {
+            var hbRe = new DedupHeartbeat(progress, "去重:重排帧号", frameCount);
             int idx = 0;
             for (int n = 0; n < frameCount; n++)
             {
+                if ((n & 1023) == 0) hbRe.Step(n, 0);
                 if (keep.Contains(n))
                 {
                     idx++;
@@ -6766,6 +7034,7 @@ public static class VideoService
                     try { File.Delete(files[n]); } catch { }
                 }
             }
+            hbRe.Done(0);
         }
         int keptCount = Directory.EnumerateFiles(framesIn, "*.jpg").Count();
         double eff = keptCount > 0 && frameCount > 0 ? inFps * keptCount / frameCount : inFps;
@@ -8184,8 +8453,20 @@ public static class VideoService
     ///   · 暗夜场景(luma=20 深灰,非黑帧):pix_th=0.10 → **误报 1 处**;0.05 → 0 处;0.02 → 0 处
     ///   · 真黑帧(且经 h264 压缩带噪):0.10 / 0.05 / 0.02 三者都能命中 1 处
     /// ⇒ 0.10 会把正常夜景当成黑帧,0.05 既有余量拒掉暗场、又留足余量接住压缩噪声后的真黑帧。
-    /// 【注意】它只如实报告"成片里有黑场",不区分"素材本来就有"还是"处理引入的" —— 提示文案里已写明让用户比对源片。</summary>
-    private static async Task<string> ScanBlackSegmentsAsync(string videoPath, CancellationToken ct)
+    /// 【2026-09-22 用户裁决:把"源片本来就黑"从缺陷里摘掉】
+    ///   起因:整机自测发现这条告警**反复误报** —— 用户素材 `GIRL LIKE ME_1.mp4` 开头本来就是 0.417s 黑场(淡入),
+    ///   成片如实复现,却每次都被当成"处理链产生的缺陷"并要求用户发日志给作者 ✗。
+    ///   实测证据(成片 0s~0.396s ↔ 源 0s~0.417s;源 `YAVG=16`);另一条历史告警 `3s~3.17s` 换算到源时间
+    ///   (那次区间起点 2.738s)正好落在源自带的 `5.755~5.881` 黑段上 ⇒ **同一个误报**。
+    ///   根因:流水线内部那条黑帧防线有"相邻源帧本来就黑就放行"的豁免(`BlackFrameRecovery.IsRealDefect`),
+    ///   **而输出端这条没有** ⇒ 两条防线口径不一致。
+    ///   现在:每处成片黑段都去**源片同位置**探一帧亮度,源片那里也黑 ⇒ 不算缺陷(只在对账行里计数)。
+    ///   ⚠ 探不到、探测失败、没传源片 ⇒ **一律照旧报**(宁可多报,不可漏报是这条防线的底线)。
+    /// 【时间轴怎么对得上】本工程有硬不变量:输出时长恒 = 原处理时长(结算行每次都核对"成片容器 vs 源容器");
+    ///   去重只把被删帧的时长并进前一帧、指定帧率与平滑时间轴都保时长 ⇒ **源时刻 = 裁剪起点 + 成片时刻**
+    ///   (误差 ≤ 半帧)。所以这里可以直接相加,不需要另做时间轴映射。</summary>
+    private static async Task<string> ScanBlackSegmentsAsync(string videoPath, CancellationToken ct,
+        string? sourceForCompare = null, double sourceOffsetSec = 0)
     {
         LastBlackScanResult = "";
         var ffmpeg = FfmpegPath;
@@ -8219,6 +8500,7 @@ public static class VideoService
             string err = await errTask.ConfigureAwait(false);
 
             var segs = new System.Collections.Generic.List<string>();
+            var segRanges = new System.Collections.Generic.List<(double s, double e)>();
             foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
                 err, @"black_start:([0-9.]+)\s+black_end:([0-9.]+)"))
             {
@@ -8226,19 +8508,91 @@ public static class VideoService
                     System.Globalization.CultureInfo.InvariantCulture, out var s);
                 bool okE = double.TryParse(m.Groups[2].Value, System.Globalization.NumberStyles.Float,
                     System.Globalization.CultureInfo.InvariantCulture, out var e);
-                if (okS && okE) segs.Add($"{s:0.##}s~{e:0.##}s");
-                if (segs.Count >= 20) { segs.Add("…"); break; }   // 别把日志刷爆
+                if (okS && okE) { segRanges.Add((s, e)); }
+                if (segRanges.Count >= 20) break;   // 别把日志刷爆
             }
-            if (segs.Count == 0) return "";
+            if (segRanges.Count == 0) return "";
+
+            // 【2026-09-22】把"源片同位置也黑"的摘掉(见方法注释):逐段探一帧源片亮度。
+            int exempt = 0;
+            if (!string.IsNullOrEmpty(sourceForCompare) && File.Exists(sourceForCompare))
+            {
+                var kept = new System.Collections.Generic.List<(double s, double e)>();
+                foreach (var (s0, e0) in segRanges)
+                {
+                    double at = sourceOffsetSec + (s0 + e0) / 2.0;   // 取该段中点探一帧
+                    bool srcBlack = await SourceLooksBlackAtAsync(sourceForCompare, at, ct).ConfigureAwait(false);
+                    if (srcBlack) exempt++; else kept.Add((s0, e0));
+                }
+                if (exempt > 0)
+                {
+                    AppLogger.Info($"输出端黑场自检:成片 {exempt} 处黑段在**源片同一时刻也是黑的** ⇒ 判定为源自带的黑场"
+                        + $"(淡入淡出/夜戏/转场),不再当缺陷上报;剩下 {kept.Count} 处需你核对。"
+                        + "口径与流水线内部那条黑帧防线一致(它一直有'相邻源帧本来就黑就放行'的豁免)。");
+                }
+                segRanges = kept;
+            }
+            if (segRanges.Count == 0) return "";
+
+            foreach (var (s, e) in segRanges) segs.Add($"{s:0.##}s~{e:0.##}s");
             var summary = string.Join("、", segs);
             LastBlackScanResult = summary;
             AppLogger.Warn($"⚠ 输出端黑场自检:成片含 {segs.Count} 处全黑片段({summary})。"
-                + "若源片本来没有黑场,说明是处理链某一步产生的 —— 请把本行发作者。"
-                + "常见来源:后处理滤镜(去频闪 deflicker / 去模糊)或 ncnn-Vulkan 队列异常。");
+                + "这些位置**在源片同一时刻不是黑的**,说明是处理链某一步产生的 —— 请把本行发作者。"
+                + "常见来源:后处理滤镜(去频闪 deflicker / 去模糊)或 ncnn-Vulkan 队列异常。"
+                + (exempt > 0 ? $"（另有 {exempt} 处已按「源片本来就黑」豁免，不计入）" : ""));
             return summary;
         }
         catch (OperationCanceledException) { return ""; }
         catch { return ""; }
+    }
+
+    /// <summary>【2026-09-22 加】探"源片在 <paramref name="atSec"/> 附近是不是也黑",用于把**源自带的黑场**
+    /// 从"输出端黑场自检"里摘掉(见 <see cref="ScanBlackSegmentsAsync"/> 的说明)。
+    ///
+    /// 【第一版是错的,照实记】(2026-09-22 自测真机复现)
+    ///   第一版解一帧、用 `signalstats` 的 **整帧平均亮度 YAVG &lt; 13** 判黑 —— **在真素材上没生效** ✗:
+    ///   用户素材开头那段淡入黑场实测 **YAVG=16**(>13)⇒ 判成"源片不黑" ⇒ 告警照旧。
+    ///   根因:扫描端 `blackdetect` 的 `pix_th=0.05` + `pic_th=0.98` 是**"低于阈值的像素占比"**这个统计量
+    ///   (≥98% 的像素亮度 &lt; 12.75),而**整帧平均**是另一个统计量 —— 前者能判黑、后者不一定 ✗。
+    ///   教训:**判据换统计量就等于换了判据**;要口径一致,就得用**同一个滤镜 + 同一组阈值**。
+    /// 【现在怎么做】在源片上开一个**以该时刻为中心的小窗口**(±0.3 秒),跑**与扫描端逐字相同**的
+    ///   `fps/scale/blackdetect` 参数,只要窗口内报出黑段 ⇒ 源片这里也黑 ⇒ 豁免。
+    ///   这样不需要我再"发明"任何阈值(也就不会有第二个统计量跑偏的机会)。
+    /// 【失败一律返回 false(= 不豁免 → 照旧报警)】宁可多报也不许漏报,这是这条防线的底线。
+    /// 【成本】每处黑段只解 0.6 秒的窗口,一次任务通常 0~3 处 ⇒ 可忽略。</summary>
+    private static async Task<bool> SourceLooksBlackAtAsync(string sourcePath, double atSec, CancellationToken ct)
+    {
+        var ffmpeg = FfmpegPath;
+        if (ffmpeg == null || atSec < 0) return false;
+        try
+        {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            double from = Math.Max(0, atSec - 0.3);
+            var psi = new ProcessStartInfo
+            {
+                FileName = ffmpeg,
+                // ⚠ 阈值与 ScanBlackSegmentsAsync 里那串**逐字相同**(只有 d 从 0.15 收到 0.08,
+                //   因为窗口本身只有 0.6 秒;黑段本身比这长得多,不会因此漏判)
+                Arguments = $"-v info -ss {from.ToString("0.###", inv)} -t 0.6 -i \"{sourcePath}\" " +
+                            $"-vf \"fps=6,scale=320:-2,blackdetect=d=0.08:pic_th=0.98:pix_th=0.05\" " +
+                            $"-an -f null -",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            using var p = Process.Start(psi);
+            if (p == null) return false;
+            var errTask = p.StandardError.ReadToEndAsync();
+            var exitTask = p.WaitForExitAsync(ct);
+            var done = await Task.WhenAny(exitTask, Task.Delay(TimeSpan.FromSeconds(20), ct)).ConfigureAwait(false);
+            if (done != exitTask) { try { p.Kill(entireProcessTree: true); } catch { } return false; }
+            await exitTask.ConfigureAwait(false);
+            string err = await errTask.ConfigureAwait(false);
+            return System.Text.RegularExpressions.Regex.IsMatch(err, @"black_start:[0-9.]+\s+black_end:[0-9.]+");
+        }
+        catch { return false; }
     }
 
     /// <summary>编码参数;quality 0=自动 1=低 2=中 3=高 4=极高(CRF 值递减=画质递增,单调)。
@@ -8661,25 +9015,41 @@ public static class VideoService
             string filt; int outW, outH;
             if (layout == CompareLayout.SplitLine)
             {
-                // 【左右对比】线左侧 = 原片同一处的左半(1:1 裁切),线右侧 = 处理后同一条线右边(1:1)。
-                // 每边都是**原分辨率的裁切**,所以这里是"看 4K 原样"最该用的那档(并排整幅那档每边只有一半像素)。
-                // 合成片 = W×H,和原片同形状:填满画面区、分割线正落在 splitPct 处。
-                int oh2 = oh / 2 * 2;
+                // 【2026-09-19 修 · 用户实测:"左右的时候右边处理后的画质和看处理效果的那个画质完全不一样"】
+                // 根因(证据在代码里):原来右边是 `scale={原片宽}:{原片高}` 之后再裁 ⇒ **处理后的分辨率被丢掉** ✗
+                //   (处理成片可能是 4K/8K,合成片里只剩 1080p,还多一次重编码)⇒ 右边看着又糊又假 ✓
+                // 修法:合成片改按**处理后尺寸**烘 ——
+                //   · 右边:**1:1 原样裁**(不再缩放,保住真像素)✔
+                //   · 左边:把原片等比放大到同一尺寸 ⇒ 线两边是同一处画面、同一尺度(擦除对比的语义不变)✔
+                //   · 上限 4096 宽:防 8K 合成片过大(超了就两边**同比例**缩,仍然同尺度、可比)✔
+                var (pw0, ph0) = await ProbeSizeAsync(processedPath).ConfigureAwait(false);
+                if (pw0 < 32 || ph0 < 32) { pw0 = ow; ph0 = oh; }      // 探不到就退回原片尺寸(与旧行为一致)
+                double cap = Math.Min(1.0, 4096.0 / Math.Max(1, pw0));
+                int cw = (int)Math.Round(pw0 * cap); cw -= cw % 2;
+                int chh = (int)Math.Round(ph0 * cap); chh -= chh % 2;
+                if (cw < 32 || chh < 32) { cw = ow; chh = oh / 2 * 2; }
                 double p = Math.Clamp(splitPct, 0.02, 0.98);
-                int lw = (int)Math.Round(ow * p); lw -= lw % 2;      // 左侧宽度(偶)
+                int lw = (int)Math.Round(cw * p); lw -= lw % 2;      // 左侧宽度(偶)
                 if (lw < 2) lw = 2;
-                if (ow - lw < 2) lw = ow - 2;
-                int rw = ow - lw;
-                filt = $"[0:v]{fpsArg}crop={lw}:{oh2}:0:0,setsar=1,setpts=PTS-STARTPTS[l];"
-                     + $"[1:v]{fpsArg}scale={ow}:{oh2},crop={rw}:{oh2}:{lw}:0,setsar=1,setpts=PTS-STARTPTS[r];"
+                if (cw - lw < 2) lw = cw - 2;
+                int rw = cw - lw;
+                filt = $"[0:v]{fpsArg}scale={cw}:{chh},crop={lw}:{chh}:0:0,setsar=1,setpts=PTS-STARTPTS[l];"
+                     + $"[1:v]{fpsArg}scale={cw}:{chh},crop={rw}:{chh}:{lw}:0,setsar=1,setpts=PTS-STARTPTS[r];"
                      + "[l][r]hstack=inputs=2:shortest=1[v]";
-                outW = ow; outH = oh2;
+                outW = cw; outH = chh;
             }
             else
             {
-                // 【两者同时】每半边 = 整幅画面等比缩一半 → 合成片 = W × (H/2),分割线正好在 50%
-                int w2 = ow / 2 / 2 * 2;                    // 半边宽(yuv420p 要求偶数)
-                int h2 = oh / 4 * 2;                        // 半边高 = 原片高的一半(同样取偶数)
+                // 【2026-09-19 修 · 与「左右对比」同一类问题】这里原来把两侧都缩到"**原片的一半**"✗:
+                //   源 1080p → 每侧只有 960×540,处理后的 4K/8K 分辨率全丢 ⇒
+                //   用户实测"闪一下就又变成降采样的效果了"(后台合成片一落地,界面切过去就是这样)✓
+                // 修法:每侧按**处理后的尺寸**烘,整条合成片限宽 4096 —— 超了就两侧**同比例**缩(保持同尺度可比)✔
+                var (pw2, ph2) = await ProbeSizeAsync(processedPath).ConfigureAwait(false);
+                if (pw2 < 32 || ph2 < 32) { pw2 = ow; ph2 = oh; }
+                int sideW = Math.Min(pw2, 2048);                 // 每侧宽度上限(整条 ≤ 4096,保证能流畅播)
+                double k2 = (double)sideW / Math.Max(1, pw2);
+                int w2 = (int)Math.Round(pw2 * k2); w2 -= w2 % 2;  // 半边宽(yuv420p 要求偶数)
+                int h2 = (int)Math.Round(ph2 * k2); h2 -= h2 % 2;  // 半边高
                 if (w2 < 16 || h2 < 16) return Fail("原片太小,拼不出左右两半");
                 string sc = $"scale={w2}:{h2},setsar=1,setpts=PTS-STARTPTS";
                 filt = $"[0:v]{fpsArg}{sc}[l];[1:v]{fpsArg}{sc}[r];[l][r]hstack=inputs=2:shortest=1[v]";
@@ -8740,6 +9110,59 @@ public static class VideoService
         catch (OperationCanceledException) { return Fail("已取消"); }
         catch (Exception ex) { return Fail(ex.Message); }
     }
+
+    /// <summary>用**一条 ffmpeg 命令**把整段帧缩回目标尺寸(替代原来的"逐帧 C# 缩放")。
+    /// 成功返回新帧目录;任何异常/帧数对不上返回 null ⇒ **调用方回退逐帧路径**(保持"源帧损坏也不中断合帧"的兜底)。
+    /// 实测(`_qa\bench_shrink.py`,60 帧 1080p→540p):逐帧串行 34.0 ms/帧、逐帧并行 8.4 ms/帧、
+    /// 本方案 **4.9 ms/帧**(单进程、内存有界;原实现还给每帧开一个 Task,长片/4K 上会同时抢内存与 GDI 句柄)。</summary>
+    private static async Task<string?> TryShrinkFramesWithFfmpegAsync(
+        string ffmpeg, string srcDir, string[] files, int w, int h,
+        IProgress<(int pct, string msg)>? progress, int upEnd, CancellationToken ct)
+    {
+        try
+        {
+            if (files.Length == 0) return null;
+            string name = Path.GetFileName(files[0]);
+            var m = System.Text.RegularExpressions.Regex.Match(name, @"^(.*?)(\d+)(\.[^.]+)$");
+            if (!m.Success) return null;      // 名字不是"前缀+编号+扩展名"⇒ 不猜,交给逐帧路径
+            string pattern = m.Groups[1].Value + "%0" + m.Groups[2].Value.Length + "d" + m.Groups[3].Value;
+            string ext = m.Groups[3].Value;
+            string outDir = srcDir.TrimEnd('\\', '/') + "_1x";
+            if (Directory.Exists(outDir)) Directory.Delete(outDir, true);
+            Directory.CreateDirectory(outDir);
+            // JPG 中间帧要显式给高质量(默认质量会把上一道编码的损失再叠一次);PNG 无损不需要。
+            string q = ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ? "-q:v 2 " : "";
+            // 【2026-09-21 修回归】改成"一条 ffmpeg 走完"时**丢了逐帧进度**:原来逐帧 C# 循环会报
+            //   「缩回中 N 帧 / 共 M 帧」,改后既没传 watchDir、命令里也没有进度输出 ⇒ 用户只看到一条不动的行 ✗。
+            //   这里加 `-nostats -progress pipe:1`:ffmpeg 会把 `frame=` 等机器可读行写到 stdout,
+            //   而 RunAsync 里的 FrameRegex 正是解析它 ⇒ 恢复「1x 修复 缩回 第 N 帧 / 共 M 帧」✓
+            //   (与「编码」阶段同一套机制,见 RunAsync 的注释)。
+            string args = $"-y -v error -nostats -progress pipe:1 -framerate 30 -i \"{Path.Combine(srcDir, pattern)}\" "
+                        + $"-vf \"scale={w}:{h}:flags=lanczos\" {q}\"{Path.Combine(outDir, pattern)}\"";
+            await RunAsync(ffmpeg, args, progress, ct, "1x 修复 缩回", files.Length).ConfigureAwait(false);
+            int n = Directory.EnumerateFiles(outDir).Count();
+            if (n != files.Length)
+            {
+                AppLogger.Warn($"[1x 修复] 缩回:ffmpeg 输出 {n} 帧 ≠ 输入 {files.Length} 帧 ⇒ 回退逐帧路径");
+                return null;
+            }
+            return outDir;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"[1x 修复] 缩回:ffmpeg 路径异常({ex.GetType().Name}: {ex.Message})⇒ 回退逐帧路径");
+            return null;
+        }
+    }
+
+    /// <summary>拆帧那趟的阶段名:链里挂了 Anime4K 着色器时叫「1x 修复(Anime4K)」。
+    /// 【为什么】1x + Anime4K 那条路**整段超分阶段被跳过**(见 upscaleRuns 的判据):它不跑引擎,
+    ///   只是把着色器挂在拆帧这趟的滤镜链首(见 preParts 的构造)。于是进度行原本只写「拆帧 N 帧」✗,
+    ///   用户看到的就像是"1x 什么都没跑、也没有属于它的进度" ⇒ 这一步只是**把名字说对**,不改变任何处理行为。
+    /// 【怎么判定】Anime4K 的滤镜参数里必然含 `custom_shader_path`(libplacebo 的着色器开关),
+    ///   不需要额外传参数进来(拆帧方法没有 anime4k1x 形参,也不想为一句文案加形参)。</summary>
+    private static string ExtractStageLabel(string vfExpr)
+        => vfExpr.Contains("custom_shader_path", StringComparison.Ordinal) ? "1x 修复(Anime4K)" : "拆帧";
 
     private static async Task RunAsync(string exe, string args,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct,
@@ -8976,6 +9399,10 @@ public static class VideoService
         private readonly IProgress<(int pct, string msg)> _inner;
         private readonly Func<long> _fallbackDone;
         private readonly Func<long, string> _eta;
+        // 【2026-09-19 · 超分进度闪动】超分分批**并行**跑,各批上报的是"第 N 帧"(=起始槽位+批内帧号),
+        // 界面显示最后到达的那条 ⇒ 批次A 报 220 时批次B 可能才报 21 = 进度倒退/闪动。只让显示口径**单调不回退**。
+        private int _maxPct = -1;
+        private long _maxFrameNo = -1;
         public EtaProgress(IProgress<(int pct, string msg)> inner, Func<long> fallbackDone, Func<long, string> eta)
         { _inner = inner; _fallbackDone = fallbackDone; _eta = eta; }
         public void Report((int pct, string msg) value)
@@ -8990,14 +9417,22 @@ public static class VideoService
                     {
                         long done = _fallbackDone();
                         var m = FrameNoRegex.Match(s);
-                        if (m.Success && long.TryParse(m.Groups[1].Value, out var parsed) && parsed > done) done = parsed;
+                        if (m.Success && long.TryParse(m.Groups[1].Value, out var parsed))
+                        {
+                            long rawNo = parsed;
+                            if (parsed < _maxFrameNo) { parsed = _maxFrameNo; } else { _maxFrameNo = parsed; }   // 帧号只许增
+                            if (parsed != rawNo) s = FrameNoRegex.Replace(s, "第 " + parsed + " 帧", 1);   // 文字也顶到最大值
+                            if (parsed > done) done = parsed;
+                        }
                         e = _eta(done);
                     }
                     catch { e = ""; }
                     if (e.Length > 0) s += " · " + e;
                 }
             }
-            _inner.Report((value.pct, s));
+            int pctOut = value.pct;
+            if (pctOut < _maxPct) pctOut = _maxPct; else _maxPct = pctOut;   // 百分比只许增
+            _inner.Report((pctOut, s));
         }
     }
 

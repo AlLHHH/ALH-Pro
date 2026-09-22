@@ -18,7 +18,7 @@ public class EngineScalePolicyTests
     {
         string[] models = { "realesr-animevideov3", "realesrgan-x4plus", "realesrgan-x4plus-anime",
                             "realesr-general-x4v3", "realesr-general-wdn-x4v3", "unknown-model",
-                            "alhpro-real2x", "alhpro-game2x" };   // 末两支 = Rev4 追加的自训实验 2x
+                            "alhpro-real2x", "alhpro-game2x", "alhpro-game2x-v2", "alhpro-game2x-v3" };   // 末四支 = 自训 2x(Rev4 + Rev5 + Rev6)
         for (double want = 0.25; want <= 4.001; want += 0.25)
             foreach (var m in models)
             {
@@ -121,7 +121,50 @@ public class EngineScalePolicyTests
         Assert.True(d.ShrinkRatio > 0);
     }
 
-    /// <summary>静默全黑判定:输出缺陷 + 源帧正常 = 引擎故障;源帧本来就是黑场(片头/夜景)= 放行,不误杀。</summary>
+    /// <summary>**1x 修复模型(同尺寸)**的倍率:1x 目标是它的原生用法 ⇒ 引擎倍数 1、不缩放、不留理由。
+    /// 【为什么允许引擎倍数 1】上面那条"绝不返回 1"守的是"**没有 x1 权重**的模型传 -s 1 会静默全黑";
+    /// 这一支的网络尾层就是 3 通道、倍率写死 1 ⇒ -s 1 正常(上线前必须真机跑一次确认非黑 + 尺寸不变)。</summary>
+    [Fact]
+    public void Fix1x_model_runs_natively_at_scale_one()
+    {
+        var d = EngineScalePolicy.Decide("realesrgan", ExperimentalEsrgan.Fix1x, 1.0);
+        Assert.Equal(1, d.EngineScale);
+        Assert.Equal(1.0, d.ShrinkRatio, 6);
+        Assert.False(d.NeedsShrinkBack);
+        Assert.Equal("", d.Reason);                                  // 原生路径不刷日志
+        Assert.True(EngineScalePolicy.ModelHasNative1x("realesrgan", ExperimentalEsrgan.Fix1x));
+        Assert.True(ExperimentalEsrgan.Is1xModel(ExperimentalEsrgan.Fix1x));
+        // 其它模型仍然没有原生 1x ⇒ 那条"绝不返回 1"的护栏不受影响
+        foreach (var m in ExperimentalEsrgan.All)
+        {
+            Assert.False(EngineScalePolicy.ModelHasNative1x("realesrgan", m));
+            Assert.False(ExperimentalEsrgan.Is1xModel(m));
+        }
+    }
+
+    /// <summary>拿「1x 修复模型」去放大:不能悄悄放大(它只会被普通放大),必须给出可读的理由让用户换模型。</summary>
+    [Fact]
+    public void Fix1x_model_refuses_to_upscale_with_a_readable_reason()
+    {
+        var d = EngineScalePolicy.Decide("realesrgan", ExperimentalEsrgan.Fix1x, 2.0);
+        Assert.Equal(1, d.EngineScale);
+        Assert.Equal(2.0, d.ShrinkRatio, 6);
+        Assert.Contains("不能放大", d.Reason);
+        Assert.Contains("1x 修复", d.Reason);
+    }
+
+    /// <summary>**1x 目标 + 2x/4x 模型**这条路的实测结论必须写进理由里(用户要能看懂"为什么 1x 会更糊")。
+    /// 实测(素材(13) 第 20 秒):2x 超分再缩回 1080p = detail 822 / 边宽 5.86px,原片 = 1152 / 7.02px。</summary>
+    [Fact]
+    public void One_x_target_with_a_2x_model_states_the_measured_softness()
+    {
+        var d = EngineScalePolicy.Decide("realesrgan", ExperimentalEsrgan.Game2xV2, 1.0);
+        Assert.Equal(2, d.EngineScale);
+        Assert.Equal(0.5, d.ShrinkRatio, 6);
+        Assert.Contains("比原片更软", d.Reason);
+        Assert.Contains("1x 修复", d.Reason);      // 给出出路:换 1x 修复模型
+    }
+
     [Theory]
     [InlineData(false, true, true)]     // 源正常、输出全黑 → 引擎静默故障
     [InlineData(true, true, false)]     // 源本来就是黑场 → 不算故障
