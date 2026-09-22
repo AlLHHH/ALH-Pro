@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Windows.ApplicationModel.DataTransfer;
 
 namespace ALHPro.Views;
 
@@ -191,6 +192,35 @@ public sealed partial class VideoMattingView : UserControl
             if (!_videos.Contains(f.Path)) _videos.Add(f.Path);
         RefreshList();
         Status($"视频抠图:已添加 {_videos.Count} 个视频");
+    }
+
+    // ---------- 拖放(照 VideoView 的 DropBorder_* 写法) ----------
+    // 【两个坑都是照抄过来的教训】① e.Handled = true:不标记会被外层容器再处理一次 ⇒ 拖入一次添加两次;
+    // ② 必须 await GetStorageItemsAsync():UI 线程上同步等(Result)会死锁,表现为"拖不进去"。
+
+    private void DropArea_DragOver(object sender, DragEventArgs e)
+        => e.AcceptedOperation = DataPackageOperation.Copy;
+
+    private async void DropArea_Drop(object sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        if (_cts != null) { Status("视频抠图:处理中,暂不接受新拖入的文件"); return; }
+        if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
+        var items = await e.DataView.GetStorageItemsAsync();
+        var ext = new[] { ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".wmv", ".ts" };
+        var files = items.OfType<Windows.Storage.StorageFile>()
+            .Where(f => ext.Any(x => f.Path.EndsWith(x, StringComparison.OrdinalIgnoreCase)))
+            .Select(f => f.Path).ToArray();
+        if (files.Length == 0)
+        {
+            Status("视频抠图:拖入的文件不是支持的视频格式(mp4/mov/mkv/avi/webm/m4v/wmv/ts)");
+            return;
+        }
+        int added = 0;
+        foreach (var p in files)
+            if (!_videos.Contains(p)) { _videos.Add(p); added++; }
+        RefreshList();
+        Status($"视频抠图:拖入 {added} 个视频(共 {_videos.Count} 个)");
     }
 
     private void Clear_Click(object sender, RoutedEventArgs e)
