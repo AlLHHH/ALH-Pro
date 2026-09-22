@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+# 站点地图(搜索引擎读它来发现全部页面与规范地址)
+Sitemap: https://alhpro.cn/sitemap.xml
