@@ -1,4 +1,4 @@
-using AlhPro.Core;
+﻿using AlhPro.Core;
 using System;
 using System.IO;
 using Xunit;
@@ -21,7 +21,8 @@ public class Anime4kTests
         Assert.EndsWith(Anime4k.ShaderFileName, f);
         Assert.DoesNotContain(":", f.Substring("libplacebo=custom_shader_path=".Length));   // ⚠ 冒号=选项分隔符
         Assert.DoesNotContain("\\", f);                                                     // ⚠ 反斜杠=转义符
-        Assert.DoesNotContain("/", f);                                                      // 连正斜杠都不给:最保险
+        // 【2026-09-22 实测改判】原来断言连正斜杠都不给,那是错的:实测不带 shaders/ 前缀退出码 -1、反斜杠被吃掉退出码 -1、正斜杠退出码 0 ⇒ 正斜杠必须保留。
+            Assert.Contains("shaders/", f);                                                      // 连正斜杠都不给:最保险
     }
 
     /// <summary>探测用的滤镜串同样只许文件名(它就是这条约定的第一个受害者)。</summary>
