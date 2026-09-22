@@ -8,19 +8,25 @@ using Microsoft.UI.Xaml.Controls;
 
 namespace ALHPro.Views;
 
-/// <summary>视频抠图页(独立板块,2026-09-22)。接线到 `VideoMattingService`,不再有"开发中"占位。
+/// <summary>视频抠图页(独立板块,2026-09-22)。接线到 `VideoMattingService`。
 ///
 /// 【为什么独立成页】用户明确要求:"要的是单独一个界面 视频抠图,原先的还是图片抠图"。
-/// 两页共享的只有模型注册表(`CutoutService.Models`)与参数语义;素材类型、任务列表、输出形态完全不同。
+/// 两页共享的只有模型注册表(`CutoutService.Models`)与参数语义。
 ///
-/// 【界面口径】控件与排版照 `CutoutView` / `VideoView`:同样的 SectionTitle/HintText/分隔线、
-/// 同样的 FileOpenPicker + WinRT.Interop.InitializeWithWindow 用法、同样的"按钮禁用-跑完恢复"节奏。
+/// 【结构照其它模式】左侧参数面板 + 右侧【任务列表】;进度/结果通过 <see cref="StatusChanged"/>
+/// 交给 MainPage 的底部状态栏显示 —— 页面里**不放日志框**(用户反馈:"日志怎么在这里 要和其他模式一样")。
+/// 控件与交互照 `CutoutView` / `VideoView`:同样的 SectionTitle/HintText、同样的 FileOpenPicker +
+/// WinRT.Interop.InitializeWithWindow 用法、同样的"运行中禁用按钮、跑完恢复"节奏。
 /// 模型默认 = `CutoutService.DefaultModelKey`(按 key 不写下标)、容器默认 = 规格表第一项(MOV/ProRes 4444)。
 /// </summary>
 public sealed partial class VideoMattingView : UserControl
 {
+    /// <summary>状态文本(底部状态栏)。MainPage 订阅它(与图片抠图页同一套)。</summary>
+    public event Action<string>? StatusChanged;
+
     private readonly string[] _containers = AlhPro.Core.MattingOutputSpecs.TransparentContainers;
     private readonly List<string> _videos = new();
+    private readonly Dictionary<string, ListViewItem> _rows = new();
     private string _outDir = "";
     private string _bgImage = "";
     private CancellationTokenSource? _cts;
@@ -116,7 +122,7 @@ public sealed partial class VideoMattingView : UserControl
         BgImageInfo.Visibility = image ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    // ---------- 选素材 / 选输出目录 / 选背景图 ----------
+    // ---------- 素材与输出目录 ----------
 
     private async void PickBtn_Click(object sender, RoutedEventArgs e)
     {
@@ -127,12 +133,28 @@ public sealed partial class VideoMattingView : UserControl
         WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow));
         var files = await picker.PickMultipleFilesAsync();
         if (files == null || files.Count == 0) return;
+        foreach (var f in files)
+            if (!_videos.Contains(f.Path)) _videos.Add(f.Path);
+        RefreshList();
+        Status($"已添加 {_videos.Count} 个视频");
+    }
+
+    private void Clear_Click(object sender, RoutedEventArgs e)
+    {
+        if (_cts != null) return;
         _videos.Clear();
-        foreach (var f in files) _videos.Add(f.Path);
-        FileInfo.Text = _videos.Count == 1
-            ? System.IO.Path.GetFileName(_videos[0])
-            : $"已添加 {_videos.Count} 个视频";
-        Log($"添加 {_videos.Count} 个视频");
+        RefreshList();
+    }
+
+    private void Remove_Click(object sender, RoutedEventArgs e)
+    {
+        if (_cts != null) return;
+        foreach (var item in TaskList.SelectedItems.Cast<ListViewItem>().ToList())
+        {
+            string? path = item.Tag as string;
+            if (path != null) _videos.Remove(path);
+        }
+        RefreshList();
     }
 
     private async void OutDir_Click(object sender, RoutedEventArgs e)
@@ -157,24 +179,59 @@ public sealed partial class VideoMattingView : UserControl
         BgImageInfo.Text = System.IO.Path.GetFileName(_bgImage);
     }
 
+    // ---------- 任务列表 ----------
+
+    private void RefreshList()
+    {
+        _rows.Clear();
+        TaskList.Items.Clear();
+        foreach (var v in _videos)
+        {
+            var item = new ListViewItem { Content = RowText(v, "待处理", -1), Tag = v };
+            _rows[v] = item;
+            TaskList.Items.Add(item);
+        }
+        FileInfo.Text = _videos.Count switch
+        {
+            0 => "未添加视频",
+            1 => System.IO.Path.GetFileName(_videos[0]),
+            _ => $"已添加 {_videos.Count} 个视频",
+        };
+    }
+
+    private static string RowText(string path, string state, int pct)
+    {
+        string name = System.IO.Path.GetFileName(path);
+        return pct >= 0 ? $"{name}   ·   {state} {pct}%" : $"{name}   ·   {state}";
+    }
+
+    private void SetRow(string path, string state, int pct = -1)
+    {
+        if (_rows.TryGetValue(path, out var item)) item.Content = RowText(path, state, pct);
+    }
+
     // ---------- 开始 / 取消 ----------
 
     private async void Start_Click(object sender, RoutedEventArgs e)
     {
         if (_videos.Count == 0)
         {
-            ProgressText.Text = "请先添加视频。";
+            Status("请先添加视频。");
             return;
         }
         if (_cts != null) return;
 
+        foreach (var v in _videos) SetRow(v, "待处理");
         _cts = new CancellationTokenSource();
         SetRunning(true);
         var ct = _cts.Token;
+        string current = "";
         var progress = new Progress<(int pct, string msg)>(p =>
         {
             TaskBar.Value = Math.Clamp(p.pct, 0, 100);
             ProgressText.Text = p.msg;
+            if (current.Length > 0) SetRow(current, "处理中", p.pct);
+            Status("视频抠图:" + p.msg);
         });
 
         try
@@ -182,29 +239,34 @@ public sealed partial class VideoMattingView : UserControl
             foreach (var video in _videos.ToList())
             {
                 ct.ThrowIfCancellationRequested();
-                Log($"开始:{System.IO.Path.GetFileName(video)}");
+                current = video;
+                SetRow(video, "处理中", 0);
+                TaskBar.Value = 0;
                 var req = BuildRequest(video);
                 var result = await Task.Run(() => VideoMattingService.RunAsync(req, progress, ct), ct);
                 TaskBar.Value = 100;
-                Log($"完成:{result.OutputPath}");
-                Log($"  帧数 {result.Frames} · 用时 {result.ElapsedSec:0.#} 秒 · 设备 {result.Device}");
-                if (!string.IsNullOrWhiteSpace(result.Notes)) Log($"  {result.Notes}");
-                ProgressText.Text = "处理完成:" + System.IO.Path.GetFileName(result.OutputPath);
+                SetRow(video, $"完成 · {result.Frames} 帧 / {result.ElapsedSec:0.#} 秒 · {System.IO.Path.GetFileName(result.OutputPath)}");
+                ProgressText.Text = "完成:" + result.OutputPath;
+                Status($"视频抠图完成:{System.IO.Path.GetFileName(result.OutputPath)} · {result.Device} · {result.ElapsedSec:0.#} 秒");
+                AppLogger.Info($"视频抠图完成:{result.OutputPath} 帧数={result.Frames} 设备={result.Device} 备注={result.Notes}");
             }
         }
         catch (OperationCanceledException)
         {
+            if (current.Length > 0) SetRow(current, "已取消");
             ProgressText.Text = "已取消(临时文件已清理)。";
-            Log("用户取消");
+            Status("视频抠图已取消");
         }
         catch (Exception ex)
         {
+            if (current.Length > 0) SetRow(current, "失败");
             AppLogger.Error($"视频抠图失败 HRESULT=0x{ex.HResult:X8}", ex);
             ProgressText.Text = "处理失败:" + ex.Message;
-            Log("失败:" + ex.Message);
+            Status("视频抠图失败:" + ex.Message);
         }
         finally
         {
+            current = "";
             _cts.Dispose();
             _cts = null;
             SetRunning(false);
@@ -214,7 +276,8 @@ public sealed partial class VideoMattingView : UserControl
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
         try { _cts?.Cancel(); } catch { }
-        Log("已请求取消,等当前帧处理完就停...");
+        ProgressText.Text = "已请求取消,等当前帧处理完就停...";
+        Status("视频抠图:正在取消...");
     }
 
     private void SetRunning(bool running)
@@ -222,9 +285,16 @@ public sealed partial class VideoMattingView : UserControl
         StartBtn.IsEnabled = !running;
         CancelBtn.IsEnabled = running;
         PickBtn.IsEnabled = !running;
+        ClearBtn.IsEnabled = !running;
+        RemoveBtn.IsEnabled = !running;
         OutDirBtn.IsEnabled = !running;
         ModeBgRadio.IsEnabled = !running;
         ModeAlphaRadio.IsEnabled = !running;
+    }
+
+    private void Status(string text)
+    {
+        try { StatusChanged?.Invoke(text); } catch { }
     }
 
     private VideoMattingRequest BuildRequest(string video) => new(
@@ -242,10 +312,4 @@ public sealed partial class VideoMattingView : UserControl
         Edge: 0,
         Morph: (int)MorphSlider.Value,
         Stability: (int)StabilitySlider.Value);
-
-    private void Log(string line)
-    {
-        LogBox.Text += (LogBox.Text.Length == 0 ? "" : Environment.NewLine) + $"[{DateTime.Now:HH:mm:ss}] {line}";
-        LogBox.SelectionStart = LogBox.Text.Length;
-    }
 }

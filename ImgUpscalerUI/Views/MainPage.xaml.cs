@@ -1251,6 +1251,8 @@ public sealed partial class MainPage : Page
             {
                 AppLogger.Info("进入页面:视频抠图");
                 _mattingView ??= new VideoMattingView();
+                _mattingView.StatusChanged -= OnStatusChanged;
+                _mattingView.StatusChanged += OnStatusChanged;
                 ContentRoot.Children.Add(_mattingView);
             }
             catch (Exception ex)

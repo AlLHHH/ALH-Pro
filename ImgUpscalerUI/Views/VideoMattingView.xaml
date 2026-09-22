@@ -9,8 +9,8 @@
     mc:Ignorable="d">
 
     <!-- 视频抠图:独立板块(2026-09-22 用户明确要求)。
-         与「图片抠图」是两件事,页面不合并、互不影响;共享的只有模型注册表与参数语义。
-         控件与排版刻意与 CutoutView / VideoView 一致:同样的 SectionTitle / HintText / 分隔线 / 参数列写法。 -->
+         结构照其它模式:左侧参数面板 + 右侧【任务列表】;进度与结果走底部状态栏(StatusChanged),
+         页面里不放日志框(用户 2026-09-22 反馈:"日志怎么在这里 要和其他模式一样")。 -->
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="300"/>
@@ -27,6 +27,10 @@
                     <TextBlock Text="素材" Style="{StaticResource SectionTitle}"/>
                     <Button x:Name="PickBtn" Content="添加视频(可多选)..." Click="PickBtn_Click"
                             HorizontalAlignment="Stretch"/>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="ClearBtn" Content="清空" Click="Clear_Click"/>
+                        <Button x:Name="RemoveBtn" Content="移除选中" Click="Remove_Click"/>
+                    </StackPanel>
                     <TextBlock x:Name="FileInfo" Text="未添加视频" Style="{StaticResource HintText}"
                                TextTrimming="CharacterEllipsis"/>
 
@@ -118,28 +122,29 @@
             </ScrollViewer>
         </Border>
 
-        <!-- ============ 右侧任务区(进度 + 日志,与其它页一致) ============ -->
+        <!-- ============ 右侧任务列表(与视频处理页同款:ListView + 进度条) ============ -->
         <Border Grid.Column="1" Background="{StaticResource AppPanelBrush}"
                 BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
                 CornerRadius="12" Margin="0,0,0,10">
             <Grid Padding="14" RowSpacing="8">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <TextBlock x:Name="TaskTitle" Text="视频抠图" FontSize="15"/>
-                <StackPanel Grid.Row="1" Spacing="6">
-                    <TextBlock x:Name="ProgressText" TextWrapping="Wrap"
-                               Style="{StaticResource HintText}"
+                <TextBlock x:Name="TaskTitle" Text="任务列表" FontSize="15"/>
+                <ListView Grid.Row="1" x:Name="TaskList" SelectionMode="Extended"
+                          BorderThickness="0" Background="Transparent"/>
+                <Grid Grid.Row="2" RowSpacing="6">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock x:Name="ProgressText" TextWrapping="Wrap" Style="{StaticResource HintText}"
                                Text="添加视频后点「开始处理」。换背景输出普通视频;透明通道输出带 alpha 的视频给剪辑软件用。"/>
-                    <ProgressBar x:Name="TaskBar" Minimum="0" Maximum="100" Value="0"/>
-                </StackPanel>
-                <TextBox Grid.Row="2" x:Name="LogBox" IsReadOnly="True" AcceptsReturn="True"
-                         TextWrapping="Wrap" FontSize="12" FontFamily="Consolas"
-                         ScrollViewer.VerticalScrollBarVisibility="Auto"
-                         PlaceholderText="处理日志会显示在这里"/>
+                    <ProgressBar Grid.Row="1" x:Name="TaskBar" Minimum="0" Maximum="100" Value="0"/>
+                </Grid>
             </Grid>
         </Border>
     </Grid>
