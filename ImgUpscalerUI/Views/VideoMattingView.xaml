@@ -8,45 +8,34 @@
     xmlns:local="using:ALHPro.Views"
     mc:Ignorable="d">
 
-    <!-- 视频抠图:独立板块(2026-09-22 用户明确要求)。
-         结构照其它模式:左侧参数面板 + 右侧【任务列表】;进度与结果走底部状态栏(StatusChanged),
-         页面里不放日志框(用户 2026-09-22 反馈:"日志怎么在这里 要和其他模式一样")。 -->
+    <!-- 视频抠图:独立板块(用户要求)。布局与控件**照「视频处理」页**:左栏参数(滑条行式 + 输出/码率格式组)
+         + 右侧「等待任务」任务板(工具栏 + 空态)。用户 2026-09-22 反馈原话:
+         "右侧要和这个一样 功能也是 / 滑条那几个要和这个一样 / 输出文件夹 格式什么的要和这个一样
+          并且在处理的上面 就是和视频处理页面一模一样的风格布局"。 -->
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="300"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
-        <!-- ============ 参数面板(圆角卡片,与图片抠图页同款) ============ -->
+        <!-- ============ 左栏参数 ============ -->
         <Border Grid.Column="0" Background="{StaticResource AppPanelBrush}"
                 BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
                 CornerRadius="12" Margin="0,0,10,10">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <StackPanel Padding="14,16" Spacing="14">
-
-                    <TextBlock Text="素材" Style="{StaticResource SectionTitle}"/>
-                    <Button x:Name="PickBtn" Content="添加视频(可多选)..." Click="PickBtn_Click"
-                            HorizontalAlignment="Stretch"/>
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Button x:Name="ClearBtn" Content="清空" Click="Clear_Click"/>
-                        <Button x:Name="RemoveBtn" Content="移除选中" Click="Remove_Click"/>
-                    </StackPanel>
-                    <TextBlock x:Name="FileInfo" Text="未添加视频" Style="{StaticResource HintText}"
-                               TextTrimming="CharacterEllipsis"/>
-
-                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
+                <StackPanel Padding="14,16" Spacing="12">
 
                     <TextBlock Text="输出方式" Style="{StaticResource SectionTitle}"/>
-                    <StackPanel Spacing="6">
+                    <StackPanel Spacing="4">
                         <RadioButton x:Name="ModeBgRadio" Content="换背景(输出普通视频)" IsChecked="True"
                                      GroupName="MattingOutputMode" Checked="OutputMode_Changed"/>
                         <RadioButton x:Name="ModeAlphaRadio" Content="透明通道(带 alpha,给剪辑软件用)"
                                      GroupName="MattingOutputMode" Checked="OutputMode_Changed"/>
                     </StackPanel>
 
-                    <StackPanel x:Name="BgPanel" Spacing="8">
+                    <StackPanel x:Name="BgPanel" Spacing="6">
                         <TextBlock Text="背景" Style="{StaticResource SectionTitle}"/>
-                        <StackPanel Spacing="6">
+                        <StackPanel Orientation="Horizontal" Spacing="14">
                             <RadioButton x:Name="BgColorRadio" Content="纯色" IsChecked="True" GroupName="MattingBg"
                                          Checked="BgMode_Changed"/>
                             <RadioButton x:Name="BgImageRadio" Content="图片" GroupName="MattingBg"
@@ -58,13 +47,13 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <TextBox x:Name="BgColorBox" Text="#1E3A5F" FontSize="12"/>
-                            <TextBlock Grid.Column="1" Text="背景色" Style="{StaticResource HintText}"
-                                       VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="1" Text="背景色" VerticalAlignment="Center" FontSize="12"
+                                       Opacity="0.7"/>
                         </Grid>
-                        <Button x:Name="BgImageBtn" Content="选择背景图片..." Click="BgImage_Click" Visibility="Collapsed"
-                                HorizontalAlignment="Stretch"/>
-                        <TextBlock x:Name="BgImageInfo" Text="未选择背景图片" Style="{StaticResource HintText}"
-                                   Visibility="Collapsed" TextTrimming="CharacterEllipsis"/>
+                        <Button x:Name="BgImageBtn" Content="选择背景图片..." Click="BgImage_Click"
+                                Visibility="Collapsed" HorizontalAlignment="Stretch"/>
+                        <TextBlock x:Name="BgImageInfo" Text="未选择背景图片" Visibility="Collapsed" FontSize="11"
+                                   Opacity="0.55" TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
@@ -73,46 +62,94 @@
                     <ComboBox x:Name="ModelCombo" HorizontalAlignment="Stretch"
                               SelectionChanged="ModelCombo_SelectionChanged"
                               ToolTipService.ToolTip="默认 ISNet 精细边缘:本机 GPU 实测最快(约 0.26 秒/帧蒙版)、边缘最细;BiRefNet 判别力强但本机 DirectML 上会回退 CPU"/>
-                    <TextBlock x:Name="ModelHint" Style="{StaticResource HintText}" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="ModelHint" FontSize="11" Opacity="0.55" TextWrapping="Wrap"/>
 
+                    <!-- 抠图参数:与视频处理页的「视频调整 (后处理)」同款行式(左标签 + 滑条 + 右数值) -->
                     <TextBlock Text="抠图参数" Style="{StaticResource SectionTitle}"/>
-                    <TextBlock x:Name="FgLabel" Style="{StaticResource HintText}"/>
-                    <Slider x:Name="FgSlider" Minimum="0" Maximum="255" Value="152" StepFrequency="1"
-                            ValueChanged="Param_ValueChanged"/>
-                    <TextBlock x:Name="BgLabel" Style="{StaticResource HintText}"/>
-                    <Slider x:Name="BgSlider" Minimum="0" Maximum="255" Value="84" StepFrequency="1"
-                            ValueChanged="Param_ValueChanged"/>
-                    <TextBlock x:Name="FeatherLabel" Style="{StaticResource HintText}"/>
-                    <Slider x:Name="FeatherSlider" Minimum="0" Maximum="20" Value="1" StepFrequency="1"
-                            ValueChanged="Param_ValueChanged"/>
-                    <TextBlock x:Name="MorphLabel" Style="{StaticResource HintText}"/>
-                    <Slider x:Name="MorphSlider" Minimum="0" Maximum="100" Value="28" StepFrequency="1"
-                            ValueChanged="Param_ValueChanged"/>
+                    <Grid ColumnSpacing="8" RowSpacing="6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="86"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="34"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Text="前景" VerticalAlignment="Center" FontSize="12"/>
+                        <Slider Grid.Column="1" x:Name="FgSlider" Minimum="0" Maximum="255" Value="152"
+                                StepFrequency="1" ValueChanged="Param_ValueChanged"/>
+                        <TextBlock Grid.Column="2" x:Name="FgVal" Text="152" VerticalAlignment="Center"
+                                   FontSize="12" Opacity="0.7" HorizontalAlignment="Right"/>
+
+                        <TextBlock Grid.Row="1" Text="背景" VerticalAlignment="Center" FontSize="12"/>
+                        <Slider Grid.Row="1" Grid.Column="1" x:Name="BgSlider" Minimum="0" Maximum="255" Value="84"
+                                StepFrequency="1" ValueChanged="Param_ValueChanged"/>
+                        <TextBlock Grid.Row="1" Grid.Column="2" x:Name="BgVal" Text="84" VerticalAlignment="Center"
+                                   FontSize="12" Opacity="0.7" HorizontalAlignment="Right"/>
+
+                        <TextBlock Grid.Row="2" Text="羽化" VerticalAlignment="Center" FontSize="12"/>
+                        <Slider Grid.Row="2" Grid.Column="1" x:Name="FeatherSlider" Minimum="0" Maximum="20" Value="1"
+                                StepFrequency="1" ValueChanged="Param_ValueChanged"/>
+                        <TextBlock Grid.Row="2" Grid.Column="2" x:Name="FeatherVal" Text="1" VerticalAlignment="Center"
+                                   FontSize="12" Opacity="0.7" HorizontalAlignment="Right"/>
+
+                        <TextBlock Grid.Row="3" Text="形态学" VerticalAlignment="Center" FontSize="12"/>
+                        <Slider Grid.Row="3" Grid.Column="1" x:Name="MorphSlider" Minimum="0" Maximum="100" Value="28"
+                                StepFrequency="1" ValueChanged="Param_ValueChanged"/>
+                        <TextBlock Grid.Row="3" Grid.Column="2" x:Name="MorphVal" Text="28" VerticalAlignment="Center"
+                                   FontSize="12" Opacity="0.7" HorizontalAlignment="Right"/>
+
+                        <TextBlock Grid.Row="4" Text="时序稳定" VerticalAlignment="Center" FontSize="12"
+                                   ToolTipService.ToolTip="治逐帧抖动:静止区更稳,运动区少平滑。切镜会自动重置"/>
+                        <Slider Grid.Row="4" Grid.Column="1" x:Name="StabilitySlider" Minimum="0" Maximum="100" Value="50"
+                                StepFrequency="1" ValueChanged="Param_ValueChanged"/>
+                        <TextBlock Grid.Row="4" Grid.Column="2" x:Name="StabilityVal" Text="50" VerticalAlignment="Center"
+                                   FontSize="12" Opacity="0.7" HorizontalAlignment="Right"/>
+                    </Grid>
+                    <Button x:Name="ResetBtn" Content="重置调整" HorizontalAlignment="Right" Click="Reset_Click"
+                            FontSize="12"/>
+                    <TextBlock Text="前景/背景阈值以上算实心、以下算透明,中间羽化过渡;时序稳定越高越稳但快速运动会拖影。"
+                               FontSize="11" Opacity="0.55" TextWrapping="Wrap"/>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
-                    <TextBlock Text="时序稳定" Style="{StaticResource SectionTitle}"/>
-                    <TextBlock x:Name="StabilityLabel" Style="{StaticResource HintText}"/>
-                    <Slider x:Name="StabilitySlider" Minimum="0" Maximum="100" Value="50" StepFrequency="1"
-                            ValueChanged="Param_ValueChanged"/>
-                    <TextBlock Text="抖动越小越稳,但过高会让快速运动拖影;静止画面建议 50~80。"
-                               Style="{StaticResource HintText}" TextWrapping="Wrap"/>
-
-                    <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
-
+                    <!-- 输出:与视频处理页同款(路径框 + 选择输出位置 + 码率/格式组),且在「开始处理」上面 -->
                     <TextBlock Text="输出" Style="{StaticResource SectionTitle}"/>
-                    <Button x:Name="OutDirBtn" Content="选择输出文件夹..." Click="OutDir_Click"
+                    <TextBox x:Name="OutDirBox" IsReadOnly="True" FontSize="12" Text="(默认与源视频同目录)"/>
+                    <Button x:Name="OutDirBtn" Content="选择输出位置..." Click="OutDir_Click"
                             HorizontalAlignment="Stretch"/>
-                    <TextBlock x:Name="OutDirText" Text="默认与源视频同目录" Style="{StaticResource HintText}"
-                               TextTrimming="CharacterEllipsis"/>
-                    <!-- 容器:仅"透明通道"显示;默认第一项 = MOV/ProRes 4444(实测到处都认) -->
-                    <StackPanel x:Name="ContainerPanel" Spacing="6" Visibility="Collapsed">
-                        <TextBlock Text="容器" Style="{StaticResource HintText}"/>
-                        <ComboBox x:Name="ContainerCombo" HorizontalAlignment="Stretch"
-                                  ToolTipService.ToolTip="MOV / ProRes 4444:剪辑软件普遍认,体积较大;&#x0a;WebM / VP9-alpha:体积小,但能否透明取决于对方解码器(连 ffmpeg 原生 vp9 解码器都会丢 alpha)"/>
-                        <TextBlock Text="要叠加请用剪辑软件(Premiere / 剪映 / DaVinci / OBS):多数播放器会把透明显示成黑底。"
-                                   Style="{StaticResource HintText}" TextWrapping="Wrap"/>
-                    </StackPanel>
+
+                    <TextBlock Text="码率 / 格式" Style="{StaticResource SectionTitle}"/>
+                    <Grid ColumnSpacing="8" RowSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="86"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Text="码率" VerticalAlignment="Center" FontSize="12"
+                                   ToolTipService.ToolTip="输出画质。跟随应用既有的编码器策略(硬编优先),不在这里单独改写"/>
+                        <ComboBox Grid.Column="1" x:Name="BitrateCombo" HorizontalAlignment="Stretch" FontSize="12">
+                            <ComboBoxItem Content="自动 (推荐)"/>
+                        </ComboBox>
+
+                        <TextBlock Grid.Row="1" Text="格式" VerticalAlignment="Center" FontSize="12"/>
+                        <ComboBox Grid.Row="1" Grid.Column="1" x:Name="FormatCombo" HorizontalAlignment="Stretch"
+                                  FontSize="12" SelectionChanged="FormatCombo_Changed"
+                                  ToolTipService.ToolTip="换背景=MP4(通用性最好);透明通道=MOV/ProRes 4444(剪辑软件都认)或 WebM/VP9-alpha(体积小)"/>
+
+                        <TextBlock Grid.Row="2" Text="编码格式" VerticalAlignment="Center" FontSize="12"/>
+                        <ComboBox Grid.Row="2" Grid.Column="1" x:Name="CodecCombo" HorizontalAlignment="Stretch"
+                                  FontSize="12" IsEnabled="False"
+                                  ToolTipService.ToolTip="由上面选的格式决定:MP4 跟随全局编码器策略;MOV=ProRes 4444;WebM=VP9-alpha"/>
+
+                        <CheckBox Grid.Row="3" Grid.ColumnSpan="2" x:Name="MuteCheck"
+                                  Content="静音(输出不含音频)" FontSize="12"
+                                  ToolTipService.ToolTip="透明通道默认不带音频(给剪辑软件叠加时通常用自己的音轨);换背景默认保留源音频"/>
+                    </Grid>
 
                     <Button x:Name="StartBtn" Content="开始处理" Click="Start_Click"
                             HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
@@ -122,26 +159,54 @@
             </ScrollViewer>
         </Border>
 
-        <!-- ============ 右侧任务列表(与视频处理页同款:ListView + 进度条) ============ -->
+        <!-- ============ 右侧任务板(照视频处理页:「等待任务」+ 工具栏 + 空态) ============ -->
         <Border Grid.Column="1" Background="{StaticResource AppPanelBrush}"
                 BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
                 CornerRadius="12" Margin="0,0,0,10">
-            <Grid Padding="14" RowSpacing="8">
+            <Grid Padding="12" RowSpacing="8">
                 <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <TextBlock x:Name="TaskTitle" Text="任务列表" FontSize="15"/>
-                <ListView Grid.Row="1" x:Name="TaskList" SelectionMode="Extended"
-                          BorderThickness="0" Background="Transparent"/>
-                <Grid Grid.Row="2" RowSpacing="6">
+                <TextBlock x:Name="TaskTitle" Text="等待任务" FontSize="13"/>
+
+                <Grid Grid.Row="1" ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="PickBtn" Content="添加视频" Click="PickBtn_Click" FontSize="12"/>
+                    <Button Grid.Column="1" x:Name="RemoveBtn" Content="移除选中" Click="Remove_Click" FontSize="12"/>
+                    <Button Grid.Column="2" x:Name="ClearBtn" Content="清空" Click="Clear_Click" FontSize="12"/>
+                    <Button Grid.Column="3" x:Name="DoneBtn" Content="清除已完成" Click="Done_Click" FontSize="12"/>
+                    <TextBlock Grid.Column="5" Text="双击预览 · 拖动裁剪" FontSize="11" Opacity="0.55"
+                               VerticalAlignment="Center"
+                               ToolTipService.ToolTip="视频抠图:参数在左侧;处理完成后可在输出目录找到成品"/>
+                </Grid>
+
+                <ListView Grid.Row="2" x:Name="TaskList" SelectionMode="Extended" BorderThickness="0"
+                          Background="Transparent"/>
+
+                <!-- 空态:照视频处理页(拖入项目 + 支持格式 + 组件自检) -->
+                <StackPanel Grid.Row="2" x:Name="EmptyHint" VerticalAlignment="Center" HorizontalAlignment="Center"
+                            Spacing="6">
+                    <TextBlock Text="＋" FontSize="34" HorizontalAlignment="Center" Opacity="0.5"/>
+                    <TextBlock Text="拖入项目" HorizontalAlignment="Center" FontSize="14"/>
+                    <TextBlock Text="MP4 / MKV / MOV / WebM / AVI" HorizontalAlignment="Center" FontSize="11"
+                               Opacity="0.55"/>
+                    <TextBlock x:Name="EngineHint" Text="组件: ffmpeg ✓ · 模型 ✓" HorizontalAlignment="Center"
+                               FontSize="11" Opacity="0.55"/>
+                </StackPanel>
+
+                <Grid Grid.Row="3" RowSpacing="6">
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
-                    <TextBlock x:Name="ProgressText" TextWrapping="Wrap" Style="{StaticResource HintText}"
+                    <TextBlock x:Name="ProgressText" TextWrapping="Wrap" FontSize="11" Opacity="0.6"
                                Text="添加视频后点「开始处理」。换背景输出普通视频;透明通道输出带 alpha 的视频给剪辑软件用。"/>
                     <ProgressBar Grid.Row="1" x:Name="TaskBar" Minimum="0" Maximum="100" Value="0"/>
                 </Grid>
