@@ -82,10 +82,11 @@ public static class VideoMatting
     /// 【为什么可以拆成"先行后列"】方形结构元的 min/max 是可分离的:
     /// min over 邻域 = min over 行 的 (min over 列),按同样的边界规则(跳过越界样本)写出来与
     /// 朴素二维实现**逐像素等价** —— 这条不是"看着差不多",有单测拿朴素参照实现逐像素比对钉住。
-    /// 代价从 O(n·r²) 降到 O(n·r):1080p 默认档(morph=28 ⇒ r=1)每个像素只做 9 次比较,
-    /// 而朴素二维实现同样的 r=1 也是 9 次 —— 但 r=4 时朴素实现是 81 次/像素/遍、可分离只有 9 次/像素/遍,
-    /// 差 9 倍。这里刻意不给"多少毫秒"的数字:实测数字由 `_qa/mattingbench` 的 --postproc 模式给出
-    /// (见报告),没测过的数字不写进注释。
+    /// 代价从 O(n·r²) 降到 O(n·r)。实测(Release,1080p/2.07 MPix,取 3 次最快,工具 `_qa/mattingbench` 的
+    /// `--postproc` 模式):只做阈值 11.1 ms/帧;加 feather=1 + morph=28(isnet 默认档)后 82.4 ms/帧;
+    /// 极值档(feather=20 + morph=100)183.5 ms/帧。也就是说 **feather/morph 这两档约占后处理的 85%**,
+    /// 而它们只作用在蒙版上 —— 将来若嫌慢,优先动这里(整数化/向量化/降分辨率蒙版),别去动阈值那段。
+    /// 备注:朴素二维实现在同参数下是 81 次/像素/遍,r=4 时就是这里的 9 倍。
     /// </summary>
     internal static void MorphOpenAlpha(float[] a, int w, int h, int r)
     {
@@ -156,6 +157,32 @@ public static class VideoMatting
         long sum = 0;
         for (int i = 0; i < n; i++) sum += Math.Abs(grayCur[i] - grayPrev[i]);
         return sum / (double)n >= meanDiffThreshold;
+    }
+
+    /// <summary>把前景按 alpha 合成到背景上(结果写到 dst)。三路都是 pixels*3 的字节
+    /// (通道顺序由调用方保证一致:BGR 或 RGB 都行,只要三路一致)。
+    ///
+    /// 【为什么不抛异常】长视频里单帧解码失败、或调用方复用的缓冲区长度对不上,都属常见;
+    /// 纯算法层静默返回,"跳过并记录"由调用方统一决定 —— 在这里抛会把"一帧的问题"升级成"整段失败"。
+    /// 【为什么 dst 长度也要检查】最容易出事的恰恰是它:调用方复用上一段视频的缓冲区(4K vs 1080p)时
+    /// 长度不匹配,少检查一次就是越界写内存。所以任何一个入参不足都直接返回,一个字节都不写。
+    /// 【为什么 +0.5f 再截断】直接截断会让每次混合都整体偏暗半格,长片里累积成肉眼可见的偏色。
+    /// </summary>
+    public static void Composite(byte[] fg, float[] alpha, byte[] bg, byte[] dst, int pixels)
+    {
+        if (fg == null || bg == null || dst == null || alpha == null) return;
+        if (pixels <= 0) return;
+        int need = pixels * 3;
+        if (fg.Length < need || bg.Length < need || dst.Length < need || alpha.Length < pixels) return;
+
+        for (int i = 0, p = 0; i < pixels; i++, p += 3)
+        {
+            float a = Math.Clamp(alpha[i], 0f, 1f);
+            float inv = 1f - a;
+            dst[p]     = (byte)Math.Clamp(fg[p]     * a + bg[p]     * inv + 0.5f, 0f, 255f);
+            dst[p + 1] = (byte)Math.Clamp(fg[p + 1] * a + bg[p + 1] * inv + 0.5f, 0f, 255f);
+            dst[p + 2] = (byte)Math.Clamp(fg[p + 2] * a + bg[p + 2] * inv + 0.5f, 0f, 255f);
+        }
     }
 }
 
