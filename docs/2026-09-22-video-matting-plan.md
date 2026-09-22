@@ -128,7 +128,23 @@ git add -A; git commit -m "video-matting: 性能标定工具与实测报告(4 �
 
 ---
 
-### Task 2: 输出规格决策表（`AlhPro.Core`）
+### Task 2: 输出规格决策表（`AlhPro.Core`）—— 已执行（2026-09-22），含两处对计划的修正
+
+> **执行记录（2026-09-22，提交见 git log「video-matting: 输出规格决策表」）**
+> 1. **修正一：换背景一路不写死编码器。** 计划里 `ForBackground(hevc)` 要返回 `libx264`/`libx265`，
+>    但仓库里已经有一套自适应编码器策略（`VideoService.EncoderArgs` / `SelectVideoEncoder`：
+>    厂商硬编 → 任一硬编 → libx264/libx265，带探针实测）。再写一份就会出现"视频页走 NVENC、
+>    抠图页走软编"的双策略漂移。改成 `UseGlobalEncoder = true` + 空的 `VideoCodec`，
+>    只钉死 `pix_fmt=yuv420p`、`-c:a copy`、`+faststart`。
+> 2. **修正二：音频字段改成 ffmpeg 参数片段**（`AudioArgs`），并显式区分：换背景 `-c:a copy`（应用惯例，
+>    `VideoService.cs:3715`），透明通道 `-c:a libopus` / `-c:a pcm_s16le` —— 两种透明容器都装不了 aac，
+>    照抄 copy 会直接失败或丢音轨。
+> 3. **实测补强（编码往返，见 `_qa/视频抠图_性能实测_20260922.md` §四）**：两种容器的 alpha 都真实存在
+>    （抽出 alpha 平面数点：2400 透明 / 2400 不透明，与源图一致）；但发现两个坑并写进代码注释 ——
+>    ① WebM 的 alpha 不在 `pix_fmt` 里（ffprobe 仍报 yuv420p，靠 `alpha_mode=1` 承载），
+>    ② **ffmpeg 原生 `vp9` 解码器会静默丢 alpha**，读回必须 `-c:v libvpx-vp9`。
+> 4. 测试从计划的 5 条扩到 18 条（含容器回落、归一化、"永远不能返回不带 alpha 的组合"、
+>    "界面下拉的容器名必须都被实现"）。
 
 **Files:**
 - Create: `AlhPro.Core/MattingOutputSpec.cs`
