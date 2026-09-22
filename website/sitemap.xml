@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ALH Pro 官网站点地图(2026-09-22 新增)。
+  【为什么要它】此前站点既没有 sitemap 也没有 robots.txt,首页又没有 canonical ⇒
+  搜索引擎把 alhpro.cn/index.html 与 alhpro.cn/ 当成两个地址收录(用户实测"搜到的是 index")。
+  现在:每页各自声明 canonical(指向这里的 loc),这里再集中列一次。
+  【维护】新增/改名页面时,必须同步改本文件与该页的 <link rel="canonical">;
+  lastmod 用「该页最后改动的日期」(W3C 日期格式,时区可省)。
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://alhpro.cn/</loc>
+    <lastmod>2026-09-22</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://alhpro.cn/download.html</loc>
+    <lastmod>2026-09-22</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://alhpro.cn/tutorial.html</loc>
+    <lastmod>2026-09-22</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://alhpro.cn/faq.html</loc>
+    <lastmod>2026-09-22</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://alhpro.cn/changelog.html</loc>
+    <lastmod>2026-09-22</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://alhpro.cn/privacy.html</loc>
+    <lastmod>2026-09-22</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
+  <url>
+    <loc>https://alhpro.cn/licenses.html</loc>
+    <lastmod>2026-09-22</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
+</urlset>

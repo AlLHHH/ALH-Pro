@@ -10,7 +10,14 @@
      原先是两条带 media 的 meta(dark #06080f / light #eef2f9),系统浅色时会把地址栏刷白,
      现已删掉 light 那条;这里的值来自 style.css §1.1 的 --body-bg / --bg(#0a0a0b)。 -->
 <meta name="theme-color" content="#0a0a0b">
-<link rel="icon" href="assets/img/logo.png" type="image/png">
+<!-- 【2026-09-22 修"网页没有图标"】原来只声明了一张 logo.png;浏览器与搜索引擎结果列表默认找的是
+     **站点根目录的 /favicon.ico** —— 没有那个文件,标签页/搜索结果就是空白地球。现在三件套都给上:
+     根目录 favicon.ico(内部含 16/32/48/64/128/256 六个尺寸的 PNG)、32×32 PNG、iOS 桌面图标。
+     路径一律**相对**(不带开头的 /),这样双击本地文件预览时图标同样能出来。 -->
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/img/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+<link rel="canonical" href="https://alhpro.cn/licenses.html">
 <link rel="stylesheet" href="assets/css/style.css">
 <script>
 /* 标记「JS 可用」:需要 JS 才启用的动效都挂在 html.has-js 下。

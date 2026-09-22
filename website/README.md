@@ -48,6 +48,11 @@ website/
 ├── privacy.html        隐私说明:本地处理 + 三处联网行为如实列全 + 本站自身说明
 ├── licenses.html       开源许可与致谢:软件本体许可 + 第三方程组逐条声明 + 致谢名单
 ├── changelog.html      更新日志:逐版本摘要(含“需要你重新调参”的提示)
+├── favicon.ico         站点图标(2026-09-22 新增):内部含 16/32/48/64/128/256 六个尺寸的 PNG。
+│                       浏览器与搜索引擎结果列表默认就找**根目录的 /favicon.ico** —— 以前没有这个文件,
+│                       所以标签页与搜索结果里一直是空白地球(用户实测反馈"网页没有图标")。
+├── robots.txt          (2026-09-22 新增)允许全站抓取 + 指向 sitemap
+├── sitemap.xml         (2026-09-22 新增)七个页面的规范地址清单,给搜索引擎看
 ├── assets/
 │   ├── css/style.css   全部样式。开头是 §0 实测性能基线与"滚动性能铁律"、§1 设计令牌,
 │   │                   改深浅两套主题只改 §1;§20 是 prefers-reduced-motion 的统一关闭规则
@@ -55,9 +60,23 @@ website/
 │   │                   光斑(进视口才播)/ 章节条高亮与内部跟随 / 吸顶哨兵 / 滚动进入 /
 │   │                   标题逐词 / 数字计数 / 卡片跟随高光 / 步骤流点亮 / FAQ 高度过渡 /
 │   │                   复制按钮 / 锚点点击跳转。**文件里没有任何 scroll 监听器**
-│   └── img/logo.png    站点图标 / 页眉标志(取自软件图标 ALHPro_icon.png;全站唯一图片)
+│   └── img/logo.png    站点页眉标志(取自软件图标;全站唯一的 `<img>`)
+│       img/favicon-32.png        (2026-09-22 新增)32×32 标签页图标
+│       img/apple-touch-icon.png  (2026-09-22 新增)180×180,iOS 加到主屏用
 └── README.md           本文件
 ```
+
+> **三个 SEO 必备件怎么来的(2026-09-22 一次性补齐)**
+> 起因是用户搜自己站点时发现:① 首页被收录成 `alhpro.cn/index.html` 而不是 `alhpro.cn/`;
+> ② 每个内页也只以 `xxx.html` 出现;③ 搜索结果里没有图标。根因分别是:
+> **没有 canonical**(首页那行是注释掉的 `example.com` 占位符,其余六页一条都没有)、
+> **没有 sitemap/robots**、**根目录没有 favicon.ico**。
+> 现在:七个页面各自 `<link rel="canonical">` 指向 `https://alhpro.cn/...`
+> (首页指向 `https://alhpro.cn/`),站点根目录给了多尺寸 `favicon.ico` + 32/180 两张 PNG,
+> 并新增 `robots.txt` 与 `sitemap.xml`。
+> **站点内部链接仍写成 `index.html`**(每页 3 处)——这是**故意的**:换成 `/` 会让"双击本地文件预览"
+> 跳到文件系统根目录,破坏"可离线打开"这条约定(见 §一 技术约定)。规范地址交给 canonical 与 sitemap 表达。
+> 若哪天不要离线预览、想要更干净的路径,再把那 21 处改成 `/` 即可。
 
 > 页面里的动效钩子(改 HTML 时会用到):
 > `data-reveal` = 该区块滚动进入时淡入上移 12px;`data-reveal-group` = 放在容器上,
@@ -138,9 +157,15 @@ while ($true) {
    发新版时统一替换(可用编辑器全文查找,例如搜 `1.4.0`)。
 5. **`changelog.html` 补一条新版本。** 格式:标题 `vX.Y.Z + 日期 + 一句话`,并用 `<details>` 展开细节;
    凡是需要用户重新调参、默认值变化、界面迁移的改动,**必须单独标出**。
-6. **可选:** 打开 `index.html` 里 `rel="canonical"` 的注释并填上真实域名;
-   若域名是 `www` 与裸域并存,记得做 301 跳转统一。
+6. **~~canonical~~ 已做(2026-09-22)。** 七个页面各自声明了 `<link rel="canonical" href="https://alhpro.cn/...">`
+   (首页指向 `https://alhpro.cn/`),并新增 `favicon.ico`(多尺寸)、`robots.txt`、`sitemap.xml`。
+   **仍有一步在服务器侧:** 若 `www.alhpro.cn` 与裸域并存,做 301 统一到其中一个(推荐 301 到裸域 `https://alhpro.cn/`);
+   若主机/OSS 支持,再把 `/index.html` 301 到 `/` —— 两条都能让"首页只被收录成一个地址"更彻底。
+   改完到 Google Search Console / Bing 网站管理员工具里**提交 sitemap 并请求重新抓取**,旧的标题与摘要(抓取缓存)才会更新。
 7. **不要在页面里加统计脚本。** 若确实需要,请先确认合规要求并自行申报,再统一加。
+8. **上线文件清单**:`*.html`(7 个)、`assets/`、`favicon.ico`、`robots.txt`、`sitemap.xml`。
+   上传时 `.ico` 要 `image/x-icon`、`.png` 要 `image/png`、`.xml` 要 `application/xml`、`.txt` 要 `text/plain`
+   —— 图标若被 OSS 传成 `application/octet-stream`,浏览器会**拒用**,表现和"没有图标"一样。
 
 ---
 
@@ -236,6 +261,12 @@ server {
 | `index.html` | 首页版本号、下载按钮文案、功能演示的说明文字 |
 | `privacy.html` | 若**联网行为有变化**(新增接口、换域名、改频率),必须同步更新;否则不动 |
 | `faq.html` | 按用户反馈持续补充(最常被问到的问题放前面) |
+| `sitemap.xml` | **新增/改名/删页面时必须同步**(把该页的 `<loc>` 加进去),并把改过的页 `lastmod` 改成当天 |
+
+**改 head 里的三件套时记住(每页都有):**
+`<link rel="canonical">`(规范地址,首页是 `https://alhpro.cn/`)、三条图标 `<link rel="icon"/apple-touch-icon>`
+(指向 `favicon.ico` 与 `assets/img/` 下两张 PNG)、以及 `robots.txt` / `sitemap.xml` 里的域名。
+**域名一旦从 `alhpro.cn` 变化,这三处 + sitemap + robots 全都要跟着改。**
 
 **给将来预留的兜底(本期未实现,别在页面上承诺):**
 
