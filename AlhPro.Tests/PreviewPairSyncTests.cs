@@ -81,10 +81,18 @@ public class PreviewPairSyncTests
 
         // 对齐本身必须是**带校验的定位**(裸设 Position + 立刻 Play = 恒定偏移,本文件 2026-09-17 已判定过)
         Assert.Contains("private async Task AlignMaskPairAsync(bool toMin, bool thenPlay, string why)", code);
-        Assert.Contains("await SeekAndVerifyAsync(e, anchor, 3).ConfigureAwait(true);", code);
-        Assert.Contains("await SeekAndVerifyAsync(o, anchor, 3).ConfigureAwait(true);", code);
+        // 【2026-09-23 并行】两条**同时**发起定位再一起等(串行 = 等待叠加 + "一条已到位、另一条还在原处"
+        // 的可见窗口翻倍;实测抓到过片尾重播那一瞬的 3000ms 错位)
+        Assert.Contains("var seekE = Math.Abs(pe - anchor) > 0.03 ? SeekAndVerifyAsync(e, anchor, 3) : Task.CompletedTask;", code);
+        Assert.Contains("var seekO = Math.Abs(po - anchor) > 0.03 ? SeekAndVerifyAsync(o, anchor, 3) : Task.CompletedTask;", code);
+        Assert.Contains("await Task.WhenAll(seekE, seekO).ConfigureAwait(true);", code);
+        Assert.DoesNotContain("await SeekAndVerifyAsync(e, anchor, 3).ConfigureAwait(true);", code);
+        Assert.DoesNotContain("await SeekAndVerifyAsync(o, anchor, 3).ConfigureAwait(true);", code);
         // 遮罩模式两条同轴 ⇒ 目标就是同一个秒数,**绝不加 _effStart**(加了就是凭空造出几秒的假偏差)
         Assert.Contains("double anchor = toMin ? Math.Min(pe, po) : pe;", code);
+        // 片尾重播那条路(ReplayFromStartAsync)同样并行归零
+        Assert.Contains("var seekE = SeekAndVerifyAsync(e, 0, 6);", code);
+        Assert.Contains("var seekO = SeekAndVerifyAsync(o, 0, 6);", code);
         // 防重入:看门狗每 150ms 一跳,而一次对齐要 await 两次"带校验的定位"⇒ 没有这道闸门会起第二次
         // 对齐、两个对齐互相 seek(画面来回跳)✗;而且 `_maskAlignAt` 必须在**开头**就盖时间戳(冷却才生效)
         Assert.Contains("if (_maskAlignBusy) return;", code);
