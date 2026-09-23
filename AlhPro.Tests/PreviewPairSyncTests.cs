@@ -166,8 +166,8 @@ public class PreviewPairSyncTests
         var code = StripComments(ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs"));
         // 统一的重抓入口 + 判据(只看症状,不靠引用相等)
         Assert.Contains("private void RecacheMediaRefs(string why)", code);
-        Assert.Contains("private bool OrigRefLooksStale(Windows.Media.Playback.MediaPlayer? liveOrig,", code);
-        Assert.Contains("return liveDur > 0.05 && cachedDur <= 0.05;", code);
+        Assert.Contains("private bool RefsLookStale(Windows.Media.Playback.MediaPlayer? liveOrig,", code);
+        Assert.Contains("if (liveOrigDur > 0.05 && cachedOrigDur <= 0.05) return true;", code);
         // 每个装片入口后面都必须跟一次重抓 —— 少一处就会重演"只有一条被对齐"的静默失效
         foreach (var site in new[] { "RecacheMediaRefs(\"遮罩装片后(上层刚拿到 Source)\");",
                                      "RecacheMediaRefs(\"成片条装片后\");",
@@ -178,8 +178,13 @@ public class PreviewPairSyncTests
             Assert.Contains(site, code);
         // 回调是**按会话**订阅的 ⇒ 换会话必须"先摘再挂"(SetCompareSync 在已订阅时会提前返回)
         Assert.Contains("SetCompareSync(false);\n            if (_compareMode) SetCompareSync(true);", code);
-        // 看门狗永久对账(限流 2 秒),防这类 bug 再悄悄回来
-        Assert.Contains("if (OrigRefLooksStale(om, os))", code);
+        // 看门狗永久对账(限流 2 秒),防这类 bug 再悄悄回来。
+        // 【2026-09-23 补齐】不只查"原片"那条:成片条(左右对比的主时钟)与播放条同样会踩,
+        // 所以判据要覆盖三条缓存 + "活体有片子而缓存读回 0/0s"这种症状。
+        Assert.Contains("if (RefsLookStale(om, os, eff, se, se?.NaturalDuration.TotalSeconds ?? 0))", code);
+        Assert.Contains("if (_cmpPosMpCache == null && liveEff != null) return true;", code);
+        Assert.Contains("if (_barMpCache == null && liveBarDur > 0.05) return true;", code);
+        Assert.Contains("return liveEffDur > 0.05 && cachedEffDur <= 0.05;", code);
         Assert.Contains("if (nowTick - _lastRefHealAt > 2000)", code);
     }
 
