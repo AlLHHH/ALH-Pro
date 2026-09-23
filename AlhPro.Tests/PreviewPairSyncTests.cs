@@ -85,6 +85,10 @@ public class PreviewPairSyncTests
         Assert.Contains("await SeekAndVerifyAsync(o, anchor, 3).ConfigureAwait(true);", code);
         // 遮罩模式两条同轴 ⇒ 目标就是同一个秒数,**绝不加 _effStart**(加了就是凭空造出几秒的假偏差)
         Assert.Contains("double anchor = toMin ? Math.Min(pe, po) : pe;", code);
+        // 防重入:看门狗每 150ms 一跳,而一次对齐要 await 两次"带校验的定位"⇒ 没有这道闸门会起第二次
+        // 对齐、两个对齐互相 seek(画面来回跳)✗;而且 `_maskAlignAt` 必须在**开头**就盖时间戳(冷却才生效)
+        Assert.Contains("if (_maskAlignBusy) return;", code);
+        Assert.Contains("finally { _maskAlignBusy = false; _maskAlignAt = Environment.TickCount64; }", code);
     }
 
     /// <summary>"两条可能停在不同时刻"的三个入口都要收口:起播前 / 暂停后 / 换倍率后。
