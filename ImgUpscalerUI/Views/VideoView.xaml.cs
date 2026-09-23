@@ -6180,7 +6180,7 @@ public sealed partial class VideoView : UserControl
             // 并排每侧只有 ~775px,屏幕尺寸就是上限)③ **左边卡不动** ✗✗ 第③条是硬故障(把原片装进一个同时
             // 被对比机制驱动的播放器,装载/起播时序打架)⇒ 立即退回原合成片路径 ✔
             // 结论:这条路收益本就很小(屏幕每侧仍 ~775px),风险却动到播放核心 ✗
-            // ⇒ 看画质请用「1:1 对比」(静态、两侧原生像素、零重采样)✔
+            // (2026-09-19 这里原本还推荐去用那个"原画质对比"功能,它已于 2026-09-23 按用户要求删掉)
             _twoFileWant = false;
             _twoFileSrc = _previewItem?.Path; _twoFileProc = _effOutPath;
             // 【2026-09-18 架构调整(用户:"要的是实时滑动 实时响应 像 topaz 一样…能不能好好重构一下")】
@@ -8664,219 +8664,18 @@ public sealed partial class VideoView : UserControl
     private double ToZoomLocalX(double x) => (x - _zoomPanX) / (_zoomScale <= 0 ? 1 : _zoomScale);
     private double ToZoomLocalY(double y) => (y - _zoomPanY) / (_zoomScale <= 0 ? 1 : _zoomScale);
 
-    // ==================== 静止帧 1:1 原画质对比(2026-09-19 用户要求) ====================
-    // 【为什么是静止帧,而不是"两个播放器各播各的实时 1:1"】三条理由(XAML 里也写了):
-    //   ① 画面区只有约 900px 宽,并排两整幅 4K/8K 必然要缩 ⇒ 一条合成片**做不到**"两边都 1:1" ✗
-    //   ② "两个播放器各播各的"正是 2026-09-18 反复出现"只有一边动/不协调"后**主动放弃**的架构 ✗
-    //      (见 ApplyPreviewView 里的架构注释:同一处 6 次以上修不好 = 架构错了)
-    //   ③ 像素级对比本来就该看静帧(Photoshop / Topaz 的 1:1 对比都是静帧),而且**完全不动播放架构** ✔
-    //
-    // 口径:两侧各裁【各自原生像素 1:1】的同一块"中心区域",不缩不放、一个像素都不重采样;
-    //       处理后分辨率更高 ⇒ 同一块区域内它看到的内容范围更小 —— 这正是像素级对比该有的样子 ✔
-    private bool _pxOpen;
-    private double _pxCx = 0.5, _pxCy = 0.5;               // 对比区域中心(各自画面的归一化 0~1)
-    private int _pxOrigW, _pxOrigH, _pxProcW, _pxProcH;    // 两侧原始尺寸(取图后记账,供点击换算用)
-    private int _pxLx, _pxLy, _pxRx, _pxRy, _pxCw, _pxCh;  // 两侧这次的裁切原点与尺寸(原始像素)
-    private readonly List<string> _pxTemps = new();        // 本次产生的临时图(重取/关闭时删)
-
-    private async void PixelCmpBtn_Click(object sender, RoutedEventArgs e)
-    {
-        if (_pxOpen) { ClosePixelCompare(); return; }
-        await OpenPixelCompareAsync();
-    }
-
-    private async Task OpenPixelCompareAsync()
-    {
-        try
-        {
-            if (_effBusy) { await ShowPauseHintAsync("正在处理/预览中 —— 等这一段跑完再来做 1:1 对比。"); return; }
-            string? proc = _effOutPath, orig = _previewItem?.Path;
-            if (string.IsNullOrEmpty(proc) || !File.Exists(proc)
-                || string.IsNullOrEmpty(orig) || !File.Exists(orig))
-            {
-                await ShowPauseHintAsync("还没有处理结果 —— 先跑一次预览,再来看 1:1 对比。");
-                return;
-            }
-            _pxCx = _pxCy = 0.5;                       // 每次打开都从画面正中心起
-            PixelCmpPanel.Visibility = Visibility.Visible;
-            _pxOpen = true;
-            await RefreshPixelCompareAsync();
-        }
-        catch (Exception ex) { Log($"1:1 对比打开失败:{ex.Message}"); }
-    }
-
-    private async void PixelCmpRecap_Click(object sender, RoutedEventArgs e)
-    {
-        PixelCmpRecapBtn.IsEnabled = false;
-        try { await RefreshPixelCompareAsync(); }
-        finally { PixelCmpRecapBtn.IsEnabled = true; }
-    }
-
-    private void PixelCmpClose_Click(object sender, RoutedEventArgs e) => ClosePixelCompare();
-
-    private void ClosePixelCompare()
-    {
-        _pxOpen = false;
-        try { PixelCmpPanel.Visibility = Visibility.Collapsed; } catch { }
-        try { PixelCmpLeftImg.Source = null; PixelCmpRightImg.Source = null; } catch { }
-        foreach (var f in _pxTemps) { try { File.Delete(f); } catch { } }
-        _pxTemps.Clear();
-    }
-
-    private void PixelCmpCell_SizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        // 面板第一次显示时尺寸才从 0 变成真实值 ⇒ 尺寸到位后自动补取一次(否则会取到很小的图)
-        if (!_pxOpen || _pxCw > 0) return;
-        _ = RefreshPixelCompareAsync();
-    }
-
-    /// <summary>点画面任意位置 = 把那一处画面移到对比中心,然后重新取图。</summary>
-    private async void PixelCmp_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-    {
-        if (!_pxOpen || _pxCw <= 0) return;
-        try
-        {
-            var p = e.GetCurrentPoint(PixelCmpArea).Position;
-            if (p.X < PixelCmpLeftCell.ActualWidth)
-            {
-                var lp = e.GetCurrentPoint(PixelCmpLeftCell).Position;
-                if (_pxOrigW <= 0 || _pxOrigH <= 0) return;
-                _pxCx = (_pxLx + lp.X) / _pxOrigW;
-                _pxCy = (_pxLy + lp.Y) / _pxOrigH;
-            }
-            else
-            {
-                var rp = e.GetCurrentPoint(PixelCmpRightCell).Position;
-                if (_pxProcW <= 0 || _pxProcH <= 0) return;
-                _pxCx = (_pxRx + rp.X) / _pxProcW;
-                _pxCy = (_pxRy + rp.Y) / _pxProcH;
-            }
-            _pxCx = Math.Clamp(_pxCx, 0, 1);
-            _pxCy = Math.Clamp(_pxCy, 0, 1);
-            await RefreshPixelCompareAsync();
-            e.Handled = true;
-        }
-        catch { }
-    }
-
-    /// <summary>按当前那一帧 + 当前区域中心,两侧各取一张 1:1 的原生像素裁切图。</summary>
-    private async Task RefreshPixelCompareAsync()
-    {
-        try
-        {
-            string? proc = _effOutPath, orig = _previewItem?.Path;
-            if (string.IsNullOrEmpty(proc) || string.IsNullOrEmpty(orig)) return;
-            double aw = PixelCmpLeftCell?.ActualWidth ?? 0, ah = PixelCmpLeftCell?.ActualHeight ?? 0;
-            if (aw < 48 || ah < 48) { await Task.Delay(140); aw = PixelCmpLeftCell?.ActualWidth ?? 0; ah = PixelCmpLeftCell?.ActualHeight ?? 0; }
-            if (aw < 48 || ah < 48) return;
-            var (ow, oh) = await VideoService.ProbeSizeAsync(orig);
-            var (pw, ph) = await VideoService.ProbeSizeAsync(proc);
-            if (ow <= 0 || oh <= 0 || pw <= 0 || ph <= 0) { Log("1:1 对比:取不到视频尺寸,已跳过"); return; }
-            // 区域大小 = 画面格大小(1:1 时正好铺满一格),但不能超过任一侧的原始尺寸
-            int cw = (int)Math.Min(aw, Math.Min(ow, pw)) & ~1;
-            int chh = (int)Math.Min(ah, Math.Min(oh, ph)) & ~1;
-            if (cw < 32 || chh < 32) { Log($"1:1 对比:画面格太小({aw:0}x{ah:0}),已跳过"); return; }
-            double abs = PixelCmpCurrentAbsSeconds();
-            double clipT = Math.Max(0, abs - _effStart);
-            string? lt = await CropFrameAsync(orig, abs, ow, oh, cw, chh, _pxCx, _pxCy);
-            string? rt = await CropFrameAsync(proc, clipT, pw, ph, cw, chh, _pxCx, _pxCy);
-            if (lt == null || rt == null)
-            {
-                if (lt != null) { try { File.Delete(lt); } catch { } }
-                if (rt != null) { try { File.Delete(rt); } catch { } }
-                Log("1:1 对比:取帧失败(ffmpeg 没能出图)");
-                return;
-            }
-            var lb = await LoadPngAsync(lt); var rb = await LoadPngAsync(rt);
-            if (lb == null || rb == null) { Log("1:1 对比:图片读入失败"); return; }
-            // 旧临时图先留着,新的挂上去之后再删(避免出现一瞬间的空白)
-            var old = _pxTemps.ToArray(); _pxTemps.Clear();
-            _pxTemps.Add(lt); _pxTemps.Add(rt);
-            foreach (var f in old) { try { File.Delete(f); } catch { } }
-            PixelCmpLeftImg.Source = lb; PixelCmpRightImg.Source = rb;
-            _pxOrigW = ow; _pxOrigH = oh; _pxProcW = pw; _pxProcH = ph;
-            _pxCw = cw; _pxCh = chh;
-            _pxLx = CropOrigin(_pxCx, ow, cw); _pxLy = CropOrigin(_pxCy, oh, chh);
-            _pxRx = CropOrigin(_pxCx, pw, cw); _pxRy = CropOrigin(_pxCy, ph, chh);
-            PixelCmpLeftTagText.Text = $"原片 {ow}×{oh} · 1:1";
-            PixelCmpRightTagText.Text = $"处理后 {pw}×{ph} · 1:1";
-            PixelCmpTime.Text = $"第 {EffTime(abs)} 处 · 每侧 {cw}×{chh} 像素 · 缩放倍率 {(double)pw / ow:0.##}×";
-            Log($"[1:1 对比] 第 {EffTime(abs)} 处:原片裁 {cw}×{chh}@{_pxLx},{_pxLy}(源 {ow}×{oh}) · "
-                + $"处理后裁 {cw}×{chh}@{_pxRx},{_pxRy}(源 {pw}×{ph}) —— 两侧均为原生像素 1:1,零重采样");
-        }
-        catch (Exception ex) { Log($"1:1 对比取图失败:{ex.Message}"); }
-    }
-
-    /// <summary>裁切原点(把区域中心放到给定归一化位置上;贴边时夹住,不留黑边)。</summary>
-    private static int CropOrigin(double center, int frameSize, int cropSize)
-    {
-        int v = (int)Math.Round(center * frameSize - cropSize / 2.0);
-        return Math.Max(0, Math.Min(Math.Max(0, frameSize - cropSize), v));
-    }
-
-    /// <summary>当前播放位置(原片时间轴,秒)。与「看原片 / 看处理效果」两个视图统一的原点换算一致:
-    /// 原片那条是整片时间轴,处理后那条是片段内时间轴(0 = _effStart)。</summary>
-    private double PixelCmpCurrentAbsSeconds()
-    {
-        double abs = _effStart;
-        try
-        {
-            // 【倒装】按"这个视图的角色播放器"读(原来写死 PreviewPlayer/EffectPlayer)
-            var el = _lastViewMode == ViewOriginal ? _srcPlayer : _resPlayer;
-            var es = el?.MediaPlayer?.PlaybackSession;
-            if (es != null) abs = _lastViewMode == ViewOriginal ? CmpPos(es) : _effStart + CmpPos(es);
-        }
-        catch { }
-        if (double.IsNaN(abs) || abs < 0) abs = _effStart;
-        return abs;
-    }
-
-    /// <summary>从视频里裁一块原生像素区域(不缩放),输出 PNG。失败返回 null。</summary>
-    private static async Task<string?> CropFrameAsync(string file, double ss, int fw, int fh,
-        int cw, int ch, double cx, double cy)
-    {
-        var ffmpeg = VideoService.FfmpegPath;
-        if (ffmpeg == null) return null;
-        int w = Math.Min(cw, fw) & ~1, h = Math.Min(ch, fh) & ~1;
-        if (w < 16 || h < 16) return null;
-        int x = CropOrigin(cx, fw, w), y = CropOrigin(cy, fh, h);
-        string tmp = Path.Combine(Path.GetTempPath(), "ALHPro", "preview", $"px1to1_{Guid.NewGuid():N}.png");
-        try { Directory.CreateDirectory(Path.GetDirectoryName(tmp)!); } catch { }
-        var inv = System.Globalization.CultureInfo.InvariantCulture;
-        string args = $"-y -v error -ss {ss.ToString("0.###", inv)} "
-                    + $"-i \"{ALHPro.AudioService.FfmpegSafePath(file)}\" -frames:v 1 "
-                    + $"-vf \"crop={w}:{h}:{x}:{y}\" \"{ALHPro.AudioService.FfmpegSafePath(tmp)}\"";
-        await Task.Run(() =>
-        {
-            var psi = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = ffmpeg,
-                Arguments = args,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardError = true,
-            };
-            using var p = System.Diagnostics.Process.Start(psi);
-            if (p == null) return;
-            _ = p.StandardError.ReadToEndAsync();
-            p.WaitForExit();
-        });
-        if (!File.Exists(tmp) || new FileInfo(tmp).Length == 0) { try { File.Delete(tmp); } catch { } return null; }
-        return tmp;
-    }
-
-    private static async Task<BitmapImage?> LoadPngAsync(string path)
-    {
-        try
-        {
-            var bmp = new BitmapImage();
-            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read))
-                await bmp.SetSourceAsync(fs.AsRandomAccessStream());
-            return bmp;
-        }
-        catch { return null; }
-    }
-
+    // ==================== 「1:1 对比」已于 2026-09-23 按用户要求整套删除 ====================
+    // 【为什么删】用户实测觉得没用(原话:「1:1对比这个功能简直没有用 删掉他」)。复盘它为什么没用:
+    //   ① 必须先跑过一次预览才有内容(否则只能提示"还没有处理结果");
+    //   ② 正在处理时会被直接挡回来("等这一段跑完再来做");
+    //   ③ 面板只有约 900px 宽 ⇒ 只能做静止帧,还得手动点「取当前帧」—— 摩擦力比收益大。
+    // 【删了什么】按钮 PixelCmpBtn + 整屏面板 PixelCmpPanel(XAML),以及这里的 _pxOpen/_pxCx… 字段、
+    //   OpenPixelCompareAsync / ClosePixelCompare / RefreshPixelCompareAsync / PixelCmp*_Click /
+    //   PixelCmpCell_SizeChanged / PixelCmp_PointerPressed / PixelCmpCurrentAbsSeconds / CropOrigin,
+    //   还有只被它调用的 CropFrameAsync 与 LoadPngAsync(私有助手,一并删);
+    //   另外 4 处指向该功能的提示文案也改了(否则会叫人去点一个不存在的按钮)。
+    // 【别再加回来】用户已两次点名(先加后删);「两者同时 / 左右对比 / 慢放」三个对比模式不受影响。
+    // ========================================================================================
     private async void EffectRunBtn_Click(object sender, RoutedEventArgs e)
     {
         if (_effBusy) return;
@@ -9728,12 +9527,14 @@ public sealed partial class VideoView : UserControl
                 int.TryParse(m.Groups[2].Value, out h);
             }
             string? txt = null;
+            // 【2026-09-23】这三条提示原来都在末尾推荐用那个已删除的对比功能 —— 功能没了还留着指引
+            // 就是叫人去点一个不存在的按钮 ⇒ 只保留"降低预览倍率"这条可执行的建议。
             if (w >= 3840)
-                txt = $"⚠ 素材 {w}×{h}(4K 以上):预览要解码这么大的画面,容易掉帧/卡顿(慢放、4x 超分时更明显)。建议用 2x 预览,看细节用「1:1 对比」";
+                txt = $"⚠ 素材 {w}×{h}(4K 以上):预览要解码这么大的画面,容易掉帧/卡顿(慢放、4x 超分时更明显)。建议用 2x 预览";
             else if (w >= 2560)
-                txt = $"⚠ 素材 {w}×{h} 分辨率偏高:预览解码负载较高,慢放时可能卡顿。建议用 2x,细节用「1:1 对比」看";
+                txt = $"⚠ 素材 {w}×{h} 分辨率偏高:预览解码负载较高,慢放时可能卡顿。建议用 2x 预览";
             else if ((_cmpOutSpec ?? "").Contains("7680"))
-                txt = "⚠ 处理后是 8K(7680 宽):解码负载很高,可能卡顿。建议预览用 2x,细节用「1:1 对比」看";
+                txt = "⚠ 处理后是 8K(7680 宽):解码负载很高,可能卡顿。建议预览用 2x";
             // 【2026-09-19 · 审计落地】HDR/10bit 素材:让用户在界面上就知道"会被转成 SDR(有损)"✔
             try
             {
@@ -9755,8 +9556,8 @@ public sealed partial class VideoView : UserControl
     // 【与旧做法的区别】旧的是一条**烘焙好的并排合成片**(处理后那侧被重采样+重编码一代 ✗);
     // 现在:左 = **原片文件**、右 = **处理成片**,各自原生像素、各自解码 ⇒ 省掉那一代损失 ✔
     // 【必须说清的边界(已跟用户讲过)】并排时每侧只占画面区一半宽(实测约 775px),
-    //   所以屏幕上"看起来"的清晰度上限由**窗口宽度**决定,不会因为这条改动而变成 4K 那么锐 ✗ ——
-    //   要看真像素仍然用「1:1 对比」✔
+    //   所以屏幕上"看起来"的清晰度上限由**窗口宽度**决定,不会因为这条改动而变成 4K 那么锐 ✗
+    //   (原来这里指向「1:1 对比」看真像素 —— 那个功能 2026-09-23 按用户要求删掉了)
     // 【为什么用布局切半幅而不是设裁切】视频面(SwapChainPanel)对裁切有脾气(本文件多处记录过)✗;
     //   把主机的宽度直接设成半幅、左右对齐 ⇒ 天然不越界、零裁切、最稳 ✔
     private bool _twoFileBoth;                  // 当前是否处于"两个文件并排"形态
