@@ -67,7 +67,9 @@ public static class RenderPolicy
     /// 不再看空闲显存:批大小决定的是每批缓冲在磁盘/内存里的帧数,显存峰值由 VideoTileSize(分块)界定,
     /// 与批大小无关;而空闲显存在 AMD/Intel 上无法真测,拿估算值砍批次只会白白损失吞吐。
     /// 空闲内存由 GlobalMemoryStatusEx 实测,跨厂商可靠。
-    /// 【任务 T · 2026-09-13 口径变更】中/高档数字整体上调(120/180/240 → 300/300/700):
+    /// 【任务 T · 2026-09-13 口径变更】中/高档数字整体上调(历史链条:120/180/240 → 300/300/700 →
+    /// 2026-09-23「档位 ×2」后为 80/600/700/1400)。⚠ 当前值**一律以常量与 <see cref="PlanVideoBatches"/> 为准**,
+    /// 上面的历史数字只是沿革 —— 本文件里凡是把具体帧数写进正文的地方都是漂移来源(B6)。
     /// 这一列现在只用于"内存压力"的展示与兜底(UI 日志 `SafeRender.GetVideoBatchSize()`),
     /// 真正决定每批帧数的是 <see cref="PlanVideoBatches"/> 的"内存档 × 性能档"(见那里)。</summary>
     public static int VideoBatchSize(double freeRamGB)
@@ -75,9 +77,9 @@ public static class RenderPolicy
         if (freeRamGB <= 1.5) return 25;     // 极端紧张
         if (freeRamGB <= 2.5) return 40;
         if (freeRamGB <= 4) return 60;
-        if (freeRamGB <= 6) return NormalDeviceFramesPerBatch;      // 【T】120 → 300
-        if (freeRamGB <= 8) return NormalDeviceFramesPerBatch;      // 【T】180 → 300
-        return StrongDeviceLargeFramesPerBatch;                     // 【T】240 → 700(空余内存 >8G:最快档)
+        if (freeRamGB <= 6) return NormalDeviceFramesPerBatch;      // 【T】120 → 300 → 600(2026-09-23 档位 ×2)
+        if (freeRamGB <= 8) return NormalDeviceFramesPerBatch;      // 【T】180 → 300 → 600
+        return StrongDeviceLargeFramesPerBatch;                     // 【T】240 → 700 → 1400(空余内存 >8G:最快档)
     }
 
     // ===== 批次口径(2026-09-13 按用户口径重定;旧的 240/8 口径已作废)=====
@@ -176,8 +178,10 @@ public static class RenderPolicy
     /// <summary>【任务 T】档位基准帧数(优先级链的第 ① 步):内存档与性能档**取较低者**,再按"视频长不长"取大档。
     /// 【为什么取较低者】内存不够却"测得快"时,大批会把同屏临时帧顶爆(峰值随批线性涨);
     /// 反过来内存够大但"测得慢"(例如 ONNX 落 CPU 8 秒/帧)时,大批只会让每批跑得更久、峰值占盘更久。
-    /// 【700 的硬条件】只有 性能档=Fast **且** 空闲内存 ≥ <see cref="StrongDeviceFreeRamGB"/> 才可能取到 700:
-    /// 内存档取较低者已经蕴含这一条(Strong 内存档 = ≥8G),这里再显式判一次,免得日后有人改坏。</summary>
+    /// 【大档(<see cref="StrongDeviceLargeFramesPerBatch"/>)的硬条件】只有 性能档=Fast **且**
+    /// 空闲内存 ≥ <see cref="StrongDeviceFreeRamGB"/> 才可能取到它:
+    /// 内存档取较低者已经蕴含这一条(Strong 内存档 = ≥8G),这里再显式判一次,免得日后有人改坏。
+    /// (正文里不再写"700"这种具体数字 —— 档位改过一次,写死的数字就变成了假话,见 B6。)</summary>
     public static int TierBaseFrames(DeviceTier memoryTier, PerfScore perf, double freeRamGB, bool longClip)
     {
         var perfTier = TierForPerf(perf);
@@ -186,10 +190,10 @@ public static class RenderPolicy
         // 直接读本文件常量 —— 与"覆盖层为 null 时回落常量"逐字等价,批大小行为一个字节都没变。
         if (effective == DeviceTier.Strong)
             return longClip && perf == PerfScore.Fast && freeRamGB >= StrongDeviceFreeRamGB
-                ? StrongDeviceLargeFramesPerBatch     // 700
-                : StrongDeviceFramesPerBatch;         // 350
-        if (effective == DeviceTier.Normal) return NormalDeviceFramesPerBatch;   // 300
-        return WeakDeviceFramesPerBatch;                                         // 50(仍是全档位下界)
+                ? StrongDeviceLargeFramesPerBatch     // 1400(2026-09-23 档位 ×2 前是 700)
+                : StrongDeviceFramesPerBatch;         // 700(同上是 350)
+        if (effective == DeviceTier.Normal) return NormalDeviceFramesPerBatch;   // 600(同上是 300)
+        return WeakDeviceFramesPerBatch;                                         // 80(同上是 50;仍是全档位下界)
     }
 
     // ===== 面积缩放(任务 Q2 · 2026-09-13)=5====
@@ -254,12 +258,13 @@ public static class RenderPolicy
     /// 【规则(自上而下,命中即止)】
     ///   ① 设备档位 = TierFor(空闲内存):&lt;4G 差 / 4~8G 正常 / ≥8G 好;
     ///   ② 设备 ≥ 正常 且 补帧后总帧数 ≤ SingleBatchMaxPostInterpFrames(400)→ 完全不分批(batchCount=1);
-    ///   ③ 【任务 T 口径变更】档位基准 = (内存档 × 性能档)取较低者 → 长片 700 / 短片 350 / 正常 300 / 差 50
-    ///      (见 <see cref="TierBaseFrames"/>);"性能档"来自 <see cref="DevicePerf"/>:优先用实测吞吐,
-    ///      没有实测数据时回退纯内存档。700 还要求"性能档 = Fast **且** 空闲内存 ≥ 8G"。
-    ///   ④ fastMode / diskTight 各自把每批帧数减半(既有的防爆盘/弱机保护),再【钳到 ≥ 50】。
-    ///      ⚠ 冲突点(已如实报告、未自行决定别的折中):在"设备差(基准 50)"档上,减半(→25)会被 50 下界
-    ///      挡住 = 该档减半不生效;其余档位(700→350、350→175、300→150)减半照常生效。
+    ///   ③ 【任务 T 口径变更】档位基准 = (内存档 × 性能档)取较低者 → 长片 1400 / 短片 700 / 正常 600 / 差 80
+    ///      (2026-09-23「档位 ×2」后的值;一律以 <see cref="TierBaseFrames"/> 与那几个常量为准,别在正文里写死);
+    ///      "性能档"来自 <see cref="DevicePerf"/>:优先用实测吞吐,
+    ///      没有实测数据时回退纯内存档。最大档还要求"性能档 = Fast **且** 空闲内存 ≥ <see cref="StrongDeviceFreeRamGB"/>G"。
+    ///   ④ fastMode / diskTight 各自把每批帧数减半(既有的防爆盘/弱机保护),再【钳到 ≥ <see cref="WeakDeviceFramesPerBatch"/>】。
+    ///      ⚠ 冲突点(已如实报告、未自行决定别的折中):在"设备差(基准 80)"档上,减半(→40)会被下界
+    ///      挡住 = 该档减半不生效;其余档位(1400→700、700→350、600→300)减半照常生效。
     ///   批数 = ⌈补帧后总帧数 ÷ 每批帧数⌉(不分批时 = 1;这是【预计值】,真正切批按去重后的唯一帧组数,
     ///   由调用方按实际结果再记一行日志)。
     /// 【不设批数上限】仍成立:限批数只能让每批帧数随素材线性变大,同屏临时帧(输入+输出并存)跟着涨 ——
@@ -296,7 +301,7 @@ public static class RenderPolicy
                     ? $"视频长(源 {sourceFrames} 帧 ≥ {LongClipMinSourceFrames} 或补帧后 {postInterpFrames} 帧 ≥ {LongClipMinPostInterpFrames})→ 批内扩大到 {baseFrames} 帧/批"
                     : $"视频不长(源 {sourceFrames} 帧 < {LongClipMinSourceFrames} 且补帧后 {postInterpFrames} 帧 < {LongClipMinPostInterpFrames})→ {baseFrames} 帧/批")
                 + (baseFrames == StrongDeviceLargeFramesPerBatch
-                    ? $"(700 的硬条件:性能档 Fast 且空闲内存 ≥ {StrongDeviceFreeRamGB:0.#}G,当前 {freeRamGB:0.#}G 满足)"
+                    ? $"({StrongDeviceLargeFramesPerBatch} 的硬条件:性能档 Fast 且空闲内存 ≥ {StrongDeviceFreeRamGB:0.#}G,当前 {freeRamGB:0.#}G 满足)"
                     : "");
         }
         int batch = baseFrames;

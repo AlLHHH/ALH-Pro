@@ -33,6 +33,16 @@ public static class UpdateChecker
     public static string CurrentVersion =>
         typeof(UpdateChecker).Assembly.GetName().Version?.ToString(3) ?? "1.0";
 
+    /// <summary>【C3 · 2026-09-23】端点失败的**日志去重**计数器:同一端点在本次运行内只逐字报一次失败原因,
+    /// 之后再失败只累加次数(最后汇总一行)。
+    /// 【为什么】真机症状:本机 api.github.com 稳定 403(限流)、gh-proxy 稳定超时,启动检查 3 轮 × 2 端点
+    /// = 一次运行刷 6 条几乎相同的 INFO,把真正有用的日志顶走 —— 而"检查失败"这件事一句汇总就够了
+    /// (更新检查失败不影响任何功能,启动检查本来就是静默的)。</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _endpointFailCount = new();
+
+    /// <summary>端点地址截断到 40 字(日志里只用来认是哪条通道)。</summary>
+    private static string Ep(string url) => url[..Math.Min(40, url.Length)];
+
     /// <summary>检查结果:null=全部端点失败(网络/超时/接口异常);HasNew=true 有新版。</summary>
     public static async Task<(bool HasNew, string LatestTag, string LatestVersion)?> CheckAsync(int retries = 3)
     {
@@ -65,12 +75,15 @@ public static class UpdateChecker
                     var latestStr = tag.TrimStart('v', 'V').Split('-')[0].Trim();
                     if (!Version.TryParse(latestStr, out var latest)) return (false, tag, latestStr);
                     var cur = Version.TryParse(CurrentVersion, out var c) ? c : new Version(1, 0, 0);
-                    AppLogger.Info($"[更新] 检查:当前 {CurrentVersion},GitHub 最新 {tag} → {(latest > cur ? "有新版本" : "已是最新")}(端点 {url[..Math.Min(40, url.Length)]}..., 第 {attempt} 轮)");
+                    AppLogger.Info($"[更新] 检查:当前 {CurrentVersion},GitHub 最新 {tag} → {(latest > cur ? "有新版本" : "已是最新")}(端点 {Ep(url)}..., 第 {attempt} 轮)");
                     return (latest > cur, tag, latestStr);   // 拿到确定结果(有新版或已最新)立即返回
                 }
                 catch (Exception ex)
                 {
-                    AppLogger.Info($"[更新] 端点失败({url[..Math.Min(40, url.Length)]}...):" + ex.Message.Split('\n')[0]);
+                    // 【C3】同一端点的失败原因只报一次;之后的失败静默计数,由下面的汇总行交代
+                    int n = _endpointFailCount.AddOrUpdate(url, 1, (_, old) => old + 1);
+                    if (n == 1)
+                        AppLogger.Info($"[更新] 端点失败({Ep(url)}...):{ex.Message.Split('\n')[0]}(同一端点在本次运行内不再重复报,末尾有汇总)");
                 }
             }
             // 本轮所有端点都失败(被墙/超时):小间隔后重试下一轮
@@ -80,7 +93,11 @@ public static class UpdateChecker
                 catch { return null; }
             }
         }
-        AppLogger.Info($"[更新] 检查失败(重试 {retries} 轮后仍无确定结果,网络可能被墙)");
+        int failed = 0;
+        foreach (var kv in _endpointFailCount) failed += kv.Value;
+        AppLogger.Info($"[更新] 检查失败:重试 {retries} 轮、{Endpoints.Length} 个端点共 {failed} 次请求都没有确定结果"
+            + "(常见原因:网络受限 / GitHub 限流 / 镜像不可用)。此检查不影响任何功能,启动检查到此为止;"
+            + "需要时可到「关于」页点「检查更新」手动再试。");
         return null;
     }
 }

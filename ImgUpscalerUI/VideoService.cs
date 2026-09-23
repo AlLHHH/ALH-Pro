@@ -703,15 +703,19 @@ public static class VideoService
             catch { }
 
             // 【2026-09-23 用户要求 · 视频这一侧「绝不落 CPU」】硬编可用性是视频任务的**前提**,所以在这里提前探一次:
-            // 本机一个可用硬编都没有、而用户又没在设置里显式选「CPU 计算」⇒ 立刻报错,而不是"先处理一小时、
-            // 最后编码掉到 CPU 再慢一整轮"(实测 5060:编码阶段 17.0s → 115.7s,**7 倍**)。
+            // 本机一个可用硬编都没有 ⇒ 立刻报错,而不是"先处理一小时、最后编码掉到 CPU 再慢一整轮"
+            // (实测 5060:编码阶段 17.0s → 115.7s,**7 倍**)。
             // 探测本身有闩锁(_hwProbed),所以后面编码前那次调用会变成空操作,不会白探两遍。
             // ct.ThrowIfCancellationRequested 放在前面:用户点过停止时不能报成"本机没有硬编"。
+            // 【B8 · 2026-09-23】判据不再看 gpuId:设置页早已不提供「CPU 计算」,而 Vulkan 自检失败时
+            // MainPage 会把 GpuIndex 临时置 -1(那是自动降级、不是用户选择)⇒ 按旧的 gpuId<0 判据,
+            // 这种机器上的视频会**静默**走 CPU 软编,正好是这条策略要消灭的情况。现在一律要求可用硬编。
             await EnsureHwProbeAsync(ffmpeg, ct);
             ct.ThrowIfCancellationRequested();
-            if (!AlhPro.Core.CpuFallbackPolicy.AllowsCpuFallback(gpuId) && !HasAnyWorkingHwEncoder())
+            if (!AlhPro.Core.CpuFallbackPolicy.AllowsCpuFallback() && !HasAnyWorkingHwEncoder())
             {
-                AppLogger.Error("视频处理未开始:本机没有可用的硬件编码器,且用户未选「CPU 计算」——按「视频不落 CPU」策略直接报错");
+                AppLogger.Error("视频处理未开始:本机没有可用的硬件编码器 —— 按「视频不落 CPU」策略直接报错"
+                    + $"(设置里的计算设备 = {(AppSettings.GpuIndex >= 0 ? "GPU " + AppSettings.GpuIndex : "未检测到可用显卡/仅本次会话降级")})");
                 throw new InvalidOperationException(AlhPro.Core.CpuFallbackPolicy.DescribeNoHwEncoder());
             }
 
@@ -3890,7 +3894,7 @@ public static class VideoService
             {
                 // 【2026-09-23 用户要求 · 视频这一侧「绝不落 CPU」】硬件编码失败**不再**回退 CPU 软编:
                 // 同一台设备按 AlhPro.Core.CpuFallbackPolicy 的间隔重试(重启子进程,专挡"瞬时失败"),
-                // 全失败就报错、让用户自己决定(要 CPU 软编请在设置里显式选「CPU 计算」)。
+                // 全失败就报错并给出可操作的建议(更新驱动/重启;软件不提供 CPU 软编选项,见 B8)。
                 // 【真机依据】5060 那台"上一次任务"nvenc 还是 16.7 fps,下一次就 exit -542398533 ⇒ 属瞬时,
                 // 不是"这台机器编不了";而旧逻辑一次都不重试就掉 libx264:编码 17.0s → 115.7s(**7 倍**),
                 // 那行回报还误标成"(硬编)"。driverOld(驱动过旧)是确定性失败 ⇒ 不重试,直接报错让他去更新驱动。
@@ -4425,38 +4429,9 @@ public static class VideoService
     ///   干净素材 n2 比 n0 PSNR 略降 0.94 但 SSIM 反升 0.037、细节(拉普拉斯方差)不降 —— 基本无损。
     ///   数据与对比图:_qa\ab_waifu\REPORT.md。用户按观感决定"关"必须是真关,故不再默认替用户开。</summary>
 
-    /// <summary>
-    /// freezedetect 检测冻结(静止)段:返回 (开始秒, 结束秒) 列表。
-    /// 专业冻结检测:连续帧亮度差低于噪声阈值且持续超过 0.1s 视为静止段。
-    /// </summary>
-    private static async Task<List<(double s, double e)>> DetectFreezeAsync(string ffmpeg, string input,
-        string trimArgs, double noise, CancellationToken ct)
-    {
-        var segs = new List<(double, double)>();
-        var inv = System.Globalization.CultureInfo.InvariantCulture;
-        try
-        {
-            var lines = await RunCaptureAsync(ffmpeg,
-                $"-y {trimArgs} -i \"{input}\" -vf \"freezedetect=n={noise.ToString("0.###", inv)}:d=0.04,metadata=print\" -f rawvideo NUL",
-                ct);
-            double curStart = -1;
-            foreach (var l in lines)
-            {
-                var ms = System.Text.RegularExpressions.Regex.Match(l, @"freeze_start=([\d.]+)");
-                if (ms.Success && double.TryParse(ms.Groups[1].Value, System.Globalization.NumberStyles.Float, inv, out var s))
-                    curStart = s;
-                var me = System.Text.RegularExpressions.Regex.Match(l, @"freeze_end=([\d.]+)");
-                if (me.Success && curStart >= 0
-                    && double.TryParse(me.Groups[1].Value, System.Globalization.NumberStyles.Float, inv, out var e))
-                {
-                    if (e > curStart) segs.Add((curStart, e));
-                    curStart = -1;
-                }
-            }
-        }
-        catch { /* 检测失败按无静止段处理 */ }
-        return segs;
-    }
+    // 【C2 · 2026-09-23 删除死代码】这里原有一个 freezedetect 抽静止段的方法(DetectFreezeAsync):
+    // 全仓库(含 AlhPro.Tests)没有任何调用点 —— 它是早期"按静止段跳帧"方案留下的,那条路已被
+    // SegmentContentFpsCoreSync(段级分析)取代。留着只会让人以为"静止检测在用"。
 
     /// <summary>CPU 重算预计时长(分钟)估算:补帧 CPU 软解约 2~6 秒/帧(随分辨率),给个上界让用户有"可等"预期。
     /// 避免降级后进度条久不动,用户以为卡死。</summary>
@@ -4908,29 +4883,79 @@ public static class VideoService
         }
 
         var files = EnumerateFrameFiles(finalOut)
-            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase);
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
+        // ===== 【B7 · 2026-09-23】交付逐帧结果:不再"失败了也照样推进编号 + 静默吞异常" =====
+        // 原写法是"在目的文件名的插值表达式里直接自增全局帧号"配 `catch { try { Copy } catch { } }`:
+        // 两次都失败时这一帧**没了**,但编号已经被吃掉 ⇒ framesFinal 里出现空洞,而下游是按
+        // `frame_%06d.jpg` 顺序读的(编码/拼接),撞上"文件不存在"要么直接报错、要么少帧静默变短 ——
+        // 日志里连一条提示都没有,真机排查时完全看不出。
+        // 现在的口径:① 只有**真的交付成功**才推进编号(序列始终连续);② 失败一定留痕(逐帧 WARN + 段末 ERROR 汇总);
+        // ③ 失败前多给两次机会(引擎进程刚退出时句柄可能还没放开,Move 会因共享冲突失败)。
+        int delivered = 0, dropped = 0;
+        string firstErr = "";
         foreach (var f in files)
         {
             // 【任务 O3】引擎现在是【直出 JPG】(见上面的 -f),所以这里是"搬"而不是"转":
             // 省掉整段 PNG 解码 + q0.96 重编码(实测省 86.5ms/帧),画质还更好(引擎 q≈100,+1.56 dB)。
             // 仅当输出真是 PNG 时(ONNX 补帧路径、旧引擎)才走原来的转码。
-            var dst = Path.Combine(framesFinal, $"frame_{globalIdx++:D6}.jpg");
-            if (f.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+            var dst = Path.Combine(framesFinal, $"frame_{globalIdx + 1:D6}.jpg");
+            if (TryDeliverFrame(f, dst, out var err))
             {
-                try { EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality); }
-                catch { try { File.Copy(f, dst, true); } catch { } }
+                globalIdx++;
+                delivered++;
             }
             else
             {
-                // 同名同扩展名直接搬(跨目录 Move;失败退回复制),不再解码重编码
-                try { File.Move(f, dst, overwrite: true); }
-                catch { try { File.Copy(f, dst, true); } catch { } }
+                dropped++;
+                if (firstErr.Length == 0) firstErr = err;
+                AppLogger.Warn($"⚠ 补帧帧交付失败(本段已成功 {delivered} 帧,失败 {dropped} 帧:{Path.GetFileName(f)})—— {err}");
             }
+        }
+        if (dropped > 0)
+        {
+            AppLogger.Error($"✗ 本段有 {dropped} 帧没能交付到最终目录(共 {files.Count} 帧;首条原因:{firstErr})。"
+                + $"已让后面的帧顶上空出的编号 ⇒ 帧序列仍连续,但**本段总帧数少了 {dropped} 帧**,"
+                + "成片会比目标帧数短一点(进度与 ETA 按实际帧数计)。请检查磁盘是否写满、是否有杀毒/同步软件锁住临时目录。");
         }
         try { Directory.Delete(segIn, true); } catch { }
         if (finalOut != segIn) { try { Directory.Delete(finalOut, true); } catch { } }
         return globalIdx;
     }
+
+    /// <summary>把引擎产出的一帧交付到最终目录(搬/转码 + 两次兜底重试);失败时把原因交回调用方。
+    /// 【B7】分离出来的唯一目的就是"不许静默丢帧":调用方要按返回值决定是否推进全局帧号并留痕。</summary>
+    private static bool TryDeliverFrame(string src, string dst, out string error)
+    {
+        error = "";
+        try
+        {
+            if (src.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+                EngineService.ConvertPngToJpg(src, dst, VideoFrameJpgQuality);
+            else
+                File.Move(src, dst, overwrite: true);   // 同名同扩展名直接搬(跨目录 Move),不再解码重编码
+            return true;
+        }
+        catch (Exception ex) { error = DescribeFileError(ex); }
+        // 兜底①:退回复制(Move 的失败常是"源被刚退出的引擎进程短暂占着")
+        try { File.Copy(src, dst, true); return true; }
+        catch (Exception ex) { error += " / 复制也失败: " + DescribeFileError(ex); }
+        // 兜底②:等 150ms 再复制一次(句柄释放有延迟,尤其是刚 kill 过引擎进程时)
+        try
+        {
+            System.Threading.Thread.Sleep(150);
+            File.Copy(src, dst, true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error += " / 等待 150ms 后重试仍失败: " + DescribeFileError(ex);
+            return false;
+        }
+    }
+
+    /// <summary>异常 → 一行短描述(类型 + Message 首行),供逐帧告警用(日志里一行一帧,别把堆栈刷进来)。</summary>
+    private static string DescribeFileError(Exception ex)
+        => $"{ex.GetType().Name}: {ex.Message.Split('\n')[0]}";
 
     /// <summary>
     /// 历史遗留:早期"方案 C"按关键帧间隙逐段插值的实现。已废弃。
@@ -7088,38 +7113,10 @@ public static class VideoService
         return (res.Kept, res.EffFps, res.KeptSrcIdx);
     }
 
-    /// <summary>转场切段:scene 评分(阈值 0.3;转场显著高于内容切换),返回段边界。</summary>
-    private static async Task<System.Collections.Generic.List<(int s, int e)>> DetectFpsSegmentsAsync(
-        string ffmpeg, string framesIn, int frameCount, CancellationToken ct)
-    {
-        var inv = System.Globalization.CultureInfo.InvariantCulture;
-        var cuts = new System.Collections.Generic.List<int>();
-        try
-        {
-            var lines = await RunCaptureAsync(ffmpeg,
-                $"-y -framerate 1 -i \"{Path.Combine(framesIn, "frame_%06d.jpg")}\" " +
-                $"-vf \"select='gt(scene,0.3)',metadata=print\" -f rawvideo NUL", ct);
-            foreach (var l in lines)
-            {
-                var m = System.Text.RegularExpressions.Regex.Match(l, @"pts_time:(\d+(?:\.\d+)?)");
-                if (m.Success && double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float, inv, out var pts))
-                    cuts.Add((int)Math.Round(pts));
-            }
-            cuts.RemoveAll(c => c <= 0 || c >= frameCount);
-            cuts.Sort();
-        }
-        catch { /* 检测失败按整段处理 */ }
-        var segs = new System.Collections.Generic.List<(int s, int e)>();
-        int segStart = 0;
-        foreach (var c in cuts)
-        {
-            if (c > segStart) segs.Add((segStart, c));
-            segStart = c;
-        }
-        if (segStart < frameCount) segs.Add((segStart, frameCount));
-        if (segs.Count == 0) segs.Add((0, frameCount));
-        return segs;
-    }
+    // 【C2 · 2026-09-23 删除死代码】这里原有一个"scene 评分抽转场段、返回段边界"的方法:
+    // 全仓库(含 AlhPro.Tests)没有任何调用点。它属于早期"按转场切段再逐段定帧率"的方案 ——
+    // 那条路现在统一走 AlhPro.Core 的段级分析(转场阈值 + SegmentContentFpsCoreSync),
+    // 留着只会让"转场切段到底走哪条"变得含混。
 
     /// <summary>分段内容帧率化核心(在已拆帧序列上,后台线程执行):每段"节奏网格 + 变化帧保护",
     /// 段内保留内容帧;找不准节奏的段仅删真静止帧。</summary>
@@ -7339,16 +7336,6 @@ public static class VideoService
         var res = new SegmentFpsResult { UsedSegs = used, Kept = keptCount, EffFps = eff, Note = note };
         res.KeptSrcIdx.AddRange(keep.OrderBy(i => i));
         return res;
-    }
-
-    /// <summary>硬链接(kernel32):零拷贝创建同一文件的新路径(展开序列复用内容帧,不占额外磁盘)。</summary>
-    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
-    private static extern bool CreateHardLinkW(string lpFileName, string lpExistingFileName, System.IntPtr lpSecurityAttributes);
-
-    private static void TryCreateHardLink(string dst, string src)
-    {
-        if (!CreateHardLinkW(dst, src, System.IntPtr.Zero))
-            throw new System.ComponentModel.Win32Exception(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
     }
 
     /// <summary>网格相位估计(相位自动对齐):段内相邻帧 SAD16,取"大变化事件"按整拍 st 取模的众数相位。

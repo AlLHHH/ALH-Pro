@@ -100,7 +100,9 @@ Source: "发布版\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs cre
 ; 内置主 ffmpeg 的 NVENC 需要 NVIDIA 驱动 ≥610.00(nvenc API 13.1);驱动较旧的机器(实测 572.83)主 ffmpeg 直接报
 ;   "Driver does not support the required nvenc API version. Required: 13.1 Found: 13.0",而且会写出 0 字节文件。
 ; 这类机器【全靠 ffmpeg8 这个备用包】才能用上显卡编码(实测 4K 下 15~19 fps,CPU 软编只有它的几分之一)。
-; 少了它,软件会静默退回 CPU 软编 —— 用户只觉得"变慢了",日志里还没有任何线索。
+; 少了它会怎样(2026-09-23 口径更新):视频处理**不会**再静默退回 CPU 软编,而是**开跑前直接报错**
+;   (「本机没有可用的硬件编码器…」,见 AlhPro.Core.CpuFallbackPolicy)——用户会明确看到"少了东西",
+;   而不是只觉得"变慢了"。所以这一条既是功能也是排障入口,漏拷一定会在编译期就暴露。
 ; engines\ 是 gitignore、deploy.ps1 也不同步 engines,最容易漏;显式写一条的收益是:
 ; **漏拷时 Inno 在编译期就报错(找不到 Source),不会发出一份"悄悄变慢"的包**。
 Source: "发布版\engines\ffmpeg8\*"; DestDir: "{app}\engines\ffmpeg8"; Flags: ignoreversion recursesubdirs createallsubdirs

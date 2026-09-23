@@ -19,14 +19,12 @@ public class CpuFallbackPolicyTests
 {
     // ───────────────────────── ① 纯逻辑判据 ─────────────────────────
 
-    /// <summary>只有"用户显式选 CPU"(引擎设备号 &lt; 0)才允许落 CPU;0/1/2… 都算要用 GPU。</summary>
-    [Theory]
-    [InlineData(-1, true)]    // 设置里选「CPU 计算」
-    [InlineData(0, false)]    // 独显(绝大多数机器)
-    [InlineData(1, false)]    // 核显 / 第二张卡 —— 仍然"要用 GPU"
-    [InlineData(2, false)]
-    public void Cpu_is_only_allowed_when_the_user_explicitly_chose_it(int gpuId, bool allowed)
-        => Assert.Equal(allowed, AlhPro.Core.CpuFallbackPolicy.AllowsCpuFallback(gpuId));
+    /// <summary>★ B8(2026-09-23 二次修正):视频**一律**不许落 CPU —— 判据恒为 false。
+    /// 旧判据是 <c>gpuId &lt; 0</c>(当作"用户显式选 CPU"),但设置页早已不提供 CPU 选项,
+    /// 那个值的唯一来源是"Vulkan 自检失败 → MainPage 临时置 -1"(自动降级)⇒ 拿它当用户选择就是留后门。</summary>
+    [Fact]
+    public void Video_never_falls_back_to_cpu()
+        => Assert.False(AlhPro.Core.CpuFallbackPolicy.AllowsCpuFallback());
 
     /// <summary>重试次数与间隔:首次失败后重试 2 次(共 3 次尝试),间隔递增(给驱动释放编码会话的时间)。</summary>
     [Fact]
@@ -49,7 +47,8 @@ public class CpuFallbackPolicyTests
         Assert.NotNull(p);
     }
 
-    /// <summary>报错文案必须能自己救回来:说清"硬编不可用"+"不落 CPU"+"去设置里显式选 CPU"。</summary>
+    /// <summary>报错文案必须能自己救回来:说清"硬编不可用" + 给可执行的自救动作(更新驱动/重启),
+    /// 而且**不许**再让人去设置里找「CPU 计算」—— 那个选项不存在(B8)。</summary>
     [Fact]
     public void The_no_encoder_error_tells_the_user_how_to_recover()
     {
@@ -59,8 +58,10 @@ public class CpuFallbackPolicyTests
         Assert.Contains("amf", msg);
         Assert.Contains("qsv", msg);
         Assert.Contains("CPU 软编", msg);
-        Assert.Contains("设置", msg);          // 自救入口:设置里显式选 CPU
-        Assert.Contains("驱动", msg);
+        Assert.Contains("驱动", msg);          // 自救入口 ①:更新驱动
+        Assert.Contains("重启", msg);          // 自救入口 ②:重启
+        Assert.Contains("不提供", msg);         // 说清"本软件没有 CPU 选项",别把人支到点不到的地方
+        Assert.DoesNotContain("CPU 计算", msg); // ★ 不许再指向那个已不存在的设置项
     }
 
     /// <summary>重试全失败的报错:要带上编码器名、尝试次数、最后一次原因,并按是否驱动过旧给不同建议。</summary>
@@ -71,7 +72,8 @@ public class CpuFallbackPolicyTests
         Assert.Contains("h264_nvenc", normal);
         Assert.Contains("3", normal);
         Assert.Contains("exit -542398533", normal);
-        Assert.Contains("设置", normal);
+        Assert.Contains("驱动", normal);                       // 可执行建议(不再是"去设置里选 CPU")
+        Assert.DoesNotContain("CPU 计算", normal);              // ★ B8:不指向已不存在的设置项
         Assert.Contains("不会退回 CPU 软编", normal);
 
         string driver = AlhPro.Core.CpuFallbackPolicy.DescribeHwEncodeFailure("h264_nvenc", 1, "minimum required Nvidia driver", true);
@@ -100,7 +102,8 @@ public class CpuFallbackPolicyTests
         Assert.Contains("CpuFallbackPolicy.DescribeHwEncodeFailure", code);
         Assert.Contains("CpuFallbackPolicy.DescribeNoHwEncoder", code);
         Assert.Contains("HasAnyWorkingHwEncoder()", code);
-        Assert.Contains("CpuFallbackPolicy.AllowsCpuFallback(gpuId)", code);
+        Assert.Contains("CpuFallbackPolicy.AllowsCpuFallback()", code);   // B8:不再传 gpuId(设置里没有 CPU 选项了)
+        Assert.DoesNotContain("AllowsCpuFallback(gpuId)", code);
     }
 
     /// <summary>★ "编码实测"那行回报不许再靠预编码缓存的名字判硬编/软编(旧写法导致 CPU 软编被标成"(硬编)")。</summary>

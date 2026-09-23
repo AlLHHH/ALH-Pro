@@ -269,9 +269,9 @@ setTimeout(function () {
         <tbody>
           <tr><td>操作系统</td><td>Windows 10 1809 及以上 / Windows 11,<strong>仅 64 位(x64)</strong>。32 位系统与 Windows 7 不支持</td></tr>
           <tr><td>.NET 运行库</td><td><strong>已内置,不用单独装 .NET</strong>;安装包里已带 Windows App SDK。若提示缺少运行库,见 <a href="faq.html#dotnet">常见问题</a></td></tr>
-          <tr><td>处理器</td><td>任意 x64 处理器。没有独显也能跑,只是自动改用 CPU,慢数倍到十几倍</td></tr>
+          <tr><td>处理器</td><td>任意 x64 处理器。<strong>没有独显也能用</strong>:图片放大 / 抠图 / 音频会用 CPU 跑完(慢数倍到十几倍);<strong>视频处理需要可用的硬件编码器</strong>,没有时软件会直接提示更新驱动,而不是把几分钟的片子拖成几小时</td></tr>
           <tr><td>内存</td><td>建议 8 GB 及以上。低于 8 GB 会按「弱设备」处理,并提示可开「兼容模式」</td></tr>
-          <tr><td>显卡</td><td>建议 NVIDIA RTX 30 / 40 系(最稳)。RTX 50 系自动走 ONNX / DirectML 稳定路线,速度略降但结果不变;AMD、Intel Arc、核显可用但可能降级。对照表见 <a href="faq.html#gpu">常见问题 · 显卡能不能用</a></td></tr>
+          <tr><td>显卡</td><td>建议 NVIDIA RTX 30 / 40 系(最稳)。RTX 50 系<b>首次处理时真机实测</b>:通过就走最快路径,不通过自动改走 ONNX / DirectML 稳定路线(显卡仍参与加速,结果不变);AMD、Intel Arc、核显可用但可能降级。对照表见 <a href="faq.html#gpu">常见问题 · 显卡能不能用</a></td></tr>
           <tr><td>显存</td><td>建议 6 GB 及以上。不够时自动降低分块,变慢但不报错</td></tr>
           <tr><td>磁盘空间</td><td>安装占约 0.9 GB(完整版约 2.6 GB)。处理视频会在临时目录产生中间帧,长视频建议预留与素材同量级的空闲空间</td></tr>
           <tr><td>权限</td><td>默认装到当前用户目录,<strong>不需要管理员权限</strong>;装到 Program Files 才会请求</td></tr>

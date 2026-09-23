@@ -152,22 +152,12 @@ public static class RifeOnnxService
         RunCore(session, img0, img1, time, outputPng, gpuId, model);
     }
 
-    /// <summary>【任务 · 2026-09-16 审计第 6 条】同一个会话、**源帧位图由调用方预先解好**的插帧入口。
-    ///
-    /// 为什么需要:逐对补帧的内层循环里,同一对源帧要为每个中间帧各调一次上面那个入口,于是同一张源帧
-    /// 被反复 `new Bitmap(path)` + DrawImage 复制(4x 补帧 = 3 个中间帧,同一张源帧解 3 遍;外加调用方
-    /// 每帧再判一次黑帧又解一遍)。ONNX 补帧路径上这属于纯浪费 —— ncnn 路径本来就只在段内抽样判黑。
-    ///
-    /// 语义与上面那个入口**逐字一致**(同一份守卫、同一个 RunCore、同样的像素处理),差别只有"谁负责解码":
-    /// `bmpPath` 只用于异常信息里的文件名。调用方必须在 `using` 里持有这两个位图,且不并发共享。
-    /// 像素不变性:LoadBitmap 把源图统一成 24bppRgb 全尺寸,提到循环外复用与循环内每次重解**结果相同**。</summary>
-    public static void InterpWithSession(InferenceSession session, Bitmap bmp0, Bitmap bmp1, string bmpPath,
-        float time, string outputPng, int gpuId)
-    {
-        var model = FindModel() ?? throw new FileNotFoundException("缺少补帧模型:rife49.onnx");
-        EnsureDeviceUsable(gpuId);
-        RunCore(session, bmp0, bmp1, bmpPath, time, outputPng, gpuId, model);
-    }
+    // 【C2 · 2026-09-23 删除死代码】这里原有一个"位图由调用方预先解好"的 public InterpWithSession 重载
+    // (签名第二参是 Bitmap 的那个)+ 配套的 public LoadFrameBitmap 解码入口:全仓库(含 AlhPro.Tests)
+    // **零调用点** —— 两个补帧调用方(VideoService 的 ONNX 逐对路径)传的都是文件路径,走上面那个入口。
+    // 它当初是为"同一对源帧被反复解码"这条性能问题写的(见其原注释),但没接上线 ⇒ 用户拿不到那点收益,
+    // 代码里却摆着一个"看起来已经在用"的优化。要做得有据:先接线 + 实测(逐对解码 vs 预解位图),
+    // 再决定留哪条 —— 现在按死代码清掉。
 
     /// <summary>设备可用性守卫(三个入口共用一处,2026-09-16 抽出):设备已摘除/连续失败 ⇒ 快速失败,
     /// **绝不落到 CPU**(那会把整段视频拖成几十分钟;gpuId=-1 是调用方明确要 CPU 的唯一场景)。
@@ -517,10 +507,8 @@ public static class RifeOnnxService
 
     // ---------- System.Drawing 工具(与电脑版 EsrganOnnxService 一致) ----------
 
-    /// <summary>供调用方**在循环外**预解源帧用的解码入口(见 InterpWithSession 的位图重载)。
-    /// 语义与内部 LoadBitmap 完全一致(24bppRgb 全尺寸、失败抛"补帧输入帧无法解码");调用方负责 Dispose。
-    /// 旧调用方是改不到的 —— 逐对补帧的失败路径本来就是"这一对按原帧复制",所以这里抛出由调用方接住即可。</summary>
-    public static Bitmap LoadFrameBitmap(string path) => LoadBitmap(path);
+    // 【C2 · 2026-09-23 删除死代码】这里原来还有一个 public LoadFrameBitmap(path)(其实只是 LoadBitmap 的
+    // 转发):它只服务于上面那个已删掉的"位图重载",调用点一并归零,故删除。LoadBitmap 本身仍在用(见 RunCore)。
 
     static Bitmap LoadBitmap(string path)
     {

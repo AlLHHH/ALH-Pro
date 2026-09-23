@@ -54,18 +54,83 @@ public sealed partial class AudioView : UserControl
             if (!File.Exists(candidate)) return candidate;
         }
     }
-    public sealed class AudioItem
+    /// <summary>音频列表项。【C4 · 2026-09-23】实现 <see cref="System.ComponentModel.INotifyPropertyChanged"/>:
+    /// 任务跑完会把 <see cref="Display"/> 改成"文件名 (已处理)"、并置 IsDone/Status,而列表模板绑定的正是
+    /// Display —— 不通知的话这些赋值**不会反映到界面**(旧文字一直挂着,用户只能重新点选列表或重开页面才看到),
+    /// 这正是本轮核查里"音频列表完成后文字不刷新"那条。所有会变的值都走 get/set + 通知,值没变则不通知。</summary>
+    public sealed class AudioItem : System.ComponentModel.INotifyPropertyChanged
     {
-        public string Path { get; set; } = "";
-        public string Name => System.IO.Path.GetFileName(Path);
-        public string Display { get; set; } = "";
-        public bool IsDone { get; set; }
-        public string Status { get; set; } = "";
+        public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
 
-        // 预览/裁剪
-        public float DurationSec { get; set; }
-        public double TrimStart { get; set; }
-        public double TrimEnd { get; set; }   // >0 表示设置;0=到结尾
+        private void Raise(string name)
+            => PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+
+        private string _path = "";
+        public string Path
+        {
+            get => _path;
+            set { if (_path == value) return; _path = value; Raise(nameof(Path)); Raise(nameof(Name)); }
+        }
+        public string Name => System.IO.Path.GetFileName(Path);
+
+        private string _display = "";
+        public string Display
+        {
+            get => _display;
+            set { if (_display == value) return; _display = value; Raise(nameof(Display)); }
+        }
+
+        private bool _isDone;
+        public bool IsDone
+        {
+            get => _isDone;
+            set { if (_isDone == value) return; _isDone = value; Raise(nameof(IsDone)); }
+        }
+
+        private string _status = "";
+        public string Status
+        {
+            get => _status;
+            set { if (_status == value) return; _status = value; Raise(nameof(Status)); }
+        }
+
+        // 预览/裁剪(IsTrimmed 是由这几个算出来的 ⇒ 任一变化都要连带通知它)
+        private float _durationSec;
+        public float DurationSec
+        {
+            get => _durationSec;
+            set
+            {
+                if (_durationSec.Equals(value)) return;
+                _durationSec = value;
+                Raise(nameof(DurationSec)); Raise(nameof(IsTrimmed));
+            }
+        }
+
+        private double _trimStart;
+        public double TrimStart
+        {
+            get => _trimStart;
+            set
+            {
+                if (_trimStart.Equals(value)) return;
+                _trimStart = value;
+                Raise(nameof(TrimStart)); Raise(nameof(IsTrimmed));
+            }
+        }
+
+        private double _trimEnd;
+        public double TrimEnd
+        {
+            get => _trimEnd;
+            set
+            {
+                if (_trimEnd.Equals(value)) return;
+                _trimEnd = value;
+                Raise(nameof(TrimEnd)); Raise(nameof(IsTrimmed));
+            }
+        }
+
         public bool IsTrimmed => TrimStart > 0.1 || (DurationSec > 0 && TrimEnd > 0.1 && TrimEnd < DurationSec - 0.1);
     }
 
@@ -943,9 +1008,14 @@ public sealed partial class AudioView : UserControl
                         Log("转为 44.1kHz 立体声 WAV...");
                         AudioStatus.Text = $"正在准备: {item.Name}(转为 44.1kHz 立体声)...";
                         await AudioService.ConvertToWav44kAsync(srsApplied ? srsWav! : item.Path, tmpWav);
-                        bool aiGpu = AppSettings.GpuIndex >= 0;   // 设置里选了显卡 → DML 加速;选了 CPU/无显卡 → CPU
-                        Log(aiGpu ? "AI 分轨处理中(显卡加速,请耐心等待...)" : "AI 分轨处理中(CPU 较慢:约 1.5 分钟/分钟音频,可先离开本页处理其它任务)");
-                        AudioStatus.Text = aiGpu ? "AI 分离中(显卡加速): ..." : $"AI 分离中(CPU 较慢): {item.Name}...";
+                        // 【B6 · 2026-09-23】这里只是在**尝试** DML:建会话失败就自动改 CPU 会话,所以文案不许断言
+                        // "正在用显卡加速" —— 说"显卡加速中"而实际跑在 CPU 上就是假话(本轮核查发现的第 3 处)。
+                        bool aiGpu = AppSettings.GpuIndex >= 0;   // 设置里选了显卡 → 尝试 DML;没选/无显卡 → 直接 CPU
+                        string accel = aiGpu
+                            ? "优先显卡加速(DirectML;本机撑不住时自动改用 CPU)"
+                            : "CPU 较慢:约 1.5 分钟/分钟音频,可先离开本页处理其它任务";
+                        Log($"AI 分轨处理中({accel}...)");
+                        AudioStatus.Text = $"AI 分离中({accel}): {item.Name}...";
                         // 【一次分轨】输出 4 轨(人声=轨3,伴奏=原曲−人声,其他1/2=轨1/2)——增强和分离共用,不重复推理
                         var aiDir = System.IO.Path.Combine(EngineService.TempRoot, $"alh_ai_{Guid.NewGuid():N}");
                         System.IO.Directory.CreateDirectory(aiDir);

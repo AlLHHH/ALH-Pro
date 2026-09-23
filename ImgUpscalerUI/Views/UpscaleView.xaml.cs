@@ -976,8 +976,8 @@ public sealed partial class UpscaleView : UserControl
         // waifu2x 已实测支持级联 3x/4x,不再置灰;后续若新增仅支持 2x 的引擎可在此按 engine 判断
         SetRadioEnabled(Scale3xRadio, true);
         SetRadioEnabled(Scale4xRadio, true);
-        if (ScaleHint != null)
-            ScaleHint.Visibility = Visibility.Collapsed;
+        // 【C1 · 2026-09-23】原先这里还有一句 `ScaleHint.Visibility = Collapsed` —— 那个橙色提示 XAML 里
+        // 本来就是常驻 Collapsed、再没有任何地方让它可见,属于"永不出现的界面",已连同 XAML 一起删掉。
     }
 
     private static void SetRadioEnabled(RadioButton rb, bool on)

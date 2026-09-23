@@ -67,8 +67,9 @@
                             HorizontalAlignment="Stretch"/>
                     <TextBlock x:Name="VideoInfo" Text="未选择视频"
                                Style="{StaticResource HintText}" TextTrimming="CharacterEllipsis"/>
-                    <TextBlock Text="裁剪:在右侧选中视频后可设置开始/结束时间" Style="{StaticResource HintText}"
-                               TextWrapping="Wrap" Visibility="Collapsed"/>
+                    <!-- 【C1 · 2026-09-23 删除】这里原有一个常驻 Collapsed、**没有 x:Name** 的裁剪提示文字
+                         ("在右侧选中视频后可设置开始/结束时间"):代码根本引用不到它 ⇒ 永远不会显示。
+                         裁剪的说明现在在右侧时间线区域里(拖动手柄那一段),这里不留死元素。 -->
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
@@ -91,6 +92,16 @@
                         <RadioButton x:Name="VScale2xRadio" Content="2x"/>
                         <RadioButton x:Name="VScale3xRadio" Content="3x"/>
                         <RadioButton x:Name="VScale4xRadio" Content="4x"/>
+                        <!-- 【B5 · 2026-09-23】第 5 个条目(索引 4)= 自定义分辨率。它原先**根本不存在**:
+                             面板 CustomSizePanel 只在 SelectedIndex==4 时可见,而这个 RadioButtons 只有 0~3 四项,
+                             于是面板永久 Collapsed、`SelectedIndex == 4` 的那些分支(输出尺寸/超 4K 预检/成就名)
+                             全都是死路 —— 而使用教程里还写着"选「自定义分辨率」精确指定输出宽高"(照着做找不到)。
+                             面板与全链路(outWidth/outHeight → VideoService「缩放到自定义分辨率」)本来就齐全,
+                             缺的只是这个入口,所以这里补回来。
+                             ⚠ 索引 4 是硬约定(VideoView.xaml.cs 多处判 SelectedIndex == 4,以及 switch 的 _ 分支),
+                               新条目只能加在这个位置,不能插到中间。 -->
+                        <RadioButton x:Name="VScaleCustomRadio" Content="自定义分辨率"
+                                     ToolTipService.ToolTip="超分后精确缩放到你填的宽×高(面板在下面,留空=按倍率)。适合必须交付某个尺寸的场合:平台要求 1080p、或把 4K 片压成 1080p 交付。"/>
                     </RadioButtons>
                     <!-- 【2026-09-21 再更新】1x 现在有**两个**条目(动漫 · Anime4K 修复 / 现实 · 1x 修复),
                          这句静态兜底文案也要跟着说清"两个都在做什么" —— 运行时那行是动态的(见 OneXScaleHint)。 -->
@@ -299,7 +310,7 @@
                                Style="{StaticResource HintText}" Margin="0,2,0,0"/>
 
                     <TextBlock Text="视频降噪" Style="{StaticResource SectionTitle}"/>
-                    <CheckBox x:Name="DenoiseToggle" Content="启用视频降噪" ToolTipService.ToolTip="降噪统一发生在**拆帧阶段**(源分辨率、超分之前)。顺序有依据:先降噪再放大,超分才不必去放大噪点 —— Neat Video 官方手册把 resampling 列为会改变噪声特性的效果、结论是先用它降噪;RealBasicVSR 官方也把 image pre-cleaning 放在传播之前并称其 indispensable。&#x0a;强度选「自动」时软件先给素材体检(抽 6 帧量颗粒/块效应/闪烁),**干净素材直接跳过降噪**:实测干净/轻压缩源上降噪会让成片 PSNR 掉 0.3~0.9dB(不降噪 36.23 对 现行三档 35.34~35.93)。&#x0a;引擎差异:超分引擎选 waifu2x 时用它自带的降噪档(同一套网络换权重、不额外耗时);「自动」档为了必定生效,统一走拆帧滤镜链(waifu2x 落到 ONNX 稳定引擎时模型档会失效,自动档避开这条路)。"
+                    <CheckBox x:Name="DenoiseToggle" Content="启用视频降噪" ToolTipService.ToolTip="降噪统一发生在**拆帧阶段**(源分辨率、超分之前),或由 waifu2x 自带的降噪档承担(见下)。顺序有依据:先降噪再放大,超分才不必去放大噪点 —— Neat Video 官方手册把 resampling 列为会改变噪声特性的效果、结论是先用它降噪;RealBasicVSR 官方也把 image pre-cleaning 放在传播之前并称其 indispensable。&#x0a;强度**只有 弱 / 中 / 强 三档**(原先那个「自动」档已按用户要求下线):干净素材请直接关掉本开关 —— 实测(同一批 6 张连续帧压 JPEG q15)干净/轻压缩源上降噪会让成片 PSNR 掉 0.3~0.9dB(不降噪 36.23 对 现行三档 35.34~35.93)。&#x0a;引擎差异:超分引擎选 waifu2x 且本机 ncnn 实测可用时,走它自带的降噪档(同一套网络换权重、不额外耗时);其余情况(兼容模式 / waifu2x 落到 ONNX 稳定引擎 / 其它超分引擎)统一走拆帧滤镜链 —— 这条路必定生效,不会静默失效。"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
                     <TextBlock x:Name="DenoiseKindLabel" Text="降噪算法" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="DenoiseKindCombo" SelectedIndex="0" SelectionChanged="Combo_Changed"
@@ -1343,10 +1354,9 @@
                                 </StackPanel>
                             </Border>
                         </Grid>
-                        <Grid x:Name="CompareSplitGhost" Width="10" HorizontalAlignment="Left" Visibility="Collapsed"
-                              IsHitTestVisible="False">
-                            <Rectangle Width="2" Fill="#FFE8A33D" Opacity="0.8" HorizontalAlignment="Center"/>
-                        </Grid>
+                        <!-- 【C1 · 2026-09-23 删除】CompareSplitGhost(橙色"待生效位置"虚影线):左右对比的分割线
+                             自从改成**实时裁切**之后,所有代码路径都只剩"把它设为 Collapsed" ⇒ 用户永远看不到它。
+                             连同 VideoView.xaml.cs 里那 5 处恒 Collapsed 的赋值一起删掉。 -->
                         <!-- 对比模式专用:一套播放控件(自己画,盖在最上层;两个播放器自带的控件都关掉) -->
                         <!-- 布局:进度条独占一行(拉满),下一行才是 播放键 / 倍速 / 时间 —— 之前全挤在一行,太紧凑 -->
                         <Border x:Name="CompareBar" Visibility="Collapsed" VerticalAlignment="Bottom"
