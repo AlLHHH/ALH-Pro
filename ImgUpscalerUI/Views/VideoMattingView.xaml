@@ -333,5 +333,44 @@
                 </Grid>
             </Grid>
         </Grid>
+
+        <!-- ============ 【开发中】遮罩横幅(2026-09-23 用户要求:"加一个开发中横幅 敬请期待 并且背景模糊") ============
+             做法 = "整页禁用(代码后端 VideoMattingView() 里那一行 this.IsEnabled = false) + 盖一层磨砂
+                    + 居中一块横幅":
+               ① 锁:本页(UserControl 本身就是 Control)禁用 ⇒ 整棵页面子树收不到点击/滚轮/Tab/回车,
+                  也没有任何 drop 目标。UIA 里全页控件会报 en=False,这就是"真的锁住了"的客观证据
+                  (不是肉眼猜)。**子控件自己设 IsEnabled=true 翻不过来** —— 有效可用性 = 自己 ∩ 所有祖先。
+                  【为什么不写在 XAML 里】WinUI 3 的 IsEnabled 是 **Control 的成员,不是 UIElement 的**
+                  (实测:钉在根 Grid 上报 XamlCompiler error WMC0011 "Unknown member 'IsEnabled' on
+                  element 'Grid'")。所以要么钉在 Control 上(本页自己),要么包一层 ContentControl —— 选前者。
+               ② 模糊:AcrylicBrush ⇒ 系统去模糊**它下层的内容**,也就是下面那一整页控件(应用内 acrylic,
+                  不是糊窗口外的桌面),再压深色 tint 让横幅文字看得清;系统关了"透明效果"或省电模式时
+                  自动退化成 FallbackColor 的纯色 ⇒ **不会出现"全透明糊成一片啥也看不见"**。
+                  【注意】WinUI 3 的 AcrylicBrush **没有 BackgroundSource 属性**(实测:WMC0011 Unknown
+                  member'BackgroundSource'),别再照着 UWP 文档写那一句。
+               ③ 横幅:圆角卡片 + 图标 + 「视频抠图 · 开发中」+「敬请期待」+ 一行小字(只说这一页没开放,
+                  不让用户以为整个软件坏了)。
+             【撤掉"开发中"状态】= 删掉这一整块 + 去掉代码后端构造函数末尾那句 this.IsEnabled = false。
+             【坑,别踩】横幅自己在"被禁用"的页面里 —— 纯文本无所谓;以后若想在横幅上加按钮(比如"预约提醒"),
+             就得改成只禁用内容区(包一层 ContentControl 设 IsEnabled=false)并把横幅放到它外面,不能再整页禁用。 -->
+        <Grid x:Name="DevBannerOverlay" Grid.ColumnSpan="2">
+            <Grid.Background>
+                <AcrylicBrush TintColor="#FF0E131A" TintOpacity="0.25"
+                              TintLuminosityOpacity="0.55" FallbackColor="#F00E131A"/>
+            </Grid.Background>
+
+            <Border HorizontalAlignment="Center" VerticalAlignment="Center" CornerRadius="16" Padding="38,28"
+                    Background="#FA151A22" BorderBrush="#4D6E8BF0" BorderThickness="1">
+                <StackPanel Spacing="12" HorizontalAlignment="Center">
+                    <TextBlock Text="🚧" FontSize="36" HorizontalAlignment="Center"/>
+                    <TextBlock Text="视频抠图 · 开发中" FontSize="24" FontWeight="SemiBold"
+                               Foreground="White" HorizontalAlignment="Center"/>
+                    <TextBlock Text="敬请期待" FontSize="16" Foreground="#FFB9C6DE" HorizontalAlignment="Center"/>
+                    <TextBlock Text="这个功能还没做完,先没放出来。现有的「图片抠图」照常可用。"
+                               FontSize="12" Foreground="#FF8C97A8" MaxWidth="420"
+                               TextWrapping="Wrap" TextAlignment="Center" HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 </UserControl>
