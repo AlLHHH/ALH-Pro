@@ -99,24 +99,37 @@ public static class RenderPolicy
     /// 60 帧/批(低档),与用户"设备差最低 50 一批"同一量级;4G 就是既有表里"低档/中档"的分界。【待实测标定】</summary>
     public const double NormalDeviceFreeRamGB = 4.0;
 
-    /// <summary>设备差的每批帧数(用户给定:最低 50 一批)。这是【全档位下界】:任何档位、任何模式
-    /// (含 fastMode/diskTight 减半)算出来的每批帧数都不许低于它。</summary>
-    public const int WeakDeviceFramesPerBatch = 50;
+    /// <summary>设备差的每批帧数。【2026-09-23 档位 ×2:50 → 80】这是【全档位下界】:任何档位、任何模式
+    /// (含 fastMode/diskTight 减半)算出来的每批帧数都不许低于它。
+    /// 【为什么跟着一起抬】下界如果不动,高档位抬到 2 倍之后,"设备差"这一档在总区间里的占比会变得极小,
+    /// 减半保护 + 面积缩放一叠就全落在这个地板上(等于这批机器完全得不到这次提速);
+    /// 而 80 帧在一批里占的临时盘(1080p 约 0.14GB)对任何能跑这个软件的机器都还是小数目。
+    /// 【硬约束】抬它必须同时抬"临时盘余量"那道闸门(见 <see cref="LimitBatchByTempDisk"/>)——
+    /// 只抬数字不给守门,就是任务 T 那条硬约束("抬上限必须同时抬峰值守门")的反面。</summary>
+    public const int WeakDeviceFramesPerBatch = 80;
 
-    /// <summary>设备正常(内存档或性能档判定为"正常"):每批 300 帧。【任务 T · 2026-09-13 口径变更】
-    /// 旧口径是"沿用内存档 120/180"。【依据】用户在任务 T 里的口径「Normal 120/180 → 300」;
-    /// 300 仍低于"设备好+长片"的 700,峰值(输入帧+本批输出帧并存)只有它的 3/7。【待实测标定】</summary>
-    public const int NormalDeviceFramesPerBatch = 300;
+    /// <summary>设备正常(内存档或性能档判定为"正常"):每批 600 帧。【2026-09-23 档位 ×2:300 → 600】
+    /// 【依据】用户本轮口径「档位 ×2」;300 仍低于"设备好+长片"的 1400,峰值(输入帧+本批输出帧并存)只有它的 3/14。</summary>
+    public const int NormalDeviceFramesPerBatch = 600;
 
-    /// <summary>设备好 + 视频不长:每批 350 帧。【任务 T · 2026-09-13 口径变更】旧口径 200。
-    /// 【依据】用户口径「Strong 短片 200 → 350」。【待实测标定】</summary>
-    public const int StrongDeviceFramesPerBatch = 350;
+    /// <summary>设备好 + 视频不长:每批 700 帧。【2026-09-23 档位 ×2:350 → 700】
+    /// 【依据】用户本轮口径「档位 ×2」。</summary>
+    public const int StrongDeviceFramesPerBatch = 700;
 
-    /// <summary>设备好 + 视频长("批内扩大"):每批 700 帧。【任务 T · 2026-09-13 口径变更】旧口径 400(×1.75)。
+    /// <summary>设备好 + 视频长("批内扩大"):每批 1400 帧。【2026-09-23 档位 ×2:700 → 1400】
     /// 【硬条件】只有"性能档 = Fast 且空闲内存 ≥ <see cref="StrongDeviceFreeRamGB"/> 才给" ——
     /// 见 <see cref="TierBaseFrames"/>;上界抬高同时必须抬高**峰值守门**(见 TempSpaceEstimate.NeedBytes
-    /// 的"每批并存帧"项),不允许只抬上限不给守门。【待实测标定】</summary>
-    public const int StrongDeviceLargeFramesPerBatch = 700;
+    /// 的"每批并存帧"项、<see cref="LimitBatchByTempDisk"/> 与 VideoService 的守门复算),不允许只抬上限不给守门。
+    /// 【黑帧代价:已核对,不再随批大小线性放大(2026-09-23)】抬批之前必须先回答"批越大黑帧代价越大吗":
+    /// VideoService 里那条"整批重跑"**已经不再是默认行为**(2026-09-16 二次修订)——
+    /// `wholeBatchRetry = !anyFrame || defectiveFrames.Count >= curPG.Count`,即**只有"整批一帧没出"
+    /// 或"整批全被判黑"才整批重跑**;普通的零星黑帧只重跑那几帧(同批好帧保留),而且带硬预算
+    /// (90 + 帧数×3 秒,上限 240 秒)。所以批 ×2 的后果是:① 每批的**发生概率**下降(批数少了一半);
+    /// ② 单次事故最坏仍被 240 秒预算封顶(超预算的帧回退源帧缩放,不是无限等)。
+    /// ⚠ 唯一会放大的量:整批空产那一次要重跑的帧数(×2)⇒ 预算内救回的帧占比下降,
+    /// 也就是"最坏情况下画质掉档的帧数"可能变多 —— 这是本轮**明知并接受**的取舍(墙钟不变,画质风险变大);
+    /// 真要再进一步,得把整批重跑改成分块重跑,那是另一轮的活。</summary>
+    public const int StrongDeviceLargeFramesPerBatch = 1400;
 
     /// <summary>「视频长」门槛之一(按时长):源帧数 ≥ 900(≈30 秒 @30fps)。【依据】用户点名的"短素材"是
     /// 72 帧/3 秒;900 帧(30 秒)是"明显属于长片"的下限。【待实测标定】</summary>
@@ -124,16 +137,26 @@ public static class RenderPolicy
 
     /// <summary>「视频长」门槛之二(按体量):补帧后总帧数 ≥ 1200。【依据】① 用户点名的"长素材"那条
     /// (他明确说的是"补帧完的帧总数")补帧后是 3420 帧,命中;点名的短素材补帧后只有 288 帧,不命中;
-    /// ② 与批数挂钩:1200 帧按 200/批 是 6 批,扩到 400/批 变 3 批 —— 省下 3 次引擎进程启动(每次秒级,
+    /// ② 与批数挂钩:1200 帧按 600/批 是 2 批,扩到 1400/批 变 1 批 —— 省下的是引擎进程启动(每次秒级,
     /// 见 VideoPipeline.AssumedEngineStartupSecondsPerBatch),这正是"批内扩大"的收益来源。【待实测标定】</summary>
     public const int LongClipMinPostInterpFrames = 1200;
 
-    /// <summary>【不分批】上限:补帧后总帧数 ≤ 400 且设备档位 ≥ 正常 → 整条素材一批跑完。
-    /// 【依据】400 就是用户给的【最大批】(设备好+视频长的档):整片都不超过这个数时,不分批的同屏临时帧
-    /// 不会超过用户已经认可的最大批,峰值不越界;省下的是每批一次的引擎进程启动(秒级/次,见
-    /// VideoPipeline.AssumedEngineStartupSecondsPerBatch)。【待实测标定】
+    /// <summary>【不分批】上限:补帧后总帧数 ≤ 800 且设备档位 ≥ 正常 → 整条素材一批跑完。
+    /// 【2026-09-23 档位 ×2:400 → 800】【依据】800 与新的"设备好+短片"档(700)同量级:
+    /// 整片都不超过这个数时,"不分批"的同屏临时帧不会超过用户已经认可的最大批太多,峰值不越界;
+    /// 省下的是每批一次的引擎进程启动(秒级/次)。【待实测标定】
     /// 注:因为"补帧后总帧数 ≥ 源帧数",本条件已隐含"视频短";源帧数条件保留只为把用户口径写全。</summary>
-    public const int SingleBatchMaxPostInterpFrames = 400;
+    public const int SingleBatchMaxPostInterpFrames = 800;
+
+    /// <summary>【2026-09-23 用户新条件】一批占的临时盘 ≤ 临时盘余量 × 这个比例。
+    /// 【为什么要它】档位 ×2 之后,一批在同一时刻占盘的帧数也 ×2(输入帧 + 本批输出帧并存);
+    /// 原来只有一道"整任务预估 vs 剩余空间"的闸门(超过就**直接让任务失败**),粒度太粗:
+    /// ① 它算的是全片口径 + 1.6 安全系数,批大小在里面的权重随素材长度变化,短的素材几乎影响不到判定;
+    /// ② 它只会**报错**,不会**自动把批调小** —— 而这正是档位放大后需要的动作(能跑就跑小点,别失败)。
+    /// 【0.65 的来历】用户直接给的数;含义是"一批最多吃掉余量的 65%,留 35% 给编码器临时文件、
+    /// 其它进程与并发批"。它比"整任务守门的 1.6 安全系数"更松(后者等价于批占比 ≤ 1/1.6 = 0.625),
+    /// 所以**常见情形下它是第二道、不会误伤**;真正会拦住的是"余量小 + 单帧大(4K/8K)"那种峰值极端。</summary>
+    public const double BatchTempDiskShareLimit = 0.65;
 
     /// <summary>设备档位判定(纯函数):<see cref="NormalDeviceFreeRamGB"/> 以下=差,<see cref="StrongDeviceFreeRamGB"/> 及以上=好,中间=正常。</summary>
     public static DeviceTier TierFor(double freeRamGB)
@@ -193,7 +216,11 @@ public static class RenderPolicy
     {
         if (width <= 0 || height <= 0 || tierFrames <= 0) return tierFrames;
         int scaled = (int)Math.Round(tierFrames * AreaFactor(width, height));
-        return Math.Clamp(scaled, WeakDeviceFramesPerBatch, tierFrames);
+        // 【2026-09-23 修】下界必须与"档位基准"取小:`Math.Clamp(x, 80, tierFrames)` 在 tierFrames < 80
+        // (旧配置/外部直接调用)时会**抛 ArgumentException**(Clamp 要求 min ≤ max)✗。
+        // 语义仍然是"不许低于下界,也不许超过档位基准",只是当档位基准本身低于下界时以它为准。
+        int floor = Math.Min(WeakDeviceFramesPerBatch, tierFrames);
+        return Math.Clamp(scaled, floor, tierFrames);
     }
 
     /// <summary>【任务 R3 · 2026-09-13 用户要求"补帧分批要比超分大"】按**"输入帧 + 本批输出帧并存"的像素量**
@@ -340,8 +367,61 @@ public static class RenderPolicy
         return list;
     }
 
-    /// <summary>减半但【不破用户下界】:结果钳到 ≥ WeakDeviceFramesPerBatch(50)。</summary>
-    private static int HalveWithFloor(int frames) => Math.Max(WeakDeviceFramesPerBatch, frames / 2);
+    /// <summary>减半但【不破下界】:结果钳到 ≥ WeakDeviceFramesPerBatch;同时**绝不允许减半把批变大**
+    /// (传进来的值本来就比下界小时以原值为准 —— 与 ScaleFramesForArea 的下界处理同一个道理)。</summary>
+    private static int HalveWithFloor(int frames) => Math.Min(frames, Math.Max(WeakDeviceFramesPerBatch, frames / 2));
+
+    // ===== 【2026-09-23 新条件】批内临时帧 ≤ 临时盘余量 × 0.65 =====
+
+    /// <summary>临时盘闸门的结论。</summary>
+    /// <param name="BatchFrames">闸门**之后**真正该用的每批帧数。</param>
+    /// <param name="MaxFramesByDisk">按余量算出来的上限(每批并存帧口径)。</param>
+    /// <param name="Shrunk">是否真的被这道闸门调小了(调用方据此决定要不要写日志)。</param>
+    /// <param name="BatchGB">闸门后一批占的临时盘(GB,输入帧 + 本批输出帧并存)。</param>
+    /// <param name="BudgetGB">余量里分给"一批"的额度(GB)= 余量 × <see cref="BatchTempDiskShareLimit"/>。</param>
+    /// <param name="Note">一行说明(写日志用;拿不到余量时也如实说明)。</param>
+    public readonly record struct TempDiskBatchGate(
+        int BatchFrames, int MaxFramesByDisk, bool Shrunk, double BatchGB, double BudgetGB, string Note);
+
+    /// <summary>【用户条件】一批占的临时盘 ≤ 临时盘余量 × <see cref="BatchTempDiskShareLimit"/>。
+    /// 超了就**把批调小**到能放下为止(而不是让任务失败 —— 这是与既有"整任务守门"最大的区别:
+    /// 那道闸门是"放不下就别跑",这道是"放不下就跑小一点")。
+    ///
+    /// 【口径:一批占多少】= 每批帧数 × (峰值帧体积 + 源帧体积)。
+    /// 与 <see cref="TempSpaceEstimate.NeedBytes"/> 里那一项**同一个口径**(一批里同时占盘的两侧:
+    /// 输入帧还没删、输出帧已经写下来),所以两处的数字可以直接对照。
+    /// 【为什么不乘安全系数 1.6】用户给的条件就是"批内临时帧 ≤ 余量 × 0.65",这条本身已经把余量切走 35%;
+    /// 再叠一个 1.6 会让"实际只占 40%"的机器也被拦住,与"激进放大"的意图相反。
+    /// 整任务那道闸门(带 1.6)原样保留 —— 两道闸门管的是不同的事。
+    /// 【地板】调小不得低于 <paramref name="floorFrames"/>:批太小会把"每批一次引擎启动"的开销摊到每帧上。
+    /// 万一余量连地板都放不下,这里**不再往下压**(压到 1 帧/批也救不了整任务),并如实写进 Note ——
+    /// 那种情形该由整任务守门去报错。
+    /// 【拿不到余量怎么办】freeDiskGB ≤ 0 或单帧体积 ≤ 0(探测失败)→ 原样返回,并说明"没做这道闸门"
+    /// (与仓库既有口径一致:拿不到数据就不做判定,而不是猜一个)。</summary>
+    public static TempDiskBatchGate LimitBatchByTempDisk(int batchFrames, double freeDiskGB,
+        double peakFrameMb, double sourceFrameMb, int floorFrames = WeakDeviceFramesPerBatch)
+    {
+        if (batchFrames <= 0) return new TempDiskBatchGate(batchFrames, batchFrames, false, 0, 0, "批大小无效,未做临时盘闸门");
+        if (freeDiskGB <= 0 || peakFrameMb <= 0)
+            return new TempDiskBatchGate(batchFrames, batchFrames, false, 0, 0,
+                "拿不到临时盘余量/单帧体积 ⇒ 未做这道闸门(交由整任务守门判定)");
+        double perFrameMb = peakFrameMb + Math.Max(0, sourceFrameMb);
+        if (perFrameMb <= 0)
+            return new TempDiskBatchGate(batchFrames, batchFrames, false, 0, 0, "单帧体积口径无效 ⇒ 未做这道闸门");
+        double budgetMb = freeDiskGB * 1024.0 * BatchTempDiskShareLimit;
+        int maxByDisk = (int)Math.Max(1, Math.Floor(budgetMb / perFrameMb));
+        int floor = Math.Max(1, floorFrames);
+        int target = Math.Min(batchFrames, maxByDisk);
+        bool belowFloor = target < floor;
+        if (belowFloor) target = Math.Min(batchFrames, floor);   // 地板优先:再压也救不了整任务,交给整任务守门报错
+        double batchGB = target * perFrameMb / 1024.0;
+        double budgetGB = budgetMb / 1024.0;
+        string note = target < batchFrames
+            ? $"临时盘闸门:一批 {target} 帧 ≈ {batchGB:0.##}GB(余量 {freeDiskGB:0.#}GB × {BatchTempDiskShareLimit:0.##} = {budgetGB:0.##}GB)"
+              + (belowFloor ? $";按余量算只能 {maxByDisk} 帧,已保地板 {floor} 帧(整任务守门随后判定)" : "")
+            : $"临时盘闸门未触发(一批 {batchFrames} 帧 ≈ {batchGB:0.##}GB ≤ 额度 {budgetGB:0.##}GB)";
+        return new TempDiskBatchGate(target, maxByDisk, target < batchFrames, batchGB, budgetGB, note);
+    }
 
     // ===== 两个阶段各自的批计划(任务 Q2 要求 2)=====
     /// <summary>某一个阶段的批计划(含该阶段的输入分辨率/面积系数/每批帧数/批数/是否"仅供参考")。</summary>
