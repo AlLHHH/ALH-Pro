@@ -1055,7 +1055,7 @@ public sealed partial class UpscaleView : UserControl
             TaskStatus.Text = done + active > 0
                 ? $"({done + 1}/{done + active}) {t.msg}"
                 : t.msg;
-            SafeRender.ApplyRestUi(TaskStatus, CancelBtn, t.msg);   // 休息时:黄字加粗 + 按钮变「跳过休息」
+            SafeRender.ApplyRestUi(TaskStatus, CancelBtn, t.msg);   // 休息时:黄字加粗;「跳过休息」是窗口底部那个专用按钮 —— 本面板的取消按钮不变文案(2026-09-23 按实现校正:ApplyRestUi 根本不用 cancelBtn)
             // 当前项的列表状态(暂停删除判断:处理中的项不可删)
             if (_runItems != null && _progressIndex >= 0 && _progressIndex < _runItems.Length)
             {

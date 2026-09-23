@@ -3930,14 +3930,25 @@ public static class VideoService
                         // 异常直接往上抛(那种情况下 CPU 是用户的选择,不是我们的降级)。
                         string why = (ex.Message ?? "").Split('\n')[0];
                         bool driverOld = IsNvencDriverTooOld(ex.Message ?? "");
+                        // 【2026-09-23 修 A9 的"报错指错人"】实测:Anime4K 找不到着色器时,ffmpeg 的错是
+                        // `[libplacebo] Cannot read file ...` + `[AVFilterGraph] Error initializing filters`,
+                        // 而旧文案一律说"硬件编码(nvenc)失败" ⇒ 用户去折腾显卡驱动,真因却在滤镜/着色器。
+                        // 这里认出滤镜类失败就把它说清楚(合帧命令里滤镜与编码同进程,exit code 分不出来,只能看文本)。
+                        bool filterProblem = why.Contains("AVFilterGraph", StringComparison.OrdinalIgnoreCase)
+                            || why.Contains("Error initializing filters", StringComparison.OrdinalIgnoreCase)
+                            || why.Contains("libplacebo", StringComparison.OrdinalIgnoreCase)
+                            || why.Contains("custom_shader_path", StringComparison.OrdinalIgnoreCase);
+                        string filterNote = filterProblem
+                            ? "\n⚠ 注意:这次失败发生在**滤镜链**(如 Anime4K 着色器 / 后处理滤镜),不是编码器本身 —— 请检查滤镜相关设置,以及 engines\\ffmpeg\\shaders 与 engines\\ffmpeg8\\shaders 两个目录里是否都有着色器文件。"
+                            : "";
                         int delayMs = driverOld ? 0 : AlhPro.Core.CpuFallbackPolicy.RetryDelayMsAfterAttempt(hwAttempt);
                         if (delayMs <= 0)
                         {
                             AppLogger.Error($"⚠ 硬件编码({encoder})第 {hwAttempt} 次失败:{why}"
-                                + " —— 已停止(按「视频不落 CPU」策略不退回 CPU 软编)");
+                                + " —— 已停止(按「视频不落 CPU」策略不退回 CPU 软编)" + filterNote);
                             progress?.Report((96, $"⚠ 硬件编码({encoder})失败,已停止(不退回 CPU 软编)..."));
                             throw new InvalidOperationException(
-                                AlhPro.Core.CpuFallbackPolicy.DescribeHwEncodeFailure(encoder, hwAttempt, why, driverOld), ex);
+                                AlhPro.Core.CpuFallbackPolicy.DescribeHwEncodeFailure(encoder, hwAttempt, why, driverOld) + filterNote, ex);
                         }
                         int total = AlhPro.Core.CpuFallbackPolicy.HwEncodeTotalAttempts;
                         AppLogger.Warn($"⚠ 硬件编码({encoder})第 {hwAttempt} 次失败:{why} —— "
@@ -6822,8 +6833,11 @@ public static class VideoService
             var raw = Path.Combine(EngineService.TempRoot, $"imgup_rhythm_{Guid.NewGuid():N}.raw");
             try
             {
+                // 【2026-09-23 修 A8】原来是 `-vsync 0` —— 随包 ffmpeg(master 快照 N-126247)**已经没有这个选项**了:
+                // 实测原命令退出码 -1414549496 且报 `Unrecognized option 'vsync'`,于是「一键参考预估」每次都走
+                // 下面的 catch(用户看到的是列表项上一个「无法预估」角标)。新写法 `-fps_mode passthrough` 实测退出码 0。
                 await RunAsync(ffmpeg,
-                    $"-y -v error -i \"{videoPath}\" -vf \"select=not(mod(n\\,{step})),scale=64:36,format=gray\" -vsync 0 -f rawvideo -pix_fmt gray \"{raw}\"",
+                    $"-y -v error -i \"{videoPath}\" -vf \"select=not(mod(n\\,{step})),scale=64:36,format=gray\" -fps_mode passthrough -f rawvideo -pix_fmt gray \"{raw}\"",
                     null, ct);
             }
             catch

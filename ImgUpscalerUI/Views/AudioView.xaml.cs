@@ -502,7 +502,9 @@ public sealed partial class AudioView : UserControl
         }
         AudioInfo.Text = $"{_items.Count} 个音频";
         Log($"已添加 {paths.Length} 个音频");
-        UpdateRunState();
+        // 【2026-09-23 修 A3】加完文件必须刷按钮 —— 原来这里只调 UpdateRunState()(它只管「开始处理」),
+        // 于是"列表里已经有音频了,但「清空」还是灰的"(真机实测:同场景视频页/图片页都是亮的)。
+        UpdateListButtons();
     }
 
     // ---------- 选择文件 ----------
@@ -529,6 +531,9 @@ public sealed partial class AudioView : UserControl
     private void AudioList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         // 单击只更新选中状态;预览区保留(双击会打开;这里不清除以免闪)
+        // 【2026-09-23 修 A3】但按钮状态必须跟着选中走 —— 原来这是个空方法,于是「删除选中」永远灰:
+        // 判据 `RemoveAudioBtn.IsEnabled = hasSel && !_running`(见 UpdateListButtons),没有这行就没人去点它。
+        UpdateListButtons();
     }
 
     private void AudioList_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)

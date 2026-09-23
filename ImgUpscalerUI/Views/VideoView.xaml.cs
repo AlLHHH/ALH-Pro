@@ -2607,7 +2607,7 @@ public sealed partial class VideoView : UserControl
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = this.XamlRoot,
         };
-        try { if (await dlg.ShowAsync() != ContentDialogResult.Primary) return; } catch { return; }
+        try { if (await ALHPro.SafeDialog.ShowAsync(dlg, "确认框") != ContentDialogResult.Primary) return; } catch { return; }
         string name = box.Text.Trim();
         if (name.Length == 0) name = defaultName;
         var preset = new VideoPreset
@@ -2852,7 +2852,7 @@ public sealed partial class VideoView : UserControl
             RebuildList();
             if (n > 0) await ShowPresetHintAsync($"已导入 {n} 个视频预设。");
         };
-        try { await dlg.ShowAsync(); } catch { }
+        try { await ALHPro.SafeDialog.ShowAsync(dlg, "提示"); } catch { }
     }
 
     /// <summary>按当前排序方式取预设列表(与预设窗口 listView 的显示顺序**严格一致**)。
@@ -3118,7 +3118,7 @@ public sealed partial class VideoView : UserControl
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = this.XamlRoot,
         };
-        try { return await dlg.ShowAsync() == ContentDialogResult.Primary; }
+        try { return await ALHPro.SafeDialog.ShowAsync(dlg, "确认框") == ContentDialogResult.Primary; }
         catch { return false; }
     }
 
@@ -3132,7 +3132,7 @@ public sealed partial class VideoView : UserControl
             CloseButtonText = "知道了",
             XamlRoot = this.XamlRoot,
         };
-        try { await dlg.ShowAsync(); } catch { }
+        try { await ALHPro.SafeDialog.ShowAsync(dlg, "提示"); } catch { }
     }
 
     private void SaveSettings()
@@ -4112,7 +4112,22 @@ public sealed partial class VideoView : UserControl
             CloseButtonText = "确定",
             XamlRoot = this.XamlRoot,
         };
-        await dlg.ShowAsync();
+        // 【2026-09-23 修 A1】WinUI **同一时刻只允许一个 ContentDialog**。实测崩溃:
+        // 任务跑完会弹「处理完成」,此时再点「预览效果」→ 这里想弹第二个 → ContentDialog.ShowAsync()
+        // 抛 COMException 0x80000019("Only a single ContentDialog can be open at any time"),
+        // 而且是**未处理异常**(写进崩溃诊断,用户只看到"点了没反应")。
+        // 这里改成:弹不出来就**降级**成界面状态条 + 日志,绝不把异常抛到顶层。
+        try
+        {
+            await dlg.ShowAsync();   // 故意不走 SafeDialog:这里的 catch 会把提示写到状态栏+日志,比通用降级更有用
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"提示弹窗没能显示(多半是已有另一个对话框开着,WinUI 同时只允许一个):{ex.Message} ⇒ 已改为写在状态栏/日志里");
+            try { VideoStatus.Text = msg; } catch { }          // 主面板状态行
+            try { PreviewDeckStatus(msg); } catch { }          // 预览页那一行
+            Log(msg);                                          // 左下角日志留痕,便于回看
+        }
     }
 
     /// <summary>检测是否 RTX 50 系列(Blackwell 架构)显卡:从 VulkanCheck 设备或系统枚举名称判断。
@@ -4151,7 +4166,7 @@ public sealed partial class VideoView : UserControl
         };
         try
         {
-            var r = await dlg.ShowAsync();
+            var r = await ALHPro.SafeDialog.ShowAsync(dlg, "提示");
             if (r == ContentDialogResult.Primary)
             {
                 Log("已按 50 系兼容提示换用 waifu2x 超分");
@@ -4184,7 +4199,7 @@ public sealed partial class VideoView : UserControl
         };
         try
         {
-            var r = await dlg.ShowAsync();
+            var r = await ALHPro.SafeDialog.ShowAsync(dlg, "提示");
             if (r == ContentDialogResult.Primary)
             {
                 Log("已按 50 系兼容提示切换超分引擎为 waifu2x(最快)");
@@ -4212,7 +4227,7 @@ public sealed partial class VideoView : UserControl
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = this.XamlRoot,
         };
-        return await dlg.ShowAsync() == ContentDialogResult.Primary;
+        return await ALHPro.SafeDialog.ShowAsync(dlg, "确认框") == ContentDialogResult.Primary;
     }
 
     private void ClearVideos_Click(object sender, RoutedEventArgs e)
@@ -8709,9 +8724,13 @@ public sealed partial class VideoView : UserControl
             if (outPath == null)
             {
                 // 没跑起来:参数校验没通过(超分/补帧都没开、引擎缺失、帧率框空…)或被取消 —— 具体原因在左下角日志
+                // 【2026-09-23 修 B2】还要区分"正在处理中"这一种:它跟参数无关,提示不该叫用户去查参数。
+                bool busy = _running || _runItems != null;
                 PreviewDeckStatus((_effCts?.IsCancellationRequested ?? false)
                     ? "已取消预览。"
-                    : "预览没有生成 —— 请检查左侧参数(超分/补帧是否已启用、引擎是否完整),原因见左下角日志。");
+                    : busy
+                        ? "现在正在处理别的任务(或上一次刚跑完还没收尾)—— 等它结束再点「开始预览」。"
+                        : "预览没有生成 —— 请检查左侧参数(超分/补帧是否已启用、引擎是否完整),原因见左下角日志。");
                 EffectPlayerHint.Text = "点「开始预览」,处理结果会在这里播放";
             }
             else
@@ -10146,7 +10165,7 @@ public sealed partial class VideoView : UserControl
             CloseButtonText = "关闭",
             XamlRoot = this.XamlRoot,
         };
-        await dlg.ShowAsync();
+        await ALHPro.SafeDialog.ShowAsync(dlg, "提示");
     }
 
     public static string FormatTime(double seconds)
@@ -10368,7 +10387,7 @@ public sealed partial class VideoView : UserControl
                     PrimaryButtonStyle = ButtonStyle(Windows.UI.Color.FromArgb(255, 217, 48, 48), Windows.UI.Color.FromArgb(255, 255, 255, 255)),
                     CloseButtonStyle = ButtonStyle(Windows.UI.Color.FromArgb(255, 0, 103, 192), Windows.UI.Color.FromArgb(255, 255, 255, 255)),
                 };
-                var r4k = await dlg4k.ShowAsync();
+                var r4k = await ALHPro.SafeDialog.ShowAsync(dlg4k, "4K 提醒");
                 if (r4k != Microsoft.UI.Xaml.Controls.ContentDialogResult.Primary)
                 {
                     Log("⚠ 检测到输出超 4K,用户选择「取消」,已停止处理。");
@@ -10459,7 +10478,7 @@ public sealed partial class VideoView : UserControl
                         PrimaryButtonStyle = ButtonStyle(Windows.UI.Color.FromArgb(255, 217, 48, 48), Windows.UI.Color.FromArgb(255, 255, 255, 255)),
                         CloseButtonStyle = ButtonStyle(Windows.UI.Color.FromArgb(255, 0, 103, 192), Windows.UI.Color.FromArgb(255, 255, 255, 255)),
                     };
-                    var rCpu = await dlgCpu.ShowAsync();
+                    var rCpu = await ALHPro.SafeDialog.ShowAsync(dlgCpu, "CPU 提醒");
                     if (rCpu != ContentDialogResult.Primary)
                     {
                         Log("⚠ 超分将用 CPU 且预计超过 30 分钟,用户选择「取消」,已停止处理。");
@@ -10518,7 +10537,7 @@ public sealed partial class VideoView : UserControl
                 DefaultButton = Microsoft.UI.Xaml.Controls.ContentDialogButton.Primary,
                 XamlRoot = this.XamlRoot,
             };
-            var r = await dlg.ShowAsync();
+            var r = await ALHPro.SafeDialog.ShowAsync(dlg, "提示");
             if (r == Microsoft.UI.Xaml.Controls.ContentDialogResult.Secondary)
             {
                 FastModeCheck.IsChecked = true;   // 一键开启兼容模式(源头降资源)
@@ -10601,7 +10620,18 @@ public sealed partial class VideoView : UserControl
     private async Task<string?> RunPreviewAsync(VideoItem item, double startSec, double lengthSec,
         IProgress<(int pct, string msg)> progress, CancellationToken token)
     {
-        if (_running || _runItems != null || _previewRun != null) return null;
+        // 【2026-09-23 修 B2】这两条早退原来**一声不吭**(连日志都没有),而调用方却提示用户
+        // "请检查左侧参数…原因见左下角日志" ⇒ 用户去翻日志什么也找不到(真机踩到:其实是"正在处理中")。
+        if (_running || _runItems != null)
+        {
+            Log("⚠ 现在正在处理/收尾其它任务(比如上一次处理刚跑完、还停在「处理完成」提示上)⇒ 这次预览没有开始。等它结束再点「开始预览」。");
+            return null;
+        }
+        if (_previewRun != null)
+        {
+            Log("⚠ 上一次预览还在跑 ⇒ 这次点击已忽略(等它跑完)。");
+            return null;
+        }
         var ctx = new PreviewRun
         {
             Item = item,
@@ -10713,7 +10743,7 @@ public sealed partial class VideoView : UserControl
                 };
                 try
                 {
-                    var r = await dlg.ShowAsync();
+                    var r = await ALHPro.SafeDialog.ShowAsync(dlg, "提示");
                     if (r == ContentDialogResult.Secondary)
                     {
                         // 源头杜绝:自动开启兼容模式(降分块/批大小/单批),并黄字提醒用户已生效
@@ -11088,7 +11118,7 @@ public sealed partial class VideoView : UserControl
                 _ => "设备差",
             };
             int bs = SafeRender.GetVideoBatchSize();
-            Log($"资源自检:空闲内存 {fr:0.#} GB / 空闲显存 {SafeRender.FreeVramText} → {tierTxt};内存档基准 {bs} 帧/批(实际每批 50~400,按素材长度定)");
+            Log($"资源自检:空闲内存 {fr:0.#} GB / 空闲显存 {SafeRender.FreeVramText} → {tierTxt};内存档基准 {bs} 帧/批(实际每批 80~1400,按素材长度/显存/临时盘定)");
             AppLogger.Info($"资源自检:空闲内存 {fr:0.#} GB / 空闲显存 {SafeRender.FreeVramText} → {tierTxt}(内存档基准 {bs} 帧/批;实际每批帧数/批数见各任务的「超分批决策」日志)");
         }
         // 预计时间:全局平均速度(已用时间 ÷ 已完成进度 → 总时长估计,再减已用 = 剩余)
@@ -11512,7 +11542,7 @@ public sealed partial class VideoView : UserControl
                 lastPanelAt = DateTime.Now;
                 UpdateTaskPanel(t.msg);
             }
-            SafeRender.ApplyRestUi(VideoStatus, CancelBtn, t.msg);   // 休息时:黄字加粗 + 按钮变「跳过休息」
+            SafeRender.ApplyRestUi(VideoStatus, CancelBtn, t.msg);   // 休息时:黄字加粗;「跳过休息」是窗口底部那个专用按钮 —— 本面板的取消按钮不变文案(2026-09-23 按实现校正:ApplyRestUi 根本不用 cancelBtn)
             }
             catch (Exception ex) { NoteUiRefreshFailure("任务进度刷新(整体)", ex); }
         });
@@ -12000,7 +12030,19 @@ public sealed partial class VideoView : UserControl
         };
         // 保护:任务完成时窗口可能已关闭(XamlRoot 为 null)→ 不再弹窗,避免未处理异常
         if (dlg.XamlRoot == null) return;
-        if (await dlg.ShowAsync() == ContentDialogResult.Primary)
+        var rDone = await ALHPro.SafeDialog.ShowAsync(dlg, "处理完成");
+        // 【2026-09-23 修 A1(第二次实测崩溃点)】弹不出来(例如启动时的「更新公告」还开着)时,
+        // 把结论写到主状态栏 + 日志 —— 用户至少知道"跑完了、输出在哪",而不是什么都没有,
+        // 也不会再因为 WinUI 只允许一个对话框而抛未处理异常。
+        if (rDone == ContentDialogResult.None)
+        {
+            string brief = $"✓ 处理完成:成功 {ok} 个{(fail > 0 ? $",失败 {fail} 个" : "")};输出目录 {dir}";
+            try { VideoStatus.Text = brief; } catch { }
+            Log(brief + (outputFiles.Count > 0
+                ? ";" + string.Join(";", outputFiles.Select(System.IO.Path.GetFileName))
+                : ""));
+        }
+        if (rDone == ContentDialogResult.Primary)
             ProcessStartHelper.OpenSelect(outputFiles.Count > 0 ? outputFiles : new System.Collections.Generic.List<string> { dir });
         if (fail <= 0) MainPage.MaybeShowSponsorPrompt();   // 仅全部导出成功才弹赞助提示(有失败不打扰)
     }
