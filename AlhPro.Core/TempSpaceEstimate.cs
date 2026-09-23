@@ -64,4 +64,22 @@ public static class TempSpaceEstimate
     /// 与 <see cref="NeedBytes"/> 同一条公式,只是把口径写进函数名,避免调用点漏传 batchFrames。</summary>
     public static double NeedBytesForBatch(long peakFrames, double peakFrameMb, int batchFrames, double sourceFrameMb)
         => NeedBytes(peakFrames, peakFrameMb, batchFrames, sourceFrameMb);
+
+    /// <summary>【2026-09-23 加】按**任意一组参数**算整任务临时盘需求(GB)。
+    /// 【为什么要它 —— 来自一份真实用户反馈】某个用户报"不能补帧",诊断包里真相是:
+    /// 4K 源 + 2x 超分(输出 8K)+ 2x 补帧的 5 分钟素材,预估要 **262GB**,而临时盘只剩 132GB
+    /// ⇒ 守门在开跑前就拒绝(6 次尝试全是 0.2 秒失败),用户看到的是"补帧不能用" ✗。
+    /// 而同样的素材只要**关掉超分**(输出留在 4K、补帧保留)就只要约 118GB —— **放得下**。
+    /// 所以"跑不动时该往哪降"这件事必须由软件算出来告诉用户,而不是只丢一句"降低倍率"。
+    /// 本函数就是那个计算器:同一套公式、换一组参数重算,不新增第二套口径。</summary>
+    public static double NeedGigabytesFor(int srcW, int srcH, long baseFrames, bool frameInterp, int interpScale,
+        double upscaleMult, int batchFrames)
+    {
+        double srcMb = SourceFrameMegabytes(srcW, srcH);
+        double outMb = PeakFrameMegabytes(srcW, srcH, upscaleMult, frameInterp);
+        long peak = frameInterp
+            ? (long)Math.Ceiling(Math.Max(0L, baseFrames) * (double)Math.Max(1, interpScale))
+            : Math.Max(0L, baseFrames);
+        return NeedBytes(peak, outMb, batchFrames, srcMb) / (1024.0 * 1024.0 * 1024.0);
+    }
 }
