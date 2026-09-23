@@ -117,6 +117,53 @@ public class PreviewPairSyncTests
         Assert.DoesNotContain("private async Task AlignPausedAsync()", code);
     }
 
+    /// <summary>【2026-09-23 顺手修的既有 bug】进「视频处理」页那一刻的那条日志会抛
+    /// `NullReferenceException 0x80004003`(控件还没进可视树,写 TextBlock.Text 就抛),
+    /// 每次启动一条 WARN,而且**那一行日志在界面日志框里是丢的**。
+    /// 证据:日志里 `进入页面:视频处理` → `倍率切换:…` → `⚠ 界面刷新失败…视频日志追加/自动滚动`。
+    /// 修法:进可视树之前先缓冲,Loaded 后补齐 ⇒ 不再抛、内容也不丢。</summary>
+    [Fact]
+    public void Log_lines_written_before_the_page_is_loaded_are_buffered_not_lost()
+    {
+        var code = StripComments(ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs"));
+        Assert.Contains("private readonly List<string> _pendingLogLines = new();", code);
+        Assert.Contains("if (!_uiLogReady)", code);
+        Assert.Contains("lock (_pendingLogLines) { if (_pendingLogLines.Count < 50) _pendingLogLines.Add(msg); }", code);
+        Assert.Contains("private void FlushPendingLogLines()", code);
+        // Loaded 里必须**在最前面**置位并补齐(下面有 `if (_dupRefreshRun) return;` 的提前返回路径)
+        int loaded = code.IndexOf("this.Loaded += async (_, _) =>", StringComparison.Ordinal);
+        int flag = code.IndexOf("_uiLogReady = true;", loaded, StringComparison.Ordinal);
+        int flush = code.IndexOf("try { FlushPendingLogLines(); } catch { }", loaded, StringComparison.Ordinal);
+        int earlyReturn = code.IndexOf("if (_dupRefreshRun) return;", loaded, StringComparison.Ordinal);
+        Assert.True(flag > loaded && flush > flag, "Loaded 里要置位并补齐");
+        Assert.True(earlyReturn > flush, "置位与补齐必须在提前 return **之前**(否则第二次 Loaded 会漏)");
+        // 原来的 try/catch 兜底保留(它是"界面刷新绝不许把任务带崩"的那道线,不许删)
+        Assert.Contains("catch (Exception ex) { NoteUiRefreshFailure(\"视频日志追加/自动滚动\", ex); }", code);
+        // 滚动那段不能被改坏(本轮误删过一次,这条用来兜住结构)
+        Assert.Contains("App.UiBreadcrumb = \"日志滚动到底(延迟执行)\";", code);
+    }
+
+    /// <summary>★ 切视图进「左右对比」时,两条**必须互相咬合**。
+    /// 真机日志实证:`切视图对齐(CmpPlayerBottom):差 302 ms → 跳过定位(容差内)` —— 0.5 秒容差把
+    /// 302ms 的错位放过了,而并排画面里那是肉眼一眼能看出的不同帧(用户报的"不协调")。
+    /// 而且旧写法让两条**各自**对到 clipT ⇒ 可以一个 +0.5、一个 −0.5,相差最多 1 秒。
+    /// 现在:上层对到**下层此刻的位置**,容差一帧(30ms)。</summary>
+    [Fact]
+    public void Entering_the_split_view_makes_the_two_halves_bite_each_other()
+    {
+        var code = StripComments(ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs"));
+        // 容差参数化(默认 0.5 秒照旧,给单视图用)
+        Assert.Contains("private async Task AlignViewPlayerAsync(Microsoft.UI.Xaml.Controls.MediaPlayerElement? el, double targetSec, bool play, long gen,\n        double tolSec = 0.5)", code);
+        Assert.Contains("bool didSeek = gap > tolSec;", code);
+        Assert.Contains("private const double MaskPairToleranceSec = 0.03;", code);
+        // 遮罩分支:上层对到下层的位置 + 一帧容差(不再两条各自对 clipT)
+        Assert.Contains("anchor = res.Position.TotalSeconds;", code);
+        Assert.Contains("await AlignViewPlayerAsync(nSrc, anchor, playing, gen, tolSec: MaskPairToleranceSec);", code);
+        Assert.DoesNotContain("if (_maskSplitActive) await AlignViewPlayerAsync(nSrc, clipT, playing, gen);", code);
+        // 日志要把容差写出来(否则下次又分不清"跳过定位"是因为多少毫秒的容差)
+        Assert.Contains("(容差 {tolSec * 1000:0} ms)", code);
+    }
+
     // ---------- ① / ② 埋点必须说实话 ----------
 
     /// <summary>`进同步分支` 以前是 `!_cmpSingle`(只说明"不是单播放器"),与"同步真的动手了"无关 ——

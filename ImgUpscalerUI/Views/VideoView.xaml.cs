@@ -358,6 +358,15 @@ public sealed partial class VideoView : UserControl
     //   (为什么不用 _suppressEvents 的初值来挡:LoadSettings 有两条提前 return 的路径不会把它复位成 false,
     //    会让交互永久失效;本标志位在构造函数里无条件置 true,没有任何"忘了复位"的风险。)
     private bool _uiReady;
+    // ===== 【2026-09-23 修】进页面那一刻的日志:控件还没进可视树,写 TextBlock.Text 会抛 E_POINTER =====
+    // 【证据】每次"进入页面:视频处理"都紧跟一条
+    //   `⚠ 界面刷新失败,已忽略并继续:视频日志追加/自动滚动 — NullReferenceException 0x80004003`
+    //   (触发它的是紧随其后的那句 `倍率切换:放大档只用放大模型…` = 构造/恢复设置阶段的那次 Log)。
+    // 【后果】① 诊断包每次启动都多一条看起来像故障的 WARN;② **那一行日志在屏幕上的日志框里是丢的**
+    //   (文件日志有,界面没有) ⇒ 用户报"界面日志少一行"。
+    // 【修法】进可视树之前先把日志行**缓冲**起来,Loaded 之后一次性补进文本框(内容不丢、也不再抛)。
+    private readonly List<string> _pendingLogLines = new();
+    private bool _uiLogReady;
     private VideoItem? _selected;
     // 「输入帧率」框里那个值是从哪个视频探测来的(null = 无来源/用户手填):
     // 用于在开始处理时识别"框里还留着上一个视频的帧率"的残留(输入帧率参与节奏换算,残留会算错结果)。
@@ -395,6 +404,10 @@ public sealed partial class VideoView : UserControl
         // (预估只在"拖入列表"时触发,重启后旧项不重算 → 徽标空白;这里统一补上,后台串行,不卡界面)
         this.Loaded += async (_, _) =>
         {
+            // 【2026-09-23】到这一刻控件才真的在可视树里 ⇒ 允许写日志框,并把之前缓冲的行补齐。
+            // 必须放在**最前面**(下面有 `if (_dupRefreshRun) return;` 的提前返回路径)。
+            _uiLogReady = true;
+            try { FlushPendingLogLines(); } catch { }
             if (_dupRefreshRun) return;
             _dupRefreshRun = true;
             try
@@ -3394,9 +3407,45 @@ public sealed partial class VideoView : UserControl
         }
         catch { }
     }
+
+    /// <summary>【2026-09-23】把"进可视树之前"缓冲下来的日志行一次补进日志框(见 _pendingLogLines)。
+    /// 只在 Loaded 里调用一次;失败也不抛(补不上就只是那几行不在界面上)。</summary>
+    private void FlushPendingLogLines()
+    {
+        try
+        {
+            List<string> pending;
+            lock (_pendingLogLines)
+            {
+                if (_pendingLogLines.Count == 0) return;
+                pending = new List<string>(_pendingLogLines);
+                _pendingLogLines.Clear();
+            }
+            var text = VideoLogText.Text;
+            if (text == "日志:等待任务...") text = "";
+            var sb = new System.Text.StringBuilder(text.Length + pending.Count * 32);
+            sb.Append(text);
+            foreach (var m in pending)
+            {
+                sb.Append(sb.Length == 0 ? "" : "\n").Append($"[{DateTime.Now:HH:mm:ss}] {m}");
+            }
+            var next = sb.ToString();
+            var lines = next.Split('\n');
+            if (lines.Length > 200) next = string.Join("\n", lines.Skip(80)) + "\n";
+            VideoLogText.Text = next;
+            ScrollLogToBottomDeferred();
+        }
+        catch { }
+    }
     private void Log(string msg)
     {
         AppLogger.Info(msg);   // 同步写诊断日志文件
+        // 【2026-09-23】还没进可视树 ⇒ 只缓冲,不碰控件(碰了就抛 0x80004003,见 _pendingLogLines 的说明)。
+        if (!_uiLogReady)
+        {
+            lock (_pendingLogLines) { if (_pendingLogLines.Count < 50) _pendingLogLines.Add(msg); }
+            return;
+        }
         // 【UI 刷新绝不许把任务带崩】下面两句是 WinRT/原生控件操作:文本越长布局越贵,
         // 而 ScrollViewer.ChangeView 在布局进行中/文本高速增长时会抛 COMException(实测 0x80070490
         // "找不到元素")或 LayoutCycleException —— 50 系笔记本一天内崩两次,两次都紧跟在"刷新日志行"
@@ -5141,6 +5190,12 @@ public sealed partial class VideoView : UserControl
     private int _maskAlignTries;
     /// <summary>一次对齐正在进行中(防重入:看门狗每 150ms 一跳,而一次对齐要 await 两次带校验的定位)。</summary>
     private bool _maskAlignBusy;
+    /// <summary>【2026-09-23】遮罩模式两条之间的对齐容差:30ms ≈ 30fps 的**一帧**。
+    /// 【为什么不能沿用 0.5 秒】单视图切换那个 0.5 秒是有理由的(只影响"切过去那一瞬间的起始帧"),
+    /// 但左右对比是**两半并排比着看**:偏差直接表现为"中间那条线两侧不是同一帧"。
+    /// 实测(无头尺子 `_qa/playerbench`):暂停态/播放态一次定位落地只要 15~16ms(720p)⇒ 按一帧对齐
+    /// 的代价极小,不值得为省这一次定位而放过几百毫秒的错位。</summary>
+    private const double MaskPairToleranceSec = 0.03;
     private CancellationTokenSource? _effCts;  // 预览取消(与主界面「强制结束」等效)
     private string? _effOutPath;               // 上次预览的临时成片(换预览/离开预览页时删除)
     private string? _effStarted;               // 已经起播过的成片路径(防重复起播)
@@ -6346,7 +6401,25 @@ public sealed partial class VideoView : UserControl
             else
             {
                 await AlignViewPlayerAsync(nRes, clipT, playing, gen);                 // EffectPlayer(合成片/并排片)
-                if (_maskSplitActive) await AlignViewPlayerAsync(nSrc, clipT, playing, gen);   // 遮罩:上层装的也是同一条片
+                if (_maskSplitActive)
+                {
+                    // 【2026-09-23 修 · 遮罩模式必须让两条"互相咬合",不能各自"差不多就行"】
+                    // 旧写法:上层也**对到 clipT、容差 0.5 秒** ⇒ 两条可以一个偏 +0.5、另一个偏 −0.5,
+                    // 相差最多 **1 秒**;而中间那条线上放的就是这两半并排比着看 ⇒ 用户报的"不协调"正是它。
+                    // 真机日志实证(2026-09-22 12:48 那次 UI 自测):
+                    //   `[性能] 切视图对齐(CmpPlayerBottom):差 302 ms → 跳过定位(容差内)` ——
+                    //   302ms 的偏差被"容差内"放过了,而在并排画面里 302ms 是**肉眼一眼能看出的不同帧**。
+                    // 现在:上层对到**下层此刻读到的位置**(而不是对到 clipT),容差按"一帧"给(30ms ≈ 30fps 一帧)
+                    // ⇒ 两条互相之间最多差 60ms,且与用户正看着的那一帧对齐。
+                    double anchor = clipT;
+                    try
+                    {
+                        var res = nRes?.MediaPlayer?.PlaybackSession;
+                        if (res != null && res.NaturalDuration.TotalSeconds > 0.05) anchor = res.Position.TotalSeconds;
+                    }
+                    catch { }
+                    await AlignViewPlayerAsync(nSrc, anchor, playing, gen, tolSec: MaskPairToleranceSec);
+                }
             }
             if (gen != _viewGen) return;   // 连点视图切换:这一轮已经过期,不要再写状态
             ApplyCmpRateToAll(false);      // 倍率(用户选的档)在换条/换片后必须活着 ✔
@@ -6356,10 +6429,13 @@ public sealed partial class VideoView : UserControl
         catch { }
     }
 
-    /// <summary>把某条播放器对到目标秒(差值 ≤0.5 秒就跳过定位),并接上播放状态 + 用户倍率。
-    /// 【为什么容差是 0.5 秒】本机实测一次定位要 813~1094 ms(大素材要从关键帧解码),
-    /// 每次切换都精确定位 = 切一次卡一秒;而 0.5 秒偏差只影响"切过去那一瞬间的起始帧",肉眼不可辨 ✔</summary>
-    private async Task AlignViewPlayerAsync(Microsoft.UI.Xaml.Controls.MediaPlayerElement? el, double targetSec, bool play, long gen)
+    /// <summary>把某条播放器对到目标秒(差值 ≤ 容差就跳过定位),并接上播放状态 + 用户倍率。
+    /// 【为什么单视图的容差是 0.5 秒】本机实测一次定位要 813~1094 ms(大素材要从关键帧解码),
+    /// 每次切换都精确定位 = 切一次卡一秒;而 0.5 秒偏差只影响"切过去那一瞬间的起始帧",肉眼不可辨 ✔
+    /// 【2026-09-23 · 容差改成参数】遮罩左右对比**不能**用这个 0.5 秒 —— 见调用点(那两条是同一条片、
+    /// 同屏并排比着看,偏差要按"一帧"算)。</summary>
+    private async Task AlignViewPlayerAsync(Microsoft.UI.Xaml.Controls.MediaPlayerElement? el, double targetSec, bool play, long gen,
+        double tolSec = 0.5)
     {
         try
         {
@@ -6370,10 +6446,10 @@ public sealed partial class VideoView : UserControl
             try { cur = se.Position.TotalSeconds; } catch { }
             double gap = Math.Abs(cur - targetSec);
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            bool didSeek = gap > 0.5;
+            bool didSeek = gap > tolSec;
             if (didSeek) { await SeekAndVerifyAsync(mp, targetSec, 2); if (gen != _viewGen) return; }
             sw.Stop();
-            Log($"[性能] 切视图对齐({ElName(el)}):差 {gap * 1000:0} ms → {(didSeek ? "做了定位" : "跳过定位(容差内)")}"
+            Log($"[性能] 切视图对齐({ElName(el)}):差 {gap * 1000:0} ms(容差 {tolSec * 1000:0} ms)→ {(didSeek ? "做了定位" : "跳过定位(容差内)")}"
               + $",耗时 {sw.ElapsedMilliseconds} ms,播放中={play}");
             ApplyCmpRateToAll(false);
             if (play) { try { mp.Play(); } catch { } } else { try { mp.Pause(); } catch { } }
