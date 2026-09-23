@@ -1249,17 +1249,15 @@
                         <!-- 【2026-09-19 已按用户要求回退】这里的缩放档位(适应/50%/100%/200%/400%)是
                              我按 Topaz 文档做的"整体缩放",**不是用户要的东西** ✗ —— 用户要的是:
                              「两者同时」里**两侧锁同一块区域**、**中间是边界**,缩放其中一个另一个跟着到同一处。
-                             在做出那个之前,这里不再放任何缩放控件(只留「1:1 对比」)。
+                             在做出那个之前,这里不再放任何缩放控件。
                              (缩放层/裁切框等结构保留但恒为恒等变换:不缩放时行为与改动前逐帧一致 ✔) -->
-                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
-                            <!-- 【2026-09-19 用户要求:撤销实时缩放】滚轮/档位/两侧同区域缩放全部撤掉:
-                                 它带来了卡死、偶现缩放不一致、偶现左右比例不同、缩放后画面只剩一小块等问题 ✗
-                                 ⇒ 预览页回到稳定状态(遮罩左右对比 + 单播放器合成片,都是验证过多轮的);
-                                 只保留「1:1 对比」(那是**静态取帧**,不参与任何播放/布局,零风险)✔ -->
-                            <Button x:Name="PixelCmpBtn" Content="1:1 对比" FontSize="12" Padding="10,6"
-                                    VerticalAlignment="Center" Click="PixelCmpBtn_Click"
-                                    ToolTipService.ToolTip="在当前这一帧上,把「原片」和「处理后」各取一帧、按各自【原始像素 1:1】并排显示同一处画面 —— 一个像素都不重采样(真原画质)"/>
-                        </StackPanel>
+                        <!-- 【2026-09-23 用户要求:删掉「1:1 对比」】这一格原来放着那个按钮
+                             (2026-09-19 加的"静止帧原画质对比":把原片与成片各取一帧、按各自原始像素 1:1 并排),
+                             用户实测觉得没用 ⇒ **整套删除**:按钮 + 下面那个整屏 PixelCmpPanel + code-behind
+                             里全部相关代码(含只被它调用的 CropFrameAsync / LoadPngAsync),
+                             并把 4 处指向它的提示文案一起改掉(否则会叫人去点一个不存在的按钮)。
+                             这一格现在空着:用户 2026-09-19 明确不要实时缩放控件,所以不放别的东西 ✔
+                             【别再加回来】用户已经点过两次名(先加、后删) -->
                         <Button Grid.Column="3" Content="退出" Click="PreviewClose_Click" FontSize="13" Padding="16,7"
                                 VerticalAlignment="Center" ToolTipService.ToolTip="退出回到列表"/>
                     </Grid>
@@ -1414,65 +1412,10 @@
                         </Border>
                     </Grid>
 
-                    <!-- 【静止帧 1:1 原画质对比 · 2026-09-19 用户要求】「两者同时 / 左右对比」里两侧都该是真原画质。
-                         物理事实:画面区只有约 900px 宽,并排两整幅 4K/8K 必然要缩 ⇒ 一条合成片**做不到**"两边都 1:1"。
-                         所以做成**静止帧**对比:在当前那一帧上,从原片与成片各裁一块【各自原生像素 1:1】的同一区域并排显示。
-                         不播视频 ⇒ 没有任何同步问题,也不动现有播放架构 ✔
-                         交互:点任一侧 = 把对比区域移到那个点(松手/点击即重新取图);「取当前帧」= 按播放器当前那一帧重取。
-                         不做缩放:1:1 就是这个面板的意义,再放大只是把像素放大,看不到新东西 ✗ -->
-                    <Grid x:Name="PixelCmpPanel" Grid.RowSpan="5" Visibility="Collapsed" Background="#F70D0F14">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-                        <Grid Grid.Row="0" Margin="14,10,14,6" ColumnSpacing="10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                                <TextBlock Text="1:1 原画质对比" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="PixelCmpTime" FontSize="11" Opacity="0.6" VerticalAlignment="Center"/>
-                            </StackPanel>
-                            <Button x:Name="PixelCmpRecapBtn" Grid.Column="1" Content="取当前帧" FontSize="12" Padding="12,6"
-                                    VerticalAlignment="Center" Click="PixelCmpRecap_Click"
-                                    ToolTipService.ToolTip="按播放器当前所在的那一帧重新取图(两边同时更新)"/>
-                            <Button Grid.Column="2" Content="关闭" FontSize="13" Padding="16,7" VerticalAlignment="Center"
-                                    Click="PixelCmpClose_Click" ToolTipService.ToolTip="退出对比(临时图会被删掉)"/>
-                        </Grid>
-                        <Grid x:Name="PixelCmpArea" Grid.Row="1" Margin="14,0,14,8"
-                              PointerPressed="PixelCmp_PointerPressed">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <Border Grid.Column="0" Background="#0A0C10" BorderBrush="#2A3240" BorderThickness="1" CornerRadius="6">
-                                <Grid x:Name="PixelCmpLeftCell" SizeChanged="PixelCmpCell_SizeChanged">
-                                    <Image x:Name="PixelCmpLeftImg" Stretch="None" HorizontalAlignment="Left" VerticalAlignment="Top"/>
-                                    <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8" Padding="8,3"
-                                            CornerRadius="4" Background="#B30D0F14" IsHitTestVisible="False">
-                                        <TextBlock x:Name="PixelCmpLeftTagText" Text="原片" FontSize="11" Foreground="#E8ECF2"/>
-                                    </Border>
-                                </Grid>
-                            </Border>
-                            <Rectangle Grid.Column="1" Width="2" Fill="#7FB2FF" Margin="6,0"/>
-                            <Border Grid.Column="2" Background="#0A0C10" BorderBrush="#2A3240" BorderThickness="1" CornerRadius="6">
-                                <Grid x:Name="PixelCmpRightCell" SizeChanged="PixelCmpCell_SizeChanged">
-                                    <Image x:Name="PixelCmpRightImg" Stretch="None" HorizontalAlignment="Left" VerticalAlignment="Top"/>
-                                    <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8" Padding="8,3"
-                                            CornerRadius="4" Background="#B3101318" IsHitTestVisible="False">
-                                        <TextBlock x:Name="PixelCmpRightTagText" Text="处理后" FontSize="11" Foreground="#7FB2FF"/>
-                                    </Border>
-                                </Grid>
-                            </Border>
-                        </Grid>
-                        <TextBlock x:Name="PixelCmpHint" Grid.Row="2" Margin="14,0,14,12" FontSize="11" Opacity="0.6"
-                                   TextWrapping="Wrap"
-                                   Text="两边都是各自的原生像素、1:1 显示,中心对的是同一处画面(处理后的分辨率更高,所以同一块区域看到的内容范围更小 —— 这正是像素级对比该有的样子)。点画面任意位置 = 换到那一处。"/>
-                    </Grid>
+                    <!-- 【2026-09-23 用户要求:删掉「1:1 对比」】这里原本是 PixelCmpPanel(2026-09-19 加的
+                         "静止帧原画质对比"整屏面板:标题 + 「取当前帧」+ 左右两格原生像素裁切图 + 说明行)。
+                         用户实测觉得没用(原话「1:1对比这个功能简直没有用 删掉他」)⇒ 连同入口按钮与
+                         code-behind 的实现一起整套删掉了,删除原因与清单写在 VideoView.xaml.cs 的对应注释里。 -->
 
                     <!-- ③ 裁剪页:一条时间线 + 首尾两个把手(拖动时画面跟着跳到那个点) -->                    <StackPanel x:Name="TrimDeck" Grid.Row="2" Margin="14,0,14,10" Spacing="8" Visibility="Collapsed">
                         <Grid x:Name="TrimTimeline" Height="52" Background="Transparent"
