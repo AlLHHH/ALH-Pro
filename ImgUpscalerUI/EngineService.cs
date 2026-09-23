@@ -817,8 +817,12 @@ public static partial class EngineService
                     }
             }
             catch { }
-            // ③ 匹配不到:落 CPU(宁可慢不跑错卡)
-            AppLogger.Warn($"⚠ 设备映射:引擎编号 {engineGpu} 未匹配到同名 DirectML 设备;为避免静默跑核显,本次已改用 CPU(软件计算)。可用引擎设备={string.Join(",", devs.Select(d => d.Id + ":" + d.Name))}");
+            // ③ 匹配不到:返回 -1(按 CPU 处理)。为避免"选独显却静默跑核显",这里只能这么保守;
+            // 【2026-09-23 用户要求「视频不落 CPU」后的下游差异】视频侧(ONNX 超分/补帧)拿到 -1 会直接抛出
+            // "无法把 GPU 编号映射到可用的 DirectML 设备(不降级到慢速 CPU)",而抠图/图片侧允许改用 CPU。
+            AppLogger.Warn($"⚠ 设备映射:引擎编号 {engineGpu} 未匹配到同名 DirectML 设备 → 返回 -1(按 CPU 处理)。"
+                + "若随后出现「无法映射到可用的 DirectML 设备」的报错,请把本行连同设备表一起发给作者。"
+                + $"可用引擎设备={string.Join(",", devs.Select(d => d.Id + ":" + d.Name))}");
             return -1;
         }
         catch { return engineGpu; }
@@ -2875,28 +2879,18 @@ public static partial class EngineService
                 AppLogger.Info("⚠ 目录批量超分检测到异常输出(GPU 队列问题),改用 ONNX 稳定引擎重算整图");
                 throw new InvalidOperationException("BLACKOUT_NEED_ONNX:GPU 黑块,转用 ONNX 稳定引擎");
             }
-            progress?.Report((89, "⚠ 该批引擎输出异常(GPU 队列问题),改用 CPU 软解重处理受影响块..."));
-            AppLogger.Info("⚠ 目录批量超分检测到异常输出(GPU 队列问题),不同引擎/模型无 ONNX 版,改用 CPU 软解重处理");
-            foreach (var tf in Directory.EnumerateFiles(inDir, "*.png"))
-            {
-                ct.ThrowIfCancellationRequested();
-                var of = Path.Combine(outDir, Path.GetFileName(tf));
-                if (!File.Exists(of) || IsBlackPng(of))
-                {
-                    if (File.Exists(of)) try { File.Delete(of); } catch { }
-                    try { await UpOneTileAsync(tf, of, engine, model, scale, noise, -1, tta, progress, ct, tileSize).ConfigureAwait(false); }
-                    catch
-                    {
-                        try { File.Delete(of); } catch { }
-                        throw new InvalidOperationException("BLACKOUT_NEED_ONNX:GPU 黑块且 CPU 模式不可用,转用 ONNX 稳定引擎");
-                    }
-                    if (File.Exists(of) && IsBlackPng(of))
-                    {
-                        try { File.Delete(of); } catch { }
-                        throw new InvalidOperationException("BLACKOUT_NEED_ONNX:GPU 持续黑块(CPU 修复无效),转用 ONNX 稳定引擎");
-                    }
-                }
-            }
+            // 【2026-09-23 用户要求 · 视频这一侧「绝不落 CPU」】这里原来是"逐块用 ncnn-CPU 重算受影响块"。
+            // 而本方法(EngineService.UpscaleDirAsync)在当前代码里【只有视频流水线在调】
+            // (grep 全仓库:调用点只有 VideoService 的超分批次循环 2713 那处)⇒ "在 CPU 上重算视频帧"
+            // 等于把整段视频拖成几十分钟到几小时,按用户口径改成**明确报错**,把决定权交回上层降级链
+            // (ONNX → 换另一张卡 → 报错)。信号仍带 BLACKOUT_NEED_ONNX 前缀:上层据此知道"是黑块问题、
+            // 该换引擎",而这条分支本身就是"换不到 ONNX 版"的情形 ⇒ 最终会以明确错误结束,不会静默慢跑。
+            progress?.Report((89, "⚠ 该批引擎输出异常(GPU 队列问题),该模型没有 ONNX 版 —— 停止(不落 CPU)..."));
+            AppLogger.Error("⚠ 目录批量超分检测到异常输出(GPU 队列问题),且该引擎/模型无 ONNX 版:"
+                + "按「视频不落 CPU」策略停止该批(不再用 CPU 逐块重算)");
+            throw new InvalidOperationException(
+                "BLACKOUT_NEED_ONNX:GPU 黑块且该引擎/模型没有 ONNX 版,按「视频不落 CPU」策略停止"
+                + "(请更新显卡驱动,或改用有 ONNX 版的模型)");
         }
         progress?.Report((90, $"超分 完成({totalTiles} 块)"));
 
