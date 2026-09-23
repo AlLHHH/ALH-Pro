@@ -3842,6 +3842,25 @@ public static class VideoService
                 catch (Exception ex) { AppLogger.Warn("1x 修复:解析 Vulkan 设备索引失败,按默认设备继续:" + ex.Message); }
             }
             var muxBase = $"-y {animeDevArgs}{muxInput} {trimArgs} -i \"{inputVideo}\" ";
+            // ===== 【2026-09-23 测试缝 + 分段合帧选择】=====
+            // `ALH_TEST_SEGMENT_FRAMES=<n>`：强制按 n 帧/段做分段合帧（**仅自动化自验**；不设时零副作用）。
+            // 与 ALH_TEST_VIDEO / ALH_TEST_KEEP_BAR 同一套纪律：只认环境变量、进程内读一次。
+            // 暂不支持可变帧率时间轴（vfrSetpts 非空）：按段切 setpts 要处理累计时间偏移，没验收素材不做。
+            bool segMux = false;
+            int segFramesPerSeg = 0;
+            try
+            {
+                var seam = Environment.GetEnvironmentVariable("ALH_TEST_SEGMENT_FRAMES");
+                if (int.TryParse(seam, out var sv) && sv > 0)
+                {
+                    if (vfrSetpts == null) { segMux = true; segFramesPerSeg = sv; }
+                    else AppLogger.Warn($"[测试缝] ALH_TEST_SEGMENT_FRAMES={sv} 已设,但本次是可变帧率时间轴"
+                        + "(vfrSetpts 非空)⇒ 不分段(分段暂不支持 VFR,避免时间轴悄悄错位)");
+                }
+            }
+            catch { }
+            if (segMux)
+                AppLogger.Info($"[测试缝] 强制分段合帧:每段 {segFramesPerSeg} 帧(仅自动化自验;不设该变量时不生效)");
             // 编码阶段整体进度 96→100 随 ffmpeg 编码帧数推进(否则卡 96%,结尾预计时间虚高失真)
             int encTotal = Math.Max(1, Directory.EnumerateFiles(framesFinal, "*.jpg").Count());
             if (pauseWait != null) await pauseWait();   // 暂停:编码开始前停(已生成的帧不浪费)
@@ -3868,7 +3887,18 @@ public static class VideoService
                     // 改成 -progress pipe:1:ffmpeg 会把 frame=/fps=/out_time… 等【机器可读】行写到 stdout,
                     // 而 RunAsync 的 FrameRegex 正在解析 frame= → "编码 第 N 帧 / 共 M 帧 + 预计还剩" 就稳定刷新了;
                     // -nostats 顺手去掉 stderr 上重复的统计行。
-                    await RunAsync(encFfmpeg, "-nostats -progress pipe:1 " + muxBase + encMuxArgs, progress, ct, "编码", encTotal);
+                    if (segMux)
+                    {
+                        // 【2026-09-23 分段合帧】每段同一套编码参数;编码成功才删该段帧;最后 concat -c copy + 音频封装
+                        await EncodeSegmentedMuxAsync(encFfmpeg, framePattern, encTotal, segFramesPerSeg, frInput,
+                            encMuxArgs == muxArgs ? encArgs : StripPreset(encArgs), vfArg, animeDevArgs, fastFlag,
+                            audioPart, videoMap, trimArgs, inputVideo, outTmp, workDir,
+                            recipe?.NoPreset == true ? "nopreset" : null, progress, ct);
+                    }
+                    else
+                    {
+                        await RunAsync(encFfmpeg, "-nostats -progress pipe:1 " + muxBase + encMuxArgs, progress, ct, "编码", encTotal);
+                    }
                     // 硬件编码可能留下 0 字节/损坏文件却退出 0,这里校验;无效则触发回退
                     if (!await ValidateVideoFileAsync(outTmp, 1))
                         throw new InvalidOperationException("硬件编码输出文件无效");
@@ -3983,8 +4013,19 @@ public static class VideoService
             {
                 double uTotal = uStageTimes.Sum(t => t.Seconds) + uWatch.Elapsed.TotalSeconds;
                 string uStages = string.Join(" | ", uStageTimes.Select(t => $"{t.Name} {t.Seconds:0.#}s"));
-                int uFinalFrames = 0;
-                try { uFinalFrames = Directory.EnumerateFiles(framesFinal, "*.jpg").Count(); } catch { }
+                int uFinalFrames = encTotal;
+                // 【2026-09-23 分段合帧修正】这里原来是**数目录**(`Directory.EnumerateFiles(framesFinal)`)**——
+                // 而分段模式每段编码成功后就删掉该段的帧 ⇒ 数出来是 0。实测现场:同一次任务里
+                // `输出校验:… 帧率 60fps,时长 3s ✓`(文件没问题)但紧接着 `· 实际输出:0 帧`、
+                // `· 帧数台账:… 补帧/超分后 0 帧`(还连带把"每帧耗时"的分母算成 0)。
+                // 帧数在**编码开始前**就已定稿(encTotal 正是那个数,且它是在任何删除发生之前数的)⇒ 直接用它。
+                // 【留给下一步的提醒】真正把峰值压到"段"量级的是"边处理边编码",那时连
+                // encTotal / finalFileCount / finalNDiag 这几个"处理阶段里数的目录"也会被删除破坏,
+                // 必须一起改成**按台账计数**(见 docs/2026-09-23-segmented-mux.md §二事实 6 与 §六验收口径)。
+                if (uFinalFrames <= 0)
+                {
+                    try { uFinalFrames = Directory.EnumerateFiles(framesFinal, "*.jpg").Count(); } catch { }
+                }
                 string uPeak = uTempSamples >= 2 && uTempFreeFirst >= 0 && uTempFreeMin >= 0
                     ? $"约 {(uTempFreeFirst - uTempFreeMin) / (1024.0 * 1024 * 1024):0.##} GB"
                       + $"(口径:初始剩余 − 采样到的最小剩余,共 {uTempSamples} 个采样点 → 是下界)"
@@ -5070,6 +5111,76 @@ public static class VideoService
     /// 声明流头,混进去的那些帧在播放器里是花的。用户只看到"成片某几秒画面异常",日志里查不到原因。
     /// 参考尺寸取目录里已写出的第一张可解码 JPG(那就是编码器要的统一尺寸);
     /// 一张都没有(本批是首个失败批)时按 源尺寸×倍数 推。</summary>
+    /// <summary>【2026-09-23 分段合帧】把最终帧按"连续的帧号区间"逐段编码，每段成功后**删掉该段帧**，
+    /// 最后用 `concat -c copy` 无缝拼接、再套用现有的音频/元数据/时长/封装那一段。
+    ///
+    /// 【为什么要它】临时盘放不下整片的最终帧时，原来只能**拒绝任务**——这正是用户报「不能补帧」的真因
+    /// （诊断包 `ALHPro_Diag_20260923_1345`：4K 源 + 2x 超分到 8K + 2x 补帧 ≈5 分钟素材预估 262GB，
+    /// 临时盘只剩 132GB，6 次尝试全部 0.2 秒失败）。拒绝本身是对的（2026-09-15 那次没拒 ⇒ 跑到一半爆盘、
+    /// 8550 帧被占位帧顶替），但用户要的是**能跑完**。
+    ///
+    /// 【纪律】
+    /// · **同一套编码参数**：`encArgs`/`vfArg`/`frInput` 与单遍路径逐字相同，分段不许改画质；
+    /// · 每段用 `-start_number <段首> -frames:v <段长>` 直接读同一目录的连续区间 ⇒ **不拷帧、不硬链接**；
+    /// · **编码成功后才删**该段帧（失败/取消都不删，交给 finally 清 workDir）；
+    /// · **暂不支持可变帧率时间轴**（`vfrSetpts` 非空时调用方不走这条路）：按段切 setpts 要处理累计时间偏移，
+    ///   风险高且手上没有合适的验收素材 ⇒ 宁可不做，也不出一个时间轴悄悄错位的成片。
+    ///
+    /// 【峰值口径】本版本是"处理完再分段编码"（先把机制与验收跑通），真正把峰值压到"段"量级的那一步
+    /// 是"边处理边编码"（见 docs/2026-09-23-segmented-mux.md §四），作为下一步接入。</summary>
+    private static async Task EncodeSegmentedMuxAsync(string encFfmpeg, string framePattern, int totalFrames, int segFrames,
+        string frInput, string encArgs, string vfArg, string animeDevArgs, string fastFlag, string audioPart,
+        string videoMap, string trimArgs, string inputVideo, string outTmp, string workDir, string? recipeNoPresetHint,
+        IProgress<(int pct, string msg)>? progress, CancellationToken ct)
+    {
+        var segs = AlhPro.Core.MuxSegmentation.PlanSegments(totalFrames, Math.Max(1, segFrames));
+        if (segs.Count <= 1)
+        {
+            // 只有一段 = 等于不分段：直接走单遍（调用方在 ≥2 段时才走这里，这里是保险）
+            await RunAsync(encFfmpeg, $"-nostats -progress pipe:1 -y {animeDevArgs}-framerate {frInput} " +
+                $"-i \"{framePattern}\" {trimArgs} -i \"{inputVideo}\" {videoMap} -map_metadata 1 -map_chapters 1 " +
+                $"{audioPart} {encArgs} {vfArg}{fastFlag} \"{outTmp}\"", progress, ct, "编码", totalFrames);
+            return;
+        }
+        var segDir = Path.Combine(workDir, "seg");
+        Directory.CreateDirectory(segDir);
+        var segFiles = new System.Collections.Generic.List<string>();
+        var swAll = System.Diagnostics.Stopwatch.StartNew();
+        string frameDir = Path.GetDirectoryName(framePattern) ?? workDir;
+        AppLogger.Info($"[分段合帧] 开始:共 {totalFrames} 帧 → {segs.Count} 段(每段 {segs[0].FrameCount} 帧)"
+            + $";每段用同一套编码参数,编码成功后删该段帧(目录 {Path.GetFileName(frameDir)})");
+        foreach (var seg in segs)
+        {
+            ct.ThrowIfCancellationRequested();
+            string segPath = Path.Combine(segDir, $"seg_{seg.Index:D4}.mp4");
+            long startNumber = seg.StartFrame + 1;   // image2 的 -start_number 是 1 基
+            string segArgs = $"-nostats -progress pipe:1 -y {animeDevArgs}-framerate {frInput} -start_number {startNumber} " +
+                             $"-i \"{framePattern}\" -frames:v {seg.FrameCount} -an {encArgs} {vfArg} \"{segPath}\"";
+            await RunAsync(encFfmpeg, segArgs, progress, ct, $"分段编码 {seg.Index + 1}/{segs.Count}", (int)seg.FrameCount);
+            // 硬件编码可能留下 0 字节/损坏文件却退出 0 —— 逐段也要校验(与单遍路径同一条纪律)
+            if (!await ValidateVideoFileAsync(segPath, 1))
+                throw new InvalidOperationException($"分段 {seg.Index + 1}/{segs.Count} 输出文件无效");
+            int del = 0;
+            for (long i = seg.StartFrame; i < seg.StartFrame + seg.FrameCount; i++)
+            {
+                try { File.Delete(Path.Combine(frameDir, $"frame_{i + 1:D6}.jpg")); del++; } catch { }
+            }
+            segFiles.Add(segPath);
+            AppLogger.Info($"[分段合帧] 段 {seg.Index + 1}/{segs.Count} 完成:帧 {startNumber}~{startNumber + seg.FrameCount - 1}"
+                + $"(共 {seg.FrameCount} 帧),已删 {del} 帧;累计 {swAll.Elapsed.TotalSeconds:0.#} 秒");
+        }
+        // ===== 无缝拼接 + 音频/元数据/时长/封装(与单遍路径同一套参数) =====
+        // concat demuxer 的清单里路径用【正斜杠】(反斜杠会被当转义);单引号按官方规则转义。
+        var listPath = Path.Combine(workDir, "seg_list.txt");
+        File.WriteAllLines(listPath, segFiles.Select(f => "file '" + f.Replace('\\', '/').Replace("'", @"'\''") + "'"));
+        string finArgs = $"-nostats -progress pipe:1 -y -f concat -safe 0 -i \"{listPath}\" {trimArgs} -i \"{inputVideo}\" " +
+                         $"{videoMap} -map_metadata 1 -map_chapters 1 {audioPart} -c:v copy {fastFlag} \"{outTmp}\"";
+        await RunAsync(encFfmpeg, finArgs, progress, ct, "拼接分段", segs.Count);
+        AppLogger.Info($"[分段合帧] 拼接完成:{segs.Count} 段 → {Path.GetFileName(outTmp)}"
+            + $";总分段耗时 {swAll.Elapsed.TotalSeconds:0.#} 秒");
+        _ = recipeNoPresetHint;   // 供将来"逐段复用硬编配方"用;当前 encArgs 已由调用方按配方处理
+    }
+
     private static void WriteFallbackFrame(string srcFile, string upOutputDir, double scale)
     {
         string dst = Path.Combine(upOutputDir, Path.GetFileName(srcFile));
