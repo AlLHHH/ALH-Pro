@@ -6798,12 +6798,29 @@ public sealed partial class VideoView : UserControl
     // ---------- 对比模式控制条:淡入淡出 + 播放中自动隐藏(业界惯例,参考 Video.js 的 show/hide controls)
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _cmpBarTimer;   // 自动隐藏计时(2.5 秒,用户指定)
 
+    /// <summary>【测试缝 · 2026-09-23】`ALH_TEST_KEEP_BAR=1` ⇒ 对比播放条**不自动淡出**(一直可点)。
+    /// 【为什么需要】播放 2.5 秒后播放条会淡出(Collapsed),于是它里面的按钮(播放/暂停、慢放档…)
+    ///   **从 UIA 树里消失** ⇒ 自动回归脚本点不到(实测报 `element not found: CmpRate1Btn`)。
+    ///   而让它重新出现只能靠"鼠标在画面上动一下"—— 那正是铁律禁止的键鼠注入 ✗。
+    /// 【纪律】与 ALH_TEST_VIDEO / ALH_TEST_SPLIT 同一套:只认环境变量、进程内读一次、
+    ///   不设它时行为与改动前**逐字一致**(用户正常启动完全不受影响)。</summary>
+    private static readonly bool TestKeepBar =
+        Environment.GetEnvironmentVariable("ALH_TEST_KEEP_BAR") == "1";
+
     /// <summary>淡入(180ms)/淡出(300ms)用透明度动画 —— 不再用 Visibility 硬切(那是"咔"一下,也是用户看到的"渐显一下")。</summary>
     private void FadeCompareBar(bool show)
     {
         try
         {
             if (CompareBar == null) return;
+            // 【测试缝】不让它淡出(见 TestKeepBar 的说明);显示那条路照走,保证可见且可点。
+            if (!show && TestKeepBar)
+            {
+                CompareBar.Visibility = Visibility.Visible;
+                CompareBar.Opacity = 1;
+                CompareBar.IsHitTestVisible = true;
+                return;
+            }
             if (show)
             {
                 // 【响应慢的一条来源】鼠标一动就重建一个 Storyboard(对比模式里鼠标在画面上移会几十次/秒)。
@@ -7508,8 +7525,11 @@ public sealed partial class VideoView : UserControl
             try { dur = es.NaturalDuration.TotalSeconds; } catch { }
             if (dur > 0.05) anchor = Math.Clamp(anchor, 0, Math.Max(0, dur - 0.02));
             // 【别白花时间】只有真的差着才定位:每次校验式定位都要等它落地,起播路上白等就是"按下去要等一下" ✗
-            if (Math.Abs(pe - anchor) > 0.03) await SeekAndVerifyAsync(e, anchor, 3).ConfigureAwait(true);
-            if (Math.Abs(po - anchor) > 0.03) await SeekAndVerifyAsync(o, anchor, 3).ConfigureAwait(true);
+            // 【2026-09-23 并行】两条**同时**发起定位再一起等(原来串行 ⇒ 等待时间叠加 = 起播更慢、
+            // 且"一条已到位、另一条还在原处"的可见窗口翻倍)。两条播放器互不相干,并行没有副作用。
+            var seekE = Math.Abs(pe - anchor) > 0.03 ? SeekAndVerifyAsync(e, anchor, 3) : Task.CompletedTask;
+            var seekO = Math.Abs(po - anchor) > 0.03 ? SeekAndVerifyAsync(o, anchor, 3) : Task.CompletedTask;
+            await Task.WhenAll(seekE, seekO).ConfigureAwait(true);
             if (Math.Abs(pe - po) > 0.03)
                 Log($"[对比] 遮罩对齐({why}):两条已拉到 {anchor:0.###}s(此前 片段 {pe:0.###} / 原片 {po:0.###},"
                     + $"相差 {(pe - po) * 1000:0} ms)");
@@ -9659,8 +9679,13 @@ public sealed partial class VideoView : UserControl
             var o = PreviewPlayer?.MediaPlayer;
             try { e?.Pause(); } catch { }
             try { o?.Pause(); } catch { }
-            if (e != null) await SeekAndVerifyAsync(e, 0, 6).ConfigureAwait(true);
-            if (o != null) await SeekAndVerifyAsync(o, 0, 6).ConfigureAwait(true);
+            // 【2026-09-23 并行归零】原来是"先 e 再 o"两条**串行**带校验定位 ⇒ 两次定位的等待叠加,
+            // 期间一条已经在 0、另一条还在片尾 = 屏幕上那半是"上一帧"、这半是"第一帧"(实测地面数据
+            // 抓到过 片段[停 0/3s] vs 原片[停 3/3s] = 3000ms 的瞬时错位)。
+            // 两条播放器互不相干 ⇒ 并行发起、一起等,可见窗口直接砍半(失败语义不变:各自最多重试 6 次)。
+            var seekE = SeekAndVerifyAsync(e, 0, 6);
+            var seekO = SeekAndVerifyAsync(o, 0, 6);
+            await Task.WhenAll(seekE, seekO).ConfigureAwait(true);
             ApplyCmpRateToAll(false);            // 起播前把用户倍率补到两条(同一个值)✔
             SetCmpPlayGlyph(true);
             try { o?.Play(); } catch { }
