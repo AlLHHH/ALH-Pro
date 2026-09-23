@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media.Imaging;
@@ -29,13 +29,27 @@ public sealed partial class MainPage : Page
         };
         LoadStartupPage();   // 默认启动页(-1=上次退出 0图片 1抠图 2视频)
         // 退出时记录最后一次使用的界面(「上次退出界面」启动模式保证准确;切换时也已记录,这里兜底)
-        try { App.MainWindow.Closed += (_, _) => SaveLastPage(_currentTag == "video" ? 2 : _currentTag == "cutout" ? 1 : 0); } catch { }
+        // 【2026-09-23 修 A2】原来这里是三元表达式(video→2 / cutout→1 / 其它→0):
+        // 音频处理与视频抠图都被写成 0(图片放大),在教程/设置页退出也会把上次页冲掉 ⇒ 改用统一换算,
+        // 不是五个功能页就**不写**(返回 -1)。
+        try
+        {
+            App.MainWindow.Closed += (_, _) =>
+            {
+                int lp = AlhPro.Core.StartupPageMap.PageForTag(_currentTag);
+                if (lp >= 0) SaveLastPage(lp);
+            };
+        }
+        catch { }
         // 视图随构造一起就绪(同步):窗口 Activate 在 App 侧,Navigate(MainPage) 完成即已构造好
         // MainPage + 挂载视图 → 窗口一出现就是完整界面(用户要求:等渲染完再开窗口)
         {
             int page0 = _startupPage >= 0 ? _startupPage : LoadLastPage();
             _startupPageIndex = page0;
-            NavList.SelectedIndex = page0;   // 触发 SelectionChanged → ShowView(唯一入口;下面不再重复调用)
+            // 【2026-09-23 修 A2 · 这一行就是那个 bug】原来是把"启动页编号"**直接**赋给导航列表的
+            // SelectedIndex —— 两套编号并不一致(启动页 2 = 视频处理;而导航列表第 3 项才是视频处理)⇒
+            // 真机实测"设置里选视频处理 → 开机进视频抠图"。现在走唯一换算(纯逻辑 + 单测)。
+            NavList.SelectedIndex = AlhPro.Core.StartupPageMap.NavIndexFor(page0);   // 触发 SelectionChanged → ShowView(唯一入口)
             // 注意:曾在此处再手动 ShowView 一次 → 视图被创建两次(日志"进入页面:图片放大"出现2次),
             // 第二个实例用默认值覆盖第一个恢复的设置 → "图片记不住格式/码率"的真正元凶。已删。
         }
@@ -78,7 +92,7 @@ public sealed partial class MainPage : Page
             AppLogger.Info($"安全渲染:模式={(SafeRender.Mode == 0 ? "自动" : "自定义")}," +
                 $"显存墙 {SafeRender.EffectiveVramGB:0.#} GB(总 {SafeRender.TotalVramGB:0.#} GB / 空闲 {SafeRender.FreeVramText})," +
                 $"分块 {SafeRender.GetTileSize()}(ONNX {SafeRender.GetOnnxTileSize()}),内存墙 {SafeRender.EffectiveRamGB:0.#} GB," +
-                $"视频批基准 {SafeRender.GetVideoBatchSize()} 帧/批(实际每批 50~400,按素材长度定),CPU {SafeRender.EffectiveCpuLevel switch { 1 => "低", 2 => "中", _ => "高" }}({SafeRender.CpuCoreCount} 核)," +
+                $"视频批基准 {SafeRender.GetVideoBatchSize()} 帧/批(实际每批 80~1400,按素材长度/显存/临时盘定),CPU {SafeRender.EffectiveCpuLevel switch { 1 => "低", 2 => "中", _ => "高" }}({SafeRender.CpuCoreCount} 核)," +
                 $"CPU硬上限 {SafeRender.GetEffectiveCpuCapPct():0}%(处理前系统占用 {SafeRender.IdleCpuLoad * 100:0}%)," +
                 $"降温休息={(SafeRender.RestEnabled ? "开(1小时/15分钟)" : "关")}");
             // Vulkan 自检:后台跑完,无 GPU 自动切 CPU。弹窗「设备检测」只对低配设备(无GPU/显存<6/内存<8/核数≤4)
@@ -1200,7 +1214,12 @@ public sealed partial class MainPage : Page
         // 记录最近使用界面(「上次退出界面」启动模式用);切换即保存,退出时也保存(见 MainWindow_Closed)
         // 索引口径:0=图片放大 1=图片抠图 2=视频处理 3=音频处理 4=视频抠图(见 StartupPage 注释,别再往下挤默认值)
         if (tag != "tutorial")
-            SaveLastPage(tag switch { "upscale" => 0, "cutout" => 1, "video" => 2, "audio" => 3, "matting" => 4, _ => 1 });
+        {
+            // 【2026-09-23 修 A2】换算收进 AlhPro.Core.StartupPageMap(唯一来源);不是五个功能页就不写
+            // (教程/设置/关于退出时不该把"上次界面"冲成图片放大)。
+            int lp = AlhPro.Core.StartupPageMap.PageForTag(tag);
+            if (lp >= 0) SaveLastPage(lp);
+        }
         if (tag == "upscale")
         {
             AppLogger.Info("进入页面:图片放大");
@@ -2276,7 +2295,7 @@ public sealed partial class MainPage : Page
         try
         {
             if (File.Exists(StartupFile) && int.TryParse(File.ReadAllText(StartupFile).Trim(), out var p)
-                && p is >= -1 and <= 3)
+                && AlhPro.Core.StartupPageMap.IsValidPage(p))   // 【2026-09-23 修 A2】范围放到 4(原来只到 3 ⇒「视频抠图」永远存不进去)
                 _startupPage = p;
         }
         catch { }
@@ -2308,7 +2327,7 @@ public sealed partial class MainPage : Page
         try
         {
             if (File.Exists(LastPageFile) && int.TryParse(File.ReadAllText(LastPageFile).Trim(), out var p)
-                && p is >= 0 and <= 2)
+                && AlhPro.Core.StartupPageMap.IsValidLastPage(p))   // 【2026-09-23 修 A2】范围放到 4(原来只到 2 ⇒ 音频处理/视频抠图被拒)
                 return p;
         }
         catch { }
@@ -2908,7 +2927,7 @@ public sealed partial class MainPage : Page
             RefreshCpuCap();   // 自动/自定义切换:CPU 上限滑条锁定 85%(自动)或恢复可拖(自定义)
             var modeTxt = SafeRender.Mode == 1 ? "" : "当前生效(自动):";
             applyText.Text = $"{modeTxt}显存墙 {SafeRender.EffectiveVramGB:0.#} GB → 分块 {SafeRender.GetTileSize()} · " +
-                $"内存墙 {SafeRender.EffectiveRamGB:0.#} GB → 每批基准 {SafeRender.GetVideoBatchSize()} 帧(实际 50~400,按素材长度)· CPU {CpuName(SafeRender.EffectiveCpuLevel)}";
+                $"内存墙 {SafeRender.EffectiveRamGB:0.#} GB → 每批基准 {SafeRender.GetVideoBatchSize()} 帧(实际 80~1400,按素材长度/显存定)· CPU {CpuName(SafeRender.EffectiveCpuLevel)}";
             SafeRender.Save();
             AppLogger.Info($"安全渲染设置已保存:模式={(SafeRender.Mode == 0 ? "自动" : "自定义")}," +
                 $"显存墙 {SafeRender.EffectiveVramGB:0.#} GB,内存墙 {SafeRender.EffectiveRamGB:0.#} GB," +

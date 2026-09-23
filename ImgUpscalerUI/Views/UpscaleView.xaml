@@ -341,7 +341,7 @@
                         <Button x:Name="CancelBtn" Content="强制结束"
                                 HorizontalAlignment="Stretch" MinHeight="44" Background="#E5484D" Foreground="White"
                                 IsEnabled="False" Click="CancelBtn_Click"
-                                ToolTipService.ToolTip="强制结束当前任务;休息时变「跳过休息」,点一下跳过休息继续处理"/>
+                                ToolTipService.ToolTip="强制结束当前任务(这次处理会被丢弃;已完成的文件不受影响)。休息时若想跳过休息,请点窗口底部状态栏右侧那个「跳过休息」按钮 —— 本按钮**始终**是「强制结束」,不会变文案"/>
                     </StackPanel>
 
                     <ProgressBar x:Name="TaskProgress" Minimum="0" Maximum="100" Value="0"/>

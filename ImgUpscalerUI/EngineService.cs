@@ -3265,8 +3265,12 @@ public static partial class EngineService
                 }
                 engineScale = 2;
             }
+            // 【2026-09-23 修 A5】这里原来是写死的 `-t 0` —— 而 RunEngAsync 的显存不足降级链
+            // (auto→512→256→128) 是把新的 t 当**参数**传进这个 lambda 的 ⇒ 写死 0 等于让降级空转:
+            // 日志与进度条都在说"分块 auto→512 重试",实际命令逐字节没变,同一参数白跑 3 次。
+            // 改成插值 `{t}`:首次仍是 0(引擎自选 auto,行为不变),重试时才真的变小 ✔
             await RunEngAsync(exe, t => $"-i \"{inputDir}\" -o \"{outputDir}\" -s {engineScale} -n {noise} " +
-                $"-t 0 -g {gpuId} -m \"{modelDir}\"{SafeRender.GetEngineThreadArgs()} -f {outFormat}" + (tta ? " -x" : "")).ConfigureAwait(false);
+                $"-t {t} -g {gpuId} -m \"{modelDir}\"{SafeRender.GetEngineThreadArgs()} -f {outFormat}" + (tta ? " -x" : "")).ConfigureAwait(false);
         }
         else if (engine == "realcugan")
         {
@@ -3282,8 +3286,9 @@ public static partial class EngineService
             // 行为不变(仍传 0):整帧直算交给引擎按显存自选分块,分块过大才会 vkQueueSubmit 失败 → 黑帧/OOM,
             // 那种情况由 RunEngAsync 的"降分块重试"与上层的黑帧降级链接住。
             // 视频帧整帧直算(OOM 时 RunEngAsync 自动降级重试/减 tile),避免逐帧"一块一块"。
+            // 【2026-09-23 修 A5,同上】`-t 0` 写死会让"显存不足自动降分块"变成空转 ⇒ 改成 `{t}`。
             await RunEngAsync(exe, t => $"-i \"{inputDir}\" -o \"{outputDir}\" -s {engineScale} -m {AlhPro.Core.EsrganModelDir.For(model)} -n {model} " +
-                $"-t 0 -g {gpuId}{SafeRender.GetEngineThreadArgs()} -f {outFormat}").ConfigureAwait(false);
+                $"-t {t} -g {gpuId}{SafeRender.GetEngineThreadArgs()} -f {outFormat}").ConfigureAwait(false);
         }
 
         // 非引擎原生倍数:批量缩放到目标倍数
