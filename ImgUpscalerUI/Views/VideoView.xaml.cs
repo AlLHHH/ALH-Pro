@@ -5139,6 +5139,8 @@ public sealed partial class VideoView : UserControl
     private long _maskAlignAt;
     /// <summary>连续多少次"停住态对齐"都没把两条纠到 120ms 以内(退避用,见 RealignMaskIfIdle)。</summary>
     private int _maskAlignTries;
+    /// <summary>一次对齐正在进行中(防重入:看门狗每 150ms 一跳,而一次对齐要 await 两次带校验的定位)。</summary>
+    private bool _maskAlignBusy;
     private CancellationTokenSource? _effCts;  // 预览取消(与主界面「强制结束」等效)
     private string? _effOutPath;               // 上次预览的临时成片(换预览/离开预览页时删除)
     private string? _effStarted;               // 已经起播过的成片路径(防重复起播)
@@ -7291,6 +7293,13 @@ public sealed partial class VideoView : UserControl
     /// <param name="why">日志用的一句话,说明这次为什么对齐(排查时一眼看出是谁调的)。</param>
     private async Task AlignMaskPairAsync(bool toMin, bool thenPlay, string why)
     {
+        // 【防重入 · 2026-09-23 自查】看门狗每 150ms 一跳,而本方法要 await 两次"带校验的定位"
+        // (每次十几~上百毫秒)⇒ 第一次还没做完,看门狗就可能再判一次"不同步"并起第二次对齐,
+        // 两个对齐互相 seek = 画面来回跳 ✗。所以:① 忙标志直接吃掉重入;② `_maskAlignAt` **在开头**就盖时间戳
+        // (原来写在定位之后,那段时间里冷却根本没生效)。
+        if (_maskAlignBusy) return;
+        _maskAlignBusy = true;
+        _maskAlignAt = Environment.TickCount64;
         try
         {
             if (!_maskSplitActive) return;
@@ -7316,7 +7325,6 @@ public sealed partial class VideoView : UserControl
             if (Math.Abs(pe - po) > 0.03)
                 Log($"[对比] 遮罩对齐({why}):两条已拉到 {anchor:0.###}s(此前 片段 {pe:0.###} / 原片 {po:0.###},"
                     + $"相差 {(pe - po) * 1000:0} ms)");
-            _maskAlignAt = Environment.TickCount64;      // 看门狗据此避免"刚对齐完又对齐"(见 RealignMaskIfIdle)
             ApplyCmpRateToAll(false);
             if (thenPlay) PlayWatchStep("左右对比·补倍率(可能触发管线重定时)");
             if (thenPlay || wasPlaying)
@@ -7329,6 +7337,7 @@ public sealed partial class VideoView : UserControl
             OnUiThread(() => { SetCmpPlayGlyph(thenPlay || wasPlaying); ShowCompareBarTemporarily(); });
         }
         catch (Exception ex) { AppLogger.Warn("遮罩对齐异常:" + ex.Message); }
+        finally { _maskAlignBusy = false; _maskAlignAt = Environment.TickCount64; }
     }
 
     /// <summary>【看门狗里的"空转兜底"】停住态(两条都没在播)时如果两条停在不同的时刻,就对齐它们。
