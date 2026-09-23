@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="UTF-8" ?>
+<?xml version="1.0" encoding="UTF-8" ?>
 <UserControl
     x:Class="ALHPro.Views.VideoMattingView"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -9,11 +9,19 @@
     mc:Ignorable="d">
 
     <!-- 视频抠图:独立板块。骨架照 VideoView.xaml:左栏 322 + 右侧裸 Grid(摘要/工具栏/列表宿主)。
-         用户 2026-09-22 追加要求(本轮落实):
+         用户 2026-09-22 追加要求:
            ① 进度条放到「开始处理」下面(不放右侧项目页下面);
            ② 顶部摘要用视频页那套"已处理 / 剩余"计数,不再堆"未处理/待处理";
            ③ 主按钮与视频页完全一致:开始处理=AccentButtonStyle+MinHeight 48,取消=红底 #FFE5484D;
-           ④ 背景色加色块(白/黑/绿)+ 调色板(ColorPicker)直接选色。 -->
+           ④ 背景色加色块(白/黑/绿)+ 调色板(ColorPicker)直接选色。
+         用户 2026-09-23 欠账(本轮落实):
+           ⑤ **色块挪到输入框右侧**:那一格显示"当前颜色"、点它开调色板 ⇒ 输入框/色块/调色板三者
+              永远是同一个值,不用再在"上面的色块"和"下面的输入框"之间来回看;
+           ⑥ **焦点离开时归一化**:输入框失焦或按回车 → 把 `fff` / `#F0A` / `0x1E3A5F` 这类写法
+              统一成 `#RRGGBB`;解析不了就**明确提示并退回上一个有效值**(绝不静默变黑 —— 下游只认
+              6 位十六进制,不归一化就会悄悄变黑,这正是本条欠账要治的病);
+           ⑦ **框选**:右侧任务列表支持鼠标橡皮筋多选(与视频页 VideoGridHost 同一套四个指针处理器)。
+         本文件是**整份重写**的(结构改动不用脚本打补丁 —— 上个会话在 XAML 上被脚本锚点坑过 4 次)。-->
     <Grid Background="Transparent" AllowDrop="True" DragOver="DropArea_DragOver" Drop="DropArea_Drop">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="322"/>
@@ -44,7 +52,8 @@
                                          Checked="BgMode_Changed"/>
                         </StackPanel>
 
-                        <!-- 纯色:三个常用色块 + 调色板(直接选任意颜色);颜色值统一写在 BgColorBox -->
+                        <!-- 纯色:第一行=三个常用色块(一键设值);第二行=十六进制输入框 + **右侧当前色块**
+                             (那一格显示当前颜色、点它开调色板)。三者共用同一个值,写入都走 SetBgColor。 -->
                         <StackPanel x:Name="BgColorRow" Spacing="6">
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <Button x:Name="SwatchWhite" Click="Swatch_Click" Tag="#FFFFFF"
@@ -62,7 +71,24 @@
                                         BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1">
                                     <Border Background="#00B140" CornerRadius="2" Width="24" Height="16"/>
                                 </Button>
-                                <Button x:Name="PaletteBtn" Content="调色板" FontSize="12" Padding="10,5">
+                                <TextBlock Text="背景色" VerticalAlignment="Center" FontSize="11" Opacity="0.6"/>
+                            </StackPanel>
+
+                            <Grid ColumnSpacing="6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="46"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="BgColorBox" Grid.Column="0" Text="#1E3A5F" IsSpellCheckEnabled="False"
+                                         LostFocus="BgColorBox_LostFocus" KeyDown="BgColorBox_KeyDown"
+                                         ToolTipService.ToolTip="背景色(十六进制)。#RRGGBB 或简写 #RGB 都行;离开输入框时会自动归一化"/>
+                                <!-- 输入框右侧的**当前色块**:显示现在的颜色;点它开调色板
+                                     (Button.Flyout 本身就是"点一下弹出来"的语义,不另挂 Click,免得弹两次)。 -->
+                                <Button x:Name="SwatchCurrent" Grid.Column="1" Padding="0" Height="32"
+                                        BorderBrush="{StaticResource AppBorderBrush}" BorderThickness="1"
+                                        ToolTipService.ToolTip="当前背景色 —— 点这里打开调色板选任意颜色">
+                                    <Border x:Name="SwatchCurrentFill" Background="#1E3A5F" CornerRadius="3"
+                                            Width="30" Height="22"/>
                                     <Button.Flyout>
                                         <Flyout>
                                             <ColorPicker x:Name="BgColorPicker" IsAlphaEnabled="False"
@@ -72,9 +98,9 @@
                                         </Flyout>
                                     </Button.Flyout>
                                 </Button>
-                            </StackPanel>
-                            <TextBox x:Name="BgColorBox" Text="#1E3A5F" IsSpellCheckEnabled="False"
-                                     ToolTipService.ToolTip="背景色(十六进制,如 #1E3A5F);上面的色块与调色板改的也是这里"/>
+                            </Grid>
+                            <TextBlock x:Name="BgColorHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
+                                       Visibility="Collapsed"/>
                         </StackPanel>
 
                         <Button x:Name="BgImageBtn" Content="选择背景图片..." Click="BgImage_Click"
@@ -235,12 +261,19 @@
                             IsEnabled="False" Click="Clear_Click"/>
                     <Button Grid.Column="3" x:Name="DoneBtn" Content="清除已完成" FontSize="12" Padding="10,5"
                             IsEnabled="False" Click="Done_Click" ToolTipService.ToolTip="清除所有已完成(灰)的项目"/>
-                    <TextBlock Grid.Column="4" Text="拖入视频即可添加" FontSize="11" Opacity="0.5"
+                    <TextBlock Grid.Column="4" Text="拖入视频即可添加 · 空白处拖动可框选" FontSize="11" Opacity="0.5"
                                VerticalAlignment="Center" HorizontalAlignment="Right"
                                TextTrimming="CharacterEllipsis"/>
                 </Grid>
 
-                <Grid Grid.Row="2" Background="Transparent" AllowDrop="True"
+                <!-- 任务列表宿主(**橡皮筋框选的挂载点**,照 VideoView 的 VideoGridHost):
+                     四个指针处理器挂在**宿主 Grid** 上、可见的矩形画在宿主里的 Canvas 上。
+                     注意:按在列表项上不启动框选(交回 ListView 做点击选中/拖拽排序),见 code-behind 的 IsPressOnTaskItem。 -->
+                <Grid x:Name="TaskGridHost" Grid.Row="2" Background="Transparent" AllowDrop="True"
+                      PointerPressed="TaskGridHost_PointerPressed"
+                      PointerMoved="TaskGridHost_PointerMoved"
+                      PointerReleased="TaskGridHost_PointerReleased"
+                      PointerCaptureLost="TaskGridHost_PointerCaptureLost"
                       DragOver="DropArea_DragOver" Drop="DropArea_Drop">
                     <ListView x:Name="TaskList" SelectionMode="Multiple" SelectionChanged="TaskList_SelectionChanged"
                               KeyDown="TaskList_KeyDown"
@@ -280,6 +313,13 @@
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>
+
+                    <!-- 框选橡皮筋(Canvas 内定位;IsHitTestVisible=false ⇒ 不吃指针,也不会挡列表) -->
+                    <Canvas IsHitTestVisible="False" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                        <Rectangle x:Name="RbRectM" Visibility="Collapsed"
+                                   Stroke="#5B8DEF" StrokeThickness="1" Fill="#335B8DEF"
+                                   IsHitTestVisible="False"/>
+                    </Canvas>
 
                     <StackPanel x:Name="EmptyHint" IsHitTestVisible="False" VerticalAlignment="Center"
                                 HorizontalAlignment="Center" Spacing="6">

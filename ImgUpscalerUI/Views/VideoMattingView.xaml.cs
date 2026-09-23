@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.ApplicationModel.DataTransfer;
 
@@ -87,6 +88,11 @@ public sealed partial class VideoMattingView : UserControl
     /// <summary>上一条已写进日志的进度文案(避免同一帧被重复上报两次时写两遍)。</summary>
     private string _lastLogged = "";
 
+    /// <summary>【2026-09-23】最后一个**有效**的背景色(`#RRGGBB`)。
+    /// 输入框里打错字时,归一化会退回它 —— 关键点:**绝不退化成黑色**
+    /// (下游 `VideoMattingService.ParseColor` 只认 6 位十六进制,不归一化就会静默变黑,这正是要治的病)。</summary>
+    private string _lastValidBgColor = "#1E3A5F";
+
     /// <summary>XAML 是否已解析完。解析期 IsChecked="True" 就会触发 Checked,那时其它控件还没建出来
     /// (真机踩到过:整页加载失败,报 Failed to assign to property 'ToggleButton.IsChecked')。</summary>
     private bool _ready;
@@ -110,6 +116,7 @@ public sealed partial class VideoMattingView : UserControl
         RefreshFormatOptions();
         RefreshEngineHint();
         RefreshEmptyState();
+        SetBgColor(BgColorBox.Text);   // 【2026-09-23】初始化右侧"当前色块",让它一开始就等于文本框里的颜色
         _ready = true;
     }
 
@@ -137,14 +144,72 @@ public sealed partial class VideoMattingView : UserControl
     /// <summary>常用色块(白/黑/绿):只改颜色值,与调色板/文本框同一个入口。</summary>
     private void Swatch_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button b && b.Tag is string hex) BgColorBox.Text = hex;
+        if (sender is Button b && b.Tag is string hex) SetBgColor(hex);
     }
 
     /// <summary>调色板选色 → 写回同一个十六进制文本框(另一条路改它也一样)。</summary>
     private void BgColorPicker_ColorChanged(ColorPicker sender, ColorChangedEventArgs args)
     {
         if (!_ready) return;
-        BgColorBox.Text = $"#{args.NewColor.R:X2}{args.NewColor.G:X2}{args.NewColor.B:X2}";
+        SetBgColor(AlhPro.Core.HexColor.Format(args.NewColor.R, args.NewColor.G, args.NewColor.B));
+    }
+
+    /// <summary>【唯一写入口】把背景色写进文本框 + 同步右侧色块。三个入口(色块/调色板/输入框归一化)都走这里,
+    /// 所以"文本框里的值 = 色块显示的颜色 = 真正下发给处理端的值"永远一致。</summary>
+    private void SetBgColor(string hex)
+    {
+        var norm = AlhPro.Core.HexColor.Normalize(hex);
+        if (norm == null) return;                      // 非法值只可能来自归一化已判定过的路径,这里直接忽略
+        _lastValidBgColor = norm;
+        try
+        {
+            BgColorBox.Text = norm;
+            if (SwatchCurrentFill != null)
+            {
+                AlhPro.Core.HexColor.TryParseRgb(norm, out var r, out var g, out var b);
+                SwatchCurrentFill.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, r, g, b));
+            }
+            if (BgColorHint != null) BgColorHint.Visibility = Visibility.Collapsed;   // 设了有效值就把上次的警告收起来
+        }
+        catch { }
+    }
+
+    /// <summary>焦点离开输入框 / 按回车 ⇒ 归一化。见 <see cref="AlhPro.Core.HexColor"/> 的说明:
+    /// 用户很自然会打 `fff`、`#F0A`、`0x1E3A5F`,而下游只认恰好 6 位 ⇒ 不归一化就**静默变黑**。
+    /// 归一化不了(长度不对/有非法字符/带了注释)时**明确提示并按上一个有效值回退** ——
+    /// 绝不把"打错了"变成"颜色悄悄变了"。</summary>
+    private void NormalizeBgColorText()
+    {
+        if (!_ready) return;
+        var raw = BgColorBox.Text;
+        var norm = AlhPro.Core.HexColor.Normalize(raw);
+        if (norm != null)
+        {
+            SetBgColor(norm);   // 写回规范写法(#RRGGBB 大写)—— 文本框里永远只有一种写法,肉眼可比对
+            return;
+        }
+        SetBgColor(_lastValidBgColor);
+        try
+        {
+            if (BgColorHint != null)
+            {
+                BgColorHint.Text = $"「{raw}」不是有效颜色(要 6 位十六进制,如 #1E3A5F;简写 #RGB 也行)"
+                                 + $" ⇒ 已退回上一个有效值 {_lastValidBgColor}";
+                BgColorHint.Visibility = Visibility.Visible;
+            }
+            Status(BgColorHint?.Text ?? "");
+            AppLogger.Info($"[视频抠图] 背景色输入无效:{raw} ⇒ 退回 {_lastValidBgColor}");
+        }
+        catch { }
+    }
+
+    private void BgColorBox_LostFocus(object sender, RoutedEventArgs e) => NormalizeBgColorText();
+
+    private void BgColorBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key != Windows.System.VirtualKey.Enter) return;
+        e.Handled = true;
+        NormalizeBgColorText();
     }
 
     private void BgMode_Changed(object sender, RoutedEventArgs e)
@@ -502,6 +567,114 @@ public sealed partial class VideoMattingView : UserControl
 
     private void SetRunning(bool running) => UpdateButtons();
 
+    // ==================== 框选(橡皮筋多选) ====================
+    // 【2026-09-23 补的欠账】照抄 `VideoView` 的 `VideoGridHost` 那四个指针处理器(它与本页此前是
+    // "最后一个真差异":视频页能框选、抠图页不能)。三条纪律与原版逐字一致:
+    //   ① 按在**列表项**上不启动框选 ⇒ 交回 ListView 做"点击选中/拖拽排序"(否则拖动排序会被吃掉);
+    //   ② 位移小于 4px 算单击 ⇒ 清空选中(点空白处取消选择,与 Windows 资源管理器一致);
+    //   ③ 必须 CapturePointer:指针拖出宿主后仍要收到 Moved/Released,否则橡皮筋会"卡住不消失"。
+    private const double RbThresholdM = 4;
+    private bool _rbBandingM;
+    private bool _rbMovedM;
+    private Windows.Foundation.Point _rbStartM;
+
+    private void TaskGridHost_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (IsPressOnTaskItem(e.GetCurrentPoint(TaskGridHost).Position)) return;
+        _rbBandingM = true;
+        _rbMovedM = false;
+        _rbStartM = e.GetCurrentPoint(TaskGridHost).Position;
+        RbRectM.Visibility = Visibility.Visible;
+        RbRectM.Width = 0;
+        RbRectM.Height = 0;
+        Canvas.SetLeft(RbRectM, _rbStartM.X);
+        Canvas.SetTop(RbRectM, _rbStartM.Y);
+        TaskGridHost.CapturePointer(e.Pointer);
+    }
+
+    /// <summary>按下位置是否落在某个任务行上(落在行上就交给 ListView,避免与框选打架)。</summary>
+    private bool IsPressOnTaskItem(Windows.Foundation.Point pt)
+    {
+        for (int i = 0; i < _items.Count; i++)
+        {
+            if (TaskList.ContainerFromIndex(i) is FrameworkElement c && c.ActualWidth > 0)
+            {
+                var tl = c.TransformToVisual(TaskGridHost).TransformPoint(new Windows.Foundation.Point(0, 0));
+                var r = new Windows.Foundation.Rect(tl.X, tl.Y, c.ActualWidth, c.ActualHeight);
+                if (r.Contains(pt)) return true;
+            }
+        }
+        return false;
+    }
+
+    private void TaskGridHost_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_rbBandingM) return;
+        var cur = e.GetCurrentPoint(TaskGridHost).Position;
+        if (!_rbMovedM && Math.Abs(cur.X - _rbStartM.X) < RbThresholdM && Math.Abs(cur.Y - _rbStartM.Y) < RbThresholdM)
+            return;
+        _rbMovedM = true;
+        UpdateRbRectM(cur);
+    }
+
+    private void TaskGridHost_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_rbBandingM) return;
+        _rbBandingM = false;
+        try { TaskGridHost.ReleasePointerCapture(e.Pointer); } catch { }
+        if (_rbMovedM)
+        {
+            UpdateRbRectM(e.GetCurrentPoint(TaskGridHost).Position);
+            ApplyRubberSelectionM();
+        }
+        else
+        {
+            TaskList.SelectedItems.Clear();   // 单击空白 = 取消选中
+            UpdateButtons();
+        }
+        RbRectM.Visibility = Visibility.Collapsed;
+    }
+
+    private void TaskGridHost_PointerCaptureLost(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        _rbBandingM = false;
+        try { RbRectM.Visibility = Visibility.Collapsed; } catch { }
+    }
+
+    private void UpdateRbRectM(Windows.Foundation.Point cur)
+    {
+        double x = Math.Min(_rbStartM.X, cur.X);
+        double y = Math.Min(_rbStartM.Y, cur.Y);
+        Canvas.SetLeft(RbRectM, x);
+        Canvas.SetTop(RbRectM, y);
+        RbRectM.Width = Math.Abs(cur.X - _rbStartM.X);
+        RbRectM.Height = Math.Abs(cur.Y - _rbStartM.Y);
+        RbRectM.Visibility = RbRectM.Width > 2 && RbRectM.Height > 2 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>橡皮筋与行相交即选中(相交判据,不是"完全包含"—— 与视频页一致)。</summary>
+    private void ApplyRubberSelectionM()
+    {
+        var rect = new Windows.Foundation.Rect(Canvas.GetLeft(RbRectM), Canvas.GetTop(RbRectM),
+            RbRectM.Width, RbRectM.Height);
+        if (rect.Width < 2 || rect.Height < 2) return;
+        TaskList.SelectedItems.Clear();
+        for (int i = 0; i < _items.Count; i++)
+        {
+            if (TaskList.ContainerFromIndex(i) is FrameworkElement c)
+            {
+                var topLeft = c.TransformToVisual(TaskGridHost).TransformPoint(new Windows.Foundation.Point(0, 0));
+                var itemRect = new Windows.Foundation.Rect(topLeft.X, topLeft.Y, c.ActualWidth, c.ActualHeight);
+                if (RectIntersectsM(itemRect, rect)) TaskList.SelectedItems.Add(_items[i]);
+            }
+        }
+        UpdateButtons();   // 框选完要让「删除选中」亮起来(否则框了一堆还是灰的,像没选中)
+    }
+
+    private static bool RectIntersectsM(Windows.Foundation.Rect a, Windows.Foundation.Rect b)
+        => a.X < b.X + b.Width && a.X + a.Width > b.X
+            && a.Y < b.Y + b.Height && a.Y + a.Height > b.Y;
+
     private void TaskList_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateButtons();
 
     /// <summary>按钮灰的规则(照视频处理页):没选中就不给点「删除选中」,列表空不给点「清空」,
@@ -515,20 +688,6 @@ public sealed partial class VideoMattingView : UserControl
         RemoveBtn.IsEnabled = !running && TaskList.SelectedItems.Count > 0;
         ClearBtn.IsEnabled = !running && _items.Count > 0;
         DoneBtn.IsEnabled = !running && _done.Count > 0;
-        OutDirBtn.IsEnabled = !running;
-        ModeBgRadio.IsEnabled = !running;
-        ModeAlphaRadio.IsEnabled = !running;
-        FormatCombo.IsEnabled = !running;
-    }
-
-    private void SetRunningOld(bool running)
-    {
-        StartBtn.IsEnabled = !running;
-        CancelBtn.IsEnabled = running;
-        PickBtn.IsEnabled = !running;
-        RemoveBtn.IsEnabled = !running;
-        ClearBtn.IsEnabled = !running;
-        DoneBtn.IsEnabled = !running;
         OutDirBtn.IsEnabled = !running;
         ModeBgRadio.IsEnabled = !running;
         ModeAlphaRadio.IsEnabled = !running;
@@ -568,7 +727,9 @@ public sealed partial class VideoMattingView : UserControl
             ? _containers[Math.Clamp(FormatCombo.SelectedIndex, 0, _containers.Length - 1)]
             : "mp4",
         BackgroundPath: BgImageRadio.IsChecked == true ? _bgImage : "",
-        BackgroundColor: BgColorBox.Text,
+        // 【2026-09-23】背景色一律**归一化后**再下发:用户可能还停在输入框里没失焦就点了「开始处理」,
+        // 那时文本框里可能是 `fff` 这种简写 —— 直接下发会被下游判为非法并**静默变黑** ✗。
+        BackgroundColor: AlhPro.Core.HexColor.NormalizeOr(BgColorBox.Text, _lastValidBgColor),
         Fg: (int)FgSlider.Value,
         Bg: (int)BgSlider.Value,
         Feather: (int)FeatherSlider.Value,
