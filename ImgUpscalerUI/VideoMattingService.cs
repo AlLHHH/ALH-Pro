@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -314,11 +314,12 @@ public static class VideoMattingService
 
     private static byte[] ParseColor(string hex)
     {
-        var s = (hex ?? "").Trim().TrimStart('#');
-        if (s.Length == 6
-            && byte.TryParse(s.Substring(0, 2), System.Globalization.NumberStyles.HexNumber, null, out byte r)
-            && byte.TryParse(s.Substring(2, 2), System.Globalization.NumberStyles.HexNumber, null, out byte g)
-            && byte.TryParse(s.Substring(4, 2), System.Globalization.NumberStyles.HexNumber, null, out byte b))
+        // 【2026-09-23 与界面同一份判据】原先这里只认**恰好 6 位**十六进制,其余一律静默回退黑色 ✗
+        // (`fff` 这种很自然的简写会**悄悄变黑**,这正是"输入框焦点离开归一化"那条欠账要治的病)。
+        // 现在交给 AlhPro.Core.HexColor(有单测):简写按 CSS 规则展开(`#F0A` → `#FF00AA`),
+        // 大小写 / `#` 前缀 / `0x` / 前后空白都容忍;真的不合法仍然回退黑色
+        // (走到这里的"非法"只可能来自绕过界面的调用 —— 界面侧会明确提示并退回上一个有效值)。
+        if (AlhPro.Core.HexColor.TryParseRgb(hex, out byte r, out byte g, out byte b))
             return new[] { r, g, b };
         return new byte[] { 0, 0, 0 };
     }
