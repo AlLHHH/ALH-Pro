@@ -4699,6 +4699,7 @@ public sealed partial class VideoView : UserControl
         {
             PreviewPlayer.Source = MediaSource.CreateFromUri(new Uri(item.Path));
             _previewLoadedPath = item.Path;
+            RecacheMediaRefs("裁剪页装原片后");   // 【2026-09-23】装片会创建/替换 MediaPlayer ⇒ 缓存引用必须重抓
         }
         else
         {
@@ -4971,6 +4972,7 @@ public sealed partial class VideoView : UserControl
                 PreviewPlayer.Source = Windows.Media.Core.MediaSource.CreateFromUri(new Uri(clip));
                 _previewLoadedPath = clip;
                 _zmLoadedPath = clip;
+                RecacheMediaRefs("对比片装进上层后");   // 【2026-09-23】装片会创建/替换 MediaPlayer ⇒ 缓存引用必须重抓
                 try { ApplyCmpRateToAll(false); } catch { }        // 换源会把倍率打回 1.0 ⇒ 立刻补回 ✔
                 Log($"[两者同时] 两侧同源装载(同一条合成片,各自缩放):{Path.GetFileName(clip)}");
             }
@@ -5344,6 +5346,90 @@ public sealed partial class VideoView : UserControl
     private void CacheBarPlayer(Windows.Media.Playback.MediaPlayer? mp)
     {
         _barMpCache = mp;
+    }
+
+    // ===== 【2026-09-23 · 修"左右预览不协调"的**真根因**】把"媒体线程要用的缓存引用"与活体对齐 =====
+    //
+    // 【机制】给 `MediaPlayerElement.Source` 赋值时,元素会**创建/替换**它的 MediaPlayer;
+    // 而媒体回调(位置/状态同步、地面数据、硬对齐)不能读控件属性(媒体线程上读会抛 0x8001010E,
+    // 本文件多处记过这个坑),只能读 UI 线程存下来的那几个字段:
+    //   `_origMpCache/_origSessionCache`(原片那条)、`_cmpPosMpCache`(位置回调挂的那条)、`_barSession/_barMpCache`。
+    // ⇒ **装片之后没有重新抓引用 = 这些回调从此对着一个孤儿会话说话**:
+    //   ① 位置回调里那段"原片同步"整段失效(它先读 `op.PlaybackState`,孤儿会话恒为 Paused ⇒ 什么都不做,
+    //      连 `_cmpSyncBranchEntered` 都不会置 true);② 地面数据的 `原片[…]` 与 `漂移` 变成假数
+    //      (读的是 0/0s 的孤儿);③ 自绘播放条读数停在 `00:00.0 / 00:00.0`。
+    //
+    // 【实证 · 2026-09-23 用测试缝 ALH_TEST_VIDEO 跑到的一手现场】切进「左右对比」后:
+    //   画面两侧都在正常渲染(截图已确认)、片段条在播(`片段[播 2.193/3s]`),而同一行日志写着
+    //   `原片[停 0/0s] · 漂移 -2193ms · 进同步分支=False`,并且**整段播放一次硬对齐都没触发**
+    //   (门槛 0.25 秒,−2193ms 早该触发) ⇒ 同步那段根本没在工作。
+    //
+    // 【为什么只有上层中招】下层的装片入口 `LoadEffectSource` 里跟着一句 `SetCompareSync(...)`
+    //   (它会顺手重抓引用);而上层 `TryMaskSplit` 里那句 `PreviewPlayer.Source = …` 后面什么都没跟。
+    //   更要命的是"仅原片"那条路(下层已经是同一条片、只重装上层)**恰恰不会**走到 `LoadEffectSource`
+    //   ⇒ 引用永久停在旧值/`null`,而且此后没有任何地方会去修它。
+    //
+    // 【做法】① 每个 `PreviewPlayer.Source = …` / `EffectPlayer.Source = …` 之后显式调一次
+    //   `RecacheMediaRefs`;② 看门狗每 150ms **对一次账**(`OrigRefLooksStale`)——
+    //   一旦再出现"装片没重抓"的路径,150ms 内自愈并写日志,而不是让同步静默失效几个月。
+    /// <summary>【2026-09-23】上次"看门狗自愈重抓引用"的时刻(限流用:同症状 2 秒最多修一次)。</summary>
+    private long _lastRefHealAt;
+
+    /// <summary>重新抓取"媒体回调要用的"全部引用,并在引用真的变了时重新挂回调(UI 线程调用)。</summary>
+    private void RecacheMediaRefs(string why)
+    {
+        try
+        {
+            var newOrig = (_compareMode ? PreviewPlayer : _srcPlayer)?.MediaPlayer;
+            var newEff = EffectPlayer.MediaPlayer;
+            var newBar = _trimMode
+                ? PreviewPlayer.MediaPlayer
+                : (_compareMode ? EffectPlayer.MediaPlayer : (_barOnOriginal ? _srcPlayer?.MediaPlayer : _resPlayer?.MediaPlayer));
+            // 判"变了"要把"活体有片子、缓存却读回 0/0s"也算上 —— 会话包装对象不保证 ReferenceEquals
+            // (本文件记过:同一个播放器两次取到的 session 对象可能是不同包装)⇒ 只比引用会漏判。
+            double cachedDur = 0;
+            try { cachedDur = _origSessionCache?.NaturalDuration.TotalSeconds ?? 0; } catch { }
+            double liveDur = 0;
+            try { liveDur = newOrig?.PlaybackSession.NaturalDuration.TotalSeconds ?? 0; } catch { }
+            bool changed = !ReferenceEquals(_origMpCache, newOrig)
+                           || !ReferenceEquals(_cmpPosMpCache, newEff)
+                           || !ReferenceEquals(_barMpCache, newBar)
+                           || _origSessionCache == null
+                           || (liveDur > 0.05 && cachedDur <= 0.05);
+            _origMpCache = newOrig;
+            _origSessionCache = newOrig?.PlaybackSession;
+            _cmpPosMpCache = newEff;
+            CacheBarPlayer(newBar);
+            _barSession = newBar?.PlaybackSession;
+            if (!changed) return;
+            AppLogger.Info($"[播放器引用] 重新抓取({why}):原片={MpName(newOrig)}(活体时长 {liveDur:0.###}s,此前缓存读回 {cachedDur:0.###}s)"
+                + $" 成片={MpName(newEff)} 播放条={MpName(newBar)}");
+            // 位置/状态回调是**按会话**订阅的 ⇒ 引用了新会话就必须重挂一次
+            // (`SetCompareSync(on)` 在"已订阅"时会提前返回,所以必须先 false 再 true 才真的重挂)
+            SetCompareSync(false);
+            if (_compareMode) SetCompareSync(true);
+            EnsureBarSync();
+        }
+        catch (Exception ex) { AppLogger.Warn("重新抓取播放器引用失败:" + ex.Message); }
+    }
+
+    /// <summary>"原片那条的缓存引用"是不是孤儿 —— **只看症状,不做引用比较**。
+    /// 【为什么不做 ReferenceEquals】本文件记过:`PlaybackSession` 两次取到的包装对象不保证同一实例;
+    /// 拿引用相等当判据,一旦包装不稳定就会**每 150ms 判一次"不一致"** ⇒ 日志刷屏 + 反复重挂回调 ✗。
+    /// 症状判据(与用户可见现象一一对应):① 缓存是 null;② 活体有片子(时长 >0.05s)而缓存读回 0/0s
+    /// ——后者正是"地面数据写着 `原片[停 0/0s]` 而画面其实在正常播"那种现场。UI 线程调用。</summary>
+    private bool OrigRefLooksStale(Windows.Media.Playback.MediaPlayer? liveOrig,
+        Windows.Media.Playback.MediaPlaybackSession? liveOrigSession)
+    {
+        try
+        {
+            if (_origSessionCache == null) return true;
+            double liveDur = 0, cachedDur = 0;
+            try { liveDur = liveOrigSession?.NaturalDuration.TotalSeconds ?? 0; } catch { }
+            try { cachedDur = _origSessionCache.NaturalDuration.TotalSeconds; } catch { }
+            return liveDur > 0.05 && cachedDur <= 0.05;
+        }
+        catch { return false; }
     }
 
     /// <summary>【倒装 · 2026-09-19 用户实测"看原片里画面被那条线的遮罩切成一条"】
@@ -6266,6 +6352,7 @@ public sealed partial class VideoView : UserControl
                 // 保持旧路径(把源文件放进 PreviewPlayer),于是"没跑过预览就看对比"的版式与改动前逐像素一致 ✔
                 PreviewPlayer.Source = MediaSource.CreateFromUri(new Uri(_previewItem.Path));
                 _previewLoadedPath = _previewItem.Path;
+                RecacheMediaRefs("没结果时的对比视图装原片后");   // 【2026-09-23】同上:装片后必须重抓引用
             }
             if (_compareMode && hasResult)
             {
@@ -6493,6 +6580,7 @@ public sealed partial class VideoView : UserControl
             _cmpPendingPlay = play;
             EffectPlayer.Source = MediaSource.CreateFromUri(new Uri(path));
             SetCompareSync(_compareMode);
+            RecacheMediaRefs("成片条装片后");   // 【2026-09-23】装片会创建/替换 MediaPlayer ⇒ 缓存引用必须重抓
             StartEffectPlaybackWhenReady(path, 0, _effGen);
         }
         catch { }
@@ -6623,6 +6711,23 @@ public sealed partial class VideoView : UserControl
             var om = PreviewPlayer.MediaPlayer;
             var os = om?.PlaybackSession;
             if (se == null || om == null || os == null) return;
+            // ===== 【2026-09-23 自愈】先对账:媒体回调用的那几个缓存引用会不会已经变成孤儿 =====
+            // (装片会给元素创建/替换 MediaPlayer;而媒体线程读不到控件属性,只能读缓存的引用)
+            // 不对账的后果是**静默失效**:位置回调里那段"原片同步"什么都不做、地面数据的漂移变成假数。
+            // 这里 150ms 一次、只比引用与时长(极便宜);一旦发现不对就立刻重抓 + 重挂回调并写日志。
+            if (OrigRefLooksStale(om, os))
+            {
+                // 限流:同一症状反复出现时不要每 150ms 重挂一次回调(那条路只在"真的坏了"时才走到)
+                long nowTick = Environment.TickCount64;
+                if (nowTick - _lastRefHealAt > 2000)
+                {
+                    _lastRefHealAt = nowTick;
+                    RecacheMediaRefs("看门狗对账:缓存引用与活体不一致");
+                }
+                om = PreviewPlayer.MediaPlayer;
+                os = om?.PlaybackSession;
+                if (om == null || os == null) return;
+            }
             double clipPos = se.Position.TotalSeconds;
             double clipDur = se.NaturalDuration.TotalSeconds;
             bool clipPlaying = se.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing;
@@ -7112,6 +7217,13 @@ public sealed partial class VideoView : UserControl
                 _maskOnPath = _cmpClipPath;
                 Log($"[遮罩左右对比] 两条同源装载:{Path.GetFileName(_cmpClipPath)}"
                   + (effOk ? "(仅原片)" : origOk ? "(仅处理后)" : "(两条)"));
+                // 【2026-09-23 修 · 本轮找到的"真根因"就在这一句后面】
+                // 上面 `PreviewPlayer.Source = …` 会让元素**创建/替换**它的 MediaPlayer,而媒体回调
+                // 只认 UI 线程存下来的缓存引用(`_origMpCache/_origSessionCache`)。
+                // "仅原片"这条路**不会**走 `LoadEffectSource`(那句里跟了 SetCompareSync,会顺手重抓)⇒
+                // 引用永久停在旧值/null,于是"原片同步"整段静默失效、地面数据的漂移变成假数
+                // (实证:画面两侧都在渲染,日志却写 `原片[停 0/0s] · 漂移 -2193ms · 无硬对齐`)。
+                RecacheMediaRefs("遮罩装片后(上层刚拿到 Source)");
                 // 【2026-09-18 用户:"换视角倍率会变"】换源会把新装的播放器速率打回默认 1.0 ✗ ⇒
                 // 每次装载之后**立刻把用户的倍率补回两条** ✔(静音状态一并补,同一个道理)
                 try { ApplyCmpRateToAll(false); } catch { }
@@ -9644,6 +9756,7 @@ public sealed partial class VideoView : UserControl
             {
                 PreviewPlayer.Source = Windows.Media.Core.MediaSource.CreateFromUri(new Uri(_twoFileSrc));
                 _previewLoadedPath = _twoFileSrc;
+                RecacheMediaRefs("两文件并排装上原片后");   // 【2026-09-23】同上(该形态当前关闭,一并补上)
             }
             if (!string.Equals(_effLoadedPath, _twoFileProc, StringComparison.OrdinalIgnoreCase))
             {
