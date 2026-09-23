@@ -57,10 +57,10 @@
                         <RadioButton x:Name="Scale3xRadio" Content="3x"/>
                         <RadioButton x:Name="Scale4xRadio" Content="4x"/>
                     </RadioButtons>
-                    <TextBlock x:Name="ScaleHint" FontSize="10" Opacity="0.6"
-                               Foreground="#E8A33D" TextWrapping="Wrap"
-                               Text="当前模型不支持 3x/4x 倍率(已置灰);倍率由引擎内置权重决定,请选择灰色项以外的倍数"
-                               Visibility="Collapsed"/>
+                    <!-- 【C1 · 2026-09-23 删除】这里原先有一个永远不可见的橙色提示 TextBlock(x:Name=ScaleHint,
+                         Foreground=#E8A33D,Visibility=Collapsed):它当初是给"某些模型不支持 3x/4x 所以置灰"用的,
+                         但 waifu2x 级联实测通过后 3x/4x 一律可用,代码里唯一碰它的地方(UpdateScaleAvailability)
+                         就只剩一句"把它设为 Collapsed" ⇒ 用户永远看不到、代码只读不写 = 死界面。 -->
 
                     <StackPanel x:Name="NoisePanel" Spacing="6">
                         <TextBlock Text="降噪级别" Style="{StaticResource SectionTitle}"/>

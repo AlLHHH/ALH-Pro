@@ -192,8 +192,9 @@ setTimeout(function () {
     <details data-reveal id="50series">
       <summary>RTX 50 系为什么会被提示走了“兼容路线”?</summary>
       <div class="details-body">
-        <p>50 系较新,部分内置引擎(基于 ncnn-Vulkan)在早期驱动上不完全兼容。软件会自动适配:
-          <strong>检测到 50 系就改用 ONNX / DirectML 稳定路线,显卡仍参与加速(不是退回纯 CPU),结果不受影响</strong>,页面上会有提示。</p>
+        <p>50 系较新,部分内置引擎(基于 ncnn-Vulkan)在早期驱动上不完全兼容 —— 所以从 v1.4.2 起不再按型号一刀切:
+          <strong>第一次处理时软件会真机实测</strong>,实测通过就走 ncnn 最快路径(50 系也能用),不通过才自动改走
+          ONNX / DirectML 稳定路线(显卡仍参与加速,不是退回纯 CPU),两种情况下结果都不受影响,页面上会有提示。</p>
         <p>从 v1.3.5 起补帧引擎已用新版 ncnn 重编,50 系不必再等驱动修复。</p>
       </div>
     </details>
@@ -202,7 +203,10 @@ setTimeout(function () {
       <summary>提示“驱动偏旧 / 改走兼容路线”,一定要更新驱动吗?</summary>
       <div class="details-body">
         <p>不是必须,但<strong>更新显卡驱动后重启软件,通常能恢复完整的 GPU 加速</strong>。老驱动(2021 年以前)上引擎可能起不来,软件会自动降级(慢但稳)。</p>
-        <p>内置的视频编码器(NVENC)也需要较新的 NVIDIA 驱动,驱动过旧时软件会改用 CPU 软编码并提示你。</p>
+        <p>内置的视频编码器(NVENC / AMF / QSV)也需要较新的显卡驱动。<strong>视频处理不提供 CPU 软编</strong>:
+          实测 CPU 软编比硬编慢 7 倍以上(同一段片子编码 17 秒 → 116 秒),所以本机没有可用硬件编码器时,
+          软件会<strong>直接停下并提示你更新驱动</strong>,而不是悄悄变成几小时。
+          (图片放大 / 抠图 / 音频处理不受影响,那三项没有显卡也能用 CPU 跑完。)</p>
       </div>
     </details>
 

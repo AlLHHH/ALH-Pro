@@ -1,4 +1,4 @@
-﻿// EsrganOnnxService.cs — Real-ESRGAN ONNX 超分(纯 C#,ONNX Runtime,无 Python)
+// EsrganOnnxService.cs — Real-ESRGAN ONNX 超分(纯 C#,ONNX Runtime,无 Python)
 // 目的:ncnn-Vulkan 实测不可用时(50 系 / AMD / 无独显 / 驱动异常)的稳定超分实现 —— 走 ONNX
 // (优先 DirectML,失败落 CPU),与 ncnn 是两套完全独立的运行时。
 // 【措辞已更正】原文写"引擎文件 realesrgan-ncnn-vulkan.exe(2022)在 50 系不可用",那是"按型号猜"时代的
@@ -207,6 +207,19 @@ public static class EsrganOnnxService
     /// 这是原 _dmlBad 闩锁里唯一有用的那半(不重复注定失败的调用),去掉的是它"转 CPU"的落点。</summary>
     internal static bool DmlDeviceUnusable(int device, DmlDomain domain = DmlDomain.Video)
         => device >= 0 && Strikes(domain).TryGetValue(device, out var n) && n >= DmlTransientStrikeLimit;
+
+    /// <summary>【B4 · 2026-09-23】DirectML **建会话**就失败(AppendExecutionProvider_DML 抛异常)时,
+    /// 直接把该设备在该业务域判死(连击一次打满),而不是等"推理失败 3 次"。
+    /// 【为什么】(实测)音频分离每次任务都重启一遍 DML 尝试:provider 挂不上去是**结构性**问题
+    /// (驱动/显存状态),同一进程里再试必然再失败一次 —— 而连击表要靠**三次任务**才到上限,
+    /// 于是每个任务都白等 2~11 秒。建会话失败 ⇒ 本次就是这个结论,不必再攒两次。
+    /// 【复位】进程内闩锁,重启软件即清空(与 DmlDeviceDead 同口径:驱动修好不必重装软件)。
+    /// ⚠ 只给"建会话失败"用:推理期的一次失败仍走 NoteDmlTransientFailure(可能是瞬时抖动,不能重罚)。</summary>
+    internal static void NoteDmlSessionCreationFailure(int device, DmlDomain domain = DmlDomain.Video)
+    {
+        if (device < 0) return;
+        Strikes(domain)[device] = DmlTransientStrikeLimit;
+    }
 
     /// <summary>是否【任一】设备已达连击上限。供只持有"自动"(-2)这类未解析设备号的调用方使用:
     /// 逐对/逐帧循环里认出一次就该停止白试,否则几千帧就是几千次注定失败的调用 + 几千条同样的日志。</summary>

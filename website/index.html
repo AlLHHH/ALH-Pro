@@ -358,10 +358,10 @@ setTimeout(function () {
         <p><strong>NVIDIA 优先优化</strong>;AMD、Intel 可用,但<strong>没有做专门优化</strong>,可能自动走更稳的路线或改用 CPU。</p>
         <ul class="fit-list">
           <li><span class="fit-k">NVIDIA RTX 30 / 40 系</span><span class="fit-v">最稳,走 GPU 加速</span></li>
-          <li><span class="fit-k">NVIDIA RTX 50 系</span><span class="fit-v">可用,自动改用更稳的引擎路线</span></li>
+          <li><span class="fit-k">NVIDIA RTX 50 系</span><span class="fit-v">可用;首次处理时真机实测,通过就走最快路径,不通过自动改走稳定路线</span></li>
           <li><span class="fit-k">NVIDIA 20 / 16 / 10 系</span><span class="fit-v">可用;驱动偏旧时可能自动降级</span></li>
           <li><span class="fit-k">AMD · Intel 独显</span><span class="fit-v">可用,未做专门优化,可能降级</span></li>
-          <li><span class="fit-k">核显 / 无独显</span><span class="fit-v">能跑,但会慢很多(自动改用 CPU)</span></li>
+          <li><span class="fit-k">核显 / 无独显</span><span class="fit-v">图片 / 音频能用 CPU 跑完(慢);<strong>视频处理需要可用的硬件编码器</strong>,没有会直接提示而不是慢慢磨</span></li>
         </ul>
         <p class="small muted">用哪块卡、走哪条路线由软件自动判断,不用你设置;逐显卡的完整对照表见
           <a href="faq.html#gpu">常见问题 · 显卡能不能用</a>。</p>

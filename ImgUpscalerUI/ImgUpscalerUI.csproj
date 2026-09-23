@@ -24,8 +24,11 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <RootNamespace>ALHPro</RootNamespace>
         <AssemblyName>ALHPro</AssemblyName>
-        <!-- 【2026-09-23】1.4.1 → 1.4.2:用户点名要修的"实测清单"第一批(A1/A2/A3/A5/A6/A8/A9 + B2/B3)。
-             公告见仓库根 release_history.json(应用内更新公告的单一来源)与 RELEASE_NOTES.md。 -->
+        <!-- 【2026-09-23】1.4.1 → 1.4.2:用户点名要修的"实测清单"**两批一起**(第一批 A1/A2/A3/A5/A6/A8/A9 + B2/B3,
+             第二批 B4/B5/B6/B7/B8 + C1~C4)。两批都还没对外发布过,所以**合并成一个 1.4.2**,
+             不再单独占一个版本号(用户 2026-09-23:「1.4.2 都还没上」)。
+             公告见仓库根 release_history.json(应用内更新公告的单一来源)与 RELEASE_NOTES.md。
+             A4(分段编码自动触发)仍未做:见 RELEASE_NOTES.md 的说明。 -->
         <Version>1.4.2</Version>
         <!-- 汇编元数据:文件属性里显示的作者/版权(版权保护的第一步:署名清晰、可追责) -->
         <Authors>AlL.H</Authors>

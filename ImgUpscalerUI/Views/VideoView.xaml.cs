@@ -2459,9 +2459,13 @@ public sealed partial class VideoView : UserControl
             //   这里在**恢复设置时**把真实值记下来;之后只有"单选可用时的点击"才会更新它(见 Combo_Changed)。
             _userEngineIndex = VideoEngineRadios.SelectedIndex;
         }
-        // 放大倍数索引已去掉「自定义分辨率」(4),旧设置里的 4 归到 2x(索引1),其余 0~3 照搬
-        if (d.Scale is >= 0 and <= 3) VideoScaleRadios.SelectedIndex = d.Scale;
-        else if (d.Scale == 4) VideoScaleRadios.SelectedIndex = 1;   // 旧「自定义分辨率」→ 2x
+        // 放大倍数索引:0=1x 修复 1=2x 2=3x 3=4x 4=自定义分辨率。
+        // 【B5 连带修复 · 2026-09-23】这里原来是"0~3 照搬,4(自定义分辨率)一律归到 2x" —— 那是
+        // 「自定义分辨率」入口被删掉时写的迁移规则。现在入口补回来了(见 VideoView.xaml 的 VScaleCustomRadio):
+        // 再照旧规则,用户选了自定义分辨率、保存、重开就被静默打回 2x(**存得住、读不回**)。所以 4 照搬。
+        // 老设置里存着 4 的用户会直接恢复到「自定义分辨率」+ 他们当年存的宽高(设置里 CustomW/CustomH 一直在存),
+        // 这比"静默改成 2x"更符合他们的本意。
+        if (d.Scale is >= 0 and <= 4) VideoScaleRadios.SelectedIndex = d.Scale;
         if (!string.IsNullOrWhiteSpace(d.CustomW)) CustomWidthBox.Text = d.CustomW;
         if (!string.IsNullOrWhiteSpace(d.CustomH)) CustomHeightBox.Text = d.CustomH;
         if (d.PostSharpen is >= 0 and <= 100) SharpenSlider.Value = d.PostSharpen;
@@ -4763,7 +4767,8 @@ public sealed partial class VideoView : UserControl
         SetCompareSync(false);
         ApplyPlayerClip();
         if (CompareSplitter != null) CompareSplitter.Visibility = Visibility.Collapsed;
-        if (CompareSplitGhost != null) CompareSplitGhost.Visibility = Visibility.Collapsed;
+        // 【C1 · 2026-09-23】这里原先还有一句把 CompareSplitGhost(橙色虚影线)设为 Collapsed ——
+        // 那个元素自从分割线改成实时裁切后就没有任何路径会让它可见(XAML 里已连同元素一起删除)。
         // 【用户反馈"老播放器为什么还在"】裁剪页原来还在用播放器**自带**的传输条;现在两个页面统一用自绘那套:
         // 自带控件全关,自绘播放条(播放/进度/倍速)接上原片 —— 也不再多出一条风格不同的控制条。
         HideBuiltInTransportControls();
@@ -5059,7 +5064,8 @@ public sealed partial class VideoView : UserControl
                 CompareSplitter.Visibility = Visibility.Visible;
                 CompareSplitter.Margin = new Thickness(Math.Round(half) - (CompareSplitter.Width / 2), 0, 0, 0);
             }
-            try { if (CompareSplitGhost != null) CompareSplitGhost.Visibility = Visibility.Collapsed; } catch { }
+            // 【C1 · 2026-09-23】这里原先还有一句 try/catch 把 CompareSplitGhost(橙色虚影线)设为 Collapsed;
+            // 该元素从来没有可见路径,已连同 XAML 一起删除,这里不再留空 try。
             if (why != "") Log($"[两者同时] 同区域缩放:{_zmScale:0.##}× 中心({_zmCx:0.###},{_zmCy:0.###}) · 画面区 {aw:0}x{ah:0}");
         }
         catch { }
@@ -8005,7 +8011,8 @@ public sealed partial class VideoView : UserControl
                         : Math.Round(LineScreenX(baked, w, h));
                     CompareSplitter.Margin = new Thickness(lx - (CompareSplitter.Width / 2), 0, 0, 0);
                 }
-                if (CompareSplitGhost != null) CompareSplitGhost.Visibility = Visibility.Collapsed;   // 不再用"待生效位置"提示(现在是实时裁切)
+                // 【C1 · 2026-09-23】原先这里把 CompareSplitGhost("待生效位置"虚影线)设为 Collapsed;
+                // 分割线已是实时裁切、该元素再无可见路径,元素本身已从 XAML 删除 ⇒ 这句一起删。
             }
             // 【2026-09-18 统一换算】左右对比改成实时裁切后,裁切位置必须和"线画在哪"用**同一套换算**:
             // 拖动时 _compareSplit 是"画面内比例"(扣掉 Uniform 黑边),老代码却拿它乘容器宽 → 有黑边时
@@ -8031,7 +8038,7 @@ public sealed partial class VideoView : UserControl
             // 用户看到的"分割线边框不对、还有偏移" ✓(越靠边越明显 ✓;用户建议"按视频边缘定" ✔)
             if (_maskSplitActive && _maskVw > 20)
             {
-                if (CompareSplitGhost != null) CompareSplitGhost.Visibility = Visibility.Collapsed;
+                // 【C1 · 2026-09-23】原先这里也把 CompareSplitGhost 设为 Collapsed(元素已删除)
                 return;
             }
             _playerClip.Rect = new Windows.Foundation.Rect(0, 0, x, hh);
@@ -8039,7 +8046,7 @@ public sealed partial class VideoView : UserControl
             _baseClipPrev = _playerClip.Rect;   // 【基准裁切记账】供缩放取交集用(不能读"当前"那个,会棘轮式越缩越小)✔
             if (CompareSplitter != null)
                 PlaceSplitter(x);   // 【缩放定稿】x 是层内坐标 ⇒ 经缩放换算落位,线自身不放大 ✔
-            if (CompareSplitGhost != null) CompareSplitGhost.Visibility = Visibility.Collapsed;   // 回退路径:裁切是实时的,不需要虚影
+            // 【C1 · 2026-09-23】旧回退路径这里还有一句"把 CompareSplitGhost 设为 Collapsed";元素已删除。
         }
         catch { }
     }
