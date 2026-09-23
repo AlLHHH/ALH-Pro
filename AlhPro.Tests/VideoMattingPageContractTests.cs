@@ -141,6 +141,34 @@ public class VideoMattingPageContractTests
         Assert.Contains("private void SetRunning(bool running) => UpdateButtons();", code);
     }
 
+    /// <summary>★ ④【开发中】2026-09-23 用户要求:这一页要标成"开发中/敬请期待"、背景模糊。
+    /// 契约 = ① XAML 里有那一层磨砂 + 居中横幅(文案、AcrylicBrush 都得在);
+    ///        ② 代码后端构造函数末尾把**整页**禁用(锁死输入),而且必须锁在初始化之后。
+    /// 为什么要这么细:横幅删了看得见,锁删了**看不见** —— 页面照样显示"开发中"却能点,最坑。</summary>
+    [Fact]
+    public void The_page_is_locked_behind_a_coming_soon_banner()
+    {
+        var xaml = ReadRepoFile("ImgUpscalerUI", "Views", "VideoMattingView.xaml");
+        var code = StripComments(ReadRepoFile("ImgUpscalerUI", "Views", "VideoMattingView.xaml.cs"));
+        // ① 磨砂层 + 横幅文案
+        Assert.Contains("x:Name=\"DevBannerOverlay\"", xaml);
+        Assert.Contains("<AcrylicBrush", xaml);
+        Assert.Contains("视频抠图 · 开发中", xaml);
+        Assert.Contains("敬请期待", xaml);
+        // 【实测结论,别再照着 UWP 文档写】WinUI 3 的 AcrylicBrush 没有 BackgroundSource 属性,
+        //   Grid 也没有 IsEnabled(XamlCompiler 报 WMC0011)。只查"有没有当属性用",注释里提到不算。
+        Assert.DoesNotContain("BackgroundSource=\"", xaml);
+        // ② 锁:一行禁用整页 —— 本页是 UserControl,而 UserControl 本身就是 Control。
+        //    【为什么带上缩进和新行】本文件前面还有 `MuteCheck.IsEnabled = false;`(第 107 行那个),
+        //    只找 "IsEnabled = false;" 会先撞上它、把顺序断言判错(第一版就是这么写错的)。
+        const string lockLine = "\n        IsEnabled = false;";
+        Assert.Contains(lockLine, code);
+        int init = code.IndexOf("_ready = true;", StringComparison.Ordinal);
+        int lockAt = code.IndexOf(lockLine, StringComparison.Ordinal);
+        Assert.True(init >= 0 && lockAt > init,
+            "整页禁用必须排在初始化完成(_ready = true)之后,否则页面加载会被自己的锁影响");
+    }
+
     private static int CountOf(string haystack, string needle)
     {
         int n = 0, i = 0;

@@ -118,6 +118,16 @@ public sealed partial class VideoMattingView : UserControl
         RefreshEmptyState();
         SetBgColor(BgColorBox.Text);   // 【2026-09-23】初始化右侧"当前色块",让它一开始就等于文本框里的颜色
         _ready = true;
+
+        // 【开发中】2026-09-23 用户要求:这一页标成"开发中/敬请期待"、背景模糊 ⇒ 整页禁用(锁死输入)。
+        // 为什么是这一句、而不是写在 XAML 里:WinUI 3 的 IsEnabled 是 **Control 的成员、不是 UIElement 的**
+        // (实测:钉在根 Grid 上报 XamlCompiler error WMC0011 "Unknown member 'IsEnabled' on element 'Grid'"),
+        // 而本类(UserControl)本身就是 Control ⇒ 一行就能锁住整棵页面子树。
+        // 效果:点击 / 滚轮 / Tab 键 / 回车 / 拖放**全部**失效(有效可用性 = 自己 ∩ 所有祖先,子控件自己设
+        // IsEnabled=true 也翻不过来);UIA 里全页控件报 en=False —— 这就是"真的锁住了"的客观证据。
+        // 位置讲究:放在 _ready = true 之后、所有初始化跑完之后 —— 锁的只是"输入",不影响页面加载逻辑。
+        // 撤掉"开发中":删掉这一句 + XAML 末尾的 DevBannerOverlay(那份注释里写了为什么这么做)。
+        IsEnabled = false;
     }
 
     // ---------- 参数区 ----------
