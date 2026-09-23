@@ -5370,7 +5370,7 @@ public sealed partial class VideoView : UserControl
     //   ⇒ 引用永久停在旧值/`null`,而且此后没有任何地方会去修它。
     //
     // 【做法】① 每个 `PreviewPlayer.Source = …` / `EffectPlayer.Source = …` 之后显式调一次
-    //   `RecacheMediaRefs`;② 看门狗每 150ms **对一次账**(`OrigRefLooksStale`)——
+    //   `RecacheMediaRefs`;② 看门狗每 150ms **对一次账**(`RefsLookStale`)——
     //   一旦再出现"装片没重抓"的路径,150ms 内自愈并写日志,而不是让同步静默失效几个月。
     /// <summary>【2026-09-23】上次"看门狗自愈重抓引用"的时刻(限流用:同症状 2 秒最多修一次)。</summary>
     private long _lastRefHealAt;
@@ -5413,21 +5413,34 @@ public sealed partial class VideoView : UserControl
         catch (Exception ex) { AppLogger.Warn("重新抓取播放器引用失败:" + ex.Message); }
     }
 
-    /// <summary>"原片那条的缓存引用"是不是孤儿 —— **只看症状,不做引用比较**。
+    /// <summary>"媒体回调要用的缓存引用"有没有变成孤儿 —— **只看症状,不做引用比较**。
     /// 【为什么不做 ReferenceEquals】本文件记过:`PlaybackSession` 两次取到的包装对象不保证同一实例;
     /// 拿引用相等当判据,一旦包装不稳定就会**每 150ms 判一次"不一致"** ⇒ 日志刷屏 + 反复重挂回调 ✗。
-    /// 症状判据(与用户可见现象一一对应):① 缓存是 null;② 活体有片子(时长 >0.05s)而缓存读回 0/0s
-    /// ——后者正是"地面数据写着 `原片[停 0/0s]` 而画面其实在正常播"那种现场。UI 线程调用。</summary>
-    private bool OrigRefLooksStale(Windows.Media.Playback.MediaPlayer? liveOrig,
-        Windows.Media.Playback.MediaPlaybackSession? liveOrigSession)
+    /// 症状判据(与用户可见现象一一对应):
+    ///   ① 缓存是 null 而活体是有的(元素是**懒创建** MediaPlayer 的:装片那一刻它才出现);
+    ///   ② 活体有片子(时长 >0.05s)而缓存读回 0/0s —— 后者正是"地面数据写着 `原片[停 0/0s]` 而画面其实在正常播"那种现场。
+    /// 【2026-09-23 补齐】一开始只查"原片"那条,后来发现**成片条与播放条同样会踩**(日志里出现过
+    /// `成片=null 播放条=null` 的瞬间)—— 而成片条正是左右对比的"主时钟",它哑了等于整条同步链全哑。
+    /// UI 线程调用。</summary>
+    private bool RefsLookStale(Windows.Media.Playback.MediaPlayer? liveOrig,
+        Windows.Media.Playback.MediaPlaybackSession? liveOrigSession,
+        Windows.Media.Playback.MediaPlayer? liveEff,
+        Windows.Media.Playback.MediaPlaybackSession? liveEffSession,
+        double liveBarDur)
     {
         try
         {
-            if (_origSessionCache == null) return true;
-            double liveDur = 0, cachedDur = 0;
-            try { liveDur = liveOrigSession?.NaturalDuration.TotalSeconds ?? 0; } catch { }
-            try { cachedDur = _origSessionCache.NaturalDuration.TotalSeconds; } catch { }
-            return liveDur > 0.05 && cachedDur <= 0.05;
+            if (_origSessionCache == null && liveOrig != null) return true;
+            if (_cmpPosMpCache == null && liveEff != null) return true;
+            if (_barMpCache == null && liveBarDur > 0.05) return true;
+            double liveOrigDur = 0, cachedOrigDur = 0;
+            try { liveOrigDur = liveOrigSession?.NaturalDuration.TotalSeconds ?? 0; } catch { }
+            try { cachedOrigDur = _origSessionCache?.NaturalDuration.TotalSeconds ?? 0; } catch { }
+            if (liveOrigDur > 0.05 && cachedOrigDur <= 0.05) return true;
+            double liveEffDur = 0, cachedEffDur = 0;
+            try { liveEffDur = liveEffSession?.NaturalDuration.TotalSeconds ?? 0; } catch { }
+            try { cachedEffDur = _cmpPosMpCache?.PlaybackSession.NaturalDuration.TotalSeconds ?? 0; } catch { }
+            return liveEffDur > 0.05 && cachedEffDur <= 0.05;
         }
         catch { return false; }
     }
@@ -6714,8 +6727,8 @@ public sealed partial class VideoView : UserControl
             // ===== 【2026-09-23 自愈】先对账:媒体回调用的那几个缓存引用会不会已经变成孤儿 =====
             // (装片会给元素创建/替换 MediaPlayer;而媒体线程读不到控件属性,只能读缓存的引用)
             // 不对账的后果是**静默失效**:位置回调里那段"原片同步"什么都不做、地面数据的漂移变成假数。
-            // 这里 150ms 一次、只比引用与时长(极便宜);一旦发现不对就立刻重抓 + 重挂回调并写日志。
-            if (OrigRefLooksStale(om, os))
+            // 这里 150ms 一次、只比"症状"(见 RefsLookStale,不做引用比较);一旦发现就重抓 + 重挂回调并写日志。
+            if (RefsLookStale(om, os, eff, se, se?.NaturalDuration.TotalSeconds ?? 0))
             {
                 // 限流:同一症状反复出现时不要每 150ms 重挂一次回调(那条路只在"真的坏了"时才走到)
                 long nowTick = Environment.TickCount64;
