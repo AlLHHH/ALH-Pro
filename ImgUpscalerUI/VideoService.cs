@@ -507,6 +507,60 @@ public static class VideoService
         //   21048 帧里 8550 帧是占位帧)。所以:①拆帧前按用户选的倍率粗判(preliminary=true,早失败省得白拆帧);
         //   ②倍率被「指定帧率」抬高之后按**最终倍率**复判(preliminary=false)—— 这才是能拦住爆盘的那道闸。
         // 【口径只有一个】估算表达式只在本函数里出现一次;调用点不许再内联一份(两份口径必然漂移)。
+        // ===== 【2026-09-23 加 · 来自一份真实用户反馈】"跑不动"时要说清**该往哪降、降完要多少** =====
+        // 【现场】某用户报"不能补帧":诊断包里 6 次尝试全是 **0.2 秒失败**,原因是
+        //   4K 源 + 2x 超分(输出 8K)+ 2x 补帧的约 5 分钟素材预估要 **262GB**,而临时盘只剩 132GB。
+        //   守门拒绝本身是对的(2026-09-15 那次"跑到一半爆盘、8550 帧变占位帧"就是这么来的),
+        //   但用户看到的是"补帧不能用" —— 因为原提示只给了一句"降低倍率",没告诉他
+        //   **只要关掉超分就能跑**(同一素材关超分后约 118GB,正好放得下,而补帧能保留)。
+        // 所以:用同一个估算函数把几条可选路线各自要多少算出来,连同"哪个盘还有多少"一起报出来。
+        string ShortageMessage(double freeBytes, double needGB)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append($"临时磁盘空间不足:{tempRoot} 仅剩 {freeBytes / (1024 << 20):0}GB,"
+                    + $"本任务预计需要约 {needGB:0}GB(峰值 {peakFrames} 帧 × 每帧 {outFrameMB:0.##}MB;超分放大后的临时帧最占地方)。");
+            // 三条可选路线(同一套公式换参数重算,不新增第二套口径)
+            try
+            {
+                double gbNoUp = AlhPro.Core.TempSpaceEstimate.NeedGigabytesFor(
+                    srcW, srcH, baseFrames, frameInterp, interpScale, 1.0, perfBatchFrames);
+                double gbNoInterp = AlhPro.Core.TempSpaceEstimate.NeedGigabytesFor(
+                    srcW, srcH, baseFrames, false, 1, outMult, perfBatchFrames);
+                double gbNeither = AlhPro.Core.TempSpaceEstimate.NeedGigabytesFor(
+                    srcW, srcH, baseFrames, false, 1, 1.0, perfBatchFrames);
+                double freeGB = freeBytes / (1024.0 * 1024 * 1024);
+                string Mark(double gb) => gb <= freeGB ? $"✓放得下({gb:0}GB)" : $"✗({gb:0}GB)";
+                sb.Append(" 可选路线:");
+                if (outMult > 1.0001)
+                    sb.Append($"① 关掉「超分」(输出保持 {srcW}×{srcH}、补帧保留)→ 约 {gbNoUp:0}GB {Mark(gbNoUp)}"
+                            + "(注意:改成「1x 修复」**不省盘** —— 它内部照样按 2x 跑再缩回,临时帧一样大);");
+                if (frameInterp)
+                    sb.Append($"② 关掉「补帧」→ 约 {gbNoInterp:0}GB {Mark(gbNoInterp)};");
+                if (outMult > 1.0001 && frameInterp)
+                    sb.Append($"③ 两个都关 → 约 {gbNeither:0}GB {Mark(gbNeither)};(④ 降低补帧倍率 / 用「裁剪」只跑一段,也能减)");
+            }
+            catch { }
+            // 其它盘还剩多少(临时盘可以改;用户若把临时盘固定在小盘上,这里能直接看出该换哪块)
+            try
+            {
+                var others = new List<string>();
+                foreach (var d in System.IO.DriveInfo.GetDrives())
+                {
+                    try
+                    {
+                        if (d.DriveType != System.IO.DriveType.Fixed || !d.IsReady) continue;
+                        if (string.Equals(d.Name.TrimEnd('\\'), tempRoot.TrimEnd('\\').Substring(0, 2), StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        others.Add($"{d.Name.TrimEnd('\\')} {d.AvailableFreeSpace / (1024 << 20):0}GB");
+                    }
+                    catch { }
+                }
+                if (others.Count > 0) sb.Append(" 其它盘剩余:" + string.Join(" · ", others) + "(可把临时盘改到大盘)。");
+            }
+            catch { }
+            sb.Append(" 也可清理临时盘后重试。");
+            return sb.ToString();
+        }
         (bool t, double needGB) EvalTempSpaceGate(bool preliminary)
         {
             int srcFramesEst = (int)Math.Min(int.MaxValue, Math.Max(0, baseFrames));
@@ -531,9 +585,7 @@ public static class VideoService
                 var drive = new System.IO.DriveInfo(tempRoot);
                 double free = drive.AvailableFreeSpace;
                 if (free < needBytesNow)
-                    throw new InvalidOperationException(
-                        $"临时磁盘空间不足:{tempRoot} 仅剩 {free / (1024 << 20):0}GB,本任务预计需要约 {needGBNow:0}GB(补帧放大后的临时帧占用大)。" +
-                        "请清理磁盘、降低补帧倍率/超分倍率,或把视频放到其它盘后再处理。");
+                    throw new InvalidOperationException(ShortageMessage(free, needGBNow));
                 if (free < 35L * 1024 * 1024 * 1024 || free < needBytesNow * 2.2)
                 {
                     diskTight = true;
