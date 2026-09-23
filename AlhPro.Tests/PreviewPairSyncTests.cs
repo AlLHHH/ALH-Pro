@@ -143,6 +143,38 @@ public class PreviewPairSyncTests
         Assert.Contains("App.UiBreadcrumb = \"日志滚动到底(延迟执行)\";", code);
     }
 
+    /// <summary>★★ 本轮（2026-09-23 用测试缝 ALH_TEST_VIDEO 跑到一手现场后）找到的**真根因**：
+    /// 给 `MediaPlayerElement.Source` 赋值会**创建/替换**它的 MediaPlayer，而媒体回调（位置同步、地面数据）
+    /// 不能读控件属性（媒体线程上读会抛 0x8001010E）⇒ 只能读 UI 线程缓存的引用。
+    /// **装片之后没重抓引用 = 那些回调从此对着孤儿会话说话**：
+    /// 现场证据（同一行日志里三个信号同时出现）：画面两侧都在渲染、`片段[播 2.193/3s]`，
+    /// 而 `原片[停 0/0s] · 漂移 -2193ms · 进同步分支=False`，且整段播放**一次硬对齐都没触发**
+    /// （门槛 0.25s）⇒ 同步那段根本没工作。
+    /// 为什么只有上层中招：下层的 `LoadEffectSource` 里跟了 `SetCompareSync(...)`（会顺手重抓），
+    /// 而"仅原片"那条路恰恰不会走到它。</summary>
+    [Fact]
+    public void Player_references_are_recaptured_after_every_source_change()
+    {
+        var code = StripComments(ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs"));
+        // 统一的重抓入口 + 判据(只看症状,不靠引用相等)
+        Assert.Contains("private void RecacheMediaRefs(string why)", code);
+        Assert.Contains("private bool OrigRefLooksStale(Windows.Media.Playback.MediaPlayer? liveOrig,", code);
+        Assert.Contains("return liveDur > 0.05 && cachedDur <= 0.05;", code);
+        // 每个装片入口后面都必须跟一次重抓 —— 少一处就会重演"只有一条被对齐"的静默失效
+        foreach (var site in new[] { "RecacheMediaRefs(\"遮罩装片后(上层刚拿到 Source)\");",
+                                     "RecacheMediaRefs(\"成片条装片后\");",
+                                     "RecacheMediaRefs(\"对比片装进上层后\");",
+                                     "RecacheMediaRefs(\"裁剪页装原片后\");",
+                                     "RecacheMediaRefs(\"没结果时的对比视图装原片后\");",
+                                     "RecacheMediaRefs(\"两文件并排装上原片后\");" })
+            Assert.Contains(site, code);
+        // 回调是**按会话**订阅的 ⇒ 换会话必须"先摘再挂"(SetCompareSync 在已订阅时会提前返回)
+        Assert.Contains("SetCompareSync(false);\n            if (_compareMode) SetCompareSync(true);", code);
+        // 看门狗永久对账(限流 2 秒),防这类 bug 再悄悄回来
+        Assert.Contains("if (OrigRefLooksStale(om, os))", code);
+        Assert.Contains("if (nowTick - _lastRefHealAt > 2000)", code);
+    }
+
     /// <summary>★ 切视图进「左右对比」时,两条**必须互相咬合**。
     /// 真机日志实证:`切视图对齐(CmpPlayerBottom):差 302 ms → 跳过定位(容差内)` —— 0.5 秒容差把
     /// 302ms 的错位放过了,而并排画面里那是肉眼一眼能看出的不同帧(用户报的"不协调")。
