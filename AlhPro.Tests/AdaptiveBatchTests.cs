@@ -23,12 +23,13 @@ public class AdaptiveBatchTests
     }
 
     [Theory]
+    // 【2026-09-23 档位 ×2】下界 50 → 80 ⇒ 被下界兜住的那些行跟着变(面积把批压到 80 以下时取 80)
     [InlineData(200, 1920, 1080, 200)]   // 基准分辨率:不变
-    [InlineData(200, 3840, 2160, 50)]    // 4K:1/4 → 50(正好等于用户下界)
-    [InlineData(400, 3840, 2160, 100)]   // 4K:1/4
-    [InlineData(200, 7680, 4320, 50)]    // 8K:1/16 → 12.5 → 被 50 下界兜住
+    [InlineData(200, 3840, 2160, 80)]    // 4K:1/4 → 50 → 被新下界 80 兜住
+    [InlineData(400, 3840, 2160, 100)]   // 4K:1/4 → 100(在下界之上,不受影响)
+    [InlineData(200, 7680, 4320, 80)]    // 8K:1/16 → 12.5 → 被新下界 80 兜住
     [InlineData(200, 960, 448, 200)]     // 小图:系数 >1 但**不许超过档位基准**(否则会越过任务 E 的口径)
-    [InlineData(50, 3840, 2160, 50)]     // 已是下界:减不动
+    [InlineData(50, 3840, 2160, 50)]     // 档位基准本身低于下界(旧配置/外部调用):**不许抛异常**、也不许抬到 80
     public void Frames_per_batch_scale_by_area_and_clamp(int tierFrames, int w, int h, int expected)
         => Assert.Equal(expected, RenderPolicy.ScaleFramesForArea(tierFrames, w, h));
 
@@ -36,13 +37,13 @@ public class AdaptiveBatchTests
     [Fact]
     public void Plan_frames_per_batch_follow_area_inverse()
     {
-        // 设备好(10.4G)+ 长片(1800 帧 ≥ 900)→ 档位基准 700(【任务 T】400 → 700)
+        // 设备好(10.4G)+ 长片(1800 帧 ≥ 900)→ 档位基准 1400(【2026-09-23 档位 ×2】700 → 1400)
         var p1080 = RenderPolicy.PlanVideoBatches(10.4, 1800, 1800, false, false, 1920, 1080);
         var p2160 = RenderPolicy.PlanVideoBatches(10.4, 1800, 1800, false, false, 3840, 2160);
         var pSmall = RenderPolicy.PlanVideoBatches(10.4, 1800, 1800, false, false, 960, 448);
-        Assert.Equal(700, p1080.BatchSize);
-        Assert.Equal(175, p2160.BatchSize);                  // 【T 口径变更】700 ÷ 4(旧 400 ÷ 4 = 100)
-        Assert.Equal(700, pSmall.BatchSize);                 // 小图被档位上限挡住(不放大)
+        Assert.Equal(1400, p1080.BatchSize);
+        Assert.Equal(350, p2160.BatchSize);                  // 1400 ÷ 4
+        Assert.Equal(1400, pSmall.BatchSize);                // 小图被档位上限挡住(不放大)
         Assert.Equal(p1080.BatchSize / 4, p2160.BatchSize);
         Assert.True(p2160.BatchCount > p1080.BatchCount);    // 每批更小 → 批数更多
     }
@@ -62,13 +63,13 @@ public class AdaptiveBatchTests
     [Fact]
     public void Existing_rules_still_apply_on_top_of_area_scaling()
     {
-        // 4K + 兼容模式:700 →(面积)175 →(减半)87
+        // 4K + 兼容模式:1400 →(面积)350 →(减半)175
         var fast = RenderPolicy.PlanVideoBatches(10.4, 1800, 1800, fastMode: true, diskTight: false, 3840, 2160);
-        Assert.Equal(87, fast.BatchSize);
-        // 4K + 兼容 + 盘紧:175 → 87 → 50(下界优先,第二个减半后 43 被 50 挡住)
+        Assert.Equal(175, fast.BatchSize);
+        // 4K + 兼容 + 盘紧:350 → 175 → 87(两次减半;87 在新下界 80 之上,所以下界不再兜住它)
         var both = RenderPolicy.PlanVideoBatches(10.4, 1800, 1800, fastMode: true, diskTight: true, 3840, 2160);
-        Assert.Equal(50, both.BatchSize);
-        // 短素材(补帧后 ≤400)+ 设备正常 → 单批,面积缩放不影响(整片一批)
+        Assert.Equal(87, both.BatchSize);
+        // 短素材(补帧后 ≤800)+ 设备正常 → 单批,面积缩放不影响(整片一批)
         var single = RenderPolicy.PlanVideoBatches(6.0, 200, 400, false, false, 3840, 2160);
         Assert.True(single.SingleBatch);
         Assert.Equal(400, single.BatchSize);
@@ -109,7 +110,7 @@ public class AdaptiveBatchTests
         Assert.Equal(1920, oUp.InputWidth);
         Assert.Equal(3600, oUp.StageInputFrames);        // 超分读补帧输出
         Assert.Equal(1800, oIp.StageInputFrames);
-        Assert.Equal(280, oUp.FramesPerBatch);          // R3:超分阶段按"输入+输出并存"的峰值算 → 【T 口径变更】280(< 补帧阶段 700)
+        Assert.Equal(560, oUp.FramesPerBatch);          // R3:超分阶段按"输入+输出并存"的峰值算(1400 × 0.4)⇒ < 补帧阶段 1400
         Assert.True(oIp.Advisory);                       // 补帧按转场分段跑 → 每批帧数是等效参考值
 
         // 新顺序:超分阶段输入 = 源帧;补帧阶段输入 = 放大 2x 的帧(面积 ×4 → 每批帧数显著更小)
@@ -120,7 +121,7 @@ public class AdaptiveBatchTests
         Assert.Equal(3840, nIp.InputWidth);
         Assert.Equal(2160, nIp.InputHeight);
         Assert.Equal(0.25, nIp.AreaFactor, 6);
-        Assert.Equal(175, nIp.FramesPerBatch);           // 【T 口径变更】700 × 0.25(旧 400 × 0.25 = 100)
+        Assert.Equal(350, nIp.FramesPerBatch);           // 1400 × 0.25(4K 面积)
         Assert.True(nIp.FramesPerBatch < oIp.FramesPerBatch, "新顺序补帧阶段的每批帧数必须显著更小");
     }
 
@@ -147,14 +148,14 @@ public class AdaptiveBatchTests
             >= oldOrder.Single(s => s.Stage == "补帧").InputWidth);
     }
 
-    /// <summary>报告里那张对照表的**数字本身**钉住(设备好 10.4G、源 1800 帧 = 长片 → 【T】档位基准 700、2x 超分、2x 补帧)。
+    /// <summary>报告里那张对照表的**数字本身**钉住(设备好 10.4G、源 1800 帧 = 长片 → 档位基准 1400、2x 超分、2x 补帧)。
     /// 每行 [源分辨率] → 旧顺序[超分/补帧] + 新顺序[超分/补帧] 的每批帧数。
-    /// 【任务 T 口径变更】整体按 700/400 = 1.75 倍换算后再套 50 下界与"档位上限"钳位。</summary>
+    /// 【2026-09-23 档位 ×2】整表按 700 → 1400 换算(面积系数、面积上限钳位、80 下界都照旧)。</summary>
     [Theory]
-    [InlineData(960, 448, 700, 700, 700, 700)]     // 小图:全被"档位上限 700"兜住
-    [InlineData(1920, 1080, 280, 700, 280, 175)]   // 基准[R3]:超分阶段峰值=源+源×4 → 280;补帧阶段=源 → 700(**补帧批 > 超分批**)
-    [InlineData(2560, 1440, 158, 394, 158, 98)]    // 2.5K:超分峰值系数 0.225 → 158;补帧 394;新顺序补帧侧 98
-    [InlineData(3840, 2160, 70, 175, 70, 50)]      // 4K:超分峰值系数 0.1 → 70;补帧 175;新顺序补帧 43.75→被 50 下界兜住
+    [InlineData(960, 448, 1400, 1400, 1400, 1400)]     // 小图:全被"档位上限 1400"兜住
+    [InlineData(1920, 1080, 560, 1400, 560, 350)]      // 基准[R3]:超分峰值系数 0.4 → 560;补帧=源 → 1400(**补帧批 > 超分批**)
+    [InlineData(2560, 1440, 315, 788, 315, 197)]       // 2.5K:超分峰值系数 0.225 → 315;补帧 0.5625 → 788;新顺序补帧侧 0.140625 → 197
+    [InlineData(3840, 2160, 140, 350, 140, 88)]        // 4K:超分峰值系数 0.1 → 140;补帧 0.25 → 350;新顺序补帧侧 0.0625 → 88
     public void Report_table_numbers_are_pinned(int w, int h, int oldUp, int oldIp, int newUp, int newIp)
     {
         var oldOrder = RenderPolicy.PlanStageBatches(10.4, 1800, 2.0, 2, w, h, upscaleFirst: false);

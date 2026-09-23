@@ -73,16 +73,16 @@ public class DevicePerfTests
     [Fact]
     public void New_tier_baselines_are_exactly_as_specified()
     {
-        // Strong + 长片 → 700;Strong + 短片 → 350;Normal → 300;Weak → 50(全档位下界)
-        Assert.Equal(700, RenderPolicy.PlanVideoBatches(16.0, 1800, 3600, perf: PerfScore.Fast).BatchSize);
-        Assert.Equal(350, RenderPolicy.PlanVideoBatches(16.0, 300, 600, perf: PerfScore.Fast).BatchSize);
-        Assert.Equal(300, RenderPolicy.PlanVideoBatches(6.0, 2000, 4000, perf: PerfScore.Normal).BatchSize);
-        Assert.Equal(50, RenderPolicy.PlanVideoBatches(2.0, 2000, 4000, perf: PerfScore.Slow).BatchSize);
+        // 【2026-09-23 档位 ×2】Strong 长片 1400;Strong 短片 700;Normal 600;Weak 80(全档位下界)
+        Assert.Equal(1400, RenderPolicy.PlanVideoBatches(16.0, 1800, 3600, perf: PerfScore.Fast).BatchSize);
+        Assert.Equal(700, RenderPolicy.PlanVideoBatches(16.0, 300, 600, perf: PerfScore.Fast).BatchSize);
+        Assert.Equal(600, RenderPolicy.PlanVideoBatches(6.0, 2000, 4000, perf: PerfScore.Normal).BatchSize);
+        Assert.Equal(80, RenderPolicy.PlanVideoBatches(2.0, 2000, 4000, perf: PerfScore.Slow).BatchSize);
         // 常量与实现必须是同一个数(防止有人只改一处)
-        Assert.Equal(700, RenderPolicy.StrongDeviceLargeFramesPerBatch);
-        Assert.Equal(350, RenderPolicy.StrongDeviceFramesPerBatch);
-        Assert.Equal(300, RenderPolicy.NormalDeviceFramesPerBatch);
-        Assert.Equal(50, RenderPolicy.WeakDeviceFramesPerBatch);
+        Assert.Equal(1400, RenderPolicy.StrongDeviceLargeFramesPerBatch);
+        Assert.Equal(700, RenderPolicy.StrongDeviceFramesPerBatch);
+        Assert.Equal(600, RenderPolicy.NormalDeviceFramesPerBatch);
+        Assert.Equal(80, RenderPolicy.WeakDeviceFramesPerBatch);
     }
 
     [Fact]
@@ -101,12 +101,12 @@ public class DevicePerfTests
     }
 
     [Fact]
-    public void Seven_hundred_requires_fast_perf_and_at_least_8gb()
+    public void Largest_batch_requires_fast_perf_and_at_least_8gb()
     {
-        // 长片 + Fast,但内存只有 6G(Normal 内存档)→ 300,拿不到 700
+        // 长片 + Fast,但内存只有 6G(Normal 内存档)→ 600,拿不到 1400
         var p = RenderPolicy.PlanVideoBatches(6.0, 1800, 3600, perf: PerfScore.Fast);
         Assert.Equal(RenderPolicy.NormalDeviceFramesPerBatch, p.BatchSize);
-        // 内存 16G 但实测是 Slow → 50,同样拿不到 700
+        // 内存 16G 但实测是 Slow → 80,同样拿不到 1400
         var slow = RenderPolicy.PlanVideoBatches(16.0, 1800, 3600, perf: PerfScore.Slow);
         Assert.Equal(RenderPolicy.WeakDeviceFramesPerBatch, slow.BatchSize);
     }

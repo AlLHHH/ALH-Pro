@@ -516,6 +516,14 @@ public static class VideoService
             var guardPlan = AlhPro.Core.RenderPolicy.PlanVideoBatches(SafeRender.FreeRamGB, srcFramesEst, peakFramesEst,
                 false, false, srcW, srcH, guardOutW, guardOutH, perfScore);
             perfBatchFrames = guardPlan.BatchSize;
+            // 【2026-09-23】这道粗判必须与真正执行时用**同一个批大小**,否则档位翻倍后会出现
+            // "粗判按 1400 帧/批算出要 30GB 直接不让跑,而实际会被临时盘闸门压到 300 帧/批、跑得好好的" ✗。
+            // 所以先取余量 → 过闸门 → 再用闸门后的批大小算需求。
+            double freeNowGb = 0;
+            try { freeNowGb = new System.IO.DriveInfo(tempRoot).AvailableFreeSpace / (1024.0 * 1024 * 1024); }
+            catch { }
+            var gateNow = AlhPro.Core.RenderPolicy.LimitBatchByTempDisk(perfBatchFrames, freeNowGb, outFrameMB, srcFrameMB);
+            perfBatchFrames = gateNow.BatchFrames;
             double needBytesNow = AlhPro.Core.TempSpaceEstimate.NeedBytes(peakFrames, outFrameMB, perfBatchFrames, srcFrameMB);
             double needGBNow = needBytesNow / (1024.0 * 1024.0 * 1024.0);
             try
@@ -2403,9 +2411,27 @@ public static class VideoService
                     (int)Math.Max(1, Math.Round(srcH * (upscaleShrink1x ? 2.0 : Math.Max(1.0, scale)))),
                     perfScore);
                 int batchSize = batchPlan.BatchSize;
+                // ===== 【2026-09-23 新条件】批内临时帧 ≤ 临时盘余量 × 0.65 =====
+                // 【为什么加这道闸门】本轮把档位整体 ×2(下界 50→80、正常 300→600、好 700/1400),
+                // 一批在同一时刻占盘的帧数跟着 ×2(输入帧 + 本批输出帧并存)。原来只有下面那道
+                // "整任务预估 vs 剩余空间"的闸门,而它有两个毛病:① 算的是全片口径 + 1.6 安全系数,
+                // 批大小在里面的权重随素材长度变化(短素材几乎影响不到判定);② 它只会**报错**,
+                // 不会把批调小 —— 而"能跑就跑小一点"才是档位放大后该有的动作。
+                // 纯逻辑在 AlhPro.Core.RenderPolicy.LimitBatchByTempDisk(有单测),这里只负责取余量 + 记日志。
+                double tempFreeGB = 0;
+                try { tempFreeGB = new System.IO.DriveInfo(PickTempRoot()).AvailableFreeSpace / (1024.0 * 1024 * 1024); }
+                catch { /* 拿不到余量 → 闸门自动不做判定(与既有口径一致:不猜) */ }
+                var diskGate = AlhPro.Core.RenderPolicy.LimitBatchByTempDisk(batchSize, tempFreeGB, outFrameMB, srcFrameMB);
+                if (diskGate.Shrunk)
+                {
+                    AppLogger.Info($"⚠ 超分批按临时盘余量下调:每批 {batchSize} → {diskGate.BatchFrames} 帧;{diskGate.Note}");
+                    progress?.Report((10, $"⚠ 临时盘余量偏紧:每批帧数已从 {batchSize} 下调到 {diskGate.BatchFrames}(防爆盘)"));
+                    batchSize = diskGate.BatchFrames;
+                }
                 // 【任务 T 要求 4:峰值守门必须按**最终生效的**批上限复算】上面那份预估用的是"候选批大小"
-                // (diskTight=false 时的最大值);这里批大小已定稿,再用它重算一次并**真的**判一次剩余空间 ——
-                // 批上限 400→700(×1.75)后"输入帧 + 本批输出帧并存"的同屏峰值同倍数上涨,不复算就是漏守门。
+                // (diskTight=false 时的最大值);这里批大小已定稿(含临时盘闸门的下调),再用它重算一次
+                // 并**真的**判一次剩余空间 —— 批上限翻倍后"输入帧 + 本批输出帧并存"的同屏峰值同倍数上涨,
+                // 不复算就是漏守门。
                 try
                 {
                     double needBytesFinal = AlhPro.Core.TempSpaceEstimate.NeedBytesForBatch(
@@ -2414,7 +2440,8 @@ public static class VideoService
                     var driveNow = new System.IO.DriveInfo(PickTempRoot());
                     double freeNow = driveNow.AvailableFreeSpace;
                     AppLogger.Info($"峰值守门复算(超分阶段定稿批大小):每批 {batchSize} 帧 → 预计 {needGBFinal:0.#} GB"
-                        + $"(全片 {peakFrames} 帧 + 每批并存 {batchSize} 帧),临时盘剩余 {freeNow / (1024 << 20):0}GB");
+                        + $"(全片 {peakFrames} 帧 + 每批并存 {batchSize} 帧),临时盘剩余 {freeNow / (1024 << 20):0}GB"
+                        + $";{diskGate.Note}");
                     if (freeNow < needBytesFinal)
                         throw new System.IO.IOException(
                             $"临时磁盘空间不足:{driveNow.Name} 仅剩 {freeNow / (1024 << 20):0}GB,"
