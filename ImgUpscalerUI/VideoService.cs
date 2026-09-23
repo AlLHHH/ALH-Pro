@@ -702,6 +702,19 @@ public static class VideoService
             }
             catch { }
 
+            // 【2026-09-23 用户要求 · 视频这一侧「绝不落 CPU」】硬编可用性是视频任务的**前提**,所以在这里提前探一次:
+            // 本机一个可用硬编都没有、而用户又没在设置里显式选「CPU 计算」⇒ 立刻报错,而不是"先处理一小时、
+            // 最后编码掉到 CPU 再慢一整轮"(实测 5060:编码阶段 17.0s → 115.7s,**7 倍**)。
+            // 探测本身有闩锁(_hwProbed),所以后面编码前那次调用会变成空操作,不会白探两遍。
+            // ct.ThrowIfCancellationRequested 放在前面:用户点过停止时不能报成"本机没有硬编"。
+            await EnsureHwProbeAsync(ffmpeg, ct);
+            ct.ThrowIfCancellationRequested();
+            if (!AlhPro.Core.CpuFallbackPolicy.AllowsCpuFallback(gpuId) && !HasAnyWorkingHwEncoder())
+            {
+                AppLogger.Error("视频处理未开始:本机没有可用的硬件编码器,且用户未选「CPU 计算」——按「视频不落 CPU」策略直接报错");
+                throw new InvalidOperationException(AlhPro.Core.CpuFallbackPolicy.DescribeNoHwEncoder());
+            }
+
             // 2) 拆帧(可选去重 + 裁剪)
             // 去重模型:0=关,1=智能检测(freezedetect 自适应),2=动漫模式(freezedetect 高去重),3=标准模式(scene),4=手动模式(scene)
             var dedup = dedupMode > 0;
@@ -3873,58 +3886,66 @@ public static class VideoService
             double uEncSec = 0, uOutDur = 0, uOutFps = 0;   // 【任务 U】结算用:编码耗时 / 成片时长 / 成片帧率
             string uBlackSeg = "";                          // 【任务 U 补充】输出端黑场自检结果(空 = 无黑场)
             var encSw = System.Diagnostics.Stopwatch.StartNew();
-            string encUsed = LastVideoEncoderInfo;
             try
             {
-                try
+                // 【2026-09-23 用户要求 · 视频这一侧「绝不落 CPU」】硬件编码失败**不再**回退 CPU 软编:
+                // 同一台设备按 AlhPro.Core.CpuFallbackPolicy 的间隔重试(重启子进程,专挡"瞬时失败"),
+                // 全失败就报错、让用户自己决定(要 CPU 软编请在设置里显式选「CPU 计算」)。
+                // 【真机依据】5060 那台"上一次任务"nvenc 还是 16.7 fps,下一次就 exit -542398533 ⇒ 属瞬时,
+                // 不是"这台机器编不了";而旧逻辑一次都不重试就掉 libx264:编码 17.0s → 115.7s(**7 倍**),
+                // 那行回报还误标成"(硬编)"。driverOld(驱动过旧)是确定性失败 ⇒ 不重试,直接报错让他去更新驱动。
+                int hwAttempt = 0;
+                while (true)
                 {
-                    // 已知会失败的硬件编码器直接跳过,走 CPU(避免每次先白跑一次)
-                    if (BrokenHwEncoders.Contains(encoder))
-                        throw new InvalidOperationException("hw-encoder-known-broken");
-                    // 【编码阶段必须能报进度】ffmpeg 的 stats 行(打给 stderr)在输出被重定向时不保证持续出现,
-                    // 于是"编码"这一步此前只有一条静止的「合成视频…」——用户实测"一直显示合成视频",不知道还要多久、
-                    // 也判断不出是死机还是在跑(实测那段可能是几十分钟到数小时)。
-                    // 改成 -progress pipe:1:ffmpeg 会把 frame=/fps=/out_time… 等【机器可读】行写到 stdout,
-                    // 而 RunAsync 的 FrameRegex 正在解析 frame= → "编码 第 N 帧 / 共 M 帧 + 预计还剩" 就稳定刷新了;
-                    // -nostats 顺手去掉 stderr 上重复的统计行。
-                    if (segMux)
+                    hwAttempt++;
+                    try
                     {
-                        // 【2026-09-23 分段合帧】每段同一套编码参数;编码成功才删该段帧;最后 concat -c copy + 音频封装
-                        await EncodeSegmentedMuxAsync(encFfmpeg, framePattern, encTotal, segFramesPerSeg, frInput,
-                            encMuxArgs == muxArgs ? encArgs : StripPreset(encArgs), vfArg, animeDevArgs, fastFlag,
-                            audioPart, videoMap, trimArgs, inputVideo, outTmp, workDir,
-                            recipe?.NoPreset == true ? "nopreset" : null, progress, ct);
+                        // 【编码阶段必须能报进度】ffmpeg 的 stats 行(打给 stderr)在输出被重定向时不保证持续出现,
+                        // 于是"编码"这一步此前只有一条静止的「合成视频…」——用户实测"一直显示合成视频",不知道还要多久、
+                        // 也判断不出是死机还是在跑(实测那段可能是几十分钟到数小时)。
+                        // 改成 -progress pipe:1:ffmpeg 会把 frame=/fps=/out_time… 等【机器可读】行写到 stdout,
+                        // 而 RunAsync 的 FrameRegex 正在解析 frame= → "编码 第 N 帧 / 共 M 帧 + 预计还剩" 就稳定刷新了;
+                        // -nostats 顺手去掉 stderr 上重复的统计行。
+                        if (segMux)
+                        {
+                            // 【2026-09-23 分段合帧】每段同一套编码参数;编码成功才删该段帧;最后 concat -c copy + 音频封装
+                            await EncodeSegmentedMuxAsync(encFfmpeg, framePattern, encTotal, segFramesPerSeg, frInput,
+                                encMuxArgs == muxArgs ? encArgs : StripPreset(encArgs), vfArg, animeDevArgs, fastFlag,
+                                audioPart, videoMap, trimArgs, inputVideo, outTmp, workDir,
+                                recipe?.NoPreset == true ? "nopreset" : null, progress, ct);
+                        }
+                        else
+                        {
+                            await RunAsync(encFfmpeg, SeamBreakHwEncode("-nostats -progress pipe:1 " + muxBase + encMuxArgs), progress, ct, "编码", encTotal);
+                        }
+                        // 硬件编码可能留下 0 字节/损坏文件却退出 0,这里校验;无效同样按"这次失败"处理(进重试)
+                        if (!await ValidateVideoFileAsync(outTmp, 1))
+                            throw new InvalidOperationException("硬件编码输出文件无效(0 字节或解不开)");
+                        break;   // 编出有效文件 ⇒ 成功
                     }
-                    else
+                    catch (OperationCanceledException) { throw; }   // 【必须排在最前】取消不是"硬编坏了"
+                    catch (Exception ex) when (encoder != "libx264" && encoder != "libx265")
                     {
-                        await RunAsync(encFfmpeg, "-nostats -progress pipe:1 " + muxBase + encMuxArgs, progress, ct, "编码", encTotal);
+                        // 用户显式选 CPU 时 encoder 就是 libx264/libx265 ⇒ 上面那条 when 不成立,
+                        // 异常直接往上抛(那种情况下 CPU 是用户的选择,不是我们的降级)。
+                        string why = (ex.Message ?? "").Split('\n')[0];
+                        bool driverOld = IsNvencDriverTooOld(ex.Message ?? "");
+                        int delayMs = driverOld ? 0 : AlhPro.Core.CpuFallbackPolicy.RetryDelayMsAfterAttempt(hwAttempt);
+                        if (delayMs <= 0)
+                        {
+                            AppLogger.Error($"⚠ 硬件编码({encoder})第 {hwAttempt} 次失败:{why}"
+                                + " —— 已停止(按「视频不落 CPU」策略不退回 CPU 软编)");
+                            progress?.Report((96, $"⚠ 硬件编码({encoder})失败,已停止(不退回 CPU 软编)..."));
+                            throw new InvalidOperationException(
+                                AlhPro.Core.CpuFallbackPolicy.DescribeHwEncodeFailure(encoder, hwAttempt, why, driverOld), ex);
+                        }
+                        int total = AlhPro.Core.CpuFallbackPolicy.HwEncodeTotalAttempts;
+                        AppLogger.Warn($"⚠ 硬件编码({encoder})第 {hwAttempt} 次失败:{why} —— "
+                            + $"{delayMs / 1000.0:0.#} 秒后重试(共 {total} 次尝试;不退回 CPU 软编)");
+                        progress?.Report((96, $"⚠ 硬件编码({encoder})失败,{delayMs / 1000.0:0.#} 秒后重试({hwAttempt}/{total - 1})..."));
+                        await Task.Delay(delayMs, ct).ConfigureAwait(false);
+                        try { if (File.Exists(outTmp)) File.Delete(outTmp); } catch { }   // 清掉半成品,免得下次校验读到旧坏文件
                     }
-                    // 硬件编码可能留下 0 字节/损坏文件却退出 0,这里校验;无效则触发回退
-                    if (!await ValidateVideoFileAsync(outTmp, 1))
-                        throw new InvalidOperationException("硬件编码输出文件无效");
-                }
-                catch (OperationCanceledException) { throw; }   // 【必须排在下面那条之前】取消不是"硬编坏了"
-                catch (Exception ex) when (encoder != "libx264" && encoder != "libx265")
-                {
-                    // 【不再整片重试 GPU】"去掉 -preset"和"换备用 ffmpeg"这两个问题探测期已回答过,
-                    // 到这里还失败说明这台机器就是编不了(驱动过旧/硬件不在/输出损坏)。整片长度的重试
-                    // = 用户白等一整遍编码时间,而答案在 1 帧探测里就能拿到。直接标记坏 + 回退 CPU。
-                    // 【踩过的坑】此前这里没有上面那条 catch:用户点一次「停止」→ 抛取消异常 → 命中本 catch
-                    // → BrokenHwEncoders.Add(encoder) —— 从此本次运行所有任务都被判"硬编不可用"、静默走 CPU 软编
-                    // (慢数倍),必须重启软件才恢复。日志实证:2026-09-11 21:59 "原因:The operation was canceled."。
-                    BrokenHwEncoders.Add(encoder);
-                    var cpuEnc = encoder.StartsWith("hevc", StringComparison.OrdinalIgnoreCase) ? "libx265" : "libx264";
-                    // 驱动过旧单列:它是最常见且用户能自己解决的一种,提示要说清"去更新驱动"
-                    bool driverOld = IsNvencDriverTooOld(ex.Message);
-                    if (driverOld)
-                        AppLogger.Warn($"⚠ 硬件编码({encoder})不可用(显卡驱动过旧:需更新 NVIDIA 驱动到 610+,当前驱动 nvenc 版本过低)——改用轻量 CPU 编码({cpuEnc})");
-                    else
-                        AppLogger.Warn($"⚠ 硬件编码({encoder})不可用(原因:{ex.Message.Split('\n')[0]})——改用轻量 CPU 编码({cpuEnc})");
-                    progress?.Report((96, $"⚠ 硬件编码({encoder})不可用{(driverOld ? "(显卡驱动过旧)" : "")},改用轻量 CPU 编码({cpuEnc})..."));
-                    LastVideoEncoderInfo = $"{cpuEnc} (CPU 软编,硬件编码回退)";
-                    await RunAsync(ffmpeg,
-                        "-nostats -progress pipe:1 " + muxBase + $"{videoMap}{audioPart} {EncoderArgs(cpuEnc, quality, bitrateKbps)} {vfArg}{fastFlag} \"{outTmp}\"",
-                        progress, ct, "编码", encTotal);
                 }
                 if (!await ValidateVideoFileAsync(outTmp, 1))
                     throw new InvalidOperationException("视频合成失败:输出文件无效(无法被解码)");
@@ -3935,14 +3956,15 @@ public static class VideoService
                 double encSec = encSw.Elapsed.TotalSeconds;
                 uEncSec = encSec;
                 double encFps = encSec > 0.01 ? encTotal / encSec : 0;
-                AppLogger.Info($"编码实测:编码器={LastVideoEncoderInfo},帧数={encTotal},耗时={encSec:0.##}s,实测={encFps:0.#}fps{(!encUsed.StartsWith("libx264") && !encUsed.StartsWith("libx265") ? "(硬编)" : "(CPU 软编)")}");
+                AppLogger.Info($"编码实测:编码器={LastVideoEncoderInfo},帧数={encTotal},耗时={encSec:0.##}s,实测={encFps:0.#}fps"
+                    + (encoder is "libx264" or "libx265" ? "(CPU 软编)" : "(硬编)"));
                 // 【把"解码""滤镜""编码"三者分开报】"编码/封装"这个数里混着 ffmpeg 的后处理滤镜与 JPG 解码
                 // (同一进程)。2026-09-12 就是被这一点误导过:日志显示"硬编只有 1fps",实际是滤镜链里一个 sab
                 // 把整条链拖到 4.88 秒/帧(4K),编码器本身有 15~20fps。这里分别抽样实测"解码"与"解码+滤镜",
                 // 相减得到纯滤镜成本,三者都写清楚(2026-09-13:原来是混在一起报的,导致用户拿含解码的数去优化滤镜)。
                 if (!string.IsNullOrEmpty(vfChainBody))
                 {
-                    bool hwJpeg = _hwJpegDecode == HwJpegDecode.Usable && encUsed.Contains("nvenc", StringComparison.OrdinalIgnoreCase);
+                    bool hwJpeg = _hwJpegDecode == HwJpegDecode.Usable && encoder.Contains("nvenc", StringComparison.OrdinalIgnoreCase);
                     var (perFrameFull, perFrameDecode) = await SampleFilterChainCostPerFrameAsync(
                         encFfmpeg, framePattern, vfChainBody, frBase, hwJpeg, ct);
                     if (perFrameFull >= 0)
@@ -5440,6 +5462,24 @@ public static class VideoService
     private static bool _hwProbed;
     private static readonly object _hwLock = new();
 
+    /// <summary>【自动化自验缝】让硬件编码这次调用必定失败(故意塞一个不存在的选项),用来在真机上验证
+    /// "重试 N 次 → 报错(不退回 CPU 软编)"这条路径 —— 否则手上没有能稳定复现的硬编失败样本。
+    /// 只在 ALH_FORCE_HW_ENCODE_FAIL=1 时生效;不设该变量时零副作用(参数原样返回)。</summary>
+    private static string SeamBreakHwEncode(string args)
+        => Environment.GetEnvironmentVariable("ALH_FORCE_HW_ENCODE_FAIL") == "1"
+           ? args + " -x_alh_force_hw_encode_fail" : args;
+
+    /// <summary>本机有没有【实测可用】的硬件编码器(必须先 await <see cref="EnsureHwProbeAsync"/>)。
+    /// 【用途】视频任务开跑前的一次闸门:一个硬编都没有、用户又没显式选 CPU 时直接报错,
+    /// 不让他白等一小时处理完再在编码这步慢一整轮(见 <see cref="AlhPro.Core.CpuFallbackPolicy"/>)。
+    /// 【自验缝】环境变量 ALH_FORCE_NO_HW_ENCODER=1 时假装"本机没有可用硬编",用来在真机上把这条
+    /// 报错路径跑出来(本机有 nvenc,否则这条分支永远走不到)。不设该变量时零副作用。</summary>
+    internal static bool HasAnyWorkingHwEncoder()
+    {
+        if (Environment.GetEnvironmentVariable("ALH_FORCE_NO_HW_ENCODER") == "1") return false;
+        lock (_hwLock) return WorkingHwEncoders.Count > 0;
+    }
+
     /// <summary>NVDEC(JPG 序列硬解)探测结果。**三态**:只有 <see cref="Usable"/> 才会启用硬解,
     /// 其余一律走软解(保守行为不变);分出 <see cref="ProbeTimeout"/> 只是为了【诊断能分清】
     /// "确定不支持"与"我们自己的 6 秒硬超时(结论未知)"。
@@ -5930,8 +5970,10 @@ public static class VideoService
         catch { return ""; }
     }
 
-    /// <summary>本会话已知会失败的硬件编码器(如 nvenc 驱动过老),避免每次先白跑一次硬件编码再回退。</summary>
-    private static readonly System.Collections.Generic.HashSet<string> BrokenHwEncoders = new();
+    // 【2026-09-23 删掉 BrokenHwEncoders】它原来是"硬编失败一次 → 本会话所有任务静默走 CPU 软编"的载体。
+    // 按用户要求「视频不落 CPU」,现在硬编失败是"重试 N 次 → 报错",没有什么"记坏以后走 CPU"的状态了
+    // ⇒ 字段连同它的两处用法一起删掉(死代码);这也顺手根除了旧注释里记的那个坑:
+    // 用户点一次「停止」被误判成"硬编坏了",此后本会话全部任务静默慢数倍直到重启。
 
     /// <summary>本会话各视频编码 GPU 硬解(d3d11va)已验证不可用的集合(按编码器区分,如 h264/hevc/av1)。
     /// 某一种编码硬解不了(如旧卡硬解 AV1)只禁用该编码,其它编码仍优先硬解,不再"一次失败、全会话软解"。</summary>
