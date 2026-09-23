@@ -58,14 +58,11 @@ public class NavLogoWebsiteTests
     {
         var xaml = ReadRepoFile("ImgUpscalerUI", "Views", "MainPage.xaml");
 
-        // 【2026-09-23 改锚点】用户要求「左侧功能区要有图标」⇒ 这个按钮的内容从纯字符串
-        // `Content="官方网站"` 变成了「图标 + 文字」面板。**Content 变成面板后 UIA 的 Name 不再自动
-        // 等于文字**,所以这一项现在显式写着 AutomationProperties.Name="官方网站" —— 正好当新锚点用。
-        Assert.Contains("AutomationProperties.Name=\"官方网站\"", xaml);
+        Assert.Contains("Content=\"官方网站\"", xaml);
         Assert.Contains("Click=\"Website_Click\"", xaml);
 
         // 按钮自己那一段里必须有悬停提示:一排按钮里没提示的话,它跟「设置」长得没区别
-        var btn = Regex.Match(xaml, "<Button Click=\"Website_Click\"[\\s\\S]*?</Button>");
+        var btn = Regex.Match(xaml, "<Button Content=\"官方网站\"[\\s\\S]*?/>");
         Assert.True(btn.Success, "找不到「官方网站」按钮的元素体");
         Assert.Contains("ToolTipService.ToolTip=", btn.Value);
         Assert.Contains("alhpro.cn", btn.Value);
