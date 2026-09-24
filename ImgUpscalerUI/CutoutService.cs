@@ -58,7 +58,8 @@ public static class CutoutService
     /// <summary>抠图页的默认模型(按 key 指定,不靠数组下标 —— 数组顺序一变默认就漂到别的模型上)。
     ///
     /// 【为什么从 birefnet-lite 换成 isnet-general-use】2026-09-22 实测(RTX 4060 Laptop,
-    /// 报告 _qa/视频抠图_性能实测_20260922.md):
+    /// 原始报告 _qa/视频抠图_性能实测_20260922.md;摘要与全部数字见
+    /// docs/2026-09-23-视频抠图下线-保留的经验与可复用件.md §三.1):
     ///   · birefnet-lite(1024²)在本机 DirectML 上图融合失败(8007000E → 887A0005 设备挂起),
     ///     每次推理都白试一遍再回退 CPU,实测量到的是 CPU 的 4.9~5.4 秒/帧;
     ///   · isnet-general-use 在干净进程里 GPU 只要 0.40 秒/帧(比 CPU 快 2.6 倍),
@@ -193,10 +194,12 @@ public static class CutoutService
     /// <summary>模型推理 + 掩码后处理共用核心(抠图输出与蒙版预览复用)。
     /// 该函数在 Task.Run 后台执行,不阻塞 UI。</summary>
     /// <summary>只做"像素 → 网络蒙版"这一段(读图/缩放由调用方完成)。
-    /// 【为什么把它单独拎出来】视频路径每帧都要蒙版,但走完整 <see cref="RunCore"/> 会连带
-    /// 图片抠图页那套参数后处理(阈值/羽化/边缘增强),再套一层 VideoMatting.PostProcessAlpha
-    /// 就是重复处理、而且每帧要写一个 PNG;见 docs/2026-09-22-video-matting.md §四。
-    /// DML 账本与设备级熔断逻辑全在这段里 ⇒ 视频路径天然共享同一套降级策略。
+    /// 【为什么把它单独拎出来】抠图输出与蒙版预览两条路共用它;而"读图 + 缩放"是两个入口各自的活。
+    /// (2026-09-23 视频抠图下线前,视频的逐帧路径也复用它 —— 那时它下面还有一句"绕开图片页后处理"的理由。)
+    /// **逐帧场景的成本纪律仍然成立**:别走完整 <see cref="RunCore"/>(它会做图片页那套参数后处理,
+    /// 而且每帧写一个 PNG,实测多花 120~134 ms/帧),详见
+    /// `docs/2026-09-23-视频抠图下线-保留的经验与可复用件.md` §三.2。
+    /// DML 账本与设备级熔断逻辑全在这段里 ⇒ 任何调用方天然共享同一套降级策略。
     /// <paramref name="pixels"/> 必须是 <c>Preprocess</c> 的输出(长度 3×InputSize²)。</summary>
     private static float[,] InferMaskCore(float[] pixels, CutoutModel model, string modelPath, int gpuId,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct)
@@ -286,8 +289,8 @@ public static class CutoutService
     }
 
     /// <summary>把小蒙版位图(灰度值写在四通道里)双三次放大到原图尺寸,读回一维 0~1 alpha。
-    /// 【为什么单独成方法】图片抠图页与视频抠图都要这一步(网络输出是 InputSize² 的方图,
-    /// 必须拉伸回原图尺寸)。抽出来是为了让两条路共用同一套插值口径 —— 各写一份迟早会不一致。
+    /// 【为什么单独成方法】网络输出是 InputSize² 的方图,必须拉伸回原图尺寸;抠图输出与蒙版预览
+    /// 两条路共用同一套插值口径 —— 各写一份迟早会不一致。
     /// 【调用方负责释放】<paramref name="smallMask"/> 的释放留在调用方(它自己 using 建的)。
     /// 【rembg 官方口径】输入拉伸成正方形(size×size)⇒ 输出蒙版也是 size×size,直接拉伸回原图即可(无 letterbox 补边)。</summary>
     private static float[] ScaleMaskToAlpha(System.Drawing.Bitmap smallMask, int w, int h)
@@ -327,7 +330,7 @@ public static class CutoutService
 
     /// <summary>网络蒙版(InputSize² 的 float[,],0~1) → 原图尺寸的一维 alpha(0~1)。
     /// 只做"放大 + 读回",**不做任何参数相关的处理**(阈值/羽化/形态学留给调用方:
-    /// 图片页用 ProcessMask 那一套,视频路径用 AlhPro.Core.VideoMatting.PostProcessAlpha)。
+    /// 图片页用 ProcessMask 那一套;将来做逐帧蒙版用 AlhPro.Core.VideoMatting.PostProcessAlpha)。
     /// 【为什么不做形态学分支】ProcessMask 的小图构造会在开启形态学时先二值化再开运算,
     /// 那属于"参数后处理";这里保持蒙版原值,让放大本身只用双三次插值(边缘天然带过渡)。</summary>
     private static float[] UpsampleMask(float[,] mask, int w, int h)
@@ -361,45 +364,21 @@ public static class CutoutService
         return ScaleMaskToAlpha(small, w, h);
     }
 
-    /// <summary>【视频抠图专用】只出蒙版:返回 0~1 的 float alpha(长度 w*h)与原图尺寸,**不写任何文件、
-    /// 不做参数后处理、不进 `_rawMaskCache`**。
-    ///
-    /// 【为什么必须有这个入口】视频路径每帧都要蒙版。若改用 <see cref="CutoutAsync"/> 或
-    /// <see cref="PreviewMaskAsync"/>:①它们走完整 `RunCore`,已经做过一遍阈值/羽化/边缘增强
-    /// (视频路径再套 `VideoMatting.PostProcessAlpha` 就是重复处理,参数含义也会打架);
-    /// ②它们每帧都要写一个 PNG —— 1800 帧就是数 GB 临时盘。
-    /// 详见 docs/2026-09-22-video-matting.md §四 与 plan-2 的硬约束 2。
-    ///
-    /// 【调用方随后该做什么】`VideoMatting.PostProcessAlpha`(阈值/羽化/形态学)
-    /// → `AlphaTemporalFilter.Push`(先按 `LooksLikeSceneCut` 判断要不要 `Reset`)
-    /// → `VideoMatting.Composite`(换背景)或直接把 alpha 写成灰度序列(透明通道)。
-    /// 【注意】同一 ONNX 会话不能并发 `Run`(内部已用信号量串行化),所以帧循环必须串行。
-    /// </summary>
-    /// <returns>alpha(0~1,长度 w*h)、w、h(原图像素尺寸;EXIF 旋转已应用)。</returns>
-    public static async Task<(float[] alpha, int w, int h)> CutoutMaskAsync(string input, string modelKey,
-        int gpuId = -1, IProgress<(int pct, string msg)>? progress = null, CancellationToken ct = default)
-    {
-        var model = GetModel(modelKey);
-        var modelPath = EngineService.FindCutoutModel(model.FileName)
-            ?? throw new FileNotFoundException($"缺少抠图模型:{model.FileName}。");
-
-        progress?.Report((5, $"加载模型({model.Label})..."));
-        return await Task.Run(() =>
-        {
-            ct.ThrowIfCancellationRequested();
-            using var src = LoadRotatedBitmap(input);
-            var (pixels, _, _) = Preprocess(src, model.InputSize, model);
-            var mask = InferMaskCore(pixels, model, modelPath, gpuId, progress, ct);
-            progress?.Report((85, "生成蒙版..."));
-            var alpha = UpsampleMask(mask, src.Width, src.Height);
-            progress?.Report((100, "蒙版完成"));
-            return (alpha, src.Width, src.Height);
-        }, ct);
-    }
+    // 【2026-09-23 删除】这里原有一个 `CutoutMaskAsync`("只出蒙版:返回 0~1 float alpha,不写文件、不做参数后处理")
+    // —— 它是**视频抠图专用**的逐帧入口,视频抠图整条下线后没有任何调用方,故一并删除。
+    // 【将来若又要逐帧蒙版,照这个配方做(实测数据见 docs/2026-09-23-视频抠图下线-保留的经验与可复用件.md)】:
+    //   ① 走本类的推理路径拿原始蒙版(别用 RunCore/CutoutAsync/PreviewMaskAsync:它们会重复做一遍图片页后处理,
+    //      而且**每帧写一个 PNG** —— 1800 帧就是数 GB 临时盘,实测那一步固定多花 120~134 ms/帧);
+    //   ② `AlhPro.Core.VideoMatting.PostProcessAlpha`(阈值/羽化/形态学,已保留、有单测)
+    //      → `AlphaTemporalFilter.Push`(先按 `LooksLikeSceneCut` 判断要不要 `Reset`;实测只 3.9 ms/帧)
+    //      → 直接把 alpha 写成灰度序列或 `VideoMatting.Composite` 换背景;
+    //   ③ 同一 ONNX 会话**不能并发** Run(本类内部已用信号量串行化)⇒ 推理与滤波必须同一个串行循环;
+    //   ④ 别走 `_rawMaskCache`:它按「图|模型|设备」缓存,逐帧每帧都是新键 ⇒ 每帧写一张 1080p float 再立刻清空。
 
     /// <summary>图片抠图页的完整路径:读图(含 EXIF 旋转) → 缩放归一化 → 推理 → 放大到原尺寸 → 参数后处理。
     /// 【行为不许变】这是图片抠图页唯一的生产路径。改动后必须用 `_qa/mattingbench` 对同一张探针图
-    /// 做**逐字节**输出比对(GPU/CPU 两条路各一次),见 docs/2026-09-22-video-matting-plan-2.md Task A Step 3。</summary>
+    /// 做**逐字节**输出比对(GPU/CPU 两条路各一次),工具用法见
+    /// `docs/2026-09-23-视频抠图下线-保留的经验与可复用件.md` §六。</summary>
     private static float[] RunCore(string input, CutoutModel model, string modelPath, int gpuId,
         int fgThreshold, int bgThreshold, int featherRadius, int edgeStrength,
         int? selX, int? selY, int? selW, int? selH,

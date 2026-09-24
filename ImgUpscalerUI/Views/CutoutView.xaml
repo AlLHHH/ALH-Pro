@@ -61,7 +61,7 @@
                     <TextBlock Text="抠图模型" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="ModelCombo" HorizontalAlignment="Stretch"
                               SelectedIndex="0" SelectionChanged="ParamsCombo_Changed"
-                              ToolTipService.ToolTip="ISNet 精细边缘:边缘/发丝最细,速度最快(轻量模型);BiRefNet 高精度:2025 年 SOTA,暗光/复杂背景/远景多人判别力强(模型大得多,实测约 5 秒/张);U²-Net 轻量快速:老牌轻量模型,速度与 ISNet 相当、细节略逊。&#x0a;注意:**图片抠图固定用 CPU 推理**(GPU 推理会把显卡占满,处理时整机卡顿),所以本页没有「显卡加速」;视频抠图才跟随设置里的计算设备。">
+                              ToolTipService.ToolTip="ISNet 精细边缘:边缘/发丝最细,速度最快(轻量模型);BiRefNet 高精度:2025 年 SOTA,暗光/复杂背景/远景多人判别力强(模型大得多,实测约 5 秒/张);U²-Net 轻量快速:老牌轻量模型,速度与 ISNet 相当、细节略逊。&#x0a;注意:**图片抠图固定用 CPU 推理**(GPU 推理会把显卡占满,处理时整机卡顿),所以本页没有「显卡加速」。">
                         <ComboBoxItem Content="BiRefNet 高精度"/>
                         <ComboBoxItem Content="BiRefNet 完整版 (复杂背景)"/>
                         <ComboBoxItem Content="ISNet 精细边缘 (推荐)"/>

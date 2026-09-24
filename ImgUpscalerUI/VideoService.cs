@@ -6250,8 +6250,10 @@ public static class VideoService
     public static string? LastSourceColorSummary { get; private set; }
     /// <summary>探测是否需要 HDR→SDR 色调映射,并返回要插进拆帧滤镜链的 vf;顺带在发现"非法色彩标记"时
     /// 写入 <see cref="InputColorOverride"/>(拆帧命令要在 -i 之前插入颜色覆盖,否则 mjpeg 报 Invalid color space、0 帧)。
-    /// 【视频抠图也要用它】internal 开放给同程序集的 `VideoMattingService`:直接调 `ExtractFramesCoreAsync`
-    /// 而跳过本探测,就会丢掉 HDR 映射与非法标记兜底这两层处理 —— 那不是"少一个功能",是拆帧可能整批失败。
+    /// 【为什么 internal】原先是为了给同程序集的 `VideoMattingService`(视频抠图)复用;视频抠图已于
+    /// 2026-09-23 下线,这里保持 internal 只是因为同程序集内还有别的拆帧调用方。**结论对任何调用方都成立**:
+    /// 直接调 `ExtractFramesCoreAsync` 而跳过本探测,就会丢掉 HDR 映射与非法标记兜底这两层处理 ——
+    /// 那不是"少一个功能",是拆帧可能整批失败。
     /// 调用顺序必须是:本探测 → 用返回的 vf 拼拆帧 vf → `ExtractFramesCoreAsync`。</summary>
     internal static async Task<(string? desc, string? vf)> ProbeHdrToSdrAsync(string video, CancellationToken ct)
     {
@@ -6367,9 +6369,10 @@ public static class VideoService
     private static string InputColorOverride = "";
 
     /// <summary>拆帧到 `framesDir`(JPG,yuvj420p),返回帧数。含硬解回退、看门狗、阶段进度上报。
-    /// 【internal 开放给视频抠图】`VideoMattingService` 复用这一条,而不是自己拼 ffmpeg:
+    /// 【为什么 internal】原先视频抠图(`VideoMattingService`,已于 2026-09-23 下线)复用它而不是自己拼 ffmpeg:
     /// 它已经处理了 HDR→SDR 色调映射、非法色彩标记兜底(见 <see cref="ProbeHdrToSdrAsync"/>)、
     /// 硬解坏编码表、进程收不回来时"不回退重跑"这些坑 —— 重写一份就是把这些坑重新踩一遍。
+    /// 这条理由对任何"想自己拆帧"的新代码同样适用(见 docs/2026-09-23-视频抠图下线-保留的经验与可复用件.md §四)。
     /// 【前置条件】调用前必须先跑 <see cref="ProbeHdrToSdrAsync"/>(它会写 `InputColorOverride`),
     /// 并把返回的色调映射 vf 拼进 `vfExpr`。</summary>
     internal static async Task<int> ExtractFramesCoreAsync(string ffmpeg, string inputVideo, string trimArgs,

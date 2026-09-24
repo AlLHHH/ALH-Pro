@@ -810,7 +810,7 @@ public sealed partial class CutoutView : UserControl
             int total = items.Length;
             TaskLogText.Text = "";
             Log($"开始抠图任务:共 {total} 张,设备=CPU");
-            Log("⚠ 图片抠图强制使用 CPU:用 GPU 会占满显卡、整个电脑卡顿;CPU 较慢但稳定流畅(设置里选 GPU 对图片抠图无效;视频抠图跟随设置)。");
+            Log("⚠ 图片抠图强制使用 CPU:用 GPU 会占满显卡、整个电脑卡顿;CPU 较慢但稳定流畅(设置里选 GPU 对图片抠图无效)。");
             Log($"输出目录:{outDir}");
             for (int i = 0; i < total; i++)
             {
