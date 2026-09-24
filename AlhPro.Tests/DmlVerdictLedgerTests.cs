@@ -390,4 +390,65 @@ public class DmlVerdictLedgerTests
         Assert.Equal(Key(Domain, Model, 0), fresh[0].Key);
         Assert.True(ledger.ShouldAttempt(Domain, OtherModel, 0, T0 + 3600 + 1));
     }
+
+    // ───────────────── 环境签名 + 失败结论跨天记忆(2026-09-24 队长裁定) ─────────────────
+
+    /// <summary>★ 失败结论与成功结论同为 7 天:1 天会让"一天只跑一次"的用户永远攒不到 3 次连击、
+    /// 每次会话都白试一次 DML(那正是本类要消灭的浪费)。自愈改由环境签名负责(下一条)。</summary>
+    [Fact]
+    public void Failure_and_success_verdicts_share_the_same_seven_day_memory()
+    {
+        Assert.Equal(TimeSpan.FromDays(7), DmlVerdictLedger.DefaultSuccessTtl);
+        Assert.Equal(TimeSpan.FromDays(7), DmlVerdictLedger.DefaultFailureTtl);
+    }
+
+    /// <summary>★ 环境签名:换驱动/换卡 ⇒ 整份结论作废(重新试一次);签名一致则照常生效;
+    /// 老文件没有签名的行 ⇒ 不擅自作废(签名未知 ≠ 环境变过);签名只写不解析成条目。</summary>
+    [Fact]
+    public void A_changed_gpu_or_driver_signature_invalidates_every_verdict()
+    {
+        var l = new DmlVerdictLedger(1, failureTtl: TimeSpan.FromDays(7));
+        l.NoteFailure("audio", "m.onnx", 0, T0, "推理失败");
+        l.NoteDenial("audio", "m.onnx", 0, T0, "推理失败");
+        string text = DmlVerdictLedger.Format(l.Snapshot(T0), "RTX 4060@32.0.15.7283");
+        Assert.Equal("RTX 4060@32.0.15.7283", DmlVerdictLedger.ParseSignature(text));
+        Assert.Single(DmlVerdictLedger.Parse(text));                                  // 签名行不会被当成条目
+
+        // 同一环境:结论照旧生效(不试 DML)
+        var same = DmlVerdictLedger.FromText(text, 1, currentSignature: "RTX 4060@32.0.15.7283");
+        Assert.False(same.ShouldAttempt("audio", "m.onnx", 0, T0 + 60));
+
+        // 换了驱动:整份作废 ⇒ 照现状重新试一次
+        var changed = DmlVerdictLedger.FromText(text, 1, currentSignature: "RTX 4060@33.0.0.1");
+        Assert.True(changed.ShouldAttempt("audio", "m.onnx", 0, T0 + 60));
+        Assert.Null(changed.Verdict("audio", "m.onnx", 0, T0 + 60));
+
+        // 调换大小写不算环境变化(签名比较忽略大小写)
+        Assert.False(DmlVerdictLedger.FromText(text, 1, currentSignature: "rtx 4060@32.0.15.7283")
+            .ShouldAttempt("audio", "m.onnx", 0, T0 + 60));
+
+        // 老文件没有签名行 ⇒ 不擅自作废;调用方拿不到当前签名(空)同样不判断
+        string legacy = DmlVerdictLedger.Format(l.Snapshot(T0));
+        Assert.Null(DmlVerdictLedger.ParseSignature(legacy));
+        Assert.False(DmlVerdictLedger.FromText(legacy, 1, currentSignature: "随便什么")
+            .ShouldAttempt("audio", "m.onnx", 0, T0 + 60));
+        Assert.False(DmlVerdictLedger.FromText(text, 1, currentSignature: "").ShouldAttempt("audio", "m.onnx", 0, T0 + 60));
+    }
+
+    /// <summary>★ 一天只跑一次的用户:三次会话(跨天,但在 7 天记忆内)累计到上限 ⇒ 之后不再白试。</summary>
+    [Fact]
+    public void A_daily_user_reaches_the_denial_across_days_instead_of_wasting_every_session()
+    {
+        var l = new DmlVerdictLedger(3);
+        long day = 24 * 3600;
+        Assert.True(l.ShouldAttempt("audio", "m.onnx", 0, T0));                 // 第 1 天:试
+        Assert.False(l.NoteFailure("audio", "m.onnx", 0, T0, "失败 1"));
+        Assert.True(l.ShouldAttempt("audio", "m.onnx", 0, T0 + day));           // 第 2 天:再试一次
+        Assert.False(l.NoteFailure("audio", "m.onnx", 0, T0 + day, "失败 2"));
+        Assert.True(l.ShouldAttempt("audio", "m.onnx", 0, T0 + 2 * day));       // 第 3 天:最后一次
+        Assert.True(l.NoteFailure("audio", "m.onnx", 0, T0 + 2 * day, "失败 3"));  // 达上限
+        Assert.False(l.ShouldAttempt("audio", "m.onnx", 0, T0 + 3 * day));      // 第 4 天起:不再白试
+        // 7 天后旧结论过期 ⇒ 给一次重新试的机会(机器自愈窗口)
+        Assert.True(l.ShouldAttempt("audio", "m.onnx", 0, T0 + 11 * day));
+    }
 }

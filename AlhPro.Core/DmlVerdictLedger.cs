@@ -16,11 +16,14 @@ namespace AlhPro.Core;
 /// ncnn 探测结论缓存踩过一次坑(旧键 <c>引擎|设备</c> 缺"模型"维度,于是"animevideov3 通过"给
 /// x4plus 背书了 7 天,见 <see cref="NcnnVerdictKey"/>)。按设备一刀切会把同一张卡上能跑的模型一起关掉。
 ///
-/// 【为什么成功与失败用不同 TTL】判错的代价不对称,时间尺度也不对称:
-///   · 成功结论留 <see cref="DefaultSuccessTtl"/>(7 天)—— 能跑就是能跑,重测一次要几秒到几十秒;
-///   · 失败结论只留 <see cref="DefaultFailureTtl"/>(1 天)—— **短**是刻意的,让机器能自愈:
-///     换驱动、别家程序腾出显存、重启电脑之后,本机就该有机会重新试一次,而系统不会通知我们环境变了。
-///     (与 EngineService 的 ncnn 探测结论缓存同一组数字与同一条理由)
+/// 【为什么成功与失败用不同 TTL → 2026-09-24 改成同一组 7 天】原设计失败只留 1 天,理由是"让机器自愈"。
+/// 但真机使用模式暴露了它的反面:**一天只跑一次的用户永远攒不到 3 次连击** —— 每次开软件时上一条失败
+/// 都刚好过期 ⇒ 这个用户**每次会话都要白试一次 DML**(实测每次白等 3~13 秒),而"白试"正是本类要消灭的东西。
+/// 现在失败同样留 7 天(攒得起来),**自愈改由"环境签名"负责**:落盘文本里带一行
+/// <c># sig=显卡名@驱动版本…</c>,读回时若与本机当前签名不一致(换了驱动 / 换了卡 / 插拔了 eGPU),
+/// **整份结论一律作废**(= 全部当"没测过",重新试一次)。换驱动正是"跑不了"最常见的解药,
+/// 这样既不靠"每天忘一次"来碰运气,也不会在换驱动后继续死认旧结论。
+/// (与 EngineService 的 ncnn 探测结论缓存不同:那边没有签名机制,所以只能靠短 TTL。)
 ///
 /// 【为什么"没结论就放行"】<see cref="ShouldAttempt"/> 只在"存在未过期的否定结论"时才说 false。
 /// 空文件 / 文件损坏 / 键不认识 / 结论过期 / 时钟异常 —— 一律当作"没测过" ⇒ 调用方照现状试一次。
@@ -45,11 +48,16 @@ public sealed class DmlVerdictLedger
     /// 反射序列化/裁剪风险(同 ncnn-probe.txt 的理由),而且人可以直接读诊断包核查。</summary>
     private const char Sep = '\t';
 
-    /// <summary>成功结论的有效期(见类注释:Ttl 不对称的理由)。</summary>
+    /// <summary>成功结论的有效期(见类注释)。</summary>
     public static readonly TimeSpan DefaultSuccessTtl = TimeSpan.FromDays(7);
 
-    /// <summary>失败结论的有效期。**短一些是刻意的**:让机器在换驱动/腾显存之后能自愈。</summary>
-    public static readonly TimeSpan DefaultFailureTtl = TimeSpan.FromDays(1);
+    /// <summary>失败结论的有效期。**与成功同为 7 天**(2026-09-24 改口径,理由见类注释):
+    /// 1 天会让"一天只跑一次"的用户永远攒不到连击、每次会话都白试一次;自愈改由**环境签名**负责
+    /// (<see cref="ParseSignature"/>:换驱动/换卡 ⇒ 整份作废重测)。</summary>
+    public static readonly TimeSpan DefaultFailureTtl = TimeSpan.FromDays(7);
+
+    /// <summary>落盘文本里"环境签名"那一行的前缀(注释行,解析条目时自然跳过)。</summary>
+    public const string SigPrefix = "# sig=";
 
     private readonly Dictionary<string, Entry> _entries = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _gate = new();
@@ -117,10 +125,16 @@ public sealed class DmlVerdictLedger
 
     /// <summary>把条目序列化成落盘文本(第一行是注释说明,键升序 ⇒ 文件 diff 友好)。
     /// 行尾固定 LF(仓库约定),不随平台变;成功条目强制 failures=0。</summary>
-    public static string Format(IEnumerable<Entry>? entries)
+    public static string Format(IEnumerable<Entry>? entries) => Format(entries, null);
+
+    /// <summary>同 <see cref="Format(IEnumerable{Entry}?)"/>,但额外写入一行**环境签名**(<see cref="SigPrefix"/>)。
+    /// 签名为空则不写(老文件没有这一行时,读回按"无法判断环境是否变过"处理 —— 见 <see cref="FromText"/>,不擅自作废)。</summary>
+    public static string Format(IEnumerable<Entry>? entries, string? signature)
     {
         var sb = new StringBuilder();
         sb.Append(FileHeader).Append('\n');
+        if (!string.IsNullOrWhiteSpace(signature))
+            sb.Append(SigPrefix).Append(OneLine(signature)).Append('\n');
         if (entries != null)
         {
             var list = new List<Entry>();
@@ -137,13 +151,36 @@ public sealed class DmlVerdictLedger
         return sb.ToString();
     }
 
-    /// <summary>便捷构造:新建账本并合并一份落盘文本(调用方负责文件 I/O,本类不读文件)。</summary>
+    /// <summary>便捷构造:新建账本并合并一份落盘文本(调用方负责文件 I/O,本类不读文件)。
+    /// <paramref name="currentSignature"/> 非空时做**环境签名校验**:落盘文本里的签名与它不一致
+    /// (换了驱动 / 换了卡 / 插拔 eGPU)⇒ **整份结论作废**,等效于"没测过"(下次照现状试一次)。
+    /// 文本里没有签名的老文件不擅自作废(签名未知 ≠ 环境变过)。</summary>
     public static DmlVerdictLedger FromText(string? text, int strikeLimit,
-        TimeSpan? successTtl = null, TimeSpan? failureTtl = null)
+        TimeSpan? successTtl = null, TimeSpan? failureTtl = null, string? currentSignature = null)
     {
         var ledger = new DmlVerdictLedger(strikeLimit, successTtl, failureTtl);
+        string? stored = ParseSignature(text);
+        if (!string.IsNullOrWhiteSpace(currentSignature) && !string.IsNullOrWhiteSpace(stored)
+            && !string.Equals(stored, OneLine(currentSignature), StringComparison.OrdinalIgnoreCase))
+            return ledger;   // 环境变了:一条都不合并(见上面注释)
         ledger.Merge(Parse(text));
         return ledger;
+    }
+
+    /// <summary>从落盘文本里取出环境签名(第一行 <c># sig=</c> 之后的原文);没有则 null。纯函数,绝不抛。</summary>
+    public static string? ParseSignature(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        foreach (var raw in text!.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.StartsWith(SigPrefix, StringComparison.Ordinal))
+            {
+                var sig = line.Substring(SigPrefix.Length).Trim();
+                return sig.Length > 0 ? sig : null;
+            }
+        }
+        return null;
     }
 
     // ───────────────────────── 实例状态(线程安全) ─────────────────────────

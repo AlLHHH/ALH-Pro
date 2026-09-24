@@ -27,7 +27,8 @@ public readonly record struct ProbeRetryProfile(
     bool RetryHang,
     bool RetryDeterministicFailures,
     int MaxAttempts,
-    int BackoffMs);
+    int BackoffMs,
+    int HangMaxAttempts = 0);   // 0 = 与 MaxAttempts 相同;>0 = 卡死(Hang)单独限次
 
 /// <summary>【探测失败要不要重试】的纯逻辑判据 + 编排(2026-09-24)。
 ///
@@ -65,14 +66,19 @@ public static class ProbeRetryPolicy
 
     /// <summary>【小图活性检查/挑卡档】<c>FindBestWorkingGpuAsync</c> 的挑卡、编号纠正、核显切换(fullFrame:false,
     /// 320×240,单次 15 秒):**确定性失败也退避 1.5 秒、最多 3 次**(恢复 t3 里被顺带删掉的旧保险);
-    /// 瞬时 Hang 同样重试(同一档位、同一退避)。
-    /// 【代价与收益】最坏 3×(15 秒) + 2×1.5 秒 ≈ 48 秒,只发生在"探测真的失败"时(正常卡首探几百毫秒);
+    /// 瞬时卡死同样重试,但**只重试一次**(共 2 次,见下)。
+    /// 【代价与收益】确定性失败最坏 ≈ 3×15 + 2×1.5 ≈ 48 秒(只发生在"探测真的失败"时,正常卡首探几百毫秒);
     /// 换来的是"一次驱动抽风不至于把独显判成没有 GPU、让整个会话停在错卡/核显上"。
+    /// 【为什么卡死(Hang)单独限 2 次 · 2026-09-24 队长裁定】这一档要在**多张候选卡**上逐个试
+    /// (FindBestWorkingGpuAsync 最多 4 独显 + 2 核显),而独立审查算过:若卡死也试 3 次,
+    /// "所有候选都卡死"的机器上启动自检最坏 **≈4.8 分钟**(6×48 秒)⇒ 把用户晾在启动界面上。
+    /// 卡死与"进程崩一下"不同:它每次都要等满 15 秒超时,乘上候选数就是分钟级。所以卡死只留**一次**重试
+    /// (足以覆盖"驱动/显存刚开始回收"这类瞬时状态),最坏降到 6×31.5 ≈ **3.2 分钟**;确定性形态的三次保险不变。
     /// 【为什么退避 1.5 秒而不是 3 秒】这一档本来就快、且它是启动自检的热路径:1.5 秒足够给驱动/显存一个回收窗口,
     /// 又不会让自检明显变慢(与旧代码逐字一致)。</summary>
     public static readonly ProbeRetryProfile DeviceLivenessCheck =
         new(Name: "device-liveness", RetryHang: true, RetryDeterministicFailures: true,
-            MaxAttempts: 3, BackoffMs: 1500);
+            MaxAttempts: 3, BackoffMs: 1500, HangMaxAttempts: 2);
 
     /// <summary>★ 档位只由 fullFrame 决定(调用点不该自己拼档):true = 流水线生产形态探测,false = 小图活性检查/挑卡。</summary>
     public static ProbeRetryProfile ForFullFrame(bool fullFrame)
@@ -90,9 +96,15 @@ public static class ProbeRetryPolicy
             ? profile.RetryHang
             : IsDeterministicFailure(kind) && profile.RetryDeterministicFailures;
 
-    /// <summary>这个形态在**这一档**下允许的总尝试次数(可重试 = profile.MaxAttempts,否则 1)。</summary>
+    /// <summary>这个形态在**这一档**下允许的总尝试次数(可重试 = 该形态的上限,否则 1)。
+    /// 卡死(Hang)可以有自己的上限(见 <see cref="ProbeRetryProfile.HangMaxAttempts"/>):挑卡档要在多张卡上逐个试,
+    /// 卡死每次都要等满超时,乘上候选数就是分钟级 —— 所以那里卡死只重试一次,而确定性形态保留三次保险。</summary>
     public static int MaxAttempts(ProbeRetryProfile profile, ProbeFailureKind kind)
-        => ShouldRetry(profile, kind) ? profile.MaxAttempts : 1;
+    {
+        if (!ShouldRetry(profile, kind)) return 1;
+        if (kind == ProbeFailureKind.Hang && profile.HangMaxAttempts > 0) return profile.HangMaxAttempts;
+        return profile.MaxAttempts;
+    }
 
     /// <summary>第 N 次尝试失败后、重试前要等多久(毫秒)。不该重试的形态返回 0(调用方不该拿它去等)。</summary>
     public static int BackoffMsAfterAttempt(ProbeRetryProfile profile, int failedAttempt, ProbeFailureKind kind)
