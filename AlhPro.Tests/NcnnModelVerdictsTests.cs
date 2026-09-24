@@ -95,4 +95,72 @@ public class NcnnModelVerdictsTests
     {
         Assert.Contains("未测", NcnnModelVerdicts.Describe(new List<NcnnModelVerdicts.Entry>(), "realesrgan2026", 0));
     }
+
+    // ───────────────────────── 【2026-09-24】没有 default 结论时的兜底口径 ─────────────────────────
+
+    /// <summary>本机(4060 Laptop + 核显)真实缓存形状:**没有 default 行**,只有两条带模型的结论。
+    /// 纯 N 卡 + 核显走不了"免探测快速通道",而每次探测都带模型 ⇒ 从来不写 default ⇒
+    /// `EngineUsable` 返回 null,必须靠兜底口径。旧兜底"任一支失败即整条不可用"里的那支失败正是
+    /// anime4k(走 libplacebo 着色器、被误当模型名喂给 ncnn 探测超时),于是整条 realesrgan 被判走 ONNX。</summary>
+    private static List<NcnnModelVerdicts.Entry> ThisMachineNoDefaultRow() => new()
+    {
+        new("realesrgan2026|0|realesr-animevideov3", true, 1790166490),
+        new("realesrgan2026|0|anime4k", false, 1790173376),
+    };
+
+    [Fact]
+    public void Without_a_default_row_a_pseudo_model_failure_must_not_disable_the_engine()
+    {
+        var e = ThisMachineNoDefaultRow();
+        Assert.Null(NcnnModelVerdicts.EngineUsable(e, "realesrgan2026", 0));                 // 没有 default 行
+        Assert.True(NcnnModelVerdicts.ModelOnlyRisk(e, "realesrgan2026", 0));                // ⇒ 只看真模型:通过
+        Assert.False(NcnnModelVerdicts.IsNonNcnnModel("realesr-animevideov3"));               // 真模型不受影响
+        Assert.True(NcnnModelVerdicts.IsNonNcnnModel("anime4k"));                             // 伪模型
+        Assert.True(NcnnModelVerdicts.IsNonNcnnModel("  Anime4K "));                          // 大小写/空白不敏感
+        Assert.False(NcnnModelVerdicts.IsNonNcnnModel(null));
+        Assert.False(NcnnModelVerdicts.IsNonNcnnModel(""));
+    }
+
+    /// <summary>兜底口径仍然是保守的:真模型里有失败 ⇒ 引擎判风险(不能因为"跳过了伪模型"就变成永远可用)。</summary>
+    [Fact]
+    public void A_real_model_failure_still_makes_the_engine_risky_without_a_default_row()
+    {
+        var e = new List<NcnnModelVerdicts.Entry>
+        {
+            new("realesrgan2026|0|realesr-animevideov3", true, 1),
+            new("realesrgan2026|0|alhpro-real2x", false, 1),     // 真模型(只有 ncnn 权重)失败
+        };
+        Assert.False(NcnnModelVerdicts.ModelOnlyRisk(e, "realesrgan2026", 0));
+    }
+
+    /// <summary>只有伪模型结论时 = 一条真 ncnn 结论都没有 ⇒ 返回 null(当"未测",交给启发式),别乱判。</summary>
+    [Fact]
+    public void Only_pseudo_rows_means_untested()
+    {
+        var e = new List<NcnnModelVerdicts.Entry> { new("realesrgan2026|0|anime4k", false, 1) };
+        Assert.Null(NcnnModelVerdicts.ModelOnlyRisk(e, "realesrgan2026", 0));
+    }
+
+    /// <summary>兜底口径按"引擎 + 设备"隔离:别把 10 号卡/别的引擎的结论算进来(键前缀成对)。</summary>
+    [Fact]
+    public void The_fallback_summary_is_scoped_to_engine_and_device()
+    {
+        var e = new List<NcnnModelVerdicts.Entry>
+        {
+            new("realesrgan2026|0|realesr-animevideov3", true, 1),
+            new("realesrgan2026|10|alhpro-real2x", false, 1),   // 双位数设备号:不许被 engine|1 误吃
+            new("waifu2x|0|models-cunet", false, 1),            // 别的引擎
+        };
+        Assert.True(NcnnModelVerdicts.ModelOnlyRisk(e, "realesrgan2026", 0));
+        Assert.False(NcnnModelVerdicts.ModelOnlyRisk(e, "realesrgan2026", 10));
+        Assert.Null(NcnnModelVerdicts.ModelOnlyRisk(e, "realesrgan2026", 1));
+    }
+
+    /// <summary>自检报告里要把伪模型标出来(否则看着像"ncnn 有一支跑不了")。</summary>
+    [Fact]
+    public void Describe_marks_pseudo_models_so_they_do_not_look_like_ncnn_failures()
+    {
+        var s = NcnnModelVerdicts.Describe(ThisMachineNoDefaultRow(), "realesrgan2026", 0);
+        Assert.Contains("非 ncnn 模型", s);
+    }
 }

@@ -807,7 +807,10 @@ public static class VideoService
                     progress?.Report((1, $"正在检测超分引擎兼容性({engine},首次约 1~20 秒,结论会记住)..." + StageElapsed()));
                     try
                     {
-                        denoiseViaModel = await EngineService.EnsureNcnnProbeAsync("waifu2x", gpuId, model, ct);
+                        // 同样先过探测计划:伪模型/着色器条目别喂给 ncnn 探测(见超分预检处的说明)
+                        var dnPlan = AlhPro.Core.NcnnProbePlan.For(model);
+                        denoiseViaModel = dnPlan.ShouldProbe
+                            && await EngineService.EnsureNcnnProbeAsync("waifu2x", gpuId, dnPlan.Model, ct);
                         if (!denoiseViaModel)
                             AppLogger.Info("视频降噪:waifu2x 的 ncnn 引擎在本机不可用(将走 ONNX 稳定引擎),降噪改由拆帧阶段 nlmeans 承担");
                     }
@@ -2340,8 +2343,21 @@ public static class VideoService
                     // 于是探测判"可用",坏帧一路进成片。现在改为:先按【生产形态】真机探测
                     // (1080×1920 + 真实模型 + 生产 -j + 带状黑判据),通过 → 就走 ncnn-Vulkan
                     // (真机实测 0.24~0.6 秒/帧,而"ONNX 落 CPU"是 8 秒/帧);失败 → 才改走 ONNX 并明确告知用户。
-                    progress?.Report((upBase, $"正在检测超分 GPU 兼容性({engine},首次最长约 60 秒,结论会记住)..."));
-                    bool usable = await EngineService.EnsureNcnnProbeAsync(engine, gpuId, model, ct).ConfigureAwait(false);
+                    // 【2026-09-24】探测按 NcnnProbePlan 走:①「动漫 · Anime4K 修复」走着色器、根本不用 ncnn
+                    // ⇒ **不探测**(原样把 Tag anime4k 喂进去会让 ncnn 去加载一个不存在的模型 ⇒ 探 60 秒被强杀
+                    // ⇒ 落一条假的 realesrgan 失败结论 ⇒ 之后所有 2x/3x/4x 视频超分被判走 ONNX —— 实测 2x 超分
+                    // 3880 ms/帧,而软件标称 0.26~0.30 秒/帧);②「现实 · 1x 修复」的 Tag 不是真模型 ⇒ 用真权重探。
+                    var upProbePlan = AlhPro.Core.NcnnProbePlan.For(model);
+                    bool usable = true;
+                    if (upProbePlan.ShouldProbe)
+                    {
+                        progress?.Report((upBase, $"正在检测超分 GPU 兼容性({engine},首次最长约 60 秒,结论会记住)..."));
+                        usable = await EngineService.EnsureNcnnProbeAsync(engine, gpuId, upProbePlan.Model, ct).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        AppLogger.Info($"超分 GPU 探测跳过:{upProbePlan.Why}(本批不经 ncnn,探测只会白等并写脏结论)");
+                    }
                     if (!usable)
                     {
                         if (engine == "waifu2x" && EngineService.IsBlackwellGpu())
@@ -2368,7 +2384,8 @@ public static class VideoService
                     }
                     else
                     {
-                        AppLogger.Info($"✅ 超分引擎 {engine} 真机探测通过(生产帧尺寸 1080×1920,GPU {gpuId})→ 使用 ncnn-Vulkan(未因 50 系而禁用)");
+                        if (upProbePlan.ShouldProbe)
+                            AppLogger.Info($"✅ 超分引擎 {engine} 真机探测通过(生产帧尺寸 1080×1920,GPU {gpuId})→ 使用 ncnn-Vulkan(未因 50 系而禁用)");
                     }
                 }
                 else if (engine == "waifu2x" && EngineService.IsBlackwellGpu())

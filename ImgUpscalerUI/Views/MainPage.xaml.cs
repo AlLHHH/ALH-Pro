@@ -1194,11 +1194,13 @@ public sealed partial class MainPage : Page
     }
 
     /// <summary>「官网下载」:打开官方网站(alhpro.cn)。2026-09-16 用户要求更新提示条并列三个渠道:
-    /// 官网 / GitHub / 网盘 —— 国内直连 GitHub 常常打不开,官网与网盘是更稳的两条路。</summary>
+    /// 官网 / GitHub / 网盘 —— 国内直连 GitHub 常常打不开,官网与网盘是更稳的两条路。
+    /// 【2026-09-24 修被测试抓到的重复】这里原先自己抄了一份 <c>Process.Start</c>,与 <see cref="OpenWebsite"/>
+    /// 重复 —— 正是那条契约测试(NavLogoWebsiteTests,断言"真正干活只允许一处")一直在报的失败,
+    /// 之前被误当成"网络用例失败"基线放过了三个版本。现在改调同一个方法,只保留自己的收尾动作。</summary>
     private void UpdateBarSite_Click(object sender, RoutedEventArgs e)
     {
-        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(WebsiteUrl) { UseShellExecute = true }); }
-        catch { /* 打开失败忽略 */ }
+        OpenWebsite();
         UpdateBar.Visibility = Visibility.Collapsed;
     }
 
