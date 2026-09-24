@@ -1429,37 +1429,19 @@ body::after {
 
 
 
+
 /* =============================================================================
-   §首屏右侧:官方 QQ 群(两张纯文字小卡)
-   两轮用户反馈定下的形态:① "两张卡片放首屏右边"(原先只是页脚一行文字,用户说"不直观");
-   ② "太冗余了…只显示文字" ⇒ 现在一行一个群号,可加入的在前、满的标"(已满)";
-   不放徽标、不放复制按钮、不写说明。
-   左列包裹层**同时挂着 .hero-inner**:原样式 `.has-js .hero-inner > *` 那套逐个入场动画是按"直接子元素"
-   写的,类挂在这一层就不用动动画;右侧卡片不在 .hero-inner 里,也不会被那套 opacity:0 的入场规则波及。
-   右列给 196px 起的窄列 —— 卡片要"小",所以不跟左列抢宽度;窄屏(≤979px)折回单列,两张卡排在文案下面。
+   §首屏下方的官方 QQ 群(两张纯文字小卡,左右摆放)
+   用户四轮反馈定稿:① 页脚一行文字"不直观" → ② "两张卡片放右边" → ③ "太冗余了,只显示文字"
+   → ④ "放在我画圈的位置(首屏按钮下方那片),左右摆放,左边一群"。
+   所以:**不再改首屏的列布局**(回到原来那个单列 .hero-inner),只在最后追加一行 flex 容器放两张小卡;
+   卡片只显示文字(群号 + 是否已满),不放徽标 / 按钮 / 说明;窄屏一行放不下时自动换行。
+   入场动画由既有的 `.has-js .hero-inner > *`(第 7 个子元素 = 540ms)接管,这里不用另写。
    ============================================================================= */
-.hero-split {
-  display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(196px, .4fr);
-  column-gap: clamp(20px, 3vw, 40px);
-  align-items: start;
-}
-.hero-copy { min-width: 0; }
-
-.hero-aside { display: grid; gap: 8px; align-content: start; margin-top: 8px; }
+.qq-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .qq-card {
-  padding: 9px 14px; margin: 0; text-align: center;
-  font-size: 14.5px; color: var(--fg-soft); font-variant-numeric: tabular-nums;
+  padding: 9px 16px; margin: 0; font-size: 14.5px; color: var(--fg-soft);
+  font-variant-numeric: tabular-nums;
 }
-/* 满的那个淡一档:不用徽标也能一眼分出"哪个还能加" */
-.qq-card:last-child { color: var(--muted); }
-
-/* 入场:两张小卡与左列错开一拍(复用同一条 heroIn 关键帧) */
-.has-js .hero-aside > .qq-card { opacity: 0; animation: heroIn 620ms var(--ease-out) both; }
-.has-js .hero-aside > .qq-card:nth-child(1) { animation-delay: 330ms; }
-.has-js .hero-aside > .qq-card:nth-child(2) { animation-delay: 430ms; }
-
-@media (max-width: 979px) {
-  .hero-split { grid-template-columns: minmax(0, 1fr); }
-  .hero-aside { margin-top: 22px; }
-}
+/* 满了的那张淡一档:不用徽标也能一眼看出该加哪个 */
+.qq-card.is-full { color: var(--muted); }

@@ -71,13 +71,7 @@ setTimeout(function () {
       <span class="aurora-blob b3"></span>
     </div>
 
-    <div class="wrap hero-split">
-      <!-- 左列:标题 / 说明 / 徽标 / 入口按钮 / 小字提示。
-           包裹层**特意保留 .hero-inner 这个类**:原样式里 `.has-js .hero-inner > *` 那套逐个入场动画
-           (h1 → lede → 徽标 → 按钮,延迟 40/140/240/330…)是按"直接子元素"写的,类挂在这一层才不用动动画;
-           右侧卡片不在 .hero-inner 里,也就不会被那套 `opacity: 0` 的入场规则波及(动画没跑时照样可见)。
-           见 style.css §首屏右侧。 -->
-      <div class="hero-inner hero-copy">
+    <div class="wrap hero-inner">
       <h1 class="hero-title">
         <span class="line">在你自己的电脑上,</span>
         <span class="line">做视频 / 图片处理</span>
@@ -127,17 +121,14 @@ setTimeout(function () {
       <p class="btn-note small">标准版约 678 MB,<strong>不含 AI 抠图模型包</strong>(GitHub 上另一个附件,约 1.4 GB,需单独下载)。
         想一次装好全部功能,直接下百度网盘完整版。
         遇到问题<strong>建议优先用软件左下角的「ALH Pro 社区」反馈</strong>。</p>
-      </div>
 
-      <!-- 官方 QQ 群:两轮用户反馈定下的最终形态 ——
-           ① "两张卡片放首屏右边"(原先只是页脚一行文字,用户说"不直观");
-           ② "太冗余了…只显示文字" ⇒ 现在就是两张**纯文字**小卡:一行一个群号,可加入的在前、满的标"(已满)";
-              不放徽标、不放复制按钮、不写说明文字。
-           样式见 style.css §首屏右侧。将来若要放群二维码,把 <img> 插进对应卡片即可。 -->
-      <aside class="hero-aside" aria-label="官方 QQ 群">
-        <p class="card qq-card">QQ 群 1028704070</p>
-        <p class="card qq-card">QQ 群 1057761060(已满)</p>
-      </aside>
+      <!-- 官方 QQ 群(用户最终定稿):放在首屏按钮下方、小字提示下面这一片,**两张纯文字小卡左右摆放**,
+           左边一群、右边二群;不放徽标、不放按钮、不写说明文字。样式见 style.css §首屏下方的官方 QQ 群。
+           将来若要放群二维码,把 <img> 插进对应那张卡片即可。 -->
+      <div class="qq-row">
+        <p class="card qq-card is-full">QQ 一群 1057761060(已满)</p>
+        <p class="card qq-card">QQ 二群 1028704070</p>
+      </div>
 
     </div>
   </section>
