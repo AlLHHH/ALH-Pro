@@ -10,7 +10,7 @@ public sealed partial class MainPage : Page
     private UpscaleView? _upView;
     private CutoutView? _cutView;
     private VideoView? _videoView;
-    private VideoMattingView? _mattingView;
+    // 【2026-09-23】原先这里有一个视频抠图页的缓存字段;该功能整条下线,字段一并删除。
     private AudioView? _audioView;
     private TutorialView? _tutorialView;
     private string _currentTag = "upscale";
@@ -30,8 +30,8 @@ public sealed partial class MainPage : Page
         LoadStartupPage();   // 默认启动页(-1=上次退出 0图片 1抠图 2视频)
         // 退出时记录最后一次使用的界面(「上次退出界面」启动模式保证准确;切换时也已记录,这里兜底)
         // 【2026-09-23 修 A2】原来这里是三元表达式(video→2 / cutout→1 / 其它→0):
-        // 音频处理与视频抠图都被写成 0(图片放大),在教程/设置页退出也会把上次页冲掉 ⇒ 改用统一换算,
-        // 不是五个功能页就**不写**(返回 -1)。
+        // 音频处理被写成 0(图片放大),在教程/设置页退出也会把上次页冲掉 ⇒ 改用统一换算,
+        // 不是功能页就**不写**(返回 -1)。(视频抠图当时也被写成 0;该页已于同日下线。)
         try
         {
             App.MainWindow.Closed += (_, _) =>
@@ -47,8 +47,9 @@ public sealed partial class MainPage : Page
             int page0 = _startupPage >= 0 ? _startupPage : LoadLastPage();
             _startupPageIndex = page0;
             // 【2026-09-23 修 A2 · 这一行就是那个 bug】原来是把"启动页编号"**直接**赋给导航列表的
-            // SelectedIndex —— 两套编号并不一致(启动页 2 = 视频处理;而导航列表第 3 项才是视频处理)⇒
-            // 真机实测"设置里选视频处理 → 开机进视频抠图"。现在走唯一换算(纯逻辑 + 单测)。
+            // SelectedIndex —— 当时两套编号并不一致(启动页 2 = 视频处理;而导航列表第 3 项才是视频处理,
+            // 第 3 项是"视频抠图")⇒ 真机实测"设置里选视频处理 → 开机进视频抠图"。
+            // 现在走唯一换算(纯逻辑 + 单测);视频抠图下线后两者顺序一致,换算退化成恒等值但保留。
             NavList.SelectedIndex = AlhPro.Core.StartupPageMap.NavIndexFor(page0);   // 触发 SelectionChanged → ShowView(唯一入口)
             // 注意:曾在此处再手动 ShowView 一次 → 视图被创建两次(日志"进入页面:图片放大"出现2次),
             // 第二个实例用默认值覆盖第一个恢复的设置 → "图片记不住格式/码率"的真正元凶。已删。
@@ -1212,10 +1213,11 @@ public sealed partial class MainPage : Page
         _currentTag = tag;
         ContentRoot.Children.Clear();
         // 记录最近使用界面(「上次退出界面」启动模式用);切换即保存,退出时也保存(见 MainWindow_Closed)
-        // 索引口径:0=图片放大 1=图片抠图 2=视频处理 3=音频处理 4=视频抠图(见 StartupPage 注释,别再往下挤默认值)
+        // 索引口径:0=图片放大 1=图片抠图 2=视频处理 3=音频处理(见 StartupPageMap 注释,别再往下挤默认值;
+        // 2026-09-23 视频抠图下线前它是第 5 个 4,现已删除)
         if (tag != "tutorial")
         {
-            // 【2026-09-23 修 A2】换算收进 AlhPro.Core.StartupPageMap(唯一来源);不是五个功能页就不写
+            // 【2026-09-23 修 A2】换算收进 AlhPro.Core.StartupPageMap(唯一来源);不是功能页就不写
             // (教程/设置/关于退出时不该把"上次界面"冲成图片放大)。
             int lp = AlhPro.Core.StartupPageMap.PageForTag(tag);
             if (lp >= 0) SaveLastPage(lp);
@@ -1264,29 +1266,9 @@ public sealed partial class MainPage : Page
             _tutorialView ??= new TutorialView();
             ContentRoot.Children.Add(_tutorialView);
         }
-        else if (tag == "matting")
-        {
-            try
-            {
-                AppLogger.Info("进入页面:视频抠图");
-                _mattingView ??= new VideoMattingView();
-                _mattingView.StatusChanged -= OnStatusChanged;
-                _mattingView.StatusChanged += OnStatusChanged;
-                ContentRoot.Children.Add(_mattingView);
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Error($"视频抠图页加载失败 HRESULT=0x{ex.HResult:X8}", ex);
-                _mattingView = null;
-                ContentRoot.Children.Add(new TextBlock
-                {
-                    Text = "视频抠图页加载失败(已记录到诊断日志):\n" + ex.Message,
-                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-                    FontSize = 13,
-                    Margin = new Microsoft.UI.Xaml.Thickness(20),
-                });
-            }
-        }
+        // 【2026-09-23 视频抠图整条下线】原先这里有一个视频抠图页的分支(把那个页面加进内容区)。
+        // 功能与页面一起删除(用户定案"以后不会再做了");老配置若还带着那个旧 tag,会落到文件末尾那条
+        // "未识别 tag 一律回图片抠图页"的兜底,不会再进一个不存在的页面。
         else if (tag == "cutout")
         {
             AppLogger.Info("进入页面:图片抠图");
@@ -2284,7 +2266,9 @@ public sealed partial class MainPage : Page
     private bool _coffeeViaSponsor;         // 是否从赞助提示进入打码界面
     private Microsoft.UI.Xaml.Controls.Primitives.Popup? _logPopup;     // 日志弹窗(单例守卫)
 
-    /// <summary>默认启动页:-1=上次退出界面(默认) 0=图片放大 1=图片抠图 2=视频处理 3=音频处理 4=视频抠图。</summary>
+    /// <summary>默认启动页:-1=上次退出界面(默认) 0=图片放大 1=图片抠图 2=视频处理 3=音频处理。
+    /// 【2026-09-23】原第 5 项 4=视频抠图 随该功能下线删除;老设置里存的 4 会被 IsValidPage 挡掉
+    /// ⇒ 保持 -1(上次退出界面),不会指向一个不存在的页面。</summary>
     private int _startupPage = -1;
     private static string StartupFile => ParaPaths.SettingsFile("startup-page.txt");
     // 最近一次使用的界面(切换即写,退出时也写):"上次退出界面"模式启动用
@@ -2295,7 +2279,7 @@ public sealed partial class MainPage : Page
         try
         {
             if (File.Exists(StartupFile) && int.TryParse(File.ReadAllText(StartupFile).Trim(), out var p)
-                && AlhPro.Core.StartupPageMap.IsValidPage(p))   // 【2026-09-23 修 A2】范围放到 4(原来只到 3 ⇒「视频抠图」永远存不进去)
+                && AlhPro.Core.StartupPageMap.IsValidPage(p))   // 【A2】范围 0~3(视频抠图下线后 4 已非法 ⇒ 老设置自动回落到"上次退出界面")
                 _startupPage = p;
         }
         catch { }
@@ -2327,7 +2311,7 @@ public sealed partial class MainPage : Page
         try
         {
             if (File.Exists(LastPageFile) && int.TryParse(File.ReadAllText(LastPageFile).Trim(), out var p)
-                && AlhPro.Core.StartupPageMap.IsValidLastPage(p))   // 【2026-09-23 修 A2】范围放到 4(原来只到 2 ⇒ 音频处理/视频抠图被拒)
+                && AlhPro.Core.StartupPageMap.IsValidLastPage(p))   // 【A2】范围 0~3(音频处理曾被漏掉;视频抠图下线后 4 不再合法)
                 return p;
         }
         catch { }
@@ -2352,13 +2336,14 @@ public sealed partial class MainPage : Page
         pageCombo.Items.Add(new ComboBoxItem { Content = "图片抠图" });
         pageCombo.Items.Add(new ComboBoxItem { Content = "视频处理" });
         pageCombo.Items.Add(new ComboBoxItem { Content = "音频处理" });
-        pageCombo.Items.Add(new ComboBoxItem { Content = "视频抠图" });
+        // 【2026-09-23】「视频抠图」下拉项随功能整条下线删除。老设置里存着 4 的话,
+        // LoadStartupPage 的 IsValidPage(0~3)会挡掉它 ⇒ 回落到"上次退出界面"(见那里的注释)。
         pageCombo.SelectedIndex = _startupPage + 1;   // 下拉索引 = 模式 + 1(-1→0,0→1,…)
         pageCombo.SelectionChanged += (_, _) =>
         {
             _startupPage = pageCombo.SelectedIndex - 1;   // 还原:0→-1(上次退出),1→0(图片),…
             SaveStartupPage(_startupPage);
-            AppLogger.Info($"启动页面已设为:{_startupPage switch { -1 => "上次退出界面", 0 => "图片放大", 1 => "图片抠图", 2 => "视频处理", 3 => "音频处理", 4 => "视频抠图", _ => "图片抠图" }}");
+            AppLogger.Info($"启动页面已设为:{_startupPage switch { -1 => "上次退出界面", 0 => "图片放大", 1 => "图片抠图", 2 => "视频处理", 3 => "音频处理", _ => "图片抠图" }}");
         };
         content.Children.Add(pageCombo);
         content.Children.Add(new TextBlock
@@ -2437,7 +2422,7 @@ public sealed partial class MainPage : Page
         content.Children.Add(gpuCombo);
         content.Children.Add(new TextBlock
         {
-            Text = "各功能(图片放大 / 图片抠图 / 视频抠图 / 视频处理 / 音频处理)统一使用这里选的计算设备。编号顺序可能与引擎实际识别的设备不一致(Windows 顺序 ≠ 引擎顺序):若选某编号处理崩/慢,换其它编号实测,日志「引擎启动...设备 -g X」会显示所选编号。设备列表里没有显卡时,软件会自动改用 ONNX DirectML,再不行回退到 CPU(软件计算),不需要你手动选 CPU。音频增强/分离(Demucs)会优先用这里选的显卡(DirectML)加速,没有显卡时自动用 CPU;音频升采样率(LavaSR)目前用 CPU 计算(暂不支持显卡)。注意:图片抠图固定使用 CPU(GPU 推理会占满显卡导致整机卡),此处设置对图片抠图不生效(视频抠图跟随这里选的计算设备)。",
+            Text = "各功能(图片放大 / 图片抠图 / 视频处理 / 音频处理)统一使用这里选的计算设备。编号顺序可能与引擎实际识别的设备不一致(Windows 顺序 ≠ 引擎顺序):若选某编号处理崩/慢,换其它编号实测,日志「引擎启动...设备 -g X」会显示所选编号。设备列表里没有显卡时,软件会自动改用 ONNX DirectML,再不行回退到 CPU(软件计算),不需要你手动选 CPU。音频增强/分离(Demucs)会优先用这里选的显卡(DirectML)加速,没有显卡时自动用 CPU;音频升采样率(LavaSR)目前用 CPU 计算(暂不支持显卡)。注意:图片抠图固定使用 CPU(GPU 推理会占满显卡导致整机卡),此处设置对图片抠图不生效。",
             FontSize = 10, Opacity = 0.5,
             TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });

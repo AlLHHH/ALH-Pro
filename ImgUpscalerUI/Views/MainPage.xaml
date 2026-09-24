@@ -54,7 +54,8 @@
                       ② 单色浅灰 #A6B1C2:不跟文字抢眼,但每个功能一眼认得出(用户选的就是单色,别再自作主张上彩色)。
                       ③ `AutomationProperties.Name` 必须显式写:Content 从纯字符串变成 StackPanel 之后,
                          UIA 的 Name 不再自动等于文字 ⇒ 不写就变成"无名按钮"(无障碍读屏 + 我们的 uia_drv
-                         只读验证都会看不到它)。字形宽度用 Width=20 统一,保证 5 个标签左边缘对齐。 -->
+                         只读验证都会看不到它)。字形宽度用 Width=20 统一,保证 4 个标签左边缘对齐。
+                         (2026-09-23:原来第 3 项那个已被删掉的功能页没了,只剩这 4 个功能页。) -->
                 <ListView x:Name="NavList" Grid.Row="1" SelectionChanged="NavList_SelectionChanged"
                           Background="Transparent" BorderThickness="0">
                     <ListViewItem x:Name="NavUpscale" Tag="upscale" Padding="14,10"
@@ -71,16 +72,6 @@
                             <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xE8C6;"
                                       Width="20" FontSize="16" Foreground="#A6B1C2" VerticalAlignment="Center"/>
                             <TextBlock Text="图片抠图" FontSize="13" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </ListViewItem>
-                    <!-- 视频抠图:独立板块(2026-09-22 用户明确要求;不并进图片抠图页)。
-                         图标用"人像"(E77B):抠的就是人/主体,比再用一把剪刀更好区分。 -->
-                    <ListViewItem x:Name="NavMatting" Tag="matting" Padding="14,10"
-                                  AutomationProperties.Name="视频抠图">
-                        <StackPanel Orientation="Horizontal" Spacing="10">
-                            <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xE77B;"
-                                      Width="20" FontSize="16" Foreground="#A6B1C2" VerticalAlignment="Center"/>
-                            <TextBlock Text="视频抠图" FontSize="13" VerticalAlignment="Center"/>
                         </StackPanel>
                     </ListViewItem>
                     <ListViewItem x:Name="NavVideo" Tag="video" Padding="14,10"
