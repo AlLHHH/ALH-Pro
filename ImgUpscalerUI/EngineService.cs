@@ -229,7 +229,7 @@ public static partial class EngineService
         try
         {
             var parts = new System.Collections.Generic.List<string>();
-            foreach (var eng in new[] { "realesrgan", "waifu2x" })
+            foreach (var eng in new[] { "realesrgan", AlhPro.Core.RealCugan.EngineName, "waifu2x" })
             {
                 var v = TryGetEngineVerdictSummary(eng, gpuId);
                 int measured = CountCachedModels(eng, gpuId);
@@ -783,6 +783,7 @@ public static partial class EngineService
             string? exe = engine switch
             {
                 "realesrgan" => FindRealEsrgan2026(),
+                AlhPro.Core.RealCugan.EngineName => FindRealCugan2026(),
                 "rife" => VideoService.RifePath,
                 _ => null,   // waifu2x 上游 20250915 版走它自己的参数(默认就不按 Blackwell 预判)
             };
@@ -1364,6 +1365,9 @@ public static partial class EngineService
             string[] names =
             {
                 "realesrgan-ncnn-vulkan-2026", "realesrgan-ncnn-vulkan",
+                // 【2026-09-24】Real-CUGAN 重新随包 ⇒ 必须进回收名单。漏加的后果与 realesrgan 同级:
+                // 任务结束后残留进程占着 GPU → 同机 NVENC 会话申请失败 → 整段任务退回 CPU 软编。
+                "realcugan-ncnn-vulkan-2026", "realcugan-ncnn-vulkan",
                 "rife-ncnn-vulkan-2026", "rife-ncnn-vulkan",
                 "waifu2x-ncnn-vulkan", "ffmpeg", "ffprobe",
             };
@@ -1466,18 +1470,59 @@ public static partial class EngineService
     /// <summary>实际使用的 Real-ESRGAN 引擎:有新版就用新版,否则回退官方 2022 版。</summary>
     public static string? FindRealESRGAN() => FindRealEsrgan2026() ?? FindExe("realesrgan", "realesrgan-ncnn-vulkan.exe");
 
+    /// <summary>【2026-09-24 重新上架】Real-CUGAN 重编引擎(2025/2026 ncnn + 官方同一份 MIT 前端源码)。
+    /// 官方 20220728 那份 exe 实测 `VK_EXT_robustness2` = 0 处 ⇒ 在 NVIDIA 50 系上属「退出码 0 + 坏帧」,
+    /// **不能随包**,必须用重编版(配方见 tools\engine-build\README_REALCUGAN.md)。</summary>
+    public static string? FindRealCugan2026() => FindExe("realcugan", "realcugan-ncnn-vulkan-2026.exe");
+
+    /// <summary>实际使用的 Real-CUGAN 引擎:有重编版就用重编版,否则回退官方 20220728 版(仅作本机排障)。</summary>
+    public static string? FindRealCugan() => FindRealCugan2026() ?? FindExe("realcugan", "realcugan-ncnn-vulkan.exe");
+
+    /// <summary>**Real-CUGAN 参数拼装的唯一来源**(单测锁住形态,不许在调用点各写一份)。
+    ///
+    /// 【为什么不能照抄 Real-ESRGAN · 实测】两个引擎的 `-n` / `-m` 语义**正好相反**:
+    ///   · Real-ESRGAN:`-m &lt;模型目录&gt; -n &lt;模型名&gt;`;
+    ///   · Real-CUGAN :`-m &lt;模型目录&gt; -n &lt;降噪档 -1/0/1/2/3&gt;` —— `-n` **不是模型名**。
+    /// 照抄 realesrgan 的拼法会把模型名当降噪档传过去:轻则引擎报参数错,重则按错档静默跑
+    /// (画面对得上、数字不对,最难以察觉的一类故障)。Real-CUGAN 另有 `-c syncgap-mode`(它独有),
+    /// 本工程不下发该参数(保持上游默认 0 = 关闭),故不出现在这里。
+    ///
+    /// 【tile 口径】与 realesrgan 一致:`0` = 引擎自选分块(auto),不是"关闭分块";
+    /// 显存不足的降级链会把真正的 t 值传进来(t&gt;0)。
+    /// 【format】目录批量模式必须给输出格式(引擎按它决定写盘扩展名);单文件模式传 null。</summary>
+    internal static string RealCuganArgs(string input, string output, string? modelTag, int gpuId,
+        int engineScale, bool tta, int tile, string? format = null)
+    {
+        var dir = AlhPro.Core.RealCugan.ModelDir(modelTag);
+        var noise = AlhPro.Core.RealCugan.Noise(modelTag);
+        var fmt = format is null ? "" : $" -f {format}";
+        var ttaArg = tta ? " -x" : "";
+        return $"-i \"{input}\" -o \"{output}\" -s {engineScale} -n {noise} -m {dir} " +
+               $"-t {tile} -g {gpuId}{fmt}{ttaArg}{SafeRender.GetEngineThreadArgs()}";
+    }
+
     /// <summary>Real-ESRGAN 引擎的"身份键"。装了新版就用 "realesrgan2026",否则沿用 "realesrgan"。
     /// 【为什么必须区分】探测结论按 "引擎|GPU" 落盘缓存(成功 7 天):官方 2022 版在 50 系上"出坏帧"是真结论,
     /// 若沿用同一个键,新引擎会被这条旧结论直接判死 → 又回到又慢又糊的 ONNX。换了引擎就必须重新实测。</summary>
     public static string RealEsrganEngineId => FindRealEsrgan2026() is not null ? "realesrgan2026" : "realesrgan";
 
+    /// <summary>Real-CUGAN 引擎的身份键(同上口径重编版 = realcugan2026)。</summary>
+    public static string RealCuganEngineId => FindRealCugan2026() is not null ? "realcugan2026" : "realcugan";
+
     /// <summary>把对外的引擎名规整成实际身份键(探测 / 结论缓存 / 日志统一走这里)。</summary>
-    public static string EngineId(string engine) => engine == "realesrgan" ? RealEsrganEngineId : engine;
+    public static string EngineId(string engine) => engine switch
+    {
+        "realesrgan" => RealEsrganEngineId,
+        AlhPro.Core.RealCugan.EngineName => RealCuganEngineId,
+        _ => engine,
+    };
 
     /// <summary>引擎的中文显示名(带新旧版区分,便于用户反馈时对号)。</summary>
     public static string EngineLabel(string engine) => engine switch
     {
         "realesrgan" or "realesrgan2026" => RealEsrganEngineId == "realesrgan2026" ? "Real-ESRGAN(新版引擎)" : "Real-ESRGAN",
+        AlhPro.Core.RealCugan.EngineName or "realcugan2026" =>
+            RealCuganEngineId == "realcugan2026" ? "Real-CUGAN(重编引擎)" : "Real-CUGAN",
         _ => "waifu2x",
     };
 
@@ -1513,6 +1558,9 @@ public static partial class EngineService
         if (FindRealESRGAN() is null) list.Add("realesrgan");
         if (VideoService.FfmpegPath is null) list.Add("ffmpeg");
         if (VideoService.RifePath is null) list.Add("rife");
+        // 【2026-09-24】Real-CUGAN 已随包(用户裁决)—— 缺了它必须在启动自检里就报出来,
+        // 而不是等用户在下拉里选了它才炸。
+        if (FindRealCugan() is null) list.Add("realcugan");
         // 抠图模型:检查【当前默认】模型(缺了它,默认抠图不可用)。
         // 默认模型 = CutoutService.DefaultModelKey(isnet-general-use),别再写死 birefnet-lite。
         if (FindCutoutModel("isnet-general-use.onnx") is null) list.Add("rembg 模型(默认用 ISNet 精细边缘)");
@@ -1907,6 +1955,7 @@ public static partial class EngineService
             {
                 "waifu2x" => FindWaifu2x(),
                 "realesrgan" => FindRealESRGAN(),
+                AlhPro.Core.RealCugan.EngineName => FindRealCugan(),
                 _ => null,
             };
             if (exe == null)
@@ -1956,6 +2005,12 @@ public static partial class EngineService
                 {
                     var modelDir = Path.Combine(Path.GetDirectoryName(exe)!, string.IsNullOrEmpty(model) ? "models-cunet" : model);
                     args = $"-i \"{inPng}\" -o \"{outPng}\" -s 2 -n 0 -t 0 -g {gpuId} -m \"{modelDir}\"{SafeRender.GetEngineThreadArgs()}";
+                }
+                else if (fullFrame && engine == AlhPro.Core.RealCugan.EngineName)
+                {
+                    // 【Real-CUGAN:CLI 与 Real-ESRGAN 不兼容,不能照抄下一行】`-n` 是**降噪档**、`-m` 才是模型目录。
+                    // 把它当 realesrgan 拼(`-m <模型目录> -n <模型名>`)会得到一个非法降噪档名 ⇒ 引擎报错或按错档跑。
+                    args = RealCuganArgs(inPng, outPng, model, gpuId, engineScale: 2, tta: false, tile: 0);
                 }
                 else if (fullFrame)
                 {
@@ -2755,10 +2810,35 @@ public static partial class EngineService
             GuardSilentBlackOutput(input, output, engine, model, engineScale);   // 【O1③】exit=0 却整帧全黑 → 抛可读错误
             return output;
         }
-        if (engine == "realcugan")
+        if (engine == AlhPro.Core.RealCugan.EngineName)
         {
-            // realcugan 已整体移除(许可不明,见 THIRD_PARTY_NOTICES):兜底为 waifu2x
-            throw new InvalidOperationException("Real-CUGAN 已移除(许可不明),请改用 waifu2x 或 Real-ESRGAN");
+            // 【2026-09-24 重新上架 · 单图路径】参数形态与 realesrgan **不同** ⇒ 走唯一的 RealCuganArgs。
+            // 没有 1x 权重:目标 ≤1x 由 EngineScalePolicy 改成"2x 放大后缩回",这里不复制原图
+            // (与 realesrgan 的 1x 复制不同 —— realesrgan 那边 1x 是"用户要 1x 修复模型"的那个特例)。
+            var exe = FindRealCugan() ?? throw new FileNotFoundException("未找到 Real-CUGAN 引擎");
+            var rcPolicy = AlhPro.Core.EngineScalePolicy.Decide(engine, model, scale);
+            int engineScale = rcPolicy.EngineScale;
+            if (rcPolicy.Reason.Length > 0)
+            {
+                AppLogger.Warn($"⚠ 超分倍数护栏:{engine} / {model} → 引擎按 {engineScale}x 跑(目标 {scale:0.##}x)。{rcPolicy.Reason}");
+                progress?.Report((0, $"⚠ {rcPolicy.Reason}"));
+            }
+            var args = RealCuganArgs(input, output, model, gpuId, engineScale, tta, tile: 0);
+            progress?.Report((0, "启动 Real-CUGAN 引擎..."));
+            // 诊断:日志里必须能一眼看出"这次用的是哪条引擎、哪个降噪档、哪个权重目录"
+            // (Real-CUGAN 的 -n 是降噪档,不写清楚就没法对着日志复现)。
+            AppLogger.Info($"引擎 {engine}/{model} 启动:设备 -g {gpuId}{(gpuId < 0 ? "(CPU 软件计算)" : "(GPU)")}," +
+                $" -s {engineScale} -n {AlhPro.Core.RealCugan.Noise(model)} -m {AlhPro.Core.RealCugan.ModelDir(model)}");
+            await RunEngFallbackGpuAsync(exe, args, progress, ct).ConfigureAwait(false);
+            EnsureFinalOutput(output, jpgQuality, pngCompress);
+            if (Math.Abs(engineScale - scale) > 0.001)
+            {
+                progress?.Report((96, $"输出 {scale:0.##}x(引擎 {engineScale}x 放大后精确调整)..."));
+                await Task.Run(() => ResizeImage(output, output, scale / engineScale), ct)
+                    .ConfigureAwait(false);
+            }
+            GuardSilentBlackOutput(input, output, engine, model, engineScale);   // 缺权重时引擎同样 exit=0 只画坏帧
+            return output;
         }
         else
         {
@@ -2814,10 +2894,17 @@ public static partial class EngineService
             if (Math.Abs(engineScale - scale) > 0.001)
                 await Task.Run(() => ResizeImage(output, output, scale / engineScale), ct).ConfigureAwait(false);
         }
-        else if (engine == "realcugan")
+        else if (engine == AlhPro.Core.RealCugan.EngineName)
         {
-            // realcugan 已整体移除(许可不明,见 THIRD_PARTY_NOTICES):兜底为 waifu2x
-            throw new InvalidOperationException("Real-CUGAN 已移除(许可不明),请改用 waifu2x 或 Real-ESRGAN");
+            // 【2026-09-24】单块路径:同样走唯一的 RealCuganArgs(CLI 与 realesrgan 不兼容,别照抄下一段)。
+            var exe = FindRealCugan() ?? throw new FileNotFoundException("未找到 Real-CUGAN 引擎");
+            var rcPolicy = AlhPro.Core.EngineScalePolicy.Decide(engine, model, scale);
+            int engineScale = rcPolicy.EngineScale;
+            var args = RealCuganArgs(input, output, model, gpuId, engineScale, tta, tile: 0);
+            await RunEngFallbackGpuAsync(exe, args, progress, ct).ConfigureAwait(false);
+            EnsureFinalOutput(output);
+            if (Math.Abs(engineScale - scale) > 0.001)
+                await Task.Run(() => ResizeImage(output, output, scale / engineScale), ct).ConfigureAwait(false);
         }
         else
         {
@@ -2913,6 +3000,14 @@ public static partial class EngineService
             engineScale2 = CeilPowerOfTwo(scale);
             var args = $"-i \"{inDir}\" -o \"{outDir}\" -s {engineScale2} -n {noise} " +
                 $"-t 0 -g {gpuId} -m \"{modelArg}\"{SafeRender.GetEngineThreadArgs()}" + (tta ? " -x" : "");
+            await RunEngFallbackGpuAsync(exe, args, progress, ct).ConfigureAwait(false);
+        }
+        else if (engine == AlhPro.Core.RealCugan.EngineName)
+        {
+            // 【2026-09-24】逐块拼接路径的 Real-CUGAN 分支(唯一 RealCuganArgs)。
+            var exe = FindRealCugan() ?? throw new FileNotFoundException("未找到 Real-CUGAN 引擎");
+            engineScale2 = AlhPro.Core.EngineScalePolicy.Decide(engine, model, scale).EngineScale;
+            var args = RealCuganArgs(inDir, outDir, model, gpuId, engineScale2, tta, tile: 0);
             await RunEngFallbackGpuAsync(exe, args, progress, ct).ConfigureAwait(false);
         }
         else
@@ -3338,10 +3433,17 @@ public static partial class EngineService
             await RunEngAsync(exe, t => $"-i \"{inputDir}\" -o \"{outputDir}\" -s {engineScale} -n {noise} " +
                 $"-t {t} -g {gpuId} -m \"{modelDir}\"{SafeRender.GetEngineThreadArgs()} -f {outFormat}" + (tta ? " -x" : "")).ConfigureAwait(false);
         }
-        else if (engine == "realcugan")
+        else if (engine == AlhPro.Core.RealCugan.EngineName)
         {
-            // realcugan 已整体移除(许可不明,见 THIRD_PARTY_NOTICES):兜底为 waifu2x
-            throw new InvalidOperationException("Real-CUGAN 已移除(许可不明),请改用 waifu2x 或 Real-ESRGAN");
+            // 【2026-09-24】视频真跑的就是这一条(EngineService.UpscaleDirAsync 只有视频流水线在调)。
+            // 参数走唯一的 RealCuganArgs:`-n` 是降噪档、`-m` 是权重目录 —— 与 Real-ESRGAN 相反。
+            // tile 沿用 `{t}` 插值:首跑 0(auto),显存不足的降级链才真的改小(写死 0 会让降级空转)。
+            var exe = FindRealCugan() ?? throw new FileNotFoundException("未找到 Real-CUGAN 引擎");
+            if (engineScale == 1) engineScale = 2;   // 没有 1x 权重(EngineScalePolicy 已保证,这里再兜一道)
+            AppLogger.Info($"引擎 {engine}/{model} 启动(目录批量):-s {engineScale} " +
+                $"-n {AlhPro.Core.RealCugan.Noise(model)} -m {AlhPro.Core.RealCugan.ModelDir(model)} -g {gpuId}");
+            await RunEngAsync(exe, t => RealCuganArgs(inputDir, outputDir, model, gpuId, engineScale, tta, tile: t, format: outFormat))
+                .ConfigureAwait(false);
         }
         else
         {

@@ -4,7 +4,7 @@
 
 **所有处理在本机完成,不上传、不收集任何用户数据。** 全程中文界面,新手也能用。
 
-**© 2026 AlL.H. 保留所有权利。** 免费公益、个人自用;未经作者书面许可,禁止商用、再次分发或篡改(详见随软件 LICENSE)。开源引擎与模型版权归各原作者所有(见 THIRD_PARTY_NOTICES.txt)。
+**© 2026 AlL.H. · MIT 许可。** 软件本体以 MIT 许可开源:可自由使用、修改、再分发(含商业用途),只需保留版权与许可声明(详见随软件 LICENSE)。开源引擎与模型版权归各原作者所有(见 THIRD_PARTY_NOTICES.txt)。
 
 ---
 
@@ -105,7 +105,7 @@ dotnet build ImgUpscalerUI.csproj -c Release -p:Platform=x64
 
 ## ⚖️ 版权与免责声明(重要)
 
-- **Real-CUGAN 已移除**:因其官方仓库未附明确开源许可(默认"保留所有权利",且无授权联系渠道),v1.1.0 起不再随软件分发该引擎与模型,超分仅保留 MIT/BSD-3 许可的 waifu2x 与 Real-ESRGAN。
+- **Real-CUGAN(2026-09-24 重新随包)**:早前因官方仓库未附明确开源许可(默认"保留所有权利")自 v1.1.0 起移除;现已核实到**附 MIT 许可的官方权重渠道**——bilibili 官方 ModelScope 模型页(`LICENSE` 与 GitHub 版逐字节一致,均 MIT © 2022 bilibili)与 MIT 的 ncnn 移植层(© 2019 nihui),故重新随包;许可原文见 `licenses\`。早期第三方网盘分发的权重包**不在采信范围**内。
 - **FFmpeg**:随附构建为 GPL v2+(含 libx264),本软件以**独立子进程**方式调用(未链接)。分发时保留本声明与源码链接:https://ffmpeg.org/download.html
 - 其余组件(waifu2x-ncnn-vulkan、Real-ESRGAN-ncnn-vulkan、RIFE-ncnn-vulkan、U²-Net、IS-Net、BiRefNet、rembg、HT-Demucs、LavaSR、超分/补帧 ONNX 模型、ONNX Runtime、Windows App SDK、.NET)许可明细见 **`THIRD_PARTY_NOTICES.txt`**(随发布版分发)。
 

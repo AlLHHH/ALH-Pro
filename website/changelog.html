@@ -119,6 +119,17 @@ setTimeout(function () {
           <li><strong>启动自检的"所有候选卡都卡死"最坏耗时砍掉三分之一:</strong>挑卡档对"卡死"原本也重试 3 次,而这一档要在多张候选卡上逐个试、每次卡死都要等满 15 秒超时 ⇒ 独立审查算过:全部候选都卡死时启动自检最坏约 <strong>4.8 分钟</strong>。现在"卡死"在这档单独限 2 次(仍保留一次重试覆盖"驱动 / 显存刚开始回收"的瞬时状态),最坏降到约 <strong>3.2 分钟</strong>;"进程崩一下"这类确定性失败仍是 3 次保险不变。<strong>边界</strong>:这是算式(6 张候选卡 × 单卡最坏耗时),不是实测。</li>
           <li><strong>AMD / Intel 机器现在也能真读空闲显存了(不再是"未实测"):</strong>此前"当前空闲显存"只有 NVIDIA 能真读(nvidia-smi),A 卡与核显上一律报"未实测" ⇒ 显存墙与并发档位在那些机器上整层失效。现在补了第二条<strong>跨厂商</strong>路径:用 Windows 自带的性能计数器「GPU Adapter Memory」读"已用",再与 DXGI 报的显存总量相减得空闲(换算与实例名解析都在 Core、有单测);日志与诊断包里会写明这个数字<strong>是谁给的</strong>(<code>6.3 GB(nvidia-smi)</code> / <code>6.5 GB(PDH(GPU Adapter Memory))</code>)。
             <strong>边界(如实)</strong>:多卡机拿不到目标卡 LUID 时按全部实例求和 ⇒ 偏保守(宁可少放批次);两者都读不到时仍照旧报"未实测",<strong>绝不返回估值冒充实测</strong>。(AMD / Intel 的<strong>温度</strong>读数本版没做:Intel 侧没有公开接口、AMD 需 ADL 且本机无 A 卡,不发没验过的。)</li>
+          <li><strong>新增:Real-CUGAN 重新随包(动漫专用超分,引擎下拉第三项)+ 补帧新增第 3 支 RIFE v4.26 —— 用户点名要的两项。</strong>
+            <strong>Real-CUGAN</strong> 专为动漫优化,线条与色块最干净,并配了自己的模型下拉(保守 / 不降噪 / 强降噪,权重全部随包)。
+            它<strong>原来被移除过</strong>,现在为什么能发:当时(2026-09-14)的依据是<strong>上游 <code>bilibili/ailab</code> 仓库内的 <code>weights_v3/</code> 目录自身</strong>只有占位 README;
+            2026-09-24 逐字复核发现 <strong>bilibili 官方 ModelScope 模型页把权重与一份 MIT 许可文件一起发布</strong>(1065 字节,SHA256 <code>8CAD8CFD…3CBA</code>,Copyright (c) 2022 bilibili),与上游仓库根那份<strong>逐字节相同</strong>
+            ⇒ 权重有书面 MIT 依据(署名与依据见 <code>THIRD_PARTY_NOTICES.txt</code> <strong>第 16 条</strong>)。引擎包装层与随仓模型来自 <code>nihui/realcugan-ncnn-vulkan</code>(MIT © 2019 nihui);只许从这两条许可干净渠道取权重(禁网盘"完整包")。
+            <strong>实测代价(口径:1080p、40 帧、目录批量按帧摊、三次独立进程冷跑)</strong>:Real-CUGAN 2x <strong>约 1.65 秒/帧</strong>(1.63~1.68 秒),同口径 animevideov3 2x 约 0.27 秒/帧 ⇒ <strong>约 6.2 倍慢</strong> ⇒ 适合少量精品镜头,不适合整片批量。
+            <strong>需要 GPU,CPU 档不可用</strong>:它只有 ncnn-Vulkan 权重(没有 ONNX 版本),CPU 档本机实测会崩 ⇒ 没有可用独显 / Vulkan 不可用 / 计算设备选了 CPU 时,开跑前<strong>明确拒绝</strong>并提示改选 Real-ESRGAN 或 waifu2x,<strong>不会静默换模型</strong>。
+            随包的引擎是用 2025/2026 版 ncnn <strong>重编</strong>的(官方 20220728 那份 <code>VK_EXT_robustness2</code>=0,在 50 系上属"退出码 0 + 坏帧"那一类);<strong>诚实边界</strong>:本机是 RTX 4060,<strong>50 系未实测</strong>。</li>
+          <li><strong>补帧新增第 3 支:RIFE v4.26。</strong>补帧模型下拉现在是 <strong>v4.13(默认)/ v4.6 / v4.26</strong>,三支同架构、功能一样(3x/4x/12x/16x、指定帧率都支持)。
+            <strong>实测(1080p、40 帧 → 79 输出帧、冷跑两次)</strong>:v4.26 = <strong>82.9 / 84.4 ms/输出帧</strong>,v4.13 = 81.3 / 82.6,v4.6 = 81.1 / 80.5 ⇒ <strong>三支同级</strong>(内部旧记录里"v4.26 更快"是在机器被 20 核编译占满时测的,已更正 —— 上架理由是"同速同功能",不宣称更快)。
+            唯一限制:v4.26 的「高质量 TTA」实测卡死,选中它时该项会自动置灰。权重与代码同为 MIT(<code>hzwer/Practical-RIFE</code> README 逐字),署名见 <code>THIRD_PARTY_NOTICES.txt</code> 第 17 条。</li>
         </ul>
       </div>
     </details>
@@ -365,7 +376,8 @@ setTimeout(function () {
       <div class="details-body">
         <ul>
           <li><strong>v1.1.0(大版本):</strong>全新「音频处理」页 —— AI 升采样率、增强、AI 分离(可自定义多轨与音量)、链式处理;
-            50 系显卡全面适配;移除 Real-CUGAN(官方仓库未附开源许可,为合规分发不再包含)。</li>
+            50 系显卡全面适配;移除 Real-CUGAN(当时依据:上游仓库内的 <code>weights_v3/</code> 目录自身未附权重许可,为合规分发不再包含)。
+            <strong>(2026-09-24 重新评估并恢复:权重有 bilibili ModelScope 随附 MIT 书面依据)</strong></li>
           <li><strong>v1.1.1:</strong>修复视频选 Real-ESRGAN 一点开始就崩溃、GPU 黑块死循环、大视频处理中“磁盘空间不足”、
             音频超分“时长砍半 + 变单声道”等问题;设置新增「临时文件位置」。</li>
           <li><strong>v1.1.2:</strong>新增更新弹窗、一键导出诊断包、GPU 自动选择升级为“实测验证”;音频 AI 分离 / 增强接入显卡加速;
@@ -422,7 +434,7 @@ setTimeout(function () {
     </p>
     <!-- 备案:【2026-09-22 决定暂不备案】本站挂在阿里云 OSS + CDN 的香港节点,域名不解析到境内服务器,境外主机不需要 ICP 备案;将来若迁回国内主机或做经营性内容,按 index.html 页脚注释里的模板补真实备案号。 -->
       <!-- 注意:没有备案就**不要**展示任何备案号(包括占位符) —— 展示假的比不展示更糟。 -->
-    <p class="icp">©2026 ALH Pro · 保留所有权利</p>
+    <p class="icp">©2026 ALH Pro · MIT 许可</p>
   </div>
 </footer>
 </body>

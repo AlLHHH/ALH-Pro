@@ -17,6 +17,44 @@ public sealed class DedupTooStrongException : InvalidOperationException
     public DedupTooStrongException(string message) : base(message) { }
 }
 
+/// <summary>【2026-09-24】Real-CUGAN 需要 GPU:它**只有 ncnn-Vulkan 权重**(没有 ONNX 版本),
+/// 而本仓库重编版的 CPU 档(-g -1)实测不可用(启动后访问违例、0 帧产出)。
+/// 因此"没有可用 GPU / 用户选了 CPU / 真机探测失败"这三种情况下必须**明确拒绝**并给出替代方案 ——
+/// 不许静默换成别的超分模型(本仓库的硬规矩),也不许跑一条必然崩/必然坏帧的路径。</summary>
+public sealed class RealCuganNeedsGpuException : InvalidOperationException
+{
+    public RealCuganNeedsGpuException(string message) : base(message) { }
+}
+
+/// <summary>【F4 · 2026-09-24】Real-CUGAN 拒绝处理时的**统一话术**(唯一来源)。
+///
+/// 【为什么单独抽出来】旧文案只说"跑不通、换别的引擎",用户看到的是"这软件坏了"。
+/// F4 的要求是:拒绝时必须写明**这是设计如此** + **可执行的下一步**。写在这里而不是散在三处调用点,
+/// 是为了让"用户看到的每一句话"与"我们为什么这么设计"永远一致。
+///
+/// 【用户会看到什么】① 说明为什么不能像 Real-ESRGAN 那样自动换引擎(它只有 ncnn-Vulkan 权重:
+/// 没有 ONNX 版本可换,而 CPU 档在本仓库重编版上实测会崩、0 帧产出);② 四步可执行下一步
+/// (重跑一次 → 关掉占显存的程序 / 重启软件 → 更新驱动 → 改选 Real-ESRGAN 或 waifu2x);
+/// ③ 附上引擎给出的那一行失败原因。</summary>
+internal static class RealCuganRefusal
+{
+    internal static string Message(bool engineLevelAlsoFailed)
+    {
+        string head = engineLevelAlsoFailed
+            ? "Real-CUGAN 的**引擎级**实测(不带具体档位)与三个降噪档都没能在这台机器上跑通。"
+            : "Real-CUGAN 需要 GPU,当前这台机器上没有可用的 GPU 路线。";
+        return head
+            + "**这是设计如此,不是没想办法**:它只有 ncnn-Vulkan 权重 —— **没有 ONNX 版本可换**,"
+            + "而它的 CPU 档在本仓库重编版上实测会崩(启动后访问违例、0 帧产出);"
+            + "所以我们宁可明确拒绝,也不跑一条必然崩 / 必然坏帧的路(更不会悄悄换成别的超分模型)。"
+            + "可以这样做:① **重跑一次** —— 可能只是一次探测超时(显存正被别的程序占用,或驱动刚从休眠唤醒);"
+            + "② 关掉占显存的程序(浏览器 / 剪辑软件 / 另一个正在跑的 ALH Pro 任务)后重试,或重启软件;"
+            + "③ 更新显卡驱动后重试;"
+            + "④ 要稳就把「超分引擎」改成 **Real-ESRGAN**(它有 ONNX 稳定路线,慢路也能跑)或 **waifu2x**。"
+            + EngineService.LastProbeUserMessage;
+    }
+}
+
 /// <summary>子进程长时间无任何输出(疑似驱动/解码器挂死),已被无进展看门狗强制终止。
 /// 派生自 InvalidOperationException,故现有的回退层(拆帧硬解→软解、编码器降级链)能直接接管。
 /// 与用户取消(OperationCanceledException)严格区分:停滞要走回退,取消要立刻收手。
@@ -43,6 +81,53 @@ public sealed class BlackFrameRerouteException : InvalidOperationException
 
 public static class VideoService
 {
+    /// <summary>【硬规矩 · 用户 2026-09-24 拍板】「**预览只要是有关处理后的都不要降采样,不然不好看**」。
+    ///
+    /// 【这条规矩落到哪】预览页要展示"处理后画面"的每一条路径:
+    ///   · 「看处理效果」→ 直接放 VideoView 那条 `_effOutPath` 指向的**原生预览成片**(不经过任何合成/缩放)✔
+    ///   · 「两者同时 / 左右对比」→ 放 <see cref="BuildCompareClipAsync"/> 烘的合成片 ⇒
+    ///     合成片里那**一半"处理后"**必须是**原生像素**,不许按"每侧"这种固定常数封顶;
+    ///     唯一允许的限制是**合成片整条宽度**的硬上限(见 <see cref="MaxCompareCompositeWidth"/>),
+    ///     而且它必须按**布局各自的几何**换算到每侧,不许一律除以 2(见下面那条 2026-09-24 修复说明)✔
+    ///
+    /// 【为什么必须有这条】2026-09-24 之前合成片把"处理后"每侧封顶 <b>2048</b> 宽:
+    ///   4K 预览成片(3840×2160)进对比片只剩 2048×1152 —— 用户在「两者同时」里看到的"处理后"
+    ///   被砍掉近一半宽度,和「看处理效果」看到的原生成片不是同一份清晰度 ✗。
+    ///
+    /// 【2026-09-24 · 修复第 2 轮:上限必须按布局换算,不能一律 ÷2】
+    ///   两种布局的**合成片整条宽**与"处理后宽"的关系根本不同:
+    ///     · <see cref="CompareLayout.WholeFrames"/>:整条 = 2 × 处理后宽(左右各一幅并排)⇒ 每侧上限 = 上限/2 ✔
+    ///     · <see cref="CompareLayout.SplitLine"/>:整条 = **处理后宽**(左右各裁一半,拼起来正好一幅)
+    ///       ⇒ 每侧既不是"整条/2"也不是真的每侧一半,这里必须按 **÷1** 算;若照抄 ÷2,
+    ///       4K 成片会被砍成每侧 2048(整条 4096 里只用了 4096 的一半宽度 ⇒ 白丢一半像素)✗。
+    ///   这次改动后:4K(3840×2160)成片在 **两种布局下都不触发缩放**(SplitLine 整条 3840 ≤ 4096;
+    ///   WholeFrames 每侧 2048 ≤ 2048)⇒「处理后」在合成片路径上**也不被降采样** ✔
+    ///   (WholeFrames 的每侧 2048 是"两幅并排"的物理结果,落地显示尺寸仍是 1115~1676 逻辑像素,
+    ///    见下面 MaxCompareCompositeWidth 的显示上限实测)
+    ///
+    /// 【别再退回"每侧写死常数"】AlhPro.Tests 的 PreviewNoDownsampleTests 会把这条钉住。</summary>
+
+    /// <summary>**合成片整条宽度**的上限(不是"每侧宽度上限";每侧上限由各布局的几何换算,
+    /// 见 <see cref="BuildCompareClipAsync"/> 里的 <c>perSideCap</c>)。
+    ///
+    /// 【为什么是 4096,而不是"给处理后随便封个 2048"】这个数的两条依据都是**实测的硬上限**,不是省钱:
+    ///   ① **编码上限(真机实测,2026-09-24,RTX 4060 Laptop / engines/ffmpeg8 备用版)**:
+    ///      整条 4096×2160 → `h264_nvenc` 可用(3 秒片 1.8~2.1 秒出片);
+    ///      整条 7680×2160 → `h264_nvenc` 直接 "No capable devices found"(驱动/HW 上限),
+    ///      退回 libx264 要 **16.7 秒**(3 秒片,同一台机器实测),而对比片是"当场看、随便拖"的临时片
+    ///      ⇒ 7680 这条**当前不可取**(不是不想,是编不出来)。
+    ///   ② **显示上限**(布局实测):对比视图里每半幅宽度 = 播放区宽 ÷ 2;窗口 1920 宽时播放区 1344
+    ///      ⇒ 每半幅 1115(≈1394 物理像素);窗口最大化到 1728 逻辑宽时每半幅 1676(≈2095 物理像素)。
+    ///      整条 4096 已经 **超过"当前窗口真的能显示出来的像素数"**;再大只是白烧编解码。
+    ///      真要看 4K 成片的原生像素,请用「看处理效果」(那条放的就是原生预览成片,零降采样)。
+    ///
+    /// 【未来要放开这个数】唯一的前提是"硬编又能编、屏幕又能显示":
+    ///   换支持 >4096 宽的编码器/显卡(H.264 之上还有 HEVC/AV1)或换 8K 屏时,
+    ///   只改这一个常数 + MaxCompareCompositeWidth 的实测注释,并在产物里如实报新的合成耗时与体积。
+    ///
+    /// 超上限时:合成片**两侧同比例**缩(永远同尺度、可比),且必须留一行日志说清"超了、缩了多少" ✔。</summary>
+    public const int MaxCompareCompositeWidth = 4096;
+
     /// <summary>引擎目录下定位可执行文件(向上搜索 engines 根)。</summary>
     private static string? FindInEngines(string subDir, string exeName)
     {
@@ -2335,6 +2420,13 @@ public static class VideoService
                 bool waifuOnnx = false;   // 50系 waifu2x ncnn 不可用 → 整段视频改走 ONNX(安全网)
                 bool upOnnxDml = false;   // 探测失败/不可用 → 走 ONNX 时用 DirectML GPU(-2 自动)而非强制 CPU(-1)
                 bool ncnnUnreliable = false;   // 视频超分检测到 ncnn-Vulkan 黑帧 → 后续批次直接走 ONNX(不再每批先 ncnn 失败再降级,省极长时间)
+                // 【2026-09-24】Real-CUGAN 只支持 GPU:用户在"计算设备"里选了 CPU(-g -1)、
+                // 或本机确实没有可用 GPU 时,直接**明确拒绝**并给替代方案 —— 不跑那条实测会崩的 CPU 档,
+                // 也不静默换模型。判据与真实原因都写在异常消息里(用户看得到)。
+                if (doUpscale && engine == AlhPro.Core.RealCugan.EngineName && gpuId < 0)
+                {
+                    throw new RealCuganNeedsGpuException(RealCuganRefusal.Message(engineLevelAlsoFailed: false));
+                }
                 if (gpuId >= 0)
                 {
                     // 【50 系不再"一律禁用 ncnn"】旧逻辑:Blackwell + waifu2x 直接改走 ONNX,不做任何实测。
@@ -2369,6 +2461,45 @@ public static class VideoService
                             AppLogger.Warn($"⚠ waifu2x 在本机 50 系 GPU 上真机探测失败——为稳定性改用 ONNX 稳定版(整段视频,兼容模式)。"
                                 + EngineService.LastProbeUserMessage);
                             progress?.Report((upBase, $"⚠ waifu2x 在本机 50 系 GPU 上不可用,为稳定性改用 ONNX(整段视频)..."));
+                        }
+                        else if (engine == AlhPro.Core.RealCugan.EngineName)
+                        {
+                            // 【F4 · 2026-09-24】修掉"单支档位被瞬时误判 ⇒ 整批拒绝"。
+                            // 口径与 AlhPro.Core.NcnnModelVerdicts 一致:**引擎级可用性只认不带模型的那条**
+                            // (键 `引擎|GPU|`),单支档位失败不牵连同引擎的其它档位。三步:
+                            //   ① 先读引擎级结论;没有就**补探一次**(model = null ⇒ RealCuganArgs 落到默认档
+                            //      models-se + 保守档,"引擎本身能不能在这张卡上跑"由此确定 —— 与 RIFE / Real-ESRGAN 同款兜底);
+                            //   ② 引擎级可用 ⇒ 在其它降噪档里逐个实测,第一个通过的拿来用(三档权重都在包里);换档如实上报;
+                            //   ③ 引擎级也不可用 / 三档都不过 ⇒ 才拒绝,且拒绝信息写成「设计如此 + 可执行下一步」。
+                            var engineLevelVerdict = EngineService.TryGetNcnnVerdict(AlhPro.Core.RealCugan.EngineName, gpuId);
+                            bool engineLevelOk = engineLevelVerdict
+                                ?? await EngineService.EnsureNcnnProbeAsync(AlhPro.Core.RealCugan.EngineName, gpuId, null, ct).ConfigureAwait(false);
+                            string? picked = null;
+                            if (engineLevelOk)
+                            {
+                                foreach (var alt in AlhPro.Core.RealCugan.AlternativeTags(model))
+                                {
+                                    if (await EngineService.EnsureNcnnProbeAsync(AlhPro.Core.RealCugan.EngineName, gpuId, alt, ct).ConfigureAwait(false))
+                                    {
+                                        picked = alt;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (picked is not null)
+                            {
+                                AppLogger.Warn($"⚠ Real-CUGAN 的「{AlhPro.Core.RealCugan.Label(model)}」档位在本机 GPU({gpuId})探测没过,"
+                                    + $"但**引擎级**实测可用 ⇒ 本批自动改用「{AlhPro.Core.RealCugan.Label(picked)}」(权重同样随包),不是整批拒绝。"
+                                    + EngineService.LastProbeUserMessage);
+                                progress?.Report((upBase, $"⚠ Real-CUGAN 的「{AlhPro.Core.RealCugan.Label(model)}」档位探测未通过,"
+                                    + $"已自动改用「{AlhPro.Core.RealCugan.Label(picked)}」继续处理(引擎级实测可用)…"));
+                                model = picked;
+                                usable = true;   // 保持 GPU(ncnn-Vulkan)
+                            }
+                            else
+                            {
+                                throw new RealCuganNeedsGpuException(RealCuganRefusal.Message(engineLevelAlsoFailed: !engineLevelOk));
+                            }
                         }
                         else
                         {
@@ -9313,28 +9444,68 @@ public static class VideoService
             if (fps < 1 || fps > 480) fps = 0;          // 探不到就不写 fps=(交给 ffmpeg 按输入自己定)
             string fpsArg = fps > 0 ? "fps=" + fps.ToString("0.###", inv) + "," : "";
             string filt; int outW, outH;
+            // ===================== 【硬规矩 · 用户 2026-09-24 拍板】=====================
+            // 「**预览只要是有关处理后的都不要降采样**」(2026-09-24,原话)——
+            // 本方法烘出来的合成片(「两者同时 / 左右对比」都在放它)**含处理后那一半**,
+            // 所以它也必须守这条规矩:
+            //   · ① **不许给"处理后那一半"写死一个每侧常数**。2026-09-24 之前这里写的是
+            //     `sideW = Math.Min(pw2, 2048)`:预览成片 3840×2160 时右半被砍到 2048×1152
+            //     —— 用户看到的"处理后"在对比片里只剩一半宽度,这是**违规**,不是省钱。
+            //   · ② 处理后那一半按**原生像素**进合成片,两侧**同尺度**(可比性不能丢)。
+            //   · ③ 唯一允许的限制是**合成片整条宽度**的硬上限(MaxCompareCompositeWidth);
+            //     而"整条宽 ÷ 每侧"的倍数**取决于布局**,不能一律 ÷2:
+            //        · 整幅并排(WholeFrames):整条 = 2 × 处理后宽 ⇒ perSideFactor = 2 ✔
+            //        · 分界线(SplitLine):整条 = **处理后宽**(左右各裁一半拼起来正好一幅)⇒ = 1 ✔
+            //     (2026-09-24 第 2 轮修复:原先无条件 ÷2,把 4K 成片在 SplitLine 里又砍成每侧 2048 ✗)
+            //   · ④ 超过上限时才缩,且缩**整条**(两侧同比例)、缩之前**说清为什么**(留日志)。
+            // 实测(2026-09-24,4K 预览成片 3840×2160 / 3 秒):
+            //   · 4K 走**两种布局都不触发缩放**(SplitLine 整条 3840 ≤ 4096;WholeFrames 每侧 2048 ≤ 2048)✔
+            //   · 真要整条 7680(每侧 3840 原生):`h264_nvenc` 报 "No capable devices found" ⇒ libx264 16.7 秒
+            //     (3 秒片)⇒ 当前不可取,故上限留在 4096;`[对比片]` 那行日志会说明实际落到了哪一档。
+            // 而**单视图(看原片/看处理效果)根本不走本方法**,它直接放原生预览成片 ⇒ 零降采样。
+            // =========================================================================
+            int pwOut, phOut;
+            {
+                var (pw, ph) = await ProbeSizeAsync(processedPath).ConfigureAwait(false);
+                if (pw < 32 || ph < 32) { pw = ow; ph = oh; }     // 探不到就退回原片尺寸
+                // 每侧上限:按**本布局的几何**换算(见上面 ③),不是一律 ÷2
+                int perSideFactor = layout == CompareLayout.SplitLine ? 1 : 2;
+                double cap = Math.Min(1.0, MaxCompareCompositeWidth / ((double)perSideFactor * Math.Max(1, pw)));
+                pwOut = (int)Math.Round(pw * cap); pwOut -= pwOut % 2;
+                phOut = (int)Math.Round(ph * cap); phOut -= phOut % 2;
+                if (pwOut < 32 || phOut < 32) return Fail("处理后尺寸异常,拼不出对比片");
+                // 合成片整条宽:整幅并排 = 2 × 处理后宽;分界线 = 处理后宽(裁剪后拼回一幅)
+                int wholeW = perSideFactor == 2 ? pwOut * 2 : pwOut;
+                string layoutName = layout == CompareLayout.SplitLine ? "分界线(整条=处理后宽)" : "整幅并排(整条=2×处理后宽)";
+                if (cap < 1.0)
+                    AppLogger.Warn($"[对比片] 处理后原生 {pw}x{ph},{layoutName} 的整条宽 {(perSideFactor == 2 ? pw * 2 : pw)}x{ph} "
+                        + $"超过合成片上限 {MaxCompareCompositeWidth}px ⇒ 整条缩到 {wholeW}x{phOut}(处理后侧每幅 {pwOut}x{phOut},两侧同比例 {cap:0.###});"
+                        + $"要按原生像素看处理后请切「看处理效果」(那条放的是原生成片,零降采样)");
+                else
+                    AppLogger.Info($"[对比片] {layoutName}:处理后按原生 {pwOut}x{phOut} 进合成(不降采样:整条 {wholeW}x{phOut};原片侧按同尺度改写)");
+            }
+            // 两侧都缩到同一尺寸 ⇒ 线两边是同一处画面、同一尺度(擦除对比的语义不变)。
+            // ★ 这里**真的在缩**那一侧就是"处理后" ⇒ 它必须先经过**高质量缩放(lanczos)**,
+            //   最终坐标还必须落在整数像素上(`force_divisible_by=2`),否则就是"缩放后再被磁贴吸到错位像素"=糊。
+            string ScaleTo(int w, int h)
+                => $"scale={w}:{h}:flags=lanczos:force_divisible_by=2,";
             if (layout == CompareLayout.SplitLine)
             {
                 // 【2026-09-19 修 · 用户实测:"左右的时候右边处理后的画质和看处理效果的那个画质完全不一样"】
                 // 根因(证据在代码里):原来右边是 `scale={原片宽}:{原片高}` 之后再裁 ⇒ **处理后的分辨率被丢掉** ✗
                 //   (处理成片可能是 4K/8K,合成片里只剩 1080p,还多一次重编码)⇒ 右边看着又糊又假 ✓
-                // 修法:合成片改按**处理后尺寸**烘 ——
-                //   · 右边:**1:1 原样裁**(不再缩放,保住真像素)✔
-                //   · 左边:把原片等比放大到同一尺寸 ⇒ 线两边是同一处画面、同一尺度(擦除对比的语义不变)✔
-                //   · 上限 4096 宽:防 8K 合成片过大(超了就两边**同比例**缩,仍然同尺度、可比)✔
-                var (pw0, ph0) = await ProbeSizeAsync(processedPath).ConfigureAwait(false);
-                if (pw0 < 32 || ph0 < 32) { pw0 = ow; ph0 = oh; }      // 探不到就退回原片尺寸(与旧行为一致)
-                double cap = Math.Min(1.0, 4096.0 / Math.Max(1, pw0));
-                int cw = (int)Math.Round(pw0 * cap); cw -= cw % 2;
-                int chh = (int)Math.Round(ph0 * cap); chh -= chh % 2;
-                if (cw < 32 || chh < 32) { cw = ow; chh = oh / 2 * 2; }
+                // 修法:合成片按**处理后尺寸**烘(pwOut/phOut,见上面的硬规矩注释)——
+                //   · 右边:按处理后原生尺寸裁(未超上限时**一次都不缩**)✔
+                //   · 左边:把原片等比改写到同一尺寸 ⇒ 线两边是同一处画面、同一尺度(擦除对比的语义不变)✔
+                //   · 上限:MaxCompareCompositeWidth(超了就两边**同比例**缩,仍然同尺度、可比,且已留日志)✔
+                int cw = pwOut, chh = phOut;
                 double p = Math.Clamp(splitPct, 0.02, 0.98);
                 int lw = (int)Math.Round(cw * p); lw -= lw % 2;      // 左侧宽度(偶)
                 if (lw < 2) lw = 2;
                 if (cw - lw < 2) lw = cw - 2;
                 int rw = cw - lw;
-                filt = $"[0:v]{fpsArg}scale={cw}:{chh},crop={lw}:{chh}:0:0,setsar=1,setpts=PTS-STARTPTS[l];"
-                     + $"[1:v]{fpsArg}scale={cw}:{chh},crop={rw}:{chh}:{lw}:0,setsar=1,setpts=PTS-STARTPTS[r];"
+                filt = $"[0:v]{fpsArg}{ScaleTo(cw, chh)}crop={lw}:{chh}:0:0,setsar=1,setpts=PTS-STARTPTS[l];"
+                     + $"[1:v]{fpsArg}{ScaleTo(cw, chh)}crop={rw}:{chh}:{lw}:0,setsar=1,setpts=PTS-STARTPTS[r];"
                      + "[l][r]hstack=inputs=2:shortest=1[v]";
                 outW = cw; outH = chh;
             }
@@ -9343,17 +9514,14 @@ public static class VideoService
                 // 【2026-09-19 修 · 与「左右对比」同一类问题】这里原来把两侧都缩到"**原片的一半**"✗:
                 //   源 1080p → 每侧只有 960×540,处理后的 4K/8K 分辨率全丢 ⇒
                 //   用户实测"闪一下就又变成降采样的效果了"(后台合成片一落地,界面切过去就是这样)✓
-                // 修法:每侧按**处理后的尺寸**烘,整条合成片限宽 4096 —— 超了就两侧**同比例**缩(保持同尺度可比)✔
-                var (pw2, ph2) = await ProbeSizeAsync(processedPath).ConfigureAwait(false);
-                if (pw2 < 32 || ph2 < 32) { pw2 = ow; ph2 = oh; }
-                int sideW = Math.Min(pw2, 2048);                 // 每侧宽度上限(整条 ≤ 4096,保证能流畅播)
-                double k2 = (double)sideW / Math.Max(1, pw2);
-                int w2 = (int)Math.Round(pw2 * k2); w2 -= w2 % 2;  // 半边宽(yuv420p 要求偶数)
-                int h2 = (int)Math.Round(ph2 * k2); h2 -= h2 % 2;  // 半边高
-                if (w2 < 16 || h2 < 16) return Fail("原片太小,拼不出左右两半");
-                string sc = $"scale={w2}:{h2},setsar=1,setpts=PTS-STARTPTS";
+                // 【2026-09-24 再修 · 用户硬规矩】这里原来又写死 `Math.Min(pw2, 2048)`:
+                //   预览成片 3840 宽时右半被砍半 ⇒ 正是"展示处理结果被降采样"✗。
+                //   现在一律走上面算出来的 pwOut/phOut:未超屏幕上限 ⇒ **不缩**;
+                //   超了才两侧同比例缩(留日志)。两侧都是**高质量 lanczos + 整数像素落点**。
+                if (pwOut < 16 || phOut < 16) return Fail("原片太小,拼不出左右两半");
+                string sc = ScaleTo(pwOut, phOut) + "setsar=1,setpts=PTS-STARTPTS";
                 filt = $"[0:v]{fpsArg}{sc}[l];[1:v]{fpsArg}{sc}[r];[l][r]hstack=inputs=2:shortest=1[v]";
-                outW = w2 * 2; outH = h2;
+                outW = pwOut * 2; outH = phOut;
             }
             if (outW < 32 || outH < 32) return Fail("原片太小,拼不出对比片");
             // 进度百分比的分母用真实帧数(右片时长 × 帧率),不是拍脑袋的数

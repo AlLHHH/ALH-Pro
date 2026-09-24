@@ -1,4 +1,4 @@
-﻿// VulkanCheck.cs — 首次启动后台自检:实测引擎能否用 GPU(Vulkan)加速。
+// VulkanCheck.cs — 首次启动后台自检:实测引擎能否用 GPU(Vulkan)加速。
 // 方法:拿 waifu2x 引擎跑一张 1×1 测试图(设备 -g 0),能出图 = GPU Vulkan 可用;
 // 顺带解析引擎启动时打印的 Vulkan 设备列表(名称),生成给用户看的友好报告。
 // 结果缓存到 AppSettings(报告文本),只在首次启动执行一次,之后直接读缓存。
@@ -617,6 +617,8 @@ public static class VulkanCheck
         // 而软件实际是"先真机探测、通过就走 ncnn" —— 报告与行为相反(已被用户实测抓到一次)。
         var vEsrgan = EngineService.TryGetNcnnVerdict("realesrgan", AppSettings.GpuIndex);
         var vWaifu = EngineService.TryGetNcnnVerdict("waifu2x", AppSettings.GpuIndex);
+        // 【2026-09-24】Real-CUGAN 的实测结论单独取(它有自己的引擎身份键 realcugan2026)。
+        var vRealCugan = EngineService.TryGetNcnnVerdict(AlhPro.Core.RealCugan.EngineName, AppSettings.GpuIndex);
         string RouteOf(bool? verdict, string ncnnDesc, string cpuDesc)
             => verdict.HasValue
                 ? (verdict.Value ? ncnnDesc : "走 ONNX DirectML(本机实测 ncnn 不可用;显卡加速,稳定)")
@@ -628,6 +630,15 @@ public static class VulkanCheck
           .Append(RouteOf(vEsrgan, "ncnn-Vulkan GPU 加速,快速;异常自动降级", "CPU 软算,较慢但稳")).Append('\n');
         sb.Append("· 动漫超分(waifu2x):")
           .Append(RouteOf(vWaifu, "ncnn-Vulkan GPU 加速,快速流畅", "CPU 软算,慢但稳")).Append('\n');
+        // 【2026-09-24 新增 Real-CUGAN 一行】它**没有 ONNX 版本** ⇒ 不能用上面的 RouteOf(那句会写成
+        // "走 ONNX DirectML",而实际没有那条路)。实测不可用时只剩 ncnn-CPU,必须如实说清楚。
+        sb.Append("· 动漫超分(Real-CUGAN):")
+          .Append(vRealCugan.HasValue
+              ? (vRealCugan.Value
+                  ? "ncnn-Vulkan GPU 加速(无 ONNX 版本;实测 1080p 2x 约 0.6 秒/帧,是三者里最慢的一支)\n"
+                  : "本机实测 ncnn 不可用 —— 它没有 ONNX 版本可换,只能按 CPU 计算(明显慢);求快请改用 Real-ESRGAN\n")
+              : (gpuOk ? "未测 —— 首次处理时自动实测(通过用 ncnn GPU;失败只能按 CPU,没有 ONNX 兜底)\n"
+                       : "用不上 —— 本机无可用 GPU,而 Real-CUGAN 只有 ncnn 权重\n"));
         // 【2026-09-22 用户追问"自训模型兼容性"时补的一条】自训那三支**只有 ncnn 权重**,
         // 所以"走不走到 ncnn"直接决定它们能不能用 —— 而这份报告此前只报到引擎级,
         // 用户根本看不出"我在下拉里选的那支,在我这台机器上到底能不能跑" ✗。

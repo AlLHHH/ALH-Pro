@@ -127,12 +127,16 @@
 
                     <TextBlock Text="超分引擎" Style="{StaticResource SectionTitle}"/>
                     <!-- 【顺序:Real-ESRGAN 在上、waifu2x 在下】(用户要求)列表顺序只影响界面,
-                         存盘值仍用旧约定(0=waifu2x / 1=realesrgan),转换在 VideoView 的 EngineFromStored/EngineToStored,
-                         这样老用户已保存的选择不会被翻转。 -->
-                    <RadioButtons x:Name="VideoEngineRadios" SelectedIndex="0" ToolTipService.ToolTip="超分引擎:Real-ESRGAN 会主动合成细节(动漫/写实都明显变清晰);waifu2x 只做去噪/去压缩块 —— 干净素材上看起来≈单纯放大,只适合有噪点的老片源"
+                         存盘值仍用旧约定(0=waifu2x / 1=realesrgan / 3=realcugan),转换在 VideoView 的
+                         EngineFromStored/EngineToStored,这样老用户已保存的选择不会被翻转。
+                         ⚠ 【2026-09-24 加回 Real-CUGAN】它是**末尾追加**(界面索引 2 / 存盘值 3):
+                           历史存盘值 2 曾经也是 Real-CUGAN(v1.1.0 移除后一直被解释成 Real-ESRGAN),
+                           继续让它=Real-ESRGAN,绝不让老设置静默变成 Real-CUGAN。 -->
+                    <RadioButtons x:Name="VideoEngineRadios" SelectedIndex="0" ToolTipService.ToolTip="超分引擎:Real-ESRGAN 会主动合成细节(动漫/写实都明显变清晰);waifu2x 只做去噪/去压缩块 —— 干净素材上看起来≈单纯放大,只适合有噪点的老片源;Real-CUGAN 是动漫专用超分(线条最干净,但最慢:实测 1080p 2x 约 1.65 秒/帧,约为 animevideov3 的 6.2 倍;且必须有 GPU)"
                                   SelectionChanged="Combo_Changed">
                         <RadioButton Content="Real-ESRGAN"/>
                         <RadioButton Content="waifu2x"/>
+                        <RadioButton Content="Real-CUGAN"/>
                     </RadioButtons>
                     <TextBlock x:Name="VideoModelLabel" Text="超分模型" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="VideoWaifu2xModelCombo" ToolTipService.ToolTip="waifu2x 模型(动漫/通用/现实)"
@@ -300,6 +304,23 @@
                             </StackPanel>
                         </ComboBoxItem>
                     </ComboBox>
+                    <!-- 【2026-09-24 新增:Real-CUGAN 的模型下拉】与其它两个不同,它的"选哪支模型"是
+                         (权重目录 × 降噪档) 两个自由度的组合 ⇒ Tag 写成 `models-se:-1` 形式,
+                         由 AlhPro.Core.RealCugan 解析成 `-m <目录> -n <降噪档>`。
+                         ⚠ Tag 里那对冒号是**语义**,不是装饰:Real-CUGAN 的 -n 是降噪档、-m 才是模型目录
+                           (与 Real-ESRGAN 正好相反),拼错会静默按错档跑。
+                         ⚠ 只列 models-se 的三档:它们都同时具备 up2x/up3x/up4x 权重。
+                           models-pro / models-nose **没有随包**,列出来会让引擎找不到权重、exit=0 只出坏帧。 -->
+                    <ComboBox x:Name="VideoRealcuganModelCombo" Visibility="Collapsed"
+                              ToolTipService.ToolTip="Real-CUGAN 模型(动漫专用超分;按降噪档选)。&#x0a;引擎:realcugan-ncnn-vulkan(2026 重编版,含 50 系所需的健壮性修复)。&#x0a;⚠ 实测速度(口径:本机 RTX 4060,1080p 2x,40 帧目录批量按帧摊,三次独立进程冷跑):约 1.65 秒/帧(1.63~1.68)。同口径 animevideov3 2x 是 0.27 秒/帧 ⇒ 约 6.2 倍慢。&#x0a;⚠ 必须有 GPU:它只有 ncnn-Vulkan 权重(没有 ONNX 版本、CPU 档在本机实测会崩),没有可用显卡时会被拒绝处理。"
+                              SelectionChanged="Combo_Changed">
+                        <ComboBoxItem Content="动漫 · 保守（保留纹理 · 中）" Tag="models-se:-1"
+                                      ToolTipService.ToolTip="Real-CUGAN 官方保守档(-n -1 = conservative):尽量保留原纹理、不做强打磨,动漫线条最干净。&#x0a;适用:干净或轻压缩的动漫片源。&#x0a;实测速度:1080p 2x 约 1.65 秒/帧(同口径 animevideov3 约 0.27 秒/帧 ⇒ 约 6.2 倍)。&#x0a;模型大小:25.4 MB(models-se 权重目录,2x/3x/4x 共 11 个文件)。"/>
+                        <ComboBoxItem Content="动漫 · 不降噪（快）" Tag="models-se:0"
+                                      ToolTipService.ToolTip="Real-CUGAN 无降噪档(-n 0):输入已经干净时用它,速度与保守档同档(实测同口径约 1.63~1.74 秒/帧)。&#x0a;适用:高码率、无明显噪点/压缩块的动漫。&#x0a;模型大小:25.4 MB(models-se 权重目录)。"/>
+                        <ComboBoxItem Content="动漫 · 强降噪（慢）" Tag="models-se:3"
+                                      ToolTipService.ToolTip="Real-CUGAN 最强降噪档(-n 3):老片源噪点多、压缩块明显时用它;会一并抹掉部分纹理。&#x0a;适用:录像带/低码率老番。&#x0a;实测速度:1080p 2x 约 1.61~1.65 秒/帧(与保守档同档)。&#x0a;模型大小:25.4 MB(models-se 权重目录)。"/>
+                    </ComboBox>
                     <!-- 4x 专用权重模型的提示(用户要求:放在模型下拉正下方)
                          【2026-09-13 用户要求】这条不再是"红色警告":改用普通提示样式(中性灰 HintText)、文案里也不带 ⚠ 图标。
                          它说明的是"该模型只有 4x 权重"这一事实,不是错误,没必要用告警色吓人。
@@ -438,24 +459,35 @@
 
                     <TextBlock Text="补帧模型" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="InterpModelCombo" HorizontalAlignment="Stretch"
-                              ToolTipService.ToolTip="补帧模型:悬停每一项看官方说明、速度与模型大小。&#x0a;下拉已精简为两支 v4 架构模型 —— 选哪支都能用 3x/4x/12x/16x、指定帧率与「高质量 TTA」。&#x0a;以前选过 动漫专用 / 高清 / 超高清 / 经典兼容 的话,设置会自动改用 v4.13。"
+                              ToolTipService.ToolTip="补帧模型:悬停每一项看官方说明、速度与模型大小。&#x0a;下拉为三支 v4 架构模型 —— 都能用 3x/4x/12x/16x 与指定帧率;「高质量 TTA」只有 v4.13 / v4.6 能开(v4.26 的 TTA 实测卡死,选中它会被自动取消并置灰)。&#x0a;以前选过 动漫专用 / 高清 / 超高清 / 经典兼容 的话,设置会自动改用 v4.13。"
                               SelectedIndex="0" SelectionChanged="Combo_Changed">
-                        <!-- 【2026-09-16 用户裁决:只留 13 + 一个兼容性强的】下拉从 7 项精简到 2 项。
-                             删掉的 5 项:通用画质再新(v4.26 —— engines\rife 里根本没有这个目录,且 TTA 卡死早已置灰,是个僵尸项)、
-                             动漫专用(RIFE Anime)、高清(RIFE HD)、超高清(RIFE UHD)、经典兼容(RIFE v2.3)。
-                             后 4 项是老三网络架构(各 57.3 / 54.0 MB),功能砍半:只能 2x 级联,不支持 3x/4x、指定帧率与 TTA。
+                        <!-- 【2026-09-16 用户裁决:只留 13 + 一个兼容性强的】下拉从 7 项精简到 2 项;
+                             【2026-09-24 用户裁决:把 v4.26 作为第 3 支加回来】现在是 3 项。
+                             2026-09-16 删掉的 4 项(动漫专用 RIFE Anime / 高清 RIFE HD / 超高清 RIFE UHD / 经典兼容 RIFE v2.3)
+                             仍是老三网络架构(各 57.3 / 54.0 MB),功能砍半:只能 2x 级联,不支持 3x/4x、指定帧率。
                              留 v4.6 当备用的理由:与 v4.13 同架构、功能完全一样,只是旧一版 ⇒ 万一 v4.13 在某台机器上出问题,
                              切过去不丢任何功能;反之拿老架构当备用代价太大(用户一旦选到就只能 2x)。
-                             ⚠ 序号即取值口径:0=v4.13、1=v4.6。老设置里存的 2~6 会被读设置时的范围检查挡掉 ⇒ 自动落到 0(v4.13)。
-                             权重已移到 alh-pro\_retired_rife\(装机包因此小约 226MB),要恢复就搬回 engines\rife\ 并把本段改回来。 -->
+                             v4.26 回来的理由(实测,不是推测):同一份 rife-ncnn-vulkan-2026.exe 直接能跑它,
+                             1080p 两次冷跑 92.2 / 79.0 ms/输出帧,比 v4.13(103.8 / 91.2)只快不慢;权重 10.90 MB 现在随包。
+                             ⚠ v4.26 的「高质量 TTA」(-x/-z)**实测卡死** ⇒ 它是唯一一项 TTA 会被置灰的(见 VideoView.xaml.cs 的 v426TtaBroken)。
+                             ⚠ 序号即取值口径:0=v4.13、1=v4.6、2=v4.26(一律**末尾追加**,不许插队)。
+                             老设置里存的 3~6 仍会被读设置时的范围检查挡掉 ⇒ 自动落到 0(v4.13);
+                             但**存的 2 会被解释成 v4.26**(2026-09-16 之前 2 曾是「动漫专用」)—— 已下架 8 天,且两支都是 v4 补帧模型,不会崩,
+                             这里如实记一笔而不做迁移:补帧侧没有 VideoModelOrder 那样的序号迁移表。
+                             老 4 项的权重仍在 alh-pro\_retired_rife\(装机包因此小约 226MB),要恢复就搬回 engines\rife\ 并把本段改回来。 -->
                         <ComboBoxItem Content="通用画质最新 (RIFE v4.13)"
                                       ToolTipService.ToolTip="通用画质最新 (RIFE v4.13):官方 RIFE 的 ncnn 实现;官方 README 的模型表最新只列到 v4.6,v4.13 比它更新(出处:rife-ncnn-vulkan README)。&#x0a;本工程推荐:支持任意帧数精确补齐、3x/4x/12x/16x 与「高质量 TTA」,最稳。&#x0a;速度:1080p 约 0.06~0.09 秒/输出帧。&#x0a;模型大小:10.3 MB。"/>
                         <ComboBoxItem Content="通用画质 (RIFE v4.6)"
                                       ToolTipService.ToolTip="通用画质 (RIFE v4.6):官方 README 模型表里的 4.6 版(上游 4.6)。&#x0a;与 v4.13 同架构、功能完全一样(3x/4x、指定帧率、TTA 都支持),效果与稳定性略逊;留作 v4.13 在你机器上出问题时的备用。&#x0a;模型大小:10.1 MB。"/>
+                        <!-- 【2026-09-24 末尾追加】第 3 支。加它是因为它实测与 v4.13 同档速度,
+                             且用的是同一份 rife-ncnn-vulkan-2026.exe —— 不需要新引擎、不需要新 exe。
+                             ⚠ 顺序即序号,只许追加:2 = rife-v4.26。 -->
+                        <ComboBoxItem Content="通用画质再新 (RIFE v4.26)"
+                                      ToolTipService.ToolTip="通用画质再新 (RIFE v4.26):RIFE 4.26 的 ncnn 权重(上游 Practical-RIFE 系列,权重与代码同为 MIT)。&#x0a;本机实测(1080p,同素材)约 80~93 ms/输出帧,与 v4.13 同档(两次独立实测互有快慢,没有稳定差距)。&#x0a;功能:同 v4.13/v4.6,支持 3x/4x/12x/16x 与指定帧率。&#x0a;⚠ 唯一限制:「高质量 TTA」(-x/-z)在这支上实测会卡死,选中它时该项自动置灰。&#x0a;模型大小:10.9 MB。"/>
                     </ComboBox>
                     <!-- 补帧模型提示:随所选模型动态更新,说明推荐/各模型的问题(选 v4.13 提示推荐,选其它提示风险) -->
                     <TextBlock x:Name="InterpModelHint" FontSize="10" Opacity="0.65" TextWrapping="Wrap"
-                               Margin="0,2,0,4" Text="通用画质 v4.13 为推荐模型(帧数精确、稳定);v4.6 与它同架构、功能一样,是备选。两支都支持 3x/4x 与指定帧率。"/>
+                               Margin="0,2,0,4" Text="通用画质 v4.13 为推荐模型(帧数精确、稳定);v4.6 与它同架构、功能一样,是备选。三支都支持 3x/4x 与指定帧率;v4.26 速度与 v4.13 同档,但不支持「高质量 TTA」。"/>
 
                     <Button x:Name="FpsToggleBtn" Content="视频帧率 ▾" HorizontalAlignment="Stretch"
                             Click="FpsToggleBtn_Click"
@@ -1298,7 +1330,18 @@
                              CmpPlayerTop = 「看原片」(源文件)、CmpPlayerBottom = 「看处理效果」(预览成片)。
                              它们**替代** PreviewPlayer/EffectPlayer 去服务单视图,而 PreviewPlayer/EffectPlayer
                              从此只服务「两者同时 / 左右对比」(对比子系统一字不改)⇒ 换视角只改可见性,零装载。
-                             (指针事件与 PreviewPlayerHost 保持一致:自绘播放条靠它唤出) -->
+                             (指针事件与 PreviewPlayerHost 保持一致:自绘播放条靠它唤出)
+                             ===================== 【硬规矩 · 用户 2026-09-24】=====================
+                             「**预览只要是有关处理后的都不要降采样,不然不好看**」(用户原话)。
+                             所以 CmpPlayerBottom 装的一律是**原生预览成片**(code-behind 里 _effOutPath 指向的
+                             那个临时文件,例如 3840×2160),中间**不做任何预缩放**;Stretch=Uniform 只在"窗口比成片小"时
+                             由渲染层把它缩到画面区(窗口的物理限制,不是软件降采样)。
+                             想看 100% 原生像素 ⇒ 最大化窗口/全屏(切到「看处理效果」时会记一行
+                             `[清晰度] … 显示倍率 …` 说明当前是 1:1 还是被窗口压小了多少)。
+                             【别再给这两个元素写显式 Width/Height 或 MaxWidth/MaxHeight】那会造出
+                             "先改小渲染面、再被放大显示"的糊化路径;遮罩版式的宽高只允许写在**主机**上,
+                             且离开对比视图时必须由 NormalizeHostGeometry 复位。
+                             ====================================================================== -->
                         <Grid x:Name="CmpPlayerHostBottom" Visibility="Collapsed"
                               PointerMoved="PreviewPlayerHost_PointerMoved"
                               PointerExited="PreviewPlayerHost_PointerExited">

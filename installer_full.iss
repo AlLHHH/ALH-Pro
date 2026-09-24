@@ -91,9 +91,9 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.i
 Source: "发布版\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "models_v1.0\*,_ttracks*,bin\*,obj\*,*.pdb,*.lib,*.bak,ALHPro_old*,DirectML.Debug.*,d3dcompiler_47.dll.bak,onnxruntime.lib"
 
 [InstallDelete]
-; v1.0 升级清理:Real-CUGAN 已从 v1.1.0 起移除(许可不明),旧引擎目录不再需要(约 200MB+),
-; 避免升级后留一堆无用文件;其余文件一概不动(设置/记录在 %LOCALAPPDATA%,用户文件不删)。
-Type: filesandordirs; Name: "{app}\engines\realcugan"
+; 【2026-09-24 必须删掉这条 Real-CUGAN 清理规则】Real-CUGAN 已重新随包(2026 重编引擎 + models-se,
+; 许可 MIT,见 THIRD_PARTY_NOTICES 第 16 条)。留着它 = 升级安装时把刚装的 engines\realcugan 再删一次。
+; 其余文件一概不动(设置/记录在 %LOCALAPPDATA%,用户文件不删)。
 Type: files; Name: "{app}\d3dcompiler_47.dll"
 Type: files; Name: "{app}\D3DCOMPILER_47.dll"
 

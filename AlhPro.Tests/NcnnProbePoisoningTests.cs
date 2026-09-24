@@ -35,7 +35,12 @@ public class NcnnProbePoisoningTests
         Assert.Contains("AlhPro.Core.NcnnProbePlan.For(model)", video);
         Assert.Contains("EnsureNcnnProbeAsync(engine, gpuId, upProbePlan.Model, ct)", video);
         Assert.Contains("AlhPro.Core.NcnnProbePlan.For(model)", videoView);
-        Assert.Contains("EnsureNcnnProbeAsync(\"realesrgan\", gpuId, probePlan.Model, cts.Token)", videoView);
+        // 【2026-09-24 · t4】这里原来写死 `"realesrgan"`;Real-CUGAN 上架后探测目标引擎改成
+        // **本次真正要跑的那支**(`probeEngine = SelectedEngineName`),否则拿 realesrgan 的键去探
+        // Real-CUGAN 会写一条脏结论。断言跟着改成"引擎变量 + 计划里的模型",要钉的性质没变:
+        // **喂给 ncnn 的模型名一律来自 NcnnProbePlan,绝不是界面 Tag 原样**。
+        Assert.Contains("string probeEngine = SelectedEngineName;", videoView);
+        Assert.Contains("EnsureNcnnProbeAsync(probeEngine, gpuId, probePlan.Model, cts.Token)", videoView);
         Assert.Contains("AlhPro.Core.NcnnProbePlan.For(model)", upView);
 
         // 旧写法(把界面 Tag 原样喂进去)必须再也搜不到

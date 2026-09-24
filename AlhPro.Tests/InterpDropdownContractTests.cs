@@ -9,6 +9,8 @@ namespace AlhPro.Tests;
 
 /// <summary>补帧下拉精简(2026-09-16 用户裁决:「补帧只留 13,再留一个兼容性强的,其他全部删除」)
 /// 与「超分模型悬停提示」这两件事的**接线契约**。
+/// 【2026-09-24 更新】用户又裁决把 `RIFE v4.26` 作为第 3 支加回来(实测 1080p 79~92 ms/输出帧,
+/// 权重随包)⇒ 本文件的口径由「恰好两支」改为「恰好三支」,`RetiredInterpItems` 相应由 5 支减为 4 支。
 ///
 /// 【为什么必须单测】下拉的**序号就是存进设置的取值口径**(AppSettings.Model = 下拉 SelectedIndex),
 /// 而「序号 → 引擎模型目录名」的映射写在 VideoView.xaml.cs 的 SelectedInterpModel 里。
@@ -23,34 +25,40 @@ namespace AlhPro.Tests;
 /// (比如"删掉的 5 项是……"),不剥就会自己绊倒自己 —— 这个坑 VideoModelOrderTests 第一次跑就踩过。</summary>
 public class InterpDropdownContractTests
 {
-    /// <summary>2026-09-16 已下架、不许再作为**下拉项**出现的 5 支。
-    /// 它们在 `发布版\engines\rife` 下的权重目录也同时搬去了 `_retired_rife\`。</summary>
+    /// <summary>2026-09-16 已下架、不许再作为**下拉项**出现的 4 支。
+    /// 它们在 `发布版\engines\rife` 下的权重目录也同时搬去了 `_retired_rife\`。
+    /// 【2026-09-24】原先是 5 支 —— `RIFE v4.26` 已由用户裁决作为第 3 支**上架**(权重搬回
+    /// `发布版\engines\rife\rife-v4.26`,实测 1080p 79~92 ms/输出帧)⇒ 从本表移除。
+    /// ⚠ 不是"删断言换绿":同一支模型被同时加进了下拉(下面的项数 2→3 与序号映射断言都跟着改了),
+    ///   `Interp_dropdown_has_exactly_three_items` 与 `Interp_index_to_model_directory_mapping_matches_the_dropdown`
+    ///   会一起把它按住;下架的那 4 支仍在表里、仍被断言不许回来。</summary>
     private static readonly string[] RetiredInterpItems =
     {
-        "动漫专用", "高清 (RIFE HD)", "超高清 (RIFE UHD)", "经典兼容", "RIFE v4.26",
+        "动漫专用", "高清 (RIFE HD)", "超高清 (RIFE UHD)", "经典兼容",
     };
 
-    /// <summary>精简后应当**恰好**两支:0 = v4.13(推荐)、1 = v4.6(同架构备用)。
+    /// <summary>应当**恰好**三支:0 = v4.13(推荐)、1 = v4.6(同架构备用)、2 = v4.26(2026-09-24 末尾追加,实测最快)。
     /// 写成常量而不是从 XAML 反推,是为了让"有人再往下拉里塞一支"立刻失败 —— 那时候
-    /// 序号映射、名字表、以及"老设置序号 2~6 会被范围检查挡掉"这三处都得跟着复核。</summary>
-    private const int ExpectedInterpItemCount = 2;
+    /// 序号映射、名字表、以及"老设置序号 3~6 会被范围检查挡掉"这三处都得跟着复核。</summary>
+    private const int ExpectedInterpItemCount = 3;
 
-    // ───────────────────────── ① 补帧下拉:只留两支 ─────────────────────────
+    // ───────────────────────── ① 补帧下拉:只留三支 ─────────────────────────
 
-    /// <summary>补帧下拉**恰好两项**,且依次是 v4.13 与 v4.6(顺序即序号口径,不能反)。</summary>
+    /// <summary>补帧下拉**恰好三项**,且依次是 v4.13 / v4.6 / v4.26(顺序即序号口径,不能反)。</summary>
     [Fact]
-    public void Interp_dropdown_has_exactly_two_items_v413_then_v46()
+    public void Interp_dropdown_has_exactly_three_items_v413_then_v46_then_v426()
     {
         var items = InterpItems();
 
         Assert.Equal(ExpectedInterpItemCount, items.Count);
         Assert.Contains("通用画质最新 (RIFE v4.13)", items[0]);
         Assert.Contains("通用画质 (RIFE v4.6)", items[1]);
+        Assert.Contains("通用画质再新 (RIFE v4.26)", items[2]);
     }
 
-    /// <summary>下架的那 5 支不许再作为下拉项回来(先剥注释:注释里会写"删掉的 5 项是……"这规则本身)。</summary>
+    /// <summary>下架的那 4 支不许再作为下拉项回来(先剥注释:注释里会写"删掉的 4 项是……"这规则本身)。</summary>
     [Fact]
-    public void Interp_dropdown_no_longer_offers_the_five_retired_models()
+    public void Interp_dropdown_no_longer_offers_the_four_retired_models()
     {
         var visible = InterpItems().Select(StripComments).ToArray();
 
@@ -84,7 +92,7 @@ public class InterpDropdownContractTests
     // ───────────────────────── ③ 序号 ↔ 引擎模型目录名 ─────────────────────────
 
     /// <summary>**核心契约**:下拉有多少项,`SelectedInterpModel` 就得映射多少个序号,而且
-    /// 0/1 必须分别是 rife-v4.13 / rife-v4.6(顺序与下拉一致)。
+    /// 0/1/2 必须分别是 rife-v4.13 / rife-v4.6 / rife-v4.26(顺序与下拉一致)。
     /// 映射里只要残留一支下架模型,引擎就会拿到不存在的模型目录 —— 而这是编译期查不出来的。</summary>
     [Fact]
     public void Interp_index_to_model_directory_mapping_matches_the_dropdown()
@@ -96,6 +104,7 @@ public class InterpDropdownContractTests
         Assert.Equal(items.Count, map.Count);
         Assert.Equal("rife-v4.13", map[0]);
         Assert.Equal("rife-v4.6", map[1]);
+        Assert.Equal("rife-v4.26", map[2]);
 
         // 映射到的模型目录必须**真实存在**(引擎按目录名取权重)。
         // ⚠ 引擎目录是 .gitignore 的(engines/ 与 发布版/),全新克隆上不存在 ⇒ 找不到就跳过这条,

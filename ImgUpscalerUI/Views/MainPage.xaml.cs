@@ -2170,12 +2170,12 @@ public sealed partial class MainPage : Page
         };
         copyright.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
         {
-            Text = "© 2026 AlL.H. 保留所有权利。",
+            Text = "© 2026 AlL.H. · MIT 许可",
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
         });
         copyright.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
         {
-            Text = "「ALH Pro」软件界面与代码版权归 AlL.H 所有,免费公益、个人自用;未经作者书面许可,禁止商用、再次分发或篡改。开源模型与引擎版权归各原作者所有(见上方致谢与许可声明),仅作为本软件底层能力使用,请勿移除版权信息。",
+            Text = "「ALH Pro」软件界面与代码版权归 AlL.H 所有,以 MIT 许可开源:可自由使用、修改与分发,但须保留本版权声明与许可原文。开源模型与引擎版权归各原作者所有(见上方致谢与许可声明),仅作为本软件底层能力使用,请遵循各自的许可,请勿移除版权信息。",
         });
         content.Children.Add(copyright);
 
@@ -3119,7 +3119,7 @@ public sealed partial class MainPage : Page
                     {
                         // 只对"本来会显示未测"的引擎强制实测,否则直接用已有结论 —— 正常机器导出不额外等待。
                         var needProbe = new System.Collections.Generic.List<string>();
-                        foreach (var eng in new[] { "realesrgan", "waifu2x" })
+                        foreach (var eng in new[] { "realesrgan", AlhPro.Core.RealCugan.EngineName, "waifu2x" })
                             if (!ALHPro.EngineService.TryGetNcnnVerdict(eng, probeGpu).HasValue) needProbe.Add(eng);
                         if (needProbe.Count > 0)
                         {
