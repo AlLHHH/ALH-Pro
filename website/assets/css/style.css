@@ -1428,43 +1428,38 @@ body::after {
 }
 
 
+
 /* =============================================================================
-   §首屏右侧:官方 QQ 群两张卡片(2026-09-24 用户要求)
-   为什么新增这一块:原先官方 QQ 群只在页脚写一行"官方 QQ 群:xxxx(一群已满)…",
-   用户反馈"这样子不直观" ⇒ 改成首屏右侧两张卡:群号大字 + 状态徽标 + 一键复制群号。
-   · 复制走站内既有的 [data-copy] 机制(site.js §11 initCopy),本块**不含任何脚本**;
-   · 布局多包了一层:外层 .hero-split 管两列,左列的包裹层**同时就是 .hero-inner** ——
-     这样 .has-js .hero-inner > * 那套逐个入场动画(h1→lede→徽标→按钮)一个字都不用改;
-     右侧卡片不在 .hero-inner 里,不会被那套 opacity:0 的入场规则波及(动画没跑时卡片照样可见);
-   · 不用「六个元素直接当 grid item」的扁平写法:grid 里**外边距不合并**,那样 lede→badges 的间距
-     会从 34px 变成 54px,整列竖向节奏会被顶开;
-   · 行间距刻意**不给 row-gap**:左右两列各自管自己的内部间距。
+   §首屏右侧:官方 QQ 群(两张纯文字小卡)
+   两轮用户反馈定下的形态:① "两张卡片放首屏右边"(原先只是页脚一行文字,用户说"不直观");
+   ② "太冗余了…只显示文字" ⇒ 现在一行一个群号,可加入的在前、满的标"(已满)";
+   不放徽标、不放复制按钮、不写说明。
+   左列包裹层**同时挂着 .hero-inner**:原样式 `.has-js .hero-inner > *` 那套逐个入场动画是按"直接子元素"
+   写的,类挂在这一层就不用动动画;右侧卡片不在 .hero-inner 里,也不会被那套 opacity:0 的入场规则波及。
+   右列给 196px 起的窄列 —— 卡片要"小",所以不跟左列抢宽度;窄屏(≤979px)折回单列,两张卡排在文案下面。
    ============================================================================= */
 .hero-split {
   display: grid;
-  grid-template-columns: minmax(0, 1.22fr) minmax(268px, .78fr);
-  column-gap: clamp(22px, 3.2vw, 44px);
+  grid-template-columns: minmax(0, 1.6fr) minmax(196px, .4fr);
+  column-gap: clamp(20px, 3vw, 40px);
   align-items: start;
 }
 .hero-copy { min-width: 0; }
 
-.hero-aside { display: grid; gap: 14px; align-content: start; margin-top: 4px; }
-.qq-card { padding: 18px 20px; }
-.qq-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.qq-num {
-  margin: 10px 0 0; font-size: 23px; font-weight: 700; letter-spacing: .4px;
-  font-variant-numeric: tabular-nums; color: var(--fg);
+.hero-aside { display: grid; gap: 8px; align-content: start; margin-top: 8px; }
+.qq-card {
+  padding: 9px 14px; margin: 0; text-align: center;
+  font-size: 14.5px; color: var(--fg-soft); font-variant-numeric: tabular-nums;
 }
-.qq-card .small { margin-top: 8px; }
-.qq-card .copy-btn { margin-top: 12px; }
+/* 满的那个淡一档:不用徽标也能一眼分出"哪个还能加" */
+.qq-card:last-child { color: var(--muted); }
 
-@media (max-width: 979px) {
-  .hero-split { grid-template-columns: minmax(0, 1fr); }
-  .hero-aside { margin-top: 24px; }
-}
-
-/* 右侧两张卡片的入场:与左列错开一拍(两张卡依次出现),复用同一条 heroIn 关键帧。
-   为什么不用 `.has-js .hero-aside > *`:那样两张卡会同时淡入,和左列 40~470ms 的节奏对不上。 */
+/* 入场:两张小卡与左列错开一拍(复用同一条 heroIn 关键帧) */
 .has-js .hero-aside > .qq-card { opacity: 0; animation: heroIn 620ms var(--ease-out) both; }
 .has-js .hero-aside > .qq-card:nth-child(1) { animation-delay: 330ms; }
 .has-js .hero-aside > .qq-card:nth-child(2) { animation-delay: 430ms; }
+
+@media (max-width: 979px) {
+  .hero-split { grid-template-columns: minmax(0, 1fr); }
+  .hero-aside { margin-top: 22px; }
+}

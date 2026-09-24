@@ -129,30 +129,14 @@ setTimeout(function () {
         遇到问题<strong>建议优先用软件左下角的「ALH Pro 社区」反馈</strong>。</p>
       </div>
 
-      <!-- 官方 QQ 群:2026-09-24 用户要求"两张卡片放首屏右边"(原先只是页脚一行文字,用户反馈"不直观")。
-           两张卡:二群可加(放前面)、一群已满(用 badge-warn 标出来)。群号带 id,复制按钮走站内既有的
-           [data-copy] 机制(site.js §11 的 initCopy),**不新增任何脚本**。
-           将来拿到群二维码图片:在卡里群号那一行(qq-num)前面插一张 <img src="assets/img/qq-group-2.png"
-           alt="官方 QQ 群二群二维码"> 即可 —— 卡片本身就是"码在上、号在下"的排法,不用改 CSS。 -->
+      <!-- 官方 QQ 群:两轮用户反馈定下的最终形态 ——
+           ① "两张卡片放首屏右边"(原先只是页脚一行文字,用户说"不直观");
+           ② "太冗余了…只显示文字" ⇒ 现在就是两张**纯文字**小卡:一行一个群号,可加入的在前、满的标"(已满)";
+              不放徽标、不放复制按钮、不写说明文字。
+           样式见 style.css §首屏右侧。将来若要放群二维码,把 <img> 插进对应卡片即可。 -->
       <aside class="hero-aside" aria-label="官方 QQ 群">
-        <div class="card qq-card">
-          <div class="qq-card-head">
-            <span class="badge badge-brand">官方 QQ 群 · 二群</span>
-            <span class="badge badge-ok">可加入</span>
-          </div>
-          <p class="qq-num" id="qq-num-2">1028704070</p>
-          <p class="small muted">在手机 / 电脑的 QQ 里搜索这个群号即可加入;提问带上版本号、显卡与日志,基本一轮就能定位。</p>
-          <button class="copy-btn" type="button" data-copy="qq-num-2">复制群号</button>
-        </div>
-
-        <div class="card qq-card">
-          <div class="qq-card-head">
-            <span class="badge">官方 QQ 群 · 一群</span>
-            <span class="badge badge-warn">已满</span>
-          </div>
-          <p class="qq-num" id="qq-num-1">1057761060</p>
-          <p class="small muted">人数已满、暂时加不进;有问题请加二群。</p>
-        </div>
+        <p class="card qq-card">QQ 群 1028704070</p>
+        <p class="card qq-card">QQ 群 1057761060(已满)</p>
       </aside>
 
     </div>
