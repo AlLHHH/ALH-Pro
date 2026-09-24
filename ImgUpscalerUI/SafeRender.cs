@@ -126,11 +126,14 @@ public static class SafeRender
     /// 一个凭空造的数字同时喂给批次档位与并发档位,导致好机器被误降档(实测有机器批次从 180 掉到 120)。</summary>
     public static bool FreeVramMeasured { get { EnsureFreeVramProbed(); return Volatile.Read(ref _vramFreeMeasured) != 0; } }
 
-    /// <summary>空闲显存的显示串:真测到给数值,测不到明确标"未实测"。
-    /// UI/诊断包里出现一个凭空造的"空闲显存 6.4 GB"会误导排查——曾据此误判视频批次为何从 180 掉到 120。</summary>
+    /// <summary>空闲显存的显示串:真测到给数值 + 读数来源,测不到明确标"未实测"。
+    /// UI/诊断包里出现一个凭空造的"空闲显存 6.4 GB"会误导排查——曾据此误判视频批次为何从 180 掉到 120。
+    /// 【2026-09-24】AMD/Intel 现在也能真读(PDH 计数器),所以"未实测"不再等于"只有 N 卡可测";
+    /// 读数来源一并写出来(nvidia-smi / PDH),排查时不必再猜。</summary>
     public static string FreeVramText => FreeVramMeasured
         ? FreeVramGB.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + " GB"
-        : "未实测(仅 NVIDIA 可测)";
+          + (string.IsNullOrEmpty(_vramFreeSource) ? "" : $"({_vramFreeSource})")
+        : "未实测(本机读不到显卡显存计数)";
 
     /// <summary>惰性探测一次空闲显存。<b>FreeVramGB 与 FreeVramMeasured 都必须经过这里</b>——
     /// 此前 FreeVramMeasured 是个不触发探测的自动属性,而 GetVideoConcurrency() 的条件写的是
@@ -141,11 +144,36 @@ public static class SafeRender
     private static void EnsureFreeVramProbed()
     {
         if (Volatile.Read(ref _vramFreeProbed) != 0) return;
-        var smi = ProbeNvidiaSmi("memory.free");
-        if (smi is > 0) { _vramFreeGb = smi.Value; Volatile.Write(ref _vramFreeMeasured, 1); }
-        else { _vramFreeGb = 0; Volatile.Write(ref _vramFreeMeasured, 0); }
+        // 【2026-09-24 · 跨厂商】先 nvidia-smi(NVIDIA 最准);读不到(N 卡没装/AMD/Intel)
+        // 再退到 Windows 性能计数器「GPU Adapter Memory」的"已用"⇒ 空闲 = 总量 − 已用。
+        // 两者都拿不到才保持"未实测"(绝不返回估值冒充实测)。
+        // 强制走 PDH 的测试开关:ALH_FORCE_PDH_VRAM=1(开发/诊断用,正常用户不生效)。
+        bool forcePdh = Environment.GetEnvironmentVariable("ALH_FORCE_PDH_VRAM") == "1";
+        var smi = forcePdh ? null : ProbeNvidiaSmi("memory.free");
+        string src = "nvidia-smi";
+        double free = 0;
+        if (smi is > 0) free = smi.Value;
+        else
+        {
+            var pdh = GpuMemoryPdh.TryGetFreeVramGB(TotalVramGB);
+            if (pdh is > 0) { free = pdh.Value; src = "PDH(GPU Adapter Memory)"; }
+        }
+        if (free > 0)
+        {
+            // 【2026-09-24 · 独立审查抓到】来源串必须**在** measured 置位之前写:measured==1 是"值已就绪"的发布点,
+            // 先发布再写来源,并发读者就可能看到一个没有来源标签的数值(诊断串偶发少 "(nvidia-smi)")。
+            _vramFreeGb = free;
+            _vramFreeSource = src;
+            Volatile.Write(ref _vramFreeMeasured, 1);
+        }
+        else { _vramFreeGb = 0; _vramFreeSource = ""; Volatile.Write(ref _vramFreeMeasured, 0); }
         Volatile.Write(ref _vramFreeProbed, 1);   // 最后置位:别人看到"已探测"时,值必定已写好
     }
+
+    /// <summary>空闲显存读数来自哪里(nvidia-smi / PDH 计数器;空 = 未实测)。**只用于日志与诊断包** ——
+    /// "这个 6.4 GB 是谁给的"必须在排查时一眼看到,否则又会像 1.3.x 那样把估值当实测值讨论半天。</summary>
+    private static string _vramFreeSource = "";
+    public static string FreeVramSource => FreeVramMeasured ? _vramFreeSource : "";
 
     /// <summary>本机物理内存总量(GB)。</summary>
     public static double TotalRamGB => _ramTotal ??= GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 1073741824.0;

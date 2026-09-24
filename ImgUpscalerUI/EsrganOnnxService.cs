@@ -257,21 +257,33 @@ public static class EsrganOnnxService
 
     /// <summary>音频域结论账本。**首次使用时**把落盘文本读进来一次,之后纯内存查表。
     /// 【失败一律退回空账本】文件读不到/解析炸了都只当"没测过" ⇒ 照现状试一次 DML;
-    /// 结论缓存坏了绝不能把 DML 这条路一起堵死(那会让能跑的机器永远跑 CPU)。</summary>
+    /// 结论缓存坏了绝不能把 DML 这条路一起堵死(那会让能跑的机器永远跑 CPU)。
+    /// 【环境签名 · 2026-09-24】读回时带上本机当前签名:签名不一致(换驱动/换卡)⇒ 整份结论作废,
+    /// 于是"失败结论留 7 天"不会变成"换了驱动还死认旧结论"(自愈不再依赖 1 天的短 TTL)。</summary>
     private static AlhPro.Core.DmlVerdictLedger AudioVerdictLedger()
     {
         lock (_audioVerdictLock)
         {
             if (_audioVerdictLedger != null) return _audioVerdictLedger;
+            string sig = AudioDmlDeviceSignature();
             var ledger = new AlhPro.Core.DmlVerdictLedger(DmlTransientStrikeLimit);   // 与进程内连击表同源,不写死第二个 3
             try
             {
                 var path = AudioDmlVerdictFile;
                 if (File.Exists(path))
                 {
-                    ledger.Merge(AlhPro.Core.DmlVerdictLedger.Parse(File.ReadAllText(path)));
-                    AppLogger.Info($"[结论] 音频分离 DML 落盘结论已载入:{path}"
-                        + $"({ledger.Snapshot(DateTimeOffset.UtcNow.ToUnixTimeSeconds()).Count} 条未过期结论)");
+                    string text = File.ReadAllText(path);
+                    string? stored = AlhPro.Core.DmlVerdictLedger.ParseSignature(text);
+                    bool envChanged = !string.IsNullOrWhiteSpace(sig) && !string.IsNullOrWhiteSpace(stored)
+                        && !string.Equals(stored, sig, StringComparison.OrdinalIgnoreCase);
+                    ledger = AlhPro.Core.DmlVerdictLedger.FromText(text, DmlTransientStrikeLimit,
+                        currentSignature: sig);
+                    if (envChanged)
+                        AppLogger.Info($"[结论] 音频分离 DML 落盘结论已作废:本机显卡/驱动签名变了"
+                            + $"(旧 {stored} → 新 {sig})⇒ 本次照现状重新试一次 DML");
+                    else
+                        AppLogger.Info($"[结论] 音频分离 DML 落盘结论已载入:{path}"
+                            + $"({ledger.Snapshot(DateTimeOffset.UtcNow.ToUnixTimeSeconds()).Count} 条未过期结论)");
                 }
             }
             catch (Exception ex)
@@ -281,6 +293,29 @@ public static class EsrganOnnxService
             _audioVerdictLedger = ledger;
             return ledger;
         }
+    }
+
+    /// <summary>本机"显卡 + 驱动"签名(用于结论账本的环境校验:变过就整份作废)。
+    /// 【为什么用这两样】换驱动是"上次跑不了"最常见的解药,换卡/插拔 eGPU 同理;两者都能从注册表稳定读到
+    /// (<see cref="GpuInfo.GetAdapterNames"/> / <see cref="GpuInfo.GetDriverVersions"/>,NVIDIA/AMD/Intel 通用)。
+    /// 读不到时返回空串 ⇒ 调用方不做环境判断(宁可按"没变"处理,也不误废掉好结论)。</summary>
+    private static string AudioDmlDeviceSignature()
+    {
+        try
+        {
+            var names = GpuInfo.GetAdapterNames();
+            var vers = GpuInfo.GetDriverVersions();
+            if (names.Count == 0) return "";
+            var parts = new List<string>();
+            for (int i = 0; i < names.Count; i++)
+            {
+                string v = i < vers.Count ? vers[i] : "";
+                parts.Add(string.IsNullOrWhiteSpace(v) ? names[i] : names[i] + "@" + v);
+            }
+            parts.Sort(StringComparer.OrdinalIgnoreCase);   // 枚举顺序可能变,排序后比较才稳定
+            return string.Join("; ", parts);
+        }
+        catch { return ""; }
     }
 
     /// <summary>键里的"模型"段只取**文件名**(不是全路径):把模型目录搬到别处、或用户机器路径不同,
@@ -321,7 +356,9 @@ public static class EsrganOnnxService
         try
         {
             long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            File.WriteAllText(AudioDmlVerdictFile, AlhPro.Core.DmlVerdictLedger.Format(ledger.Snapshot(now)));
+            // 【2026-09-24】写回时带上本机"显卡+驱动"签名:换驱动/换卡后,下次读回会整份作废重测。
+            File.WriteAllText(AudioDmlVerdictFile,
+                AlhPro.Core.DmlVerdictLedger.Format(ledger.Snapshot(now), AudioDmlDeviceSignature()));
         }
         catch (Exception ex)
         {
