@@ -6,7 +6,8 @@
   现在:每页各自声明 canonical(指向这里的 loc),这里再集中列一次。
   【维护】新增/改名页面时,必须同步改本文件与该页的 <link rel="canonical">;
   lastmod 用「该页最后改动的日期」(W3C 日期格式,时区可省)。
-  (2026-09-24:随 v1.4.2 发版更新首页 / 下载页 / 更新日志 / 隐私说明的 lastmod;常见问题页本次未改,仍保留 2026-09-22。)
+  (2026-09-24:随 v1.4.2 发版更新首页 / 下载页 / 更新日志 / 隐私说明,并给**全部页面**的页脚加了
+   官方 QQ 群一行 ⇒ 七个页面的 lastmod 统一为 2026-09-24。)
 -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
@@ -23,13 +24,13 @@
   </url>
   <url>
     <loc>https://alhpro.cn/tutorial.html</loc>
-    <lastmod>2026-09-22</lastmod>
+    <lastmod>2026-09-24</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://alhpro.cn/faq.html</loc>
-    <lastmod>2026-09-22</lastmod>
+    <lastmod>2026-09-24</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
@@ -47,7 +48,7 @@
   </url>
   <url>
     <loc>https://alhpro.cn/licenses.html</loc>
-    <lastmod>2026-09-22</lastmod>
+    <lastmod>2026-09-24</lastmod>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
   </url>
