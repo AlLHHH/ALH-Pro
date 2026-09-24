@@ -94,7 +94,7 @@ Name: "downloadmodels"; Description: "下载并安装模型包(约 1.4GB,来自 
 ; 发布版 = 软件 + 引擎(不含模型)。模型不在安装包内,保持体积 ~900MB
 ; Excludes:排除抠图模型(engines\rembg\*.onnx 1.65GB)、发布版里的解压副本(models_v1.0\)、
 ; 以及开发残留/调试产物(_ttracks 脚本、旧 exe、pdb/lib/bak、DirectML.Debug)——否则体积膨胀且泄露源码痕迹
-Source: "发布版\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "engines\rembg\*.onnx,models_v1.0\*,_ttracks*,bin\*,obj\*,*.pdb,*.lib,*.bak,ALHPro_old*,DirectML.Debug.*,d3dcompiler_47.dll.bak,onnxruntime.lib"
+Source: "发布版\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "engines\rembg\*.onnx,models_v1.0\*,_ttracks*,_bench*,bin\*,obj\*,*.pdb,*.lib,*.bak,ALHPro_old*,DirectML.Debug.*,d3dcompiler_47.dll.bak,onnxruntime.lib"
 
 ; 【备用 ffmpeg(ffmpeg8)必须随包带上 —— 单独显式列一条,不靠上面那条通配】
 ; 内置主 ffmpeg 的 NVENC 需要 NVIDIA 驱动 ≥610.00(nvenc API 13.1);驱动较旧的机器(实测 572.83)主 ffmpeg 直接报

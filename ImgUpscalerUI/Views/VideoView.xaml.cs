@@ -11003,7 +11003,15 @@ public sealed partial class VideoView : UserControl
             // 探测调用本身**保留** —— 它走快速通道直接给结论,零成本,而且它是"小图能跑、真帧尺寸出黑帧"
             // 这个真实坑的唯一防线(见 EngineService 里 fullFrame 的注释),删掉会把静默黑帧放回来。
             bool willProbe = true;
-            try { willProbe = EngineService.NcnnProbeWillRun("realesrgan", gpuId, SelModel(VideoEsrganModelCombo, "realesrgan-x4plus")); } catch { }
+            // 【2026-09-24】用**探测计划**决定"探不探、拿哪个模型探"—— 这里必须用上面已经映射过的 `model`
+            // (10871 那条:1x 现实的 Tag 已换成真权重),**不能再直接读下拉 Tag**:
+            //   · 「动漫 · Anime4K 修复」的 Tag 是 anime4k,它走着色器、根本不用 ncnn —— 原样喂给探测会让 ncnn
+            //     去加载一个不存在的模型 ⇒ 探 60 秒无响应被强杀 ⇒ 落一条**假的 realesrgan 失败结论** ⇒
+            //     之后所有 2x/3x/4x 视频超分都被判走 ONNX(实测 2x 超分 3880 ms/帧 vs 标称 0.27 秒/帧);
+            //   · 「现实 · 1x 修复」的 Tag 不是真模型 ⇒ 用真正的权重 alhpro-real2x 去探。
+            var probePlan = AlhPro.Core.NcnnProbePlan.For(model);
+            willProbe = probePlan.ShouldProbe;
+            try { if (willProbe) willProbe = EngineService.NcnnProbeWillRun("realesrgan", gpuId, probePlan.Model); } catch { }
             if (willProbe)
             {
                 TaskSummary.Text = "正在检测 Real-ESRGAN 显卡兼容性(首次约 15~60 秒,结论会记住)…";
@@ -11011,10 +11019,10 @@ public sealed partial class VideoView : UserControl
             }
             else
             {
-                try { Log("超分引擎:本机是纯 NVIDIA 非 50 系,走免探测快速通道 —— 不做显卡兼容性实测(无需等待)"); } catch { }
+                try { Log($"超分引擎:本次不做显卡兼容性实测({probePlan.Why})"); } catch { }
             }
-            bool usable = await EngineService.EnsureNcnnProbeAsync("realesrgan", gpuId,
-                SelModel(VideoEsrganModelCombo, "realesrgan-x4plus"), cts.Token);
+            bool usable = !probePlan.ShouldProbe
+                || await EngineService.EnsureNcnnProbeAsync("realesrgan", gpuId, probePlan.Model, cts.Token);
             if (!usable)
             {
                 var useWaifu = await AskBlackwellCompatibleAsync("Real-ESRGAN");
@@ -11050,6 +11058,11 @@ public sealed partial class VideoView : UserControl
             {
                 anime4k1x = false;
                 upscaleShrink1x = true;    // ← "现实 · 1x 修复"这条路:2x 超分(alhreal2x)后缩回,与用户选的那支无关
+                // 【2026-09-24 修一个被掩盖的老洞】回退到"现实 · 1x 修复"时,必须把下面要下发给引擎的 `model`
+                // 一起换成**真权重**:否则它还是 Tag `anime4k`,引擎会按 `-n anime4k` 去找一个不存在的权重
+                // (找不到权重时 exit=0 只出坏帧 —— 本仓库踩过)。此前这条洞被"anime4k 预检必然失败 ⇒ 整批被判
+                // 走 ONNX(ONNX 侧会替换成它自己的模型)"挡住了,所以看不出来。
+                model = AlhPro.Core.Upscale1x.RealEngineModel;
                 if (wantAnime4k)
                 {
                     // Anime4K 不可用 ⇒ 模型框里选到 1x 条目就自动切到"现实 · 1x 修复"(同样是 1x、但不依赖 Vulkan)

@@ -1614,8 +1614,14 @@ public sealed partial class UpscaleView : UserControl
                         // 永久推到 ONNX。而且这个探测在 waifu2x 路径上本来是毫无意义的。
                         bool esrganNcnnOk = true;
                         if (engine == "realesrgan")
-                            esrganNcnnOk = await EngineService
-                                .EnsureNcnnProbeAsync("realesrgan", gpuId, model, ct).ConfigureAwait(false);
+                        {
+                            // 【2026-09-24】再过一道探测计划:伪模型/着色器条目(anime4k 那类)不能喂给 ncnn ——
+                            // 与上面那段"把 waifu2x 模型名喂给 realesrgan 会写假失败结论"是同一个坑。
+                            var plan = AlhPro.Core.NcnnProbePlan.For(model);
+                            if (plan.ShouldProbe)
+                                esrganNcnnOk = await EngineService
+                                    .EnsureNcnnProbeAsync("realesrgan", gpuId, plan.Model, ct).ConfigureAwait(false);
+                        }
                         string? onnxPath = null;
                         // 手动选 CPU(-1)时:waifu2x/realesrgan 的 ncnn CPU 模式在部分机器崩(实测 exit -1/-1073741819)→ 直接 ONNX(CPU 同样稳定,画质一致)
                         // 没有 ONNX 模型时不能把用户堵死:只能走 ncnn(哪怕探测说它不稳,也比什么都不做强)

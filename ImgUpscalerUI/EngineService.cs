@@ -625,27 +625,27 @@ public static partial class EngineService
     {
         try
         {
-            var oks = new System.Collections.Generic.List<bool>();
-            lock (_ncnnVerdictLock)
-            {
-                EnsureNcnnVerdictsLoaded_NoLock();
-                foreach (var kv in _ncnnVerdicts)
-                {
-                    if (kv.Value is null) continue;
-                    if (!AlhPro.Core.NcnnVerdictKey.BelongsTo(kv.Key, EngineId(engine), gpuId)) continue;
-                    oks.Add(kv.Value.Ok);
-                }
-            }
             // 【2026-09-22 口径修正】引擎级只认不带模型的那条(default 探测)。
             // 实测证据:用户 5060 机器上 anime4k 探测超时被强杀,旧口径"任一支失败即整条不可用"
             // 把 realesrgan2026 整体判成走 ONNX ⇒ 四支自训模型(只有 ncnn 权重)全军覆没。
-            // 详见 AlhPro.Core.NcnnModelVerdicts 注释。没有 default 结论时保持旧的保守汇总(不引入回归)。
+            // 详见 AlhPro.Core.NcnnModelVerdicts 注释。
             var engineLevel = AlhPro.Core.NcnnModelVerdicts.EngineUsable(NcnnVerdictEntries(), EngineId(engine), gpuId);
             if (engineLevel.HasValue) return engineLevel;
-            return AlhPro.Core.NcnnVerdictKey.Summarize(oks);
+            // 【2026-09-24 · 补齐上面那条修正留下的口子】没有 default 结论时(本机 4060 就是:
+            // 纯 N 卡 + 核显 ⇒ 不走免探测快速通道,而每次探测都带模型 ⇒ 从不写 default),
+            // 旧代码回落到"NcnnVerdictKey.Summarize(全部模型的结论)" = 任一支失败即整条不可用 ⇒
+            // anime4k 那条假失败又把 realesrgan 判到 ONNX(视频 2x 超分实测 3880 ms/帧 vs 标称 0.27 秒/帧)。
+            // 现在只统计【真 ncnn 模型】的结论:伪模型(anime4k,走 libplacebo 着色器)一律不参与。
+            return AlhPro.Core.NcnnModelVerdicts.ModelOnlyRisk(NcnnVerdictEntries(), EngineId(engine), gpuId);
         }
         catch { return null; }
     }
+
+    // 【2026-09-24】这里曾有一个便捷入口 `NcnnProbeModel(tag)`(把"伪模型"回落成 null = 探引擎默认)。
+    // 现在所有调用点都改用 <see cref="AlhPro.Core.NcnnProbePlan.For"/> —— 它能表达更准的三件事:
+    // ① 走着色器的条目**根本不探测**(回落成"探默认模型"仍会白等一分钟，并可能写出一条引擎级结论);
+    // ② 「现实 · 1x 修复」的 Tag 换成它真正的权重;
+    // ③ 何时原样透传。留着旧入口只会让下一个人挑错的那个用,故删除(唯一的调用方已全部迁走)。
 
     /// <summary>该引擎+GPU 上已缓存了几支模型的结论(自检报告里说明"结论覆盖面",避免只看一句"可用"却不知测了哪支)。</summary>
     private static int CountCachedModels(string engine, int gpuId)
