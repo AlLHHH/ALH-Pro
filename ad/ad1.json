@@ -1,8 +1,8 @@
 {
   "_note": "字符安全上限(实测): title≤14字, text≤40字, linkText≤6字, sponsor≤8字。超出仍会换行完整显示、只是卡片变高;别太长以免左栏过高。",
   "title": "你知道吗",
-  "text": "赞助可以为作者回血 持续更新维护  如果你愿意 请为我赞助一波！",
+  "text": "赞助可以为作者回血，持续更新维护，如果你愿意，请为我赞助一波！",
   "link": "https://github.com/AlLHHH/ALH-Pro/releases",
-  "linkText": "去下载",
+  "linkText": "去打赏 ",
   "sponsor": "ALH Pro"
 }
