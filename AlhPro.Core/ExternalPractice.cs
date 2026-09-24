@@ -266,22 +266,42 @@ public static class ExternalPractice
     /// <https://github.com/nihui/waifu2x-ncnn-vulkan></summary>
     public const string Waifu2xNcnnVulkanLicense = "【待核实】本次未取得逐字许可文本";
 
-    /// <summary>[2026-09-14 更新]**结论刷新**:当初写的是"未取到 Real-CUGAN 的逐字许可文本";
-    /// 这次把两边都查清了(逐字,见下)——
-    ///   · **Real-CUGAN**:代码仓库 `bilibili/ailab` 的 `Real-CUGAN/LICENSE` 是 **MIT(c) 2022 bilibili**
-    ///     (2022-02-01 加入),但 `Real-CUGAN/weights_v3/` 里**只有一个 README**,全文是
-    ///     "Please download the weight files from netdisks and put them here." ⇒ **权重不在仓库、上游对权重
-    ///     没有给出任何书面许可**。可再分发的实际来源是第三方移植 `nihui/realcugan-ncnn-vulkan`(MIT,c) 2019 nihui),
-    ///     那是"别人转的",不等于权重作者授权 ⇒ **结论不变:不做推荐**。
+    /// <summary>[2026-09-24 再次更新 · **结论已反转**]**Real-CUGAN 现在随包**,不再是"不推荐"。
+    ///
+    /// 事实(逐字核实记录:docs\许可尽调_RealCUGAN与补帧模型_2026-09-24.md §1.3/§1.5):
+    ///   · 算法与权重项目 `bilibili/ailab` 的 `Real-CUGAN/LICENSE` = **MIT, Copyright (c) 2022 bilibili**;
+    ///   · **bilibili 官方 ModelScope 权重页**
+    ///     (`bilibili/cv_bilibili_image-super-resolution`,组织 = bilibili/哔哩哔哩)
+    ///     把 `weights_v3/*.pth`(11 个)+ `weights_pro/*.pth`(6 个)**与一份 LICENSE 一起发布**;
+    ///     该 LICENSE 与上游仓库根那份**逐字节相同**
+    ///     (1065 字节,SHA256 `8CAD8CFDF94BAAF23519061AF913770E52476DDEC2A311E9510582E7BED13CBA`)
+    ///     ⇒ **权重有书面 MIT 依据**,可以随包(署名与原文见 `THIRD_PARTY_NOTICES.txt` **第 16 条**
+    ///     与 `licenses\Real-CUGAN-MIT-bilibili-2022.txt`)。
+    ///   · ncnn 引擎包装层与随仓模型:`nihui/realcugan-ncnn-vulkan`,MIT © 2019 nihui
+    ///     (`licenses\realcugan-ncnn-vulkan-MIT-nihui-2019.txt`)。
+    ///
+    /// 【仍然成立的限制 · 别把它当成"可以随便取权重"】
+    ///   ① 权重只许从上面两条许可干净渠道取,**禁止**百度网盘 / GoogleDrive / 和彩云 分发的
+    ///      "完整包/更新参数包"(它们不附任何许可文本);
+    ///   ② 上游 `bilibili/ailab` 仓内的 `Real-CUGAN/weights_v3/` 目录**自身**确实只有一个占位 README
+    ///      (全文 "Please download the weight files from netdisks and put them here.")——
+    ///      "上游仓内那份目录没有权重、也没有许可文本"是**历史事实**,
+    ///      它解释的是"当年为什么判成不推荐",**不再**是对 Real-CUGAN 的现行结论;
+    ///   ③ ModelScope 的元数据字段写 Apache-2.0,与随包 MIT 文件矛盾 —— **以文件为准**;
+    ///      发布者是组织下的成员账号而非授权函(可选 issue 确认,不阻塞发布)。
+    ///
     ///   · **`realesr-general-wdn-x4v3`**:权重是上游官方 release v0.2.5.0 的资产(作者 xinntao 本人发布,
     ///     SHA256 1641F8C4…),项目许可 **BSD 3-Clause(c) 2021 Xintao Wang**,README 与 docs 里**没有任何**
     ///     "仅研究/禁商用"表述 ⇒ 与在用的 general-x4v3 同族同许可,**可以随包分发**,已于 2026-09-14 接线
     ///     (自转 ncnn;同架构、同 bin 字节数,实测单价 0.460 秒/帧 @1080p)。
-    ///   · 同类坑提醒:`cszn/SRMD`、`cszn/RealSR` 两个权重来源仓库**都没有 LICENSE 文件**,并不比 Real-CUGAN 干净。</summary>
+    ///   · 同类坑提醒:`cszn/SRMD`、`cszn/RealSR` 两个权重来源仓库**都没有 LICENSE 文件**,仍不推荐。</summary>
     public const string NoVerifiedAdditionalRedistributableModel =
-        "许可逐字核实(2026-09-14):Real-CUGAN 代码 MIT 但上游权重未附许可 ⇒ 不推荐;"
+        "许可逐字核实(2026-09-24 更新):Real-CUGAN **已恢复随包** —— bilibili 官方 ModelScope 权重页"
+        + "把权重与同一份 MIT 许可文件一起发布(1065 B / 8CAD8CFD…3CBA),见 THIRD_PARTY_NOTICES 第 16 条;"
+        + "仍限渠道(只用 nihui 仓内模型或该 ModelScope 页,禁网盘来源)。"
+        + "历史结论的适用范围:上游 bilibili/ailab 仓内 weights_v3 目录自身确实无权重、无许可文本 —— 那解释的是 2026-09-14 当时为何判不推荐,不再是现行结论。"
         + "realesr-general-wdn-x4v3 取自官方 BSD-3 release ⇒ 已纳入(许可与在用模型同族);"
-        + "SRMD / RealSR 的权重来源仓库无 LICENSE ⇒ 同样不推荐";
+        + "SRMD / RealSR 的权重来源仓库无 LICENSE ⇒ 仍不推荐";
 
     // ============ ⑤ 显存 → 分块/批次:外部**没有**可用表 ============
 

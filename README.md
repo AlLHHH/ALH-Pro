@@ -4,7 +4,7 @@
 
 **所有处理在本机完成,不上传、不收集任何用户数据。** 全程中文界面。
 
-**© 2026 AlL.H. 保留所有权利。** 本软件采用自创专有许可(个人/非商用免费;未经作者书面许可,禁止商用、再分发或篡改),详见下文「版权与许可」及随软件 LICENSE。开源引擎与模型版权归各原作者所有(见 THIRD_PARTY_NOTICES.txt)。
+**© 2026 AlL.H. · MIT 许可。** 本软件开源(MIT):任何人都可以自由使用、修改、分发,包括商业用途,只需保留版权与许可声明(详见 `LICENSE`)。开源引擎与模型版权归各原作者所有(见 THIRD_PARTY_NOTICES.txt)。
 
 - 引擎:waifu2x / Real-ESRGAN / RIFE(基于 nihui/ncnn)、U²-Net / ISNet / BiRefNet(基于 ONNX Runtime)、FFmpeg
 - 系统要求:Windows 10/11 x64(无 GPU 也可用,自动降级 CPU)
@@ -120,7 +120,7 @@ dotnet build ImgUpscalerUI/ImgUpscalerUI.csproj -c Release -p:Platform=x64
 
 ## ⚖️ 版权与许可
 
-- **本软件本体**:ALH Pro 自创专有许可(个人/非商用免费使用;未经作者书面许可,禁止商用、再次分发、篡改或用于盈利性项目),详见 **`LICENSE`**;
+- **本软件本体**:ALH Pro 采用 **MIT 许可**(可自由使用、修改、分发,含商业用途;需保留版权与许可声明),详见 **`LICENSE`**;
 - **第三方引擎/模型许可明细与源码链接**见 **`THIRD_PARTY_NOTICES.txt`**;
 - **FFmpeg**:随附构建为 GPL v3(BtbN 构建),本软件以独立子进程方式调用(未链接);
 - **图片/视频/音频素材处理全部在本机完成**,不上传、不收集任何用户数据。
@@ -129,10 +129,11 @@ dotnet build ImgUpscalerUI/ImgUpscalerUI.csproj -c Release -p:Platform=x64
 
 ## 📄 关于本许可
 
-ALH Pro 采用**自创专有许可**(非 MIT / Apache / GPL 等标准开源许可)。软件源码按「源码可见(Source-available)」方式公开,供学习与研究;**版权归 AlL.H 所有,保留所有权利(All Rights Reserved)**。
+ALH Pro 采用 **MIT 许可**(标准开源许可之一)。**版权归 AlL.H 所有**;任何人都可以自由使用、复制、修改、合并、发布、分发、再授权甚至销售本软件,唯一的要求是**保留版权声明与本许可全文**。
 
-- **允许**:个人 / 非商业用途免费下载、安装、使用;用于个人学习、研究、日常图片 / 视频 / 音频处理。
-- **禁止**(未经 AlL.H 书面许可):复制、修改、再分发、商业用途、去除或篡改署名与版权声明、反向工程后用于再分发。
+- **允许**:个人 / 非商业 / 商业用途均可;可修改、可再分发、可再授权、可销售。
+- **唯一要求**:分发时保留 `LICENSE` 里的版权与许可声明(即「© 2026 AlL.H」与 MIT 全文)。
+- **不再有限制**:不存在「禁止商用 / 禁止再分发」这类附加条款 —— 这是换成 MIT 的直接结果。
 - **第三方开源组件**(如 waifu2x、Real-ESRGAN、RIFE、U²-Net、ISNet、BiRefNet、ffmpeg、ONNX Runtime 等)版权归各原作者所有,遵循各自开源许可(如 MIT / BSD),详见 `THIRD_PARTY_NOTICES.txt`。本许可仅约束 ALH Pro 自身原创部分,不影响上述开源组件的原有许可。
 
 ---

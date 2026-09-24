@@ -59,11 +59,23 @@ public static class EngineScalePolicy
     /// <summary>按引擎/模型/目标倍数给出"实际下发给引擎的倍数"。
     /// 【waifu2x】沿用原口径:取不小于目标的最大 2 的幂(`CeilPowerOfTwo`),它的 1x 特例(不降噪复制 /
     /// 降噪改 2x)依赖 `noise`,由调用方处理 —— 本函数不改变其行为。
+    /// 【Real-CUGAN · 2026-09-24 新增】**也绝不返回 1**:随包的 models-se 三档只有 up2x/up3x/up4x,
+    /// 没有任何 1x 权重 ⇒ 目标 ≤1x 一律走"2x 放大后缩回"(与 Real-ESRGAN 的 1x 护栏同一手法);
+    /// 2/3/4 按目标直接下发(三档都有对应权重,不需要像 x4plus 那样固定 4x)。
     /// 【Real-ESRGAN】**绝不返回 1**:x4plus 系固定 4;只有 2x 权重的自训模型(游戏向/现实向)固定 2;
     /// 其余(animevideov3)按 ceil 到 2/3/4,目标 ≤1 时改走 2x 再缩回(缺 x1 权重会静默全黑,见类注释)。</summary>
     public static Decision Decide(string engine, string model, double requestedScale)
     {
         double want = requestedScale > 0 && double.IsFinite(requestedScale) ? requestedScale : 1.0;
+        // 【Real-CUGAN】原生权重档 = 2 / 3 / 4(models-se 三档都有这三套);目标 ≤1x 走 2x 再缩回。
+        if (string.Equals(engine, RealCugan.EngineName, StringComparison.OrdinalIgnoreCase))
+        {
+            int rc = want <= 2.0 ? 2 : want <= 3.0 ? 3 : 4;
+            return want < 2.0
+                ? new Decision(rc, want / rc,
+                    "Real-CUGAN 的权重只有 2x/3x/4x(没有 1x):改用 2x 放大后缩回目标尺寸")
+                : new Decision(rc, want / rc, "");
+        }
         if (!string.Equals(engine, "realesrgan", StringComparison.OrdinalIgnoreCase))
             return new Decision(PathUtil.CeilPowerOfTwo(want), 1.0, "");
         // 【1x 修复模型】倍率写死 1(同尺寸):1x 目标是它的原生用法 ⇒ 引擎倍数 1、不缩放。

@@ -108,9 +108,11 @@ Source: "发布版\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs cre
 Source: "发布版\engines\ffmpeg8\*"; DestDir: "{app}\engines\ffmpeg8"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [InstallDelete]
-; v1.0 升级清理:Real-CUGAN 已从 v1.1.0 起移除(许可不明),旧引擎目录不再需要(约 200MB+),
-; 避免升级后留一堆无用文件;其余文件一概不动(设置/记录在 %LOCALAPPDATA%,用户文件不删)。
-Type: filesandordirs; Name: "{app}\engines\realcugan"
+; 【2026-09-24 必须删掉这条 Real-CUGAN 清理规则】Real-CUGAN 已重新随包(2026 重编引擎 + models-se,
+; 许可 MIT,见 THIRD_PARTY_NOTICES 第 16 条)。留着这条的后果不是"清理旧文件",而是
+; **升级安装时把刚装好的 engines\realcugan 再删一次** —— 用户装完发现引擎没了,功能等于白做。
+; (v1.0 那批老文件确实要清,但那是 v1.1.0 时代的事;现在这个目录是我们要保留的。)
+; 其余文件一概不动(设置/记录在 %LOCALAPPDATA%,用户文件不删)。
 Type: files; Name: "{app}\d3dcompiler_47.dll"
 Type: files; Name: "{app}\D3DCOMPILER_47.dll"
 

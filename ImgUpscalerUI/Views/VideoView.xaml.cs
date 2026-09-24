@@ -658,7 +658,8 @@ public sealed partial class VideoView : UserControl
             bool weak = SafeRender.IsWeakDevice && FastModeCheck.IsChecked != true;
             // 引擎兼容自检(不限 50 系):结论【一律以真机实测为准】,不按显卡型号猜。
             // · Real-ESRGAN:本机实测 ncnn 不可用 → 建议换 waifu2x
-            // · RIFE:补帧下拉现在只剩 v4.13 / v4.6,两支本机实测都可用 ⇒ 不再需要按模型提示(旧模型分支已随下拉精简删除)
+            // · RIFE:补帧下拉现在是 v4.13 / v4.6 / v4.26 三支,三支本机实测都可用 ⇒ 不再需要按模型提示
+            //   (v4.26 的唯一限制是 TTA 卡死,那一项由 v426TtaBroken 在控件层置灰,不进这条兼容提示)
             string? compatMsg = null;
             bool upOn = UpscaleToggle.IsChecked == true;
             bool interpOn = InterpToggle.IsChecked == true;
@@ -669,10 +670,9 @@ public sealed partial class VideoView : UserControl
             {
                 compatMsg = $"⚠ 本机实测「{EngineService.EngineLabel("realesrgan")}」无法用 GPU 加速,建议改用「waifu2x」(官方新版,更稳定)";
             }
-            // 【2026-09-16 下拉精简】原本这里还有一条"实测本机非 v4 老模型(动漫/高清/超高清/经典兼容)的 ncnn
-            // 补帧不可用"的提示;那 4 项已下架 ⇒ 条件恒不成立 ⇒ 整段删除(连同它的 else if 与所属花括号),
-            // 不留永远进不去的死代码。引擎兼容提示只留上面 realesrgan 那一条
-            // (它是唯一还可能实测失败的引擎;RIFE 只剩 v4.13/v4.6,两支都已通过本机实测)。
+            // 补帧那 4 支非 v4 老模型(动漫/高清/超高清/经典兼容)已下架 ⇒ 它们的"ncnn 不可用"提示条件恒不成立,整段已删。
+            // 引擎兼容提示只留上面 realesrgan 那一条(它是唯一还可能实测失败的引擎;
+            // RIFE 的三支 v4.13/v4.6/v4.26 都已通过本机实测)。
             // 【2026-09-16 用户裁决:黑帧检测已删除 ⇒ 兼容性提示成为**唯一防线**】
             // 补帧这条链路上,已知会"静默出黑帧"的组合必须在使用者**开始处理之前**就说清楚:
             //   ① 8K 级输入(实测 117/119 全黑)② RTX 50 系(Blackwell)③ 无独显 / Vulkan 不可用
@@ -1046,24 +1046,54 @@ public sealed partial class VideoView : UserControl
         ScheduleSave();   // 参数记忆:变化后防抖写盘
     }
 
-    // ===== 超分引擎:界面顺序 Real-ESRGAN(上) / waifu2x(下) =====
+    // ===== 超分引擎:界面顺序 Real-ESRGAN(上) / waifu2x(中) / Real-CUGAN(下,2026-09-24 追加) =====
     // 【为什么要这层映射】界面顺序按用户要求改成 real 在上,但**存盘沿用旧约定**
     // (0=waifu2x, 1=realesrgan, 2=更早的 Real-CUGAN):老用户存过的选择不会被顺序调整翻转。
-    /// <summary>界面索引 → 存盘值(旧约定)。</summary>
-    private static int EngineToStored(int uiIndex) => uiIndex == 1 ? 0 : 1;   // ui: 0=real,1=waifu
+    // ⚠ 【Real-CUGAN 复活时的取值决策 · 2026-09-24】它**不用**历史值 2,而是用新值 3:
+    //   历史值 2 从 v1.1.0 移除 Real-CUGAN 起就**一直被解释成 Real-ESRGAN**(见下面的 FromStored),
+    //   若现在把 2 改解释回 Real-CUGAN,那些还存着 2 的老用户会在升级后**静默换引擎**
+    //   (他们上次看到的是 Real-ESRGAN)—— 本仓库明令禁止静默换模型。所以:2 继续=Real-ESRGAN,Real-CUGAN=3。
+    /// <summary>界面索引 → 存盘值(旧约定 + 追加 3=Real-CUGAN)。</summary>
+    private static int EngineToStored(int uiIndex) => uiIndex switch
+    {
+        1 => 0,   // ui 1 = waifu2x
+        2 => 3,   // ui 2 = Real-CUGAN(2026-09-24 起;历史值 2 仍表示 Real-ESRGAN)
+        _ => 1,   // ui 0 = Real-ESRGAN
+    };
     /// <summary>存盘值(旧约定) → 界面索引。</summary>
-    private static int EngineFromStored(int stored) => stored == 0 ? 1 : 0;   // 0=waifu → ui 1;1/2 → ui 0(real)
+    private static int EngineFromStored(int stored) => stored switch
+    {
+        0 => 1,   // waifu2x  → ui 1
+        3 => 2,   // Real-CUGAN → ui 2(只有新值 3 会到这里)
+        _ => 0,   // 1(realesrgan)/ 2(历史 Real-CUGAN,按 Real-ESRGAN 处理)/ 越界 → ui 0
+    };
+    /// <summary>当前选中的超分引擎名(**唯一来源**;界面索引 → 引擎名)。</summary>
+    private string SelectedEngineName => VideoEngineRadios.SelectedIndex switch
+    {
+        1 => "waifu2x",
+        2 => AlhPro.Core.RealCugan.EngineName,
+        _ => "realesrgan",
+    };
     /// <summary>当前选中的超分引擎是否是 Real-ESRGAN(界面上排第一个 = 索引 0)。</summary>
-    private bool SelectedEngineIsReal => VideoEngineRadios.SelectedIndex == 0;
-    /// <summary>选 waifu2x 显示 waifu2x 模型下拉,选 Real-ESRGAN 显示其模型下拉;并确保默认选中首个模型。</summary>
+    private bool SelectedEngineIsReal => SelectedEngineName == "realesrgan";
+    /// <summary>当前选中的是不是 Real-CUGAN(2026-09-24 追加的第三项)。</summary>
+    private bool SelectedEngineIsRealCugan => SelectedEngineName == AlhPro.Core.RealCugan.EngineName;
+    /// <summary>选 waifu2x 显示 waifu2x 模型下拉,选 Real-ESRGAN / Real-CUGAN 显示各自的下拉;并确保默认选中首个模型。</summary>
     private void UpdateVideoModelVisibility()
     {
         if (VideoWaifu2xModelCombo == null || VideoEsrganModelCombo == null) return;
-        bool waifu2x = !SelectedEngineIsReal;
+        bool waifu2x = SelectedEngineName == "waifu2x";
         VideoWaifu2xModelCombo.Visibility = waifu2x ? Visibility.Visible : Visibility.Collapsed;
         // 【Rev9】1x 修复锁定期:模型框让位给"Anime4K 锁定牌",这里不许把它又显示回来
         // (原先无条件 `= waifu2x ? Collapsed : Visible`,会把锁定的牌面覆盖掉 ⇒ 用户看到的是普通下拉)。
-        VideoEsrganModelCombo.Visibility = waifu2x ? Visibility.Collapsed : Visibility.Visible;
+        VideoEsrganModelCombo.Visibility = SelectedEngineIsReal ? Visibility.Visible : Visibility.Collapsed;
+        // 【2026-09-24】Real-CUGAN 有自己的一份模型下拉(它的 Tag 是 `models-se:<降噪档>`,
+        // 与 realesrgan 的模型名不同域,绝不能混进同一个下拉)。
+        if (VideoRealcuganModelCombo != null)
+        {
+            VideoRealcuganModelCombo.Visibility = SelectedEngineIsRealCugan ? Visibility.Visible : Visibility.Collapsed;
+            if (VideoRealcuganModelCombo.SelectedIndex < 0) VideoRealcuganModelCombo.SelectedIndex = 0;
+        }
         // 确保各下拉有默认选中项(首次/恢复时)
         if (VideoWaifu2xModelCombo.SelectedIndex < 0) VideoWaifu2xModelCombo.SelectedIndex = 0;
         if (VideoEsrganModelCombo.SelectedIndex < 0) VideoEsrganModelCombo.SelectedIndex = 0;
@@ -1122,8 +1152,10 @@ public sealed partial class VideoView : UserControl
     /// <summary>显示器刷新率(初始化时探测;0 = 没探到)。**只用于提示**(提醒"填的值超过屏幕刷新率")。</summary>
     private int _screenHz;
 
-    /// <summary>当前选中的补帧模型是不是「通用画质」系列(V4 = 下拉前两项)。只有它支持任意目标帧率。</summary>
-    private bool IsV4ModelSelected() => InterpModelCombo?.SelectedIndex is 0 or 1;
+    /// <summary>当前选中的补帧模型是不是「通用画质」系列(V4 = 下拉三项:0/1/2)。
+    /// 【2026-09-24】第 3 项 rife-v4.26 也是 v4 架构(见 VideoService.IsV4Model)⇒ 一并算进来 ——
+    /// 漏了它会让「指定帧率」被误判成不可用。</summary>
+    private bool IsV4ModelSelected() => InterpModelCombo?.SelectedIndex is 0 or 1 or 2;
 
     /// <summary>「输出倍率」这组按钮当前代表的**真实倍率序号**(0~5)。
     /// 选中「指定帧率」(6)时返回用户上一个真实倍率 —— 因为那时倍率由目标帧率反推、这组按钮不再决定补帧倍率,
@@ -1332,12 +1364,13 @@ public sealed partial class VideoView : UserControl
         }
         InterpModelCombo.IsEnabled = interp;
         // 非 2 的幂倍率(3x/12x/16x)仅 v4 架构模型支持;其余模型按 2x 级联(置灰+已选回退)。
-        // 【2026-09-16 下拉精简】下拉只剩两支 v4 模型(v4.13 / v4.6)⇒ 下面两个门槛恒为"可用 / 不坏"。
-        // 判断保留不动:一是改动面最小(牵动 TTA 与 3x/12x/16x、指定帧率共五处开关),二是将来若再放回
-        // 非 v4 老模型(或 v4.26),门槛会自动重新生效 —— 而不是静默把限制放开。
-        bool v4Model = InterpModelCombo.SelectedIndex is 0 or 1;
-        // v4.26 的 TTA(-x/-z)实测卡死、非 v4 级联模型 TTA 无效;两类都已下架 ⇒ 本判断恒 false。
-        bool v426TtaBroken = InterpModelCombo.SelectedIndex is 2 or 3 or 4 or 5 or 6;
+        // 【2026-09-16 下拉精简 / 2026-09-24 加回 v4.26】下拉三支(v4.13 / v4.6 / v4.26)**都是 v4 架构**
+        // ⇒ 倍率与「指定帧率」这两个门槛恒为"可用";判断保留不动:一是改动面最小(牵动 TTA 与 3x/12x/16x、
+        // 指定帧率共五处开关),二是将来若再放回非 v4 老模型,门槛会自动重新生效 —— 而不是静默把限制放开。
+        bool v4Model = InterpModelCombo.SelectedIndex is 0 or 1 or 2;
+        // v4.26 的 TTA(-x/-z)实测卡死 ⇒ 它是三项里唯一 TTA 要禁的一支(2026-09-24 加回时的实测结论,
+        // 见 VideoService.cs:4841 的同一口径)。非 v4 老模型已下架 ⇒ 不再有其它索引要算进来。
+        bool v426TtaBroken = InterpModelCombo.SelectedIndex is 2;
         TtaCheck.IsEnabled = interp && !v426TtaBroken;
         TtaCheck.Opacity = interp && !v426TtaBroken ? 1.0 : 0.5;
         if (v426TtaBroken && TtaCheck.IsChecked == true)
@@ -1359,7 +1392,8 @@ public sealed partial class VideoView : UserControl
             {
                 0 => "推荐:通用画质 v4.13(最新,支持任意帧数精确补齐,最稳).",
                 1 => "通用画质 v4.6:与 v4.13 同架构、功能一样,效果/稳定性略逊;留作 v4.13 出问题时的备用.",
-                _ => "请选择补帧模型(下拉现在只有 v4.13 / v4.6 两支).",
+                2 => "通用画质再新 v4.26:实测三支里最快(1080p 79~92 ms/输出帧),功能同 v4.13;唯一限制是「高质量 TTA」会卡死,已自动置灰.",
+                _ => "请选择补帧模型(下拉现在是 v4.13 / v4.6 / v4.26 三支).",
             };
             InterpModelHint.Text = hint;
         }
@@ -1573,8 +1607,8 @@ public sealed partial class VideoView : UserControl
             // 参数区的输出帧率提示不再显示"至少启用一项处理"——该提醒已移到「开始处理」按钮下方(RunHint)
             InterpHint.Text = up ? "输出帧率 = 输入帧率" : "";
         }
-        // 【2026-09-16 下拉精简】原来这里会在"选了非 v4 老模型 + 3x"时提示"3x 需要 v4 模型";
-        // 老模型已全部下架、剩下两支都是 v4 ⇒ 这个组合不可能出现,整段删除(含它下一行的语句)。
+        // 【2026-09-16 下拉精简 / 2026-09-24 加回 v4.26】原意是"选了非 v4 老模型 + 3x 时提示 3x 需要 v4 模型";
+        // 老模型已全部下架、剩下三支都是 v4 ⇒ 这个组合不可能出现,整段删除(含它下一行的语句)。
         // 3x 的可用性判断仍在上面 v4Model 那一处(它才是真正置灰开关的地方)。
         UpdateRunState();
         _ = RefreshVideoOutSpec();   // 超分/补帧/目标帧率变化时刷新左下角输出规格
@@ -1798,6 +1832,10 @@ public sealed partial class VideoView : UserControl
         public int Model { get; set; }         // 补帧模型索引(InterpModelCombo)
         public int UpWaifu2xModel { get; set; }   // 视频超分 waifu2x 模型索引(VideoWaifu2xModelCombo)
         public int UpEsrganModel { get; set; }    // 视频超分 Real-ESRGAN 模型索引(VideoEsrganModelCombo)
+        /// <summary>视频超分 Real-CUGAN 模型索引(VideoRealcuganModelCombo)。【2026-09-24 新增】
+        /// 与其它两个下拉的索引一样,含义 = 界面里的序号(0=保守 / 1=不降噪 / 2=强降噪)。
+        /// 老设置文件里没有这个字段 ⇒ 反序列化后是 0(保守档),正是我们想要的默认。</summary>
+        public int RealCuganModel { get; set; }
         // 【序号迁移标记(2026-09-12 起,共两次调整)】视频超分模型下拉换过两次顺序:
         //   Rev1(09-12):general-x4v3 从序号 3 上移到 2(x4plus「超慢」对调);
         //   Rev2(09-13):general-x4v3 再上移到 1(x4plus-anime 对调),即 animevideov3 正下方。
@@ -2502,6 +2540,10 @@ public sealed partial class VideoView : UserControl
         else VideoWaifu2xModelCombo.SelectedIndex = 0;
         if (VideoEsrganModelCombo.Items.Count > 0 && d.UpEsrganModel is >= 0 && d.UpEsrganModel < VideoEsrganModelCombo.Items.Count)
             VideoEsrganModelCombo.SelectedIndex = d.UpEsrganModel;
+        // 【2026-09-24】Real-CUGAN 的模型下拉同样按序号恢复;越界(或老文件没这个字段)落到 0 = 保守档。
+        if (VideoRealcuganModelCombo != null && VideoRealcuganModelCombo.Items.Count > 0
+            && d.RealCuganModel is >= 0 && d.RealCuganModel < VideoRealcuganModelCombo.Items.Count)
+            VideoRealcuganModelCombo.SelectedIndex = d.RealCuganModel;
         else VideoEsrganModelCombo.SelectedIndex = 0;
         // 【顺序有讲究:必须先落 `_lastScaleIndex`,再动下拉选中项】
         // 若这里直接 `InterpScaleRadios.SelectedIndex = d.InterpScale`,紧接着 `SetTargetFpsSelection` 把选中项
@@ -3028,7 +3070,9 @@ public sealed partial class VideoView : UserControl
             ? $"「{p.Name}」[官方]"
             : $"「{p.Name}」({p.SavedAt})");
         sb.AppendLine("超分: " + (d.Up
-            ? $"{(d.Engine == 1 ? "Real-ESRGAN" : "waifu2x")} · 倍率 {d.Scale switch { 0 => "1x", 1 => "2x", 2 => "3x", 3 => "4x", _ => "自定义" }} · 模型 {(d.Engine == 1 ? UpEsrganModelName(d.UpEsrganModel) : UpWaifu2xModelName(d.UpWaifu2xModel))}"
+            // 【2026-09-24】引擎由两选一改成三选一(Real-ESRGAN / waifu2x / Real-CUGAN)。
+            // 存盘值口径见 EngineToStored:0=waifu2x、1=realesrgan、3=realcugan(历史的 2 仍按 Real-ESRGAN)。
+            ? $"{EngineDisplayName(d.Engine)} · 倍率 {d.Scale switch { 0 => "1x", 1 => "2x", 2 => "3x", 3 => "4x", _ => "自定义" }} · 模型 {EngineModelDisplayName(d.Engine, d.UpWaifu2xModel, d.UpEsrganModel, d.RealCuganModel)}"
             : "关闭"));
         // 【2026-09-13 修 · 用户报告「去重补帧4x 的提示显示成 2x」】原实现直接印 {d.InterpScale}x ——
         // 那是下拉【序号】(0~5)不是倍率:「去重补帧4x」存的序号 2 就被打成 "2x";序号为 0 时更会打成 "0x",
@@ -3068,11 +3112,12 @@ public sealed partial class VideoView : UserControl
         return sb.ToString().TrimEnd();
     }
 
-    // 【2026-09-16 下拉精简为两支】名字表同步只留两项;兜底给 0 的名字 —— 因为越界时真正跑的模型
-    // 就是 SelectedInterpModel 兜底的 rife-v4.13,报表里写它的名字是对的(原先兜底 "?" 反而看不出实跑哪支)。
+    // 【2026-09-16 下拉精简为两支 / 2026-09-24 加回 v4.26 ⇒ 三支】名字表必须与下拉同长度(契约测试断言);
+    // 兜底给 0 的名字 —— 因为越界时真正跑的模型就是 SelectedInterpModel 兜底的 rife-v4.13,
+    // 报表里写它的名字是对的(原先兜底 "?" 反而看不出实跑哪支)。
     private static string InterpModelName(int idx) => idx switch
     {
-        0 => "通用最新(v4.13)", 1 => "通用(v4.6)", _ => "通用最新(v4.13)",
+        0 => "通用最新(v4.13)", 1 => "通用(v4.6)", 2 => "通用再新(v4.26)", _ => "通用最新(v4.13)",
     };
 
     // 视频超分模型下拉选项文本(与 VideoView.xaml 里 ComboBoxItem.Content 一致;x4plus 那项是富文本+红字"超慢",
@@ -3109,6 +3154,24 @@ public sealed partial class VideoView : UserControl
     }
     private static string UpWaifu2xModelName(int idx) => idx >= 0 && idx < UpWaifu2xModelNames.Length ? UpWaifu2xModelNames[idx] : "通用·cunet";
     private static string UpEsrganModelName(int idx) => idx >= 0 && idx < UpEsrganModelNames.Length ? UpEsrganModelNames[idx] : "动漫·animevideov3";
+
+    // 【2026-09-24 Real-CUGAN 追加】预设摘要里的引擎名与模型名(与下拉同口径,别再各写一份)。
+    /// <summary>存盘值(0=waifu2x / 1=realesrgan / 3=realcugan / 2=历史 Real-CUGAN,按 Real-ESRGAN 处理)→ 显示名。</summary>
+    private static string EngineDisplayName(int stored) => stored switch
+    {
+        0 => "waifu2x",
+        3 => "Real-CUGAN",
+        _ => "Real-ESRGAN",
+    };
+    /// <summary>预设摘要里的模型显示名(按引擎取对应的那个下拉的显示名)。
+    /// 参数收三个序号而不是 <c>Params</c>(它嵌套在预设类型内部,外面拿不到这个名字)。</summary>
+    private static string EngineModelDisplayName(int storedEngine, int upWaifu2xModel, int upEsrganModel, int realCuganModel) => storedEngine switch
+    {
+        0 => UpWaifu2xModelName(upWaifu2xModel),
+        3 => AlhPro.Core.RealCugan.Tags[
+                Math.Clamp(realCuganModel, 0, AlhPro.Core.RealCugan.Tags.Length - 1)].Label,
+        _ => UpEsrganModelName(upEsrganModel),
+    };
 
     /// <summary>删除确认对话框:点「删除」返回 true。</summary>
     private async Task<bool> ConfirmDeletePresetAsync(string name)
@@ -3190,6 +3253,7 @@ public sealed partial class VideoView : UserControl
             // 【Rev10 · 2026-09-21】1x 也有自己的模型条目了(Anime4K / 现实 1x)⇒ 直接存选中项即可:
             //   下拉里每一项都是**真实存在**的模型序号(不再有"锁定期临时插入的项",那个坑已随构架去掉)。
             UpEsrganModel = VideoEsrganModelCombo.SelectedIndex,    // 超分 Real-ESRGAN 模型
+            RealCuganModel = VideoRealcuganModelCombo?.SelectedIndex ?? 0,   // 超分 Real-CUGAN 模型(2026-09-24)
             // 【2026-09-16 修复 · 评审 Critical 8】这里必须存**真实倍率序号**(0~5),不许把"指定帧率"那一项(序号 6)存进去:
             //   ① 读取端只认 0~5(见加载处的 `is >= 0 and <= 5`),存 6 会被静默丢弃 ⇒ 重启后真实倍率回退成 2x;
             //   ② 预设摘要会拿它去 InterpScaleMap.Label(6) → 打印成 "2x"(又是一次"序号当倍率"的显示错误)。
@@ -4421,8 +4485,12 @@ public sealed partial class VideoView : UserControl
     {
         0 => "rife-v4.13",
         1 => "rife-v4.6",
-        // 【2026-09-16 下拉精简为两支】动漫/高清/超高清/经典兼容/v4.26 已下架;老设置里存的序号 2~6
-        // 会被读设置时的范围检查(ReadSettings 里的 d.Model < Items.Count)挡掉 ⇒ 自动落到默认的 0(v4.13)。
+        // 【2026-09-24 末尾追加第 3 支】权重已随包(发布版\engines\rife\rife-v4.26),
+        // 用的是同一份 rife-ncnn-vulkan-2026.exe,实测 1080p 79~92 ms/输出帧。
+        2 => "rife-v4.26",
+        // 【2026-09-16 下拉精简 / 2026-09-24 改为三支】动漫/高清/超高清/经典兼容 已下架;老设置里存的
+        // **3~6** 会被读设置时的范围检查(ReadSettings 里的 d.Model < Items.Count)挡掉 ⇒ 自动落到默认的 0(v4.13)。
+        // 注意:存的 **2** 现在落进合法范围,会被解释成 v4.26(09-16 之前 2 是「动漫专用」)—— 见 XAML 那段注释的说明。
         // 这里保留兜底,是为了越界时也绝不返回一个不存在的模型目录名。
         _ => "rife-v4.13",
     };
@@ -4438,6 +4506,8 @@ public sealed partial class VideoView : UserControl
             // 【删掉了 IsBlackwellGpu() ||】此前 50 系无条件返回 true → ETA/提示永远按 ONNX 慢路估算,
             // 即使实测证明 ncnn 可用。现在只看实测结论(ShouldUseOnnx* 内部:有结论用结论;
             // 没结论时只在"无独显 / Vulkan 不可用"这两种确实只能 CPU 的情况下才为真)。
+            // 【2026-09-24 Real-CUGAN】它**没有 ONNX 版本** ⇒ 永远不走 ONNX,按 ncnn(探测不过时是 ncnn-CPU)估。
+            if (SelectedEngineIsRealCugan) return false;
             if (!SelectedEngineIsReal)
                 return EngineService.ShouldUseOnnxWaifu2x();
             return EngineService.ShouldUseOnnxEsrgan();
@@ -5234,6 +5304,16 @@ public sealed partial class VideoView : UserControl
     private string? _cmpClipPath;              // 「两者同时」对比片(临时文件,换预览/离开预览页时删除)
     private bool _cmpClipReady;                // 「两者同时」片就绪
     private int _cmpClipW, _cmpClipH;          // 「两者同时」片尺寸
+    // ===== 【清晰度自证 · 2026-09-24 用户硬规矩】=====
+    // 「预览只要是有关处理后的都不要降采样,不然不好看」(用户原话)。
+    // 这条规矩在实现上分两半:
+    //   ① 「看处理效果」= 直接把**原生预览成片**(3840×2160)装进 CmpPlayerBottom,中间**不发生任何降采样**;
+    //   ② 「两者同时/左右对比」= 放并排合成片,而合成片里"处理后"那一半必须在
+    //      **原生像素**上进合成(VideoService.BuildCompareClipAsync / MaxCompareCompositeWidth)。
+    // 下面两个字段只服务于一件事:把①的**真实事实**打成一行日志(自然尺寸 + 画面区尺寸 + 显示倍率),
+    // 这样"看处理效果到底有没有被降采样"不用靠猜、诊断包里一眼可判 ✔(只在数字变化时记一行,不刷屏)
+    private int _resNativeW, _resNativeH;      // 「看处理效果」那条装的原生成片尺寸
+    private string _resNativeLogged = "";      // 去重键:同一组数字只记一次
     private string? _cmpSplitPath;             // 「左右对比」分割片(按 _cmpSplitBaked 位置烘焙)
     private bool _cmpSplitReady;               // 分割片就绪
     private double _cmpSplitBaked = 0.5;       // _cmpSplitPath 是按哪个分割位置烘焙的(0~1)
@@ -5506,6 +5586,45 @@ public sealed partial class VideoView : UserControl
     private static string ElName(Microsoft.UI.Xaml.Controls.MediaPlayerElement? el)
     {
         try { return el?.Name ?? "(无)"; } catch { return "(无)"; }
+    }
+
+    /// <summary>【清晰度自证 · 2026-09-24】「看处理效果」这一条到底放的是什么像素,如实上报一行。
+    ///
+    /// 【为什么要这行日志】用户 2026-09-24 反馈"左右对比右边很清晰,看处理效果变糊了",
+    /// 而"有没有被降采样"以前**只能靠推理**:现在把它变成一行可核对的数字 ——
+    ///   自然尺寸(播放器回报的成片原生宽高)· 画面区尺寸 · 显示倍率(画面区宽 ÷ 自然宽)。
+    /// 判据很简单:**显示倍率 ≥ 1 ⇒ 1:1 或放大,零降采样;倍率 < 1 ⇒ 只能缩(窗口小于成片),
+    /// 这是窗口尺寸的物理限制,不是软件又偷偷降了采样** —— 想按原生像素看就最大化窗口。
+    ///
+    /// 【实现纪律】只在数字**变化**时记一行(切视图是热路径,不能刷屏);四项属性全在 try 里读,
+    /// 任何一项读不到就照实写缺失,不编数字。</summary>
+    private void LogResultNativeResolution()
+    {
+        try
+        {
+            double nw = 0, nh = 0;
+            try
+            {
+                var se = CmpPlayerBottom?.MediaPlayer?.PlaybackSession;
+                if (se != null) { nw = se.NaturalVideoWidth; nh = se.NaturalVideoHeight; }
+            }
+            catch { }
+            if (nw <= 16 || nh <= 16) { nw = _resNativeW; nh = _resNativeH; }
+            if (nw > 16 && nh > 16) { _resNativeW = (int)nw; _resNativeH = (int)nh; }
+            double aw = PlayerArea?.ActualWidth ?? 0, ah = PlayerArea?.ActualHeight ?? 0;
+            double ar = nh > 0 ? nw / nh : 0;
+            double dispW = (ar > 0 && aw > 0 && ah > 0) ? (aw / ah > ar ? ah * ar : aw) : 0;
+            double k = nw > 0 && dispW > 0 ? dispW / nw : 0;
+            string key = $"{nw:0}x{nh:0}|{aw:0}x{ah:0}";
+            if (key == _resNativeLogged) return;
+            _resNativeLogged = key;
+            string verdict = k <= 0 ? "画面区尺寸未知"
+                : k >= 0.999 ? "1:1 或放大 · 全程零降采样 ✔"
+                : $"窗口小于成片 ⇒ 只能缩 {1 / k:0.##}× (窗口物理限制,不是软件二次降采样);最大化窗口或全屏即可按原生像素看";
+            Log($"[清晰度] 看处理效果:成片原生 {(nw > 16 ? $"{nw:0}×{nh:0}" : "未知")} · 画面区 {aw:0}×{ah:0} · "
+                + $"显示 {(dispW > 0 ? $"{dispW:0}×{dispW / Math.Max(0.001, ar):0}" : "未知")} · 显示倍率 {(k > 0 ? $"{k:0.###}" : "未知")} ⇒ {verdict}");
+        }
+        catch { }
     }
 
     /// <summary>四个面板的可见性只在这里决定:裁剪页=裁剪区(+重复帧可选)、预览页=预览区。</summary>
@@ -6352,6 +6471,8 @@ public sealed partial class VideoView : UserControl
             }
             // 结果还没生成时,结果区不显示(否则那半会是一块黑底,把底层提示盖掉)
             if (!hasResult && mode != ViewOriginal) EffectPlayerHost.Visibility = Visibility.Collapsed;
+            // 【清晰度自证】切到「看处理效果」时,把"这一条放的是不是原生像素"如实记一行(见上面的硬规矩注释)。
+            try { if (!_compareMode && mode == ViewEffect && hasResult) LogResultNativeResolution(); } catch { }
             // 【倒装 · 装片路由】单视图各自**常驻自己那条**(源没变就一次都不装);对比视图照旧装合成片。
             // 「看原片」= CmpPlayerTop 装源文件、「看处理效果」= CmpPlayerBottom 装预览成片 ——
             // 成片在预览出结果时已经"预装"过一次(见 WarmResultPlayer)⇒ 这里正常是 0 ms。
@@ -9916,6 +10037,7 @@ public sealed partial class VideoView : UserControl
         _cmpSingle = false;
         _cmpClipPct = 0;
         _cmpClipW = _cmpClipH = 0;
+        _resNativeW = _resNativeH = 0; _resNativeLogged = "";   // 【清晰度自证】换素材/清结果 ⇒ 上一份成片的原生尺寸作废
         _cmpSplitW = _cmpSplitH = 0;
         _cmpLoadedW = _cmpLoadedH = 0;
         _cmpPendingSeek = 0;
@@ -10292,7 +10414,7 @@ public sealed partial class VideoView : UserControl
             bool dedupOn = DedupCheck.IsChecked == true;
             int interpScale = AlhPro.Core.InterpScaleMap.Multiplier(CurrentScaleIndex());
             int engIdx = VideoEngineRadios.SelectedIndex;
-            string engine = SelectedEngineIsReal ? "realesrgan" : "waifu2x";
+            string engine = SelectedEngineName;   // 【2026-09-24】三选一:realesrgan / waifu2x / realcugan(唯一来源)
             // 倍率:0=1x(2x缩回) 1=2x 2=3x 3=4x 4=自定义(内部按2x)
             int scale = VideoScaleRadios.SelectedIndex switch { 1 => 2, 2 => 3, 3 => 4, _ => 1 };
             bool upscaleShrink1x = VideoScaleRadios.SelectedIndex == 0;
@@ -10412,7 +10534,7 @@ public sealed partial class VideoView : UserControl
             try { await ALHPro.EsrganOnnxService.EnsureDmlProbeAsync().ConfigureAwait(true); } catch { }
             if (UpscaleWillFallbackToCpu())
             {
-                string cpuEngine = SelectedEngineIsReal ? "realesrgan" : "waifu2x";
+                string cpuEngine = SelectedEngineName;   // 【2026-09-24】三选一(唯一来源)
                 var (perFrameBase, perFrameSrc, _) = CpuPerFrameBase();
                 long cpuFrames = 0;
                 double cpuMinutes = 0, cpuPerFrameMax = 0;
@@ -10705,8 +10827,11 @@ public sealed partial class VideoView : UserControl
             var missing = new System.Collections.Generic.List<string>();
             if (up)
             {
-                if (!SelectedEngineIsReal && EngineService.FindWaifu2x() is null) missing.Add("waifu2x 引擎");
+                // 【2026-09-24】三选一,按**当前选中的那支**查(不再用"非 real 即 waifu2x"的二值判断 ——
+                // 那会让选了 Real-CUGAN 的用户只被检查 waifu2x 是否在,真缺引擎时反而放过去)。
+                if (SelectedEngineName == "waifu2x" && EngineService.FindWaifu2x() is null) missing.Add("waifu2x 引擎");
                 if (SelectedEngineIsReal && EngineService.FindRealESRGAN() is null) missing.Add("Real-ESRGAN 引擎");
+                if (SelectedEngineIsRealCugan && EngineService.FindRealCugan() is null) missing.Add("Real-CUGAN 引擎");
             }
             if (interp && VideoService.RifePath is null) missing.Add("RIFE 补帧引擎");
             if (VideoService.FfmpegPath is null) missing.Add("ffmpeg");
@@ -10861,12 +10986,18 @@ public sealed partial class VideoView : UserControl
             var tag = it?.Tag as string;
             return !string.IsNullOrEmpty(tag) ? tag : fallback;
         }
+        // 分支顺序与 SelectedEngineName **逐条对应**(索引 0/1/2;越界一律落 Real-ESRGAN = 界面默认项),
+        // 两处不一致会出现"界面说 A、实跑 B"——本仓库最忌讳的那类静默错位。
         var (engine, model) = VideoEngineRadios.SelectedIndex switch
         {
-            // Real-ESRGAN(界面上排第一):从模型下拉 Tag 读模型名(默认 realesr-animevideov3)
-            0 => ("realesrgan", SelModel(VideoEsrganModelCombo, "realesr-animevideov3")),
             // waifu2x(界面第二项):从模型下拉 Tag 读模型名(默认 models-cunet)
-            _ => ("waifu2x", SelModel(VideoWaifu2xModelCombo, "models-cunet")),
+            1 => ("waifu2x", SelModel(VideoWaifu2xModelCombo, "models-cunet")),
+            // 【2026-09-24】Real-CUGAN(界面第三项,末尾追加)。Tag 形如 `models-se:-1`,
+            // 由 AlhPro.Core.RealCugan 解析成 `-m <权重目录> -n <降噪档>`;默认走保守档。
+            2 => (AlhPro.Core.RealCugan.EngineName,
+                  SelModel(VideoRealcuganModelCombo!, AlhPro.Core.RealCugan.DefaultTag)),
+            // Real-ESRGAN(界面上排第一,也是默认):从模型下拉 Tag 读模型名(默认 realesr-animevideov3)
+            _ => ("realesrgan", SelModel(VideoEsrganModelCombo, "realesr-animevideov3")),
         };
         // 【Rev10】「现实 · 1x 修复」**不是真模型**:它内部用自训的 alhreal2x 按 2x 跑再缩回原尺寸
         //   ⇒ 下发给引擎的必须是真正的权重名(alhpro-real2x),否则引擎会去找一个不存在的模型
@@ -10984,7 +11115,10 @@ public sealed partial class VideoView : UserControl
         //   留在后台线程会抛 0x8001010E(已真机复现:选 Real-ESRGAN 视频必崩)——await 不带
         //   ConfigureAwait(false),让方法自然地回到 UI 线程;内部改 SelectedIndex 的 DispatcherQueue
         //   兜底保留(双保险,即使未来路径变化也不跨线程改控件)。
-        if (up && SelectedEngineIsReal)
+        // 【2026-09-24】Real-CUGAN 也走这一段(它同样是 ncnn-Vulkan 引擎、同样会"小图能跑、真帧尺寸出黑帧",
+        // 而且它**没有 ONNX 兜底**)⇒ 预检必须覆盖它,否则选 Real-CUGAN 的用户连一句提示都看不到。
+        // waifu2x 不在此列:它的探测入口在别处(denoise 路径)/(与既有行为一致,本次不改)。
+        if (up && (SelectedEngineIsReal || SelectedEngineIsRealCugan))
         {
             // 【口径统一到与处理流水线同一个入口(2026-09-12 自检发现)】这里原来调的是
             // EngineService.IsEngineGpuUsableAsync(engine, gpuId, ct) 这个 3 参重载 = fullFrame:false =
@@ -11010,33 +11144,49 @@ public sealed partial class VideoView : UserControl
             //     之后所有 2x/3x/4x 视频超分都被判走 ONNX(实测 2x 超分 3880 ms/帧 vs 标称 0.27 秒/帧);
             //   · 「现实 · 1x 修复」的 Tag 不是真模型 ⇒ 用真正的权重 alhpro-real2x 去探。
             var probePlan = AlhPro.Core.NcnnProbePlan.For(model);
+            // 【2026-09-24】探测目标引擎 = **本次真正要跑的那支**(原来写死 "realesrgan"):
+            // Real-CUGAN 是独立引擎、有自己的权重名域(models-se),拿 realesrgan 的键去探会写脏结论。
+            string probeEngine = SelectedEngineName;
+            string probeLabel = EngineService.EngineLabel(probeEngine);
             willProbe = probePlan.ShouldProbe;
-            try { if (willProbe) willProbe = EngineService.NcnnProbeWillRun("realesrgan", gpuId, probePlan.Model); } catch { }
+            try { if (willProbe) willProbe = EngineService.NcnnProbeWillRun(probeEngine, gpuId, probePlan.Model); } catch { }
             if (willProbe)
             {
-                TaskSummary.Text = "正在检测 Real-ESRGAN 显卡兼容性(首次约 15~60 秒,结论会记住)…";
-                try { Log("正在检测 Real-ESRGAN 显卡兼容性(按生产帧尺寸实测,首次较慢,结论会记住)…"); } catch { }
+                TaskSummary.Text = $"正在检测 {probeLabel} 显卡兼容性(首次约 15~60 秒,结论会记住)…";
+                try { Log($"正在检测 {probeLabel} 显卡兼容性(按生产帧尺寸实测,首次较慢,结论会记住)…"); } catch { }
             }
             else
             {
                 try { Log($"超分引擎:本次不做显卡兼容性实测({probePlan.Why})"); } catch { }
             }
             bool usable = !probePlan.ShouldProbe
-                || await EngineService.EnsureNcnnProbeAsync("realesrgan", gpuId, probePlan.Model, cts.Token);
+                || await EngineService.EnsureNcnnProbeAsync(probeEngine, gpuId, probePlan.Model, cts.Token);
             if (!usable)
             {
-                var useWaifu = await AskBlackwellCompatibleAsync("Real-ESRGAN");
-                var tcs = new System.Threading.Tasks.TaskCompletionSource();
-                _ = DispatcherQueue.TryEnqueue(() =>
+                // 【Real-CUGAN 没有 ONNX 版本】探测失败时不能像 Real-ESRGAN 那样"自动换稳定引擎":
+                // 它只剩 ncnn-Vulkan 一条路(重编版的 CPU 档实测会崩)⇒ 处理时会被**明确拒绝**。
+                // 所以在开跑前就把话说清楚,并给出替代方案 —— 不让用户等一轮之后才被告知失败。
+                if (SelectedEngineIsRealCugan)
                 {
-                    try
+                    await ShowPauseHintAsync($"{probeLabel} 在本机 GPU 上实测跑不通,而它只有 ncnn-Vulkan 权重"
+                        + "(没有 ONNX 版本可换、CPU 档也不可用)。这一批会被拒绝处理。"
+                        + "请把「超分引擎」改成 Real-ESRGAN(有 ONNX 稳定路线)或 waifu2x 后重试。");
+                }
+                else
+                {
+                    var useWaifu = await AskBlackwellCompatibleAsync(probeLabel);
+                    var tcs = new System.Threading.Tasks.TaskCompletionSource();
+                    _ = DispatcherQueue.TryEnqueue(() =>
                     {
-                        if (useWaifu && SelectedEngineIsReal)
-                            VideoEngineRadios.SelectedIndex = 1;   // 换成 waifu2x(界面第二项;兼容+最快)
-                    }
-                    finally { tcs.TrySetResult(); }
-                });
-                await tcs.Task;
+                        try
+                        {
+                            if (useWaifu && SelectedEngineIsReal)
+                                VideoEngineRadios.SelectedIndex = 1;   // 换成 waifu2x(界面第二项;兼容+最快)
+                        }
+                        finally { tcs.TrySetResult(); }
+                    });
+                    await tcs.Task;
+                }
             }
         }
         // ===== 【1x 修复 · 2026-09-21 Rev10】1x 档现在有**两个**模型条目(用户:"1x 也是可以选模型 加一个现实的1x模型")=====
@@ -11599,7 +11749,9 @@ public sealed partial class VideoView : UserControl
         Log($"▶ 参数:设备={devStr} | " +
             // 【2026-09-15 Rev4】两支自训模型在日志里也带上"名字 + 实测速度"的括号(用户要求:这几处的括号内容
             // 写速度,不写"测试"这类定性词)。日志是排查"这次到底用的哪支模型、该有多快"的唯一凭据。
-            $"超分={(up ? $"开({model}{AlhPro.Core.ExperimentalEsrgan.LogSuffix(model)}·{scaleLabel})" : "关")}" + (up && customRes ? $"·输出{outWidth}×{outHeight}" : "") + " | " +
+            // 【2026-09-24】Real-CUGAN 的 model 是 `models-se:-1` 这种 Tag(不能直读成模型名),
+            // 所以这里补上引擎名 + 该 Tag 的人话名 —— 日志必须能一眼看出"这一批用的是哪条引擎、哪支模型"。
+            $"超分={(up ? $"开({EngineService.EngineLabel(engine)}·{AlhPro.Core.RealCugan.DisplayOrSelf(model)}{AlhPro.Core.ExperimentalEsrgan.LogSuffix(model)}·{scaleLabel})" : "关")}" + (up && customRes ? $"·输出{outWidth}×{outHeight}" : "") + " | " +
             $"补帧={(interp ? $"{interpModel}·{interpScale}x{(tta ? "·TTA" : "")}·时间步{(timeStep ?? 0):0.00}" : "关")} | " +
             $"去重={dedupDesc} | " +
             // 【2026-09-21】转场识别这一项不止印开关:阈值(滑块值)也印出来 ——

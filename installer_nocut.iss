@@ -68,7 +68,8 @@ Name: "downloadmodels"; Description: "下载并安装抠图模型包(约 1.4GB,�
 Source: "发布版\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "engines\rembg\birefnet-lite.onnx,engines\rembg\birefnet.onnx,engines\rembg\isnet-anime.onnx,engines\rembg\isnet-general-use.onnx,engines\rembg\u2net.onnx,engines\rembg\u2netp.onnx,models_v1.0\*,_ttracks*,bin\*,obj\*,*.pdb,*.lib,*.bak,ALHPro_old*,DirectML.Debug.*,d3dcompiler_47.dll.bak,onnxruntime.lib"
 
 [InstallDelete]
-Type: filesandordirs; Name: "{app}\engines\realcugan"
+; 【2026-09-24 必须删掉这条 Real-CUGAN 清理规则】Real-CUGAN 已重新随包(2026 重编引擎 + models-se),
+; 留着它会在升级安装时把刚装好的 engines\realcugan 再删一次(功能白做)。
 Type: files; Name: "{app}\d3dcompiler_47.dll"
 Type: files; Name: "{app}\D3DCOMPILER_47.dll"
 

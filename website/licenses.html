@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <title>开源许可与致谢 — ALH Pro(第三方组件许可声明)</title>
-<meta name="description" content="ALH Pro 的版权与许可说明:软件本体为自创专有许可(个人 / 非商用免费);集成的 waifu2x、Real-ESRGAN、RIFE、FFmpeg 等开源组件的许可、版权与源码地址逐条列出,并附致谢名单。">
+<meta name="description" content="ALH Pro 的版权与许可说明:软件本体为 MIT 开源许可;集成的 waifu2x、Real-ESRGAN、RIFE、FFmpeg 等开源组件的许可、版权与源码地址逐条列出,并附致谢名单。">
 <!-- 深色是唯一主题(手机浏览器地址栏/状态栏也跟着深色)。
      原先是两条带 media 的 meta(dark #06080f / light #eef2f9),系统浅色时会把地址栏刷白,
      现已删掉 light 那条;这里的值来自 style.css §1.1 的 --body-bg / --bg(#0a0a0b)。 -->
@@ -80,25 +80,25 @@ setTimeout(function () {
 
     <div class="note" data-reveal>
       <p><span class="note-title">两件事先分清:</span>
-      ① <strong>软件本体</strong>是作者自创的专有许可(个人 / 非商用免费,源码可见,但不是标准开源许可);
+      ① <strong>软件本体</strong>采用 MIT 开源许可(可自由使用、修改、分发,含商业用途;只需保留版权与许可声明);
       ② <strong>集成的开源引擎与模型</strong>版权归各原作者,各按自己的许可(MIT / BSD-3-Clause / Apache-2.0 / GPLv3 等)。</p>
     </div>
 
     <h2 id="alh">一、ALH Pro 软件本体许可</h2>
-    <p data-reveal>ALH Pro 采用<strong>自创专有许可</strong>(<strong>不是</strong> MIT、Apache-2.0、GPL 等标准开源许可)。
-      源码按「源码可见」方式公开,供学习与研究;<strong>版权归 AlL.H 所有,保留所有权利</strong>。</p>
+    <p data-reveal>ALH Pro 本体采用 <strong>MIT 许可</strong>(标准开源许可之一)。
+      源码公开在 GitHub,任何人可自由使用、修改、分发(含商业用途);<strong>版权归 AlL.H 所有</strong>,唯一要求是保留版权与许可声明。</p>
     <div class="table-scroll" data-reveal>
       <table>
         <thead><tr><th>范围</th><th>说明</th></tr></thead>
         <tbody>
           <tr>
             <td><strong>允许</strong></td>
-            <td>个人 / 非商业用途免费下载、安装、使用,用于个人学习、研究与日常处理。</td>
+            <td>任何人都可以免费下载、安装、使用(含商业用途),用于学习、研究与日常处理。</td>
           </tr>
           <tr>
-            <td><strong>禁止</strong><br><span class="small muted">(未经作者书面许可)</span></td>
-            <td>复制、修改、再分发;<strong>以任何形式重新打包、改名、发布、上传到第三方渠道</strong>;商业用途(售卖、出租、捆绑销售、盈利性项目);
-              去除或篡改署名、版权与开源组件许可声明;反向工程后用于再分发。</td>
+            <td><strong>唯一要求</strong><br><span class="small muted">(MIT 条件)</span></td>
+            <td>再分发或发布修改版时,需<strong>保留版权声明与许可原文</strong>(不得去除或篡改署名);
+              不得暗示衍生版本由原作者背书。除此之外没有附加限制。</td>
           </tr>
           <tr>
             <td><strong>免责</strong></td>
@@ -339,7 +339,7 @@ setTimeout(function () {
     </p>
     <!-- 备案:【2026-09-22 决定暂不备案】本站挂在阿里云 OSS + CDN 的香港节点,域名不解析到境内服务器,境外主机不需要 ICP 备案;将来若迁回国内主机或做经营性内容,按 index.html 页脚注释里的模板补真实备案号。 -->
       <!-- 注意:没有备案就**不要**展示任何备案号(包括占位符) —— 展示假的比不展示更糟。 -->
-    <p class="icp">©2026 ALH Pro · 保留所有权利</p>
+    <p class="icp">©2026 ALH Pro · MIT 许可</p>
   </div>
 </footer>
 </body>

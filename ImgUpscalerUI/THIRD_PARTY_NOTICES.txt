@@ -5,6 +5,11 @@ ALH Pro — 第三方组件许可声明
 
 如分发本软件,请保留本文件。
 
+【本文件是唯一源】本文件(ImgUpscalerUI\THIRD_PARTY_NOTICES.txt)是**这份声明的唯一维护源**:
+  · 构建时由 csproj 复制到输出目录 → `发布版\THIRD_PARTY_NOTICES.txt`(安装包实际带的那份);
+  · 仓库根目录的 `THIRD_PARTY_NOTICES.txt` 是它的**逐字节副本**(由 `打包.ps1` 的 ①f 段比对/覆盖保持同步)。
+  ⇒ 要改声明,只改这一个文件;改别处会被 ①f 覆盖并提示。契约测试 `RealCuganContractTests` 会断言三者一致。
+
 --------------------------------------------------
 1. waifu2x-ncnn-vulkan(超分引擎)
    项目: https://github.com/nihui/waifu2x-ncnn-vulkan
@@ -109,6 +114,64 @@ ALH Pro — 第三方组件许可声明
     - waifu2x-cunet2x.onnx → 上游 waifu2x(nagadomi,MIT)
     由社区 ONNX 转换项目导出(deepghs / tidus2102 系列转换项目,MIT);
     各模型权重版权归上游作者,许可按上游条目执行。
+    注:Real-CUGAN **没有** ONNX 版本(本软件不随包任何 realcugan 的 .onnx)。
+
+16. Real-CUGAN(动漫超分引擎;【2026-09-24 重新随包】引擎 + models-se 权重)
+    算法与权重项目: https://github.com/bilibili/ailab/tree/main/Real-CUGAN
+    许可: MIT License(算法代码与模型权重),Copyright (c) 2022 bilibili
+    许可原文(逐字,随包于 licenses\Real-CUGAN-MIT-bilibili-2022.txt,1065 字节,
+              SHA256 8CAD8CFDF94BAAF23519061AF913770E52476DDEC2A311E9510582E7BED13CBA):
+      MIT License
+
+      Copyright (c) 2022 bilibili
+
+      Permission is hereby granted, free of charge, to any person obtaining a copy
+      of this software and associated documentation files (the "Software"), to deal
+      in the Software without restriction, including without limitation the rights
+      to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+      copies of the Software, and to permit persons to whom the Software is
+      furnished to do so, subject to the following conditions:
+
+      The above copyright notice and this permission notice shall be included in all
+      copies or substantial portions of the Software.
+
+      THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+      IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+      FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+      AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+      LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+      OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+      SOFTWARE.
+    引擎包装层 + ncnn 权重来源: https://github.com/nihui/realcugan-ncnn-vulkan
+      许可: MIT License,Copyright (c) 2019 nihui
+      许可原文随包于 licenses\realcugan-ncnn-vulkan-MIT-nihui-2019.txt(1072 字节,
+      SHA256 57157B0FC6954DD1645DC674CC99BEBBAB4CB84C5B306B910989777E3D0D6FBD)。
+      该仓库自带 models-se / models-pro / models-nose 全部模型,README 原文:
+        "This package includes all the binaries and models required."
+      ⚠ 本软件**只随包 models-se**(2x/3x/4x × conservative / no-denoise / denoise1x-3x);
+        models-pro 与 models-nose **不随包**(界面上也没有它们的档位)。
+    ncnn 推理框架: BSD 3-Clause License,Copyright (c) 2017 Tencent
+    【引擎二进制】本软件随包的是**用 2025/2026 版 ncnn 源码重编**的引擎
+      (engines\realcugan\realcugan-ncnn-vulkan-2026.exe),前端源码取自上面那个 MIT 仓库、
+      只改了 MinGW 宽字符 printf 的一处兼容补丁;重构配方见 tools\engine-build\README_REALCUGAN.md。
+      为什么要重编:上游 20220728 那份 exe 实测不含 VK_EXT_robustness2 处理(0 处)——
+      在 NVIDIA 50 系(Blackwell)上属「退出码 0、却输出坏帧」那一类。
+    说明: 上游 GitHub 仓库内 Real-CUGAN/weights_v3/ 目录只含一句
+          "Please download the weight files from netdisks and put them here.";
+          经百度网盘 / GoogleDrive / 和彩云 分发的"完整包/更新参数包"未随附任何许可文本,
+          本软件**不使用**该来源的模型文件。本软件采用的权重来自上述 nihui 移植仓库
+          (许可文本与权重同仓)。
+          来源与逐文件 SHA256 见 licenses\模型权重来源与校验值.md。
+
+17. RIFE 补帧模型新增版本 rife-v4.26(2026-09-24;与第 3 条同源)
+    算法项目: https://github.com/hzwer/Practical-RIFE
+    许可: MIT License,Copyright (c) 2021 hzwer
+      许可原文随包于 licenses\Practical-RIFE-MIT-hzwer-2021.txt(1062 字节,
+      SHA256 7932FB49341512B959B1744A6D9CBB39E5A1EC89DA438A34D0454D5D8DF9FECD)。
+      README「Trained Model」段逐字原文:
+        "The content of these links is under the same MIT license as this project."
+      ⇒ 训练好的模型权重与项目同为 MIT 许可(逐字,不是我们的推断)。
+    权重文件与 SHA256 见 licenses\模型权重来源与校验值.md。
 
 ---------------------------------------------------
 【模型权重来源与版权明细】
@@ -132,10 +195,19 @@ A. 图片超分模型
   - waifu2x-cunet2x.onnx / RealESRGAN_x4plus.onnx / realesr-animevideov3.onnx
     由社区 ONNX 转换项目导出(deepghs / tidus2102 等,MIT),权重版权归上游作者。
 
-B. 视频补帧模型
-  - rife-anime / rife-HD / rife-UHD / rife-v2.3 / rife-v4.13 / rife-v4.26(.bin/.param)
+B. 视频补帧模型(随包的实际只有下面 3 支 —— 与 engines\rife 逐条对应)
+  - rife-v4.13 / rife-v4.6 / rife-v4.26(.bin/.param)
     算法: RIFE(Zhewei Huang 等 / Megvii Inc.,MIT)https://github.com/hzwer/arXiv2020-RIFE
-    模型: 随 rife-ncnn-vulkan 官方发行版,版权 Megvii Inc. / 原作者
+          Practical-RIFE 的 README「Trained Model」段逐字写明:
+            "The content of these links is under the same MIT license as this project."
+          ⇒ 训练好的模型权重与项目同为 MIT 许可(逐字,不是我们的推断)。
+    ncnn 转换与封装: 随社区 rife-ncnn-vulkan 发行版(引擎包装层 nihui,MIT © 2020),
+          ncnn 运行时 BSD 3-Clause(Tencent)。
+    版权: Zhewei Huang 等(2022)/ Megvii Inc. / nihui(2020)
+    【2026-09-24 变更】rife-v4.26 由用户裁决作为补帧下拉第 3 项上架,权重随包;
+          本机实测 1080p 79.0~92.2 ms/输出帧。原先随包的 rife-anime / rife-HD / rife-UHD / rife-v2.3
+          已于 2026-09-16 从装机包移除,不再分发(故不在本条目内)。
+    每个随包权重文件的来源与 SHA256 见 licenses\模型权重来源与校验值.md。
   - rife49.onnx → 算法 RIFE(MIT),ONNX 导出 yuvraj108c/rife-onnx(MIT)
 
 C. AI 抠图模型(ONNX)
