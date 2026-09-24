@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>下载 ALH Pro v1.4.1 — GitHub 直链 / 百度网盘两种下载方式(安装包 · 完整版 · 模型包)</title>
-<meta name="description" content="下载 ALH Pro v1.4.1:GitHub 直链(标准版约 679 MB,原版不限速;AI 抠图模型包约 1.4 GB 需额外下载)与百度网盘完整版(约 2.0 GB,含全部模型,提取码 6eym)。含系统要求与安装步骤。">
+<title>下载 ALH Pro v1.4.2 — GitHub 直链 / 百度网盘两种下载方式(安装包 · 完整版 · 模型包)</title>
+<meta name="description" content="下载 ALH Pro v1.4.2:GitHub 直链(标准版约 678 MB,原版不限速;AI 抠图模型包约 1.4 GB 需额外下载)与百度网盘完整版(约 2.0 GB,含全部模型,提取码 6eym)。含系统要求与安装步骤。">
 <!-- 深色是唯一主题(手机浏览器地址栏/状态栏也跟着深色)。
      原先是两条带 media 的 meta(dark #06080f / light #eef2f9),系统浅色时会把地址栏刷白,
      现已删掉 light 那条;这里的值来自 style.css §1.1 的 --body-bg / --bg(#0a0a0b)。 -->
@@ -71,16 +71,17 @@ setTimeout(function () {
     <div class="wrap hero-inner">
       <h1 class="hero-title">下载 ALH Pro</h1>
       <p class="page-meta">
-        <strong>下载 · 两种方式任选。</strong>当前版本 <strong>v1.4.1</strong>。
+        <strong>下载 · 两种方式任选。</strong>当前版本 <strong>v1.4.2</strong>。
         遇到问题<strong>建议优先用软件左下角的「ALH Pro 社区」反馈</strong>。
       </p>
       <!-- =================================================================
            首屏:两个官方渠道按钮 + 下方单独一行的模型包次级入口(用户要求模型包不要挤进按钮同一排)。
-           · 渠道 A(GitHub):v1.4.1 的 ALHPro_v1.4.1_Setup.exe(711,995,240 字节);
+           · 渠道 A(GitHub):v1.4.2 的 ALHPro_v1.4.2_Setup.exe(711,249,499 字节);
              发布新版后若附件名变化,换成发布页上的真实附件名(releases/latest/download/<附件名>)。
-           · 模型包:v1.4.1 的 Release **也带了** models_v1.0.zip(1,479,029,997 字节,
-             sha256 8BCC46C4…,与 v1.3.x / v1.4.0 上那份**逐字节相同**)⇒ 本页"当前版本"那 6 处模型包直链
-             都指向 v1.4.1;老版本区的 v1.4.0 / v1.3.5 两行按惯例仍指向各自 Release 的附件。
+           · 模型包:v1.4.2 的 Release **也带了** models_v1.0.zip(1,479,029,997 字节,
+             sha256 8BCC46C4…,与 v1.3.x / v1.4.0 / v1.4.1 上那份**逐字节相同**)⇒ 本页"当前版本"那 6 处模型包直链
+             都指向 v1.4.2(2026-09-24 起每个新 Release 都随传一份,链接统一到当前版本);
+             老版本区的 v1.4.1 / v1.4.0 两行按惯例仍指向各自 Release 的附件。
            · 渠道 B(百度网盘):链接 https://pan.baidu.com/s/1XfUXwR685bV2XgmU-dycCQ?pwd=6eym,提取码 6eym。
            · 模型包那一行:单独一行小字 + 文本链接(不占按钮排,也不再做成第三个按钮)。
              链接必须与「下载文件」表模型包那一行完全一致,带 download 属性,点了立刻下载。
@@ -88,18 +89,18 @@ setTimeout(function () {
              链接文字用「下载模型包(约 1.4 GB)」(抠图模型四个字已由前面的引导语说掉),这样 320px 极窄屏也单行放得下。
            ================================================================= -->
       <div class="cta-row">
-        <a class="btn btn-primary" href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.1/ALHPro_v1.4.1_Setup.exe" download>
+        <a class="btn btn-primary" href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.2/ALHPro_v1.4.2_Setup.exe" download>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.6v10.2"/><path d="M7.8 10.2L12 14.4l4.2-4.2"/><path d="M4.6 17.2v2.6h14.8v-2.6"/></svg>
-          下载标准版(约 679 MB)
+          下载标准版(约 678 MB)
         </a>
         <a class="btn btn-ghost" href="https://pan.baidu.com/s/1XfUXwR685bV2XgmU-dycCQ?pwd=6eym" target="_blank" rel="noopener">百度网盘完整版(约 2.0 GB,提取码 6eym)</a>
       </div>
       <!-- 点「下载」后在这里出现一行醒目蓝字(由 site.js §13 显示;没点之前不占位、不显示)。 -->
       <p class="btn-note dl-tip" id="dl-tip" hidden>已开始下载。<strong>如果一直没反应</strong>,点下面那行「备用下载链接」。</p>
-      <p class="btn-note small">标准版约 679 MB,<strong>不含 AI 抠图模型包</strong>,模型包要单独下载(约 1.4 GB)。
+      <p class="btn-note small">标准版约 678 MB,<strong>不含 AI 抠图模型包</strong>,模型包要单独下载(约 1.4 GB)。
         想一次装好全部功能,直接下网盘完整版。</p>
-      <p class="btn-note small"><a href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.1/models_v1.0.zip" download>抠图模型包</a></p>
-      <p class="btn-note small"><a class="dl-alt" href="https://gh-proxy.com/https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.1/ALHPro_v1.4.1_Setup.exe">备用下载链接</a></p>
+      <p class="btn-note small"><a href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.2/models_v1.0.zip" download>抠图模型包</a></p>
+      <p class="btn-note small"><a class="dl-alt" href="https://gh-proxy.com/https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.2/ALHPro_v1.4.2_Setup.exe">备用下载链接</a></p>
     </div>
   </section>
 
@@ -117,25 +118,25 @@ setTimeout(function () {
         <h3>渠道 A · GitHub(推荐)</h3>
         <p><strong>原版安装包,点按钮就开始下载</strong>,不限速。<strong>模型包不在安装包里</strong>,见下面按钮。</p>
         <ul>
-          <li><strong>安装包:</strong><code>ALHPro_v1.4.1_Setup.exe</code>,约 679 MB(711,995,240 字节)</li>
+          <li><strong>安装包:</strong><code>ALHPro_v1.4.2_Setup.exe</code>,约 678 MB(711,249,499 字节)</li>
           <li><strong>模型包:</strong><code>models_v1.0.zip</code>,约 1.4 GB,需单独下载</li>
           <li><strong>适合:</strong>能正常访问 GitHub、想直接拿原版文件的人</li>
           <li><strong>不适合:</strong>国内直连 GitHub 慢或经常断(见下方「下载速度慢或中断」)</li>
         </ul>
         <div class="cta-row">
-          <a class="btn btn-primary" href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.1/ALHPro_v1.4.1_Setup.exe" download>下载标准版安装包(约 679 MB)</a>
-          <a class="btn btn-ghost" href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.1/models_v1.0.zip" download>额外下载模型包(约 1.4 GB)</a>
+          <a class="btn btn-primary" href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.2/ALHPro_v1.4.2_Setup.exe" download>下载标准版安装包(约 678 MB)</a>
+          <a class="btn btn-ghost" href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.2/models_v1.0.zip" download>额外下载模型包(约 1.4 GB)</a>
           <a class="btn btn-ghost" href="https://github.com/AlLHHH/ALH-Pro/releases/latest" target="_blank" rel="noopener">查看最新版发布页</a>
         </div>
         <p class="small muted">嫌单独装模型包麻烦,就直接下渠道 B 的完整版,装完含全部模型。</p>
         <p class="small muted">备用下载链接(镜像加速):
-          <a class="dl-alt" href="https://gh-proxy.com/https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.1/ALHPro_v1.4.1_Setup.exe">安装包</a>
-          · <a class="dl-alt" href="https://gh-proxy.com/https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.1/models_v1.0.zip">模型包</a></p>
+          <a class="dl-alt" href="https://gh-proxy.com/https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.2/ALHPro_v1.4.2_Setup.exe">安装包</a>
+          · <a class="dl-alt" href="https://gh-proxy.com/https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.2/models_v1.0.zip">模型包</a></p>
         <!-- 渠道 A 的直链说明(维护者):GitHub Release 上是两个独立附件,本卡两处直链分别对应它们:
-               · 安装包 https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.1/ALHPro_v1.4.1_Setup.exe
-               · 模型包 https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.1/models_v1.0.zip
-             安装包指向**本次发布的 v1.4.1**;模型包与版本无关(内容逐字节相同),仍留在 v1.4.0 ——
-             那份已实测过、保证可用;若哪天把模型包也传到 v1.4.1,把这 6 处 tag 一起换掉即可。
+               · 安装包 https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.2/ALHPro_v1.4.2_Setup.exe
+               · 模型包 https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.2/models_v1.0.zip
+             安装包与模型包都指向**本次发布的 v1.4.2**:模型包内容与 v1.4.1 / v1.4.0 那份逐字节相同,
+             只是随新 Release 又传了一份 ⇒ 本页"当前版本"所有直链的 tag 统一,不必再记"模型包留在旧版"。
              发布新包时把安装包那几处的 tag / 附件名换成发布页上的真实值。
              想让按钮永远指向最新一版可把 tag 换成 latest(附件名一变会 404,所以右边保留了「查看最新版发布页」)。 -->
       </div>
@@ -186,10 +187,10 @@ setTimeout(function () {
         </thead>
         <tbody>
           <tr>
-            <td><strong>标准版安装包</strong><br><span class="small muted"><strong>不含 AI 抠图模型包</strong>,模型包需单独下载(约 1.4 GB)</span><br><span class="small muted">发布页附件名:<code>ALHPro_v1.4.1_Setup.exe</code></span><!-- 发布新版时替换为发布页上的真实附件名:本地打包结果形如 ALHPro_v{版本}_Setup.exe(见仓库 installer.iss 的 OutputBaseFilename;2026-09-17 起不带构建时间戳,且必须纯 ASCII —— GitHub 会剥掉附件名里的非 ASCII 字符) --></td>
-            <td class="td-center">约 679 MB</td>
+            <td><strong>标准版安装包</strong><br><span class="small muted"><strong>不含 AI 抠图模型包</strong>,模型包需单独下载(约 1.4 GB)</span><br><span class="small muted">发布页附件名:<code>ALHPro_v1.4.2_Setup.exe</code></span><!-- 发布新版时替换为发布页上的真实附件名:本地打包结果形如 ALHPro_v{版本}_Setup.exe(见仓库 installer.iss 的 OutputBaseFilename;2026-09-17 起不带构建时间戳,且必须纯 ASCII —— GitHub 会剥掉附件名里的非 ASCII 字符) --></td>
+            <td class="td-center">约 678 MB</td>
             <td>软件本体 + 全部处理引擎(超分 / 补帧 / 音频等)</td>
-            <td><a href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.1/ALHPro_v1.4.1_Setup.exe" download>GitHub 直链下载(点击即开始)</a><br>
+            <td><a href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.2/ALHPro_v1.4.2_Setup.exe" download>GitHub 直链下载(点击即开始)</a><br>
               <span class="small muted">或在 <a href="https://github.com/AlLHHH/ALH-Pro/releases/latest" target="_blank" rel="noopener">发布页</a> 手动选附件</span></td>
           </tr>
           <tr>
@@ -203,7 +204,7 @@ setTimeout(function () {
             <td><strong>AI 抠图模型包</strong><br><span class="small muted"><code>models_v1.0.zip</code></span></td>
             <td class="td-center">约 1.4 GB</td>
             <td>6 个抠图模型(.onnx),解压到程序目录的 <code>engines\rembg\</code> 即可,内含中文安装说明</td>
-            <td><a href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.1/models_v1.0.zip" download>GitHub 直链下载(1,479,029,997 字节)</a><br>
+            <td><a href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.2/models_v1.0.zip" download>GitHub 直链下载(1,479,029,997 字节)</a><br>
               <span class="small muted">或在安装时勾选「下载并安装模型包」自动下载</span></td>
           </tr>
           <!-- 手机版:整行灰掉、不可点(用户要求)。不是链接、没有 href、没有 download、没有 JS、不可聚焦
@@ -223,7 +224,7 @@ setTimeout(function () {
     </div>
 
     <h2 id="legacy">老版本下载</h2>
-    <p class="small muted">保留最近两个正式版 <strong>v1.4.0</strong> 与 <strong>v1.3.5</strong>(更早的版本已下架)。装好后软件里的「检查更新」会提示升到最新版。</p>
+    <p class="small muted">保留最近两个正式版 <strong>v1.4.1</strong> 与 <strong>v1.4.0</strong>(更早的版本已下架)。装好后软件里的「检查更新」会提示升到最新版。</p>
     <div class="table-scroll" data-reveal>
       <table>
         <thead>
@@ -231,30 +232,24 @@ setTimeout(function () {
         </thead>
         <tbody>
           <tr>
+            <td><strong>v1.4.1</strong></td>
+            <td>标准版安装包(约 679 MB,不含 AI 抠图模型包)<br>
+              <span class="small muted">ALHPro_v1.4.1_Setup.exe</span></td>
+            <td><a href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.1/ALHPro_v1.4.1_Setup.exe" download>GitHub 直链</a><br>
+              <a class="dl-alt" href="https://gh-proxy.com/https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.1/ALHPro_v1.4.1_Setup.exe">备用(镜像加速)</a></td>
+          </tr>
+          <tr>
+            <td><strong>v1.4.1</strong></td>
+            <td>AI 抠图模型包(约 1.4 GB)<br>
+              <span class="small muted">models_v1.0.zip</span></td>
+            <td><a href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.1/models_v1.0.zip" download>GitHub 直链</a></td>
+          </tr>
+          <tr>
             <td><strong>v1.4.0</strong></td>
             <td>标准版安装包(约 636 MB,不含 AI 抠图模型包)<br>
               <span class="small muted">ALHPro_v1.4.0_Setup.exe</span></td>
             <td><a href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.0/ALHPro_v1.4.0_Setup.exe" download>GitHub 直链</a><br>
               <a class="dl-alt" href="https://gh-proxy.com/https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.0/ALHPro_v1.4.0_Setup.exe">备用(镜像加速)</a></td>
-          </tr>
-          <tr>
-            <td><strong>v1.4.0</strong></td>
-            <td>AI 抠图模型包(约 1.4 GB)<br>
-              <span class="small muted">models_v1.0.zip</span></td>
-            <td><a href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.0/models_v1.0.zip" download>GitHub 直链</a></td>
-          </tr>
-          <tr>
-            <td><strong>v1.3.5</strong></td>
-            <td>标准版安装包(约 827 MB,不含 AI 抠图模型包)<br>
-              <span class="small muted">ALHPro_v1.3.5_Setup.exe</span></td>
-            <td><a href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.3.5/ALHPro_v1.3.5_Setup.exe" download>GitHub 直链</a><br>
-              <a class="dl-alt" href="https://gh-proxy.com/https://github.com/AlLHHH/ALH-Pro/releases/download/v1.3.5/ALHPro_v1.3.5_Setup.exe">备用(镜像加速)</a></td>
-          </tr>
-          <tr>
-            <td><strong>v1.3.5</strong></td>
-            <td>AI 抠图模型包(约 1.4 GB)<br>
-              <span class="small muted">models_v1.0.zip</span></td>
-            <td><a href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.3.5/models_v1.0.zip" download>GitHub 直链</a></td>
           </tr>
         </tbody>
       </table>
@@ -286,7 +281,7 @@ setTimeout(function () {
       <li><strong>双击运行。</strong>默认装到 <code>C:\Users\你的用户名\AppData\Local\Programs\ALH Pro</code>,不需要管理员权限;想换目录可以自己改。</li>
       <li><strong>一路「下一步」。</strong>「选择附加任务」页会有一个可选项「下载并安装模型包(约 1.4 GB)」,要用 AI 抠图就勾上;不勾也行,以后随时单独装。</li>
       <li><strong>没勾模型包、之后要用 AI 抠图:</strong>下载
-        <a href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.1/models_v1.0.zip" download><code>models_v1.0.zip</code></a>,把里面 6 个 <code>.onnx</code> 文件
+        <a href="https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.2/models_v1.0.zip" download><code>models_v1.0.zip</code></a>,把里面 6 个 <code>.onnx</code> 文件
         <strong>直接解压到</strong> <code>程序目录\engines\rembg\</code>(不要再套一层文件夹)。装好的标志:AI 抠图页左上角的黄色提示消失。</li>
       <li><strong>首次启动可能要等 1~2 分钟。</strong>安全软件会完整扫描一次,双击后「没反应」是正常的,扫过之后启动就快了。</li>
       <li><strong>开始使用:</strong>左侧选功能 → 添加素材 → 调参数 → 点「开始处理」。</li>
