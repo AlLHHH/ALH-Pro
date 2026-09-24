@@ -230,6 +230,164 @@ public static class EsrganOnnxService
         return false;
     }
 
+    // ═════════════ 【音频分离 · 结论落盘】"这台卡跑不了 Demucs" 不能随进程重启就忘 ═════════════
+    // 【真机依据】diagnostic.log 2026-09-23 的 21:41:58 / 21:42:48 / 23:07:52 / 23:28:25 四次
+    // `音频分离 GPU 推理失败 — DmlFusedNode_0_0`(HT-Demucs 图融合失败,失败点在 session.Run,不是建会话),
+    // 每次白等 5~9 秒;退回 CPU 的行为本身正确(保留),但上面那张连击表是**进程内**的:
+    // 连吃 3 次才熔断、进程一重启就忘 ⇒ 每个应用会话都要重新白试一遍。所以结论必须落盘。
+    // 【为什么键是 (域 · 模型 · 设备)】同一台机器上不同模型/不同卡的可用性不一样 —— 按设备一刀切会把
+    // 好路径一起关掉(见 DmlAttemptLedger 与 NcnnVerdictKey 的教训)。域固定 audio:视频/图片路径的行为一字未动。
+    // 【TTL 为什么不对称】成功 7 天(能跑就是能跑,重测要几秒到几十秒);失败只留 1 天 —— 短是刻意的,
+    // 让机器在换驱动/腾出显存之后能自愈(平台不会通知我们环境变了)。理由同 EngineService 的 ncnn 探测缓存。
+    // 【删掉本文件即强制重试】(下次启动生效:账本是首次使用时读一次,之后纯内存查表、零 I/O)。
+    private const string AudioDmlVerdictDomain = "audio";
+
+    /// <summary>落盘结论文件(与其他设置同在 %LOCALAPPDATA%\ALHPro\settings)。删掉它 = 下次启动重新试一次 DML。</summary>
+    private static string AudioDmlVerdictFile => ParaPaths.SettingsFile("dml-verdicts.txt");
+
+    /// <summary>落盘结论文件的路径(= <c>settings\dml-verdicts.txt</c>),供导出诊断包原样带上。
+    /// 【为什么必须暴露 · 2026-09-24 复审 F2】诊断包原先只枚举 <c>settings\*.json</c> 再显式补一个
+    /// <c>ncnn-probe.txt</c>,于是这份 .txt 结论被静默漏掉 —— 用户报"音频一直走 CPU"时,
+    /// 包里没有"到底测了什么模型/哪张卡/什么时候判的/失败几次"的第一手材料,作者只能靠猜
+    /// (ncnn 那次已踩过同一个坑,见 <see cref="EngineService.NcnnProbeCacheFilePath"/>)。</summary>
+    public static string AudioDmlVerdictFilePath => AudioDmlVerdictFile;
+
+    private static readonly object _audioVerdictLock = new();
+    private static AlhPro.Core.DmlVerdictLedger? _audioVerdictLedger;
+
+    /// <summary>音频域结论账本。**首次使用时**把落盘文本读进来一次,之后纯内存查表。
+    /// 【失败一律退回空账本】文件读不到/解析炸了都只当"没测过" ⇒ 照现状试一次 DML;
+    /// 结论缓存坏了绝不能把 DML 这条路一起堵死(那会让能跑的机器永远跑 CPU)。</summary>
+    private static AlhPro.Core.DmlVerdictLedger AudioVerdictLedger()
+    {
+        lock (_audioVerdictLock)
+        {
+            if (_audioVerdictLedger != null) return _audioVerdictLedger;
+            var ledger = new AlhPro.Core.DmlVerdictLedger(DmlTransientStrikeLimit);   // 与进程内连击表同源,不写死第二个 3
+            try
+            {
+                var path = AudioDmlVerdictFile;
+                if (File.Exists(path))
+                {
+                    ledger.Merge(AlhPro.Core.DmlVerdictLedger.Parse(File.ReadAllText(path)));
+                    AppLogger.Info($"[结论] 音频分离 DML 落盘结论已载入:{path}"
+                        + $"({ledger.Snapshot(DateTimeOffset.UtcNow.ToUnixTimeSeconds()).Count} 条未过期结论)");
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"[结论] 音频分离 DML 落盘结论读取失败(按未测处理,本次仍会试一次 DML):{ex.Message}");
+            }
+            _audioVerdictLedger = ledger;
+            return ledger;
+        }
+    }
+
+    /// <summary>键里的"模型"段只取**文件名**(不是全路径):把模型目录搬到别处、或用户机器路径不同,
+    /// 结论照样有效;大小写/分隔符差异由账本的归一化吃掉。</summary>
+    private static string AudioVerdictModelKey(string modelPath)
+    {
+        try { return Path.GetFileName(modelPath) is { Length: > 0 } name ? name : modelPath; }
+        catch { return modelPath; }
+    }
+
+    /// <summary>音频域:本机是否已有生效的"这个模型 + 这张卡跑不了 DML"结论(true = 别再试)。
+    /// 【契约】返回 false(不拦)= 没结论 / 文件损坏 / 结论过期 / 读取出错 ⇒ **照现状试一次**;
+    /// 绝不把没测过的机器一刀切成 CPU。
+    /// 【日志只报一次/键/进程】批量处理几十个音频时,每件都报一遍同一句会把日志刷满
+    /// (仓库里 F4 那条教训:694 条 WARN 里 676 条是同文重复)。</summary>
+    internal static bool AudioDmlVerdictDenied(int device, string modelPath)
+    {
+        if (device < 0) return false;
+        try
+        {
+            string key = AudioVerdictModelKey(modelPath);
+            bool attempt = AudioVerdictLedger()
+                .ShouldAttempt(AudioDmlVerdictDomain, key, device, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+            if (!attempt && _audioVerdictSkipLogged.TryAdd(key + "|" + device, 0))
+                AppLogger.Info($"[结论] 音频分离按本机落盘结论直接走 CPU(不再白试 DML):模型 {key} · DML 设备 {device}"
+                    + " 已实测跑不动且结论未过期(想强制重试:删掉 %LOCALAPPDATA%\\ALHPro\\settings\\dml-verdicts.txt 后重启软件)");
+            return !attempt;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>已经用"落盘结论"跳过过的 (模型, 设备),用于把上面那句日志压成一次/键/进程。</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _audioVerdictSkipLogged = new();
+
+    /// <summary>把账本写回落盘文件。失败只记日志:这只是"下次少等 5~9 秒"的优化,绝不能影响本次处理。</summary>
+    private static void SaveAudioVerdicts(AlhPro.Core.DmlVerdictLedger ledger)
+    {
+        try
+        {
+            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            File.WriteAllText(AudioDmlVerdictFile, AlhPro.Core.DmlVerdictLedger.Format(ledger.Snapshot(now)));
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"[结论] 音频分离 DML 结论落盘失败(不影响本次处理,只是下次启动还会再试一次):{ex.Message}");
+        }
+    }
+
+    /// <summary>记一次音频域 DML 失败并落盘(所以结论**跨进程**累计)。
+    /// <param name="inProcessDenied">进程内连击表是否已判定该设备不可用。true ⇒ 落盘结论至少也要一样严:
+    /// 进程内都已经不再试了,没有理由让重启后的新进程反而更宽松(那正是"每个会话重新白试"的来源)。
+    /// 返回 true = 落盘否定结论已生效(调用方据此只提示一次)。</summary>
+    internal static bool NoteAudioDmlFailure(int device, string modelPath, string detail, bool inProcessDenied)
+    {
+        if (device < 0) return false;
+        try
+        {
+            var ledger = AudioVerdictLedger();
+            string key = AudioVerdictModelKey(modelPath);
+            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            bool denied = ledger.NoteFailure(AudioDmlVerdictDomain, key, device, now, detail);
+            if (inProcessDenied && !denied)
+            {
+                ledger.NoteDenial(AudioDmlVerdictDomain, key, device, now, detail);
+                denied = true;
+            }
+            SaveAudioVerdicts(ledger);
+            return denied;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>结构性失败:DirectML **建会话**就抛异常(provider 都挂不上,同一进程里再试必然再失败一次)。
+    /// 直接把落盘结论判死,不等跨进程攒到 3 次 —— 与进程内 <see cref="NoteDmlSessionCreationFailure"/> 同口径。</summary>
+    internal static void NoteAudioDmlDenial(int device, string modelPath, string detail)
+    {
+        if (device < 0) return;
+        try
+        {
+            var ledger = AudioVerdictLedger();
+            ledger.NoteDenial(AudioDmlVerdictDomain, AudioVerdictModelKey(modelPath), device,
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds(), detail);
+            SaveAudioVerdicts(ledger);
+        }
+        catch { }
+    }
+
+    /// <summary>音频域 GPU 推理成功 → 清除该键的失败结论(下次启动不会又被判"跑不了")。
+    /// 【为什么不必每次都写文件】成功是按【分块】回调的(一首歌 40 个分块):账本里已经是有效成功结论时
+    /// 直接返回,只有"第一次成功"或"上一次失败过"才落一次盘。</summary>
+    internal static void NoteAudioDmlSuccess(int device, string modelPath)
+    {
+        if (device < 0) return;
+        try
+        {
+            var ledger = AudioVerdictLedger();
+            string key = AudioVerdictModelKey(modelPath);
+            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            if (ledger.Verdict(AudioDmlVerdictDomain, key, device, now) == true) return;   // 已是成功结论,无需再写
+            bool cleared = ledger.NoteSuccess(AudioDmlVerdictDomain, key, device, now, "推理成功(session.Run)");
+            SaveAudioVerdicts(ledger);
+            if (cleared)
+                AppLogger.Info($"[结论] 音频分离 DML 已实测成功(设备 {device} · 模型 {key}):已清除本机落盘结论里的否定记录");
+        }
+        catch { }
+    }
+
     /// <summary>熔断 DirectML:记录设备号、置进程级失效标志,并只提示一次(后续批次静默快速失败,不刷屏)。</summary>
     internal static void TripDmlDead(int dmDevice, Exception ex)
     {

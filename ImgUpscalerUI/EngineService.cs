@@ -509,28 +509,62 @@ public static partial class EngineService
         {
             AppLogger.Info($"[探测] {engine} GPU({gpuId})强制真机重测(诊断包导出:绕过快速通道与缓存,拿到当前真实结论)");
         }
-        AppLogger.Info($"[探测] {engine} GPU({gpuId})首次真机探测(生产帧尺寸 1080×1920,模型 {model ?? "(默认)"} + 带状黑判据,最长约 60 秒)...");
-        // 接住失败形态:日志、落盘明细、以及给用户看的话都由它决定(见 AlhPro.Core.ProbeDiagnosis)
-        AlhPro.Core.ProbeFailureKind failKind = AlhPro.Core.ProbeFailureKind.None;
-        string failDetail = "";
-        bool ok = await IsEngineGpuUsableAsync(engine, gpuId, ct, fullFrame: true, model: model,
-            (k, d) => { failKind = k; failDetail = d; }).ConfigureAwait(false);
-        // 结论按【引擎|GPU】记账(决策键);明细带上失败形态 —— 诊断包里一眼能分出"初始化即崩"还是"出图但坏帧"。
-                    SaveNcnnVerdict(engine, gpuId, model, ok,
+        AppLogger.Info($"[探测] {engine} GPU({gpuId})首次真机探测(生产帧尺寸 1080×1920,模型 {model ?? "(默认)"} + 带状黑判据,"
+            + $"最长约 60 秒;若超时/无响应会退避 {AlhPro.Core.ProbeRetryPolicy.PipelineFullFrameProbe.BackoffMs / 1000.0:0.#} 秒再试一次)...");
+        // 【2026-09-24 · 超时/无响应只重试一次再判死】真机踩过(2026-09-22 22:22):一次
+        // 「realesrgan GPU(0) 60 秒无响应(疑似 hang)」被强杀 → 当场落失败结论(TTL 1 天)→ 之后【一整天】
+        // 该引擎/该模型全走 ONNX 慢路(实测 3880 ms/帧 vs 标称 0.26~0.30 秒/帧);而这个探测自己的注释就写着
+        // "realesrgan-x4plus 在 4060 上要 24.1 秒" ⇒ 健康卡完全可能被一次瞬时超时判死。
+        // 现在"要不要再试一次 / 试几次 / 退避多久"全由 AlhPro.Core.ProbeRetryPolicy 按【档位】决定(可单测):
+        //   · 本函数走 pipeline 档(fullFrame:true):超时/无响应 → 退避 3 秒重试一次;
+        //     确定性失败(初始化即崩 / 进程起不来 / 参数或编译错误 / 出图但坏帧 / 无产出)→ 一次都不重试(理由见 Core)。
+        //   · 小图活性检查(fullFrame:false,挑卡/编号纠正/核显切换)另有自己的档(1.5 秒×最多 3 次,见 Core 的两个 profile)。
+        // 只有【重试后仍失败】才落失败结论(TTL 1 天);重试成功即成功(TTL 7 天,见 SaveNcnnVerdict 的 TTL 口径)。
+        // 每次重试决策与结果都经 log 回调进日志(第几次、为什么、退避多久、结果),绝不静默。
+        var outcome = await ProbeEngineGpuAsync(engine, gpuId, ct, fullFrame: true, model: model).ConfigureAwait(false);
+        bool ok = outcome.Ok;
+        // 【2026-09-24 复审修正 · 取消 ≠ 判死】任何时刻 ct 已取消都在这里落地:不落盘**任何**结论。
+        // 真实触发路径:调用方(VideoService 预检等)传的是用户 ct ⇒ 探测卡满 60 秒时用户最可能点取消,
+        // 而取消正好会落在"超时失败之后、重试之前"那段退避里 —— 此时 RunAsync 返回的是"上一次失败",
+        // 但探测根本没跑完:落盘就等于"用户点一次取消,该引擎/模型接下来一整天走 ONNX 慢路"。
+        // 日志也要按取消说,不许写成"确定性失败"(那是归因错误,会把排查方向带偏)。
+        if (ct.IsCancellationRequested || outcome.Cancelled)
+        {
+            AppLogger.Warn(outcome.Cancelled
+                ? $"[探测] {engine} GPU({gpuId})本次探测被取消(超时失败后未完成重试)——因取消未重试,不落盘结论,下次照旧试"
+                : $"[探测] {engine} GPU({gpuId})本次探测期间任务已取消——因取消未落盘结论(这不代表该卡不可用),下次照旧试");
+            return false;
+        }
+        var failKind = outcome.Kind;
+        string failDetail = outcome.Detail ?? "";
+        // 结论按【引擎|GPU|模型】记账(决策键);明细带上失败形态与探测次数 ——
+        // 诊断包里一眼能分出"初始化即崩"还是"出图但坏帧",也一眼能看出"这次是不是重试过"。
+        SaveNcnnVerdict(engine, gpuId, model, ok,
             (ok ? "probe ok" : "probe failed: " + AlhPro.Core.ProbeDiagnosis.ShortName(failKind))
-            + $"; model={model ?? "(default)"}");
+            + $"; model={model ?? "(default)"}; attempts={outcome.Attempts}");
         if (ok)
         {
             LastProbeUserMessage = "";
-            AppLogger.Info($"[探测] {engine} GPU({gpuId})真机探测通过 → 使用 ncnn-Vulkan(50 系未禁用,走最快路径)");
+            AppLogger.Info($"[探测] {engine} GPU({gpuId})真机探测通过"
+                + (outcome.Retries > 0 ? $"(第 {outcome.Attempts} 次才通过:已如实重试 {outcome.Retries} 次)" : "")
+                + " → 使用 ncnn-Vulkan(50 系未禁用,走最快路径)");
         }
         else
         {
             // 【按形态说话】初始化即崩(Blackwell 上=NVIDIA 驱动缺陷)与"出图但坏帧"是两回事,不能混为一谈
             LastProbeUserMessage = AlhPro.Core.ProbeDiagnosis.Describe(failKind, IsBlackwellGpu(),
                 EngineLabel(engine));
+            // 【措辞自洽】"共探测 N 次"一律取实际尝试数(attempts);重试过就说"已重试 k 次仍失败",
+            // 没重试才允许说"确定性失败,按判据未重试"(取消那条路已在上面 return,不会走到这里)。
             AppLogger.Warn($"[探测] {engine} GPU({gpuId})真机探测失败({AlhPro.Core.ProbeDiagnosis.ShortName(failKind)}"
-                + (failDetail.Length > 0 ? ";" + failDetail : "") + ")→ 为稳定性改用 ONNX(结论已记住,不再重复试)。"
+                + (failDetail.Length > 0 ? ";" + failDetail : "")
+                + $";共探测 {outcome.Attempts} 次"
+                + (outcome.Retries > 0
+                    ? $"(已重试 {outcome.Retries} 次仍失败)"
+                    : failKind == AlhPro.Core.ProbeFailureKind.Hang
+                        ? "(超时/无响应未重试)"
+                        : "(确定性失败,按判据未重试)")
+                + ")→ 为稳定性改用 ONNX(结论已记住,不再重复试)。"
                 + LastProbeUserMessage);
         }
         return ok;
@@ -1811,7 +1845,8 @@ public static partial class EngineService
     /// AMD/Intel/老驱动等任何"该引擎不支持"的场景),提前提示换引擎,而不是处理中默默降级。
     /// 返回 false = GPU 不可用(建议换 waifu2x);异常/超时一律按 false 处理(不中断主流程)。
     /// 注意:仅探测(小图,毫秒级),不影响正常处理;结果不缓存(显卡/驱动随时可能变)。
-    /// 【保持原行为】这个 3 参重载 = fullFrame:false,与改动前逐字一致(所有既有调用点都走它)。
+    /// 【行为】这个 3 参重载 = fullFrame:false = 小图活性检查/挑卡档:确定性失败与瞬时超时都退避 1.5 秒、
+    /// 最多 3 次(挑卡路径的旧保险,定值见 AlhPro.Core.ProbeRetryPolicy.DeviceLivenessCheck)。
     /// 需要"能堵住 Blackwell 静默空帧/黑帧"的强判据时,用 fullFrame:true 的重载(见下)。</summary>
     public static async Task<bool> IsEngineGpuUsableAsync(string engine, int gpuId, CancellationToken ct)
         => await IsEngineGpuUsableAsync(engine, gpuId, ct, fullFrame: false, model: null).ConfigureAwait(false);
@@ -1832,9 +1867,39 @@ public static partial class EngineService
     /// (绝不能甩给驱动)。文案规则见 AlhPro.Core.ProbeDiagnosis(有单测守着这两条约束)。</summary>
     public static async Task<bool> IsEngineGpuUsableAsync(string engine, int gpuId, CancellationToken ct, bool fullFrame, string? model, Action<AlhPro.Core.ProbeFailureKind, string>? onFailure)
     {
+        var outcome = await ProbeEngineGpuAsync(engine, gpuId, ct, fullFrame, model).ConfigureAwait(false);
+        if (!outcome.Ok) onFailure?.Invoke(outcome.Kind, outcome.Detail);
+        return outcome.Ok;
+    }
+
+    /// <summary>按【重试档(profile)】编排探测:档位只由 fullFrame 决定(定值在 AlhPro.Core.ProbeRetryPolicy,有单测钉住)。
+    /// 【为什么编排在这里,而不是在 EnsureNcnnProbeAsync】同一个函数还被"启动自检挑卡"那一路调用
+    /// (fullFrame:false:FindBestWorkingGpuAsync 的挑卡、编号纠正、核显切换),那条路要按自己的档重试
+    /// (确定性失败/瞬时超时都 1.5 秒×最多 3 次 —— 旧保险),而生产形态探测按 pipeline 档(仅超时重试一次,退避 3 秒)。
+    /// 编排只留这一处 ⇒ 不会出现"内外两层各重试一次"(最坏会变成 4 次全帧探测,每次最长 60 秒)。</summary>
+    private static async Task<AlhPro.Core.ProbeRetryOutcome> ProbeEngineGpuAsync(
+        string engine, int gpuId, CancellationToken ct, bool fullFrame, string? model)
+    {
+        var profile = AlhPro.Core.ProbeRetryPolicy.ForFullFrame(fullFrame);
+        return await AlhPro.Core.ProbeRetryPolicy.RunAsync(
+            profile,
+            attemptAsync: (attemptNo, token) => ProbeEngineGpuOnceAsync(engine, gpuId, token, fullFrame, model),
+            // 退避里被取消不当成"探测过程异常":此时结论已经定了(失败),按失败返回、由调用方按 ct 收尾。
+            backoffAsync: async (ms, token) =>
+            {
+                try { await Task.Delay(ms, token).ConfigureAwait(false); } catch (OperationCanceledException) { }
+            },
+            log: AppLogger.Warn,   // 重试决策/结果一律落日志(Warn:这也是诊断包要看的那条线)
+            ct: ct).ConfigureAwait(false);
+    }
+
+    /// <summary>【做一次】探测:起引擎 → 等它出图 → 按形态分类结果(重试编排在 <see cref="ProbeEngineGpuAsync"/>)。
+    /// Kind/Detail 就是失败形态与明细(<see cref="AlhPro.Core.ProbeDiagnosis"/> 据此决定对用户怎么说)。</summary>
+    private static async Task<AlhPro.Core.ProbeAttempt> ProbeEngineGpuOnceAsync(
+        string engine, int gpuId, CancellationToken ct, bool fullFrame, string? model)
+    {
         AlhPro.Core.ProbeFailureKind failKind = AlhPro.Core.ProbeFailureKind.None;
         string failDetail = "";
-        // 重试链里以【最后一次】的形态为准 —— 那才是导致判"不可用"的原因
         void Note(AlhPro.Core.ProbeFailureKind k, string d) { failKind = k; failDetail = d; }
         try
         {
@@ -1846,8 +1911,7 @@ public static partial class EngineService
             };
             if (exe == null)
             {
-                onFailure?.Invoke(AlhPro.Core.ProbeFailureKind.EngineMissing, engine);
-                return false;
+                return new AlhPro.Core.ProbeAttempt(false, AlhPro.Core.ProbeFailureKind.EngineMissing, engine);
             }
             // 生成测试图:fullFrame=false 用 320×240(原 1×1 会假通过:部分引擎能跑 1×1,但在真实帧尺寸上因分块/显存/驱动崩);
             // fullFrame=true 用生产帧尺寸 1080×1920 —— 见下方 overload 的说明。
@@ -1911,76 +1975,78 @@ public static partial class EngineService
                     RedirectStandardError = true,
                     WorkingDirectory = Path.GetDirectoryName(exe) ?? ".",
                 };
-                // 【有独显时不轻易掉 CPU】探测重试 3 次:快速失败(exit≠0/无输出/黑帧)多为瞬时抽风,退避后重试;
-                // 超时(真 hang)不重试(重试只会再白等 15s);3 次全失败才判不可用。避免"一次驱动抽风就把 4060 判成没 GPU、整段掉 CPU"。
-                const int MaxAttempts = 3;
-                for (int attempt = 1; attempt <= MaxAttempts && !ct.IsCancellationRequested; attempt++)
+                // 【2026-09-24 · 重试判据已下沉到 AlhPro.Core.ProbeRetryPolicy ⇒ 这里只做【一次】尝试】
+                // 旧写法两处都与判据冲突,故一并收拢到 Core 的单一判据:
+                //   ① 确定性失败(退出码非 0 / 无产出 / 空产出 / 坏帧)在流水线档不再重试 ——
+                //      这些形态是确定性的(引擎已经退出、或已经交出结果,每次都会重现),重试只是把等待拉长;
+                //      但在【小图活性检查档】仍然退避 1.5 秒、最多 3 次(挑卡路径的旧保险,见 Core 的 profile 注释);
+                //   ② 超时(真 hang)不再当场判死 —— 真机踩过(2026-09-22 22:22 realesrgan GPU(0) 60 秒无响应
+                //      被强杀 ⇒ 该引擎/该模型当天全程走 ONNX),而重模型本身就可能跑数十秒 ⇒ 健康卡会被一次瞬时超时判死。
+                // 现在:要不要再试一次、试几次、退避多久,全由 ProbeRetryPolicy 按【档位】决定;
+                // 档位由调用方传进来的 fullFrame 选(见 ProbeEngineGpuAsync),这里只管"做一次 + 报形态"。
+                if (File.Exists(outPng)) { try { File.Delete(outPng); } catch { } }
+                using var p = Process.Start(psi);
+                if (p == null)
                 {
-                    if (File.Exists(outPng)) { try { File.Delete(outPng); } catch { } }
-                    using var p = Process.Start(psi);
-                    if (p == null)
-                    {
-                        AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId})第 {attempt}/{MaxAttempts} 次启动失败(进程为空),退避后重试...");
-                        Note(AlhPro.Core.ProbeFailureKind.StartupFailed, "进程为空(引擎未启动起来)");
-                        if (attempt < MaxAttempts) { try { await Task.Delay(1500, ct).ConfigureAwait(false); } catch { } }
-                        continue;
-                    }
-                    using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    // 探测超时:小图 15 秒(旧 5 秒对"冷启动慢的 ncnn 卡"会误报 hang,如 4060 首次加载 Vulkan 要 >5s);
-                    // 【生产帧尺寸探测必须给足 60 秒】实测(4060,1080×1920,-s 2):waifu2x-cunet 1.6s、
-                    // realesrgan-animevideov3 1.7s,但【realesrgan-x4plus 要 24.1s】—— 30 秒余量对重模型太紧,
-                    // 慢卡上会把能用的设备误判"不可用"→ 永久推回 ONNX(假失败代价很大:5060 上 ONNX 落 CPU 是 8 秒/帧)。
-                    // 真 hang 不会因超时变长而变慢:超时后直接返回 false,不重试。
-                    int probeTimeoutSec = fullFrame ? 60 : 15;
-                    waitCts.CancelAfter(TimeSpan.FromSeconds(probeTimeoutSec));
-                    try
-                    {
-                        await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
-                        // 【失败形态分类,决定对用户怎么说】
-                        // 退出码非 0 = 初始化/运行期崩溃(0xC0000005 访问违例是驱动缺陷的典型特征);
-                        // 退出码 0 但无产出/产出 0 字节 = 静默失败;产出非空但近黑 = 坏帧(另一类问题)。
-                        if (p.ExitCode != 0)
-                            Note(AlhPro.Core.ProbeFailureKind.CrashExitCode, $"exit=0x{p.ExitCode:X8}");
-                        else if (!File.Exists(outPng))
-                            Note(AlhPro.Core.ProbeFailureKind.NoOutput, "退出码 0 但无产出文件");
-                        else if (new FileInfo(outPng).Length == 0)
-                            Note(AlhPro.Core.ProbeFailureKind.EmptyOutput, "产出文件 0 字节");
-                        else
-                            Note(AlhPro.Core.ProbeFailureKind.DefectiveFrame, "产出非空,但判为缺陷帧(近黑/带状近黑)");
-                        // 判定:退出码 0 且输出文件存在(引擎正常出图)
-                        bool ok = p.ExitCode == 0 && File.Exists(outPng) && new FileInfo(outPng).Length > 0;
-                        // 【黑帧自检】引擎输出存在但全黑(静默黑帧 bug,如旧 ncnn on 50系/AMD 驱动异常)→ 该设备视为不可用,
-                        // 立即改用其它卡/ONNX;否则黑帧设备会被误判"可用",后续补帧/超分一路黑。
-                        // 判据是 IsBlackPng = FrameInspect.IsDefectiveFrame(整帧近黑【或】任一 1/3 主条带近黑)——
-                        // 带状黑("下 2/3 全黑、上 1/3 正常")也拦得住,不是只查整帧全黑。
-                        if (ok) { try { if (IsBlackPng(outPng)) { ok = false; } } catch { } }
-                        if (ok)
-                        {
-                            AppLogger.Info($"[探测] 引擎 {engine} GPU(-g {gpuId})可用(第 {attempt} 次," +
-                                (fullFrame ? "生产帧尺寸 1080×1920 出图,非黑/非带状黑" : "320×240 小图出图,非黑") + ")");
-                            return true;
-                        }
-                        AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId})第 {attempt}/{MaxAttempts} 次不可用(exit={p.ExitCode}/无输出/空帧/黑帧)" + (attempt < MaxAttempts ? ",退避后重试..." : "——将自动改用其它设备或 ONNX"));
-                    }
-                    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-                    {
-                        // 超时(真 hang):重试只会再白等,直接判不可用并杀进程
-                        AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId}) {probeTimeoutSec} 秒无响应(疑似 hang)" +
-                            (fullFrame ? "(探测用 1080×1920 生产帧尺寸:重模型本身也可能跑数十秒,本次按不可用保守处理)" : "") +
-                            "——按不可用处理,已终止探测(不重试)");
-                        try { p.Kill(entireProcessTree: true); } catch { }
-                        onFailure?.Invoke(AlhPro.Core.ProbeFailureKind.Hang, $"{probeTimeoutSec} 秒无响应");
-                        return false;
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        try { p.Kill(entireProcessTree: true); } catch { }
-                        throw;
-                    }
-                    if (attempt < MaxAttempts) { try { await Task.Delay(1500, ct).ConfigureAwait(false); } catch { } }
+                    AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId})启动失败(进程为空)");
+                    return new AlhPro.Core.ProbeAttempt(false, AlhPro.Core.ProbeFailureKind.StartupFailed,
+                        "进程为空(引擎未启动起来)");
                 }
-                onFailure?.Invoke(failKind, failDetail);
-                return false;
+                using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                // 探测超时:小图 15 秒(旧 5 秒对"冷启动慢的 ncnn 卡"会误报 hang,如 4060 首次加载 Vulkan 要 >5s);
+                // 【生产帧尺寸探测必须给足 60 秒】实测(4060,1080×1920,-s 2):waifu2x-cunet 1.6s、
+                // realesrgan-animevideov3 1.7s,但【realesrgan-x4plus 要 24.1s】—— 30 秒余量对重模型太紧,
+                // 慢卡上会把能用的设备误判"不可用"→ 永久推回 ONNX(假失败代价很大:5060 上 ONNX 落 CPU 是 8 秒/帧)。
+                // 【超时之后怎么办】本函数不自己决定:如实报 Hang,由 ProbeRetryPolicy 判"退避后再试一次"还是"到此为止"。
+                int probeTimeoutSec = fullFrame ? 60 : 15;
+                waitCts.CancelAfter(TimeSpan.FromSeconds(probeTimeoutSec));
+                try
+                {
+                    await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
+                    // 【失败形态分类,决定对用户怎么说】
+                    // 退出码非 0 = 初始化/运行期崩溃(0xC0000005 访问违例是驱动缺陷的典型特征);
+                    // 退出码 0 但无产出/产出 0 字节 = 静默失败;产出非空但近黑 = 坏帧(另一类问题)。
+                    if (p.ExitCode != 0)
+                        Note(AlhPro.Core.ProbeFailureKind.CrashExitCode, $"exit=0x{p.ExitCode:X8}");
+                    else if (!File.Exists(outPng))
+                        Note(AlhPro.Core.ProbeFailureKind.NoOutput, "退出码 0 但无产出文件");
+                    else if (new FileInfo(outPng).Length == 0)
+                        Note(AlhPro.Core.ProbeFailureKind.EmptyOutput, "产出文件 0 字节");
+                    else
+                        Note(AlhPro.Core.ProbeFailureKind.DefectiveFrame, "产出非空,但判为缺陷帧(近黑/带状近黑)");
+                    // 判定:退出码 0 且输出文件存在(引擎正常出图)
+                    bool ok = p.ExitCode == 0 && File.Exists(outPng) && new FileInfo(outPng).Length > 0;
+                    // 【黑帧自检】引擎输出存在但全黑(静默黑帧 bug,如旧 ncnn on 50系/AMD 驱动异常)→ 该设备视为不可用,
+                    // 立即改用其它卡/ONNX;否则黑帧设备会被误判"可用",后续补帧/超分一路黑。
+                    // 判据是 IsBlackPng = FrameInspect.IsDefectiveFrame(整帧近黑【或】任一 1/3 主条带近黑)——
+                    // 带状黑("下 2/3 全黑、上 1/3 正常")也拦得住,不是只查整帧全黑。
+                    if (ok) { try { if (IsBlackPng(outPng)) { ok = false; } } catch { } }
+                    if (ok)
+                    {
+                        AppLogger.Info($"[探测] 引擎 {engine} GPU(-g {gpuId})可用(" +
+                            (fullFrame ? "生产帧尺寸 1080×1920 出图,非黑/非带状黑" : "320×240 小图出图,非黑") + ")");
+                        return new AlhPro.Core.ProbeAttempt(true, AlhPro.Core.ProbeFailureKind.None, "probe ok");
+                    }
+                    AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId})探测不可用({AlhPro.Core.ProbeDiagnosis.ShortName(failKind)}"
+                        + (failDetail.Length > 0 ? ";" + failDetail : "")
+                        + ")→ 要不要再试一次由 AlhPro.Core.ProbeRetryPolicy 判据决定");
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    // 超时(疑似 hang):杀进程 + 如实报 Hang;重试与否交给 ProbeRetryPolicy(见上面的说明)
+                    AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId}) {probeTimeoutSec} 秒无响应(疑似 hang)" +
+                        (fullFrame ? "(探测用 1080×1920 生产帧尺寸:重模型本身也可能跑数十秒,健康卡也可能被这一次误判)" : "") +
+                        "——已终止本次探测");
+                    try { p.Kill(entireProcessTree: true); } catch { }
+                    Note(AlhPro.Core.ProbeFailureKind.Hang, $"{probeTimeoutSec} 秒无响应");
+                }
+                catch (OperationCanceledException)
+                {
+                    try { p.Kill(entireProcessTree: true); } catch { }
+                    throw;
+                }
+                // 只报"这一次"的形态;要不要再试一次、退避多久由 ProbeEngineGpuAsync 按档位编排
+                return new AlhPro.Core.ProbeAttempt(false, failKind, failDetail);
             }
             finally
             {
@@ -1991,8 +2057,8 @@ public static partial class EngineService
         catch (Exception ex)
         {
             AppLogger.Warn($"[探测] 引擎 {engine} GPU 探测异常(按不可用):{ex.Message}");
-            onFailure?.Invoke(AlhPro.Core.ProbeFailureKind.StartupFailed, "探测过程异常:" + ex.Message);
-            return false;
+            return new AlhPro.Core.ProbeAttempt(false, AlhPro.Core.ProbeFailureKind.StartupFailed,
+                "探测过程异常:" + ex.Message);
         }
     }
 

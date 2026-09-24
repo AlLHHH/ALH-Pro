@@ -3188,6 +3188,16 @@ public sealed partial class MainPage : Page
                             { System.IO.File.Copy(probeFile, System.IO.Path.Combine(tmpDir, "ncnn-probe.txt"), true); gathered++; }
                         }
                         catch { }
+                        // 【DirectML 结论账本原样带上 · 2026-09-24 复审 F2】同一条教训再来一次:音频分离"这台卡
+                        // 跑不了 Demucs"的结论落在 settings\dml-verdicts.txt(.txt),只枚举 *.json 就会把它漏掉 ——
+                        // 用户报"音频一直走 CPU"时,包里看不到是哪个模型/哪张卡/什么时候判的、失败了几次。
+                        try
+                        {
+                            var verdictFile = ALHPro.EsrganOnnxService.AudioDmlVerdictFilePath;
+                            if (System.IO.File.Exists(verdictFile))
+                            { System.IO.File.Copy(verdictFile, System.IO.Path.Combine(tmpDir, "dml-verdicts.txt"), true); gathered++; }
+                        }
+                        catch { }
                     }
                     catch { }
                     // ④ 打包到内存流(不落地临时 zip,避免被清理/边写边读竞态),再写入用户选的保存文件
