@@ -100,9 +100,9 @@
                 <StackPanel Grid.Row="2" Padding="14,12" Spacing="6">
                     <TextBlock Text="AlL.H" FontSize="16" FontWeight="SemiBold"
                                Foreground="#E8ECF2"/>
-                    <Button Content="请作者喝咖啡" Click="CoffeeCard_Click" HorizontalAlignment="Stretch"
+                    <Button Content="赞助作者" Click="CoffeeCard_Click" HorizontalAlignment="Stretch"
                             Padding="0,5" FontSize="11" Margin="0,2,0,0"
-                            ToolTipService.ToolTip="完全自愿:请作者喝一杯咖啡"/>
+                            ToolTipService.ToolTip="完全自愿:赞助作者"/>
                     <Button Content="ALH Pro 社区" Click="Community_Click" HorizontalAlignment="Stretch"
                             Padding="0,5" FontSize="11" Margin="0,2,0,0"
                             ToolTipService.ToolTip="官方交流社区:使用问题 / 功能建议 / 处理效果交流"/>
@@ -299,7 +299,7 @@
             </Border>
         </Grid>
 
-        <!-- 请作者喝咖啡 赞助提示遮罩 -->
+        <!-- 赞助作者 赞助提示遮罩 -->
         <Grid x:Name="SponsorOverlay" Grid.ColumnSpan="2"
               Background="#D8000000" Visibility="Collapsed" IsHitTestVisible="True">
             <Border Background="{StaticResource AppPanelBrush}" BorderBrush="{StaticResource AppBorderBrush}"
@@ -308,14 +308,14 @@
                 <StackPanel Spacing="14">
                     <TextBlock Text="感谢使用 ALH Pro" FontSize="22" FontWeight="SemiBold"
                                Foreground="#E8ECF2" TextAlignment="Center" HorizontalAlignment="Center"/>
-                    <TextBlock Text="如果 ALH Pro 对你有帮助,欢迎请作者喝杯咖啡,支持作者持续更新与修复。"
+                    <TextBlock Text="如果 ALH Pro 对你有帮助,欢迎赞助作者,支持作者持续更新与修复。"
                                FontSize="14" Opacity="0.92" TextWrapping="Wrap" TextAlignment="Center"
                                HorizontalAlignment="Center"/>
                     <TextBlock Text="你的支持是作者持续优化软件的最大动力。"
                                FontSize="12" Opacity="0.6" TextWrapping="Wrap" TextAlignment="Center"
                                HorizontalAlignment="Center"/>
                     <StackPanel Orientation="Horizontal" Spacing="14" HorizontalAlignment="Center" Margin="0,8,0,0">
-                        <Button Content="请作者喝咖啡" Style="{StaticResource AccentButtonStyle}" Padding="18,7"
+                        <Button Content="赞助作者" Style="{StaticResource AccentButtonStyle}" Padding="18,7"
                                 Click="SponsorCoffee_Click"/>
                         <Button Content="暂时不了" Padding="18,7" Click="SponsorClose_Click"/>
                     </StackPanel>

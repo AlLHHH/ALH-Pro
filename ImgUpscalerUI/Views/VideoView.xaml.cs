@@ -11373,6 +11373,13 @@ public sealed partial class VideoView : UserControl
         DateTime lastStepFileLogAt = DateTime.MinValue;   // 文件日志节流:阶段内每 30 秒补一行进度(诊断用)
         string? stepLogFull = null;                   // 当前已显示的步骤完整行([hh:mm:ss] ▶ ...)
         var taskStart = DateTime.Now;
+        // 【F2 · 标定墙钟的归零点 —— 唯一一处(2026-09-25 修订 R1)】紧接任务起点、在 items 循环**之前**清零:
+        //   · 清零 = **每任务一次**(这里),扣减 = **每任务一次**(下面的记账行),累计 = 本任务内**所有视频**的标定之和;
+        //   · 上一轮任务若在"记账"前就结束(取消/异常),残留值在这里被丢弃 ⇒ 不会被扣到本次头上(扣多同样是污染);
+        //   · 原来这个清零在 `VideoService.ProcessVideoAsync` 入口 = **每个视频都跑一次** ⇒ 多视频任务里
+        //     视频 2 会把视频 1 刚标定的累计值消费掉丢弃,记账时 calibSeconds=0(标定墙钟照样进样本)。
+        //     `VideoService.cs` 里不许再出现 `ConsumeCalibratedSeconds()`(有源断言钉住)。
+        UpscaleCalibrator.ConsumeCalibratedSeconds();
         DateTime lastEtaAt = DateTime.MinValue;
         DateTime lastPanelAt = DateTime.MinValue;   // 详情面板刷新节流(防高频报告刷 UI 卡顿)
         DateTime lastSpeedAt = DateTime.MinValue;   // 近期速度样本节流
@@ -12060,8 +12067,16 @@ public sealed partial class VideoView : UserControl
             double encSeconds = encSecondsAcc + (encSegStart.HasValue
                 ? Math.Max(0, (DateTime.Now - encSegStart.Value).TotalSeconds)
                 : 0);
-            double processSeconds = Math.Max(0, taskSpan.TotalSeconds - encSeconds);
-            AppLogger.Info($"阶段耗时拆分:处理阶段(拆帧/去重/补帧/超分/后处理){processSeconds:0.#} 秒 + 编码/封装 {encSeconds:0.#} 秒 = 总 {taskSpan.TotalSeconds:0.#} 秒");
+            // 【2026-09-25 修订 · F2/R1】首帧任务的**超分单价标定**墙钟也要扣掉:它同样不是"每帧推理成本"
+            // (一次 Real-CUGAN 标定约 10~20 秒,含两次引擎启动),不扣就会把这次的"秒/帧"抬高,
+            // 再以 50/50 掺进后续 ETA。与任务入口那一次 `ConsumeCalibratedSeconds()` 成对:清零每任务一次、
+            // 扣减每任务一次、累计 = 本任务内**所有视频**的标定之和(多视频也扣得住)。
+            // 没标定过时返回 0(行为不变)。
+            double calibSeconds = UpscaleCalibrator.ConsumeCalibratedSeconds();
+            double processSeconds = Math.Max(0, taskSpan.TotalSeconds - encSeconds - calibSeconds);
+            AppLogger.Info($"阶段耗时拆分:处理阶段(拆帧/去重/补帧/超分/后处理){processSeconds:0.#} 秒 + 编码/封装 {encSeconds:0.#} 秒"
+                + (calibSeconds > 0 ? $" + 超分单价标定 {calibSeconds:0.#} 秒(不计入每帧成本)" : "")
+                + $" = 总 {taskSpan.TotalSeconds:0.#} 秒");
             if (okCount > 0 && failCount == 0 && totalFramesEst > 0 && processSeconds > 10)
             {
                 // 面积归一只按【帧数加权】:实际成本 = Σ(帧数ᵢ × 每帧成本 × 面积ᵢ),各视频面积不同时

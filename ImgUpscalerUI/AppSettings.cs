@@ -41,7 +41,7 @@ public static class AppSettings
     /// <summary>启动自检完成后的正式报告文本(设置界面「计算设备」区常驻显示)。</summary>
     public static string SelfCheckReport { get; set; } = "";
 
-    /// <summary>上次关闭"请作者喝咖啡"赞助提示的时间(冷却:2 小时内不再触发)。</summary>
+    /// <summary>上次关闭"赞助作者"赞助提示的时间(冷却:2 小时内不再触发)。</summary>
     public static DateTime SponsorPromptTime { get; set; } = DateTime.MinValue;
 
     /// <summary>是否已完成过启动自检(点了「确定」才置真;用于消除 RunOnce 竞态,保证首次/更新必弹自检)。</summary>

@@ -115,11 +115,14 @@ public class LogShortTextTests
         Assert.DoesNotContain("未达", line);
     }
 
-    /// <summary>真实判定入口(用成本表算出来的 Decision)也必须满足界面规则 —— 不是只有手搓结果才合规。</summary>
+    /// <summary>真实判定入口(用成本表算出来的 Decision)也必须满足界面规则 —— 不是只有手搓结果才合规。
+    /// 【2026-09-25】判定入口改成只吃**本机标定**后,这里显式喂一条本机标定,测的才是生产上真会走的那条路
+    /// (不喂 ⇒ 走"未标定→旧顺序"的兜底,判据那一大串就不在场了,这条测试会失去意义)。</summary>
     [Fact]
     public void Order_short_text_from_the_real_decider_also_obeys_ui_rules()
     {
-        var d = PipelineOrderPlan.Decide("realesrgan", "realesr-animevideov3", 4.0, 3, 1920, 1080, 72);
+        var d = PipelineOrderPlan.Decide("realesrgan", "realesr-animevideov3", 4.0, 3, 1920, 1080, 72,
+            localPrices: LocalPriceFixture.Built("realesr-animevideov3", 3));
         string line = LogShortText.OrderShortText(d, 15.0);
         Assert.Contains(d.UpscaleFirst ? "超分→补帧" : "补帧→超分", line);
         Assert.DoesNotContain("完成", line);

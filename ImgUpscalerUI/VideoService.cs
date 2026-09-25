@@ -582,6 +582,13 @@ public static class VideoService
         // 【长视频临时盘水位】磁盘紧张标志:预估需要 ≥ 剩余空间 45% → 降批大小(减少同屏临时帧,防爆盘)。
         // 必须在 EvalTempSpaceGate 之前声明:那个本地函数要往里写(复判只能收紧、不能放松)。
         bool diskTight = false;
+        // 【F2 · 归零点**不在这里**(2026-09-25 修订 R1)】这里原来是"任务入口归零"(调用标定器的
+        // 取一次清零入口)。但 `ProcessVideoAsync` 是**每个视频都会跑**的,而扣减与"记进耗时经验库"
+        // 是**全任务一次**(见 Views/VideoView.xaml.cs,那个收尾块在逐 item 循环之外)——
+        // 于是两个视频的任务里:视频 1 现场标定累计 → **视频 2 的入口把值消费掉丢弃** →
+        // 全任务记账时拿到的标定秒数是 0 ⇒ 标定墙钟照样留进每帧成本样本(与"已从样本里扣掉"的声明相反)。
+        // ⇒ 归零点已移到 `Views/VideoView.xaml.cs` 的**任务入口**(items 循环之前),与扣减点成对(都是每任务一次)。
+        // 【本文件不许再出现那个清零调用】有源断言钉住(LocalCalibrationWiringTests)。
         var workDir = Path.Combine(tempRoot, $"imgup_video_{Guid.NewGuid():N}");
 
         // ===== 【临时空间守门 · 唯一一份判据】拆帧前粗判一次、倍率定稿后再复判一次 =====
@@ -1494,6 +1501,14 @@ public static class VideoService
             // 故去重删过帧时也用「每帧真实时长表」重定时:输出 VFR 时间轴=原视频节奏,补帧只负责填运动、不改变时间。
             bool preserveRhythm = vfrPassthrough || (dedup && frameDurs != null && frameDurs.Count == frameCount);
 
+            // 【2026-09-25 修订 · F1】超分设备定稿(upGpu/waifuOnnx/upOnnxDml/ncnnUnreliable)必须声明在这里
+            // (方法主体层),不能像原来那样声明在超分阶段里:`if (upscaleRuns) { …探测… }` 那段已经**上移到
+            // 阶段顺序判定之前**,而批次循环还在很后面 —— 两者要读的是同一组变量。
+            // 早声明的理由与 `segBounds`/`frameScale` 那几行完全一样:它只依赖 engine/model/gpuId 这些外层入参。
+            int upGpu = gpuId;
+            bool waifuOnnx = false;        // 50系 waifu2x ncnn 不可用 → 整段视频改走 ONNX(安全网)
+            bool upOnnxDml = false;        // 探测失败/不可用 → 走 ONNX 时用 DirectML GPU(-2 自动)而非强制 CPU(-1)
+            bool ncnnUnreliable = false;   // 视频超分检测到 ncnn-Vulkan 黑帧 → 后续批次直接走 ONNX(不再每批先 ncnn 失败再降级,省极长时间)
             // 3) 补帧(可选):按下面 InterpStageAsync 执行,转场识别时按转场点分段,段内插值、转场处不插。
             //    【阶段顺序】1x/2x 走「超分 → 补帧」(补帧在超分输出上做),3x/4x 走「补帧 → 超分」(旧顺序,一字不改)。
             //    旧注释里"避免在大图上补帧造成 9 倍开销"只对高倍率成立:实测 2x@1080p→2160p 补帧 0.10→0.35 秒/输出帧,
@@ -2190,19 +2205,239 @@ public static class VideoService
                                       : "转场识别=关 → 切点处不做保护、照常按比例插值(与改动前一致)")
                                 : " → 判定可填平,但**源不是 VFR** ⇒ 按常规路径处理(不做时序重采样,与改动前一致)"))));
                 }
-                // 【任务 Q1 · 2026-09-13】阶段顺序不再靠全局开关(常量 false),改为**按实测单价自动判定**:
+                // ═══════════ 【2026-09-25 修订 · F1】超分 GPU 探测与"设备定稿"必须先于阶段顺序判定/标定 ═══════════
+            // 【原设计错在哪】探测块原来在超分阶段里(判定点之后约 300 行):它会改口 upGpu/waifuOnnx/upOnnxDml、
+            // **改写 model**(Real-CUGAN 换降噪档)、甚至直接 throw;而标定与顺序判定都跑在它【之前】⇒
+            // 标定可能测到生产根本不会走的后端,并把偏小的错单价**永久落盘**(判定于是偏向「补帧→超分」——
+            // 正是 2026-09-25 那次 39 分钟误判的同一类)。而 `ShouldUseOnnx*` 读的是**已落盘**的探测结论
+            // (未测过时按"不算风险"处理)⇒ **首次运行必然撞上**这个错位。
+            // 【现在】把"探测 + 设备定稿"整段提前到判定之前 ⇒ 判定点能算出**本次真正会走的后端**,
+            // 单价就按这个后端落盘与查找(LocalPriceBook 的 Backend 键)。
+            // 【进度百分比用 6(准备/判定档),不借超分档的 45%】否则进度条先跳到 45 再回落到补帧的 10~45,
+            // 用户看到的是"倒退"。
+            if (upscaleRuns)
+            {
+                int probePct = 6;
+                // 【2026-09-24】Real-CUGAN 只支持 GPU:用户在"计算设备"里选了 CPU(-g -1)、
+                // 或本机确实没有可用 GPU 时,直接**明确拒绝**并给替代方案 —— 不跑那条实测会崩的 CPU 档,
+                // 也不静默换模型。判据与真实原因都写在异常消息里(用户看得到)。
+                if (doUpscale && engine == AlhPro.Core.RealCugan.EngineName && gpuId < 0)
+                {
+                    throw new RealCuganNeedsGpuException(RealCuganRefusal.Message(engineLevelAlsoFailed: false));
+                }
+                if (gpuId >= 0)
+                {
+                    // 【50 系不再"一律禁用 ncnn"】旧逻辑:Blackwell + waifu2x 直接改走 ONNX,不做任何实测。
+                    // 旧口径漏检的根因已写明在 EngineService.IsEngineGpuUsableAsync(fullFrame) 上:
+                    // 320×240(甚至 1×1)小图能过,真实分辨率才静默出 0KB 空帧/黑帧且【退出码 0】——
+                    // 于是探测判"可用",坏帧一路进成片。现在改为:先按【生产形态】真机探测
+                    // (1080×1920 + 真实模型 + 生产 -j + 带状黑判据),通过 → 就走 ncnn-Vulkan
+                    // (真机实测 0.24~0.6 秒/帧,而"ONNX 落 CPU"是 8 秒/帧);失败 → 才改走 ONNX 并明确告知用户。
+                    // 【2026-09-24】探测按 NcnnProbePlan 走:①「动漫 · Anime4K 修复」走着色器、根本不用 ncnn
+                    // ⇒ **不探测**(原样把 Tag anime4k 喂进去会让 ncnn 去加载一个不存在的模型 ⇒ 探 60 秒被强杀
+                    // ⇒ 落一条假的 realesrgan 失败结论 ⇒ 之后所有 2x/3x/4x 视频超分被判走 ONNX —— 实测 2x 超分
+                    // 3880 ms/帧,而软件标称 0.26~0.30 秒/帧);②「现实 · 1x 修复」的 Tag 不是真模型 ⇒ 用真权重探。
+                    var upProbePlan = AlhPro.Core.NcnnProbePlan.For(model);
+                    bool usable = true;
+                    if (upProbePlan.ShouldProbe)
+                    {
+                        progress?.Report((probePct, $"正在检测超分 GPU 兼容性({engine},首次最长约 60 秒,结论会记住)..."));
+                        usable = await EngineService.EnsureNcnnProbeAsync(engine, gpuId, upProbePlan.Model, ct).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        AppLogger.Info($"超分 GPU 探测跳过:{upProbePlan.Why}(本批不经 ncnn,探测只会白等并写脏结论)");
+                    }
+                    if (!usable)
+                    {
+                        if (engine == "waifu2x" && EngineService.IsBlackwellGpu())
+                        {
+                            // waifu2x 在 50 系:ncnn CPU 模式同样会崩(实测 exit -1073741819)——
+                            // 不能像其他引擎那样"降 CPU",而是整段改走 ONNX 稳定版(DirectML/CPU 都行)
+                            waifuOnnx = true;
+                            upOnnxDml = true;
+                            AppLogger.Warn($"⚠ waifu2x 在本机 50 系 GPU 上真机探测失败——为稳定性改用 ONNX 稳定版(整段视频,兼容模式)。"
+                                + EngineService.LastProbeUserMessage);
+                            progress?.Report((probePct, $"⚠ waifu2x 在本机 50 系 GPU 上不可用,为稳定性改用 ONNX(整段视频)..."));
+                        }
+                        else if (engine == AlhPro.Core.RealCugan.EngineName)
+                        {
+                            // 【F4 · 2026-09-24】修掉"单支档位被瞬时误判 ⇒ 整批拒绝"。
+                            // 口径与 AlhPro.Core.NcnnModelVerdicts 一致:**引擎级可用性只认不带模型的那条**
+                            // (键 `引擎|GPU|`),单支档位失败不牵连同引擎的其它档位。三步:
+                            //   ① 先读引擎级结论;没有就**补探一次**(model = null ⇒ RealCuganArgs 落到默认档
+                            //      models-se + 保守档,"引擎本身能不能在这张卡上跑"由此确定 —— 与 RIFE / Real-ESRGAN 同款兜底);
+                            //   ② 引擎级可用 ⇒ 在其它降噪档里逐个实测,第一个通过的拿来用(三档权重都在包里);换档如实上报;
+                            //   ③ 引擎级也不可用 / 三档都不过 ⇒ 才拒绝,且拒绝信息写成「设计如此 + 可执行下一步」。
+                            var engineLevelVerdict = EngineService.TryGetNcnnVerdict(AlhPro.Core.RealCugan.EngineName, gpuId);
+                            bool engineLevelOk = engineLevelVerdict
+                                ?? await EngineService.EnsureNcnnProbeAsync(AlhPro.Core.RealCugan.EngineName, gpuId, null, ct).ConfigureAwait(false);
+                            string? picked = null;
+                            if (engineLevelOk)
+                            {
+                                foreach (var alt in AlhPro.Core.RealCugan.AlternativeTags(model))
+                                {
+                                    if (await EngineService.EnsureNcnnProbeAsync(AlhPro.Core.RealCugan.EngineName, gpuId, alt, ct).ConfigureAwait(false))
+                                    {
+                                        picked = alt;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (picked is not null)
+                            {
+                                AppLogger.Warn($"⚠ Real-CUGAN 的「{AlhPro.Core.RealCugan.Label(model)}」档位在本机 GPU({gpuId})探测没过,"
+                                    + $"但**引擎级**实测可用 ⇒ 本批自动改用「{AlhPro.Core.RealCugan.Label(picked)}」(权重同样随包),不是整批拒绝。"
+                                    + EngineService.LastProbeUserMessage);
+                                progress?.Report((probePct, $"⚠ Real-CUGAN 的「{AlhPro.Core.RealCugan.Label(model)}」档位探测未通过,"
+                                    + $"已自动改用「{AlhPro.Core.RealCugan.Label(picked)}」继续处理(引擎级实测可用)…"));
+                                model = picked;
+                                usable = true;   // 保持 GPU(ncnn-Vulkan)
+                            }
+                            else
+                            {
+                                throw new RealCuganNeedsGpuException(RealCuganRefusal.Message(engineLevelAlsoFailed: !engineLevelOk));
+                            }
+                        }
+                        else
+                        {
+                            // ncnn GPU 不可用:不急着掉最慢的 ncnn-CPU —— 先试 ONNX DirectML(与 ncnn-Vulkan
+                            // 是两套完全独立运行时,这些卡 DirectML 往往能正常 GPU 加速);ONNX 失败才自动掉 CPU。
+                            AppLogger.Warn($"⚠ 超分引擎 {engine} 真机探测失败(生产帧尺寸 1080×1920)——为稳定性改用 ONNX DirectML GPU(比 ncnn-CPU 快一个数量级)。"
+                                + EngineService.LastProbeUserMessage);
+                            progress?.Report((probePct, $"⚠ 超分引擎 {engine} 无法用 ncnn GPU,为稳定性改用 ONNX 稳定引擎(DirectML GPU)..."));
+                            upGpu = -1;          // 触发下方 ONNX 分支
+                            upOnnxDml = true;    // 且用 DirectML GPU(-2 自动选设备),而非强制 CPU
+                            waifuOnnx = engine == "waifu2x" ? true : waifuOnnx;   // waifu2x 探测失败同样走 ONNX
+                        }
+                    }
+                    else
+                    {
+                        if (upProbePlan.ShouldProbe)
+                            AppLogger.Info($"✅ 超分引擎 {engine} 真机探测通过(生产帧尺寸 1080×1920,GPU {gpuId})→ 使用 ncnn-Vulkan(未因 50 系而禁用)");
+                    }
+                }
+                else if (engine == "waifu2x" && EngineService.IsBlackwellGpu())
+                {
+                    // 用户选了 CPU(-g -1):50 系 waifu2x 的 ncnn CPU 模式有崩溃 bug → 直接整段走 ONNX 更稳
+                    waifuOnnx = true;
+                    AppLogger.Warn("⚠ 50系 waifu2x:CPU(-g -1)模式有崩溃 bug,自动改走 ONNX 稳定版");
+                }
+                // ===== 设备实际用途诊断(进诊断包:一眼分辨"显示 GPU 却实际跑 CPU/慢路径")=====
+                // 超分阶段已在此定死:waifuOnnx → ONNX 整段;upGpu<0 → ONNX DirectML 或 CPU;否则 ncnn-GPU。
+                // 补帧/编码实际设备在各自阶段已记录;这里只汇总超分(最常掉 CPU 的一步)+ 标注哪些环节待确认。
+                {
+                    string upPath;
+                    if (waifuOnnx) upPath = upOnnxDml ? "ONNX DirectML(GPU 稳定版)" : "ONNX CPU(无 DirectML)";
+                    else if (upGpu < 0) upPath = upOnnxDml ? "ONNX DirectML(GPU,探测失败降级)" : "ONNX CPU";
+                    else upPath = $"ncnn-Vulkan GPU(编号 {upGpu})";
+                    string upDeviceName = upGpu >= 0 ? GpuInfo.GetEngineDeviceName(upGpu) : "(非 GPU)";
+                    AppLogger.Info($"设备实际用途:超分[{engine}] 走 {upPath}(设备:{upDeviceName});补帧/编码设备见各自阶段日志(超分是最常掉 CPU 的一步,此处已定死)");
+                }
+            }
+
+            // 【任务 Q1 · 2026-09-13】阶段顺序不再靠全局开关(常量 false),改为**按实测单价自动判定**:
                 // 超分单帧成本 u 与"补帧在源分辨率/放大后分辨率的单帧成本"比较,谁便宜谁先跑。
-                // 判据/成本表/安全边际(节省 <15% 不切换)/未实测组合回退,全在 AlhPro.Core.PipelineOrderPlan
-                // (纯函数 + 单测,成本表每个数字都标了 2026-09-13 真机实测出处)。
-                // 【2026-09-14】这三组数字(超分单价表 / 补帧锚点表 / 安全边际)原可被"在线参数"覆盖,
-                // 那个功能已被用户判定为累赘并整体删除 → 现在**只读 Core 里的内置实测常量**(逐字等价)。
+                // 判据/成本模型/安全边际(节省 <15% 不切换)/未标定回退,全在 AlhPro.Core.PipelineOrderPlan
+                // (纯函数 + 单测)。
+                // 【2026-09-14】三组数字(超分单价 / 补帧锚点 / 安全边际)原可被"在线参数"覆盖,那个功能已整体删除
+                // ⇒ 现在这些数字都来自代码里的常量,不再有联网覆盖层。
+                // 【2026-09-25 A+B】其中"超分单价"这一项的**来源变了**:内置表是开发机(RTX 4060 Laptop)一台机器的
+                // 实测,**不再参与判定**(用户原话:「别人使用时…也是用我的设备???」)⇒ 判定只吃本机标定
+                // (CalibMemory,键含机器指纹);本机没标定过就在下面现场标一次,标不出来就保守走旧顺序。
+                // 补帧锚点与安全边际仍是原口径(与机器相关性低得多,且属本轮 non-goal)。
                 // 只有"超分与补帧都要真跑"时顺序才有意义;其余情况保持 upscaleFirst 的原值(全局开关口径)。
                 if (doUpscale && frameInterp && upscaleRuns)
                 {
                     double upScaleNow = upscaleShrink1x ? 2.0 : scale;   // 引擎实际跑的倍率(1x 缩回 = 按 2x 跑再缩回)
                     double areaScaleNow = upscaleShrink1x ? 1.0 : scale; // 补帧真正吃到的帧相对源帧的放大倍数(缩回后 = 1)
+                    // ===== 【2026-09-25 A+B + 修订 F1 · 判据只吃「本机实测单价」】=====
+                    // 用户原话:「那别人使用时,这个检查决定先超分还是先补帧也是用我的设备???」
+                    // ⇒ 内置表(开发机 RTX 4060 Laptop)不再参与判定;只看**这台机器**上标出来的单价
+                    //   (CalibMemory,键含机器指纹 + **后端**)。
+                    // 【修订 F1(2026-09-25)】探测与设备定稿已经在上文完成 ⇒ 这里的 upGpu/waifuOnnx/upOnnxDml
+                    // 就是**本次真正会走的那条路**;后端字符串由与批次循环同一个纯函数算出(UpscaleBackendPlan),
+                    // 单价就按这个后端落盘与查找:
+                    //   · I1 落盘单价 = 在本次真跑的那条后端上测出来的;
+                    //   · I2 在别的后端上测的单价**查不到**(后端进键)—— 绝不会被用来判定本次;
+                    //   · I4 后端没定稿(空)时 UpscaleCalibrator 与 LocalPriceBook.TryBuild 都会**拒收**,不落盘。
+                    // 只有"超分与补帧都要真跑"时顺序才有意义;其余情况保持 upscaleFirst 的原值(全局开关口径)。
+                    bool calibPrefEsrgan = upGpu >= 0 && engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan();
+                    bool calibPrefWaifu2x = upGpu >= 0 && engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx);
+                    bool calibOnnx = AlhPro.Core.UpscaleBackendPlan.UseOnnx(engine, upGpu, calibPrefEsrgan, calibPrefWaifu2x,
+                        ncnnUnreliable, fastMode);
+                    string calibBackend = AlhPro.Core.UpscaleBackendPlan.DescribeBackend(engine, upGpu, calibPrefEsrgan,
+                        calibPrefWaifu2x, ncnnUnreliable, fastMode, upOnnxDml);
+                    var calibBook = CalibMemory.All();
+                    string calibMachineKey = CalibMemory.MachineKeyOf();
+                    int calibEngineScale = Math.Max(1, AlhPro.Core.EngineScalePolicy.Decide(engine, model, upScaleNow).EngineScale);
+                    bool haveLocalPrice = AlhPro.Core.LocalPriceBook.Resolve(calibBook, model, calibEngineScale, calibMachineKey, calibBackend).Usable;
+                    AppLogger.Info($"阶段顺序判据的准备:后端={AlhPro.Core.UpscaleBackendPlan.Label(calibBackend)}"
+                        + $";本机这一格(模型 {model} {calibEngineScale}x + 该后端){(haveLocalPrice ? "有" : "没有")}标定");
+                    if (!haveLocalPrice)
+                    {
+                        try
+                        {
+                            long calibPixels = (long)Math.Max(1, srcW) * (long)Math.Max(1, srcH);
+                            int calibSampleFrames = AlhPro.Core.CalibrationSample.FramesFor(
+                                AlhPro.Core.CalibrationSample.EstimatePerFrame(model, calibEngineScale, calibPixels), calibPixels);
+                            // 【同一条入口】标定跑的就是批次循环那条路:同一个纯函数 + **定稿后的取值**
+                            // + 同一套参数(引擎/模型/倍率/降噪档/GPU/分块/jpg)。标定与生产不各写一份。
+                            int calibTile = SafeRender.GetVideoTileSize() / (fastMode ? 2 : 1);
+                            var calibPrice = await UpscaleCalibrator.MeasureAsync(
+                                framesIn, frameCount, workDir, srcW, srcH, calibSampleFrames, calibMachineKey, calibBackend,
+                                engine, model, calibEngineScale,
+                                async (calibIn, calibOut, calibCt) =>
+                                {
+                                    if (calibOnnx)
+                                    {
+                                        string? calibOnnxPath = engine == "waifu2x"
+                                            ? EsrganOnnxService.FindWaifu2xModel(model)
+                                            : EsrganOnnxService.ResolveEsrganOnnxPath(model);
+                                        // 与批次循环**同一个设备公式**(UpgradeBackendPlan.OnnxDevice)⇒ 标定测的就是生产那条 ONNX 后端
+                                        await EsrganOnnxService.UpscaleDirAsync(calibIn, calibOut, upScaleNow,
+                                            AlhPro.Core.UpscaleBackendPlan.OnnxDevice(upGpu, upOnnxDml), null, calibCt, calibOnnxPath, 0, 0, null);
+                                    }
+                                    else
+                                    {
+                                        await EngineService.UpscaleDirAsync(calibIn, calibOut, engine, model, upScaleNow,
+                                            denoiseViaModel ? waifu2xNoiseArg : 0, upGpu, false, null, calibCt, calibTile,
+                                            outFormat: "jpg");
+                                    }
+                                },
+                                progress, ct).ConfigureAwait(false);
+                            if (calibPrice is { } cp)
+                            {
+                                CalibMemory.Upsert(cp);
+                                calibBook = CalibMemory.All();   // 复用刚测出的数字,同一任务内不再标第二次
+                                haveLocalPrice = true;
+                            }
+                            else
+                            {
+                                // 【不许静默】标定没成功要如实说一句(短话),并说明这次按哪条路走。
+                                progress?.Report((6, "· " + AlhPro.Core.LogShortText.ClampToChineseLimit(
+                                    $"本机超分单价没标定成功({UpscaleCalibrator.LastRejectReason})→ 本次保守按「补帧→超分」,不影响成片")));
+                            }
+                            // 标定耗时**单独记一个阶段**;它由 VideoView 的任务入口归零 + 记账行从 PerfMemory
+                            // 样本窗口扣除(每任务一次,累计本任务内所有视频的标定;见 docs §六.5)。
+                            AppLogger.Info($"阶段耗时(准备·超分单价标定):{UpscaleCalibrator.LastTotalSeconds:0.#} 秒"
+                                + "(一次性;含两次引擎启动。该耗时会在本次任务结束时从 PerfMemory 的每帧成本样本窗口里扣除 —— 标定过程本身也不接逐帧进度)");
+                        }
+                        catch (Exception ex)
+                        {
+                            // 双保险:UpscaleCalibrator 内部已吞异常。这里再兜一层,绝不让"标定"成为任务失败的原因。
+                            AppLogger.Warn($"⚠ 超分单价标定阶段异常(已忽略,任务继续):{ex.Message}");
+                            progress?.Report((6, "· " + AlhPro.Core.LogShortText.ClampToChineseLimit(
+                                "本机超分单价标定异常 → 本次保守按「补帧→超分」,不影响成片")));
+                        }
+                    }
+                    // 【I2】判定只喂**该后端**的单价(后端不匹配的记录当没这一格);未标定 ⇒ Decide 内部走旧顺序。
+                    var sameBackendBook = calibBook
+                        .Where(p => AlhPro.Core.UpscaleBackendPlan.NormalizeBackend(p.Backend) == AlhPro.Core.UpscaleBackendPlan.NormalizeBackend(calibBackend))
+                        .ToList();
                     var orderPlan = AlhPro.Core.PipelineOrderPlan.Decide(engine, model, upScaleNow, interpScale,
-                        srcW, srcH, frameCount, areaScale: areaScaleNow);
+                        srcW, srcH, frameCount, areaScale: areaScaleNow,
+                        localPrices: sameBackendBook, machineKey: calibMachineKey, backend: calibBackend);
                     upscaleFirst = orderPlan.UpscaleFirst;
                     // 【进度区间必须跟着"真正执行的顺序"走】否则进度条会先按旧顺序跳到 45% 再倒退
                     // (H 任务注释里点名的老问题)。这里就在判定点重算,闭包/后续阶段读到的都是新值;
@@ -2219,8 +2454,20 @@ public static class VideoService
                     // 【任务 X1】界面日志区只放【结论短句】:完整判据(u / r_lo / r_hi / 门槛秒数 / 成本表出处)
                     // 已经由上面两行 AppLogger 写进诊断文件 —— 用户真机就是被那一长串挡住、没找到结论的。
                     // 文案规则(不含"完成"/不含"第 N 帧 / 共 M 帧"/≤60 汉字)由 Core.LogShortText 负责并被单测钉住。
-                    progress?.Report((6, "· " + AlhPro.Core.LogShortText.ClampToChineseLimit(
-                        $"顺序:{AlhPro.Core.LogShortText.OrderShortText(orderPlan, AlhPro.Core.PipelineOrderPlan.MinSavingsPercent)}")));
+                    // 【2026-09-25 · 未标定不许报假百分比】判据在未标定时把 u 当成 0(表示"没采信任何单价"),
+                    // 拿它算出来的"先超分反而慢 X%"是**假精度**(用户真机会被这句话误导)⇒ 那时只报"保守不切换"。
+                    // 【修订 R2】若本机**在另一条后端上**标过这一格(所以这次被忽略),必须像"另一台机器"那样
+                    // 明写出来 —— 否则用户会以为"本机压根没标过",下次还是在同一条路上白等。
+                    {
+                        string? otherBackend = AlhPro.Core.LocalPriceBook
+                            .Resolve(calibBook, model, calibEngineScale, calibMachineKey, calibBackend).OtherBackend;
+                        progress?.Report((6, "· " + AlhPro.Core.LogShortText.ClampToChineseLimit(
+                            orderPlan.Measured || interpScale < 2
+                                ? $"顺序:{AlhPro.Core.LogShortText.OrderShortText(orderPlan, AlhPro.Core.PipelineOrderPlan.MinSavingsPercent)}"
+                                : otherBackend is null
+                                    ? "顺序:补帧→超分(本机还没标定超分单价,保守不切换;详情见诊断日志)"
+                                    : $"顺序:补帧→超分(本机这一格是在另一后端 {otherBackend} 上标的,已忽略;详情见诊断日志)")));
+                    }
                     // 【任务 Q2】两阶段批计划:两个阶段的输入分辨率不同,各自按自己的面积算每批帧数,分别落日志。
                     // (补帧阶段的"每批帧数"是等效参考值 —— 它实际按转场分段跑,见 RenderPolicy.PlanStageBatches)
                     var stagePlans = AlhPro.Core.RenderPolicy.PlanStageBatches(SafeRender.FreeRamGB, frameCount,
@@ -2413,129 +2660,11 @@ public static class VideoService
                     }
                 }
                 var upScale = upscaleShrink1x ? 2.0 : scale;
-                // ===== 超分 GPU 探测(避免"GPU hang 8 分钟"白等)=====
-                // 50 系/AMD/Intel/老驱动等:当前引擎在 GPU 上跑 1×1 图如果能出图 → GPU 放心用;
-                // 不能 → 直接改 CPU,并提示用户(不再等引擎启动失败/黑帧降级,省时间)。
-                int upGpu = gpuId;
-                bool waifuOnnx = false;   // 50系 waifu2x ncnn 不可用 → 整段视频改走 ONNX(安全网)
-                bool upOnnxDml = false;   // 探测失败/不可用 → 走 ONNX 时用 DirectML GPU(-2 自动)而非强制 CPU(-1)
-                bool ncnnUnreliable = false;   // 视频超分检测到 ncnn-Vulkan 黑帧 → 后续批次直接走 ONNX(不再每批先 ncnn 失败再降级,省极长时间)
-                // 【2026-09-24】Real-CUGAN 只支持 GPU:用户在"计算设备"里选了 CPU(-g -1)、
-                // 或本机确实没有可用 GPU 时,直接**明确拒绝**并给替代方案 —— 不跑那条实测会崩的 CPU 档,
-                // 也不静默换模型。判据与真实原因都写在异常消息里(用户看得到)。
-                if (doUpscale && engine == AlhPro.Core.RealCugan.EngineName && gpuId < 0)
-                {
-                    throw new RealCuganNeedsGpuException(RealCuganRefusal.Message(engineLevelAlsoFailed: false));
-                }
-                if (gpuId >= 0)
-                {
-                    // 【50 系不再"一律禁用 ncnn"】旧逻辑:Blackwell + waifu2x 直接改走 ONNX,不做任何实测。
-                    // 旧口径漏检的根因已写明在 EngineService.IsEngineGpuUsableAsync(fullFrame) 上:
-                    // 320×240(甚至 1×1)小图能过,真实分辨率才静默出 0KB 空帧/黑帧且【退出码 0】——
-                    // 于是探测判"可用",坏帧一路进成片。现在改为:先按【生产形态】真机探测
-                    // (1080×1920 + 真实模型 + 生产 -j + 带状黑判据),通过 → 就走 ncnn-Vulkan
-                    // (真机实测 0.24~0.6 秒/帧,而"ONNX 落 CPU"是 8 秒/帧);失败 → 才改走 ONNX 并明确告知用户。
-                    // 【2026-09-24】探测按 NcnnProbePlan 走:①「动漫 · Anime4K 修复」走着色器、根本不用 ncnn
-                    // ⇒ **不探测**(原样把 Tag anime4k 喂进去会让 ncnn 去加载一个不存在的模型 ⇒ 探 60 秒被强杀
-                    // ⇒ 落一条假的 realesrgan 失败结论 ⇒ 之后所有 2x/3x/4x 视频超分被判走 ONNX —— 实测 2x 超分
-                    // 3880 ms/帧,而软件标称 0.26~0.30 秒/帧);②「现实 · 1x 修复」的 Tag 不是真模型 ⇒ 用真权重探。
-                    var upProbePlan = AlhPro.Core.NcnnProbePlan.For(model);
-                    bool usable = true;
-                    if (upProbePlan.ShouldProbe)
-                    {
-                        progress?.Report((upBase, $"正在检测超分 GPU 兼容性({engine},首次最长约 60 秒,结论会记住)..."));
-                        usable = await EngineService.EnsureNcnnProbeAsync(engine, gpuId, upProbePlan.Model, ct).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        AppLogger.Info($"超分 GPU 探测跳过:{upProbePlan.Why}(本批不经 ncnn,探测只会白等并写脏结论)");
-                    }
-                    if (!usable)
-                    {
-                        if (engine == "waifu2x" && EngineService.IsBlackwellGpu())
-                        {
-                            // waifu2x 在 50 系:ncnn CPU 模式同样会崩(实测 exit -1073741819)——
-                            // 不能像其他引擎那样"降 CPU",而是整段改走 ONNX 稳定版(DirectML/CPU 都行)
-                            waifuOnnx = true;
-                            upOnnxDml = true;
-                            AppLogger.Warn($"⚠ waifu2x 在本机 50 系 GPU 上真机探测失败——为稳定性改用 ONNX 稳定版(整段视频,兼容模式)。"
-                                + EngineService.LastProbeUserMessage);
-                            progress?.Report((upBase, $"⚠ waifu2x 在本机 50 系 GPU 上不可用,为稳定性改用 ONNX(整段视频)..."));
-                        }
-                        else if (engine == AlhPro.Core.RealCugan.EngineName)
-                        {
-                            // 【F4 · 2026-09-24】修掉"单支档位被瞬时误判 ⇒ 整批拒绝"。
-                            // 口径与 AlhPro.Core.NcnnModelVerdicts 一致:**引擎级可用性只认不带模型的那条**
-                            // (键 `引擎|GPU|`),单支档位失败不牵连同引擎的其它档位。三步:
-                            //   ① 先读引擎级结论;没有就**补探一次**(model = null ⇒ RealCuganArgs 落到默认档
-                            //      models-se + 保守档,"引擎本身能不能在这张卡上跑"由此确定 —— 与 RIFE / Real-ESRGAN 同款兜底);
-                            //   ② 引擎级可用 ⇒ 在其它降噪档里逐个实测,第一个通过的拿来用(三档权重都在包里);换档如实上报;
-                            //   ③ 引擎级也不可用 / 三档都不过 ⇒ 才拒绝,且拒绝信息写成「设计如此 + 可执行下一步」。
-                            var engineLevelVerdict = EngineService.TryGetNcnnVerdict(AlhPro.Core.RealCugan.EngineName, gpuId);
-                            bool engineLevelOk = engineLevelVerdict
-                                ?? await EngineService.EnsureNcnnProbeAsync(AlhPro.Core.RealCugan.EngineName, gpuId, null, ct).ConfigureAwait(false);
-                            string? picked = null;
-                            if (engineLevelOk)
-                            {
-                                foreach (var alt in AlhPro.Core.RealCugan.AlternativeTags(model))
-                                {
-                                    if (await EngineService.EnsureNcnnProbeAsync(AlhPro.Core.RealCugan.EngineName, gpuId, alt, ct).ConfigureAwait(false))
-                                    {
-                                        picked = alt;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (picked is not null)
-                            {
-                                AppLogger.Warn($"⚠ Real-CUGAN 的「{AlhPro.Core.RealCugan.Label(model)}」档位在本机 GPU({gpuId})探测没过,"
-                                    + $"但**引擎级**实测可用 ⇒ 本批自动改用「{AlhPro.Core.RealCugan.Label(picked)}」(权重同样随包),不是整批拒绝。"
-                                    + EngineService.LastProbeUserMessage);
-                                progress?.Report((upBase, $"⚠ Real-CUGAN 的「{AlhPro.Core.RealCugan.Label(model)}」档位探测未通过,"
-                                    + $"已自动改用「{AlhPro.Core.RealCugan.Label(picked)}」继续处理(引擎级实测可用)…"));
-                                model = picked;
-                                usable = true;   // 保持 GPU(ncnn-Vulkan)
-                            }
-                            else
-                            {
-                                throw new RealCuganNeedsGpuException(RealCuganRefusal.Message(engineLevelAlsoFailed: !engineLevelOk));
-                            }
-                        }
-                        else
-                        {
-                            // ncnn GPU 不可用:不急着掉最慢的 ncnn-CPU —— 先试 ONNX DirectML(与 ncnn-Vulkan
-                            // 是两套完全独立运行时,这些卡 DirectML 往往能正常 GPU 加速);ONNX 失败才自动掉 CPU。
-                            AppLogger.Warn($"⚠ 超分引擎 {engine} 真机探测失败(生产帧尺寸 1080×1920)——为稳定性改用 ONNX DirectML GPU(比 ncnn-CPU 快一个数量级)。"
-                                + EngineService.LastProbeUserMessage);
-                            progress?.Report((upBase, $"⚠ 超分引擎 {engine} 无法用 ncnn GPU,为稳定性改用 ONNX 稳定引擎(DirectML GPU)..."));
-                            upGpu = -1;          // 触发下方 ONNX 分支
-                            upOnnxDml = true;    // 且用 DirectML GPU(-2 自动选设备),而非强制 CPU
-                            waifuOnnx = engine == "waifu2x" ? true : waifuOnnx;   // waifu2x 探测失败同样走 ONNX
-                        }
-                    }
-                    else
-                    {
-                        if (upProbePlan.ShouldProbe)
-                            AppLogger.Info($"✅ 超分引擎 {engine} 真机探测通过(生产帧尺寸 1080×1920,GPU {gpuId})→ 使用 ncnn-Vulkan(未因 50 系而禁用)");
-                    }
-                }
-                else if (engine == "waifu2x" && EngineService.IsBlackwellGpu())
-                {
-                    // 用户选了 CPU(-g -1):50 系 waifu2x 的 ncnn CPU 模式有崩溃 bug → 直接整段走 ONNX 更稳
-                    waifuOnnx = true;
-                    AppLogger.Warn("⚠ 50系 waifu2x:CPU(-g -1)模式有崩溃 bug,自动改走 ONNX 稳定版");
-                }
-                // ===== 设备实际用途诊断(进诊断包:一眼分辨"显示 GPU 却实际跑 CPU/慢路径")=====
-                // 超分阶段已在此定死:waifuOnnx → ONNX 整段;upGpu<0 → ONNX DirectML 或 CPU;否则 ncnn-GPU。
-                // 补帧/编码实际设备在各自阶段已记录;这里只汇总超分(最常掉 CPU 的一步)+ 标注哪些环节待确认。
-                {
-                    string upPath;
-                    if (waifuOnnx) upPath = upOnnxDml ? "ONNX DirectML(GPU 稳定版)" : "ONNX CPU(无 DirectML)";
-                    else if (upGpu < 0) upPath = upOnnxDml ? "ONNX DirectML(GPU,探测失败降级)" : "ONNX CPU";
-                    else upPath = $"ncnn-Vulkan GPU(编号 {upGpu})";
-                    string upDeviceName = upGpu >= 0 ? GpuInfo.GetEngineDeviceName(upGpu) : "(非 GPU)";
-                    AppLogger.Info($"设备实际用途:超分[{engine}] 走 {upPath}(设备:{upDeviceName});补帧/编码设备见各自阶段日志(超分是最常掉 CPU 的一步,此处已定死)");
-                }
+                // 【2026-09-25 修订 · F1】超分 GPU 探测与 upGpu/waifuOnnx/upOnnxDml/ncnnUnreliable 的**定稿**
+                // 已上移到「阶段顺序判定」之前(见上方 `if (upscaleRuns) { ... }` 那一整段)。原因:
+                // 标定与判定必须先知道**本次真正会走的后端**,否则标定可能测到生产不会走的后端,并把偏小的
+                // 错单价永久落盘(判定于是偏向「补帧→超分」—— 2026-09-25 那次 39 分钟误判的同一类)。
+                // 这里只保留 1x 缩回需要的真实尺寸(origW/origH)与引擎倍率 upScale。
                 // 分批目录批处理超分 + 并行 2 批(多 worker):
                 // 一次引擎启动处理一批帧,避免每帧启动引擎;批间并行提高 GPU 利用率
                 // upInput/upOutput 已在超分阶段入口声明(upInput = 新顺序 framesIn / 旧顺序 framesFinal)。
@@ -2790,19 +2919,21 @@ public static class VideoService
                                 catch { }
                             };
                             // 视频超分:50系/无独显/手动CPU + Real-ESRGAN/waifu2x + ONNX 模型在 → 走 ONNX 逐帧(不走会崩的 ncnn-vulkan)
+                            // 【2026-09-25 B3】"走 ncnn 还是走 ONNX"的判据抽成纯函数 AlhPro.Core.UpscaleBackendPlan.UseOnnx
+                            // (真值表与改动前的 if/else **逐字等价**,有单测钉住;realcugan 无 ONNX 通道 ⇒ 恒 false)。
+                            // 本块只保留"取 ONNX 模型路径"这一步:解析逻辑与改动前一一对应(realesrgan → ResolveEsrganOnnxPath,
+                            // waifu2x → FindWaifu2xModel)。注意两个"是否优先 ONNX"的参数按原来的**短路顺序**求值:
+                            // 原来只在 engine 匹配、且 upGpu>=0 时才调 ShouldUseOnnx*(),这里保持同样条件(别顺手改成无条件)。
                             string? onnxModelPath = null;
-                            if (upGpu < 0)
                             {
-                                // 手动选 CPU:waifu2x/realesrgan 的 ncnn CPU 模式在部分机器崩(实测 exit -1/-1073741819)→ 直接 ONNX
-                                if (engine == "realesrgan")
-                                    onnxModelPath = EsrganOnnxService.ResolveEsrganOnnxPath(model);
-                                else if (engine == "waifu2x")
-                                    onnxModelPath = EsrganOnnxService.FindWaifu2xModel(model);
+                                bool onnxPreferredEsrgan = upGpu >= 0 && engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan();
+                                bool onnxPreferredWaifu2x = upGpu >= 0 && engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx);
+                                if (AlhPro.Core.UpscaleBackendPlan.UseOnnx(engine, upGpu, onnxPreferredEsrgan, onnxPreferredWaifu2x,
+                                        ncnnUnreliable, fastMode))
+                                    onnxModelPath = engine == "waifu2x"
+                                        ? EsrganOnnxService.FindWaifu2xModel(model)
+                                        : EsrganOnnxService.ResolveEsrganOnnxPath(model);
                             }
-                            else if (engine == "realesrgan" && (EngineService.ShouldUseOnnxEsrgan() || ncnnUnreliable || fastMode))
-                                onnxModelPath = EsrganOnnxService.ResolveEsrganOnnxPath(model);
-                            else if (engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx || ncnnUnreliable || fastMode))
-                                onnxModelPath = EsrganOnnxService.FindWaifu2xModel(model);
                             // 【让"批间停顿"可见】本批的计算引擎还没起来 —— ncnn 是"进程启动 + 模型加载",
                             // ONNX 稳定引擎是"每批新建 DirectML 推理会话",两者都是秒级固定开销。
                             // 先如实说明"正在启动(约 N 秒)",别让进度条与文案在这几秒里一动不动
@@ -2869,8 +3000,8 @@ public static class VideoService
                                 progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
                                     $"超分(稳定引擎) 批次 {batchInfo.Number}/{batchCount}{EtaStr(batchStartSlot, total, (DateTime.UtcNow - srStageStart).TotalSeconds - srIdleSec)}..."));
                                 await EsrganOnnxService.UpscaleDirAsync(batchIn, batchOut, upScale,
-                                    upGpu < 0 ? (upOnnxDml ? -2 : -1) : -2, srProgress, ct, onnxModelPath,
-                                    batchStartSlot, total, pauseWait, upPctLoArg, upPctHiArg);   // 用户主动选 CPU(-1)强制 CPU;探测失败(upOnnxDml)用 -2=DirectML GPU 自动;正常 GPU 也 -2 自适应;pauseWait=ONNX/CPU 也能暂停
+                                    AlhPro.Core.UpscaleBackendPlan.OnnxDevice(upGpu, upOnnxDml), srProgress, ct, onnxModelPath,
+                                    batchStartSlot, total, pauseWait, upPctLoArg, upPctHiArg);   // 设备号与标定走**同一个纯函数**(-1 强制 CPU / -2 DirectML 自动);pauseWait=ONNX/CPU 也能暂停
                                     // 末两参 = 逐帧进度的百分比区间:新顺序(超分排第一)传 10~45,旧顺序传 0/0=沿用引擎原口径
                             }
                             else

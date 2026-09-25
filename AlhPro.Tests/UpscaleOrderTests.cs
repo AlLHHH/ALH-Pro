@@ -13,6 +13,9 @@ namespace AlhPro.Tests;
 ///
 /// 【2026-09-16 清理后的口径】判据**只有一处**:`AlhPro.Core.PipelineOrderPlan.Decide(...)`,
 /// 由 `VideoService.ProcessVideoAsync` 在"补帧倍率/去重结果确定后"调用(按真机实测单价 + 15% 安全边际)。
+/// 【2026-09-25 A+B】"真机实测单价"的含义变了:不再是开发机那台的内置表,而是**本机标定**
+/// (`CalibMemory` → `Decide(..., localPrices: …)`);未标定 ⇒ 旧顺序。本文件的调用点断言不变,
+/// 数字类的断言改为显式喂本机标定(见 <see cref="LocalPriceFixture"/>)。
 /// 本文件原先钉的旧回退链(`VideoPipeline.UpscaleFirstEnabled` / `UpscaleRunsFirst`)与那段**零调用点**的
 /// `AutoUpscaleFirst` 已一并删除 —— 它们恒返回"旧顺序",与 Decide 的结论可能各说各话。
 /// 现在钉两件事:① 顺序判据在生产路径上确实由 Decide 提供、且不许再冒出第二个判据;
@@ -51,19 +54,31 @@ public class UpscaleOrderTests
     }
 
     /// <summary>ETA 的顺序口径必须与判据同源:ETA 按旧顺序(回退值),而 Decide 对**默认组合**也判旧顺序 ——
-    /// 两边一旦不一致,界面的预计时间就是在算一个不会执行的顺序(这正是任务 H 要修的病)。</summary>
+    /// 两边一旦不一致,界面的预计时间就是在算一个不会执行的顺序(这正是任务 H 要修的病)。
+    /// 【2026-09-25】判据只吃本机标定(不喂 ⇒ 走"未标定→旧顺序"兜底);这条测试仍要证明"**按数字判**也是旧顺序",
+    /// 所以显式传一条本机标定,而不是靠兜底通过(否则它会退化成永远为真的空测试)。</summary>
     [Fact]
     public void Eta_order_matches_the_decider_for_the_default_combination()
     {
-        // 默认组合:1080p 源、animevideov3 2x、补帧 2x —— 实测 u/r_lo ≈ 3.8 < 门槛(见 Decide 的实测单价表)
+        // 默认组合:1080p 源、animevideov3 2x、补帧 2x —— 实测 u/r_lo ≈ 3.8 < 门槛
         // ⇒ Decide 判**旧顺序**;ETA 侧也正是按旧顺序估的。
-        var d = PipelineOrderPlan.Decide("realesrgan", "realesr-animevideov3", 2.0, 2, 1920, 1080, 900);
+        var d = PipelineOrderPlan.Decide("realesrgan", "realesr-animevideov3", 2.0, 2, 1920, 1080, 900,
+            localPrices: LocalPriceFixture.Built("realesr-animevideov3", 2));
+        Assert.True(d.Measured);
         Assert.False(d.UpscaleFirst, $"默认组合应判旧顺序(ETA 也是按旧顺序估);实际理由:{d.Reason}");
 
-        // 反例(有牙齿):换成"超分很贵"的模型(x4plus 实测 15.87 秒/帧@1080p)⇒ u 远超门槛 ⇒ Decide 改判新顺序。
-        // 这条一旦变成 false,说明单价表/门槛被改过 —— 那时 ETA 的"按旧顺序"回退值就与判据不同源,必须一并处理。
-        var dExpensive = PipelineOrderPlan.Decide("realesrgan", "realesr-x4plus", 4.0, 2, 1920, 1080, 900);
+        // 反例(有牙齿):换成"超分很贵"的模型(x4plus 实测 15.87 秒/帧@1080p,**本机标定**同值)⇒ u 远超门槛 ⇒ 改判新顺序。
+        // 这条一旦变成 false,说明成本模型/门槛被改过 —— 那时 ETA 的"按旧顺序"回退值就与判据不同源,必须一并处理。
+        var dExpensive = PipelineOrderPlan.Decide("realesrgan", "realesr-x4plus", 4.0, 2, 1920, 1080, 900,
+            localPrices: LocalPriceFixture.Built("realesr-x4plus", 4));
         Assert.True(dExpensive.UpscaleFirst, $"超贵模型应判新顺序;实际理由:{dExpensive.Reason}");
+
+        // 【2026-09-25 新增对照】同一组入参**不喂本机标定** ⇒ 一律旧顺序 + 【本机未标定】
+        // (内置表里的 15.87 再不参与判定,别人的机器不会用我的数字)
+        var uncalibrated = PipelineOrderPlan.Decide("realesrgan", "realesr-x4plus", 4.0, 2, 1920, 1080, 900);
+        Assert.False(uncalibrated.UpscaleFirst);
+        Assert.False(uncalibrated.Measured);
+        Assert.Contains("【本机未标定】", uncalibrated.Reason);
     }
 
     /// <summary>ETA 不许再从调用方拿"顺序"形参(有它 = UI 又能传错),也不许自己算一份判据。</summary>
