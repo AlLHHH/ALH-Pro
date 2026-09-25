@@ -30,10 +30,14 @@ public static class EngineChoice
 
     /// <summary>界面索引:Real-ESRGAN(界面第 1 项,默认)。</summary>
     public const int UiRealEsrgan = 0;
-    /// <summary>界面索引:waifu2x(界面第 2 项)。</summary>
-    public const int UiWaifu2x = 1;
-    /// <summary>界面索引:Real-CUGAN(界面第 3 项,**末尾追加**)。</summary>
-    public const int UiRealCugan = 2;
+    /// <summary>界面索引:Real-CUGAN(界面第 2 项)。
+    /// 【2026-09-25 用户要求】waifu2x 挪到最后一项 ⇒ Real-CUGAN 与它**互换界面位置**。
+    /// 关键:**存盘值一个都没变**(0=waifu2x / 1=Real-ESRGAN / 2=历史 / 3=Real-CUGAN),
+    /// 所以老用户的设置**不需要迁移** —— 只是"同一个存盘值现在落在另一个界面位置上"。
+    /// ⚠ 谁改了 XAML 里 RadioButton 的顺序,就必须同步这里(否则界面说 A、实跑 B —— 本仓库踩过的坑)。</summary>
+    public const int UiRealCugan = 1;
+    /// <summary>界面索引:waifu2x(界面第 3 项;2026-09-25 由用户要求从第 2 项挪到最后)。</summary>
+    public const int UiWaifu2x = 2;
 
     /// <summary>界面索引 → 存盘值。越界(含 -1「没有选中项」)一律落 Real-ESRGAN(界面默认项),
     /// 绝不返回一个引擎下拉里不存在的值。</summary>

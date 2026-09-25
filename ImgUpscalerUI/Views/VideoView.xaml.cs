@@ -4512,7 +4512,8 @@ public sealed partial class VideoView : UserControl
     /// 查不到就用保守常数,估不准的风险有界。</summary>
     private string PerfFingerprintForCpuEstimate(out string engine)
     {
-        engine = SelectedEngineIsReal ? "realesrgan" : "waifu2x";
+        engine = SelectedEngineName;   // 【2026-09-25 修】原来是二值 `SelectedEngineIsReal ? "realesrgan" : "waifu2x"`,
+                                       // 于是选中 Real-CUGAN 时经验库指纹键被记成 "waifu2x" ⇒ 预计用时错配(只影响文字,不影响实跑引擎)。
         double scale = VideoScaleRadios.SelectedIndex switch { 1 => 2, 2 => 3, 3 => 4, _ => 1 };
         if (VideoScaleRadios.SelectedIndex is 0 or 4) scale = 2;   // 1x 缩回 / 自定义:内部都按 2x 超分
         int interpScale = AlhPro.Core.InterpScaleMap.Multiplier(CurrentScaleIndex());
@@ -10890,7 +10891,7 @@ public sealed partial class VideoView : UserControl
             && EngineService.TryGetNcnnVerdict("realesrgan", AppSettings.GpuIndex) == false)
         {
             if (await AskBlackwellOldEngineAsync("Real-ESRGAN"))
-                VideoEngineRadios.SelectedIndex = 1;   // 好,换成 waifu2x(界面上第二项;兼容 50 系,且最快)
+                VideoEngineRadios.SelectedIndex = AlhPro.Core.EngineChoice.UiWaifu2x;   // 好,换成 waifu2x(界面最后一项;兼容 50 系,且最快)
         }
         // 自定义码率:选了该项但没填/填了非法值 → 提示并拦截(避免按"自动"悄悄处理)
         if (QualityCombo.SelectedIndex == 5 && ParseBitrate() <= 0)
@@ -10978,16 +10979,17 @@ public sealed partial class VideoView : UserControl
             var tag = it?.Tag as string;
             return !string.IsNullOrEmpty(tag) ? tag : fallback;
         }
-        // 分支顺序与 SelectedEngineName **逐条对应**(索引 0/1/2;越界一律落 Real-ESRGAN = 界面默认项),
+        // 分支用 AlhPro.Core.EngineChoice 的**常量**、禁止写死数字:2026-09-25 用户要求把 waifu2x
+        // 挪到最后 ⇒ waifu2x 与 Real-CUGAN **互换界面位置**,写死索引的地方最容易漏改。
         // 两处不一致会出现"界面说 A、实跑 B"——本仓库最忌讳的那类静默错位。
         var (engine, model) = VideoEngineRadios.SelectedIndex switch
         {
-            // waifu2x(界面第二项):从模型下拉 Tag 读模型名(默认 models-cunet)
-            1 => ("waifu2x", SelModel(VideoWaifu2xModelCombo, "models-cunet")),
-            // 【2026-09-24】Real-CUGAN(界面第三项,末尾追加)。Tag 形如 `models-se:-1`,
+            // Real-CUGAN(界面第二项)。Tag 形如 `models-se:-1`,
             // 由 AlhPro.Core.RealCugan 解析成 `-m <权重目录> -n <降噪档>`;默认走保守档。
-            2 => (AlhPro.Core.RealCugan.EngineName,
+            AlhPro.Core.EngineChoice.UiRealCugan => (AlhPro.Core.RealCugan.EngineName,
                   SelModel(VideoRealcuganModelCombo!, AlhPro.Core.RealCugan.DefaultTag)),
+            // waifu2x(界面第 3 项/最后一项):从模型下拉 Tag 读模型名(默认 models-cunet)
+            AlhPro.Core.EngineChoice.UiWaifu2x => ("waifu2x", SelModel(VideoWaifu2xModelCombo, "models-cunet")),
             // Real-ESRGAN(界面上排第一,也是默认):从模型下拉 Tag 读模型名(默认 realesr-animevideov3)
             _ => ("realesrgan", SelModel(VideoEsrganModelCombo, "realesr-animevideov3")),
         };
@@ -11173,7 +11175,7 @@ public sealed partial class VideoView : UserControl
                         try
                         {
                             if (useWaifu && SelectedEngineIsReal)
-                                VideoEngineRadios.SelectedIndex = 1;   // 换成 waifu2x(界面第二项;兼容+最快)
+                                VideoEngineRadios.SelectedIndex = AlhPro.Core.EngineChoice.UiWaifu2x;   // 换成 waifu2x(界面最后一项;兼容+最快)
                         }
                         finally { tcs.TrySetResult(); }
                     });

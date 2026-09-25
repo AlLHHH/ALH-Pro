@@ -119,8 +119,8 @@ setTimeout(function () {
           <li><strong>启动自检的"所有候选卡都卡死"最坏耗时砍掉三分之一:</strong>挑卡档对"卡死"原本也重试 3 次,而这一档要在多张候选卡上逐个试、每次卡死都要等满 15 秒超时 ⇒ 独立审查算过:全部候选都卡死时启动自检最坏约 <strong>4.8 分钟</strong>。现在"卡死"在这档单独限 2 次(仍保留一次重试覆盖"驱动 / 显存刚开始回收"的瞬时状态),最坏降到约 <strong>3.2 分钟</strong>;"进程崩一下"这类确定性失败仍是 3 次保险不变。<strong>边界</strong>:这是算式(6 张候选卡 × 单卡最坏耗时),不是实测。</li>
           <li><strong>AMD / Intel 机器现在也能真读空闲显存了(不再是"未实测"):</strong>此前"当前空闲显存"只有 NVIDIA 能真读(nvidia-smi),A 卡与核显上一律报"未实测" ⇒ 显存墙与并发档位在那些机器上整层失效。现在补了第二条<strong>跨厂商</strong>路径:用 Windows 自带的性能计数器「GPU Adapter Memory」读"已用",再与 DXGI 报的显存总量相减得空闲(换算与实例名解析都在 Core、有单测);日志与诊断包里会写明这个数字<strong>是谁给的</strong>(<code>6.3 GB(nvidia-smi)</code> / <code>6.5 GB(PDH(GPU Adapter Memory))</code>)。
             <strong>边界(如实)</strong>:多卡机拿不到目标卡 LUID 时按全部实例求和 ⇒ 偏保守(宁可少放批次);两者都读不到时仍照旧报"未实测",<strong>绝不返回估值冒充实测</strong>。(AMD / Intel 的<strong>温度</strong>读数本版没做:Intel 侧没有公开接口、AMD 需 ADL 且本机无 A 卡,不发没验过的。)</li>
-          <li><strong>新增:Real-CUGAN 重新随包(动漫专用超分,引擎下拉第三项)+ 补帧新增第 3 支 RIFE v4.26 —— 用户点名要的两项。</strong>
-            <strong>Real-CUGAN</strong> 专为动漫优化,线条与色块最干净,并配了自己的模型下拉(保守 / 不降噪 / 强降噪,权重全部随包)。
+          <li><strong>新增:Real-CUGAN 重新随包(动漫专用超分,引擎下拉第二项)+ 补帧新增第 3 支 RIFE v4.26 —— 用户点名要的两项。</strong>
+            <strong>Real-CUGAN</strong> 专为动漫优化,线条与色块最干净,并配了自己的降噪档下拉(<strong>动漫 · 保守 -1（中）/ 不降噪 0（快）/ 强降噪 3（慢）</strong>—— 同一份 models-se 权重、只是降噪档不同,权重全部随包)。
             它<strong>原来被移除过</strong>,现在为什么能发:当时(2026-09-14)的依据是<strong>上游 <code>bilibili/ailab</code> 仓库内的 <code>weights_v3/</code> 目录自身</strong>只有占位 README;
             2026-09-24 逐字复核发现 <strong>bilibili 官方 ModelScope 模型页把权重与一份 MIT 许可文件一起发布</strong>(1065 字节,SHA256 <code>8CAD8CFD…3CBA</code>,Copyright (c) 2022 bilibili),与上游仓库根那份<strong>逐字节相同</strong>
             ⇒ 权重有书面 MIT 依据(署名与依据见 <code>THIRD_PARTY_NOTICES.txt</code> <strong>第 16 条</strong>)。引擎包装层与随仓模型来自 <code>nihui/realcugan-ncnn-vulkan</code>(MIT © 2019 nihui);只许从这两条许可干净渠道取权重(禁网盘"完整包")。

@@ -132,11 +132,11 @@
                          ⚠ 【2026-09-24 加回 Real-CUGAN】它是**末尾追加**(界面索引 2 / 存盘值 3):
                            历史存盘值 2 曾经也是 Real-CUGAN(v1.1.0 移除后一直被解释成 Real-ESRGAN),
                            继续让它=Real-ESRGAN,绝不让老设置静默变成 Real-CUGAN。 -->
-                    <RadioButtons x:Name="VideoEngineRadios" SelectedIndex="0" ToolTipService.ToolTip="超分引擎:Real-ESRGAN 会主动合成细节(动漫/写实都明显变清晰);waifu2x 只做去噪/去压缩块 —— 干净素材上看起来≈单纯放大,只适合有噪点的老片源;Real-CUGAN 是动漫专用超分(线条最干净,但最慢:实测 1080p 2x 约 1.65 秒/帧,约为 animevideov3 的 6.2 倍;且必须有 GPU)"
+                    <RadioButtons x:Name="VideoEngineRadios" SelectedIndex="0" ToolTipService.ToolTip="超分引擎(顺序=推荐度):Real-ESRGAN 会主动合成细节(动漫/写实都明显变清晰);Real-CUGAN 是动漫专用超分(线条与色块最干净,但最慢:实测 1080p 2x 约 1.65 秒/帧,约为 animevideov3 的 6.2 倍,且必须有可用显卡);waifu2x 放最后 —— 它只做去噪/去压缩块,干净素材上看起来≈单纯放大,只适合有噪点的老片源"
                                   SelectionChanged="Combo_Changed">
                         <RadioButton Content="Real-ESRGAN"/>
-                        <RadioButton Content="waifu2x"/>
                         <RadioButton Content="Real-CUGAN"/>
+                        <RadioButton Content="waifu2x"/>
                     </RadioButtons>
                     <TextBlock x:Name="VideoModelLabel" Text="超分模型" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="VideoWaifu2xModelCombo" ToolTipService.ToolTip="waifu2x 模型(动漫/通用/现实)"
@@ -312,13 +312,13 @@
                          ⚠ 只列 models-se 的三档:它们都同时具备 up2x/up3x/up4x 权重。
                            models-pro / models-nose **没有随包**,列出来会让引擎找不到权重、exit=0 只出坏帧。 -->
                     <ComboBox x:Name="VideoRealcuganModelCombo" Visibility="Collapsed"
-                              ToolTipService.ToolTip="Real-CUGAN 模型(动漫专用超分;按降噪档选)。&#x0a;引擎:realcugan-ncnn-vulkan(2026 重编版,含 50 系所需的健壮性修复)。&#x0a;⚠ 实测速度(口径:本机 RTX 4060,1080p 2x,40 帧目录批量按帧摊,三次独立进程冷跑):约 1.65 秒/帧(1.63~1.68)。同口径 animevideov3 2x 是 0.27 秒/帧 ⇒ 约 6.2 倍慢。&#x0a;⚠ 实测随 GPU 占用波动:单机复现可能落在约 4~30 倍(量级可信、精确倍数不可复现)。&#x0a;⚠ 必须有 GPU:它只有 ncnn-Vulkan 权重(没有 ONNX 版本、CPU 档在本机实测会崩),没有可用显卡时会被拒绝处理。"
+                              ToolTipService.ToolTip="Real-CUGAN 降噪档(动漫专用超分)。&#x0a;注意:这里是**同一份 models-se 权重**、只是降噪档(-n)不同 —— 不是三个不同的模型,所以命名与其他引擎保持同一格式「适用 · 档名 档位（速度）」。&#x0a;引擎:realcugan-ncnn-vulkan(2026 重编版,含 50 系所需的健壮性修复)。&#x0a;⚠ 实测速度(口径:本机 RTX 4060,1080p 2x,40 帧目录批量按帧摊,三次独立进程冷跑):约 1.65 秒/帧(1.63~1.68)。同口径 animevideov3 2x 是 0.27 秒/帧 ⇒ 约 6.2 倍慢。&#x0a;⚠ 实测随 GPU 占用波动:单机复现可能落在约 4~30 倍(量级可信、精确倍数不可复现)。&#x0a;⚠ 必须有 GPU:它只有 ncnn-Vulkan 权重(没有 ONNX 版本、CPU 档在本机实测会崩),没有可用显卡时会被拒绝处理。"
                               SelectionChanged="Combo_Changed">
-                        <ComboBoxItem Content="动漫 · 保守（保留纹理 · 中）" Tag="models-se:-1"
+                        <ComboBoxItem Content="动漫 · 保守 -1（中）" Tag="models-se:-1"
                                       ToolTipService.ToolTip="Real-CUGAN 官方保守档(-n -1 = conservative):尽量保留原纹理、不做强打磨,动漫线条最干净。&#x0a;适用:干净或轻压缩的动漫片源。&#x0a;实测速度:1080p 2x 约 1.65 秒/帧(同口径 animevideov3 约 0.27 秒/帧 ⇒ 约 6.2 倍)。&#x0a;⚠ 实测随 GPU 占用波动:单机复现可能落在约 4~30 倍(量级可信、精确倍数不可复现)。&#x0a;模型大小:25.4 MB(models-se 权重目录,2x/3x/4x 共 11 个文件)。"/>
-                        <ComboBoxItem Content="动漫 · 不降噪（快）" Tag="models-se:0"
+                        <ComboBoxItem Content="动漫 · 不降噪 0（快）" Tag="models-se:0"
                                       ToolTipService.ToolTip="Real-CUGAN 无降噪档(-n 0):输入已经干净时用它,速度与保守档同档(实测同口径约 1.63~1.74 秒/帧)。&#x0a;适用:高码率、无明显噪点/压缩块的动漫。&#x0a;⚠ 实测随 GPU 占用波动:单机复现可能落在约 4~30 倍(量级可信、精确倍数不可复现)。&#x0a;模型大小:25.4 MB(models-se 权重目录)。"/>
-                        <ComboBoxItem Content="动漫 · 强降噪（慢）" Tag="models-se:3"
+                        <ComboBoxItem Content="动漫 · 强降噪 3（慢）" Tag="models-se:3"
                                       ToolTipService.ToolTip="Real-CUGAN 最强降噪档(-n 3):老片源噪点多、压缩块明显时用它;会一并抹掉部分纹理。&#x0a;适用:录像带/低码率老番。&#x0a;实测速度:1080p 2x 约 1.61~1.65 秒/帧(与保守档同档)。&#x0a;⚠ 实测随 GPU 占用波动:单机复现可能落在约 4~30 倍(量级可信、精确倍数不可复现)。&#x0a;模型大小:25.4 MB(models-se 权重目录)。"/>
                     </ComboBox>
                     <!-- 4x 专用权重模型的提示(用户要求:放在模型下拉正下方)

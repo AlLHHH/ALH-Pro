@@ -180,9 +180,14 @@ public class RealCuganContractTests
         Assert.Contains(@"licenses\Real-CUGAN-MIT-bilibili-2022.txt", ps);
     }
 
-    /// <summary>视频页:引擎单选**恰好三项**,第三项是 Real-CUGAN(末尾追加 = 老存盘值不被改含义)。</summary>
+    /// <summary>视频页:引擎单选**恰好三项**,顺序 = Real-ESRGAN / Real-CUGAN / waifu2x,
+    /// 且必须与 `AlhPro.Core.EngineChoice` 的界面索引常量一一对应。
+    /// 【2026-09-24】Real-CUGAN 是**追加**的(不复用历史存盘值 2)。
+    /// 【2026-09-25】用户要求把 waifu2x 挪到最后一项 ⇒ 它与 Real-CUGAN **互换界面位置**;
+    /// 存盘值一个都没变(老设置不需要迁移)。这种改动只要漏改一处(XAML 顺序 / 索引常量 /
+    /// 页面里的分支表),就会变成"界面说 A、实跑 B"的静默错位 —— 这条把 XAML 与常量钉在一起。</summary>
     [Fact]
-    public void Video_page_engine_radios_have_real_cugan_appended_last()
+    public void Video_page_engine_radios_order_matches_engine_choice()
     {
         var xaml = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml");
         int at = xaml.IndexOf("x:Name=\"VideoEngineRadios\"", StringComparison.Ordinal);
@@ -192,8 +197,19 @@ public class RealCuganContractTests
         var items = Regex.Matches(block, "<RadioButton\\s+Content=\"([^\"]*)\"");
         Assert.Equal(3, items.Count);
         Assert.Equal("Real-ESRGAN", items[0].Groups[1].Value);
-        Assert.Equal("waifu2x", items[1].Groups[1].Value);
-        Assert.Equal("Real-CUGAN", items[2].Groups[1].Value);
+        Assert.Equal("Real-CUGAN", items[1].Groups[1].Value);
+        Assert.Equal("waifu2x", items[2].Groups[1].Value);
+
+        // 顺序即索引:常量必须是 0/1/2,且各自映射到与 XAML 同序的引擎名
+        Assert.Equal(new[] { 0, 1, 2 }, new[]
+        {
+            AlhPro.Core.EngineChoice.UiRealEsrgan,
+            AlhPro.Core.EngineChoice.UiRealCugan,
+            AlhPro.Core.EngineChoice.UiWaifu2x,
+        });
+        Assert.Equal("realesrgan", AlhPro.Core.EngineChoice.EngineNameOf(AlhPro.Core.EngineChoice.UiRealEsrgan));
+        Assert.Equal(AlhPro.Core.RealCugan.EngineName, AlhPro.Core.EngineChoice.EngineNameOf(AlhPro.Core.EngineChoice.UiRealCugan));
+        Assert.Equal("waifu2x", AlhPro.Core.EngineChoice.EngineNameOf(AlhPro.Core.EngineChoice.UiWaifu2x));
     }
 
     /// <summary>Real-CUGAN 的模型下拉项必须与 <see cref="AlhPro.Core.RealCugan.Tags"/> 逐项对应
@@ -216,7 +232,8 @@ public class RealCuganContractTests
     [Fact]
     public void Stored_engine_codes_keep_legacy_two_meaning_real_esrgan()
     {
-        // ① 值 → 界面索引:0=waifu2x(界面第 2 项)、3=Real-CUGAN(界面第 3 项)、1 与 2 都落 Real-ESRGAN(界面第 1 项)
+        // ① 值 → 界面索引:0=waifu2x(界面**最后**一项)、3=Real-CUGAN(界面第 2 项)、1 与 2 都落 Real-ESRGAN(界面第 1 项)
+        //    【2026-09-25】用户要求 waifu2x 挪到最后 ⇒ Real-CUGAN 与它**互换界面位置**;存盘值一个都没变。
         Assert.Equal(AlhPro.Core.EngineChoice.UiWaifu2x, AlhPro.Core.EngineChoice.FromStored(0));
         Assert.Equal(AlhPro.Core.EngineChoice.UiRealEsrgan, AlhPro.Core.EngineChoice.FromStored(1));
         Assert.Equal(AlhPro.Core.EngineChoice.UiRealEsrgan, AlhPro.Core.EngineChoice.FromStored(2));   // 历史值 2 仍是 Real-ESRGAN
@@ -226,7 +243,10 @@ public class RealCuganContractTests
         Assert.Equal(0, AlhPro.Core.EngineChoice.ToStored(AlhPro.Core.EngineChoice.UiWaifu2x));
         Assert.Equal(1, AlhPro.Core.EngineChoice.ToStored(AlhPro.Core.EngineChoice.UiRealEsrgan));
         Assert.Equal(3, AlhPro.Core.EngineChoice.ToStored(AlhPro.Core.EngineChoice.UiRealCugan));
-        for (int ui = 0; ui <= AlhPro.Core.EngineChoice.UiRealCugan; ui++)
+        // ⚠ 必须按**三个界面索引**逐个往返,不能写 `for (ui = 0; ui <= UiRealCugan; ui++)` 这种
+        //   "末项即最大索引"的假设 —— 2026-09-25 把 waifu2x 挪到最后之后最大值是 UiWaifu2x,
+        //   旧写法会**静默漏掉 waifu2x 那一支**(往返断言覆盖不到它)。
+        foreach (var ui in new[] { AlhPro.Core.EngineChoice.UiRealEsrgan, AlhPro.Core.EngineChoice.UiRealCugan, AlhPro.Core.EngineChoice.UiWaifu2x })
             Assert.Equal(ui, AlhPro.Core.EngineChoice.FromStored(AlhPro.Core.EngineChoice.ToStored(ui)));
 
         // ③ 引擎名与界面索引一一对应(Real-CUGAN 必须落在 realcugan,不能悄悄是 waifu2x/realesrgan)
