@@ -72,7 +72,12 @@ public class RealCuganContractTests
         Assert.True(at > 0);
         int end = xaml.IndexOf("</ComboBox>", at, StringComparison.Ordinal);
         var block = xaml.Substring(at, end - at);
-        foreach (Match m in Regex.Matches(block, "<ComboBoxItem[^>]*>", RegexOptions.Singleline))
+        // 【2026-09-25 适配】提示不再写在开始标签的属性里(属性是纯文本,上不了色)⇒ 每项现在是
+        // `<ComboBoxItem …>` + 属性元素 `<ToolTipService.ToolTip>…</ToolTipService.ToolTip>` + `</ComboBoxItem>`。
+        // 所以按**整项**取(原来只取开始标签,现在取不到提示文字了),判据本身不变:每一项的提示里都要有「模型大小」。
+        var items = Regex.Matches(block, "<ComboBoxItem.*?</ComboBoxItem>", RegexOptions.Singleline);
+        Assert.Equal(3, items.Count);   // models-se 三档
+        foreach (Match m in items)
             Assert.True(m.Value.Contains("模型大小"), "Real-CUGAN 的下拉项提示里没有「模型大小」:" + m.Value);
     }
 
@@ -180,12 +185,13 @@ public class RealCuganContractTests
         Assert.Contains(@"licenses\Real-CUGAN-MIT-bilibili-2022.txt", ps);
     }
 
-    /// <summary>视频页:引擎单选**恰好三项**,顺序 = Real-ESRGAN / Real-CUGAN / waifu2x,
+    /// <summary>视频页:引擎单选**恰好两项**,顺序 = Real-ESRGAN / Real-CUGAN,
     /// 且必须与 `AlhPro.Core.EngineChoice` 的界面索引常量一一对应。
     /// 【2026-09-24】Real-CUGAN 是**追加**的(不复用历史存盘值 2)。
-    /// 【2026-09-25】用户要求把 waifu2x 挪到最后一项 ⇒ 它与 Real-CUGAN **互换界面位置**;
-    /// 存盘值一个都没变(老设置不需要迁移)。这种改动只要漏改一处(XAML 顺序 / 索引常量 /
-    /// 页面里的分支表),就会变成"界面说 A、实跑 B"的静默错位 —— 这条把 XAML 与常量钉在一起。</summary>
+    /// 【2026-09-25 用户裁定:视频页移除 waifu2x】原话「禁用吧 直接删掉在视频页面」⇒ 只剩两项;
+    /// 存盘值一个都没变(0 仍被认得,读到就**显式迁移**到 Real-ESRGAN,见下一条测试)。
+    /// 这种改动只要漏改一处(XAML 项数 / 索引常量 / 页面里的分支表),就会变成"界面说 A、实跑 B" ——
+    /// 这条把 XAML 与常量钉在一起。</summary>
     [Fact]
     public void Video_page_engine_radios_order_matches_engine_choice()
     {
@@ -195,21 +201,25 @@ public class RealCuganContractTests
         int end = xaml.IndexOf("</RadioButtons>", at, StringComparison.Ordinal);
         var block = xaml.Substring(at, end - at);
         var items = Regex.Matches(block, "<RadioButton\\s+Content=\"([^\"]*)\"");
-        Assert.Equal(3, items.Count);
+        Assert.Equal(AlhPro.Core.EngineChoice.VideoUiEngineCount, items.Count);
+        Assert.Equal(2, items.Count);                       // 视频页只剩两项(waifu2x 已删)
         Assert.Equal("Real-ESRGAN", items[0].Groups[1].Value);
         Assert.Equal("Real-CUGAN", items[1].Groups[1].Value);
-        Assert.Equal("waifu2x", items[2].Groups[1].Value);
+        // 单选项里没有 waifu2x;而**提示**里如实写明它已从视频页移除(需要它请用图片页)——
+        // 这是"不再宣称视频页可用 waifu2x"的正面证据,所以这里**要求**它出现。
+        Assert.DoesNotContain("Content=\"waifu2x\"", block);
+        Assert.Contains("waifu2x 已从视频页移除", block);
 
-        // 顺序即索引:常量必须是 0/1/2,且各自映射到与 XAML 同序的引擎名
-        Assert.Equal(new[] { 0, 1, 2 }, new[]
+        // 顺序即索引:常量必须是 0/1,且各自映射到与 XAML 同序的引擎名
+        Assert.Equal(new[] { 0, 1 }, new[]
         {
             AlhPro.Core.EngineChoice.UiRealEsrgan,
             AlhPro.Core.EngineChoice.UiRealCugan,
-            AlhPro.Core.EngineChoice.UiWaifu2x,
         });
         Assert.Equal("realesrgan", AlhPro.Core.EngineChoice.EngineNameOf(AlhPro.Core.EngineChoice.UiRealEsrgan));
         Assert.Equal(AlhPro.Core.RealCugan.EngineName, AlhPro.Core.EngineChoice.EngineNameOf(AlhPro.Core.EngineChoice.UiRealCugan));
-        Assert.Equal("waifu2x", AlhPro.Core.EngineChoice.EngineNameOf(AlhPro.Core.EngineChoice.UiWaifu2x));
+        // 越界索引(含旧的第 3 项)一律 Real-ESRGAN —— 不会"读回一个视频页已经没有的档位"
+        Assert.Equal("realesrgan", AlhPro.Core.EngineChoice.EngineNameOf(2));
     }
 
     /// <summary>Real-CUGAN 的模型下拉项必须与 <see cref="AlhPro.Core.RealCugan.Tags"/> 逐项对应
@@ -228,31 +238,42 @@ public class RealCuganContractTests
 
     /// <summary>存盘口径:**行为断言**(直接调 `AlhPro.Core.EngineChoice`,不再只读源码文本)。
     /// 铁律:Real-CUGAN 用**新值 3**,历史值 2 继续表示 Real-ESRGAN ——
-    /// 反过来(2 → Real-CUGAN)会让还存着 2 的老用户升级后**静默换引擎**,是明令禁止的。</summary>
+    /// 反过来(2 → Real-CUGAN)会让还存着 2 的老用户升级后**静默换引擎**,是明令禁止的。
+    /// 【2026-09-25 视频页移除 waifu2x】`0` 仍被认得(老存档的合法旧值),但 `FromStored(0)` 明确落到
+    /// Real-ESRGAN —— **显式迁移**,不是靠越界兜底碰巧达成(UI 会写下 Waifu2xRetiredNotice)。</summary>
     [Fact]
     public void Stored_engine_codes_keep_legacy_two_meaning_real_esrgan()
     {
-        // ① 值 → 界面索引:0=waifu2x(界面**最后**一项)、3=Real-CUGAN(界面第 2 项)、1 与 2 都落 Real-ESRGAN(界面第 1 项)
-        //    【2026-09-25】用户要求 waifu2x 挪到最后 ⇒ Real-CUGAN 与它**互换界面位置**;存盘值一个都没变。
-        Assert.Equal(AlhPro.Core.EngineChoice.UiWaifu2x, AlhPro.Core.EngineChoice.FromStored(0));
+        // ① 值 → 界面索引:0=退役的 waifu2x ⇒ **Real-ESRGAN**、3=Real-CUGAN(界面第 2 项)、
+        //    1 与 2 也都落 Real-ESRGAN(界面第 1 项)。
+        Assert.Equal(AlhPro.Core.EngineChoice.UiRealEsrgan, AlhPro.Core.EngineChoice.FromStored(0));   // ★ 显式迁移
         Assert.Equal(AlhPro.Core.EngineChoice.UiRealEsrgan, AlhPro.Core.EngineChoice.FromStored(1));
         Assert.Equal(AlhPro.Core.EngineChoice.UiRealEsrgan, AlhPro.Core.EngineChoice.FromStored(2));   // 历史值 2 仍是 Real-ESRGAN
         Assert.Equal(AlhPro.Core.EngineChoice.UiRealCugan, AlhPro.Core.EngineChoice.FromStored(3));   // 新值 3 = Real-CUGAN
+        // 迁移 + 记日志的信号(与 FromStored 同源):只有 0 需要"迁移说明"
+        Assert.True(AlhPro.Core.EngineChoice.IsRetiredWaifu2x(0));
+        Assert.False(AlhPro.Core.EngineChoice.IsRetiredWaifu2x(1));
+        Assert.False(AlhPro.Core.EngineChoice.IsRetiredWaifu2x(2));
+        Assert.False(AlhPro.Core.EngineChoice.IsRetiredWaifu2x(3));
+        Assert.Contains("Real-ESRGAN", AlhPro.Core.EngineChoice.Waifu2xRetiredNotice);
+        Assert.Contains("waifu2x", AlhPro.Core.EngineChoice.Waifu2xRetiredNotice);
 
         // ② 界面索引 → 值(反向),并逐项做**往返**:存得住、读得回(G4 类事故就是往返被守卫截断)
-        Assert.Equal(0, AlhPro.Core.EngineChoice.ToStored(AlhPro.Core.EngineChoice.UiWaifu2x));
         Assert.Equal(1, AlhPro.Core.EngineChoice.ToStored(AlhPro.Core.EngineChoice.UiRealEsrgan));
         Assert.Equal(3, AlhPro.Core.EngineChoice.ToStored(AlhPro.Core.EngineChoice.UiRealCugan));
-        // ⚠ 必须按**三个界面索引**逐个往返,不能写 `for (ui = 0; ui <= UiRealCugan; ui++)` 这种
-        //   "末项即最大索引"的假设 —— 2026-09-25 把 waifu2x 挪到最后之后最大值是 UiWaifu2x,
-        //   旧写法会**静默漏掉 waifu2x 那一支**(往返断言覆盖不到它)。
-        foreach (var ui in new[] { AlhPro.Core.EngineChoice.UiRealEsrgan, AlhPro.Core.EngineChoice.UiRealCugan, AlhPro.Core.EngineChoice.UiWaifu2x })
+        // 2 是旧的第 3 项(waifu2x)⇒ 越界,落 Real-ESRGAN;**绝不会把 0 再写出去**
+        //(这正是"值被回写成 0"那条禁令的机械保证)
+        Assert.Equal(1, AlhPro.Core.EngineChoice.ToStored(2));
+        foreach (var ui in new[] { AlhPro.Core.EngineChoice.UiRealEsrgan, AlhPro.Core.EngineChoice.UiRealCugan })
             Assert.Equal(ui, AlhPro.Core.EngineChoice.FromStored(AlhPro.Core.EngineChoice.ToStored(ui)));
+        for (int ui = -1; ui <= 5; ui++)
+            Assert.NotEqual(AlhPro.Core.EngineChoice.StoredWaifu2x, AlhPro.Core.EngineChoice.ToStored(ui));
 
-        // ③ 引擎名与界面索引一一对应(Real-CUGAN 必须落在 realcugan,不能悄悄是 waifu2x/realesrgan)
+        // ③ 引擎名与界面索引一一对应(Real-CUGAN 必须落在 realcugan;视频页不再有索引 → waifu2x 的映射)
         Assert.Equal("realesrgan", AlhPro.Core.EngineChoice.EngineNameOf(AlhPro.Core.EngineChoice.UiRealEsrgan));
-        Assert.Equal("waifu2x", AlhPro.Core.EngineChoice.EngineNameOf(AlhPro.Core.EngineChoice.UiWaifu2x));
         Assert.Equal(AlhPro.Core.RealCugan.EngineName, AlhPro.Core.EngineChoice.EngineNameOf(AlhPro.Core.EngineChoice.UiRealCugan));
+        for (int ui = 2; ui <= 5; ui++)
+            Assert.Equal("realesrgan", AlhPro.Core.EngineChoice.EngineNameOf(ui));
 
         // ④ 越界(含界面未选中时的 -1)一律落 Real-ESRGAN,绝不返回下拉里不存在的引擎
         foreach (var bad in new[] { -1, 4, 99, int.MinValue, int.MaxValue })
@@ -263,11 +284,13 @@ public class RealCuganContractTests
     }
 
     /// <summary>**恢复设置时的守卫**(真机事故本体):认的存盘值必须**包含 3**。
-    /// 这一条是行为断言 —— 旧的 `d.Engine is >= 0 and <= 2` 会让这里第 4 行直接红。</summary>
+    /// 这一条是行为断言 —— 旧的 `d.Engine is >= 0 and <= 2` 会让这里第 4 行直接红。
+    /// 【2026-09-25】0(退役 waifu2x)**也仍要被认**:它是老存档里的合法旧值,
+    /// 认得它才能"迁移 + 写日志",而不是被当成损坏文件丢掉(IsRetiredWaifu2x 才是迁移信号)。</summary>
     [Fact]
     public void Stored_engine_guard_accepts_the_new_realcugan_value_and_rejects_junk()
     {
-        Assert.True(AlhPro.Core.EngineChoice.IsKnownStored(0));
+        Assert.True(AlhPro.Core.EngineChoice.IsKnownStored(0));   // 老存档的 waifu2x ⇒ 认得 + 迁移
         Assert.True(AlhPro.Core.EngineChoice.IsKnownStored(1));
         Assert.True(AlhPro.Core.EngineChoice.IsKnownStored(2));   // 历史值也要认(否则老用户设置被当成损坏文件)
         Assert.True(AlhPro.Core.EngineChoice.IsKnownStored(3));   // ★ 事故点:3 必须被认
@@ -276,7 +299,8 @@ public class RealCuganContractTests
         Assert.False(AlhPro.Core.EngineChoice.IsKnownStored(99));
     }
 
-    /// <summary>**接线断言**:视频页那边必须用上面这个守卫、且不得再出现写死的区间。
+    /// <summary>**接线断言**:视频页那边必须用上面这个守卫、且不得再出现写死的区间;
+    /// 并且**显式迁移**的那半也要接线(IsRetiredWaifu2x + 可读日志),不能只靠越界兜底。
     /// (纯逻辑的真相在 <see cref="AlhPro.Core.EngineChoice"/>;这条只钉"页面确实用了它"。)</summary>
     [Fact]
     public void Video_page_uses_the_shared_guard_and_mapping()
@@ -292,6 +316,9 @@ public class RealCuganContractTests
         Assert.DoesNotContain("d.Engine < 0 || d.Engine > 2", code);
         // 必须改用共享守卫(这条查的是**代码**,不是注释)
         Assert.Contains("if (AlhPro.Core.EngineChoice.IsKnownStored(d.Engine))", code);
+        // 【2026-09-25】迁移那半必须显式接线:判据 + 一行可读日志(说明"为什么换成 Real-ESRGAN")
+        Assert.Contains("if (AlhPro.Core.EngineChoice.IsRetiredWaifu2x(d.Engine))", code);
+        Assert.Contains("AlhPro.Core.EngineChoice.Waifu2xRetiredNotice", code);
         // 两张映射表都必须转发到 Core(页面里不许留第二份 switch —— 两份迟早分叉)
         Assert.Contains("private static int EngineToStored(int uiIndex) => AlhPro.Core.EngineChoice.ToStored(uiIndex);", code);
         Assert.Contains("private static int EngineFromStored(int stored) => AlhPro.Core.EngineChoice.FromStored(stored);", code);

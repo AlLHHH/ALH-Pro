@@ -113,33 +113,21 @@
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
                     <TextBlock Text="超分引擎" Style="{StaticResource SectionTitle}"/>
-                    <!-- 【顺序:Real-ESRGAN 在上、waifu2x 在下】(用户要求)列表顺序只影响界面,
-                         存盘值仍用旧约定(0=waifu2x / 1=realesrgan / 3=realcugan),转换在 VideoView 的
-                         EngineFromStored/EngineToStored,这样老用户已保存的选择不会被翻转。
-                         ⚠ 【2026-09-24 加回 Real-CUGAN】它是**末尾追加**(界面索引 2 / 存盘值 3):
-                           历史存盘值 2 曾经也是 Real-CUGAN(v1.1.0 移除后一直被解释成 Real-ESRGAN),
-                           继续让它=Real-ESRGAN,绝不让老设置静默变成 Real-CUGAN。 -->
-                    <RadioButtons x:Name="VideoEngineRadios" SelectedIndex="0" ToolTipService.ToolTip="超分引擎(顺序=推荐度):Real-ESRGAN 会主动合成细节(动漫/写实都明显变清晰);Real-CUGAN 是动漫专用超分(线条与色块最干净,但最慢:实测 1080p 2x 约 1.65 秒/帧,约为 animevideov3 的 6.2 倍,且必须有可用显卡);waifu2x 放最后 —— 它只做去噪/去压缩块,干净素材上看起来≈单纯放大,只适合有噪点的老片源"
+                    <!-- 【2026-09-25 用户裁定:视频页移除 waifu2x】原话「禁用吧 直接删掉在视频页面」
+                         —— waifu2x 在视频上的观感远差于图片(TTA 写死 false / -n 挂在降噪开关后面
+                         默认是 -n -1 / 拆帧是 4:2:0 JPEG 中间帧 / 且它本身是 2017 年的静帧动漫降噪器)。
+                         ⇒ 引擎单选**只剩两项**:Real-ESRGAN(界面 0)、Real-CUGAN(界面 1)。
+                         存盘值口径见 AlhPro.Core.EngineChoice:0=waifu2x 仍被认得,
+                         但读到就**显式迁移**到 Real-ESRGAN 并写日志(不是靠越界兜底)。
+                         ⚠ 顺序/项数改了必须同步 EngineChoice 的界面索引常量。
+                         【历史留存】Real-CUGAN 是 2026-09-24 末尾追加的(存盘值 3,不复用历史值 2 ——
+                         历史 2 一直被解释成 Real-ESRGAN,改回去会让老用户静默换引擎)。 -->
+                    <RadioButtons x:Name="VideoEngineRadios" SelectedIndex="0" ToolTipService.ToolTip="超分引擎(顺序=推荐度):Real-ESRGAN 会主动合成细节(动漫/写实都明显变清晰);Real-CUGAN 是动漫专用超分(线条与色块最干净,但最慢:实测 1080p 2x 约 1.65 秒/帧,约为 animevideov3 的 6.2 倍,且必须有可用显卡)。waifu2x 已从视频页移除(视频观感远差于图片;需要它请用图片页)"
                                   SelectionChanged="Combo_Changed">
                         <RadioButton Content="Real-ESRGAN"/>
                         <RadioButton Content="Real-CUGAN"/>
-                        <RadioButton Content="waifu2x"/>
                     </RadioButtons>
                     <TextBlock x:Name="VideoModelLabel" Text="超分模型" Style="{StaticResource SectionTitle}"/>
-                    <ComboBox x:Name="VideoWaifu2xModelCombo" ToolTipService.ToolTip="waifu2x 模型(动漫/通用/现实)"
-                              SelectionChanged="Combo_Changed">
-                        <!-- 【标签长度 · 2026-09-14】第 2 项原来写全名 `models-upconv_7_anime_style_art_rgb`,
-                             界面字体实测 398px —— 比加宽后的下拉(可用 ~322px)还长,必然被裁。
-                             改成 `upconv_7_anime`:与「预设摘要」里既有的叫法(`动漫·upconv_7_anime`,
-                             见 VideoView.xaml.cs 的 UpWaifu2xModelNames)一致,长度 ~250px 可完整显示。
-                             Tag 仍是引擎要的目录全名,不受显示名影响。 -->
-                        <ComboBoxItem Content="通用 · cunet（24MB·中）" Tag="models-cunet"
-                                      ToolTipService.ToolTip="通用 · cunet:官方 waifu2x 默认模型(cunet 架构,比 upconv_7 新、更慢、更干净)。&#x0a;适用:通用画面,动漫与实拍均可。&#x0a;速度 1080p 约 0.37 秒/帧 · 模型大小 24 MB。"/>
-                        <ComboBoxItem Content="动漫 · upconv_7_anime（快）" Tag="models-upconv_7_anime_style_art_rgb"
-                                      ToolTipService.ToolTip="动漫 · upconv_7_anime:官方 waifu2x 动漫模型(upconv_7 架构,比 cunet 快、画面略软)。&#x0a;适用:动漫 / 线稿。&#x0a;模型大小 5.3 MB。"/>
-                        <ComboBoxItem Content="现实 · upconv_7_photo（快）" Tag="models-upconv_7_photo"
-                                      ToolTipService.ToolTip="现实 · upconv_7_photo:官方 waifu2x 照片模型。&#x0a;适用:实拍照片。&#x0a;速度 1080p 约 1.29 秒/帧 · 模型大小 5.3 MB。"/>
-                    </ComboBox>
                     <ComboBox x:Name="VideoEsrganModelCombo" Visibility="Collapsed"
                               ToolTipService.ToolTip="Real-ESRGAN 模型(按速度与体积排列)。&#x0a;末尾四项为本项目自训的 2x 模型(现实 · alhreal2x / 游戏 · alhgame2x / 游戏 · alhgame2x-v2 / 游戏 · alhgame2x-v3;名字里的 alh 与末尾那个蓝色「测试」小标都表示「这不是官方权重」)。"
                               SelectionChanged="Combo_Changed">
@@ -149,16 +137,19 @@
                              所以去掉冗余前缀(`realesr-` / `realesrgan-` / `models-`;引擎名由上面的
                              「超分引擎」与 ToolTip 说明,预设摘要里也一直是这个短叫法),现在最长 ~240px ✓。
                              ⚠ 读模型名一律走 Tag(引擎要的全名),不许改成读 Content —— 见 VideoView.xaml.cs 的 SelModel。 -->
-                        <ComboBoxItem Content="动漫 · animevideov3（快）" Tag="realesr-animevideov3"
-                                      ToolTipService.ToolTip="动漫 · animevideov3:官方动漫视频模型(体积最小、速度最快的一档)。&#x0a;适用:动漫长视频。&#x0a;速度 1080p 约 0.26~0.30 秒/帧 · 模型大小 3.8 MB(x2 / x3 / x4)。&#x0a;无 1x 权重:1x 会输出全黑画面,请用 2x 及以上。"/>
-                        <ComboBoxItem Content="通用 · general-x4v3（快）" Tag="realesr-general-x4v3"
-                                      ToolTipService.ToolTip="通用 · general-x4v3:官方通用模型,体积小、显存占用低;去模糊与去噪能力偏弱。&#x0a;速度 1080p 约 0.46 秒/帧 · 模型大小 4.9 MB。"/>
+                        <ComboBoxItem Content="动漫 · animevideov3（快）" Tag="realesr-animevideov3">
+                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">动漫 · animevideov3:官方动漫视频模型(体积最小、速度最快的一档)。&#x0a;适用:动漫长视频。&#x0a;速度 1080p 约 0.26~0.30 秒/帧 · 模型大小 3.8 MB(x2 / x3 / x4)。&#x0a;无 1x 权重:1x 会输出全黑画面,请用 2x 及以上。<Run Foreground="#7BD88F">&#x0a;权重 2x / 3x / 4x</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
+                        </ComboBoxItem>
+                        <ComboBoxItem Content="通用 · general-x4v3（快）" Tag="realesr-general-x4v3">
+                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">通用 · general-x4v3:官方通用模型,体积小、显存占用低;去模糊与去噪能力偏弱。&#x0a;速度 1080p 约 0.46 秒/帧 · 模型大小 4.9 MB。<Run Foreground="#7BD88F">&#x0a;权重 4x</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
+                        </ComboBoxItem>
                         <!-- ↓ 第 3 项(序号 2):自转的带降噪通用模型。**这一行绝不能少** ——
                              2026-09-14 重排时曾漏掉它(只留了注释),结果下拉里 5 项变 4 项,
                              而 VideoModelOrder 仍按 5 项映射(Rev2 的 4→新 2),老用户存的序号会被解释成错的模型。
                              是"看真实界面截图"才发现的;以后改这个下拉,必须用界面确认 5 项都在且顺序如上。 -->
-                        <ComboBoxItem Content="通用 · wdn-x4v3（快）" Tag="realesr-general-wdn-x4v3"
-                                      ToolTipService.ToolTip="通用 · wdn-x4v3:官方通用模型(带 WDN 去噪训练),细节略多。&#x0a;速度 1080p 约 0.46 秒/帧 · 模型大小 4.9 MB。"/>
+                        <ComboBoxItem Content="通用 · wdn-x4v3（快）" Tag="realesr-general-wdn-x4v3">
+                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">通用 · wdn-x4v3:官方通用模型(带 WDN 去噪训练),细节略多。&#x0a;速度 1080p 约 0.46 秒/帧 · 模型大小 4.9 MB。<Run Foreground="#7BD88F">&#x0a;权重 4x</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
+                        </ComboBoxItem>
                         <!-- 【顺序 · Rev3 · 2026-09-14 用户要求】整个下拉按**速度与体积**排(快/小 → 慢/大):
                              0 realesr-animevideov3 4MB 0.26~0.30 秒/帧
                              1 realesr-general-x4v3  5MB 0.458 秒/帧
@@ -171,15 +162,16 @@
                              MigrateEsrganModelOrder 调用它;读设置与读预设都走那条路。
                              不迁移的后果:老用户"存的 2 = x4plus-anime"会静默变成 2 = wdn-x4v3。
                              以后若再调顺序:必须 +1 Rev、加一段映射、同步改这里与 UpEsrganModelNames。 -->
-                        <ComboBoxItem Content="动漫 · x4plus-anime（中）" Tag="realesrgan-x4plus-anime"
-                                      ToolTipService.ToolTip="动漫 · x4plus-anime:官方动漫插画模型。&#x0a;适用:动漫插画 / 静态图;长视频建议用 animevideov3。&#x0a;速度 1080p 约 3.3~4.4 秒/帧 · 模型大小 9.0 MB。"/>
+                        <ComboBoxItem Content="动漫 · x4plus-anime（中）" Tag="realesrgan-x4plus-anime">
+                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">动漫 · x4plus-anime:官方动漫插画模型。&#x0a;适用:动漫插画 / 静态图;长视频建议用 animevideov3。&#x0a;速度 1080p 约 3.3~4.4 秒/帧 · 模型大小 9.0 MB。<Run Foreground="#7BD88F">&#x0a;权重 4x</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
+                        </ComboBoxItem>
                         <!-- 「通用 · realesrgan-x4plus」按体积(33.5MB)与耗时(最慢)排在最后,并红字标出"超慢"
                              (用户要求:不删除、只警示)。
                               依据(2026-09-11 本机 4060 Laptop 实测,源 1920×1080 每帧):x4plus 14.48s / x4plus-anime 4.84s /
                               animevideov3 0.84s;x4plus 还有"只有 4x 权重"的问题(选 2x 也照样全量算 4x 再缩回)。
                               注:本项 Content 是 StackPanel(富文本),读模型名一律走 Tag —— 不要改成读 Content。 -->
-                        <ComboBoxItem Tag="realesrgan-x4plus"
-                                      ToolTipService.ToolTip="通用 · x4plus:官方通用模型。&#x0a;只有 4x 权重:选 2x / 3x 也按 4x 全量计算再缩回。&#x0a;速度 1080p 约 15.9 秒/帧 · 模型大小 33.5 MB。&#x0a;建议只用于单张图片。">
+                        <ComboBoxItem Tag="realesrgan-x4plus">
+                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">通用 · x4plus:官方通用模型。&#x0a;只有 4x 权重:选 2x / 3x 也按 4x 全量计算再缩回。&#x0a;速度 1080p 约 15.9 秒/帧 · 模型大小 33.5 MB。&#x0a;建议只用于单张图片。<Run Foreground="#7BD88F">&#x0a;权重 4x</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
                             <!-- 「慢」直接在括号里改成红字「超慢」,不再另挂一个红字标记(用户:冗余了) -->
                             <StackPanel Orientation="Horizontal" Spacing="0">
                                 <TextBlock Text="通用 · x4plus（" VerticalAlignment="Center"/>
@@ -217,7 +209,7 @@
                                  不是秒/帧(那个数字放在悬停提示与下拉下方提示里)。
                                  【宽度 · 2026-09-21】药丸占 36px(6 间距 + 30),而收起状态文字右侧只剩 18px
                                  ⇒ 已按用户裁决把左栏 300 → 322,见文件头那条实测。 -->
-                            <ToolTipService.ToolTip>现实 · alhreal2x:自训 2x 超分模型(训练数据:实拍照片与人像)。&#x0a;留出视频实测(540p→1080p):PSNR 31.56 · SSIM 0.952 · 边缘 PSNR 21.55;色偏 游戏 0.34 / 动漫 0.18 / 实拍 1.48(判据 小于 5)。&#x0a;detail 3.55 / 2.14 / 63.44(游戏 / 动漫 / 实拍)。&#x0a;1080p 约 0.35 秒/帧 · 模型大小 2.4 MB。 倍率:原生 2x;目标 3x/4x 由 2x 成片放大。</ToolTipService.ToolTip>
+                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">现实 · alhreal2x:自训 2x 超分模型(训练数据:实拍照片与人像)。&#x0a;留出视频实测(540p→1080p):PSNR 31.56 · SSIM 0.952 · 边缘 PSNR 21.55;色偏 游戏 0.34 / 动漫 0.18 / 实拍 1.48(判据 小于 5)。&#x0a;detail 3.55 / 2.14 / 63.44(游戏 / 动漫 / 实拍)。&#x0a;1080p 约 0.35 秒/帧 · 模型大小 2.4 MB。 倍率:原生 2x;目标 3x/4x 由 2x 成片放大。<Run Foreground="#7BD88F">&#x0a;权重 2x</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <Border Width="3" Height="14" CornerRadius="1.5" Background="#8FA9D6" VerticalAlignment="Center" ToolTipService.ToolTip="ALH Pro 自训模型(独立分支 models\\alhpro)"/>
                                 <TextBlock Text="现实 · alhreal2x（快）" VerticalAlignment="Center"/>
@@ -241,7 +233,7 @@
                              ⚠ 这是**追加**(v1 原样保留):VideoModelOrder Rev5 与 Rev4 之间是恒等映射。
                              ⚠ 文案与 Core.ExperimentalEsrgan 里的 v2 分支**逐字相同**(有单测钉住),改时一起改。 -->
                         <ComboBoxItem Tag="alhpro-game2x-v2" AutomationProperties.Name="游戏 · alhgame2x-v2（快）测试">
-                            <ToolTipService.ToolTip>游戏 · alhgame2x-v2:自训 2x 超分模型(训练数据:26 段游戏录像 · 942 帧)。&#x0a;留出视频实测(540p→1080p):PSNR 32.67 · SSIM 0.954 · 边缘 PSNR 22.67;色偏 游戏 0.21 / 动漫 0.00 / 实拍 1.27(判据 小于 5)。&#x0a;detail 2.77 / 1.68 / 70.58(游戏 / 动漫 / 实拍)。&#x0a;1080p 约 0.35 秒/帧 · 模型大小 2.4 MB。 倍率:原生 2x;目标 3x/4x 由 2x 成片放大。</ToolTipService.ToolTip>
+                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">游戏 · alhgame2x-v2:自训 2x 超分模型(训练数据:26 段游戏录像 · 942 帧)。&#x0a;留出视频实测(540p→1080p):PSNR 32.67 · SSIM 0.954 · 边缘 PSNR 22.67;色偏 游戏 0.21 / 动漫 0.00 / 实拍 1.27(判据 小于 5)。&#x0a;detail 2.77 / 1.68 / 70.58(游戏 / 动漫 / 实拍)。&#x0a;1080p 约 0.35 秒/帧 · 模型大小 2.4 MB。 倍率:原生 2x;目标 3x/4x 由 2x 成片放大。<Run Foreground="#7BD88F">&#x0a;权重 2x</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <Border Width="3" Height="14" CornerRadius="1.5" Background="#8FA9D6" VerticalAlignment="Center" ToolTipService.ToolTip="ALH Pro 自训模型(独立分支 models\\alhpro)"/>
                                 <TextBlock Text="游戏 · alhgame2x-v2（快）" VerticalAlignment="Center"/>
@@ -259,7 +251,7 @@
                              ⚠ 这是**追加**(v1/v2 原样保留):VideoModelOrder Rev6 与 Rev5 之间是恒等映射。
                              ⚠ 文案与 Core.ExperimentalEsrgan 里的 v3 分支**逐字相同**(有单测钉住),改时一起改。 -->
                         <ComboBoxItem Tag="alhpro-game2x-v3" AutomationProperties.Name="游戏 · alhgame2x-v3（快）测试">
-                            <ToolTipService.ToolTip>游戏 · alhgame2x-v3:自训 2x 超分模型(锐化优先:留出视频实测 detail 760、锯齿 50.91,两项都优于其它几支)。&#x0a;留出视频实测(540p→1080p):PSNR 31.99 · SSIM 0.953 · 边缘 PSNR 22.10;最干净的 v2 是 32.67 / 0.954 / 22.67。&#x0a;色偏 游戏 0.49 / 动漫 0.13 / 实拍 8.85(判据 小于 5:照片偏蓝,照片请用 v2);detail 3.72 / 2.28 / 77.26。&#x0a;1080p 约 0.35 秒/帧 · 模型大小 2.4 MB。 倍率:原生 2x;目标 3x/4x 由 2x 成片放大。</ToolTipService.ToolTip>
+                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">游戏 · alhgame2x-v3:自训 2x 超分模型(锐化优先:留出视频实测 detail 760、锯齿 50.91,两项都优于其它几支)。&#x0a;留出视频实测(540p→1080p):PSNR 31.99 · SSIM 0.953 · 边缘 PSNR 22.10;最干净的 v2 是 32.67 / 0.954 / 22.67。&#x0a;色偏 游戏 0.49 / 动漫 0.13 / 实拍 8.85(判据 小于 5:照片偏蓝,照片请用 v2);detail 3.72 / 2.28 / 77.26。&#x0a;1080p 约 0.35 秒/帧 · 模型大小 2.4 MB。 倍率:原生 2x;目标 3x/4x 由 2x 成片放大。<Run Foreground="#7BD88F">&#x0a;权重 2x</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <Border Width="3" Height="14" CornerRadius="1.5" Background="#8FA9D6" VerticalAlignment="Center" ToolTipService.ToolTip="ALH Pro 自训模型(独立分支 models\\alhpro)"/>
                                 <TextBlock Text="游戏 · alhgame2x-v3（快）" VerticalAlignment="Center"/>
@@ -277,14 +269,14 @@
                              ⚠ 文案与 Core 的常量**逐字一致**(有单测钉住):Anime4k.MenuText / Upscale1x.RealMenuText。
                              选到 1x 时,下拉里只有这两项可选,其余放大模型由代码置灰(见 VideoView.UpdateModelScaleAvailability)。 -->
                         <ComboBoxItem Tag="anime4k" AutomationProperties.Name="动漫 · Anime4K 修复（快）">
-                            <ToolTipService.ToolTip>Anime4K:开源着色器(MIT),在**原分辨率**上做修复 + 锐化,**不放大**(1x)。&#x0a;实测(1080p 同帧):边缘过渡宽度 6.76 → 5.96px(更锐)、纹理量不丢、与源的细节相关性 0.909(增强原有细节,不是编出来);代价是平坦区噪声 1.74×,**脏素材慎用**。&#x0a;速度最快(实测约 15 FPS@1080p);需要可用的 Vulkan 显卡,探测不过会自动退回「现实 · 1x 修复」并写日志。</ToolTipService.ToolTip>
+                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">Anime4K:开源着色器(MIT),在**原分辨率**上做修复 + 锐化,**不放大**(1x)。&#x0a;实测(1080p 同帧):边缘过渡宽度 6.76 → 5.96px(更锐)、纹理量不丢、与源的细节相关性 0.909(增强原有细节,不是编出来);代价是平坦区噪声 1.74×,**脏素材慎用**。&#x0a;速度最快(实测约 15 FPS@1080p);需要可用的 Vulkan 显卡,探测不过会自动退回「现实 · 1x 修复」并写日志。<Run Foreground="#7BD88F">&#x0a;着色器(无权重)</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <Border Width="3" Height="14" CornerRadius="1.5" Background="#5FC9A8" VerticalAlignment="Center" ToolTipService.ToolTip="Anime4K 着色器(第三方开源,MIT;随 ffmpeg 目录下发)"/>
                                 <TextBlock Text="动漫 · Anime4K 修复（快）" VerticalAlignment="Center"/>
                             </StackPanel>
                         </ComboBoxItem>
                         <ComboBoxItem Tag="alhpro-real1x" AutomationProperties.Name="现实 · 1x 修复（中）">
-                            <ToolTipService.ToolTip>现实 · 1x 修复:**画面尺寸不变、不放大**。内部用自训的「现实 · alhreal2x」按 2x 超分,再精确缩回原尺寸。&#x0a;实测(2026-09-21 三素材对比):干净素材上它比 Anime4K **更接近原片**(PSNR 36.8 对 35.8dB)、噪点更低(1.54× 对 1.85×);有压缩损伤/偏软的素材上则相反。&#x0a;⚠ 速度标「中」是有依据的:它要跑**完整一遍 2x 超分**(本机约 0.35 秒/帧 @1080p),而 Anime4K 那条约 0.07 秒/帧 ⇒ 慢约 5 倍。</ToolTipService.ToolTip>
+                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">现实 · 1x 修复:**画面尺寸不变、不放大**。内部用自训的「现实 · alhreal2x」按 2x 超分,再精确缩回原尺寸。&#x0a;实测(2026-09-21 三素材对比):干净素材上它比 Anime4K **更接近原片**(PSNR 36.8 对 35.8dB)、噪点更低(1.54× 对 1.85×);有压缩损伤/偏软的素材上则相反。&#x0a;⚠ 速度标「中」是有依据的:它要跑**完整一遍 2x 超分**(本机约 0.35 秒/帧 @1080p),而 Anime4K 那条约 0.07 秒/帧 ⇒ 慢约 5 倍。<Run Foreground="#7BD88F">&#x0a;权重 2x(缩回 1x)</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <Border Width="3" Height="14" CornerRadius="1.5" Background="#8FA9D6" VerticalAlignment="Center" ToolTipService.ToolTip="自训现实模型(alhreal2x)按 2x 跑再缩回原尺寸"/>
                                 <TextBlock Text="现实 · 1x 修复（中）" VerticalAlignment="Center"/>
@@ -301,12 +293,15 @@
                     <ComboBox x:Name="VideoRealcuganModelCombo" Visibility="Collapsed"
                               ToolTipService.ToolTip="Real-CUGAN 降噪档(动漫专用超分)。&#x0a;注意:这里是**同一份 models-se 权重**、只是降噪档(-n)不同 —— 不是三个不同的模型,所以命名与其他引擎保持同一格式「适用 · 档名 档位（速度）」。&#x0a;引擎:realcugan-ncnn-vulkan(2026 重编版,含 50 系所需的健壮性修复)。&#x0a;⚠ 实测速度(口径:本机 RTX 4060,1080p 2x,40 帧目录批量按帧摊,三次独立进程冷跑):约 1.65 秒/帧(1.63~1.68)。同口径 animevideov3 2x 是 0.27 秒/帧 ⇒ 约 6.2 倍慢。&#x0a;⚠ 实测随 GPU 占用波动:单机复现可能落在约 4~30 倍(量级可信、精确倍数不可复现)。&#x0a;⚠ 必须有 GPU:它只有 ncnn-Vulkan 权重(没有 ONNX 版本、CPU 档在本机实测会崩),没有可用显卡时会被拒绝处理。"
                               SelectionChanged="Combo_Changed">
-                        <ComboBoxItem Content="动漫 · models-se -1（中）" Tag="models-se:-1"
-                                      ToolTipService.ToolTip="Real-CUGAN 官方保守档(-n -1 = conservative):尽量保留原纹理、不做强打磨,动漫线条最干净。&#x0a;适用:干净或轻压缩的动漫片源。&#x0a;实测速度:1080p 2x 约 1.65 秒/帧(同口径 animevideov3 约 0.27 秒/帧 ⇒ 约 6.2 倍)。&#x0a;⚠ 实测随 GPU 占用波动:单机复现可能落在约 4~30 倍(量级可信、精确倍数不可复现)。&#x0a;模型大小:25.4 MB(models-se 权重目录,2x/3x/4x 共 11 个文件)。"/>
-                        <ComboBoxItem Content="动漫 · models-se 0（快）" Tag="models-se:0"
-                                      ToolTipService.ToolTip="Real-CUGAN 无降噪档(-n 0):输入已经干净时用它,速度与保守档同档(实测同口径约 1.63~1.74 秒/帧)。&#x0a;适用:高码率、无明显噪点/压缩块的动漫。&#x0a;⚠ 实测随 GPU 占用波动:单机复现可能落在约 4~30 倍(量级可信、精确倍数不可复现)。&#x0a;模型大小:25.4 MB(models-se 权重目录)。"/>
-                        <ComboBoxItem Content="动漫 · models-se 3（慢）" Tag="models-se:3"
-                                      ToolTipService.ToolTip="Real-CUGAN 最强降噪档(-n 3):老片源噪点多、压缩块明显时用它;会一并抹掉部分纹理。&#x0a;适用:录像带/低码率老番。&#x0a;实测速度:1080p 2x 约 1.61~1.65 秒/帧(与保守档同档)。&#x0a;⚠ 实测随 GPU 占用波动:单机复现可能落在约 4~30 倍(量级可信、精确倍数不可复现)。&#x0a;模型大小:25.4 MB(models-se 权重目录)。"/>
+                        <ComboBoxItem Content="动漫 · models-se -1（中）" Tag="models-se:-1">
+                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">Real-CUGAN 官方保守档(-n -1 = conservative):尽量保留原纹理、不做强打磨,动漫线条最干净。&#x0a;适用:干净或轻压缩的动漫片源。&#x0a;实测速度:1080p 2x 约 1.65 秒/帧(同口径 animevideov3 约 0.27 秒/帧 ⇒ 约 6.2 倍)。&#x0a;⚠ 实测随 GPU 占用波动:单机复现可能落在约 4~30 倍(量级可信、精确倍数不可复现)。&#x0a;模型大小:25.4 MB(models-se 权重目录,2x/3x/4x 共 11 个文件)。<Run Foreground="#7BD88F">&#x0a;权重 2x / 3x / 4x</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
+                        </ComboBoxItem>
+                        <ComboBoxItem Content="动漫 · models-se 0（快）" Tag="models-se:0">
+                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">Real-CUGAN 无降噪档(-n 0):输入已经干净时用它,速度与保守档同档(实测同口径约 1.63~1.74 秒/帧)。&#x0a;适用:高码率、无明显噪点/压缩块的动漫。&#x0a;⚠ 实测随 GPU 占用波动:单机复现可能落在约 4~30 倍(量级可信、精确倍数不可复现)。&#x0a;模型大小:25.4 MB(models-se 权重目录)。<Run Foreground="#7BD88F">&#x0a;权重 2x / 3x / 4x</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
+                        </ComboBoxItem>
+                        <ComboBoxItem Content="动漫 · models-se 3（慢）" Tag="models-se:3">
+                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">Real-CUGAN 最强降噪档(-n 3):老片源噪点多、压缩块明显时用它;会一并抹掉部分纹理。&#x0a;适用:录像带/低码率老番。&#x0a;实测速度:1080p 2x 约 1.61~1.65 秒/帧(与保守档同档)。&#x0a;⚠ 实测随 GPU 占用波动:单机复现可能落在约 4~30 倍(量级可信、精确倍数不可复现)。&#x0a;模型大小:25.4 MB(models-se 权重目录)。<Run Foreground="#7BD88F">&#x0a;权重 2x / 3x / 4x</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
+                        </ComboBoxItem>
                     </ComboBox>
                     <!-- 4x 专用权重模型的提示(用户要求:放在模型下拉正下方)
                          【2026-09-13 用户要求】这条不再是"红色警告":改用普通提示样式(中性灰 HintText)、文案里也不带 ⚠ 图标。
@@ -318,7 +313,7 @@
                                Style="{StaticResource HintText}" Margin="0,2,0,0"/>
 
                     <TextBlock Text="视频降噪" Style="{StaticResource SectionTitle}"/>
-                    <CheckBox x:Name="DenoiseToggle" Content="启用视频降噪" ToolTipService.ToolTip="降噪统一发生在**拆帧阶段**(源分辨率、超分之前),或由 waifu2x 自带的降噪档承担(见下)。顺序有依据:先降噪再放大,超分才不必去放大噪点 —— Neat Video 官方手册把 resampling 列为会改变噪声特性的效果、结论是先用它降噪;RealBasicVSR 官方也把 image pre-cleaning 放在传播之前并称其 indispensable。&#x0a;强度**只有 弱 / 中 / 强 三档**(原先那个「自动」档已按用户要求下线):干净素材请直接关掉本开关 —— 实测(同一批 6 张连续帧压 JPEG q15)干净/轻压缩源上降噪会让成片 PSNR 掉 0.3~0.9dB(不降噪 36.23 对 现行三档 35.34~35.93)。&#x0a;引擎差异:超分引擎选 waifu2x 且本机 ncnn 实测可用时,走它自带的降噪档(同一套网络换权重、不额外耗时);其余情况(兼容模式 / waifu2x 落到 ONNX 稳定引擎 / 其它超分引擎)统一走拆帧滤镜链 —— 这条路必定生效,不会静默失效。"
+                    <CheckBox x:Name="DenoiseToggle" Content="启用视频降噪" ToolTipService.ToolTip="降噪统一发生在**拆帧阶段**(源分辨率、超分之前)。顺序有依据:先降噪再放大,超分才不必去放大噪点 —— Neat Video 官方手册把 resampling 列为会改变噪声特性的效果、结论是先用它降噪;RealBasicVSR 官方也把 image pre-cleaning 放在传播之前并称其 indispensable。&#x0a;强度**只有 弱 / 中 / 强 三档**(原先那个「自动」档已按用户要求下线):干净素材请直接关掉本开关 —— 实测(同一批 6 张连续帧压 JPEG q15)干净/轻压缩源上降噪会让成片 PSNR 掉 0.3~0.9dB(不降噪 36.23 对 现行三档 35.34~35.93)。&#x0a;引擎差异:视频页已移除 waifu2x(2026-09-25),所以视频超分一律走这条拆帧滤镜链 —— 它必定生效,不会静默失效。(waifu2x 自带降噪档现在只在图片页。) "
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
                     <TextBlock x:Name="DenoiseKindLabel" Text="降噪算法" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="DenoiseKindCombo" SelectedIndex="0" SelectionChanged="Combo_Changed"

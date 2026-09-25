@@ -2418,11 +2418,17 @@ public static partial class EngineService
             }
             catch (InvalidOperationException gpuEx)
             {
+                // 【2026-09-25 话术校准:这是两页共用的兜底分支 ⇒ 建议必须"页面无关且真的做得到"】
+                // waifu2x 已按用户裁定**从视频页移除**(视频页只剩 Real-ESRGAN / Real-CUGAN),所以
+                // 不能再写"换用 waifu2x 引擎"——视频页用户照做会发现那个档位根本不存在(假出路)。
+                // 首选出路改成 **Real-ESRGAN(两页都有)**;waifu2x 只在图片页提供,所以想用它必须
+                // **写明入口是图片页**。替换 engines/waifu2x/ 文件那条照旧有效(图片页仍在用这个引擎)。
                 throw new InvalidOperationException(
                     $"超分引擎在 GPU 和 CPU 模式都不行(exit {ExtractExit(gpuEx.Message)}):\n" +
                     $"这多半是引擎版本与显卡不兼容(如 RTX 50 系 + 旧版 ncnn-vulkan,或引擎自身 CPU 模式 bug)。\n" +
-                    $"建议:①换用 waifu2x 引擎(官方新版,兼容 50 系/Blackwell);" +
-                    "②或到 https://github.com/nihui/waifu2x-ncnn-vulkan/releases 下载最新版替换 engines/waifu2x/ 下的文件。" +
+                    $"建议:①换用 **Real-ESRGAN** 引擎(视频页 / 图片页都有这一个档位,它有 ONNX 稳定路线;官方新版兼容 50 系/Blackwell);" +
+                    "②图片页可改用 waifu2x(waifu2x 已从视频页移除,它现在只在图片页提供);" +
+                    "③或到 https://github.com/nihui/waifu2x-ncnn-vulkan/releases 下载最新版替换 engines/waifu2x/ 下的文件。" +
                     $"\n--\n{gpuEx.Message}");
             }
         }
@@ -2524,11 +2530,14 @@ public static partial class EngineService
 
             // ② 【原则 A:任何情况不自动转 CPU】当前及其它 GPU 都失败 → 直接报错给可行建议,而非默默跑慢速 CPU。
             // 超分/补帧在 CPU 上慢到不可接受;只有用户在设置里【手动选 CPU】才走 CPU(见上方 !usesGpu 分支,那里保留)。
+            // 【2026-09-25 话术校准(与上面那条同因)】两页共用的失败分支里不许再让视频页用户去"换用 waifu2x":
+            // 视频页已把它移除 ⇒ 首选出路写 **Real-ESRGAN**,waifu2x 必须写明"图片页可改用"。
             throw new InvalidOperationException(
                 $"超分引擎在当前及其它 GPU 上均失败(exit {ExtractExit(ex.Message)}):\n" +
                 $"这多半是引擎与显卡/驱动不兼容(如 RTX 50 系 + 旧版 ncnn-vulkan 的已知崩溃)。\n" +
-                $"建议:①换用 waifu2x 引擎(官方新版支持 50 系/Blackwell);②更新 NVIDIA 显卡驱动;" +
-                $"③或到 https://github.com/nihui/waifu2x-ncnn-vulkan/releases 下载最新版替换 engines/waifu2x/ 下的文件。" +
+                $"建议:①换用 **Real-ESRGAN** 引擎(视频页 / 图片页都有,官方新版兼容 50 系/Blackwell);" +
+                $"②图片页可改用 waifu2x(waifu2x 已从视频页移除,只在图片页提供);③更新 NVIDIA 显卡驱动;" +
+                $"④或到 https://github.com/nihui/waifu2x-ncnn-vulkan/releases 下载最新版替换 engines/waifu2x/ 下的文件。" +
                 $"\n(已按「不自动转 CPU」设置停止,避免慢速超分;确需 CPU 请在设置中手动选择)\n--\n{ex.Message}");
         }
     }

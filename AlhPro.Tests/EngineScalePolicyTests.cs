@@ -172,4 +172,89 @@ public class EngineScalePolicyTests
     [InlineData(true, false, false)]    // 源黑、输出不黑(降噪/提亮) → 不是故障
     public void Silent_black_detection_matches_the_rule(bool inputBlack, bool outputBlack, bool expected)
         => Assert.Equal(expected, FrameInspect.IsSilentBlackFailure(inputBlack, outputBlack));
+
+    // ═══════════ 【2026-09-25 · 用户要求:悬停提示末尾那行绿字「权重 Nx」的唯一来源】═══════════
+
+    /// <summary>`NativeWeightLabel` 逐条取值(与合同一一对应)。
+    /// 【为什么要有这个函数】各支模型的原生权重倍率不同(animevideov3 = 2/3/4x、x4plus 系 = 只有 4x、
+    /// 自训两支 = 只有 2x、waifu2x 三支 = 2x);倍率与权重不一致时上层用重采样补齐 —— **那不是超分**,
+    /// 所以要把这件事统一印在悬停提示里。</summary>
+    [Theory]
+    // Real-CUGAN:models-se 三档都同时具备 up2x/up3x/up4x
+    [InlineData("realcugan", "models-se:-1", "权重 2x / 3x / 4x")]
+    [InlineData("realcugan", "models-se:0", "权重 2x / 3x / 4x")]
+    [InlineData("realcugan", "models-se:3", "权重 2x / 3x / 4x")]
+    // Real-ESRGAN:1x 修复(2x 跑再缩回)/ 4x-only 系 / 只有 2x 权重的自训 / animevideov3
+    [InlineData("realesrgan", "alhpro-fix1x", "权重 2x(缩回 1x)")]
+    [InlineData("realesrgan", "realesrgan-x4plus", "权重 4x")]
+    [InlineData("realesrgan", "realesrgan-x4plus-anime", "权重 4x")]
+    [InlineData("realesrgan", "realesr-general-x4v3", "权重 4x")]
+    [InlineData("realesrgan", "realesr-general-wdn-x4v3", "权重 4x")]
+    [InlineData("realesrgan", "alhpro-real2x", "权重 2x")]
+    [InlineData("realesrgan", "alhpro-game2x", "权重 2x")]
+    [InlineData("realesrgan", "alhpro-game2x-v2", "权重 2x")]
+    [InlineData("realesrgan", "alhpro-game2x-v3", "权重 2x")]
+    [InlineData("realesrgan", "realesr-animevideov3", "权重 2x / 3x / 4x")]
+    [InlineData("realesrgan", "realesr-animevideov3-x2", "权重 2x / 3x / 4x")]   // 名字判定与 NormalizeModel 同源
+    // waifu2x:随包三支都是 2x 权重
+    [InlineData("waifu2x", "models-cunet", "权重 2x")]
+    [InlineData("waifu2x", "models-upconv_7_photo", "权重 2x")]
+    [InlineData("waifu2x", "models-upconv_7_anime_style_art_rgb", "权重 2x")]
+    // 认不出 / 不适用 ⇒ **空串**(调用方据此不加绿字行)
+    [InlineData("waifu2x", "models-unknown", "")]
+    [InlineData("realesrgan", "some-new-model", "")]
+    [InlineData("realesrgan", "alhpro-real1x", "")]     // 界面上那项的 Tag 不是权重模型名(它自己写死一行绿字)
+    [InlineData("anime4k", "anime4k", "")]              // Anime4K 走着色器:没有权重文件
+    [InlineData("", "", "")]
+    [InlineData("realesrgan", "", "")]
+    [InlineData(null!, null!, "")]
+    public void Native_weight_label_matches_the_contract(string? engine, string? model, string expected)
+        => Assert.Equal(expected, EngineScalePolicy.NativeWeightLabel(engine!, model!));
+
+    /// <summary>只要给了绿字,文字就必须以「权重」或「着色器」开头 —— 界面那行是**提醒**,
+    /// 不能变成一句没有信息量的话(界面上写死的两项自己负责,这里只管函数的输出)。</summary>
+    [Fact]
+    public void Native_weight_label_is_either_empty_or_a_weight_line()
+    {
+        string[] engines = { "realesrgan", "waifu2x", "realcugan", "anime4k", "other", "" };
+        string[] models = { "realesr-animevideov3", "realesrgan-x4plus", "realesr-general-x4v3",
+                            "realesr-general-wdn-x4v3", "alhpro-real2x", "alhpro-game2x-v2", "alhpro-game2x-v3",
+                            "alhpro-fix1x", "models-cunet", "models-upconv_7_photo",
+                            "models-upconv_7_anime_style_art_rgb", "models-se:-1", "models-se:0", "models-se:3",
+                            "anime4k", "alhpro-real1x", "whatever", "" };
+        foreach (var e in engines)
+            foreach (var m in models)
+            {
+                string s = EngineScalePolicy.NativeWeightLabel(e, m);
+                if (s.Length == 0) continue;
+                Assert.StartsWith("权重", s);
+                Assert.DoesNotContain("&#x0a;", s);       // XAML 里那行换行由调用方拼,函数只管文字
+                Assert.DoesNotContain("Foreground", s);   // 颜色也不归函数管
+            }
+    }
+
+    /// <summary>与 `Decide` 的判据必须**同源**:够 4x-only 的模型在两边都得按 4x 处理/提示;
+    /// 只有 2x 权重的自训模型两边都得说 2x。任一处"各说各话"就直接红。</summary>
+    [Fact]
+    public void Native_weight_label_agrees_with_the_engine_scale_decision()
+    {
+        // 4x-only 系:Decide 固定按 4 跑 ⇒ 提示必须是「权重 4x」
+        foreach (var m in new[] { "realesrgan-x4plus", "realesrgan-x4plus-anime", "realesr-general-x4v3", "realesr-general-wdn-x4v3" })
+        {
+            Assert.Equal(4, EngineScalePolicy.Decide("realesrgan", m, 2.0).EngineScale);
+            Assert.Equal("权重 4x", EngineScalePolicy.NativeWeightLabel("realesrgan", m));
+        }
+        // 只有 2x 权重的自训:目标 2x 时引擎倍数就是 2 ⇒ 提示「权重 2x」
+        foreach (var m in new[] { "alhpro-real2x", "alhpro-game2x-v2", "alhpro-game2x-v3" })
+        {
+            Assert.Equal(2, EngineScalePolicy.Decide("realesrgan", m, 2.0).EngineScale);
+            Assert.Equal("权重 2x", EngineScalePolicy.NativeWeightLabel("realesrgan", m));
+        }
+        // animevideov3:三档都有权重 ⇒ 目标 2/3/4 直接下发,提示写三档
+        Assert.Equal(3, EngineScalePolicy.Decide("realesrgan", "realesr-animevideov3", 3.0).EngineScale);
+        Assert.Equal("权重 2x / 3x / 4x", EngineScalePolicy.NativeWeightLabel("realesrgan", "realesr-animevideov3"));
+        // Real-CUGAN:三档权重齐 ⇒ 目标 3x 下发 3
+        Assert.Equal(3, EngineScalePolicy.Decide("realcugan", "models-se:0", 3.0).EngineScale);
+        Assert.Equal("权重 2x / 3x / 4x", EngineScalePolicy.NativeWeightLabel("realcugan", "models-se:0"));
+    }
 }

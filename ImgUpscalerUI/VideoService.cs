@@ -34,8 +34,14 @@ public sealed class RealCuganNeedsGpuException : InvalidOperationException
 ///
 /// 【用户会看到什么】① 说明为什么不能像 Real-ESRGAN 那样自动换引擎(它只有 ncnn-Vulkan 权重:
 /// 没有 ONNX 版本可换,而 CPU 档在本仓库重编版上实测会崩、0 帧产出);② 四步可执行下一步
-/// (重跑一次 → 关掉占显存的程序 / 重启软件 → 更新驱动 → 改选 Real-ESRGAN 或 waifu2x);
-/// ③ 附上引擎给出的那一行失败原因。</summary>
+/// (重跑一次 → 关掉占显存的程序 / 重启软件 → 更新驱动 → 把「超分引擎」改成 **Real-ESRGAN**);
+/// ③ 附上引擎给出的那一行失败原因。
+///
+/// 【2026-09-25 话术校准:不许再教用户去视频页选 waifu2x】waifu2x 已按用户裁定**从视频页移除**
+/// (`AlhPro.Core/EngineChoice`:视频页只剩 Real-ESRGAN / Real-CUGAN 两项;旧存档里的 `Engine=0`
+/// 读到就迁到 Real-ESRGAN 并写日志)。所以上面第④步**只能**说 Real-ESRGAN ——
+/// 被拒的正是 Real-CUGAN,它在视频页的另一项本来就是我们要换掉的那个,"改选它"等于没换;
+/// 而 waifu2x 现在**唯一的入口是图片页**,不能写成视频页的可选项(用户照做做不到 = 假出路)。</summary>
 internal static class RealCuganRefusal
 {
     internal static string Message(bool engineLevelAlsoFailed)
@@ -50,7 +56,10 @@ internal static class RealCuganRefusal
             + "可以这样做:① **重跑一次** —— 可能只是一次探测超时(显存正被别的程序占用,或驱动刚从休眠唤醒);"
             + "② 关掉占显存的程序(浏览器 / 剪辑软件 / 另一个正在跑的 ALH Pro 任务)后重试,或重启软件;"
             + "③ 更新显卡驱动后重试;"
-            + "④ 要稳就把「超分引擎」改成 **Real-ESRGAN**(它有 ONNX 稳定路线,慢路也能跑)或 **waifu2x**。"
+            + "④ 要稳就把视频页的「超分引擎」改成 **Real-ESRGAN**"
+            + "(它有 ONNX 稳定路线,慢路也能跑) —— 视频页现在只有 Real-ESRGAN / Real-CUGAN 两项,"
+            + "而被拒的正是 Real-CUGAN,所以这里的出路就是换成 Real-ESRGAN;"
+            + "**想用 waifu2x 请去图片页**(它已从视频页移除,视频页选不到它,你在这里找不到那个档位)。"
             + EngineService.LastProbeUserMessage;
     }
 }

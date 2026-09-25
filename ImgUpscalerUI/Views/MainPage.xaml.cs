@@ -2018,7 +2018,7 @@ public sealed partial class MainPage : Page
         // 功能
         content.Children.Add(new TextBlock
         {
-            Text = "功能:图片超分(waifu2x / Real-ESRGAN)、AI 抠图、视频超分(Real-ESRGAN / waifu2x / Real-CUGAN)+ 光流补帧、\n智能去重、转场识别、批量处理、音频增强。",
+            Text = "功能:图片超分(waifu2x / Real-ESRGAN)、AI 抠图、视频超分(Real-ESRGAN / Real-CUGAN)+ 光流补帧、\n智能去重、转场识别、批量处理、音频增强。",
             FontSize = 12,
             TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });

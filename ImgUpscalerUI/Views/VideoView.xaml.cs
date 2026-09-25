@@ -657,7 +657,7 @@ public sealed partial class VideoView : UserControl
         {
             bool weak = SafeRender.IsWeakDevice && FastModeCheck.IsChecked != true;
             // 引擎兼容自检(不限 50 系):结论【一律以真机实测为准】,不按显卡型号猜。
-            // · Real-ESRGAN:本机实测 ncnn 不可用 → 建议换 waifu2x
+            // · Real-ESRGAN:本机实测 ncnn 不可用 → 处理时会自动改用 ONNX 稳定引擎(视频页已无 waifu2x 可换)
             // · RIFE:补帧下拉现在是 v4.13 / v4.6 / v4.26 三支,三支本机实测都可用 ⇒ 不再需要按模型提示
             //   (v4.26 的唯一限制是 TTA 卡死,那一项由 v426TtaBroken 在控件层置灰,不进这条兼容提示)
             string? compatMsg = null;
@@ -668,7 +668,9 @@ public sealed partial class VideoView : UserControl
             if (upOn && SelectedEngineIsReal
                 && EngineService.TryGetNcnnVerdict("realesrgan", AppSettings.GpuIndex) == false)
             {
-                compatMsg = $"⚠ 本机实测「{EngineService.EngineLabel("realesrgan")}」无法用 GPU 加速,建议改用「waifu2x」(官方新版,更稳定)";
+                // 【2026-09-25】原来这里写"建议改用 waifu2x";视频页已移除它(且另一支 Real-CUGAN 也是
+                // ncnn-Vulkan,同卡大概率同样不可用)⇒ 如实说"会自动改用 ONNX 稳定引擎"。
+                compatMsg = $"⚠ 本机实测「{EngineService.EngineLabel("realesrgan")}」无法用 GPU 加速,处理时会自动改用 ONNX 稳定引擎(兼容性更好)";
             }
             // 补帧那 4 支非 v4 老模型(动漫/高清/超高清/经典兼容)已下架 ⇒ 它们的"ncnn 不可用"提示条件恒不成立,整段已删。
             // 引擎兼容提示只留上面 realesrgan 那一条(它是唯一还可能实测失败的引擎;
@@ -831,7 +833,7 @@ public sealed partial class VideoView : UserControl
     private int _lastUpscaleModelIndex = -1;
     /// <summary>用户上一次在 1x 档里选的模型序号(Anime4K / 现实 1x)—— 再切到 1x 时恢复它。</summary>
     private int _last1xModelIndex = -1;
-    /// <summary>进 1x 之前用户选的**引擎**(Real-ESRGAN / waifu2x)—— 1x 会强制走 Real-ESRGAN,离开时恢复。</summary>
+    /// <summary>进 1x 之前用户选的**引擎**(Real-ESRGAN / Real-CUGAN)—— 1x 会强制走 Real-ESRGAN,离开时恢复。</summary>
     private int _lastEngineIndexBefore1x = -1;
     /// <summary>1x 档是否正在"锁住引擎"(存盘时要据此写回用户的真实选择,别把强制值存下去)。</summary>
     private bool _engineLockedFor1x;
@@ -846,8 +848,8 @@ public sealed partial class VideoView : UserControl
     ///   因为 1x 现在有自己的两个修复条目(动漫 · Anime4K 修复 / 现实 · 1x 修复),用放大模型去做 1x 才是"错的用法"。
     ///
     /// 【为什么同时要把引擎锁到 Real-ESRGAN —— 自审抓到的界面谎话】
-    ///   1x 的两个条目都在 **Real-ESRGAN 的模型下拉**里;若引擎选的是 waifu2x,那个下拉是**隐藏**的 ⇒
-    ///   用户看到的是 waifu2x 的三个模型(全是 2x 的、一个都没灰 ✗),而提示却写着"这里只列 1x 修复模型" ✗✗。
+    ///   1x 的两个条目都在 **Real-ESRGAN 的模型下拉**里,而那个下拉只在引擎=Real-ESRGAN 时显示 ⇒
+    ///   【2026-09-25】waifu2x 已从视频页移除,不再存在"引擎选 waifu2x 时看到三个 2x 模型却一个都没灰"的谎话。
     ///   ⇒ 1x 时把引擎强制切到 Real-ESRGAN 并**禁用引擎单选**(离开 1x 原样恢复),界面与实跑才一致。
     ///
     /// 【切倍率时当前选中项不可用怎么办】自动切到该档"上次用的那支"(没有就选第一个可用的),并写日志 ——
@@ -1046,9 +1048,10 @@ public sealed partial class VideoView : UserControl
         ScheduleSave();   // 参数记忆:变化后防抖写盘
     }
 
-    // ===== 超分引擎:界面顺序 Real-ESRGAN(上) / waifu2x(中) / Real-CUGAN(下,2026-09-24 追加) =====
-    // 【为什么要这层映射】界面顺序按用户要求改成 real 在上,但**存盘沿用旧约定**
-    // (0=waifu2x, 1=realesrgan, 2=更早的 Real-CUGAN):老用户存过的选择不会被顺序调整翻转。
+    // ===== 超分引擎:视频页**只剩两项** —— Real-ESRGAN(上,默认) / Real-CUGAN(下,2026-09-24 追加) =====
+    // 【2026-09-25 用户裁定:视频页移除 waifu2x】原话「禁用吧 直接删掉在视频页面」。
+    // 【为什么要这层映射】界面顺序按用户要求是 real 在上,但**存盘沿用旧约定**
+    // (0=waifu2x、1=realesrgan、2=更早的 Real-CUGAN):老用户存过的选择不会被顺序调整翻转。
     // ⚠ 【Real-CUGAN 复活时的取值决策 · 2026-09-24】它**不用**历史值 2,而是用新值 3:
     //   历史值 2 从 v1.1.0 移除 Real-CUGAN 起就**一直被解释成 Real-ESRGAN**(见下面的 FromStored),
     //   若现在把 2 改解释回 Real-CUGAN,那些还存着 2 的老用户会在升级后**静默换引擎**
@@ -1058,20 +1061,20 @@ public sealed partial class VideoView : UserControl
     /// ⚠ 别再在这里写第二份 switch:它已经害过一次真机事故(见 VideoView 恢复设置处的守卫)。</summary>
     private static int EngineToStored(int uiIndex) => AlhPro.Core.EngineChoice.ToStored(uiIndex);
     /// <summary>存盘值(旧约定) → 界面索引。真相同样在 `AlhPro.Core.EngineChoice.FromStored`:
-    /// `0 → waifu2x`、`3 → Real-CUGAN`、`1` 与**历史值 2** 一律 Real-ESRGAN、越界落 Real-ESRGAN。</summary>
+    /// `3 → Real-CUGAN`、`1` / **历史值 2** / 越界 一律 Real-ESRGAN,
+    /// 而 **`0`(waifu2x)是显式迁移**到 Real-ESRGAN(视频页没这个档位了;恢复设置时会写日志)。</summary>
     private static int EngineFromStored(int stored) => AlhPro.Core.EngineChoice.FromStored(stored);
     /// <summary>当前选中的超分引擎名(**唯一来源**;界面索引 → 引擎名)。</summary>
     private string SelectedEngineName => AlhPro.Core.EngineChoice.EngineNameOf(VideoEngineRadios.SelectedIndex);
     /// <summary>当前选中的超分引擎是否是 Real-ESRGAN(界面上排第一个 = 索引 0)。</summary>
     private bool SelectedEngineIsReal => SelectedEngineName == "realesrgan";
-    /// <summary>当前选中的是不是 Real-CUGAN(2026-09-24 追加的第三项)。</summary>
+    /// <summary>当前选中的是不是 Real-CUGAN(2026-09-24 追加;2026-09-25 起是最后一项)。</summary>
     private bool SelectedEngineIsRealCugan => SelectedEngineName == AlhPro.Core.RealCugan.EngineName;
-    /// <summary>选 waifu2x 显示 waifu2x 模型下拉,选 Real-ESRGAN / Real-CUGAN 显示各自的下拉;并确保默认选中首个模型。</summary>
+    /// <summary>选 Real-ESRGAN / Real-CUGAN 显示各自的模型下拉;并确保默认选中首个模型。
+    /// 【2026-09-25】waifu2x 那个模型下拉已随引擎项一起删除,这里不再有它的分支。</summary>
     private void UpdateVideoModelVisibility()
     {
-        if (VideoWaifu2xModelCombo == null || VideoEsrganModelCombo == null) return;
-        bool waifu2x = SelectedEngineName == "waifu2x";
-        VideoWaifu2xModelCombo.Visibility = waifu2x ? Visibility.Visible : Visibility.Collapsed;
+        if (VideoEsrganModelCombo == null) return;
         // 【Rev9】1x 修复锁定期:模型框让位给"Anime4K 锁定牌",这里不许把它又显示回来
         // (原先无条件 `= waifu2x ? Collapsed : Visible`,会把锁定的牌面覆盖掉 ⇒ 用户看到的是普通下拉)。
         VideoEsrganModelCombo.Visibility = SelectedEngineIsReal ? Visibility.Visible : Visibility.Collapsed;
@@ -1083,7 +1086,6 @@ public sealed partial class VideoView : UserControl
             if (VideoRealcuganModelCombo.SelectedIndex < 0) VideoRealcuganModelCombo.SelectedIndex = 0;
         }
         // 确保各下拉有默认选中项(首次/恢复时)
-        if (VideoWaifu2xModelCombo.SelectedIndex < 0) VideoWaifu2xModelCombo.SelectedIndex = 0;
         if (VideoEsrganModelCombo.SelectedIndex < 0) VideoEsrganModelCombo.SelectedIndex = 0;
     }
 
@@ -1260,8 +1262,6 @@ public sealed partial class VideoView : UserControl
         VideoScaleRadios.IsEnabled = up;
         // 超分模型:未启用超分时一并置灰(与引擎/倍率一致,避免"没开超分还能选模型"的困惑)
         VideoModelLabel.Opacity = up ? 1.0 : 0.5;
-        VideoWaifu2xModelCombo.IsEnabled = up;
-        VideoWaifu2xModelCombo.Opacity = up ? 1.0 : 0.5;
         // 【历史】Rev9 时代这里要写成 `up && !Anime4kLocked`(否则会把"锁定牌"的禁用状态覆盖掉)。
         //   Rev10 起锁定牌那套机制已删(1x 有自己的模型条目 ⇒ 靠"隐藏不支持的项"实现),这里恢复成 `= up` 即可;
         //   但**下拉整体可用性**仍由 UpdateModelScaleAvailability 按倍率管(它在下面紧接着被调用)。
@@ -1286,8 +1286,8 @@ public sealed partial class VideoView : UserControl
             4 => "自定义输出分辨率:内部按 2x 超分,再精确缩放到指定宽×高(适合统一输出规格)",
             _ => "2x 速度较快;倍率越高越慢、显存占用越大。3x 内部按引擎支持倍数处理",
         };
-        // 超分倍率可用性:waifu2x 模型权重虽为 2x,但引擎实测 -s 3/-s 4 用级联输出正常、不崩,已放开;
-        // Real-ESRGAN 有对应权重,全亮
+        // 超分倍率可用性:Real-ESRGAN / Real-CUGAN 都有对应权重(且实测 -s 3/-s 4 正常)⇒ 全亮
+        // 【2026-09-25】waifu2x 已从视频页移除,这里不再有"它的 2x 权重能不能用 3x"那条判断。
         SetScaleRadioEnabled(VScale3xRadio, true);
         SetScaleRadioEnabled(VScale4xRadio, true);
         // 【4x-only 权重模型 × 倍率】realesrgan-x4plus / x4plus-anime 只有 4x 权重:选 2x/3x 时引擎会按非原生倍率
@@ -1816,7 +1816,7 @@ public sealed partial class VideoView : UserControl
         public int Gpu { get; set; }
         public bool Interp { get; set; }
         public int Model { get; set; }         // 补帧模型索引(InterpModelCombo)
-        public int UpWaifu2xModel { get; set; }   // 视频超分 waifu2x 模型索引(VideoWaifu2xModelCombo)
+        public int UpWaifu2xModel { get; set; }   // 【已退役 · 2026-09-25】视频页 waifu2x 模型索引;字段只为兼容旧 JSON 保留,程序内不再读取/写入(恒 0)
         public int UpEsrganModel { get; set; }    // 视频超分 Real-ESRGAN 模型索引(VideoEsrganModelCombo)
         /// <summary>视频超分 Real-CUGAN 模型索引(VideoRealcuganModelCombo)。【2026-09-24 新增】
         /// 与其它两个下拉的索引一样,含义 = 界面里的序号(0=保守 / 1=不降噪 / 2=强降噪)。
@@ -1945,6 +1945,15 @@ public sealed partial class VideoView : UserControl
         /// 直接按新刻度解释会**静默改画面**(本仓库禁止)。所以按 VideoModelOrder 的老办法:
         /// 版本落后的数据先做"等效强度换算"再写回,写回时带上版本号 ⇒ 只迁移一次、幂等。</summary>
         public int PostScaleRev { get; set; }
+
+        /// <summary>「只处理选中的项目」(视频列表上方的那个勾选框)。【2026-09-25 新增(字段)· t47 审计 F3】
+        /// 【为什么现在才有】这个开关一直只活在界面上:处理时读一次(RunBatchAsync),既不入存档也不入预设
+        /// ⇒ 重启软件、或套一个参数预设之后,它永远回到**未勾选** —— 用户没动过它,它自己变了(本仓库最忌讳
+        /// 的一类 bug)。与图片页 UpscaleView 的 SelectedOnly 同款语义(那边一直有字段 + 存档读写),
+        /// 这次把视频页这一侧补齐。
+        /// 【老文件怎么读】旧 JSON 里没有这个字段 ⇒ System.Text.Json 不赋值 ⇒ 反序列化后 false(未勾选),
+        /// 正是历史默认行为,不需要迁移、也不需要 Rev(它没有"序号语义")。</summary>
+        public bool SelectedOnly { get; set; }
     }
 
     private static string SettingsFile => ParaPaths.SettingsFile("video-settings.json");
@@ -1961,7 +1970,13 @@ public sealed partial class VideoView : UserControl
     private const int PostScaleCurrentRev = 1;
 
     /// <summary>把老刻度的 5 档后处理强度换算到新刻度(等效强度不变 ⇒ 画面不变)。
-    /// 幂等:带版本号判断,只迁移一次;迁移结果会立刻写回(调用方把我们返回的 true 当"需要保存")。</summary>
+    /// 幂等:带版本号判断,只迁移一次;迁移结果会立刻写回(调用方把我们返回的 true 当"需要保存")。
+    /// 【三个调用点,别再漏】设置加载(<see cref="LoadSettings"/> 里直接调)、预设加载、预设导入
+    /// (后两者经 <see cref="MigratePresetParams"/> 这一个入口,不许各写一份 —— F2 当初就是漏了预设这两条路,
+    /// 而 AlhPro.Core/VideoPostFilters.cs 明确写着"老设置/老预设必须按它做等效换算")。
+    /// 所以迁移日志写在这里、不写在调用点(与 <see cref="MigrateEsrganModelOrder"/> 同一套办法)。
+    /// ⚠ 本函数**不适用于官方内置预设**:它们的 5 个强度由 BuiltinPresets 基线负责,调用方按 IsOfficial 跳过
+    /// (理由:基线里 Rev8 之后的数值本来就是新刻度,再换算一次会静默改画面)。</summary>
     private static bool MigratePostStrengths(VideoSettings d)
     {
         if (d.PostScaleRev >= PostScaleCurrentRev) return false;
@@ -1985,7 +2000,8 @@ public sealed partial class VideoView : UserControl
 
     /// <summary>降噪强度档位顺序迁移(2026-09-21「自动放在最上面」)。
     /// 旧:0=弱 1=中 2=强 3=自动 → 新:0=自动 1=弱 2=中 3=强;-1(关)与越界值原样不动。
-    /// 幂等(带版本号),迁移结果立刻写回;设置与预设**两条读路径**都要调用(预设里同样按序号存)。
+    /// 幂等(带版本号),迁移结果立刻写回;设置与预设**两条读路径**都要调用 —— 准确说是**三个调用点**:
+    /// 设置加载(<see cref="LoadSettings"/> 直接调)、预设加载 / 预设导入(经 <see cref="MigratePresetParams"/>)。
     /// 【为什么不能省】不迁移的话:老"弱(0)"会变成"自动"、"中(1)"变"弱"、"强(2)"变"中"、
     /// 老"自动(3)"变"强" —— 处理结果静默改变,界面上完全看不出来(本仓库在超分模型下拉上踩过同类坑)。</summary>
     private static bool MigrateDenoiseStrength(VideoSettings d)
@@ -2029,7 +2045,8 @@ public sealed partial class VideoView : UserControl
     /// 这里只负责读写设置字段;Rev 历史与每次换位的原因写在那个类的注释里。
     /// 【必须留日志】迁移一旦发生就**静默改了用户存下来的模型**(可能从"最快"变成"最慢"),
     /// 排查"为何突然慢十几倍"时唯一的线索就是这行日志;没发生迁移时**不写**(避免每次启动刷屏)。
-    /// 三个调用点(设置加载 / 预设加载 / 预设导入)共用它,所以日志写在这里、不写在调用点。
+    /// 【三个调用点】设置加载(<see cref="LoadSettings"/>)直接调;预设加载 / 预设导入经
+    /// <see cref="MigratePresetParams"/> 这一个入口调。迁移日志写在这里、不写在调用点,正因为三处共用它。
     /// 返回 true 表示"做过改动"(调用方据此决定是否立即写回盘)。</summary>
     private static bool MigrateEsrganModelOrder(VideoSettings d)
     {
@@ -2088,9 +2105,40 @@ public sealed partial class VideoView : UserControl
         }
     }
 
+    /// <summary>预设读路径的**统一迁移入口**(预设加载 LoadPresets 与预设导入两条路共用它)。
+    /// 【为什么必须是一个入口】原来"三处 Rev"是散着调的:设置加载那条路调了三个,而预设这条路只调了两个
+    /// 后处理刻度那一处**从来没在预设上跑过**(t47 审计 F2)—— 与 AlhPro.Core/VideoPostFilters.cs 里
+    /// 「老设置/老预设必须按 MigrateStrength 做等效换算,否则同一份预设的画面会变」自相矛盾。收成一个入口后,
+    /// 以后再加 Rev 只会漏一处(而不是漏两条路)。
+    /// 三处各管什么(不迁会怎么静默变,见各函数的注释):
+    ///   ① <see cref="MigrateEsrganModelOrder"/> —— 超分模型下拉换过顺序,预设里存的是**序号**;
+    ///   ② <see cref="MigrateDenoiseStrength"/> —— 降噪档位顺序换过两次,存的也是序号;
+    ///   ③ <see cref="MigratePostStrengths"/> —— 5 档后处理刻度 2026-09-20 重新定标。
+    /// 【为什么官方预设不做刻度迁移(③)】官方预设那 5 个强度**由代码基线负责**,不由 PostScaleRev 负责:
+    /// 它们的值就是 `BuiltinPresets()` 里那一版定义的口径(Rev8 之后写下去的就是**新刻度**数值),而基线
+    /// 一旦改动会走 `OfficialRev &lt; 当前基线` 的整份覆盖机制(见 EnsureBuiltinPresets)。若这里再按刻度
+    /// 换算一次,等于把**已经是新刻度**的 15 当旧值变成 21/30/30/30/21(锐化 15→21、清晰 15→30,
+    /// 见 VideoPostFilters.MigrateStrength),用户点一下官方预设画面就变了 ✗。
+    /// 【为什么这个坑必然存在于老机器上】本版之前 SavePresets 从来没盖过 PostScaleRev ⇒ 用户机器上那份
+    /// OfficialRev=8 的官方预设就是「新刻度数值 + PostScaleRev=0」这种组合,肉眼与字段都看不出新旧。
+    /// 所以判据不能只看 Rev,必须结合"这份参数归谁负责":官方预设只迁 ①②(序号类,与刻度无关)。
+    /// 【幂等】三处都带版本判断(Rev 不落后就原样返回),而 <see cref="SavePresets"/> 每次写盘都把当前 Rev
+    /// 盖上 ⇒ "读了写、写了读"不会反复换算(连读两次第二次一定是全 false)。
+    /// 返回 true = 改过(调用方据此立刻写回盘)。</summary>
+    private static bool MigratePresetParams(VideoPreset p)
+    {
+        if (p?.Params == null) return false;
+        bool changed = MigrateEsrganModelOrder(p.Params);          // ① 超分模型序号(Rev 落后才换算)
+        if (MigrateDenoiseStrength(p.Params)) changed = true;      // ② 降噪档位序号(Rev 落后才换算)
+        // ③ 后处理刻度:官方预设跳过(理由见上),用户自建预设照迁
+        if (!p.IsOfficial && MigratePostStrengths(p.Params)) changed = true;
+        return changed;
+    }
+
     /// <summary>读取全部预设(按创建时间排序;坏项跳过)。失败/空返回空列表。
-    /// 【顺带迁移】预设里同样按序号存超分模型,所以读出来后要过一遍 MigrateEsrganModelOrder,
-    /// 有改动就立刻写回(用户自建预设的"轻量模型"也要被正确换算,不能只迁移当前设置)。
+    /// 【顺带迁移】预设里同样按序号/旧刻度存着(超分模型序号 · 降噪档位序号 · 5 档后处理刻度),读出来后
+    /// 统一过一遍 <see cref="MigratePresetParams"/>(预设加载与预设导入共用同一个入口,不许各写一份),
+    /// 有改动就立刻写回 —— 用户自建预设也必须在"读"这一步被换算,不能只迁移设置文件那一条路。
     /// 【损坏保护】文件存在但解析失败时:备份成 .bak 并置只读保护(见 ProtectCorruptPresetFile / SavePresets)。</summary>
     private static List<VideoPreset> LoadPresets()
     {
@@ -2104,9 +2152,9 @@ public sealed partial class VideoView : UserControl
             bool changed = false;
             foreach (var p in list)
             {
-                if (p?.Params != null && MigrateEsrganModelOrder(p.Params)) changed = true;
-                // 【降噪档位顺序同样要迁】预设里存的也是序号,不迁移就会把"存的 0(弱)"当成"自动"。
-                if (p?.Params != null && MigrateDenoiseStrength(p.Params)) changed = true;
+                // 【三处 Rev 一次说完】模型序号 / 降噪档位(预设里存的都是序号,不迁移就会把"存的 0(弱)"
+                // 当成"自动"、把"轻量模型"当成"超慢")+ 后处理刻度(官方预设按基线负责,见 MigratePresetParams)。
+                if (MigratePresetParams(p)) changed = true;
             }
             if (changed) SavePresets(list);
             return list;
@@ -2119,8 +2167,9 @@ public sealed partial class VideoView : UserControl
     }
 
     /// <summary>把预设列表写盘。空列表则删除文件。
-    /// 【盖章】写盘前给每个预设的 Params 盖上"新序号"标记:预设里的 VideoSettings 也是从界面收集来的
-    /// (ModelOrderRev 默认 0),不盖章的话下次 LoadPresets 的迁移会把它当老文件再换一遍序号(来回横跳)。
+    /// 【盖章】写盘前给每个预设的 Params 盖上**四枚**版本标记(ModelOrderRev / SceneDefaultRev /
+    /// VideoDenoiseRev / PostScaleRev):预设里的 VideoSettings 也是从界面收集来的(那些 Rev 默认 0),
+    /// 不盖章的话下次读预设时 MigratePresetParams 会把它当老数据再换一遍(序号来回横跳 / 刻度被二次换算)。
     /// 【损坏保护】若本会话此前读这个文件失败过(_presetFileUnreadable),一律拒绝写入 —— 否则会把用户那份
     /// 读不出来但可能还能救的数据直接顶掉。</summary>
     private static void SavePresets(List<VideoPreset> list)
@@ -2137,10 +2186,19 @@ public sealed partial class VideoView : UserControl
             // 【SceneDefaultRev 一起盖】预设的快照里也有 Scene;预设**刻意不迁移**它(预设是用户主动保存的
             // 显式快照,不该被"默认口径"改动 —— 用户存的是勾着的,应用时就该是勾着的)。盖章只是把它钉成
             // "按当前口径写入"的版本标记,免得将来有人给它加迁移时误伤(本版迁移不改值,盖不盖都不影响结果)。
+            // 【2026-09-25 补上另外两枚章 · t47 审计 F1/F2】预设读侧本来就会跑这三处 Rev 迁移(见
+            // MigratePresetParams),而写侧原先只盖了模型序号与转场口径这两枚 ⇒ 每存一次预设,
+            // VideoDenoiseRev / PostScaleRev 又被打回 0,下一次读出来就被当成"老数据"再换算一遍:
+            //   · 降噪档位:Rev0 的「弱(0)」经 Rev0→Rev1→Rev2 两跳成了「中(1)」—— 用户没动过却变了;
+            //   · 后处理刻度:5 个强度被按旧刻度等效换算,数字与画面都变了。
+            // 盖当前 Rev 是"这份预设就是按本版口径写的"的唯一凭据:漏一枚 = 一处静默改画面(本仓库禁止)。
+            // ⚠ 同样禁止写死数字:Rev 一变,写死的值会让刚写出的数据立刻"版本落后"。
             foreach (var p in list) if (p?.Params != null)
             {
                 p.Params.ModelOrderRev = AlhPro.Core.VideoModelOrder.CurrentRev;
                 p.Params.SceneDefaultRev = AlhPro.Core.SceneDefaultPolicy.CurrentRev;
+                p.Params.VideoDenoiseRev = AlhPro.Core.DenoiseStrengthOrder.CurrentRev;   // F1:降噪档位顺序版本
+                p.Params.PostScaleRev = PostScaleCurrentRev;                              // F2:后处理刻度版本
             }
             Directory.CreateDirectory(Path.GetDirectoryName(PresetFile)!);
             File.WriteAllText(PresetFile, System.Text.Json.JsonSerializer.Serialize(list));
@@ -2260,7 +2318,10 @@ public sealed partial class VideoView : UserControl
         ( "动漫通用", 8, new Func<VideoSettings>(() => new VideoSettings
         {
             Remember = true, Up = true, Engine = 1, Scale = 1, Gpu = 0,
-            Interp = true, Model = 0, UpWaifu2xModel = 1, UpEsrganModel = 0, InterpScale = 2,
+            // 【2026-09-25 · 只改出厂值】UpWaifu2xModel 原写 1(那是 waifu2x 时代的模型序号);该字段已随
+            //   视频页 waifu2x 档位一起退役(程序内不再读取/写入,见 VideoSettings 上的说明)⇒ 写成 0,
+            //   免得看快照的人以为这个预设还在用 waifu2x。不影响任何行为。
+            Interp = true, Model = 0, UpWaifu2xModel = 0, UpEsrganModel = 0, InterpScale = 2,
             Target = false, TargetFps = "", VfrMode = 0, VfrExpanded = false, FpsBase = 0, FpsMode = 0, FpsOffset = 0, FpsExpanded = true,
             DedupOn = true, DedupModel = 1, DedupAnime = 4, DedupSmart = 0, DedupThr = 0.01,
             Scene = false, SceneThr = 0.3, TimeStep = 0.5, Tta = false, OutDir = "", CustomW = "1920", CustomH = "1080",
@@ -2275,9 +2336,17 @@ public sealed partial class VideoView : UserControl
         //   提 Rev 只会把用户对它其它参数的自定义整份覆盖掉(EnsureBuiltinPresets 的覆盖规则),得不偿失。
         // 【Rev 2 → 退回 1 · 2026-09-15 当天定稿】当时为了"转场识别默认改开"提过一次 Rev(1 → 2);
         //   该口径已被用户撤回(默认关、可开可关)⇒ Scene 改回 false、Rev 退回 1,理由同上一个预设处那段。
+        // 【2026-09-25 · 只改出厂值,Rev 一个字都不动】(t46 复核留下的唯一 low)下面这行原写 `Engine = 0` ——
+        //   那是 waifu2x 的**退役存值**(视频页 2026-09-25 已按用户裁定删掉这个档位)。本预设 `Up = false`
+        //   (不超分)⇒ **不会跑错引擎**(t46 已实测),但点一下它就会多打一行「视频页已移除 waifu2x…已改用
+        //   Real-ESRGAN」的迁移日志 —— 对一个"根本没开超分"的预设是多余的解释。现在按 Real-ESRGAN 的存值
+        //   (1)写,推荐值与界面现状一致。
+        //   ⚠ **不许为此提 Rev**:一提,`OfficialRev < 基线` 成立,就会把老用户对这个官方预设的其它自定义
+        //   (去重档位、帧率基准等)整份覆盖掉 —— 那正是要避免的。代价照实说:老机器上**已经存在**的那份
+        //   同名官方预设仍是 Engine=0(不会被刷新),点它照旧多一行迁移日志,但不会跑错引擎。这个取舍是刻意的。
         ( "去重补帧4x", 1, new Func<VideoSettings>(() => new VideoSettings
         {
-            Remember = true, Up = false, Engine = 0, Scale = 1, Gpu = 0,
+            Remember = true, Up = false, Engine = 1, Scale = 1, Gpu = 0,
             Interp = true, Model = 0, UpWaifu2xModel = 0, UpEsrganModel = 0, InterpScale = 2,
             Target = false, TargetFps = "", VfrMode = 0, VfrExpanded = false, FpsBase = 0, FpsMode = 0, FpsOffset = 0, FpsExpanded = false,
             DedupOn = true, DedupModel = 0, DedupAnime = 0, DedupSmart = 1, DedupThr = 0.01,
@@ -2471,8 +2540,11 @@ public sealed partial class VideoView : UserControl
     private void ApplyVideoParams(VideoSettings d)
     {
         UpscaleToggle.IsChecked = d.Up;
+        // 【F3 · 2026-09-25 t47 审计】「只处理选中的项目」是用户设过的开关,恢复设置/套预设时必须原样回填:
+        // 这是新加的字段,老文件里没有 ⇒ false(未勾选,与历史默认一致)。不恢复的话就是"存了却从来没生效"。
+        SelectedOnlyCheck.IsChecked = d.SelectedOnly;
         // 兼容旧设置:存盘沿用旧约定 0=waifu2x / 1=Real-ESRGAN / **2=历史值(自 v1.1.0 起按 Real-ESRGAN 解释)**
-        // / 3=Real-CUGAN(2026-09-24 重新随包后新增)。界面顺序是 Real-ESRGAN(0)/ waifu2x(1)/ Real-CUGAN(2),
+        // / 3=Real-CUGAN(2026-09-24 重新随包后新增)。界面**只剩两项**:Real-ESRGAN(0)/ Real-CUGAN(1),
         // 所以必须经 EngineFromStored 换算,否则老用户存的选择会被顺序调整翻转。
         // 【真机事故 · 2026-09-24 修】原先这里的守卫写的是 `d.Engine is >= 0 and <= 2` ——
         // **把新值 3 挡在外面**,于是"选 Real-CUGAN → 重启 → 静默变回 Real-ESRGAN"(实测两次:
@@ -2480,6 +2552,14 @@ public sealed partial class VideoView : UserControl
         // 判据现在收进 AlhPro.Core.EngineChoice.IsKnownStored(纯逻辑 + 单测),别再在这里写区间。
         if (AlhPro.Core.EngineChoice.IsKnownStored(d.Engine))
         {
+            // 【2026-09-25 用户裁定:视频页移除 waifu2x】**显式迁移**:旧存档里的 Engine=0(waifu2x)
+            // 现在落到 Real-ESRGAN(FromStored),并在这里写一行可读日志说明为什么 ——
+            // 不许让它只是"越界兜底碰巧变成 Real-ESRGAN"(那样用户看到的只有自己的设置悄悄变了)。
+            if (AlhPro.Core.EngineChoice.IsRetiredWaifu2x(d.Engine))
+            {
+                AppLogger.Info($"[记忆] {AlhPro.Core.EngineChoice.Waifu2xRetiredNotice}(日志/文件里的 Engine=0 已规范化)");
+                Log("ℹ " + AlhPro.Core.EngineChoice.Waifu2xRetiredNotice);
+            }
             VideoEngineRadios.SelectedIndex = EngineFromStored(d.Engine);
             // 【2026-09-21 自查修复】记住"用户真实选的引擎"。1x 档会把引擎**强制**成 Real-ESRGAN 并禁用单选,
             //   存盘时若直接读 SelectedIndex,就会把强制值写进设置 ⇒ 用户的引擎选择被静默改写 ✗
@@ -2522,10 +2602,9 @@ public sealed partial class VideoView : UserControl
         if (d.DenoiseKind is >= 0 and <= 2 && DenoiseKindCombo != null) DenoiseKindCombo.SelectedIndex = d.DenoiseKind;
         InterpToggle.IsChecked = d.Interp;
         if (d.Model is >= 0 && d.Model < InterpModelCombo.Items.Count) InterpModelCombo.SelectedIndex = d.Model;
-        // 恢复超分模型(waifu2x / Real-ESRGAN,各自按引擎下拉索引,越界回退 0)
-        if (VideoWaifu2xModelCombo.Items.Count > 0 && d.UpWaifu2xModel is >= 0 && d.UpWaifu2xModel < VideoWaifu2xModelCombo.Items.Count)
-            VideoWaifu2xModelCombo.SelectedIndex = d.UpWaifu2xModel;
-        else VideoWaifu2xModelCombo.SelectedIndex = 0;
+        // 恢复超分模型(Real-ESRGAN 的模型下拉,越界回退 0)。
+        // 【2026-09-25】waifu2x 的模型下拉已随引擎项删除 ⇒ 它的 `UpWaifu2xModel` 字段不再被读取
+        // (字段留在设置模型里只为兼容旧 JSON,程序内不再用它)。
         if (VideoEsrganModelCombo.Items.Count > 0 && d.UpEsrganModel is >= 0 && d.UpEsrganModel < VideoEsrganModelCombo.Items.Count)
             VideoEsrganModelCombo.SelectedIndex = d.UpEsrganModel;
         // 【2026-09-24】Real-CUGAN 的模型下拉同样按序号恢复;越界(或老文件没这个字段)落到 0 = 保守档。
@@ -2964,17 +3043,17 @@ public sealed partial class VideoView : UserControl
             }
             var imported = System.Text.Json.JsonSerializer.Deserialize<List<VideoPreset>>(json) ?? new List<VideoPreset>();
             if (imported.Count == 0) { AppLogger.Warn("导入预设:文件无内容"); return 0; }
-            // 【导入也要过一遍序号迁移】旧版导出的 .alhpreset 里超分模型是**旧序号**(3=轻量通用),
-            // 而 SavePresets 会统一盖"新序号"章;不先换算就会把"轻量"当成"超慢"存下来(点一下预设慢 17 倍)。
-            // 新版导出的文件自带 ModelOrderRev=2,过这里不会被动。
+            // 【导入也要过一遍迁移】与 LoadPresets 走**同一个入口** MigratePresetParams(不许各写一份):
+            // 旧版导出的 .alhpreset 里超分模型是**旧序号**(3=轻量通用)、降噪档位是**旧顺序**、后处理是**旧刻度**;
+            // 不先换算就会把"轻量"当成"超慢"存下来(点一下预设慢 17 倍),或把旧刻度的强度直接按新刻度喂进去
+            // (画面变了还看不出来)。新版导出的文件自带当前 Rev,过这里不会被动。
             int migrated = 0;
             foreach (var p in imported)
             {
-                if (p?.Params != null && MigrateEsrganModelOrder(p.Params)) migrated++;
-                // 【同上】导入的旧预设里降噪档位也是旧序号。
-                if (p?.Params != null && MigrateDenoiseStrength(p.Params)) migrated++;
+                if (MigratePresetParams(p)) migrated++;
             }
-            if (migrated > 0) AppLogger.Info($"导入预设:已按新下拉顺序换算 {migrated} 个预设的超分模型序号(旧序 3=轻量通用 → 新序 2)");
+            if (migrated > 0) AppLogger.Info($"导入预设:已按当前口径换算 {migrated} 个预设"
+                + "(超分模型序号 / 降噪档位序号 / 后处理刻度;官方预设只迁前两项,刻度由官方基线负责)");
             var existing = LoadPresets();
             int added = 0;
             foreach (var p in imported)
@@ -3059,7 +3138,9 @@ public sealed partial class VideoView : UserControl
             : $"「{p.Name}」({p.SavedAt})");
         sb.AppendLine("超分: " + (d.Up
             // 【2026-09-24】引擎由两选一改成三选一(Real-ESRGAN / waifu2x / Real-CUGAN)。
-            // 存盘值口径见 EngineToStored:0=waifu2x、1=realesrgan、3=realcugan(历史的 2 仍按 Real-ESRGAN)。
+            // 【2026-09-25】视频页又回到**两选一**(Real-ESRGAN / Real-CUGAN):waifu2x 已按用户裁定移除 ⇒
+            // 摘要里的引擎名只可能是这两支(存档里的 0 走迁移,显示成 Real-ESRGAN)。
+            // 存盘值口径见 EngineToStored:1=realesrgan、3=realcugan、0=退役 waifu2x(迁移)、历史的 2 仍按 Real-ESRGAN)。
             ? $"{EngineDisplayName(d.Engine)} · 倍率 {d.Scale switch { 0 => "1x", 1 => "2x", 2 => "3x", 3 => "4x", _ => "自定义" }} · 模型 {EngineModelDisplayName(d.Engine, d.UpWaifu2xModel, d.UpEsrganModel, d.RealCuganModel)}"
             : "关闭"));
         // 【2026-09-13 修 · 用户报告「去重补帧4x 的提示显示成 2x」】原实现直接印 {d.InterpScale}x ——
@@ -3110,7 +3191,8 @@ public sealed partial class VideoView : UserControl
 
     // 视频超分模型下拉选项文本(与 VideoView.xaml 里 ComboBoxItem.Content 一致;x4plus 那项是富文本+红字"超慢",
     // 这里只用于预设摘要显示,故仍是纯文本)
-    private static string[] UpWaifu2xModelNames = { "通用·cunet", "动漫·upconv_7_anime", "现实·upconv_7_photo" };
+    // 【2026-09-25】waifu2x 的模型名数组与 `UpWaifu2xModelName` 已随视频页那个下拉一起删除
+    // (引擎项没了 ⇒ 摘要里也不会再有 waifu2x 的模型名;`UpWaifu2xModel` 字段只留在设置模型里兼容旧 JSON)。
     /// <summary>视频超分 Real-ESRGAN 模型的显示名(必须与 VideoView.xaml 里 ComboBoxItem 的**顺序**一一对应)。
     /// 【2026-09-12】补上第 4 项 general-x4v3:此前数组只有 3 项(漏了它),序号 3 会落到兜底值上、显示成别的模型;
     /// 同时顺序随下拉调整:2=general-x4v3、3=超慢(x4plus)。改这里必须与 XAML 同步改,否则显示与实跑不符。
@@ -3140,25 +3222,26 @@ public sealed partial class VideoView : UserControl
             names.Add(AlhPro.Core.ExperimentalEsrgan.SummaryText(m));
         return names.ToArray();
     }
-    private static string UpWaifu2xModelName(int idx) => idx >= 0 && idx < UpWaifu2xModelNames.Length ? UpWaifu2xModelNames[idx] : "通用·cunet";
     private static string UpEsrganModelName(int idx) => idx >= 0 && idx < UpEsrganModelNames.Length ? UpEsrganModelNames[idx] : "动漫·animevideov3";
 
     // 【2026-09-24 Real-CUGAN 追加】预设摘要里的引擎名与模型名(与下拉同口径,别再各写一份)。
-    /// <summary>存盘值(0=waifu2x / 1=realesrgan / 3=realcugan / 2=历史 Real-CUGAN,按 Real-ESRGAN 处理)→ 显示名。</summary>
+    /// <summary>存盘值(1=realesrgan / 3=realcugan / 0=**已退役的 waifu2x** / 2=历史 Real-CUGAN)→ 显示名。
+    /// 【2026-09-25】0(waifu2x)在视频页已退役:老预设摘要里那一行必须显示**实际会跑的引擎**
+    /// (= Real-ESRGAN,与 `EngineChoice.FromStored` 的迁移一致),不能还印"waifu2x"(那是页面已经做不到的事)。</summary>
     private static string EngineDisplayName(int stored) => stored switch
     {
-        0 => "waifu2x",
         3 => "Real-CUGAN",
-        _ => "Real-ESRGAN",
+        _ => "Real-ESRGAN",   // 1 / 2(历史)/ 0(退役 waifu2x → 实际跑 Real-ESRGAN)/ 越界
     };
     /// <summary>预设摘要里的模型显示名(按引擎取对应的那个下拉的显示名)。
-    /// 参数收三个序号而不是 <c>Params</c>(它嵌套在预设类型内部,外面拿不到这个名字)。</summary>
+    /// 参数收三个序号而不是 <c>Params</c>(它嵌套在预设类型内部,外面拿不到这个名字)。
+    /// 【2026-09-25】`storedEngine = 0`(退役的 waifu2x)同样按 Real-ESRGAN 取模型名 —— 与
+    /// <see cref="EngineDisplayName"/> / `EngineChoice.FromStored` 的口径一致(显示 = 实际会跑的)。</summary>
     private static string EngineModelDisplayName(int storedEngine, int upWaifu2xModel, int upEsrganModel, int realCuganModel) => storedEngine switch
     {
-        0 => UpWaifu2xModelName(upWaifu2xModel),
         3 => AlhPro.Core.RealCugan.Tags[
                 Math.Clamp(realCuganModel, 0, AlhPro.Core.RealCugan.Tags.Length - 1)].Label,
-        _ => UpEsrganModelName(upEsrganModel),
+        _ => UpEsrganModelName(upEsrganModel),   // 1 / 2 / 0(退役 waifu2x)/ 越界
     };
 
     /// <summary>删除确认对话框:点「删除」返回 true。</summary>
@@ -3228,16 +3311,23 @@ public sealed partial class VideoView : UserControl
         {
             Remember = VideoRememberCheck.IsChecked == true,
             Up = UpscaleToggle.IsChecked == true,
+            // 【F3 · 2026-09-25 t47 审计】「只处理选中的项目」也进存档与预设。原先它只在处理时被读一次
+            //   (RunBatchAsync),所以重启后永远回到"未勾选" —— 用户没碰过它,状态却自己变了。这里与
+            //   图片页 CollectSettings 同款:存当前勾选状态,读侧由 ApplyVideoParams 原样回填。
+            SelectedOnly = SelectedOnlyCheck.IsChecked == true,
             // 【2026-09-21 自查修复】1x 档会把引擎**强制**成 Real-ESRGAN 并禁用单选(见 UpdateModelScaleAvailability),
             //   若直接存 SelectedIndex,就把用户的**真实引擎选择**改写掉了 ✗
             //   —— 实测:存的是 waifu2x,启动一次后变成 Real-ESRGAN,而用户从没改过它(典型的"静默改设置")。
             //   ⇒ 存 `_userEngineIndex`:它在"恢复设置时"记下真实值,之后只被"单选可用时的点击"更新。
+            //   【2026-09-25】视频页只剩 Real-ESRGAN / Real-CUGAN ⇒ 新写出去的值只有 1 与 3(0 再也不会被写出来)。
             Engine = EngineToStored(_userEngineIndex >= 0 ? _userEngineIndex : VideoEngineRadios.SelectedIndex),
             Scale = VideoScaleRadios.SelectedIndex,
             Gpu = AppSettings.GpuIndex,
             Interp = InterpToggle.IsChecked == true,
             Model = InterpModelCombo.SelectedIndex,
-            UpWaifu2xModel = VideoWaifu2xModelCombo.SelectedIndex,   // 超分 waifu2x 模型
+            // 【2026-09-25】waifu2x 的模型下拉已删 ⇒ 不再写这个字段(它留在设置模型里只为兼容旧 JSON;
+            //   写 0 会让"视频页已移除 waifu2x"的事实看起来还没落地,也免得以后有人以为这个字段还在用)。
+            UpWaifu2xModel = 0,
             // 【Rev10 · 2026-09-21】1x 也有自己的模型条目了(Anime4K / 现实 1x)⇒ 直接存选中项即可:
             //   下拉里每一项都是**真实存在**的模型序号(不再有"锁定期临时插入的项",那个坑已随构架去掉)。
             UpEsrganModel = VideoEsrganModelCombo.SelectedIndex,    // 超分 Real-ESRGAN 模型
@@ -4199,9 +4289,11 @@ public sealed partial class VideoView : UserControl
         catch { return false; }
     }
 
-    /// <summary>RTX 50 系 + 旧引擎(2022 版 ncnn)提前提示:「好的」= 换 waifu2x(官方新版,兼容 50 系且快);
-    /// 「仍然继续」= 保持原引擎(处理中探测失败会自动换卡/CPU,不影响输出)。</summary>
-    private async Task<bool> AskBlackwellOldEngineAsync(string engineLabel)
+    /// <summary>RTX 50 系 + 旧引擎(2022 版 ncnn)提前提示(只告知,不再提供"换引擎")。
+    /// 【2026-09-25 视频页移除 waifu2x 后重写】原来这里「好的」= 换用 waifu2x;视频页不再提供它,
+    /// 而另一支 Real-CUGAN 同样是 ncnn-Vulkan(同一张卡上大概率同样不可用)⇒ **不拿"换引擎"当出路**。
+    /// 现在如实说明:处理时会自动改用 ONNX 稳定引擎(DirectML,输出不变),按「知道了」照跑即可。</summary>
+    private async Task AskBlackwellOldEngineAsync(string engineLabel)
     {
         var dlg = new ContentDialog
         {
@@ -4209,32 +4301,25 @@ public sealed partial class VideoView : UserControl
             Content = new TextBlock
             {
                 Text = $"检测到 RTX 50 系显卡。当前超分引擎「{engineLabel}」是较旧版本(2022 年)," +
-                    "在 50 系上可能无法用 GPU 计算(会慢或自动降级)。\n\n" +
-                    "「好的」= 换用 waifu2x(官方 2025 新版,完全兼容 50 系,且速度最快)\n" +
-                    "「仍然继续」= 保持当前引擎(不通时会自动改用其它 GPU,再不行则 CPU,不影响输出)",
+                    "在这类新卡上实测无法用 GPU 计算。\n\n" +
+                    "处理时会**自动改用 ONNX 稳定引擎**(DirectML GPU,兼容性更好,输出不变)—— 直接继续即可。",
                 TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
             },
-            PrimaryButtonText = "好的",
-            CloseButtonText = "仍然继续",
-            DefaultButton = ContentDialogButton.Primary,
+            CloseButtonText = "知道了",
+            DefaultButton = ContentDialogButton.Close,
             XamlRoot = this.XamlRoot,
         };
         try
         {
-            var r = await ALHPro.SafeDialog.ShowAsync(dlg, "提示");
-            if (r == ContentDialogResult.Primary)
-            {
-                Log("已按 50 系兼容提示换用 waifu2x 超分");
-                return true;
-            }
-            Log("用户选择保留旧引擎,50 系上可能降级 CPU(可手动改 waifu2x)");
-            return false;
+            await ALHPro.SafeDialog.ShowAsync(dlg, "提示");
+            Log("50 系兼容提示:已告知会自动改用 ONNX 稳定引擎(视频页已无其它可换的 ncnn 引擎)");
         }
-        catch { return false; }
+        catch { }
     }
 
-    /// <summary>当前引擎 GPU 不可用提示:「好的」= 改用 waifu2x(兼容+最快);「仍然继续」= 保持当前引擎(处理中自动降级 GPU→CPU)。</summary>
-    private async Task<bool> AskBlackwellCompatibleAsync(string engineLabel)
+    /// <summary>当前引擎 GPU 不可用提示(只告知;不再建议换 waifu2x —— 视频页已移除它)。
+    /// 结论与上面那条同源:处理时会自动改用 ONNX 稳定引擎,输出不受影响。</summary>
+    private async Task AskBlackwellCompatibleAsync(string engineLabel)
     {
         var dlg = new ContentDialog
         {
@@ -4242,28 +4327,20 @@ public sealed partial class VideoView : UserControl
             Content = new TextBlock
             {
                 Text = $"检测到当前超分引擎「{engineLabel}」在你的显卡上无法用 GPU 计算" +
-                    "(显卡过新/过旧或驱动不兼容,AI 超分会很慢甚至失败)。\n\n" +
-                    "「好的」= 换用 waifu2x(兼容性好,且速度最快)\n" +
-                    "「仍然继续」= 保持当前引擎(不通时会自动改用其它 GPU,再不行则 CPU,不影响输出)",
+                    "(显卡过新/过旧或驱动不兼容)。\n\n" +
+                    "处理时会**自动改用 ONNX 稳定引擎**(DirectML GPU;再不行才 CPU),输出不变 —— 直接继续即可。",
                 TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
             },
-            PrimaryButtonText = "好的",
-            CloseButtonText = "仍然继续",
-            DefaultButton = ContentDialogButton.Primary,
+            CloseButtonText = "知道了",
+            DefaultButton = ContentDialogButton.Close,
             XamlRoot = this.XamlRoot,
         };
         try
         {
-            var r = await ALHPro.SafeDialog.ShowAsync(dlg, "提示");
-            if (r == ContentDialogResult.Primary)
-            {
-                Log("已按 50 系兼容提示切换超分引擎为 waifu2x(最快)");
-                return true;
-            }
-            Log("用户选择保持当前引擎,50 系上可能降级 CPU(可到设置改)");
-            return false;
+            await ALHPro.SafeDialog.ShowAsync(dlg, "提示");
+            Log("当前引擎 GPU 不可用提示:已告知会自动改用 ONNX 稳定引擎");
         }
-        catch { return false; }
+        catch { }
     }
 
     /// <summary>「去重后帧数过少」确认:用户点「仍要进行」则继续(跳过防删光保护),否则取消。</summary>
@@ -10395,7 +10472,7 @@ public sealed partial class VideoView : UserControl
             bool dedupOn = DedupCheck.IsChecked == true;
             int interpScale = AlhPro.Core.InterpScaleMap.Multiplier(CurrentScaleIndex());
             int engIdx = VideoEngineRadios.SelectedIndex;
-            string engine = SelectedEngineName;   // 【2026-09-24】三选一:realesrgan / waifu2x / realcugan(唯一来源)
+            string engine = SelectedEngineName;   // 【2026-09-25】视频页两选一:realesrgan / realcugan(唯一来源)
             // 倍率:0=1x(2x缩回) 1=2x 2=3x 3=4x 4=自定义(内部按2x)
             int scale = VideoScaleRadios.SelectedIndex switch { 1 => 2, 2 => 3, 3 => 4, _ => 1 };
             bool upscaleShrink1x = VideoScaleRadios.SelectedIndex == 0;
@@ -10802,9 +10879,10 @@ public sealed partial class VideoView : UserControl
             var missing = new System.Collections.Generic.List<string>();
             if (up)
             {
-                // 【2026-09-24】三选一,按**当前选中的那支**查(不再用"非 real 即 waifu2x"的二值判断 ——
-                // 那会让选了 Real-CUGAN 的用户只被检查 waifu2x 是否在,真缺引擎时反而放过去)。
-                if (SelectedEngineName == "waifu2x" && EngineService.FindWaifu2x() is null) missing.Add("waifu2x 引擎");
+                // 【2026-09-24】按**当前选中的那支**查(不再用"非 real 即 waifu2x"的二值判断 ——
+                // 那会让选了别的引擎的用户只被检查 waifu2x 是否在,真缺引擎时反而放过去)。
+                // 【2026-09-25】waifu2x 那一支已从视频页删除 ⇒ 它的"缺引擎"检查一并删掉
+                // (图片页仍会自己查;这里再留一条永远不成立的分支只会误导后人)。
                 if (SelectedEngineIsReal && EngineService.FindRealESRGAN() is null) missing.Add("Real-ESRGAN 引擎");
                 if (SelectedEngineIsRealCugan && EngineService.FindRealCugan() is null) missing.Add("Real-CUGAN 引擎");
             }
@@ -10868,12 +10946,14 @@ public sealed partial class VideoView : UserControl
         // 【不再按型号猜】原先这里是 "IsBlackwellGpu() 就弹窗",等于 50 系一律假定不兼容:
         // 引擎路由已改成真机探测(EngineService.EnsureNcnnProbeAsync),提示也必须以【实测结论】为准 ——
         // 只有已经测出"这台机的 realesrgan ncnn 不可用"(TryGetNcnnVerdict == false)才弹窗;
-        // 没测过就交给运行时探测去定并明确告知,避免"先弹窗说不兼容、结果跑得比 waifu2x 还快"的说反话。
+        // 没测过就交给运行时探测去定并明确告知,避免"先弹窗说不兼容、结果实测跑得通"的说反话。
         if (up && IsBlackwellGpu() && SelectedEngineIsReal
             && EngineService.TryGetNcnnVerdict("realesrgan", AppSettings.GpuIndex) == false)
         {
-            if (await AskBlackwellOldEngineAsync("Real-ESRGAN"))
-                VideoEngineRadios.SelectedIndex = AlhPro.Core.EngineChoice.UiWaifu2x;   // 好,换成 waifu2x(界面最后一项;兼容 50 系,且最快)
+            // 【2026-09-25 视频页移除 waifu2x 后】这里原来"好的 = 换成 waifu2x";现在视频页只有
+            // Real-ESRGAN / Real-CUGAN **两支都是 ncnn-Vulkan**,换过去在同一张卡上大概率同样跑不通
+            // ⇒ 不再拿"换引擎"当出路:这个对话框只如实告知"会自动改用 ONNX 稳定引擎"。
+            await AskBlackwellOldEngineAsync("Real-ESRGAN");
         }
         // 自定义码率:选了该项但没填/填了非法值 → 提示并拦截(避免按"自动"悄悄处理)
         if (QualityCombo.SelectedIndex == 5 && ParseBitrate() <= 0)
@@ -10961,17 +11041,15 @@ public sealed partial class VideoView : UserControl
             var tag = it?.Tag as string;
             return !string.IsNullOrEmpty(tag) ? tag : fallback;
         }
-        // 分支用 AlhPro.Core.EngineChoice 的**常量**、禁止写死数字:2026-09-25 用户要求把 waifu2x
-        // 挪到最后 ⇒ waifu2x 与 Real-CUGAN **互换界面位置**,写死索引的地方最容易漏改。
-        // 两处不一致会出现"界面说 A、实跑 B"——本仓库最忌讳的那类静默错位。
+        // 分支用 AlhPro.Core.EngineChoice 的**常量**、禁止写死数字:索引与 XAML 项顺序必须一致
+        // (两处不一致会出现"界面说 A、实跑 B"——本仓库最忌讳的那类静默错位)。
+        // 【2026-09-25】视频页只剩两项:Real-ESRGAN(0) / Real-CUGAN(1) —— waifu2x 那一支已删除。
         var (engine, model) = VideoEngineRadios.SelectedIndex switch
         {
             // Real-CUGAN(界面第二项)。Tag 形如 `models-se:-1`,
             // 由 AlhPro.Core.RealCugan 解析成 `-m <权重目录> -n <降噪档>`;默认走保守档。
             AlhPro.Core.EngineChoice.UiRealCugan => (AlhPro.Core.RealCugan.EngineName,
                   SelModel(VideoRealcuganModelCombo!, AlhPro.Core.RealCugan.DefaultTag)),
-            // waifu2x(界面第 3 项/最后一项):从模型下拉 Tag 读模型名(默认 models-cunet)
-            AlhPro.Core.EngineChoice.UiWaifu2x => ("waifu2x", SelModel(VideoWaifu2xModelCombo, "models-cunet")),
             // Real-ESRGAN(界面上排第一,也是默认):从模型下拉 Tag 读模型名(默认 realesr-animevideov3)
             _ => ("realesrgan", SelModel(VideoEsrganModelCombo, "realesr-animevideov3")),
         };
@@ -10981,8 +11059,9 @@ public sealed partial class VideoView : UserControl
         if (model == AlhPro.Core.Upscale1x.RealTag)
             model = AlhPro.Core.Upscale1x.RealEngineModel;
         // 视频降噪由现有「启用视频降噪 + 强度(弱/中/强)」统一驱动,不再单开一个 waifu2x 专用下拉(割裂):
-        // waifu2x 引擎 → 强弱档直接当它的自带降噪 -n(模型更对症、不额外耗时);
-        // 其它情况 → 拆帧阶段 nlmeans。映射与执行都在 VideoService 里完成。
+        // 【2026-09-25】waifu2x 分支保留在管线里(图片页 / 旧预设在用),但**视频页选不到它** ⇒
+        // 视频任务的降噪一律走拆帧滤镜链(waifu2x 自带降噪档只在图片页出现)。
+        // 拆帧阶段 nlmeans。映射与执行都在 VideoService 里完成。
         // 倍率:0=1x 修复(Anime4K,不变尺寸) 1=2x 2=3x 3=4x(第 5 项「自定义分辨率」已于 2026-09-25 移除)
         bool upscaleShrink1x = false;
         bool anime4k1x = false;   // 1x 修复档:走 Anime4K 着色器(探测通过才置 true,见下方 RunBatchAsync 里的探测)
@@ -11078,7 +11157,7 @@ public sealed partial class VideoView : UserControl
         var gpuId = CurrentGpuId;
         // ===== 超分引擎 GPU 兼容探测(全设备,不猜型号) =====
         // 任何显卡(50系/AMD/Intel/老驱动)只要当前引擎 realesrgan 在 GPU 上跑不通,
-        // 处理前提示:「好的」→ 换 waifu2x(兼容最快);「仍然继续」→ 保持(处理中自动降级其他GPU→CPU)
+        // 处理前提示(2026-09-25 起只告知,不再切引擎):「知道了」→ 照跑,处理中自动降级其它GPU→CPU。
         // ⚠ 此处【禁止】ConfigureAwait(false):探测后还要接着读下面一大段 UI 控件(参数快照),
         //   留在后台线程会抛 0x8001010E(已真机复现:选 Real-ESRGAN 视频必崩)——await 不带
         //   ConfigureAwait(false),让方法自然地回到 UI 线程;内部改 SelectedIndex 的 DispatcherQueue
@@ -11138,22 +11217,14 @@ public sealed partial class VideoView : UserControl
                 {
                     await ShowPauseHintAsync($"{probeLabel} 在本机 GPU 上实测跑不通,而它只有 ncnn-Vulkan 权重"
                         + "(没有 ONNX 版本可换、CPU 档也不可用)。这一批会被拒绝处理。"
-                        + "请把「超分引擎」改成 Real-ESRGAN(有 ONNX 稳定路线)或 waifu2x 后重试。");
+                        + "请把「超分引擎」改成 Real-ESRGAN(有 ONNX 稳定路线)后重试。");
                 }
                 else
                 {
-                    var useWaifu = await AskBlackwellCompatibleAsync(probeLabel);
-                    var tcs = new System.Threading.Tasks.TaskCompletionSource();
-                    _ = DispatcherQueue.TryEnqueue(() =>
-                    {
-                        try
-                        {
-                            if (useWaifu && SelectedEngineIsReal)
-                                VideoEngineRadios.SelectedIndex = AlhPro.Core.EngineChoice.UiWaifu2x;   // 换成 waifu2x(界面最后一项;兼容+最快)
-                        }
-                        finally { tcs.TrySetResult(); }
-                    });
-                    await tcs.Task;
+                    // 【2026-09-25 视频页移除 waifu2x 后】原来这里"好的 = 换成 waifu2x";
+                    // 现在没有可换的第三支引擎(Real-CUGAN 也是 ncnn-Vulkan,同卡大概率同样跑不通)
+                    // ⇒ 只如实告知:处理时会自动改用 ONNX 稳定引擎。
+                    await AskBlackwellCompatibleAsync(probeLabel);
                 }
             }
         }

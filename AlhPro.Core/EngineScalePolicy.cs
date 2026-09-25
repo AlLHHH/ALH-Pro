@@ -48,6 +48,54 @@ public static class EngineScalePolicy
     /// 若不在这里登记就会被当成"普通模型"→ 目标 4x 时下发 `-s 4` → 错帧。两个判定互斥(2x / 4x)。</summary>
     public static bool IsX2OnlyModel(string model) => ExperimentalEsrgan.IsX2Only(model);
 
+    /// <summary>该模型**原生权重**的倍率提示文字(给界面的悬停提示末尾那行绿字用,纯逻辑)。
+    ///
+    /// 【用户要求(2026-09-25)】「**在每一个模型的悬停提示里面最后加一个绿字提醒「权重 2x」这样子**」。
+    /// 背景:各支超分模型的原生权重倍率并不一样 —— animevideov3 有 2x/3x/4x、Real-CUGAN models-se 有
+    /// 2x/3x/4x、x4plus 系只有 **4x**、自训那几支只有 **2x**、waifu2x 三支都是 **2x**;倍率与权重不一致时
+    /// 上层会用重采样补齐(**那不是超分**)。这件事原先只散写在部分提示里,现在统一成一行绿字。
+    ///
+    /// 【判据复用】这里的分类**完全复用 <see cref="Decide"/> 里那些谓词**
+    /// (<see cref="ExperimentalEsrgan.Is1xModel"/> / <see cref="Is4xOnlyModel"/> / <see cref="IsX2OnlyModel"/>),
+    /// 不新造第二套 —— 否则"提示说 4x、实际按 2x 跑"这种自相矛盾迟早出现。
+    ///
+    /// 【返回值】空串 = 认不出/不适用(调用方据此**不加**绿字行):
+    ///   · Real-CUGAN → `权重 2x / 3x / 4x`
+    ///   · realesrgan + 1x 修复模型 → `权重 2x(缩回 1x)`
+    ///   · realesrgan + 4x-only(x4plus 系 / general-x4v3 / wdn-x4v3)→ `权重 4x`
+    ///   · realesrgan + 只有 2x 权重的自训模型 → `权重 2x`
+    ///   · realesrgan + animevideov3 → `权重 2x / 3x / 4x`
+    ///   · waifu2x + cunet / upconv_7_photo / upconv_7_anime_style_art_rgb → `权重 2x`
+    ///   · 其它(含 Anime4K —— 它走着色器、根本没有权重文件)→ `""`
+    /// 【注】界面上的「动漫 · Anime4K 修复」与「现实 · 1x 修复」两项各自写死一行绿字
+    /// (前者 `着色器(无权重)`、后者 `权重 2x(缩回 1x)`),因为它们不是引擎权重模型(Tag 是 `anime4k` /
+    /// `alhpro-real1x`),不该硬蹭这里的判据。</summary>
+    public static string NativeWeightLabel(string engine, string model)
+    {
+        string m = model ?? "";
+        // Real-CUGAN:models-se 三档都同时具备 up2x/up3x/up4x(与 Decide 的注释同源)。
+        if (string.Equals(engine, RealCugan.EngineName, StringComparison.OrdinalIgnoreCase))
+            return "权重 2x / 3x / 4x";
+        // waifu2x:随包三支的权重都是 2x(upconv_7_photo / upconv_7_anime_style_art_rgb 只有 noiseN_scale2.0x)。
+        if (string.Equals(engine, "waifu2x", StringComparison.OrdinalIgnoreCase))
+        {
+            if (m.Contains("cunet", StringComparison.OrdinalIgnoreCase)
+                || m.Contains("upconv_7_photo", StringComparison.OrdinalIgnoreCase)
+                || m.Contains("upconv_7_anime_style_art_rgb", StringComparison.OrdinalIgnoreCase))
+                return "权重 2x";
+            return "";
+        }
+        if (!string.Equals(engine, "realesrgan", StringComparison.OrdinalIgnoreCase))
+            return "";   // 其它引擎(Anime4K 走着色器、没有权重)与认不出的名字 ⇒ 调用方不加绿字行
+        // Real-ESRGAN:判据与 Decide 逐条同一套谓词(顺序也一致:先 1x、再 4x-only、再 2x-only)。
+        if (ExperimentalEsrgan.Is1xModel(m)) return "权重 2x(缩回 1x)";
+        if (Is4xOnlyModel(m)) return "权重 4x";
+        if (IsX2OnlyModel(m)) return "权重 2x";
+        // animevideov3:名字口径与 PipelineOrderPlan.NormalizeModel 同一处(它有原生的 x2/x3/x4 三套权重)。
+        if (PipelineOrderPlan.NormalizeModel(m) == "animevideov3") return "权重 2x / 3x / 4x";
+        return "";
+    }
+
     /// <summary>引擎倍数决策结果。<paramref name="ShrinkRatio"/> = 目标倍数 ÷ 引擎倍数
     /// (≠1 表示调用方需要把引擎输出缩放到目标尺寸,现有代码就是 `scale / engineScale`)。
     /// <paramref name="Reason"/> 非空 = 发生了"护栏改写",调用方应当记日志(用户要能看懂为什么改了倍数)。</summary>

@@ -18,7 +18,7 @@ ALH Pro 是一款**本地图片/视频处理桌面应用**(WinUI 3 / .NET 8 / x6
 |---|---|---|
 | 图片超分 | 动漫(waifu2x)/照片(Real-ESRGAN)放大 2x/3x/4x | ncnn-Vulkan 或 ONNX(DirectML) |
 | AI 抠图 | 自动抠主体→透明 PNG,支持编辑 | ONNX(rembg:u2net/birefnet/isnet) |
-| 视频超分/补帧 | 超分(Real-ESRGAN/waifu2x)+ 补帧(RIFE)+ 去重 + 后处理 | ncnn-Vulkan 或 ONNX(DirectML) |
+| 视频超分/补帧 | 超分(Real-ESRGAN / Real-CUGAN;2026-09-25 用户裁定后视频页已移除 waifu2x,它仅在图片页可用)+ 补帧(RIFE)+ 去重 + 后处理 | ncnn-Vulkan 或 ONNX(DirectML) |
 | 音频 | 人声分离(Demucs)/升采样(LavaSR) | ONNX |
 
 ---

@@ -80,10 +80,18 @@ public sealed partial class UpscaleView : UserControl
             ModelCombo.Items.Clear();
             if (isAnime)
                 foreach (var m in EngineService.AnimeModels)
-                    ModelCombo.Items.Add(new ComboBoxItem { Content = m.Label });   // Label=模型名
+                {
+                    var item = new ComboBoxItem { Content = m.Label };   // Label=模型名(含体量 MB · 快/中/慢)
+                    SetModelItemToolTip(item, m.Label, m.Engine, m.Model);
+                    ModelCombo.Items.Add(item);
+                }
             else
                 foreach (var m in EngineService.PhotoModels)
-                    ModelCombo.Items.Add(new ComboBoxItem { Content = m.Label });   // Label=模型名
+                {
+                    var item = new ComboBoxItem { Content = m.Label };
+                    SetModelItemToolTip(item, m.Label, "realesrgan", m.Name);
+                    ModelCombo.Items.Add(item);
+                }
             // 尽量保留上次选中(跨模式按新列表 index 兜底);否则默认第一个
             ModelCombo.SelectedIndex = (saved >= 0 && saved < ModelCombo.Items.Count) ? saved : 0;
         }
@@ -154,6 +162,33 @@ public sealed partial class UpscaleView : UserControl
         RememberCheck.Unchecked += (_, _) => SaveSettings();
 
         UpdateRunState();
+    }
+
+    /// <summary>给模型下拉的每一项挂悬停提示(用户要求:每一个模型的悬停提示里**最后**加一行绿字「权重 Nx」)。
+    ///
+    /// 【现状修正】这个下拉此前**没有任何悬停提示**;基础文字只用该模型**已有**的字段
+    /// (<paramref name="label"/> = <c>EngineService.AnimeModels/PhotoModels</c> 里那串显示名,已含体量 MB 与快/中/慢),
+    /// **不编造任何实测数字** —— 数字要么在 Label 里、要么在 <see cref="AlhPro.Core.EngineScalePolicy.NativeWeightLabel"/>
+    /// 的权重结论里,两者都是既有口径。
+    /// 【绿字行】与视频页同一口径:`#7BD88F` + 以「权重」开头;函数返回空串(认不出/不适用)时**不加**这一行。
+    /// 【不许动的东西】只设 ToolTip,不动 <c>Content</c>:模型仍按索引读写(图片预设存的是序号,见本文件下方注释)。</summary>
+    private static void SetModelItemToolTip(ComboBoxItem item, string label, string engine, string model)
+    {
+        var tb = new Microsoft.UI.Xaml.Controls.TextBlock
+        {
+            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+            MaxWidth = 440,
+        };
+        tb.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = label });
+        string weight = AlhPro.Core.EngineScalePolicy.NativeWeightLabel(engine, model);
+        if (weight.Length > 0)
+            tb.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
+            {
+                Text = "\n" + weight,
+                Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                    Windows.UI.Color.FromArgb(255, 0x7B, 0xD8, 0x8F)),   // #7BD88F(与视频页同一绿)
+            });
+        Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(item, tb);
     }
 
     // ---------- 参数记忆 ----------
@@ -255,6 +290,11 @@ public sealed partial class UpscaleView : UserControl
                 Remember = RememberCheck.IsChecked == true,
                 Mode = ModeToStored(ModeRadios.SelectedIndex),
                 W2xModel = ModelCombo.SelectedIndex,
+                // 【F4 · 2026-09-25 t47 审计】**设置文件也必须写模型名**:读侧两处(LoadSettings 与
+                // ApplyImgSettings)都"优先按名定位",而原先只有预设快照(CollectSettings)会写名 ⇒ 设置文件
+                // 那条保险**从来没有生效过**;模型表顺序一变(或某项下架),重启后就静默指到别的模型上。
+                // 这里与 CollectSettings 共用同一个 SelectedModelName()(不许各算一份)。
+                W2xModelName = SelectedModelName(),
                 Scale = ScaleRadios.SelectedIndex,
                 Noise = NoiseCombo.SelectedIndex,
                 Tta = TtaCheck.IsChecked == true,
@@ -326,6 +366,10 @@ public sealed partial class UpscaleView : UserControl
         Scale = ScaleRadios.SelectedIndex,
         Noise = NoiseCombo.SelectedIndex,
         Tta = TtaCheck.IsChecked == true,
+        // 【F3 · 2026-09-25 t47 审计】「只处理选中的图片」也要进预设快照:它此前只在 SaveSettings(设置文件)
+        // 里存、在 LoadSettings 里恢复 —— 而 ApplyImgSettings 一条都不读 ⇒ "存了却没生效"(与视频页那个
+        // 漏项方向相反、同一类缺陷)。写侧在这里补齐,读侧见 ApplyImgSettings 里那行。
+        SelectedOnly = SelectedOnlyCheck.IsChecked == true,
         Fmt = FmtCombo.SelectedIndex,
         Detail = (int)DetailSlider.Value,
         Sharpen = (int)SharpenSlider.Value,
@@ -548,6 +592,16 @@ public sealed partial class UpscaleView : UserControl
             int mi = FindModelIndexByName(d.W2xModelName, d.Mode == 1);
             if (mi < 0) mi = d.W2xModel;
             if (mi >= 0 && mi < ModelCombo.Items.Count) ModelCombo.SelectedIndex = mi;
+            // 【F5 · 2026-09-25 t47 审计】名与下标**都无效**时必须**显式回落**,不许"什么都不做":
+            // 上面那句 `ModeRadios.SelectedIndex = …` 会触发 PopulateModelCombo 重建列表,而它只保证
+            // "同一个**数字**下标不越界"(见 PopulateModelCombo 的注释)—— 于是跨模式套预设时,若预设里的
+            // 模型名与下标都对不上新列表,下拉就停在上一个模式的模型上(用户什么都没点,显示的却是别的档)。
+            // 视频页对同类情况一律显式回落(见 ApplyVideoParams 里 InterpModelCombo / EsrganModelCombo 几处),
+            // 这里同款:落回当前模式的第一项(0 = 该模式的首选模型,PopulateModelCombo 的默认项)。
+            else ModelCombo.SelectedIndex = 0;
+            // 【F3 的另一半】「只处理选中的图片」:预设里存了(CollectSettings),这里必须恢复,否则
+            // "套完预设那个勾停在上一次的状态" —— 与视频页那条漏项同一类(存了却没生效)。
+            SelectedOnlyCheck.IsChecked = d.SelectedOnly;
             // 与 LoadSettings 同一读法:同一字段只允许一套语义。两处不一致会让同一个预设/设置值
             // 在"应用预设"与"重启恢复"下得到不同倍率(用户看到"预设每次套出来都不一样")
             if (d.Scale is >= 0 and <= 4) ScaleRadios.SelectedIndex = Math.Clamp(d.Scale, 0, 3);
