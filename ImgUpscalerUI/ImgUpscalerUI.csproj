@@ -77,7 +77,13 @@
     <ItemGroup>
         <None Include="..\assets\icon.ico" Link="ALHPro.ico" CopyToOutputDirectory="PreserveNewest"/>
 
-        <None Include="LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest"/>
+        <!-- 【2026-09-25 修·根因】原先是 Include="LICENSE" = 本目录下那份**重复**的 LICENSE,
+             内容是 v1.0 时代的「保留所有权利/禁止再分发/禁止商用」,而仓库根 LICENSE 早已改成 MIT。
+             结果:构建 → publish → deploy.ps1 同步 → 发布版\LICENSE(= 安装包的 {app}\LICENSE)
+             又变回限制性文案,与同包 licenses\ALH-Pro-MIT-LICENSE.txt 及官网/关于页的 MIT 口径矛盾。
+             (打包.ps1 的 ①e'/①g 只修 发布版\,下一次部署又会被 publish 输出盖回 —— 两个机制在打架。)
+             现在与 RELEASE_NOTES/使用教程 同款做法:只认仓库根那一份,本目录下的重复文件已删除。 -->
+        <None Include="..\LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest"/>
         <None Include="README.md" Link="README.md" CopyToOutputDirectory="PreserveNewest"/>
         <None Include="THIRD_PARTY_NOTICES.txt" Link="THIRD_PARTY_NOTICES.txt" CopyToOutputDirectory="PreserveNewest"/>
         <None Include="..\RELEASE_NOTES.md" Link="RELEASE_NOTES.md" CopyToOutputDirectory="PreserveNewest"/>
