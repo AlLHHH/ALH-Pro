@@ -45,20 +45,31 @@ public class AuditFixes_20260923_Tests
         Assert.Contains("NoteDmlSessionCreationFailure(dmDevice", audio);
     }
 
-    // ───────────────────────── B5:自定义分辨率必须有入口 ─────────────────────────
+    // ─────────────── B5(修订):「自定义分辨率」已于 2026-09-25 按用户要求**移除** ───────────────
 
-    /// <summary>★「自定义分辨率」面板只在 SelectedIndex == 4 时可见,而单选组原先只有 0~3 四项
-    /// ⇒ 面板永久隐藏、代码里所有 `== 4` 的分支都是死路(使用教程却写着让用户去选它)。</summary>
+    /// <summary>★ 历史:B5 当初要求"把丢掉的自定义分辨率入口补回来"(面板只在索引 4 时可见、
+    /// 而单选组只有 0~3 项 ⇒ 面板永久隐藏)。**2026-09-25 用户要求移除该功能**(原话:鸡肋、容易出问题):
+    /// 入口、面板、以及代码里所有 `SelectedIndex == 4` 分支一并删除。
+    /// 这条测试随之反过来:① 界面与代码里都不许再出现它们;② 老设置里的 4 必须**回退到 2x**(迁移规则)。</summary>
     [Fact]
-    public void The_custom_resolution_entry_exists_so_its_panel_is_reachable()
+    public void Custom_resolution_entry_is_removed_and_legacy_value_falls_back_to_2x()
     {
         var xaml = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml");
-        Assert.Contains("x:Name=\"VScaleCustomRadio\"", xaml);
-        foreach (var name in new[] { "VScale1xRadio", "VScale2xRadio", "VScale3xRadio", "VScale4xRadio", "VScaleCustomRadio" })
+        // ① 界面:四个倍率项还在,自定义那一项与其面板都不在了
+        foreach (var name in new[] { "VScale1xRadio", "VScale2xRadio", "VScale3xRadio", "VScale4xRadio" })
             Assert.Contains($"x:Name=\"{name}\"", xaml);
-        // 代码侧的可见性判据仍然是索引 4(与新条目位置一致)
+        Assert.DoesNotContain("x:Name=\"VScaleCustomRadio\"", xaml);
+        Assert.DoesNotContain("x:Name=\"CustomWidthBox\"", xaml);
+        Assert.DoesNotContain("x:Name=\"CustomHeightBox\"", xaml);
+
         var cs = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs");
-        Assert.Contains("CustomSizePanel.Visibility = up && scaleIdx == 4", cs);
+        // ② 代码:控件引用与索引 4 分支都不许再出现(留着就是"死代码 + 编译不过"的来源)
+        Assert.DoesNotContain("CustomWidthBox", cs);
+        Assert.DoesNotContain("CustomHeightBox", cs);
+        Assert.DoesNotContain("CustomSizePanel", cs);
+        Assert.DoesNotContain("SelectedIndex == 4", cs);
+        // ③ 迁移:老设置里的 4(自定义分辨率)→ 2x,并注明原因
+        Assert.Contains("else if (d.Scale == 4) VideoScaleRadios.SelectedIndex = 1;", cs);
     }
 
     // ───────────────────────── B6:过时文案 ─────────────────────────

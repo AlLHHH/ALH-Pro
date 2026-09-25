@@ -1269,9 +1269,9 @@ public sealed partial class VideoView : UserControl
         VideoEsrganModelCombo.Opacity = up ? 1.0 : 0.5;
         // 【2026-09-21】按当前倍率刷新"哪些模型可选"(1x 只留 1x 修复条目,其余放大模型置灰)
         UpdateModelScaleAvailability();
-        // 自定义分辨率面板 + 倍率后果提示(随选择动态变化);索引:0=1x 修复(Anime4K) 1=2x 2=3x 3=4x 4=自定义
+        // 倍率后果提示(随选择动态变化);索引:0=1x 修复(Anime4K) 1=2x 2=3x 3=4x
+        // 【2026-09-25】「自定义分辨率」面板已按用户要求移除 ⇒ 这里不再有面板显隐要刷。
         var scaleIdx = VideoScaleRadios.SelectedIndex;
-        CustomSizePanel.Visibility = up && scaleIdx == 4 ? Visibility.Visible : Visibility.Collapsed;
         // 【2026-09-21 用户:"这个提示是不是也该更新了"】是的 —— 1x 档的语义从"2x 放大后缩回"换成了
         // Anime4K 着色器修复(原分辨率、不放大、不跑超分引擎),这句提示必须跟着换,否则界面在骗人。
         ScaleHint.Text = scaleIdx switch
@@ -1512,8 +1512,8 @@ public sealed partial class VideoView : UserControl
         TtaCheck.IsEnabled = interp && !fast;
         TtaCheck.Opacity = fast ? 0.5 : 1.0;
         FastModeHint.Text = fast
-            ? "已启用:GPU 硬解拆帧、tile 减半、单批、帧批减半+批后释放内存、忽略 TTA、硬编合帧;去重/转场/后处理/自定义分辨率/码率/格式均不受影响"
-            : "给配置差的电脑用的:GPU 硬解拆帧、tile 减半(显存约降 4 倍)、单批处理防爆显存、帧批减半+批后释放内存、忽略 TTA、硬编合帧;去重/转场/后处理/自定义分辨率/码率/格式均不受影响";
+            ? "已启用:GPU 硬解拆帧、tile 减半、单批、帧批减半+批后释放内存、忽略 TTA、硬编合帧;去重/转场/后处理/码率/格式均不受影响"
+            : "给配置差的电脑用的:GPU 硬解拆帧、tile 减半(显存约降 4 倍)、单批处理防爆显存、帧批减半+批后释放内存、忽略 TTA、硬编合帧;去重/转场/后处理/码率/格式均不受影响";
 
         // 选择去重模式时自动把内置预设同步到手滑条(方便切到手动后继续微调);只在模式切换时生效
         if (dedup && dedupModel != _lastDedupModel)
@@ -1609,8 +1609,6 @@ public sealed partial class VideoView : UserControl
         UpscaleToggle.IsChecked = true;
         VideoEngineRadios.SelectedIndex = 0;
         VideoScaleRadios.SelectedIndex = 1;   // 默认 2x
-        CustomWidthBox.Text = "1920";
-        CustomHeightBox.Text = "1080";
         InterpToggle.IsChecked = false;
         InterpModelCombo.SelectedIndex = 0;
         InputFpsBox.Text = "30";
@@ -2457,7 +2455,7 @@ public sealed partial class VideoView : UserControl
             }
             _suppressEvents = false;
             _settingsLoaded = true;   // 加载完成,此后才允许保存(防构造/加载期 -1 污染)
-            UpdateOptions();   // 恢复后刷新 UI 状态(自定义分辨率面板显隐/提示/滑条数值等)
+            UpdateOptions();   // 恢复后刷新 UI 状态(提示/滑条数值等)
         }
         catch (Exception ex)
         {
@@ -2489,15 +2487,13 @@ public sealed partial class VideoView : UserControl
             //   这里在**恢复设置时**把真实值记下来;之后只有"单选可用时的点击"才会更新它(见 Combo_Changed)。
             _userEngineIndex = VideoEngineRadios.SelectedIndex;
         }
-        // 放大倍数索引:0=1x 修复 1=2x 2=3x 3=4x 4=自定义分辨率。
-        // 【B5 连带修复 · 2026-09-23】这里原来是"0~3 照搬,4(自定义分辨率)一律归到 2x" —— 那是
-        // 「自定义分辨率」入口被删掉时写的迁移规则。现在入口补回来了(见 VideoView.xaml 的 VScaleCustomRadio):
-        // 再照旧规则,用户选了自定义分辨率、保存、重开就被静默打回 2x(**存得住、读不回**)。所以 4 照搬。
-        // 老设置里存着 4 的用户会直接恢复到「自定义分辨率」+ 他们当年存的宽高(设置里 CustomW/CustomH 一直在存),
-        // 这比"静默改成 2x"更符合他们的本意。
-        if (d.Scale is >= 0 and <= 4) VideoScaleRadios.SelectedIndex = d.Scale;
-        if (!string.IsNullOrWhiteSpace(d.CustomW)) CustomWidthBox.Text = d.CustomW;
-        if (!string.IsNullOrWhiteSpace(d.CustomH)) CustomHeightBox.Text = d.CustomH;
+        // 放大倍数索引:0=1x 修复 1=2x 2=3x 3=4x(第 5 项「自定义分辨率」已于 2026-09-25 按用户要求移除)。
+        // 【迁移动机】用户原话:自定义分辨率鸡肋、容易出问题 ⇒ 入口与面板一并删掉。
+        // 老设置里存着 4 的用户**明确回退到 2x**(与历史上第一次删除时的规则一致),下次保存会自动规范化成 1,
+        // 不会再出现"面板不存在却仍停在自定义档"的悬挂状态。CustomW/CustomH 两个字段仍留在设置模型里(仅为兼容旧文件),
+        // 程序内已不再读取它们。
+        if (d.Scale is >= 0 and <= 3) VideoScaleRadios.SelectedIndex = d.Scale;
+        else if (d.Scale == 4) VideoScaleRadios.SelectedIndex = 1;   // 旧的「自定义分辨率」→ 2x
         if (d.PostSharpen is >= 0 and <= 100) SharpenSlider.Value = d.PostSharpen;
         if (d.PostClarity is >= 0 and <= 100) ClaritySlider.Value = d.PostClarity;
         if (d.PostUsm is >= 0 and <= 100) UsmSlider.Value = d.PostUsm;
@@ -3283,8 +3279,7 @@ public sealed partial class VideoView : UserControl
             SceneThr = AlhPro.Core.SceneThresholdMap.Snap(SceneSlider.Value),
             Tta = TtaCheck.IsChecked == true,
             OutDir = _customOutDir ?? "",
-            CustomW = CustomWidthBox.Text,
-            CustomH = CustomHeightBox.Text,
+            // 【2026-09-25】CustomW/CustomH 不再写入:自定义分辨率已移除(字段仍留在设置模型里,仅为兼容旧文件)。
             PostSharpen = (int)SharpenSlider.Value,
             PostClarity = (int)ClaritySlider.Value,
             PostUsm = (int)UsmSlider.Value,
@@ -4515,7 +4510,7 @@ public sealed partial class VideoView : UserControl
         engine = SelectedEngineName;   // 【2026-09-25 修】原来是二值 `SelectedEngineIsReal ? "realesrgan" : "waifu2x"`,
                                        // 于是选中 Real-CUGAN 时经验库指纹键被记成 "waifu2x" ⇒ 预计用时错配(只影响文字,不影响实跑引擎)。
         double scale = VideoScaleRadios.SelectedIndex switch { 1 => 2, 2 => 3, 3 => 4, _ => 1 };
-        if (VideoScaleRadios.SelectedIndex is 0 or 4) scale = 2;   // 1x 缩回 / 自定义:内部都按 2x 超分
+        if (VideoScaleRadios.SelectedIndex == 0) scale = 2;   // 1x 缩回:内部按 2x 超分再缩回(自定义分辨率已于 2026-09-25 移除)
         int interpScale = AlhPro.Core.InterpScaleMap.Multiplier(CurrentScaleIndex());
         bool dedupOn = DedupCheck.IsChecked == true;
         int vdenoise = DenoiseToggle.IsChecked == true ? AlhPro.Core.DenoiseStrengthOrder.ToPipeline(DenoiseStrengthIndex()) : 0;
@@ -4628,20 +4623,14 @@ public sealed partial class VideoView : UserControl
             // 源分辨率(失败给 0,显示时省略)
             int sw = 0, sh = 0;
             try { (sw, sh) = await VideoService.ProbeSizeAsync(it.Path); } catch { }
-            // 输出分辨率:0=1x缩回 1=2x 2=3x 3=4x 4=自定义
+            // 输出分辨率:0=1x缩回 1=2x 2=3x 3=4x(第 5 项「自定义分辨率」已于 2026-09-25 按用户要求移除)
             bool shrink1x = VideoScaleRadios.SelectedIndex == 0;
-            bool customRes = VideoScaleRadios.SelectedIndex == 4;
             double mult = VideoScaleRadios.SelectedIndex switch { 1 => 2.0, 2 => 3.0, 3 => 4.0, _ => 1.0 };
             var up = UpscaleToggle.IsChecked == true;
             int ow = sw, oh = sh;
             if (up)
             {
-                if (customRes)
-                {
-                    int.TryParse(CustomWidthBox.Text, out var cw); int.TryParse(CustomHeightBox.Text, out var ch);
-                    if (cw > 0 && ch > 0) { ow = cw; oh = ch; }
-                }
-                else if (!shrink1x)
+                if (!shrink1x)
                 {
                     ow = (int)Math.Round(sw * mult); oh = (int)Math.Round(sh * mult);
                 }
@@ -4665,8 +4654,7 @@ public sealed partial class VideoView : UserControl
                 string srcNote = "";
                 if (sw > 0 && sh > 0)
                 {
-                    if (up && customRes) srcNote = $"(源 {sw}×{sh} · 自定义)";
-                    else if (up && shrink1x) srcNote = $"(源 {sw}×{sh} ×1·缩回)";
+                    if (up && shrink1x) srcNote = $"(源 {sw}×{sh} ×1·缩回)";
                     else if (up) srcNote = $"(源 {sw}×{sh} ×{mult:0.##})";
                     else srcNote = $"(源 {sw}×{sh})";
                 }
@@ -10411,20 +10399,18 @@ public sealed partial class VideoView : UserControl
             // 倍率:0=1x(2x缩回) 1=2x 2=3x 3=4x 4=自定义(内部按2x)
             int scale = VideoScaleRadios.SelectedIndex switch { 1 => 2, 2 => 3, 3 => 4, _ => 1 };
             bool upscaleShrink1x = VideoScaleRadios.SelectedIndex == 0;
-            if (VideoScaleRadios.SelectedIndex == 4) scale = 2;   // 自定义分辨率:内部按 2x 超分再缩放(与 pipeline 一致,避免占盘/耗时低估)
+            // 倍率:0=1x(2x缩回) 1=2x 2=3x 3=4x(自定义分辨率入口已于 2026-09-25 移除)
             if (upOn && upscaleShrink1x) scale = 2;
             bool highRate = interpScale >= 4;   // 4x 及以上
             double totalNeedGB = 0, totalSec = 0;
             // ===== 超 4K 判定所需的 UI 值,必须在 UI 线程先读成局部量 =====
             // XAML 对象有线程亲和:后台线程读控件会抛 RPC_E_WRONG_THREAD(0x8001010E)。
             // 历史上这里正是在下面 Task.Run 的 lambda 内读 VideoScaleRadios.SelectedIndex /
-            // CustomWidthBox.Text 来算"输出超 4K",异常被 lambda 里的 catch{} 逐个吞掉,
+            // 自定义分辨率移除后,这里不再有宽高输入框要读(异常被 lambda 里的 catch{} 逐个吞掉的历史教训保留):
             // 于是超分开启时整段扫描静默失效:超 4K 名单恒空(弹窗从未真正生效过)、
             // totalSec/totalNeedGB 恒 0(爆盘预检永不触发,诊断框还显示"约 0 分钟/约 0 GB"的假数字)。
             // 所以这里先取快照,lambda 内只许用这些局部量,不许再碰任何控件。
-            bool customResUi = VideoScaleRadios.SelectedIndex == 4;   // 4=自定义分辨率
-            int.TryParse(CustomWidthBox.Text, out int customWUi);
-            int.TryParse(CustomHeightBox.Text, out int customHUi);
+            // 【2026-09-25】自定义分辨率移除后,输出尺寸只剩"源×倍率 / 1x 缩回"两种,不再需要宽高快照。
             // 超 4K 名单(形如 "名字(3840×4320)"):只装确实超 4K 的项,供下方确认弹窗列出
             var over4k = new System.Collections.Generic.List<string>();
             // 后台扫描每个视频(不卡 UI)
@@ -10437,15 +10423,11 @@ public sealed partial class VideoView : UserControl
                         double dur = await VideoService.ProbeDurationSeconds(it.Path).ConfigureAwait(false);
                         var (w, h) = await VideoService.ProbeSizeAsync(it.Path).ConfigureAwait(false);
                         // 输出尺寸口径与内联红字(RefreshVideoOutSpec)完全一致:超分开启且非 1x 缩回 → 源×倍率;
-                        // 自定义分辨率 → 用用户填的值;1x 缩回 → 源尺寸(补帧只改帧率,不影响尺寸)。
+                        // 1x 缩回 → 源尺寸(补帧只改帧率,不影响尺寸)。
                         int outW = w, outH = h;
                         if (upOn)
                         {
-                            if (customResUi)
-                            {
-                                if (customWUi > 0 && customHUi > 0) { outW = customWUi; outH = customHUi; }
-                            }
-                            else if (!upscaleShrink1x)
+                            if (!upscaleShrink1x)
                             {
                                 outW = (int)Math.Round((double)w * scale); outH = (int)Math.Round((double)h * scale);
                             }
@@ -10498,7 +10480,7 @@ public sealed partial class VideoView : UserControl
                                     + "\n\n超 4K 会占用极大量显存/临时磁盘、处理非常慢,甚至中途失败。是否仍要继续?",
                                 TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
                             },
-                            new TextBlock { Text = "也可先降低超分倍率或改小自定义分辨率再试。", FontSize = 11, Opacity = 0.6, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap },
+                            new TextBlock { Text = "也可先降低超分倍率,或改用 1x 修复再试。", FontSize = 11, Opacity = 0.6, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap },
                         },
                     },
                     PrimaryButtonText = "仍要继续",
@@ -11001,7 +10983,7 @@ public sealed partial class VideoView : UserControl
         // 视频降噪由现有「启用视频降噪 + 强度(弱/中/强)」统一驱动,不再单开一个 waifu2x 专用下拉(割裂):
         // waifu2x 引擎 → 强弱档直接当它的自带降噪 -n(模型更对症、不额外耗时);
         // 其它情况 → 拆帧阶段 nlmeans。映射与执行都在 VideoService 里完成。
-        // 倍率:0=1x 修复(Anime4K,不变尺寸) 1=2x 2=3x 3=4x 4=自定义分辨率
+        // 倍率:0=1x 修复(Anime4K,不变尺寸) 1=2x 2=3x 3=4x(第 5 项「自定义分辨率」已于 2026-09-25 移除)
         bool upscaleShrink1x = false;
         bool anime4k1x = false;   // 1x 修复档:走 Anime4K 着色器(探测通过才置 true,见下方 RunBatchAsync 里的探测)
         var scale = VideoScaleRadios.SelectedIndex switch
@@ -11011,23 +10993,15 @@ public sealed partial class VideoView : UserControl
             3 => 4,
             _ => 1,
         };
+        // 【2026-09-25】自定义分辨率已移除 ⇒ outWidth/outHeight 恒为 null
+        // (ProcessVideoAsync 的这两个参数保留 —— 管线本身仍支持"缩放到指定尺寸",1x 缩回也在用同一套)。
         int? outWidth = null, outHeight = null;
-        var customRes = false;
         if (VideoScaleRadios.SelectedIndex == 0)
         {
             // 【2026-09-21 用户定案】1x 档从「2x 放大后缩回」整体换成 **Anime4K 修复**(原分辨率修复+锐化,不放大)。
             // 这里先按"回退行为"打底(upscaleShrink1x=true):探测通过时会在 RunBatchAsync 里翻成 anime4k1x=true,
             // 探测不过就保持旧的 2x-缩回 —— 这样"没 Vulkan 的机器"不会整批失败,也不会什么都没做。
             upscaleShrink1x = true;
-        }
-        else if (VideoScaleRadios.SelectedIndex == 4)
-        {
-            scale = 2;   // 自定义:内部按 2x 超分,再缩放到指定尺寸
-            var cwOk = int.TryParse(CustomWidthBox.Text, out var cw) && cw > 0;
-            var chOk = int.TryParse(CustomHeightBox.Text, out var ch) && ch > 0;
-            customRes = cwOk && chOk;
-            if (customRes) { outWidth = cw; outHeight = ch; }
-            else Log("⚠ 自定义分辨率无效(宽/高需为正整数),已按 2x 输出");
         }
         var scaleLabel = upscaleShrink1x ? "1x(2x超分后缩回)" : $"{scale:0.##}x";
         // 视频帧率:0=各视频默认帧率(原帧率) 1=帧率偏移(统一减) 2=单独调整(单视频输入框/多视频右侧逐个)
@@ -11745,7 +11719,7 @@ public sealed partial class VideoView : UserControl
             // 写速度,不写"测试"这类定性词)。日志是排查"这次到底用的哪支模型、该有多快"的唯一凭据。
             // 【2026-09-24】Real-CUGAN 的 model 是 `models-se:-1` 这种 Tag(不能直读成模型名),
             // 所以这里补上引擎名 + 该 Tag 的人话名 —— 日志必须能一眼看出"这一批用的是哪条引擎、哪支模型"。
-            $"超分={(up ? $"开({EngineService.EngineLabel(engine)}·{AlhPro.Core.RealCugan.DisplayOrSelf(model)}{AlhPro.Core.ExperimentalEsrgan.LogSuffix(model)}·{scaleLabel})" : "关")}" + (up && customRes ? $"·输出{outWidth}×{outHeight}" : "") + " | " +
+            $"超分={(up ? $"开({EngineService.EngineLabel(engine)}·{AlhPro.Core.RealCugan.DisplayOrSelf(model)}{AlhPro.Core.ExperimentalEsrgan.LogSuffix(model)}·{scaleLabel})" : "关")}" + " | " +
             $"补帧={(interp ? $"{interpModel}·{interpScale}x{(tta ? "·TTA" : "")}·时间步{(timeStep ?? 0):0.00}" : "关")} | " +
             $"去重={dedupDesc} | " +
             // 【2026-09-21】转场识别这一项不止印开关:阈值(滑块值)也印出来 ——
@@ -11825,7 +11799,6 @@ public sealed partial class VideoView : UserControl
                     ? $"{targetFps.Value:0.##}fps"
                     : (effScaleForName != interpScale ? $"{interpScale}x(自动{effScaleForName}x)" : $"{interpScale}x");
                 var suffix = (up ? $"_超分{scaleLabel}_{UpscaleView.ModelShort(engine)}" : "")
-                    + (customRes ? $"_自定义{outWidth}x{outHeight}" : "")
                     + (interp ? $"_补帧{interpLabelForName}_{UpscaleView.ModelShort(interpModel)}" : "")
                     + (dedupOn ? DedupSuffix(dedupModel, dedupAnimeThr, contentFpsNow, animeHoldN) : "")
                     + (sceneCut != null ? "_转场" : "");
