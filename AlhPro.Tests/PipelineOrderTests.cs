@@ -6,9 +6,15 @@ namespace AlhPro.Tests;
 
 /// <summary>阶段顺序自动判定的单测(任务 Q1)。
 /// 判据:新顺序(先超分)更省 ⟺ `u > k·(r_hi − r_lo)/(k−1)`(u=超分单帧成本、k=补帧倍率、
-/// r_lo/r_hi=补帧在源分辨率/放大后分辨率的单帧成本)。成本表全部来自 2026-09-13 真机实测(见 Core 注释)。
+/// r_lo/r_hi=补帧在源分辨率/放大后分辨率的单帧成本)。
 /// 预期结论(用户给定,本文件逐条钉住):①animevideov3 2x+补帧2x → 旧(新慢约 22%)②同模型 4x+补帧2x → 旧(新慢约 73%)
-/// ③x4plus 4x+补帧2x → **新(省约 47%)** ④x4plus-anime 4x+补帧4x → 新 ⑤分辨率变化判据随之变化 ⑥边际不足回退旧 ⑦未知/非法回退旧。</summary>
+/// ③x4plus 4x+补帧2x → **新(省约 47%)** ④x4plus-anime 4x+补帧4x → 新 ⑤分辨率变化判据随之变化 ⑥边际不足回退旧 ⑦未知/非法回退旧。
+///
+/// 【2026-09-25 A+B 改动 · 必须理解】成本表的内置数字(`UpscaleRates`,开发机实测)**不再参与判定**;
+/// `Decide(...)` 只吃 `localPrices`(本机标定)。所以下面每个"要按数字判"的用例都显式传一条
+/// **本机标定**(`LocalPriceFixture.Built(...)` 把内置表那一格的数值包成"本机实测",采样面积 = 1080p ⇒ 折算值不变)——
+/// **断言的数字与结论一字未改**,改的只是"这些秒/帧从哪来"。原口径(不传 localPrices)的回归由本文件末尾
+/// 几条新用例单独钉住(未标定 ⇒ 一律旧顺序 + 理由含【本机未标定】)。</summary>
 public class PipelineOrderTests
 {
     private const int W1080 = 1920, H1080 = 1080;
@@ -16,7 +22,8 @@ public class PipelineOrderTests
     [Fact]
     public void Case1_animevideov3_2x_interp2x_keeps_old_order()
     {
-        var d = PipelineOrderPlan.Decide("realesrgan", "realesr-animevideov3", 2.0, 2, W1080, H1080, 1800);
+        var d = PipelineOrderPlan.Decide("realesrgan", "realesr-animevideov3", 2.0, 2, W1080, H1080, 1800,
+            localPrices: LocalPriceFixture.Built("realesr-animevideov3", 2));
         Assert.False(d.UpscaleFirst);
         Assert.True(d.Measured);
         Assert.Equal(0.2605, d.UpscalePerFrame, 6);          // 实测 0.252~0.269 中值
@@ -30,7 +37,8 @@ public class PipelineOrderTests
     [Fact]
     public void Case2_animevideov3_4x_interp2x_keeps_old_order_much_slower()
     {
-        var d = PipelineOrderPlan.Decide("realesrgan", "realesr-animevideov3", 4.0, 2, W1080, H1080, 1800);
+        var d = PipelineOrderPlan.Decide("realesrgan", "realesr-animevideov3", 4.0, 2, W1080, H1080, 1800,
+            localPrices: LocalPriceFixture.Built("realesr-animevideov3", 4));
         Assert.False(d.UpscaleFirst);
         Assert.Equal(0.297, d.UpscalePerFrame, 6);
         Assert.Equal(0.5186, d.InterpHiPerFrame, 6);        // 4320p 锚点(4x 放大后的面积)
@@ -41,7 +49,8 @@ public class PipelineOrderTests
     [Fact]
     public void Case3_x4plus_4x_interp2x_picks_new_order_about_47_percent()
     {
-        var d = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus", 4.0, 2, W1080, H1080, 1800);
+        var d = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus", 4.0, 2, W1080, H1080, 1800,
+            localPrices: LocalPriceFixture.Built("realesrgan-x4plus", 4));
         Assert.True(d.UpscaleFirst);
         Assert.Equal(15.87, d.UpscalePerFrame, 6);                   // 实测 15.87(2026-09-15,30 帧 1080p 目录批跑)
         Assert.True(d.UpscalePerFrame > d.ThresholdSecondsPerFrame); // u 超过门槛
@@ -51,7 +60,8 @@ public class PipelineOrderTests
     [Fact]
     public void Case4_x4plus_anime_4x_interp4x_picks_new_order()
     {
-        var d = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus-anime", 4.0, 4, W1080, H1080, 1800);
+        var d = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus-anime", 4.0, 4, W1080, H1080, 1800,
+            localPrices: LocalPriceFixture.Built("realesrgan-x4plus-anime", 4));
         Assert.True(d.UpscaleFirst);
         Assert.Equal(3.85, d.UpscalePerFrame, 6);                    // 实测 ≈3.3~4.4 中值
         Assert.Equal(4 * (0.5186 - 0.0807) / 3.0, d.ThresholdSecondsPerFrame, 6);
@@ -65,13 +75,15 @@ public class PipelineOrderTests
     [InlineData(3840, 2160, true)]    // 8.29 Mpx:u 随面积涨到 1.04s,超过门槛 0.482 → **新顺序**
     public void Case5_decision_follows_source_resolution(int w, int h, bool expectNew)
     {
-        var d = PipelineOrderPlan.Decide("realesrgan", "realesr-animevideov3", 2.0, 2, w, h, 1800);
+        var d = PipelineOrderPlan.Decide("realesrgan", "realesr-animevideov3", 2.0, 2, w, h, 1800,
+            localPrices: LocalPriceFixture.Built("realesr-animevideov3", 2));
         Assert.Equal(expectNew, d.UpscaleFirst);
         double expectedU = 0.2605 * ((double)w * h / PipelineOrderPlan.ReferencePixels1080p);
         Assert.Equal(expectedU, d.UpscalePerFrame, 6);   // 超分成本 ∝ 源面积(与输出倍率几乎无关)
         Assert.Equal((long)w * h, d.SourcePixels);
         // 三种分辨率的判据数字必须两两不同(否则"按分辨率变化"没生效)
-        var other = PipelineOrderPlan.Decide("realesrgan", "realesr-animevideov3", 2.0, 2, 1920, 1080, 1800);
+        var other = PipelineOrderPlan.Decide("realesrgan", "realesr-animevideov3", 2.0, 2, 1920, 1080, 1800,
+            localPrices: LocalPriceFixture.Built("realesr-animevideov3", 2));
         if (w * h != 1920 * 1080) Assert.NotEqual(other.ThresholdSecondsPerFrame, d.ThresholdSecondsPerFrame, 9);
     }
 
@@ -99,9 +111,13 @@ public class PipelineOrderTests
         Assert.False(unknown.UpscaleFirst);
         Assert.False(unknown.Measured);
         Assert.Contains("待实测标定", unknown.Reason);
+        // 【2026-09-25】生产口径下"没有这一格"= **本机没标定过**(不是"开发机没测过"),理由必须写明
+        Assert.Contains("【本机未标定】", unknown.Reason);
 
-        var noInterp = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus", 4.0, 1, W1080, H1080, 1800);
+        var noInterp = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus", 4.0, 1, W1080, H1080, 1800,
+            localPrices: LocalPriceFixture.Built("realesrgan-x4plus", 4));
         Assert.False(noInterp.UpscaleFirst);   // 不补帧:顺序无收益
+        Assert.Contains("补帧关闭", noInterp.Reason);
 
         // 非法入参不许炸,且一律旧顺序
         foreach (var (w, h, s, k) in new[] { (0, 0, 4.0, 2), (-1, 1080, 4.0, 2), (1920, 1080, 0.0, 2), (1920, 1080, 4.0, 0) })
@@ -115,7 +131,8 @@ public class PipelineOrderTests
     [Fact]
     public void Decision_log_line_is_auditable()
     {
-        var d = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus", 4.0, 2, W1080, H1080, 1800);
+        var d = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus", 4.0, 2, W1080, H1080, 1800,
+            localPrices: LocalPriceFixture.Built("realesrgan-x4plus", 4));
         string line = d.LogLine;
         Assert.Contains("顺序判定:", line);
         Assert.Contains("u=", line);
@@ -176,15 +193,17 @@ public class PipelineOrderTests
         // 它没有 2x 权重(与 general-x4v3 同族),查表也必须是"无实测"而不是回退到别的倍率
         Assert.Null(PipelineOrderPlan.LookupUpscaleSecondsPerFrame("realesr-general-wdn-x4v3", 2, out _));
         // "1x 缩回"的面积与倍率分开传:engine 倍率仍按 2x 查表(areaScale 只影响放大后面积)
-        var shrink = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus", 2.0, 2, W1080, H1080, 1800, areaScale: 1.0);
+        var shrink = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus", 2.0, 2, W1080, H1080, 1800, areaScale: 1.0,
+            localPrices: LocalPriceFixture.Built("realesrgan-x4plus", 4));
         Assert.Equal(15.87, shrink.UpscalePerFrame, 6);
         Assert.Equal((long)W1080 * H1080, shrink.HiPixels);   // 缩回后补帧输入仍是源尺寸
     }
 
-    /// <summary>【2026-09-25 · 真机事故回归】Real-CUGAN 的实测单价必须在表里,且据此判定出的顺序必须是「超分→补帧」。
-    /// 缺这一行时判定把超分当成免费(u=0)⇒ 误选「补帧→超分」⇒ 超分要去跑补帧后 4 倍的帧数:
+    /// <summary>【2026-09-25 · 真机事故回归】Real-CUGAN 的秒/帧**必须在资料表里**,且据**本机标定**判出的顺序必须是
+    /// 「超分→补帧」。缺这一行时判定把超分当成免费(u=0)⇒ 误选「补帧→超分」⇒ 超分要去跑补帧后 4 倍的帧数:
     /// 真机现场(14.6 秒素材、源 350 帧、补帧 4x ⇒ 1401 帧)超分阶段约 39 分钟;顺序反过来只需 350 帧 ≈ 10 分钟。
-    /// 同一行缺失还会让"预计时间"沿用 Real-ESRGAN 的 0.45 秒/帧 ⇒ 乐观约 3.7 倍。</summary>
+    /// 同一行缺失还会让"预计时间"沿用 Real-ESRGAN 的 0.45 秒/帧 ⇒ 乐观约 3.7 倍。
+    /// 【2026-09-25 A+B 之后】判定不看资料表,只看本机标定 ⇒ 本用例把 1.65 包成"本机实测"再判。</summary>
     [Fact]
     public void Realcugan_has_a_measured_price_and_that_flips_the_order()
     {
@@ -198,10 +217,80 @@ public class PipelineOrderTests
         Assert.Contains("待实测标定", prov4);
 
         // 2x + 补帧 4x:u=1.65 已超过门槛(0.2625)⇒ 必须选「超分→补帧」
-        var d = PipelineOrderPlan.Decide("realcugan", "models-se:0", 2.0, 4, W1080, H1080, 1800);
+        var d = PipelineOrderPlan.Decide("realcugan", "models-se:0", 2.0, 4, W1080, H1080, 1800,
+            localPrices: LocalPriceFixture.Built("models-se:0", 2));
         Assert.True(d.Measured);
         Assert.Equal(1.65, d.UpscalePerFrame, 6);
         Assert.True(d.UpscaleFirst,
             $"Real-CUGAN 2x + 补帧 4x 必须选「超分→补帧」;实际 SavingsPercent={d.SavingsPercent:0.#}%");
+    }
+
+    // ═══════════════ 【2026-09-25 A+B】本机标定口径:命中才判、未标定一律回退、指纹不符不采信 ═══════════════
+
+    /// <summary>**红/绿对照(契约 §4.2 点名要的证据)**:同一组入参,只改 `localPrices`:
+    /// 不传 ⇒ 未标定 ⇒ 旧顺序 + 理由含【本机未标定】(哪怕模型"很贵");传一条本机标定 ⇒ 立刻按数字判新顺序。
+    /// 这就同时证明了"内置 `UpscaleRates` 已不参与判定"(否则 x4plus 那行 15.87 会让它直接判新顺序)。</summary>
+    [Fact]
+    public void Same_inputs_flip_only_when_a_local_price_is_supplied()
+    {
+        // 红:x4plus(资料表里 15.87 s/帧,旧口径一定判新顺序)
+        var red = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus", 4.0, 2, W1080, H1080, 1800);
+        Assert.False(red.UpscaleFirst, "未标定必须保守用旧顺序 —— 哪怕资料表说这个模型很贵");
+        Assert.False(red.Measured);
+        Assert.Contains("【本机未标定】", red.Reason);
+        Assert.Contains("内置表是他机实测", red.Reason);
+        Assert.Equal(0.0, red.UpscalePerFrame, 9);   // u=0 = "未采信任何单价",不是"免费"(理由里写明)
+
+        // 绿:同一组入参 + 一条本机标定 ⇒ 按数字判新顺序
+        var green = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus", 4.0, 2, W1080, H1080, 1800,
+            localPrices: LocalPriceFixture.Built("realesrgan-x4plus", 4));
+        Assert.True(green.UpscaleFirst);
+        Assert.True(green.Measured);
+        Assert.Equal(15.87, green.UpscalePerFrame, 6);
+
+        // 反过来:便宜模型(animevideov3 2x)本机标定后仍判旧顺序 ⇒ 不是"有标定就一定新顺序"
+        var cheap = PipelineOrderPlan.Decide("realesrgan", "realesr-animevideov3", 2.0, 2, W1080, H1080, 1800,
+            localPrices: LocalPriceFixture.Built("realesr-animevideov3", 2));
+        Assert.False(cheap.UpscaleFirst);
+        Assert.True(cheap.Measured);
+    }
+
+    /// <summary>**命中本机时理由必须写出两点法出处**(契约 A4):两次耗时 + N + 采样分辨率 + 折算 1080p 的单价。</summary>
+    [Fact]
+    public void Reason_cites_the_local_two_point_provenance()
+    {
+        var d = PipelineOrderPlan.Decide("realcugan", "models-se:0", 2.0, 4, W1080, H1080, 1800,
+            localPrices: new[] { LocalPriceFixture.At1080p("models-se:0", 2, 1.65, sampleFrames: 6) },
+            machineKey: LocalPriceFixture.MachineKey);
+        Assert.True(d.Measured);
+        Assert.Contains("本机实测", d.Reason);
+        Assert.Contains("两点法", d.Reason);
+        Assert.Contains("1 帧 0.9s", d.Reason);
+        Assert.Contains("6 帧 10.8s", d.Reason);
+        Assert.Contains("1920×1080", d.Reason);
+        Assert.Contains("折算 1080p", d.Reason);
+        Assert.True(d.UpscaleFirst);
+    }
+
+    /// <summary>**机器指纹不一致 ⇒ 不采信**(契约 A3.1/A4):标定是"别人的机器"测的,理由必须写明
+    /// 「另一台机器(<摘要>)的标定,已忽略」,并且仍然回退旧顺序。</summary>
+    [Fact]
+    public void A_price_from_another_machine_is_ignored()
+    {
+        var theirs = LocalPriceFixture.Built("realesrgan-x4plus", 4, LocalPriceFixture.OtherMachineKey);
+        var d = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus", 4.0, 2, W1080, H1080, 1800,
+            localPrices: theirs, machineKey: LocalPriceFixture.MachineKey);
+        Assert.False(d.UpscaleFirst);
+        Assert.False(d.Measured);
+        Assert.Contains("【本机未标定】", d.Reason);
+        Assert.Contains("另一台机器", d.Reason);
+        Assert.Contains("已忽略", d.Reason);
+        Assert.Contains("别人的机器", d.Reason);              // 摘要里能看出是哪台(长串会截断,故只断言开头)
+
+        // 同一份记录,但那台机器自己来判 ⇒ 就采信了(证明拦的是指纹,不是数据本身)
+        var mine = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus", 4.0, 2, W1080, H1080, 1800,
+            localPrices: theirs, machineKey: LocalPriceFixture.OtherMachineKey);
+        Assert.True(mine.Measured);
+        Assert.True(mine.UpscaleFirst);
     }
 }

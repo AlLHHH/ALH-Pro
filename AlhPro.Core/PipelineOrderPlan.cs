@@ -4,6 +4,18 @@ namespace AlhPro.Core;
 /// 【任务 Q1 · 2026-09-13】取代原先的全局开关 `VideoPipeline.UpscaleFirstEnabled`(常量 false):
 /// 顺序该由**这台机器上这次任务的实际成本**决定,而不是一个"全局关掉"的常量。
 ///
+/// ==== 【2026-09-25 硬规矩 · 本文件的表**不再参与生产判定**】====
+/// 用户原话:「那别人使用时,这个检查决定先超分还是先补帧也是用我的设备???」
+/// —— **旧实现就是这样**:下面 <see cref="UpscaleRates"/> 每一格都来自**开发机**(RTX 4060 Laptop)一台机器,
+/// 别人机器上的阶段顺序却由开发机的秒/帧决定。这是错的,现在改成:
+///   · 生产判定(`VideoService` 的顺序决策点)**只看本机实测单价** —— <see cref="LocalPriceBook"/> 里的记录
+///     (由 `UpscaleCalibrator` 在用户这台机器上现场两点法标出来,键含**机器指纹**);
+///   · 本机没有那一格(或指纹对不上,例如换了显卡 / 重编了引擎)→ **保守回退旧顺序**,理由里标【本机未标定】;
+///   · 下面这张 **<see cref="UpscaleRates"/> 是他机实测,只作资料与回归基线**(历史出处、面积线性规律的证据、
+///     单测的期望值来源)。它**不再**决定任何人的阶段顺序,也**不要**往里补开发机的新数字(§4 非目标)。
+/// 判据的目的也从"省时间"变成"**按用户这台机器**省时间":同一个 14.6 s 素材,本机 Real-CUGAN 2x 才会算出
+/// 「超分贵 ⇒ 先超分只跑源帧」,别人的机器标出来的可能是相反结论 —— 这正是要的效果。
+///
 /// ==== 成本模型(判据的四个数字) ====
 /// 记 N=源帧数、k=补帧倍率、u=超分单帧成本(按源面积缩放)、r_lo/r_hi=补帧单个**输出**帧在
 /// 源分辨率/放大后分辨率上的成本:
@@ -11,7 +23,8 @@ namespace AlhPro.Core;
 ///   · 旧顺序(先补帧)= k·N·r_lo + k·N·u     ← 补帧输出仍是源分辨率,所以超分那侧也是 N·k 帧 × u
 /// 令新顺序更省 ⟺ u·(1−k) &lt; k·(r_lo−r_hi) ⟺ (k&gt;1)**u &gt; k·(r_hi−r_lo)/(k−1)** —— 这就是门槛。
 ///
-/// ==== 实测单价表(2026-09-13 基准代理真机测;2026-09-15 补测 3x / x4plus 大样本 / 面积线性;
+/// ==== 【他机(开发机)实测单价表 —— 只作资料与回归基线,不参与判定(见上)】
+///      (2026-09-13 基准代理真机测;2026-09-15 补测 3x / x4plus 大样本 / 面积线性;
 ///      单位:秒/帧;超分档为 1080p 源、`-j 1:1:1 -t 0`;2026-09-15 的补测一律用「40 帧目录批跑」,
 ///      不用「单帧调用」—— 后者的地板见下面面积线性验证那段) ====
 /// 超分:
@@ -51,17 +64,21 @@ namespace AlhPro.Core;
 /// ==== 覆盖不到的组合怎么办 ====
 /// 表里没有(模型未实测 / 倍率未实测 / 参数非法 / 没开补帧或没开超分)→ **一律回退旧顺序**,
 /// 理由里标【待实测标定】。宁可保守,也不拿没测过的数字去改阶段顺序。
+/// 【2026-09-25 起】生产路径上"表里没有"= **本机没标定过**(见上),不是"开发机没测过"。
 /// ==== 安全边际 ====
 /// 预估节省 **&lt; 15%** 时**不切换**(避免在临界点上抖动/来回翻),理由写进日志。
 ///
 /// ==== 【2026-09-14 在线参数功能整体删除后的口径】====
 /// 本类原先有"三组数字可被在线配置覆盖"的一层(超分单价表 / 补帧锚点表 / 安全边际)—— 那份"在线最优参数"
 /// 功能已被用户判定为**累赘**并整体删除(界面复选框、设置项、联网拉取服务、覆盖层全部删掉)。
-/// 现在这里**只读内置实测表**:<see cref="UpscaleRates"/> 与 <see cref="InterpAnchorSeconds"/> /
-/// <see cref="InterpAnchorPixels"/>,每一格都标着真机实测出处。删除前后**行为逐字一致**:
-/// 覆盖层原本只在"配置成功"时才生效,默认(null)就是回落这些常量(见当时的单测口径)。
+/// 【2026-09-25 A+B 起的口径(覆盖上面这一段的"只读内置表")】
+///   · **超分单价**:判定只吃 <see cref="LocalPriceBook"/> 里的**本机标定**(参数 `localPrices`/`machineKey`);
+///     内置 <see cref="UpscaleRates"/> 降级为"他机实测,只作资料与回归基线"(见类开头那段)。
+///   · **补帧锚点** <see cref="InterpAnchorSeconds"/> / <see cref="InterpAnchorPixels"/> 与**安全边际**
+///     <see cref="MinSavingsPercent"/> 仍是代码里的常量(与机器相关性低得多,本轮 non-goal 不动)。
+/// 删除在线参数层的前后**行为逐字一致**(覆盖层原本只在"配置成功"时才生效,默认(null)就是回落这些常量)。
 /// 备注:外部社区从未发布过这类"超分秒/帧"标定表(见 <c>ExternalPractice</c> 的说明),
-/// 所以这张表的权威来源只能是本仓库的真机实测。</summary>
+/// 所以任何单价的权威来源只能是**发起判定的那台机器**上的实测。</summary>
 public static class PipelineOrderPlan
 {
     /// <summary>1080p 面积 = 2 073 600 px(2.07 Mpx):超分单价表的基准面积,也是补帧锚点之一。
@@ -96,7 +113,10 @@ public static class PipelineOrderPlan
     public readonly record struct UpscaleRate(string Engine, string ModelKey, int EngineScale,
         double SecondsPerFrame1080p, string Provenance);
 
-    /// <summary>实测超分单价表(出处逐条标注;区间取中值,区间宽度见 Provenance)。</summary>
+    /// <summary>**他机实测**的超分单价表(开发机 RTX 4060 Laptop),**只作资料与回归基线**:
+    /// 历史出处、面积线性规律的证据、单测期望值的来源。**不参与生产判定**
+    /// (生产只看 <see cref="LocalPriceBook"/> 里的本机标定;见类注释 2026-09-25 那一段)。
+    /// 每一行仍逐条标出处,便于回看当时的数字从哪来。</summary>
     public static readonly UpscaleRate[] UpscaleRates =
     {
         new("realesrgan", "animevideov3", 1, 0.028,  "2026-09-13 实测 0.027~0.029;【该档输出全黑(无 x1 权重),数字仅供量级】"),
@@ -141,8 +161,11 @@ public static class PipelineOrderPlan
         return null;
     }
 
-    /// <summary>查"该模型 × 该引擎倍率"的实测超分单价(秒/帧 @1080p 源);没实测过返回 null(调用方回退旧顺序),
-    /// 出处写进 <paramref name="provenance"/>。
+    /// <summary>查**他机(开发机)**实测表的超分单价(秒/帧 @1080p 源);没测过返回 null,出处写进
+    /// <paramref name="provenance"/>。
+    /// 【2026-09-25 起这不再是判据】本方法只用于:① 选标定采样帧数(`CalibrationSample.EstimatePerFrame`);
+    /// ② 单测/回归对照;③ 界面上的"他机参考"。**生产顺序判定请用
+    /// <see cref="LocalPriceBook.Resolve"/>,它按机器指纹区分别人的机器。**
     /// 【口径】只认本仓库真机实测表 <see cref="UpscaleRates"/> —— "在线参数表"随该功能于 2026-09-14 删除,
     /// 原先的"引擎|模型键|倍率"键与两侧归一(`NormalizeEngine` / `CanonicalUpscaleKey*`)也一并删掉了。</summary>
     public static double? LookupUpscaleSecondsPerFrame(string? model, int engineScale, out string provenance)
@@ -201,8 +224,8 @@ public static class PipelineOrderPlan
             + $" → 选择 {(UpscaleFirst ? "新顺序(超分→补帧)" : "旧顺序(补帧→超分)")}";
     }
 
-    /// <summary>按实测表判定(生产入口)。
-    /// <param name="engine">引擎("realesrgan"/"waifu2x")。
+    /// <summary>按**本机实测单价**判定(生产入口)。
+    /// <param name="engine">引擎("realesrgan"/"waifu2x"/"realcugan")。
     /// <param name="model">模型名(引擎侧名,如 realesr-animevideov3 / models-cunet)。
     /// <param name="scale">目标超分倍率(UI 口径;引擎倍数由 Core.EngineScalePolicy 推)。
     /// <param name="interpScale">补帧倍率(1 = 不补帧 → 顺序无意义)。
@@ -210,14 +233,46 @@ public static class PipelineOrderPlan
     /// <param name="sourceFrames">源帧数(只影响两侧总成本的绝对值,N 会被约掉,不影响判据;给 0 也能判)。</param>
     /// <param name="minSavingsPercent">安全边际;省略(= <see cref="UseBuiltInMinSavings"/>)→ 用内置
     /// <see cref="MinSavingsPercent"/>。</param>
+    /// <param name="localPrices">**本机标定表**(`CalibMemory.All()`);null/空 = 本机还没标定过 ⇒ 保守用旧顺序。
+    /// **不传内置表** —— 内置表是他机实测,只用资料与回归基线(见类注释 2026-09-25 那段)。</param>
+    /// <param name="machineKey">本机机器指纹(与 <see cref="LocalPrice.MachineKey"/> 比对)。
+    /// null/空白 = 不做机器过滤(单测/资料口径);**生产必须传**,否则别人机器的标定会被当成自己的。</param>
     public static Decision Decide(string? engine, string? model, double scale, int interpScale, int srcW, int srcH, int sourceFrames = 900,
-        double areaScale = 0, double minSavingsPercent = UseBuiltInMinSavings)
+        double areaScale = 0, double minSavingsPercent = UseBuiltInMinSavings,
+        IEnumerable<LocalPrice>? localPrices = null, string? machineKey = null, string? backend = null)
     {
         int engineScale = Math.Max(1, AlhPro.Core.EngineScalePolicy.Decide(engine ?? "", model ?? "", scale).EngineScale);
-        double? up = LookupUpscaleSecondsPerFrame(model, engineScale, out string prov);
-        var cost = new CostInput(NormalizeModel(model) ?? "?", engineScale, up != null, up ?? 0);
+        string key = NormalizeModel(model) ?? (model ?? "?");
+        // 【backend · 2026-09-25 修订 · F1-I2】本机单价**分后端**存:在 ncnn 上测的那一格,绝不能拿来判定
+        // 一次会走 ONNX 的运行(反之亦然)。传了 backend ⇒ Resolve 只认同一后端的记录;没传(=null)⇒
+        // 不过滤(既有单测口径不变)。这一层是**机械保证**,不依赖调用方先把表筛干净。
+        var look = LocalPriceBook.Resolve(localPrices, model, engineScale, machineKey, backend);
+        bool measured = look.Usable;
+        double up1080 = measured ? look.Price!.Value.SecondsPerFrame1080p : 0;
+        var cost = new CostInput(key, engineScale, measured, up1080);
         var d = Decide(cost, scale, interpScale, srcW, srcH, sourceFrames, minSavingsPercent, areaScale);
-        return up == null ? d with { Reason = $"{NormalizeModel(model) ?? (model ?? "?")} @ {engineScale}x(实测出处:{prov})" } : d;
+
+        // 理由里必须写清"这次用的是谁的数据"(用户就是被"拿开发机数字当本机"坑过):
+        //   本机命中 → 原样引用出处(两次耗时 + N + 采样分辨率 + 折算 1080p 的 s/帧);
+        //   本机没有 → 标【本机未标定】;若表里**有**别的机器 / **别的后端**的同款标定,明说"已忽略"
+        //   (别让它悄悄生效,也别让人误以为"本机压根没标过"—— 2026-09-25 修订 R2)。
+        if (measured)
+            return d with { Reason = $"{key} @ {engineScale}x(本机实测出处:{look.Price!.Value.Provenance}) → {d.Reason}" };
+
+        string why = look.OtherMachineKey != null
+            ? $"另一台机器({LocalPriceBook.Digest(look.OtherMachineKey)})的标定,已忽略"
+            : look.OtherBackend != null
+                ? $"本机在**另一后端**({UpscaleBackendPlan.Label(look.OtherBackend)})上测过这一格,"
+                    + $"与本次后端({UpscaleBackendPlan.Label(backend)})不一致 ⇒ 已忽略"
+                : "本机没有这一格(模型×引擎倍率)的标定";
+        // 【防止再次误读 u=0】日志里 UpscalePerFrame 会是 0 —— 那是"没采信任何单价",不是"超分免费"。
+        // 2026-09-25 那次事故正是 u=0 被当成免费,所以这句话必须写在理由里。
+        return d with
+        {
+            Reason = $"{key} @ {engineScale}x【本机未标定】{why}(内置表是他机实测,不作为本机判据;"
+                + $"日志里 u=0 表示「未采信任何单价」,不是免费)→ {d.Reason}",
+            Measured = false,
+        };
     }
 
     /// <summary>按给定成本判定(可注入成本 → 单测能覆盖"边际不足"等边界)。

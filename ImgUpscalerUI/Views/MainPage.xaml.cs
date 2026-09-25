@@ -1402,7 +1402,7 @@ public sealed partial class MainPage : Page
         TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         Text = "来自作者的话\n软件当前仍处于早期开发阶段,功能方向与工程稳定性仍在持续完善中。尽管有开源模型提供底层能力支撑," +
             "但上层的调用适配、性能优化与长期维护,依然面临较大的工程挑战。作为个人发起的公益项目,我将在力所能及的范围内持续改进。" +
-            "若您在使用过程中受益,欢迎通过赞赏给予一点支持,帮助项目走得更远。感谢每一份善意的理解和信任。",
+            "若您在使用过程中受益,欢迎通过赞助给予一点支持,帮助项目走得更远。感谢每一份善意的理解和信任。",
     };
 
     /// <summary>更新说明:作者的话 + 更新内容。
@@ -1752,7 +1752,7 @@ public sealed partial class MainPage : Page
         try { _ = dlg.ShowAsync(); } catch { }
     }
 
-    /// <summary>「关于」页查看《声明》(免责 / 打赏 / 版权许可 / 第三方软件)。</summary>
+    /// <summary>「关于」页查看《声明》(免责 / 赞助 / 版权许可 / 第三方软件)。</summary>
     private void ShowUserDeclarations()
     {
         var dlg = new ContentDialog
@@ -1785,12 +1785,12 @@ public sealed partial class MainPage : Page
         "4. 请自行评估并承担使用风险;处理重要素材前务必备份原文件。\n" +
         "5. 本软件集成的第三方开源引擎、模型与组件的稳定性与许可,由其各自作者负责。\n" +
         "6. 以上条款在您所在地法律法规允许的最大范围内适用。\n\n" +
-        "二、打赏声明\n" +
-        "1. 本软件免费使用;打赏完全自愿,不影响任何功能。\n" +
-        "2. 打赏仅用于支持作者持续更新、修复与维护软件(覆盖设备、带宽、时间成本)。\n" +
-        "3. 打赏不构成购买,不提供特权或额外功能;打赏后不支持退还。\n" +
-        "4. 请理性打赏、量力而行;未成年人请在监护人同意下操作。\n" +
-        "5. 打赏即表示已阅读并同意本条。\n\n" +
+        "二、赞助声明\n" +
+        "1. 本软件免费使用;赞助完全自愿,不影响任何功能。\n" +
+        "2. 赞助仅用于支持作者持续更新、修复与维护软件(覆盖设备、带宽、时间成本)。\n" +
+        "3. 赞助不构成购买,不提供特权或额外功能;赞助后不支持退还。\n" +
+        "4. 请理性赞助、量力而行;未成年人请在监护人同意下操作。\n" +
+        "5. 赞助即表示已阅读并同意本条。\n\n" +
         "三、广告说明(合规告知)\n" +
         "1. 本软件为免费软件,通过左侧底部「广告」区域展示合作方广告,以维持开发与维护成本。\n" +
         "2. 广告内容由广告主提供,由作者按合规要求审核后展示;右上角「推广」角标用于标识广告性质。\n" +
@@ -1893,10 +1893,10 @@ public sealed partial class MainPage : Page
         };
         agreementLink.Click += (_, _) => { try { ShowUserAgreement(); } catch { } };
         content.Children.Add(agreementLink);
-        // 声明(免责/打赏/版权/第三方):随时可看
+        // 声明(免责/赞助/版权/第三方):随时可看
         var declLink = new Microsoft.UI.Xaml.Controls.HyperlinkButton
         {
-            Content = "查看声明(免责 / 打赏 / 版权)",
+            Content = "查看声明(免责 / 赞助 / 版权)",
             FontSize = 11,
             Padding = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 0),
             HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
@@ -1997,16 +1997,16 @@ public sealed partial class MainPage : Page
         authorRow.Children.Add(authorGroup);
         content.Children.Add(authorRow);
 
-        // 「请作者喝咖啡」:与左下角入口同一打赏卡片(赞赏码大图 + 爱发电主页)
+        // 「赞助作者」:与左下角入口同一张赞助卡片(赞助码大图 + 爱发电主页)
         var rewardBtn = new Button
         {
-            Content = "请作者喝咖啡",
+            Content = "赞助作者",
             FontSize = 12,
             Padding = new Microsoft.UI.Xaml.Thickness(14, 6, 14, 6),
             HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
             Margin = new Microsoft.UI.Xaml.Thickness(0, 4, 0, 0),
         };
-        ToolTipService.SetToolTip(rewardBtn, "完全免费,打赏自愿(赞赏码 + 爱发电主页)");
+        ToolTipService.SetToolTip(rewardBtn, "完全免费,赞助自愿(赞助码 + 爱发电主页)");
         rewardBtn.Click += (_, _) => ShowCoffeeCard();
         content.Children.Add(rewardBtn);
         content.Children.Add(new Border
@@ -3384,11 +3384,11 @@ public sealed partial class MainPage : Page
         ShowCardPopup(content, "设置", 560);
     }
 
-    /// <summary>左下角「☕ 请作者喝咖啡」→ 打赏卡片弹窗(赞赏码图片 + 打赏平台链接)。</summary>
+    /// <summary>左下角「赞助作者」→ 赞助卡片弹窗(赞助码图片 + 赞助平台链接)。</summary>
     private void CoffeeCard_Click(object sender, RoutedEventArgs e) => ShowCoffeeCard();
 
-    /// <summary>处理完成(且全部成功)后按概率弹出"请作者喝咖啡"赞助提示。
-    /// 参数(作者定案):35% 概率;点「请作者喝咖啡」并停留 ≥5 秒 → 24 小时不再弹;点「暂时不了」→ 2 小时不弹。
+    /// <summary>处理完成(且全部成功)后按概率弹出"赞助作者"赞助提示。
+    /// 参数(作者定案):35% 概率;点「赞助作者」并停留 ≥5 秒 → 24 小时不再弹;点「暂时不了」→ 2 小时不弹。
     /// 【冷却语义】`AppSettings.SponsorPromptTime` 存的是【到期时刻】,判据为 `Now &lt; 到期`。
     /// 历史 BUG:原先存 `Now.AddHours(10)`(未来时刻)却用 `Now - 它 &lt; 10h` 判断,
     /// 于是从现在起要过 20 小时才解除冷却(前 10 小时差值恒为负、之后才真正计时)。</summary>
@@ -3421,7 +3421,7 @@ public sealed partial class MainPage : Page
     }
 
     /// <summary>供图片/视频等视图在"处理完成"弹窗点确定后调用(35% 概率;
-    /// 点赞赏并停留 ≥5 秒 → 24 小时冷却;点「暂时不了」→ 2 小时冷却)。
+    /// 点赞助并停留 ≥5 秒 → 24 小时冷却;点「暂时不了」→ 2 小时冷却)。
     /// 注意:window.Content 是 Frame,MainPage 是 Navigate 进去的,必须经 Frame 取,否则拿不到。</summary>
     public static void MaybeShowSponsorPrompt()
     {
@@ -3441,18 +3441,18 @@ public sealed partial class MainPage : Page
         ShowCoffeeCard();
     }
 
-    /// <summary>打赏页关闭:若从赞助提示进入 —— 停留 ≥5 秒(真的看了赞赏码)→ 24 小时冷却;
+    /// <summary>赞助页关闭:若从赞助提示进入 —— 停留 ≥5 秒(真的看了赞助码)→ 24 小时冷却;
     /// 停留不足 5 秒(点开就退)→ 2 小时冷却。两者都设冷却,避免"点开又立刻关掉"导致反复打扰;
-    /// 从导航栏/左下角进入的打赏页不参与本逻辑(见 _coffeeViaSponsor 判定)。</summary>
+    /// 从导航栏/左下角进入的赞助页不参与本逻辑(见 _coffeeViaSponsor 判定)。</summary>
     private void OnCoffeeCardClosed()
     {
         try
         {
-            if (!_coffeeViaSponsor) return;   // 导航栏进入的打赏不影响赞助提示
+            if (!_coffeeViaSponsor) return;   // 导航栏进入的赞助页不影响赞助提示
             _coffeeViaSponsor = false;
             double sec = (DateTime.Now - _coffeeCardOpenedAt).TotalSeconds;
-            if (sec >= 5) SetSponsorCooldown(24, "已停留 ≥5 秒(认真看了赞赏码)");
-            else SetSponsorCooldown(2, "打开了赞赏页但停留不足 5 秒");
+            if (sec >= 5) SetSponsorCooldown(24, "已停留 ≥5 秒(认真看了赞助码)");
+            else SetSponsorCooldown(2, "打开了赞助页但停留不足 5 秒");
         }
         catch { }
     }
@@ -3514,11 +3514,11 @@ public sealed partial class MainPage : Page
         var content = new StackPanel { Spacing = 10 };
         content.Children.Add(new TextBlock
         {
-            Text = "打赏全凭自愿,只是想表达对作者的一份心意与鼓励,与软件本身无关;这并非交易,也没有任何回报承诺。谢谢你愿为这份心意停留。\n\n" +
+            Text = "赞助全凭自愿,只是想表达对作者的一份心意与鼓励,与软件本身无关;这并非交易,也没有任何回报承诺。谢谢你愿为这份心意停留。\n\n" +
                    "若你尚未满 18 岁,可在取得监护人同意后再考虑,感谢理解。",
             FontSize = 12, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, LineHeight = 19,
         });
-        // 收款码:把图片放到「发布版\assets\coffee_qr.png」即自动显示(无需改代码)
+        // 赞助码:把图片放到「发布版\assets\coffee_qr.png」即自动显示(无需改代码)
         var qrPath = Path.Combine(AppContext.BaseDirectory, "assets", "coffee_qr.png");
         if (File.Exists(qrPath))
         {
@@ -3535,7 +3535,7 @@ public sealed partial class MainPage : Page
         {
             content.Children.Add(new TextBlock
             {
-                Text = "(收款码图片:放到发布版目录 assets\\coffee_qr.png 后自动显示)",
+                Text = "(赞助码图片:放到发布版目录 assets\\coffee_qr.png 后自动显示)",
                 FontSize = 10, Opacity = 0.45,
                 HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
             });
@@ -3546,7 +3546,7 @@ public sealed partial class MainPage : Page
             FontSize = 10, Opacity = 0.55,
             HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
         });
-        // 打赏平台:爱发电主页(官方图标+文字,点击直达)
+        // 赞助平台:爱发电主页(官方图标+文字,点击直达)
         var ifdLink = new HyperlinkButton
         {
             NavigateUri = new Uri("https://www.ifdian.net/a/AlL666"),
@@ -3569,7 +3569,7 @@ public sealed partial class MainPage : Page
             },
         };
         content.Children.Add(ifdLink);
-        ShowCardPopup(content, "请作者喝一杯咖啡", 640, onClosed: OnCoffeeCardClosed);
+        ShowCardPopup(content, "赞助作者", 640, onClosed: OnCoffeeCardClosed);
     }
 
     /// <summary>居中圆角卡片弹窗(遮罩 + 标题 + 关闭按钮 + 可滚动内容)。</summary>

@@ -15,11 +15,14 @@ public static class VideoPipeline
     // `UpscaleRunsFirst(...)`(因常量恒 false ⇒ **恒返回"旧顺序"**),外加一段**零调用点**的重复判据
     // `AutoUpscaleFirst(...)`。三者已全部删除,原因:
     //   · 真正生效的顺序判定一直是 `AlhPro.Core.PipelineOrderPlan.Decide(...)` ——
-    //     `VideoService.ProcessVideoAsync` 在"补帧倍率/去重结果都确定后"按**真机实测单价**判定(安全边际 15%),
+    //     `VideoService.ProcessVideoAsync` 在"补帧倍率/去重结果都确定后"按**本机实测单价**判定(安全边际 15%),
     //     写「顺序判定:…」日志,并由 PipelineOrderTests 钉住。
     //   · 旧链恒返回"旧顺序",与 Decide 的结论**可能各说各话**;留着它,等于给下一个人准备了一个
     //     "照着交接文档把它接上 → 静默换掉渲染顺序"的陷阱(它那份判据用 0.97 系数,与 Decide 的 15% 安全边际不同)。
-    //   · 想重新启用「超分 → 补帧」:改 PipelineOrderPlan 的实测单价表/安全边际,**不要**恢复本文件里的开关。
+    //   · 想换阶段顺序的判据:**改本机标定**(删掉 `%LOCALAPPDATA%\ALHPro\settings\engine-prices.json` 里那一格,
+    //     下次任务会重新标定),**不要**恢复本文件里的开关;`PipelineOrderPlan.UpscaleRates` 那张内置表是
+    //     **他机(开发机)实测的资料**,自 2026-09-25 起**已不参与阶段顺序判定**(判据只吃本机标定),
+    //     改它不会改变任何人的阶段顺序。
     // 【教训保留】原注释记的那次事故仍然有效:2026-09-13 管线侧实测回退后 UI 忘了跟着改,
     // 导致"界面在按一个根本不会执行的顺序估时间"。现在的对策是**同一个 Decide 结论**(见 UpscaleOrderTests)。
     // 【当前口径】`EstimateProcessSeconds` 与管线里的进度区间都按**旧顺序**取回退值;若哪天 Decide 真的
@@ -112,7 +115,10 @@ public static class VideoPipeline
         {
             // 超分逐帧成本:1080p 单帧 waifu2x≈0.18s / realesrgan≈0.45s / realcugan≈1.65s,按面积缩放
             // 【2026-09-25 修】realcugan 原先落到 `_ => 0.45`(Real-ESRGAN 的常数)⇒ 预计时间乐观约 3.7 倍;
-            // 实测值 1.65 秒/帧 @1080p 2x(与 PipelineOrderPlan.UpscaleRates 里那一行同源,改一处要改两处)。
+            // 实测值 1.65 秒/帧 @1080p 2x(与内置资料表 `PipelineOrderPlan.UpscaleRates` 里那一行同源)。
+            // 【口径】这些数字**只用于"预计剩余时间"**:内置表已不参与阶段顺序判定(判据只吃**本机标定**,
+            // 见 `LocalPriceBook` / `CalibMemory`),此处仅为预计时间的旧常数 —— 本机跑过一遍后由
+            // `PerfMemory` 的实测值修正(那条线是另一套口径,见 docs §六.2)。
             double per = engine switch { "waifu2x" => 0.18, "realcugan" => 1.65, _ => 0.45 };
             per *= areaN * Math.Max(0.5, scale / 1.0);
             // 新顺序:超分只跑【源帧数】(补帧排在超分之后,不再让超分帧数翻倍)——这是新顺序省钱的全部来源。

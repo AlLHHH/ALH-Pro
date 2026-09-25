@@ -4,6 +4,10 @@ obj/
 *.user
 .vs/
 artifacts/
+# ===== 测试产物(2026-09-25:t27 跑 `--logger "trx;..."` 会留下 AlhPro.Tests/TestResults/*.trx)=====
+# 目录本身是"跑一次测试就再生"的产物,不该入库;这里挡住 `git add -A` 再把它带进来。
+AlhPro.Tests/TestResults/
+TestResults/
 
 # ===== 引擎/模型(第三方二进制+大文件; 入库无意义且超限)=====
 engines/
