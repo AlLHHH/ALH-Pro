@@ -92,7 +92,10 @@
                         <RadioButton x:Name="VScale2xRadio" Content="2x"/>
                         <RadioButton x:Name="VScale3xRadio" Content="3x"/>
                         <RadioButton x:Name="VScale4xRadio" Content="4x"/>
-                        <!-- 【B5 · 2026-09-23】第 5 个条目(索引 4)= 自定义分辨率。它原先**根本不存在**:
+                        <!-- 【2026-09-25 用户要求移除「自定义分辨率」】第 5 项(索引 4)、CustomSizePanel、
+                             以及代码里所有 `SelectedIndex == 4` 分支已一并删除;老设置里存着 4 的用户回退到 2x
+                             (见 VideoView.xaml.cs 的 LoadSettings 迁移)。**下面的旧说明保留作历史记录、已作废**:
+                             ⚠ 现在的硬约定:倍率索引只有 0=1x修复 / 1=2x / 2=3x / 3=4x —— 不要再往后加条目。
                              面板 CustomSizePanel 只在 SelectedIndex==4 时可见,而这个 RadioButtons 只有 0~3 四项,
                              于是面板永久 Collapsed、`SelectedIndex == 4` 的那些分支(输出尺寸/超 4K 预检/成就名)
                              全都是死路 —— 而使用教程里还写着"选「自定义分辨率」精确指定输出宽高"(照着做找不到)。
@@ -100,28 +103,12 @@
                              缺的只是这个入口,所以这里补回来。
                              ⚠ 索引 4 是硬约定(VideoView.xaml.cs 多处判 SelectedIndex == 4,以及 switch 的 _ 分支),
                                新条目只能加在这个位置,不能插到中间。 -->
-                        <RadioButton x:Name="VScaleCustomRadio" Content="自定义分辨率"
-                                     ToolTipService.ToolTip="超分后精确缩放到你填的宽×高(面板在下面,留空=按倍率)。适合必须交付某个尺寸的场合:平台要求 1080p、或把 4K 片压成 1080p 交付。"/>
+                        <!-- (入口已移除,见上) -->
                     </RadioButtons>
                     <!-- 【2026-09-21 再更新】1x 现在有**两个**条目(动漫 · Anime4K 修复 / 现实 · 1x 修复),
                          这句静态兜底文案也要跟着说清"两个都在做什么" —— 运行时那行是动态的(见 OneXScaleHint)。 -->
                     <TextBlock x:Name="ScaleHint" Text="1x 修复不放大(在「超分模型」里选:动漫用 Anime4K 着色器原分辨率修复,现实用自训模型 2x 后缩回);2x 及以上由超分模型放大,倍率越高越慢、显存占用越大"
                                Style="{StaticResource HintText}" TextWrapping="Wrap"/>
-                    <Grid x:Name="CustomSizePanel" ColumnSpacing="8" Visibility="Collapsed"
-                          ToolTipService.ToolTip="自定义输出分辨率:超分后精确缩放到指定宽×高(留空=按倍率)">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="宽" VerticalAlignment="Center"/>
-                        <TextBox x:Name="CustomWidthBox" Grid.Column="1" Text="1920"
-                                 IsSpellCheckEnabled="False" TextChanged="Text_Changed"/>
-                        <TextBlock Text="高" Grid.Column="2" VerticalAlignment="Center" Margin="8,0,0,0"/>
-                        <TextBox x:Name="CustomHeightBox" Grid.Column="3" Text="1080"
-                                 IsSpellCheckEnabled="False" TextChanged="Text_Changed"/>
-                    </Grid>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
