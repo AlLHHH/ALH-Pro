@@ -135,7 +135,9 @@ $noticeKeys = @(
     @{ k = 'realcugan-ncnn-vulkan-MIT-nihui-2019.txt'; why = 'Real-CUGAN 引擎移植层许可原文的引用' },
     @{ k = 'Practical-RIFE-MIT-hzwer-2021.txt'; why = 'RIFE 权重许可原文的引用' },
     @{ k = '模型权重来源与校验值.md'; why = '随包权重来源与逐文件 SHA256 记录' },
-    @{ k = '16. Real-CUGAN'; why = '第 16 条 Real-CUGAN 声明(2026-09-24 重新随包)' }
+    @{ k = '16. Real-CUGAN'; why = '第 16 条 Real-CUGAN 声明(2026-09-24 重新随包)' },
+    @{ k = '18. Anime4K'; why = '第 18 条 Anime4K 着色器声明(随 ffmpeg 目录分发;2026-09-25 补齐,之前三处都没有它)' },
+    @{ k = '19. Microsoft DirectML'; why = '第 19 条 DirectML 声明(随包 DirectML.dll;2026-09-25 补齐,之前三处都没有它)' }
 )
 $noticeMissing = @()
 foreach ($k in $noticeKeys) {
@@ -151,10 +153,62 @@ if ($noticeMissing.Count -gt 0) {
 }
 else { Say "  OK  声明:两份与唯一源一致,关键条目 $($noticeKeys.Count)/$($noticeKeys.Count) 齐" }
 
+# ===== ①g 随包文档:唯一源 → 发布版\ 副本(同名比 SHA256,不一致就覆盖并提示)=====
+# 【F3 修复 · 2026-09-25 根因 = 「随包副本没有同步机制」】①e 只管 licenses\、①f 只管 notice,
+# 而 README.md / 使用教程.md / RELEASE_NOTES.md / release_history.json / LICENSE 这些**随包文档**
+# 一直是"改仓库那份、发布版那份看运气" ⇒ 安装包 (Source: "发布版\*") 会把**旧版**装进 {app}\。
+# 真机就出过两次(本 task 修的):发布版\README.md 停在 09-22 的旧文案(还写着"保留所有权利 / 禁止商用"),
+# 发布版\使用教程.md 比仓库版少一行。语义与 ①e **完全一致**:不一致就覆盖 + 提示。
+#   · 唯一源 = 仓库里那份;**发布版\ 那份是生成物,永远不许手改**(改了下次打包会被覆盖)。
+#   · 注意 README 有两份不同用途:随包的是 ImgUpscalerUI\README.md;仓库根 README.md 是项目说明(不随包)。
+$docPairs = @(
+    @{ src = (Join-Path $root 'ImgUpscalerUI\README.md'); dst = (Join-Path $pub 'README.md');           why = '随包说明(唯一源 = ImgUpscalerUI\README.md;仓库根 README.md 是项目说明,不是这一份)' },
+    @{ src = (Join-Path $root '使用教程.md');             dst = (Join-Path $pub '使用教程.md');          why = '随包使用教程(用户第一手说明)' },
+    @{ src = (Join-Path $root 'RELEASE_NOTES.md');        dst = (Join-Path $pub 'RELEASE_NOTES.md');     why = '更新公告(更新弹窗读它)' },
+    @{ src = (Join-Path $root 'release_history.json');    dst = (Join-Path $pub 'release_history.json'); why = '更新弹窗的版本历史数据源' },
+    @{ src = (Join-Path $root 'LICENSE');                 dst = (Join-Path $pub 'LICENSE');              why = '本软件自己的 MIT 许可原文' }
+)
+$docSynced = 0
+foreach ($d in $docPairs) {
+    if (!(Test-Path $d.src)) { Fail ("随包文档的唯一源不存在:{0}({1})" -f $d.src, $d.why) }
+    $docNeedCopy = $true
+    if (Test-Path $d.dst) {
+        $docNeedCopy = (Get-FileHash $d.src -Algorithm SHA256).Hash -ne (Get-FileHash $d.dst -Algorithm SHA256).Hash
+    }
+    if ($docNeedCopy) {
+        Copy-Item $d.src $d.dst -Force
+        Say ("→ 随包文档:{0} 的发布版副本与唯一源不一致(或缺失),已用唯一源覆盖 —— {1}" -f (Split-Path $d.dst -Leaf), $d.why)
+        $docSynced++
+    }
+}
+if ($docSynced -gt 0) { Say "→ 随包文档:同步了 $docSynced 份(发布版\ 里那份是生成物,不要手改)" }
+else { Say ("  OK  随包文档:{0} 份与唯一源同哈希" -f $docPairs.Count) }
+
+# 内容闸门:随包 README 不许出现与 MIT / 当前版本冲突的旧文案(这一条正是 2026-09-25 那起漂移的事故文本)
+$readmePubPath = Join-Path $pub 'README.md'
+if (Test-Path $readmePubPath) {
+    $readmePubText = Get-Content $readmePubPath -Raw -Encoding UTF8
+    $readmeBanned = @('保留所有权利', '禁止商用', '再次分发', 'Real-CUGAN 已移除')
+    $readmeHits = @()
+    foreach ($b in $readmeBanned) { if ($readmePubText -like "*$b*") { $readmeHits += $b } }
+    if ($readmeHits.Count -gt 0) {
+        $readmeMsg = "随包 README.md 含与 MIT / 当前版本冲突的旧文案:{0}。本软件是 MIT,不该出现「保留/禁止」类表述;" -f ($readmeHits -join '、')
+        $readmeMsg += "若确实需要说明历史,请写成「按著作权法默认由著作权人保留全部权利 → 现已核实到 MIT 渠道并恢复」那种历史叙述,而不是现行限制;"
+        $readmeMsg += "另外「Real-CUGAN 已移除」是过时叙事(2026-09-24 已重新随包)。"
+        if ($SkipCheck) { Write-Host "⚠ $readmeMsg(已 -SkipCheck,继续)" -ForegroundColor Yellow }
+        else { Fail $readmeMsg }
+    }
+    else { Say "  OK  随包 README.md:无与 MIT / 当前版本冲突的旧文案" }
+}
+
 # ===== ② 必带清单校验 =====
 $required = @(
     @{ p = 'ALHPro.exe'; why = '主程序' },
     @{ p = 'ALHPro.dll'; why = '主程序' },
+    @{ p = 'README.md'; why = '随包说明(唯一源 = ImgUpscalerUI\README.md;①g 会校验同哈希)' },
+    @{ p = '使用教程.md'; why = '随包使用教程(①g 会校验同哈希)' },
+    @{ p = 'release_history.json'; why = '更新弹窗的版本历史数据源(①g 会校验同哈希)' },
+    @{ p = 'LICENSE'; why = '本软件自己的 MIT 许可原文(MIT 要求随副本附带;另有 licenses\ALH-Pro-MIT-LICENSE.txt)' },
     @{ p = 'RELEASE_NOTES.md'; why = '更新公告(更新弹窗读它)' },
     @{ p = 'engines\ffmpeg\ffmpeg.exe'; why = '主 ffmpeg(拆帧/合帧/音频)' },
     @{ p = 'engines\ffmpeg\ffprobe.exe'; why = '探测视频信息' },
@@ -175,6 +229,12 @@ $required = @(
     @{ p = 'licenses\Practical-RIFE-MIT-hzwer-2021.txt'; why = 'RIFE 权重许可原文(MIT © 2021 hzwer)' },
     @{ p = 'licenses\模型权重来源与校验值.md'; why = '随包权重来源与逐文件 SHA256 记录' },
     @{ p = 'THIRD_PARTY_NOTICES.txt'; why = '第三方组件许可声明(与 发布版\ 那份同哈希;缺了用户拿不到署名)' },
+    @{ p = 'engines\ffmpeg\shaders\anime4k-v4-a.glsl'; why = 'Anime4K 着色器(1x 修复;合帧走主 ffmpeg 时用它)' },
+    @{ p = 'engines\ffmpeg8\shaders\anime4k-v4-a.glsl'; why = 'Anime4K 着色器(备用 ffmpeg8 那份;缺了走 ffmpeg8 的机器上 1x 修复必然失败)' },
+    @{ p = 'licenses\README.md'; why = '随包许可目录的清单(写明每个文件对应哪个随包组件)' },
+    @{ p = 'licenses\DirectML-LICENSE-CODE-MIT-Microsoft.txt'; why = 'DirectML 代码部分的 MIT 原文(© Microsoft)' },
+    @{ p = 'licenses\DirectML-LICENSE-TERMS-Microsoft.txt'; why = '随包 DirectML.dll 的微软软件许可条款' },
+    @{ p = 'licenses\DirectML-ThirdPartyNotices-Microsoft.txt'; why = 'DirectML 自带的第三方声明' },
     @{ p = 'licenses\ALH-Pro-MIT-LICENSE.txt'; why = '本软件自己的 MIT 许可原文(根 LICENSE 的随包副本;MIT 要求随副本附带)' }
 )
 $missing = @()

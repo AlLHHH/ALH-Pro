@@ -10,6 +10,10 @@
 | `realcugan-ncnn-vulkan-MIT-nihui-2019.txt` | **Real-CUGAN 引擎包装层 + ncnn 权重文件** | MIT, Copyright (c) 2019 nihui | 1072 B，SHA256 `57157B0FC6954DD1645DC674CC99BEBBAB4CB84C5B306B910989777E3D0D6FBD` |
 | `Practical-RIFE-MIT-hzwer-2021.txt` | **RIFE 补帧权重（含 2026-09-24 上架的 rife-v4.26）** | MIT, Copyright (c) 2021 hzwer | 1062 B，SHA256 `7932FB49341512B959B1744A6D9CBB39E5A1EC89DA438A34D0454D5D8DF9FECD` |
 | `模型权重来源与校验值.md` | 每个**实际随包的权重/二进制文件**的来源 URL 与 SHA256 | — | — |
+| *(无独立文件)* `anime4k-v4-a.glsl` | **Anime4K「1x 修复」着色器**(随 `engines\ffmpeg\shaders\` 与 `engines\ffmpeg8\shaders\` 分发) | MIT, Copyright (c) 2019-2021 bloc97 | 许可原文**就在着色器文件头部**;各 336,741 B(两个目录各一份,必须都带) |
+| `DirectML-LICENSE-CODE-MIT-Microsoft.txt` | **DirectML 代码部分**(随包 `发布版\DirectML.dll`,约 18.7 MB,ONNX Runtime 的 DirectML 提供程序用它) | MIT, Copyright (c) Microsoft Corporation | 1093 B |
+| `DirectML-LICENSE-TERMS-Microsoft.txt` | 随包的 `DirectML.dll` 本体 | 微软软件许可条款(`MICROSOFT SOFTWARE LICENSE TERMS — MICROSOFT DIRECTX MACHINE LEARNING (DIRECTML)`) | 10439 B |
+| `DirectML-ThirdPartyNotices-Microsoft.txt` | DirectML 自身携带的第三方声明 | — | 4577 B |
 
 ## 为什么 Real-CUGAN 那两份许可文件是分开的
 

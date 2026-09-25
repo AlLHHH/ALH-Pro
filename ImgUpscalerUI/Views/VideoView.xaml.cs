@@ -1053,27 +1053,15 @@ public sealed partial class VideoView : UserControl
     //   历史值 2 从 v1.1.0 移除 Real-CUGAN 起就**一直被解释成 Real-ESRGAN**(见下面的 FromStored),
     //   若现在把 2 改解释回 Real-CUGAN,那些还存着 2 的老用户会在升级后**静默换引擎**
     //   (他们上次看到的是 Real-ESRGAN)—— 本仓库明令禁止静默换模型。所以:2 继续=Real-ESRGAN,Real-CUGAN=3。
-    /// <summary>界面索引 → 存盘值(旧约定 + 追加 3=Real-CUGAN)。</summary>
-    private static int EngineToStored(int uiIndex) => uiIndex switch
-    {
-        1 => 0,   // ui 1 = waifu2x
-        2 => 3,   // ui 2 = Real-CUGAN(2026-09-24 起;历史值 2 仍表示 Real-ESRGAN)
-        _ => 1,   // ui 0 = Real-ESRGAN
-    };
-    /// <summary>存盘值(旧约定) → 界面索引。</summary>
-    private static int EngineFromStored(int stored) => stored switch
-    {
-        0 => 1,   // waifu2x  → ui 1
-        3 => 2,   // Real-CUGAN → ui 2(只有新值 3 会到这里)
-        _ => 0,   // 1(realesrgan)/ 2(历史 Real-CUGAN,按 Real-ESRGAN 处理)/ 越界 → ui 0
-    };
+    /// <summary>界面索引 → 存盘值(旧约定 + 追加 3=Real-CUGAN)。**真相在 `AlhPro.Core.EngineChoice`**
+    /// (纯逻辑 + 单测);这里只保留转发,免得历史调用点改名。
+    /// ⚠ 别再在这里写第二份 switch:它已经害过一次真机事故(见 VideoView 恢复设置处的守卫)。</summary>
+    private static int EngineToStored(int uiIndex) => AlhPro.Core.EngineChoice.ToStored(uiIndex);
+    /// <summary>存盘值(旧约定) → 界面索引。真相同样在 `AlhPro.Core.EngineChoice.FromStored`:
+    /// `0 → waifu2x`、`3 → Real-CUGAN`、`1` 与**历史值 2** 一律 Real-ESRGAN、越界落 Real-ESRGAN。</summary>
+    private static int EngineFromStored(int stored) => AlhPro.Core.EngineChoice.FromStored(stored);
     /// <summary>当前选中的超分引擎名(**唯一来源**;界面索引 → 引擎名)。</summary>
-    private string SelectedEngineName => VideoEngineRadios.SelectedIndex switch
-    {
-        1 => "waifu2x",
-        2 => AlhPro.Core.RealCugan.EngineName,
-        _ => "realesrgan",
-    };
+    private string SelectedEngineName => AlhPro.Core.EngineChoice.EngineNameOf(VideoEngineRadios.SelectedIndex);
     /// <summary>当前选中的超分引擎是否是 Real-ESRGAN(界面上排第一个 = 索引 0)。</summary>
     private bool SelectedEngineIsReal => SelectedEngineName == "realesrgan";
     /// <summary>当前选中的是不是 Real-CUGAN(2026-09-24 追加的第三项)。</summary>
@@ -2485,10 +2473,14 @@ public sealed partial class VideoView : UserControl
     private void ApplyVideoParams(VideoSettings d)
     {
         UpscaleToggle.IsChecked = d.Up;
-        // 兼容旧设置:存盘沿用旧约定 0=waifu2x / 1=Real-ESRGAN / 2=Real-CUGAN(已移除,归到 Real-ESRGAN)。
-        // 界面顺序已改成 Real-ESRGAN 在上(索引 0)、waifu2x 在下(索引 1),所以要经 EngineFromStored 换算,
-        // 否则老用户存的选择会被顺序调整翻转。
-        if (d.Engine is >= 0 and <= 2)
+        // 兼容旧设置:存盘沿用旧约定 0=waifu2x / 1=Real-ESRGAN / **2=历史值(自 v1.1.0 起按 Real-ESRGAN 解释)**
+        // / 3=Real-CUGAN(2026-09-24 重新随包后新增)。界面顺序是 Real-ESRGAN(0)/ waifu2x(1)/ Real-CUGAN(2),
+        // 所以必须经 EngineFromStored 换算,否则老用户存的选择会被顺序调整翻转。
+        // 【真机事故 · 2026-09-24 修】原先这里的守卫写的是 `d.Engine is >= 0 and <= 2` ——
+        // **把新值 3 挡在外面**,于是"选 Real-CUGAN → 重启 → 静默变回 Real-ESRGAN"(实测两次:
+        // 文件里 Engine=3、日志"恢复完成: 界面 Engine=0"、那次预览实跑 engine=realesrgan)。
+        // 判据现在收进 AlhPro.Core.EngineChoice.IsKnownStored(纯逻辑 + 单测),别再在这里写区间。
+        if (AlhPro.Core.EngineChoice.IsKnownStored(d.Engine))
         {
             VideoEngineRadios.SelectedIndex = EngineFromStored(d.Engine);
             // 【2026-09-21 自查修复】记住"用户真实选的引擎"。1x 档会把引擎**强制**成 Real-ESRGAN 并禁用单选,

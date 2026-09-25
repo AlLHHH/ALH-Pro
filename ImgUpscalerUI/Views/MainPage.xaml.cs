@@ -1800,7 +1800,7 @@ public sealed partial class MainPage : Page
         "1. 本软件版权归作者所有;未经许可不得商业倒卖或为营利再分发,不得移除版权/许可信息。\n" +
         "2. 本软件基于若干开源软件构建,受各自开源许可约束(见 THIRD_PARTY_NOTICES.txt)。\n\n" +
         "五、第三方软件\n" +
-        "本软件集成 FFmpeg、Real-ESRGAN、waifu2x-ncnn、RIFE、ONNX Runtime、BiRefNet、Demucs、LavaSR 等开源引擎/模型;其版权、许可与免责见随软件附带的 THIRD_PARTY_NOTICES.txt 及各项目主页。\n\n" +
+        "本软件集成 FFmpeg、Real-ESRGAN、waifu2x-ncnn、Real-CUGAN、RIFE、Anime4K 着色器、ONNX Runtime、BiRefNet、Demucs、LavaSR 等开源引擎/模型;其版权、许可与免责见随软件附带的 THIRD_PARTY_NOTICES.txt 及各项目主页。\n\n" +
         "以上声明最终解释权归作者所有,并随版本更新而可能调整。";
 
     private void ShowPrivacyPolicy()
@@ -1843,7 +1843,7 @@ public sealed partial class MainPage : Page
         "补充:广告与提示文案托管在公开代码仓库及其公共镜像 / CDN 上,这些服务在技术上会看到请求来自哪台机器(IP 与请求头),这是任何网络请求都无法避免的;我们能控制的是——请求里不含您的文件信息、设备信息或使用记录。\n" +
         "失败会怎样:任一联网失败(断网、内网、GitHub 不可达)均静默忽略,改用软件内置的兜底内容(内置提示文案 / 隐藏广告位),不影响任何功能与画质。\n\n" +
         "三、第三方服务\n" +
-        "软件集成的开源引擎与模型(FFmpeg、Real-ESRGAN、waifu2x-ncnn、RIFE、ONNX Runtime、BiRefNet、Demucs、LavaSR 等)均为本地调用,不会向它们的作者或任何第三方传输您的数据。\n\n" +
+        "软件集成的开源引擎与模型(FFmpeg、Real-ESRGAN、waifu2x-ncnn、Real-CUGAN、RIFE、Anime4K 着色器、ONNX Runtime、BiRefNet、Demucs、LavaSR 等)均为本地调用,不会向它们的作者或任何第三方传输您的数据。\n\n" +
         "四、广告\n" +
         "本软件为免费软件,通过界面广告位展示合作方广告以维持开发维护成本。广告由作者按合规要求审核后展示,您可点广告卡右上角「✕」隐藏本次,或在「设置 → 本次运行不显示广告」勾选(仅对本次运行生效,重启软件自动恢复显示)。关闭不影响软件任何功能。\n\n" +
         "五、您的权利\n" +
@@ -2018,7 +2018,7 @@ public sealed partial class MainPage : Page
         // 功能
         content.Children.Add(new TextBlock
         {
-            Text = "功能:图片超分(waifu2x / Real-ESRGAN)、AI 抠图、视频超分 + 光流补帧、\n智能去重、转场识别、批量处理、音频增强。",
+            Text = "功能:图片超分(waifu2x / Real-ESRGAN)、AI 抠图、视频超分(Real-ESRGAN / waifu2x / Real-CUGAN)+ 光流补帧、\n智能去重、转场识别、批量处理、音频增强。",
             FontSize = 12,
             TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
@@ -2034,6 +2034,11 @@ public sealed partial class MainPage : Page
         {
             ("waifu2x", "naoaki + nihui/ncnn", "https://github.com/nagadomi/waifu2x"),
             ("Real-ESRGAN(含 ONNX)", "Xintao Wang 等 + nihui/ncnn", "https://github.com/xinntao/Real-ESRGAN"),
+            ("Real-CUGAN(含 ncnn 权重)", "bilibili + nihui/ncnn", "https://github.com/bilibili/ailab"),
+            ("realcugan-ncnn-vulkan(引擎包装层)", "nihui/ncnn(MIT © 2019)", "https://github.com/nihui/realcugan-ncnn-vulkan"),
+            ("Anime4K(1x 修复着色器)", "bloc97(MIT © 2019-2021)", "https://github.com/bloc97/Anime4K"),
+            ("HT-Demucs(音频源分离)", "adefossez / Meta AI", "https://github.com/adefossez/demucs"),
+            ("LavaSR(音频超分)", "Kunal Sharma 等", "https://sharma-kunal.github.io/LavaSR/"),
             ("waifu2x(含 ONNX)", "nagadomi/nunif", "https://github.com/nagadomi/waifu2x"),
             ("RIFE(含 ONNX)", "Zhewei Huang 等 + nihui/ncnn", "https://github.com/hzwer/arXiv2020-RIFE"),
             ("U²-Net", "Qin 等", "https://github.com/xuebinqin/U-2-Net"),
@@ -2042,6 +2047,7 @@ public sealed partial class MainPage : Page
             ("rembg(模型封装)", "Daniel Gatis", "https://github.com/danielgatis/rembg"),
             ("ffmpeg", "FFmpeg 团队(BtbN 构建)", "https://ffmpeg.org"),
             ("ONNX Runtime", "Microsoft", "https://github.com/microsoft/onnxruntime"),
+            ("DirectML(显卡推理)", "Microsoft(MIT 代码 + 微软软件许可条款)", "https://www.nuget.org/packages/Microsoft.AI.DirectML"),
             ("Windows App SDK / WinUI 3", "Microsoft", "https://github.com/microsoft/WindowsAppSDK"),
             (".NET 8", "Microsoft", "https://github.com/dotnet/runtime"),
             ("ONNX 转换模型(waifu2x/动漫动画)", "deepghs / tidus2102", "https://huggingface.co"),

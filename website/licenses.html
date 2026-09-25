@@ -272,6 +272,60 @@ setTimeout(function () {
       </dl>
     </div>
 
+    <div class="lic" data-reveal>
+      <h3>16. Real-CUGAN(动漫超分引擎;2026-09-24 重新随包:引擎 + models-se 权重)</h3>
+      <dl>
+        <dt>算法与权重</dt><dd>github.com/bilibili/ailab(tree/main/Real-CUGAN)</dd>
+        <dt>许可</dt><dd><strong>MIT License,Copyright (c) 2022 bilibili</strong>(算法代码与模型权重);许可原文随包于
+          <code>licenses\Real-CUGAN-MIT-bilibili-2022.txt</code>(1065 字节,SHA256 <code>8CAD8CFD…3CBA</code>)</dd>
+        <dt>引擎包装层与 ncnn 权重来源</dt><dd>github.com/nihui/realcugan-ncnn-vulkan — MIT License,Copyright (c) 2019 nihui
+          (许可原文随包于 <code>licenses\realcugan-ncnn-vulkan-MIT-nihui-2019.txt</code>,1072 字节);ncnn 运行时 BSD 3-Clause(Tencent)</dd>
+        <dt>随包的权重</dt><dd><strong>只随包 models-se</strong>(2x / 3x / 4x × conservative / no-denoise / denoise1x-3x,共 22 个文件);
+          models-pro 与 models-nose <strong>不随包</strong>,界面上也没有它们的档位</dd>
+        <dt>引擎二进制</dt><dd>随包的是<strong>用 2025/2026 版 ncnn 源码重编</strong>的引擎 —— 上游 20220728 那份不含 <code>VK_EXT_robustness2</code> 处理,
+          在 NVIDIA 50 系上属「退出码 0、却输出坏帧」那一类;前端源码取自上面那个 MIT 仓库,只改了 MinGW 宽字符 printf 的一处兼容补丁</dd>
+        <dt>说明</dt><dd>上游 GitHub 仓的 <code>Real-CUGAN/weights_v3/</code> 只有一句「请从网盘下载权重」;经百度网盘 / Google Drive / 和彩云 分发的「完整包」
+          <strong>未随附任何许可文本</strong>,本软件<strong>不使用</strong>该来源的权重。权重的许可依据是 bilibili 官方 ModelScope 模型页
+          (权重与同一份 MIT 文件一起发布,哈希与上游仓库根那份逐字节相同)。来源与逐文件 SHA256 见 <code>licenses\模型权重来源与校验值.md</code></dd>
+      </dl>
+    </div>
+
+    <div class="lic" data-reveal>
+      <h3>17. RIFE 补帧模型新增版本 rife-v4.26(2026-09-24;与第 3 条同源)</h3>
+      <dl>
+        <dt>算法项目</dt><dd>github.com/hzwer/Practical-RIFE</dd>
+        <dt>许可</dt><dd>MIT License,Copyright (c) 2021 hzwer;许可原文随包于
+          <code>licenses\Practical-RIFE-MIT-hzwer-2021.txt</code>(1062 字节);
+          README「Trained Model」段逐字写明「The content of these links is under the same MIT license as this project.」
+          ⇒ 训练好的模型权重与项目同为 MIT(逐字,不是推断)</dd>
+        <dt>说明</dt><dd>补帧模型下拉现在<strong>三支</strong>(rife-v4.13 / rife-v4.6 / rife-v4.26),权重全部随包;唯一限制是 v4.26 的「高质量 TTA」实测会卡死(选中时自动置灰)</dd>
+      </dl>
+    </div>
+
+    <div class="lic" data-reveal>
+      <h3>18. Anime4K(「1x 修复」用的着色器)</h3>
+      <dl>
+        <dt>项目</dt><dd>github.com/bloc97/Anime4K</dd>
+        <dt>许可</dt><dd>MIT License,Copyright (c) 2019-2021 bloc97(<strong>许可原文就写在着色器文件头部</strong>,随 ffmpeg 目录一并分发)</dd>
+        <dt>随包位置</dt><dd><code>engines\ffmpeg\shaders\anime4k-v4-a.glsl</code> 与 <code>engines\ffmpeg8\shaders\anime4k-v4-a.glsl</code>
+          (各 336,741 字节;<strong>两个目录都要带</strong> —— 合帧走备用 ffmpeg8 的机器也要能跑滤镜)</dd>
+      </dl>
+    </div>
+
+    <div class="lic" data-reveal>
+      <h3>19. Microsoft DirectML(显卡推理运行时)</h3>
+      <dl>
+        <dt>包</dt><dd>Microsoft.AI.DirectML(NuGet,当前 1.15.1)— nuget.org/packages/Microsoft.AI.DirectML</dd>
+        <dt>随包的东西</dt><dd><code>DirectML.dll</code>(约 18.7 MB;本软件在 Windows 上通过 ONNX Runtime 的 DirectML 执行提供程序用显卡做推理)</dd>
+        <dt>许可</dt><dd>代码部分 <strong>MIT License,Copyright (c) Microsoft Corporation</strong>(包内 <code>LICENSE-CODE.txt</code>,
+          随包于 <code>licenses\DirectML-LICENSE-CODE-MIT-Microsoft.txt</code>);
+          随包的 <code>DirectML.dll</code> 另有微软软件许可条款 —— 包内 <code>LICENSE.txt</code>「MICROSOFT SOFTWARE LICENSE TERMS —
+          MICROSOFT DIRECTX MACHINE LEARNING (DIRECTML)」(随包于 <code>licenses\DirectML-LICENSE-TERMS-Microsoft.txt</code>);
+          包内还有它自身携带的第三方声明(随包于 <code>licenses\DirectML-ThirdPartyNotices-Microsoft.txt</code>)</dd>
+        <dt>版权</dt><dd>Microsoft Corporation</dd>
+      </dl>
+    </div>
+
     <h2 id="full-text">三、许可全文与源码获取</h2>
     <ul data-reveal>
       <li><strong>随软件附带:</strong>发布版内含 <code>THIRD_PARTY_NOTICES.txt</code> 与许可全文
@@ -305,7 +359,7 @@ setTimeout(function () {
       <li>小野寺小咲☁️</li>
       <li>记住羡鱼</li>
     </ul>
-    <p data-reveal>也感谢上面逐条列出的所有开源项目的作者与维护者 —— 没有 waifu2x、Real-ESRGAN、RIFE、FFmpeg 这些项目,就不会有 ALH Pro。</p>
+    <p data-reveal>也感谢上面逐条列出的所有开源项目的作者与维护者 —— 没有 waifu2x、Real-ESRGAN、Real-CUGAN、RIFE、Anime4K、FFmpeg 这些项目,就不会有 ALH Pro。</p>
 
     <h2 id="declare">五、其它声明</h2>
     <ul data-reveal>

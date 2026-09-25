@@ -173,6 +173,32 @@ ALH Pro — 第三方组件许可声明
       ⇒ 训练好的模型权重与项目同为 MIT 许可(逐字,不是我们的推断)。
     权重文件与 SHA256 见 licenses\模型权重来源与校验值.md。
 
+18. Anime4K(「1x 修复」用的着色器)
+    项目: https://github.com/bloc97/Anime4K
+    许可: MIT License,Copyright (c) 2019-2021 bloc97
+    许可原文: 就写在**着色器文件头部**(随 ffmpeg 目录一并分发,不是单独的文件)
+    随包位置: engines\ffmpeg\shaders\anime4k-v4-a.glsl
+              engines\ffmpeg8\shaders\anime4k-v4-a.glsl
+              (各 336,741 字节;**两个目录都要带** —— 合帧走备用 ffmpeg8 的机器也要能跑这个滤镜)
+    版权: bloc97(2019-2021)
+
+19. Microsoft DirectML(显卡推理运行时;随包 DirectML.dll,约 18.7 MB)
+    包: Microsoft.AI.DirectML(NuGet,当前 1.15.1)
+         https://www.nuget.org/packages/Microsoft.AI.DirectML
+    许可: 代码部分 MIT License,Copyright (c) Microsoft Corporation
+          (包内 LICENSE-CODE.txt,1093 字节,随包于
+           licenses\DirectML-LICENSE-CODE-MIT-Microsoft.txt);
+          随包的 DirectML.dll 另有微软软件许可条款(包内 LICENSE.txt:
+          「MICROSOFT SOFTWARE LICENSE TERMS — MICROSOFT DIRECTX MACHINE
+          LEARNING (DIRECTML)」,10439 字节,随包于
+          licenses\DirectML-LICENSE-TERMS-Microsoft.txt);
+          包内还有它自身携带的第三方声明(ThirdPartyNotices.txt,4577 字节,
+          随包于 licenses\DirectML-ThirdPartyNotices-Microsoft.txt)。
+    版权: Microsoft Corporation
+    说明: 本软件在 Windows 上通过 ONNX Runtime 的 DirectML 执行提供程序用显卡
+          做推理(DirectML.dll 由上面这个 NuGet 包提供);分发本软件时请一并保留
+          本条目与上述三份文本。
+
 ---------------------------------------------------
 【模型权重来源与版权明细】
 
