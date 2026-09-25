@@ -335,12 +335,22 @@ public class VideoModelOrderTests
             // 【为什么钉逐字】提示词写了两处:下拉项里(XAML,声明式)与 Core(给"选中后下拉正下方那行提示"复用)。
             // 两处各写一份数字 = 迟早对不上(本仓库有前车之鉴:摘要印"轻量"、下拉写"快",用户以为两份说的是不同模型)。
             // XAML 里换行写成 &#x0a;(元素内容里的裸换行会被 XAML 折叠掉),所以比对前归一化成 \n。
+            // 【2026-09-25 用户要求:提示末尾加一行绿字「权重 Nx」】提示的**原文**必须仍然逐字相同 ——
+            // 比对时把外层的 <ToolTip><TextBlock …> 包装与末尾那行绿字 `<Run …>…</Run>` 剥掉,
+            // 只比原文;同时要求绿字行确实存在(不能因为"加了绿字"就把原文改掉/丢掉)。
             var m = System.Text.RegularExpressions.Regex.Match(item,
                 "<ToolTipService.ToolTip>(.*?)</ToolTipService.ToolTip>",
                 System.Text.RegularExpressions.RegexOptions.Singleline);
             Assert.True(m.Success, $"{tag} 的下拉项没有内联 ToolTip 文本");
+            string tipInner = m.Groups[1].Value;
+            const string tipWrapper = "<ToolTip><TextBlock TextWrapping=\"Wrap\" MaxWidth=\"440\">";
+            Assert.StartsWith(tipWrapper, tipInner);
+            tipInner = tipInner[tipWrapper.Length..];
+            int greenAt = tipInner.IndexOf("<Run Foreground=\"#7BD88F\">", StringComparison.Ordinal);
+            Assert.True(greenAt > 0, $"{tag} 的提示末尾缺少绿字权重行");
+            Assert.Contains("权重 2x", tipInner[greenAt..]);
             Assert.Equal(AlhPro.Core.ExperimentalEsrgan.ToolTip(tag),
-                m.Groups[1].Value.Replace("&#x0a;", "\n"));
+                tipInner[..greenAt].Replace("&#x0a;", "\n"));
         }
 
         // ④ 下拉整体的 ToolTip(收起状态悬停时显示的)也不许把这几支说成"实验模型"(注释同样先剥掉);

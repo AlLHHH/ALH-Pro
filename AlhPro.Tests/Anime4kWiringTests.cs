@@ -134,17 +134,16 @@ public class Anime4kWiringTests
         // 两个 1x 条目必须挂在**这个**下拉里(上一版按第一个 </ComboBox> 找锚点,插进了 waifu2x 那个下拉 ✗)
         Assert.Contains($"Tag=\"{Anime4k.ModelTag}\"", dropdown);
         Assert.Contains($"Tag=\"{Upscale1x.RealTag}\"", dropdown);
-        // 而且不许出现在 waifu2x 的下拉里
-        int w = xaml.IndexOf("x:Name=\"VideoWaifu2xModelCombo\"", StringComparison.Ordinal);
-        int we = xaml.IndexOf("</ComboBox>", w, StringComparison.Ordinal);
-        var waifu = xaml.Substring(w, we - w);
-        Assert.DoesNotContain($"Tag=\"{Anime4k.ModelTag}\"", waifu);
-        Assert.DoesNotContain($"Tag=\"{Upscale1x.RealTag}\"", waifu);
+        // 而且不许出现在 waifu2x 的下拉里 —— 【2026-09-25】那个下拉已从视频页删除,所以直接钉"它不存在":
+        // 一个不存在的容器当然也不可能夹带 1x 条目(比原来"在它的区间里搜"更强)。
+        Assert.DoesNotContain("VideoWaifu2xModelCombo", xaml);
+        Assert.DoesNotContain("models-cunet", xaml);
     }
 
     /// <summary>**1x 时必须把引擎锁到 Real-ESRGAN**(自审抓到的界面谎话):
-    /// 1x 的两个条目都在 Real-ESRGAN 的下拉里;若引擎是 waifu2x,那个下拉是隐藏的 ⇒ 用户看到的却是
-    /// waifu2x 的三个 2x 模型(一个都没灰),而提示写着"这里只列 1x 修复模型" ✗✗。</summary>
+    /// 1x 的两个条目都在 Real-ESRGAN 的下拉里,那个下拉只在引擎 = Real-ESRGAN 时显示。
+    /// 【2026-09-25】waifu2x 已从视频页移除 ⇒ 不再有"引擎选 waifu2x 时看到三个 2x 模型"的谎话,
+    /// 但"1x 锁引擎"这套机制本身保留(它同时管"切到 1x 时强制 Real-ESRGAN、离开时恢复用户选择")。</summary>
     [Fact]
     public void One_x_locks_the_engine_to_real_esrgan()
     {

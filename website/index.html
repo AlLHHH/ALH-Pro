@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <title>ALH Pro — 本地视频/图片处理工具(超分 · 补帧 · 抠图 · 音频增强)</title>
-<meta name="description" content="ALH Pro 是一款在你自己的电脑上运行的视频/图片处理工具:超分(Real-ESRGAN / waifu2x / Real-CUGAN)、补帧(RIFE,含 v4.13 / v4.6 / v4.26 三支模型)、AI 抠图、音频增强、视频去重。全程本地处理,不上传任何文件。支持 Windows 10/11 x64。">
+<meta name="description" content="ALH Pro 是一款在你自己的电脑上运行的视频/图片处理工具:超分(图片:waifu2x / Real-ESRGAN;视频:Real-ESRGAN / Real-CUGAN)、补帧(RIFE,含 v4.13 / v4.6 / v4.26 三支模型)、AI 抠图、音频增强、视频去重。全程本地处理,不上传任何文件。支持 Windows 10/11 x64。">
 <!-- 深色是唯一主题(手机浏览器地址栏/状态栏也跟着深色)。值来自 style.css §1.1 的 --body-bg / --bg(#0a0a0b)。 -->
 <meta name="theme-color" content="#0a0a0b">
 <!-- 【2026-09-22 修"网页没有图标"】原来只声明了一张 logo.png;浏览器与搜索引擎结果列表默认找的是
@@ -190,7 +190,7 @@ setTimeout(function () {
         <ul>
           <li>动漫插画用 waifu2x(cunet / upconv_7_anime)</li>
           <li>照片用 Real-ESRGAN</li>
-          <li>动漫视频另有 <strong>Real-CUGAN</strong>(引擎下拉第二项;线条与色块最干净,代价是最慢 —— 1080p 2x 约 1.65 秒/帧,约为 animevideov3 的 6.2 倍,且<strong>必须有可用显卡</strong>。waifu2x 已挪到下拉最后一项)</li>
+          <li>动漫视频另有 <strong>Real-CUGAN</strong>(引擎下拉第二项;线条与色块最干净,代价是最慢 —— 1080p 2x 约 1.65 秒/帧,约为 animevideov3 的 6.2 倍,且<strong>必须有可用显卡</strong>)。视频页的超分引擎现在只剩 <strong>Real-ESRGAN</strong> 与 <strong>Real-CUGAN</strong> 两项 —— <strong>waifu2x 已按用户裁定从视频页移除</strong>,<strong>图片页</strong>照常可用</li>
           <li>1x 超分只变清晰,2x~4x 才放大</li>
           <li>后处理:降噪、去雾、锐化、去模糊、边缘抗锯齿</li>
           <li>支持批量,输出 JPG / PNG</li>

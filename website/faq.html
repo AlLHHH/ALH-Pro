@@ -186,7 +186,7 @@ setTimeout(function () {
           </table>
         </div>
         <p class="small muted">启动时软件自动检测 GPU:有独显且引擎兼容就自动启用;不兼容会自动走稳定路线,结果不受影响,只是速度有差别。走哪条路看页面上方的设备提示。</p>
-        <p class="small"><strong>一个例外要说清:Real-CUGAN(动漫专用超分,引擎下拉第二项)只有 ncnn-Vulkan 权重</strong> —— 它<strong>没有</strong> ONNX 版本,CPU 档实测会崩,所以「没有可用独显 / Vulkan 不可用 / 计算设备选了 CPU」时软件会<strong>在开跑前明确拒绝</strong>并提示你改选 Real-ESRGAN 或 waifu2x(<strong>不会</strong>静默换成别的模型)。同一次任务里另外两项超分不受影响。</p>
+        <p class="small"><strong>一个例外要说清:Real-CUGAN(动漫专用超分,引擎下拉第二项)只有 ncnn-Vulkan 权重</strong> —— 它<strong>没有</strong> ONNX 版本,CPU 档实测会崩,所以「没有可用独显 / Vulkan 不可用 / 计算设备选了 CPU」时软件会<strong>在开跑前明确拒绝</strong>并提示你改选 <strong>Real-ESRGAN</strong>(视频页两项超分引擎里唯一有 ONNX 稳定路线的那个;<strong>waifu2x 已按用户裁定从视频页移除</strong>,图片页照常可用)(<strong>不会</strong>静默换成别的模型)。同一次任务里的图片超分不受影响。</p>
       </div>
     </details>
 
