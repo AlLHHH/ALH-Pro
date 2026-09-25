@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <title>ALH Pro — 本地视频/图片处理工具(超分 · 补帧 · 抠图 · 音频增强)</title>
-<meta name="description" content="ALH Pro 是一款在你自己的电脑上运行的视频/图片处理工具:超分(Real-ESRGAN / waifu2x)、补帧(RIFE)、AI 抠图、音频增强、视频去重。全程本地处理,不上传任何文件。支持 Windows 10/11 x64。">
+<meta name="description" content="ALH Pro 是一款在你自己的电脑上运行的视频/图片处理工具:超分(Real-ESRGAN / waifu2x / Real-CUGAN)、补帧(RIFE,含 v4.13 / v4.6 / v4.26 三支模型)、AI 抠图、音频增强、视频去重。全程本地处理,不上传任何文件。支持 Windows 10/11 x64。">
 <!-- 深色是唯一主题(手机浏览器地址栏/状态栏也跟着深色)。值来自 style.css §1.1 的 --body-bg / --bg(#0a0a0b)。 -->
 <meta name="theme-color" content="#0a0a0b">
 <!-- 【2026-09-22 修"网页没有图标"】原来只声明了一张 logo.png;浏览器与搜索引擎结果列表默认找的是
@@ -142,7 +142,7 @@ setTimeout(function () {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 3.2l1.9 5.1 5.1 1.9-5.1 1.9L11 17.2 9.1 12.1 4 10.2l5.1-1.9z"/><path d="M18.4 15.4l.7 1.9 1.9.7-1.9.7-.7 1.9-.7-1.9-1.9-.7 1.9-.7z"/></svg>
         </span>
         <h3>想让老番、老片变清晰的动漫爱好者</h3>
-        <p>动漫 / 插画走 waifu2x 路线,线条和色块更干净。配合「去重复帧」,补帧结果更准。</p>
+        <p>动漫 / 插画走 waifu2x 路线,线条和色块更干净。视频里的动漫片源还有 <strong>Real-CUGAN</strong>(线条与色块最干净的一支,代价是最慢、且必须有可用显卡)。配合「去重复帧」,补帧结果更准。</p>
       </div>
       <div class="card">
         <span class="card-icon" aria-hidden="true">
@@ -190,6 +190,7 @@ setTimeout(function () {
         <ul>
           <li>动漫插画用 waifu2x(cunet / upconv_7_anime)</li>
           <li>照片用 Real-ESRGAN</li>
+          <li>动漫视频另有 <strong>Real-CUGAN</strong>(引擎下拉第三项;线条与色块最干净,代价是最慢 —— 1080p 2x 约 1.65 秒/帧,约为 animevideov3 的 6.2 倍,且<strong>必须有可用显卡</strong>)</li>
           <li>1x 超分只变清晰,2x~4x 才放大</li>
           <li>后处理:降噪、去雾、锐化、去模糊、边缘抗锯齿</li>
           <li>支持批量,输出 JPG / PNG</li>
@@ -217,10 +218,10 @@ setTimeout(function () {
         <h3>视频补帧</h3>
         <p class="demo-note">补帧 = 在相邻两帧之间算出中间帧,把动作接起来。上面那行按原片 24fps 走,一跳一跳;下面补到 60fps 后就连续顺滑了。</p>
         <ul>
-          <li>RIFE 引擎,默认 v4.13,可选多支模型</li>
+          <li>RIFE 引擎,补帧模型<strong>三支</strong>:默认「通用画质最新 v4.13」,另有 v4.6 与 v4.26(三支同架构、功能一样;v4.26 的「高质量 TTA」实测会卡死,选中它会自动置灰)</li>
           <li>输出帧率 = 原帧率 × 倍率(2x / 3x / 4x / 8x / 12x / 16x)</li>
           <li>录屏、手机、监控这类帧率不均匀的素材,自动按原节奏处理</li>
-          <li>果冻修复、光流调整、转场识别,减少鬼影与扭曲</li>
+          <li>光流调整、转场识别,减少鬼影与扭曲</li>
         </ul>
       </div>
       <div class="card">

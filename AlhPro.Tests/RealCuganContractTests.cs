@@ -210,28 +210,82 @@ public class RealCuganContractTests
         Assert.Equal(AlhPro.Core.RealCugan.Tags.Select(t => t.Tag).ToArray(), tags);
     }
 
-    /// <summary>存盘口径:Real-CUGAN 用**新值 3**,历史值 2 继续表示 Real-ESRGAN。
+    /// <summary>存盘口径:**行为断言**(直接调 `AlhPro.Core.EngineChoice`,不再只读源码文本)。
+    /// 铁律:Real-CUGAN 用**新值 3**,历史值 2 继续表示 Real-ESRGAN ——
     /// 反过来(2 → Real-CUGAN)会让还存着 2 的老用户升级后**静默换引擎**,是明令禁止的。</summary>
     [Fact]
     public void Stored_engine_codes_keep_legacy_two_meaning_real_esrgan()
     {
-        var cs = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs");
-        int at = cs.IndexOf("private static int EngineToStored(", StringComparison.Ordinal);
-        Assert.True(at > 0);
-        int end = cs.IndexOf("private static int EngineFromStored(", at, StringComparison.Ordinal);
-        Assert.True(end > at);
-        var to = cs.Substring(at, end - at);
-        Assert.Contains("2 => 3", to);          // ui 2(Real-CUGAN)→ 存 3
-        Assert.Contains("1 => 0", to);          // ui 1(waifu2x)  → 存 0
+        // ① 值 → 界面索引:0=waifu2x(界面第 2 项)、3=Real-CUGAN(界面第 3 项)、1 与 2 都落 Real-ESRGAN(界面第 1 项)
+        Assert.Equal(AlhPro.Core.EngineChoice.UiWaifu2x, AlhPro.Core.EngineChoice.FromStored(0));
+        Assert.Equal(AlhPro.Core.EngineChoice.UiRealEsrgan, AlhPro.Core.EngineChoice.FromStored(1));
+        Assert.Equal(AlhPro.Core.EngineChoice.UiRealEsrgan, AlhPro.Core.EngineChoice.FromStored(2));   // 历史值 2 仍是 Real-ESRGAN
+        Assert.Equal(AlhPro.Core.EngineChoice.UiRealCugan, AlhPro.Core.EngineChoice.FromStored(3));   // 新值 3 = Real-CUGAN
 
-        int end2 = cs.IndexOf("/// <summary>当前选中的超分引擎名", end, StringComparison.Ordinal);
-        Assert.True(end2 > end);
-        var from = cs.Substring(end, end2 - end);
-        Assert.Contains("3 => 2", from);        // 存 3 → ui 2
-        Assert.Contains("0 => 1", from);        // 存 0 → ui 1
-        // 历史值 2 不许映射到 Real-CUGAN
-        Assert.DoesNotContain("2 => 2", from);
+        // ② 界面索引 → 值(反向),并逐项做**往返**:存得住、读得回(G4 类事故就是往返被守卫截断)
+        Assert.Equal(0, AlhPro.Core.EngineChoice.ToStored(AlhPro.Core.EngineChoice.UiWaifu2x));
+        Assert.Equal(1, AlhPro.Core.EngineChoice.ToStored(AlhPro.Core.EngineChoice.UiRealEsrgan));
+        Assert.Equal(3, AlhPro.Core.EngineChoice.ToStored(AlhPro.Core.EngineChoice.UiRealCugan));
+        for (int ui = 0; ui <= AlhPro.Core.EngineChoice.UiRealCugan; ui++)
+            Assert.Equal(ui, AlhPro.Core.EngineChoice.FromStored(AlhPro.Core.EngineChoice.ToStored(ui)));
+
+        // ③ 引擎名与界面索引一一对应(Real-CUGAN 必须落在 realcugan,不能悄悄是 waifu2x/realesrgan)
+        Assert.Equal("realesrgan", AlhPro.Core.EngineChoice.EngineNameOf(AlhPro.Core.EngineChoice.UiRealEsrgan));
+        Assert.Equal("waifu2x", AlhPro.Core.EngineChoice.EngineNameOf(AlhPro.Core.EngineChoice.UiWaifu2x));
+        Assert.Equal(AlhPro.Core.RealCugan.EngineName, AlhPro.Core.EngineChoice.EngineNameOf(AlhPro.Core.EngineChoice.UiRealCugan));
+
+        // ④ 越界(含界面未选中时的 -1)一律落 Real-ESRGAN,绝不返回下拉里不存在的引擎
+        foreach (var bad in new[] { -1, 4, 99, int.MinValue, int.MaxValue })
+        {
+            Assert.Equal(AlhPro.Core.EngineChoice.UiRealEsrgan, AlhPro.Core.EngineChoice.FromStored(bad));
+            Assert.Equal(1, AlhPro.Core.EngineChoice.ToStored(bad));
+        }
     }
+
+    /// <summary>**恢复设置时的守卫**(真机事故本体):认的存盘值必须**包含 3**。
+    /// 这一条是行为断言 —— 旧的 `d.Engine is >= 0 and <= 2` 会让这里第 4 行直接红。</summary>
+    [Fact]
+    public void Stored_engine_guard_accepts_the_new_realcugan_value_and_rejects_junk()
+    {
+        Assert.True(AlhPro.Core.EngineChoice.IsKnownStored(0));
+        Assert.True(AlhPro.Core.EngineChoice.IsKnownStored(1));
+        Assert.True(AlhPro.Core.EngineChoice.IsKnownStored(2));   // 历史值也要认(否则老用户设置被当成损坏文件)
+        Assert.True(AlhPro.Core.EngineChoice.IsKnownStored(3));   // ★ 事故点:3 必须被认
+        Assert.False(AlhPro.Core.EngineChoice.IsKnownStored(-1));
+        Assert.False(AlhPro.Core.EngineChoice.IsKnownStored(4));
+        Assert.False(AlhPro.Core.EngineChoice.IsKnownStored(99));
+    }
+
+    /// <summary>**接线断言**:视频页那边必须用上面这个守卫、且不得再出现写死的区间。
+    /// (纯逻辑的真相在 <see cref="AlhPro.Core.EngineChoice"/>;这条只钉"页面确实用了它"。)</summary>
+    [Fact]
+    public void Video_page_uses_the_shared_guard_and_mapping()
+    {
+        var cs = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs");
+
+        // ⚠ 判"旧写法不许回来"之前**必须先剥注释**:修好之后我们**故意**在注释里写明了旧写法
+        //   是什么、为什么错 —— 连注释一起搜会自己绊倒自己(InterpDropdownContractTests 第一次跑就踩过同一个坑)。
+        var code = StripCsharpComments(cs);
+
+        // 事故写法:任何对 d.Engine 的写死区间都不许再出现(它把新值 3 挡在外面)
+        Assert.DoesNotContain("d.Engine is >= 0 and <= 2", code);
+        Assert.DoesNotContain("d.Engine < 0 || d.Engine > 2", code);
+        // 必须改用共享守卫(这条查的是**代码**,不是注释)
+        Assert.Contains("if (AlhPro.Core.EngineChoice.IsKnownStored(d.Engine))", code);
+        // 两张映射表都必须转发到 Core(页面里不许留第二份 switch —— 两份迟早分叉)
+        Assert.Contains("private static int EngineToStored(int uiIndex) => AlhPro.Core.EngineChoice.ToStored(uiIndex);", code);
+        Assert.Contains("private static int EngineFromStored(int stored) => AlhPro.Core.EngineChoice.FromStored(stored);", code);
+        // 引擎名也要走同一个来源(此前是页面里的第二个 switch)
+        Assert.Contains("AlhPro.Core.EngineChoice.EngineNameOf(VideoEngineRadios.SelectedIndex)", code);
+    }
+
+    /// <summary>剥掉 C# 的 `//` 行注释(判"旧写法不许回来"时用)。
+    /// ⚠ **只剥行注释,不要顺手剥 `/* */`**:这个文件里 `/*` 会出现在**字符串字面量**里
+    /// (文件名通配 / URL 之类),一个天真的块注释正则会把文件"从那个字符串一路吃到很远处的一个 `*/`"
+    /// —— 实测把 600,255 字节吃成 55,212 字节(91%),于是所有 Contains 断言全假红。
+    /// 行注释正则的已知局限:字符串里出现 `//`(如 `https://…`)会把该行后半截掉;
+    /// 对本测试要查的四行(守卫调用与两句转发)无影响 —— 它们所在的行都不含 `//`。</summary>
+    private static string StripCsharpComments(string s) => Regex.Replace(s, @"//[^\n]*", "");
 
     // ───────────────────────── 小工具 ─────────────────────────
 
