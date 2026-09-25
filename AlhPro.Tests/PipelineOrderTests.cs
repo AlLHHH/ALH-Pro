@@ -148,6 +148,9 @@ public class PipelineOrderTests
     [InlineData("realesr-general-wdn-x4v3", "wdn-x4v3")]      // 【2026-09-14】名字是 general-wdn-x4v3,不含 general-x4v3
     [InlineData("models-cunet", "cunet")]
     [InlineData("models-upconv_7_photo", "upconv_7_photo")]
+    [InlineData("models-se:0", "realcugan-se")]      // 【2026-09-25】Real-CUGAN:三个降噪档归一到一个键(同价)
+    [InlineData("models-se:-1", "realcugan-se")]
+    [InlineData("models-se:3", "realcugan-se")]
     [InlineData("whatever", null)]
     public void Model_key_normalization(string model, string? expected)
         => Assert.Equal(expected, PipelineOrderPlan.NormalizeModel(model));
@@ -176,5 +179,29 @@ public class PipelineOrderTests
         var shrink = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus", 2.0, 2, W1080, H1080, 1800, areaScale: 1.0);
         Assert.Equal(15.87, shrink.UpscalePerFrame, 6);
         Assert.Equal((long)W1080 * H1080, shrink.HiPixels);   // 缩回后补帧输入仍是源尺寸
+    }
+
+    /// <summary>【2026-09-25 · 真机事故回归】Real-CUGAN 的实测单价必须在表里,且据此判定出的顺序必须是「超分→补帧」。
+    /// 缺这一行时判定把超分当成免费(u=0)⇒ 误选「补帧→超分」⇒ 超分要去跑补帧后 4 倍的帧数:
+    /// 真机现场(14.6 秒素材、源 350 帧、补帧 4x ⇒ 1401 帧)超分阶段约 39 分钟;顺序反过来只需 350 帧 ≈ 10 分钟。
+    /// 同一行缺失还会让"预计时间"沿用 Real-ESRGAN 的 0.45 秒/帧 ⇒ 乐观约 3.7 倍。</summary>
+    [Fact]
+    public void Realcugan_has_a_measured_price_and_that_flips_the_order()
+    {
+        Assert.Equal(1.65, PipelineOrderPlan.LookupUpscaleSecondsPerFrame("models-se:0", 2, out var prov)!.Value, 6);
+        Assert.Contains("2026-09-24", prov);
+        Assert.Equal(1.65, PipelineOrderPlan.LookupUpscaleSecondsPerFrame("models-se:-1", 2, out _)!.Value, 6);
+        Assert.Equal(1.65, PipelineOrderPlan.LookupUpscaleSecondsPerFrame("models-se:3", 2, out _)!.Value, 6);
+
+        // 3x/4x 是另外的网络、尚无实测 ⇒ 仍然"查不到"(偏保守;查不到就回退旧顺序,这一点不许被顺手改掉)
+        Assert.Null(PipelineOrderPlan.LookupUpscaleSecondsPerFrame("models-se:0", 4, out var prov4));
+        Assert.Contains("待实测标定", prov4);
+
+        // 2x + 补帧 4x:u=1.65 已超过门槛(0.2625)⇒ 必须选「超分→补帧」
+        var d = PipelineOrderPlan.Decide("realcugan", "models-se:0", 2.0, 4, W1080, H1080, 1800);
+        Assert.True(d.Measured);
+        Assert.Equal(1.65, d.UpscalePerFrame, 6);
+        Assert.True(d.UpscaleFirst,
+            $"Real-CUGAN 2x + 补帧 4x 必须选「超分→补帧」;实际 SavingsPercent={d.SavingsPercent:0.#}%");
     }
 }

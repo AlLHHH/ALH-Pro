@@ -110,8 +110,10 @@ public static class VideoPipeline
         }
         if (up && scale > 1.001)
         {
-            // 超分逐帧成本:1080p 单帧 waifu2x≈0.18s / realesrgan≈0.45s,按面积缩放
-            double per = engine switch { "waifu2x" => 0.18, _ => 0.45 };
+            // 超分逐帧成本:1080p 单帧 waifu2x≈0.18s / realesrgan≈0.45s / realcugan≈1.65s,按面积缩放
+            // 【2026-09-25 修】realcugan 原先落到 `_ => 0.45`(Real-ESRGAN 的常数)⇒ 预计时间乐观约 3.7 倍;
+            // 实测值 1.65 秒/帧 @1080p 2x(与 PipelineOrderPlan.UpscaleRates 里那一行同源,改一处要改两处)。
+            double per = engine switch { "waifu2x" => 0.18, "realcugan" => 1.65, _ => 0.45 };
             per *= areaN * Math.Max(0.5, scale / 1.0);
             // 新顺序:超分只跑【源帧数】(补帧排在超分之后,不再让超分帧数翻倍)——这是新顺序省钱的全部来源。
             // 旧顺序:超分跑补帧后的帧数 frames(= src × 倍率),与改动前逐字一致。
