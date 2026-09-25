@@ -109,6 +109,11 @@ public static class PipelineOrderPlan
         new("realesrgan", "x4plus-anime", 4, 3.85,   "2026-09-13 实测 ≈3.3~4.4(区间较宽,取中值)"),
         new("waifu2x", "cunet", 2, 0.3685,            "2026-09-13 实测 -n0 0.368~0.370 / -n1 0.373~0.383 / -n2 0.353~0.364(三档中值)"),
         new("waifu2x", "upconv_7_photo", 2, 1.288,    "2026-09-13 实测 ≈1.288"),
+        // 【2026-09-25 补 · 真机事故根因】Real-CUGAN 原来**没有单价行** ⇒ `LookupUpscaleSecondsPerFrame` 返回 null
+        // ⇒ 判定里超分单价 u=0(当成免费),于是 14.6 秒素材 + 补帧 4x 的场景被误判成「新顺序更慢 244%」,
+        // 选了「补帧→超分」让超分去跑补帧后的 1401 帧(≈39 分钟);正确的顺序只需跑源 350 帧(≈10 分钟)。
+        // 同一行缺失也让"预计时间"沿用 Real-ESRGAN 的 0.45 秒/帧常数 ⇒ 乐观约 3.7 倍。
+        new("realcugan", "realcugan-se", 2, 1.65, "2026-09-24 实测 1.634~1.675 秒/帧(40 帧 1080p 目录批跑 ×3 冷态);-1/0/3 三档实测 1.61~1.74 同价,取中值 1.65。3x/4x 是另外的网络、尚无实测【待实测标定】"),
     };
 
     /// <summary>把模型名归一到成本表的键(与表里的 ModelKey 对应);认不出返回 null。
@@ -130,6 +135,9 @@ public static class PipelineOrderPlan
             || m.Contains("general_x4v3", StringComparison.OrdinalIgnoreCase)) return "general-x4v3";
         if (m.Contains("upconv_7_photo", StringComparison.OrdinalIgnoreCase)) return "upconv_7_photo";
         if (m.Contains("cunet", StringComparison.OrdinalIgnoreCase)) return "cunet";
+        // 【2026-09-25】Real-CUGAN:模型标识形如 `models-se:-1`(权重目录:降噪档)。
+        // 三个降噪档共用同一份权重、实测同价(1.61~1.74)⇒ 归一到同一个键;倍率仍按 EngineScale 区分。
+        if (m.Contains("models-se", StringComparison.OrdinalIgnoreCase)) return "realcugan-se";
         return null;
     }
 

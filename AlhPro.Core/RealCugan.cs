@@ -45,11 +45,11 @@ public static class RealCugan
     ///  denoise1x / denoise2x 只有 up2x ⇒ **不进下拉**,否则 3x/4x 目标会加载不存在的权重、静默出坏帧)。</summary>
     public static readonly (string Tag, string Label, string Hint)[] Tags =
     {
-        ("models-se:-1", "动漫 · 保守（保留纹理 · 中）",
+        ("models-se:-1", "动漫 · models-se -1（中）",
             "Real-CUGAN 官方保守档(-n -1 = conservative):尽量保留原纹理、不做强打磨,动漫线条最干净。"),
-        ("models-se:0", "动漫 · 不降噪（快）",
+        ("models-se:0", "动漫 · models-se 0（快）",
             "Real-CUGAN 无降噪档(-n 0):输入已经干净时用它,速度与保守档同档。"),
-        ("models-se:3", "动漫 · 强降噪（慢）",
+        ("models-se:3", "动漫 · models-se 3（慢）",
             "Real-CUGAN 最强降噪档(-n 3):老片源噪点多、压缩块明显时用它;会一并抹掉部分纹理。"),
     };
 
