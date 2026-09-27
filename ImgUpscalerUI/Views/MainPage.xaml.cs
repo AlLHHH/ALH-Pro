@@ -3149,19 +3149,50 @@ public sealed partial class MainPage : Page
                             if (!ALHPro.EngineService.TryGetNcnnVerdict(eng, probeGpu).HasValue) needProbe.Add(eng);
                         if (needProbe.Count > 0)
                         {
+                            // 【2026-09-30 · t62 B1/F3/L2】顺序与极性都要钉住:
+                            //   ① **先只读问台账**(EngineService.WouldSkipProbeThisSession,无副作用)⇒ 分流出
+                            //      willProbe / skippedBySession;
+                            //   ② **再写状态栏**:只有"真的会探"才允许说「正在实测…」—— 这一步只有在跳过闸
+                            //      极性正确时才成立(B1 之前闸门永远是"跳过",willProbe 恒为空,F3 的修复被抵消);
+                            //   ③ **最后**才真探测(下面那道 `if (willProbe.Count > 0)`)。
+                            //   ⚠ 「先问台账、再对外宣称」的顺序由测试钉住(t61 的 L2:IndexOf 顺序断言)。
+                            var willProbe = new System.Collections.Generic.List<string>();
+                            var skippedBySession = new System.Collections.Generic.List<string>();
+                            foreach (var eng in needProbe)
+                                (ALHPro.EngineService.WouldSkipProbeThisSession(eng, probeGpu) ? skippedBySession : willProbe).Add(eng);
                             var prevStatus = StatusText.Text;
-                            try { StatusText.Text = "正在实测 ncnn 引擎(诊断包,最长约 90 秒)…"; } catch { }
-                            info.AppendLine($"ncnn 探测:本机此前没有 {string.Join(" / ", needProbe)} 的实测结论,导出时强制实测一次");
-                            AppLogger.Info($"[探测] 诊断包导出:此前无 {string.Join("/", needProbe)} 的实测结论,强制实测(GPU {probeGpu})");
-                            using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+                            try
+                            {
+                                if (willProbe.Count == 0)
+                                    StatusText.Text = "本会话已试过这几个引擎(未测通)—— 不再重复实测,报告里照实写「未测通」";
+                                else
+                                    StatusText.Text = $"正在实测 ncnn 引擎({string.Join("/", willProbe)},诊断包,最长约 90 秒)…";
+                            }
+                            catch { }
+                            info.AppendLine($"ncnn 探测:本机此前没有 {string.Join(" / ", needProbe)} 的实测结论,导出时强制实测一次"
+                                + (skippedBySession.Count > 0
+                                    ? $"(其中 {string.Join(" / ", skippedBySession)} 本会话已试过且未测通 ⇒ **本次跳过**(不重复白等;重启软件即可重试),报告照实写「未测通」)"
+                                    : ""));
+                            AppLogger.Info($"[探测] 诊断包导出:此前无 {string.Join("/", needProbe)} 的实测结论,"
+                                + (willProbe.Count > 0 ? $"强制实测({string.Join("/", willProbe)},GPU {probeGpu})" : "但本会话已试过同一键且未测通 ⇒ 本次全部跳过(不重复白等)")
+                                + (skippedBySession.Count > 0 ? $";跳过:{string.Join("/", skippedBySession)}" : ""));
+                            // 真探测:只对**台账放行**的引擎(被跳过的绝不再白等一次)
+                            if (willProbe.Count > 0)
+                            {
+                                using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+                                foreach (var eng in willProbe)
+                                {
+                                    try
+                                    {
+                                        await ALHPro.EngineService.EnsureNcnnProbeAsync(
+                                            eng, probeGpu, model: null, probeCts.Token, force: true);
+                                    }
+                                    catch (Exception ex) { AppLogger.Warn($"[探测] 诊断包强制实测 {eng} 失败(不影响打包):{ex.Message}"); }
+                                }
+                            }
+                            // 报告行:每个引擎都给一行(被跳过的也照实写"未测通 + 原因")
                             foreach (var eng in needProbe)
                             {
-                                try
-                                {
-                                    await ALHPro.EngineService.EnsureNcnnProbeAsync(
-                                        eng, probeGpu, model: null, probeCts.Token, force: true);
-                                }
-                                catch (Exception ex) { AppLogger.Warn($"[探测] 诊断包强制实测 {eng} 失败(不影响打包):{ex.Message}"); }
                                 // 【2026-09-27 · E1 修】这一行**不再看 EnsureNcnnProbeAsync 的返回值** —— 那个 bool
                                 // 把"探测跑完并判不可用"(结论已落盘)与"探测没跑完"(60 秒无响应被强杀 / 被取消 /
                                 // 空闲显存不足跳过)压成同一个 false ⇒ 1355 那台机什么都没测到却被写成

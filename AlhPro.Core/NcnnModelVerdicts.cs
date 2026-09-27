@@ -177,12 +177,41 @@ public sealed class NcnnProbeSessionLedger
 {
     private readonly HashSet<string> _tried = new(StringComparer.Ordinal);
     private readonly object _lock = new();
+    private int _attemptsAllowed;
+    private int _attemptsSkipped;
 
-    /// <summary>这个键**本次运行**是不是已经试过且没测通(true = 别再探了,直接用"本次未测通"回话)。</summary>
-    public bool ShouldSkip(string? key)
+    /// <summary>这个键**本次运行**是不是已经试过且没测通(true = 别再探了,直接用"本次未测通"回话)。
+    /// **只读查询**:不改变任何计数(报告措辞先看它,见 EngineService.WouldSkipProbeThisSession)。
+    /// ★ 它与下面那个带计数的重载是**同一个判据**,对同一状态给出**同一答案**
+    /// —— t62 的 B1 就是因为"闸门入口"与"只读查询"极性相反才漏出去的,所以现在**只有一份判断**。</summary>
+    public bool ShouldSkip(string? key) => ShouldSkip(key, countAttempt: false);
+
+    /// <summary>★ **跳过闸的唯一判据(带计数)**:true = 本会话已试过同一键且没测通 ⇒ **调用点必须跳过**。
+    /// 【2026-09-30 · t62 B1 留档】t60 曾把闸门入口写成 `TryBeginAttempt`(语义是"true = 允许发起"),
+    /// 而调用点仍按旧语义写 `if (助手(...)) { 跳过 }` ⇒ **台账为空时第一次调用就进跳过分支**:
+    /// 整个会话里超分 ncnn 探测(realesrgan/waifu2x/realcugan)永远不会真正发起、日志谎称"本会话已试过",
+    /// 能走 ncnn 的机器被静默降级 ONNX。根因是"同一件事有两个极性相反的说法"。
+    /// 现在:极性只说一种(**true = 已试过 ⇒ 跳过**),闸门与只读查询共用这一个方法;
+    /// `countAttempt: true` 时额外记一次"允许/跳过"(生产路径的真计数,见 <see cref="AttemptsAllowed"/>)。
+    /// 【计数为什么要有开关】报告路径(诊断包导出前的措辞)会**只读地问一次**,
+    /// 那次不该被算成"发起过一次探测" —— 所以只读版与生产版必须同判据、不同计数。</summary>
+    public bool ShouldSkip(string? key, bool countAttempt)
     {
-        if (string.IsNullOrEmpty(key)) return false;
-        lock (_lock) return _tried.Contains(key!);
+        if (string.IsNullOrEmpty(key))
+        {
+            if (countAttempt) lock (_lock) _attemptsAllowed++;
+            return false;
+        }
+        lock (_lock)
+        {
+            bool skip = _tried.Contains(key!);
+            if (countAttempt)
+            {
+                if (skip) _attemptsSkipped++;
+                else _attemptsAllowed++;
+            }
+            return skip;
+        }
     }
 
     /// <summary>记下"这个键试过了、但没得出任何结论"(**纯内存**,本进程有效;重启即清空)。</summary>
@@ -194,6 +223,12 @@ public sealed class NcnnProbeSessionLedger
 
     /// <summary>已经记下多少个键(日志/自测用)。</summary>
     public int Count { get { lock (_lock) return _tried.Count; } }
+
+    /// <summary>本会话经闸门**允许发起**过多少次探测(生产路径真计数;跳过的不算)。</summary>
+    public int AttemptsAllowed { get { lock (_lock) return _attemptsAllowed; } }
+
+    /// <summary>本会话被闸门**跳过**过多少次探测(生产路径真计数)。</summary>
+    public int AttemptsSkipped { get { lock (_lock) return _attemptsSkipped; } }
 }
 
 /// <summary>【2026-09-27 · 依据用户诊断包 ALHPro_Diag_20260927_1355】ncnn 探测**报告口径**的单一来源。
