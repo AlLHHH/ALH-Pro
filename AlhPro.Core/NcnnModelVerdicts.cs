@@ -93,10 +93,14 @@ public static class NcnnModelVerdicts
 
     /// <summary>汇总成一行(自检报告/日志用)。
     /// 【为什么要按模型说】旧文案只报"2 支模型中有失败" ⇒ 用户看到"整条引擎不可用",
-    /// 而实际只有一支失败。这里明确写出"引擎可用;仅 X 未通过"。</summary>
-    public static string Describe(IEnumerable<Entry> entries, string engineId, int gpuId)
+    /// 而实际只有一支失败。这里明确写出"引擎可用;仅 X 未通过"。
+    /// 【notConcludedReason】该引擎+该卡这次**没测通**(超时被强杀/取消/空闲显存不足)时传进来:
+    /// 那时"未测"要按统一口径说清楚(见 <see cref="NcnnProbeWording.NotConcluded"/>),不能只写一个"未测"
+    /// —— 用户会把它当成"测了、不通过"(1355 诊断包里就是这么被读错的)。null = 这次没有"未测通"记录,
+    /// 保持原样("未测(首次处理时自动实测)")。**默认 null 保证既有调用点行为一字不变。**</summary>
+    public static string Describe(IEnumerable<Entry> entries, string engineId, int gpuId, string? notConcludedReason = null)
     {
-        if (entries == null) return $"{engineId}=未测";
+        if (entries == null) return NotConcludedOrPlain($"{engineId}=未测", notConcludedReason);
         string prefix = $"{engineId}|{gpuId}|";
         int ok = 0, fail = 0;
         var failed = new List<string>();
@@ -114,13 +118,121 @@ public static class NcnnModelVerdicts
                     : IsNonNcnnModel(model) ? model + "(非 ncnn 模型,不计入判定)" : model);
             }
         }
-        if (ok == 0 && fail == 0) return $"{engineId}=未测(首次处理时自动实测)";
+        if (ok == 0 && fail == 0) return NotConcludedOrPlain($"{engineId}=未测(首次处理时自动实测)", notConcludedReason);
         // 【2026-09-27 改】这一行原来对所有引擎一律写"→走 ONNX",但 Real-CUGAN **没有 ONNX 版本**
         // (CPU 档实测会崩)⇒ 报告在这里就替用户编了一条不存在的出路。口径统一取自 RealCugan。
-        if (engine == false) return $"{engineId}=实测不可用({fail} 支模型失败)—— "
-            + (RealCugan.IsRealCuganId(engineId) ? RealCugan.UnavailableNotice : "走 ONNX");
+        if (engine == false) return $"{engineId}=实测不可用({fail} 支模型失败)—— " + NcnnProbeWording.UnavailableRoute(engineId);
         // 引擎可用:如实指出个别失败的模型,别让人以为整条坏了
         return fail == 0
             ? $"{engineId}=实测可用→走 ncnn({ok} 支模型全通过)"
-            : $"{engineId}=实测可用→走 ncnn(仅 {string.Join("、", failed)} 未通过,其余 {ok} 支照走 ncnn)";    }
+            : $"{engineId}=实测可用→走 ncnn(仅 {string.Join("、", failed)} 未通过,其余 {ok} 支照走 ncnn)";
+    }
+
+    /// <summary>没测通时把统一口径接在"未测"后面(短形式;长句留给逐引擎那一行与日志)。
+    /// 单一来源仍是 <see cref="NcnnProbeWording"/>。</summary>
+    private static string NotConcludedOrPlain(string plain, string? notConcludedReason)
+        => notConcludedReason is null ? plain : $"{plain.Split('=')[0]}={NcnnProbeWording.NotConcludedShort(notConcludedReason)}";
+}
+
+/// <summary>一次 ncnn 探测在**报告里**的三种结果(判据见 <see cref="NcnnProbeWording"/> 与
+/// <c>EngineService.DescribeProbeAttempt</c>):
+///   · <see cref="Available"/> —— 探测跑完、结论通过;
+///   · <see cref="Unavailable"/> —— 探测跑完、结论判不可用(**已落盘**,值得让用户知道);
+///   · <see cref="NotConcluded"/> —— 探测**没跑完**(超时被强杀 / 取消 / 空闲显存不足跳过):什么都没测到,
+///     只能说"本次未测通 + 不落盘 + 下次照旧试"。
+/// 【为什么要有这个区分】1355 诊断包里第三类被写成了第二类 ⇒ 用户读到"实测不可用"(显卡坏了)而实际什么都没测到。</summary>
+public enum NcnnProbeReport
+{
+    Available,
+    Unavailable,
+    NotConcluded,
+}
+
+/// <summary>【2026-09-27 · 依据用户诊断包 ALHPro_Diag_20260927_1355】ncnn 探测**报告口径**的单一来源。
+///
+/// 【为什么必须收成一处】那台机(GTX 1050 Ti / 空闲显存 0.7GB)的一次超时被写成了三句互相打脸的话:
+///   · 逐引擎探测行:`ncnn 探测(realesrgan, GPU 0): 实测不可用 → 走 ONNX 稳定引擎`
+///     —— 而那次探测**根本没跑完**:第 1 次 60 秒无响应被强杀 → 退避 3 秒 → 第 2 次任务被取消;
+///   · 同一份文件的汇总行:`ncnn 实测结论(导出时实时): realesrgan2026=未测`;
+///   · 启动自检报告:`可用性:GPU 加速可用`。
+///   三句话里只有第三句是对的(设备层可用),第二句也不算错(确实没落盘结论),第一句是假话。
+///
+/// 【规矩】**「实测不可用」只能由"探测真的跑完并判不可用"得出**;超时被强杀 / 进程起不来 / 被取消一律写
+/// 「本次未测通(原因:…)+ 不落盘结论 + 下次照旧试」,而且**只有这一处**定义这句话。
+/// 三条口径的分工(三处报告点各说什么范围):
+///   ① 逐引擎探测行(诊断包 `设备信息.txt`)= **这一次探测**的结果(可用/不可用/未测通);
+///   ② `ncnn 实测结论(导出时实时)` 汇总行 = **落盘结论**的汇总(它读的是结论缓存,没落盘就是"未测通");
+///   ③ 启动自检报告(VulkanCheck)= **设备/驱动这一层**的快照(能不能被 Vulkan 枚举、驱动/显存够不够),
+///      它不判断任何引擎走 ncnn 还是 ONNX —— 那句留给出厂后的生产帧尺寸实测。</summary>
+public static class NcnnProbeWording
+{
+    /// <summary>**「未测通」长句(唯一来源)**:超时被强杀 / 进程起不来 / 探测自身异常 / 被取消 / 空闲显存不足。
+    /// 关键三要素:①如实写原因;②明说**不落盘结论**(所以下次照旧试);③明说"这不代表该卡不可用"
+    /// (否则用户读成"显卡坏了")。</summary>
+    public static string NotConcluded(string? reason)
+        => $"本次未测通(原因:{(string.IsNullOrWhiteSpace(reason) ? "未记录(本次探测没跑完)" : reason!.Trim())})"
+         + "—— 不落盘结论(这不代表该卡不可用),下次照旧试";
+
+    /// <summary>**「未测通」短句(唯一来源)**:汇总行/自检报告这类一行里塞不下长句的地方用。
+    /// 与 <see cref="NotConcluded"/> 同源(同一处定义、同一套要素,只是不展开原因)。</summary>
+    public static string NotConcludedShort(string? reason)
+        => $"本次未测通(不落盘,下次照旧试{(string.IsNullOrWhiteSpace(reason) ? "" : ";原因:" + reason!.Trim())})";
+
+    /// <summary>怎么把一次失败的探测说成"原因"。
+    /// 【关键区分】取消落在探测过程里时,**不许说"进程起不来"**(那是归因错误,1355 的日志就这么写了)——
+    /// 被取消的探测可能根本没走完,只该说"未跑完 + 因取消未重试"。
+    /// 真实序列(1355:第 1 次 60 秒无响应被强杀 → 退避 3 秒 → 第 2 次取消)拼出来是:
+    /// `60 秒无响应(疑似 hang)被强杀;因取消未重试`。</summary>
+    public static string NotConcludedReasonFrom(ProbeFailureKind kind, string? detail, bool cancelled)
+    {
+        string d = (detail ?? "").Trim();
+        string shape = kind switch
+        {
+            ProbeFailureKind.Hang => (d.Length > 0 ? d : "60 秒无响应") + "(疑似 hang)被强杀",
+            ProbeFailureKind.None => d.Length > 0 ? d : "探测未跑完",
+            // 取消时不许说"进程起不来"(见上):只留过程明细,没有明细就只说形态
+            _ when cancelled => d.Length > 0 ? d : ProbeDiagnosis.ShortName(kind),
+            _ => ProbeDiagnosis.ShortName(kind) + (d.Length > 0 ? ":" + d : ""),
+        };
+        return cancelled ? shape + ";因取消未重试" : shape;
+    }
+
+    /// <summary>★ **这次探测跑完了吗**?—— 决定要不要落盘结论。
+    /// 只有"跑完并得出形态"的失败才配得上「实测不可用」(进程已退出/引擎已交出结果 ⇒ 行为是确定的);
+    /// **被强杀的 Hang、进程起不来(StartupFailed)、EngineMissing 之外的未知形态、以及任何取消都不落盘**
+    /// —— 否则就是把"没测到"记成"测出不可用"(1355 那台机就是这么被判了一整天)。
+    /// **纯函数**(可单测),EngineService 只问它、不许自己写 if。</summary>
+    public static bool IsConclusiveOutcome(ProbeFailureKind kind, bool cancelled)
+    {
+        if (cancelled) return false;
+        return kind is ProbeFailureKind.None                       // 通过
+            or ProbeFailureKind.CrashExitCode                       // 进程已退出:退出码就是结论
+            or ProbeFailureKind.NoOutput                            // 引擎跑完却没交产出(结构性失败)
+            or ProbeFailureKind.EmptyOutput                         // 引擎跑完交出 0 字节
+            or ProbeFailureKind.DefectiveFrame                      // 引擎跑完交出坏帧
+            or ProbeFailureKind.EngineMissing;                      // 引擎文件不在(与显卡无关,但结论确定)
+    }
+
+    /// <summary>「实测不可用」后面**那条出路**(与"能不能用"分开说):Real-CUGAN 没有 ONNX 版本,
+    /// 不许给它编一条不存在的路(口径取自 <see cref="RealCugan.UnavailableNotice"/>)。</summary>
+    public static string UnavailableRoute(string engineId)
+        => RealCugan.IsRealCuganId(engineId) ? RealCugan.UnavailableNotice : "走 ONNX 稳定引擎";
+
+    /// <summary>探测**通过**时那一句(逐引擎行用)。</summary>
+    public const string AvailableText = "实测可用 → 走 ncnn-Vulkan";
+
+    /// <summary>探测**跑完并判不可用**时那一句(逐引擎行用;出路由 <see cref="UnavailableRoute"/> 决定)。</summary>
+    public static string UnavailableText(string engineId) => "实测不可用 —— " + UnavailableRoute(engineId);
+
+    /// <summary>空闲显存不足、**跳过本次生产帧尺寸探测**时给用户的一句话(为什么 + 怎么办)。
+    /// 与"不可用"完全分开:这次**不落盘任何结论**,关掉占显存的程序后重试即可。</summary>
+    public static string VramShortfallHint(double freeGB, double needGB)
+        => $"本次先不跑这项实测:显卡当前只有 {freeGB:0.#}GB 空闲显存,而生产帧尺寸(1080×1920)的实测至少要留约 {needGB:0.#}GB"
+         + "(否则引擎容易卡住,白等一分钟还可能被误判成'不可用')。"
+         + "可以先关掉占显存的程序(游戏 / 浏览器 / 剪辑软件)再重试,或把「计算设备」改成 CPU(慢但稳);"
+         + "这次不会记成「不可用」,下次照旧会再试。";
+
+    /// <summary>跳过探测时记进"未测通原因"的那一句(单一口径,汇总行与逐引擎行共用)。</summary>
+    public static string VramShortfallReason(double freeGB, double needGB)
+        => $"空闲显存不足(实测 {freeGB:0.#}GB,低于下限 {needGB:0.#}GB)";
 }

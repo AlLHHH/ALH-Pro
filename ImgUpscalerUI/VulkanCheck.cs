@@ -610,6 +610,15 @@ public static class VulkanCheck
         sb.Append(string.Join(";", notes)).Append('\n');
 
         // ===== 各模型在本机的兼容性(按真实路由如实展示:走 ncnn 还是 ONNX、GPU 还是 CPU)=====
+        // 【2026-09-27 · 三处报告点的口径关系】写清范围,免得用户把几处结论读成互相打脸
+        // (1355 诊断包里「实测不可用」+「未测」+「可用性:GPU 加速可用」同框):
+        //   · 本报告 = **设备/驱动这一层**的快照(能不能被 Vulkan 枚举、驱动与显存够不够、有无硬编);
+        //   · 「某引擎走 ncnn 还是 ONNX」= **生产帧尺寸实测**的结论,可能产生在本报告之后;
+        //   · 那次实测没跑完时,它的口径是「本次未测通(不落盘,下次照旧试)」,与"不可用"是两回事
+        //     (统一措辞在 AlhPro.Core.NcnnProbeWording)。
+        sb.Append("报告范围:以下只讲【设备/驱动这一层】能不能用;每个引擎走 ncnn 还是 ONNX 由"
+            + "【生产帧尺寸实测】决定(见下「模型兼容性」逐条;那次实测没跑完时它会如实说"
+            + "「没测通、不落盘、下次照旧试」,不代表这张卡不可用)").Append('\n');
         sb.Append("模型兼容性:").Append('\n');
         bool onnxRife = RifeOnnxService.Available();
         // 【按实测结论报;没测过就如实写"未测",不再按显卡型号断言走哪条路】
@@ -619,17 +628,26 @@ public static class VulkanCheck
         var vWaifu = EngineService.TryGetNcnnVerdict("waifu2x", AppSettings.GpuIndex);
         // 【2026-09-24】Real-CUGAN 的实测结论单独取(它有自己的引擎身份键 realcugan2026)。
         var vRealCugan = EngineService.TryGetNcnnVerdict(AlhPro.Core.RealCugan.EngineName, AppSettings.GpuIndex);
-        string RouteOf(bool? verdict, string ncnnDesc, string cpuDesc)
+        // 【2026-09-27 · E1】没结论时要分清"压根没测过"与"这次没测通" —— 后者带原因,措辞与诊断包/日志同源
+        // (否则用户在报告里看到只说"未测"、在诊断包里看到"实测不可用",读起来就是互相打脸)。
+        string NotConcludedLine(string engine)
+        {
+            var reason = EngineService.LastNotConcludedReason(engine, AppSettings.GpuIndex);
+            return reason is null
+                ? "未测 —— 首次处理时自动实测(通过用 ncnn,失败才走 ONNX)"
+                : AlhPro.Core.NcnnProbeWording.NotConcludedShort(reason);
+        }
+        string RouteOf(bool? verdict, string ncnnDesc, string cpuDesc, string engine)
             => verdict.HasValue
                 ? (verdict.Value ? ncnnDesc : "走 ONNX DirectML(本机实测 ncnn 不可用;显卡加速,稳定)")
-                : (gpuOk ? "未测 —— 首次处理时自动实测(通过用 ncnn,失败才走 ONNX)" : cpuDesc);
+                : (gpuOk ? NotConcludedLine(engine) : cpuDesc);
 
         sb.Append("· 图片超分(Real-ESRGAN):")
-          .Append(RouteOf(vEsrgan, "ncnn-Vulkan 直接 GPU,加速,稳定", "CPU 软算,慢但稳")).Append('\n');
+          .Append(RouteOf(vEsrgan, "ncnn-Vulkan 直接 GPU,加速,稳定", "CPU 软算,慢但稳", "realesrgan")).Append('\n');
         sb.Append("· 视频超分(Real-ESRGAN):")
-          .Append(RouteOf(vEsrgan, "ncnn-Vulkan GPU 加速,快速;异常自动降级", "CPU 软算,较慢但稳")).Append('\n');
+          .Append(RouteOf(vEsrgan, "ncnn-Vulkan GPU 加速,快速;异常自动降级", "CPU 软算,较慢但稳", "realesrgan")).Append('\n');
         sb.Append("· 动漫超分(waifu2x):")
-          .Append(RouteOf(vWaifu, "ncnn-Vulkan GPU 加速,快速流畅", "CPU 软算,慢但稳")).Append('\n');
+          .Append(RouteOf(vWaifu, "ncnn-Vulkan GPU 加速,快速流畅", "CPU 软算,慢但稳", "waifu2x")).Append('\n');
         // 【2026-09-24 新增 Real-CUGAN 一行】它**没有 ONNX 版本** ⇒ 不能用上面的 RouteOf(那句会写成
         // "走 ONNX DirectML",而实际没有那条路)。
         // 【2026-09-27 改正三支】此前"失败/不可用时只能按 CPU 计算"是**假的**:它的 CPU 档(-g -1)在重编版上
