@@ -80,7 +80,7 @@ public class InterpDropdownContractTests
         var xaml = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml");
 
         // Real-ESRGAN 10 项(5 官方 + 3 自训 + Rev10 追加的两个 1x 修复条目)
-        AssertItemsAllHaveTooltipWithSize(ComboItems(xaml, "VideoEsrganModelCombo"), 10, "Real-ESRGAN");
+        AssertItemsAllHaveTooltipWithSize(ComboItems(xaml, "VideoEsrganModelCombo"), 9, "Real-ESRGAN");
         // waifu2x 那个下拉与它的 3 个模型项都已删除 ⇒ 视频页不许再有它的入口
         Assert.DoesNotContain("VideoWaifu2xModelCombo", xaml);
         Assert.DoesNotContain("models-cunet", xaml);
@@ -162,12 +162,11 @@ public class InterpDropdownContractTests
         {
             Assert.True(items[i].Contains("ToolTipService.ToolTip"),
                 $"{which} 第 {i + 1} 项没有悬停提示");
-            // 【1x 条目例外 · Rev10】「动漫 · Anime4K 修复」(libplacebo 着色器)与「现实 · 1x 修复」
-            // (内部跑 alhreal2x 再缩回)**都不是独立权重**,所以提示里天然没有「模型大小」——
-            // 要求它们写等于编一个不存在的数字。换成对等的契约:必须说清它是什么(不放大 / 怎么做),
-            // 否则用户会以为它们是普通放大模型,在 2x/4x 下选到它们。
-            bool is1xEntry = items[i].Contains($"Tag=\"{AlhPro.Core.Anime4k.ModelTag}\"")
-                             || items[i].Contains($"Tag=\"{AlhPro.Core.Upscale1x.RealTag}\"");
+            // 【1x 条目例外 · Rev11】「动漫 · Anime4K 修复」(libplacebo 着色器)**不是独立权重**,
+            // 提示里天然没有「模型大小」—— 要求它写等于编一个不存在的数字。换成对等的契约:
+            // 必须说清它是什么(不放大),否则用户会以为它是普通放大模型,在 2x/4x 下选到它。
+            // (Rev11 起「现实 · 1x 修复」已下线,这条例外只剩 Anime4K 一支。)
+            bool is1xEntry = items[i].Contains($"Tag=\"{AlhPro.Core.Anime4k.ModelTag}\"");
             if (is1xEntry)
             {
                 Assert.Contains("不放大", items[i]);

@@ -88,7 +88,7 @@
                              代价**平坦区噪声 1.74×**;与 Video2X 自带的 Anime4K 逐帧 44.4 dB = 同一处理。
                              ⚠ 回退:本机探测不过(缺 Vulkan/libplacebo)时自动退回旧的「2x 超分后缩回」并写日志,绝不让整批失败。 -->
                         <RadioButton x:Name="VScale1xRadio" Content="1x 修复"
-                                     ToolTipService.ToolTip="1x 修复(**不放大**,画面尺寸不变):两个条目二选一。&#x0a;「动漫 · Anime4K 修复(快)」= 开源着色器在原分辨率做修复+锐化,不跑超分模型,约 15 FPS@1080p,适合有压缩损伤/偏软的素材。&#x0a;「现实 · 1x 修复(中)」= 用自训的「现实 · alhreal2x」按 2x 超分后再精确缩回原尺寸,干净素材上更接近原片(PSNR 36.8 对 35.8dB、噪点 1.54× 对 1.85×),代价是要跑完整一遍 2x、慢约 5 倍。&#x0a;Anime4K 需要能用的 Vulkan 显卡(探测不过会自动改用「现实 · 1x 修复」并写日志)。"/>
+                                     ToolTipService.ToolTip="1x 修复(**不放大**,画面尺寸不变):用 Anime4K 着色器在原分辨率做修复+锐化。&#x0a;「动漫 · Anime4K 修复(快)」= 开源着色器在原分辨率做修复+锐化,不跑超分模型,约 15 FPS@1080p,适合有压缩损伤/偏软的素材。&#x0a;Anime4K 需要能用的 Vulkan 显卡(探测不过会自动改为「按 2x 超分后缩回原尺寸」并写日志)。"/>
                         <RadioButton x:Name="VScale2xRadio" Content="2x"/>
                         <RadioButton x:Name="VScale3xRadio" Content="3x"/>
                         <RadioButton x:Name="VScale4xRadio" Content="4x"/>
@@ -105,9 +105,9 @@
                                新条目只能加在这个位置,不能插到中间。 -->
                         <!-- (入口已移除,见上) -->
                     </RadioButtons>
-                    <!-- 【2026-09-21 再更新】1x 现在有**两个**条目(动漫 · Anime4K 修复 / 现实 · 1x 修复),
+                    <!-- 【2026-09-27】1x 现在只有**一个**条目(动漫 · Anime4K 修复)——「现实 · 1x 修复」按用户要求下线,
                          这句静态兜底文案也要跟着说清"两个都在做什么" —— 运行时那行是动态的(见 OneXScaleHint)。 -->
-                    <TextBlock x:Name="ScaleHint" Text="1x 修复不放大(在「超分模型」里选:动漫用 Anime4K 着色器原分辨率修复,现实用自训模型 2x 后缩回);2x 及以上由超分模型放大,倍率越高越慢、显存占用越大"
+                    <TextBlock x:Name="ScaleHint" Text="1x 修复不放大(在「超分模型」里选:用 Anime4K 着色器在原分辨率做修复+锐化;Vulkan 不可用时自动改为「按 2x 超分后缩回原尺寸」);2x 及以上由超分模型放大,倍率越高越慢、显存占用越大"
                                Style="{StaticResource HintText}" TextWrapping="Wrap"/>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
@@ -264,22 +264,17 @@
                              用户:"an4K 那个不在列表显示 只在选择 1x 时模型锁住 并且显示 an4K 并且给提示"。
                              为什么它不该在列表里:它不是放大模型(没有权重、不放大),挂在列表里会让"想放大的人"选到它。
                              所以这里**刻意没有** anime4k 项(有单测钉住"列表里不许出现它")。 -->
-                        <!-- 【Rev10 · 2026-09-21 追加】1x 档的两个模型条目(用户:"1x 也是可以选模型 加一个现实的1x模型")。
-                             ⚠ 它们是**末尾追加** ⇒ 0..7 的老序号一个都没动(VideoModelOrder Rev10 是恒等映射)。
-                             ⚠ 文案与 Core 的常量**逐字一致**(有单测钉住):Anime4k.MenuText / Upscale1x.RealMenuText。
-                             选到 1x 时,下拉里只有这两项可选,其余放大模型由代码置灰(见 VideoView.UpdateModelScaleAvailability)。 -->
+                        <!-- 【Rev10 · 2026-09-21 追加 / Rev11 · 2026-09-27 **删掉「现实 · 1x 修复」**】
+                             用户 2026-09-27:"还有1x 那个 第二个现实档先删掉吧" ⇒ 1x 档现在**只有 Anime4K 一条**。
+                             它原来是列表**最后一项**(序号 9),删掉后 0..8 一个都没动;老存档里存过 9 的由
+                             VideoModelOrder Rev11 映射显式改到 8(Anime4K),并写日志 —— 不许靠越界兜底。
+                             ⚠ 文案与 Core 的常量**逐字一致**(有单测钉住):Anime4k.MenuText。
+                             选到 1x 时,下拉里只有 Anime4K 可选,其余放大模型由代码置灰(见 VideoView.UpdateModelScaleAvailability)。 -->
                         <ComboBoxItem Tag="anime4k" AutomationProperties.Name="动漫 · Anime4K 修复（快）">
-                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">Anime4K:开源着色器(MIT),在**原分辨率**上做修复 + 锐化,**不放大**(1x)。&#x0a;实测(1080p 同帧):边缘过渡宽度 6.76 → 5.96px(更锐)、纹理量不丢、与源的细节相关性 0.909(增强原有细节,不是编出来);代价是平坦区噪声 1.74×,**脏素材慎用**。&#x0a;速度最快(实测约 15 FPS@1080p);需要可用的 Vulkan 显卡,探测不过会自动退回「现实 · 1x 修复」并写日志。<Run Foreground="#7BD88F">&#x0a;着色器(无权重)</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
+                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">Anime4K:开源着色器(MIT),在**原分辨率**上做修复 + 锐化,**不放大**(1x)。&#x0a;实测(1080p 同帧):边缘过渡宽度 6.76 → 5.96px(更锐)、纹理量不丢、与源的细节相关性 0.909(增强原有细节,不是编出来);代价是平坦区噪声 1.74×,**脏素材慎用**。&#x0a;速度最快(实测约 15 FPS@1080p);需要可用的 Vulkan 显卡,探测不过会**自动改为「按 2x 超分后缩回原尺寸」**并写日志(原「现实 · 1x 修复」条目已于 2026-09-27 下线)。<Run Foreground="#7BD88F">&#x0a;着色器(无权重)</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <Border Width="3" Height="14" CornerRadius="1.5" Background="#5FC9A8" VerticalAlignment="Center" ToolTipService.ToolTip="Anime4K 着色器(第三方开源,MIT;随 ffmpeg 目录下发)"/>
                                 <TextBlock Text="动漫 · Anime4K 修复（快）" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </ComboBoxItem>
-                        <ComboBoxItem Tag="alhpro-real1x" AutomationProperties.Name="现实 · 1x 修复（中）">
-                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">现实 · 1x 修复:**画面尺寸不变、不放大**。内部用自训的「现实 · alhreal2x」按 2x 超分,再精确缩回原尺寸。&#x0a;实测(2026-09-21 三素材对比):干净素材上它比 Anime4K **更接近原片**(PSNR 36.8 对 35.8dB)、噪点更低(1.54× 对 1.85×);有压缩损伤/偏软的素材上则相反。&#x0a;⚠ 速度标「中」是有依据的:它要跑**完整一遍 2x 超分**(本机约 0.35 秒/帧 @1080p),而 Anime4K 那条约 0.07 秒/帧 ⇒ 慢约 5 倍。<Run Foreground="#7BD88F">&#x0a;权重 2x(缩回 1x)</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <Border Width="3" Height="14" CornerRadius="1.5" Background="#8FA9D6" VerticalAlignment="Center" ToolTipService.ToolTip="自训现实模型(alhreal2x)按 2x 跑再缩回原尺寸"/>
-                                <TextBlock Text="现实 · 1x 修复（中）" VerticalAlignment="Center"/>
                             </StackPanel>
                         </ComboBoxItem>
                     </ComboBox>

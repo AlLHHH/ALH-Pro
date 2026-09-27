@@ -54,18 +54,16 @@ public class Anime4kWiringTests
         // 【2026-09-21 用户:"提示太长了 导致界面被下移"】实测数字不再堆在这条悬停提示里
         //   (改放桌面对比图与报告)⇒ 这里改钉**对用户有用的那一条**:必须写明硬件要求与回退行为。
         Assert.Contains("Vulkan", block);
-        // 【2026-09-21 更新】回退目标变了:原来是"退回旧的 2x 放大后缩回",现在退回的是
-        //   **列表里那一支正式条目「现实 · 1x 修复」**(它的内部就是"用自训模型 2x 跑再缩回")
-        //   ⇒ 文案与断言一起改(旧措辞"自动退回旧做法"已不存在)。同时钉住"这条提示要说明是**二选一**",
-        //   因为 1x 现在有两条(只讲 Anime4K 会让用户以为没有别的选择)。
-        Assert.Contains("现实 · 1x 修复", block);
-        Assert.Contains("两个条目二选一", block);
+        // 【Rev11 · 2026-09-27】「现实 · 1x 修复」已下线 ⇒ 回退不再是"退回另一条菜单项",
+        //   而是**内部改走"按下限倍率(2x)超分后缩回原尺寸"**,提示里必须这么写(否则用户找不到那个不存在的条目)。
+        Assert.Contains("自动改为", block);
+        Assert.DoesNotContain("两个条目二选一", block);   // 1x 只剩 Anime4K 一条
     }
 
     /// <summary>**1x 档的模型可选性**(2026-09-21 用户定案:"选倍率后 不支持的模型就灰掉"、"1x 也是可以选模型")。
     /// 规则(用户选的 A 方案):**只灰 1x 这一档** ——
-    ///   · 1x   ⇒ 只有两个 1x 修复条目可选(动漫 · Anime4K 修复 / 现实 · 1x 修复),其余放大模型全部置灰;
-    ///   · 2x+  ⇒ 反过来:放大模型全可选(**不减少任何现有能力**),两个 1x 条目置灰;
+    ///   · 1x   ⇒ 只有 1x 修复条目可选(Rev11 起只剩「动漫 · Anime4K 修复」一条),其余放大模型全部置灰;
+    ///   · 2x+  ⇒ 反过来:放大模型全可选(**不减少任何现有能力**),1x 条目置灰;
     ///   · 切换倍率时当前选中项若不可用 ⇒ 自动切到该档"上次用的那支",并写日志(不静默)。
     /// 【为什么必须钉】灰错了不会报错:只会在 1x 下让用户选到一个"根本不放大"的放大模型(白跑一遍还看不出问题)。</summary>
     [Fact]
@@ -94,9 +92,10 @@ public class Anime4kWiringTests
     {
         Assert.Equal("alhpro-real2x", AlhPro.Core.Upscale1x.RealEngineModel);
         Assert.Contains("AlhPro.Core.Upscale1x.RealEngineModel", ReadFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs"));
-        // 两个 1x 条目都要能被 Core 认出来
+        // 1x 条目要能被 Core 认出来;Rev11 起「现实 · 1x 修复」已下线 ⇒ 它的 Tag 不再算 1x 可选条目
+        //   (常量与回退路径仍在:Anime4K 不可用时内部就按 alhreal2x 2x→缩回 跑)
         Assert.True(AlhPro.Core.Upscale1x.Is1xEntry("anime4k"));
-        Assert.True(AlhPro.Core.Upscale1x.Is1xEntry("alhpro-real1x"));
+        Assert.False(AlhPro.Core.Upscale1x.Is1xEntry("alhpro-real1x"));
         Assert.False(AlhPro.Core.Upscale1x.Is1xEntry("realesrgan-x4plus"));
         // 只有 Anime4K 那条走着色器(现实那条走 2x 超分再缩回)
         Assert.True(AlhPro.Core.Upscale1x.UsesAnime4kShader("anime4k"));
@@ -129,11 +128,12 @@ public class Anime4kWiringTests
         var dropdown = xaml.Substring(combo, end - combo);
         Assert.Contains(Anime4k.MenuText, dropdown);
         Assert.Contains(Anime4k.Tooltip, dropdown);
-        Assert.Contains(Upscale1x.RealMenuText, dropdown);
-        Assert.Contains(Upscale1x.RealTooltip, dropdown);
-        // 两个 1x 条目必须挂在**这个**下拉里(上一版按第一个 </ComboBox> 找锚点,插进了 waifu2x 那个下拉 ✗)
+        // 【Rev11 · 2026-09-27】「现实 · 1x 修复」已下线 ⇒ 它的文案/Tag **不许**再出现在这个下拉里
+        Assert.DoesNotContain(Upscale1x.RealMenuText, dropdown);
+        Assert.DoesNotContain(Upscale1x.RealTooltip, dropdown);
+        Assert.DoesNotContain($"Tag=\"{Upscale1x.RealTag}\"", dropdown);
+        // 1x 条目必须挂在这个下拉里(上一版按第一个 </ComboBox> 找锚点,插进了 waifu2x 那个下拉 ✗)
         Assert.Contains($"Tag=\"{Anime4k.ModelTag}\"", dropdown);
-        Assert.Contains($"Tag=\"{Upscale1x.RealTag}\"", dropdown);
         // 而且不许出现在 waifu2x 的下拉里 —— 【2026-09-25】那个下拉已从视频页删除,所以直接钉"它不存在":
         // 一个不存在的容器当然也不可能夹带 1x 条目(比原来"在它的区间里搜"更强)。
         Assert.DoesNotContain("VideoWaifu2xModelCombo", xaml);

@@ -121,13 +121,14 @@ public class NcnnProbePoisoningTests
         Assert.False(AlhPro.Core.NcnnModelVerdicts.IsNonNcnnModel(AlhPro.Core.Upscale1x.RealEngineModel));
     }
 
-    /// <summary>★ 界面里那两支 Tag 必须与 Core 常量逐字一致(用常量断言,不再靠裸字符串)。</summary>
+    /// <summary>★ 界面里的 1x Tag 必须与 Core 常量逐字一致(用常量断言,不再靠裸字符串);
+    /// Rev11 起「现实 · 1x 修复」已下线 ⇒ 它的 Tag **不许**再出现在界面上(常量本身仍在 Core,回退路径用它)。</summary>
     [Fact]
     public void The_ui_tags_still_match_the_core_constants()
     {
         var xaml = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml");
         Assert.Contains($"Tag=\"{AlhPro.Core.Anime4k.ModelTag}\"", xaml);
-        Assert.Contains($"Tag=\"{AlhPro.Core.Upscale1x.RealTag}\"", xaml);
+        Assert.DoesNotContain($"Tag=\"{AlhPro.Core.Upscale1x.RealTag}\"", xaml);
     }
 
     private static string ReadRepoFile(params string[] parts)

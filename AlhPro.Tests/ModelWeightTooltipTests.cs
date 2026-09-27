@@ -37,9 +37,9 @@ public class ModelWeightTooltipTests
         ("alhpro-real2x", "", "realesrgan", "alhpro-real2x"),
         ("alhpro-game2x-v2", "", "realesrgan", "alhpro-game2x-v2"),
         ("alhpro-game2x-v3", "", "realesrgan", "alhpro-game2x-v3"),
-        // 1x 一栏的两项:Anime4K 走着色器(没有权重文件)、1x 修复是 2x 跑再缩回 —— 都写死(不蹭 Core 判据)
+        // 1x 一栏:Rev11 起只剩 Anime4K(走着色器、没有权重文件)⇒ 写死(不蹭 Core 判据)
+        //   「现实 · 1x 修复」条目已于 2026-09-27 下线,不再出现在下拉里 —— 它对应的引擎模型仍是回退路径用的那支。
         ("anime4k", "", "@handwritten", "着色器(无权重)"),
-        ("alhpro-real1x", "", "@handwritten", "权重 2x(缩回 1x)"),
         // Real-CUGAN 组合(3 项)
         ("models-se:-1", "动漫 · models-se -1（中）", "realcugan", "models-se:-1"),
         ("models-se:0", "动漫 · models-se 0（快）", "realcugan", "models-se:0"),
@@ -138,7 +138,7 @@ public class ModelWeightTooltipTests
             Assert.Equal("&#x0a;" + expected, actual);
             coreCovered++;
         }
-        Assert.Equal(11, coreCovered);   // 13 项里 11 项走 Core 判据、2 项写死
+        Assert.Equal(11, coreCovered);   // 12 项里 11 项走 Core 判据、1 项写死(Rev11 删掉 real1x 后)
     }
 
     // ───────────────────────── ③ 图片页:每一项都挂提示(此前一项都没有) ─────────────────────────
