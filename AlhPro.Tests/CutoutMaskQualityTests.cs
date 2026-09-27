@@ -41,7 +41,7 @@ public class CutoutMaskQualityTests
     public void Morphology_reuses_the_full_resolution_core_primitive()
     {
         Assert.Contains("AlhPro.Core.VideoMatting.PostProcessAlpha(alpha, w, h, 0, 0, 0, morphStrength)", CutoutCode);
-        Assert.Contains("RemoveSmallIslands(alpha, w, h, Math.Max(4, areaPerMaskPixel * 3))", CutoutCode);
+        Assert.Contains("RemoveSmallIslands(alpha, w, h, Math.Max(4, areaPerMaskPixel * 6))", CutoutCode);
         Assert.Contains("static void RemoveSmallIslands(float[] a, int aw, int ah, int minArea)", CutoutCode);
     }
 

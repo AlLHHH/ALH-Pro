@@ -6806,7 +6806,14 @@ public static class VideoService
             kv.TryGetValue("color_space", out string? sp);
             kv.TryGetValue("color_primaries", out string? pr);
             kv.TryGetValue("color_transfer", out string? tr);
+            // 【2026-09-27】输出色标计划**每次探测先回到默认**(bt709/tv)⇒ 上一条素材的结论不会泄漏到这一次;
+            // 只有下面"已知 SDR 且不是 bt709"那一路才会覆盖它。见 AlhPro.Core.ColorTagPlan。
+            _outputColorPlan = (AlhPro.Core.ColorTagPlan.Bt709Args, AlhPro.Core.ColorTagPlan.Bt709VuiBsf);
             string space = sp ?? "", prim = pr ?? "", trc = tr ?? "";
+            // 【2026-09-27】range 也要在外层读一份:上面那个 try 里的 rng 出了花括号就没了,
+            // 而"输出色标跟随源"的判断在外层分支里(编译期就会报 CS0103,别再来一次)。
+            kv.TryGetValue("color_range", out string? rg);
+            string colorRange = rg ?? "";
             // 【2026-09-18 诊断包定位到的真凶】原来只把 "unknown" 当"未知",别的值一律当"已知" ✗ ——
             // 而 ffprobe 对**没写标记**的文件会给 **"reserved"**(保留值)/"unspecified" ✗ → 被当成
             // "已知且不是 bt709" → **误判成广色域源 → 白加一层 zscale 色彩转换** → 后果有两种:
@@ -6845,6 +6852,13 @@ public static class VideoService
                 // 只在"标记非法/未指定"时兜底;真正的 bt709 源不动它。
                 if (!primKnown || !spaceKnown || !trcKnown)
                     InputColorOverride = " -color_primaries bt709 -color_trc bt709 -colorspace bt709";
+                // 【2026-09-27】这一路的像素**没有被转换** ⇒ 若源明确标了"已知 SDR 非 bt709"(如 SD 的
+                // bt470bg / smpte170m),输出就按**源的真实标签**写,别贴 bt709(贴错 = 按标签解释的播放器
+                // 看起来和源片不一样,属于用户报的"变色");标记缺失/本来就是 bt709 时这里返回默认值,一字不变。
+                var plan = AlhPro.Core.ColorTagPlan.ForSource(colorRange, prim, trc, space, convertedToBt709: false);
+                _outputColorPlan = (plan.args, plan.vuiBsf);
+                if (plan.args != AlhPro.Core.ColorTagPlan.Bt709Args)
+                    AppLogger.Info("[色彩] " + plan.describe);
                 return (null, null);
             }
             // 安全:任一关键字段未知 → 不做转换。zscale 需要明确的输入色域/传递/矩阵,缺一即报
@@ -6865,6 +6879,14 @@ public static class VideoService
     /// `Invalid color space` → `Could not open encoder before EOF` → 0 帧、exit -22;
     /// 在输入前加 `-color_primaries bt709 -color_trc bt709 -colorspace bt709` 后 **exit 0 / 120 帧全出** ✓。</summary>
     private static string InputColorOverride = "";
+
+    /// <summary>**输出侧**要写的色彩标记(默认 = 改动前的 bt709/tv)。
+    /// 由 <see cref="ProbeHdrToSdrAsync"/> 按源素材事实设置,规则与理由见 <see cref="AlhPro.Core.ColorTagPlan"/>:
+    /// 只有"源三件套都已知、且都不是 bt709、且没有被转换过"时才跟随源;其余(含 HDR/广色域已转码、
+    /// 标记缺失/非法)一律回到 bt709 —— 与改动前**逐字一致**。
+    /// 单条流水线 ⇒ 静态安全(与 <see cref="InputColorOverride"/> 同源理由);每次探测先复位,避免上一条素材的结论泄漏。</summary>
+    private static (string args, string bsf) _outputColorPlan =
+        (AlhPro.Core.ColorTagPlan.Bt709Args, AlhPro.Core.ColorTagPlan.Bt709VuiBsf);
 
     /// <summary>拆帧到 `framesDir`(JPG,yuvj420p),返回帧数。含硬解回退、看门狗、阶段进度上报。
     /// 【为什么 internal】原先视频抠图(`VideoMattingService`,已于 2026-09-23 下线)复用它而不是自己拼 ffmpeg:
@@ -9385,15 +9407,17 @@ public static class VideoService
         // 输出强制标 BT.709/tv:中间帧 JPG 不保留色彩元数据,ffmpeg 读 JPG 用默认 bt470bg/pc/yuvj420p,
         // 对 1080p 高清(BT.709)源会造成红蓝错色(用户实测:源 bt709→输出 bt470bg 红蓝)。统一标正确色彩。
         // (顺带纠正 video 帧 JPG 直走 GDI 后,合帧时色彩元数据缺失导致的同类偏差。)
-        const string colorArgs = " -color_range tv -colorspace bt709 -color_primaries bt709 -color_trc bt709";
+        // 【2026-09-27】不再写死:取探测阶段定下的输出色标计划(默认值 = 上面那串 bt709/tv,一字不差)。
+        // 规则/理由/单测见 AlhPro.Core.ColorTagPlan:只有"源明确标了已知 SDR 非 bt709"时才跟随源。
+        (string colorArgs, string vuiCodes) = _outputColorPlan;
         // 打包版 ffmpeg(n7.1-20240930)的编码器【静默忽略】-color_trc 与 -color_primaries
         // (libx264 与 h264_nvenc 均实测:只有 -colorspace 落进 VUI,另两个探回来是 unknown),
         // 于是成片缺 bt709 的传递/色域标签,播放器只能按默认猜 → 偏色。唯一可靠写法是用
         // bitstream filter 直接改 SPS 里的 VUI(1=bt709);bsf 作用在编码后的码流上,与具体编码器无关。
         // 若某台机器的硬编 + bsf 编不出有效文件,EnsureHwProbeAsync 的 1 帧真实参数探测会先发现并回退 CPU。
         string vuiBsf = encoder.StartsWith("hevc", StringComparison.OrdinalIgnoreCase) || encoder == "libx265"
-            ? " -bsf:v hevc_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1"
-            : " -bsf:v h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1";
+            ? " -bsf:v hevc_metadata=" + vuiCodes
+            : " -bsf:v h264_metadata=" + vuiCodes;
         if (bitrateKbps > 0)
         {
             int k = (int)Math.Max(100, bitrateKbps);

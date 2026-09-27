@@ -720,13 +720,16 @@ public static class CutoutService
             AlhPro.Core.VideoMatting.PostProcessAlpha(alpha, w, h, 0, 0, 0, morphStrength);
 
             // 3.3) 按面积去掉孤岛(**全分辨率**):开运算半径只有 1px,管不到"由 1~2 个遮罩像素放大来的斑点"
-            //      (4K 上那仍是个十几像素的色块,就是用户说的"像素点")。这里按"3 个遮罩像素那么大"折算面积
+            //      (4K 上那仍是个十几像素的色块,就是用户说的"像素点")。这里按"多少个遮罩像素那么大"折算面积
             //      阈值 ⇒ 任何图尺寸下清掉的是**同一来源**的小岛,而不是随分辨率漂移。
+            //      【2026-09-27 按作者要求 3 → 6】4K 上还剩 10 个很淡的小点(已不是方块),放宽到"约 6 个遮罩像素"
+            //      把它们也清掉;代价是极小的合法细节(孤立发丝尖、耳饰)可能被一起清 —— 所以只动"按面积算出的
+            //      极小连通块",主体永远不碰。
             //      【为什么写成下面的本地函数】纯数组操作、无 IO / 无 UI,本可以放进 AlhPro.Core 并配 Core 单测,
             //      但 2026-09-27 那次改动期间构建链一直解析到**陈旧的 Core 引用程序集**(编出来的 Core 里就是没这个成员),
             //      先把这段时间用在功能上 —— 逻辑一字未改地留在这里,将来可以整段挪进 Core 再补单测。
             int areaPerMaskPixel = Math.Max(1, (int)Math.Round((double)w * h / Math.Max(1, mw * mh)));
-            RemoveSmallIslands(alpha, w, h, Math.Max(4, areaPerMaskPixel * 3));
+            RemoveSmallIslands(alpha, w, h, Math.Max(4, areaPerMaskPixel * 6));
 
             static void RemoveSmallIslands(float[] a, int aw, int ah, int minArea)
             {

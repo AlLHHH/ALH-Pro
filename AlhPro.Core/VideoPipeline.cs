@@ -120,7 +120,17 @@ public static class VideoPipeline
             // 见 `LocalPriceBook` / `CalibMemory`),此处仅为预计时间的旧常数 —— 本机跑过一遍后由
             // `PerfMemory` 的实测值修正(那条线是另一套口径,见 docs §六.2)。
             double per = engine switch { "waifu2x" => 0.18, "realcugan" => 1.65, _ => 0.45 };
-            per *= areaN * Math.Max(0.5, scale / 1.0);
+            // 【2026-09-27 实测修正 · Real-CUGAN 不按倍率线性放大】它的成本**几乎与倍率无关** ——
+            //   1080p 40 帧实测:2x = 2.21、3x = 2.35(+6%)、4x = 2.46(+11%)秒/帧
+            //   (算力主要花在**输入分辨率**的特征提取上,最后那步上采样占比很小;见
+            //    docs\实测-RealCUGAN-3x4x单价-20260927.md)。而 1.65 这个常数**本身就是 1080p 2x 的实测价**,
+            //   旧写法再乘一次 `max(0.5, scale)` 等于按倍率重复计价 ⇒ 2x 高估约 1.5 倍、4x 高估约 2.7 倍
+            //   (**是偏悲观、不是偏乐观** —— 上一轮我把这条说反了,这里更正)。
+            //   其它引擎没有被这样测过 ⇒ 保持原口径一个字不动,避免拿没测过的数字去改别人的 ETA。
+            double scaleFactor = engine == "realcugan"
+                ? (scale > 3.5 ? 1.11 : scale > 2.5 ? 1.06 : 1.0)
+                : Math.Max(0.5, scale / 1.0);
+            per *= areaN * scaleFactor;
             // 新顺序:超分只跑【源帧数】(补帧排在超分之后,不再让超分帧数翻倍)——这是新顺序省钱的全部来源。
             // 旧顺序:超分跑补帧后的帧数 frames(= src × 倍率),与改动前逐字一致。
             s += (upFirst && interp && interpScale > 1 ? src : frames) * per;
