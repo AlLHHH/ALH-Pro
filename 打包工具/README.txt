@@ -23,7 +23,6 @@
     　　　birefnet-lite.onnx
     　　　birefnet.onnx
     　　　isnet-general-use.onnx
-    　　　isnet-anime.onnx
     　　　u2net.onnx
     　　　u2netp.onnx
     (6 个 .onnx 文件直接放在 rembg 里;不要解压缩成

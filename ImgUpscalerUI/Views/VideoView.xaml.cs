@@ -3220,6 +3220,10 @@ public sealed partial class VideoView : UserControl
         };
         foreach (var m in AlhPro.Core.ExperimentalEsrgan.All)
             names.Add(AlhPro.Core.ExperimentalEsrgan.SummaryText(m));
+        // 【2026-09-27 · Rev11】最后一格是 1x 档的 Anime4K(下拉序号 8 = VideoModelOrder.Anime4kIndex)。
+        // 不带它的话,选了 Anime4K 的预设摘要会落到越界兜底、显示成「动漫·animevideov3」——
+        // 那是**假话**(用户选的是 1x 修复,摘要却印一个 2x/4x 放大模型);名字取 Core 常量,别再抄一份措辞。
+        names.Add(AlhPro.Core.Anime4k.MenuText);
         return names.ToArray();
     }
     private static string UpEsrganModelName(int idx) => idx >= 0 && idx < UpEsrganModelNames.Length ? UpEsrganModelNames[idx] : "动漫·animevideov3";

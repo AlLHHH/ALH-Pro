@@ -31,7 +31,7 @@ ALH Pro 是一款**本地图片/视频处理桌面应用**(WinUI 3 / .NET 8 / x6
 | `engines\realesrgan\` | `realesrgan-ncnn-vulkan.exe`,`RealESRGAN_x4plus.onnx`,`realesr-animevideov3.onnx` | 超分 |
 | `engines\rife\` | `rife-ncnn-vulkan.exe`,`rife49.onnx` | 补帧(ncnn + ONNX 双路线) |
 | `engines\ffmpeg\` / `engines\ffmpeg8\` | ffmpeg.exe / ffprobe.exe | 拆帧/合帧/编码;ffmpeg8=备用 |
-| `engines\rembg\` | 抠图 6 模型(u2net/u2netp/birefnet/birefnet-lite/isnet-anime/isnet-general-use)+ `RealESRGAN_x4plus.onnx` | 注意 RealESRGAN_x4plus 是**超分用**,也放 rembg 目录 |
+| `engines\rembg\` | 抠图 **5** 模型(u2net/u2netp/birefnet/birefnet-lite/isnet-general-use;`isnet-anime` 已于 2026-09-27 连同权重一并删除)+ `RealESRGAN_x4plus.onnx` | 注意 RealESRGAN_x4plus 是**超分用**,也放 rembg 目录 |
 | `engines\demucs\` | htdemucs.onnx / htdemucs_ft_vocals.onnx | 人声分离 |
 | `engines\lavasr\` | backbone/denoiser_core/spec_head.onnx | 音频升采样 |
 | `engines\realesrgan\` | realesr-animevideov3.onnx(2.4MB 快模型) | 视频超分动漫快模型 |

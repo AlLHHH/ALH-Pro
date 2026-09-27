@@ -196,6 +196,27 @@ public class VideoModelOrderTests
             Assert.Equal(i, VideoModelOrder.Migrate(i, 10, out _));
     }
 
+    /// <summary>**预设摘要的模型名表必须覆盖 1x 那一条**(Rev11:Anime4K 是索引 8、也是最后一项)。
+    /// 【为什么】摘要按序号取名字表:表只有 8 项(0..7)时,`UpEsrganModelName(8)` 会落到越界兜底
+    /// 显示「动漫·animevideov3」—— 用户明明选的是"1x 修复",预设摘要却印了一个放大模型的名字,界面上是假话。
+    /// 名字必须取自 Core 常量(单一来源),不许在这里另抄一份措辞。</summary>
+    [Fact]
+    public void Preset_summary_name_table_covers_the_1x_entry()
+    {
+        string? path = null;
+        var dir = new System.IO.DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            var cand = System.IO.Path.Combine(dir.FullName, "ImgUpscalerUI", "Views", "VideoView.xaml.cs");
+            if (System.IO.File.Exists(cand)) { path = cand; break; }
+            dir = dir.Parent;
+        }
+        Assert.NotNull(path);
+        var src = System.IO.File.ReadAllText(path!);
+        Assert.Contains("names.Add(AlhPro.Core.Anime4k.MenuText);", src);
+        Assert.Equal(VideoModelOrder.Anime4kIndex, 8);   // 与上面那条常量契约联动
+    }
+
     /// <summary>**契约测试**:VideoView.xaml 里超分模型下拉的真实 Tag 顺序,必须与 VideoModelOrder 的映射表逐位一致。
     /// 【为什么必须有】2026-09-14 重排时 XAML 漏掉了一行(只留注释),下拉从 5 项变 4 项,而迁移表仍按 5 项映射
     /// (Rev2 的 4→新 2)—— 老用户存的序号会被解释成另一支模型,而且**编译、单测、启动验证全都通过**,
