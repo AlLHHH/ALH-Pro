@@ -54,9 +54,29 @@ public static class RealCugan
     };
 
     /// <summary>引擎在哪条路线上能跑:Real-CUGAN **只有 ncnn 权重**(engines\ 下没有任何 realcugan 的 .onnx)
-    /// ⇒ 探测失败时没有 ONNX 兜底,只能按 CPU 跑或如实拒绝。四类机器上的口径见
-    /// <c>docs\Real-CUGAN-四类机器口径.md</c>。</summary>
+    /// ⇒ 探测失败时**没有可换的路线**。注意:也不能"降 CPU 凑合"—— 它的 CPU 档(`-g -1`)在本仓库重编版上
+    /// **实测会崩**(启动后访问违例、0 帧产出,见 <c>VideoService.RealCuganRefusal</c> 的注释),
+    /// 所以真实处置是**开跑前明确拒绝**(见 <see cref="UnavailableNotice"/>),而不是落到 CPU。
+    /// 四类机器上的口径表见 <c>licenses\模型权重来源与校验值.md</c> 的「四类机器」一节(该文件逐台标注了
+    /// 哪些是实测、哪些**未实测** —— 未实测的那几条不许当成结论)。</summary>
     public const bool HasOnnxFallback = false;
+
+    /// <summary>"Real-CUGAN 在这台机器上跑不通"时的**唯一短句口径**:自检报告的模型兼容性行、
+    /// 诊断包的 ncnn 探测行、ncnn 结论汇总行都引它(单一口径 —— 曾经这三处各自拼话,其中两处写成
+    /// "只能按 CPU 计算 / 走 ONNX 稳定引擎",而两条路都不存在 ⇒ 用户照着找档位找不到)。
+    /// 【这一句里**不许写"改选 Real-ESRGAN"**】替代方案是不是成立**取决于上下文**:有可用 GPU、只是这一支
+    /// 探测不过 ⇒ 换 Real-ESRGAN 是真出路;而"本机根本没有可用显卡" ⇒ 视频页换了它也一样开不了跑
+    /// (硬编守门 <c>CpuFallbackPolicy</c> 对任何引擎都生效),那句话就成了新的假出路 ⇒ 由调用点按情形给。
+    /// 【改动这里必须同时改动 <c>VideoService.RealCuganRefusal</c>】那句是拒绝处理时给用户看的长版,
+    /// 二者说的是同一件事。</summary>
+    public const string UnavailableNotice =
+        "它只有 ncnn-Vulkan 权重(没有 ONNX 版本可换,CPU 档在重编版上实测会崩)"
+        + "⇒ 不会降 CPU、也不会静默换成别的模型,而是在开跑前明确拒绝";
+
+    /// <summary>引擎身份键是不是 Real-CUGAN。重编版叫 `realcugan2026`(见 <c>EngineService.RealCuganEngineId</c>),
+    /// 探测结论、日志与报告用的都是这个键 ⇒ 只认 <see cref="EngineName"/> 会漏掉重编版。</summary>
+    public static bool IsRealCuganId(string? engineId)
+        => engineId == EngineName || string.Equals(engineId, "realcugan2026", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>这个标签是不是 Real-CUGAN 的模型标签(`&lt;目录&gt;:&lt;降噪档&gt;`)。</summary>
     public static bool IsRealCuganTag(string? tag)

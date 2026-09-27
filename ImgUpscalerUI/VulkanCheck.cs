@@ -631,14 +631,25 @@ public static class VulkanCheck
         sb.Append("· 动漫超分(waifu2x):")
           .Append(RouteOf(vWaifu, "ncnn-Vulkan GPU 加速,快速流畅", "CPU 软算,慢但稳")).Append('\n');
         // 【2026-09-24 新增 Real-CUGAN 一行】它**没有 ONNX 版本** ⇒ 不能用上面的 RouteOf(那句会写成
-        // "走 ONNX DirectML",而实际没有那条路)。实测不可用时只剩 ncnn-CPU,必须如实说清楚。
+        // "走 ONNX DirectML",而实际没有那条路)。
+        // 【2026-09-27 改正三支】此前"失败/不可用时只能按 CPU 计算"是**假的**:它的 CPU 档(-g -1)在重编版上
+        // 实测会崩(访问违例、0 帧产出),真实行为是**开跑前明确拒绝**(VideoService.RealCuganNeedsGpuException)。
+        // 事实部分统一取自 AlhPro.Core.RealCugan.UnavailableNotice;出路那半句**按情形给** ——
+        // 「本机无可用 GPU」时不能叫用户改选 Real-ESRGAN:视频页还有一道硬编守门(CpuFallbackPolicy),
+        // 没有可用显卡时任何引擎都不会开跑,那句话同样是假出路(独立复核抓到,已改)。
         sb.Append("· 动漫超分(Real-CUGAN):")
           .Append(vRealCugan.HasValue
               ? (vRealCugan.Value
-                  ? "ncnn-Vulkan GPU 加速(无 ONNX 版本;实测 1080p 2x 约 0.6 秒/帧,是三者里最慢的一支)\n"
-                  : "本机实测 ncnn 不可用 —— 它没有 ONNX 版本可换,只能按 CPU 计算(明显慢);求快请改用 Real-ESRGAN\n")
-              : (gpuOk ? "未测 —— 首次处理时自动实测(通过用 ncnn GPU;失败只能按 CPU,没有 ONNX 兜底)\n"
-                       : "用不上 —— 本机无可用 GPU,而 Real-CUGAN 只有 ncnn 权重\n"));
+                  ? "ncnn-Vulkan GPU 加速(无 ONNX 版本;随包《使用教程》实测 1080p 2x 约 1.65 秒/帧,是三者里最慢的一支,"
+                    + "你机器上的真实速度以本机标定为准)\n"
+                  : "本机实测 ncnn 不可用 —— " + AlhPro.Core.RealCugan.UnavailableNotice
+                    + ";要处理请把视频页的「超分引擎」改选 Real-ESRGAN(本机有可用 GPU,它有 ONNX 稳定路线)\n")
+              : (gpuOk
+                  ? "未测 —— 首次处理时自动实测(通过用 ncnn GPU)。若不通过:" + AlhPro.Core.RealCugan.UnavailableNotice
+                    + ";届时可改选 Real-ESRGAN(它有 ONNX 稳定路线)\n"
+                  : "本机无可用 GPU —— " + AlhPro.Core.RealCugan.UnavailableNotice
+                    + ";**换成 Real-ESRGAN 对视频也没用**:视频处理另有一道「必须有可用硬件编码器」的守门,"
+                    + "没有显卡时按「视频不落 CPU」直接停下(图片放大 / 抠图 / 音频不受影响,那三项用 CPU 完全可用)\n"));
         // 【2026-09-22 用户追问"自训模型兼容性"时补的一条】自训那三支**只有 ncnn 权重**,
         // 所以"走不走到 ncnn"直接决定它们能不能用 —— 而这份报告此前只报到引擎级,
         // 用户根本看不出"我在下拉里选的那支,在我这台机器上到底能不能跑" ✗。

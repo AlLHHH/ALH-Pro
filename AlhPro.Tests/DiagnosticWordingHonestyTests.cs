@@ -26,6 +26,15 @@ namespace AlhPro.Tests;
 ///   根因:`CheckEngines()` 把 rembg 抠图模型也算进"引擎齐全",且**缺的具体项没打印**。
 ///   修法:抠图模型分出去单列(专用判据 `CheckCutoutModel`),汇总行经纯函数 `ReportSummary` 拼装并打印缺项。
 ///
+/// **C · Real-CUGAN「跑不通之后会怎样」被编出两条不存在的出路**(2026-09-27 从本机启动自检报告抓到)
+///   自检报告写「本机实测 ncnn 不可用 —— …只能按 CPU 计算(明显慢)」「失败只能按 CPU,没有 ONNX 兜底」,
+///   诊断包的逐引擎探测行写「实测不可用 → 走 ONNX 稳定引擎」,ncnn 结论汇总行写「→走 ONNX」。
+///   三条都指向**不存在**的出路:它没有 ONNX 版本(engines\ 下没有任何 realcugan 的 .onnx),而 CPU 档
+///   (`-g -1`)在本仓库重编版上实测会崩(访问违例、0 帧产出)。真实行为是**开跑前明确拒绝**
+///   (`VideoService.RealCuganNeedsGpuException`;视频页预检 `ShowPauseHintAsync` 早就说对了 ⇒ 只有报告在说假话)。
+///   修法:短句口径抽到唯一来源 `AlhPro.Core.RealCugan.UnavailableNotice`,三处报告点(自检报告的模型兼容性行 /
+///   诊断包探测行 / `NcnnModelVerdicts.Describe`)全引它;顺带修掉诊断包「ncnn 实测结论(导出时实时)」写两遍的重复行。
+///
 /// 【证据分层(诚实说明)】AlhPro.Tests 只引用 AlhPro.Core(无 WinUI,见 csproj 注释),**拿不到 App 的程序集**
 /// ⇒ 本文件钉的是**源码契约 + 判据常数 + 文档案例**;真正的**执行**证据在反射探针 `D:\deep\_t54\probe`
 /// (加载已编译的 ALHPro.dll,直接跑 `ProfileFor` / `DeviceHintText` / `ReportSummary`,喂那台机的画像
@@ -224,6 +233,104 @@ public class DiagnosticWordingHonestyTests
         string eng = ReadRepoFile("ImgUpscalerUI", "EngineService.cs");
         Assert.Contains("GTX 1050Ti", eng);
         Assert.Contains("引擎行必须仍是「齐全」", eng);
+    }
+
+    // ───────────────────────── C:Real-CUGAN「跑不通之后会怎样」不许编出路 ─────────────────────────
+
+    /// <summary>**C · 唯一短句口径**:Real-CUGAN 不可用时的说法必须来自 Core 的单一来源,并且**只提真实存在的处置**
+    /// (明确拒绝 + 改选 Real-ESRGAN),不许出现"走 ONNX"(它没有 ONNX 版本)也不许出现"降 CPU 凑合"
+    /// (CPU 档实测会崩:访问违例、0 帧产出)。这条红了 = 有人把口径又复制回调用点、或写回那两条假出路。</summary>
+    [Fact]
+    public void The_real_cugan_notice_names_only_routes_that_actually_exist()
+    {
+        Assert.False(RealCugan.HasOnnxFallback);                       // 前提:没有 ONNX 版本
+        Assert.Contains("明确拒绝", RealCugan.UnavailableNotice);        // 真实行为(见 VideoService 的异常)
+        Assert.Contains("CPU 档在重编版上实测会崩", RealCugan.UnavailableNotice);
+        Assert.DoesNotContain("走 ONNX", RealCugan.UnavailableNotice);   // 那条路不存在
+        Assert.DoesNotContain("按 CPU 计算", RealCugan.UnavailableNotice);
+        // 【出路不许写进唯一口径】"改选 Real-ESRGAN" 只在**有可用 GPU** 时成立:没有显卡的机器上视频页
+        // 还有一道硬编守门(CpuFallbackPolicy),换了它照样开不了跑 ⇒ 替代方案归调用点按情形给。
+        Assert.DoesNotContain("Real-ESRGAN", RealCugan.UnavailableNotice);
+        // 身份键两支都要认:重编版是 realcugan2026(探测结论/日志/报告用的都是它)
+        Assert.True(RealCugan.IsRealCuganId(RealCugan.EngineName));
+        Assert.True(RealCugan.IsRealCuganId("realcugan2026"));
+        Assert.False(RealCugan.IsRealCuganId("realesrgan2026"));
+        Assert.False(RealCugan.IsRealCuganId("waifu2x"));
+    }
+
+    /// <summary>**C · 口径必须与实现一致**:实现侧真的是"抛异常拒绝",而不是悄悄换引擎或落到 CPU。
+    /// 拒绝话术(<c>RealCuganRefusal</c>)与报告短句说的是同一件事 ⇒ 两边的关键词都要在。
+    /// 这条红了 = 实现改了(比如放开 CPU 档)而报告没跟上,或反过来。</summary>
+    [Fact]
+    public void The_refusal_is_actually_implemented_at_both_gates()
+    {
+        string vs = CodeOnly(ReadRepoFile("ImgUpscalerUI", "VideoService.cs"));
+        // 两道闸:① 计算设备选了 CPU / 本机无 GPU(开跑前);② 真机探测(含引擎级 + 三个降噪档)全失败
+        Assert.Contains("engine == AlhPro.Core.RealCugan.EngineName && gpuId < 0", vs);
+        Assert.Equal(2, Count(vs, "throw new RealCuganNeedsGpuException(RealCuganRefusal.Message("));
+        string msg = Block(vs, "internal static string Message(bool engineLevelAlsoFailed)", "    }\n}");
+        Assert.Contains("宁可明确拒绝", msg);
+        Assert.Contains("更不会悄悄换成别的超分模型", msg);              // 不静默换模型(硬规矩)
+        Assert.DoesNotContain("降到 CPU", msg);
+    }
+
+    /// <summary>**C · 自检报告那一行**(用户真正读到的):Real-CUGAN 的三个分支都必须引同一份口径,
+    /// 而且**任何一支都不许出现"走 ONNX"或"只能按 CPU"** —— 2026-09-27 之前的两支就是这么写的
+    /// (「本机实测 ncnn 不可用 —— …只能按 CPU 计算(明显慢)」「失败只能按 CPU,没有 ONNX 兜底」),
+    /// 而当天 12:00:46 的启动自检报告里就是这句话(开发机:未测分支)。
+    /// 这条红了 = 那两句假话被写回来,或有人绕过单一来源自己拼。</summary>
+    [Fact]
+    public void The_self_check_report_line_offers_no_imaginary_fallback()
+    {
+        string src = ReadRepoFile("ImgUpscalerUI", "VulkanCheck.cs");
+        string line = Block(CodeOnly(src),
+            "sb.Append(\"· 动漫超分(Real-CUGAN):\")",
+            "sb.Append(\"· 自训模型");
+        Assert.Equal(3, Count(line, "RealCugan.UnavailableNotice"));   // 实测不可用 / 未测 / 无 GPU 三支同源
+        Assert.DoesNotContain("走 ONNX", line);
+        Assert.DoesNotContain("按 CPU", line);
+        Assert.Contains("ncnn-Vulkan GPU 加速", line);                  // 通过那一支照旧说 GPU
+        // 【「本机无可用 GPU」那一支不许把用户支去改选引擎】没有显卡时视频页另有硬编守门,换 Real-ESRGAN
+        // 照样不会开跑 ⇒ 必须说出真正的拦路石(独立复核抓到过这个假出路)。
+        Assert.Contains("硬件编码器", line);
+        Assert.Contains("图片放大", line);                              // 并说清哪几项其实还能用 CPU
+        // 速度数字必须与随包文档同口径(旧值 0.6 秒/帧 是 Real-ESRGAN 那一档的量,写在 CUGAN 行里=虚报快 3 倍)
+        Assert.DoesNotContain("0.6 秒/帧", line);
+        // 通过与否都必须按**真机实测**说,不许按显卡型号断言(既有不变量)
+        Assert.Contains("vRealCugan.HasValue", line);
+    }
+
+    /// <summary>**C · ncnn 结论汇总行**:引擎级失败时,有 ONNX 路线的引擎照旧说"走 ONNX",
+    /// Real-CUGAN 必须改说真话。这条是**可执行**的(Core 纯函数,喂两条假定的结论即可),
+    /// 不是源码契约 —— 它同时钉住"别把 realesrgan 那一支也改坏"。</summary>
+    [Fact]
+    public void The_verdict_summary_names_only_routes_that_actually_exist()
+    {
+        var entries = new List<NcnnModelVerdicts.Entry>
+        {
+            new("realesrgan2026|0|", false, 0),
+            new("realcugan2026|0|", false, 0),
+        };
+        string real = NcnnModelVerdicts.Describe(entries, "realesrgan2026", 0);
+        Assert.Contains("实测不可用", real);
+        Assert.Contains("走 ONNX", real);                              // 它真有这条路
+        string cugan = NcnnModelVerdicts.Describe(entries, "realcugan2026", 0);
+        Assert.Contains("实测不可用", cugan);
+        Assert.DoesNotContain("走 ONNX", cugan);
+        Assert.Contains("明确拒绝", cugan);
+    }
+
+    /// <summary>**C · 诊断包的「设备信息.txt」**:①"ncnn 实测结论(导出时实时)"整份文件里**只能出现一次**
+    /// (此前 try 内、catch 后各写一遍 ⇒ 强制实测那台机器会看到两行同样的结论);
+    /// ②逐引擎探测行不许一律写"→ 走 ONNX 稳定引擎"(Real-CUGAN 没有这条路)。
+    /// 这条红了 = 重复行又回来,或探测行又回到一刀切话术。</summary>
+    [Fact]
+    public void The_diagnostic_package_writes_the_live_verdict_line_once()
+    {
+        string mp = CodeOnly(ReadRepoFile("ImgUpscalerUI", "Views", "MainPage.xaml.cs"));
+        Assert.Equal(1, Count(mp, "ncnn 实测结论(导出时实时)"));
+        Assert.Contains("AlhPro.Core.RealCugan.IsRealCuganId(eng)", mp);
+        Assert.Equal(1, Count(mp, "实测不可用 → 走 ONNX 稳定引擎"));   // 只剩"别的引擎"那一支
     }
 
     // ───────────────────────── 工具 ─────────────────────────
