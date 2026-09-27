@@ -240,7 +240,7 @@ public class NcnnProbeHonestyTests
     }
 
     /// <summary>**E2 阈值必须有依据(不许拍数字)**:常量值 + 注释里的两条依据必须都在,而且**属估计**要写明。
-    /// 依据①=同一台机的实测对照(1355:空闲 2.6/2.7GB 连过 5 次 vs 0.7GB 被强杀);
+    /// 依据①=同一台机的实测对照(1355:空闲 **2.5~2.7GB** 连过 5 次 —— 04:05 那次的读数是 **2.5GB**;vs 0.7GB 被强杀);
     /// 依据②=仓库既有显存门槛(SafeRender.GetVideoConcurrency 的"空闲 ≥3GB 才 2 路",取一半)。
     /// 这条红了 = 阈值被改成拍脑袋的数字,或依据被删(下一个人再也不敢动它)。</summary>
     [Fact]
@@ -251,7 +251,8 @@ public class NcnnProbeHonestyTests
         string doc = Block(src, "/// <summary>【2026-09-27 · E2】生产帧尺寸探测所需的**空闲显存下限**(GB)。", "public const double ProductionProbeMinFreeVramGB = 1.5;");
         Assert.Contains("估计", doc);                       // 属估计
         Assert.Contains("未逐档实测", doc);
-        Assert.Contains("2.6 / 2.7 GB", doc);               // 通过时的实测读数
+        Assert.Contains("2.5 ~ 2.7 GB", doc);               // 通过时的实测读数(范围;04:05 那次是 2.5GB)
+        Assert.Contains("2.5GB", doc);                      // 最低点要单独写出来(与日志逐字对得上)
         Assert.Contains("0.7 GB", doc);                     // 失败时的实测读数
         Assert.Contains("连续通过 5 次", doc);
         Assert.Contains("60 秒无响应被强杀", doc);

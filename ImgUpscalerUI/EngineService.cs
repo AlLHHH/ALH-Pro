@@ -284,14 +284,15 @@ public static partial class EngineService
     /// <summary>【2026-09-27 · E2】生产帧尺寸探测所需的**空闲显存下限**(GB)。
     /// 【口径:保守下限,**属估计、未逐档实测**】依据两条:
     ///   ① **同一台机的实测对照**(用户诊断包 ALHPro_Diag_20260927_1355,GTX 1050 Ti 4GB,同一引擎、同一探测形态 1080×1920):
-    ///        · 空闲 **2.6 / 2.7 GB**:生产帧尺寸探测**连续通过 5 次**(同一天 03:58 / 04:05 / 04:11 / 04:14 / 04:16);
+    ///        · 空闲 **2.5 ~ 2.7 GB**:生产帧尺寸探测**连续通过 5 次**(同一天 03:58 / 04:05 / 04:11 / 04:14 / 04:16;
+    ///          其中 04:05 那次日志 `资源自检:… 空闲显存 2.5 GB(nvidia-smi)` ⇒ 通过时的**最低点就是 2.5GB**);
     ///        · 空闲 **0.7 GB**:13:56 那次 **60 秒无响应被强杀**。
-    ///      两点之间取保守下限 **1.5GB**(约为通过时的一半,给驱动/桌面/别的程序留约 0.8GB 余量)。
+    ///      两点之间取保守下限 **1.5GB**(约为通过时最低点的一半,给驱动/桌面/别的程序留约 1.0GB 余量)。
     ///   ② **仓库已有显存门槛**:SafeRender.GetVideoConcurrency 里"空闲显存 ≥3GB 才允许 2 路并行"
     ///      (`vramOk2 = FreeVramGB >= 3`)—— 那是"再加一份引擎工作集"的口径;单次探测只需一份 ⇒ 取它的一半。
     /// 【为什么不是硬约束】它只决定"这次要不要白等一分钟",不决定"能不能用":闸门跳过时**不落盘任何结论**,
     /// 用户关掉占显存的程序后重试即可(与"记一天不可用"完全是两回事)。
-    /// 【保守性】宁可选低(1.5GB)也不误拦健康机器:开发机常年 3.8~11GB 空闲,那台 1050Ti 通过时是 2.6GB。</summary>
+    /// 【保守性】宁可选低(1.5GB)也不误拦健康机器:开发机常年 3.8~11GB 空闲,那台 1050Ti 通过时是 2.5~2.7GB。</summary>
     public const double ProductionProbeMinFreeVramGB = 1.5;
 
     /// <summary>生产帧尺寸探测前的空闲显存闸(依据见 <see cref="ProductionProbeMinFreeVramGB"/>)。
@@ -577,12 +578,26 @@ public static partial class EngineService
         {
             AppLogger.Info($"[探测] {engine} GPU({gpuId})强制真机重测(诊断包导出:绕过快速通道与缓存,拿到当前真实结论)");
         }
+        // 【2026-09-28 · t58 M1】★本会话"同一键最多探一次"。
+        // 承接 t56:被强杀/取消的探测**不落盘**(对),但代价是那类机器**每次任务**都重探 ——
+        // 复核方量到最坏 `60 秒超时 + 3 秒退避 + 60 秒 = 123 秒/引擎`,而一次视频任务可能触发 2~3 个引擎。
+        // 现在:同一键在本进程里"试过且没测通"就不再探(照样不落盘、照样按"本次未测通"报告)。
+        // **进程内记忆**(见 AlhPro.Core.NcnnProbeSessionLedger):重启软件即清空 ⇒ "下次照旧试"不变。
+        if (SessionAlreadyTriedNotConcluded(engine, gpuId, model))
+        {
+            int perAttempt = AlhPro.Core.ProbeRetryPolicy.PipelineFullFrameProbe.MaxAttempts;
+            AppLogger.Info($"[探测] {engine} GPU({gpuId})本会话已试过同一键且未测通 —— 跳过重复探测"
+                + $"(不再白等最坏 {perAttempt}×60 秒 + 退避;重启软件即可重试),本次按「未测通」报告");
+            return false;
+        }
         // 【2026-09-27 · E2】★生产帧尺寸探测前的【空闲显存闸】。
         // 【为什么加】用户诊断包 ALHPro_Diag_20260927_1355:GTX 1050 Ti 4GB,**空闲显存只剩 0.7GB**,
         // 却仍然去跑 1080×1920 的 ncnn 探测 ⇒ 白等 60 秒 + 被强杀 + 报告还把那一次写成"实测不可用"(E1)。
         // 【闸门只做一件事】明显不足时**不跑这次探测**,给用户一句"为什么 + 怎么办",并且**不落盘任何结论**
         // (不是能力判定,更不是"不可用")—— 关掉占显存的程序后重试即可。
         // 【测不到就不闸】AMD/Intel 读不到空闲显存(FreeVramMeasured=false)时一律照旧跑:不许拿"未知"当"不足"。
+        // 【刻意**不**记进 M1 台账】这条闸门根本没花等待时间,而且它给用户的承诺正是"关掉占显存的程序后重试" ⇒
+        // 同会话内重试必须仍然有效(把"没探过"当"探过了"会当场违背那句提示)。
         if (VramTooLowForProductionProbe(out double freeGb, out double needGb))
         {
             string reason = AlhPro.Core.NcnnProbeWording.VramShortfallReason(freeGb, needGb);
@@ -592,8 +607,10 @@ public static partial class EngineService
             AppLogger.Info(AlhPro.Core.NcnnProbeWording.VramShortfallHint(freeGb, needGb));
             return false;
         }
+        int runNo = Interlocked.Increment(ref _productionProbeRuns);
         AppLogger.Info($"[探测] {engine} GPU({gpuId})首次真机探测(生产帧尺寸 1080×1920,模型 {model ?? "(默认)"} + 带状黑判据,"
-            + $"最长约 60 秒;若超时/无响应会退避 {AlhPro.Core.ProbeRetryPolicy.PipelineFullFrameProbe.BackoffMs / 1000.0:0.#} 秒再试一次)...");
+            + $"最长约 60 秒;若超时/无响应会退避 {AlhPro.Core.ProbeRetryPolicy.PipelineFullFrameProbe.BackoffMs / 1000.0:0.#} 秒再试一次;"
+            + $"本会话第 {runNo} 次真机探测)...");
         // 【2026-09-24 · 超时/无响应只重试一次再判死】真机踩过(2026-09-22 22:22):一次
         // 「realesrgan GPU(0) 60 秒无响应(疑似 hang)」被强杀 → 当场落失败结论(TTL 1 天)→ 之后【一整天】
         // 该引擎/该模型全走 ONNX 慢路(实测 3880 ms/帧 vs 标称 0.26~0.30 秒/帧);而这个探测自己的注释就写着
@@ -618,6 +635,7 @@ public static partial class EngineService
             string cancelReason = AlhPro.Core.NcnnProbeWording.NotConcludedReasonFrom(
                 outcome.Kind, outcome.Detail, cancelled: true);
             NoteNotConcluded(engine, gpuId, cancelReason);
+            MarkSessionNotConcluded(engine, gpuId, model);     // 【t58 M1】本会话同一键不再重探
             LastProbeUserMessage = "";
             AppLogger.Warn($"[探测] {engine} GPU({gpuId}) {AlhPro.Core.NcnnProbeWording.NotConcluded(cancelReason)}");
             return false;
@@ -632,6 +650,7 @@ public static partial class EngineService
             string inconclusiveReason = AlhPro.Core.NcnnProbeWording.NotConcludedReasonFrom(
                 outcome.Kind, outcome.Detail, cancelled: false);
             NoteNotConcluded(engine, gpuId, inconclusiveReason);
+            MarkSessionNotConcluded(engine, gpuId, model);     // 【t58 M1】本会话同一键不再重探
             LastProbeUserMessage = "";
             AppLogger.Warn($"[探测] {engine} GPU({gpuId}) {AlhPro.Core.NcnnProbeWording.NotConcluded(inconclusiveReason)}");
             return false;
@@ -669,6 +688,31 @@ public static partial class EngineService
         return ok;
     }
 
+    /// <summary>【2026-09-28 · t58 M1】本会话"已试过但没测通"的键台账(**纯内存,永不落盘** ——
+    /// 机制与理由见 <see cref="AlhPro.Core.NcnnProbeSessionLedger"/>:把最坏等待从"每任务 123 秒"
+    /// 压到"每会话每键一次",同时保住 t56 的"重启照旧试")。</summary>
+    private static readonly AlhPro.Core.NcnnProbeSessionLedger _sessionNotConcluded = new();
+
+    /// <summary>本进程内**实际发起过**的生产帧尺寸探测次数(自测/诊断用:验证"每会话每键最多一次")。
+    /// 只在真正要起引擎探测那一刻 +1;命中缓存 / 快速通道 / 空闲显存闸 / 本会话跳过都**不算**。</summary>
+    private static int _productionProbeRuns;
+
+    /// <summary>本会话实际发起过的生产帧尺寸探测次数(读它不打日志,诊断包/自测可随时取)。</summary>
+    public static int ProductionProbeRunCount => System.Threading.Volatile.Read(ref _productionProbeRuns);
+
+    /// <summary>本会话已记下多少个"试过但没测通"的键(诊断用)。</summary>
+    public static int SessionNotConcludedCount => _sessionNotConcluded.Count;
+
+    /// <summary>这个键本会话是否已经试过且没测通(超分探测与 RIFE 探测共用同一本台账)。</summary>
+    private static bool SessionAlreadyTriedNotConcluded(string engine, int gpuId, string? model)
+        => _sessionNotConcluded.ShouldSkip(NcnnVerdictKey(engine, gpuId, model));
+
+    /// <summary>记下"这个键试过了、没测通"——**只活在本次运行**;调用方必须已经按统一口径报过"未测通"。</summary>
+    private static void MarkSessionNotConcluded(string engine, int gpuId, string? model)
+    {
+        try { _sessionNotConcluded.MarkNotConcluded(NcnnVerdictKey(engine, gpuId, model)); } catch { }
+    }
+
     /// <summary>补帧(RIFE)同款"先探后决定 + 结论缓存"。
     /// 旧逻辑在 50 系上【直接】改走 ONNX、不做任何探测(原文:"50系(Blackwell)ncnn 补帧引擎会 hang,直接改用 ONNX")。
     /// 现在改为真实插一帧实测(含"出帧但颜色损坏"判据):通过就用更快的 ncnn-Vulkan 补帧,失败才 ONNX。
@@ -684,11 +728,31 @@ public static partial class EngineService
             AppLogger.Info($"[探测] 补帧 {model} GPU({gpuId})沿用已缓存结论:" + (cached.Value ? "可用 → 走 ncnn-Vulkan" : "不可用 → 走 ONNX"));
             return cached.Value;
         }
+        // 【2026-09-28 · t58 M1 + L3】与超分探测同口径的两道闸:
+        //   ① M1:本会话这一键试过且没测通 ⇒ 不再重探(与超分共用 <see cref="_sessionNotConcluded"/>);
+        //   ② L3:取消闸门 —— RIFE 探测**此前没有**这道闸(超分探测有):ct 一取消,`IsRifeGpuUsableAsync`
+        //      会把 OperationCanceledException 抛进它自己的兜底 catch,返回 StartupFailed("进程起不来")⇒
+        //      这里就去落盘一条 `rife probe failed: 进程起不来;探测过程异常:The operation was canceled.`(TTL 1 天)
+        //      —— 那正是 t56 从超分探测里消灭掉的那类假结论(用户点一次取消 = 补帧接下来一整天走 ONNX)。
+        if (_sessionNotConcluded.ShouldSkip(key))
+        {
+            AppLogger.Info($"[探测] 补帧 {model} GPU({gpuId})本会话已试过同一键且未测通 —— 跳过重复探测(重启软件即可重试)");
+            return false;
+        }
         AlhPro.Core.ProbeFailureKind failKind = AlhPro.Core.ProbeFailureKind.None;
         string failDetail = "";
         bool ok = await IsRifeGpuUsableAsync(rifeExe, model, gpuId, ct,
             (k, d) => { failKind = k; failDetail = d; },
             frameW <= 0 ? 320 : frameW, frameH <= 0 ? 240 : frameH).ConfigureAwait(false);
+        // ② 取消闸门必须在落盘之前:取消不等于"这张卡不可用",不落盘任何结论(与超分探测逐字同口径)。
+        if (ct.IsCancellationRequested)
+        {
+            string cancelReason = AlhPro.Core.NcnnProbeWording.NotConcludedReasonFrom(failKind, failDetail, cancelled: true);
+            _sessionNotConcluded.MarkNotConcluded(key);
+            LastProbeUserMessage = "";
+            AppLogger.Warn($"[探测] 补帧 {model} GPU({gpuId}) {AlhPro.Core.NcnnProbeWording.NotConcluded(cancelReason)}");
+            return false;
+        }
         SaveNcnnVerdict(key, gpuId, null, ok,
             (ok ? "rife probe ok" : "rife probe failed: " + AlhPro.Core.ProbeDiagnosis.ShortName(failKind)) + $"; model={model}");
         if (ok)
@@ -2391,7 +2455,10 @@ public static partial class EngineService
         }
         catch (Exception ex)
         {
-            AppLogger.Warn($"[探测] RIFE GPU 探测异常(按不可用):{ex.Message}");
+            // 【2026-09-28 · t58 L3】与超分探测同口径:这条异常意味着**探测没跑完**(取消时抛出的
+            // OperationCanceledException 也会落到这里),不构成任何对这张卡的结论 —— 不再写"按不可用"。
+            AppLogger.Warn($"[探测] RIFE GPU 探测过程异常({ex.Message})—— 这次没跑完,交给上层按「未测通」收尾"
+                + (ct.IsCancellationRequested ? "(任务已取消)" : ""));
             onFailure?.Invoke(AlhPro.Core.ProbeFailureKind.StartupFailed, "探测过程异常:" + ex.Message);
             return false;
         }
