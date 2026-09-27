@@ -40,24 +40,50 @@ public class CalibrationSampleTests
         => Assert.Equal(0, CalibrationSample.TwoPointPerFrame(n, t1, tN));
 
     /// <summary>采样帧数 N 的选择:便宜的模型多采几帧、贵的少采,总等待被 30 秒量级框住,
-    /// 且**永不**低于 <see cref="LocalPriceBook.MinSampleFrames"/>(1~3 帧的差值不可信)、不高于 8。</summary>
+    /// 且**永不**低于 <see cref="LocalPriceBook.MinSampleFrames"/>(1~3 帧的差值不可信)、不高于 8。
+    /// 【2026-09-27 提速】贵档(每帧 ≥ <see cref="CalibrationSample.ExpensivePerFrame"/>)再按 4 封顶;
+    /// 便宜档保持 8 —— 降了它差值过不了相对噪声门槛,反而白标一场(下面 0.028 那一格就是反例)。</summary>
     [Fact]
     public void FramesFor_keeps_the_budget_and_respects_the_bounds()
     {
         Assert.Equal(CalibrationSample.MinFrames, CalibrationSample.MinFrames);          // 4
         Assert.Equal(CalibrationSample.MinFrames, LocalPriceBook.MinSampleFrames);
         Assert.Equal(8, CalibrationSample.MaxFrames);
+        Assert.Equal(4, CalibrationSample.MaxFramesExpensive);
+        Assert.Equal(0.20, CalibrationSample.ExpensivePerFrame, 9);
         Assert.Equal(30.0, CalibrationSample.BudgetSeconds, 9);
 
-        Assert.Equal(8, CalibrationSample.FramesFor(1.65, Px1080));                       // 30/1.65=18 → 夹到 8
-        Assert.Equal(6, CalibrationSample.FramesFor(5.0, Px1080));                        // 30/5=6
-        Assert.Equal(4, CalibrationSample.FramesFor(15.87, Px1080));                      // 30/15.87=1 → 抬到 4
+        // 贵档(≥0.20 s/帧):封顶 4 帧 —— 作者实测 Real-CUGAN 2x 从 1+8(14.2 s)降到 1+4(约 8 s)
+        Assert.Equal(4, CalibrationSample.FramesFor(1.65, Px1080));                       // Real-CUGAN 2x:原先 8
+        Assert.Equal(4, CalibrationSample.FramesFor(5.0, Px1080));                        // 30/5=6 → 贵档封顶 4
+        Assert.Equal(4, CalibrationSample.FramesFor(15.87, Px1080));                      // 30/15.87=1 → 抬到下限 4
+        Assert.Equal(4, CalibrationSample.FramesFor(0.20, Px1080));                       // 门槛边界:含等于
+        // 便宜档(<0.20 s/帧):仍用满 8(差值要靠帧数撑过噪声门槛)
+        Assert.Equal(8, CalibrationSample.FramesFor(0.19, Px1080));
+        Assert.Equal(8, CalibrationSample.FramesFor(0.028, Px1080));                      // 最便宜的 1x 档:必须 8
         Assert.Equal(CalibrationSample.MaxFrames, CalibrationSample.FramesFor(0, Px1080));      // 估值非法 → 上限
         Assert.Equal(CalibrationSample.MaxFrames, CalibrationSample.FramesFor(double.NaN, Px1080));
         Assert.Equal(CalibrationSample.MaxFrames, CalibrationSample.FramesFor(-1, Px1080));
-        // 预算非法 ⇒ 用内置预算;min/max 反了 ⇒ 按 min 处理(不许返回一个比下限还小的值)
-        Assert.Equal(8, CalibrationSample.FramesFor(1.65, Px1080, budgetSeconds: 0));
+        // 预算非法 ⇒ 用内置预算;min/max 反了 ⇒ 按 min 处理(不许返回一个比下限还小的值;贵档封顶也不许压破 min)
+        Assert.Equal(4, CalibrationSample.FramesFor(1.65, Px1080, budgetSeconds: 0));
         Assert.Equal(6, CalibrationSample.FramesFor(1.65, Px1080, min: 6, max: 4));
+        Assert.Equal(6, CalibrationSample.FramesFor(1.65, Px1080, min: 6));
+    }
+
+    /// <summary>【2026-09-27 提速的**安全前提**】4 帧样本在贵档上仍必须过 <see cref="CalibrationSample.MinDeltaRatio"/>
+    /// 那道相对噪声门槛 —— 否则"少等 6 秒"换来的是"标定被拒收、保守走旧顺序",那就白改了。
+    /// 用两点法的自洽模型(`t1 = F + p`、`t4 = F + 4p`)代入真实量级算比值。</summary>
+    [Theory]
+    [InlineData(0.75, 1.65)]     // Real-CUGAN 2x(作者机器:地板 ~0.75~0.92,每帧 1.3202 实测)
+    [InlineData(0.92, 1.3202)]
+    [InlineData(0.90, 0.50)]     // 贵档里的下沿:0.5 s/帧
+    [InlineData(0.90, 0.20)]     // 门槛本身
+    public void Four_frame_sample_still_clears_the_noise_ratio(double floor, double per)
+    {
+        double t1 = floor + per;
+        double t4 = floor + 4 * per;
+        Assert.True(t4 - t1 >= CalibrationSample.MinDeltaRatio * t1,
+            $"地板 {floor}、每帧 {per}:4 帧差值 {(t4 - t1):0.###} 必须 ≥ 门槛 {CalibrationSample.MinDeltaRatio * t1:0.###}");
     }
 
     /// <summary>估值走**内置表(他机资料)+ 面积折算**:Real-CUGAN 2x 在 1080p 上是 1.65 s/帧,

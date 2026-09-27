@@ -4,7 +4,7 @@ using AlhPro.Core;
 
 namespace ALHPro;
 
-/// <summary>**本机超分单价标定**的落盘记忆(`engine-prices.json`)。
+/// <summary>**本机超分单帧耗时标定**的落盘记忆(`engine-prices.json`)。
 ///
 /// 【为什么不复用 <see cref="PerfMemory"/>】那张表记的是"**整条链路**的秒/帧"(含拆帧/去重/补帧/编码),
 /// 用来估 ETA;而阶段顺序判据要的是"**纯超分引擎**的秒/帧"(已扣掉每进程地板)—— 两者口径不同,
@@ -43,11 +43,11 @@ public static class CalibMemory
                     ? LocalPriceBook.ParseJson(File.ReadAllText(path))
                     : Array.Empty<LocalPrice>();
                 if (_cache.Count == 0 && File.Exists(path))
-                    AppLogger.Warn($"⚠ 超分单价标定表为空或不可读({path})—— 本次按「本机未标定」保守用旧顺序,稍后可重新标定");
+                    AppLogger.Warn($"⚠ 超分单帧耗时标定表为空或不可读({path})—— 本次按「本机未标定」保守用旧顺序,稍后可重新标定");
             }
             catch (Exception ex)
             {
-                AppLogger.Warn($"⚠ 读超分单价标定表失败,按空表继续(不影响任务):{ex.Message}");
+                AppLogger.Warn($"⚠ 读超分单帧耗时标定表失败,按空表继续(不影响任务):{ex.Message}");
                 _cache = Array.Empty<LocalPrice>();
             }
             return _cache;
@@ -67,10 +67,10 @@ public static class CalibMemory
                 string tmp = FilePath + ".tmp";
                 File.WriteAllText(tmp, LocalPriceBook.ToJson(merged), new UTF8Encoding(false));
                 File.Move(tmp, FilePath, overwrite: true);   // 先写临时文件再原子替换,防写坏
-                AppLogger.Info($"超分单价标定已记住:{price.ModelKey}@{price.EngineScale}x = {price.SecondsPerFrame:0.####} s/帧"
+                AppLogger.Info($"超分单帧耗时标定已记住:{price.ModelKey}@{price.EngineScale}x = {price.SecondsPerFrame:0.####} s/帧"
                     + $"(采样 {LocalPrice.PixelsToText(price.SamplePixels)})→ {FilePath}");
             }
-            catch (Exception ex) { AppLogger.Warn($"⚠ 写超分单价标定表失败(本次仍按刚测出的数字判定,只是下次要重标):{ex.Message}"); }
+            catch (Exception ex) { AppLogger.Warn($"⚠ 写超分单帧耗时标定表失败(本次仍按刚测出的数字判定,只是下次要重标):{ex.Message}"); }
         }
     }
 

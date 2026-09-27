@@ -40,9 +40,9 @@ public static class UpscaleBackendPlan
     // ═══════════════ 【2026-09-25 修订 · F1】"后端身份"必须是一个可落盘的键 ═══════════════
     // 本机标定测出来的秒/帧**只在它被测的那条后端上成立**:ncnn-Vulkan 与 ONNX 是两套完全不同的运行时
     // (实测 ncnn 0.24~0.6 秒/帧,而 ONNX 落 CPU 是 8 秒/帧 —— 差一个数量级)。
-    // 拿在 ncnn 上测的单价去判定"本次其实走 ONNX"的运行 ⇒ u 偏小 ⇒ 判定偏向「补帧→超分」,
+    // 拿在 ncnn 上测的单帧耗时去判定"本次其实走 ONNX"的运行 ⇒ u 偏小 ⇒ 判定偏向「补帧→超分」,
     // 正是 2026-09-25 那次 39 分钟误判的同一类错。
-    // ⇒ 单价记录必须**带着后端**落盘,查找也必须按后端匹配(见 LocalPriceBook.Resolve / TryBuild)。
+    // ⇒ 单帧耗时记录必须**带着后端**落盘,查找也必须按后端匹配(见 LocalPriceBook.Resolve / TryBuild)。
 
     /// <summary>后端 = ncnn-Vulkan(本机 GPU)。</summary>
     public const string NcnnVulkan = "ncnn-vulkan";

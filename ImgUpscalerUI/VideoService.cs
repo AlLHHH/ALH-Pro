@@ -760,13 +760,13 @@ public static class VideoService
             // ===== 阶段顺序:1x/2x 走「超分 → 补帧」,3x/4x 保持「补帧 → 超分」=====
             // 【为什么】(2026-09-13 本机实测:1080p 源 240 帧,k=2 补帧,RIFE v4.13,realesr-animevideov3 2x,
             // 两序交错各 3 轮)中位 346.6s(超分→补帧) vs 411.6s(补帧→超分),新顺序快 65s ≈ 15.8%,逐档配对每档都快。
-            // 原因:超分单价按帧算(2x@1080p≈0.70s/帧),补帧按【输出帧数】算;先超分 → 超分只跑源帧数(少一半),
+            // 原因:超分单帧耗时按帧算(2x@1080p≈0.70s/帧),补帧按【输出帧数】算;先超分 → 超分只跑源帧数(少一半),
             // 补帧帧数不变(源帧数×倍率),总账少一半的超分帧。
             // 1x 也是此列:1x 内部就是「2x 放大后缩回源尺寸」(upscaleShrink1x),补帧仍在源分辨率上做,
             // 与旧顺序的补帧成本完全相同,但超分/缩回次数减半 → 约省 44%。
             // 3x/4x(任何 scale>2.001)按【旧顺序一字不改】:4x 超分要跑到 4320p(2.30s/帧),
             // 而补帧在 4320p 上是 0.76~1.09s/输出帧、在源分辨率上只有 0.10s/输出帧 —— 先补帧能把补帧按便宜价跑。
-            // 顺序分档的依据是"补帧单价随分辨率涨得比超分快",不是越新越好。
+            // 顺序分档的依据是"补帧单帧耗时随分辨率涨得比超分快",不是越新越好。
             bool upscaleRuns = doUpscale && !(scale <= 1.001 && !upscaleShrink1x);   // 超分阶段是否真的会执行
             // 【2026-09-13 实测回退:暂不启用新顺序】原判据为 frameInterp && upscaleRuns && !(scale > 2.001)。
             // 回退依据(用户真机日志:3 秒 / 72 帧 / 1080p / 超分 realesr-animevideov3 2x / 补帧 rife-v4.13 4x):
@@ -777,12 +777,12 @@ public static class VideoService
             //   1) 用 SafeRender.GetEngineThreadArgs() 同款线程参数,实测"补帧倍率 × 超分倍率 × 片长"矩阵;
             //   2) 按单帧成本之比(而不是"输出帧数超过多少")给门限 —— 帧数越大亏得越多,帧数阈值方向是反的。
             // 另注:进度区间已统一到 Core.ProgressBands,阶段切换时不再需要"随顺序改口径"。
-            // 【单一事实来源】阶段顺序的判据只允许有一处:PipelineOrderPlan.Decide(按实测单价判定);
+            // 【单一事实来源】阶段顺序的判据只允许有一处:PipelineOrderPlan.Decide(按实测单帧耗时判定);
             // 下面那行只是**回退值**(旧顺序),不许在管线或 UI 里另算一份 —— 免得再出现"管线回退了、
             // UI 还在按新顺序估"这种各写一份的老问题。
-            bool upscaleFirst = false;   // 回退值 = 旧顺序;真正的顺序由 PipelineOrderPlan(核心库)按实测单价判定
+            bool upscaleFirst = false;   // 回退值 = 旧顺序;真正的顺序由 PipelineOrderPlan(核心库)按实测单帧耗时判定
             // 【Q1 · 2026-09-13】上面这行只是【回退值】(全局开关口径)。真正的顺序在去重结果/补帧倍率确定后
-            // 由 AlhPro.Core.PipelineOrderPlan 按**实测单价**判定(超分贵就先超分,补帧在放大帧上做太贵就先补帧);
+            // 由 AlhPro.Core.PipelineOrderPlan 按**实测单帧耗时**判定(超分贵就先超分,补帧在放大帧上做太贵就先补帧);
             // 判定的日志会另打一行「顺序判定:… → 选择 X 顺序」(可审计)。这里的进度区间/早期日志仍按回退值打印,
             // 判定点之后 upscaleFirst 会被覆写,而进度区间(interpPctBase/Span)在第 3) 块之前就已确定 ——
             // 见判定点处的注释(两点都为"旧顺序"口径,避免进度条先跳后倒退)。
@@ -797,7 +797,7 @@ public static class VideoService
                 : AlhPro.Core.ProgressBands.Of(AlhPro.Core.ProgressBands.Stage.Interp).hi - AlhPro.Core.ProgressBands.Of(AlhPro.Core.ProgressBands.Stage.Interp).lo);
             AppLogger.Info($"阶段顺序(回退值,待 Q1 自动判定):{(upscaleFirst ? "超分 → 补帧" : "补帧 → 超分")}"
                 + $"(up={doUpscale}/shrink1x={upscaleShrink1x}/scale={scale:0.###},interp={frameInterp},超分是否执行={upscaleRuns})"
-                + $" —— 真正的顺序由 AlhPro.Core.PipelineOrderPlan 按实测单价在补帧/超分都确定后判定(见「顺序判定:…」那行)");
+                + $" —— 真正的顺序由 AlhPro.Core.PipelineOrderPlan 按实测单帧耗时在补帧/超分都确定后判定(见「顺序判定:…」那行)");
             // ===== 设备选择映射诊断(编号错位排查命门):设置 GpuIndex → 实际引擎 gpuId → 设备名 =====
             try
             {
@@ -2252,11 +2252,11 @@ public static class VideoService
                 // ═══════════ 【2026-09-25 修订 · F1】超分 GPU 探测与"设备定稿"必须先于阶段顺序判定/标定 ═══════════
             // 【原设计错在哪】探测块原来在超分阶段里(判定点之后约 300 行):它会改口 upGpu/waifuOnnx/upOnnxDml、
             // **改写 model**(Real-CUGAN 换降噪档)、甚至直接 throw;而标定与顺序判定都跑在它【之前】⇒
-            // 标定可能测到生产根本不会走的后端,并把偏小的错单价**永久落盘**(判定于是偏向「补帧→超分」——
+            // 标定可能测到生产根本不会走的后端,并把偏小的错单帧耗时**永久落盘**(判定于是偏向「补帧→超分」——
             // 正是 2026-09-25 那次 39 分钟误判的同一类)。而 `ShouldUseOnnx*` 读的是**已落盘**的探测结论
             // (未测过时按"不算风险"处理)⇒ **首次运行必然撞上**这个错位。
             // 【现在】把"探测 + 设备定稿"整段提前到判定之前 ⇒ 判定点能算出**本次真正会走的后端**,
-            // 单价就按这个后端落盘与查找(LocalPriceBook 的 Backend 键)。
+            // 单帧耗时就按这个后端落盘与查找(LocalPriceBook 的 Backend 键)。
             // 【进度百分比用 6(准备/判定档),不借超分档的 45%】否则进度条先跳到 45 再回落到补帧的 10~45,
             // 用户看到的是"倒退"。
             if (upscaleRuns)
@@ -2380,13 +2380,13 @@ public static class VideoService
                 }
             }
 
-            // 【任务 Q1 · 2026-09-13】阶段顺序不再靠全局开关(常量 false),改为**按实测单价自动判定**:
+            // 【任务 Q1 · 2026-09-13】阶段顺序不再靠全局开关(常量 false),改为**按实测单帧耗时自动判定**:
                 // 超分单帧成本 u 与"补帧在源分辨率/放大后分辨率的单帧成本"比较,谁便宜谁先跑。
                 // 判据/成本模型/安全边际(节省 <15% 不切换)/未标定回退,全在 AlhPro.Core.PipelineOrderPlan
                 // (纯函数 + 单测)。
-                // 【2026-09-14】三组数字(超分单价 / 补帧锚点 / 安全边际)原可被"在线参数"覆盖,那个功能已整体删除
+                // 【2026-09-14】三组数字(超分单帧耗时 / 补帧锚点 / 安全边际)原可被"在线参数"覆盖,那个功能已整体删除
                 // ⇒ 现在这些数字都来自代码里的常量,不再有联网覆盖层。
-                // 【2026-09-25 A+B】其中"超分单价"这一项的**来源变了**:内置表是开发机(RTX 4060 Laptop)一台机器的
+                // 【2026-09-25 A+B】其中"超分单帧耗时"这一项的**来源变了**:内置表是开发机(RTX 4060 Laptop)一台机器的
                 // 实测,**不再参与判定**(用户原话:「别人使用时…也是用我的设备???」)⇒ 判定只吃本机标定
                 // (CalibMemory,键含机器指纹);本机没标定过就在下面现场标一次,标不出来就保守走旧顺序。
                 // 补帧锚点与安全边际仍是原口径(与机器相关性低得多,且属本轮 non-goal)。
@@ -2395,15 +2395,15 @@ public static class VideoService
                 {
                     double upScaleNow = upscaleShrink1x ? 2.0 : scale;   // 引擎实际跑的倍率(1x 缩回 = 按 2x 跑再缩回)
                     double areaScaleNow = upscaleShrink1x ? 1.0 : scale; // 补帧真正吃到的帧相对源帧的放大倍数(缩回后 = 1)
-                    // ===== 【2026-09-25 A+B + 修订 F1 · 判据只吃「本机实测单价」】=====
+                    // ===== 【2026-09-25 A+B + 修订 F1 · 判据只吃「本机实测单帧耗时」】=====
                     // 用户原话:「那别人使用时,这个检查决定先超分还是先补帧也是用我的设备???」
-                    // ⇒ 内置表(开发机 RTX 4060 Laptop)不再参与判定;只看**这台机器**上标出来的单价
+                    // ⇒ 内置表(开发机 RTX 4060 Laptop)不再参与判定;只看**这台机器**上标出来的单帧耗时
                     //   (CalibMemory,键含机器指纹 + **后端**)。
                     // 【修订 F1(2026-09-25)】探测与设备定稿已经在上文完成 ⇒ 这里的 upGpu/waifuOnnx/upOnnxDml
                     // 就是**本次真正会走的那条路**;后端字符串由与批次循环同一个纯函数算出(UpscaleBackendPlan),
-                    // 单价就按这个后端落盘与查找:
-                    //   · I1 落盘单价 = 在本次真跑的那条后端上测出来的;
-                    //   · I2 在别的后端上测的单价**查不到**(后端进键)—— 绝不会被用来判定本次;
+                    // 单帧耗时就按这个后端落盘与查找:
+                    //   · I1 落盘单帧耗时 = 在本次真跑的那条后端上测出来的;
+                    //   · I2 在别的后端上测的单帧耗时**查不到**(后端进键)—— 绝不会被用来判定本次;
                     //   · I4 后端没定稿(空)时 UpscaleCalibrator 与 LocalPriceBook.TryBuild 都会**拒收**,不落盘。
                     // 只有"超分与补帧都要真跑"时顺序才有意义;其余情况保持 upscaleFirst 的原值(全局开关口径)。
                     bool calibPrefEsrgan = upGpu >= 0 && engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan();
@@ -2460,22 +2460,22 @@ public static class VideoService
                             {
                                 // 【不许静默】标定没成功要如实说一句(短话),并说明这次按哪条路走。
                                 progress?.Report((6, "· " + AlhPro.Core.LogShortText.ClampToChineseLimit(
-                                    $"本机超分单价没标定成功({UpscaleCalibrator.LastRejectReason})→ 本次保守按「补帧→超分」,不影响成片")));
+                                    $"本机超分单帧耗时没标定成功({UpscaleCalibrator.LastRejectReason})→ 本次保守按「补帧→超分」,不影响成片")));
                             }
                             // 标定耗时**单独记一个阶段**;它由 VideoView 的任务入口归零 + 记账行从 PerfMemory
                             // 样本窗口扣除(每任务一次,累计本任务内所有视频的标定;见 docs §六.5)。
-                            AppLogger.Info($"阶段耗时(准备·超分单价标定):{UpscaleCalibrator.LastTotalSeconds:0.#} 秒"
+                            AppLogger.Info($"阶段耗时(准备·超分单帧耗时标定):{UpscaleCalibrator.LastTotalSeconds:0.#} 秒"
                                 + "(一次性;含两次引擎启动。该耗时会在本次任务结束时从 PerfMemory 的每帧成本样本窗口里扣除 —— 标定过程本身也不接逐帧进度)");
                         }
                         catch (Exception ex)
                         {
                             // 双保险:UpscaleCalibrator 内部已吞异常。这里再兜一层,绝不让"标定"成为任务失败的原因。
-                            AppLogger.Warn($"⚠ 超分单价标定阶段异常(已忽略,任务继续):{ex.Message}");
+                            AppLogger.Warn($"⚠ 超分单帧耗时标定阶段异常(已忽略,任务继续):{ex.Message}");
                             progress?.Report((6, "· " + AlhPro.Core.LogShortText.ClampToChineseLimit(
-                                "本机超分单价标定异常 → 本次保守按「补帧→超分」,不影响成片")));
+                                "本机超分单帧耗时标定异常 → 本次保守按「补帧→超分」,不影响成片")));
                         }
                     }
-                    // 【I2】判定只喂**该后端**的单价(后端不匹配的记录当没这一格);未标定 ⇒ Decide 内部走旧顺序。
+                    // 【I2】判定只喂**该后端**的单帧耗时(后端不匹配的记录当没这一格);未标定 ⇒ Decide 内部走旧顺序。
                     var sameBackendBook = calibBook
                         .Where(p => AlhPro.Core.UpscaleBackendPlan.NormalizeBackend(p.Backend) == AlhPro.Core.UpscaleBackendPlan.NormalizeBackend(calibBackend))
                         .ToList();
@@ -2498,7 +2498,7 @@ public static class VideoService
                     // 【任务 X1】界面日志区只放【结论短句】:完整判据(u / r_lo / r_hi / 门槛秒数 / 成本表出处)
                     // 已经由上面两行 AppLogger 写进诊断文件 —— 用户真机就是被那一长串挡住、没找到结论的。
                     // 文案规则(不含"完成"/不含"第 N 帧 / 共 M 帧"/≤60 汉字)由 Core.LogShortText 负责并被单测钉住。
-                    // 【2026-09-25 · 未标定不许报假百分比】判据在未标定时把 u 当成 0(表示"没采信任何单价"),
+                    // 【2026-09-25 · 未标定不许报假百分比】判据在未标定时把 u 当成 0(表示"没采信任何单帧耗时"),
                     // 拿它算出来的"先超分反而慢 X%"是**假精度**(用户真机会被这句话误导)⇒ 那时只报"保守不切换"。
                     // 【修订 R2】若本机**在另一条后端上**标过这一格(所以这次被忽略),必须像"另一台机器"那样
                     // 明写出来 —— 否则用户会以为"本机压根没标过",下次还是在同一条路上白等。
@@ -2509,7 +2509,7 @@ public static class VideoService
                             orderPlan.Measured || interpScale < 2
                                 ? $"顺序:{AlhPro.Core.LogShortText.OrderShortText(orderPlan, AlhPro.Core.PipelineOrderPlan.MinSavingsPercent)}"
                                 : otherBackend is null
-                                    ? "顺序:补帧→超分(本机还没标定超分单价,保守不切换;详情见诊断日志)"
+                                    ? "顺序:补帧→超分(本机还没标定超分单帧耗时,保守不切换;详情见诊断日志)"
                                     : $"顺序:补帧→超分(本机这一格是在另一后端 {otherBackend} 上标的,已忽略;详情见诊断日志)")));
                     }
                     // 【任务 Q2】两阶段批计划:两个阶段的输入分辨率不同,各自按自己的面积算每批帧数,分别落日志。
@@ -2710,7 +2710,7 @@ public static class VideoService
                 // 【2026-09-25 修订 · F1】超分 GPU 探测与 upGpu/waifuOnnx/upOnnxDml/ncnnUnreliable 的**定稿**
                 // 已上移到「阶段顺序判定」之前(见上方 `if (upscaleRuns) { ... }` 那一整段)。原因:
                 // 标定与判定必须先知道**本次真正会走的后端**,否则标定可能测到生产不会走的后端,并把偏小的
-                // 错单价永久落盘(判定于是偏向「补帧→超分」—— 2026-09-25 那次 39 分钟误判的同一类)。
+                // 错单帧耗时永久落盘(判定于是偏向「补帧→超分」—— 2026-09-25 那次 39 分钟误判的同一类)。
                 // 这里只保留 1x 缩回需要的真实尺寸(origW/origH)与引擎倍率 upScale。
                 // 分批目录批处理超分 + 并行 2 批(多 worker):
                 // 一次引擎启动处理一批帧,避免每帧启动引擎;批间并行提高 GPU 利用率

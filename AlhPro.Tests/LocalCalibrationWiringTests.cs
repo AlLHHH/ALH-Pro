@@ -10,7 +10,7 @@ namespace AlhPro.Tests;
 ///
 /// 【为什么这里只能"扫源码"】`AlhPro.Tests` 只引用 `AlhPro.Core`(纯逻辑库,可单测),**引用不到** WinUI 层;
 /// 而 `CalibMemory` 要碰 `ParaPaths`/`GpuInfo`/`EngineService`(都在 UI 层)。所以:
-///   · 能抽成纯逻辑的部分(单价的折算/拒收/JSON 编解码/采样下标/两点法/走哪条后端)已全部搬进 Core 并有单测;
+///   · 能抽成纯逻辑的部分(单帧耗时的折算/拒收/JSON 编解码/采样下标/两点法/走哪条后端)已全部搬进 Core 并有单测;
 ///   · 剩下的"路径 + 文件 IO + 机器指纹 + 接线"用**源码断言**钉住关键行为(本仓库既有惯例:
 ///     `UpscaleOrderTests` / t21 的守卫断言都是这么做的)。
 /// 断言写的是"**行为要点**"(清理由谁做、异常是否吞、判定点是否先标定再判定),不是行号 —— 免得一改版式就红。</summary>
@@ -120,7 +120,7 @@ public class LocalCalibrationWiringTests
         // 【F2 · 两半必须成对】标定耗时单独记一个阶段,**并且**消费端(记账处)真的把它从
         // PerfMemory 的每帧成本样本窗口里扣掉。只写日志不扣账 = 那句"不参与每帧成本"就是错话
         // (t28/t29 判 medium 的正是这一条)。
-        Assert.Contains("阶段耗时(准备·超分单价标定)", svc);
+        Assert.Contains("阶段耗时(准备·超分单帧耗时标定)", svc);
         Assert.DoesNotContain("PerfMemory.Record", svc);              // 判定点/标定路径不许自己记账
         string view = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs");
         Assert.Contains("taskSpan.TotalSeconds - encSeconds - calibSeconds", view);   // 真的从样本窗口扣掉
@@ -142,8 +142,8 @@ public class LocalCalibrationWiringTests
         // ③ 任务起点与归零点相邻(相对顺序证据:taskStart 先出现)
         Assert.True(view.IndexOf("var taskStart = DateTime.Now;", StringComparison.Ordinal) < clearAt);
 
-        // 【不许假精度】未标定时 u=0 只是"没采信单价",界面**不许**报基于它算出的"先超分反而慢 X%"
-        Assert.Contains("本机还没标定超分单价,保守不切换", svc);
+        // 【不许假精度】未标定时 u=0 只是"没采信单帧耗时",界面**不许**报基于它算出的"先超分反而慢 X%"
+        Assert.Contains("本机还没标定超分单帧耗时,保守不切换", svc);
         Assert.Contains("orderPlan.Measured || interpScale < 2", svc);
 
         // 【R2 · 2026-09-25 修订】后端不匹配要像"另一台机器"那样明写出来:判定理由(Core)+ 界面短话
@@ -157,7 +157,7 @@ public class LocalCalibrationWiringTests
     [Fact]
     public void The_doc_states_the_formula_the_scope_the_failure_paths_and_all_four_known_limits()
     {
-        string doc = ReadRepoFile("docs", "本机标定-超分单价.md");
+        string doc = ReadRepoFile("docs", "本机标定-超分单帧耗时.md");
 
         // 公式(两点法,含两次耗时与 N)
         Assert.Contains("t1 = F + 1·p", doc);

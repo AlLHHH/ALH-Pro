@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace AlhPro.Core;
 
-/// <summary>**本机实测**的超分单价(一次标定的结果)。
+/// <summary>**本机实测**的超分单帧耗时(一次标定的结果)。
 ///
 /// 【为什么需要它 · 用户 2026-09-25 的原话】「那别人使用时,这个检查决定先超分还是先补帧也是用我的设备???」
 /// —— **是的,旧实现就是这样**:<see cref="PipelineOrderPlan.UpscaleRates"/> 全部来自开发机
@@ -17,11 +17,11 @@ namespace AlhPro.Core;
 ///   · <see cref="FloorSeconds"/> / <see cref="SampleSeconds"/> = 两点法两次的原始耗时(可审计);
 ///   · <see cref="MachineKey"/> = 机器指纹(GPU 名称 + 引擎可执行文件标识);
 ///     **指纹不一致的记录一律不参与判定**(换显卡/换引擎重编版 ⇒ 自动失效并重标);
-///   · <see cref="Backend"/> = **这条单价是在哪条超分后端上测出来的**
+///   · <see cref="Backend"/> = **这条单帧耗时是在哪条超分后端上测出来的**
 ///     (<see cref="UpscaleBackendPlan.NcnnVulkan"/> / <see cref="UpscaleBackendPlan.OnnxDml"/> /
 ///      <see cref="UpscaleBackendPlan.OnnxCpu"/>)。
 ///     【为什么必须进键(2026-09-25 修订 · F1)】ncnn-Vulkan 与 ONNX 是两套完全不同的运行时,秒/帧差一个数量级
-///     (ncnn 0.24~0.6 s/帧 vs ONNX 落 CPU 8 s/帧)。拿"在 ncnn 上测的"单价去判定"本次其实走 ONNX"的运行,
+///     (ncnn 0.24~0.6 s/帧 vs ONNX 落 CPU 8 s/帧)。拿"在 ncnn 上测的"单帧耗时去判定"本次其实走 ONNX"的运行,
 ///     就会得出偏小的 u ⇒ 判定偏向「补帧→超分」—— 这正是 2026-09-25 那次 39 分钟误判的同一类错。
 ///     ⇒ **后端不进键的记录一律拒收**(见 <see cref="LocalPriceBook.TryBuild"/>);查找也必须带后端匹配。
 ///
@@ -66,19 +66,19 @@ public readonly record struct LocalPrice(
     }
 }
 
-/// <summary>本机实测单价的**判定用书**(纯逻辑:查找 / 折算 / 拒绝条件 / JSON 编解码;不做文件 IO)。
+/// <summary>本机实测单帧耗时的**判定用书**(纯逻辑:查找 / 折算 / 拒绝条件 / JSON 编解码;不做文件 IO)。
 ///
 /// 【与内置表的关系】`PipelineOrderPlan.UpscaleRates` 是**他机实测**(开发机),只作资料与回归基线;
 /// 生产判定只看这里 —— 用户这台机器上真实测出来的数字。</summary>
 public static class LocalPriceBook
 {
-    /// <summary>低于这个帧数的样本差值会被噪声吃掉(本仓库实测:1~3 帧样本给出的单价都不可信)。</summary>
+    /// <summary>低于这个帧数的样本差值会被噪声吃掉(本仓库实测:1~3 帧样本给出的单帧耗时都不可信)。</summary>
     public const int MinSampleFrames = 4;
 
-    /// <summary>单价下限(秒/帧):小到 0.5 毫秒以下必然是把某次瞬时抖动算进去了,拒收。</summary>
+    /// <summary>单帧耗时下限(秒/帧):小到 0.5 毫秒以下必然是把某次瞬时抖动算进去了,拒收。</summary>
     public const double MinSecondsPerFrame = 0.0005;
 
-    /// <summary>单价上限(秒/帧):超过 2 分钟/帧的样本不可能是"正常超分",拒收(避免一条脏数据把顺序永久带偏)。</summary>
+    /// <summary>单帧耗时上限(秒/帧):超过 2 分钟/帧的样本不可能是"正常超分",拒收(避免一条脏数据把顺序永久带偏)。</summary>
     public const double MaxSecondsPerFrame = 120.0;
 
     /// <summary>落盘 schema 版本(`engine-prices.json` 的 `schema` 字段)。</summary>
@@ -89,7 +89,7 @@ public static class LocalPriceBook
     public static string Key(string modelKey, int engineScale) => $"{modelKey}@{engineScale}x";
 
     /// <summary>**判定用的键(含后端)**:`模型键@引擎倍率@后端`(如 `realcugan-se@2x@ncnn-vulkan`)。
-    /// 写入去重、查找、日志出处三处都用它 —— 后端不进键 = 允许"在 ncnn 上测的单价判定 ONNX 运行",
+    /// 写入去重、查找、日志出处三处都用它 —— 后端不进键 = 允许"在 ncnn 上测的单帧耗时判定 ONNX 运行",
     /// 那是 2026-09-25 误判的同一类错,必须从键上就杜绝。</summary>
     public static string Key(string modelKey, int engineScale, string? backend)
         => $"{modelKey}@{engineScale}x@{NormalizeBackend(backend)}";
@@ -111,10 +111,10 @@ public static class LocalPriceBook
     /// <summary>按 (模型, 引擎倍率[, 后端]) 查;**同时**判定机器指纹是否一致(这是本方案的核心,不能只看模型)。
     /// <paramref name="machineKey"/> 传 null/空白 = 不做机器过滤(纯资料查询,<see cref="Lookup.SameMachine"/>=true)。
     /// <paramref name="backend"/> 传 <c>null</c> = **不做后端过滤**(只用于"本机有没有这一格"的资料式提问);
-    /// **判定必须传**(生产由 <c>VideoService</c> 传本次定稿的后端)⇒ 在别的后端上测的单价绝不会被采用。
+    /// **判定必须传**(生产由 <c>VideoService</c> 传本次定稿的后端)⇒ 在别的后端上测的单帧耗时绝不会被采用。
     /// 【2026-09-25 修订 · F1-I2/I4】传了**非 null** 但归一成 <see cref="UpscaleBackendPlan.Unknown"/> 的值
     /// (空串、空白、以及认不出的名字如 <c>"vulkan-2027"</c>)⇒ **一格都不命中**,绝不当成"不过滤" ——
-    /// 那正是"拿 ncnn 的偏小单价去判定 ONNX 运行"的入口。注意 <see cref="UpscaleBackendPlan.Unknown"/>
+    /// 那正是"拿 ncnn 的偏小单帧耗时去判定 ONNX 运行"的入口。注意 <see cref="UpscaleBackendPlan.Unknown"/>
     /// **本身就是空串**,所以判据必须是"是否显式传了非 null",不能只看归一结果的长度。
     /// 命中多条时取 <see cref="LocalPrice.MeasuredAtUtc"/> 最大的那条(最新标定优先)。
     /// 不做任何 IO、不抛异常。</summary>
@@ -125,7 +125,7 @@ public static class LocalPriceBook
         string? wantKey = PipelineOrderPlan.NormalizeModel(model);
         if (wantKey is null) return new Lookup(null, false, null, null);
         // 【2026-09-25 修订 · F1-I2/I4】后端过滤的三种情形必须严格分开(原实现把"给了名字但认不出"混进了
-        // "不过滤",于是 `Resolve(..., backend: Unknown)` 会命中 ncnn 那一格 —— 那正是把 ncnn 的偏小单价
+        // "不过滤",于是 `Resolve(..., backend: Unknown)` 会命中 ncnn 那一格 —— 那正是把 ncnn 的偏小单帧耗时
         // 拿去判定 ONNX 运行的入口):
         //   · backend == null          ⇒ 资料式提问,不过滤;
         //   · 认得出的后端              ⇒ 只认同后端的记录;
@@ -177,7 +177,7 @@ public static class LocalPriceBook
             return null;
         }
         provenance = look.Price is null && look.OtherMachineKey is null
-            ? "本机没有这一格(模型×引擎倍率)的实测单价"
+            ? "本机没有这一格(模型×引擎倍率)的实测单帧耗时"
             : $"另一台机器({Digest(look.OtherMachineKey)})的标定,已忽略";
         return null;
     }
@@ -202,17 +202,17 @@ public static class LocalPriceBook
     /// ③ 两次耗时或面积非法(非有限 / ≤0);④ 机器指纹空白;
     /// ⑤ **后端未确认**(空白/认不出)—— 见 <see cref="UpscaleBackendPlan.NormalizeBackend"/>;
     /// ⑥ **两点法退化** `sampleSeconds &lt;= floorSeconds`(等于没测出正斜率 → 纯噪声,必须拒收,
-    ///    **不许**回退成 `sampleSeconds / N` —— 那正是把地板当单价的旧错);
+    ///    **不许**回退成 `sampleSeconds / N` —— 那正是把地板当单帧耗时的旧错);
     /// ⑦ **相对噪声门槛(2026-09-25 修订 · F3)**:差值必须 ≥
     ///    <see cref="CalibrationSample.MinDeltaRatio"/> × 1 帧那次的耗时,否则与两次进程启动的抖动同量级;
-    /// ⑧ 算出单价超出 [<see cref="MinSecondsPerFrame"/>, <see cref="MaxSecondsPerFrame"/>]。</summary>
+    /// ⑧ 算出单帧耗时超出 [<see cref="MinSecondsPerFrame"/>, <see cref="MaxSecondsPerFrame"/>]。</summary>
     public static bool TryBuild(string? model, int engineScale, int sampleFrames, double floorSeconds, double sampleSeconds,
         long samplePixels, string machineKey, string backend, string measuredAtUtc, string note,
         out LocalPrice price, out string reject)
     {
         price = default;
         string? key = PipelineOrderPlan.NormalizeModel(model);
-        if (key is null) { reject = $"认不出这个模型名:{model ?? "(空)"} —— 无法与单价表的键对应,拒收"; return false; }
+        if (key is null) { reject = $"认不出这个模型名:{model ?? "(空)"} —— 无法与单帧耗时表的键对应,拒收"; return false; }
         if (engineScale < 1) { reject = $"引擎倍率非法:{engineScale}(必须 ≥1),拒收"; return false; }
         if (sampleFrames < MinSampleFrames) { reject = $"采样帧数太少:{sampleFrames} < {MinSampleFrames},差值会被噪声吃掉,拒收"; return false; }
         if (!double.IsFinite(floorSeconds) || floorSeconds <= 0) { reject = $"1 帧那次耗时非法:{floorSeconds},拒收"; return false; }
@@ -223,13 +223,13 @@ public static class LocalPriceBook
         if (bk.Length == 0)
         {
             reject = $"超分后端未确认({(string.IsNullOrWhiteSpace(backend) ? "(空)" : backend)})—— "
-                + "后端没定稿就落盘,等于允许「在 ncnn 上测的单价」去判定「本次其实走 ONNX」的运行(2026-09-25 误判的同一类),拒收";
+                + "后端没定稿就落盘,等于允许「在 ncnn 上测的单帧耗时」去判定「本次其实走 ONNX」的运行(2026-09-25 误判的同一类),拒收";
             return false;
         }
         if (sampleSeconds <= floorSeconds)
         {
             reject = $"两点法退化:{sampleFrames} 帧那次({sampleSeconds:0.###}s)不比 1 帧那次({floorSeconds:0.###}s)慢 —— "
-                + "说明这段差值被噪声/降频吃掉了,不是单价。拒收(**不回退**成 总量÷帧数:那会把每进程地板当成单帧成本)";
+                + "说明这段差值被噪声/降频吃掉了,不是单帧耗时。拒收(**不回退**成 总量÷帧数:那会把每进程地板当成单帧成本)";
             return false;
         }
         double delta = sampleSeconds - floorSeconds;
@@ -240,13 +240,13 @@ public static class LocalPriceBook
             // 只差 0.05s 时,算出来的是一个 4 位小数的"本机实测",其实全是噪声(假精度)。
             reject = $"两点法差值太小:差值 tN−t1={delta:0.###}s 不足 1 帧那次耗时({floorSeconds:0.###}s)的 "
                 + $"{CalibrationSample.MinDeltaRatio * 100:0}%(需 ≥{needDelta:0.###}s)—— "
-                + "这个量级与两次进程启动的地板抖动/GPU 热降频同量级,算出来的单价是噪声(会给出看着很准的假精度),拒收";
+                + "这个量级与两次进程启动的地板抖动/GPU 热降频同量级,算出来的单帧耗时是噪声(会给出看着很准的假精度),拒收";
             return false;
         }
         double perFrame = CalibrationSample.TwoPointPerFrame(sampleFrames, floorSeconds, sampleSeconds);
         if (!double.IsFinite(perFrame) || perFrame <= MinSecondsPerFrame || perFrame > MaxSecondsPerFrame)
         {
-            reject = $"算出单价 {perFrame:0.#####} s/帧 超出合理区间 [{MinSecondsPerFrame}, {MaxSecondsPerFrame}],拒收";
+            reject = $"算出单帧耗时 {perFrame:0.#####} s/帧 超出合理区间 [{MinSecondsPerFrame}, {MaxSecondsPerFrame}],拒收";
             return false;
         }
         price = new LocalPrice(key, engineScale, perFrame, samplePixels, sampleFrames, floorSeconds, sampleSeconds,
@@ -256,7 +256,7 @@ public static class LocalPriceBook
     }
 
     /// <summary>合并一条标定:同 (**模型键, 倍率, 机器指纹, 后端**) 覆盖旧记录,其余原样保留(可审计)。
-    /// 【后端必须参与去重】否则同一模型在 ncnn / ONNX 两条路上的单价会互相覆盖 —— 一条被删、另一条错用。
+    /// 【后端必须参与去重】否则同一模型在 ncnn / ONNX 两条路上的单帧耗时会互相覆盖 —— 一条被删、另一条错用。
     /// 返回新列表(纯函数,不改入参)。</summary>
     public static IReadOnlyList<LocalPrice> Upsert(IEnumerable<LocalPrice>? book, LocalPrice price)
     {
@@ -304,7 +304,7 @@ public static class LocalPriceBook
     /// <summary>读一份 `engine-prices.json` 文本。**文件缺失/截断/字段非法/schema 不认识 → 一律空表,绝不抛**
     /// (标定文件坏掉不能影响任务,大不了重新标一次)。逐条校验:字段缺失或数值非法的那条**只丢它自己**。
     /// 【后端是硬要求(F1-I4 的机械保证)】`backend` 空白/认不出的记录**读回来直接丢弃** ⇒
-    /// 文件里不可能存在"后端未确认"的单价,即使有人手写成那样。</summary>
+    /// 文件里不可能存在"后端未确认"的单帧耗时,即使有人手写成那样。</summary>
     public static IReadOnlyList<LocalPrice> ParseJson(string? json)
     {
         var empty = (IReadOnlyList<LocalPrice>)Array.Empty<LocalPrice>();

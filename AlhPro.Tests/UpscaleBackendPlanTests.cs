@@ -99,7 +99,7 @@ public class UpscaleBackendPlanTests
         // 【2026-09-25 修订 · F1】ONNX 设备号也必须走同一个纯函数(标定与批次循环不许各写一份)
         Assert.Contains("AlhPro.Core.UpscaleBackendPlan.OnnxDevice(upGpu, upOnnxDml)", svc);
         Assert.DoesNotContain("upGpu < 0 ? (upOnnxDml ? -2 : -1) : -2", svc);
-        // 判定点必须用同一个纯函数算"本次后端",并按它查/存单价
+        // 判定点必须用同一个纯函数算"本次后端",并按它查/存单帧耗时
         Assert.Contains("AlhPro.Core.UpscaleBackendPlan.DescribeBackend(", svc);
         Assert.Contains("string calibBackend = AlhPro.Core.UpscaleBackendPlan.DescribeBackend(", svc);
     }

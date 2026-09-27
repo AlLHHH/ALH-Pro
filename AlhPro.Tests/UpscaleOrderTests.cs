@@ -12,8 +12,8 @@ namespace AlhPro.Tests;
 /// 根本不会执行的顺序**,这正是用户反复抱怨"预计时间不准"的来源之一。
 ///
 /// 【2026-09-16 清理后的口径】判据**只有一处**:`AlhPro.Core.PipelineOrderPlan.Decide(...)`,
-/// 由 `VideoService.ProcessVideoAsync` 在"补帧倍率/去重结果确定后"调用(按真机实测单价 + 15% 安全边际)。
-/// 【2026-09-25 A+B】"真机实测单价"的含义变了:不再是开发机那台的内置表,而是**本机标定**
+/// 由 `VideoService.ProcessVideoAsync` 在"补帧倍率/去重结果确定后"调用(按真机实测单帧耗时 + 15% 安全边际)。
+/// 【2026-09-25 A+B】"真机实测单帧耗时"的含义变了:不再是开发机那台的内置表,而是**本机标定**
 /// (`CalibMemory` → `Decide(..., localPrices: …)`);未标定 ⇒ 旧顺序。本文件的调用点断言不变,
 /// 数字类的断言改为显式喂本机标定(见 <see cref="LocalPriceFixture"/>)。
 /// 本文件原先钉的旧回退链(`VideoPipeline.UpscaleFirstEnabled` / `UpscaleRunsFirst`)与那段**零调用点**的
