@@ -66,7 +66,6 @@
        rembg\
          birefnet-lite.onnx       ← 6 个 .onnx 直接放这里
          birefnet.onnx
-         isnet-anime.onnx
          isnet-general-use.onnx
          u2net.onnx
          u2netp.onnx

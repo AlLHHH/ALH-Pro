@@ -26,9 +26,14 @@ public static class CutoutService
     {
         // 数值来源(交叉验证):rembg 官方 session 源码 + U²-Net/BiRefNet 原版 + 本地 onnx 元数据实测
         // birefnet-lite/birefnet:ImageNet 归一化 + 输出需 sigmoid;isnet-general:mean 0.5/std 1.0;
-        // isnet-anime:ImageNet mean/std 1.0,输出名 mask;u2net:ImageNet,输出无固定名(取首个 [1,1,H,W])
+        // isnet-general:mean 0.5/std 1.0;u2net:ImageNet,输出无固定名(取首个 [1,1,H,W])
         // 【数组顺序别动】界面上设置里存的是【下标】(CutoutSettings.Model),重排会让老用户的选择静默漂移到别的模型;
         // 默认模型改由 DefaultModelKey 按 key 指定(见下)。
+        // 【2026-09-27 作者定案删除「ISNet 动漫」】实测它的掩码过弱:同一张动漫帧上它原始掩码里 >=0.9 的像素
+        // 只占 0.001%(isnet-general-use 13.7%、u2net 12.6%),而输出名(mask)正确、归一化四种组合
+        // (ImageNet / 0.5 / 带不带 std / 当 logits)结果一样弱、随包权重与仓库那份同一文件 ⇒ 这份权重本身不行。
+        // 它原来是下标 3,删掉后下标 3 变成 u2net ⇒ **老存档必须显式迁移**(见 CutoutView.LoadSettings 的
+        // `d.Model == 3 → 2`),不许靠"越界兜底"或"看起来没变"蒙过去。
         new("birefnet-lite", "BiRefNet 高精度", "birefnet-lite.onnx",
             1024, 0.485f, 0.456f, 0.406f, 0.229f, 0.224f, 0.225f,
             FgPreset: 168, BgPreset: 90, FeatherPreset: 2, EdgePreset: 0, MorphPreset: 35,
@@ -41,10 +46,6 @@ public static class CutoutService
             1024, 0.5f, 0.5f, 0.5f, 1f, 1f, 1f,
             FgPreset: 152, BgPreset: 84, FeatherPreset: 1, EdgePreset: 0, MorphPreset: 28,
             "output_image"),
-        new("isnet-anime", "ISNet 动漫", "isnet-anime.onnx",
-            1024, 0.485f, 0.456f, 0.406f, 1f, 1f, 1f,
-            FgPreset: 144, BgPreset: 80, FeatherPreset: 1, EdgePreset: 0, MorphPreset: 22,
-            "mask"),
         new("u2net", "U²-Net 通用", "u2net.onnx",
             320, 0.485f, 0.456f, 0.406f, 0.229f, 0.224f, 0.225f,
             FgPreset: 160, BgPreset: 88, FeatherPreset: 0, EdgePreset: 0, MorphPreset: 20,

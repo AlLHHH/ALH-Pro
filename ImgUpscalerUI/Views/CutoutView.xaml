@@ -65,7 +65,6 @@
                         <ComboBoxItem Content="BiRefNet 高精度"/>
                         <ComboBoxItem Content="BiRefNet 完整版 (复杂背景)"/>
                         <ComboBoxItem Content="ISNet 精细边缘 (推荐)"/>
-                        <ComboBoxItem Content="ISNet 动漫"/>
                         <ComboBoxItem Content="U²-Net 通用 (简单背景)"/>
                         <ComboBoxItem Content="U²-Net 轻量 (快速,效果一般)"/>
                     </ComboBox>
