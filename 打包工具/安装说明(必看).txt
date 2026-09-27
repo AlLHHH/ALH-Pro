@@ -31,7 +31,6 @@
 　　　　　birefnet-lite.onnx
 　　　　　birefnet.onnx
 　　　　　isnet-general-use.onnx
-　　　　　isnet-anime.onnx
 　　　　　u2net.onnx
 　　　　　u2netp.onnx
 　　注意:不要解压出一个新的文件夹(比如"models_v1.0")
