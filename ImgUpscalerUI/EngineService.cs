@@ -234,11 +234,79 @@ public static partial class EngineService
                 var v = TryGetEngineVerdictSummary(eng, gpuId);
                 int measured = CountCachedModels(eng, gpuId);
                 _ = measured;   // 新口径下"几支通过/哪支失败"由 Describe 如实写出,这里不再拼字符串
-                parts.Add(AlhPro.Core.NcnnModelVerdicts.Describe(NcnnVerdictEntries(), EngineId(eng), gpuId));
+                // 【2026-09-27 · E1】把"这次没测通"的原因一并交给汇总行(同一处口径):否则这一行只写"未测",
+                // 与逐引擎那行"实测不可用"看起来像两件事(1355 诊断包里就是这么被读错的)。
+                parts.Add(AlhPro.Core.NcnnModelVerdicts.Describe(NcnnVerdictEntries(), EngineId(eng), gpuId,
+                    LastNotConcludedReason(eng, gpuId)));
             }
             return string.Join(" ", parts);
         }
         catch { return "未测"; }
+    }
+
+    // ---------- 【2026-09-27 · E1】"本次没测通"的记账与报告口径(单一来源在 AlhPro.Core.NcnnProbeWording) ----------
+
+    /// <summary>"最近一次**没测通**"的原因,按【引擎|GPU|default】记账(只用于报告与日志,**不参与任何判定**)。
+    /// 为什么不落盘:它描述的是"这一次没跑完"这一事实,不是对这张卡的结论 —— 落盘就等于把"没测到"写成"测出不可用"
+    /// (1355 那台机就是这么被误判了一整天)。进程内即可,重启后按"未测"从头再来,正是想要的语义。</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _notConcluded = new();
+
+    /// <summary>记一条"本次没测通"的原因(键与结论缓存同口径:引擎|GPU|default)。</summary>
+    private static void NoteNotConcluded(string engine, int gpuId, string reason)
+    {
+        try { _notConcluded[NcnnVerdictKey(engine, gpuId, null)] = reason; } catch { }
+    }
+
+    /// <summary>这个引擎+这张卡**最近一次没测通**的原因(null = 没记录过 = 干脆没测过)。
+    /// 供诊断包/自检报告按统一口径写"未测通";不参与任何路由判定(判定只看落盘结论)。</summary>
+    public static string? LastNotConcludedReason(string engine, int gpuId)
+    {
+        try { return _notConcluded.TryGetValue(NcnnVerdictKey(engine, gpuId, null), out var r) ? r : null; }
+        catch { return null; }
+    }
+
+    /// <summary>★ **一次 ncnn 探测该怎么写进报告**(逐引擎行的唯一判据)。
+    /// 【为什么不能看 <see cref="EnsureNcnnProbeAsync"/> 的返回值】那个 bool 把两种完全不同的事压成一个 false:
+    ///   ① 探测**跑完**并判不可用(结论已落盘,值得写"实测不可用");
+    ///   ② 探测**没跑完**(60 秒无响应被强杀 / 被取消 / 空闲显存不足跳过了)= 什么都没测到。
+    /// 1355 诊断包里 ② 被写成了 ①(用户读到的就是"显卡不可用"),而同一份文件的汇总行写着"未测" ⇒ 自相矛盾。
+    /// 现在**判据只看结论缓存**(<see cref="TryGetNcnnVerdict"/>):有结论才说"可用/不可用",没结论一律说"未测通"。
+    /// 返回 (Kind, Text):Kind 供调用方/测试区分三种情形,Text 是给用户看的原话。</summary>
+    public static (AlhPro.Core.NcnnProbeReport Kind, string Text) DescribeProbeAttempt(string engine, int gpuId)
+    {
+        bool? verdict = TryGetNcnnVerdict(engine, gpuId);
+        if (verdict is true) return (AlhPro.Core.NcnnProbeReport.Available, AlhPro.Core.NcnnProbeWording.AvailableText);
+        if (verdict is false) return (AlhPro.Core.NcnnProbeReport.Unavailable, AlhPro.Core.NcnnProbeWording.UnavailableText(EngineId(engine)));
+        return (AlhPro.Core.NcnnProbeReport.NotConcluded,
+            AlhPro.Core.NcnnProbeWording.NotConcluded(LastNotConcludedReason(engine, gpuId)));
+    }
+
+    /// <summary>【2026-09-27 · E2】生产帧尺寸探测所需的**空闲显存下限**(GB)。
+    /// 【口径:保守下限,**属估计、未逐档实测**】依据两条:
+    ///   ① **同一台机的实测对照**(用户诊断包 ALHPro_Diag_20260927_1355,GTX 1050 Ti 4GB,同一引擎、同一探测形态 1080×1920):
+    ///        · 空闲 **2.6 / 2.7 GB**:生产帧尺寸探测**连续通过 5 次**(同一天 03:58 / 04:05 / 04:11 / 04:14 / 04:16);
+    ///        · 空闲 **0.7 GB**:13:56 那次 **60 秒无响应被强杀**。
+    ///      两点之间取保守下限 **1.5GB**(约为通过时的一半,给驱动/桌面/别的程序留约 0.8GB 余量)。
+    ///   ② **仓库已有显存门槛**:SafeRender.GetVideoConcurrency 里"空闲显存 ≥3GB 才允许 2 路并行"
+    ///      (`vramOk2 = FreeVramGB >= 3`)—— 那是"再加一份引擎工作集"的口径;单次探测只需一份 ⇒ 取它的一半。
+    /// 【为什么不是硬约束】它只决定"这次要不要白等一分钟",不决定"能不能用":闸门跳过时**不落盘任何结论**,
+    /// 用户关掉占显存的程序后重试即可(与"记一天不可用"完全是两回事)。
+    /// 【保守性】宁可选低(1.5GB)也不误拦健康机器:开发机常年 3.8~11GB 空闲,那台 1050Ti 通过时是 2.6GB。</summary>
+    public const double ProductionProbeMinFreeVramGB = 1.5;
+
+    /// <summary>生产帧尺寸探测前的空闲显存闸(依据见 <see cref="ProductionProbeMinFreeVramGB"/>)。
+    /// 返回 true = 明显不足、这次不跑;out 参数同时给出读数与下限(日志/报告要如实写出数字)。
+    /// **读不到空闲显存(AMD/Intel,FreeVramMeasured=false)一律返回 false(不闸)**:不许把"未知"当"不足"。</summary>
+    private static bool VramTooLowForProductionProbe(out double freeGb, out double needGb)
+    {
+        freeGb = 0; needGb = ProductionProbeMinFreeVramGB;
+        try
+        {
+            if (!SafeRender.FreeVramMeasured) return false;      // 测不到 ⇒ 不拿未知当不足
+            freeGb = SafeRender.FreeVramGB;
+            return freeGb < ProductionProbeMinFreeVramGB;
+        }
+        catch { return false; }
     }
 
     /// <summary>ncnn 探测结论落盘文件的路径(诊断包要把这个文件原样带上,供作者核查"测了什么、什么时间、什么键")。
@@ -509,6 +577,21 @@ public static partial class EngineService
         {
             AppLogger.Info($"[探测] {engine} GPU({gpuId})强制真机重测(诊断包导出:绕过快速通道与缓存,拿到当前真实结论)");
         }
+        // 【2026-09-27 · E2】★生产帧尺寸探测前的【空闲显存闸】。
+        // 【为什么加】用户诊断包 ALHPro_Diag_20260927_1355:GTX 1050 Ti 4GB,**空闲显存只剩 0.7GB**,
+        // 却仍然去跑 1080×1920 的 ncnn 探测 ⇒ 白等 60 秒 + 被强杀 + 报告还把那一次写成"实测不可用"(E1)。
+        // 【闸门只做一件事】明显不足时**不跑这次探测**,给用户一句"为什么 + 怎么办",并且**不落盘任何结论**
+        // (不是能力判定,更不是"不可用")—— 关掉占显存的程序后重试即可。
+        // 【测不到就不闸】AMD/Intel 读不到空闲显存(FreeVramMeasured=false)时一律照旧跑:不许拿"未知"当"不足"。
+        if (VramTooLowForProductionProbe(out double freeGb, out double needGb))
+        {
+            string reason = AlhPro.Core.NcnnProbeWording.VramShortfallReason(freeGb, needGb);
+            NoteNotConcluded(engine, gpuId, reason);
+            LastProbeUserMessage = "";
+            AppLogger.Warn($"[探测] {engine} GPU({gpuId}) {AlhPro.Core.NcnnProbeWording.NotConcluded(reason)}");
+            AppLogger.Info(AlhPro.Core.NcnnProbeWording.VramShortfallHint(freeGb, needGb));
+            return false;
+        }
         AppLogger.Info($"[探测] {engine} GPU({gpuId})首次真机探测(生产帧尺寸 1080×1920,模型 {model ?? "(默认)"} + 带状黑判据,"
             + $"最长约 60 秒;若超时/无响应会退避 {AlhPro.Core.ProbeRetryPolicy.PipelineFullFrameProbe.BackoffMs / 1000.0:0.#} 秒再试一次)...");
         // 【2026-09-24 · 超时/无响应只重试一次再判死】真机踩过(2026-09-22 22:22):一次
@@ -530,13 +613,29 @@ public static partial class EngineService
         // 日志也要按取消说,不许写成"确定性失败"(那是归因错误,会把排查方向带偏)。
         if (ct.IsCancellationRequested || outcome.Cancelled)
         {
-            AppLogger.Warn(outcome.Cancelled
-                ? $"[探测] {engine} GPU({gpuId})本次探测被取消(超时失败后未完成重试)——因取消未重试,不落盘结论,下次照旧试"
-                : $"[探测] {engine} GPU({gpuId})本次探测期间任务已取消——因取消未落盘结论(这不代表该卡不可用),下次照旧试");
+            // 【2026-09-27 · E1】取消那一路的措辞收进 AlhPro.Core.NcnnProbeWording(唯一来源):
+            // 之前这里自己拼了两句、诊断包导出处又自己拼一句,三处口径不一致 ⇒ 用户读到"实测不可用"。
+            string cancelReason = AlhPro.Core.NcnnProbeWording.NotConcludedReasonFrom(
+                outcome.Kind, outcome.Detail, cancelled: true);
+            NoteNotConcluded(engine, gpuId, cancelReason);
+            LastProbeUserMessage = "";
+            AppLogger.Warn($"[探测] {engine} GPU({gpuId}) {AlhPro.Core.NcnnProbeWording.NotConcluded(cancelReason)}");
             return false;
         }
         var failKind = outcome.Kind;
         string failDetail = outcome.Detail ?? "";
+        // 【2026-09-27 · E1】**只有"跑完并得出形态"的结论才配落盘**。被强杀的 Hang(=没跑完)、进程起不来、
+        // 探测自身异常都被判成"没测通":不写任何结论(否则就是把"没测到"记成"测出不可用",而这条结论 TTL 1 天)。
+        // 判据是纯函数 AlhPro.Core.NcnnProbeWording.IsConclusiveOutcome(可单测),这里只问它、不自己写 if。
+        if (!AlhPro.Core.NcnnProbeWording.IsConclusiveOutcome(outcome.Kind, cancelled: false))
+        {
+            string inconclusiveReason = AlhPro.Core.NcnnProbeWording.NotConcludedReasonFrom(
+                outcome.Kind, outcome.Detail, cancelled: false);
+            NoteNotConcluded(engine, gpuId, inconclusiveReason);
+            LastProbeUserMessage = "";
+            AppLogger.Warn($"[探测] {engine} GPU({gpuId}) {AlhPro.Core.NcnnProbeWording.NotConcluded(inconclusiveReason)}");
+            return false;
+        }
         // 结论按【引擎|GPU|模型】记账(决策键);明细带上失败形态与探测次数 ——
         // 诊断包里一眼能分出"初始化即崩"还是"出图但坏帧",也一眼能看出"这次是不是重试过"。
         SaveNcnnVerdict(engine, gpuId, model, ok,
@@ -2143,7 +2242,13 @@ public static partial class EngineService
         }
         catch (Exception ex)
         {
-            AppLogger.Warn($"[探测] 引擎 {engine} GPU 探测异常(按不可用):{ex.Message}");
+            // 【2026-09-27 · E1】这句原来写"探测异常(按不可用)" —— 但这条异常意味着**探测没跑完**
+            // (取消时抛出的 OperationCanceledException 也会落到这里),而"没跑完"不构成任何对这张卡的结论。
+            // 1355 诊断包里就是这句"按不可用"与下一行"因取消未落盘结论"自相矛盾,用户读到的只有前面那句。
+            // ⚠ 措辞不要在这里自己拼:统一口径只有一处(AlhPro.Core.NcnnProbeWording),
+            //   "没跑完 ⇒ 不落盘 + 未测通"那两句由 EnsureNcnnProbeAsync 的闸门统一写(它拿得到 outcome)。
+            AppLogger.Warn($"[探测] 引擎 {engine} GPU 探测过程异常({ex.Message})—— 这次没跑完,交给上层按「未测通」收尾"
+                + (ct.IsCancellationRequested ? "(任务已取消)" : ""));
             return new AlhPro.Core.ProbeAttempt(false, AlhPro.Core.ProbeFailureKind.StartupFailed,
                 "探测过程异常:" + ex.Message);
         }

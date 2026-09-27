@@ -322,15 +322,29 @@ public class DiagnosticWordingHonestyTests
 
     /// <summary>**C · 诊断包的「设备信息.txt」**:①"ncnn 实测结论(导出时实时)"整份文件里**只能出现一次**
     /// (此前 try 内、catch 后各写一遍 ⇒ 强制实测那台机器会看到两行同样的结论);
-    /// ②逐引擎探测行不许一律写"→ 走 ONNX 稳定引擎"(Real-CUGAN 没有这条路)。
-    /// 这条红了 = 重复行又回来,或探测行又回到一刀切话术。</summary>
+    /// ②逐引擎探测行不许自己拼话术(一律"→ 走 ONNX 稳定引擎"那种一刀切),只经**单一来源**。
+    /// 【2026-09-27 · t56 E1 更新】逐引擎行现在走 `EngineService.DescribeProbeAttempt`(判据只看落盘结论,
+    /// 没跑完就说"本次未测通";措辞在 AlhPro.Core.NcnnProbeWording),MainPage 里不再出现任何
+    /// "实测不可用…"字面量 —— 所以这条改成钉"接线 + 单一来源",并把 Real-CUGAN 那条出路改为在 Core 侧
+    /// 可执行地验证(它的实现也从 MainPage 搬进了 Core.NcnnProbeWording.UnavailableRoute)。
+    /// 这条红了 = 重复行又回来,或探测行又自己拼话术(绕过单一来源)。</summary>
     [Fact]
     public void The_diagnostic_package_writes_the_live_verdict_line_once()
     {
         string mp = CodeOnly(ReadRepoFile("ImgUpscalerUI", "Views", "MainPage.xaml.cs"));
         Assert.Equal(1, Count(mp, "ncnn 实测结论(导出时实时)"));
-        Assert.Contains("AlhPro.Core.RealCugan.IsRealCuganId(eng)", mp);
-        Assert.Equal(1, Count(mp, "实测不可用 → 走 ONNX 稳定引擎"));   // 只剩"别的引擎"那一支
+        // 逐引擎行只经单一来源,且本地不许再拼"可用/不可用"这两句
+        Assert.Contains("var probe = ALHPro.EngineService.DescribeProbeAttempt(eng, probeGpu);", mp);
+        Assert.Contains("info.AppendLine($\"ncnn 探测({eng}, GPU {probeGpu}): {probe.Text}\");", mp);
+        Assert.DoesNotContain("实测不可用", mp);
+        Assert.DoesNotContain("实测可用 → 走 ncnn-Vulkan", mp);      // 逐引擎行那两句已全部搬进 Core 单一来源
+        Assert.DoesNotContain("RealCugan.UnavailableNotice", mp);   // 出路那半句已搬进 Core(见下一条)
+        // 三处报告点的范围声明(MainPage 侧):这次探测 / 落盘汇总 / 设备层快照
+        Assert.Contains("上面逐条=这一次探测的结果;本行=落盘结论的汇总;下面的 Vulkan 自检报告=启动时设备层快照", mp);
+        // 【可执行】Real-CUGAN(没有 ONNX 版本)必须改说真话;别的引擎照旧"走 ONNX 稳定引擎"
+        Assert.Contains("明确拒绝", NcnnProbeWording.UnavailableRoute(RealCugan.EngineName));
+        Assert.DoesNotContain("走 ONNX", NcnnProbeWording.UnavailableRoute(RealCugan.EngineName));
+        Assert.Contains("走 ONNX 稳定引擎", NcnnProbeWording.UnavailableRoute("realesrgan"));
     }
 
     // ───────────────────────── 工具 ─────────────────────────

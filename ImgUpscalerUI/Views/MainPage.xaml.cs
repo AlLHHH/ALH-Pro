@@ -3156,25 +3156,33 @@ public sealed partial class MainPage : Page
                             using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
                             foreach (var eng in needProbe)
                             {
-                                bool ok = false;
                                 try
                                 {
-                                    ok = await ALHPro.EngineService.EnsureNcnnProbeAsync(
+                                    await ALHPro.EngineService.EnsureNcnnProbeAsync(
                                         eng, probeGpu, model: null, probeCts.Token, force: true);
                                 }
                                 catch (Exception ex) { AppLogger.Warn($"[探测] 诊断包强制实测 {eng} 失败(不影响打包):{ex.Message}"); }
-                                // 【2026-09-27 改】失败那支原来一律写"→ 走 ONNX 稳定引擎",而 Real-CUGAN 没有
-                                // ONNX 版本(CPU 档实测会崩)⇒ 这句给用户指了一条不存在的出路。口径取自 Core。
-                                string failRoute = AlhPro.Core.RealCugan.IsRealCuganId(eng)
-                                    ? "实测不可用 —— " + AlhPro.Core.RealCugan.UnavailableNotice
-                                    : "实测不可用 → 走 ONNX 稳定引擎";
-                                info.AppendLine($"ncnn 探测({eng}, GPU {probeGpu}): {(ok ? "实测可用 → 走 ncnn-Vulkan" : failRoute)}");
+                                // 【2026-09-27 · E1 修】这一行**不再看 EnsureNcnnProbeAsync 的返回值** —— 那个 bool
+                                // 把"探测跑完并判不可用"(结论已落盘)与"探测没跑完"(60 秒无响应被强杀 / 被取消 /
+                                // 空闲显存不足跳过)压成同一个 false ⇒ 1355 那台机什么都没测到却被写成
+                                // 「实测不可用 → 走 ONNX 稳定引擎」,而同一份文件的汇总行写着"未测"、启动自检写着
+                                // "GPU 加速可用" —— 三句互相打脸。
+                                // 现在判据只看**落盘/进程内结论**(EngineService.DescribeProbeAttempt):
+                                // 有结论才说"实测可用/实测不可用",没结论一律说"本次未测通(原因:…)+ 不落盘 + 下次照旧试"。
+                                // 文案(含 Real-CUGAN 那条"没有 ONNX 版本"的出路)统一取自 AlhPro.Core.NcnnProbeWording。
+                                var probe = ALHPro.EngineService.DescribeProbeAttempt(eng, probeGpu);
+                                info.AppendLine($"ncnn 探测({eng}, GPU {probeGpu}): {probe.Text}");
                             }
                             try { StatusText.Text = prevStatus; } catch { }
                         }
                     }
                     catch (Exception ex) { AppLogger.Warn("[探测] 诊断包 ncnn 实测异常(不影响打包):" + ex.Message); }
                     info.AppendLine("ncnn 实测结论(导出时实时): " + ALHPro.EngineService.DescribeNcnnVerdicts(probeGpu));
+                    // 【2026-09-27 · 三处报告点的口径关系】这一行标题要说清范围(1355 里三句打脸的根源是没人说范围):
+                    //   · 上面那几行「ncnn 探测(引擎, GPU n)」= **这一次探测**的结果(可用/不可用/未测通);
+                    //   · 本行「ncnn 实测结论(导出时实时)」= **落盘结论**的汇总(没落盘就是"未测通");
+                    //   · 下面「Vulkan 自检报告」= 启动那一刻**设备/驱动这一层**的快照(不判断任何引擎走哪条路)。
+                    info.AppendLine("(口径:上面逐条=这一次探测的结果;本行=落盘结论的汇总;下面的 Vulkan 自检报告=启动时设备层快照)");
                     info.AppendLine("Vulkan 自检报告(以下为本次启动时的快照,可能早于上面的实时结论):");
                     try { info.AppendLine(AppSettings.VulkanReport); } catch { }
                     info.AppendLine("临时文件目录: " + ALHPro.EngineService.TempRoot);

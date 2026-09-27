@@ -1,3 +1,4 @@
+using AlhPro.Core;
 using System;
 using System.IO;
 using System.Linq;
@@ -40,8 +41,11 @@ public class ProbeRetryWiringTests
         Assert.Contains("false, failKind, failDetail", code);
     }
 
-    /// <summary>★ 复审 F1:取消必须在落盘之前拦住 —— 任何时刻 ct 已取消都不写结论,且日志按"因取消未重试"说,
-    /// 不许把它归因成"确定性失败"。而"确定性失败,按判据未重试"这句只允许出现在取消分支**之后**。</summary>
+    /// <summary>★ 复审 F1:取消必须在落盘之前拦住 —— 任何时刻 ct 已取消都不写结论;且日志按"因取消未重试"说,
+    /// 不许把它归因成"确定性失败"。而"确定性失败,按判据未重试"这句只允许出现在取消分支**之后**。
+    /// 【2026-09-27 · t56 E1 更新】取消那一路的措辞已收进 <see cref="NcnnProbeWording"/>(单一来源),
+    /// 所以这里除了源码顺序,还要**可执行地**验证那句话真的说出了"因取消未重试 + 不落盘结论"
+    /// (喂 1355 的真实形态:60 秒无响应被强杀 → 任务取消)。</summary>
     [Fact]
     public void Cancellation_is_checked_before_the_verdict_is_written()
     {
@@ -55,11 +59,18 @@ public class ProbeRetryWiringTests
         Assert.True(cancelGuard > probe, "落盘前必须有取消闸门(ct 已取消 ⇒ 不落任何结论)");
         Assert.True(save > cancelGuard, "取消闸门必须在 SaveNcnnVerdict 之前");
         Assert.True(deterministicText > save, "“确定性失败,按判据未重试”只允许出现在取消闸门之后(取消那一路已经 return)");
-        // 闸门里要如实写"因取消未重试",且与 outcome.Cancelled 对得上
-        string guardBlock = code.Substring(cancelGuard, save - cancelGuard);   // 闸门 → 落盘之间
-        Assert.Contains("因取消未重试", guardBlock);
-        Assert.Contains("不落盘结论", guardBlock);
+        // 闸门里要如实写"因取消未重试"(措辞的唯一来源在 Core),且与 outcome.Cancelled 对得上
+        string guardBlock = code.Substring(cancelGuard, save - cancelGuard);
+        Assert.Contains("NcnnProbeWording.NotConcludedReasonFrom(", guardBlock);
+        Assert.Contains("cancelled: true", guardBlock);
+        Assert.Contains("NcnnProbeWording.NotConcluded(", guardBlock);
         Assert.DoesNotContain("确定性失败", guardBlock);
+        // 【可执行】那句话必须真的说出来(不是"源码里有个函数名"就算过)
+        string reason = NcnnProbeWording.NotConcludedReasonFrom(ProbeFailureKind.Hang, "60 秒无响应", cancelled: true);
+        string text = NcnnProbeWording.NotConcluded(reason);
+        Assert.Contains("因取消未重试", text);
+        Assert.Contains("不落盘结论", text);
+        Assert.DoesNotContain("实测不可用", text);
     }
 
     /// <summary>顺序:先让判据决定重试,再落盘;全文只允许一处落盘(重试路径里不许提前写失败结论)。</summary>
