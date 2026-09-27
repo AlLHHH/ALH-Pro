@@ -93,7 +93,7 @@ public sealed partial class CutoutView : UserControl
             bool missing = EngineService.FindCutoutModel(m.FileName) == null;
             ModelMissingBar.Visibility = missing ? Visibility.Visible : Visibility.Collapsed;
             if (missing)
-                ModelMissingText.Text = $"未找到「{m.Label}」({m.FileName}) — 安装时勾选「下载并安装模型包」;或下载 models_v1.0.zip(含中文安装说明),解压到程序目录的 engines\\rembg\\ 文件夹(6 个 .onnx 直接放这,不要多套一层文件夹);也可换用其它已安装的模型";
+                ModelMissingText.Text = $"未找到「{m.Label}」({m.FileName}) — 安装时勾选「下载并安装模型包」;或下载 models_v1.1.zip(含中文安装说明),解压到程序目录的 engines\\rembg\\ 文件夹(5 个.onnx 直接放这,不要多套一层文件夹);也可换用其它已安装的模型";
         }
         catch
         {
@@ -259,16 +259,19 @@ public sealed partial class CutoutView : UserControl
             if (d is null) return;
             RememberCheck.IsChecked = d.Remember;
             if (!d.Remember) return;
-            // 【2026-09-27 移除「ISNet 动漫」】旧数组顺序里下标 3 正是它
-            //   (birefnet-lite / birefnet / isnet-general-use / isnet-anime / u2net / u2netp)。
-            //   数组顺序一变,存档里的**下标**必须显式迁移,否则会静默漂到别的模型(现在下标 3 = u2net,
-            //   一个 320 输入的老模型)—— 这里迁到「ISNet 精细边缘」(2),并留一行可审计的日志。
-            if (d.Model == 3)
-            {
-                AppLogger.Info("[抠图] 存档里的模型是已下线的「ISNet 动漫」⇒ 自动改为「ISNet 精细边缘」"
-                    + "(该模型 2026-09-27 起不再提供:实测掩码过弱、几乎抠不出东西)");
-                d.Model = 2;
-            }
+            // 【2026-09-27 移除「ISNet 动漫」· 老存档三种下标都要迁,少迁一个就是"静默换模型"】
+            //   旧顺序:0 birefnet-lite / 1 birefnet / 2 isnet-general-use / 3 isnet-anime / 4 u2net / 5 u2netp
+            //   新顺序:0 birefnet-lite / 1 birefnet / 2 isnet-general-use / 3 u2net      / 4 u2netp
+            //   ⇒ 旧 3(已下线的 ISNet 动漫)→ 2(ISNet 精细边缘,同族的 1024 模型);
+            //     旧 4(u2net 通用)      → 3(**必须迁**,不然同一序号会变成 u2netp 轻量);
+            //     旧 5(u2netp 轻量)     → 4(**必须迁**,不然 5 越界 → 掉进下面的越界兜底 = 0 = BiRefNet 高精度,
+            //                              一个慢得多的模型,用户什么都没改却突然变慢)。
+            //   只迁这三个;0/1/2 含义未变。
+            int modelBefore = d.Model;
+            d.Model = d.Model switch { 3 => 2, 4 => 3, 5 => 4, _ => d.Model };
+            if (d.Model != modelBefore)
+                AppLogger.Info($"[抠图] 存档里的模型下标已迁移(2026-09-27 下线「ISNet 动漫」):"
+                    + $"{modelBefore} → {d.Model}(新列表:{string.Join(" / ", System.Linq.Enumerable.Select(CutoutService.Models, m => m.Key))})");
             if (d.Model is >= 0 && d.Model < ModelCombo.Items.Count) ModelCombo.SelectedIndex = d.Model;
             // 计算设备已在全局设置(AppSettings),页面不再恢复旧 Gpu 值
             if (d.Fg is >= 0 and <= 255) FgSlider.Value = d.Fg;
@@ -713,7 +716,7 @@ public sealed partial class CutoutView : UserControl
         var cutModel = CutoutService.GetModel(CutoutService.Models[Math.Clamp(ModelCombo.SelectedIndex, 0, CutoutService.Models.Length - 1)].Key);
         if (EngineService.FindCutoutModel(cutModel.FileName) == null)
         {
-            await ShowErrorAsync($"未找到抠图模型「{cutModel.Label}」({cutModel.FileName}) — 请安装/恢复模型包:下载 models_v1.0.zip,解压到程序目录的 engines\\rembg\\ 文件夹(6 个 .onnx 直接放这,不要多套一层文件夹);或换用其它已安装的模型");
+            await ShowErrorAsync($"未找到抠图模型「{cutModel.Label}」({cutModel.FileName}) — 请安装/恢复模型包:下载 models_v1.1.zip,解压到程序目录的 engines\\rembg\\ 文件夹(5 个.onnx 直接放这,不要多套一层文件夹);或换用其它已安装的模型");
             return;
         }
         // 输出目录:多张时创建子文件夹(WebP 转码件优先用原始目录,避免落到应用私有目录)
@@ -1079,8 +1082,8 @@ public sealed partial class CutoutView : UserControl
                 "　 (或桌面右键「ALH Pro」图标 → 打开文件所在位置)\n\n" +
                 "② 打开里面的 engines 文件夹,再打开 rembg 文件夹\n" +
                 "　 (没有就自己新建,名字必须叫 engines 和 rembg)\n\n" +
-                "③ 把 models_v1.0.zip 解压到 rembg 文件夹里,里面直接放\n" +
-                "　 6 个 .onnx 文件(不要多套一层文件夹)\n\n" +
+                "③ 把 models_v1.1.zip 解压到 rembg 文件夹里,里面直接放\n" +
+                "　 5 个.onnx 文件(不要多套一层文件夹)\n\n" +
                 "④ 回来这个页面,上方黄色提示消失 = 成功\n\n" +
                 "嫌麻烦?问社区要「完整版(含模型)」网盘链接——那是解压即用的整包。",
         };
