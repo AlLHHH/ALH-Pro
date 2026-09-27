@@ -22,6 +22,12 @@ namespace AlhPro.Core;
 /// ⇒ 视频会**静默**走 CPU 软编(正是这条策略要消灭的东西)。
 /// 现在把口径写死:<see cref="AllowsCpuFallback"/> 恒为 false —— 视频要么用硬编,要么在开跑前就报错。
 /// 若将来真把「CPU 计算」放回设置页,只需让这一个方法接到那个开关上(其余调用点一个都不用动)。
+///
+/// 【2026-09-30 · t64 C:重试策略只管"瞬时失败"】本类的重试间隔只适用于**跑起来之后的瞬时失败**
+/// (5060 那台:`exit -542398533`,上一次任务 16.7 fps、下一次就编不了 ⇒ 重试有依据)。
+/// 编码器**打不开/初始化失败**是另一条路:同一个编码器重试不会有不同结果,正解是换本机另一个
+/// 实测可用硬编(判据与候选链在 <see cref="VideoEncodeGuard"/>)⇒ 那条路的报错文案是
+/// <see cref="DescribeHwEncodeInitFailure"/>,不是"连续 3 次失败"。
 /// 纯逻辑、零副作用 ⇒ 可单测(见 <c>CpuFallbackPolicyTests</c>)。</summary>
 public static class CpuFallbackPolicy
 {
@@ -64,5 +70,31 @@ public static class CpuFallbackPolicy
             : "请更新显卡驱动、关闭占用显卡的程序后重试;偶发抽风时重启软件再试一次最有效";
         return $"硬件编码({encoder})连续 {attempts} 次失败,已停止 —— 按当前设定不会退回 CPU 软编"
              + "(实测 CPU 软编慢 7 倍以上)。\n最后一次原因:" + why + "\n" + advice + "。";
+    }
+
+    /// <summary>【2026-09-30 · t64 C】编码器**打不开**(初始化失败)且本机再没有别的可用硬编时的报错正文。
+    ///
+    /// 【为什么必须与 <see cref="DescribeHwEncodeFailure"/> 分开】那条说的是"**连续 3 次**失败" ——
+    /// 那是**瞬时失败**的结论(有重试才有这个数)。而"打不开编码器"是**确定性**的:同一个编码器
+    /// 重试再多遍还是打不开(2026-09-27 那台 3 次全是 `Could not open encoder before EOF`)。
+    /// 沿用旧文案会同时骗两个人:用户以为"它替我重试了很多次"(其实我们一次都没重试 —— 正解是
+    /// **换本机另一个可用硬编**,那台机器上 `hevc_qsv` 就在可用列表里),排查者也会去数重试次数。
+    ///
+    /// 【文案红线】同 <see cref="DescribeNoHwEncoder"/>:不许提"去设置里选 CPU 软编"。</summary>
+    /// <param name="encoder">打不开的那个编码器。</param>
+    /// <param name="triedEncoders">本次已经试过的编码器(含换过的),用于让用户看清"换了也没成"。</param>
+    /// <param name="reason">最后一次的 ffmpeg 原话(头+尾,见 <c>VideoEncodeGuard.DescribeProcessFailure</c>)。</param>
+    public static string DescribeHwEncodeInitFailure(string encoder, string? triedEncoders, string? reason)
+    {
+        string why = string.IsNullOrWhiteSpace(reason) ? "(未给出原因)" : reason.Trim();
+        string tried = string.IsNullOrWhiteSpace(triedEncoders) ? encoder : triedEncoders!.Trim();
+        return $"硬件编码({encoder})打不开编码器(初始化失败),本机也没有别的实测可用硬编可换 —— 已停止"
+             + "(按「视频不落 CPU」策略不退回 CPU 软编)。\n"
+             + $"已试过的编码器:{tried}。\n"
+             + "为什么不再重试:打不开是确定性的(同一个编码器重试还是打不开),换一个可用硬编才有意义 —— "
+             + "这条路径上我们没有拿它反复试。\n"
+             + "怎么办:① 更新显卡驱动(或重装一次)后重试;② 关闭占用显卡的程序/结束其它转码软件后重试;"
+             + "③ 笔记本请确认独显没有被禁用。\n"
+             + "说明:视频处理**不提供** CPU 软编选项(实测慢 7 倍以上)。\n最后一次原因:" + why;
     }
 }
