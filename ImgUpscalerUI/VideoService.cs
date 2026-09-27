@@ -4531,7 +4531,9 @@ public static class VideoService
                         + (mute ? ";静音(无音轨)" : audioDur > 0.01 ? $";音频 {audioDur:0.###}s" : ";音频未采集")
                         + (uBlackSeg.Length > 0 ? ";黑场 ⚠ 有" : ";黑场 ✓ 无"))));
                 }
-                AppLogger.Info($"· 顺序判定:{uOrderLog}" + (uOrderMeasured
+                // 【2026-09-27 修·重复前缀】`PipelineOrderPlan.Decision.LogLine` 自己就以「顺序判定:」开头,
+                // 这里再拼一次会打出「· 顺序判定:顺序判定:…」⇒ 前缀只由 LogLine 那一处负责。
+                AppLogger.Info($"· {uOrderLog}" + (uOrderMeasured
                     ? $"(预估节省 {uOrderSavingsSeconds:0.#}s / {uOrderSavingsPercent:0.#}%)"
                     : "") + ";【实际 vs 预估:未采集】反事实对照要换另一顺序再跑一遍,本次没有跑,不编数字");
                 // ===== 【任务 X1/X3】界面日志区:结算只放四行【结论】(带 `· ` 前缀 → 左下角日志区,不挤状态行、不动进度条)=====
