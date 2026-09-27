@@ -1,6 +1,8 @@
 namespace AlhPro.Core;
 
-/// <summary>**1x 修复档的模型条目**(2026-09-21 用户定案:"1x 也是可以选模型 加一个现实的1x模型")。
+/// <summary>**1x 修复档的模型条目**(2026-09-21 用户定案加过两条;**2026-09-27 用户定案:"还有1x 那个 第二个现实档先删掉吧"**
+/// ⇒ 现在只剩「动漫 · Anime4K 修复」一条;下面 RealTag/RealMenuText/RealTooltip/RealEngineModel 是**历史件**:
+///   RealEngineModel 仍被"Anime4K 不可用时的回退路径"使用,其余常量不再对应任何菜单项,保留以便旧文档/测试可追溯)。
 ///
 /// 【为什么 1x 也要有模型可选】1x 的价值是"不变尺寸、只做修复/锐化",而**动漫向**与**实拍向**需要的处理不一样:
 ///   · 动漫/游戏:线条与平涂为主 ⇒ Anime4K 着色器最对症(实测边宽 6.76→5.96px、纹理不丢);
@@ -30,7 +32,7 @@ public static class Upscale1x
         "有压缩损伤/偏软的素材上则相反。&#x0a;⚠ 速度标「中」是有依据的:它要跑**完整一遍 2x 超分**(本机约 0.35 秒/帧 @1080p),而 Anime4K 那条约 0.07 秒/帧 ⇒ 慢约 5 倍。";
 
     /// <summary>1x 档的两个条目(Tag);界面据此判断"哪些项在 1x 下可选"。</summary>
-    public static readonly string[] All = { Anime4k.ModelTag, RealTag };
+    public static readonly string[] All = { Anime4k.ModelTag };   // Rev11:现实那条已下线
 
     /// <summary>这个 Tag 是不是"1x 修复"条目。</summary>
     public static bool Is1xEntry(string? tag) => tag is not null && Array.IndexOf(All, tag) >= 0;

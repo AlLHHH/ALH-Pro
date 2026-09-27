@@ -92,7 +92,7 @@ public class VideoModelOrderTests
         // 【2026-09-21 改名**不该**动这个数字】加 `alh` 前缀只改显示名、不改顺序;
         // 【2026-09-21 Rev7】移除「游戏 · alhgame2x」是**改顺序** ⇒ 必须跟着 +1;
         // 【2026-09-21 Rev8/Rev9/Rev10】先追加 Anime4K → 移出列表 → 又作为 1x 条目加回来(+现实 1x)⇒ 三次各 +1。
-        Assert.Equal(10, rev);
+        Assert.Equal(11, rev);
     }
 
     /// <summary>老 Rev 的序号级联到 Rev4 之后,含义必须与 Rev3 时代完全一致(多走了一段空映射也不能变)。</summary>
@@ -166,8 +166,8 @@ public class VideoModelOrderTests
     [Fact]
     public void Count_matches_the_dropdown()
     {
-        Assert.Equal(10, VideoModelOrder.Count);   // Rev10 = Rev9 的 8 项 + 两个 1x 修复条目
-        Assert.Equal(10, VideoModelOrder.CurrentRev);
+        Assert.Equal(9, VideoModelOrder.Count);   // Rev11 = Rev10 的 10 项删掉「现实 · 1x 修复」
+        Assert.Equal(11, VideoModelOrder.CurrentRev);
         // 每一项在自己 Rev 下都要能落在合法范围里
         for (int i = 0; i < VideoModelOrder.Count; i++)
             Assert.InRange(VideoModelOrder.Migrate(i, VideoModelOrder.CurrentRev, out _), 0, VideoModelOrder.Count - 1);
@@ -178,19 +178,22 @@ public class VideoModelOrderTests
     /// 【2026-09-22 注】原先这句还写着"官方预设「1x 修复（不放大）」靠它选中" —— 那条官方预设已按用户裁决删除
     /// (它当初就是为这条预设加的),但**常量本身仍然必须对**:1x 档的下拉/迁移都依赖它。
     /// 与 Xaml_dropdown_order_matches_the_migration_table 的分工:那条钉"映射表 ↔ XAML 的 Tag 顺序"
-    /// (Tag 列表末尾必须是 alhpro-game2x-v3 / anime4k / alhpro-real1x),这条钉"常量 ↔ 序号"。
+    /// (Tag 列表末尾必须是 alhpro-game2x-v3 / anime4k),这条钉"常量 ↔ 序号"。
     /// 两条合起来 = 常量确实指向正确的 Tag。</summary>
     [Fact]
-    public void One_x_index_constants_point_at_the_last_two_entries()
+    public void One_x_index_constant_points_at_the_last_entry()
     {
-        Assert.Equal(VideoModelOrder.Count - 2, VideoModelOrder.Anime4kIndex);
-        Assert.Equal(VideoModelOrder.Count - 1, VideoModelOrder.Real1xIndex);
-        Assert.True(VideoModelOrder.Anime4kIndex < VideoModelOrder.Real1xIndex);
+        // Rev11:1x 档只剩 Anime4K 一条,它就是列表最后一项
+        Assert.Equal(VideoModelOrder.Count - 1, VideoModelOrder.Anime4kIndex);
         // 当前 Rev 下迁移必须幂等(否则每次启动都会把这支模型挪走)
         Assert.Equal(VideoModelOrder.Anime4kIndex,
             VideoModelOrder.Migrate(VideoModelOrder.Anime4kIndex, VideoModelOrder.CurrentRev, out _));
-        Assert.Equal(VideoModelOrder.Real1xIndex,
-            VideoModelOrder.Migrate(VideoModelOrder.Real1xIndex, VideoModelOrder.CurrentRev, out _));
+        // Rev10 的旧值 9(已下线的「现实 · 1x 修复」)必须显式迁到 Anime4K,而不是落到越界兜底的 0
+        Assert.Equal(VideoModelOrder.Anime4kIndex, VideoModelOrder.Migrate(9, 10, out int r11));
+        Assert.Equal(11, r11);
+        // 老序号 0..7(放大模型)在 Rev11 下一个都不能动
+        for (int i = 0; i < 8; i++)
+            Assert.Equal(i, VideoModelOrder.Migrate(i, 10, out _));
     }
 
     /// <summary>**契约测试**:VideoView.xaml 里超分模型下拉的真实 Tag 顺序,必须与 VideoModelOrder 的映射表逐位一致。
@@ -232,16 +235,16 @@ public class VideoModelOrderTests
             "alhpro-real2x",             // 5 Rev4 追加:现实 · alhreal2x
             "alhpro-game2x-v2",          // 6 Rev7:原 7。v1(alhpro-game2x)已从下拉移除 ⇒ 后面整体前移
             "alhpro-game2x-v3",          // 7 Rev7:原 8
-            "anime4k",                   // 8 Rev10:**1x 修复**条目(不放大;选 1x 时才可选,2x+ 置灰)
-            "alhpro-real1x",             // 9 Rev10:**现实 1x 修复**(内部 alhreal2x 2x→缩回;同样只在 1x 可选)
+            "anime4k",                   // 8 Rev10/Rev11:**1x 修复**条目(不放大;选 1x 时才可选,2x+ 置灰)
+                                         //   Rev11 起它后面那条「现实 · 1x 修复」已删除 ⇒ 它是列表最后一项
         }, tags);
         Assert.Equal(VideoModelOrder.Count, tags.Length);
         // 追加的自训模型必须与 Core 里登记的名字一字不差(名字同时是 models\ 下的权重文件名:
         // 引擎按 `models/{Tag}.param` 取权重,Tag 写错 = 运行时找不到模型/坏帧)。
         // Rev8 起 Anime4K 排在自训模型**之后**(它不属于 ExperimentalEsrgan.All:那是"自训"名单)⇒ 取 [^4..^1]。
         // Rev10 起:自训三支在中间(5..7),**末尾两个是 1x 修复条目** ⇒ 自训那段要按 [^5..^2] 取
-        Assert.Equal(AlhPro.Core.ExperimentalEsrgan.All, tags[^(AlhPro.Core.ExperimentalEsrgan.All.Length + 2)..^2]);
-        Assert.Equal(AlhPro.Core.Upscale1x.All, tags[^2..]);   // 末尾两项 = 1x 修复条目(顺序也要一致)
+        Assert.Equal(AlhPro.Core.ExperimentalEsrgan.All, tags[^(AlhPro.Core.ExperimentalEsrgan.All.Length + 1)..^1]);
+        Assert.Equal(AlhPro.Core.Upscale1x.All, tags[^1..]);   // 末尾一项 = 1x 修复条目(Rev11:只剩 Anime4K)
     }
 
     /// <summary>**契约测试**:四项自训模型在下拉里必须带 `alh` 名字前缀 + 蓝色「测试」小药丸 + 事实性悬停提示,且**不许写"实验"**。

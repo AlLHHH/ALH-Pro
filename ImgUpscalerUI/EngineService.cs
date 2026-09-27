@@ -384,7 +384,7 @@ public static partial class EngineService
         AppLogger.Info(ok
             ? ($"[探测] 1x 修复(Anime4K {AlhPro.Core.Anime4k.ShaderFileName}):着色器可用 ✓(Vulkan + libplacebo 正常)"
                + (first.Length > 0 ? "(重试后通过)" : ""))
-            : "[探测] 1x 修复(Anime4K):不可用 ✗(两次都失败)⇒ 1x 档改用「现实 · 1x 修复」");
+            : "[探测] 1x 修复(Anime4K):不可用 ✗(两次都失败)⇒ 1x 自动改为「按 2x 超分后缩回原尺寸」");
         lock (_anime4kLock) { _anime4kOk = ok; }
         return ok;
     }

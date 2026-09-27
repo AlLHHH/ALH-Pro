@@ -11278,7 +11278,7 @@ public sealed partial class VideoView : UserControl
                         finally { tcs.TrySetResult(); }
                     });
                     await tcs.Task;
-                    try { Log("⚠ 本机 Anime4K 着色器不可用(需要可用的 Vulkan 显卡/libplacebo)⇒ 1x 已自动改用「" + AlhPro.Core.Upscale1x.RealMenuText + "」"); } catch { }
+                    try { Log("⚠ 本机 Anime4K 着色器不可用(需要可用的 Vulkan 显卡/libplacebo)⇒ 1x 已自动改为「按 2x 超分后缩回原尺寸」(该 1x 条目已于 2026-09-27 下线)"); } catch { }
                 }
             }
             scaleLabel = anime4k1x ? "1x(Anime4K 修复)" : "1x(现实修饰·2x缩回)";

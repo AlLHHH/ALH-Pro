@@ -30,6 +30,9 @@ namespace AlhPro.Core;
 ///      【命名 · 用户 2026-09-15 定】界面文字只许叫「游戏向」「现实向」,不出现"实验"字样;
 ///      括号里写实测速度(口径与数值见 AlhPro.Core.ExperimentalEsrgan)。
 ///
+///   · Rev10 → Rev11(2026-09-27):**删除**列表最后一项「现实 · 1x 修复」(Tag = alhpro-real1x)
+///                               → 0..8 一个都没动;旧 9 → 8(anime4k)。用户:"还有1x 那个 第二个现实档先删掉吧"。
+///
 ///   · Rev4 → Rev5(2026-09-19):**末尾追加**一支自训 2x 模型「游戏 · alhgame2x-v2」(用用户 26 段录像重训,
 ///                               实测全面优于 v1;v1 保留不动),老 7 项位置一个都不动
 ///                               → 0..6 与 Rev4 逐位相同,7=alhpro-game2x-v2
@@ -41,19 +44,19 @@ namespace AlhPro.Core;
 public static class VideoModelOrder
 {
     /// <summary>当前下拉顺序对应的 Rev。改顺序必须 +1,并同步 XAML 与 <c>UpEsrganModelNames</c>。</summary>
-    public const int CurrentRev = 10;
+    public const int CurrentRev = 11;
 
-    /// <summary>下拉项数量(0..Count-1)。Rev10 = Rev9 的 8 项 + 末尾**追加**的 2 个 1x 修复条目
-    /// (「动漫 · Anime4K 修复」「现实 · 1x 修复」)—— 用户:"1x 也是可以选模型 加一个现实的1x模型"。</summary>
-    public const int Count = 10;
+    /// <summary>下拉项数量(0..Count-1)。Rev11 = Rev10 的 10 项 **删掉「现实 · 1x 修复」**(用户 2026-09-27:
+    /// "还有1x 那个 第二个现实档先删掉吧")⇒ 8 支放大模型 + 1 个 1x 修复条目(「动漫 · Anime4K 修复」)。</summary>
+    public const int Count = 9;
 
-    /// <summary>1x 修复两个条目的**固定序号**(Rev10 起;它们永远是列表最后两项)。
-    /// 【为什么要具名常量】官方预设要引用"选中 Anime4K 那一档"(见 VideoView.BuiltinPresets 里新增的
-    /// 「1x 修复（不放大）」),写魔法数字 8/9 的话,以后谁再动顺序都不会被任何人发现 ✗。
-    /// 单测按"下拉里各条目的 Tag 顺序"钉住这两个值与其对应关系(见 VideoModelOrderTests)。</summary>
+    /// <summary>1x 修复条目的**固定序号**(Rev11 起:它是列表**最后一项**)。
+    /// 【为什么要具名常量】官方预设/联动要引用"选中 Anime4K 那一档",写魔法数字 8 的话,
+    /// 以后谁再动顺序都不会被任何人发现 ✗。
+    /// 单测按"下拉里各条目的 Tag 顺序"钉住这个值(见 VideoModelOrderTests)。
+    /// 【Rev11 · 2026-09-27】「现实 · 1x 修复」已下线(用户定案),它原来是序号 9、就在 Anime4K 之后;
+    /// 删掉最后一项 ⇒ 0..8 全部原地不动,所以这里只保留 Anime4K 的常量。</summary>
     public const int Anime4kIndex = 8;
-    /// <summary>「现实 · 1x 修复」在列表里的序号(见上)。</summary>
-    public const int Real1xIndex = 9;
 
     /// <summary>把某个 Rev 下保存的序号换算成当前 Rev 的序号。
     /// <paramref name="rev"/> 为该数据写入时的 Rev(读出来即 <c>ModelOrderRev</c>)。
@@ -147,6 +150,16 @@ public static class VideoModelOrder
             //   ⚠ Rev9 曾把 anime4k 从列表里拿掉(改 id 8→0);Rev10 又把它作为**末尾新项**加回来 ——
             //     序号不会回到 8(现在是 8/9),所以 Rev9 的映射必须保留在它前面(顺序纪律:各段按 rev 升序)。
             rev = 10;
+        }
+        if (rev < 11)
+        {
+            // Rev11:**删掉** 1x 档的「现实 · 1x 修复」条目(用户 2026-09-27:"还有1x 那个 第二个现实档先删掉吧")。
+            //   它原来是列表**最后一项**(序号 9,Tag = alhpro-real1x)⇒ 删掉后 0..8 一个都没动(没有换位)。
+            //   旧 9 = alhpro-real1x(已下线) → 8 = anime4k(1x 档现在唯一的那条,也是最接近它定位的那条:
+            //   同样"不放大、只修复");不映射的话 9 会落到越界兜底 = 0(animevideov3,一个放大模型),
+            //   用户选了 1x 却会拿到 2x 档的模型 —— 正是本文件开头警告的那种静默错位。
+            if (m == 9) m = 8;
+            rev = 11;
         }
         newRev = rev;
         // 越界值(手改坏/未来版本回退)保守归到 0(animevideov3,最快最省那一支),不猜中间项

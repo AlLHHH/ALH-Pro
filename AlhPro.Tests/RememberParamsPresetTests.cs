@@ -313,8 +313,9 @@ public class RememberParamsPresetTests
 
     // ═══════════════════════ t44 复核留下的 low:写死的两行绿字与 Core 联动 ═══════════════════════
 
-    /// <summary>**【t44 low · 顺手加固】**视频页有两项绿字是写死的(`anime4k` → 着色器(无权重)、
-    /// `alhpro-real1x` → 权重 2x(缩回 1x))。写死本身是对的(这两个界面 Tag **不是**引擎权重模型名,
+    /// <summary>**【t44 low · 顺手加固 / Rev11 更新】**视频页写死的绿字现在只剩一项(`anime4k` → 着色器(无权重));
+    /// `alhpro-real1x` 那条随条目于 2026-09-27 下线 —— 它的引擎侧真名仍被回退路径使用,所以下面仍钉 Core 那一侧。
+    /// 写死本身是对的(界面 Tag **不是**引擎权重模型名,
     /// Core 对它们返回空串),但原先测试只跟自己的字面量比 ⇒ 将来 Core 改文案时两边会"自洽地错着"。
     /// 现在把这一侧接到 Core 上:
     ///   · 1x 那一行的期望值取自 `NativeWeightLabel(realesrgan, ExperimentalEsrgan.Fix1x)`(引擎侧真名);
@@ -324,19 +325,18 @@ public class RememberParamsPresetTests
     public void Handwritten_weight_lines_are_linked_to_core()
     {
         string xaml = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml");
-        // ① 「现实 · 1x 修复」:界面 Tag 不是权重名,引擎侧真名是 ExperimentalEsrgan.Fix1x
+        // ① 「现实 · 1x 修复」条目已于 2026-09-27 下线(Rev11)⇒ **不再去 XAML 找那一项**;
+        //    但它的引擎侧真名(ExperimentalEsrgan.Fix1x)仍被"Anime4K 不可用时的回退路径"使用,故只钉 Core 这一侧。
         Assert.True(ExperimentalEsrgan.Is1xModel(ExperimentalEsrgan.Fix1x), "Fix1x 必须被 Core 认成 1x 修复模型");
         Assert.Equal("", EngineScalePolicy.NativeWeightLabel("realesrgan", Upscale1x.RealTag));   // 界面 Tag 本身不是权重模型
-        string oneX = EngineScalePolicy.NativeWeightLabel("realesrgan", ExperimentalEsrgan.Fix1x);
-        Assert.Equal("权重 2x(缩回 1x)", oneX);
-        Assert.Equal("&#x0a;" + oneX, GreenLineOf(xaml, Upscale1x.RealTag));
+        Assert.Equal("权重 2x(缩回 1x)", EngineScalePolicy.NativeWeightLabel("realesrgan", ExperimentalEsrgan.Fix1x));
         // ② 「动漫 · Anime4K 修复」:走着色器,Core **故意**不给标签 ⇒ 界面那行是刻意的覆盖
         Assert.Equal("", EngineScalePolicy.NativeWeightLabel("realesrgan", Anime4k.ModelTag));
         string anime4kLine = GreenLineOf(xaml, Anime4k.ModelTag);
         Assert.Equal("&#x0a;着色器(无权重)", anime4kLine);
         Assert.Contains("无权重", anime4kLine);                      // 面向用户的措辞说明了"它没有权重文件"
-        // Core 知道这两个 Tag 是 1x 档的两个条目(界面与判据同源)
-        Assert.True(Upscale1x.Is1xEntry(Upscale1x.RealTag));
+        // Core 只把 Anime4K 认成"1x 档可选条目"(Rev11:现实那条已下线)
+        Assert.False(Upscale1x.Is1xEntry(Upscale1x.RealTag));
         Assert.True(Upscale1x.Is1xEntry(Anime4k.ModelTag));
     }
 
