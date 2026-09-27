@@ -402,7 +402,17 @@ public sealed partial class MainPage : Page
         try { var drv = GpuInfo.GetDriverVersions(); if (drv.Count > 0 && !string.IsNullOrWhiteSpace(drv[0])) AddReportLine("显卡驱动", drv[0], null); } catch { }
         bool dml = ALHPro.EsrganOnnxService.DmlFallbackOk >= 0;
         AddReportLine("DirectML / ONNX 加速", dml ? "可用" : "不可用", dml);
-        AddReportLine("超分 / 补帧引擎", enginesOk ? "齐全" : "缺失", enginesOk);
+        // 【2026-09-26 修 · 依据用户诊断包 ALHPro_Diag_20260926_1704】这一行原本只说"齐全/缺失"、
+        //   且把 rembg 抠图模型也算进"引擎"⇒ 标准版(抠图模型是另外 1.4GB 下载)会把整行印成「缺失」,
+        //   而下面逐条写着 waifu2x/realesrgan/rife 已安装 —— 自相矛盾。现在:
+        //     ① 这一行只看超分/补帧类引擎(CheckEngines 已不含抠图模型);
+        //     ② 文本走 EngineService.ReportSummary(纯函数,两处报告共用),**把具体缺哪一项写出来**;
+        //     ③ 抠图模型**单列一行**,不再冒充"引擎缺失"。
+        EngineService.CheckEngines(out var enginesMissing);
+        bool cutoutOk = EngineService.CheckCutoutModel(out var cutoutMissing);
+        var summary = EngineService.ReportSummary(enginesOk, enginesMissing, cutoutOk, cutoutMissing);
+        AddReportLine("超分 / 补帧引擎", summary.EnginesLine, summary.EnginesOk);
+        AddReportLine("抠图模型 rembg", summary.CutoutLine, summary.CutoutOk);
         AddReportSection("功能自检");
         foreach (var (name, okk) in CheckFunctions())
             AddReportLine(null, "· " + name + "  " + (okk ? "可用" : "不可用"), okk);
@@ -527,7 +537,13 @@ public sealed partial class MainPage : Page
             }
             catch { }
             sb.Append("DirectML / ONNX 加速: ").Append(ALHPro.EsrganOnnxService.DmlFallbackOk >= 0 ? "可用" : "不可用").Append('\n');
-            sb.Append("超分 / 补帧引擎: ").Append(enginesOk ? "齐全" : "缺失").Append('\n');
+            // 【2026-09-26 修】与浮层报告同一处纯函数(EngineService.ReportSummary):引擎行只反映超分/补帧引擎、
+            // 并打印具体缺哪一项;抠图模型单列 —— 两处报告以前各拼一份字符串,很容易改一处漏一处。
+            EngineService.CheckEngines(out var enginesMissing);
+            bool cutoutOk = EngineService.CheckCutoutModel(out var cutoutMissing);
+            var summary = EngineService.ReportSummary(enginesOk, enginesMissing, cutoutOk, cutoutMissing);
+            sb.Append("超分 / 补帧引擎: ").Append(summary.EnginesLine).Append('\n');
+            sb.Append("抠图模型 rembg: ").Append(summary.CutoutLine).Append('\n');
             sb.Append('\n').Append("功能自检").Append('\n');
             foreach (var (name, okk) in CheckFunctions())
                 sb.Append("· ").Append(name).Append(": ").Append(okk ? "可用" : "不可用").Append('\n');
@@ -564,7 +580,11 @@ public sealed partial class MainPage : Page
             if (reExe == null) list.Add(("超分模型 ONNX(DirectML 备选 · 引擎缺失时才需要)", reOnnx));
             if (wfExe == null) list.Add(("动漫模型 waifu2x ONNX(DirectML 备选 · 引擎缺失时才需要)", waifuOnnx));
             if (!rifeExe) list.Add(("补帧模型 ONNX(DirectML 备选 · 引擎缺失时才需要)", ALHPro.RifeOnnxService.Available()));
-            list.Add(("抠图模型 rembg", EngineService.CheckEngines(out _)));
+            // 【2026-09-26 修】这一行原先写的是 `EngineService.CheckEngines(out _)` —— 那是**整机引擎健康**
+            // (waifu2x/realesrgan/ffmpeg/rife/realcugan 全齐才算 true),与"抠图模型"根本不是一回事:
+            // 缺 waifu2x 但装着抠图模型的机器会被显示成"抠图模型 rembg: 缺失"(假阳性),反之亦然。
+            // 现在用**只检查抠图模型**的专用判据(与上一行的"抠图模型 rembg"同一来源)。
+            list.Add(("抠图模型 rembg", EngineService.CheckCutoutModel(out _)));
             list.Add(("音频模型 Demucs", ALHPro.AudioEnhanceService.FindModel() != null));
         }
         catch { }
@@ -597,7 +617,7 @@ public sealed partial class MainPage : Page
             list.Add(("动漫放大", wfOk || reOk || waifuModel || reModel));
             list.Add(("视频超分", ff && (reOk || wfOk || reModel)));
             list.Add(("视频补帧", rifeExe || rifeOnnx));
-            list.Add(("图片抠图", EngineService.CheckEngines(out _)));   // 含 rembg 抠图模型
+            list.Add(("图片抠图", EngineService.CheckCutoutModel(out _)));   // 【2026-09-26 修】= rembg 抠图模型是否存在(原先错用了整机引擎健康)
             list.Add(("音频增强", audioModel));
             list.Add(("音频升采样", lavasr));
         }

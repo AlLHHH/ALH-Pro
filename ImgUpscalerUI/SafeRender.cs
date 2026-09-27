@@ -175,8 +175,43 @@ public static class SafeRender
     private static string _vramFreeSource = "";
     public static string FreeVramSource => FreeVramMeasured ? _vramFreeSource : "";
 
-    /// <summary>本机物理内存总量(GB)。</summary>
-    public static double TotalRamGB => _ramTotal ??= GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 1073741824.0;
+    /// <summary>本机**物理内存总量**(GB)。
+    /// 【2026-09-26 修 · 依据用户诊断包 ALHPro_Diag_20260926_1704】原先取的是
+    /// <c>GC.GetGCMemoryInfo().TotalAvailableMemoryBytes</c> —— 那是 **GC 眼里的可用内存上限**(带内存上限的
+    /// Job/容器里,这个数会明显低于物理内存),**不是物理内存**,与这个属性的名字与文档不符。
+    /// 【本机实测:换来源本身不改任何档位】Dev 机两者恰好逐字节相同(34,142,150,656 B = 31.797 GiB);
+    /// 真正让 8GB 机掉档的是**单位口径**:门槛按**标称容量**(8/16/32)写,而读数永远是标称值减去
+    /// 固件/硬件保留后的 GiB(8GB→7.9、16GB→15.9、32GB→31.797)。所以两件事一起修:
+    ///   ① 来源换成 GlobalMemoryStatusEx(与下面 ProbeFreeRam 同一个系统 API —— 它才是"物理内存"的实测口径);
+    ///   ② 判档前先用 <see cref="NominalGB"/> 把读数归一到标称容量(实测对照见那里的注释)。
+    /// 【为什么来源也要换 · 不是洁癖】自检报告与诊断包都把它当"系统内存"打印:在带上限的 Job/容器里,
+    /// 旧口径会说谎(用户口径:不许让软件说错话)。</summary>
+    public static double TotalRamGB => _ramTotal ??= ProbeTotalRamGB();
+
+    /// <summary>读物理内存总量(GB):GlobalMemoryStatusEx.ullTotalPhys(系统级实测)。
+    /// 读不到才退回 GC 的口径 —— 退一步也要给个数:报 0 会让 EffectiveRamGB 掉到 2GB 地板,
+    /// 反而把好机器按最差档处理。</summary>
+    private static double ProbeTotalRamGB()
+    {
+        try
+        {
+            var mi = new MEMORYSTATUSEX { dwLength = (uint)System.Runtime.InteropServices.Marshal.SizeOf<MEMORYSTATUSEX>() };
+            if (GlobalMemoryStatusEx(ref mi) && mi.ullTotalPhys > 0)
+                return mi.ullTotalPhys / 1073741824.0;
+        }
+        catch { }
+        try { return GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 1073741824.0; } catch { return 0; }
+    }
+
+    /// <summary>把系统报的内存读数(GiB)归一到**标称容量**(GB)。**分档门槛(8/16/32)是按标称容量写的**,
+    /// 而读数永远比标称小一点(固件/硬件保留 + GiB/GB 口径差)⇒ 不归一就会出现"差 0.1 掉一整档"。
+    /// 实测口径(三条都是真读数):
+    ///   · 标称 8GB  → 诊断包那台(GTX 1050 Ti 机)报 **7.9** ⇒ 旧判据 `r &gt;= 8` 差 0.1 不成立 ⇒ 掉到 UltraLow;
+    ///   · 标称 16GB → 报 **15.9** ⇒ `r &gt;= 16` 不成立 ⇒ Balanced 永远够不着;
+    ///   · 标称 32GB → 本机报 **31.797** ⇒ `r &gt;= 32` 不成立 ⇒ High 永远够不着。
+    /// 归一口径 = 最近的整数 GiB(7.9→8、15.9→16、31.797→32;正好半整数时 AwayFromZero)。
+    /// 【只归一内存】显存走另一条来源、另一套判据(那边已有 0.05G 容差,见 GetVideoConcurrency 的注释),本轮不动。</summary>
+    internal static double NominalGB(double gib) => Math.Round(gib, MidpointRounding.AwayFromZero);
 
     /// <summary>当前空闲物理内存(GB,系统 API 实测);失败按总量的 40% 保守估。</summary>
     public static double FreeRamGB => _ramFree ??= ProbeFreeRam(TotalRamGB * 0.4);
@@ -991,7 +1026,10 @@ public static class SafeRender
     public static int ResolveTile(int requested) => requested > 0 ? requested : GetTileSize();
 
     // ---------- 硬件画像 + 弱设备判定(Part A/B) ----------
-    /// <summary>硬件画像档位:UltraLow(无GPU/极低) → High(强机)。集中推导分档参数。</summary>
+    /// <summary>硬件画像档位:UltraLow(无可用 GPU / 极低:显存 &lt;3GB 或内存标称 &lt;8GB) → High(强机)。
+    /// 【口径订正 · 2026-09-26】UltraLow 的文档语义一直是"无GPU/极低",但 **8GB 标称内存机**(读数 7.9、差 0.1)
+    /// 曾被它接住 —— 于是界面把"设备偏弱"说成了「无 GPU…将用 CPU」(见 <see cref="DeviceHintText"/>)。
+    /// 内存归一后这条边界才与文档对上(= 内存标称 &lt;8GB)。</summary>
     public enum DeviceProfile { UltraLow, Low, Balanced, High }
 
     private static DeviceProfile? _profile;
@@ -1002,11 +1040,47 @@ public static class SafeRender
     {
         double v = TotalVramGB, r = TotalRamGB; int c = CpuCoreCount;
         bool gpu = true; try { gpu = ALHPro.VulkanCheck.GpuAvailable; } catch { }
+        return ProfileFor(v, r, c, gpu);
+    }
+
+    /// <summary>按硬件数值推导画像(**纯函数**,不读本机状态)。抽出来是为了能用**真实案例**做定点验证
+    /// (诊断包那台 GTX 1050 Ti:VRAM 4GB / RAM 7.9GB / 8 核 / GPU 可用 ⇒ 必须是 **Low**,不再是 UltraLow)。
+    /// 门槛与判定顺序与改动前**逐字相同**,唯一变化是内存先过 <see cref="NominalGB"/> 归一。
+    /// 标称 8/16/32GB 机的落档(各自还要满足后半段的显存/核数条件):
+    ///   8GB + 显存≥3GB → **Low**(改前 UltraLow)| 16GB + 显存≥6GB + 8核 → **Balanced**(改前 Low)
+    ///   | 32GB + 显存≥12GB + 16核 → **High**(改前 Balanced)。</summary>
+    internal static DeviceProfile ProfileFor(double vramGB, double ramGB, int cores, bool gpu)
+    {
         if (!gpu) return DeviceProfile.UltraLow;
-        if (v >= 12 && r >= 32 && c >= 16) return DeviceProfile.High;
-        if (v >= 6 && r >= 16 && c >= 8) return DeviceProfile.Balanced;
+        double v = vramGB, r = NominalGB(ramGB);
+        if (v >= 12 && r >= 32 && cores >= 16) return DeviceProfile.High;
+        if (v >= 6 && r >= 16 && cores >= 8) return DeviceProfile.Balanced;
         if (v >= 3 && r >= 8) return DeviceProfile.Low;
         return DeviceProfile.UltraLow;
+    }
+
+    /// <summary>设备提示语(**唯一来源**;两件事分开说)。
+    /// 【2026-09-26 修 · 依据用户诊断包 ALHPro_Diag_20260926_1704】原本文案只有一句
+    /// 「⚠ 无 GPU/弱设备:视频超分/补帧将用 CPU 计算…」,而调用点的判据是
+    /// `Profile == UltraLow || !VulkanCheck.GpuAvailable` ⇒ **两件不同的事被混成一句话**:
+    ///   ① 真的没有可用 GPU —— 那时才会走 CPU;
+    ///   ② 设备偏弱(UltraLow 的另一半语义:显存 &lt;3GB 或内存标称 &lt;8GB)—— 超分/补帧**照旧走 GPU**。
+    /// 那台 1050Ti 机 GPU 明明可用(GPU 探测通过、`RIFE GPU(-g 1)可用 → ncnn-Vulkan 补帧`、DirectML 建会话成功),
+    /// 用户却读到「无 GPU…将用 CPU」——"10 系显卡检测不到"的观感就是这两句错话造成的。
+    /// 现在:**只有 <paramref name="noGpu"/> 为真**才允许说"将用 CPU 计算";只是偏弱就只说偏弱。
+    /// 返回空串 = 不需要提示(不刷屏)。纯函数 ⇒ 可用真实案例(1050Ti 画像)做定点验证。</summary>
+    internal static string DeviceHintText(bool noGpu, DeviceProfile profile, string weakReason)
+    {
+        if (noGpu)
+            return "⚠ 无可用 GPU(Vulkan 自检未发现能用的设备):视频超分/补帧将用 CPU 计算,可能非常慢。" +
+                   "建议(可选):降低输出分辨率、补帧用 2x、先跑几秒的小片段、或勾选「兼容模式」。";
+        if (profile == DeviceProfile.UltraLow)
+        {
+            string why = string.IsNullOrWhiteSpace(weakReason) ? "设备偏弱" : $"设备偏弱({weakReason})";
+            return $"⚠ {why}:视频超分/补帧会很慢,但仍在用 GPU(不会自动改用 CPU)。" +
+                   "建议(可选):降低输出分辨率、补帧用 2x、先跑几秒的小片段、或勾选「兼容模式」。";
+        }
+        return "";
     }
 
     private static bool? _weak;
@@ -1024,7 +1098,9 @@ public static class SafeRender
             // 会误把强机当无 GPU);显存/内存/核数是即时硬件值,不受自检时序影响。
             bool noGpu = ALHPro.VulkanCheck.Done && !ALHPro.VulkanCheck.GpuAvailable;
             bool smallVram = TotalVramGB < 6;
-            bool smallRam = TotalRamGB < 8;
+            // 【2026-09-26 修】内存判据也要先归一到标称容量:8GB 标称机实报 7.9 ⇒ 旧写法 `TotalRamGB < 8`
+            // 会把一台 8GB 机判成"内存小"的弱设备(用户诊断包那台就是这样被误报的)。
+            bool smallRam = NominalGB(TotalRamGB) < 8;
             bool fewCores = CpuCoreCount <= 4;
             // 【裸设备·核显】只有【没有独显】才算弱(仅核显/无GPU);混合本(核显+独显)不算——否则会误判强机为弱设备
             bool igpu = false;
@@ -1048,9 +1124,16 @@ public static class SafeRender
         var list = new System.Collections.Generic.List<string>();
         try
         {
-            if (!ALHPro.VulkanCheck.GpuAvailable) list.Add("未检测到可用 GPU(Vulkan)");
+            // 【2026-09-26 修 · 第三句错话,同一诊断包】这里原先只看 `!VulkanCheck.GpuAvailable`,
+            // 而自检**跑完之前**那个标志一直是 false ⇒ 日志里出现「⚠ 检测到设备配置较低(**未检测到可用 GPU(Vulkan)**、
+            // 显存仅 4GB、内存 7.9GB)」,而同一份日志更早/更晚都写着「Vulkan 自检:GPU 引擎可用(设备枚举成功)」、
+            // 「RIFE GPU(1)真机探测通过 → 使用 ncnn-Vulkan」(bundle 15:51:22 vs 15:34:57/15:47:27)。
+            // 判据与 ComputeWeakDevice 对齐:**自检已完成**且确实不可用,才允许写"未检测到可用 GPU"。
+            if (ALHPro.VulkanCheck.Done && !ALHPro.VulkanCheck.GpuAvailable) list.Add("未检测到可用 GPU(Vulkan)");
             if (TotalVramGB < 6) list.Add($"显存仅 {TotalVramGB:0.#}GB");
-            if (TotalRamGB < 8) list.Add($"内存 {TotalRamGB:0.#}GB");
+            // 【2026-09-26】判据与显示统一走"标称容量"口径(理由见 NominalGB):8GB 标称机会报 7.9,
+            // 用裸读数判就会把 8GB 机写成"内存 7.9GB"的弱设备 —— 同一处误报的第二半。
+            if (NominalGB(TotalRamGB) < 8) list.Add($"内存 {TotalRamGB:0.#}GB");
             if (CpuCoreCount <= 4) list.Add("核心数较少");
             try
             {
