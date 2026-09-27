@@ -1551,22 +1551,54 @@ public static partial class EngineService
         return File.Exists(direct) ? direct : null;
     }
 
+    /// <summary>「超分 / 补帧」类引擎是否齐全(**不含抠图模型** —— 那是一项独立的东西,见 <see cref="CheckCutoutModel"/>)。
+    /// 【2026-09-26 修 · 依据用户诊断包 ALHPro_Diag_20260926_1704】原先 rembg 抠图模型也在这张清单里 ⇒
+    /// 只装标准版(抠图模型是另外 1.4GB 的下载)的机器会得到 `false`,于是自检汇总行印成
+    /// 「**超分 / 补帧引擎: 缺失**」,而同一页逐条写着 waifu2x / realesrgan / rife **已安装** —— 自相矛盾,
+    /// 用户读起来就是"引擎没装好"。抠图模型缺了只影响"图片抠图",与超分/补帧无关 ⇒ 从这里分出去单列。
+    /// 【命名口径】missing 里的条目一律写**给用户看的中文名**(它会直接进状态栏与自检报告),
+    /// 不再输出 waifu2x/realesrgan 这种内部键。</summary>
     public static bool CheckEngines(out string missing)
     {
         var list = new System.Collections.Generic.List<string>();
-        if (FindWaifu2x() is null) list.Add("waifu2x");
-        if (FindRealESRGAN() is null) list.Add("realesrgan");
+        if (FindWaifu2x() is null) list.Add("waifu2x 引擎");
+        if (FindRealESRGAN() is null) list.Add("Real-ESRGAN 引擎");
         if (VideoService.FfmpegPath is null) list.Add("ffmpeg");
-        if (VideoService.RifePath is null) list.Add("rife");
+        if (VideoService.RifePath is null) list.Add("RIFE 补帧引擎");
         // 【2026-09-24】Real-CUGAN 已随包(用户裁决)—— 缺了它必须在启动自检里就报出来,
         // 而不是等用户在下拉里选了它才炸。
-        if (FindRealCugan() is null) list.Add("realcugan");
-        // 抠图模型:检查【当前默认】模型(缺了它,默认抠图不可用)。
-        // 默认模型 = CutoutService.DefaultModelKey(isnet-general-use),别再写死 birefnet-lite。
-        if (FindCutoutModel("isnet-general-use.onnx") is null) list.Add("rembg 模型(默认用 ISNet 精细边缘)");
-        missing = string.Join(", ", list);
+        if (FindRealCugan() is null) list.Add("Real-CUGAN 引擎");
+        missing = string.Join("、", list);
         return list.Count == 0;
     }
+
+    /// <summary>抠图模型(rembg)**单独一项**:它不随包发布(标准版没有,是另外约 1.4GB 的下载),
+    /// 缺了只影响"图片抠图"这一个功能,不该让「超分 / 补帧引擎」那一行显示"缺失"
+    /// (见 <see cref="CheckEngines"/> 的说明)。检查的是**当前默认模型**(与 CutoutService 同源,别再写死 birefnet)。</summary>
+    public static bool CheckCutoutModel(out string missing)
+    {
+        var list = new System.Collections.Generic.List<string>();
+        if (FindCutoutModel("isnet-general-use.onnx") is null)
+            list.Add("rembg 抠图模型包(默认用 ISNet 精细边缘)");
+        missing = string.Join("、", list);
+        return list.Count == 0;
+    }
+
+    /// <summary>自检汇总行的文本(**纯函数**,两处报告共用 —— 原先浮层与设置页各拼一份字符串)。
+    /// 齐全 ⇒ "齐全";缺失 ⇒ "缺失(缺 X、Y)" —— **具体缺哪一项必须打印出来**(用户要知道缺的是哪一个)。</summary>
+    public static string SummaryText(bool ok, string missing)
+        => ok ? "齐全" : $"缺失(缺 {missing})";
+
+    /// <summary>自检报告"汇总行"的两条文本(**纯函数**,把判据与措辞从文件系统探测里分离出来)。
+    /// 【为什么要抽出来】这一行原本只说"齐全/缺失"、**不写缺什么**,而且把抠图模型算进了引擎那一行
+    /// (自相矛盾,见 <see cref="CheckEngines"/>)。抽成纯函数后可以用**真实案例**做定点验证:
+    /// 诊断包那台 GTX 1050Ti 机 = 引擎齐(waifu2x/realesrgan/rife 已装)+ 抠图模型缺
+    /// ⇒ 引擎行必须仍是「齐全」,抠图行才是「缺失(缺 rembg 抠图模型包…)」。
+    /// 返回:(引擎行 ok,引擎行文本,抠图行 ok,抠图行文本)。</summary>
+    public static (bool EnginesOk, string EnginesLine, bool CutoutOk, string CutoutLine) ReportSummary(
+        bool enginesOk, string enginesMissing, bool cutoutOk, string cutoutMissing)
+        => (enginesOk, SummaryText(enginesOk, enginesMissing),
+            cutoutOk, cutoutOk ? "已安装" : SummaryText(cutoutOk, cutoutMissing));
 
     /// <summary>本进程生成的临时文件(EXIF 旋转等),进程退出时统一清理,防止 temp 目录无限增长。</summary>
     private static readonly System.Collections.Concurrent.ConcurrentBag<string> _tempFiles = new();

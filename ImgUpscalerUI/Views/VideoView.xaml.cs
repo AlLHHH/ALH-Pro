@@ -10894,11 +10894,19 @@ public sealed partial class VideoView : UserControl
                 return;
             }
         }
-        // 无 GPU/极弱设备:仅"提示"(不改用户设置)——视频AI用 CPU 极慢,提醒用户,决定权交给用户
-        if (SafeRender.Profile == SafeRender.DeviceProfile.UltraLow || !ALHPro.VulkanCheck.GpuAvailable)
-        {
-            Log("⚠ 无 GPU/弱设备:视频超分/补帧将用 CPU 计算,可能非常慢。建议(可选):降低输出分辨率、补帧用 2x、先跑几秒的小片段、或勾选「兼容模式」。");
-        }
+        // 设备提示(仅"提示",不改用户设置):【2026-09-26 修 · 依据用户诊断包 ALHPro_Diag_20260926_1704】
+        //   原先这里是一句 `if (Profile == UltraLow || !VulkanCheck.GpuAvailable) Log("⚠ 无 GPU/弱设备:
+        //   视频超分/补帧将用 CPU 计算…")` —— **把两件不同的事混成一句话**:
+        //     ① 真的没有可用 GPU(那时才走 CPU);
+        //     ② 设备偏弱(UltraLow 的另一半语义:显存<3GB 或内存标称<8GB)—— 超分/补帧照旧走 GPU。
+        //   那台 GTX 1050 Ti 机 GPU 探测通过、RIFE 走 ncnn-Vulkan、DirectML 也建会话成功,用户却读到
+        //   「无 GPU…将用 CPU 计算」⇒ 观感就是"10 系显卡检测不到"。现在文案由 SafeRender.DeviceHintText
+        //   统一给(纯函数、有定点案例):**只有"没有可用 GPU"才允许说"将用 CPU"**,偏弱就只说偏弱。
+        //   【判据收紧】"没有可用 GPU"必须等 Vulkan 自检**跑完**(Done)才成立 —— 自检未完成时
+        //   GpuAvailable 暂为 false,拿它当结论会在启动早期误报(与 ComputeWeakDevice 同一处口径)。
+        bool noGpu = ALHPro.VulkanCheck.Done && !ALHPro.VulkanCheck.GpuAvailable;
+        string devHint = SafeRender.DeviceHintText(noGpu, SafeRender.Profile, SafeRender.WeakDeviceReason);
+        if (devHint.Length > 0) Log(devHint);
         // ===== 高倍率补帧预警:核显/小显存跑 4x 及以上大概率极慢或失败(不拦,知情即可) =====
         if (interp)
         {
