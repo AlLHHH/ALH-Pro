@@ -6,19 +6,19 @@
 ; 安装时「选择附加任务」若勾选「下载并安装模型包」仍会补全抠图模型(可跳过)。
 
 #define MyAppName "ALH Pro"
-#define MyAppVersion "1.3.4"
+#define MyAppVersion "1.4.3"
 #define MyAppExeName "ALHPro.exe"
 ; 【构建时间戳】(ISPP 在编译时求值):用于让用户一眼分辨"同名同版本的不同构建"。
 ; 起因:同一个 1.3.4 出了多次安装包,名字完全一样、大小只差几十 MB,用户无法确认手上是哪一个。
 #define BuildStamp GetDateTimeString('yyyymmdd-hhnn', '', '')
 ; GitHub Release 模型包直链(与 Release 附件名必须一致;仓库=AlLHHH/ALH-Pro)
-; 【为什么指向 v1.3.3 而不是 v1.3.4】models_v1.0.zip 与软件版本无关(内容一直没变),
+; 【为什么指向 v1.3.3 而不是 v1.3.4】models_v1.1.zip 与软件版本无关(内容一直没变),
 ; 而 v1.3.4 的 Release 尚未建立 → 指向它会让"下载并安装模型包"必然 404。
-; 已核实:经 GitHub API 查得 v1.3.3/v1.3.2/…/v1.0 每个 Release 都带 models_v1.0.zip 附件,
+; 已核实:经 GitHub API 查得 v1.3.3/v1.3.2/…/v1.0 每个 Release 都带 models_v1.1.zip 附件,
 ; 最新可用 tag 为 v1.3.3(2026-09-08)。
 ; ⇒ v1.3.4 Release 建好并上传模型附件后,可把本行改回 v1.3.4(不改也能正常工作)。
-#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.3.3/models_v1.0.zip"
-#define ModelsFile "models_v1.0.zip"
+#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.3/models_v1.1.zip"
+#define ModelsFile "models_v1.1.zip"
 ; 完整版(含模型,网盘/整包)说明:安装完成后可到软件内「使用教程」或 GitHub 说明页找完整版直链
 
 [Setup]
@@ -64,7 +64,7 @@ Name: "downloadmodels"; Description: "下载并安装抠图模型包(约 1.4GB,�
 [Files]
 ; 精简版 = 软件 + 引擎 + 超分模型(RealESRGAN_x4plus) + 其它模型(waifu2x/rife/ffmpeg/demucs/lavasr)。
 ; 只排除【抠图那 6 个 onnx】(birefnet/isnet/u2net 系列),保留超分用的 RealESRGAN_x4plus.onnx。
-; Excludes:排除抠图 6 个模型、发布版里的解压副本(models_v1.0\)、开发残留/调试产物。
+; Excludes:排除抠图模型(isnet-anime 已于 2026-09-27 删除,清单里那一条是历史项、无害)、发布版里的解压副本(models_v1.0\)、开发残留/调试产物。
 Source: "发布版\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "engines\rembg\birefnet-lite.onnx,engines\rembg\birefnet.onnx,engines\rembg\isnet-anime.onnx,engines\rembg\isnet-general-use.onnx,engines\rembg\u2net.onnx,engines\rembg\u2netp.onnx,models_v1.0\*,_ttracks*,bin\*,obj\*,*.pdb,*.lib,*.bak,ALHPro_old*,DirectML.Debug.*,d3dcompiler_47.dll.bak,onnxruntime.lib"
 
 [InstallDelete]
@@ -116,7 +116,7 @@ begin
       MsgBox('抠图模型包下载失败。' + #13#10#13#10 +
         '可能原因:网络不稳定 / GitHub 国内直连慢或被限制。' + #13#10 +
         '建议:1) 用加速器或 GitHub 镜像重试;' + #13#10 +
-        '2) 下载 models_v1.0.zip 手动解压到 程序目录\engines\rembg\;' + #13#10 +
+        '2) 下载 models_v1.1.zip 手动解压到 程序目录\engines\rembg\;' + #13#10 +
         '3) 仅需超分/补帧可先不装(不影响其它功能)。', mbError, MB_OK);
       Result := False;
       Exit;
@@ -128,14 +128,14 @@ begin
         '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     begin
       MsgBox('抠图模型包解压失败/卡住。' + #13#10#13#10 +
-        '请手动解压:下载 models_v1.0.zip → 解压到 程序目录\engines\rembg\(提示:解压需几分钟,进度条看似"卡住"是正常解压中)。', mbError, MB_OK);
+        '请手动解压:下载 models_v1.1.zip → 解压到 程序目录\engines\rembg\(提示:解压需几分钟,进度条看似"卡住"是正常解压中)。', mbError, MB_OK);
       Result := False;
       Exit;
     end;
     if ResultCode <> 0 then
     begin
       MsgBox('抠图模型包解压失败(代码 ' + IntToStr(ResultCode) + ')。' + #13#10 +
-        '请手动下载 models_v1.0.zip 解压到 程序目录\engines\rembg\。', mbError, MB_OK);
+        '请手动下载 models_v1.1.zip 解压到 程序目录\engines\rembg\。', mbError, MB_OK);
       Result := False;
       Exit;
     end;
@@ -143,7 +143,7 @@ begin
     DeleteFile(ZipPath);
   except
     MsgBox('抠图模型包下载出错:' + #13#10 + GetExceptionMessage + #13#10#13#10 +
-      '建议:使用加速器/镜像,或直接在 GitHub Release 下载 models_v1.0.zip 手动解压。', mbError, MB_OK);
+      '建议:使用加速器/镜像,或直接在 GitHub Release 下载 models_v1.1.zip 手动解压。', mbError, MB_OK);
     Result := False;
   end;
 end;

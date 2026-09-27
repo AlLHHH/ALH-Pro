@@ -11266,24 +11266,13 @@ public sealed partial class VideoView : UserControl
                 // (找不到权重时 exit=0 只出坏帧 —— 本仓库踩过)。此前这条洞被"anime4k 预检必然失败 ⇒ 整批被判
                 // 走 ONNX(ONNX 侧会替换成它自己的模型)"挡住了,所以看不出来。
                 model = AlhPro.Core.Upscale1x.RealEngineModel;
+                // 【2026-09-27 · Rev11 起这里不再切下拉选中项】原先会去模型框里按 Tag 选中「现实 · 1x 修复」,
+                //   而那一项已按作者要求下线 ⇒ 继续找就是一段**永远找不到目标的死代码**(不会崩,但也什么都不做)。
+                //   现在只留日志:本批实际走的是"按 2x 超分再缩回原尺寸"(引擎模型已在上面的 `model = ...` 里换成真权重)。
+                //   ⚠ 界面上的模型框仍显示"动漫 · Anime4K 修复"(1x 档只剩这一条可选),所以日志必须写清楚实际路线 ——
+                //     不能让用户以为它真的跑了 Anime4K。
                 if (wantAnime4k)
-                {
-                    // Anime4K 不可用 ⇒ 模型框里选到 1x 条目就自动切到"现实 · 1x 修复"(同样是 1x、但不依赖 Vulkan)
-                    var tcs = new System.Threading.Tasks.TaskCompletionSource();
-                    _ = DispatcherQueue.TryEnqueue(() =>
-                    {
-                        try
-                        {
-                            for (int i = 0; i < VideoEsrganModelCombo.Items.Count; i++)
-                                if ((VideoEsrganModelCombo.Items[i] as Microsoft.UI.Xaml.Controls.ComboBoxItem)?.Tag as string
-                                    == AlhPro.Core.Upscale1x.RealTag)
-                                { VideoEsrganModelCombo.SelectedIndex = i; break; }
-                        }
-                        finally { tcs.TrySetResult(); }
-                    });
-                    await tcs.Task;
-                    try { Log("⚠ 本机 Anime4K 着色器不可用(需要可用的 Vulkan 显卡/libplacebo)⇒ 1x 已自动改为「按 2x 超分后缩回原尺寸」(该 1x 条目已于 2026-09-27 下线)"); } catch { }
-                }
+                    try { Log("⚠ 本机 Anime4K 着色器不可用(需要可用的 Vulkan 显卡/libplacebo)⇒ 本批自动改为「按 2x 超分后缩回原尺寸」(1x 档的「现实 · 1x 修复」条目已于 2026-09-27 下线,界面仍显示 Anime4K 那一条)"); } catch { }
             }
             scaleLabel = anime4k1x ? "1x(Anime4K 修复)" : "1x(现实修饰·2x缩回)";
         }

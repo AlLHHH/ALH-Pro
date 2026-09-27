@@ -25,8 +25,8 @@
     　　　isnet-general-use.onnx
     　　　u2net.onnx
     　　　u2netp.onnx
-    (6 个 .onnx 文件直接放在 rembg 里;不要解压缩成
-     一个"models_v1.0"文件夹再放进去——多套一层或
+    (5 个.onnx 文件直接放在 rembg 里;不要解压缩成
+     一个"models_v1.1"文件夹再放进去——多套一层或
      少放一层都会找不到)
 
  4) 怎么确认装好了:打开 ALH Pro → AI 抠图页,
@@ -43,7 +43,7 @@ A: 网络原因(1.4GB,国内直连 GitHub 容易断)。别着急,
 
 Q: 解压后软件还是提示「未找到抠图模型」?
 A: 检查两点:① 是不是解压到了一个多套一层的文件夹
-   (比如 程序目录\engines\rembg\models_v1.0\{onnx})——
+   (比如 程序目录\engines\rembg\models_v1.1\{onnx})——
    删掉多余的层级;② 文件是否完整(6 个文件一个都不能少)。
 
 Q: 下载很慢/下不动,有没有别的下载渠道?

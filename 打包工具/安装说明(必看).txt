@@ -33,9 +33,9 @@
 　　　　　isnet-general-use.onnx
 　　　　　u2net.onnx
 　　　　　u2netp.onnx
-　　注意:不要解压出一个新的文件夹(比如"models_v1.0")
+　　注意:不要解压出一个新的文件夹(比如"models_v1.1")
 　　　　　再放进 rembg 里,那样软件找不到;
-　　　　　6 个 .onnx 文件要直接放在 rembg 文件夹里面。
+　　　　　5 个.onnx 文件要直接放在 rembg 文件夹里面。
 
 第四步:验证装好了没有
 　　　　打开软件 → 左侧点「AI 抠图」→
@@ -53,8 +53,8 @@
 问:解压后还是提示"未找到抠图模型"?
 答:检查两处:
 　　① 是不是多套了一层文件夹?正确位置是
-　　　 程序目录\engines\rembg\{6 个 .onnx},
-　　　 而不是 程序目录\engines\rembg\models_v1.0\{6 个 .onnx}。
+　　　 程序目录\engines\rembg\{5 个.onnx},
+　　　 而不是 程序目录\engines\rembg\models_v1.1\{5 个.onnx}。
 　　② 6 个文件是不是都在?(少一个都不行,重新解压一次)
 
 问:下不动,还有别的办法吗?
