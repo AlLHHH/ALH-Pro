@@ -259,6 +259,16 @@ public sealed partial class CutoutView : UserControl
             if (d is null) return;
             RememberCheck.IsChecked = d.Remember;
             if (!d.Remember) return;
+            // 【2026-09-27 移除「ISNet 动漫」】旧数组顺序里下标 3 正是它
+            //   (birefnet-lite / birefnet / isnet-general-use / isnet-anime / u2net / u2netp)。
+            //   数组顺序一变,存档里的**下标**必须显式迁移,否则会静默漂到别的模型(现在下标 3 = u2net,
+            //   一个 320 输入的老模型)—— 这里迁到「ISNet 精细边缘」(2),并留一行可审计的日志。
+            if (d.Model == 3)
+            {
+                AppLogger.Info("[抠图] 存档里的模型是已下线的「ISNet 动漫」⇒ 自动改为「ISNet 精细边缘」"
+                    + "(该模型 2026-09-27 起不再提供:实测掩码过弱、几乎抠不出东西)");
+                d.Model = 2;
+            }
             if (d.Model is >= 0 && d.Model < ModelCombo.Items.Count) ModelCombo.SelectedIndex = d.Model;
             // 计算设备已在全局设置(AppSettings),页面不再恢复旧 Gpu 值
             if (d.Fg is >= 0 and <= 255) FgSlider.Value = d.Fg;
