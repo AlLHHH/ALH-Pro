@@ -4871,6 +4871,8 @@ public sealed partial class VideoView : UserControl
         ResetZoom();                       // 重新进页面:画面从 100% 起(滚轮放大过才需要「还原」)
         _compareMode = false;
         _cmpSingle = false;   // 重新进页面:先按"没有对比片"处理(真要对比会在合好后再切过去)
+        _twoFileWant = false;   // 【2026-09-27】两文件形态(左右对比)的"要不要"也一起复位:这条壳不经过 ApplyPreviewView,
+                                // 留着旧值会把裁剪页/单视图也摆成左右两半(几何泄漏,用户要求 5)✗→✔
         _dividerDrag = false;
         VideoPreviewOverlay.Visibility = Visibility.Visible;   // 先显示,再算裁切(否则 ActualWidth=0 算不出来)
         try { if (VideoLogScroll != null) VideoLogScroll.Visibility = Visibility.Visible; } catch { }   // 【2026-09-19 用户要求恢复】预览页也显示左下角日志(原来按旧要求隐藏)
@@ -6385,7 +6387,21 @@ public sealed partial class VideoView : UserControl
             // 被对比机制驱动的播放器,装载/起播时序打架)⇒ 立即退回原合成片路径 ✔
             // 结论:这条路收益本就很小(屏幕每侧仍 ~775px),风险却动到播放核心 ✗
             // (2026-09-19 这里原本还推荐去用那个"原画质对比"功能,它已于 2026-09-23 按用户要求删掉)
-            _twoFileWant = false;
+            //
+            // 【2026-09-27 · 用户反馈「预览左右对比那个**左边原视频**没了…左边显示的是处理后的画面(两边看起来一样)」】
+            // 结论:原来那条"同一条并排合成片 + 遮罩裁切"的路,在真机上已经给不出"左边原片"了
+            // (合成片里那一半本来就是**缩过的半幅**,而不是用户要的"源文件整幅画面")。
+            // ⇒ 「左右对比」改走**方案 B 的两文件形态**:左 = 用户的**源文件**、右 = **处理成片**,各自原生像素、各自解码;
+            //    分割线只改**两幅各自的可见宽度**(纯裁切:播放器数量不变、零重烘焙、零换片)。
+            // 边界(如实写明,不吹):这是**两个解码器、两个时钟**,靠既有同步链维持同一时刻
+            //   (_effStart 绝对轴换算 + 位置回调里的速率微调/硬对齐 + 150ms 看门狗),
+            //   与遮罩版式"同一条片、结构性零漂移"不同 —— 这条路上漂移是**可能**出现的(有兜底,但不是结构保证)。
+            // 【为什么只给「左右对比」】用户只报了左右对比,而且「两者同时」当前依赖的是那条**合成片**路径
+            //   (方案 B 早前在「两者同时」上被用户实测撤回过)⇒ 这里 `_twoFileWant` **只在 ViewSplit 为真**,
+            //   「两者同时」一字不改 ✔(硬约束 4)。
+            _twoFileWant = isSplit && hasResult
+                        && _previewItem != null && !string.IsNullOrWhiteSpace(_previewItem.Path)
+                        && !string.IsNullOrEmpty(_effOutPath);
             _twoFileSrc = _previewItem?.Path; _twoFileProc = _effOutPath;
             // 【2026-09-18 架构调整(用户:"要的是实时滑动 实时响应 像 topaz 一样…能不能好好重构一下")】
             // 左右对比**不再用"烘焙一条分割片"**(每个位置要重合成,4K 上要 1~9 秒 → 拖线永远不跟手),
@@ -6425,9 +6441,12 @@ public sealed partial class VideoView : UserControl
             string? cmpWant = isSplit ? (segOk ? _cmpSegPath : _cmpSplitPath) : _cmpClipPath;
             bool cmpReady = isSplit ? (segOk || _cmpSplitReady) : _cmpClipReady;
             // 有偏移副本 → 走**双播放器**(左=源文件,右=偏移副本);没有 → 退回单片
+            // 【2026-09-27】再加一条:左右对比走**两文件形态**时也绝不许走"单播放器播合成片"
+            // (那条路上台面的是烘焙好的合成片,左边那一半又变成"缩过的半幅" ✗)
             _cmpSingle = _compareMode && !_dividerDrag && cmpReady
                       && !string.IsNullOrEmpty(cmpWant) && File.Exists(cmpWant)
-                      && !segOk;
+                      && !segOk
+                      && !_twoFileWant;
             // 分割线能不能拖:只有「左右对比」那个视图可拖,而且是**实时**的(只改裁切,不改片)。
             bool lineDraggable = _compareMode && isSplit;
             // 【用户反馈 2026-09-18:"没有处理的时候「两者同时」布局不对,应该是左边原片、右边未处理占位"】
@@ -6492,7 +6511,9 @@ public sealed partial class VideoView : UserControl
             UpdateCompareLabels();
             if (CmpBuildingText != null)
             {
-                bool showBuild = _compareMode && !_cmpSingle && hasResult && _cmpClipRendering;
+                // 【2026-09-27】左右对比已经改用**两个真实文件**渲染 ⇒ 后台那条合成片与它无关,
+                // 不许再在这个视图上压一条"正在后台合成对比片"(那是给「两者同时」用的)✔
+                bool showBuild = _compareMode && !_cmpSingle && !_twoFileBoth && hasResult && _cmpClipRendering;
                 if (showBuild && CmpBuildingLabel != null)
                     CmpBuildingLabel.Text = CompareBuildText(isSplit, _compareSplit, _cmpClipPct);
                 CmpBuildingText.Visibility = showBuild ? Visibility.Visible : Visibility.Collapsed;
@@ -6583,7 +6604,10 @@ public sealed partial class VideoView : UserControl
                 // 媒体被重新打开、两条装载完成时刻不同 ⇒ 正是用户报的"播放中切回左右对比两边不协调"✓
                 // (实测:19:37:29 / 19:37:42 / 19:37:55 每次进入都是"装片 2~3 ms + 遮罩再装一次")。
                 // 修法:这条直接装遮罩要用的那条 ⇒ 遮罩的 `effOk` 一进来就成立 ⇒ **切回左右零装载** ✔
-                bool maskWillUse = isSplit && !segOk && _cmpClipReady
+                // 【2026-09-27】遮罩版式总开关关掉后(MaskSplitEnabled=false)这里恒 false ⇒ 「左右对比」装的是
+                // **原生预览成片** `_effOutPath`(见下面 want 的三元表达式),而不是那条并排合成片 ✔。
+                // 保留 `MaskSplitEnabled &&` 是为了"一行打开"时行为与打开前逐字一致(遮罩还会自己装它要的那条)✔
+                bool maskWillUse = MaskSplitEnabled && isSplit && !segOk && _cmpClipReady
                                    && !string.IsNullOrEmpty(_cmpClipPath) && File.Exists(_cmpClipPath!);
                 string? want = maskWillUse ? _cmpClipPath : (_cmpSingle ? cmpWant : _effOutPath);
                 if (!string.IsNullOrEmpty(want) && want != _effLoadedPath)
@@ -6725,6 +6749,25 @@ public sealed partial class VideoView : UserControl
                     }
                     catch { }
                     await AlignViewPlayerAsync(nSrc, anchor, playing, gen, tolSec: MaskPairToleranceSec);
+                }
+                else if (_twoFileBoth)
+                {
+                    // 【2026-09-27 · 左右对比两文件形态:两条**必须**是同一时刻】
+                    // 上层装的是**源文件**(绝对轴)、下层是**预览片段**(片段轴,片段从 `_effStart` 秒起)⇒
+                    // 上层的目标 = `_effStart + 下层此刻的位置`。
+                    // 为什么必须在这里做:进入这个视图时下层**刚被换源**(从合成片换成 `_effOutPath`),
+                    // 位置会被打回 0;而暂停态**没有任何东西会纠正上层**(暂停不触发位置回调;看门狗只管"原片别越过区间";
+                    // AlignMaskPairAsync/RealignMaskIfIdle 都只在遮罩态生效)⇒ 左 0 秒 vs 右 N 秒,一眼两个时刻 ✗。
+                    // 【顺序】上面那句 `AlignViewPlayerAsync(nRes, clipT, …)` 已经**带校验定位**地把下层对到上一刻
+                    // ⇒ 这里读到的就是它落地后的真实位置,上层再跟上 ⇒ 顺序确定、没有两个 seek 抢同一个目标 ✔
+                    double anchor2 = clipT;
+                    try
+                    {
+                        var res2 = nRes?.MediaPlayer?.PlaybackSession;
+                        if (res2 != null && res2.NaturalDuration.TotalSeconds > 0.05) anchor2 = res2.Position.TotalSeconds;
+                    }
+                    catch { }
+                    await AlignViewPlayerAsync(nSrc, _effStart + Math.Max(0, anchor2), playing, gen, tolSec: MaskPairToleranceSec);
                 }
             }
             if (gen != _viewGen) return;   // 连点视图切换:这一轮已经过期,不要再写状态
@@ -7365,6 +7408,14 @@ public sealed partial class VideoView : UserControl
     // 于是四条结论是**结构性**的(不是调参调出来的):
     //   ① 左右永远是同一帧 ② 线即时(改遮罩不生成任何东西)③ 不存在漂移(一个时间轴/一个时钟)
     //   ④ 不存在"换片闪一下"(播放期间从不换媒体源)
+    //
+    // 【2026-09-27 · 遮罩版式**总开关**(用户反馈「左右对比左边原视频没了」后关闭)】
+    // 为什么关掉而不是删掉:这条路的**结构性优点**(同一条片 = 一个时钟、零漂移)仍然成立,但它的"左半"
+    // 只是**并排合成片里缩过的半幅**,给不出用户要的"源文件整幅画面";真机上还出现了"左边显示的是处理后
+    // (两边看起来一样)"。⇒ 版式改由「两文件 + 纯裁切」负责(见 SetTwoFileBoth / ApplyTwoFileSplitLayout)。
+    // 这一行就是**一键恢复**的开关:打开它,`TryMaskSplit` 的所有原始行为逐字复活(下面的代码一行都没删)✔
+    // ⚠ 打开前必须解决"合成片左半不是源文件整幅"这件事,否则用户看到的还是那半幅。
+    private const bool MaskSplitEnabled = false;
     private bool _maskSplitActive;
     /// <summary>遮罩模式下"单幅画面"在播放区里的位置与宽度(线要按这个算,才不会偏移 ✗→✓)。
     /// 【用户实测:"这个线是有偏移的"】原因:线原来走 `LineScreenX`,它是按**整条片**的留白算的 ✗,
@@ -7385,13 +7436,14 @@ public sealed partial class VideoView : UserControl
 
     /// <summary>Topaz 式左右对比:两个播放器装**同一条并排合成片**,上层露左半(原片)、下层露右半(处理后),
     /// **线 = 上层播放器的裁切遮罩** ⇒ 拖动即时、零生成;同一文件 + 同一 `MediaTimelineController`
-    /// ⇒ 同一帧、不漂移、不换片不闪、倍率经 ClockRate 持久。</summary>
+    /// ⇒ 同一帧、不漂移、不换片不闪、倍率经 ClockRate 持久。
+    /// 【2026-09-27】入口被 `MaskSplitEnabled` 关掉 ⇒ `want` 恒假,整套代码保留、一键可恢复(见常量处说明)✔</summary>
     private void TryMaskSplit(bool isSplit)
     {
         try
         {
             double aw = PlayerArea?.ActualWidth ?? 0, ah = PlayerArea?.ActualHeight ?? 0;
-            bool want = isSplit && _cmpClipReady && !string.IsNullOrEmpty(_cmpClipPath)
+            bool want = MaskSplitEnabled && isSplit && _cmpClipReady && !string.IsNullOrEmpty(_cmpClipPath)
                         && File.Exists(_cmpClipPath) && aw > 80 && ah > 60
                         && PreviewPlayerHost != null && EffectPlayerHost != null;
             if (!want)
@@ -7927,6 +7979,15 @@ public sealed partial class VideoView : UserControl
                 eff.Pause();
                 origMp?.Pause();
                 PlayWatchAfterApiCall();
+                // 【2026-09-27 · 左右对比两文件】暂停后**位置回调不再触发** ⇒ 两条会各自停在自己读到的时刻
+                // (而遮罩版式那两条装的是同一条片,停了也天然同轴)。这里按**片段条暂停后的位置**把原片
+                // 对到同一绝对时刻一次(带校验定位),用户盯着的静止画面上左右才是同一帧 ✔
+                if (_twoFileBoth)
+                {
+                    double pe = 0;
+                    try { pe = se.Position.TotalSeconds; } catch { }
+                    _ = AlignSplitSourceAsync(_effStart + Math.Max(0, pe), false);
+                }
             }
             else
             {
@@ -8161,8 +8222,13 @@ public sealed partial class VideoView : UserControl
             //   形态该开就开、该关就关;开着时裁切/变换全交给 ApplyBothZoom,不让下面的逻辑把它冲掉 ✔
             bool wantBoth = _zmWant && !string.IsNullOrEmpty(_zmWantPath) && File.Exists(_zmWantPath!);
             if (wantBoth != _zmOn) EnableBothZoom(wantBoth);
-            // 【方案 B 收口】两者同时 = 两个文件并排(左原片 / 右成片);不满足条件就退回原合成片路径 ✔
-            bool want2f = _twoFileWant && !string.IsNullOrEmpty(_twoFileSrc) && !string.IsNullOrEmpty(_twoFileProc);
+            bool isSplitView = (PreviewViewRadios?.SelectedIndex ?? 0) == ViewSplit;
+            // 【方案 B 收口 · 2026-09-27】两文件形态(左 = 源文件 / 右 = 处理成片)**只属于「左右对比」**:
+            // 判据里必须带上"当前视图",否则离开这个视图之后(例如双击进裁剪页:那条路不经过 ApplyPreviewView,
+            // `_twoFileWant` 还是上一次的旧值)裁剪页/单视图会被摆成左右两半 + 残留两个裁切 ✗✗
+            // (用户要求 5:离开视图必须复位几何,不留脏 Width/Margin/Clip)
+            bool want2f = isSplitView && _twoFileWant
+                          && !string.IsNullOrEmpty(_twoFileSrc) && !string.IsNullOrEmpty(_twoFileProc);
             if (want2f != _twoFileBoth) SetTwoFileBoth(want2f);
             if (_twoFileBoth) { ApplyTwoFileLayout(); return; }
             if (_zmOn) { ApplyBothZoom(""); return; }
@@ -8175,7 +8241,6 @@ public sealed partial class VideoView : UserControl
             double w = PlayerArea?.ActualWidth ?? 0, h = PlayerArea?.ActualHeight ?? 0;
             if (w <= 8 || h <= 8) return;
             _playerClip ??= new Microsoft.UI.Xaml.Media.RectangleGeometry();
-            bool isSplitView = (PreviewViewRadios?.SelectedIndex ?? 0) == ViewSplit;
             if (_cmpSingle)
             {
                 // 单播放器对比:画面本身就是一条合成片 → 不裁画面,原片那层也整个收起来了。
@@ -8327,6 +8392,14 @@ public sealed partial class VideoView : UserControl
         // "单片版式"之间来回切 ⇒ 用户看到两根位置不同的线 + 一次可见的刷新 ✓。
         // 遮罩模式下**松手什么都不用做**:线已经在手停下的位置 ✔、裁切也是拖动中实时改的 ✔
         // ⇒ 这里只把裁切/线按当前位置再确认一次,然后**直接返回**(不重合成、不重排版式)✔
+        // 【2026-09-27 · 左右对比 = 两文件形态】松手**什么都不用重做**:两幅的可见宽度在拖动过程中已经实时改完
+        // (纯裁切),这里按当前位置再确认一次布局即可 —— 旧那条"松手 350ms 后烘焙一条分割片"的路
+        // 在这个形态下**必须一次都不触发**(否则松手就闪一次、还要等好几秒)✔
+        if (_twoFileBoth)
+        {
+            ApplyTwoFileLayout();
+            return;
+        }
         if (_maskSplitActive)
         {
             ApplyMaskSplitClipOnly();
@@ -8363,6 +8436,13 @@ public sealed partial class VideoView : UserControl
     /// <summary>屏幕横坐标 → 画面内比例(LineScreenX 的逆运算)。</summary>
     private double RatioFromScreenX(double x, double w, double h)
     {
+        // 【2026-09-27 · 左右对比 = 两文件形态】这一支必须放在**最前面**,而且与"画线 / 两侧裁切"是
+        // **同一个映射** —— 三者都由 `_splitFrame*`(视频框:去掉 Uniform 黑边后的真实显示矩形)推出:
+        //   线 x = _splitFramePadX + _splitFrameVw × 比例;这里就是它的逆运算。
+        // 【为什么特意写这条注释】本文件记过那次事故:线用"视频框"、裁切却用"播放区留白" ⇒ 两套映射 ⇒
+        // 中心重合、**越靠边越偏** ✓。这个形态**只允许存在这一套**换算 ✔
+        if (_twoFileBoth && _splitFrameVw > 20)
+            return Math.Clamp((x - _splitFramePadX) / _splitFrameVw, 0.02, 0.98);
         // 【遮罩模式:拖拽也按"视频边缘"来定(用户建议)✔】比例 0 = 视频框左边缘,1 = 右边缘 ✔
         // 原来这里按"播放区留白"算 ✗,与画线/裁切用的"视频框"不同源 ⇒ 越靠边越偏 ✓
         if (_maskSplitActive && _maskVw > 20)
@@ -9087,6 +9167,9 @@ public sealed partial class VideoView : UserControl
     {
         try
         {
+            // 【2026-09-27】左右对比 = 两文件 + 纯裁切:两幅可见宽度在拖动中已经实时改完 ⇒ 这条"停手 350ms 后
+            // 按新位置烘一条分割片"的路在本形态下**一次都不许发**(它会换片、会闪、4K 上还要几秒)✔
+            if (_twoFileBoth) return;
             if (_cmpSplitDebounce == null)
             {
                 _cmpSplitDebounce = DispatcherQueue.CreateTimer();
@@ -9763,17 +9846,24 @@ public sealed partial class VideoView : UserControl
         catch { }
     }
 
-    // ==================== 「两者同时」= 两个播放器各播各的文件(方案 B,2026-09-19 用户拍板) ====================
+    // ==================== 方案 B = 两个播放器各播各的文件(左 = 源文件 / 右 = 处理成片) ====================
     // 【与旧做法的区别】旧的是一条**烘焙好的并排合成片**(处理后那侧被重采样+重编码一代 ✗);
     // 现在:左 = **原片文件**、右 = **处理成片**,各自原生像素、各自解码 ⇒ 省掉那一代损失 ✔
-    // 【必须说清的边界(已跟用户讲过)】并排时每侧只占画面区一半宽(实测约 775px),
-    //   所以屏幕上"看起来"的清晰度上限由**窗口宽度**决定,不会因为这条改动而变成 4K 那么锐 ✗
-    //   (原来这里指向「1:1 对比」看真像素 —— 那个功能 2026-09-23 按用户要求删掉了)
-    // 【为什么用布局切半幅而不是设裁切】视频面(SwapChainPanel)对裁切有脾气(本文件多处记录过)✗;
-    //   把主机的宽度直接设成半幅、左右对齐 ⇒ 天然不越界、零裁切、最稳 ✔
-    private bool _twoFileBoth;                  // 当前是否处于"两个文件并排"形态
+    // 【2026-09-27 · 这条路现在服务的是「左右对比」】(用户反馈「左边原视频没了…左边显示的是处理后的画面」)
+    //   · 「两者同时」= 保持原来那条**烘焙并排合成片**(单播放器、一条时钟;方案 B 早前在它上面被用户实测撤回)⇒ 一字不改;
+    //   · 「左右对比」= 本形态 + **纯裁切**分割线(见 ApplyTwoFileSplitLayout):左幅 = 源文件、右幅 = 处理成片,
+    //     拖线只改两个裁切矩形 ⇒ 零重烘焙、零换片、手到线到 ✔
+    // 【必须说清的边界(已跟用户讲过)】两幅是**两个解码器两个时钟**(与遮罩版式"同一条片零漂移"不同)⇒
+    //   同一时刻靠 `_effStart` 绝对轴换算 + 位置回调里的速率微调/硬对齐 + 150ms 看门狗兜住,
+    //   漂移是**可能**出现的(有兜底,但不是结构保证)。
+    private bool _twoFileBoth;                  // 当前是否处于"两个文件"形态(左右对比=纯裁切;两者同时=各占半幅)
     private bool _twoFileWant;
     private string? _twoFileSrc, _twoFileProc;
+    // 【2026-09-27 · 单一映射的记账】"视频框"(去掉 Uniform 黑边后的真实显示矩形)在播放区里的**左距与宽度**。
+    // 分割线落位、上层裁切、下层裁切、以及"屏幕 x → 比例"的逆运算,**四处共用这一组数** ——
+    // 本文件记过一次事故:线按"视频框"画、裁切按"播放区留白"算 ⇒ 中心重合、越靠边越偏 ✗ ⇒ 别再引入第二套映射。
+    private double _splitFramePadX, _splitFrameVw;
+    private Microsoft.UI.Xaml.Media.RectangleGeometry? _splitClipTop, _splitClipBottom;
 
     private void SetTwoFileBoth(bool on)
     {
@@ -9783,17 +9873,15 @@ public sealed partial class VideoView : UserControl
             {
                 if (!_twoFileBoth) return;
                 _twoFileBoth = false;
+                _splitFramePadX = _splitFrameVw = 0;
                 try
                 {
-                    foreach (var h in new[] { PreviewPlayerHost, EffectPlayerHost })
-                    {
-                        if (h == null) continue;
-                        h.Width = double.NaN; h.Height = double.NaN;
-                        h.HorizontalAlignment = HorizontalAlignment.Stretch;
-                        h.VerticalAlignment = VerticalAlignment.Stretch;
-                        h.Margin = new Thickness(0);
-                        h.Clip = null;
-                    }
+                    // 【2026-09-27 · 离开视图必须复位几何】一律走既有的两个"归零"函数:
+                    // 它们是 ClearValue(回到布局默认)+ 恢复 Stretch/对齐 ⇒ 不会留下脏 Width/Height/Margin/Clip。
+                    // (旧写法手工赋 NaN 只是"看着一样",配合 NormalizeHostGeometry 的纪律才是收口 ✔)
+                    NormalizeHostGeometry(PreviewPlayerHost);  NormalizePlayerElement(PreviewPlayer);
+                    NormalizeHostGeometry(EffectPlayerHost);   NormalizePlayerElement(EffectPlayer);
+                    if (PlayerArea != null) PlayerArea.Clip = null;   // 遮罩版式曾给播放区加过的裁切一并对掉
                 }
                 catch { }
                 ApplyPlayerClip();     // 交回原有逻辑
@@ -9801,17 +9889,36 @@ public sealed partial class VideoView : UserControl
             }
             if (string.IsNullOrEmpty(_twoFileSrc) || string.IsNullOrEmpty(_twoFileProc)) return;
             if (!File.Exists(_twoFileSrc) || !File.Exists(_twoFileProc)) return;
+            // 【2026-09-27】换片前先记下"片段条"此刻的时刻与播放状态:给元素换 MediaSource 会把位置打回 0 ✗,
+            // 而用户切进/切回「左右对比」时要的是"接着看"(旧写法写死 seekTo=0/play=false ⇒ 一进对比就跳回开头)
+            double keepClip = 0; bool wasPlaying = false;
+            try
+            {
+                var sesNow = EffectPlayer.MediaPlayer?.PlaybackSession;
+                if (sesNow != null)
+                {
+                    keepClip = sesNow.Position.TotalSeconds;
+                    wasPlaying = sesNow.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing;
+                }
+            }
+            catch { }
+            bool split = (PreviewViewRadios?.SelectedIndex ?? -1) == ViewSplit;
+            bool loadedNow = false;
             // 装载(只在"源真的不同"时装,避免每次布局刷新都重装 → 那正是之前卡 1 秒的原因 ✗→✔)
             if (!string.Equals(_previewLoadedPath, _twoFileSrc, StringComparison.OrdinalIgnoreCase))
             {
                 PreviewPlayer.Source = Windows.Media.Core.MediaSource.CreateFromUri(new Uri(_twoFileSrc));
                 _previewLoadedPath = _twoFileSrc;
-                RecacheMediaRefs("两文件并排装上原片后");   // 【2026-09-23】同上(该形态当前关闭,一并补上)
+                RecacheMediaRefs("两文件并排装上原片后");   // 装片会换掉元素里的 MediaPlayer ⇒ 媒体回调的缓存引用必须重抓
+                // (理由串沿用原字面量:「两文件并排」是这条路的**形态名**,现在同时服务「左右对比」的纯裁切版式;
+                //  改它会动到 PreviewPairSyncTests 里"每个装片入口后面都必须跟一次重抓"那条契约的锚点,没必要)✔
+                loadedNow = true;
             }
             if (!string.Equals(_effLoadedPath, _twoFileProc, StringComparison.OrdinalIgnoreCase))
             {
-                LoadEffectSource(_twoFileProc, 0, false);
+                LoadEffectSource(_twoFileProc, keepClip, wasPlaying);
                 _effLoadedPath = _twoFileProc;
+                loadedNow = true;
             }
             try
             {
@@ -9819,27 +9926,63 @@ public sealed partial class VideoView : UserControl
                 EffectPlayerHost.Visibility = Visibility.Visible;
                 foreach (var pl in new[] { PreviewPlayer, EffectPlayer })
                 {
-                    pl.Width = double.NaN; pl.Height = double.NaN;
-                    pl.Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform;   // 各自在自己的半幅里完整显示 ✔
+                    pl.ClearValue(Microsoft.UI.Xaml.FrameworkElement.WidthProperty);
+                    pl.ClearValue(Microsoft.UI.Xaml.FrameworkElement.HeightProperty);
+                    pl.Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform;   // 各自在自己的幅面里完整显示 ✔
                 }
             }
             catch { }
             _twoFileBoth = true;
             ApplyTwoFileLayout();
-            Log($"[两者同时·两文件] 左=原片({Path.GetFileName(_twoFileSrc)}) 右=处理后({Path.GetFileName(_twoFileProc)})"
-                + " —— 各自原生像素、各自解码,不再经过烘焙合成片");
+            // 【2026-09-27】两文件形态下"两条同一时刻"由 `TransferTimelineAcrossViewSwitchAsync` 里的
+            // `_twoFileBoth` 分支负责(它把下层带校验定位到上一刻,再让上层跟着下层的**真实位置**走)。
+            // 为什么不在这个方法里再对一次:换源发生在 ApplyPreviewView 更早的位置(line 6615 那条),
+            // 两条对齐要求"先下层、后上层"的确定顺序 —— 那条路已经保证了,这里再插一脚只会两个 seek 抢同一个目标 ✗
+            Log($"[{(split ? "左右对比" : "两者同时")}·两文件] 左=原片({Path.GetFileName(_twoFileSrc)}) 右=处理后({Path.GetFileName(_twoFileProc)})"
+                + $" —— 各自原生像素、各自解码(本次换源={loadedNow})");
         }
-        catch (Exception ex) { Log($"两者同时·两文件启用失败,退回合成片:{ex.Message}"); _twoFileBoth = false; }
+        catch (Exception ex) { Log($"两文件形态启用失败,退回合成片:{ex.Message}"); _twoFileBoth = false; }
     }
 
-    /// <summary>把两个播放器分别放进左右半幅(用布局,不用裁切 ⇒ 不碰视频面的裁切路径)✔</summary>
+    /// <summary>「左右对比·两文件」:把**上层(源文件那条)**对到目标**绝对秒**(= 源文件时间轴上的时刻)
+    /// 并按需补上播放状态。用于"装片后 / 暂停之后"这一类单点场景(见 AlignSplitSourceToClipAsync 与 ToggleComparePlayback)。
+    /// 【为什么必须带校验定位】本文件多处实测:裸设 Position + 立刻返回,那次 seek 没落地就会留下恒定偏移
+    /// ("左边比右边早 0.几秒")⇒ 一律走 SeekAndVerifyAsync(它内部按 15ms 轮询回读确认)✔
+    /// 【为什么容差 0.12 秒】与 AlignAndPlayAsync 同一口径(肉眼不可辨的起始帧差,不值得再花一次定位)。
+    /// UI 线程调用(SeekAndVerifyAsync 内部只碰媒体 API,不碰控件)✔</summary>
+    private async Task AlignSplitSourceAsync(double absSec, bool play)
+    {
+        try
+        {
+            var mp = PreviewPlayer?.MediaPlayer;
+            var se = mp?.PlaybackSession;
+            if (mp == null || se == null || !_twoFileBoth) return;
+            double cur = -999;
+            try { cur = se.Position.TotalSeconds; } catch { }
+            if (Math.Abs(cur - Math.Max(0, absSec)) > 0.12)
+                await SeekAndVerifyAsync(mp, Math.Max(0, absSec), 2);
+            if (!_twoFileBoth) return;      // 等待期间可能已经切走:过期就不再动播放状态
+            ApplyCmpRateToAll(false);       // 倍率/静音在"定位/换片后"都要补回(两条一起)
+            if (play) { try { mp.Play(); } catch { } } else { try { mp.Pause(); } catch { } }
+        }
+        catch { }
+    }
+
+    /// <summary>两个文件的版式。
+    /// · 「两者同时」= 各占半幅(用**布局**:主机宽 = 画面区宽 ÷ 2)⇒ 不碰任何裁切路径 ✔(该形态当前未启用,保留原实现);
+    /// · 「左右对比」= **纯裁切**分割线(见 ApplyTwoFileSplitLayout)✔</summary>
     private void ApplyTwoFileLayout()
     {
         if (!_twoFileBoth) return;
         try
         {
             double aw = PlayerArea?.ActualWidth ?? 0, ah = PlayerArea?.ActualHeight ?? 0;
-            if (aw < 80 || ah < 40) return;
+            if (aw < 80 || ah < 40) return;   // 布局还没测量出来:尺寸变化时会再进来一次(见 PlayerArea_SizeChanged)
+            if ((PreviewViewRadios?.SelectedIndex ?? -1) == ViewSplit)
+            {
+                ApplyTwoFileSplitLayout(aw, ah);
+                return;
+            }
             double half = Math.Floor(aw / 2);
             if (PreviewPlayerHost != null)
             {
@@ -9865,6 +10008,133 @@ public sealed partial class VideoView : UserControl
             }
         }
         catch { }
+    }
+
+    /// <summary>【2026-09-27 · 左右对比 = 两文件 + 纯裁切】
+    /// 两个主机都**铺满整个画面区**(几何完全相同 ⇒ Uniform 之后的缩放也完全相同,两幅像素一一对应),
+    /// 各自只露出分割线**一侧**:
+    ///   上层 `PreviewPlayerHost`(装**用户的源文件**)⇒ `Clip = (0, 0, x, ah)`:左边是**原视频整幅画面** ✔
+    ///   下层 `EffectPlayerHost` (装**处理后成片**)  ⇒ `Clip = (x, 0, aw−x, ah)`:右边是处理后 ✔
+    /// 拖动只改这两个矩形 + 挪线 —— **不解码、不换片、不重烘焙** ⇒ 手到线到 ✔
+    /// 【为什么用"两条都铺满 + 各裁一半",而不是"把两半的宽度直接改小"】改宽度会让 Uniform 把画面重新缩进那一半
+    /// ⇒ 拖动时两幅**各自在缩放**(一边缩一边放、比例还不一样),那是"擦除比较"里最刺眼的假象;裁切则两幅缩放恒定、
+    /// 只有**可见范围**在变 ✔(这也是 Topaz 式擦除比较的标准做法)。
+    /// 【单一映射】分界 x 由"视频框"推出:**线、上层裁切、下层裁切、逆运算**四处共用同一个 x ✔
+    /// (本文件记过那次事故:线用视频框、裁切用播放区留白 ⇒ 中心重合、越靠边越偏 ✗)</summary>
+    private void ApplyTwoFileSplitLayout(double aw, double ah)
+    {
+        try
+        {
+            // ① 视频框 = Uniform 之后的真实显示矩形。以**上层(源文件)**回报的自然尺寸为准 ——
+            //    它才是用户要看的"整幅原视频";取不到再问下层;两条都取不到就按"无黑边"退化。
+            double nw = 0, nh = 0;
+            try
+            {
+                var pse = PreviewPlayer?.MediaPlayer?.PlaybackSession;
+                if (pse != null && pse.NaturalVideoWidth > 16 && pse.NaturalVideoHeight > 16)
+                { nw = pse.NaturalVideoWidth; nh = pse.NaturalVideoHeight; }
+            }
+            catch { }
+            if (nw <= 16 || nh <= 16)
+            {
+                try
+                {
+                    var nse = EffectPlayer?.MediaPlayer?.PlaybackSession;
+                    if (nse != null && nse.NaturalVideoWidth > 16 && nse.NaturalVideoHeight > 16)
+                    { nw = nse.NaturalVideoWidth; nh = nse.NaturalVideoHeight; }
+                }
+                catch { }
+            }
+            double ar = (nw > 16 && nh > 16) ? nw / nh : (ah > 8 ? aw / ah : 16.0 / 9.0);
+            if (ar <= 0.05) ar = 16.0 / 9.0;
+            double vw = ah * ar, vh = ah;
+            if (vw > aw) { vw = aw; vh = vw / ar; }
+            if (vw < 40 || vh < 30) return;
+            _splitFramePadX = (aw - vw) / 2.0; _splitFrameVw = vw;   // 记下视频框(线/裁切/逆运算共用这一组数)
+            // ② 分界 = 视频框内比例 → 屏幕 x(取整像素:半像素会让视频面反复重采样,看着像在缩放 —— 本文件记过这个坑)
+            double x = Math.Round(_splitFramePadX + _splitFrameVw * Math.Clamp(_compareSplit, 0.02, 0.98));
+            double awR = Math.Round(aw), ahR = Math.Round(ah);
+            // ③ 两个主机都铺满画面区(相同几何 ⇒ 相同缩放),各自只露一侧
+            if (PreviewPlayerHost != null)
+            {
+                PreviewPlayerHost.ClearValue(Microsoft.UI.Xaml.FrameworkElement.WidthProperty);
+                PreviewPlayerHost.ClearValue(Microsoft.UI.Xaml.FrameworkElement.HeightProperty);
+                PreviewPlayerHost.HorizontalAlignment = HorizontalAlignment.Stretch;
+                PreviewPlayerHost.VerticalAlignment = VerticalAlignment.Stretch;
+                PreviewPlayerHost.Margin = new Thickness(0);
+                _splitClipTop ??= new Microsoft.UI.Xaml.Media.RectangleGeometry();
+                _splitClipTop.Rect = new Windows.Foundation.Rect(0, 0, Math.Max(1, x), ahR);
+                PreviewPlayerHost.Clip = _splitClipTop;
+            }
+            if (EffectPlayerHost != null)
+            {
+                EffectPlayerHost.ClearValue(Microsoft.UI.Xaml.FrameworkElement.WidthProperty);
+                EffectPlayerHost.ClearValue(Microsoft.UI.Xaml.FrameworkElement.HeightProperty);
+                EffectPlayerHost.HorizontalAlignment = HorizontalAlignment.Stretch;
+                EffectPlayerHost.VerticalAlignment = VerticalAlignment.Stretch;
+                EffectPlayerHost.Margin = new Thickness(0);
+                _splitClipBottom ??= new Microsoft.UI.Xaml.Media.RectangleGeometry();
+                _splitClipBottom.Rect = new Windows.Foundation.Rect(Math.Max(0, x), 0, Math.Max(1, awR - x), ahR);
+                EffectPlayerHost.Clip = _splitClipBottom;
+            }
+            if (PlayerArea != null) PlayerArea.Clip = null;   // 本形态不靠播放区裁切(主机没有超框几何)
+            // ④ 线 = 同一个 x(线宽/把手不随任何缩放变化)
+            if (CompareSplitter != null)
+            {
+                CompareSplitter.Visibility = Visibility.Visible;
+                CompareSplitter.Margin = new Thickness(x - (CompareSplitter.Width / 2), 0, 0, 0);
+            }
+            // ⑤ 【2026-09-27 · 自查发现的坑】上面如果走的是"自然尺寸还没回报"的退化分支(ar = 画面区比例),
+            // 这一遍版式就是**错的**(视频框与真实画面框不一致 ⇒ 非 50% 的分割位越靠边越偏),而且
+            // **没有任何东西会再算一次**(只有拖动分割线/改窗口尺寸才自愈)✗
+            // ⇒ 轮询到自然尺寸可用就重摆一次(只补一次;期间离开这个形态就放弃)✔
+            if (nw <= 16 || nh <= 16) _ = EnsureSplitFrameReadyAsync();
+        }
+        catch { }
+    }
+
+    /// <summary>【2026-09-27】"自然尺寸还没回报"时的补算:等到播放器报出自然尺寸就**重摆一次**两文件版式。
+    /// 【为什么要它】分割线位置、上层裁切、下层裁切、逆运算**全部**由"视频框"推出,而视频框的宽高比只能从
+    /// 自然尺寸得到;媒体还没打开时只能退化成"按画面区比例、无黑边" ⇒ 与真实画面框不一致时线/裁切就落偏,
+    /// 且没有任何东西会重算(见 ApplyTwoFileSplitLayout ⑤)✗。
+    /// 【线程】只从 UI 线程发起(ApplyTwoFileSplitLayout);`await Task.Delay` 之后仍在 UI 线程 ⇒ 读控件属性安全 ✔
+    /// 【防重入】已经在等就直接返回(尺寸变化会反复进来,不能每次都起一个轮询)✔</summary>
+    private bool _splitFrameWaitBusy;
+    private async Task EnsureSplitFrameReadyAsync()
+    {
+        if (_splitFrameWaitBusy) return;
+        _splitFrameWaitBusy = true;
+        try
+        {
+            for (int i = 0; i < 12; i++)   // 最多约 1.8 秒
+            {
+                await Task.Delay(150);
+                if (!_twoFileBoth) return;   // 已经离开这个形态:不用补了
+                double nw = 0, nh = 0;
+                try
+                {
+                    var pse = PreviewPlayer?.MediaPlayer?.PlaybackSession;
+                    if (pse != null) { nw = pse.NaturalVideoWidth; nh = pse.NaturalVideoHeight; }
+                }
+                catch { }
+                if (nw <= 16 || nh <= 16)
+                {
+                    try
+                    {
+                        var nse = EffectPlayer?.MediaPlayer?.PlaybackSession;
+                        if (nse != null) { nw = nse.NaturalVideoWidth; nh = nse.NaturalVideoHeight; }
+                    }
+                    catch { }
+                }
+                if (nw > 16 && nh > 16)
+                {
+                    ApplyTwoFileLayout();   // 尺寸可用了 → 按真实画面框重摆一次(线/两个裁切一起纠正)
+                    return;
+                }
+            }
+        }
+        catch { }
+        finally { _splitFrameWaitBusy = false; }
     }
 
     private void ApplyWantedSeek() => FlushPendingSeeks();
@@ -9938,7 +10208,18 @@ public sealed partial class VideoView : UserControl
         try { ApplyCmpRateToAll(false); } catch { }
         // 单播放器对比:装片完成后才定位/起播(装的同时 seek 会被播放器吞掉)
         if (_cmpSingle) { _ = PositionEffectAndPlayAsync(); return; }
-        if (_compareMode) { _ = AlignAndPlayAsync(); return; }
+        if (_compareMode)
+        {
+            // 【2026-09-27 · 左右对比两文件形态】"换源"不等于"用户点了播放":`_cmpPendingPlay` 是这次装片登记的
+            // **真实意图**(预览刚跑完 / 换源前就在播 → true)。为假时**保持暂停**,不自己播起来 ——
+            // 否则"从别的视图切进左右对比"会莫名其妙开始播放(用户没按过播放键)。
+            // 这一支的对齐由 SetTwoFileBoth → AlignSplitSourceToClipAsync(UI 线程)负责:它会等媒体打开,
+            // 再把上层(源文件)对到下层此刻的真实位置换算出的绝对秒 ✔
+            // 【线程】本方法可能由 MediaOpened(媒体线程)或装片时的同步兜底调进来 ⇒ 这里**只读字段**,不读控件属性。
+            // 【范围】只在两文件形态生效(`_twoFileWant` 在整个「左右对比」进入过程中都为真);「两者同时」原样不动 ✔
+            if (_twoFileWant && !_cmpPendingPlay) return;
+            _ = AlignAndPlayAsync(); return;
+        }
         // 【倒装】走到这里说明"这条是合成片那条(EffectPlayer),但用户已经切到单视图了" ——
         // 那一对此刻必须是暂停的(否则四路解码),所以**不要**把藏起来的那条播起来 ✔
         if (!_compareMode) return;
@@ -12141,7 +12422,7 @@ public sealed partial class VideoView : UserControl
             double encSeconds = encSecondsAcc + (encSegStart.HasValue
                 ? Math.Max(0, (DateTime.Now - encSegStart.Value).TotalSeconds)
                 : 0);
-            // 【2026-09-25 修订 · F2/R1】首帧任务的**超分单价标定**墙钟也要扣掉:它同样不是"每帧推理成本"
+            // 【2026-09-25 修订 · F2/R1】首帧任务的**超分单帧耗时标定**墙钟也要扣掉:它同样不是"每帧推理成本"
             // (一次 Real-CUGAN 标定约 10~20 秒,含两次引擎启动),不扣就会把这次的"秒/帧"抬高,
             // 再以 50/50 掺进后续 ETA。与任务入口那一次 `ConsumeCalibratedSeconds()` 成对:清零每任务一次、
             // 扣减每任务一次、累计 = 本任务内**所有视频**的标定之和(多视频也扣得住)。
@@ -12149,7 +12430,7 @@ public sealed partial class VideoView : UserControl
             double calibSeconds = UpscaleCalibrator.ConsumeCalibratedSeconds();
             double processSeconds = Math.Max(0, taskSpan.TotalSeconds - encSeconds - calibSeconds);
             AppLogger.Info($"阶段耗时拆分:处理阶段(拆帧/去重/补帧/超分/后处理){processSeconds:0.#} 秒 + 编码/封装 {encSeconds:0.#} 秒"
-                + (calibSeconds > 0 ? $" + 超分单价标定 {calibSeconds:0.#} 秒(不计入每帧成本)" : "")
+                + (calibSeconds > 0 ? $" + 超分单帧耗时标定 {calibSeconds:0.#} 秒(不计入每帧成本)" : "")
                 + $" = 总 {taskSpan.TotalSeconds:0.#} 秒");
             if (okCount > 0 && failCount == 0 && totalFramesEst > 0 && processSeconds > 10)
             {
