@@ -3163,11 +3163,15 @@ public sealed partial class MainPage : Page
                                         eng, probeGpu, model: null, probeCts.Token, force: true);
                                 }
                                 catch (Exception ex) { AppLogger.Warn($"[探测] 诊断包强制实测 {eng} 失败(不影响打包):{ex.Message}"); }
-                                info.AppendLine($"ncnn 探测({eng}, GPU {probeGpu}): {(ok ? "实测可用 → 走 ncnn-Vulkan" : "实测不可用 → 走 ONNX 稳定引擎")}");
+                                // 【2026-09-27 改】失败那支原来一律写"→ 走 ONNX 稳定引擎",而 Real-CUGAN 没有
+                                // ONNX 版本(CPU 档实测会崩)⇒ 这句给用户指了一条不存在的出路。口径取自 Core。
+                                string failRoute = AlhPro.Core.RealCugan.IsRealCuganId(eng)
+                                    ? "实测不可用 —— " + AlhPro.Core.RealCugan.UnavailableNotice
+                                    : "实测不可用 → 走 ONNX 稳定引擎";
+                                info.AppendLine($"ncnn 探测({eng}, GPU {probeGpu}): {(ok ? "实测可用 → 走 ncnn-Vulkan" : failRoute)}");
                             }
                             try { StatusText.Text = prevStatus; } catch { }
                         }
-                        info.AppendLine("ncnn 实测结论(导出时实时): " + ALHPro.EngineService.DescribeNcnnVerdicts(probeGpu));
                     }
                     catch (Exception ex) { AppLogger.Warn("[探测] 诊断包 ncnn 实测异常(不影响打包):" + ex.Message); }
                     info.AppendLine("ncnn 实测结论(导出时实时): " + ALHPro.EngineService.DescribeNcnnVerdicts(probeGpu));

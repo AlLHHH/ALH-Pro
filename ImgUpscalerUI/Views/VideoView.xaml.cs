@@ -4570,7 +4570,9 @@ public sealed partial class VideoView : UserControl
             // 【删掉了 IsBlackwellGpu() ||】此前 50 系无条件返回 true → ETA/提示永远按 ONNX 慢路估算,
             // 即使实测证明 ncnn 可用。现在只看实测结论(ShouldUseOnnx* 内部:有结论用结论;
             // 没结论时只在"无独显 / Vulkan 不可用"这两种确实只能 CPU 的情况下才为真)。
-            // 【2026-09-24 Real-CUGAN】它**没有 ONNX 版本** ⇒ 永远不走 ONNX,按 ncnn(探测不过时是 ncnn-CPU)估。
+            // 【2026-09-24 Real-CUGAN】它**没有 ONNX 版本** ⇒ 永远不走 ONNX,按 ncnn 估。
+            // 【2026-09-27 改正括号里那句】旧写"探测不过时是 ncnn-CPU" —— 它的 CPU 档在重编版上实测会崩,
+            // 探测不过的真实结果是**开跑前明确拒绝**(RealCuganNeedsGpuException),不存在 ncnn-CPU 这一档。
             if (SelectedEngineIsRealCugan) return false;
             if (!SelectedEngineIsReal)
                 return EngineService.ShouldUseOnnxWaifu2x();

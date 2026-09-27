@@ -115,7 +115,10 @@ public static class NcnnModelVerdicts
             }
         }
         if (ok == 0 && fail == 0) return $"{engineId}=未测(首次处理时自动实测)";
-        if (engine == false) return $"{engineId}=实测不可用→走 ONNX({fail} 支模型失败)";
+        // 【2026-09-27 改】这一行原来对所有引擎一律写"→走 ONNX",但 Real-CUGAN **没有 ONNX 版本**
+        // (CPU 档实测会崩)⇒ 报告在这里就替用户编了一条不存在的出路。口径统一取自 RealCugan。
+        if (engine == false) return $"{engineId}=实测不可用({fail} 支模型失败)—— "
+            + (RealCugan.IsRealCuganId(engineId) ? RealCugan.UnavailableNotice : "走 ONNX");
         // 引擎可用:如实指出个别失败的模型,别让人以为整条坏了
         return fail == 0
             ? $"{engineId}=实测可用→走 ncnn({ok} 支模型全通过)"
