@@ -6,7 +6,7 @@ using Xunit;
 
 namespace AlhPro.Tests;
 
-/// <summary>【2026-09-25 A+B】本机实测超分单价的**记录/折算/拒收**单测(契约 A1)。
+/// <summary>【2026-09-25 A+B】本机实测超分单帧耗时的**记录/折算/拒收**单测(契约 A1)。
 ///
 /// 缺陷背景:顺序判定只读 `PipelineOrderPlan.UpscaleRates`(开发机一台机器的实测)⇒
 /// 「别人的机器用我的机器的秒/帧决定先超分还是先补帧」(用户 2026-09-25 原话)。
@@ -33,7 +33,7 @@ public class LocalPriceBookTests
         Assert.Equal(0.26, bad.SecondsPerFrame1080p, 9);
     }
 
-    /// <summary>出处一行必须能被审计:两点法的两次耗时 + N + 采样分辨率 + 折算到 1080p 的单价(契约 A4)。</summary>
+    /// <summary>出处一行必须能被审计:两点法的两次耗时 + N + 采样分辨率 + 折算到 1080p 的单帧耗时(契约 A4)。</summary>
     [Fact]
     public void Provenance_cites_two_timings_frames_resolution_and_the_1080p_conversion()
     {
@@ -46,13 +46,13 @@ public class LocalPriceBookTests
         Assert.Contains("1920×1080", s);
         Assert.Contains("1.65", s);
         Assert.Contains("折算 1080p", s);
-        // 两次耗时与算出的单价必须自洽:0.9 + 6×1.65 = 10.8
+        // 两次耗时与算出的单帧耗时必须自洽:0.9 + 6×1.65 = 10.8
         Assert.Contains("10.8", s);
     }
 
     // ───────────────────────── TryBuild:成功与六条拒收 ─────────────────────────
 
-    /// <summary>两点法自洽的一组数 ⇒ 通过,且 `SecondsPerFrame` 就是扣掉地板后的单价;
+    /// <summary>两点法自洽的一组数 ⇒ 通过,且 `SecondsPerFrame` 就是扣掉地板后的单帧耗时;
     /// `FloorSeconds`/`SampleSeconds` 是**两次的原始耗时**(可审计,不是算出来的地板)。</summary>
     [Fact]
     public void TryBuild_accepts_a_self_consistent_two_point_sample()
@@ -90,11 +90,11 @@ public class LocalPriceBookTests
         Assert.Contains("退化", reject);
         Assert.Contains("不回退", reject);                   // 明确写了"不许回退成 总量÷帧数"
         Assert.Contains("拒收", reject);
-        // 那句"总量÷帧数"的数字(4.0/6≈0.67)绝不能作为单价出现 —— 记录根本没生成
+        // 那句"总量÷帧数"的数字(4.0/6≈0.67)绝不能作为单帧耗时出现 —— 记录根本没生成
         Assert.NotEqual(0.667, price.SecondsPerFrame, 3);
     }
 
-    /// <summary>其余拒收条件逐条走一遍(N&lt;4 / 两次耗时非法 / 面积非法 / 机器指纹空白 / 单价越界 / 认不出模型)。</summary>
+    /// <summary>其余拒收条件逐条走一遍(N&lt;4 / 两次耗时非法 / 面积非法 / 机器指纹空白 / 单帧耗时越界 / 认不出模型)。</summary>
     [Fact]
     public void TryBuild_rejects_every_invalid_input_with_a_readable_reason()
     {
@@ -134,19 +134,19 @@ public class LocalPriceBookTests
         Assert.False(Try("some-new-model", 2, 6, 0.9, 2.5, Px1080, "K", out string r7));
         Assert.Contains("认不出这个模型名", r7);
 
-        // ⑧ 后端未确认(空白 / 认不出)——【F1-I4】后端没定稿就不许产出可落盘的单价
+        // ⑧ 后端未确认(空白 / 认不出)——【F1-I4】后端没定稿就不许产出可落盘的单帧耗时
         Assert.False(Try("realesr-animevideov3", 2, 6, 0.9, 2.5, Px1080, "K", out string r8a, backend: "   "));
         Assert.Contains("超分后端未确认", r8a);
         Assert.False(Try("realesr-animevideov3", 2, 6, 0.9, 2.5, Px1080, "K", out string r8b, backend: "vulkan-2027"));
         Assert.Contains("超分后端未确认", r8b);
 
-        // ⑨ 单价下限:算出来 0.0004 s/帧 ≤ 0.0005 ⇒ 拒收。
+        // ⑨ 单帧耗时下限:算出来 0.0004 s/帧 ≤ 0.0005 ⇒ 拒收。
         // 【取样口径】必须让**差值先过大**(≥ 0.15×t1),否则会先被 ⑪ 那条相对噪声门槛拦下 ——
         // 所以这里把 t1 也压小(0.001s):差值 3×0.0004=0.0012 ≥ 0.15×0.001=0.00015 ✔ ⇒ 才轮到"合理区间"这条。
         Assert.False(Try("realesr-animevideov3", 2, 4, 0.001, 0.001 + 3 * 0.0004, Px1080, "K", out string r9a));
         Assert.Contains("超出合理区间", r9a);
 
-        // ⑩ 单价上限:算出来 200 s/帧(> 120);差值 5×200=1000s 远超噪声门槛 ⇒ 走"合理区间"这条
+        // ⑩ 单帧耗时上限:算出来 200 s/帧(> 120);差值 5×200=1000s 远超噪声门槛 ⇒ 走"合理区间"这条
         Assert.False(Try("realesr-animevideov3", 2, 6, 0.9, 0.9 + 5 * 200, Px1080, "K", out string r9));
         Assert.Contains("超出合理区间", r9);
 
@@ -290,7 +290,7 @@ public class LocalPriceBookTests
         """;
         var book = LocalPriceBook.ParseJson(json);
         // 留下 2 条:① 本机 + 后端认得出;⑥ 同上(第二个模型)。丢掉的 5 条分别是:
-        // 无指纹 / 单价 0 / 面积为 0 / 模型名为空 / **backend 认不出(F1-I4:后端未确认的记录不许存在)**。
+        // 无指纹 / 单帧耗时 0 / 面积为 0 / 模型名为空 / **backend 认不出(F1-I4:后端未确认的记录不许存在)**。
         Assert.Equal(2, book.Count);
         Assert.Equal("realcugan-se", book[0].ModelKey);
         Assert.Equal(1.65, book[0].SecondsPerFrame, 9);
@@ -313,7 +313,7 @@ public class LocalPriceBookTests
         Assert.Contains("…", d);
     }
 
-    /// <summary>常量口径(与契约一致):MinSampleFrames = 4、单价区间 [0.0005, 120]、schema = 1。</summary>
+    /// <summary>常量口径(与契约一致):MinSampleFrames = 4、单帧耗时区间 [0.0005, 120]、schema = 1。</summary>
     [Fact]
     public void Constants_match_the_contract()
     {
@@ -335,8 +335,8 @@ public class LocalPriceBookTests
 
     // ═══════════════ 【2026-09-25 修订 · F1-I2】后端不得串用(后端进键) ═══════════════
 
-    /// <summary>**I2 的核心断言**:在 ncnn 上测的单价,查"ONNX 后端"这一格时必须**查不到**
-    /// (否则就会拿偏小的 ncnn 单价去判定 ONNX 运行 —— 2026-09-25 那次 39 分钟误判的同一类)。
+    /// <summary>**I2 的核心断言**:在 ncnn 上测的单帧耗时,查"ONNX 后端"这一格时必须**查不到**
+    /// (否则就会拿偏小的 ncnn 单帧耗时去判定 ONNX 运行 —— 2026-09-25 那次 39 分钟误判的同一类)。
     /// 【红检】把 Resolve 里的后端过滤那行删掉(或让 Key 不含后端),本用例立刻变红。</summary>
     [Fact]
     public void A_price_measured_on_one_backend_is_never_usable_for_another()

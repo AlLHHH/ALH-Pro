@@ -293,7 +293,7 @@ public static class ExternalPractice
     ///   · **`realesr-general-wdn-x4v3`**:权重是上游官方 release v0.2.5.0 的资产(作者 xinntao 本人发布,
     ///     SHA256 1641F8C4…),项目许可 **BSD 3-Clause(c) 2021 Xintao Wang**,README 与 docs 里**没有任何**
     ///     "仅研究/禁商用"表述 ⇒ 与在用的 general-x4v3 同族同许可,**可以随包分发**,已于 2026-09-14 接线
-    ///     (自转 ncnn;同架构、同 bin 字节数,实测单价 0.460 秒/帧 @1080p)。
+    ///     (自转 ncnn;同架构、同 bin 字节数,实测单帧耗时 0.460 秒/帧 @1080p)。
     ///   · 同类坑提醒:`cszn/SRMD`、`cszn/RealSR` 两个权重来源仓库**都没有 LICENSE 文件**,仍不推荐。</summary>
     public const string NoVerifiedAdditionalRedistributableModel =
         "许可逐字核实(2026-09-24 更新):Real-CUGAN **已恢复随包** —— bilibili 官方 ModelScope 权重页"

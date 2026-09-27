@@ -5,7 +5,7 @@ namespace AlhPro.Tests;
 
 /// <summary>单测用的「本机标定表」构造器(2026-09-25 A+B)。
 ///
-/// 【为什么要有它】判据现在只吃**本机实测单价**(`LocalPriceBook`);既有那些钉数字的断言
+/// 【为什么要有它】判据现在只吃**本机实测单帧耗时**(`LocalPriceBook`);既有那些钉数字的断言
 /// (animevideov3 2x = 0.2605、x4plus = 15.87 …)测的是**成本模型的数学**,不该因为"换成本机口径"就丢掉。
 /// 所以这里把内置表(他机资料)里的数字**包装成一条本机标定**(采样面积取 1080p,折算后数值相等),
 /// 让老断言用新机制继续成立 —— 每一处改动都在 t27 的 output 里列明。
@@ -24,7 +24,7 @@ internal static class LocalPriceFixture
     public const string Backend = UpscaleBackendPlan.NcnnVulkan;
 
     /// <summary>构造一条"采样面积正好是 1080p"的本机标定 ⇒ `SecondsPerFrame1080p == secondsPerFrame1080p`。
-    /// 两次耗时就按两点法自洽地编出来(floor 0.9s + N 帧 × 单价),所以 `Provenance` 里的数字也是真的能对上的。</summary>
+    /// 两次耗时就按两点法自洽地编出来(floor 0.9s + N 帧 × 单帧耗时),所以 `Provenance` 里的数字也是真的能对上的。</summary>
     public static LocalPrice At1080p(string engineModelName, int engineScale, double secondsPerFrame1080p,
         string machineKey = MachineKey, int sampleFrames = 6, string backend = Backend)
     {

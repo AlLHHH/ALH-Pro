@@ -4,7 +4,7 @@ using AlhPro.Core;
 
 namespace ALHPro;
 
-/// <summary>**首次自动标定**:在"超分与补帧都要真跑"的那次任务里,用真引擎测出**这台机器**的超分单价,
+/// <summary>**首次自动标定**:在"超分与补帧都要真跑"的那次任务里,用真引擎测出**这台机器**的超分单帧耗时,
 /// 供 `AlhPro.Core.PipelineOrderPlan.Decide(...)` 判"先超分还是先补帧"(用户 2026-09-25 的硬要求:
 /// 别人的机器不许用我的机器的秒/帧)。
 ///
@@ -18,7 +18,7 @@ namespace ALHPro;
 /// ③ **任何异常/取消都吞掉并记日志** ⇒ 返回 null,任务照跑(标定失败绝不能中断任务,更不能静默换模型);
 /// ④ `runUpscale` 由调用方注入 = **本次真跑的那条引擎入口**(同一套参数:引擎/模型/倍率/降噪/GPU/分块/jpg),
 ///    标定与生产不各写一份;
-/// ⑤ 标定耗时单独记成"准备(超分单价标定)"一个阶段,**不喂**任何逐帧进度(`progress` 只收短句),
+/// ⑤ 标定耗时单独记成"准备(超分单帧耗时标定)"一个阶段,**不喂**任何逐帧进度(`progress` 只收短句),
 ///    免得混进"每帧速率"的记账。</summary>
 internal static class UpscaleCalibrator
 {
@@ -57,8 +57,8 @@ internal static class UpscaleCalibrator
     /// 【比契约 B2 多的参数】`backend`/`engine`/`model`/`engineScale`:
     ///   · `backend` = **本次定稿的超分后端**(<see cref="UpscaleBackendPlan.DescribeBackend"/> 算出来的
     ///     `ncnn-vulkan` / `onnx-dml` / `onnx-cpu`)。空白/认不出 ⇒ **直接拒收**(F1-I4 的机械保证:
-    ///     后端没定稿就不许产出任何可落盘的单价);
-    ///   · `engine`/`model`/`engineScale` 用于 `LocalPriceBook.TryBuild` 定位"这是哪一格单价"。</summary>
+    ///     后端没定稿就不许产出任何可落盘的单帧耗时);
+    ///   · `engine`/`model`/`engineScale` 用于 `LocalPriceBook.TryBuild` 定位"这是哪一格单帧耗时"。</summary>
     public static async Task<LocalPrice?> MeasureAsync(
         string framesIn, int frameCount, string workDir, int srcW, int srcH,
         int sampleFrames, string machineKey, string backend,
@@ -98,8 +98,8 @@ internal static class UpscaleCalibrator
 
             // 【进度】只报一句短话(界面日志区),引擎的逐帧 progress 一律不接(不然会被当成任务的帧率)。
             progress?.Report((6, "· " + LogShortText.ClampToChineseLimit(
-                $"准备:正在按本机实测标定超分单价({model} {engineScale}x,{idx.Count} 帧)…")));
-            AppLogger.Info($"超分单价标定(准备阶段):引擎={engine} 模型={model} 倍率={engineScale}x、后端={UpscaleBackendPlan.Label(bk)}、"
+                $"准备:正在按本机实测标定超分单帧耗时({model} {engineScale}x,{idx.Count} 帧)…")));
+            AppLogger.Info($"超分单帧耗时标定(准备阶段):引擎={engine} 模型={model} 倍率={engineScale}x、后端={UpscaleBackendPlan.Label(bk)}、"
                 + $"采样 {idx.Count} 帧({PixelsText(pixels)} 源)、机器指纹 {LocalPriceBook.Digest(machineKey)}"
                 + $";临时目录 {calibIn} / {calibOut}");
 
@@ -109,20 +109,20 @@ internal static class UpscaleCalibrator
             // ---- 第一次:1 帧(含每进程地板) ----
             Stage(frameFiles, calibIn, new[] { idx[0] });
             double t1 = await TimeAsync(runUpscale, calibIn, calibOut, cct).ConfigureAwait(false);
-            AppLogger.Info($"超分单价标定:1 帧那次 {t1:0.###} s");
+            AppLogger.Info($"超分单帧耗时标定:1 帧那次 {t1:0.###} s");
 
-            // ---- 第二次:n 帧(地板 + n×单价) ----
+            // ---- 第二次:n 帧(地板 + n×单帧耗时) ----
             FreshDir(calibIn);
             FreshDir(calibOut);
             Stage(frameFiles, calibIn, idx.Skip(1).ToArray());
             double tN = await TimeAsync(runUpscale, calibIn, calibOut, cct).ConfigureAwait(false);
-            AppLogger.Info($"超分单价标定:{n} 帧那次 {tN:0.###} s(平均 {tN / Math.Max(1, n):0.###} s/帧,含地板)");
+            AppLogger.Info($"超分单帧耗时标定:{n} 帧那次 {tN:0.###} s(平均 {tN / Math.Max(1, n):0.###} s/帧,含地板)");
 
             // 【F1-I3】样本体检:黑帧/0 字节空帧/没落地/帧数对不上 ⇒ 拒收,不落盘。
             // 判黑**复用既有口径**(EngineService.IsBlackPng → AlhPro.Core.FrameInspect.IsDefectiveFrame,
             // 与批次循环的黑帧防御同一条),这里不新造第二套判黑。
             // 【为什么必须做】ncnn 在 50 系/部分驱动上会**静默输出黑帧或 0KB 空帧且退出码 0** —— 那时
-            // 两次耗时都"正常"、差值也够大,但算出来的是"引擎在空转"的偏小单价;若不拒收就会永久落盘,
+            // 两次耗时都"正常"、差值也够大,但算出来的是"引擎在空转"的偏小单帧耗时;若不拒收就会永久落盘,
             // 让判定偏向「补帧→超分」(2026-09-25 那类误判)。
             string? defect = InspectSample(calibOut, n);
             if (defect is not null) return Reject($"样本输出不合格:{defect}");
@@ -155,10 +155,10 @@ internal static class UpscaleCalibrator
             total.Stop();
             LastTotalSeconds = total.Elapsed.TotalSeconds;
             lock (AccLock) _calibratedSecondsAcc += LastTotalSeconds;   // 给 PerfMemory 扣账用(可只取一次)
-            AppLogger.Info($"超分单价标定结束:耗时 {LastTotalSeconds:0.#} 秒"
+            AppLogger.Info($"超分单帧耗时标定结束:耗时 {LastTotalSeconds:0.#} 秒"
                 + (LastRejectReason.Length == 0 ? "(成功,结果已写入标定表)" : $"(未取得结果:{LastRejectReason});临时目录已清理")
-                + " —— 这段时间单独记为「准备(超分单价标定)」,并由 VideoView 记账时从 PerfMemory 样本窗口扣除"
-                + "(见 docs《本机标定-超分单价》§六.5)");
+                + " —— 这段时间单独记为「准备(超分单帧耗时标定)」,并由 VideoView 记账时从 PerfMemory 样本窗口扣除"
+                + "(见 docs《本机标定-超分单帧耗时》§六.5)");
         }
     }
 
@@ -186,7 +186,7 @@ internal static class UpscaleCalibrator
     private static LocalPrice? Reject(string why)
     {
         LastRejectReason = why;
-        AppLogger.Warn($"⚠ 超分单价标定未取得结果:{why} —— 本次保守用旧顺序(补帧→超分),任务继续");
+        AppLogger.Warn($"⚠ 超分单帧耗时标定未取得结果:{why} —— 本次保守用旧顺序(补帧→超分),任务继续");
         return null;
     }
 

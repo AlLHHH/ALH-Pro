@@ -187,7 +187,7 @@ public class PipelineOrderTests
         // waifu2x cunet 2x(噪声三档中值)+ upconv_7_photo 2x
         Assert.Equal(0.3685, PipelineOrderPlan.LookupUpscaleSecondsPerFrame("models-cunet", 2, out _)!.Value, 6);
         Assert.Equal(1.288, PipelineOrderPlan.LookupUpscaleSecondsPerFrame("models-upconv_7_photo", 2, out _)!.Value, 6);
-        // 【2026-09-14】自转的 wdn-x4v3:有自己的单价行(0.460),不许借 general-x4v3 的 0.458 蒙过去
+        // 【2026-09-14】自转的 wdn-x4v3:有自己的单帧耗时行(0.460),不许借 general-x4v3 的 0.458 蒙过去
         Assert.Equal(0.460, PipelineOrderPlan.LookupUpscaleSecondsPerFrame("realesr-general-wdn-x4v3", 4, out var provW)!.Value, 6);
         Assert.Contains("2026-09-14", provW);
         // 它没有 2x 权重(与 general-x4v3 同族),查表也必须是"无实测"而不是回退到别的倍率
@@ -239,7 +239,7 @@ public class PipelineOrderTests
         Assert.False(red.Measured);
         Assert.Contains("【本机未标定】", red.Reason);
         Assert.Contains("内置表是他机实测", red.Reason);
-        Assert.Equal(0.0, red.UpscalePerFrame, 9);   // u=0 = "未采信任何单价",不是"免费"(理由里写明)
+        Assert.Equal(0.0, red.UpscalePerFrame, 9);   // u=0 = "未采信任何单帧耗时",不是"免费"(理由里写明)
 
         // 绿:同一组入参 + 一条本机标定 ⇒ 按数字判新顺序
         var green = PipelineOrderPlan.Decide("realesrgan", "realesrgan-x4plus", 4.0, 2, W1080, H1080, 1800,
@@ -255,7 +255,7 @@ public class PipelineOrderTests
         Assert.True(cheap.Measured);
     }
 
-    /// <summary>**命中本机时理由必须写出两点法出处**(契约 A4):两次耗时 + N + 采样分辨率 + 折算 1080p 的单价。</summary>
+    /// <summary>**命中本机时理由必须写出两点法出处**(契约 A4):两次耗时 + N + 采样分辨率 + 折算 1080p 的单帧耗时。</summary>
     [Fact]
     public void Reason_cites_the_local_two_point_provenance()
     {

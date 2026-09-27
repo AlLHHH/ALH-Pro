@@ -11,13 +11,13 @@ namespace AlhPro.Core;
 ///     tN = F + N·p
 /// 相减 ⇒ **p = (tN − t1) / (N − 1)**,再代回 ⇒ **F = t1 − p**。
 /// 两次都跑**同一个引擎进程**吗?不是 —— 两次是各自独立的进程启动,所以 F 里含两次自己的地板;
-/// 但只要地板**可复现**,相减就把"固定部分"整体消掉,剩下的正是随帧数增长的那部分,这就是单价。
+/// 但只要地板**可复现**,相减就把"固定部分"整体消掉,剩下的正是随帧数增长的那部分,这就是单帧耗时。
 /// 【已知限制(必须写进文档)】两次进程启动之间笔记本 GPU 会热降频,同机多次测量的地板可差到 1.9 倍,
 /// 所以 p 是**当前热状态下的快照**,不是物理常数。
 ///
 /// ==== 采样帧数怎么选 ====
 /// 样本差值要显著大于噪声:N 太小 ⇒ (tN−t1) 被地板抖动吃掉;N 太大 ⇒ 标定本身要花掉几十秒。
-/// <see cref="FramesFor"/> 用内置单价(他机实测)估一个每帧成本,把"标定总预算 ≈ <see cref="BudgetSeconds"/> 秒"
+/// <see cref="FramesFor"/> 用内置单帧耗时(他机实测)估一个每帧成本,把"标定总预算 ≈ <see cref="BudgetSeconds"/> 秒"
 /// 摊成帧数,并夹在 [<see cref="MinFrames"/>, <see cref="MaxFrames"/>] 内。</summary>
 public static class CalibrationSample
 {
@@ -28,8 +28,23 @@ public static class CalibrationSample
     /// <summary>最少采样帧数 = <see cref="LocalPriceBook.MinSampleFrames"/>(低于 4 帧的样本一律不可信)。</summary>
     public const int MinFrames = LocalPriceBook.MinSampleFrames;
 
-    /// <summary>最多采样帧数:再多也不会更准(抖动由热状态决定,不是由样本量决定),只会让用户白等。</summary>
+    /// <summary>最多采样帧数:再多也不会更准(抖动由热状态决定,不是由样本量决定),只会让用户白等。
+    /// 【便宜档仍要用满这个上限】每帧很便宜时,差值 `tN − t1` 只能靠帧数撑起来才过得了
+    /// <see cref="MinDeltaRatio"/> 那道相对噪声门槛 —— 例:1x 那种 ≈0.028 s/帧的档,8 帧的差值约占 t1 的 21%,
+    /// 降到 4 帧只剩 9% ⇒ 会被拒收 ⇒ 白标一场(所以下面按"每帧多贵"分两档封顶)。</summary>
     public const int MaxFrames = 8;
+
+    /// <summary>【贵档的采样上限 · 2026-09-27 按作者实测提速】每帧估值 ≥ <see cref="ExpensivePerFrame"/> 时,
+    /// 采样上限降到这个数:4 帧的差值已经 ≈"每帧成本 × 3",远大于两次进程启动的地板抖动,够判阶段顺序了;
+    /// 而每多采一帧都是实打实的引擎时间。
+    /// 【实测依据(作者机器)】Real-CUGAN 2x(估值 ≈1.65 s/帧)原口径采 1+8 帧 = **14.2 秒**
+    /// (其中 8 帧那次 11.5 秒)⇒ 作者反馈"处理开始那个检测好久";降到 1+4 帧后同一格约 8 秒。</summary>
+    public const int MaxFramesExpensive = 4;
+
+    /// <summary>「贵档」门槛(秒/帧,1080p 口径):≥ 它就按 <see cref="MaxFramesExpensive"/> 封顶。
+    /// 【0.20 怎么来的】此时 4 帧的差值 ≈ 0.6 s,而两次进程启动的地板抖动实测 ~0.2 s ⇒ 差值仍是噪声的 3 倍;
+    /// 更便宜的档(每帧 &lt; 0.2 s)单帧太短,必须靠帧数把差值抬过噪声门槛 ⇒ **不降**它的上限。</summary>
+    public const double ExpensivePerFrame = 0.20;
 
     /// <summary>【F3 · 相对噪声门槛】两点法的差值 `tN − t1` 至少要占到"1 帧那次耗时"的这么多倍,否则拒收。
     ///
@@ -61,7 +76,7 @@ public static class CalibrationSample
     public static double TwoPointFloor(int sampleFrames, double floorSeconds, double sampleSeconds)
         => floorSeconds - TwoPointPerFrame(sampleFrames, floorSeconds, sampleSeconds);
 
-    /// <summary>按内置单价(他机实测)估一帧成本,用来选采样帧数;面积按 <paramref name="pixels"/> 折算
+    /// <summary>按内置单帧耗时(他机实测)估一帧成本,用来选采样帧数;面积按 <paramref name="pixels"/> 折算
     /// (超分成本 ∝ 源面积)。查不到该组合 ⇒ 用 <paramref name="fallbackPerFrame1080p"/>(默认 1.0 s/帧,
     /// 与 Real-CUGAN 这一档同量级 —— 宁可少采样几帧,也不要让标定变成一次长跑)。
     /// 【注意】这里的估值**只用于决定"测几帧"**,不会进入任何判据。</summary>
@@ -74,7 +89,7 @@ public static class CalibrationSample
 
     /// <summary>选采样帧数 N ∈ [<paramref name="min"/>, <paramref name="max"/>]:
     /// 取 `预算 ÷ 每帧估值` 向下取整;估值非法(≤0 / 非有限)⇒ 取**上限**(估值不可信时宁多采几帧,
-    /// 反正两点法只把"多出来的那部分"算成单价,采到坏值时由 `TryBuild` 的拒收条件兜住)。</summary>
+    /// 反正两点法只把"多出来的那部分"算成单帧耗时,采到坏值时由 `TryBuild` 的拒收条件兜住)。</summary>
     public static int FramesFor(double perFrameEstimate, long pixels, double budgetSeconds = BudgetSeconds,
         int min = MinFrames, int max = MaxFrames)
     {
@@ -83,8 +98,13 @@ public static class CalibrationSample
         double budget = double.IsFinite(budgetSeconds) && budgetSeconds > 0 ? budgetSeconds : BudgetSeconds;
         // 两点法要跑 1 帧 + N 帧,两者都含一份地板;预算只用来限制 N,不限制地板(地板与帧数无关,躲不开)。
         int n = (int)Math.Floor(budget / perFrameEstimate);
+        // 【贵档封顶 · 2026-09-27】每帧越贵,采样帧数越该少(差值本来就显著)⇒ 不必等"预算用满"。
+        // cap 不许把 min 违反掉(调用方显式要更多帧时听调用方的),也不许超过调用方给的 max。
+        int cap = perFrameEstimate >= ExpensivePerFrame ? MaxFramesExpensive : max;
+        if (cap < min) cap = min;
+        if (cap > max) cap = max;
         if (n < min) n = min;
-        return n > max ? max : n;
+        return n > cap ? cap : n;
     }
 
     /// <summary>从 <paramref name="frameCount"/> 帧里挑 <paramref name="need"/> 帧的**下标**(等间隔,优先取中段)。
@@ -93,7 +113,7 @@ public static class CalibrationSample
     ///     中段放不下(素材太短)时如实退回全片等间隔取;
     ///   · 取不满 `need`(素材帧数不足)→ 返回**实际能取到**的个数(可能少于 need、甚至为空集合),
     ///     由调用方决定"如实报『素材帧数不足,跳过标定』";
-    ///   · 结果**严格递增且不重复**(重复帧会让两点法的差值偏小 → 单价偏小)。</summary>
+    ///   · 结果**严格递增且不重复**(重复帧会让两点法的差值偏小 → 单帧耗时偏小)。</summary>
     public static IReadOnlyList<int> SampleIndices(int frameCount, int need)
     {
         var list = new List<int>();
@@ -113,7 +133,7 @@ public static class CalibrationSample
         return list;
     }
 
-    /// <summary>采样分辨率下的秒/帧 → 1080p 基准的秒/帧(判据统一用 1080p 单价)。</summary>
+    /// <summary>采样分辨率下的秒/帧 → 1080p 基准的秒/帧(判据统一用 1080p 单帧耗时)。</summary>
     public static double To1080p(double secondsPerFrame, long samplePixels)
         => samplePixels > 0 ? secondsPerFrame * (PipelineOrderPlan.ReferencePixels1080p / samplePixels) : secondsPerFrame;
 
@@ -121,7 +141,7 @@ public static class CalibrationSample
 
     /// <summary>一帧样本输出的体检输入(由调用方测好:**是否落地**、**字节数**、**是否被既有判黑口径判为缺陷帧**)。
     /// 【为什么要分三项】三种坏法在 ncnn 上都会**静默发生且退出码 0**:写不出文件(ncnn 少数驱动上直接崩)、
-    /// 写出 0 字节空帧、写出黑帧/带状坏帧。任一种都必须拒收,否则会把一个**偏小**的单价永久落盘。</summary>
+    /// 写出 0 字节空帧、写出黑帧/带状坏帧。任一种都必须拒收,否则会把一个**偏小**的单帧耗时永久落盘。</summary>
     public readonly record struct SampleOutput(bool Present, long Bytes, bool Defective);
 
     /// <summary>体检一组样本输出:全好返回 null;有缺陷返回**中文原因**(与 `TryBuild` 的九条拒收同一风格)。

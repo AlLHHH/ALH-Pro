@@ -1,6 +1,6 @@
 namespace AlhPro.Core;
 
-/// <summary>「超分 ↔ 补帧」阶段顺序的**按实测单价自动判定**(纯逻辑,可单测)。
+/// <summary>「超分 ↔ 补帧」阶段顺序的**按实测单帧耗时自动判定**(纯逻辑,可单测)。
 /// 【任务 Q1 · 2026-09-13】取代原先的全局开关 `VideoPipeline.UpscaleFirstEnabled`(常量 false):
 /// 顺序该由**这台机器上这次任务的实际成本**决定,而不是一个"全局关掉"的常量。
 ///
@@ -8,7 +8,7 @@ namespace AlhPro.Core;
 /// 用户原话:「那别人使用时,这个检查决定先超分还是先补帧也是用我的设备???」
 /// —— **旧实现就是这样**:下面 <see cref="UpscaleRates"/> 每一格都来自**开发机**(RTX 4060 Laptop)一台机器,
 /// 别人机器上的阶段顺序却由开发机的秒/帧决定。这是错的,现在改成:
-///   · 生产判定(`VideoService` 的顺序决策点)**只看本机实测单价** —— <see cref="LocalPriceBook"/> 里的记录
+///   · 生产判定(`VideoService` 的顺序决策点)**只看本机实测单帧耗时** —— <see cref="LocalPriceBook"/> 里的记录
 ///     (由 `UpscaleCalibrator` 在用户这台机器上现场两点法标出来,键含**机器指纹**);
 ///   · 本机没有那一格(或指纹对不上,例如换了显卡 / 重编了引擎)→ **保守回退旧顺序**,理由里标【本机未标定】;
 ///   · 下面这张 **<see cref="UpscaleRates"/> 是他机实测,只作资料与回归基线**(历史出处、面积线性规律的证据、
@@ -23,7 +23,7 @@ namespace AlhPro.Core;
 ///   · 旧顺序(先补帧)= k·N·r_lo + k·N·u     ← 补帧输出仍是源分辨率,所以超分那侧也是 N·k 帧 × u
 /// 令新顺序更省 ⟺ u·(1−k) &lt; k·(r_lo−r_hi) ⟺ (k&gt;1)**u &gt; k·(r_hi−r_lo)/(k−1)** —— 这就是门槛。
 ///
-/// ==== 【他机(开发机)实测单价表 —— 只作资料与回归基线,不参与判定(见上)】
+/// ==== 【他机(开发机)实测单帧耗时表 —— 只作资料与回归基线,不参与判定(见上)】
 ///      (2026-09-13 基准代理真机测;2026-09-15 补测 3x / x4plus 大样本 / 面积线性;
 ///      单位:秒/帧;超分档为 1080p 源、`-j 1:1:1 -t 0`;2026-09-15 的补测一律用「40 帧目录批跑」,
 ///      不用「单帧调用」—— 后者的地板见下面面积线性验证那段) ====
@@ -45,10 +45,10 @@ namespace AlhPro.Core;
 /// 面积比是 **4.00**。**把"每进程固定地板"(启动 + 模型加载 + 首次着色器/管线创建)扣掉之后再比**:
 /// 比值变成 **3.98**(av2x)与 **3.73~3.92**(gen4x),即**近似正比、偏差 −0.5% ~ −7%**。
 /// ⇒ **这条规律站得住,"按源面积线性缩放"是对的**;不扣地板时看到的"明显次线性"是假象 ——
-///   地板只加在小分辨率那一侧,12 帧摊下来把 1080p 的单价抬高约 25%,比值就被人为压低了。
-/// ⇒ 同时也说明:**"单帧调用一次引擎"测出来的不是单价**。同机实测:1 帧目录 = **1.01~1.19 s/帧**
+///   地板只加在小分辨率那一侧,12 帧摊下来把 1080p 的单帧耗时抬高约 25%,比值就被人为压低了。
+/// ⇒ 同时也说明:**"单帧调用一次引擎"测出来的不是单帧耗时**。同机实测:1 帧目录 = **1.01~1.19 s/帧**
 ///   (realesr-animevideov3 2x,其中固定地板 **0.75~0.92 s**),而 40 帧目录批跑 = **0.25~0.30 s/帧**。
-///   **地板约为单帧成本的 3 倍**,所以凡是"1~3 帧样本"给出的单价都不可信。
+///   **地板约为单帧成本的 3 倍**,所以凡是"1~3 帧样本"给出的单帧耗时都不可信。
 /// 补帧(RIFE v4.13,每个**输出**帧):**1080p = 0.0807、2160p = 0.2776、4320p = 0.5116~0.5255**;
 ///   其它分辨率按**面积**在这三个锚点之间**分段线性内插**(不按过原点的直线 —— 实测明显次线性)。
 /// 【2026-09-15 复测(rife-ncnn-vulkan-2026.exe,rife-v4.13,40 帧目录批跑 -n 目标帧数 -j 1:1:1)】
@@ -69,19 +69,19 @@ namespace AlhPro.Core;
 /// 预估节省 **&lt; 15%** 时**不切换**(避免在临界点上抖动/来回翻),理由写进日志。
 ///
 /// ==== 【2026-09-14 在线参数功能整体删除后的口径】====
-/// 本类原先有"三组数字可被在线配置覆盖"的一层(超分单价表 / 补帧锚点表 / 安全边际)—— 那份"在线最优参数"
+/// 本类原先有"三组数字可被在线配置覆盖"的一层(超分单帧耗时表 / 补帧锚点表 / 安全边际)—— 那份"在线最优参数"
 /// 功能已被用户判定为**累赘**并整体删除(界面复选框、设置项、联网拉取服务、覆盖层全部删掉)。
 /// 【2026-09-25 A+B 起的口径(覆盖上面这一段的"只读内置表")】
-///   · **超分单价**:判定只吃 <see cref="LocalPriceBook"/> 里的**本机标定**(参数 `localPrices`/`machineKey`);
+///   · **超分单帧耗时**:判定只吃 <see cref="LocalPriceBook"/> 里的**本机标定**(参数 `localPrices`/`machineKey`);
 ///     内置 <see cref="UpscaleRates"/> 降级为"他机实测,只作资料与回归基线"(见类开头那段)。
 ///   · **补帧锚点** <see cref="InterpAnchorSeconds"/> / <see cref="InterpAnchorPixels"/> 与**安全边际**
 ///     <see cref="MinSavingsPercent"/> 仍是代码里的常量(与机器相关性低得多,本轮 non-goal 不动)。
 /// 删除在线参数层的前后**行为逐字一致**(覆盖层原本只在"配置成功"时才生效,默认(null)就是回落这些常量)。
 /// 备注:外部社区从未发布过这类"超分秒/帧"标定表(见 <c>ExternalPractice</c> 的说明),
-/// 所以任何单价的权威来源只能是**发起判定的那台机器**上的实测。</summary>
+/// 所以任何单帧耗时的权威来源只能是**发起判定的那台机器**上的实测。</summary>
 public static class PipelineOrderPlan
 {
-    /// <summary>1080p 面积 = 2 073 600 px(2.07 Mpx):超分单价表的基准面积,也是补帧锚点之一。
+    /// <summary>1080p 面积 = 2 073 600 px(2.07 Mpx):超分单帧耗时表的基准面积,也是补帧锚点之一。
     /// 与批大小面积缩放用的是同一个基准(引用 RenderPolicy 的常量,避免两处各写一份)。</summary>
     public const double ReferencePixels1080p = AlhPro.Core.RenderPolicy.ReferencePixels1080p;
 
@@ -96,7 +96,7 @@ public static class PipelineOrderPlan
 
     /// <summary>安全边际:预估节省低于它就不切换顺序(15%)。
     /// 【出处】本仓库口径(任务 Q1),**外部没有可参照的公开数值** —— 社区工具(SVP/Flowframes/Hybrid)
-    /// 根本不做"按实测单价自动选阶段顺序"这件事,所以这条边际只能自定义。【不确定度】无外部对照,
+    /// 根本不做"按实测单帧耗时自动选阶段顺序"这件事,所以这条边际只能自定义。【不确定度】无外部对照,
     /// 15% 是"避免在临界点抖动"的经验值。(原先还有"在线参数可覆盖"这一层,该功能已于 2026-09-14 删除。)</summary>
     public const double MinSavingsPercent = 15.0;
 
@@ -107,13 +107,13 @@ public static class PipelineOrderPlan
     /// 用 `<0` 当哨兵既不动那些断言,又让"省略 = 用内置边际"这条语义天然成立。</summary>
     public const double UseBuiltInMinSavings = -1.0;
 
-    /// <summary>超分单价表的一行(秒/帧 @1080p 源)。
+    /// <summary>超分单帧耗时表的一行(秒/帧 @1080p 源)。
     /// <paramref name="Engine"/> 记录该行属于哪个引擎(判定只按 <paramref name="ModelKey"/> + 倍率匹配;
     /// 它原是为"在线参数表的键 `引擎|模型|倍率`"而加,在线参数功能已删除,保留只为可读性与将来扩展)。</summary>
     public readonly record struct UpscaleRate(string Engine, string ModelKey, int EngineScale,
         double SecondsPerFrame1080p, string Provenance);
 
-    /// <summary>**他机实测**的超分单价表(开发机 RTX 4060 Laptop),**只作资料与回归基线**:
+    /// <summary>**他机实测**的超分单帧耗时表(开发机 RTX 4060 Laptop),**只作资料与回归基线**:
     /// 历史出处、面积线性规律的证据、单测期望值的来源。**不参与生产判定**
     /// (生产只看 <see cref="LocalPriceBook"/> 里的本机标定;见类注释 2026-09-25 那一段)。
     /// 每一行仍逐条标出处,便于回看当时的数字从哪来。</summary>
@@ -129,8 +129,8 @@ public static class PipelineOrderPlan
         new("realesrgan", "x4plus-anime", 4, 3.85,   "2026-09-13 实测 ≈3.3~4.4(区间较宽,取中值)"),
         new("waifu2x", "cunet", 2, 0.3685,            "2026-09-13 实测 -n0 0.368~0.370 / -n1 0.373~0.383 / -n2 0.353~0.364(三档中值)"),
         new("waifu2x", "upconv_7_photo", 2, 1.288,    "2026-09-13 实测 ≈1.288"),
-        // 【2026-09-25 补 · 真机事故根因】Real-CUGAN 原来**没有单价行** ⇒ `LookupUpscaleSecondsPerFrame` 返回 null
-        // ⇒ 判定里超分单价 u=0(当成免费),于是 14.6 秒素材 + 补帧 4x 的场景被误判成「新顺序更慢 244%」,
+        // 【2026-09-25 补 · 真机事故根因】Real-CUGAN 原来**没有单帧耗时行** ⇒ `LookupUpscaleSecondsPerFrame` 返回 null
+        // ⇒ 判定里超分单帧耗时 u=0(当成免费),于是 14.6 秒素材 + 补帧 4x 的场景被误判成「新顺序更慢 244%」,
         // 选了「补帧→超分」让超分去跑补帧后的 1401 帧(≈39 分钟);正确的顺序只需跑源 350 帧(≈10 分钟)。
         // 同一行缺失也让"预计时间"沿用 Real-ESRGAN 的 0.45 秒/帧常数 ⇒ 乐观约 3.7 倍。
         new("realcugan", "realcugan-se", 2, 1.65, "2026-09-24 实测 1.634~1.675 秒/帧(40 帧 1080p 目录批跑 ×3 冷态);-1/0/3 三档实测 1.61~1.74 同价,取中值 1.65。3x/4x 是另外的网络、尚无实测【待实测标定】"),
@@ -161,7 +161,7 @@ public static class PipelineOrderPlan
         return null;
     }
 
-    /// <summary>查**他机(开发机)**实测表的超分单价(秒/帧 @1080p 源);没测过返回 null,出处写进
+    /// <summary>查**他机(开发机)**实测表的超分单帧耗时(秒/帧 @1080p 源);没测过返回 null,出处写进
     /// <paramref name="provenance"/>。
     /// 【2026-09-25 起这不再是判据】本方法只用于:① 选标定采样帧数(`CalibrationSample.EstimatePerFrame`);
     /// ② 单测/回归对照;③ 界面上的"他机参考"。**生产顺序判定请用
@@ -174,11 +174,11 @@ public static class PipelineOrderPlan
         if (key != null)
             foreach (var r in UpscaleRates)
                 if (r.ModelKey == key && r.EngineScale == engineScale) { provenance = r.Provenance; return r.SecondsPerFrame1080p; }
-        provenance = "该模型/倍率组合没有实测单价【待实测标定】";
+        provenance = "该模型/倍率组合没有实测单帧耗时【待实测标定】";
         return null;
     }
 
-    /// <summary>把 1080p 基准单价按源面积缩放(关键规律:超分成本 ∝ 源面积,与输出倍率几乎无关)。
+    /// <summary>把 1080p 基准单帧耗时按源面积缩放(关键规律:超分成本 ∝ 源面积,与输出倍率几乎无关)。
     /// 明确区分"实测锚点"(=1080p)与"按面积外推":provenance 里已注明,调用方在日志里照写。</summary>
     public static double ScaleUpscaleCostToPixels(double secondsPerFrame1080p, long srcPixels)
     {
@@ -224,7 +224,7 @@ public static class PipelineOrderPlan
             + $" → 选择 {(UpscaleFirst ? "新顺序(超分→补帧)" : "旧顺序(补帧→超分)")}";
     }
 
-    /// <summary>按**本机实测单价**判定(生产入口)。
+    /// <summary>按**本机实测单帧耗时**判定(生产入口)。
     /// <param name="engine">引擎("realesrgan"/"waifu2x"/"realcugan")。
     /// <param name="model">模型名(引擎侧名,如 realesr-animevideov3 / models-cunet)。
     /// <param name="scale">目标超分倍率(UI 口径;引擎倍数由 Core.EngineScalePolicy 推)。
@@ -243,7 +243,7 @@ public static class PipelineOrderPlan
     {
         int engineScale = Math.Max(1, AlhPro.Core.EngineScalePolicy.Decide(engine ?? "", model ?? "", scale).EngineScale);
         string key = NormalizeModel(model) ?? (model ?? "?");
-        // 【backend · 2026-09-25 修订 · F1-I2】本机单价**分后端**存:在 ncnn 上测的那一格,绝不能拿来判定
+        // 【backend · 2026-09-25 修订 · F1-I2】本机单帧耗时**分后端**存:在 ncnn 上测的那一格,绝不能拿来判定
         // 一次会走 ONNX 的运行(反之亦然)。传了 backend ⇒ Resolve 只认同一后端的记录;没传(=null)⇒
         // 不过滤(既有单测口径不变)。这一层是**机械保证**,不依赖调用方先把表筛干净。
         var look = LocalPriceBook.Resolve(localPrices, model, engineScale, machineKey, backend);
@@ -265,12 +265,12 @@ public static class PipelineOrderPlan
                 ? $"本机在**另一后端**({UpscaleBackendPlan.Label(look.OtherBackend)})上测过这一格,"
                     + $"与本次后端({UpscaleBackendPlan.Label(backend)})不一致 ⇒ 已忽略"
                 : "本机没有这一格(模型×引擎倍率)的标定";
-        // 【防止再次误读 u=0】日志里 UpscalePerFrame 会是 0 —— 那是"没采信任何单价",不是"超分免费"。
+        // 【防止再次误读 u=0】日志里 UpscalePerFrame 会是 0 —— 那是"没采信任何单帧耗时",不是"超分免费"。
         // 2026-09-25 那次事故正是 u=0 被当成免费,所以这句话必须写在理由里。
         return d with
         {
             Reason = $"{key} @ {engineScale}x【本机未标定】{why}(内置表是他机实测,不作为本机判据;"
-                + $"日志里 u=0 表示「未采信任何单价」,不是免费)→ {d.Reason}",
+                + $"日志里 u=0 表示「未采信任何单帧耗时」,不是免费)→ {d.Reason}",
             Measured = false,
         };
     }
@@ -286,7 +286,7 @@ public static class PipelineOrderPlan
         if (minSavingsPercent < 0) minSavingsPercent = MinSavingsPercent;
         int k = interpScale < 1 ? 1 : interpScale;
         // areaScale = 补帧真正吃到的那批帧相对源帧的放大倍数("1x 缩回"时超分后帧会被缩回原尺寸 → 传 1.0;
-        // 不传(=0)就用 scale。它只影响"放大后面积",不影响超分单价查表用的引擎倍率。)
+        // 不传(=0)就用 scale。它只影响"放大后面积",不影响超分单帧耗时查表用的引擎倍率。)
         double sArea = areaScale > 0 && double.IsFinite(areaScale) ? areaScale : scale;
         if (sArea <= 0) sArea = 1.0;
         long srcPixels = (long)Math.Max(1, srcW) * Math.Max(1, srcH);
@@ -313,7 +313,7 @@ public static class PipelineOrderPlan
                 $"入参非法(超分倍率 {scale:0.###}、源 {srcW}×{srcH})→ 无法按面积算成本,保守用旧顺序");
         if (!cost.Measured)
             return new Decision(false, oldTotal, newTotal, saving, pct, threshold, u, rLo, rHi, srcPixels, hiPixels, false, false,
-                $"{cost.ModelKey} @ {cost.EngineScale}x(无实测单价,【待实测标定】,保守用旧顺序)");
+                $"{cost.ModelKey} @ {cost.EngineScale}x(无实测单帧耗时,【待实测标定】,保守用旧顺序)");
         bool useNew = u > threshold && !margin;
         string why = margin
             ? (saving > 0 ? $"新顺序只省 {pct:0.#}%(< {minSavingsPercent:0.#}% 安全边际)→ 保持旧顺序" : $"新顺序反而更慢 {Math.Abs(pct):0.#}%")
