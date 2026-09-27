@@ -663,9 +663,12 @@ public static class CutoutService
         }
         if (fg <= bg) fg = bg + 0.01f;
 
-        // 1) 掩码 → 小灰度位图 → 双三次放大到原尺寸。
-        //    形态学清洗开启时:先在蒙版上做 开运算(去背景小噪点岛)+ 轻微腐蚀(去背景边缘残余),
-        //    输出近二元蒙版(主体=白/背景=黑),放大后由双三次插值天然羽化;边沿被"收缩"从而剥离背景残余。
+        // 1) 掩码 → 小灰度位图(**只写原始软蒙版,不在这里二值化/做形态学**)
+        //    【2026-09-27 修 · 方块边缘与"像素点"】这里原先在 morphStrength>0 时先做 `mask >= fg` 二值化 +
+        //    MorphBinary(开运算 + 轻微腐蚀),**然后才**放大到原尺寸 ⇒ 遮罩的边界几何在低分辨率上就被冻结成
+        //    方格:4K 图配 1024 输入模型时每格 = 3.75 个真实像素,U²-Net 那两支(320 输入)每格 = 12 个,
+        //    斜边必然呈阶梯;小图上残留的孤立像素放大后就是肉眼可见的"像素点"。
+        //    现在这里只把**软蒙版**写出来,阈值映射与形态学清洗全部挪到全分辨率(下面第 3 / 3.2 步)。
         using var maskSmall = new System.Drawing.Bitmap(mw, mh, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
         // 用 LockBits 直接写内存(SetPixel 逐像素调用极慢:1024² 要 100 万次,调参时最卡)——快几个数量级
         var msRect = new System.Drawing.Rectangle(0, 0, mw, mh);
@@ -676,35 +679,14 @@ public static class CutoutService
             unsafe
             {
                 var msPtr = (byte*)msData.Scan0.ToPointer();
-                if (morphStrength > 0)
+                for (int y = 0; y < mh; y++)
                 {
-                    var m = new byte[mw * mh];
-                    for (int y = 0; y < mh; y++)
-                        for (int x = 0; x < mw; x++)
-                            m[y * mw + x] = mask[y, x] >= fg ? (byte)1 : (byte)0;
-                    MorphBinary(m, mw, mh, morphStrength, ct);
-                    for (int y = 0; y < mh; y++)
+                    byte* row = msPtr + y * msData.Stride;
+                    for (int x = 0; x < mw; x++)
                     {
-                        byte* row = msPtr + y * msData.Stride;
-                        for (int x = 0; x < mw; x++)
-                        {
-                            byte v = (byte)(m[y * mw + x] * 255f);
-                            byte* p = row + x * 4;
-                            p[0] = v; p[1] = v; p[2] = v; p[3] = v;
-                        }
-                    }
-                }
-                else
-                {
-                    for (int y = 0; y < mh; y++)
-                    {
-                        byte* row = msPtr + y * msData.Stride;
-                        for (int x = 0; x < mw; x++)
-                        {
-                            byte v = (byte)(Math.Clamp(mask[y, x], 0f, 1f) * 255f);
-                            byte* p = row + x * 4;
-                            p[0] = v; p[1] = v; p[2] = v; p[3] = v;
-                        }
+                        byte v = (byte)(Math.Clamp(mask[y, x], 0f, 1f) * 255f);
+                        byte* p = row + x * 4;
+                        p[0] = v; p[1] = v; p[2] = v; p[3] = v;
                     }
                 }
             }
@@ -716,18 +698,66 @@ public static class CutoutService
         // 2) 小蒙版位图 → 双三次放大到原尺寸 → 读回一维 float alpha
         var alpha = ScaleMaskToAlpha(maskSmall, w, h);
 
-        // 3) 阈值映射:<=bg 全透明,>=fg 全不透明,之间线性过渡(自然渐变)。
-        //    形态学路径已二元化(不再线性映射,避免把羽化的渐变再压一次);
-        //    非形态学路径保留线性映射,让半透明边缘自然过渡。
-        if (morphStrength <= 0)
+        // 3) 阈值映射(**全分辨率**):<=bg 全透明、>=fg 全不透明,之间线性过渡(自然渐变)。
+        //    几何精度到这里就是「一个图像像素」—— 边界跟着放大后的软蒙版轮廓走,不再受遮罩像素的方格限制。
+        for (int i = 0; i < alpha.Length; i++)
         {
-            for (int i = 0; i < alpha.Length; i++)
+            if ((i & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
+            float v = alpha[i];
+            if (v <= bg) alpha[i] = 0f;
+            else if (v >= fg) alpha[i] = 1f;
+            else alpha[i] = (v - bg) / (fg - bg);
+        }
+
+        // 3.2) 形态学清洗(**全分辨率**):直接复用 Core 里那套逐帧蒙版件 ——
+        //      VideoMatting.PostProcessAlpha(fg=0, bg=0, feather=0) 只剩 MorphOpenAlpha(开运算,
+        //      半径 = max(1, morph/25)),它是全分辨率口径:只削"扛不住腐蚀"的孤立结构(背景小噪点岛),
+        //      主体不会被整体瘦一圈。
+        //      【为什么不再用 MorphBinary】它作用在**低分辨率**蒙版上(见第 1 步说明),那正是方格台阶的来源。
+        if (morphStrength > 0)
+        {
+            AlhPro.Core.VideoMatting.PostProcessAlpha(alpha, w, h, 0, 0, 0, morphStrength);
+
+            // 3.3) 按面积去掉孤岛(**全分辨率**):开运算半径只有 1px,管不到"由 1~2 个遮罩像素放大来的斑点"
+            //      (4K 上那仍是个十几像素的色块,就是用户说的"像素点")。这里按"3 个遮罩像素那么大"折算面积
+            //      阈值 ⇒ 任何图尺寸下清掉的是**同一来源**的小岛,而不是随分辨率漂移。
+            //      【为什么写成下面的本地函数】纯数组操作、无 IO / 无 UI,本可以放进 AlhPro.Core 并配 Core 单测,
+            //      但 2026-09-27 那次改动期间构建链一直解析到**陈旧的 Core 引用程序集**(编出来的 Core 里就是没这个成员),
+            //      先把这段时间用在功能上 —— 逻辑一字未改地留在这里,将来可以整段挪进 Core 再补单测。
+            int areaPerMaskPixel = Math.Max(1, (int)Math.Round((double)w * h / Math.Max(1, mw * mh)));
+            RemoveSmallIslands(alpha, w, h, Math.Max(4, areaPerMaskPixel * 3));
+
+            static void RemoveSmallIslands(float[] a, int aw, int ah, int minArea)
             {
-                if ((i & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
-                float v = alpha[i];
-                if (v <= bg) alpha[i] = 0f;
-                else if (v >= fg) alpha[i] = 1f;
-                else alpha[i] = (v - bg) / (fg - bg);
+                if (minArea <= 1) return;
+                int n = aw * ah;
+                var seen = new bool[n];
+                var stack = new System.Collections.Generic.Stack<int>();
+                var comp = new System.Collections.Generic.List<int>();
+                for (int i = 0; i < n; i++)
+                {
+                    if (seen[i] || a[i] < 0.5f) continue;
+                    comp.Clear();
+                    stack.Push(i);
+                    seen[i] = true;
+                    while (stack.Count > 0)
+                    {
+                        int p = stack.Pop();
+                        comp.Add(p);
+                        int py = p / aw, px = p - py * aw;
+                        for (int dy = -1; dy <= 1; dy++)
+                            for (int dx = -1; dx <= 1; dx++)
+                            {
+                                if (dx == 0 && dy == 0) continue;
+                                int nx = px + dx, ny = py + dy;
+                                if (nx < 0 || ny < 0 || nx >= aw || ny >= ah) continue;
+                                int q = ny * aw + nx;
+                                if (!seen[q] && a[q] >= 0.5f) { seen[q] = true; stack.Push(q); }
+                            }
+                    }
+                    if (comp.Count < minArea)
+                        foreach (int p in comp) a[p] = 0f;
+                }
             }
         }
 
