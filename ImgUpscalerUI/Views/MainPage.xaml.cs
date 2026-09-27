@@ -3169,10 +3169,16 @@ public sealed partial class MainPage : Page
                                     StatusText.Text = $"正在实测 ncnn 引擎({string.Join("/", willProbe)},诊断包,最长约 90 秒)…";
                             }
                             catch { }
-                            info.AppendLine($"ncnn 探测:本机此前没有 {string.Join(" / ", needProbe)} 的实测结论,导出时强制实测一次"
-                                + (skippedBySession.Count > 0
-                                    ? $"(其中 {string.Join(" / ", skippedBySession)} 本会话已试过且未测通 ⇒ **本次跳过**(不重复白等;重启软件即可重试),报告照实写「未测通」)"
-                                    : ""));
+                            // 【2026-09-30 · t64 复核 low】开头这句要按**实际会走哪条路**分情形:
+                            // 全部被台账拦住时不许再写「导出时强制实测一次」—— 那次一次都没探(下文 AppLogger
+                            // 那句早就写对了,只有这行漏改)。文案对齐:真探 ⇒ "强制实测一次";全拦 ⇒ "全部跳过"。
+                            info.AppendLine(willProbe.Count > 0
+                                ? $"ncnn 探测:本机此前没有 {string.Join(" / ", needProbe)} 的实测结论,导出时强制实测一次"
+                                  + (skippedBySession.Count > 0
+                                      ? $"(其中 {string.Join(" / ", skippedBySession)} 本会话已试过且未测通 ⇒ **本次跳过**(不重复白等;重启软件即可重试),报告照实写「未测通」)"
+                                      : "")
+                                : $"ncnn 探测:本机此前没有 {string.Join(" / ", needProbe)} 的实测结论,"
+                                  + $"但 {string.Join(" / ", skippedBySession)} 本会话已试过且未测通 ⇒ **本次全部跳过**(不重复实测,不重复白等;重启软件即可重试),报告照实写「未测通」");
                             AppLogger.Info($"[探测] 诊断包导出:此前无 {string.Join("/", needProbe)} 的实测结论,"
                                 + (willProbe.Count > 0 ? $"强制实测({string.Join("/", willProbe)},GPU {probeGpu})" : "但本会话已试过同一键且未测通 ⇒ 本次全部跳过(不重复白等)")
                                 + (skippedBySession.Count > 0 ? $";跳过:{string.Join("/", skippedBySession)}" : ""));

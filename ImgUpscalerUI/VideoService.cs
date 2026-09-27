@@ -705,6 +705,10 @@ public static class VideoService
             return (diskTight, needGBNow);
         }
         diskTight = diskTight || EvalTempSpaceGate(true).t;   // ① 拆帧前粗判(早失败)
+        // 【2026-09-30 · t64 B/C】拆帧前那次参数级预检定下来的编码器(可能因"打不开"换过)。
+        // 声明在 try 之外、编码阶段之前:编码阶段要用**同一个**编码器,不能在那里重新挑一次
+        // (重新挑 = 把预检的结论丢掉,又回到"预检说不行、编码照旧用原来那个"的老样子)。
+        string? encoderFromPreflight = null;
         var framesIn = Path.Combine(workDir, "frames_in");
         var framesOut = Path.Combine(workDir, "frames_out");
         var framesFinal = Path.Combine(workDir, "frames_final");
@@ -819,6 +823,37 @@ public static class VideoService
                     + $"(设置里的计算设备 = {(AppSettings.GpuIndex >= 0 ? "GPU " + AppSettings.GpuIndex : "未检测到可用显卡/仅本次会话降级")})");
                 throw new InvalidOperationException(AlhPro.Core.CpuFallbackPolicy.DescribeNoHwEncoder());
             }
+
+            // ===== 【2026-09-30 · t64 B/D】开跑前:参数级编码预检 + 标称帧率护栏 =====
+            // 【位置是硬要求】必须在下面「2) 拆帧」**之前** —— B 的全部价值就是"在做几十分钟无用功之前停下":
+            // 1527 那次超分 4x 已经跑完 1425 帧 / 49.5 分钟,最后才在编码这步失败(命令 exit -40)。
+            // 顺序由单测钉住(VideoEncodeGuardTests.The_preflight_runs_before_frame_extraction)。
+            // 用**本任务计划阶段的真实输出尺寸** + **预计标称帧率**(就是下面「帧数台账」那行的同一组数),
+            // 而不是既有探测里写死的 1280×720@30 —— 那探的是"这台机器能不能编 720p30",与"这次这组
+            // 尺寸+帧率能不能编"不等价,参数级失败只能靠整片重跑试出来。
+            var (plannedOutW, plannedOutH) = AlhPro.Core.VideoEncodeGuard.PlanOutputSize(
+                srcW, srcH, scale, upscaleRuns, outWidth, outHeight);
+            // 拆帧前只能给"上界"(去重只会减少内容帧数 ⇒ 标称帧率不会再变高),所以传 effectiveFps = inFps;
+            // 去重后的定稿值仍由**同一个** Core 判据在「帧数台账」那行给出(测试钉住"两个入口同判据")。
+            double plannedNominalFps = AlhPro.Core.VideoEncodeGuard.PlanNominalOutputFps(
+                targetFps, fpsMode, inFps, inFps, interpScale, frameInterp);
+            AppLogger.Info($"编码预检计划:输出 {plannedOutW}×{plannedOutH}(源 {srcW}×{srcH}"
+                + (upscaleRuns ? $" × 目标 {scale:0.##}x" : " 不放大") + $";1x缩回={upscaleShrink1x})"
+                + $" · 标称 {plannedNominalFps:0.##} fps"
+                + (targetFps is > 0 ? "(用户指定帧率)" : frameInterp ? $"(输入 {inFps:0.##} fps × 补帧 {interpScale}x 的上界)" : "(未补帧)")
+                + " · 这是本次任务真实要用的那组尺寸+帧率(旧探测写死 1280×720@30,探不出参数级失败)");
+            // 【D】标称帧率护栏:超过阈值必须**用户可见**(文件日志 + 界面日志区两处),
+            // 判据与文案在 Core(VideoEncodeGuard.NominalFpsGuardReason);只提醒,不改用户设的参数。
+            if (AlhPro.Core.VideoEncodeGuard.NominalFpsGuardReason(plannedNominalFps) is { } fpsGuardMsg)
+            {
+                AppLogger.Warn(fpsGuardMsg);
+                progress?.Report((6, "· " + AlhPro.Core.LogShortText.ClampToChineseLimit(fpsGuardMsg)));
+            }
+            // 【B/C】1 帧真实参数预检:用计划尺寸+标称帧率+真实编码参数真编 1 帧;
+            // "打不开编码器"就换本机另一个**实测可用硬编**(候选链,日志写清"换用 X"),换完仍不行就停在这里。
+            // 返回值 = 本次**实际要用**的编码器(可能已经被换过),下面编码阶段直接用这个,不再重新挑一次。
+            encoderFromPreflight = await PreflightEncodeOrThrowAsync(ffmpeg, PickVideoEncoder(gpuId, codecPref), codecPref,
+                quality, customBitrateMbps > 0 ? customBitrateMbps * 1000 : 0, plannedOutW, plannedOutH, plannedNominalFps, ct);
 
             // 2) 拆帧(可选去重 + 裁剪)
             // 去重模型:0=关,1=智能检测(freezedetect 自适应),2=动漫模式(freezedetect 高去重),3=标准模式(scene),4=手动模式(scene)
@@ -2549,9 +2584,12 @@ public static class VideoService
                     // 目标输出帧率:用户指定优先,否则按输出基准公式(A 内容×倍率 / B 原×倍率)【预计】;
                     // 预计输出总帧数 = globalTarget(下游"帧数对齐/尾帧容积"还会做 ±1 帧级微调,已标注【预计】)。
                     {
-                        double planOutFps = targetFps is > 0
-                            ? targetFps.Value
-                            : (fpsMode == 1 ? effectiveFps : Math.Max(effectiveFps, inFps)) * interpScale;
+                        // 【2026-09-30 · t64 B】标称帧率只认**一个**判据:AlhPro.Core.VideoEncodeGuard.PlanNominalOutputFps。
+                        // 拆帧前那次参数级编码预检用的是同一个函数(那时传 effectiveFps=inFps 给上界)——
+                        // 两处各写一份公式正是 t60 的 B1 那类坑(测试全绿、行为不一致),单测已钉住"必须都调它"。
+                        double planOutFps = AlhPro.Core.VideoEncodeGuard.PlanNominalOutputFps(
+                            targetFps, fpsMode, effectiveFps, inFps, interpScale, frameInterp);
+                        // 平滑时间轴那一档只在"已经决定填平"之后才成立(拆帧前无法预知),故留在调用侧覆写
                         if (flattenActive || flatPlan.Flatten) planOutFps = flatPlan.TargetFps;
                         long planOutFrames = (flattenActive || flatPlan.Flatten) ? flatPlan.TargetFrames : globalTarget;
                         string census = $"本次处理帧数台账:源 {origCountEst} 帧 → 去重后 {frameCount} 帧 → 补帧后 {globalTarget} 帧"
@@ -4046,7 +4084,9 @@ public static class VideoService
             }
             var muxInput = $"-framerate {frInput} -i \"{framePattern}\"";
             await EnsureHwProbeAsync(ffmpeg, ct);
-            var encoder = PickVideoEncoder(gpuId, codecPref);
+            // 【2026-09-30 · t64 B/C】编码器**已经**在拆帧前选定(见上面那次参数级预检):这里不再重新挑一次,
+            // 否则"预检时换成了 hevc_qsv"这条结论会在编码阶段被丢掉(又用回打不开的那一个)。
+            var encoder = encoderFromPreflight ?? PickVideoEncoder(gpuId, codecPref);
             // 【编码最优解·解码侧】硬编生效时,瓶颈会从编码器转到"软件解码 JPG 序列"(4K 实测 ≈39.6 fps)。
             // ⚠【2026-09-13 真机基准:**旧性能数字已无法复现,勿再引用**】这里原来写「NVDEC 实测 4595 fps、
             // 端到端 +52%」—— 本机同条件重测是 **cuvid 192.68 fps vs 软解 193.99 fps(硬解无收益)**,
@@ -4124,7 +4164,19 @@ public static class VideoService
             // 现状:只 map 视频+第一条音轨 ⇒ 标题/艺术家/日期/注释/章节全丢 ✗(归档与留档用途的硬伤)
             // ⚠ 第 0 个输入是 JPEG 序列(无元数据),真正的源在第【1】个输入上 ⇒ 必须写 1 ✔
             // 风险极低:MP4/MKV 都支持;源没有元数据/章节时是空操作 ✔
-            var muxArgs = $"{videoMap} -map_metadata 1 -map_chapters 1 {audioPart} {encArgs} {vfArg}{fastFlag} \"{outTmp}\"";
+            // 【2026-09-30 · t64 C】编码参数的拼装收成两个**局部函数**:换编码器那条路(打不开 ⇒ 换本机另一个
+            // 可用硬编)必须重建"这一次的参数"—— 预览 GOP(-g 12)、配方(备用 ffmpeg / 去 -preset)一个都不能漏。
+            // 原先这段是就地拼一次的字面量:换编码器时若在 catch 里另写一份,两份迟早不一致
+            // (t60 的 B1 就是"同一件事两处各写一份"漏出去的)⇒ 现在两条路只有这一份拼装。
+            string BuildEncArgsFor(string encoderName)
+            {
+                var a = EncoderArgs(encoderName, quality, bitrateKbps);
+                if (isPreviewClip) a += " -g 12";
+                return a;
+            }
+            string BuildMuxArgsWith(string encArgsBuilt)
+                => $"{videoMap} -map_metadata 1 -map_chapters 1 {audioPart} {encArgsBuilt} {vfArg}{fastFlag} \"{outTmp}\"";
+            var muxArgs = BuildMuxArgsWith(encArgs);
             // 【2026-09-23 Anime4K 收口】1x 修复档要把"用哪台 Vulkan 设备"一起带给合帧命令 ——
             // 只把设备选对用在探测上等于没修(探测在独显上过、正式滤镜又跑回核显,那台 5060 的症状就还在)。
             // 这两个是 ffmpeg 的**全局**选项,必须放在第一个 `-i` 之前(所以拼在 muxBase 最前面,而不是 vfArg 里)。
@@ -4187,17 +4239,33 @@ public static class VideoService
                 // 不是"这台机器编不了";而旧逻辑一次都不重试就掉 libx264:编码 17.0s → 115.7s(**7 倍**),
                 // 那行回报还误标成"(硬编)"。driverOld(驱动过旧)是确定性失败 ⇒ 不重试,直接报错让他去更新驱动。
                 int hwAttempt = 0;
+                // 【2026-09-30 · t64 C】本次已经用过的编码器(打不开就换下一个,不许再拿同一个重试)
+                var triedEncoders = new System.Collections.Generic.List<string>();
                 while (true)
                 {
                     hwAttempt++;
                     try
                     {
+                        // 【2026-09-30 · t64 A】把本次**真正要跑**的完整编码命令写进日志:
+                        // 1527 那次日志里根本没有这条命令,排查只能靠"参数详情"那行去猜编码器/尺寸/帧率/码率。
+                        // 一条命令里必须能看到:-c:v(编码器)、-framerate(标称帧率)、-b:v/-global_quality(码率或质量)、
+                        // 后处理滤镜(vfArg)、以及本任务的**计划输出尺寸**(尺寸是靠帧序列带的,命令里没有 -s,
+                        // 所以尺寸标在这行文字里,并写清是"计划"口径)。
                         // 【编码阶段必须能报进度】ffmpeg 的 stats 行(打给 stderr)在输出被重定向时不保证持续出现,
                         // 于是"编码"这一步此前只有一条静止的「合成视频…」——用户实测"一直显示合成视频",不知道还要多久、
                         // 也判断不出是死机还是在跑(实测那段可能是几十分钟到数小时)。
                         // 改成 -progress pipe:1:ffmpeg 会把 frame=/fps=/out_time… 等【机器可读】行写到 stdout,
                         // 而 RunAsync 的 FrameRegex 正在解析 frame= → "编码 第 N 帧 / 共 M 帧 + 预计还剩" 就稳定刷新了;
                         // -nostats 顺手去掉 stderr 上重复的统计行。
+                        // 【2026-09-30 · t64 A】再加 -hide_banner:ffmpeg 的 version/built/configuration
+                        // 三行横幅有 ~600 字符,失败时会把 Core 那边的"头部预算"(5 行/400 字符)全吃掉 ⇒
+                        // 头部只剩横幅、看不到"输入流尺寸/帧率 + 流映射"这些现场(实测确认)。
+                        // 其余 ffmpeg 调用点早就是 -hide_banner(见本文件两处探测命令),这里补上同一口径。
+                        string encCmdArgs = SeamBreakHwEncode("-hide_banner -nostats -progress pipe:1 " + muxBase + encMuxArgs);
+                        AppLogger.Info($"编码命令(第 {hwAttempt} 次 · 编码器 {encoder} · 计划输出尺寸 {plannedOutW}×{plannedOutH}"
+                            + $" · 标称 {frInput} fps · 帧数 {encTotal}"
+                            + (recipe?.NoPreset == true ? " · 去 -preset" : "")
+                            + $"):\"{Path.GetFileName(encFfmpeg)}\" {encCmdArgs}");
                         if (segMux)
                         {
                             // 【2026-09-23 分段合帧】每段同一套编码参数;编码成功才删该段帧;最后 concat -c copy + 音频封装
@@ -4208,7 +4276,7 @@ public static class VideoService
                         }
                         else
                         {
-                            await RunAsync(encFfmpeg, SeamBreakHwEncode("-nostats -progress pipe:1 " + muxBase + encMuxArgs), progress, ct, "编码", encTotal);
+                            await RunAsync(encFfmpeg, encCmdArgs, progress, ct, "编码", encTotal);
                         }
                         // 硬件编码可能留下 0 字节/损坏文件却退出 0,这里校验;无效同样按"这次失败"处理(进重试)
                         if (!await ValidateVideoFileAsync(outTmp, 1))
@@ -4220,19 +4288,62 @@ public static class VideoService
                     {
                         // 用户显式选 CPU 时 encoder 就是 libx264/libx265 ⇒ 上面那条 when 不成立,
                         // 异常直接往上抛(那种情况下 CPU 是用户的选择,不是我们的降级)。
-                        string why = (ex.Message ?? "").Split('\n')[0];
-                        bool driverOld = IsNvencDriverTooOld(ex.Message ?? "");
+                        // 【t64 A】whyFull = 头+尾都有的完整诊断(RunAsync 已按 Core 的口径整理);
+                        // why = 单行版,给"第 N 次失败"这种一行日志用(多行会把后续日志挤散)。
+                        string whyFull = (ex.Message ?? "").Trim();
+                        string why = whyFull.Split('\n')[0];
+                        bool driverOld = IsNvencDriverTooOld(whyFull);
                         // 【2026-09-23 修 A9 的"报错指错人"】实测:Anime4K 找不到着色器时,ffmpeg 的错是
                         // `[libplacebo] Cannot read file ...` + `[AVFilterGraph] Error initializing filters`,
                         // 而旧文案一律说"硬件编码(nvenc)失败" ⇒ 用户去折腾显卡驱动,真因却在滤镜/着色器。
                         // 这里认出滤镜类失败就把它说清楚(合帧命令里滤镜与编码同进程,exit code 分不出来,只能看文本)。
-                        bool filterProblem = why.Contains("AVFilterGraph", StringComparison.OrdinalIgnoreCase)
-                            || why.Contains("Error initializing filters", StringComparison.OrdinalIgnoreCase)
-                            || why.Contains("libplacebo", StringComparison.OrdinalIgnoreCase)
-                            || why.Contains("custom_shader_path", StringComparison.OrdinalIgnoreCase);
+                        // 【t64 A 附带修正】原先只在**第一行**里找这几个关键词,而 RunAsync 的消息第一行是
+                        // "命令失败 (exit …)" ⇒ 它们是**永远匹配不上**的(滤镜真因写在下面的正文里)。
+                        // 现在按完整诊断文本(含头部)判,才是这段注释本来想要的效果。
+                        bool filterProblem = whyFull.Contains("AVFilterGraph", StringComparison.OrdinalIgnoreCase)
+                            || whyFull.Contains("Error initializing filters", StringComparison.OrdinalIgnoreCase)
+                            || whyFull.Contains("libplacebo", StringComparison.OrdinalIgnoreCase)
+                            || whyFull.Contains("custom_shader_path", StringComparison.OrdinalIgnoreCase);
                         string filterNote = filterProblem
                             ? "\n⚠ 注意:这次失败发生在**滤镜链**(如 Anime4K 着色器 / 后处理滤镜),不是编码器本身 —— 请检查滤镜相关设置,以及 engines\\ffmpeg\\shaders 与 engines\\ffmpeg8\\shaders 两个目录里是否都有着色器文件。"
                             : "";
+                        // ===== 【2026-09-30 · t64 C】"打不开编码器"与"跑起来后瞬时失败"分成两条路 =====
+                        // 【真机依据】1527 那台 3 次全是 `Could not open encoder before EOF`(打不开 = 确定性失败,
+                        // 同一个编码器再试还是打不开),而同一台机器 `hevc_qsv` 就在可用列表里 —— 旧逻辑
+                        // 从头到尾只在 h264_qsv 上重试,最后报"连续 3 次失败",几十分钟的超分全白跑。
+                        // 【判据在 Core】VideoEncodeGuard.ClassifyEncodeFailure(只认指向"打开编码器"的原话;
+                        // 认不出来的(含 5060 的 exit -542398533)一律算瞬时 ⇒ 保持下面那条重试路,不动)。
+                        if (AlhPro.Core.VideoEncodeGuard.ClassifyEncodeFailure(whyFull)
+                            == AlhPro.Core.VideoEncodeGuard.EncodeFailureKind.EncoderInit)
+                        {
+                            var next = AlhPro.Core.VideoEncodeGuard.NextEncoderCandidate(
+                                encoder, codecPref, HwEncoderSnapshot(), triedEncoders);
+                            triedEncoders.Add(encoder);
+                            if (next == null)
+                            {
+                                AppLogger.Error($"⚠ 硬件编码({encoder})打不开编码器(初始化失败),本机也没有别的实测可用硬编可换"
+                                    + $" —— 已停止(已试过:{string.Join(" / ", triedEncoders)})" + filterNote);
+                                progress?.Report((96, $"⚠ 硬件编码({encoder})打不开编码器,已停止(不退回 CPU 软编)..."));
+                                throw new InvalidOperationException(
+                                    AlhPro.Core.CpuFallbackPolicy.DescribeHwEncodeInitFailure(
+                                        encoder, string.Join(" / ", triedEncoders), whyFull) + filterNote, ex);
+                            }
+                            // 换本机另一个**实测可用**的硬编(候选链:优先同厂商另一档,如 h264_qsv → hevc_qsv),
+                            // 并把"换用 X"写进日志 + 界面提示 —— 不许静默换。
+                            AppLogger.Warn(AlhPro.Core.VideoEncodeGuard.DescribeEncoderSwitch(encoder, next, why));
+                            progress?.Report((96, $"⚠ 硬件编码({encoder})打不开编码器 —— 换用 {next} 重编(不退回 CPU)..."));
+                            encoder = next;
+                            // 换编码器 = 换一套参数(配方可能不同:备用 ffmpeg / 去掉 -preset)⇒ 全部重建一遍
+                            recipe = GetHwRecipe(encoder);
+                            encFfmpeg = recipe?.Ffmpeg ?? ffmpeg;
+                            encArgs = BuildEncArgsFor(encoder);
+                            muxArgs = BuildMuxArgsWith(encArgs);
+                            encMuxArgs = recipe?.NoPreset == true ? StripPreset(muxArgs) : muxArgs;
+                            LastVideoEncoderInfo = $"{encoder} (GPU 硬编) — {next} 打不开编码器后换用";
+                            hwAttempt = 0;          // 新编码器的第 1 次尝试(重试计数属于"同一个编码器")
+                            try { if (File.Exists(outTmp)) File.Delete(outTmp); } catch { }
+                            continue;
+                        }
                         int delayMs = driverOld ? 0 : AlhPro.Core.CpuFallbackPolicy.RetryDelayMsAfterAttempt(hwAttempt);
                         if (delayMs <= 0)
                         {
@@ -4240,7 +4351,7 @@ public static class VideoService
                                 + " —— 已停止(按「视频不落 CPU」策略不退回 CPU 软编)" + filterNote);
                             progress?.Report((96, $"⚠ 硬件编码({encoder})失败,已停止(不退回 CPU 软编)..."));
                             throw new InvalidOperationException(
-                                AlhPro.Core.CpuFallbackPolicy.DescribeHwEncodeFailure(encoder, hwAttempt, why, driverOld) + filterNote, ex);
+                                AlhPro.Core.CpuFallbackPolicy.DescribeHwEncodeFailure(encoder, hwAttempt, whyFull, driverOld) + filterNote, ex);
                         }
                         int total = AlhPro.Core.CpuFallbackPolicy.HwEncodeTotalAttempts;
                         AppLogger.Warn($"⚠ 硬件编码({encoder})第 {hwAttempt} 次失败:{why} —— "
@@ -5483,7 +5594,7 @@ public static class VideoService
         if (segs.Count <= 1)
         {
             // 只有一段 = 等于不分段：直接走单遍（调用方在 ≥2 段时才走这里，这里是保险）
-            await RunAsync(encFfmpeg, $"-nostats -progress pipe:1 -y {animeDevArgs}-framerate {frInput} " +
+            await RunAsync(encFfmpeg, $"-hide_banner -nostats -progress pipe:1 -y {animeDevArgs}-framerate {frInput} " +
                 $"-i \"{framePattern}\" {trimArgs} -i \"{inputVideo}\" {videoMap} -map_metadata 1 -map_chapters 1 " +
                 $"{audioPart} {encArgs} {vfArg}{fastFlag} \"{outTmp}\"", progress, ct, "编码", totalFrames);
             return;
@@ -5500,7 +5611,7 @@ public static class VideoService
             ct.ThrowIfCancellationRequested();
             string segPath = Path.Combine(segDir, $"seg_{seg.Index:D4}.mp4");
             long startNumber = seg.StartFrame + 1;   // image2 的 -start_number 是 1 基
-            string segArgs = $"-nostats -progress pipe:1 -y {animeDevArgs}-framerate {frInput} -start_number {startNumber} " +
+            string segArgs = $"-hide_banner -nostats -progress pipe:1 -y {animeDevArgs}-framerate {frInput} -start_number {startNumber} " +
                              $"-i \"{framePattern}\" -frames:v {seg.FrameCount} -an {encArgs} {vfArg} \"{segPath}\"";
             await RunAsync(encFfmpeg, segArgs, progress, ct, $"分段编码 {seg.Index + 1}/{segs.Count}", (int)seg.FrameCount);
             // 硬件编码可能留下 0 字节/损坏文件却退出 0 —— 逐段也要校验(与单遍路径同一条纪律)
@@ -5519,7 +5630,7 @@ public static class VideoService
         // concat demuxer 的清单里路径用【正斜杠】(反斜杠会被当转义);单引号按官方规则转义。
         var listPath = Path.Combine(workDir, "seg_list.txt");
         File.WriteAllLines(listPath, segFiles.Select(f => "file '" + f.Replace('\\', '/').Replace("'", @"'\''") + "'"));
-        string finArgs = $"-nostats -progress pipe:1 -y -f concat -safe 0 -i \"{listPath}\" {trimArgs} -i \"{inputVideo}\" " +
+        string finArgs = $"-hide_banner -nostats -progress pipe:1 -y -f concat -safe 0 -i \"{listPath}\" {trimArgs} -i \"{inputVideo}\" " +
                          $"{videoMap} -map_metadata 1 -map_chapters 1 {audioPart} -c:v copy {fastFlag} \"{outTmp}\"";
         await RunAsync(encFfmpeg, finArgs, progress, ct, "拼接分段", segs.Count);
         AppLogger.Info($"[分段合帧] 拼接完成:{segs.Count} 段 → {Path.GetFileName(outTmp)}"
@@ -6209,6 +6320,103 @@ public static class VideoService
             }
         }
     }
+
+    /// <summary>本会话"实测可用硬编"的快照(只读;候选链要用它,不能在编码过程中边改边读)。
+    /// 返回副本:换编码器那条路会遍历它,而探测线程/下一个任务可能同时改 <see cref="WorkingHwEncoders"/>。</summary>
+    private static System.Collections.Generic.List<string> HwEncoderSnapshot()
+    {
+        lock (_hwLock) return new System.Collections.Generic.List<string>(WorkingHwEncoders);
+    }
+
+    /// <summary>【2026-09-30 · t64 B/C】开跑前的**参数级**编码预检:用本次任务真实要用的输出尺寸 + 标称帧率
+    /// 真编 1 帧;返回**实际要用**的编码器(打不开就换过)。
+    ///
+    /// 【为什么不能用既有的 <see cref="EnsureHwProbeAsync"/> 代替】那个探测写死
+    /// `testsrc=size=1280x720:rate=30` ⇒ 它回答的是"这台机器能不能编 720p30",而真实任务要问的是
+    /// "**这次这组尺寸+帧率**能不能编"(1527 那次是 1920×3416 @ 471.85 fps)⇒ 参数级失败它探不出来,
+    /// 只能靠整片重跑试出来 —— 那一次就是这么白跑了 1425 帧 / 49.5 分钟。
+    ///
+    /// 【失败语义(与 C 的分工)】
+    ///   · **打不开编码器**(初始化失败,判据在 <see cref="AlhPro.Core.VideoEncodeGuard"/>):换候选链里的
+    ///     下一个**本机实测可用硬编**(优先同厂商另一档,如 h264_qsv ⇒ hevc_qsv),日志写清"换用 X";
+    ///     链空了才报错(<see cref="AlhPro.Core.CpuFallbackPolicy.DescribeHwEncodeInitFailure"/>)。
+    ///   · **瞬时失败**:同一编码器再试 1 次(预检只花 1 秒);仍失败 ⇒ 停下。编码阶段那 3 次重试留给
+    ///     "预检通过、真编时才失败"那种情况(5060 那台就是那种),本函数不改变它。
+    /// 【不改状态】不写 WorkingHwEncoders / HwRecipes / 会话台账;临时文件用完就删。
+    /// 【自验缝】ALH_FORCE_HW_ENCODE_FAIL 只作用于**真实编码命令**(见 <see cref="SeamBreakHwEncode"/> 的用法),
+    /// 不拦预检 —— 否则那条缝就没法再用来复现"编码阶段重试"这条路了。</summary>
+    internal static async Task<string> PreflightEncodeOrThrowAsync(string ffmpeg, string intendedEncoder, int codecPref,
+        int quality, double bitrateKbps, int width, int height, double nominalFps, CancellationToken ct)
+    {
+        var tried = new System.Collections.Generic.List<string>();
+        var chain = new System.Collections.Generic.List<string> { intendedEncoder };
+        chain.AddRange(AlhPro.Core.VideoEncodeGuard.FallbackEncoderChain(intendedEncoder, codecPref, HwEncoderSnapshot()));
+        string lastDetail = "";
+        for (int i = 0; i < chain.Count; i++)
+        {
+            string encoder = chain[i];
+            tried.Add(encoder);
+            for (int attempt = 1; attempt <= 2; attempt++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var (ok, detail, kind) = await TryPreflightOnceAsync(ffmpeg, encoder, quality, bitrateKbps,
+                    width, height, nominalFps, ct).ConfigureAwait(false);
+                if (ok)
+                {
+                    AppLogger.Info(AlhPro.Core.VideoEncodeGuard.DescribePreflightPassed(encoder, width, height, nominalFps));
+                    return encoder;
+                }
+                lastDetail = detail;
+                // 打不开 = 确定性失败:同一个编码器再试还是打不开 ⇒ 立刻看下一个候选(不浪费那 1 秒)
+                if (kind == AlhPro.Core.VideoEncodeGuard.EncodeFailureKind.EncoderInit) break;
+                if (attempt == 1)
+                {
+                    AppLogger.Warn($"⚠ 编码预检({encoder})第 1 次失败(瞬时类):{FirstLine(detail)} —— 1 秒后再试 1 次");
+                    try { await Task.Delay(1000, ct).ConfigureAwait(false); } catch (OperationCanceledException) { throw; }
+                }
+            }
+            // 这一档不行:还有候选就换,并且把"换用 X"写进日志(不许静默换)
+            if (i + 1 < chain.Count)
+                AppLogger.Warn(AlhPro.Core.VideoEncodeGuard.DescribeEncoderSwitch(encoder, chain[i + 1], FirstLine(lastDetail)));
+        }
+        throw new InvalidOperationException(AlhPro.Core.VideoEncodeGuard.DescribePreflightFailure(
+            intendedEncoder, width, height, nominalFps, lastDetail, string.Join(" / ", tried)));
+    }
+
+    /// <summary>预检只编 1 帧:命令由 <see cref="AlhPro.Core.VideoEncodeGuard.BuildPreflightCommand"/> 生成
+    /// (所以日志里记的命令与实际跑的命令逐字一致)。返回 (是否通过, 诊断文本, 失败形态)。</summary>
+    private static async Task<(bool Ok, string Detail, AlhPro.Core.VideoEncodeGuard.EncodeFailureKind Kind)>
+        TryPreflightOnceAsync(string ffmpeg, string encoder, int quality, double bitrateKbps,
+        int width, int height, double nominalFps, CancellationToken ct)
+    {
+        // 参数与真实编码**同一份**(含配方:备用 ffmpeg / 是否去掉 -preset)—— 参数级预检的意义就在这里
+        var recipe = GetHwRecipe(encoder);
+        string exe = recipe?.Ffmpeg ?? ffmpeg;
+        string args = EncoderArgs(encoder, quality, bitrateKbps);
+        if (recipe?.NoPreset == true) args = StripPreset(args);
+        var tmp = Path.Combine(EngineService.TempRoot, $"imgup_encpreflight_{encoder}_{Guid.NewGuid():N}.mp4");
+        string cmd = AlhPro.Core.VideoEncodeGuard.BuildPreflightCommand(width, height, nominalFps, args, tmp);
+        try
+        {
+            AppLogger.Info($"编码预检命令({encoder}):\"{Path.GetFileName(exe)}\" {cmd}");
+            await RunAsync(exe, cmd, null, ct, "编码预检", 0).ConfigureAwait(false);
+            if (!await ValidateVideoFileAsync(tmp, 1).ConfigureAwait(false))
+                return (false, $"命令退出 0 但 1 帧输出文件无效(0 字节/解不开):{Path.GetFileName(tmp)}",
+                    AlhPro.Core.VideoEncodeGuard.EncodeFailureKind.Transient);
+            return (true, "", AlhPro.Core.VideoEncodeGuard.EncodeFailureKind.Transient);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            string detail = ex.Message ?? "";
+            return (false, detail, AlhPro.Core.VideoEncodeGuard.ClassifyEncodeFailure(detail));
+        }
+        finally { try { File.Delete(tmp); } catch { } }
+    }
+
+    /// <summary>多行诊断取第一行(给"第 N 次失败/换用 X"这种一行日志用)。</summary>
+    private static string FirstLine(string? text)
+        => string.IsNullOrWhiteSpace(text) ? "(未给出原因)" : text!.Trim().Split('\n')[0];
 
     /// <summary>硬件编码是否因【显卡驱动过旧】而不可用(ffmpeg 的 nvenc 需较新版 NVIDIA 驱动 ≥610.00 / nvenc API 13.1;
     /// 用户驱动旧则报 "Driver does not support the required nvenc API version" / "minimum required Nvidia driver ... 610.00")。
@@ -9387,10 +9595,10 @@ public static class VideoService
             throw new EngineStallException(killReason ?? "探测子进程长时间无输出,已强制终止");
         if (p.ExitCode != 0)
         {
-            // 探测类命令(转场/评分)失败不致命,但必须留痕:记录命令与输出尾部,便于定位(如 ffmpeg 滤镜不存在)
-            var tail = (err + "\n" + stdout).Trim();
-            if (tail.Length > 800) tail = tail[^800..];
-            AppLogger.Error($"命令失败(exit {p.ExitCode}):{Path.GetFileName(exe)} {args[..Math.Min(args.Length, 120)]} | {tail}");
+            // 探测类命令(转场/评分)失败不致命,但必须留痕:记录命令与输出(头+尾),便于定位(如 ffmpeg 滤镜不存在)
+            // 【2026-09-30 · t64 A 同族】这里原先只留尾部 800 字符 —— 与编码那条一样会把真因(总在开头)切掉。
+            AppLogger.Error($"命令失败(exit {p.ExitCode}):{Path.GetFileName(exe)} {args[..Math.Min(args.Length, 120)]} | "
+                + AlhPro.Core.VideoEncodeGuard.DescribeProcessFailure("探测", p.ExitCode, err, stdout));
         }
         var all = (err + "\n" + stdout).Split('\n').ToList();
         return all;
@@ -9954,19 +10162,26 @@ public static class VideoService
             throw new EngineStallException(killReason ?? $"子进程长时间无输出,已强制终止:{stage}");
         if (p.ExitCode != 0)
         {
-            var tail = (await drainErr).Trim();
-            if (tail.Length > 500) tail = tail[^500..];
+            // 【2026-09-30 · t64 A】失败输出必须**头 + 尾**都留:原先只留 `tail[^500..]`(最后 500 字符),
+            // 结果是 1527 那次诊断包里那截文本以 `ecc0] [enc:h264_qsv @ ...]` 开头 —— 连指针标识符都被
+            // 切掉半个,而"哪个编码器、打不开在哪一步"这些真因全在**开头**几行里,用户与排查者都看不到。
+            // 头尾的取法(5 行/400 字符 + 尾部 500 字符)与文案都在 Core:VideoEncodeGuard.DescribeProcessFailure。
+            string errText = await drainErr;
+            string outText = "";
+            try { outText = await drainOut; } catch { }
+            string detail = AlhPro.Core.VideoEncodeGuard.DescribeProcessFailure(
+                string.IsNullOrWhiteSpace(stage) ? "命令" : stage, p.ExitCode, errText, outText);
             // 杀软/防护拦截检测:引擎启动后 <5 秒就退出(毫秒级)且无正常输出 → 大概率被安全软件拦截
             try
             {
                 bool quickExit = false;
                 try { quickExit = (DateTime.Now - p.StartTime).TotalSeconds < 5; } catch { }
-                if (quickExit && tail.Contains("access", StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException($"命令失败 (exit {p.ExitCode}) — 引擎可能被杀毒/安全软件拦截:\n{tail}");
+                if (quickExit && detail.Contains("access", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException($"命令失败 (exit {p.ExitCode}) — 引擎可能被杀毒/安全软件拦截:\n{detail}");
             }
             catch (InvalidOperationException) { throw; }
             catch { }
-            throw new InvalidOperationException($"命令失败 (exit {p.ExitCode}):\n{tail}");
+            throw new InvalidOperationException(detail);
         }
     }
 
