@@ -703,9 +703,34 @@ public static partial class EngineService
     /// <summary>本会话已记下多少个"试过但没测通"的键(诊断用)。</summary>
     public static int SessionNotConcludedCount => _sessionNotConcluded.Count;
 
-    /// <summary>这个键本会话是否已经试过且没测通(超分探测与 RIFE 探测共用同一本台账)。</summary>
+    /// <summary>这个键本会话是否**已经试过且没测通**(true = 调用点必须跳过;超分探测与 RIFE 探测共用同一本台账)。
+    /// 【2026-09-30 · t62 B1 修】**极性只有一个说法:true = 已试过 ⇒ 跳过**。调用点因此写成
+    /// `if (SessionAlreadyTriedNotConcluded(engine, gpuId, model)) { …跳过… }`,**没有 `!`**;
+    /// 只读查询 <see cref="WouldSkipProbeThisSession"/> 用的是**同一个判断**(Core 的 `ShouldSkip`),
+    /// 对同一状态给出**同一答案** —— 这正是 B1 缺的那条不变量(已由反射探针 + 契约测试钉住)。
+    /// 【B1 留档】t60 把这里接成 Core 的 `TryBeginAttempt`(语义是"true = 允许发起"),而调用点仍按
+    /// "true = 已试过"写 ⇒ **台账为空时第一次调用就进了跳过分支**:整个会话里超分 ncnn 探测
+    /// (realesrgan / waifu2x / realcugan)永远不会真正发起、日志谎称"本会话已试过同一键",
+    /// 能走 ncnn 的机器被静默降级 ONNX。根因是"同一件事有两个极性相反的说法"。
+    /// 【计数】`countAttempt: true` ⇒ 允许 / 跳过各记一次(台账 `AttemptsAllowed` / `AttemptsSkipped`),
+    /// 所以这两个计数是**生产路径上的真计数**;而报告路径只读地问一次、不会被算成"发起过一次探测"。</summary>
     private static bool SessionAlreadyTriedNotConcluded(string engine, int gpuId, string? model)
-        => _sessionNotConcluded.ShouldSkip(NcnnVerdictKey(engine, gpuId, model));
+        => _sessionNotConcluded.ShouldSkip(NcnnVerdictKey(engine, gpuId, model), countAttempt: true);
+
+    /// <summary>【t60 F3】**只读**查询:这个引擎 + 这个键在本会话会不会被 M1 台账跳过。
+    /// 诊断包导出前用它决定状态栏文案 —— 不许出现"宣称在实测、其实跳过"(t59 复核抓到的原话)。
+    /// 刻意**不产生副作用**(不计数、不改台账),所以它在报告路径上可以被安全地问一次。</summary>
+    public static bool WouldSkipProbeThisSession(string engine, int gpuId, string? model = null)
+    {
+        try { return _sessionNotConcluded.ShouldSkip(NcnnVerdictKey(engine, gpuId, model)); }
+        catch { return false; }
+    }
+
+    /// <summary>本会话 M1 台账**允许发起**过多少次探测(生产路径真计数;诊断/自测用)。</summary>
+    public static int SessionProbeAttemptsAllowed => _sessionNotConcluded.AttemptsAllowed;
+
+    /// <summary>本会话被 M1 台账**跳过**过多少次探测(生产路径真计数;诊断/自测用)。</summary>
+    public static int SessionProbeAttemptsSkipped => _sessionNotConcluded.AttemptsSkipped;
 
     /// <summary>记下"这个键试过了、没测通"——**只活在本次运行**;调用方必须已经按统一口径报过"未测通"。</summary>
     private static void MarkSessionNotConcluded(string engine, int gpuId, string? model)
@@ -751,6 +776,20 @@ public static partial class EngineService
             _sessionNotConcluded.MarkNotConcluded(key);
             LastProbeUserMessage = "";
             AppLogger.Warn($"[探测] 补帧 {model} GPU({gpuId}) {AlhPro.Core.NcnnProbeWording.NotConcluded(cancelReason)}");
+            return false;
+        }
+        // ③ 【2026-09-29 · t60 F2】**没跑完的那一半也要拦住**:被强杀的 Hang(超时,与取消无关)、
+        //    进程起不来 / 探测自身异常都不构成"这张卡不可用"。此前只拦了取消那一半 ⇒ 一次 60 秒无响应
+        //    就落盘 `rife probe failed: 无响应(超时被强杀)`(TTL **1 天**)⇒ 用户一整天走 ONNX 慢路,
+        //    与 t56 给超分探测定下的 E1 口径(「实测不可用」只能由"跑完并得出形态"得出)自相矛盾。
+        //    判据用**同一个纯函数**(AlhPro.Core.NcnnProbeWording.IsConclusiveOutcome),不自己写 if。
+        //    当次任务照旧降级:返回 false ⇒ 调用方按"没结论"走(该走 ONNX 走 ONNX,不影响这一批能不能跑)。
+        if (!AlhPro.Core.NcnnProbeWording.IsConclusiveOutcome(failKind, cancelled: false))
+        {
+            string inconclusiveReason = AlhPro.Core.NcnnProbeWording.NotConcludedReasonFrom(failKind, failDetail, cancelled: false);
+            _sessionNotConcluded.MarkNotConcluded(key);
+            LastProbeUserMessage = "";     // 不许留"探测未通过"那类已定论措辞(用户可见文案里不许出现"实测不可用")
+            AppLogger.Warn($"[探测] 补帧 {model} GPU({gpuId}) {AlhPro.Core.NcnnProbeWording.NotConcluded(inconclusiveReason)}");
             return false;
         }
         SaveNcnnVerdict(key, gpuId, null, ok,

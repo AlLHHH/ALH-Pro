@@ -24,7 +24,7 @@ namespace AlhPro.Tests;
 ///   (<see cref="NcnnProbeWording"/>)。**真话没丢**:跑完并判不可用时照旧得出「实测不可用」。
 /// **E2** 生产帧尺寸(1080×1920)探测前先看空闲显存;明显不足就**不跑**那次探测,给一句"为什么 + 怎么办",
 ///   并且**不落盘任何结论**(阈值依据见 EngineService.ProductionProbeMinFreeVramGB 的注释:同一台机
-///   2.6/2.7GB 连过 5 次 vs 0.7GB 超时被强杀,取保守下限 1.5GB,属估计未逐档实测)。
+///   空闲 **2.5~2.7GB** 连过 5 次(04:05 那次实测 2.5GB)vs 0.7GB 超时被强杀,取保守下限 1.5GB,属估计未逐档实测)。
 ///
 /// 【证据分层】措辞与判据是 Core 纯函数 ⇒ 这里**直接执行**(喂 1355 的真实序列);UI 侧接线
 /// (MainPage 逐引擎行 / VulkanCheck 报告 / EngineService 闸门顺序)按本仓库惯例用源码断言钉住。</summary>
