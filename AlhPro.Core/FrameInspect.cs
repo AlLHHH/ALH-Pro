@@ -2,13 +2,28 @@ namespace AlhPro.Core;
 
 /// <summary>
 /// 帧质量判定(纯逻辑,不含图像解码):判断"帧是否近全黑 / 带状近黑 / 缺陷"。
-/// 抽出可测的阈值逻辑,使用方:EngineService.ConvertPngToJpg(超分批输出)/ IsBlackPng、VideoService.DefectiveFramesAllComeFromNearBlack(源帧黑场防误杀)。
+/// 【2026-09-27 · 事后判黑已按作者要求删除】作者反馈:素材里正常的黑色转场/淡入淡出/夜戏
+/// 被当成"引擎输出坏帧"⇒ 该批重跑/换 ONNX ⇒ 整条任务转 ONNX 慢路。
+/// 删除界线:凡"引擎产出后判黑、并据此改变行为(重跑/换路/回退/重算/失败)"的一律删除。
+/// 【现存三类使用方 —— 都不改变"批量成片"的走向】
+///   · 事前探测:EngineService 的 GPU 生产尺寸探测(ProbeEngineGpuOnceAsync → IsBlackProbeOutput)
+///     与 RIFE 插帧探测(ProbeOutputIsSane)—— 探测输入是程序自造的渐变图,不依赖用户素材,不会被黑色转场误伤;
+///   · 单图/分块成品守卫:EngineService.GuardSilentBlackOutput(判据 = 下面的 IsSilentBlackFailure)
+///     —— 【自带源图豁免】只有"输出近黑 且 输入不近黑"才报错,单张静帧不存在"黑转场"这回事,
+///     故不会被"素材本来就黑"误伤;它修的是"引擎 exit=0 却整帧全黑"(缺权重如 Real-ESRGAN 的 -s 1、
+///     驱动静默失败),而图片页没有别的兜底 ⇒ 2026-09-27 恢复保留(视频批量路径【不接回】);
+///   · 输出端黑场自检:VideoService.ScanBlackSegmentsAsync —— 只写日志与结算行,不改变任何行为。
+/// 【已删除且不许接回】超分批"判黑 → 只重跑黑帧 → 换 ONNX → 回退源帧"、补帧层批"块级/整段抽样判黑 → 换路重算"、
+/// ONNX 逐对"输出黑则回退该对源帧"、标定样本判黑、批量事后抽样提示(ProbeBatchBlackOutputHint)、
+/// ShouldExemptAsSourceBlack / IsFrameJustifiedByDarkSource(只为上面那条已删的视频降级链服务)。
+/// 代价(与 2026-09-16 补帧侧裁决同口径):视频批量路径下引擎真出黑帧时不再拦,成片可能带黑段 ——
+/// 事前兼容性判定(InterpSizePolicy.JudgeEngineRisk + 开跑前的尺寸/显卡预检)是唯一防线。
 /// 判定规则:采样像素中 ≥95% 的 RGB 和 &lt; 24 视为近黑(缺陷)。
 /// 【两种损坏形态都要抓】(2026 实测,RTX 4060 Laptop / waifu2x-ncnn-vulkan 20250915 + models-cunet):
 /// ①整帧近黑:GPU 队列彻底失败,整张输出全黑 → IsNearBlack(原语义,一字未改);
 /// ②带状近黑:同一次故障里更常见的形态是【每帧下 2/3 全黑、上 1/3 正常】——黑了约 66% 像素,
 ///   整帧量词的 IsNearBlack 判"正常"(ffmpeg blackdetect 同样按整帧比例,也完全不报),
-///   坏帧于是静默进成片、零日志、ncnnUnreliable 不置位 → IsBandBlack(本轮新增)。
+///   于是探测会把它当"可用设备"放过去 → IsBandBlack(本轮保留,只给事前探测与单图/分块守卫用)。
 /// 空/0字节/非法尺寸/解码失败由调用方(持有图像句柄)负责,本类只做像素采样判定。
 /// </summary>
 public static class FrameInspect
@@ -67,9 +82,10 @@ public static class FrameInspect
     /// 条带判定【不改变】整帧近全黑的原语义:IsNearBlack 为 true 时本函数必然也为 true,
     /// 它只是把"整帧 ≥95% 近黑"这个过窄的判据放宽到"某个 1/3 条带 ≥95% 近黑",
     /// 于是"下 2/3 全黑、上 1/3 正常"这类坏帧不再漏检。
-    /// 调用方(EngineService.ConvertPngToJpg 的 out nearBlack、IsBlackPng/NearBlackProbe)拿到的
-    /// 就是这个"是否缺陷帧"的结论 → 触发既有的黑帧降级链(该批重跑 → 回退源帧),
-    /// 绝不会把带状坏帧当正常帧放行。width/height 为源图尺寸(用于推导采样几何)。</summary>
+    /// 【2026-09-27 起只服务"事前探测"与"自带源图豁免"守卫】调用方 = EngineService 的两处事前探测
+    /// (生产尺寸 GPU 探测 IsBlackProbeOutput、RIFE 插帧探测)与单图/分块守卫的判据入口
+    /// (IsBlackPng / IsBlackPngStrict → 本函数)。原先靠它触发的"黑帧降级链(该批重跑 → 回退源帧/换路)"
+    /// 已按作者要求删除,视频批量路径不会再接回。width/height 为源图尺寸(用于推导采样几何)。</summary>
     public static bool IsDefectiveFrame(int[] sumRgb, int total, int width, int height)
     {
         if (IsNearBlack(sumRgb, total)) return true;
@@ -77,35 +93,16 @@ public static class FrameInspect
         return IsBandBlack(sumRgb, rows, cols);
     }
 
-    /// <summary>黑帧降级的"防误杀"判定:是否可以把这批【被判黑/转码失败】的帧当作"素材本身就是黑场"放行
-    /// (即跳过 ONNX/CPU 重算)。返回 true 仅当:缺陷帧数 &gt; 0,且【每一帧】的对应源帧都近全黑。
-    /// 【为什么必须"全部满足",不能"存在一个满足"】历史实现是存在量词(目录里只要有任意一张源帧近黑,
-    /// 就豁免【整批】),于是含黑场的素材(片头黑场/淡入淡出/夜戏/闪黑)上,GPU 真正故障产出的黑帧会被
-    /// 整批放行 —— 产品铁律「绝不把黑帧写进输出」在这类素材上完全失效,而且静默无日志。
-    /// 参数为 null 或空集合(典型:引擎一帧都没输出)必须返回 false —— 空批是真故障,与素材内容无关。
-    /// 拿不准时一律返回 false(= 降级):降级最坏只是白算一遍,与"黑帧进成片"不是一个量级的代价。</summary>
-    public static bool ShouldExemptAsSourceBlack(System.Collections.Generic.IReadOnlyCollection<bool>? defectiveFrameSourceIsNearBlack)
-    {
-        if (defectiveFrameSourceIsNearBlack == null || defectiveFrameSourceIsNearBlack.Count == 0) return false;
-        foreach (var isBlack in defectiveFrameSourceIsNearBlack)
-            if (!isBlack) return false;   // 只要有一帧的源帧不是黑场 → GPU 真的出故障了
-        return true;
-    }
-
-    /// <summary>【2026-09-16 修复】单帧版豁免判定(带**邻域容差**):这一帧被判黑,能不能用「素材本身是黑场」解释?
-    /// 传入的是"同号源帧 / 前一帧 / 后一帧"三者各自的黑场结论(由调用方按**与输出侧同一个判据**算好)。
-    /// 【为什么需要邻域】引擎有前后帧缓冲、`-n` 又是均分时间步 ⇒ "输出帧号 → 源帧号"的映射本就有 ±1 偏移。
-    /// 真机实测(200 帧 1440p×4x 一段):被判黑的输出帧,其**同号**源帧近黑 94.9%/93.2%/93.0%(刚在 95% 线下),
-    /// 而**邻居源帧是黑的** ⇒ 只查同号会把它误判成 GPU 故障,整段白重算(ONNX 比 ncnn 慢一二十倍)。
-    /// 【安全边界】三者都是 false(越界/读不出)时必须返回 false(= 按故障处理):宁可白算一遍,不许把真故障放行。</summary>
-    public static bool IsFrameJustifiedByDarkSource(bool sameNumberIsBlack, bool previousIsBlack, bool nextIsBlack)
-        => sameNumberIsBlack || previousIsBlack || nextIsBlack;
-
-    /// <summary>【任务 O1 · 2026-09-13】引擎"退出码 0 却整帧全黑"的判定(纯逻辑,可单测)。
+    /// <summary>【任务 O1 · 2026-09-13 新增 / 2026-09-27 恢复保留】引擎"退出码 0 却整帧全黑"的判定(纯逻辑,可单测)。
     /// 判据 = 【输出是缺陷帧】且【同一张的输入(源帧)不是缺陷帧】:
-    /// 源帧本来就是黑场(片头黑场/淡入淡出/夜戏)时不算引擎故障,否则就是引擎静默出了坏片。
+    /// 源帧本来就是黑场(夜景/本来就黑的图)时不算引擎故障,否则就是引擎静默出了坏片。
     /// 真机依据:Real-ESRGAN 传 `-s 1`(模型无 x1 权重)时输出纯黑(mean=0/uniq=1)**且 exit=0 无报错**,
-    /// ncnn-vulkan 的 vkQueueSubmit 失败也是同款形态 —— 都靠这条把它抓出来,不允许静默进成片。</summary>
+    /// ncnn-vulkan 的 vkQueueSubmit 失败也是同款形态 —— 都靠这条把它抓出来,不允许静默进成片。
+    /// 【2026-09-27 为什么恢复】作者要删的是"事后判黑**并据此改变行为**(重跑/换路/回退/失败)"那条链
+    /// (素材里的正常黑色转场被误判 ⇒ 整条任务转 ONNX 慢路)。本判据自带**源图豁免**(输入近黑就直接放行),
+    /// 而单张静帧根本不存在"黑转场"这回事 ⇒ 它不会误伤素材,修的正是"exit=0 却整帧全黑"。
+    /// 唯一调用方 = EngineService.GuardSilentBlackOutput(单图/分块成品);视频批量路径【不接回】。
+    /// 另外两个只为视频降级链服务的豁免判据(ShouldExemptAsSourceBlack / IsFrameJustifiedByDarkSource)保持删除。</summary>
     public static bool IsSilentBlackFailure(bool inputIsDefective, bool outputIsDefective)
         => outputIsDefective && !inputIsDefective;
 

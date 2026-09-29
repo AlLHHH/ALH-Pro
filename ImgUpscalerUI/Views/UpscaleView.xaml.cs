@@ -1757,27 +1757,10 @@ public sealed partial class UpscaleView : UserControl
                     }
                     catch (Exception ex)
                     {
-                        // 黑块修复:ncnn GPU 持续黑块且 CPU 模式不可用(真机:RTX 2080 等) → 整张改用 ONNX 稳定引擎
-                        if (!retried && ex.Message.Contains("BLACKOUT_NEED_ONNX", StringComparison.OrdinalIgnoreCase))
-                        {
-                            retried = true;
-                            string? onnxRetry = engine == "waifu2x" ? EsrganOnnxService.FindWaifu2xModel()
-                                : EsrganOnnxService.ResolveEsrganOnnxPath(model);
-                            if (onnxRetry != null)
-                            {
-                                try
-                                {
-                                    Log("  ⚠ 引擎输出异常重试:该显卡 ncnn 引擎输出异常且 CPU 不可用,自动改用 ONNX 稳定引擎重试...");
-                                    var retrySrc = converted ?? item.Path;
-                                    await EsrganOnnxService.UpscaleAsync(retrySrc, outPath, scale, gpuId < 0 ? -1 : -2, progress, ct, onnxRetry);
-                                    // 同主分支:重试也是 ONNX 出图,1x 缩回与"JPG 里不能装 PNG 字节"同样要收尾
-                                    var retryLog = await Task.Run(() => FinalizeOnnxOutput(retrySrc, outPath, upscaleShrink1x, imgQ));
-                                    if (retryLog != null) Log(retryLog);
-                                    succeeded = true;
-                                }
-                                catch { }
-                            }
-                        }
+                        // 【2026-09-29】原先这里还有一条"黑块修复:命中 BLACKOUT_NEED_ONNX ⇒ 整张改用 ONNX 稳定引擎重试"
+                        // —— 抛出方(分块路径里的 HasBlackPng 判黑)已随"删掉事后黑帧判断"整条删除(作者定案),
+                        // 这个分支永远不会再命中 ⇒ 一并删掉(留着死分支会让排查者误以为图片页还有这条 ONNX 兜底)。
+                        // 下面那段 `if (!retried && !succeeded)` 与 ONNX 无关,是**转码重试**,原样保留。
                         if (!retried && !succeeded)
                         {
                             retried = true;

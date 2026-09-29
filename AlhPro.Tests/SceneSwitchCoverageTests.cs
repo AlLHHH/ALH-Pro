@@ -37,7 +37,8 @@ public class SceneSwitchCoverageTests
         Assert.Contains("foreach (var c in cuts) sceneCutPairs.Add(c - 1);", svc);   // c=i+1 → i 口径换算
 
         // "按真实时间戳排帧"那条路:签名收共享表、**不再**有采样/判据调用
-        var flattenBody = ExtractMember(svc, "private static async Task<(int written, int cuts, int forcedCopies, bool anyBlack)> FlattenTimelineAsync(");
+        // 【2026-09-27】返回值里的 bool anyBlack(合成输出判黑 → 回退分段补帧)已随事后判黑一起删除 ⇒ 签名只有三项。
+        var flattenBody = ExtractMember(svc, "private static async Task<(int written, int cuts, int forcedCopies)> FlattenTimelineAsync(");
         Assert.Contains("IReadOnlyList<int> cutPairs", flattenBody);
         Assert.DoesNotContain("ComputeSceneCutMetricsAsync", flattenBody);
         Assert.DoesNotContain("SceneCutJudge.Detect", flattenBody);

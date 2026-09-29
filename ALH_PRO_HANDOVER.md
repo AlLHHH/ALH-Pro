@@ -44,8 +44,8 @@ ALH Pro 是一款**本地图片/视频处理桌面应用**(WinUI 3 / .NET 8 / x6
 
 | 文件 | 职责 |
 |---|---|
-| **VideoService.cs**(~317KB) | 视频主流程,入口 `ProcessVideoAsync`。拆帧→去重→补帧→超分→后处理→合帧+编码。含去重算法、RIFE 补帧、黑帧检测、帧率/时长计算、编码器选择。 |
-| **EngineService.cs**(~156KB) | 引擎调用后台。路径定位、GPU 探测(`IsBlackwellGpu`/`IsEngineGpuUsableAsync`/`IsRifeGpuUsableAsync`)、模型选择、引擎进度解析、取消(杀进程)、分块超分、后处理滤镜、降级链(`RunEngFallbackGpuAsync`)、DXGI 枚举(`ToDmlDevice`)、TempRoot、黑帧检测(`IsBlackPng`/`IsBlackPngStrict`)。 |
+| **VideoService.cs**(~317KB) | 视频主流程,入口 `ProcessVideoAsync`。拆帧→去重→补帧→超分→后处理→合帧+编码。含去重算法、RIFE 补帧、帧率/时长计算、编码器选择。视频路径黑帧只留"输出端黑场自检"**只报数字**(2026-09-27 起事后判黑/重跑/换路已删除);单图/分块成品另有自带源图豁免的守卫 `EngineService.GuardSilentBlackOutput`。 |
+| **EngineService.cs**(~156KB) | 引擎调用后台。路径定位、GPU 探测(`IsBlackwellGpu`/`IsEngineGpuUsableAsync`/`IsRifeGpuUsableAsync`)、模型选择、引擎进度解析、取消(杀进程)、分块超分、后处理滤镜、降级链(`RunEngFallbackGpuAsync`)、DXGI 枚举(`ToDmlDevice`)、TempRoot、判黑三件:事前探测 `IsBlackProbeOutput` 与单图/分块成品守卫 `GuardSilentBlackOutput`(+`IsBlackPng`/`IsBlackPngStrict`/`NearBlackProbe`)。 |
 | **RifeOnnxService.cs**(~16KB) | RIFE ONNX 补帧(rife49.onnx)。DirectML 优先,失败自动 CPU。逐对插帧 `Interp`。 |
 | **EsrganOnnxService.cs**(~46KB) | ONNX 超分(纯 C#)。为 Blackwell/无独显提供稳定实现。`FindModel`/`UpscaleDirAsync`(视频逐帧 2~3 路径并行)、分块+羽化、DirectML 优先。 |
 | **VulkanCheck.cs**(~33KB) | 启动 GPU 自检(waifu2x 跑 1×1 测 Vulkan、枚举设备表存静态 `Devices`、生成报告、`DriverTooOld`/`HasRiskyGpu` 风险判断、缓存)。 |
@@ -71,9 +71,11 @@ ALH Pro 是一款**本地图片/视频处理桌面应用**(WinUI 3 / .NET 8 / x6
 6. `ReencodeDirPngToJpg`(PNG→JPG 降临时盘,省 200GB 的核心)。
 7. 合帧+音频:`BuildPostFilter`(后处理滤镜)→ 果冻修复 → fps 重映射;编码器:硬编 **nvenc>amf>qsv** → CPU **libx264**;先写 .tmp 再原子改名;输出校验。
 
-**关键方法**:`ProcessVideoAsync`/`ProbeFrameCount`/`ProbeSizeAsync`/`ProbeAudioCodec`/`BuildPostFilter`/`EncoderArgs`/`ReencodeDirPngToJpg`/`InterpSegmentAsync`/`RifeOnnxInterpDirAsync`/`IsV4Model`/`RunAsync`/`batchOutHasDefectiveFrame`/`DirNearBlack`。
+**关键方法**:`ProcessVideoAsync`/`ProbeFrameCount`/`ProbeSizeAsync`/`ProbeAudioCodec`/`BuildPostFilter`/`EncoderArgs`/`ReencodeDirPngToJpg`/`InterpSegmentAsync`/`RifeOnnxInterpDirAsync`/`IsV4Model`/`RunAsync`。
 
-**补帧降级链(用户指定"不落 CPU")**:选定独显 ncnn → ONNX(DirectML)→ 换卡 → 报错。`TryGpuAsync` 失败/黑帧/0帧/帧数残缺(输出<目标 50%)→ `TryDegradeAsync`:①ONNX ②换卡 ③报错(绝不回落 ncnn-CPU)。
+**补帧降级链(用户指定"不落 CPU")**:选定独显 ncnn → ONNX(DirectML)→ 换卡 → 报错。`TryGpuAsync` 失败/0帧/帧数残缺(输出<目标 50%)→ `TryDegradeAsync`:①ONNX ②换卡 ③报错(绝不回落 ncnn-CPU)。
+> 【2026-09-27 更新】换路触发条件里的"**黑帧**"已删除(事后判黑整条链按作者要求移除,见下面「黑帧检测」一节)——
+> 现在只有 **失败 / 0帧 / 帧数残缺** 会触发换路;`batchOutHasDefectiveFrame`、`DirNearBlack` 两个成员已不存在。
 
 ---
 
@@ -85,11 +87,26 @@ ALH Pro 是一款**本地图片/视频处理桌面应用**(WinUI 3 / .NET 8 / x6
 - **`ShouldUseOnnxWaifu2x()`** = `!IsBlackwellGpu() && OldNcnnGpuRisky()`(仅无独显;50 系 waifu2x 20250915 新版引擎自身兼容,不走 ONNX)。
 - **`ToDmlDevice(engineGpu)`**:ncnn `-g` 编号 → DirectML 设备号(按 DXGI 真枚举名匹配,防双卡机跑错卡;匹配不到宁可落 CPU)。
 
-### 黑帧检测
-- `IsBlackPng`(≥95% 像素近黑;空/0字节/解码失败也 true=缺陷帧)——GPU 探测失败判定、ONNX 补帧防御。
-- `IsBlackPngStrict`(只判"真·近黑",空/未写完/解码失败 false)——补帧 RIFE 防御(防把未写完的瞬时空帧当黑帧误触发降级)。
-- `batchOutHasDefectiveFrame`(超分输出目录有无缺陷帧);`DirNearBlack`(源帧本就近黑时**不降级**,防误杀)。
-- `ncnnUnreliable` 标记:超分检测到黑帧置位,后续批次直接 ONNX。
+### 黑帧检测(2026-09-27 大幅收缩:事后判黑已按作者要求删除)
+> 作者原话:"黑帧判断这个功能直接删掉 —— 有用户反馈黑色转场内容转 onnx 跑的超级慢"。
+> 删除规则:凡"引擎产出之后判黑帧、并据此**改变行为(重跑/换路/回退源帧/置位开关/让任务失败)**"的代码一律删除。
+> 后果:**视频批量路径下引擎真出黑帧时不再拦**,成片可能带黑段 ——
+> 事前兼容性判定(`InterpSizePolicy.JudgeEngineRisk` + 开跑前的尺寸/显卡预检)是唯一防线。
+
+- **保留**:`IsBlackProbeOutput`(EngineService,≥95% 像素近黑【整帧或任一 1/3 条带】;空/0字节/解码失败也 true)
+  与 RIFE 探测的 `ProbeOutputIsSane` —— 只服务**事前探测**,探测输入是程序自造的渐变/色块图,不依赖用户素材。
+- **保留**:输出端黑场自检(`ScanBlackSegmentsAsync` / `LastBlackScanResult`)—— **只把数字写进日志与结算行**,
+  不参与任何判定、不改交付内容。
+- **恢复保留(2026-09-27 本次收口)**:`GuardSilentBlackOutput` + `IsBlackPng`/`IsBlackPngStrict`/`NearBlackProbe`
+  (EngineService)与判据 `AlhPro.Core.FrameInspect.IsSilentBlackFailure` —— 只守**单图 / 分块成品**:
+  判据 = 输出近黑 **且** 输入不近黑 ⇒ **自带源图豁免**,单张静帧不存在"黑转场"这回事,不会被素材黑误伤;
+  命中就抛可读错误(**不换引擎、不改路线**),修的是"引擎 exit=0 却整帧全黑"(缺权重/驱动静默失败,图片页没有别的兜底)。
+- **已删除**:`HasBlackPng`(目录巡检 ⇒ 抛 `BLACKOUT_NEED_ONNX` 换 ONNX 或报错停止)、`ProbeBatchBlackOutputHint`、
+  `AlhPro.Core.BlackFrameRecovery`、`AlhPro.Core.DefectSampling`、超分批"判黑→只重跑黑帧→换 ONNX→回退源帧"、
+  补帧层批"块级/整段抽样判黑→换路重算"、ONNX 逐对"输出黑则回退该对源帧"、标定样本"判黑"、
+  `ncnnUnreliable` 置位(**该参数本身也已从 `UpscaleBackendPlan.UseOnnx/DescribeBackend` 签名移除**)。
+- 判据纯函数(`AlhPro.Core.FrameInspect`)现存:`IsNearBlack`/`IsBandBlack`/`IsDefectiveFrame`(事前探测 + 单图守卫)
+  与 `IsSilentBlackFailure`(单图守卫);批量豁免判据 `ShouldExemptAsSourceBlack`/`IsFrameJustifiedByDarkSource` 已删除。
 
 ---
 
@@ -159,7 +176,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 
 1. **闪退(某用户 RTX 3070)**:日志只到"设置保存"就断,无异常堆栈。**需要 Windows 事件查看器崩溃记录**(Application Error 1000 / .NET Runtime 1026)才能定位。诊断包已含崩溃堆栈(见上),下次导出即带。
 2. **AMD 6750 补帧间歇 140→1 帧**:waifu2x-ncnn-vulkan / rife-ncnn-vulkan 的**引擎层共性问题**(同类软件 SVFI/Video2X 也有,GitHub issue #71/#1140)。已有"残缺自动降级 ONNX"兜底,但**没真机验证**。
-3. **RTX 3070 超分黑帧**:ncnn-Vulkan 长视频连续处理 GPU 队列累积异常。已有 `ncnnUnreliable` 标记(黑帧→后续批 ONNX)。
+3. **RTX 3070 超分黑帧**:ncnn-Vulkan 长视频连续处理 GPU 队列累积异常。**2026-09-27 起不再有"事后判黑 ⇒ 后续批改走 ONNX"的兜底**(作者要求删除:黑色转场素材会被误判,反而把整条任务拖去 ONNX 慢路);视频路径只剩事前探测与输出端黑场留痕,单图/分块成品另有自带源图豁免的 `GuardSilentBlackOutput` 守卫。
 4. **RTX 3070 nvenc 失败(7.49 秒/帧慢)**:驱动 560.70 偏旧。**代码治不了根子,须用户升级驱动到 ≥610**。
 5. **"驱动最低版本"门槛**:阈值需要真机数据校准,DeepSeek 单看诊断包设阈值会误伤(4060@572.83 是好的)。
 

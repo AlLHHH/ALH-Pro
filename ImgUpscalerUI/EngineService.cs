@@ -343,7 +343,7 @@ public static partial class EngineService
     /// ①探测图用【生产帧尺寸 1080×1920】(旧 320×240 太小:真机证据是"小图能过、真实分辨率静默出 0KB 空帧/黑帧,
     ///   退出码还是 0",于是探测判"可用"→ 整段黑);
     /// ②参数与生产逐字一致(-s 2 -n 0 -t 0 -j 1:1:1 + 真实模型),而不是裸 -s 2;
-    /// ③判据含【带状近黑】:IsBlackPng → FrameInspect.IsDefectiveFrame = 整帧 ≥95% 近黑 或 任一 1/3 主条带 ≥95% 近黑
+    /// ③判据含【带状近黑】:IsBlackProbeOutput → FrameInspect.IsDefectiveFrame = 整帧 ≥95% 近黑 或 任一 1/3 主条带 ≥95% 近黑
     ///   (整帧量词在"下 2/3 全黑、上 1/3 正常"时只黑 66%,判不出来 —— 这正是旧探测漏检的形态)。
     /// gpuId&lt;0(用户选 CPU)直接返回 false:ncnn CPU 模式在 50 系上有崩溃 bug(实测 exit -1073741819)。
     /// <param name="force">true = 忽略快速通道与缓存,无条件真机重测一次(仅"导出诊断包"用)。
@@ -2137,8 +2137,10 @@ public static partial class EngineService
     /// (-s 2 -n 0 -t 0 -j 1:1:1 + 真实模型)。这是"50 系该走 ncnn 还是 ONNX"的判据来源。
     /// 【为什么小图不够】真机证据(诊断包):320×240 甚至 1×1 探测都能通过,真实分辨率却静默输出
     /// 0KB 空帧/黑帧、【退出码还是 0】——于是旧探测判"可用",整段视频的黑帧一路进成片。
-    /// 判据仍沿用 IsBlackPng(= FrameInspect.IsDefectiveFrame:整帧 ≥95% 近黑 或 任一 1/3 主条带 ≥95% 近黑),
-    /// 因此"下 2/3 全黑、上 1/3 正常"这种带状坏帧也能被这一层拦住。</summary>
+    /// 判据仍沿用 IsBlackProbeOutput(= FrameInspect.IsDefectiveFrame:整帧 ≥95% 近黑 或 任一 1/3 主条带 ≥95% 近黑),
+    /// 因此"下 2/3 全黑、上 1/3 正常"这种带状坏帧也能被这一层拦住。
+    /// 【2026-09-27】别把这里的判黑和"事后判黑"混为一谈:事后那套(超分批重跑/换 ONNX/补帧换路)已按作者要求
+    /// 整体删除;这一处是**事前探测**,探测图由程序自造,保留。</summary>
     public static async Task<bool> IsEngineGpuUsableAsync(string engine, int gpuId, CancellationToken ct, bool fullFrame, string? model)
         => await IsEngineGpuUsableAsync(engine, gpuId, ct, fullFrame, model, null).ConfigureAwait(false);
 
@@ -2307,9 +2309,11 @@ public static partial class EngineService
                     bool ok = p.ExitCode == 0 && File.Exists(outPng) && new FileInfo(outPng).Length > 0;
                     // 【黑帧自检】引擎输出存在但全黑(静默黑帧 bug,如旧 ncnn on 50系/AMD 驱动异常)→ 该设备视为不可用,
                     // 立即改用其它卡/ONNX;否则黑帧设备会被误判"可用",后续补帧/超分一路黑。
-                    // 判据是 IsBlackPng = FrameInspect.IsDefectiveFrame(整帧近黑【或】任一 1/3 主条带近黑)——
+                    // 判据 = FrameInspect.IsDefectiveFrame(整帧近黑【或】任一 1/3 主条带近黑)——
                     // 带状黑("下 2/3 全黑、上 1/3 正常")也拦得住,不是只查整帧全黑。
-                    if (ok) { try { if (IsBlackPng(outPng)) { ok = false; } } catch { } }
+                    // 【2026-09-27】事后判黑已按作者要求删除(作者反馈:黑色转场内容被误判 ⇒ 转 ONNX 跑的超级慢);
+                    // 这里是**事前探测**,保留(探测输入是程序自造图,见上面 2207-2234 的生成段,不依赖用户素材)。
+                    if (ok) { try { if (IsBlackProbeOutput(outPng)) { ok = false; } } catch { } }
                     if (ok)
                     {
                         AppLogger.Info($"[探测] 引擎 {engine} GPU(-g {gpuId})可用(" +
@@ -3019,7 +3023,12 @@ public static partial class EngineService
                 // 分块拼接(SetPixel 羽化 + 合成 + 保存)很吃 CPU,放后台线程,避免卡 UI
                 var tiled = await Task.Run(() => UpscaleTiledAsync(input, output, engine, model,
                     scale, noise, gpuId, tta, progress, ct, tileSize)).ConfigureAwait(false);
-                GuardSilentBlackOutput(input, tiled, engine, model, 4);   // 【O1③】拼好的成品同样要过黑帧防线
+                // 【2026-09-27 · 保留(不带行为改路,只对"成品"报错)】拼好的成品同样要过"exit=0 却整帧全黑"的守卫。
+                // 为什么这次**恢复**它而不是连着视频那条链一起删:判据 IsSilentBlackFailure = 输出近黑 且 输入不近黑,
+                // 【自带源图豁免】—— 单张静帧不存在"黑转场"这回事,不会被素材本来就黑误伤;
+                // 它修的是"引擎 exit=0 却整帧全黑"(缺权重/驱动静默失败),图片页没有别的兜底,
+                // 删掉它 ⇒ 真实故障会静默出黑图且零日志。【别搞混】HasBlackPng 是**单图分块路径**那条(判黑 ⇒ 抛 BLACKOUT_NEED_ONNX ⇒ 整张改走 ONNX 重试),它同样按 2026-09-27 的界线删除;视频批量的逐帧判黑走的是 UpscaleDirAsync 那条路,与它不是同一条 —— 两者都已删除。
+                GuardSilentBlackOutput(input, tiled, engine, model, 4);
                 return tiled;
             }
         }
@@ -3059,7 +3068,10 @@ public static partial class EngineService
                 await Task.Run(() => ResizeImage(output, output, scale / engineScale), ct)
                     .ConfigureAwait(false);
             }
-            GuardSilentBlackOutput(input, output, engine, model, engineScale);   // 【O1③】exit=0 却整帧全黑 → 抛可读错误
+            // 【2026-09-27 · 保留】exit=0 却整帧全黑 → 抛可读错误中止。
+            // 判据自带源图豁免(输出近黑【且】输入不近黑),单张静帧没有"黑转场"这回事,故不误伤素材;
+            // 视频批量路径那条判黑链保持已删除,这里只守单图成品。
+            GuardSilentBlackOutput(input, output, engine, model, engineScale);
             return output;
         }
         if (engine == AlhPro.Core.RealCugan.EngineName)
@@ -3089,7 +3101,9 @@ public static partial class EngineService
                 await Task.Run(() => ResizeImage(output, output, scale / engineScale), ct)
                     .ConfigureAwait(false);
             }
-            GuardSilentBlackOutput(input, output, engine, model, engineScale);   // 缺权重时引擎同样 exit=0 只画坏帧
+            // 【2026-09-27 · 保留】缺权重时引擎同样 exit=0 只画坏帧 → 抛可读错误中止(判据与上一处同一套,
+            // 自带源图豁免;视频批量路径保持已删除)。
+            GuardSilentBlackOutput(input, output, engine, model, engineScale);
             return output;
         }
         else
@@ -3116,7 +3130,9 @@ public static partial class EngineService
                 await Task.Run(() => ResizeImage(output, output, scale / engineScale), ct)
                     .ConfigureAwait(false);
             }
-            GuardSilentBlackOutput(input, output, engine, model, engineScale);   // 【O1③】Real-ESRGAN 缺权重时会画全黑且 exit=0
+            // 【2026-09-27 · 保留】Real-ESRGAN 缺 x1 权重会画全黑且 exit=0 → 抛可读错误中止
+            //(判据自带源图豁免,不会被素材本来就黑误伤;视频批量路径保持已删除)。
+            GuardSilentBlackOutput(input, output, engine, model, engineScale);
             return output;
         }
     }
@@ -3277,34 +3293,12 @@ public static partial class EngineService
             foreach (var f in Directory.EnumerateFiles(outDir, "*.png"))
                 await Task.Run(() => ResizeImage(f, f, scale / engineScale2), ct).ConfigureAwait(false);
         }
-        // 黑帧防御:目录批量中任一块 vkQueueSubmit 失败→全黑(退出码仍 0)。有黑块则逐块用 CPU 软解重处理该块;
-        // CPU 仍黑/不可用 → 抛"转 ONNX"信号(上层改用 ONNX 稳定引擎,不再反复 GPU 黑块死循环)。
-        if (gpuId >= 0 && HasBlackPng(outDir))
-        {
-            // 【改进】有 ONNX 模型时【先】走 ONNX DirectML(GPU 加速、独立运行时,ncnn-GPU 崩≠DirectML 崩),
-            // 而非先走最慢的 ncnn-CPU 逐块重算——与视频超分黑帧降级(ONNX→CPU 顺序)一致。
-            // 仅当该引擎/模型无 ONNX 版(如某些 waifu2x 模型)才退回 ncnn-CPU 逐块兜底。
-            string? onnxModel = engine is "realesrgan" ? EsrganOnnxService.ResolveEsrganOnnxPath(model)
-                : engine is "waifu2x" ? EsrganOnnxService.FindWaifu2xModel() : null;
-            if (onnxModel != null)
-            {
-                progress?.Report((89, "⚠ 该批引擎输出异常(GPU 队列问题),改用 ONNX 稳定引擎重算整图..."));
-                AppLogger.Info("⚠ 目录批量超分检测到异常输出(GPU 队列问题),改用 ONNX 稳定引擎重算整图");
-                throw new InvalidOperationException("BLACKOUT_NEED_ONNX:GPU 黑块,转用 ONNX 稳定引擎");
-            }
-            // 【2026-09-23 用户要求 · 视频这一侧「绝不落 CPU」】这里原来是"逐块用 ncnn-CPU 重算受影响块"。
-            // 而本方法(EngineService.UpscaleDirAsync)在当前代码里【只有视频流水线在调】
-            // (grep 全仓库:调用点只有 VideoService 的超分批次循环 2713 那处)⇒ "在 CPU 上重算视频帧"
-            // 等于把整段视频拖成几十分钟到几小时,按用户口径改成**明确报错**,把决定权交回上层降级链
-            // (ONNX → 换另一张卡 → 报错)。信号仍带 BLACKOUT_NEED_ONNX 前缀:上层据此知道"是黑块问题、
-            // 该换引擎",而这条分支本身就是"换不到 ONNX 版"的情形 ⇒ 最终会以明确错误结束,不会静默慢跑。
-            progress?.Report((89, "⚠ 该批引擎输出异常(GPU 队列问题),该模型没有 ONNX 版 —— 停止(不落 CPU)..."));
-            AppLogger.Error("⚠ 目录批量超分检测到异常输出(GPU 队列问题),且该引擎/模型无 ONNX 版:"
-                + "按「视频不落 CPU」策略停止该批(不再用 CPU 逐块重算)");
-            throw new InvalidOperationException(
-                "BLACKOUT_NEED_ONNX:GPU 黑块且该引擎/模型没有 ONNX 版,按「视频不落 CPU」策略停止"
-                + "(请更新显卡驱动,或改用有 ONNX 版的模型)");
-        }
+        // 【2026-09-27 删除"分块黑块逐块重算/转 ONNX"】原逻辑:目录批量跑完后若有黑块(HasBlackPng)→
+        // 有 ONNX 版就抛 BLACKOUT_NEED_ONNX 让上层换 ONNX,没有就报错停止。那是一条**事后判黑并据此改行为**
+        // 的链(素材黑色转场/淡入淡出会被误判 ⇒ 整块图重跑/换引擎 ⇒ 转 ONNX 慢路),按作者要求整体删除。
+        // 【怎么保证不破坏分块主流程】这条链接在"引擎批跑完成 → 羽化拼接"之间,只做判定+抛出,不碰 outDir 里的
+        // 任何块、也不改 engineScale2 的缩放与下面的拼接循环 ⇒ 删掉它之后 index/坐标/尺寸/羽化参数全部原样,
+        // 拼接循环(下面 3)段)与原先逐字一致。代价:引擎真出黑块时不再拦,黑块会随成品落盘(事前预检是唯一防线)。
         progress?.Report((90, $"超分 完成({totalTiles} 块)"));
 
         // 3) 手动羽化融合回整图(直接逐像素加权,BGRA 内存,不依赖 GDI+ alpha 混合,避免大面积崩坏)
@@ -3411,36 +3405,70 @@ public static partial class EngineService
     /// <summary>枚举目录里的帧图(png/jpg/jpeg)。
     /// 【为什么必须扩展名无关】引擎目录模式可直出 JPG(`-f jpg`,4K 实测省 31%),此后输出目录里【没有 PNG】;
     /// 若某些环节仍写死 "*.png",会静默失效:进度看门狗数不到帧(喂不了狗→误判挂起)、
-    /// 非原生倍率缩回整段跳过(3x 变成 4x 输出)、黑帧巡检漏检整批。故统一走这里。</summary>
+    /// 非原生倍率缩回整段跳过(3x 变成 4x 输出)。故统一走这里。</summary>
     private static System.Collections.Generic.IEnumerable<string> EnumerateImageFiles(string dir) =>
         Directory.EnumerateFiles(dir, "*.*").Where(x =>
             x.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
             x.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
             x.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>检测目录里的 PNG 是否有全黑块(ncnn-vulkan GPU 队列失败时输出全黑/带状黑,退出码仍 0)。
-    /// 采样近似:任一张图【整帧 ≥95% 像素接近全黑】或【某个 1/3 主条带 ≥95% 近黑】即判黑
-    /// —— 实测坏帧是"下 2/3 全黑、上 1/3 正常",只看整帧会让整批黑块静默通过。</summary>
-    private static bool HasBlackPng(string dir)
+    // ===== 【2026-09-27 · 事后判黑已按作者要求收缩:只留"单图/分块成品"这一条】=====
+    // 作者原话:"黑帧判断这个功能直接删掉 —— 有用户反馈黑色转场内容转 ONNX 跑的超级慢"。
+    // 删除界线:凡是"引擎产出之后判黑帧、并据此改变行为(重跑/换路/回退源帧/置位 ncnnUnreliable/让任务失败)"
+    // 的代码一律删除 —— 这条界线的**目的**是别再让素材里的正常黑色转场把整条任务拖去 ONNX 慢路。
+    // 【已删除,不许接回】HasBlackPng(目录里任一张被判黑 ⇒ 抛 BLACKOUT_NEED_ONNX 换 ONNX 或报错停止)、
+    // ProbeBatchBlackOutputHint(批量路径按 DefectSampling 抽样判黑 ⇒ 只记 Warn;DefectSampling 本体也一并删除)。
+    // 【恢复保留(2026-09-27 本次收口)】GuardSilentBlackOutput —— 单图/分块【成品】的守卫:
+    //   判据 = FrameInspect.IsSilentBlackFailure(输出近黑【且】输入不近黑)⇒ **自带源图豁免**,
+    //   单张静帧不存在"黑转场"这回事,不会被"素材本来就黑"误伤;它修的是"引擎 exit=0 却整帧全黑"
+    //   (缺权重如 Real-ESRGAN 的 -s 1、驱动静默失败),而图片页**没有别的兜底** ⇒ 删掉它就等于
+    //   "真实故障静默出黑图且零日志"。【别搞混】HasBlackPng 是**单图分块路径**那条(判黑 ⇒ 抛 BLACKOUT_NEED_ONNX ⇒ 整张改走 ONNX 重试),它同样按 2026-09-27 的界线删除;视频批量的逐帧判黑走的是 UpscaleDirAsync 那条路,与它不是同一条 —— 两者都已删除。
+    // 【保留】引擎**事前探测**里的判黑(下面 IsBlackProbeOutput;RIFE 探测见 ProbeOutputIsSane):
+    // 探测输入是程序自造的渐变/色块图,不依赖用户素材,不会被黑色转场误伤。
+    // 【代价(与 2026-09-16 补帧侧裁决同口径)】视频批量路径下引擎真出黑帧时不再拦:成片可能带黑段,
+    // 事前兼容性判定(InterpSizePolicy.JudgeEngineRisk + 开跑前的尺寸/显卡预检)是唯一防线。
+
+    /// <summary>【只给事前探测用】探测产出这一张图是不是缺陷帧(整帧近全黑【或】任一 1/3 主条带近全黑)。
+    /// 同步把"读不出的帧"(0 字节 / 空 / 损坏)视为缺陷帧返回 true —— ncnn-vulkan 在 50 系/部分驱动上会静默输出
+    /// 0KB 空帧(退出码 0 不报错);探测路径宁可按"设备不可用"处理,也不许把空帧当可用设备放过去。
+    /// 【判定口径】走 FrameInspect.IsDefectiveFrame = 整帧 ≥95% 近黑【或】任一条 1/3 主条带 ≥95% 近黑:
+    /// 实测(ncnn-vulkan,RTX 4060)坏帧更常见的形态是"每帧下 2/3 全黑、上 1/3 正常",整帧口径会漏检。
+    /// 【唯一调用方】ProbeEngineGpuOnceAsync 的生产尺寸探测(探测图由程序自造,见该函数 2207-2234 段)。
+    /// 【为什么不与下面 IsBlackPng 合并】判据逐字相同(都是 failIsDefect:true),但探测这条路径按
+    /// 2026-09-27 的硬约束**冻结**(它是"设备可用性"的唯一判据,不许顺手动);两者各自独立。⚠ **改阈值 / 改采样几何时必须同时改 `NearBlackProbe`与这里**(两处实现逐字相同是有意的:探测路径按 2026-09-27 硬约束**冻结**,不做"委托给另一个函数"的重构,以免动到"设备可用性"的唯一判据)。</summary>
+    private static bool IsBlackProbeOutput(string file)
     {
         try
         {
-            foreach (var f in EnumerateImageFiles(dir))
+            // 空/0 字节:必然不可解码(旧逻辑 new Bitmap 抛异常被 catch 吞掉返回 false,正是空帧漏检的根源)
+            if (!File.Exists(file) || new FileInfo(file).Length == 0) return true;
+            using var bmp = new System.Drawing.Bitmap(file);
+            if (bmp.Width <= 0 || bmp.Height <= 0) return true;   // 尺寸非法
+            var sums = new System.Collections.Generic.List<int>();
+            int total = AlhPro.Core.FrameInspect.ForEachSample(bmp.Width, bmp.Height, (x, y) =>
             {
-                if (IsBlackPng(f)) return true;
-            }
+                var p = bmp.GetPixel(x, y);
+                sums.Add((int)p.R + (int)p.G + (int)p.B);
+            });
+            // IsDefectiveFrame = 整帧近全黑【或】任一 1/3 主条带近全黑:
+            // 实测坏帧是"下 2/3 全黑、上 1/3 正常",只黑约 66% 像素,整帧口径必然漏检(详见 FrameInspect 注释)。
+            return AlhPro.Core.FrameInspect.IsDefectiveFrame(sums.ToArray(), total, bmp.Width, bmp.Height);
         }
-        catch { }
-        return false;
+        catch { return true; }
     }
 
-    /// <summary>【任务 O1 ③ · 2026-09-13】"引擎 exit=0 却整帧全黑"的防线(单图/分块路径)。
-    /// 为什么必须加:实测 Real-ESRGAN 在缺 x1 权重时**不报错**,只是把整张图画成全黑(mean=0/uniq=1),
-    /// 而单图路径此前没有任何黑帧防线 → 黑图被静默保存成"超分结果"。
+    /// <summary>【任务 O1 ③ · 2026-09-13 新增 / 2026-09-27 恢复保留】"引擎 exit=0 却整帧全黑"的防线
+    /// (只服务【单图 / 分块成品】路径)。
+    /// 为什么必须保留:实测 Real-ESRGAN 在缺 x1 权重时**不报错**,只是把整张图画成全黑(mean=0/uniq=1),
+    /// 而单图路径此前没有任何黑帧防线 → 黑图被静默保存成"超分结果";图片页也没有别的兜底,删掉它就等于
+    /// "真实故障静默出黑图且零日志"。
     /// 判据复用既有纯函数:FrameInspect.IsSilentBlackFailure(输出缺陷帧 且 源帧不是缺陷帧)
-    /// —— 源帧本来就是黑场(片头/夜景/淡入淡出)时不算引擎故障,不误杀。
-    /// 【视频(批量)路径不在这里拦】那条路径**已不再**对黑帧做降级(2026-09-16 裁决),这里只如实记日志;
-    /// 抛异常反而会绕过它;那里只记日志(见 UpscaleDirAsync 的黑帧提示)。</summary>
+    /// —— **自带源图豁免**:源帧本来就是黑场(夜景/本来就黑的图)时不算引擎故障,不误杀。
+    /// 【为什么这条不违反"删掉事后判黑"的裁决】作者要删的是"判黑 ⇒ 改路/重跑/回退"那条链
+    /// (黑色转场被误判 ⇒ 整条任务转 ONNX 慢路);本守卫命中即抛可读错误,**不换引擎、不改路线**,
+    /// 且单张静帧不存在"黑转场"这回事 ⇒ 不会被素材误伤。
+    /// 【视频(批量)路径**不接回**】那条路径的黑帧降级链按作者要求已删除(2026-09-27),
+    /// 这里只守单图/分块成品。</summary>
     internal static void GuardSilentBlackOutput(string input, string output, string engine, string model, int engineScale)
     {
         try
@@ -3461,55 +3489,20 @@ public static partial class EngineService
         catch (Exception ex) { AppLogger.Warn($"⚠ 黑帧防线判定失败(忽略,不阻塞):{ex.Message.Split('\n')[0]}"); }
     }
 
-    /// <summary>【任务 O1 ③ · 批量路径只提示不抛】抽样检查输出帧:输出是缺陷帧而对应源帧不是 → 记 Warn。
-    /// 为什么不抛:视频上层已有逐帧黑帧链(检测 → ONNX 重算 → 回退源帧),在这里抛会绕过它;
-    /// 但"引擎 exit=0 却出黑帧"必须留下可检索的线索(真机就是这么静默出过坏片的)。
-    /// 单图路径没这条链,所以那边由 GuardSilentBlackOutput 直接抛可读错误。
-    /// 【F2 · 2026-09-14 抽样加密】原先只抽【前 3 帧】(且一命中就 return):批内中后部的坏帧必然漏检
-    /// (这不是唯一的防线 —— 视频链路还会逐帧判黑,那里会走降级;但"引擎静默出坏片"的线索不该只靠运气命中)。
-    /// 现在改成与补帧/补回同一套口径(AlhPro.Core.DefectSampling):均匀分散 + 首尾必查,上下限 8~48,
-    /// 每 32 帧至少 1 帧;本方法只记日志(不降级),故开销上限 = 每批 ≤48 次解码(约 0.7 秒),可忽略。
-    /// 判据不变:输出缺陷【且】同名源帧不缺陷(FrameInspect.IsSilentBlackFailure)。</summary>
-    private static void ProbeBatchBlackOutputHint(string inDir, string outDir, string engine, string model, int engineScale)
-    {
-        try
-        {
-            var outs = EnumerateImageFiles(outDir).OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
-            int hits = 0;
-            string firstHit = "";
-            foreach (int k in AlhPro.Core.DefectSampling.Plan(outs.Count))
-            {
-                var o = outs[k];
-                if (!IsBlackPng(o)) continue;
-                string stem = Path.GetFileNameWithoutExtension(o);
-                string src = Path.Combine(inDir, stem + ".png");
-                if (!File.Exists(src)) src = Path.Combine(inDir, stem + ".jpg");
-                bool srcBlack = File.Exists(src) && IsBlackPngStrict(src);
-                if (!AlhPro.Core.FrameInspect.IsSilentBlackFailure(srcBlack, true)) continue;
-                hits++;
-                if (firstHit.Length == 0) firstHit = Path.GetFileName(o);
-            }
-            if (hits > 0)
-                AppLogger.Warn($"⚠ 抽样发现全黑输出帧({AlhPro.Core.DefectSampling.Describe(outs.Count, hits)},"
-                    + $"首个 {firstHit}):引擎={engine}/{model},引擎倍数={engineScale}x,exit=0 无报错 —— "
-                    + "疑似该模型缺少对应倍率的权重(或引擎在该尺寸下静默失败);视频链**不再**对黑帧降级重算"
-                    + "(2026-09-16 裁决:素材本身可能就有黑幕),若成片异常请连同本行反馈");
-        }
-        catch { /* 抽样判定失败不影响流程 */ }
-    }
-
-    /// <summary>检测单个 PNG 是否近全黑(95% 以上像素 RGB 和 < 24)。internal:视频补帧/层批复用(黑帧=GPU 队列异常兼容症状)。
+    /// <summary>检测单个 PNG 是否近全黑(95% 以上像素 RGB 和 &lt; 24)。
     /// 同步把"读不出的帧"(0 字节 / 空 / 损坏)视为缺陷帧返回 true —— ncnn-vulkan 在 50 系/部分驱动上会静默输出 0KB 空帧
-    /// (退出码 0 不报错),若这里返回 false,空帧会被当成正常帧放行,一路传到合帧导致"找不到 frame_%06d.jpg"。
+    /// (退出码 0 不报错),若这里返回 false,空帧会被当成正常帧放行。
     /// 【判定口径】走 FrameInspect.IsDefectiveFrame = 整帧 ≥95% 近黑【或】任一条 1/3 主条带 ≥95% 近黑:
-    /// 实测(ncnn-vulkan,RTX 4060)坏帧更常见的形态是"每帧下 2/3 全黑、上 1/3 正常",整帧口径会漏检。</summary>
+    /// 实测(ncnn-vulkan,RTX 4060)坏帧更常见的形态是"每帧下 2/3 全黑、上 1/3 正常",整帧口径会漏检。
+    /// 【2026-09-27 · 用途已收缩】唯一调用方 = 上面的 GuardSilentBlackOutput(单图/分块成品);
+    /// 视频批量路径(逐帧判黑 / 目录巡检)与补帧/标定侧的判黑已删除,不许再拿它扩大用途。</summary>
     internal static bool IsBlackPng(string file) => NearBlackProbe(file, failIsDefect: true);
 
-    /// <summary>只判"真·近全黑 / 带状近全黑"(可解码、确实 ≥95% 像素[或某个 1/3 条带]近黑)。空/0字节/未写完/解码失败的帧 → false(不算黑)。
-    /// 用于【补帧黑帧防御】抽样:那里要找的是"GPU 输出真黑帧",若把"引擎还没写完的瞬时空帧"也当成黑,
-    /// 会误触发整段补帧降级重算 → 补帧帧被清空 → upInput=0 → 超分无帧 / 合帧报"找不到 frame_%06d.jpg"。
-    /// 空/坏帧在这里应"跳过不判黑",交给后续帧完整校验处理,而不是当黑帧降级。
-    /// (条带判定只针对"已成功解码的完整帧",与"帧还没写完"这个场景互不干扰,故不引入上面的误触发风险。)</summary>
+    /// <summary>只判"真·近全黑 / 带状近全黑"(可解码、确实 ≥95% 像素[或某个 1/3 条带]近黑)。
+    /// 空/0字节/未写完/解码失败的帧 → false(不算黑)。
+    /// 【为什么要与 IsBlackPng 分开】守卫要判"源帧是不是本来就黑场",此时"源帧还没写完/读不出"应当
+    /// **不算黑**(否则会把"读不出"当成"素材本来就黑"而放行真实故障);而输出侧读不出应当算缺陷。
+    /// 两者只差 failIsDefect 这一个入参,实现共用 NearBlackProbe。</summary>
     internal static bool IsBlackPngStrict(string file) => NearBlackProbe(file, failIsDefect: false);
 
     /// <summary>上面两个入口的唯一实现:差别只在"读不出的帧"算不算缺陷(failIsDefect)。
@@ -3528,10 +3521,8 @@ public static partial class EngineService
                 var p = bmp.GetPixel(x, y);
                 sums.Add((int)p.R + (int)p.G + (int)p.B);
             });
-            // IsDefectiveFrame = 整帧近全黑(原语义一字未改)【或】任一 1/3 主条带近全黑(新增):
+            // IsDefectiveFrame = 整帧近全黑(原语义一字未改)【或】任一 1/3 主条带近全黑:
             // 实测坏帧是"下 2/3 全黑、上 1/3 正常",只黑约 66% 像素,整帧口径必然漏检(详见 FrameInspect 注释)。
-            // 这样"黑帧"探测点(GPU 探测自检 / 分块黑块修复 / 补帧与层批抽样)都能识别带状坏帧,
-            // 从而走既有的降级链,而不是把它当正常帧放行。
             return AlhPro.Core.FrameInspect.IsDefectiveFrame(sums.ToArray(), total, bmp.Width, bmp.Height);
         }
         catch { return failIsDefect; }
@@ -3704,7 +3695,9 @@ public static partial class EngineService
             // -t 0 的语义是【引擎自己决定分块大小(auto)】,不是"关闭 tiling"——实测 ncnn-vulkan 引擎帮助里写的是
             //   "-t tile-size (>=32/0=auto, default=0)",0 即 auto(旧注释写成"关闭引擎内部 tiling",与引擎语义相反)。
             // 行为不变(仍传 0):整帧直算交给引擎按显存自选分块,分块过大才会 vkQueueSubmit 失败 → 黑帧/OOM,
-            // 那种情况由 RunEngAsync 的"降分块重试"与上层的黑帧降级链接住。
+            // 那种情况由 RunEngAsync 的"降分块重试"与上层的"批次异常回退原帧"接住。
+            // 【2026-09-27】原注释写的是"上层的黑帧降级链接住"——那条链(判黑 → 重跑/换路/回退)已按作者要求删除,
+            // 现在视频路径上真正兜底的是 UpscaleDirAsync 调用方的 catch:整批异常 ⇒ 该批回退原帧,不中断任务。
             // 视频帧整帧直算(OOM 时 RunEngAsync 自动降级重试/减 tile),避免逐帧"一块一块"。
             // 【2026-09-23 修 A5,同上】`-t 0` 写死会让"显存不足自动降分块"变成空转 ⇒ 改成 `{t}`。
             await RunEngAsync(exe, t => $"-i \"{inputDir}\" -o \"{outputDir}\" -s {engineScale} -m {AlhPro.Core.EsrganModelDir.For(model)} -n {model} " +
@@ -3721,8 +3714,9 @@ public static partial class EngineService
         }
 
         var outCount = Directory.EnumerateFiles(outputDir).Count();
-        // 【任务 O1 ③】批量路径的静默黑帧提示(只记日志,交上层黑帧链处理)
-        ProbeBatchBlackOutputHint(inputDir, outputDir, engine, model, engineScale);
+        // 【2026-09-27】原先这里还有 ProbeBatchBlackOutputHint(批量输出抽样判黑 → 记 Warn),已按作者要求删除:
+        // 那是"引擎产出之后判黑帧"的事后判定,素材的黑色转场/夜戏会被它反复命中,日志刷屏且误导排查。
+        // 代价:引擎静默出黑片时不再有这条线索 —— 输出端黑场自检(只报数字、不参与判定)仍是唯一留痕处。
         if (outCount == 0)
             throw new InvalidOperationException("引擎批处理未生成输出");
     }
@@ -3789,17 +3783,7 @@ public static partial class EngineService
     /// <summary>把 PNG 转成 JPG(按质量),写入 jpgPath。
     /// 按内容解码(SourceBitmap 按魔数识别),故也接受 .png 名但实际为 JPG 字节的文件;供视频流水线「引擎输出转 JPG」复用。</summary>
     public static void ConvertPngToJpg(string pngPath, string jpgPath, float quality = 0.96f)
-        => ConvertPngToJpg(pngPath, jpgPath, quality, out _);
-
-    /// <summary>同上,并顺带报告该帧是否"缺陷帧"(nearBlack)——整帧近全黑【或】某条 1/3 主条带近全黑。
-    /// 黑帧判定直接在已解码的位图上采样,不再另开一次全尺寸解码——视频批每帧本来就要解码转 JPG,
-    /// 为查黑帧再解码一遍等于把这条最热路径的开销翻倍。
-    /// 【为什么必须带条带判定】实测坏帧形态"下 2/3 全黑、上 1/3 正常"只黑约 66% 像素,
-    /// 旧口径(整帧 ≥95%)判它正常 → 坏帧静默进成片、零日志、ncnnUnreliable 不置位(用户报的问题)。
-    /// 参数名沿用它原来的 nearBlack,但语义是"是否缺陷帧":true 的调用方一律按缺陷走既有降级链。
-    /// 注意:整帧近全黑的老语义【没有】被放宽(整帧近黑必然仍为 true),只是补上了漏检的那一类。</summary>
-    public static void ConvertPngToJpg(string pngPath, string jpgPath, float quality, out bool nearBlack)
-        => ConvertPngToJpg(pngPath, jpgPath, quality, out nearBlack, 0);
+        => ConvertPngToJpg(pngPath, jpgPath, quality, 0);
 
     /// <summary>同上,并可在写 JPG 前顺带做一次「边缘抗锯齿」(edgeSmooth &gt; 0 时;0~100,与图片页同语义)。
     /// 【为什么把视频页的抗锯齿搬到 C#】视频页原先用 ffmpeg 的 sab 滤镜做这一档。2026-09-12 实测(4K JPG 序列):
@@ -3808,23 +3792,12 @@ public static partial class EngineService
     /// 同样效果的 C# 实现(与图片页共用 ApplyEdgeSmoothInMemory)4K 单帧 1.19 秒,**多核并行后约 0.1 秒/帧**。
     /// 放在这里做还顺带白赚一次:本方法本来就要把超分后的 PNG 重编码成 JPG(降临时盘),
     /// 抗锯齿在同一张位图上做完再写,**不额外增加一次 JPG 重编码**。
+    /// 【2026-09-27】原来自带 `out bool nearBlack`(顺带报告该帧是否缺陷帧)供超分批的黑帧降级链使用;
+    /// 那条链已按作者要求删除 ⇒ 这里不再做任何判黑,只负责"解码 → (可选)抗锯齿 → 写 JPG"。
     /// 数据:_qa\encbench(编码/滤镜实测)、_qa\imgpost(滤镜逐个计时)。</summary>
-    public static void ConvertPngToJpg(string pngPath, string jpgPath, float quality, out bool nearBlack, int edgeSmooth)
+    public static void ConvertPngToJpg(string pngPath, string jpgPath, float quality, int edgeSmooth)
     {
-        // 解码抛出/尺寸非法时默认留 true:异常路径由调用方按缺陷处理,这里偏保守不会漏判。
-        nearBlack = true;
         using var img = new System.Drawing.Bitmap(pngPath);
-        if (img.Width > 0 && img.Height > 0)
-        {
-            var sums = new System.Collections.Generic.List<int>();
-            int total = AlhPro.Core.FrameInspect.ForEachSample(img.Width, img.Height, (x, y) =>
-            {
-                var p = img.GetPixel(x, y);
-                sums.Add((int)p.R + (int)p.G + (int)p.B);
-            });
-            nearBlack = AlhPro.Core.FrameInspect.IsDefectiveFrame(sums.ToArray(), total, img.Width, img.Height);
-        }
-        // 抗锯齿必须在黑帧采样【之后】做:先算缺陷帧再动画面,判定口径不受影响
         if (edgeSmooth > 0) ApplyEdgeSmoothInMemory(img, edgeSmooth);
         // 视频中间帧 JPG:直接走 System.Drawing(GDI,转 24bppRgb 规避色偏),不走 WinRT——
         // WinRT BitmapEncoder 在后台/非 UI 线程会系统性抛 HRESULT=0x88982F41(视频处理必失败),

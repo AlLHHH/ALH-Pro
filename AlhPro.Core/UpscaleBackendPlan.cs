@@ -11,8 +11,13 @@ namespace AlhPro.Core;
 ///   · `gpuId &lt; 0`(用户手动选 CPU,或 GPU 探测失败):
 ///       realesrgan / waifu2x → **走 ONNX**(ncnn 的 CPU 模式在部分机器崩,实测 exit -1 / -1073741819);
 ///       realcugan → 不走(ncnn CPU 实测也崩,但**没有 ONNX 替代**,只能返回 false 让上层去撞);
-///   · `gpuId ≥ 0` 且有 GPU:realesrgan → `onnxPreferredEsrgan || ncnnUnreliable || fastMode`;
-///     waifu2x → `onnxPreferredWaifu2x || ncnnUnreliable || fastMode`;realcugan → **恒 false**。
+///   · `gpuId ≥ 0` 且有 GPU:realesrgan → `onnxPreferredEsrgan || fastMode`;
+///     waifu2x → `onnxPreferredWaifu2x || fastMode`;realcugan → **恒 false**。
+/// 【2026-09-27 · 删掉死参数 `ncnnUnreliable`】这两个方法原来还带一个 `bool ncnnUnreliable`
+/// (原义:超分批判黑命中 ⇒ 置位 ⇒ 后续批次整体改走 ONNX)。作者要求删掉"事后判黑"之后,
+/// 生产里三个调用点已全传 `false` ⇒ 该分支永不触发,是"半截删除"。本次把参数连同 XML 注释与
+/// 真值表里"跑到中途改路"的说法一并移除 —— 「本次走哪条路」现在只由**开跑前取定**的
+/// `upGpu` / `waifuOnnx` / `upOnnxDml` / 用户开关决定,不存在任何中途改路。
 /// 【调用方要传什么】`onnxPreferredWaifu2x` 把原来的 `EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx`
 /// 两项**一起**传进来 —— 注意保持原短路顺序:`ShouldUseOnnxWaifu2x()` 有副作用(探测/缓存),
 /// 不能因为重构就把它挪到后面或者改成先算。</summary>
@@ -23,17 +28,18 @@ public static class UpscaleBackendPlan
     /// <paramref name="gpuId"/> = 超分用的 GPU 序号(&lt;0 = CPU/未探测到);
     /// <paramref name="onnxPreferredEsrgan"/> = `EngineService.ShouldUseOnnxEsrgan()`;
     /// <paramref name="onnxPreferredWaifu2x"/> = `EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx`;
-    /// <paramref name="ncnnUnreliable"/> = 本机 ncnn 被判为不可靠(1x 缩回等场景);
-    /// <paramref name="fastMode"/> = 快模式(ONNX 在中低端 GPU 上更快)。</summary>
+    /// <paramref name="fastMode"/> = 快模式(ONNX 在中低端 GPU 上更快)。
+    /// 【2026-09-27】原来的第 5 个参数 `bool ncnnUnreliable`(判黑中途置位 ⇒ 后续批次改走 ONNX)
+    /// 随"事后判黑"一起删除:生产调用点当时已全传 `false`,留着就是永不触发的死参数。</summary>
     public static bool UseOnnx(string? engine, int gpuId, bool onnxPreferredEsrgan, bool onnxPreferredWaifu2x,
-        bool ncnnUnreliable, bool fastMode)
+        bool fastMode)
     {
         if (gpuId < 0)
             // 手动选 CPU:waifu2x/realesrgan 的 ncnn CPU 模式在部分机器崩 → 直接 ONNX。
             // Real-CUGAN 没有 ONNX 路径,这里返回 false(与重构前逐字一致)。
             return engine == "realesrgan" || engine == "waifu2x";
-        if (engine == "realesrgan") return onnxPreferredEsrgan || ncnnUnreliable || fastMode;
-        if (engine == "waifu2x") return onnxPreferredWaifu2x || ncnnUnreliable || fastMode;
+        if (engine == "realesrgan") return onnxPreferredEsrgan || fastMode;
+        if (engine == "waifu2x") return onnxPreferredWaifu2x || fastMode;
         return false;
     }
 
@@ -89,11 +95,12 @@ public static class UpscaleBackendPlan
     /// <summary>**本次真正会走的后端**(落盘键/日志用)。所有入参都必须取**定稿后**的值:
     /// <paramref name="gpuId"/> 传定稿的 `upGpu`、<paramref name="onnxDml"/> 传 `upOnnxDml`、
     /// <paramref name="onnxPreferredWaifu2x"/> 传 `ShouldUseOnnxWaifu2x() || waifuOnnx`(与批次循环同一形状)。
-    /// realcugan 没有 ONNX 通道 ⇒ 只要 GPU 可用就是 <see cref="NcnnVulkan"/>(它的 CPU 档会在更早处直接拒绝)。</summary>
+    /// realcugan 没有 ONNX 通道 ⇒ 只要 GPU 可用就是 <see cref="NcnnVulkan"/>(它的 CPU 档会在更早处直接拒绝)。
+    /// 【2026-09-27】`ncnnUnreliable` 死参数已从签名移除(与 <see cref="UseOnnx"/> 同步)。</summary>
     public static string DescribeBackend(string? engine, int gpuId, bool onnxPreferredEsrgan, bool onnxPreferredWaifu2x,
-        bool ncnnUnreliable, bool fastMode, bool onnxDml)
+        bool fastMode, bool onnxDml)
     {
-        if (!UseOnnx(engine, gpuId, onnxPreferredEsrgan, onnxPreferredWaifu2x, ncnnUnreliable, fastMode))
+        if (!UseOnnx(engine, gpuId, onnxPreferredEsrgan, onnxPreferredWaifu2x, fastMode))
             return gpuId >= 0 ? NcnnVulkan : Unknown;   // 没 GPU 又没 ONNX 通道(realcugan)= 后端未确认,不许落盘
         return OnnxDevice(gpuId, onnxDml) == -1 ? OnnxCpu : OnnxDml;
     }

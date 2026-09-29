@@ -167,26 +167,27 @@ public class CalibrationSampleTests
         Assert.True((0.9 + 8 * 0.028) - (0.9 + 0.028) >= CalibrationSample.MinDeltaRatio * (0.9 + 0.028)); // 最便宜的 1x 档
     }
 
-    // ═══════════════ 【2026-09-25 修订 · F1-I3】样本输出体检(黑帧/坏帧/不可读 ⇒ 拒收) ═══════════════
+    // ═══════════════ 【2026-09-25 修订 · F1-I3】样本输出体检(坏帧/不可读 ⇒ 拒收) ═══════════════
 
     /// <summary>全好 ⇒ null(可落盘);几种坏法各给中文原因:
-    /// 空目录 / 帧数对不上 / 没落地 / 0 字节空帧 / 被判黑(含带状坏帧)。</summary>
+    /// 空目录 / 帧数对不上 / 没落地 / 0 字节空帧。
+    /// 【2026-09-27 删掉第 5 种坏法"被判黑帧/带状坏帧"】作者反馈:素材里正常的黑色转场/淡入淡出/夜戏被当成
+    /// "引擎输出坏帧"⇒ 整条任务转 ONNX 慢路。事后判黑已整体删除,标定的样本体检不再问"这一帧黑不黑"
+    /// (SampleOutput 的 Defective 字段一并删除)—— 保留落地/字节数/帧数三项校验。
+    /// 代价(诚实口径):引擎在 1x 档真出黑帧时标定不再拒收,可能落盘一个偏小的单帧耗时;与 2026-09-16 补帧侧同口径。</summary>
     [Fact]
-    public void OutputDefect_rejects_black_broken_and_missing_frames()
+    public void OutputDefect_rejects_broken_and_missing_frames()
     {
-        static CalibrationSample.SampleOutput Ok() => new(Present: true, Bytes: 123456, Defective: false);
+        static CalibrationSample.SampleOutput Ok() => new(Present: true, Bytes: 123456);
 
         Assert.Null(CalibrationSample.OutputDefect(new[] { Ok(), Ok() }, 2));      // 全好
 
         Assert.Contains("空的", CalibrationSample.OutputDefect(Array.Empty<CalibrationSample.SampleOutput>(), 2));
         Assert.Contains("帧数对不上", CalibrationSample.OutputDefect(new[] { Ok() }, 2));
         Assert.Contains("没落地",
-            CalibrationSample.OutputDefect(new[] { Ok(), new CalibrationSample.SampleOutput(false, 0, false) }, 2));
+            CalibrationSample.OutputDefect(new[] { Ok(), new CalibrationSample.SampleOutput(false, 0) }, 2));
         Assert.Contains("0 字节空帧",
-            CalibrationSample.OutputDefect(new[] { Ok(), new CalibrationSample.SampleOutput(true, 0, false) }, 2));
-        var black = CalibrationSample.OutputDefect(new[] { Ok(), new CalibrationSample.SampleOutput(true, 123456, true) }, 2);
-        Assert.Contains("黑帧", black);
-        Assert.Contains("既有判黑口径", black);      // 复用既有口径,不新造第二套
+            CalibrationSample.OutputDefect(new[] { Ok(), new CalibrationSample.SampleOutput(true, 0) }, 2));
         Assert.Contains("期望帧数非法", CalibrationSample.OutputDefect(new[] { Ok() }, 0));
     }
 }
