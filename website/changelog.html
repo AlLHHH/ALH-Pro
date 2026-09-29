@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>更新日志 — ALH Pro(v1.4.3 及历史版本)</title>
-<meta name="description" content="ALH Pro 更新日志:每个版本改了什么、修复了什么、有没有需要用户重新调整参数的地方。最新版本 v1.4.3(2026-09-27,编码不再白跑:参数级预检 + 编码器打不开自动换另一块硬编;抠图边缘的方块与像素点;模型包 v1.1 删掉「ISNet 动漫」;Real-CUGAN 预计时间按实测修正)。">
+<title>更新日志 — ALH Pro(v1.4.4 及历史版本)</title>
+<meta name="description" content="ALH Pro 更新日志:每个版本改了什么、修复了什么、有没有需要用户重新调整参数的地方。最新版本 v1.4.4(2026-09-29,预览「左右对比」恢复左右各一整幅;开工前那次「检测」快约 6 秒,「超分单价」一律改叫「超分单帧耗时」;计划输出任一边超过 4096 自动改走 HEVC;「黑帧判断」整条删除)。">
 <!-- 深色是唯一主题(手机浏览器地址栏/状态栏也跟着深色)。
      原先是两条带 media 的 meta(dark #06080f / light #eef2f9),系统浅色时会把地址栏刷白,
      现已删掉 light 那条;这里的值来自 style.css §1.1 的 --body-bg / --bg(#0a0a0b)。 -->
@@ -71,13 +71,26 @@ setTimeout(function () {
     <div class="wrap hero-inner">
       <h1 class="hero-title">更新日志</h1>
       <p class="page-meta">
-        <strong>更新日志 · 每个版本改了啥。</strong>最新 <strong>v1.4.3</strong>(2026-09-27,一批「软件自己说错话 / 让你白等」的修复:超分跑完 49.5 分钟才失败的编码问题改成开跑前就拦下、编码器打不开自动换另一块硬编、抠图边缘的方块与像素点、模型包 v1.1),点标题展开细节。
+        <strong>更新日志 · 每个版本改了啥。</strong>最新 <strong>v1.4.4</strong>(2026-09-29,四条:预览「左右对比」恢复「左右各一整幅」、开工前那次「检测」快约 6 秒并把「超分单价」一律改叫「超分单帧耗时」、计划输出任一边超过 4096 自动改走 HEVC、「黑帧判断」整条删除),点标题展开细节。
         升级方式:<a href="download.html#upgrade">直接覆盖安装</a>,不用卸载,也不用重下模型。
       </p>
     </div>
   </section>
 
   <div class="wrap content">
+
+    <h2 id="v144">v1.4.4 <span class="small muted"><strong>2026-09-29</strong> · 预览「左右对比」恢复左右各一整幅 + 开工前「检测」快约 6 秒(术语改「超分单帧耗时」)+ 输出超过 4096 自动改走 HEVC + 「黑帧判断」整条删除</span></h2>
+    <details open data-reveal>
+      <summary>这一批就四条。① <strong>预览「左右对比」恢复「左右各一整幅」</strong>:原先并排合成片烘好后"遮罩擦除"版式会接管,把一帧竖切成两半,作者实测看到的是"左边显示的是处理后的画面、两边看起来一样";现在左边播<strong>用户的源文件</strong>(零重编码)、右边播<strong>处理后的成片</strong>,分割线<strong>实时可拖</strong>(只改裁切、不重新合成),遮罩那套代码一行没删、一个常量可切回。② <strong>开工前那次「检测」快约 6 秒</strong>:阶段顺序判据要实测一次超分单帧耗时(两点法),作者机器 Real-CUGAN 2x 原实测 <strong>14.2 秒</strong>(1 帧 2.3s + 8 帧 11.5s);现在贵档(每帧估值 ≥ 0.20 s)采样从 8 帧降到 4 帧 ⇒ <strong>约 8 秒</strong>,便宜档保持 8 帧(降到 4 帧差值过不了噪声门槛,会白标一场);界面 / 日志 / 文档里的「超分单价」一律改叫「<strong>超分单帧耗时</strong>」。③ <strong>编码器按尺寸自动选</strong>:用户诊断包实测(AMD RX 9070 XT)同一台机器 2880×2160 正常,一开 ×2 超分(5760×4320)H.264 硬编就 <code>Invalid argument</code> —— 不是参数写错,是 <strong>H.264 硬编尺寸上限 4096</strong>(芯片规格),而 <strong>HEVC 到 8192</strong>;现在计划输出任一边超过 4096 就<strong>自动改用 HEVC</strong>(优先同厂商)并在编码器信息行写明原因,<strong>4096 以内一切照旧</strong>。④ <strong>「黑帧判断」整条删除(作者定案)</strong>:素材里正常的黑色转场(淡入淡出 / 夜戏)会让超分整条任务改走 ONNX、慢得离谱 —— 根因是事后判黑把"素材本来就是黑的帧"当成"引擎输出坏帧";现在整条删掉,<strong>好处</strong>是不再被素材黑场误伤、而且更快(以前为判黑每帧要多解码一次),<strong>代价(如实写)</strong>是引擎若真的静默出黑帧不再拦截、成片可能带黑段,<strong>保留的两道防线</strong>是开跑前的兼容性预检与引擎探测里"生产尺寸真跑一帧、出黑即判该设备不可用",图片页 / 分块成品那条判黑守卫也保留。</summary>
+      <div class="details-body">
+        <ul>
+          <li><strong>①预览「左右对比」恢复「左右各一整幅」:</strong>原先并排合成片烘好后,"遮罩擦除"版式会接管,把一帧竖切成两半(左半原片 / 右半处理后);作者实测看到的是「<strong>左边显示的是处理后的画面、两边看起来一样</strong>」⇒ 原片那半并没有露出来。现在按 XAML 工具提示一直写的口径恢复:<strong>左边播用户的源文件(零重编码)、右边播处理后的成片</strong>,分割线<strong>实时可拖</strong>(只改裁切、不重新合成、松手不闪);遮罩那套代码<strong>一行没删</strong>,一个常量就能切回去。</li>
+          <li><strong>②开工前那次「检测」快约 6 秒 + 术语改成「超分单帧耗时」:</strong>阶段顺序判据要在真跑之前<strong>实测一次超分单帧耗时</strong>(两点法)。作者机器上 Real-CUGAN 2x 原实测 <strong>14.2 秒</strong>(1 帧 2.3 s + 8 帧 11.5 s);现在<strong>贵档(每帧估值 ≥ 0.20 s)采样从 8 帧降到 4 帧</strong>(4 帧的差值 ≈ 3×每帧,远大于两次进程启动的地板抖动)⇒ 同一格<strong>约 8 秒</strong>;便宜档保持 8 帧(降到 4 帧差值只剩 t1 的 9%,过不了噪声门槛,会白标一场)。<strong>术语统一</strong>:界面 / 日志 / 文档里的「超分单价」一律改成「<strong>超分单帧耗时</strong>」(与统计行里的"每帧耗时"同一口径)。</li>
+          <li><strong>③编码器按尺寸自动选:输出超过 4096 就改走 HEVC:</strong>用户诊断包实测(AMD RX 9070 XT):同一台机器、同一个视频,<strong>2880×2160 正常出片</strong>;一旦开启 <strong>×2 超分(输出 5760×4320)</strong>,H.264 硬编直接 <code>Invalid argument</code> 罢工 —— 这不是参数写错,而是 <strong>H.264 硬编的尺寸上限就是 4096</strong>(芯片规格),而 <strong>HEVC 能到 8192</strong>。现在:<strong>计划输出任一边超过 4096 时自动改用 HEVC</strong>(优先同厂商的 HEVC 编码器),并在编码器信息行写明"为什么不是 H.264";<strong>4096 以内一切照旧</strong>(仍优先 H.264,兼容性最好)。</li>
+          <li><strong>④「黑帧判断」整条删除(作者定案):</strong>有用户反馈:<strong>素材里正常的黑色转场(淡入淡出 / 夜戏)会让超分整条任务改走 ONNX,慢得离谱。</strong>原因是"事后判黑"这套防线的误判:引擎每产出一帧都要判一次"这帧是不是黑帧",而<strong>素材本身就是黑的那些帧</strong>被判成"引擎输出坏帧" ⇒ 该批重跑 → 换 ONNX → 累计到一定比例后<strong>后续所有批次都走 ONNX</strong>。现在<strong>整条删掉</strong>:超分批的逐帧判黑 + 只重跑黑帧 + 换 ONNX + <code>ncnnUnreliable</code> 置位、补帧层批的黑帧恢复链、标定样本的判黑,全部移除。<strong>好处</strong>:不再被素材黑场误伤,而且<strong>更快</strong> —— 以前为了判黑,每帧都要多解码一次。<strong>代价(如实说)</strong>:引擎若<strong>真的</strong>静默输出黑帧,现在不再拦截,成片可能带黑段。<strong>保留的两道防线</strong>:① 开跑前的<strong>兼容性预检</strong>;② 引擎<strong>探测</strong>里"生产尺寸真跑一帧、出黑即判该设备不可用"。另外<strong>图片页 / 分块成品</strong>那条判黑守卫<strong>保留</strong> —— 判据是"输出黑<strong>且</strong>输入不黑",自带源图豁免,修的是 exit=0 却全黑。</li>
+        </ul>
+      </div>
+    </details>
 
     <h2 id="v143">v1.4.3 <span class="small muted"><strong>2026-09-27</strong> · 一批「软件自己说错话 / 让你白等」的修复:编码失败不再白跑(参数级预检 + 自动换另一块硬编)、抠图边缘的方块与像素点、模型包 v1.1、Real-CUGAN 预计时间按实测修正</span></h2>
     <details open data-reveal>
