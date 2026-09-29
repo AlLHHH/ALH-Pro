@@ -10,7 +10,13 @@ namespace AlhPro.Tests;
 ///
 /// 这段逻辑原来只存在于 `VideoService` 批循环的 if/else 里(UI 层,测试项目引用不到)⇒ 每次动超分路径都在赌。
 /// 抽出来后:① 真值表可断言;② 批循环只剩一次调用(源码断言在下方);③ 真值表必须与**改动前**的 if/else
-/// 逐字等价(原代码见 t27 output 的对照表;realcugan 没有 ONNX 通道 ⇒ 恒 false)。</summary>
+/// 逐字等价(原代码见 t27 output 的对照表;realcugan 没有 ONNX 通道 ⇒ 恒 false)。
+///
+/// 【2026-09-27 · 死参数 `ncnnUnreliable` 已移除,该接缝随"删除事后判黑"一并下线】
+/// 原来 `UseOnnx` / `DescribeBackend` 还多一个 `bool ncnnUnreliable`(超分批判黑命中 ⇒ 置位 ⇒ 后续批次改走 ONNX)。
+/// 作者要求删掉"事后判黑"之后,生产里三个调用点**全传 `false`** ⇒ 该分支永不触发,是"半截删除"。
+/// 于是参数从签名移除,本文件里只为这个参数存在的取值组合与用例一并删除(不是"为了过测试而删":
+/// 删掉的是**已经不可能出现的输入**;其余真值表格子逐字保留,并且新增了"全仓不许再出现该参数名"的源码断言)。</summary>
 public class UpscaleBackendPlanTests
 {
     /// <summary>无 GPU / 手动选 CPU(`gpuId &lt; 0`):realesrgan 与 waifu2x 一律走 ONNX(它们的 ncnn CPU 模式
@@ -27,42 +33,38 @@ public class UpscaleBackendPlanTests
         // 注意:CPU 分支**忽略**所有"偏好 ONNX"的开关 —— 逐字等价于改动前的第一个 if(upGpu < 0)
         foreach (bool prefE in new[] { false, true })
             foreach (bool prefW in new[] { false, true })
-                foreach (bool unreliable in new[] { false, true })
-                    foreach (bool fast in new[] { false, true })
-                        Assert.Equal(expect,
-                            UpscaleBackendPlan.UseOnnx(engine, -1, prefE, prefW, unreliable, fast));
+                foreach (bool fast in new[] { false, true })
+                    Assert.Equal(expect,
+                        UpscaleBackendPlan.UseOnnx(engine, -1, prefE, prefW, fast));
     }
 
-    /// <summary>有 GPU(`gpuId ≥ 0`):realesrgan 看 `ShouldUseOnnxEsrgan()` / ncnn 不可靠 / 快模式;
-    /// waifu2x 看 `ShouldUseOnnxWaifu2x()‖waifuOnnx` / ncnn 不可靠 / 快模式;**realcugan 恒 false**
-    /// (即使 ncnn 被判不可靠、即使开了快模式 —— 它没有 ONNX 通道,改动前后的行为一致)。</summary>
+    /// <summary>有 GPU(`gpuId ≥ 0`):realesrgan 看 `ShouldUseOnnxEsrgan()` / 快模式;
+    /// waifu2x 看 `ShouldUseOnnxWaifu2x()‖waifuOnnx` / 快模式;**realcugan 恒 false**
+    /// (即使开了快模式 —— 它没有 ONNX 通道,改动前后的行为一致)。</summary>
     [Fact]
     public void With_a_gpu_the_three_engines_follow_the_original_truth_table()
     {
-        // realesrgan:三个开关任一为真 → ONNX
-        Assert.False(UpscaleBackendPlan.UseOnnx("realesrgan", 0, false, true, false, false));
-        Assert.True(UpscaleBackendPlan.UseOnnx("realesrgan", 0, true, false, false, false));
-        Assert.True(UpscaleBackendPlan.UseOnnx("realesrgan", 0, false, false, true, false));
-        Assert.True(UpscaleBackendPlan.UseOnnx("realesrgan", 0, false, false, false, true));
+        // realesrgan:两个开关任一为真 → ONNX
+        Assert.False(UpscaleBackendPlan.UseOnnx("realesrgan", 0, false, true, false));
+        Assert.True(UpscaleBackendPlan.UseOnnx("realesrgan", 0, true, false, false));
+        Assert.True(UpscaleBackendPlan.UseOnnx("realesrgan", 0, false, false, true));
 
         // waifu2x:同上,但"是否优先"那一项是 ShouldUseOnnxWaifu2x()‖waifuOnnx(由调用方合成)
-        Assert.False(UpscaleBackendPlan.UseOnnx("waifu2x", 0, true, false, false, false));
-        Assert.True(UpscaleBackendPlan.UseOnnx("waifu2x", 0, false, true, false, false));
-        Assert.True(UpscaleBackendPlan.UseOnnx("waifu2x", 0, false, false, true, false));
-        Assert.True(UpscaleBackendPlan.UseOnnx("waifu2x", 0, false, false, false, true));
+        Assert.False(UpscaleBackendPlan.UseOnnx("waifu2x", 0, true, false, false));
+        Assert.True(UpscaleBackendPlan.UseOnnx("waifu2x", 0, false, true, false));
+        Assert.True(UpscaleBackendPlan.UseOnnx("waifu2x", 0, false, false, true));
 
         // realcugan / 未知引擎:恒 false
         foreach (bool prefE in new[] { false, true })
             foreach (bool prefW in new[] { false, true })
-                foreach (bool unreliable in new[] { false, true })
-                    foreach (bool fast in new[] { false, true })
-                    {
-                        Assert.False(UpscaleBackendPlan.UseOnnx("realcugan", 0, prefE, prefW, unreliable, fast));
-                        Assert.False(UpscaleBackendPlan.UseOnnx("其它引擎", 3, prefE, prefW, unreliable, fast));
-                    }
+                foreach (bool fast in new[] { false, true })
+                {
+                    Assert.False(UpscaleBackendPlan.UseOnnx("realcugan", 0, prefE, prefW, fast));
+                    Assert.False(UpscaleBackendPlan.UseOnnx("其它引擎", 3, prefE, prefW, fast));
+                }
     }
 
-    /// <summary>穷举:函数必须**纯**(同参数同结果,不抛异常),且返回值只取决于六个参数。</summary>
+    /// <summary>穷举:函数必须**纯**(同参数同结果,不抛异常),且返回值只取决于五个参数。</summary>
     [Fact]
     public void UseOnnx_is_pure_and_total()
     {
@@ -72,14 +74,13 @@ public class UpscaleBackendPlanTests
                 foreach (bool a in new[] { false, true })
                     foreach (bool b in new[] { false, true })
                         foreach (bool c in new[] { false, true })
-                            foreach (bool d in new[] { false, true })
-                            {
-                                bool x = UpscaleBackendPlan.UseOnnx(engine, gpu, a, b, c, d);
-                                bool y = UpscaleBackendPlan.UseOnnx(engine, gpu, a, b, c, d);
-                                Assert.Equal(x, y);
-                                seen++;
-                            }
-        Assert.Equal(4 * 4 * 16, seen);
+                        {
+                            bool x = UpscaleBackendPlan.UseOnnx(engine, gpu, a, b, c);
+                            bool y = UpscaleBackendPlan.UseOnnx(engine, gpu, a, b, c);
+                            Assert.Equal(x, y);
+                            seen++;
+                        }
+        Assert.Equal(4 * 4 * 8, seen);
     }
 
     /// <summary>**源码断言**:批循环必须改用这个纯函数(不再自己写 if/else),而且原来那串判据不许残留在
@@ -89,10 +90,10 @@ public class UpscaleBackendPlanTests
     {
         string svc = ReadRepoFile("ImgUpscalerUI", "VideoService.cs");
         Assert.Contains("AlhPro.Core.UpscaleBackendPlan.UseOnnx(", svc);
-        // 改动前的三种"自己判"写法都必须消失(拿旧代码模式扫,不拿名字扫:注释里会写"原来是什么")
-        Assert.DoesNotContain("(EngineService.ShouldUseOnnxEsrgan() || ncnnUnreliable || fastMode)", svc);
-        Assert.DoesNotContain("(EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx || ncnnUnreliable || fastMode)", svc);
+        // 改动前那种"自己判"的写法必须消失(拿旧代码模式扫,不拿名字扫:注释里会写"原来是什么")
         Assert.DoesNotContain("else if (engine == \"realesrgan\" && (", svc);
+        // 【2026-09-27】死参数已从纯函数签名移除 ⇒ **代码**里(注释除外,注释要写清"原来是什么")不许再出现它的名字
+        Assert.DoesNotContain("ncnnUnreliable", StripLineComments(svc));
         // 取路径这一步仍在(realcugan 没有 ONNX 路径;waifu2x 与 realesrgan 各一支)
         Assert.Contains("EsrganOnnxService.ResolveEsrganOnnxPath(model)", svc);
         Assert.Contains("EsrganOnnxService.FindWaifu2xModel(model)", svc);
@@ -137,31 +138,40 @@ public class UpscaleBackendPlanTests
     [Fact]
     public void DescribeBackend_derives_the_persisted_key_from_the_same_truth_table()
     {
-        // 有 GPU、三个开关都关 ⇒ ncnn
+        // 有 GPU、两个开关都关 ⇒ ncnn
         Assert.Equal(UpscaleBackendPlan.NcnnVulkan,
-            UpscaleBackendPlan.DescribeBackend("realesrgan", 0, false, false, false, false, onnxDml: false));
+            UpscaleBackendPlan.DescribeBackend("realesrgan", 0, false, false, false, onnxDml: false));
         // 有 GPU + 快模式 ⇒ ONNX,设备 -2(DirectML)
         Assert.Equal(UpscaleBackendPlan.OnnxDml,
-            UpscaleBackendPlan.DescribeBackend("realesrgan", 0, false, false, false, true, onnxDml: false));
+            UpscaleBackendPlan.DescribeBackend("realesrgan", 0, false, false, true, onnxDml: false));
         // 探测失败改口:upGpu=-1 + upOnnxDml=true ⇒ ONNX DirectML(不是 CPU)
         Assert.Equal(UpscaleBackendPlan.OnnxDml,
-            UpscaleBackendPlan.DescribeBackend("realesrgan", -1, false, false, false, false, onnxDml: true));
+            UpscaleBackendPlan.DescribeBackend("realesrgan", -1, false, false, false, onnxDml: true));
         // 用户主动选 CPU(-g -1)且无 DirectML ⇒ ONNX CPU
         Assert.Equal(UpscaleBackendPlan.OnnxCpu,
-            UpscaleBackendPlan.DescribeBackend("realesrgan", -1, false, false, false, false, onnxDml: false));
+            UpscaleBackendPlan.DescribeBackend("realesrgan", -1, false, false, false, onnxDml: false));
         // waifu2x 探测失败走 ONNX 整段(waifuOnnx 由调用方合成进 onnxPreferredWaifu2x)⇒ ONNX
         Assert.Equal(UpscaleBackendPlan.OnnxDml,
-            UpscaleBackendPlan.DescribeBackend("waifu2x", 0, false, true, false, false, onnxDml: true));
-        // realcugan 没有 ONNX 通道:有 GPU ⇒ ncnn;连 GPU 都没有 ⇒ **未确认**(上层会先 throw,这里也不许落盘)
+            UpscaleBackendPlan.DescribeBackend("waifu2x", 0, false, true, false, onnxDml: true));
+        // realcugan 没有 ONNX 通道:有 GPU ⇒ ncnn(即使开了快模式);连 GPU 都没有 ⇒ **未确认**(上层会先 throw,这里也不许落盘)
         Assert.Equal(UpscaleBackendPlan.NcnnVulkan,
-            UpscaleBackendPlan.DescribeBackend("realcugan", 0, false, false, true, true, onnxDml: true));
+            UpscaleBackendPlan.DescribeBackend("realcugan", 0, false, true, true, onnxDml: true));
         Assert.Equal(UpscaleBackendPlan.Unknown,
-            UpscaleBackendPlan.DescribeBackend("realcugan", -1, false, false, false, false, onnxDml: true));
+            UpscaleBackendPlan.DescribeBackend("realcugan", -1, false, false, false, onnxDml: true));
         // 未确认的后端一律不许当键用
         Assert.Null(LocalPriceBook.PerFrame1080p(
             new[] { LocalPriceFixture.At1080p("models-se:0", 2, 1.65) }, "models-se:0", 2, out _,
             LocalPriceFixture.MachineKey, UpscaleBackendPlan.Unknown));
     }
+
+    /// <summary>剥掉源码里的行注释(含 `///`,它们都以 `//` 开头)——
+    /// 仅用于"某符号必须不存在"的源码契约断言:注释可以(也应该)解释删掉了什么。</summary>
+    private static string StripLineComments(string src)
+        => string.Join("\n", src.Split('\n').Select(l =>
+        {
+            int i = l.IndexOf("//", StringComparison.Ordinal);
+            return i >= 0 ? l.Substring(0, i) : l;
+        }));
 
     private static string ReadRepoFile(params string[] parts)
     {

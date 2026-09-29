@@ -165,9 +165,18 @@ public class EngineScalePolicyTests
         Assert.Contains("1x 修复", d.Reason);      // 给出出路:换 1x 修复模型
     }
 
+    // ═══════════ 【2026-09-27 恢复】引擎"exit=0 却整帧全黑"的判据测试 ═══════════
+    // 契约:FrameInspect.IsSilentBlackFailure(inputBlack, outputBlack) = 输出缺陷帧且源帧不缺陷,
+    // 用来把"引擎静默出坏片"从"素材本来就是黑场"里区分出来(唯一调用方 = EngineService.GuardSilentBlackOutput)。
+    // 【2026-09-27 沿革】同一天先按作者要求删掉了"事后判黑 ⇒ 改路/重跑"那条链(素材里的正常黑色转场被误判
+    // ⇒ 换引擎 ⇒ 整条任务转 ONNX 慢路),这条判据随之被一并误删;收口时按作者指令**恢复**它 ——
+    // 因为它自带源图豁免(输入近黑就放行),单张静帧不存在"黑转场"这回事,不会被素材误伤,
+    // 而图片页没有别的兜底(删掉它 ⇒ 真实故障静默出黑图且零日志)。
+    // 保留删除的只有那些**只为视频降级链服务**的豁免判据(ShouldExemptAsSourceBlack 等)。
+
     [Theory]
     [InlineData(false, true, true)]     // 源正常、输出全黑 → 引擎静默故障
-    [InlineData(true, true, false)]     // 源本来就是黑场 → 不算故障
+    [InlineData(true, true, false)]     // 源本来就是黑场 → 不算故障(自带源图豁免)
     [InlineData(false, false, false)]   // 输出正常
     [InlineData(true, false, false)]    // 源黑、输出不黑(降噪/提亮) → 不是故障
     public void Silent_black_detection_matches_the_rule(bool inputBlack, bool outputBlack, bool expected)

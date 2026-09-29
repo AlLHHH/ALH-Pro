@@ -1740,8 +1740,9 @@ public static class EsrganOnnxService
                                 float g = outTensor[0, 1, y, x];
                                 float b = outTensor[0, 2, y, x];
                                 // 【C-1 数值防线】NaN/±Inf 经 (int)Math.Round(b*255f) 在 .NET 8/x64 得 int.MinValue,
-                                // Clamp(...,0,255) 之后 = 0 = 纯黑:而"部分块变黑"既不满足 IsBlackPng 的"≥95% 近黑",
-                                // 图片页更是完全没有判黑兜底 → 黑块会静默进成图/成片且日志无痕。
+                                // Clamp(...,0,255) 之后 = 0 = 纯黑:而"部分块变黑"既够不上既有判黑口径
+                                // (整帧或任一 1/3 主条带 ≥95% 近黑,2026-09-27 起只服务事前探测),
+                                // 也不该指望事后判黑兜住 → 黑块会静默进成图/成片且日志无痕。
                                 // 这里按"该帧作废"抛出,交给既有降级链(整图/该帧回退源帧缩放,尺寸与正常输出一致)。
                                 if (float.IsNaN(r) || float.IsInfinity(r) || float.IsNaN(g) || float.IsInfinity(g)
                                     || float.IsNaN(b) || float.IsInfinity(b))

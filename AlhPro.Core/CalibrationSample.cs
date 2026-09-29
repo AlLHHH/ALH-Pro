@@ -137,16 +137,18 @@ public static class CalibrationSample
     public static double To1080p(double secondsPerFrame, long samplePixels)
         => samplePixels > 0 ? secondsPerFrame * (PipelineOrderPlan.ReferencePixels1080p / samplePixels) : secondsPerFrame;
 
-    // ───────────────────── 样本输出的体检(契约 F1-I3:黑帧/坏帧/不可读 ⇒ 拒收,不落盘) ─────────────────────
+    // ───────────────────── 样本输出的体检(契约 F1-I3:坏帧/不可读 ⇒ 拒收,不落盘) ─────────────────────
 
-    /// <summary>一帧样本输出的体检输入(由调用方测好:**是否落地**、**字节数**、**是否被既有判黑口径判为缺陷帧**)。
-    /// 【为什么要分三项】三种坏法在 ncnn 上都会**静默发生且退出码 0**:写不出文件(ncnn 少数驱动上直接崩)、
-    /// 写出 0 字节空帧、写出黑帧/带状坏帧。任一种都必须拒收,否则会把一个**偏小**的单帧耗时永久落盘。</summary>
-    public readonly record struct SampleOutput(bool Present, long Bytes, bool Defective);
+    /// <summary>一帧样本输出的体检输入(由调用方测好:**是否落地**、**字节数**)。
+    /// 【为什么要分两项】两种坏法在 ncnn 上都会**静默发生且退出码 0**:写不出文件(ncnn 少数驱动上直接崩)、
+    /// 写出 0 字节空帧。任一种都必须拒收,否则会把一个**偏小**的单帧耗时永久落盘。
+    /// 【2026-09-27 删掉第三项"判黑"】作者反馈:素材里正常的黑色转场/淡入淡出/夜戏被当成"引擎输出坏帧",
+    /// 导致整条任务转 ONNX 慢路。事后判黑已整体删除 ⇒ 这里不再问"这一帧黑不黑"
+    /// (代价:引擎在 1x 档真出黑帧时不再拒收,与 2026-09-16 补帧侧同口径 —— 事前预检是唯一防线)。</summary>
+    public readonly record struct SampleOutput(bool Present, long Bytes);
 
     /// <summary>体检一组样本输出:全好返回 null;有缺陷返回**中文原因**(与 `TryBuild` 的九条拒收同一风格)。
-    /// **纯逻辑**:判黑本身复用既有口径(`AlhPro.Core.FrameInspect.IsDefectiveFrame`,由调用方通过
-    /// <see cref="SampleOutput.Defective"/> 传进来)—— 这里**不新造第二套判黑**。
+    /// **纯逻辑**:只做"清点 + 归类",不做任何像素判定(见 <see cref="SampleOutput"/> 的 2026-09-27 说明)。
     /// <paramref name="expected"/> = 这一批应该产出多少帧(引擎保帧数)。</summary>
     public static string? OutputDefect(IReadOnlyList<SampleOutput> frames, int expected)
     {
@@ -159,7 +161,6 @@ public static class CalibrationSample
             var f = frames[i];
             if (!f.Present) return $"样本第 {i + 1} 帧没落地(引擎静默失败;ncnn 部分驱动会退 0 但不写文件)";
             if (f.Bytes <= 0) return $"样本第 {i + 1} 帧是 0 字节空帧(ncnn 在 50 系/部分驱动上的已知症状,退出码仍是 0)";
-            if (f.Defective) return $"样本第 {i + 1} 帧被判为黑帧/带状坏帧(既有判黑口径:整帧或任一 1/3 主条带 ≥95% 近黑)";
         }
         return null;
     }

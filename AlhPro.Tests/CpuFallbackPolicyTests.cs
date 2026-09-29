@@ -115,15 +115,44 @@ public class CpuFallbackPolicyTests
         Assert.DoesNotContain("encUsed", code);   // 那个会被回退"带旧"的缓存变量已删除
     }
 
-    /// <summary>★ GPU 黑块时**不许**再用 ncnn-CPU 逐块重算视频帧(该方法是视频专用)。</summary>
+    /// <summary>★ GPU 黑块那套**视频批量**事后判定已整体删除(2026-09-27),且**绝不许**再出现 CPU 逐块重算;
+    /// 而"单图/分块成品"的自带源图豁免守卫 `GuardSilentBlackOutput` 按同一次收口**恢复保留**。
+    /// 【原契约】2026-09-23 那次要求:检测到 GPU 黑块时不许用 ncnn-CPU 逐块重算视频帧(视频专用路径),
+    /// 必须明确报错停止 —— 当时钉的三条是"没有 CPU 调用形态 / 没有那句旧文案 / 有'按「视频不落 CPU」策略停止'"。
+    /// 【为什么契约变了】2026-09-27 作者要求"黑帧判断这个功能直接删掉":视频那条"检测到黑块 → 换 ONNX 或报错停止"
+    /// 的链本身(**单图分块**路径 EngineService.UpscaleTiledAsync 里的 HasBlackPng 分支 —— 注意这是单图路径、不是视频批量)已删除 ⇒ "停止"的文案不复存在,
+    /// 但"绝不用 CPU 逐块重算视频帧"这条**更强**了(连同判黑一起没了)。
+    /// 【2026-09-27 二次收口】同一次大删除里被一并误删的**单图/分块成品守卫**已按作者指令恢复:
+    /// 它的判据自带源图豁免(`IsSilentBlackFailure` = 输出近黑 **且** 输入不近黑),单张静帧不存在"黑转场"
+    /// 这回事 ⇒ 不会被素材黑误伤;图片页没有别的兜底,删掉它 ⇒ 真实故障静默出黑图且零日志。
+    /// 所以本测试现在钉两件事:①视频批量那套(判黑入口 / 换路信号 / CPU 逐块重算)一律不许回来;
+    /// ②单图守卫必须在,且判据必须仍然走自带源图豁免的那条纯函数。</summary>
     [Fact]
-    public void Engine_blackout_no_longer_reprocesses_tiles_on_cpu()
+    public void Video_batch_blackout_judgement_is_gone_but_the_single_image_guard_is_back()
     {
-        var code = ReadRepoFile("ImgUpscalerUI", "EngineService.cs");
-        Assert.DoesNotContain("scale, noise, -1, tta", code);   // 旧 CPU 逐块重算的调用形态
+        // 【为什么先剥注释】删除说明本身就要写清"删了哪个入口、原来是什么行为"(2026-09-27),
+        // 注释里必然出现 HasBlackPng / BLACKOUT_NEED_ONNX 这些名字;这条测试钉的是**代码**,不是注释。
+        var code = StripLineComments(ReadRepoFile("ImgUpscalerUI", "EngineService.cs"));
+        Assert.DoesNotContain("scale, noise, -1, tta", code);      // 旧 CPU 逐块重算的调用形态
         Assert.DoesNotContain("改用 CPU 软解重处理", code);
-        Assert.Contains("按「视频不落 CPU」策略停止", code);
+        Assert.DoesNotContain("按「视频不落 CPU」策略停止", code);   // 该分支已随判黑一起删除
+        Assert.DoesNotContain("HasBlackPng", code);                 // 视频批量事后判黑入口已删除
+        Assert.DoesNotContain("BLACKOUT_NEED_ONNX", code);          // "转 ONNX"信号已删除
+        Assert.DoesNotContain("ProbeBatchBlackOutputHint", code);   // 批量事后抽样提示已删除
+        Assert.DoesNotContain("DefectSampling", code);              // 抽样判黑本体(AlhPro.Core.DefectSampling)已删除
+        // 恢复保留的部分:单图/分块成品守卫必须在,判据必须自带源图豁免(不是"输出黑就报")
+        Assert.Contains("GuardSilentBlackOutput", code);
+        Assert.Contains("FrameInspect.IsSilentBlackFailure(inBlack, outBlack)", code);
     }
+
+    /// <summary>剥掉源码里的行注释(含 `///`,它们都以 `//` 开头)——
+    /// 仅用于"某符号必须不存在"的源码契约断言:注释可以(也应该)解释删掉了什么。</summary>
+    private static string StripLineComments(string src)
+        => string.Join("\n", src.Split('\n').Select(l =>
+        {
+            int i = l.IndexOf("//", System.StringComparison.Ordinal);
+            return i >= 0 ? l.Substring(0, i) : l;
+        }));
 
     private static string ReadRepoFile(params string[] parts)
     {

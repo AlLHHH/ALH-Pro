@@ -118,12 +118,13 @@ internal static class UpscaleCalibrator
             double tN = await TimeAsync(runUpscale, calibIn, calibOut, cct).ConfigureAwait(false);
             AppLogger.Info($"超分单帧耗时标定:{n} 帧那次 {tN:0.###} s(平均 {tN / Math.Max(1, n):0.###} s/帧,含地板)");
 
-            // 【F1-I3】样本体检:黑帧/0 字节空帧/没落地/帧数对不上 ⇒ 拒收,不落盘。
-            // 判黑**复用既有口径**(EngineService.IsBlackPng → AlhPro.Core.FrameInspect.IsDefectiveFrame,
-            // 与批次循环的黑帧防御同一条),这里不新造第二套判黑。
-            // 【为什么必须做】ncnn 在 50 系/部分驱动上会**静默输出黑帧或 0KB 空帧且退出码 0** —— 那时
-            // 两次耗时都"正常"、差值也够大,但算出来的是"引擎在空转"的偏小单帧耗时;若不拒收就会永久落盘,
-            // 让判定偏向「补帧→超分」(2026-09-25 那类误判)。
+            // 【F1-I3】样本体检:0 字节空帧/没落地/帧数对不上 ⇒ 拒收,不落盘。
+            // 【2026-09-27 删掉"判黑"这一条】作者反馈:素材里正常的黑色转场/淡入淡出/夜戏被当成"引擎输出坏帧"
+            // ⇒ 整条任务转 ONNX 慢路。事后判黑已整体删除,标定也不再问"样本帧黑不黑"。
+            // 【保留的三种坏法为什么还要拦】ncnn 在 50 系/部分驱动上会**静默输出 0KB 空帧且退出码 0** ——
+            // 那时两次耗时都"正常"、差值也够大,但算出来的是"引擎在空转"的偏小单帧耗时;
+            // 若不拒收就会永久落盘,让判定偏向「补帧→超分」(2026-09-25 那类误判)。
+            // 代价(诚实口径):引擎真出黑帧时标定不再拒收 —— 与 2026-09-16 补帧侧同口径,事前预检是唯一防线。
             string? defect = InspectSample(calibOut, n);
             if (defect is not null) return Reject($"样本输出不合格:{defect}");
 
@@ -163,8 +164,8 @@ internal static class UpscaleCalibrator
     }
 
     /// <summary>样本输出体检:返回 null = 全好;否则中文原因。
-    /// 判黑**复用既有口径** <see cref="EngineService.IsBlackPng"/> → `AlhPro.Core.FrameInspect.IsDefectiveFrame`
-    /// (与批次循环的黑帧防御同一条),本方法只做"清点 + 归类",不新造像素判据。
+    /// 【2026-09-27 只做"清点 + 归类"】判黑那一项已按作者要求删除(理由见 <see cref="CalibrationSample.SampleOutput"/>)——
+    /// 这里只看"落地了没、字节数是 0 吗、帧数对不对",不做任何像素判据。
     /// 体检失败 ⇒ 整个标定作废(不落盘、不参与判定)。</summary>
     private static string? InspectSample(string outDir, int expected)
     {
@@ -175,10 +176,7 @@ internal static class UpscaleCalibrator
         {
             long len = 0;
             try { len = new FileInfo(f).Length; } catch { }
-            bool defective;
-            try { defective = EngineService.IsBlackPng(f); }   // 空/0字节/解码失败也会返回 true(缺陷)
-            catch { defective = true; }
-            list.Add(new CalibrationSample.SampleOutput(Present: true, Bytes: len, Defective: defective));
+            list.Add(new CalibrationSample.SampleOutput(Present: true, Bytes: len));
         }
         return CalibrationSample.OutputDefect(list, expected);
     }

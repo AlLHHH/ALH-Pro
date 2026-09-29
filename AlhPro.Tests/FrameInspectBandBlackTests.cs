@@ -10,7 +10,8 @@ namespace AlhPro.Tests;
 /// 【为什么需要它】实测(RTX 4060 Laptop / waifu2x-ncnn-vulkan 20250915 + models-cunet,2x,1080×1920 目录批,
 /// 6 次里 5 次):ncnn-vulkan 的 vkQueueSubmit 失败会输出【每帧下 2/3 全黑、上 1/3 正常】的坏帧 —— 退出码 0、
 /// 引擎不报错、ffmpeg blackdetect 也不报。它只黑约 66% 的像素,所以旧的整帧量词判据(≥95% 近黑)判它"正常",
-/// 坏帧于是静默进成片、零日志、ncnnUnreliable 不置位。本文件用与生产完全相同的采样几何(SampleGrid)钉住新判据。
+/// 坏帧于是静默进成片、零日志、ncnnUnreliable 不置位(`ncnnUnreliable` 这个置位机制已于 2026-09-27 随"删掉事后
+/// 黑帧判断"整条删除,此处只作历史说明;本文件钉的是**判据本身**,该判据现在只服务单图/分块成品那条守卫)。本文件用与生产完全相同的采样几何(SampleGrid)钉住新判据。
 /// 注意:这里不修改 FrameInspectTests.cs 的既有用例 —— 整帧近黑的老语义必须保持原样。
 /// </summary>
 public class FrameInspectBandBlackTests

@@ -78,16 +78,6 @@ public sealed class EngineStallException : InvalidOperationException
         => ProcessStillRunning = processStillRunning;
 }
 
-/// <summary>【F1】补帧输出检出黑帧,且所有换路引擎(ONNX DirectML → 换卡 ncnn)重算后仍然是黑帧。
-/// 这是一条"故意让任务失败"的异常:黑帧绝不允许当成功产物交付(真机事故:任务报"成功 1,失败 0",
-/// 而成片含 3 段全黑)。派生自 InvalidOperationException 以便既有的通用 catch(Exception) 层能识别,
-/// 但凡是要继续往下交付成片的调用点(如"补回"那条路)必须**显式重新抛出**它,不许当普通失败吞掉去走兜底
-/// —— 兜底(展开/回退)会让帧数或时间轴错乱,正是用户明令不允许的处置。</summary>
-public sealed class BlackFrameRerouteException : InvalidOperationException
-{
-    public BlackFrameRerouteException(string message) : base(message) { }
-}
-
 public static class VideoService
 {
     /// <summary>【硬规矩 · 用户 2026-09-24 拍板】「**预览只要是有关处理后的都不要降采样,不然不好看**」。
@@ -1545,14 +1535,19 @@ public static class VideoService
             // 故去重删过帧时也用「每帧真实时长表」重定时:输出 VFR 时间轴=原视频节奏,补帧只负责填运动、不改变时间。
             bool preserveRhythm = vfrPassthrough || (dedup && frameDurs != null && frameDurs.Count == frameCount);
 
-            // 【2026-09-25 修订 · F1】超分设备定稿(upGpu/waifuOnnx/upOnnxDml/ncnnUnreliable)必须声明在这里
+            // 【2026-09-25 修订 · F1】超分设备定稿(upGpu/waifuOnnx/upOnnxDml)必须声明在这里
             // (方法主体层),不能像原来那样声明在超分阶段里:`if (upscaleRuns) { …探测… }` 那段已经**上移到
             // 阶段顺序判定之前**,而批次循环还在很后面 —— 两者要读的是同一组变量。
             // 早声明的理由与 `segBounds`/`frameScale` 那几行完全一样:它只依赖 engine/model/gpuId 这些外层入参。
+            // 【2026-09-27】原先这里还有一个 `ncnnUnreliable`(被"超分批检出黑帧"置位 ⇒ 后续批次整体改走 ONNX),
+            // 已按作者要求连它一起删除:作者反馈"黑色转场内容被判成坏帧 ⇒ 转 ONNX 跑的超级慢"。
+            // 现在"走 ncnn 还是走 ONNX"只由**事前探测**的结论决定(upGpu / waifuOnnx / upOnnxDml / 用户开关),
+            // 不再有任何"跑到中途因为判黑而改路"的路径(与 2026-09-16 补帧侧裁决同口径)。
+            // 该变量既已无人置位,`UpscaleBackendPlan.UseOnnx/DescribeBackend` 上那个永不触发的
+            // `ncnnUnreliable` 参数也于同日一并从签名移除(见 AlhPro.Core/UpscaleBackendPlan.cs 的说明)。
             int upGpu = gpuId;
             bool waifuOnnx = false;        // 50系 waifu2x ncnn 不可用 → 整段视频改走 ONNX(安全网)
             bool upOnnxDml = false;        // 探测失败/不可用 → 走 ONNX 时用 DirectML GPU(-2 自动)而非强制 CPU(-1)
-            bool ncnnUnreliable = false;   // 视频超分检测到 ncnn-Vulkan 黑帧 → 后续批次直接走 ONNX(不再每批先 ncnn 失败再降级,省极长时间)
             // 3) 补帧(可选):按下面 InterpStageAsync 执行,转场识别时按转场点分段,段内插值、转场处不插。
             //    【阶段顺序】1x/2x 走「超分 → 补帧」(补帧在超分输出上做),3x/4x 走「补帧 → 超分」(旧顺序,一字不改)。
             //    旧注释里"避免在大图上补帧造成 9 倍开销"只对高倍率成立:实测 2x@1080p→2160p 补帧 0.10→0.35 秒/输出帧,
@@ -1602,7 +1597,7 @@ public static class VideoService
             // 小图能跑 ≠ 真帧能跑(显存/着色器分块压力差一个量级,实测过"小图通过、真分辨率上静默出坏帧")。
             // 【边用边删】每段跑完即删该段已消费的输入帧:分段互不共享输入帧(段 [s,e) 只读 frame_{s+1}..frame_{e}),
             // 且 InterpSegmentAsync 在段首就把这一段全部复制进自己的 segIn 目录,其后所有重试/降级路径
-            // (ncnn 原卡、换另一张卡、ONNX DirectML、黑帧回退、残缺重算)都只读 segIn —— 故这些帧可证明已消费。
+            // (ncnn 原卡、换另一张卡、ONNX DirectML、残缺重算)都只读 segIn —— 故这些帧可证明已消费。
             // 【同步探针】本方法里凡是"必须在某一步之前拿到值"的地方,都用这个同步版 —— 不再用 await。
             // 【为什么要同步】真机事故(2026-09-16 20:10):`指定帧率口径` 那段里的 `await ProbeDurationSeconds(inputVideo)`
             // 把步长赋值推迟到了**补帧段跑完之后**(日志实证:段执行 20:10:14.433 用了 fractionalMult=1,
@@ -1735,12 +1730,13 @@ public static class VideoService
                 //   ② 本阶段输入帧数与时长表一一对应(否则索引不可信,直接放弃);
                 //   ③ 补帧引擎走 ncnn-Vulkan(interpGpu ≥ 0)且不是"8K 级强制 ONNX"的尺寸 —— 因为逐槽合成用的是
                 //      层批原语(EngineService.InterpLayerBatchAsync),它只有 ncnn 一条路;探针失败/ONNX 路线下
-                //      **不做填平**,回退到分段路径(那里有完整的 ONNX/换卡/黑帧降级链);
+                //      **不做填平**,回退到分段路径(那里有完整的 ONNX/换卡 降级链);
                 //   ④ 合成结果帧数必须**恰好等于** flatPlan.TargetFrames(不符 → 清掉半成品,回退分段路径)。
                 // 【复用而非新写:并发与降级链】槽位→帧的落盘走 FlattenTimelineAsync → EmitSlotFramesAsync,
                 // 后者就是"补回(还原源时间轴)"在用的同一套层批原语与并发结构(InterpLayerBatchAsync:
                 // 一批帧对平铺成目录序列、一次引擎进程跑完,二叉树逐层细分,每层一次引擎调用)——
-                // 本任务**没有**新写并发/降级链;黑帧检出、帧数校验、失败回退在这里补齐。
+                // 本任务**没有**新写并发/降级链;帧数校验、失败回退在这里补齐。
+                // 【2026-09-27】原先还有"黑帧检出"(fres.anyBlack → 清半成品)这一环,已随事后判黑整体删除。
                 if (flatPlan.Flatten && !forceOnnxInterp && interpGpu >= 0 && flatPlan.TargetFrames >= 2)
                 {
                     int targetN = flatPlan.TargetFrames;
@@ -1751,8 +1747,9 @@ public static class VideoService
                             frameCount, frameDurs, flatPlan, interpGpu, interpModel, tta, sceneCutPairs, progress, ct);
                         if (fres.written != targetN)
                             throw new InvalidOperationException($"合成帧数 {fres.written} ≠ 目标 {targetN} 帧");
-                        if (fres.anyBlack)
-                            throw new InvalidOperationException("合成输出检出黑帧(GPU 队列异常)");
+                        // 【2026-09-27】原先这里还有 `if (fres.anyBlack) throw`(合成输出检出黑帧 → 清半成品回退分段补帧),
+                        // 已随事后判黑整体删除:素材的黑色转场/夜戏会被判成"GPU 队列异常"⇒ 白白放弃整段合成。
+                        // 现在只保留上面那条**帧数**校验(那是时间轴契约,与判黑无关)。
                         flattenActive = true;
                         flattenCuts = fres.cuts;
                         flattenForcedCopies = fres.forcedCopies;
@@ -1891,7 +1888,7 @@ public static class VideoService
                         totalSrcFrames: frameCount);
                     // ===== 批处理清盘(边用边删):本段输入帧已证明消费完,立刻释放,不等整阶段结束 =====
                     // 依据:InterpSegmentAsync 段首就把 frame_{s+1}..frame_{e}(恰好 e-s 帧,不含下一段的首帧)
-                    // 复制进了它自己的 segIn 目录;其后 ncnn 原卡/换卡、ONNX DirectML、黑帧回退、残缺重算
+                    // 复制进了它自己的 segIn 目录;其后 ncnn 原卡/换卡、ONNX DirectML、残缺重算
                     // 全都只读 segIn,不会再碰 segSrcDir —— 故这 e-s 帧可证明已消费,立即删。
                     // 下一段读的是 frame_{e+1}..,与本节无交集(段边界锚点各归下一段),不会删到还要用的帧。
                     int delThisSeg = 0;
@@ -2014,10 +2011,9 @@ public static class VideoService
                     catch (Exception ex)
                     {
                         if (ct.IsCancellationRequested) throw;   // 取消必须立刻传播,绝不吞(否则会回退再跑一遍标准补帧)
-                        // 【F1】黑帧换路全失败 → 必须让任务失败:这个 catch 原有的"展开兜底"(tempoSrcIdx=null,
-                        // 按去重后的帧接着跑)会让帧数/时间轴与设计错乱,正是用户明令不允许的处置方式。
-                        // 宁可明确报错并告诉用户原因,也不交付一条含黑场/时间轴错乱的成片。
-                        if (ex is BlackFrameRerouteException) throw;
+                        // 【2026-09-27】原先这里还有一句"黑帧换路全失败(BlackFrameRerouteException)→ 必须让任务失败"的
+                        // 显式重抛。事后判黑与换路整套已删除 ⇒ 这条异常类型不复存在,重抛也一并删除。
+                        // 这个 catch 的既有口径不变:除取消外一律按"展开兜底"(tempoSrcIdx=null)继续跑。
                         AppLogger.Info($"补回来失败(按展开兜底):{ex.Message}");
                         tempoSrcIdx = null;
                     }
@@ -2409,9 +2405,9 @@ public static class VideoService
                     bool calibPrefEsrgan = upGpu >= 0 && engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan();
                     bool calibPrefWaifu2x = upGpu >= 0 && engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx);
                     bool calibOnnx = AlhPro.Core.UpscaleBackendPlan.UseOnnx(engine, upGpu, calibPrefEsrgan, calibPrefWaifu2x,
-                        ncnnUnreliable, fastMode);
+                        fastMode);
                     string calibBackend = AlhPro.Core.UpscaleBackendPlan.DescribeBackend(engine, upGpu, calibPrefEsrgan,
-                        calibPrefWaifu2x, ncnnUnreliable, fastMode, upOnnxDml);
+                        calibPrefWaifu2x, fastMode, upOnnxDml);
                     var calibBook = CalibMemory.All();
                     string calibMachineKey = CalibMemory.MachineKeyOf();
                     int calibEngineScale = Math.Max(1, AlhPro.Core.EngineScalePolicy.Decide(engine, model, upScaleNow).EngineScale);
@@ -2707,10 +2703,12 @@ public static class VideoService
                     }
                 }
                 var upScale = upscaleShrink1x ? 2.0 : scale;
-                // 【2026-09-25 修订 · F1】超分 GPU 探测与 upGpu/waifuOnnx/upOnnxDml/ncnnUnreliable 的**定稿**
+                // 【2026-09-25 修订 · F1】超分 GPU 探测与 upGpu/waifuOnnx/upOnnxDml 的**定稿**
                 // 已上移到「阶段顺序判定」之前(见上方 `if (upscaleRuns) { ... }` 那一整段)。原因:
                 // 标定与判定必须先知道**本次真正会走的后端**,否则标定可能测到生产不会走的后端,并把偏小的
                 // 错单帧耗时永久落盘(判定于是偏向「补帧→超分」—— 2026-09-25 那次 39 分钟误判的同一类)。
+                // 【2026-09-27】后端此后不会再"跑到中途改路":按黑帧置位 ncnnUnreliable 的那条路已删除
+                //(连同 UpscaleBackendPlan 上那个永不触发的参数一起移除)。
                 // 这里只保留 1x 缩回需要的真实尺寸(origW/origH)与引擎倍率 upScale。
                 // 分批目录批处理超分 + 并行 2 批(多 worker):
                 // 一次引擎启动处理一批帧,避免每帧启动引擎;批间并行提高 GPU 利用率
@@ -2976,7 +2974,7 @@ public static class VideoService
                                 bool onnxPreferredEsrgan = upGpu >= 0 && engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan();
                                 bool onnxPreferredWaifu2x = upGpu >= 0 && engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx);
                                 if (AlhPro.Core.UpscaleBackendPlan.UseOnnx(engine, upGpu, onnxPreferredEsrgan, onnxPreferredWaifu2x,
-                                        ncnnUnreliable, fastMode))
+                                        fastMode))
                                     onnxModelPath = engine == "waifu2x"
                                         ? EsrganOnnxService.FindWaifu2xModel(model)
                                         : EsrganOnnxService.ResolveEsrganOnnxPath(model);
@@ -3031,7 +3029,7 @@ public static class VideoService
                                     }
                     // 视频降噪(用户那个「启用视频降噪」开关):拆帧阶段由 nlmeans 处理,超分阶段由 waifu2x 自带降噪处理。
                     // 正常情况下上面已用探测结果保证二者择一;这里兜的是【探测通过、但本批仍走了 ONNX】的边角情形
-                    // (例如中途黑帧降级把 ncnnUnreliable 置位、或用户勾了兼容模式)——那时模型档不生效,
+                    // (例如用户勾了兼容模式)——那时模型档不生效,
                     // 而帧已经拆完(没法回头再补 nlmeans),只能如实告知并给出替代做法。
                     if (denoiseViaModel && videoDenoise > 0)
                     {
@@ -3062,233 +3060,36 @@ public static class VideoService
                                     pctLo: upPctLoArg, pctHi: upPctHiArg,   // 新顺序(超分排第一)逐帧区间 10~45;旧顺序 0/0=原有 45~90 口径不变
                                     onEngineReady: upOnEngineReady);   // 引擎真的开始出活时回报"已就绪(启动 X.Xs)"(只上报,不改处理)
                             }
-                            // 【诊断】引擎这一段的墙钟(落盘/判黑/回退/回填都不算在内)—— 与"落盘+回填"一起把每帧耗时拆开。
+                            // 【诊断】引擎这一段的墙钟(落盘/回填都不算在内)—— 与"落盘+回填"一起把每帧耗时拆开。
                             double engineSecDbg = swBatchDbg.Elapsed.TotalSeconds;
                             // 【峰值优化】本批超分 PNG 立即转 JPG 再落 upOutput(不再全量 PNG 累积到最后统一转):
                             // 超分过程中只有"当前批的 PNG"存在,upOutput 全程 JPG,峰值降 70%+。
-                            // 黑帧防御:ncnn-vulkan 偶发 vkQueueSubmit 失败 → 输出全黑帧(退出码 0 不报错)。
-                            // 判黑顺带在转 JPG 已解码的位图上做,不再为查黑把整批多解码一次。
-                            // 转不了(0KB 空帧/坏帧——ncnn 在部分驱动上静默产出,退出码仍 0)必抛异常,同样记缺陷:
-                            // 放过它们,一路传到合帧只会报"找不到 frame_%06d.jpg"。
-                            // 不可提前 break:源帧本就是黑场时会跳过降级,此时每张 JPG 都必须已落盘。
-                            bool anyFrame = false, anyDefective = false;
-                            // 【黑帧防线·按帧对应】记下"被判黑 / 转码失败"的具体帧,回退前只对这些帧检查其
-                            // 【对应源帧】是否也本来就近黑。原先用 DirNearBlack(batchIn) 做整批判断,而它是
-                            // 【存在量词】(任一源帧近黑即返回 true)→ 一批 64 帧里只要有一帧是黑场
-                            // (片头黑场/淡入淡出/夜戏/闪黑),本批 GPU 输出的【全部】黑帧都被当成"素材本来如此"
-                            // 放行,黑帧直接进成片且零日志,ncnnUnreliable 也不会置位(后续批次继续用坏引擎)。
-                            var defectiveFrames = new System.Collections.Generic.List<string>();
+                            // 【2026-09-27 删除"超分批黑帧防御"】原来这里对每张输出判黑(ConvertPngToJpg 的 out isBlack /
+                            // IsBlackPng),命中就走"只重跑被判黑的那几帧 → 换 ONNX → 仍黑则回退源帧",并在缺陷帧达到
+                            // "系统性"程度(整批空产 / 占比 ≥20%)时把 ncnnUnreliable 置位,让后续批次整体改走 ONNX。
+                            // 作者反馈:素材里正常的黑色转场/淡入淡出/夜戏被判成"引擎输出坏帧"⇒ 该批重跑 / 换 ONNX ⇒
+                            // 整条任务转 ONNX 慢路。故整段(判黑 → 重跑 → 换路 → 回退 → 置位)删除。
+                            // 现在只剩"把本批输出转成 JPG 落进 upOutput",与改动前【未命中黑帧时】逐字一致:
+                            //   · 引擎写 PNG(图片分块路径/降级重算/ONNX):解码一次转成 JPG(q96);
+                            //   · 引擎直出 JPG(outFormat:"jpg"):直接【搬】过去(引擎写的是 q100,不再重编码);
+                            //   · 转不了(0KB 空帧/坏帧,退出码仍 0)→ 仍复制原文件兜底,绝不因此少帧(合帧按编号连续读)。
+                            // 代价(与 2026-09-16 补帧侧裁决同口径):引擎真出黑帧时按原样采用、照旧写进成片 ——
+                            // 事前兼容性判定(InterpSizePolicy.JudgeEngineRisk + 开跑前的尺寸/显卡预检)是唯一防线。
                             foreach (var f in Directory.EnumerateFiles(batchOut, "*.*")
                                 .Where(x => x.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
                                          || x.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
                                          || x.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)))
                             {
-                                anyFrame = true;
                                 var dst = Path.Combine(upOutput, Path.ChangeExtension(Path.GetFileName(f), ".jpg"));
                                 try
                                 {
                                     if (f.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        // 引擎写 PNG(图片分块路径/降级重算/ONNX):解码一次判黑,顺便转成 JPG
-                                        EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality, out bool isBlack);
-                                        if (isBlack) { anyDefective = true; defectiveFrames.Add(f); }
-                                    }
+                                        EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality);
                                     else
-                                    {
-                                        // 引擎直出 JPG(outFormat:"jpg"):只需解码一次判黑,然后【搬】过去。
-                                        // 不再"解码 PNG → 重编码 q96":引擎写的是 q100,画质更好,且 4K 下省掉 31% 超分耗时。
-                                        if (EngineService.IsBlackPng(f)) { anyDefective = true; defectiveFrames.Add(f); }
                                         File.Move(f, dst, overwrite: true);
-                                    }
                                 }
-                                catch { anyDefective = true; defectiveFrames.Add(f); try { File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true); } catch { } }
-                            }
-                            // 兜底防误杀:若【被判黑/失败的每一帧】其源帧本来就近全黑(视频黑场/淡入淡出),
-                            // 输出黑是素材本身,不是 GPU 故障——跳过降级,不浪费 CPU 重算。
-                            // 空批(!anyFrame)必然是真故障:一帧都没出,与素材内容无关,必须降级。
-                            if ((anyDefective || !anyFrame) && !DefectiveFramesAllComeFromNearBlack(batchIn, defectiveFrames))
-                            {
-                                // ===== 黑帧降级(2026-09-16 二次修订:只重跑黑帧 + 硬预算)=====
-                                // 【为什么第二次改】旧逻辑只要本批出现【任何一帧】黑,就删掉整批输出、整批换 ONNX 重跑。
-                                // 真机实测(RTX 4060,2026-09-16 21:22):120 帧的批里只有 1 帧被判黑,却整批重跑 ——
-                                // ONNX 这边跑了 22 分钟(≈11 秒/帧,健康时约 0.3 秒/帧),用户等了 26 分钟只能强制结束;
-                                // 同一形态 09-15 还出现过 4 次(代码里那笔"4060 黑帧重跑 282 分钟"是同一个根因)。
-                                // 更糟的是重跑仍黑时【整批回退源帧】⇒ 好帧跟着一起牺牲,那 120 帧整段画质掉档(只缩放、没真超分)。
-                                // 现在:① 只重跑【被判黑的那几帧】,同批好帧原样保留(不再白算);
-                                //       ② 重跑带硬预算,到点就停、只把没救回来的帧回退源帧 —— 最多等两三分钟,不无限期干等;
-                                //       ③ ncnn 是否"不可靠"改为达到【系统性】程度才置位(见下),零星 1 帧不再把全片拖去 ONNX。
-                                // 两套运行时独立:ncnn GPU 崩 ≠ DirectML 崩,所以重跑才有意义。
-                                string? onnxB = engine == "realesrgan"
-                                    ? EsrganOnnxService.ResolveEsrganOnnxPath(model)
-                                    : engine == "waifu2x" ? EsrganOnnxService.FindWaifu2xModel(model) : null;
-                                int upPctRetry = upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total));
-                                // ① 待重跑的帧清单。正常 = 被判黑的那几帧(用 batchIn 里的同名副本当输入;
-                                //    回退时也拿它当"源帧"—— WriteFallbackFrame 按文件名写回 upOutput,扩展名一致)。
-                                //    整批一帧都没产出(真故障,与素材内容无关)→ 只能整批重跑。
-                                bool wholeBatchRetry = !anyFrame || defectiveFrames.Count >= curPG.Count;
-                                var retrySrcs = new System.Collections.Generic.List<string>();
-                                if (wholeBatchRetry)
-                                {
-                                    foreach (var g in curPG) retrySrcs.Add(upFiles[g.rep]);
-                                }
-                                else
-                                {
-                                    foreach (var f in defectiveFrames)
-                                    {
-                                        string bn = Path.GetFileNameWithoutExtension(f);
-                                        string srcIn = Path.Combine(batchIn, bn + ".jpg");
-                                        if (!File.Exists(srcIn)) srcIn = Path.Combine(batchIn, bn + ".png");
-                                        if (File.Exists(srcIn)) retrySrcs.Add(srcIn);
-                                    }
-                                }
-                                // ② 预算:建会话 + 每帧留 3 秒(健康 DirectML 实测 ≈0.3 秒/帧,约 10 倍余量),
-                                //    下限 90 秒(会话创建 + DML 预热),硬顶 240 秒。到点即停 —— 这条闸门就是本轮的修法核心。
-                                int retryBudgetSec = Math.Clamp(90 + retrySrcs.Count * 3, 90, 240);
-                                // ③ ncnn 是不是【系统性】不可靠:整批空产,或缺陷帧占本批 ≥20%。达标才把后续批次整体改走 ONNX。
-                                //    (旧逻辑"1 帧黑 = 后续全片改 ONNX"在 4060 上代价极大:ONNX 实测可能 11 秒/帧。)
-                                if (!anyFrame || defectiveFrames.Count * 5 >= Math.Max(1, curPG.Count))
-                                {
-                                    ncnnUnreliable = true;
-                                    AppLogger.Warn($"⚠ ncnn-Vulkan 超分判定为系统性不可靠(本批 {curPG.Count} 帧里 {defectiveFrames.Count} 帧黑"
-                                        + (anyFrame ? "" : "、整批未出帧") + ")→ 后续批次直接走 ONNX 稳定引擎");
-                                }
-                                if (retrySrcs.Count == 0)
-                                {
-                                    // 防御:一个源帧都定位不到(理论上不可达)→ 退回"整批回退源帧"的老办法。
-                                    // 绝不让黑帧留在成片里:宁可这批画质掉档(只缩放),也不交付黑帧。
-                                    AppLogger.Warn($"⚠ 批次 {start}~{batchSlots[^1]} 黑帧定位不到对应源帧——该批整批回退源帧(不重跑)");
-                                    foreach (var si in batchSlots)
-                                        try { WriteFallbackFrame(upFiles[si], upOutput, upScale); } catch { }
-                                }
-                                else if (onnxB != null)
-                                {
-                                    // 【设备要说真话】这段文案以前直接写"ONNX DirectML",可它的判据只是"ONNX 模型文件在"
-                                    // (复核报告点名):EsrganOnnxService 只是【尝试】挂 DirectML,挂不上会静默建 CPU 会话、
-                                    // 照样打印同一句话。这里把【解析出来的真实设备号】一并写进日志,含解析失败的情形。
-                                    string dmlText;
-                                    try
-                                    {
-                                        int dmlHere = upGpu >= 0
-                                            ? EngineService.ResolveDmlDevice(upGpu) : EsrganOnnxService.DmlFallbackOk;
-                                        dmlText = dmlHere >= 0 ? $"DirectML 设备 #{dmlHere}"
-                                            : "DirectML 设备解析失败(会退到 CPU 会话,详见后续「会话实际设备」日志)";
-                                    }
-                                    catch { dmlText = "DirectML 设备解析异常(详见后续「会话实际设备」日志)"; }
-                                    progress?.Report((upPctRetry,
-                                        (wholeBatchRetry
-                                            ? $"⚠ 检测到黑帧(批次 {start}~{batchSlots[^1]},GPU 输出异常),该批改用 ONNX 引擎重处理..."
-                                            : $"⚠ 检测到 {retrySrcs.Count} 帧黑帧(批次 {start}~{batchSlots[^1]}),只重跑这几帧(同批其余帧保留)...")
-                                        + StageElapsed()));
-                                    AppLogger.Warn($"⚠ 批次 {start}~{batchSlots[^1]} 输出黑帧(ncnn-vulkan GPU 队列异常)——"
-                                        + (wholeBatchRetry ? "整批" : $"只把被判黑的 {retrySrcs.Count} 帧")
-                                        + $"改用 ONNX 稳定引擎({Path.GetFileNameWithoutExtension(onnxB)},目标 {dmlText})重跑"
-                                        + (wholeBatchRetry ? "" : $"(同批其余 {curPG.Count - retrySrcs.Count} 帧沿用 ncnn 结果,不重算)"));
-                                    // 重跑只在【一个小输入目录 + 一个小输出目录】里做:batchOut 里已经落好的好帧一个都不动。
-                                    var retryIn = Path.Combine(workDir, $"up_retry_in_{start}");
-                                    var retryOut = Path.Combine(workDir, $"up_retry_out_{start}");
-                                    try { Directory.Delete(retryIn, true); } catch { }
-                                    try { Directory.Delete(retryOut, true); } catch { }
-                                    Directory.CreateDirectory(retryIn);
-                                    Directory.CreateDirectory(retryOut);
-                                    foreach (var rs in retrySrcs)
-                                        try { File.Copy(rs, Path.Combine(retryIn, Path.GetFileName(rs)), true); } catch { }
-                                    bool retryBudgetHit = false;
-                                    string retryFailWhy = "";
-                                    using (var retryCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
-                                    {
-                                        retryCts.CancelAfter(TimeSpan.FromSeconds(retryBudgetSec));
-                                        try
-                                        {
-                                            await EsrganOnnxService.UpscaleDirAsync(retryIn, retryOut, upScale,
-                                                upOnnxDml ? -2 : (upGpu < 0 ? -1 : -2), progress, retryCts.Token, onnxB,
-                                                start, total, pauseWait, upPctLoArg, upPctHiArg);   // 探测失败/黑帧 → -2(DirectML GPU 自动);主动选 CPU → -1;pauseWait=ONNX/CPU 也能暂停
-                                        }
-                                        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-                                        {
-                                            retryBudgetHit = true;   // 只超了【重跑预算】,不是用户取消(用户取消必须原样传播出去)
-                                        }
-                                        catch (Exception ex)
-                                        {
-                                            if (ct.IsCancellationRequested) throw;
-                                            retryFailWhy = ex.Message.Split('\n')[0];
-                                        }
-                                    }
-                                    if (retryBudgetHit)
-                                        AppLogger.Warn($"⚠ 批次 {start}~{batchSlots[^1]} 黑帧重跑超过预算 {retryBudgetSec} 秒,已停止重跑"
-                                            + $"(要救 {retrySrcs.Count} 帧;健康 DirectML 实测约 0.3 秒/帧,超预算说明这条路过慢)"
-                                            + "—— 没出结果的帧回退源帧,不再无限期干等");
-                                    if (retryFailWhy.Length > 0)
-                                        AppLogger.Warn($"⚠ 批次 {start}~{batchSlots[^1]} 黑帧重跑失败({retryFailWhy})——这 {retrySrcs.Count} 帧按「没救回来」处理");
-                                    // 逐帧认领重跑结果:好的写进 upOutput(覆盖那张黑帧),没出/仍黑的【只回退这一帧】。
-                                    int retriedOk = 0, retriedBack = 0;
-                                    foreach (var rs in retrySrcs)
-                                    {
-                                        string bn = Path.GetFileNameWithoutExtension(rs);
-                                        string? got = null;
-                                        foreach (var ext in new[] { ".png", ".jpg", ".jpeg" })
-                                        {
-                                            string cand = Path.Combine(retryOut, bn + ext);
-                                            if (File.Exists(cand)) { got = cand; break; }
-                                        }
-                                        bool stillBlack = true;   // 没出结果(超预算/引擎没写)= 没救回来
-                                        if (got != null)
-                                        {
-                                            var dst = Path.Combine(upOutput, bn + ".jpg");
-                                            try
-                                            {
-                                                if (got.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
-                                                {
-                                                    EngineService.ConvertPngToJpg(got, dst, VideoFrameJpgQuality, out bool isBlack);
-                                                    stillBlack = isBlack;
-                                                }
-                                                else
-                                                {
-                                                    // 引擎直出 JPG:解码判黑后直接搬(ONNX 路径目前写 PNG,此处为兼容两种格式)
-                                                    stillBlack = EngineService.IsBlackPng(got);
-                                                    File.Move(got, dst, overwrite: true);
-                                                }
-                                            }
-                                            catch { stillBlack = true; }   // 0KB/坏帧:当没救回来
-                                        }
-                                        if (stillBlack)
-                                        {
-                                            retriedBack++;
-                                            try { WriteFallbackFrame(rs, upOutput, upScale); } catch { }
-                                        }
-                                        else retriedOk++;
-                                    }
-                                    // 【绝不跑慢速 CPU】ONNX(DirectML)也救不回来的帧,直接回退源帧(超分 CPU 兜底要跑到天荒地老)。
-                                    // 【只回退这几帧】旧逻辑在这里整批作废,好帧跟着牺牲 —— 那正是"120 帧整段掉档"的来源。
-                                    if (retriedBack > 0)
-                                    {
-                                        progress?.Report((upPctRetry,
-                                            $"⚠ ONNX 重跑仍黑 {retriedBack} 帧(批次 {start}~{batchSlots[^1]}),这几帧回退原帧(不跑慢速 CPU)..." + StageElapsed()));
-                                        AppLogger.Warn($"⚠ 批次 {start}~{batchSlots[^1]} ONNX(DirectML)重跑仍黑——{retriedBack} 帧回退源帧"
-                                            + $"(已尽力重跑,仍无法得非黑;救回来的 {retriedOk} 帧已保留);若反复出现请更新显卡驱动");
-                                    }
-                                    else
-                                    {
-                                        AppLogger.Info($"✅ 批次 {start}~{batchSlots[^1]} 黑帧重跑成功:{retriedOk} 帧已由 ONNX 补回"
-                                            + (wholeBatchRetry ? "" : $"(同批其余 {curPG.Count - retrySrcs.Count} 帧未重算,沿用 ncnn 结果)"));
-                                    }
-                                    try { Directory.Delete(retryIn, true); } catch { }
-                                    try { Directory.Delete(retryOut, true); } catch { }
-                                }
-                                else
-                                {
-                                    // 无 ONNX 模型:黑帧【不跑慢速 CPU】,只把这【几帧】回退源帧(只做一次缩放,绝不把黑帧写进输出)。
-                                    // 【改这里的原因】旧逻辑连"没有 ONNX 可重跑"的情况也整批作废 —— 同批好帧跟着一起被牺牲,没必要。
-                                    progress?.Report((upPctRetry,
-                                        $"⚠ 检测到黑帧(批次 {start}~{batchSlots[^1]},GPU 输出异常),"
-                                        + (wholeBatchRetry ? "该批" : $"被判黑的 {retrySrcs.Count} 帧")
-                                        + "回退原帧(无 ONNX 模型,不跑慢速 CPU)..." + StageElapsed()));
-                                    AppLogger.Warn($"⚠ 批次 {start}~{batchSlots[^1]} 输出黑帧(GPU 队列异常),无 ONNX 模型——"
-                                        + (wholeBatchRetry ? "该批" : $"被判黑的 {retrySrcs.Count} 帧") + "回退源帧(若反复出现请更新显卡驱动)");
-                                    foreach (var rs in retrySrcs)
-                                        try { WriteFallbackFrame(rs, upOutput, upScale); } catch { }
-                                }
-                            }
-                            // ===== 回填重复槽位:拷贝代表帧的超分输出到该组重复槽(决策②=拷贝,非硬链接)=====
+                                catch { try { File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true); } catch { } }
+                            }                            // ===== 回填重复槽位:拷贝代表帧的超分输出到该组重复槽(决策②=拷贝,非硬链接)=====
                             // 硬约束:重复槽与代表帧同批 → 代表帧输出已在本批 upOutput 落盘,此处同 task 内立即拷贝,
                             // 无跨批依赖(批并行跑,跨批引用会在代表帧未产出时崩溃)。
                             // 拷贝路径与 :1486/:1512 的"src==dst 原地重写"互补:这里写不同文件(rep→slot),不会踩到
@@ -3316,7 +3117,7 @@ public static class VideoService
                             }
                             // 【诊断 · 2026-09-16】一行把"本批每帧耗时"拆开,**只写日志文件**(不上界面、不改处理):
                             //   · 引擎 ms/帧   = 引擎进程这一段(引擎自己也会在「引擎完成」那行报它的耗时)
-                            //   · 落盘+回填 ms/帧 = 判黑解码 / 黑帧回退 / 重复帧回填 —— 宿主侧的那部分
+                            //   · 落盘+回填 ms/帧 = 转 JPG 解码 / 重复帧回填 —— 宿主侧的那部分
                             // 配上「超分实测」里补的 GPU 利用率就能定性:利用率低 + 宿主占比高 ⇒ 瓶颈在宿主/编码;
                             // 利用率高 + 引擎占比高 ⇒ 就是 GPU 算力/驱动这一层,软件侧没有可优化的余地。
                             // 引擎参数也一并如实写出来(旧日志里只写"路线=ncnn-Vulkan",分块/线程/输出格式都看不到)。
@@ -3375,7 +3176,7 @@ public static class VideoService
                             // 槽位不再连续(start..end 区间写法失效),必须按本批显式槽位列表删。
                             // 【顺序无关】新顺序(1x/2x)下 upInput = 源帧 framesIn、旧顺序(3x/4x)下 = 补帧结果 framesFinal,
                             // 两种顺序都在这里逐批释放 —— 这正是"边用边删"的落点,不等整阶段结束。
-                            // 【为什么在这里删是安全的】本批所有输出(含重复槽回填、黑帧回退原帧、批次异常回退原帧)
+                            // 【为什么在这里删是安全的】本批所有输出(含重复槽回填、批次异常回退原帧)
                             // 都在本 task 内、finally 之前写完,删的是本批【全部槽位】的输入;批与批之间按槽位不重叠。
                             int relCnt = 0;
                             foreach (var si in batchSlots)
@@ -4431,6 +4232,9 @@ public static class VideoService
                 // 【输出端黑场自检】后处理与编码两个阶段原本【没有任何黑帧防线】(防线只覆盖超分引擎输出那一步),
                 // 所以后处理滤镜产生的黑帧能一路进成片且零日志 —— 用户实际就是这样报上来的。
                 // 这里在成片落盘后扫一遍,把黑场位置写进日志与任务提示,让它再也藏不住。
+                // 【2026-09-27 · 这里只报数字,不参与任何判定】事后判黑(超分批重跑/换 ONNX/补帧换路/回退源帧)
+                // 已按作者要求整体删除;这一段**只把数字写进日志与结算行**,不改任何处理行为、不改交付内容 ——
+                // 故按"只写日志、不改变行为"保留(作者口径:这类留痕要留)。
                 // 【2026-09-22】把源片与裁剪起点也传进去:让自检能区分"源自带的黑场"与"处理链产生的黑帧"
                 // (见 ScanBlackSegmentsAsync 的说明;源自带的黑场不再当缺陷报,也不再把用户叫来发日志)。
                 string blackSeg = await ScanBlackSegmentsAsync(outputVideo, ct,
@@ -4876,8 +4680,10 @@ public static class VideoService
         catch { return false; }
     }
 
-    /// <summary>ONNX 逐对补帧(50 系/GPU 不可用设备稳定路线):逐对插值、黑帧防御、进度汇报、响应取消。
-    /// 输入 sIn 的 frame_*.jpg,输出 oDir 的 frame_*.png;target=目标帧数。</summary>
+    /// <summary>ONNX 逐对补帧(50 系/GPU 不可用设备稳定路线):逐对插值、进度汇报、响应取消。
+    /// 输入 sIn 的 frame_*.jpg,输出 oDir 的 frame_*.png;target=目标帧数。
+    /// 【2026-09-27】原注释里的"黑帧防御"已随事后判黑整体删除:现在逐对失败只会复制原帧(异常路径),
+    /// 不再对"输出近黑"做任何判定与回退。</summary>
     private static async Task RifeOnnxInterpDirAsync(string sIn, string oDir, int target, int gpuId,
         int watchTotal, string? watchDir, CancellationToken ct,
         IProgress<(int pct, string msg)>? progress)
@@ -4991,12 +4797,10 @@ public static class VideoService
                                         CopyFrame(files[p], outF);
                                     }
                                 }
-                                // 【黑帧防御】ONNX/DirectML 偶发静默输出全黑 → 源不黑则回退该帧
-                                if (File.Exists(outF) && EngineService.IsBlackPng(outF) && !EngineService.IsBlackPng(files[p]))
-                                {
-                                    CopyFrame(files[p], outF);
-                                    AppLogger.Warn($"⚠ ONNX 补帧第 {startIdx + t} 帧输出黑帧(DirectML 异常),已回退复制该对源帧");
-                                }
+                                // 【2026-09-27 删除"ONNX 补帧输出黑帧 ⇒ 回退该对源帧"】作者反馈:素材里正常的黑色转场/
+                                // 淡入淡出/夜戏会被这条判成"DirectML 静默出坏帧"⇒ 白白回退该帧(画质掉档)并刷告警。
+                                // 事后判黑已整体删除;这里只剩上面的"逐对失败复制原帧"(那是**异常**路径,与判黑无关)。
+                                // 代价:DirectML 真出黑帧时该帧按原样采用,事前预检是唯一防线(与 2026-09-16 补帧侧同口径)。
                                 // 进度:补帧阶段 10~45%,按已产中间帧数估算(并行安全:Interlocked 计数)。
                                 // 文案格式是契约:上层 segProg / etaRegex 靠「第 N 帧 / 共 M 帧」提取帧号。
                                 int dn = Interlocked.Increment(ref doneCount);
@@ -5064,8 +4868,10 @@ public static class VideoService
         {
             // ===== 补帧降级链(用户指定):独显 ncnn → ONNX(DirectML GPU)→ 换卡(另一块 GPU)→ 不落 CPU =====
             // ncnn-CPU 太慢,不做兜底。ONNX 是独立运行时(DirectML),ncnn 崩的卡 DirectML 常能正常 GPU 加速,
-            // 故优先于换卡。ONNX 内部已做"逐对失败复制原帧 + 黑帧回退",尽力出帧,不抛异常。
+            // 故优先于换卡。ONNX 内部已做"逐对失败复制原帧",尽力出帧,不抛异常。
             // 换卡后失败/黑帧或 ONNX 不可用且无卡可换 → 该段报错(绝不回落慢速 CPU)。
+            // 【2026-09-27】这里的"黑帧"只指**引擎异常形态**(ncnn 崩/空跑),不再有"输出近黑"的事后判定 ——
+            // 判黑与换路整套已按作者要求删除(黑色转场素材被误判 ⇒ 全片换路重算,ONNX 慢一二十倍)。
             async Task<bool> TryOnnxAsync()
             {
                 if (RifeOnnxService.Available() && TryGetRifeOnnxFrames(args, out var onnxIn, out var onnxOut, out var onnxTarget))
@@ -5109,10 +4915,12 @@ public static class VideoService
                 {
                     var gArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", $"-g {g}");
                     await RunAsync(rife, gArgs, progress, ct, "补帧", watchTotal, watchDir, onEngineReady).ConfigureAwait(false);
-                    // 黑帧/0帧防御:GPU 输出全黑(vkQueueSubmit 失败但退出码 0)【或不输出任何帧(空跑,退出码 0)】
-                    // → 走 ONNX→换卡 降级重跑该段。0帧正是"补帧失败,未生成插帧"的根因(RIFE exit=0 却无输出,须兜底降级)。
+                    // 【0帧/残缺帧防御】GPU 【不输出任何帧(空跑,退出码 0)】→ 走 ONNX→换卡 降级重跑该段。
+                    // 0帧正是"补帧失败,未生成插帧"的根因(RIFE exit=0 却无输出,须兜底降级)。
                     // 补充【残缺帧数防御】:RIFE 偶发"只输出第 1 帧就 exit 0"(AMD 6750 GRE 实测 140→1 帧,间歇性)——
-                    // 此时有帧非黑帧,但帧数远少于目标,须触发降级而非当成功。
+                    // 此时有帧,但帧数远少于目标,须触发降级而非当成功。
+                    // 【2026-09-27】原注释开头还写着"输出全黑 → 降级":那条事后判黑早在 2026-09-16 就删了
+                    // (见下),2026-09-27 又把其余各处的判黑一并删除 ⇒ 这里只剩"0帧 / 残缺帧"两条真失败形态。
                     if (g >= 0 && watchDir != null && Directory.Exists(watchDir))
                     {
                         // 【2026-09-16 用户裁决:删掉事后黑帧判定,改为"事前兼容性提示"】
@@ -5487,84 +5295,17 @@ public static class VideoService
         AppLogger.Info($"方案C 累积网格插值:{n} 关键画 → {gOut - 1} 帧({totalGaps} 个动作段,F_out={outFpsSafe:0.##},CFR 对齐输出)");
     }
 
-    /// <summary>单个文件是否"缺陷帧"(整帧近黑 **或** 上/中/下 1/3 条带近黑)。
-    /// 【必须与输出侧同判据】输出侧用的是 `EngineService.IsBlackPngStrict`(整帧或任一 1/3 条带);
-    /// 源帧侧原先只判整帧(`IsNearBlack`)⇒ **判据不对称**:宽银幕黑边/上下黑条这类素材上,
-    /// 输出被判缺陷、源却"不算黑",于是必然误降级走 ONNX(真机证:5 帧的源帧近黑比例 94.9%/93.2%/93.0%,
-    /// 恰在 95% 线下方,而它们的邻居源帧是黑的)。这里改调 `FrameInspect.IsDefectiveFrame`,与输出侧同源。</summary>
-    private static bool IsFileDefective(string path)
-    {
-        using var bmp = new System.Drawing.Bitmap(path);
-        var sums = new System.Collections.Generic.List<int>();
-        int total = AlhPro.Core.FrameInspect.ForEachSample(bmp.Width, bmp.Height, (x, y) =>
-        {
-            var p = bmp.GetPixel(x, y);
-            sums.Add((int)p.R + (int)p.G + (int)p.B);
-        });
-        return AlhPro.Core.FrameInspect.IsDefectiveFrame(sums.ToArray(), total, bmp.Width, bmp.Height);
-    }
-
-    /// <summary>取同目录下 ±delta 号源帧的路径(帧名形如 `frame_000123.jpg`)。
-    /// 找不到时返回原路径(等价于"这一侧没信息",不会把整段判死)。</summary>
-    private static string NeighborFrame(string srcPath, int delta)
-    {
-        try
-        {
-            string dir = Path.GetDirectoryName(srcPath) ?? "";
-            string stem = Path.GetFileNameWithoutExtension(srcPath);
-            int us = stem.LastIndexOf('_');
-            if (us < 0) return srcPath;
-            if (!int.TryParse(stem.Substring(us + 1), out var idx)) return srcPath;
-            int want = idx + delta;
-            if (want < 1) return srcPath;
-            string ext = Path.GetExtension(srcPath);
-            string cand = Path.Combine(dir, stem.Substring(0, us + 1) + want.ToString("D6") + ext);
-            if (File.Exists(cand)) return cand;
-            string other = Path.ChangeExtension(cand, ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ? ".png" : ".jpg");
-            return File.Exists(other) ? other : cand;
-        }
-        catch { return srcPath; }
-    }
-
-    /// <summary>该源帧本身是否"有资格解释输出黑"(判据同 <see cref="IsFileDefective"/>)。
-    /// 拿不准(文件不存在/解码失败)一律 false —— 与"绝不把黑帧写进成片"的口径一致。</summary>
-    private static bool SourceFrameJustifiesBlack(string srcPath)
-    {
-        try { return File.Exists(srcPath) && IsFileDefective(srcPath); }
-        catch { return false; }
-    }
-
-    /// <summary>检查每一个"被判缺陷"的帧,其【对应源帧】是否也本来就近黑。
-    /// 只有全部对应上才返回 true(= 输出黑来自素材本身,不是 GPU 故障,可跳过降级)。
-    /// 【为什么按帧而不是按目录】原 DirNearBlack 是存在量词:只要目录里有【任意一张】源帧近黑就豁免整批,
-    /// 于是含黑场(片头/夜戏/淡入淡出)的素材上,GPU 真正产出的黑帧会整批放行。
-    /// 【邻域容差】引擎有前后帧缓冲、`-n` 又是均分时间步 ⇒ "输出帧号 → 源帧号"本就存在 ±1 偏移,
-    /// 只看同号源帧会把"邻居是黑、自己差一点"的帧判成故障(真机因此把整段作废去跑慢一二十倍的 ONNX)。
-    /// 判定规则本身在 AlhPro.Core.FrameInspect(有单测钉住)。</summary>
-    private static bool DefectiveFramesAllComeFromNearBlack(string srcDir, System.Collections.Generic.List<string> defectiveFrames)
-    {
-        try
-        {
-            var verdicts = new System.Collections.Generic.List<bool>(defectiveFrames.Count);
-            foreach (var f in defectiveFrames)
-            {
-                string baseName = Path.GetFileNameWithoutExtension(f);
-                string src = Path.Combine(srcDir, baseName + ".jpg");
-                if (!File.Exists(src)) src = Path.Combine(srcDir, baseName + ".png");
-                verdicts.Add(AlhPro.Core.FrameInspect.IsFrameJustifiedByDarkSource(
-                    SourceFrameJustifiesBlack(src),
-                    SourceFrameJustifiesBlack(NeighborFrame(src, -1)),
-                    SourceFrameJustifiesBlack(NeighborFrame(src, +1))));
-            }
-            return AlhPro.Core.FrameInspect.ShouldExemptAsSourceBlack(verdicts);
-        }
-        catch { return false; }
-    }
-
-    /// <summary>旧入口说明(2026-09-16 审计):本项目曾有一个只判"整帧近黑"的源帧入口,
-    /// 它与输出侧的条带判据不对称 ⇒ 宽银幕/上下黑条素材必然误降级。该入口已删除,
-    /// 源帧判据一律走 <see cref="IsFileDefective"/>(与输出侧 EngineService.IsBlackPngStrict 同源)。
-    /// 这段说明保留历史原因,便于后人理解"为什么源帧侧必须判条带"。</summary>
+    // 【2026-09-27 删除"源帧黑场豁免"判据】原先这里有四个成员:
+    //   IsFileDefective(单个源帧是不是缺陷帧)、NeighborFrame(取 ±1 号源帧,`frame_%06d` 命名口径)、
+    //   SourceFrameJustifiesBlack(该源帧能否解释输出黑)、DefectiveFramesAllComeFromNearBlack(整批豁免判定)。
+    // 它们只为"超分批黑帧降级链"做防误杀(判黑之后要区分"GPU 真故障"与"素材本来就是黑场"),而那条链
+    // 已按作者要求整体删除 ⇒ 这四处再没有任何生产调用方,一并删除(其中 ShouldExemptAsSourceBlack /
+    // IsFrameJustifiedByDarkSource 两个"批量豁免"判据也已从 AlhPro.Core.FrameInspect 删除;
+    // FrameInspect 里剩下的 IsSilentBlackFailure 只服务【单图/分块成品】的自带源图豁免守卫
+    // GuardSilentBlackOutput —— 视频批量路径不再有判黑,也不会接回)。
+    // 历史沿革(留档):2026-09-16 审计发现"输出侧判条带、源帧侧只判整帧"的判据不对称,会让宽银幕/上下黑条
+    // 素材必然误降级 —— 那次统一了判据(真机证:5 帧的源帧近黑比例 94.9%/93.2%/93.0%,恰在 95% 线下方);
+    // 2026-09-27 连豁免机制本身一起删除(作者反馈:黑色转场内容被误判 ⇒ 转 ONNX 超级慢)。
 
     /// <summary>把源帧写进超分输出目录当"该批回退帧",并缩放到与同目录其他帧一致的尺寸。
     /// 【为什么必须缩放】直接 File.Copy 会让输出目录混进两种分辨率。实测(本机 ffmpeg):
@@ -6559,7 +6300,7 @@ public static class VideoService
     // (`-f jpg`,见 EngineService.UpscaleDirAsync 的 outFormat)——4K 实测 2.98→2.02 秒/帧(省 31%,
     // 因保存线程仅 1 个时 PNG 压缩压不住 GPU),且省掉应用侧整段 PNG 解码+q96 重编码,引擎写的是 q100,画质更好。
     // 补帧(rife)仍写 PNG,在应用侧取回后重编码成 JPG(该段后续可同样改为引擎直出)。
-    // 仅列帧(枚举 .png/.jpg 均可),供"格式随路径变化"的读取点使用(去重/缩放/黑帧守卫)。
+    // 仅列帧(枚举 .png/.jpg 均可),供"格式随路径变化"的读取点使用(去重/缩放)。
     private static System.Collections.Generic.IEnumerable<string> EnumerateFrameFiles(string dir)
         => Directory.EnumerateFiles(dir, "*.*").Where(f =>
             f.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
@@ -6578,16 +6319,17 @@ public static class VideoService
     /// 并**按帧并行**(每帧独立),再与本来就要做的 PNG→JPG 合并成一次编码,不额外多一代 JPG 损失。
     /// 目录里本来就是 JPG 的帧(未超分/未补帧等分支)也会吃到这一档,避免同一开关在不同分支下效果不一致。</param>
     /// 【每帧到底在算什么(2026-09-13 逐行核对,供后续提速对照)】
-    ///   A. PNG 输入(引擎写 PNG 的分支)→ EngineService.ConvertPngToJpg(png,jpg,q,out _,aa):
-    ///      ① new Bitmap(png) = PNG 解码一次;② 黑帧采样(ForEachSample 抽样,不是全图 GetPixel);
-    ///      ③ ApplyEdgeSmoothInMemory:LockBits(32bppArgb)→ 拆 3 个通道平面(3×w×h 字节)
-    ///         → 每通道一次 3×3 边缘平滑 → 合回 32bpp;④ SaveJpegViaGdi 再拷一张 24bppRgb(GDI+ DrawImage);
-    ///      ⑤ GDI+ JPEG 编码。全流程只有一次解码、一次编码(AA 搭在中间,不多一代损失)。
+    ///   A. PNG 输入(引擎写 PNG 的分支)→ EngineService.ConvertPngToJpg(png,jpg,q,aa):
+    ///      ① new Bitmap(png) = PNG 解码一次;
+    ///      ② ApplyEdgeSmoothInMemory:LockBits(32bppArgb)→ 拆 3 个通道平面(3×w×h 字节)
+    ///         → 每通道一次 3×3 边缘平滑 → 合回 32bpp;③ SaveJpegViaGdi 再拷一张 24bppRgb(GDI+ DrawImage);
+    ///      ④ GDI+ JPEG 编码。全流程只有一次解码、一次编码(AA 搭在中间,不多一代损失)。
+    ///      【2026-09-27】原 ② 是"黑帧采样(ForEachSample 抽样)"、判黑搭在这条最热路径上,已随事后判黑删除;
+    ///      现在这一步只做"解码 → (可选)抗锯齿 → 写 JPG"。
     ///   B. JPG 输入(引擎直出 JPG,视频正常路径)→ EngineService.ApplyEdgeSmoothToJpeg:
-    ///      ① new Bitmap(jpg) = JPEG 解码一次;② 同 A 的 ③/④/⑤(AA + 24bpp 拷贝 + 编码);③ 落盘。
+    ///      ① new Bitmap(jpg) = JPEG 解码一次;② 同 A 的 ②/③/④(AA + 24bpp 拷贝 + 编码);③ 落盘。
     ///      旧落盘是"写 原文件.aa.jpg 再 File.Copy 覆盖"(同一份 JPG 多一轮全文件读+写),
     ///      2026-09-13 改成"内存里编完再一次性写回原路径"(见 EngineService.ApplyEdgeSmoothToJpeg)。
-    ///   本步骤【不】额外做的:黑帧判定只在 A 分支顺带做(B 分支不为查黑再解码一遍)。
     /// 【已知可再提速但会改画质语义 → 只列方案、本次未改】把 AA 挪到超分/缩放【之前】(在源分辨率上做):
     ///   单帧成本随面积下降明显,但"放大前削锯齿"与"放大后削锯齿"是两种画面,须用户看对比图再定。
     private static int ReencodeDirPngToJpg(string dir, int edgeSmooth,
@@ -6691,7 +6433,7 @@ public static class VideoService
             System.Threading.Tasks.Parallel.ForEach(pngs, opts, png =>
             {
                 var jpg = Path.ChangeExtension(png, ".jpg");
-                try { EngineService.ConvertPngToJpg(png, jpg, VideoFrameJpgQuality, out _, edgeSmooth); }
+                try { EngineService.ConvertPngToJpg(png, jpg, VideoFrameJpgQuality, edgeSmooth); }
                 catch (Exception ex)
                 {
                     AppLogger.Warn($"⚠ 帧转 JPG 失败({Path.GetFileName(png)}):{ex.Message.Split('\n')[0]}——用同尺寸占位帧替代,保持编号连续可解码");
@@ -7930,8 +7672,9 @@ public static class VideoService
     /// 【任务 S1 · 2026-09-13 复用点】本方法同时是「平滑时间轴」的合成原语:调用方可用
     /// <paramref name="planSlots"/>/<paramref name="planSlotSrc"/> 直接给出**外部排程**(每个输出槽是要拷源帧、
     /// 还是在某对源帧之间插值),此时本方法只负责"把排程变成真实帧"—— 层批并发、静止帧对保护、引擎缺帧兜底、
-    /// 黑帧提示、JPG 落盘全部照旧,**不另写一套**(用户硬要求)。不传外部排程时,行为与改动前逐字一致。
-    private static async Task<(int frameCount, double outFps, bool anyBlack)> RunTempoResampleAsync(string rife,
+    /// JPG 落盘全部照旧,**不另写一套**(用户硬要求)。不传外部排程时,行为与改动前逐字一致。
+    /// 【2026-09-27】返回值里原来的 bool anyBlack(检出黑帧 → 上层清半成品回退分段补帧)已随事后判黑一起删除。</summary>
+    private static async Task<(int frameCount, double outFps)> RunTempoResampleAsync(string rife,
         string framesIn, string framesFinal, int frameCount, double inFps,
         System.Collections.Generic.List<int>? srcIdx, int interpScale, double? targetFps,
         int gpuId, double srcDur, string interpModel, bool tta,
@@ -7946,7 +7689,7 @@ public static class VideoService
         if (n < 2)
         {
             foreach (var f in files) File.Copy(f, Path.Combine(framesFinal, Path.GetFileName(f)), true);
-            return (n, inFps, false);
+            return (n, inFps);
         }
         var idx = srcIdx ?? Enumerable.Range(0, n).ToList();
         // 关键帧源时刻:按保留帧在原源轴上的位置,归一化到"源视频已处理时长" srcDur(避免尾部静止段截断时间轴)
@@ -8008,14 +7751,13 @@ public static class VideoService
         // 时间轴=精确源位置,画面=最近 dyadic 插值。引擎调用:每层一次层批(共 ≤4 次)。
         var activePairs = slots.Select(s => s.i).Distinct().ToList();
         var pairMids = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<(double phi, string file)>>();
-        // ===== 【F1/F2】黑帧自检状态(层批路按【块】抽样,整段再补一次均匀抽样)=====
-        // 真机诊断:这一步曾检出黑帧却只打提示就继续,黑帧因此当成功产物交付(成片 3 段全黑)。
-        // 现在:检出即换路重算(见 RerouteBlackSlotsAsync),换不动就抛异常让任务失败 —— 绝不放行。
-        int blackDefects = 0;      // 命中的缺陷帧数(判据见 AlhPro.Core.BlackFrameRecovery.IsRealDefect)
-        int blackChecked = 0;      // 已抽样检查的帧数(日志用:说清"查了多少",不说就等于没查)
-        int blackExempts = 0;      // 近黑但按"素材本来就是黑场"放行的帧数(必须留痕,见 IsRealDefect 说明)
+        // 【2026-09-27 删除"补帧输出黑帧自检 + 换路重算"】原先这里有 5 个计数器(blackDefects/blackChecked/
+        // blackExempts/blackSamples),分【块级抽样】与【整段抽样】两轮判黑,命中就 RerouteBlackSlotsAsync
+        // (ONNX 逐槽重算 → 换卡 ncnn 逐槽重算),全失败则抛 BlackFrameRerouteException 让任务失败。
+        // 作者反馈:素材里正常的黑色转场/淡入淡出/夜戏被判成"补帧输出黑帧"⇒ 全片换路重算(ONNX/换卡,
+        // 慢一二十倍)甚至整条任务失败。事后判黑已整体删除 ⇒ 这一整套连同计数器一起删除。
+        // 保留:missingMids(引擎没产出、被兜底成"左端点副本"的节点数)——它只记日志,与判黑无关。
         int missingMids = 0;       // 引擎没产出、被 InterpLayerBatchAsync 兜底成"左端点副本"的节点数(只记日志)
-        var blackSamples = new System.Collections.Generic.List<string>();   // 少量样本(只进日志,便于定位)
         if (slots.Count > 0)
         {
             try
@@ -8120,33 +7862,9 @@ public static class VideoService
                                 nextNodes.Add((nd.p, midPhi, midF, nd.phi1, nd.b));
                             }
                         }
-                        // ===== 【F2】块级黑帧自检(每次引擎调用单独抽样;首尾必查)=====
-                        // 真机形态是"某一次引擎调用整体输出黑帧(GPU 队列异常,退出码仍 0)",块 ≤384 帧 →
-                        // 块内均匀抽样必然命中;而旧的"整段只抽前 6 帧"在几千~几万帧的层批里等于没查
-                        // (黑片实测长 40~360 帧 → 6 帧抽样命中概率极低,这就是黑帧穿到成片的直接原因)。
-                        // 判据:输出近黑【且】两端源帧都不是近黑(任一端本来就是黑场 = 素材内容:片头黑场/淡入淡出/夜戏;
-                        // 判重的代价是换路重算后仍判缺陷 → 整条任务失败,见 Core.BlackFrameRecovery.IsRealDefect 的取舍说明)。
-                        // 放行的帧数会单独记一行日志(不静默)。
-                        foreach (int bk in AlhPro.Core.DefectSampling.Plan(mids.Count))
-                        {
-                            if (bk >= batch.Count) break;
-                            blackChecked++;
-                            try
-                            {
-                                if (!EngineService.IsBlackPng(mids[bk])) continue;
-                                var bnd = batch[bk];
-                                if (!AlhPro.Core.BlackFrameRecovery.IsRealDefect(true,
-                                        EngineService.IsBlackPngStrict(bnd.a), EngineService.IsBlackPngStrict(bnd.b)))
-                                {
-                                    blackExempts++;   // 相邻源帧本来就黑 = 素材内容(不静默:末尾统一记一行)
-                                    continue;
-                                }
-                                blackDefects++;
-                                if (blackSamples.Count < 8)
-                                    blackSamples.Add($"第 {lv} 层第 {layerBatchNo}/{layerBatchAll} 层批·帧对 {bnd.p}");
-                            }
-                            catch { }
-                        }
+                        // 【2026-09-27】原先这里还有"块级黑帧自检"(DefectSampling 抽样 + IsBlackPng/IsBlackPngStrict
+                        // + BlackFrameRecovery.IsRealDefect 判"真缺陷"),已按作者要求删除(理由见本函数开头):
+                        // 素材黑色转场/夜戏会被判成"某次引擎调用整块坏掉"⇒ 全片换路重算或任务失败。
                         midDone += batch.Count;
                         int fr = Math.Min(slotTotal, (int)((double)midDone / Math.Max(1, midNeed) * slotTotal));
                         progress?.Report((10 + (int)(35.0 * fr / slotTotal),
@@ -8175,58 +7893,13 @@ public static class VideoService
                 throw;
             }
         }
-        // ===== 【F2】整段再补一次均匀抽样(首尾必查)+ 【F1】检出黑帧就必须换路 =====
-        // 块级抽样(见上)覆盖的是"某一次引擎调用整块坏掉";整段抽样额外覆盖"散落在块边界/少量坏帧"的情形,
-        // 并且它是唯一覆盖 pairMids(最终被选为槽来源的帧集合)的地方。抽样口径见 AlhPro.Core.DefectSampling。
-        // 【代价口径】整段最多 48 帧解码(约 0.7 秒),相对层批阶段(分钟级)可忽略 —— 这是刻意的:
-        // 真机那次正是"抽样太薄(只抽前 6 帧)→ 黑帧当成功交付",用 0.7 秒换"不漏"远比省这 0.7 秒值。
-        {
-            var flat = pairMids.OrderBy(kv => kv.Key)
-                .SelectMany(kv => kv.Value.Select(v => (p: kv.Key, v.phi, v.file))).ToList();
-            foreach (int k in AlhPro.Core.DefectSampling.Plan(flat.Count))
-            {
-                blackChecked++;
-                var (bp, _bphi, bfile) = flat[k];
-                try
-                {
-                    if (!EngineService.IsBlackPng(bfile)) continue;
-                    bool aBlack = bp + 1 < files.Length && EngineService.IsBlackPngStrict(files[bp]);
-                    bool bBlack = bp + 1 < files.Length && EngineService.IsBlackPngStrict(files[bp + 1]);
-                    if (!AlhPro.Core.BlackFrameRecovery.IsRealDefect(true, aBlack, bBlack))
-                    {
-                        blackExempts++;   // 相邻源帧本来就黑 = 素材内容(不静默:下面统一记一行)
-                        continue;
-                    }
-                    blackDefects++;
-                    if (blackSamples.Count < 8) blackSamples.Add($"{Path.GetFileName(bfile)}(帧对 {bp})");
-                }
-                catch { }
-            }
-        }
-        // 【放行必须留痕】把"按素材黑场放行"的帧数写进日志:否则"这次为什么没换路"在诊断包里无从判断
-        // (这也是复核报告点名的要求:豁免与否要给出依据)。口径 = 任一端源帧本来就近黑,见 IsRealDefect。
-        if (blackExempts > 0)
-            AppLogger.Info($"{stageName}:黑帧自检 —— 抽样检出近黑中间帧 {blackExempts} 帧,但其相邻源帧本来就近黑"
-                + "(素材黑场/淡入淡出/夜戏)→ 按素材内容放行(与超分段 ShouldExemptAsSourceBlack 同一思路,"
-                + "口径放宽到「相邻任一端」);这批帧不是 GPU 故障,不触发换路)");
-        bool anyBlack = blackDefects > 0;   // 返回值口径不变(平滑时间轴那条路用它决定是否回退分段补帧)
+        // 【2026-09-27】原先这里还有"整段再补一次均匀抽样判黑"(覆盖 pairMids)+ "检出黑帧就必须换路"
+        // (RerouteBlackSlotsAsync:ONNX 逐槽重算 → 换卡 ncnn 逐槽重算 → 全失败抛异常让任务失败)。
+        // 已按作者要求整体删除:素材黑色转场/淡入淡出/夜戏会被判成"补帧输出黑帧"⇒ 全片换路重算(慢一二十倍)。
+        // 保留的只有下面这条"引擎未产出节点"的日志(只报数字,不参与任何判定)。
         if (missingMids > 0)
             AppLogger.Info($"{stageName}:引擎未产出的节点 {missingMids} 个(已按「左端点副本」兜底,不是黑帧;"
                 + "若占比大说明该次引擎调用丢过活,建议更新显卡驱动后重试)");
-        if (anyBlack)
-        {
-            // 【F1 核心】检出黑帧 = "层批原语只有 ncnn 一条路"这条路在本机已不可信 → 必须【换路重算】。
-            // 为什么不用超分那种"回退源帧":补帧这一步的任务就是把缺失的时间轴位置生成出来,
-            // 拿源帧顶替会让输出帧数与时间轴双双错乱(用户口径:补帧的回退绝不能改帧数/时间轴)。
-            // 换路顺序(与分段补帧路径的 ncnn→ONNX→换卡 同思路,但不落 CPU):
-            //   ① ONNX(DirectML)按同一张槽表逐槽重算 → ② 换另一块显卡 ncnn 单对 -s 逐槽重算 → ③ 都不行就抛异常让任务失败。
-            await RerouteBlackSlotsAsync(rife, interpModel, tta, gpuId, files, slots, slotSrc, tempoTempDirs,
-                stageName, blackDefects, blackChecked, blackSamples, progress, ct).ConfigureAwait(false);
-            // 换路成功 = 输出已是【逐帧复查过的非黑帧】(换路方法本身失败会抛异常,不会走到这里)。
-            // 返回值口径要对齐"最终产物"而不是"曾经检出过":平滑时间轴那条路见到 true 会清掉半成品并回退分段补帧,
-            // 把一次已经修好的合成判成失败就白费了这次重算。
-            anyBlack = false;
-        }
         // 输出:按 j 顺序写帧(帧号连续)。统一重编码成 JPG(源帧已是 JPG,层批中间帧为引擎 PNG),配合下游 framesIn=JPG。
         int written = 0;
         for (int j = 0; j < outN; j++)
@@ -8250,250 +7923,17 @@ public static class VideoService
         foreach (var d in tempoTempDirs) { try { Directory.Delete(d, true); } catch { } }
         double fps = written > 1 ? (written - 1) / T : F;
         AppLogger.Info($"{stageName}:关键帧 {n}(源号 {idx[0]}..{idx[^1]}) → 输出 {written} 帧 @ {fps:0.##} fps(目标 {F:0.##}),时长 {T:0.###}s,逐槽-s {slots.Count} 次(静止对 {pairEqCache.Count(e => e.Value)})");
-        return (written, fps, anyBlack);
+        return (written, fps);
     }
 
-    /// <summary>【F1】黑帧换路重算:层批原语(InterpLayerBatchAsync)只有 ncnn 一条路,检出黑帧 = 这条路在本机已不可信,
-    /// 于是【按同一张逐槽排程】换引擎重算插值帧;所有换路都失败则抛 <see cref="BlackFrameRerouteException"/> 让任务失败
-    /// —— 绝不把黑帧当成功产物交付。
-    /// 【为什么按槽表重算,而不是"把这一段交给分段补帧路径"】分段补帧(InterpSegmentAsync)做的是
-    /// "整段按 -n 均匀插值",与本阶段"每个输出槽落在精确 φ"的排程不是一回事:交给它就会把槽位/输出帧数/时间轴改掉,
-    /// 正是用户点名不许发生的"补帧回退导致帧数/时间轴错乱"。而分段路径的降级链(ncnn→ONNX→换卡、绝不落 CPU)
-    /// 在这里以【逐槽等价物】复用:① ONNX(DirectML,任意时间步) → ② 换另一块显卡 ncnn 单对 -s(唯一可靠的任意时间步原语)。
-    /// 【代价】重算 slots.Count 帧(ONNX 1080p 约 0.5 秒/帧;逐槽 ncnn 约 0.4 秒/槽),只在检出黑帧时才走 ——
-    /// 这是"用速度换不把黑帧交给成片"的取舍(用户口径:实在不行宁可明确失败,也不交付坏片)。
-    /// 【成功时】直接改写 slotSrc(输出循环随后照旧写帧),帧数/时间轴与层批路完全一致。</summary>
-    private static async Task RerouteBlackSlotsAsync(string rife, string interpModel, bool tta, int gpuId,
-        string[] files, System.Collections.Generic.List<(int i, int j, double phi)> slots, string[] slotSrc,
-        System.Collections.Generic.List<string> tempDirs, string stageName,
-        int blackDefects, int blackChecked, System.Collections.Generic.List<string> blackSamples,
-        IProgress<(int pct, string msg)>? progress, CancellationToken ct)
-    {
-        string sampleText = blackSamples.Count > 0 ? $";样本:{string.Join("、", blackSamples)}" : "";
-        AppLogger.Warn($"⚠ {stageName}:检测到补帧输出黑帧 {blackDefects} 帧(共抽样 {blackChecked} 帧{sampleText})"
-            + " —— 该路(层批原语只有 ncnn)在本机已不可信,改走换路重算(绝不把黑帧交给成片)");
-        progress?.Report((40, $"⚠ 检出黑帧:按同一时间轴换引擎重算 {slots.Count} 帧(不把黑帧交给成片)…"));
-
-        // 换路档位:ONNX 可用?有别的卡?模型支持任意时间步? —— 计划本身是纯逻辑(可单测),见 AlhPro.Core.BlackFrameRecovery.Plan
-        // 【任务级选卡】优先用【本次任务选定的那块卡】(ncnn 的 -g 编号 gpuId → DirectML 设备号),
-        // 只有 gpuId<0(自动/未指定)才回落到全局设置与启动探测结论 —— 否则"任务里选了另一张卡"时,
-        // 换路会跑到别的卡上去,与"换卡"档位的语义直接冲突。
-        int engineGpu = gpuId >= 0 ? gpuId : AppSettings.GpuIndex;
-        int dmlGpu = -1;
-        bool onnxUsable = false;
-        try
-        {
-            if (RifeOnnxService.Available() && !EsrganOnnxService.DmlDeviceDead)
-            {
-                dmlGpu = engineGpu >= 0
-                    ? EngineService.ResolveDmlDevice(engineGpu) : EsrganOnnxService.DmlFallbackOk;
-                onnxUsable = dmlGpu >= 0;
-            }
-        }
-        catch { onnxUsable = false; }
-        int? altGpu = null;
-        try
-        {
-            var devs = VulkanCheck.Devices;
-            if (devs.Count >= 2) altGpu = devs.FirstOrDefault(d => d.Id != gpuId).Id;
-        }
-        catch { }
-        bool v4Model = IsV4Model(interpModel);
-        var steps = AlhPro.Core.BlackFrameRecovery.Plan(onnxUsable, altGpu.HasValue, v4Model);
-        bool triedOnnx = false, triedAlt = false;
-        int stillBad = blackDefects;   // 换路后复查仍为真缺陷的帧数(全失败时保持"原始检出数",不编数字)
-        var rerouteDirs = new System.Collections.Generic.List<string>();   // 换路临时目录(失败时清干净)
-        if (steps.Length == 0)
-        {
-            // 【说清"为什么没得换"】原先这句只笼统说"没有可用档位",排查时看不出是模型缺失、设备解析失败
-            // 还是根本没第二块卡(复核报告点名:H1/H2 的设备路由在名字匹配不到时会返回 -1,用户看到的却是别的说法)。
-            var why = new System.Collections.Generic.List<string>();
-            if (!RifeOnnxService.Available()) why.Add("未找到 ONNX 补帧模型 rife49.onnx");
-            else if (EsrganOnnxService.DmlDeviceDead)
-                why.Add("DirectML 设备已被系统摘除/挂死(本进程内不可恢复,需重启软件)");
-            else if (dmlGpu < 0)
-                why.Add($"无法把 GPU 编号 {engineGpu} 解析成可用的 DirectML 设备(名称匹配不到时按 -1 处理,不会自行改卡)");
-            if (!altGpu.HasValue) why.Add("本机没有第二块显卡可换");
-            else if (!v4Model) why.Add($"补帧模型 {interpModel} 非 v4 架构,单对 -s 会被引擎忽略,换卡也无意义");
-            AppLogger.Warn($"⚠ 黑帧换路:没有可用的换路档位 —— {string.Join(";", why)};只能按失败收尾");
-        }
-        foreach (var step in steps)
-        {
-            if (ct.IsCancellationRequested) throw new OperationCanceledException(ct);
-            string outDir = Path.Combine(EngineService.TempRoot, "imgup_blackfix", $"{step}_{Guid.NewGuid():N}");
-            try
-            {
-                Directory.CreateDirectory(outDir);
-                tempDirs.Add(outDir);
-                rerouteDirs.Add(outDir);
-                AppLogger.Info($"黑帧换路 {AlhPro.Core.BlackFrameRecovery.StepName(step)}(阶段 {stageName},待重算 {slots.Count} 帧)");
-                if (step == AlhPro.Core.BlackFrameRecovery.Step.OnnxSlots)
-                {
-                    triedOnnx = true;
-                    stillBad = await OnnxResampleSlotsAsync(dmlGpu, slots, files, slotSrc, outDir, progress, ct)
-                        .ConfigureAwait(false);
-                }
-                else
-                {
-                    triedAlt = true;
-                    stillBad = await NcnnResampleSlotsAsync(rife, interpModel, tta, altGpu!.Value, slots, files, slotSrc,
-                        outDir, progress, ct).ConfigureAwait(false);
-                }
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                // 该路整体失败(建会话失败/设备不可用/引擎进程失败):不编数字,按"原始检出数"继续下一路。
-                AppLogger.Warn($"⚠ 黑帧换路失败({AlhPro.Core.BlackFrameRecovery.StepName(step)}):{ex.Message.Split('\n')[0]}");
-                continue;
-            }
-            if (stillBad == 0)
-            {
-                AppLogger.Info($"✅ 黑帧换路成功:{AlhPro.Core.BlackFrameRecovery.StepName(step)}重算 {slots.Count} 帧,"
-                    + "逐帧复查无黑帧(输出帧数/时间轴与层批路完全一致,未回退源帧、未改帧数)");
-                progress?.Report((40, $"✅ 黑帧换路成功:已用 {AlhPro.Core.BlackFrameRecovery.StepName(step)} 重算 {slots.Count} 帧并复查通过"));
-                return;
-            }
-            AppLogger.Warn($"⚠ 黑帧换路后仍有 {stillBad} 帧真缺陷({AlhPro.Core.BlackFrameRecovery.StepName(step)}),继续下一路");
-        }
-        // 全部换路失败 = 本次任务按失败收尾:先把换路用的临时帧清干净(半成品帧留在临时目录里既占盘、
-        // 又可能被后续排查误当成"已产出的帧"),再抛可读异常。
-        foreach (var d in rerouteDirs) { try { Directory.Delete(d, true); } catch { } }
-        throw new BlackFrameRerouteException(AlhPro.Core.BlackFrameRecovery.FailureMessage(
-            stageName, slots.Count, Math.Max(stillBad, blackDefects), triedOnnx, triedAlt));
-    }
-
-    /// <summary>黑帧换路①:ONNX(DirectML)按同一张槽表逐槽重算(任意时间步 = rife49.onnx 的原生能力)。
-    /// 返回重算后【逐帧复查】仍为真缺陷的帧数(0 = 全部干净)。异常 = 该路整体失败,由调用方换下一路。</summary>
-    private static async Task<int> OnnxResampleSlotsAsync(int dmlGpu,
-        System.Collections.Generic.List<(int i, int j, double phi)> slots, string[] files, string[] slotSrc,
-        string outDir, IProgress<(int pct, string msg)>? progress, CancellationToken ct)
-    {
-        // 并行路数按可用显存动态定(F3 同一口径):显存紧的机器退到 1 路,宁可慢也不 E_OUTOFMEMORY。
-        double? freeVram = SafeRender.FreeVramMeasured ? SafeRender.FreeVramGB : null;
-        int concurrency = AlhPro.Core.RenderPolicy.OnnxSessionConcurrency(true, SafeRender.EffectiveVramGB, freeVram);
-        if (concurrency > slots.Count) concurrency = Math.Max(1, slots.Count);
-        AppLogger.Warn($"⚠ 黑帧换路:改用 ONNX 补帧(DirectML 设备 {dmlGpu})按同一槽表重算 {slots.Count} 帧,{concurrency} 路"
-            + $"(依据:{AlhPro.Core.RenderPolicy.OnnxConcurrencyRule(true, SafeRender.EffectiveVramGB, freeVram)})"
-            + " —— 帧数/时间轴一字不改,只换引擎;耗时会明显变长(用速度换不把黑帧交给成片)");
-        // 【代价提示(诚实口径)】规模大时说清"要等多久、可以放弃",而不是让用户只看到进度条慢慢爬:
-        // 速率取 RifeOnnxService 的实测锚点(1080p 整帧约 480ms/帧),只做量级估算(低分辨率更快、4K 更慢)。
-        if (slots.Count > 2000)
-        {
-            double estMin = slots.Count * 0.48 / Math.Max(1, concurrency) / 60.0;
-            AppLogger.Warn($"⚠ 黑帧换路规模较大:需重算 {slots.Count} 帧,按 1080p 实测锚点(约 0.48 秒/帧 × {concurrency} 路)"
-                + $"量级估算约 {estMin:0} 分钟(分辨率越低越快、4K 更慢);如需放弃本次换路,可直接「强制结束」");
-            progress?.Report((40, $"⚠ 黑帧换路:需重算 {slots.Count} 帧,量级估算约 {estMin:0} 分钟(不把黑帧交给成片)…"));
-        }
-        var sessions = RifeOnnxService.CreateSessions(concurrency, dmlGpu);
-        int done = 0;
-        try
-        {
-            await Task.Run(() =>
-            {
-                var workers = new System.Threading.Tasks.Task[concurrency];
-                for (int w = 0; w < concurrency; w++)
-                {
-                    int wi = w;
-                    workers[w] = System.Threading.Tasks.Task.Run(() =>
-                    {
-                        var sess = sessions[wi];
-                        for (int k = wi; k < slots.Count; k += concurrency)
-                        {
-                            ct.ThrowIfCancellationRequested();
-                            var (i, j, phi) = slots[k];
-                            // 【线程安全】每个 j 在槽表里只出现一次(槽表唯一)→ 每个输出路径只有一个 worker 写它;
-                            // 全部读写都发生在 WaitAll 之后,无竞态,故不加锁。
-                            RifeOnnxService.InterpWithSession(sess, files[i], files[i + 1], (float)phi,
-                                Path.Combine(outDir, $"slot_{j:D6}.png"), dmlGpu);
-                            slotSrc[j] = Path.Combine(outDir, $"slot_{j:D6}.png");
-                            int dn = Interlocked.Increment(ref done);
-                            if ((dn & 0x1F) == 0 || dn == slots.Count)
-                                progress?.Report((40, $"⚠ 黑帧换路(ONNX):已重算 {dn}/{slots.Count} 帧…"));
-                        }
-                    }, ct);
-                }
-                try { System.Threading.Tasks.Task.WaitAll(workers); }
-                catch (System.AggregateException ae)
-                {
-                    if (ae.Flatten().InnerExceptions.OfType<OperationCanceledException>().Any() || ct.IsCancellationRequested)
-                        throw new OperationCanceledException(ct);
-                    throw;
-                }
-            }, ct).ConfigureAwait(false);
-        }
-        finally { foreach (var s in sessions) try { s.Dispose(); } catch { } }
-        return VerifyReroutedSlots(slots, files, slotSrc);
-    }
-
-    /// <summary>黑帧换路②:换另一块显卡,用 ncnn 单对 -s 逐槽重算。
-    /// 【为什么必须是单对模式】实测教训(rife-ncnn-vulkan):目录模式【忽略 -s】,时间步只对
-    /// 单对 `-0/-1/-o` 生效;所以"任意时间步"在 ncnn 上唯一可靠的原语就是逐槽单对调用(每槽一次引擎进程)。
-    /// 也正因如此它只在 v4 架构模型上可用(v2 系模型加 -s 会被忽略 = 拿同样的帧白跑一遍),
-    /// 调用方已按 <see cref="AlhPro.Core.BlackFrameRecovery.Plan"/> 过滤。返回复查后仍为真缺陷的帧数。</summary>
-    private static async Task<int> NcnnResampleSlotsAsync(string rife, string interpModel, bool tta, int altGpu,
-        System.Collections.Generic.List<(int i, int j, double phi)> slots, string[] files, string[] slotSrc,
-        string outDir, IProgress<(int pct, string msg)>? progress, CancellationToken ct)
-    {
-        var inv = System.Globalization.CultureInfo.InvariantCulture;
-        var ttaArgs = tta ? (IsV4Model(interpModel) && interpModel == "rife-v4.26" ? "" : " -x -z") : "";
-        AppLogger.Warn($"⚠ 黑帧换路:换 GPU {altGpu}(另一块显卡)ncnn 单对 -s 逐槽重算 {slots.Count} 帧"
-            + "(每槽一次引擎进程;耗时会明显变长,用速度换不把黑帧交给成片)");
-        for (int k = 0; k < slots.Count; k++)
-        {
-            ct.ThrowIfCancellationRequested();
-            var (i, j, phi) = slots[k];
-            string outp = Path.Combine(outDir, $"slot_{j:D6}.png");
-            try
-            {
-                await RunAsync(rife,
-                    $"-0 \"{files[i]}\" -1 \"{files[i + 1]}\" -o \"{outp}\" -s {phi.ToString("0.####", inv)} "
-                    + $"-m {interpModel} -g {altGpu}{ttaArgs}{SafeRender.GetEngineThreadArgs()}",
-                    null, ct, "补帧").ConfigureAwait(false);
-                slotSrc[j] = outp;
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                // 逐槽失败:不改 slotSrc[j](它仍是那条坏路的输出)→ 后面的逐帧复查会把它算成缺陷,
-                // 于是这一路判为"没修好",由调用方决定换下一路还是失败。绝不静默换成别的帧。
-                AppLogger.Warn($"⚠ 黑帧换路(换卡)第 {j} 槽重算失败({ex.Message.Split('\n')[0]})");
-            }
-            if (((k + 1) & 0x1F) == 0 || k + 1 == slots.Count)
-                progress?.Report((40, $"⚠ 黑帧换路(换卡 GPU {altGpu}):已重算 {k + 1}/{slots.Count} 帧…"));
-        }
-        return VerifyReroutedSlots(slots, files, slotSrc);
-    }
-
-    /// <summary>换路重算后的【逐帧复查】:这批帧就是要交付的帧,所以默认【全查】(不抽样)。
-    /// 全查成本 = 每帧一次解码(1080p 约 15ms);只有槽数极大(&gt;4000)时才退回抽样计划,
-    /// 避免给已经出故障的任务再压上几分钟的纯解码时间(抽样口径与自检同一套,见 Core.DefectSampling)。
-    /// 返回仍为真缺陷的帧数;判据与自检一致:输出近黑【且】两端源帧都不是近黑(任一端近黑 = 素材黑场,放行)。</summary>
-    private static int VerifyReroutedSlots(System.Collections.Generic.List<(int i, int j, double phi)> slots,
-        string[] files, string[] slotSrc)
-    {
-        int[] plan = slots.Count <= 4000
-            ? System.Linq.Enumerable.Range(0, slots.Count).ToArray()
-            : AlhPro.Core.DefectSampling.Plan(slots.Count);
-        int bad = 0;
-        foreach (int k in plan)
-        {
-            var (i, j, _phi) = slots[k];
-            try
-            {
-                string f = slotSrc[j];
-                if (!File.Exists(f)) { bad++; continue; }            // 没产出 = 缺陷(与"0 帧防御"同口径)
-                if (!EngineService.IsBlackPngStrict(f)) continue;    // 只判真近黑:不把"没写完"当黑(见 IsBlackPngStrict 注释)
-                if (!AlhPro.Core.BlackFrameRecovery.IsRealDefect(true,
-                        EngineService.IsBlackPngStrict(files[i]), EngineService.IsBlackPngStrict(files[i + 1])))
-                    continue;                                        // 两端源帧都是黑场 = 内容本来就黑,不算故障
-                bad++;
-            }
-            catch { bad++; }   // 解码失败(0 字节/坏帧)同样算缺陷
-        }
-        return bad;
-    }
-
+    // 【2026-09-27 删除"黑帧换路重算"整套】原先这里四个成员:
+    //   RerouteBlackSlotsAsync(黑帧换路编排:ONNX 逐槽重算 → 换卡 ncnn 单对 -s 逐槽重算 → 全失败抛异常让任务失败)、
+    //   OnnxResampleSlotsAsync / NcnnResampleSlotsAsync(两条换路的实现)、VerifyReroutedSlots(换路后逐帧复查看还有没有黑帧)。
+    // 它们只服务"补帧输出检出黑帧"这一件事;事后判黑已按作者要求整体删除
+    // (作者反馈:素材里正常的黑色转场/淡入淡出/夜戏被判成黑帧 ⇒ 全片换路重算,ONNX 比 ncnn 慢一二十倍,
+    //  甚至整条任务按失败收尾)⇒ 这四个成员再没有任何调用方,一并删除。
+    // 代价(与 2026-09-16 补帧侧裁决同口径):补帧引擎真出黑帧时按原样采用、照旧写进成片 ——
+    // 事前兼容性判定(InterpSizePolicy.JudgeEngineRisk + 开跑前的尺寸/显卡预检)是唯一防线。
     /// <summary>【任务 S2 · 生产接线这半】算全片"逐对相邻源帧"的图像指标(帧差 + 拉普拉斯能量),
     /// 喂给 <see cref="AlhPro.Core.SceneCutJudge.Detect"/> 判场景硬切。
     /// 【为什么交给 ffmpeg 一条灰色 rawvideo 通道】逐帧用 GDI+ 解码采样要按帧付解码开销(几千帧就是几十秒);
@@ -8581,10 +8021,12 @@ public static class VideoService
     /// 总时长由调用方按"帧数 ÷ 源容器时长"标称(见 ProcessVideoAsync 的"帧率保险"),偏差 ≤ 半帧。
     /// 【落地方式】完全复用"补回(还原源时间轴)"那条路的既有层批并发结构(EngineService.InterpLayerBatchAsync),
     /// 只是把"槽位怎么排"换成上面这套 —— **没有**新写并发与降级链。
-    /// 【失败/黑帧】帧数不符、引擎检出黑帧 → 抛异常,由调用方清掉半成品并回退分段补帧(那里有完整降级链)。
+    /// 【失败】帧数不符 → 抛异常,由调用方清掉半成品并回退分段补帧(那里有完整降级链)。
+    /// 【2026-09-27】原先这里还有"引擎检出黑帧 → 抛异常回退分段补帧"一路,已随事后判黑整体删除
+    /// (素材黑色转场/夜戏会被判成黑帧 ⇒ 整段合成白做,作者反馈的"转 ONNX 超级慢"同源)。
     /// 【已知代价(照实写,不靠偷偷加锐化找补)】源里"本来静止"的缺口处会插出轻微软化(小样实测中位 ≈6%);
     /// 切点处由"糊一帧"变成"硬切两帧"——那是切点本身的性质,视觉上更对。</summary>
-    private static async Task<(int written, int cuts, int forcedCopies, bool anyBlack)> FlattenTimelineAsync(
+    private static async Task<(int written, int cuts, int forcedCopies)> FlattenTimelineAsync(
         string rife, string segSrcDir, string segOutDir,
         int frameCount, System.Collections.Generic.List<double>? frameDurs,
         AlhPro.Core.TimelineFlattenPlan.Plan plan, int gpuId, string interpModel, bool tta,
@@ -8635,13 +8077,13 @@ public static class VideoService
         AppLogger.Info($"平滑时间轴:排程 {outN} 槽(直接拷贝 {copySlots} 槽 / 引擎合成 {engineSlots.Count} 槽;"
             + $"其中因切点强制改拷贝 {forced} 槽);目标 {plan.TargetFps:0.##} fps、真实时长 {plan.TotalSeconds:0.###}s");
 
-        // ===== ④ 交给既有层批原语落盘(并发/降级/黑帧提示/临时目录清理都在那里)=====
+        // ===== ④ 交给既有层批原语落盘(并发/引擎缺帧兜底/临时目录清理都在那里)=====
         var res = await RunTempoResampleAsync(rife, segSrcDir, segOutDir, frameCount, plan.TargetFps,
             null, 1, plan.TargetFps, gpuId, plan.TotalSeconds, interpModel, tta, progress, ct,
             planSlots: engineSlots, planSlotSrc: slotSrc,
             slotsInPair: p => perPair.TryGetValue(p, out var c) ? c : 1,
             stageName: "平滑时间轴", preferFileCopyForJpgSlot: true).ConfigureAwait(false);
-        return (res.frameCount, cuts.Count, forced, res.anyBlack);
+        return (res.frameCount, cuts.Count, forced);
     }
 
     /// <summary>智能模式:自适应去重——不固定阈值,先算素材相邻帧差分布,再自动定"重复帧"分界。
@@ -9270,9 +8712,11 @@ public static class VideoService
     public static string LastBlackScanResult { get; private set; } = "";
 
     /// <summary>扫描【成片】里有没有"整片全黑"的片段,返回形如 "1.2s~1.6s、8.4s~8.9s" 的描述(无则空串)。
-    /// 【为什么必须有这一步】黑帧防线原先只覆盖"超分引擎输出"那一步(ConvertPngToJpg 时判 isBlack),
-    /// 而 **后处理阶段与编码阶段完全没有检测**。真实案例(用户 3070 Laptop · 花熏25.mp4):
-    /// 任务全程零 WARN、输出校验通过、用户却看到黑帧 —— 黑帧不管来自哪一步都无人发现、日志无痕。
+    /// 【只报数字,不参与任何判定 · 2026-09-27 作者口径确认保留】本方法的结果只写进日志与结算行,
+    /// 不改任何处理行为、不改交付内容(事后判黑那套"重跑/换路/回退源帧"已于 2026-09-27 整体删除)。
+    /// 【为什么必须有这一步】黑帧防线原先只覆盖"超分引擎输出"那一步,而 **后处理阶段与编码阶段完全没有检测**。
+    /// 真实案例(用户 3070 Laptop · 花熏25.mp4):任务全程零 WARN、输出校验通过、用户却看到黑帧 ——
+    /// 黑帧不管来自哪一步都无人发现、日志无痕。
     /// 做法:抽 6fps → 缩到 320 宽 → blackdetect,只为找"整片全黑",不必原分辨率逐帧,成本低一个数量级。
     /// 【阈值是实测选出来的,别随手改大】pic_th=0.98 要求 ≥98% 像素算"黑",配合 pix_th=0.05(亮度 &lt; 约 12.75/255)。
     /// 本机用捆绑 ffmpeg 实测对比:
@@ -9284,8 +8728,11 @@ public static class VideoService
     ///   成片如实复现,却每次都被当成"处理链产生的缺陷"并要求用户发日志给作者 ✗。
     ///   实测证据(成片 0s~0.396s ↔ 源 0s~0.417s;源 `YAVG=16`);另一条历史告警 `3s~3.17s` 换算到源时间
     ///   (那次区间起点 2.738s)正好落在源自带的 `5.755~5.881` 黑段上 ⇒ **同一个误报**。
-    ///   根因:流水线内部那条黑帧防线有"相邻源帧本来就黑就放行"的豁免(`BlackFrameRecovery.IsRealDefect`),
-    ///   **而输出端这条没有** ⇒ 两条防线口径不一致。
+    ///   根因:流水线内部那条黑帧防线当时有"相邻源帧本来就黑就放行"的豁免,**而输出端这条没有**
+    ///   ⇒ 两条防线口径不一致。
+    ///   【2026-09-27 更新】流水线内部那条防线(判黑 → 重跑/换路/回退源帧,判据曾是
+    ///   `AlhPro.Core.BlackFrameRecovery.IsRealDefect`)已按作者要求整体删除 ⇒ 现在**只剩输出端这一条**
+    ///   留痕口径,不存在"两条口径不一致"的问题。
     ///   现在:每处成片黑段都去**源片同位置**探一帧亮度,源片那里也黑 ⇒ 不算缺陷(只在对账行里计数)。
     ///   ⚠ 探不到、探测失败、没传源片 ⇒ **一律照旧报**(宁可多报,不可漏报是这条防线的底线)。
     /// 【时间轴怎么对得上】本工程有硬不变量:输出时长恒 = 原处理时长(结算行每次都核对"成片容器 vs 源容器");
@@ -9354,7 +8801,7 @@ public static class VideoService
                 {
                     AppLogger.Info($"输出端黑场自检:成片 {exempt} 处黑段在**源片同一时刻也是黑的** ⇒ 判定为源自带的黑场"
                         + $"(淡入淡出/夜戏/转场),不再当缺陷上报;剩下 {kept.Count} 处需你核对。"
-                        + "口径与流水线内部那条黑帧防线一致(它一直有'相邻源帧本来就黑就放行'的豁免)。");
+                        + "这是**只报数字**的留痕口径:流水线内部那套事后判黑/换路已于 2026-09-27 按作者要求删除。");
                 }
                 segRanges = kept;
             }
