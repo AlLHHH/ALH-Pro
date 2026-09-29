@@ -11,7 +11,7 @@ ALH Pro 是一款**本地图片/视频处理桌面应用**(WinUI 3 / .NET 8 / x6
 
 - **代码路径**:`D:\deep\alh-pro`(工作目录就是这个;注意运行/发布版在 `D:\deep\alh-pro\发布版`)
 - **GitHub**:https://github.com/AlLHHH/ALH-Pro(远程 `origin`)
-- **当前版本**:v1.3.2(`ImgUpscalerUI\ImgUpscalerUI.csproj` 的 `<Version>1.3.2</Version>`;发布版 exe FileVersion `1.3.2.0`)
+- **当前版本**:v1.4.4(`ImgUpscalerUI\ImgUpscalerUI.csproj` 的 `<Version>1.4.4</Version>`;发布版 exe FileVersion `1.4.4.0`)
 
 ### 四大功能板块
 | 板块 | 功能 | 引擎 |
@@ -118,7 +118,7 @@ ALH Pro 是一款**本地图片/视频处理桌面应用**(WinUI 3 / .NET 8 / x6
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 ```
-作用:①`dotnet publish -c Release -p:Platform=x64`(自包含,带 .NET 运行时);②同步到 `发布版\`(排除 engines);③启动验证(窗口标题 = "ALH Pro v1.3.2")。
+作用:①`dotnet publish -c Release -p:Platform=x64`(自包含,带 .NET 运行时);②同步到 `发布版\`(排除 engines);③启动验证(窗口标题 = "ALH Pro v1.4.4")。
 ⚠️ 别从 bin\Debug 拷(缺 .NET 运行时,双击报 "must install .NET")。
 
 ### 2. 版本号一致性
@@ -194,7 +194,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 
 ## 九、当前发布版状态
 
-- `发布版\ALHPro.exe` = v1.3.2.0,最近 deploy 时间含前面大部分改动。
+- `发布版\ALHPro.exe` = v1.4.4.0,最近 deploy 时间含前面大部分改动。
 - `发布版\engines\rife\rife-v4.26` **已删除**。
 - 【2026-09-16】补帧下拉**精简为 2 项**(序号 0 = `通用画质最新 (RIFE v4.13)`、1 = `通用画质 (RIFE v4.6)`)。
   另 4 支老架构模型的权重(`rife-anime` / `rife-HD` / `rife-UHD` / `rife-v2.3`,共 226.9 MB)

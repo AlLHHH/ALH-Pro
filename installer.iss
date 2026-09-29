@@ -12,7 +12,7 @@
 ;   不勾选 = 之后手动下载模型包,解压到 程序目录\engines\rembg\ 即可。
 
 #define MyAppName "ALH Pro"
-#define MyAppVersion "1.4.3"
+#define MyAppVersion "1.4.4"
 #define MyAppExeName "ALHPro.exe"
 ; 【构建时间戳】(ISPP 在编译时求值):用于让用户一眼分辨"同名同版本的不同构建"。
 ; 起因:同一个 1.3.4 出了多次安装包,名字完全一样、大小只差几十 MB,用户无法确认手上是哪一个。
@@ -22,14 +22,16 @@
 ; 见 打包工具\模型包打包说明.md 的"版本变更"),所以必须随本次 release 一起换名换版本;
 ; 它**必须指向一个真实存在的
 ; Release 附件**,否则"下载并安装模型包"必然 404(历史上曾被迫指向 v1.3.3,因为 v1.3.4 没建 Release)。
-; 现在 v1.4.3 的 tag 与 Release 必须**先**建好、并把 models_v1.1.zip 作为附件传上去 → 本行才指向 v1.4.3。
+; 现在 v1.4.4 的 tag 与 Release 必须**先**建好、并把 models_v1.1.zip 作为附件传上去 → 本行才指向 v1.4.4。
 ; ⚠ 上传顺序不能反:先传附件、再传安装包;否则用户点"下载模型包"必然 404。
 ; 【维护备注】以后发新版:①先建 Release 并上传 models_v1.1.zip 附件 → ②再把本行改成新版本号;
 ; 顺序反了会让新包里的"下载模型包"404。
 ; 【2026-09-13】v1.3.6 的 Release 尚未发布(tag 已按要求删除)→ 直链必须指向【真实存在】的 Release,
-; 否则"下载并安装模型包"必然 404。现指向 v1.4.3。
+; 否则"下载并安装模型包"必然 404。现指向 v1.4.4。
 ; 等 v1.3.6 的 Release 建好并上传附件后,把本行改回 v1.3.6。
-#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.3/models_v1.1.zip"
+; 【2026-09-29 改指 v1.4.4】v1.4.4 的 tag / Release 建好、并把 models_v1.1.zip 挂成附件后,本行随之指到 v1.4.4
+; (模型包内容仍是 v1.1,文件名不变)。
+#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.4/models_v1.1.zip"
 #define ModelsFile "models_v1.1.zip"
 ; 完整版(含模型,网盘/整包)说明:安装完成后可到软件内「使用教程」或 GitHub 说明页找完整版直链
 
