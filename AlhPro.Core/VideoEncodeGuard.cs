@@ -236,6 +236,19 @@ public static class VideoEncodeGuard
             || encoder.Contains("qsv", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>H.264(各家硬编都算)的**实测尺寸上限**:任一边超过它就编不出来。
+    /// 【实测出处 · 2026-09-29 用户诊断包】AMD RX 9070 XT + `h264_amf`:2880×2160 那趟一次通过,
+    /// 而 2880×2160 **×2 超分 = 5760×4320** 时引擎直接 `Task finished with error: Invalid argument`
+    /// (exit -558323010)—— 这是 H.264 的硬上限(RDNA 的 VCN 上 H.264 最大 4096,HEVC 可到 8192),
+    /// **不是参数写错**:同一台机器、同一个编码器,≤4096 完全正常。
+    /// ⇒ 计划输出任一边超过它时,**只能**用 HEVC(同厂商的 hevc_*);继续用 h264_* 是确定失败。</summary>
+    public const int H264MaxDimension = 4096;
+
+    /// <summary>计划输出尺寸是否超过 H.264 的实测上限(见 <see cref="H264MaxDimension"/>)。
+    /// 任一边 ≤0(尺寸未知)时返回 false —— 不许在尺寸未知时乱改编码器。</summary>
+    public static bool ExceedsH264Limit(int width, int height)
+        => width > H264MaxDimension || height > H264MaxDimension;
+
     /// <summary>换编码器的**候选链**(按顺序;只含本机**实测可用**的硬编,且不含 <paramref name="current"/>)。
     /// 【顺序判据(1527 那台的真实需求)】
     ///   ① **同厂商另一档**:`h264_qsv` 打不开 ⇒ 先试 `hevc_qsv`(同一块核显的另一套编码器,

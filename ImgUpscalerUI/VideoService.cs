@@ -852,7 +852,7 @@ public static class VideoService
             // 【B/C】1 帧真实参数预检:用计划尺寸+标称帧率+真实编码参数真编 1 帧;
             // "打不开编码器"就换本机另一个**实测可用硬编**(候选链,日志写清"换用 X"),换完仍不行就停在这里。
             // 返回值 = 本次**实际要用**的编码器(可能已经被换过),下面编码阶段直接用这个,不再重新挑一次。
-            encoderFromPreflight = await PreflightEncodeOrThrowAsync(ffmpeg, PickVideoEncoder(gpuId, codecPref), codecPref,
+            encoderFromPreflight = await PreflightEncodeOrThrowAsync(ffmpeg, PickVideoEncoder(gpuId, codecPref, plannedOutW, plannedOutH), codecPref,
                 quality, customBitrateMbps > 0 ? customBitrateMbps * 1000 : 0, plannedOutW, plannedOutH, plannedNominalFps, ct);
 
             // 2) 拆帧(可选去重 + 裁剪)
@@ -4086,7 +4086,9 @@ public static class VideoService
             await EnsureHwProbeAsync(ffmpeg, ct);
             // 【2026-09-30 · t64 B/C】编码器**已经**在拆帧前选定(见上面那次参数级预检):这里不再重新挑一次,
             // 否则"预检时换成了 hevc_qsv"这条结论会在编码阶段被丢掉(又用回打不开的那一个)。
-            var encoder = encoderFromPreflight ?? PickVideoEncoder(gpuId, codecPref);
+            // 【2026-09-29】这里也要把计划输出尺寸带进去:预检没跑成(或没选到)时,这里的选择同样必须遵守
+            // "超过 H.264 上限(4096)就只能走 HEVC" —— 否则会在编码阶段才失败。
+            var encoder = encoderFromPreflight ?? PickVideoEncoder(gpuId, codecPref, plannedOutW, plannedOutH);
             // 【编码最优解·解码侧】硬编生效时,瓶颈会从编码器转到"软件解码 JPG 序列"(4K 实测 ≈39.6 fps)。
             // ⚠【2026-09-13 真机基准:**旧性能数字已无法复现,勿再引用**】这里原来写「NVDEC 实测 4595 fps、
             // 端到端 +52%」—— 本机同条件重测是 **cuvid 192.68 fps vs 软解 193.99 fps(硬解无收益)**,
@@ -6433,8 +6435,10 @@ public static class VideoService
     }
 
     /// <summary>按"实测可用"自适应选视频压缩编码器:优先厂商匹配的硬编,其次任一可用硬编,最后 libx264。
-    /// codecPref:0=自动(H.264 优先) 1=强制 H.264 2=优先 H.265(hevc,更省空间,老设备可能播不了)。</summary>
-    internal static string PickVideoEncoder(int gpuId, int codecPref = 0)
+    /// codecPref:0=自动(H.264 优先) 1=强制 H.264 2=优先 H.265(hevc,更省空间,老设备可能播不了)。
+    /// outWidth/outHeight:本次任务的**计划输出尺寸**;任一边超过 H.264 硬上限(4096)时只能走 HEVC
+    /// (2026-09-29 用户诊断包实测:h264_amf 在 5760×4320 直接 Invalid argument)——见方法内注释。</summary>
+    internal static string PickVideoEncoder(int gpuId, int codecPref = 0, int outWidth = 0, int outHeight = 0)
     {
         // 按引擎真实 -g 编号取显卡名选硬件编码器;不能用注册表顺序索引(AMD 核显+NVIDIA 独显双卡机上顺序相反)。
         var name = GpuInfo.GetEngineDeviceName(gpuId);
@@ -6467,6 +6471,21 @@ public static class VideoService
                 chosen = WorkingHwEncoders.First(e => e.StartsWith("h264", StringComparison.OrdinalIgnoreCase) && e != "h264_qsv");
             else if (WorkingHwEncoders.Contains("h264_qsv")) chosen = "h264_qsv";
             else chosen = "libx264";
+
+            // 【2026-09-29 · 按尺寸选编码器(用户诊断包)】计划输出任一边 > H.264 上限(4096)时,上面任何 H.264 结论都
+            // **物理上编不了**(实测 h264_amf 在 5760×4320 直接 Invalid argument;同一台机器 2880×2160 完全正常)
+            // ⇒ 改走 HEVC:先厂商 hevc_*(qsv 那一档也接受 —— 总比确定失败强),再本机任一实测可用的 hevc。
+            // ⚠ 这里**故意不看** WorkingHwEncoders 有没有认证过厂商 HEVC:探测是"用生产参数编一小帧",
+            //   探测没过 ≠ 这个尺寸编不了;而 h264 在这个尺寸是**确定**编不了 ⇒ 让开跑前那次参数级预检
+            //   用真参数试一次 hevc 才是正解(它失败会如实报错,不会白跑几十分钟)。
+            if (AlhPro.Core.VideoEncodeGuard.ExceedsH264Limit(outWidth, outHeight)
+                && !chosen.StartsWith("hevc", StringComparison.OrdinalIgnoreCase))
+            {
+                string? forcedHevc = hevcVendor.Length > 0
+                    ? hevcVendor
+                    : WorkingHwEncoders.FirstOrDefault(e => e.StartsWith("hevc", StringComparison.OrdinalIgnoreCase));
+                if (!string.IsNullOrEmpty(forcedHevc)) chosen = forcedHevc;
+            }
         }
         bool isCpu = chosen is "libx264" or "libx265";
         bool isHevc = chosen.StartsWith("hevc", StringComparison.OrdinalIgnoreCase) || chosen == "libx265";
@@ -6477,6 +6496,10 @@ public static class VideoService
             && chosen != (codecPref == 2 ? hevcVendor : h264Vendor))
             LastVideoEncoderInfo += $" — 厂商编码器不可用,改用 {chosen}";
         if (isHevc) LastVideoEncoderInfo += " (H.265 更省空间;极老设备可能无法播放)";
+        // 【2026-09-29】按尺寸改走 HEVC 时把原因写进这行(用户与排查者都要看得见为什么不是 H.264)
+        if (!isCpu && AlhPro.Core.VideoEncodeGuard.ExceedsH264Limit(outWidth, outHeight))
+            LastVideoEncoderInfo += $" — 输出 {outWidth}×{outHeight} 超过 H.264 上限 "
+                + $"{AlhPro.Core.VideoEncodeGuard.H264MaxDimension},已按尺寸改用 HEVC";
         return chosen;
     }
 
