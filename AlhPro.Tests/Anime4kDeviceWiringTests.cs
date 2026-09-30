@@ -53,7 +53,8 @@ public class Anime4kDeviceWiringTests
         Assert.Contains("if (anime4k1x)", code);
         Assert.Contains("EngineService.Anime4kVulkanDeviceIndex is int ai ? AlhPro.Core.Anime4kVulkanDevice.DeviceArgs(ai) : \"\"", code);
         // 全局选项位置:拼在 muxBase 的 -y 之后、序列输入 -i 之前
-        Assert.Contains("var muxBase = $\"-y {animeDevArgs}{muxInput} {trimArgs} -i \\\"{inputVideo}\\\" \";", code);
+        // 【2026-09-30】合帧命令在「序列输入 -i」之前多了一个 {audioShiftArgs}(音画对齐的 -itsoffset,见 AudioOffsetArgsTests)—— 本条契约(设备参数位置)不变。
+        Assert.Contains("var muxBase = $\"-y {animeDevArgs}{muxInput} {trimArgs} {audioShiftArgs}-i \\\"{inputVideo}\\\" \";", code);
         // 抽样实测链(编码阶段拆分)也要带,否则"抽样的滤镜路径 ≠ 真实合帧的滤镜路径"
         Assert.Contains("if (chain.Contains(\"libplacebo\", StringComparison.OrdinalIgnoreCase))", code);
         Assert.Contains("$\"-nostdin -y -v error {devArgs}{hw}-framerate {fpsArg} \"", code);

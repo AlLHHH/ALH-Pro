@@ -249,6 +249,19 @@ public static class VideoEncodeGuard
     public static bool ExceedsH264Limit(int width, int height)
         => width > H264MaxDimension || height > H264MaxDimension;
 
+    /// <summary>【2026-09-30 修 · 音画不同步】由「源视频流的 start_time」算出给**音频输入**的 `-itsoffset`。
+    /// 背景:画面来自 JPG 序列(PTS 从 0 开始),而音频保留源素材自己的起始时间
+    /// ⇒ 源视频流的 start_time ≠ 0 时(剪映/手机导出很常见),两者就差这一个 start_time
+    /// ⇒ **固定偏移的音画不同步**,而软件原有自检只比「时长」(31.04 = 31.04)看不见它。
+    /// 用 `-itsoffset`(输入级参数)而不用 `asetpts`/`atrim`:**滤镜与 `-c:a copy` 互斥**
+    /// (ffmpeg 会直接报错),会把“能原样复制音轨”的机器逼成重编码。
+    /// 1ms 以内视为 0(返回空串):常见 MP4 的 start_time 就是 0,这条改动对它们是**零操作**。</summary>
+    public static string AudioOffsetArgs(double videoStartSeconds)
+    {
+        if (!double.IsFinite(videoStartSeconds) || Math.Abs(videoStartSeconds) < 0.001) return "";
+        return " -itsoffset -" + videoStartSeconds.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     /// <summary>换编码器的**候选链**(按顺序;只含本机**实测可用**的硬编,且不含 <paramref name="current"/>)。
     /// 【顺序判据(1527 那台的真实需求)】
     ///   ① **同厂商另一档**:`h264_qsv` 打不开 ⇒ 先试 `hevc_qsv`(同一块核显的另一套编码器,

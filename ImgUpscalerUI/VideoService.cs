@@ -4007,7 +4007,39 @@ public static class VideoService
                 }
                 catch (Exception ex) { AppLogger.Warn("1x 修复:解析 Vulkan 设备索引失败,按默认设备继续:" + ex.Message); }
             }
-            var muxBase = $"-y {animeDevArgs}{muxInput} {trimArgs} -i \"{inputVideo}\" ";
+            // 【2026-09-30 修 · 音画不同步】画面来自 JPG 序列(PTS 从 0 开始),音频却保留源素材自己的起始时间:
+            // 源视频流的 start_time ≠ 0(剪映/手机导出很常见)时两者就差这一个 start_time ⇒ **固定偏移的音画不同步**;
+            // 原有自检只比【时长】,看不见它。这里用输入级 `-itsoffset` 把音频整体前移同样时间
+            // (输入级参数 ⇒ `-c:a copy` 也能用;1ms 以内视为 0 = 零操作,见 VideoEncodeGuard.AudioOffsetArgs)。
+            async Task<double> ProbeSrcVideoStartAsync(string path)
+            {
+                try
+                {
+                    var fp2 = FindFfprobe();
+                    if (fp2 == null) return 0;
+                    var ls = await RunCaptureAsync(fp2, "-v error -select_streams v:0 -show_entries stream=start_time "
+                        + "-of default=nw=1:nk=1 \"" + path + "\"", CancellationToken.None);
+                    foreach (var ln in ls)
+                    {
+                        var s2 = ln.Trim();
+                        if (double.TryParse(s2, System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out var d2) && double.IsFinite(d2))
+                            return d2;
+                    }
+                }
+                catch { }
+                return 0;
+            }
+            string audioShiftArgs = "";
+            try
+            {
+                double srcVStart = await ProbeSrcVideoStartAsync(inputVideo);
+                audioShiftArgs = AlhPro.Core.VideoEncodeGuard.AudioOffsetArgs(srcVStart);
+                if (audioShiftArgs.Length > 0)
+                    AppLogger.Info($"音画对齐:源视频流 start_time={srcVStart:0.######}s ⇒ 音频整体前移同样时间({audioShiftArgs.Trim()})");
+            }
+            catch (Exception ex) { AppLogger.Warn("音画对齐:读源 start_time 失败,按 0 处理:" + ex.Message.Split('\n')[0]); }
+            var muxBase = $"-y {animeDevArgs}{muxInput} {trimArgs} {audioShiftArgs}-i \"{inputVideo}\" ";
             // ===== 【2026-09-23 测试缝 + 分段合帧选择】=====
             // `ALH_TEST_SEGMENT_FRAMES=<n>`：强制按 n 帧/段做分段合帧（**仅自动化自验**；不设时零副作用）。
             // 与 ALH_TEST_VIDEO / ALH_TEST_KEEP_BAR 同一套纪律：只认环境变量、进程内读一次。
