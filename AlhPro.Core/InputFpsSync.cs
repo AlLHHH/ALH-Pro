@@ -43,6 +43,22 @@ public static class InputFpsSyncPolicy
 /// 全都无效 → 返回 null,调用方留空(= 处理时按该视频自动探测,语义正确)。</summary>
 public static class FfprobeFps
 {
+    /// <summary>【2026-09-30 · VFR「输入帧率翻倍」的真凶,以及它引发的音画不同步】
+    /// 从 ffprobe **带标签**输出里取"该拿哪个帧率当输入帧率":**优先 avg_frame_rate**
+    /// (= 总帧数 ÷ 时长,才是"一秒里真正有多少帧"),取不到才退回 r_frame_rate(容器**最大**帧率)。
+    ///
+    /// 【为什么必须优先 avg】VFR 素材(录屏/手机视频)上 r 是**峰值**:实测一个 30fps 的 VFR 被报成 60
+    /// ⇒ 输入帧率**翻倍**(用户反馈"可变帧率放进去输入帧率会 x2")。
+    /// 【为什么以前会取错】调用方当时用 `-of csv=p=0` 位置解析,而 **ffprobe 的 csv writer 按内部字段序输出、
+    /// 忽略 `-show_entries` 的请求序**:随包 ffprobe 实测 `show_streams` 与 `-of json` 都是
+    /// **r_frame_rate 在前、avg_frame_rate 在后** ⇒ 位置解析(取第一个有效值)拿到的其实是 r_frame_rate。
+    /// 库内别处早有这条教训(见 <see cref="ProbeFields"/> 头部注释),这个入口当时漏改。
+    /// 【为什么它还会导致音画不同步】输入帧率会喂给编码的 `-framerate`:报高一倍 ⇒ 成片按 2 倍速编出来,
+    /// 而音频是原速复制 ⇒ **音画不同步**(2026-09-30 用户反馈的两条其实是同一个根因)。</summary>
+    public static double? PreferAverageFps(string? labeledRaw)
+        => ProbeFields.FpsField(labeledRaw ?? "", "avg_frame_rate")
+           ?? ProbeFields.FpsField(labeledRaw ?? "", "r_frame_rate");
+
     /// <summary>把 ffprobe 的帧率输出解析成"可显示、可被 double.TryParse"的数字文本;拿不到有效值返回 null。
     /// 接受:多行 / 逗号分隔(ffprobe `-of csv=p=0` 多字段就输出逗号分隔)/ 单值;
     /// 形态:`30/1`、`30000/1001`、`29.97`、`0/0`(跳过)、`N/A`(跳过)、空(返回 null)。</summary>

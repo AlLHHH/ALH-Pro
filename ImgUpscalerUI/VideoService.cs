@@ -239,8 +239,13 @@ public static class VideoService
                 // 【任务 P】同时取 avg_frame_rate 与 r_frame_rate:VFR 素材的 avg 实测可能是 `0/0`
                 // (旧实现这时会把 "0/0" 原样返回 → 输入框里显示非数字),解析交给 Core.FfprobeFps(纯逻辑 + 单测):
                 // avg 无效就自动看 r(容器最大帧率),两个都无效才返回 null(= 留空,处理时按该视频自动探测)。
+                // 【2026-09-30 修 · VFR「输入帧率 x2」+ 音画不同步】必须是**带标签**输出 + 按 key 取:
+                //   以前这里用 `-of csv=p=0` 位置解析,而 ffprobe 的 csv 按【内部字段序】输出、忽略请求序
+                //   (实测 show_streams / -of json 都是 r_frame_rate 在前、avg_frame_rate 在后)⇒ 位置解析取到的
+                //   其实是 r(容器**最大**帧率):VFR 素材 30fps 被报成 60 ⇒ 输入帧率翻倍;而输入帧率又喂给编码的
+                //   `-framerate` ⇒ 成片按 2 倍速编出来、音频原速复制 ⇒ 音画不同步。现在优先 avg(见 PreferAverageFps)。
                 var psi = AudioService.NewFfmpegPsi(ffprobe, $"-v error -select_streams v:0 " +
-                                $"-show_entries stream=avg_frame_rate,r_frame_rate -of csv=p=0 \"{videoPath}\"");
+                                $"-show_entries stream=avg_frame_rate,r_frame_rate -of default=nw=1:nk=0 \"{videoPath}\"");
                 psi.RedirectStandardOutput = true;
                 psi.RedirectStandardError = true;
                 using var p = Process.Start(psi);
@@ -248,8 +253,9 @@ public static class VideoService
                 var o = p.StandardOutput.ReadToEnd().Trim();
                 if (o.Length > 0)
                 {
-                    var parsed = AlhPro.Core.FfprobeFps.Parse(o);
-                    if (parsed != null) return parsed;
+                    var fps = AlhPro.Core.FfprobeFps.PreferAverageFps(o);
+                    if (fps is > 0 && double.IsFinite(fps.Value))
+                        return fps.Value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
                 }
             }
             catch { }
