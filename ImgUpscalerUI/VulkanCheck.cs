@@ -43,11 +43,69 @@ public static class VulkanCheck
         return null;
     }
 
+    /// <summary>枚举并发保护:启动自检 / DML 探测兜底 / Recheck 会从不同线程拉起 RunOnce。
+    /// 以前没有锁,两个线程会互踩 <see cref="Devices"/> 的 Clear()/AddRange(),
+    /// 出现"一张卡都枚举不到"的空窗口 —— 正是 2026-10-02 让 DML 探测拿空表去猜编号的土壤。</summary>
+    private static readonly object _runLock = new();
+
+    /// <summary>最近一次"补枚举"尝试的 TickCount64,10 秒内不重复拉起引擎(无 GPU 机器不至于每次都跑一遍)。</summary>
+    private static long _lastEnsureTicks;
+
+    /// <summary>本进程内是否真的跑过一次引擎设备枚举(用于区分"没跑过"与"跑过但没有设备"——
+    /// 后者不该被反复重试,否则无 GPU 机器每次调用都会再拉起一个引擎进程)。</summary>
+    private static volatile bool _engineRan;
+
+    /// <summary>
+    /// 确保设备表 <see cref="Devices"/> 已填充(返回 true = 有内容)。
+    /// 已有内容立即返回;否则现场补一次枚举并最多等 <paramref name="timeoutMs"/> 毫秒。
+    ///
+    /// 【为什么需要它】缓存命中时 <see cref="LoadOrRun"/> 只回填 GpuAvailable/Report,
+    /// Devices 一直是空的;而设备映射 / DirectML 探测只认 Devices ——
+    /// 空表会让"设置里存的旧编号"被当作合法 DirectML 设备号(2026-10-02 事故的入口)。
+    /// </summary>
+    public static bool EnsureEnumerated(int timeoutMs = 1500)
+    {
+        if (Devices.Count > 0) return true;
+
+        // 已经在本线程的枚举过程里(Monitor 可重入):不能再往里套一层枚举,直接如实回答。
+        if (System.Threading.Monitor.IsEntered(_runLock)) return Devices.Count > 0;
+
+        long now = Environment.TickCount64;
+        if (!_engineRan && now - System.Threading.Interlocked.Read(ref _lastEnsureTicks) > 10_000)
+        {
+            System.Threading.Interlocked.Exchange(ref _lastEnsureTicks, now);
+            try { AppLogger.Info("Vulkan 自检:设备表为空(缓存命中或尚未枚举),现场补一次引擎设备枚举"); } catch { }
+            System.Threading.Tasks.Task.Run(() => { try { Done = false; RunOnce(); } catch { } });
+        }
+
+        var sw = Stopwatch.StartNew();
+        while (Devices.Count == 0 && sw.ElapsedMilliseconds < timeoutMs)
+            System.Threading.Thread.Sleep(40);
+
+        try
+        {
+            if (Devices.Count > 0) AppLogger.Info($"Vulkan 自检:补枚举成功,枚举到 {Devices.Count} 个 Vulkan 设备");
+            else AppLogger.Warn("⚠ Vulkan 自检:补枚举后仍未枚举到任何 Vulkan 设备(显卡被禁用/驱动异常/引擎不支持)");
+        }
+        catch { }
+        return Devices.Count > 0;
+    }
+
     /// <summary>后台执行自检(启动时调用一次;结果写入 AppSettings 缓存)。</summary>
     public static void RunOnce()
     {
-        if (Done) return;
-        Done = true;
+        lock (_runLock)
+        {
+            if (Done) return;
+            Done = true;
+            RunOnceCore();
+        }
+    }
+
+    /// <summary>自检主体(调用方须已持有 _runLock 并已把 Done 置位)。</summary>
+    private static void RunOnceCore()
+    {
+        _engineRan = true;
         try
         {
             var exe = FindWaifu2x();
@@ -496,6 +554,29 @@ public static class VulkanCheck
             try { AppLogger.Info("GPU→DirectML 映射对照:" + EngineService.DescribeDmlMapping()); } catch { }
         }
         catch { /* 对照日志失败不影响主报告 */ }
+
+        // ===== 注册表里看得见、两套枚举里都不见了:2026-10-02 事故的核心症状,必须写进报告 + 日志 =====
+        // 真机:注册表仍有 RTX 5060,NVIDIA 却从 Vulkan 引擎枚举与 DXGI(DirectML)枚举里同时消失;
+        // 旧版本于是把设置里存的旧编号原样当 DirectML 设备号 → 落到软件适配器 → 整机退化 CPU。
+        try
+        {
+            var dxgiNames = new System.Collections.Generic.List<string>();
+            try { foreach (var a in EngineService.HardwareDxgiAdapters()) dxgiNames.Add(a.Name); } catch { }
+            var engineNames = new System.Collections.Generic.List<string>();
+            foreach (var (_, n) in devices) engineNames.Add(n);
+            var missing = AlhPro.Core.GpuVisibility.MissingFromEnumerations(regNames, engineNames, dxgiNames);
+            if (missing.Count > 0)
+            {
+                int? problemCode = null;
+                try { problemCode = GpuStatusProbe.ProblemCodeOf(missing[0]); } catch { }
+                AppLogger.Warn(AlhPro.Core.GpuVisibility.DescribeMissingGpu(missing[0], problemCode));
+                sb.Append("⚠ 显卡可用性异常:").Append(missing[0])
+                  .Append(" 在系统设备表里能看到,但 Vulkan 引擎与 DirectML(DXGI)枚举里都没有它 —— ")
+                  .Append(AlhPro.Core.GpuVisibility.ExplainProblemCode(problemCode))
+                  .Append("。若它就是你要用的卡,请按上面的处置步骤处理(设备管理器启用/重装驱动、切换笔记本 GPU 模式、或先改用另一张能看到的卡)\n");
+            }
+        }
+        catch { }
 
         // 显卡驱动版本(NVIDIA/AMD/Intel 都从注册表读,与显卡同序)
         try

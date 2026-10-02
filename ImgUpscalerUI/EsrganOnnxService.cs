@@ -585,6 +585,18 @@ public static class EsrganOnnxService
     private static int ResolveProbeDmlDevice(out string why)
     {
         var tried = new System.Collections.Generic.List<string>();
+        // ⓪ 【2026-10-02 事故修复】表为空必须先现场补一次引擎枚举再解析:
+        //    引擎设备表为空时,设置里存的【旧编号】没有任何身份信息可以校验(见 EngineService.ToDmlDevice),
+        //    旧实现就是在这个窗口把陈旧编号 1 当成 DirectML #1 = Microsoft Basic Render Driver(软件适配器),
+        //    建会话报 C0262002「指定的显示适配器无效」→ 直接判「DirectML 不可用」→ 整机落 CPU,
+        //    而真正能用的硬件卡(DXGI#0)一次都没被试过。这里先等一次枚举,把"空表"这个窗口关掉。
+        if (VulkanCheck.Devices.Count == 0)
+        {
+            bool got = VulkanCheck.EnsureEnumerated(1500);
+            AppLogger.Info(got
+                ? "DirectML 探测:引擎设备表为空,已现场补一次枚举(成功)再解析映射目标"
+                : "DirectML 探测:引擎设备表为空,现场补枚举后仍无设备(引擎没枚举到任何 Vulkan 设备)");
+        }
         // ① 设置里的计算设备(用户选择优先;无效编号由 ResolveDmlDevice 内部兜底到推荐独显)
         try
         {
@@ -620,6 +632,24 @@ public static class EsrganOnnxService
             }
         }
         catch (Exception ex) { tried.Add("引擎映射解析异常:" + ex.GetType().Name); }
+        // ③ 【新增·2026-10-02】引擎设备表里没有可用独显(独显被禁用/驱动异常/笔记本切到仅核显模式,
+        //    或本进程还没枚举出设备)→ 退到 DXGI 硬件适配器里挑一张能用的(绝不含软件适配器)。
+        //    这是"全修"要求里的降级路径:目标卡不可用时宁可降级到另一张【硬件】GPU 并明确留痕,
+        //    也不要静默让整机落 CPU;若只能降级到核显,会显式 Warn(用户可在设置里改回 CPU)。
+        try
+        {
+            int fb = EngineService.PickFallbackDmlDevice(out var fbWhy);
+            if (fb >= 0)
+            {
+                why = $"指定的独显不可用,已降级使用其它硬件 GPU → DirectML #{fb}({fbWhy})";
+                AppLogger.Warn("⚠ DirectML 探测:" + why
+                    + ";常见原因:独显被禁用(设备管理器代码 22)/驱动异常(代码 43)/笔记本被切到「仅核显/Eco 省电」模式。"
+                    + "如不想用核显,可在设置里把「计算设备」改成 CPU。");
+                return fb;
+            }
+            tried.Add("DXGI 硬件适配器兜底:" + fbWhy);
+        }
+        catch (Exception ex) { tried.Add("DXGI 兜底异常:" + ex.GetType().Name); }
         why = string.Join(";", tried);
         return -1;
     }
@@ -670,11 +700,19 @@ public static class EsrganOnnxService
             int ok = TryProbeDmlDevice(model, target, out var fail);
             if (ok < 0)
             {
-                // 目标设备建不出会话:退到"引擎映射表里第一个独显"再试一次(若与目标不同)
+                // 目标设备建不出会话:退到"引擎映射表里第一个独显"再试一次(若与目标不同)。
+                // 【2026-10-02 修复】引擎表里没有独显时(独显被禁用/未被枚举),再退到 DXGI 硬件适配器兜底 ——
+                // 否则这台机器会从"目标卡不可用"直接跳到"DirectML 完全不可用 → 整机 CPU"。
                 int second = FirstDiscreteDmlDevice();
+                string secondWhy = "引擎映射表里第一个独显";
+                if (second < 0 || second == target)
+                {
+                    int fb = EngineService.PickFallbackDmlDevice(out var fbWhy);
+                    if (fb >= 0 && fb != target) { second = fb; secondWhy = "DXGI 硬件适配器兜底(" + fbWhy + ")"; }
+                }
                 if (second >= 0 && second != target)
                 {
-                    AppLogger.Warn($"⚠ DirectML 探测:目标设备 #{target} 建会话失败,再试引擎映射表里第一个独显 → DirectML #{second}");
+                    AppLogger.Warn($"⚠ DirectML 探测:目标设备 #{target} 建会话失败,再试{secondWhy} → DirectML #{second}");
                     ok = TryProbeDmlDevice(model, second, out var fail2);
                     if (ok < 0) _dmlUnavailableReason = $"{fail} ; 兜底设备 #{second}:{fail2}";
                     else { _dmlFirstOk = ok; _dmlUnavailableReason = ""; }
@@ -778,12 +816,34 @@ public static class EsrganOnnxService
     }
 
     /// <summary>DirectML 不可用时的一次性明确提示(避免"静默掉 CPU → 慢几倍 → 以为不能用")。
-    /// 常见于 RTX 50 系(Blackwell)但驱动较旧、或 AMD/Intel 驱动不完整。</summary>
+    /// 【2026-10-02 事故修复】原文案一口咬定"建议更新显卡驱动(50 系需较新驱动)";而真机诊断包里
+    /// 驱动本来就是最新的、显卡驱动状态也正常,只是【没被引擎/DXGI 枚举到】—— 这句话把用户引向了
+    /// 错误的处置方向。现在:①只陈述事实(在哪个设备上建会话失败了);②若注册表里看得见某张卡
+    /// 而引擎/DXGI 枚举都没有它,附上 GpuVisibility.DescribeMissingGpu 的逐条处置
+    /// (设备管理器代码 22/43、笔记本 GPU 模式、重启)。</summary>
     private static void WarnDmlUnavailable(string detail)
     {
         if (_dmlWarned) return;
         _dmlWarned = true;
-        AppLogger.Warn($"⚠ GPU 加速(DirectML)不可用 — {detail}。已自动改用 CPU(稳定但慢数倍),建议更新显卡驱动(50 系需较新驱动)后重启软件再试。");
+        string extra = "";
+        try
+        {
+            var regNames = GpuInfo.GetAdapterNames();                                   // 注册表枚举:硬件始终看得见
+            var engineNames = new System.Collections.Generic.List<string>();
+            foreach (var d in VulkanCheck.Devices) engineNames.Add(d.Name);
+            var dxgiNames = new System.Collections.Generic.List<string>();
+            foreach (var a in EngineService.HardwareDxgiAdapters()) dxgiNames.Add(a.Name);
+            var missing = AlhPro.Core.GpuVisibility.MissingFromEnumerations(regNames, engineNames, dxgiNames);
+            if (missing.Count > 0)
+            {
+                int? code = GpuStatusProbe.ProblemCodeOf(missing[0]);
+                extra = "\n" + AlhPro.Core.GpuVisibility.DescribeMissingGpu(missing[0], code);
+            }
+        }
+        catch { }
+        AppLogger.Warn($"⚠ GPU 加速(DirectML)不可用 — {detail}。已自动改用 CPU(稳定但慢数倍)。"
+            + "本结论来自「在目标设备上真实建 DirectML 会话失败」的实测,不是驱动版本推断 —— "
+            + "请按下面的处置逐条排查,不要盲目更新驱动。" + extra);
     }
 
     /// <summary>按输入尺寸选择 ONNX 推理设备:大图(>256px)→ DirectML GPU(快,实测 512→2048 快 7.7 倍);
@@ -1443,9 +1503,14 @@ public static class EsrganOnnxService
     private static int DmlForEngineDevice(int engineGpu)
     {
         if (engineGpu < 0) return -1;
-        // 引擎设备表 ≤1 项(单卡机 / 表尚未就绪)时 ToDmlDevice 是【原样返回】,不是真映射:
-        // 这种情况下不缓存 —— 否则会把"设备表还没就绪"时的临时值钉成永久结论。
-        if (VulkanCheck.Devices.Count <= 1) return EngineService.ToDmlDevice(engineGpu);
+        // 引擎设备表 ≤1 项(单卡机 / 表尚未就绪)时不缓存:此时 ToDmlDevice 给出的结果带有"设备表未就绪"的
+        // 不确定性(2026-10-02 起:表为空一律返回 -1,不再把设置里的旧编号原样透传),缓存会把临时状态
+        // 钉成永久结论。表为空时先现场补一次枚举 —— 命中自检缓存时本进程可能从未枚举过(见 VulkanCheck.LoadOrRun)。
+        if (VulkanCheck.Devices.Count <= 1)
+        {
+            if (VulkanCheck.Devices.Count == 0) VulkanCheck.EnsureEnumerated(1500);
+            return EngineService.ToDmlDevice(engineGpu);
+        }
         if (_engineToDmlCache.TryGetValue(engineGpu, out var cached)) return cached;
         int dm = EngineService.ToDmlDevice(engineGpu);
         if (dm < 0) return -1;   // 匹配失败不缓存(见字段说明)
