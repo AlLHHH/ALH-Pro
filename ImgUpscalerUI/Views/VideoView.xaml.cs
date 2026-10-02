@@ -4638,6 +4638,11 @@ public sealed partial class VideoView : UserControl
         catch { }
     }
 
+    /// <summary>CPU 回落【内联红字】提示的通用尾巴(2026-10-02 事故:诊断结论多指向"独显被供电/系统关掉",
+    /// 而不是"驱动太旧"——所以这里不再写"建议更新显卡驱动",改为可立即执行的排查入口)。</summary>
+    private const string CpuFallbackHintTail = "。多半是独显被系统/供电关掉了(未插电、Eco/仅核显模式、在设备管理器里被禁用):"
+        + "先插上电源点「重新检测」,再按日志/弹窗里的处置逐条排查";
+
     /// <summary>按当前选中视频刷新 CPU 回落提示(供 RefreshVideoOutSpec 在算完尺寸/帧率后调用)。</summary>
     private void RefreshCpuFallbackHint(double dur, double srcFps, int sw, int sh)
     {
@@ -4647,11 +4652,11 @@ public sealed partial class VideoView : UserControl
             var est = EstimateCpuUpscale(dur, srcFps, sw, sh);
             if (est == null)
             {
-                SetCpuFallbackHint("⚠ 本机 DirectML 不可用,超分将使用 CPU(速度极慢;当前视频时长/尺寸未探明,无法给出秒/帧与总时长预估)");
+                SetCpuFallbackHint("⚠ 本机 DirectML 不可用,超分将使用 CPU(速度极慢;当前视频时长/尺寸未探明,无法给出秒/帧与总时长预估)" + CpuFallbackHintTail);
                 return;
             }
             var (perFrame, stageMin, frames) = est.Value;
-            SetCpuFallbackHint($"⚠ 本机 DirectML 不可用,超分将使用 CPU:约 {perFrame:0.#} 秒/帧 × {frames} 帧 → 该阶段预计约 {FormatMinutes(stageMin)}");
+            SetCpuFallbackHint($"⚠ 本机 DirectML 不可用,超分将使用 CPU:约 {perFrame:0.#} 秒/帧 × {frames} 帧 → 该阶段预计约 {FormatMinutes(stageMin)}" + CpuFallbackHintTail);
         }
         catch { }
     }
@@ -10918,24 +10923,39 @@ public sealed partial class VideoView : UserControl
                     var dlgCpu = new ContentDialog
                     {
                         Title = "⚠ 超分将使用 CPU,预计很慢",
-                        Content = new StackPanel
+                        // 【2026-10-02】处置文案可能有好几行(点名某张缺失的卡 + 5 条处置),套一层 ScrollViewer:
+                        // 小窗口 / 缩放 200% 时不会把按钮挤出屏幕。
+                        Content = new Microsoft.UI.Xaml.Controls.ScrollViewer
                         {
-                            Spacing = 8,
-                            Children =
+                            MaxHeight = 420,
+                            VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
+                            Content = new StackPanel
                             {
-                                new TextBlock
+                                Spacing = 8,
+                                Children =
                                 {
-                                    Text = "本机 DirectML(GPU 加速)不可用,超分只能使用 CPU 计算。\n\n" + detail
-                                        + "\n\n(秒/帧来源:" + perFrameSrc + ";该数值为保守估计,实际可能更快或更慢。)\n"
-                                        + "DirectML 不可用的原因:" + ALHPro.EsrganOnnxService.DmlUnavailableReason + "\n\n"
-                                        + "是否仍要继续?",
-                                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-                                },
-                                new TextBlock
-                                {
-                                    Text = "建议:先取消,更新显卡驱动后重启软件再试;或减少视频数量(只处理需要的片段)、"
-                                        + "降低输出分辨率/超分倍率,把总时间压下来。",
-                                    FontSize = 11, Opacity = 0.6, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                                    new TextBlock
+                                    {
+                                        Text = "本机 DirectML(GPU 加速)不可用,超分只能使用 CPU 计算。\n\n" + detail
+                                            + "\n\n(秒/帧来源:" + perFrameSrc + ";该数值为保守估计,实际可能更快或更慢。)\n"
+                                            + "DirectML 不可用的原因:" + ALHPro.EsrganOnnxService.DmlUnavailableReason,
+                                        TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                                    },
+                                    // 【2026-10-02 更新】原来这里只写"建议更新显卡驱动后重启软件再试"——
+                                    // 而真机成因是"独显被系统/供电关掉"(用户当时没插电源,笔记本自动切成仅核显),
+                                    // 驱动其实是最新的。现在直接给可执行处置(点名那张消失的卡 + 问题代码)。
+                                    new TextBlock
+                                    {
+                                        Text = ALHPro.EsrganOnnxService.DmlUnavailableAdvice(),
+                                        FontSize = 12,
+                                        TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                                    },
+                                    new TextBlock
+                                    {
+                                        Text = "是否仍要继续?也可以先取消:按上面的处置修好 GPU 再来;"
+                                            + "或减少视频数量(只处理需要的片段)、降低输出分辨率/超分倍率,把总时间压下来。",
+                                        FontSize = 11, Opacity = 0.6, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                                    },
                                 },
                             },
                         },

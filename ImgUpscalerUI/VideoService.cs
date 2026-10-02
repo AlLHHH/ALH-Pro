@@ -3046,7 +3046,9 @@ public static class VideoService
                                     // 【不要轻易掉 CPU】若这就要落 CPU(-1 = 强制 CPU),黄字明示用户(而非静默跑慢几倍)
                                     if (upGpu < 0 && !upOnnxDml)
                                         progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
-                                            $"⚠ 本机无可用 GPU 加速(DirectML 不可用),超分已降级为 CPU——速度会变得特别慢(可能慢数倍)。建议更新显卡驱动后重启软件再试"));
+                                            $"⚠ 本机无可用 GPU 加速(DirectML 不可用),超分已降级为 CPU——速度会变得特别慢(可能慢数倍)。"
+                                            + "请先点「重新检测」;若独显是被系统/供电关掉的(未插电、Eco 模式、被禁用、驱动崩过),"
+                                            + "按日志里已写明的处置逐条排查(会直接报出是哪张卡、问题代码多少)"));
                                 }
                                 progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
                                     $"超分(稳定引擎) 批次 {batchInfo.Number}/{batchCount}{EtaStr(batchStartSlot, total, (DateTime.UtcNow - srStageStart).TotalSeconds - srIdleSec)}..."));
