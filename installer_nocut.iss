@@ -6,7 +6,7 @@
 ; 安装时「选择附加任务」若勾选「下载并安装模型包」仍会补全抠图模型(可跳过)。
 
 #define MyAppName "ALH Pro"
-#define MyAppVersion "1.4.4"
+#define MyAppVersion "1.4.5"
 #define MyAppExeName "ALHPro.exe"
 ; 【构建时间戳】(ISPP 在编译时求值):用于让用户一眼分辨"同名同版本的不同构建"。
 ; 起因:同一个 1.3.4 出了多次安装包,名字完全一样、大小只差几十 MB,用户无法确认手上是哪一个。
@@ -17,6 +17,7 @@
 ; 已核实:经 GitHub API 查得 v1.3.3/v1.3.2/…/v1.0 每个 Release 都带 models_v1.1.zip 附件,
 ; 最新可用 tag 为 v1.3.3(2026-09-08)。
 ; ⇒ v1.3.4 Release 建好并上传模型附件后,可把本行改回 v1.3.4(不改也能正常工作)。
+; 【2026-10-02 版本升到 1.4.5,ModelsUrl 故意暂不动】v1.4.5 的 Release 还没建、附件也没挂 ⇒ 继续指向 v1.4.4(真实存在)。
 #define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.4/models_v1.1.zip"
 #define ModelsFile "models_v1.1.zip"
 ; 完整版(含模型,网盘/整包)说明:安装完成后可到软件内「使用教程」或 GitHub 说明页找完整版直链

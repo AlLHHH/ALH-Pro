@@ -12,7 +12,7 @@
 ;   不勾选 = 之后手动下载模型包,解压到 程序目录\engines\rembg\ 即可。
 
 #define MyAppName "ALH Pro"
-#define MyAppVersion "1.4.4"
+#define MyAppVersion "1.4.5"
 #define MyAppExeName "ALHPro.exe"
 ; 【构建时间戳】(ISPP 在编译时求值):用于让用户一眼分辨"同名同版本的不同构建"。
 ; 起因:同一个 1.3.4 出了多次安装包,名字完全一样、大小只差几十 MB,用户无法确认手上是哪一个。
@@ -31,6 +31,9 @@
 ; 等 v1.3.6 的 Release 建好并上传附件后,把本行改回 v1.3.6。
 ; 【2026-09-29 改指 v1.4.4】v1.4.4 的 tag / Release 建好、并把 models_v1.1.zip 挂成附件后,本行随之指到 v1.4.4
 ; (模型包内容仍是 v1.1,文件名不变)。
+; 【2026-10-02 版本升到 1.4.5,本行**故意暂不动**】v1.4.5 的 tag / Release 还没建、models_v1.1.zip 也还没挂上去 ⇒
+; 本行继续指向 v1.4.4(那里的附件真实存在,模型包内容与文件名都没变,功能不受影响)。
+; 等 v1.4.5 的 Release 建好、附件传完,再把本行改成 v1.4.5。
 #define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.4/models_v1.1.zip"
 #define ModelsFile "models_v1.1.zip"
 ; 完整版(含模型,网盘/整包)说明:安装完成后可到软件内「使用教程」或 GitHub 说明页找完整版直链

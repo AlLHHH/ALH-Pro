@@ -29,7 +29,13 @@
              不再单独占一个版本号(用户 2026-09-23:「1.4.2 都还没上」)。
              公告见仓库根 release_history.json(应用内更新公告的单一来源)与 RELEASE_NOTES.md。
              A4(分段编码自动触发)仍未做:见 RELEASE_NOTES.md 的说明。 -->
-        <Version>1.4.4</Version>
+        <!-- 【2026-10-02】1.4.4 → 1.4.5:修「混合显卡笔记本上独显从 Vulkan/DXGI 两套枚举里消失 →
+              设置里存的旧显卡编号被当成 DirectML 设备号 → 命中软件适配器 Microsoft Basic Render Driver →
+              判定「DirectML 不可用」→ 整机落 CPU」(50 系用户实测 64~70 秒/帧、零产出)。
+              同时:DirectML 目标必须是硬件显卡、目标卡不可用时降级到另一块可用硬件卡;
+              新增「注册表可见但两套枚举都没有」的自动识别(问题代码进日志与诊断包);
+              CPU 弹窗/黄字提示改成逐条处置、界面不点具体显卡型号。公告见 release_history.json 与 RELEASE_NOTES.md。 -->
+        <Version>1.4.5</Version>
         <!-- 汇编元数据:文件属性里显示的作者/版权(版权保护的第一步:署名清晰、可追责) -->
         <Authors>AlL.H</Authors>
         <Company>AlL.H</Company>

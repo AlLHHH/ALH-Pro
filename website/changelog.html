@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>更新日志 — ALH Pro(v1.4.4 及历史版本)</title>
-<meta name="description" content="ALH Pro 更新日志:每个版本改了什么、修复了什么、有没有需要用户重新调整参数的地方。最新版本 v1.4.4(2026-09-29,预览「左右对比」恢复左右各一整幅;开工前那次「检测」快约 6 秒,「超分单价」一律改叫「超分单帧耗时」;计划输出任一边超过 4096 自动改走 HEVC;「黑帧判断」整条删除)。">
+<title>更新日志 — ALH Pro(v1.4.5 及历史版本)</title>
+<meta name="description" content="ALH Pro 更新日志:每个版本改了什么、修复了什么、有没有需要用户重新调整参数的地方。最新版本 v1.4.5(2026-10-02,修复混合显卡笔记本上独显从系统里消失导致 DirectML 被误判、整机落 CPU;新增显卡消失自动识别与逐条处置提示)。">
 <!-- 深色是唯一主题(手机浏览器地址栏/状态栏也跟着深色)。
      原先是两条带 media 的 meta(dark #06080f / light #eef2f9),系统浅色时会把地址栏刷白,
      现已删掉 light 那条;这里的值来自 style.css §1.1 的 --body-bg / --bg(#0a0a0b)。 -->
@@ -71,13 +71,25 @@ setTimeout(function () {
     <div class="wrap hero-inner">
       <h1 class="hero-title">更新日志</h1>
       <p class="page-meta">
-        <strong>更新日志 · 每个版本改了啥。</strong>最新 <strong>v1.4.4</strong>(2026-09-29,四条:预览「左右对比」恢复「左右各一整幅」、开工前那次「检测」快约 6 秒并把「超分单价」一律改叫「超分单帧耗时」、计划输出任一边超过 4096 自动改走 HEVC、「黑帧判断」整条删除),点标题展开细节。
+        <strong>更新日志 · 每个版本改了啥。</strong>最新 <strong>v1.4.5</strong>(2026-10-02:修复混合显卡笔记本上「独显从系统里消失 → 软件误判 GPU 不可用 → 整机改用 CPU 超分」,不再按注册表顺序猜显卡编号、DirectML 目标必须是硬件显卡;新增显卡消失自动识别,问题代码进日志与诊断包;CPU 弹窗与黄字提示改成逐条处置、界面不点具体显卡型号),点标题展开细节。
         升级方式:<a href="download.html#upgrade">直接覆盖安装</a>,不用卸载,也不用重下模型。
       </p>
     </div>
   </section>
 
   <div class="wrap content">
+
+        <h2 id="v145">v1.4.5 <span class="small muted"><strong>2026-10-02</strong> · 修复混合显卡笔记本上独显消失导致 DirectML 被误判、整机落 CPU;新增显卡消失自动识别与逐条处置提示</span></h2>
+    <details open data-reveal>
+      <summary>直接覆盖安装即可，不用卸载；设置、预设、模型都不用动。</summary>
+      <div class="details-body">
+        <ul>
+          <li>修复混合显卡笔记本上「独显从系统里消失 → 软件误判 GPU 不可用 → 整机改用 CPU 超分」：不再按注册表顺序猜显卡编号，<strong>DirectML 目标必须是硬件显卡</strong>（不会落到软件适配器上）；设置里选的那张卡不可用时自动改用另一块可用硬件卡并写明。</li>
+          <li>新增自动识别：显卡「注册表里看得到、但引擎与 DXGI 两套枚举都看不到」时，把问题代码（<strong>22</strong> = 被禁用 / <strong>43</strong> = 驱动异常）写进日志与诊断包。</li>
+          <li>CPU 弹窗 / 进度黄字 / 内联红字不再一律写「建议更新显卡驱动」，改成逐条可执行处置（先插电源 → 设备管理器 → GPU 模式 → 换计算设备 → 重启）；<strong>界面不点具体显卡型号</strong>，卡名与错误码只进日志。</li>
+        </ul>
+      </div>
+    </details>
 
         <h2 id="v144">v1.4.4 <span class="small muted"><strong>2026-09-29</strong> · 修复 AMD 编码失败、修复「左右对比」看不到原片、删掉黑帧判断、开工前检测更快</span></h2>
     <details open data-reveal>
