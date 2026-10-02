@@ -10938,12 +10938,12 @@ public sealed partial class VideoView : UserControl
                                     {
                                         Text = "本机 DirectML(GPU 加速)不可用,超分只能使用 CPU 计算。\n\n" + detail
                                             + "\n\n(秒/帧来源:" + perFrameSrc + ";该数值为保守估计,实际可能更快或更慢。)\n"
-                                            + "DirectML 不可用的原因:" + ALHPro.EsrganOnnxService.DmlUnavailableReason,
+                                            + "DirectML 不可用的原因:" + ALHPro.EsrganOnnxService.DmlUnavailableReasonForUi,
                                         TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
                                     },
                                     // 【2026-10-02 更新】原来这里只写"建议更新显卡驱动后重启软件再试"——
                                     // 而真机成因是"独显被系统/供电关掉"(用户当时没插电源,笔记本自动切成仅核显),
-                                    // 驱动其实是最新的。现在直接给可执行处置(点名那张消失的卡 + 问题代码)。
+                                    // 驱动其实是最新的。现在直接给可执行处置(界面不点具体型号,只给状态 + 逐条处置)。
                                     new TextBlock
                                     {
                                         Text = ALHPro.EsrganOnnxService.DmlUnavailableAdvice(),
