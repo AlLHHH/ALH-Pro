@@ -1001,68 +1001,113 @@ public static partial class EngineService
     /// <summary>ncnn 引擎的 -g 编号 → DirectML 设备号。
     /// 双卡机(AMD 核显 + NVIDIA 独显 / Intel 核显 + 独显等)上,Vulkan 引擎枚举顺序与 DirectML(DXGI)
     /// 枚举顺序【可能不同】——直接拿 ncnn 编号喂 DirectML 会跑错卡。
-    /// 【修复】按 DXGI 真枚举(名匹配)得到正确 DirectML 设备号;DXGI 不可用时回退注册表名匹配;
-    /// 匹配不到宁可落 CPU(明确日志),不静默跑核显。</summary>
+    /// 【修复】按 DXGI 真枚举(名匹配)得到正确 DirectML 设备号,且只认【硬件适配器】(剔除软件适配器);
+    /// 引擎表为空 / 编号不在表里 / 匹配不到都返回 -1(明确日志),绝不静默透传编号、绝不回退注册表序。
+    /// 【2026-10-02 事故】旧实现在"Devices 为空"时把设置里存的旧编号原样喂给 DirectML → 落到软件适配器
+    /// (Microsoft Basic Render Driver)上建会话失败 → 程序判"DirectML 不可用" → 整机退 CPU。</summary>
     public static int ToDmlDevice(int engineGpu)
     {
         try
         {
             if (engineGpu < 0) return engineGpu;
             var devs = VulkanCheck.Devices;
-            if (devs.Count <= 1) return engineGpu;   // 单卡:无歧义
+            // 【2026-10-02 事故修复①】表为空 = 无法验证身份,绝不能猜。
+            // 旧代码这里写的是 `if (devs.Count <= 1) return engineGpu;`(注释"单卡:无歧义"),而 Count==0
+            // (引擎尚未枚举完 / 缓存命中时 Devices 本就是空表)也走这一路 —— 于是设置里存的旧编号(真机=1)
+            // 被原样当成 DirectML 设备号 #1 = Microsoft Basic Render Driver(软件适配器),建会话必然失败
+            // (OnnxRuntimeException,内部 C0262002「指定的显示适配器无效」)→ 直接判「DirectML 不可用」
+            // → 整机退 CPU(≈8 秒/帧),而 DXGI#0 那张真正能用的硬件卡一次都没被试过。
+            if (devs.Count == 0)
+            {
+                AppLogger.Warn($"⚠ 设备映射:引擎设备表为空(尚未枚举出任何 Vulkan 设备),编号 {engineGpu} 无法验证身份 → 返回 -1(不猜、不透传)。"
+                    + "DirectML 侧会改用【DXGI 硬件适配器】兜底;若反复出现请把本行发作者。");
+                return -1;
+            }
             var want = devs.FirstOrDefault(d => d.Id == engineGpu);
-            if (string.IsNullOrWhiteSpace(want.Name)) return engineGpu;
+            // 【2026-10-02 事故修复②】设置里的陈旧编号不在引擎表里时,以前【原样透传】——同样会落到软件适配器。现在返回 -1。
+            if (string.IsNullOrWhiteSpace(want.Name))
+            {
+                AppLogger.Warn($"⚠ 设备映射:引擎设备表里没有编号 {engineGpu} → 返回 -1(不原样透传)。"
+                    + $"可用引擎设备={string.Join(",", devs.Select(d => d.Id + ":" + d.Name))}");
+                return -1;
+            }
             // ① DXGI 真枚举:名匹配 → DirectML 设备号(顺序=DXGI,与注册表可能不同)
+            // 【2026-10-02 事故修复③】只在【硬件适配器】里匹配:软件适配器(Microsoft Basic Render Driver)
+            // 也会出现在 DXGI 表里,但拿它建 DirectML 会话 100% 失败,永不作为映射结果。
             try
             {
                 var dxAdapters = TryEnumerateDxgiAdapters();
-                foreach (var (idx, name, _, _) in dxAdapters)
-                    if (name.Equals(want.Name, StringComparison.OrdinalIgnoreCase)
-                        || name.Contains(want.Name, StringComparison.OrdinalIgnoreCase)
-                        || want.Name.Contains(name, StringComparison.OrdinalIgnoreCase))
-                        return idx;
-                // ①b 名字没命中 → 用【显存】可靠识别独显(独显 GB 级,核显只有几十~几百 MB):完全不依赖名字,
+                var hw = AlhPro.Core.DmlDeviceRouting.HardwareOnly(dxAdapters);
+                foreach (var a in hw)
+                    if (AlhPro.Core.GpuVisibility.Same(a.Name, want.Name)) return a.Index;
+                // ①b 单卡 1:1 推断:引擎只有一张卡、DXGI 也只有一张硬件卡 → 必然是同一张(软件适配器不算)
+                if (devs.Count == 1 && hw.Count == 1)
+                {
+                    AppLogger.Info($"设备映射:引擎 {engineGpu}({want.Name}) 名字未命中 DXGI 表,但引擎与 DXGI 都只有这一张硬件卡 → DXGI#{hw[0].Index}({hw[0].Name})");
+                    return hw[0].Index;
+                }
+                // ①c 名字没命中 → 用【显存】可靠识别独显(独显 GB 级,核显只有几十~几百 MB):完全不依赖名字,
                 //     这样"选独显"时即使名字格式有差异也一定落到真独显。这是"锁定用独显"的最后一道可靠保险。
                 // 【已移除】原 ①b「Windows 官方 GPU 偏好(EnumAdapterByGpuPreference)」:
                 //   本项目手写的 IDXGIFactory6 声明漏了 IDXGIObject::GetPrivateData,槽位整体前移一位,
                 //   实测按该签名调用会跨签名 UB —— 在委托探针里直接 AccessViolation 终止进程(不可 catch)。
                 //   槽位修好后 ① 名字匹配已真正生效,该兜底收益远小于崩溃风险,故整段删除。
-                if (dxAdapters.Count > 0 && !AlhPro.Core.GpuName.IsIntegrated(want.Name))
+                if (hw.Count > 0 && !AlhPro.Core.GpuName.IsIntegrated(want.Name))
                 {
-                    var biggest = dxAdapters.OrderByDescending(a => a.Vram).First();
-                    if (biggest.Vram > 1073741824L)   // >1GB = 独显级(核显 DedicatedVideoMemory 通常只有几十~几百 MB)
+                    var biggest = hw.OrderByDescending(a => a.DedicatedVramBytes).First();
+                    if (biggest.DedicatedVramBytes > AlhPro.Core.DmlDeviceRouting.OneGiB)   // >1GB = 独显级(核显 DedicatedVideoMemory 通常只有几十~几百 MB)
                     {
-                        AppLogger.Info($"设备映射:引擎 {engineGpu}({want.Name}) 名字未命中 DXGI 表,已按【显存最大】定位独显 → DXGI#{biggest.Index}({biggest.Name},{biggest.Vram / 1073741824.0:0.#}GB)");
+                        AppLogger.Info($"设备映射:引擎 {engineGpu}({want.Name}) 名字未命中 DXGI 表,已按【显存最大】定位独显 → DXGI#{biggest.Index}({biggest.Name},{biggest.DedicatedVramBytes / 1073741824.0:0.#}GB)");
                         return biggest.Index;
                     }
                 }
             }
             catch { }
-            // ② DXGI 不可用(罕见):回退注册表名匹配(≈DXGI 序)——【风险路径】注册表序可能与 DirectML 序相反,
-            // 双卡机上会把 NVIDIA 映射到核显号。明确留痕,便于诊断包定位"选独显跑核显"。
-            try
-            {
-                var names = GpuInfo.GetAdapterNames();
-                for (int i = 0; i < names.Count; i++)
-                    if (names[i].Equals(want.Name, StringComparison.OrdinalIgnoreCase)
-                        || names[i].Contains(want.Name, StringComparison.OrdinalIgnoreCase)
-                        || want.Name.Contains(names[i], StringComparison.OrdinalIgnoreCase))
-                    {
-                        AppLogger.Warn($"⚠ 设备映射:DXGI 枚举不可用,已回退【注册表序】匹配——引擎编号 {engineGpu}({want.Name}) → 注册表#{i}。" +
-                            $"注册表序可能与 DirectML 设备号序相反(双卡机常见),若出现'选独显却跑核显'请把本行发作者。DXGI错误={LastDxgiError}");
-                        return i;
-                    }
-            }
-            catch { }
+            // ② 【已删除:回退注册表序】旧代码在 DXGI 不可用时按【注册表序号】返回 —— 但注册表编号不是 DirectML 设备号,
+            // 双卡机上正好把独显指到核显/软件适配器上(10-02 事故的另一种形态)。现在宁可返回 -1 落 CPU 并留痕。
             // ③ 匹配不到:返回 -1(按 CPU 处理)。为避免"选独显却静默跑核显",这里只能这么保守;
             // 【2026-09-23 用户要求「视频不落 CPU」后的下游差异】视频侧(ONNX 超分/补帧)拿到 -1 会直接抛出
             // "无法把 GPU 编号映射到可用的 DirectML 设备(不降级到慢速 CPU)",而抠图/图片侧允许改用 CPU。
-            AppLogger.Warn($"⚠ 设备映射:引擎编号 {engineGpu} 未匹配到同名 DirectML 设备 → 返回 -1(按 CPU 处理)。"
+            AppLogger.Warn($"⚠ 设备映射:引擎编号 {engineGpu} 未匹配到同名 DirectML 硬件设备 → 返回 -1(按 CPU 处理)。"
                 + "若随后出现「无法映射到可用的 DirectML 设备」的报错,请把本行连同设备表一起发给作者。"
-                + $"可用引擎设备={string.Join(",", devs.Select(d => d.Id + ":" + d.Name))}");
+                + $"可用引擎设备={string.Join(",", devs.Select(d => d.Id + ":" + d.Name))}"
+                + $" DXGI错误={(string.IsNullOrEmpty(LastDxgiError) ? "无" : LastDxgiError)}");
             return -1;
         }
-        catch { return engineGpu; }
+        // 【2026-10-02 事故修复④】异常时也不再原样透传编号(旧代码 catch { return engineGpu; } 会把未知编号喂给 DirectML)
+        catch (Exception ex)
+        {
+            try { AppLogger.Warn($"⚠ 设备映射:ToDmlDevice({engineGpu}) 异常({ex.GetType().Name}) → 返回 -1"); } catch { }
+            return -1;
+        }
+    }
+
+    /// <summary>DXGI 枚举出来的【硬件】适配器(已剔除软件适配器:Microsoft Basic Render Driver)。
+    /// DirectML 设备号只能来自这里 —— 软件适配器建不出 DirectML 会话(真机 C0262002「指定的显示适配器无效」)。</summary>
+    public static System.Collections.Generic.List<AlhPro.Core.DxgiAdapterInfo> HardwareDxgiAdapters()
+    {
+        try { return AlhPro.Core.DmlDeviceRouting.HardwareOnly(TryEnumerateDxgiAdapters()); }
+        catch { return new System.Collections.Generic.List<AlhPro.Core.DxgiAdapterInfo>(); }
+    }
+
+    /// <summary>设置里选的卡 / 引擎表里都没有可用独显时,从 DXGI 硬件适配器里挑一个能用的 DirectML 设备
+    /// (优先显存最大的独显级卡,其次任一硬件卡含核显,并明确留痕"这是降级")。返回 -1 = 一张硬件卡都没有。
+    /// 【2026-10-02 事故修复⑤】这条路径的存在意义:独显被禁用/未枚举时,不该整机退 CPU —— 旁边还有能用的硬件卡。</summary>
+    public static int PickFallbackDmlDevice(out string why)
+    {
+        try
+        {
+            var pick = AlhPro.Core.DmlDeviceRouting.PickFallback(TryEnumerateDxgiAdapters());
+            why = pick.Reason;
+            if (pick.Index >= 0 && pick.Degraded)
+                AppLogger.Warn("⚠ DirectML 设备兜底:" + pick.Reason + "(非首选设备,速度可能慢于独显)");
+            return pick.Index;
+        }
+        catch (Exception ex)
+        {
+            why = "DXGI 兜底枚举异常:" + ex.GetType().Name;
+            return -1;
+        }
     }
 
     /// <summary>把"设置里存的计算设备编号"解析成本次要传给引擎的 -g 编号(唯一权威入口,尊重用户选择)。
@@ -1082,21 +1127,38 @@ public static partial class EngineService
         //   ② 编号在表里 → 原样返回;但若它恰好是【核显】且表里另有独显(陈旧注册表索引撞号的典型症状)
         //      → 换成最佳独显并留痕日志 ← 这正是"选独显却跑核显"的根治点,旧代码这里不会纠正;
         //   ③ 编号不在表里 → 换表内设备(绝不落 CPU;转译层设备照传会输出损坏帧,必须先换);
-        //   ④ 表为空(未枚举)→ 才允许按数量兜底,-1 只可能出现在这一路。
+        //   ④ 表为空(未枚举)→ 返回 -1(2026-10-02 起不再按"注册表适配器数量"兜底:那个数量会把陈旧编号判成合法引擎编号)。
         try
         {
             var list = new System.Collections.Generic.List<(int Id, string Name)>();
             var devs = VulkanCheck.Devices;
+            if (devs == null || devs.Count == 0)
+            {
+                // 【2026-10-02 事故修复】表空可能是"缓存命中、本进程还没枚举过"(见 VulkanCheck.LoadOrRun
+                // 命中缓存时只回填 GpuAvailable/Report,Devices 保持为空)。这里当场踢一次补枚举:
+                // 本方法是 UI 属性 getter 的调用路径,不能在这里长时间阻塞(超时 0 = 只踢不等),
+                // 真正会等它的是 DML 探测侧(EsrganOnnxService.ResolveProbeDmlDevice 会 EnsureEnumerated(1500))。
+                try { VulkanCheck.EnsureEnumerated(0); } catch { }
+                devs = VulkanCheck.Devices;
+            }
             if (devs != null)
                 foreach (var d in devs) list.Add((d.Id, d.Name ?? ""));
+            // 【2026-10-02 事故修复】第三个参数以前传 GpuInfo.EngineDeviceCount —— 而它在"引擎一张卡都没枚举到"时
+            // 会回退成【注册表适配器数量】(真机=2),于是设置里存的陈旧编号 1 被判成"合法引擎编号"原样透传
+            // → 最终落到 DirectML #1 = 软件适配器。注册表编号不是引擎编号,表为空就是"未知":只许传表自身的数量。
             var (id, remapped) = AlhPro.Core.DeviceRouting.ResolveEngineDevice(
-                settingsIndex, list, GpuInfo.EngineDeviceCount);
+                settingsIndex, list, list.Count);
             if (remapped)
                 AppLogger.Info($"[设备] 设置里的计算设备 #{settingsIndex} 不是可用设备/或撞号到核显 → 已改用 #{id}"
                     + $"({SafeDeviceName(id)});判定见 AlhPro.Core.DeviceRouting(有单测)");
             return id;
         }
-        catch { return settingsIndex < GpuInfo.EngineDeviceCount ? settingsIndex : -1; }   // 兜底
+        // 兜底:不再按"注册表数量"猜编号(那正是 10-02 把软件适配器当目标卡的源头)
+        catch (Exception ex)
+        {
+            try { AppLogger.Warn($"⚠ 设备映射:ResolveEngineGpu({settingsIndex}) 异常({ex.GetType().Name}) → 返回 -1"); } catch { }
+            return -1;
+        }
     }
 
     /// <summary>把"请求的计算设备编号"解析成应实际使用的 DirectML 设备号——经 ResolveEngineGpu(尊重用户)
@@ -1117,7 +1179,12 @@ public static partial class EngineService
         {
             var dx = TryEnumerateDxgiAdapters();
             sb.Append("DXGI(DirectML)枚举[");
-            for (int i = 0; i < dx.Count; i++) { if (i > 0) sb.Append(" | "); sb.Append($"#{dx[i].Index} {dx[i].Name}"); }
+            for (int i = 0; i < dx.Count; i++)
+            {
+                if (i > 0) sb.Append(" | ");
+                sb.Append($"#{dx[i].Index} {dx[i].Name}");
+                if (dx[i].Software) sb.Append("(软件适配器,已排除)");
+            }
             if (dx.Count == 0) sb.Append("(枚举失败)");
             sb.Append("] 引擎→DML 映射[");
             var devs = VulkanCheck.Devices;
@@ -1235,13 +1302,17 @@ public static partial class EngineService
     private const int SlotGetDesc1 = 10;
     private const int SlotRelease = 2;
 
+    /// <summary>DXGI_ADAPTER_FLAG_SOFTWARE:软件适配器(Microsoft Basic Render Driver / WARP),
+    /// 无独立显存,建 DirectML 会话必失败 —— 必须从 DirectML 设备选型里剔除。</summary>
+    private const uint DxgiAdapterFlagSoftware = 2;
+
     /// <summary>枚举 DXGI 适配器(顺序 = DirectML 设备号)。返回 (索引, 名字, LUID)。失败/无卡返回空;
     /// 失败原因写入 lastDxgiError 供诊断包定位(不再静默吞掉)。</summary>
     public static string LastDxgiError { get; private set; } = "";
 
-    private static System.Collections.Generic.List<(int Index, string Name, long Luid, long Vram)> TryEnumerateDxgiAdapters()
+    private static System.Collections.Generic.List<AlhPro.Core.DxgiAdapterInfo> TryEnumerateDxgiAdapters()
     {
-        var list = new System.Collections.Generic.List<(int, string, long, long)>();
+        var list = new System.Collections.Generic.List<AlhPro.Core.DxgiAdapterInfo>();
         LastDxgiError = "";
         // ① 首选 COM interop(csproj 已开 BuiltInComInteropSupport=true):DXGI 真枚举,索引 = DirectML 设备号
         try
@@ -1272,7 +1343,9 @@ public static partial class EngineService
                     if (getDesc1(adapterPtr, out var desc) == 0)
                     {
                         var name = desc.Description != null ? new string(desc.Description).TrimEnd('\0', ' ') : "";
-                        if (name.Length > 0) list.Add(((int)i, name, desc.AdapterLuid, desc.DedicatedVideoMemory));
+                        // 【2026-10-02 事故修复】软件适配器(Microsoft Basic Render Driver)也进表,但打上标记 ——
+                        // 下游(DirectML 设备选型)必须把它排除:拿它建 DirectML 会话 100% 失败。
+                        if (name.Length > 0) list.Add(new AlhPro.Core.DxgiAdapterInfo((int)i, name, desc.DedicatedVideoMemory, (desc.Flags & DxgiAdapterFlagSoftware) != 0));
                     }
                 }
                 finally
@@ -1293,8 +1366,8 @@ public static partial class EngineService
         {
             if (LastDxgiError.Length == 0) LastDxgiError = "DXGI 调用成功但返回 0 张适配器";
             if (System.Threading.Interlocked.CompareExchange(ref _dxgiEmptyWarned, 1, 0) == 0)
-                AppLogger.Warn($"⚠ DXGI 枚举未拿到任何适配器({LastDxgiError})——设备映射将回退【注册表序】,双卡机上可能选错卡;" +
-                    $"注册表序与引擎序相反时表现为'选独显跑核显'。请把本行连同 'GPU→DirectML 映射对照' 一起发作者。");
+                AppLogger.Warn($"⚠ DXGI 枚举未拿到任何适配器({LastDxgiError})——设备映射将【不再按注册表序猜编号】,"
+                    + "一律返回 -1 落 CPU/DirectML 兜底留痕;请把本行连同 'GPU→DirectML 映射对照' 一起发作者。");
         }
         return list;
     }
@@ -1304,9 +1377,9 @@ public static partial class EngineService
 
     /// <summary>COM interop 方式的 DXGI 枚举(需 csproj BuiltInComInteropSupport=true)。
     /// 这是官方支持的路径;vtable 方式作为不依赖该开关的兜底。</summary>
-    private static System.Collections.Generic.List<(int Index, string Name, long Luid, long Vram)> TryEnumerateDxgiAdaptersCom()
+    private static System.Collections.Generic.List<AlhPro.Core.DxgiAdapterInfo> TryEnumerateDxgiAdaptersCom()
     {
-        var list = new System.Collections.Generic.List<(int, string, long, long)>();
+        var list = new System.Collections.Generic.List<AlhPro.Core.DxgiAdapterInfo>();
         var riid = new System.Guid("770aae78-f26f-4dba-a829-253c83d1b387");   // IDXGIFactory1
         if (CreateDXGIFactory1(ref riid, out var factoryPtr) != 0 || factoryPtr == IntPtr.Zero) return list;
         var factory = (IDXGIFactory1)System.Runtime.InteropServices.Marshal.GetObjectForIUnknown(factoryPtr);
@@ -1320,7 +1393,9 @@ public static partial class EngineService
                     if (adapter.GetDesc1(out var desc) == 0)
                     {
                         var name = desc.Description != null ? new string(desc.Description).TrimEnd('\0', ' ') : "";
-                        if (name.Length > 0) list.Add(((int)i, name, desc.AdapterLuid, desc.DedicatedVideoMemory));
+                        // 【2026-10-02 事故修复】软件适配器(Microsoft Basic Render Driver)也进表,但打上标记 ——
+                        // 下游(DirectML 设备选型)必须把它排除:拿它建 DirectML 会话 100% 失败。
+                        if (name.Length > 0) list.Add(new AlhPro.Core.DxgiAdapterInfo((int)i, name, desc.DedicatedVideoMemory, (desc.Flags & DxgiAdapterFlagSoftware) != 0));
                     }
                 }
                 finally { System.Runtime.InteropServices.Marshal.ReleaseComObject(adapter); }
