@@ -825,25 +825,34 @@ public static class EsrganOnnxService
     {
         if (_dmlWarned) return;
         _dmlWarned = true;
-        string extra = "";
+        AppLogger.Warn($"⚠ GPU 加速(DirectML)不可用 — {detail}。已自动改用 CPU(稳定但慢数倍)。"
+            + "本结论来自「在目标设备上真实建 DirectML 会话失败」的实测,不是驱动版本推断 —— "
+            + "请按下面的处置逐条排查,不要盲目更新驱动。\n" + DmlUnavailableAdvice());
+    }
+
+    /// <summary>DirectML 不可用时给用户的【可执行处置】文案(日志 / 弹窗 / 内联提示共用)。
+    /// 若发现"注册表里看得见、但两套枚举里都没有"的显卡,直接点名该卡 + 问题代码 + 逐条处置
+    /// (真机 2026-10-02:用户当时没插电源,笔记本自动切成了仅核显 —— 所以第①条就是插上电源重测);
+    /// 否则给通用排查顺序。不再写"建议更新显卡驱动(50 系需较新驱动)"这种把用户带偏的结论。</summary>
+    public static string DmlUnavailableAdvice()
+    {
         try
         {
-            var regNames = GpuInfo.GetAdapterNames();                                   // 注册表枚举:硬件始终看得见
+            var regNames = GpuInfo.GetAdapterNames();                        // 注册表枚举:硬件始终看得见
             var engineNames = new System.Collections.Generic.List<string>();
             foreach (var d in VulkanCheck.Devices) engineNames.Add(d.Name);
             var dxgiNames = new System.Collections.Generic.List<string>();
             foreach (var a in EngineService.HardwareDxgiAdapters()) dxgiNames.Add(a.Name);
             var missing = AlhPro.Core.GpuVisibility.MissingFromEnumerations(regNames, engineNames, dxgiNames);
             if (missing.Count > 0)
-            {
-                int? code = GpuStatusProbe.ProblemCodeOf(missing[0]);
-                extra = "\n" + AlhPro.Core.GpuVisibility.DescribeMissingGpu(missing[0], code);
-            }
+                return AlhPro.Core.GpuVisibility.DescribeMissingGpu(missing[0], GpuStatusProbe.ProblemCodeOf(missing[0]));
         }
         catch { }
-        AppLogger.Warn($"⚠ GPU 加速(DirectML)不可用 — {detail}。已自动改用 CPU(稳定但慢数倍)。"
-            + "本结论来自「在目标设备上真实建 DirectML 会话失败」的实测,不是驱动版本推断 —— "
-            + "请按下面的处置逐条排查,不要盲目更新驱动。" + extra);
+        return "没检测到「注册表可见却枚举不到」的显卡,按下面顺序排查:"
+            + "①给笔记本【插上电源】、并把 GPU 模式切回「混合输出 / 独显优先」,然后点软件里的「重新检测」;"
+            + "②设备管理器 → 显示适配器,确认显卡没被禁用、没有黄色感叹号(问题代码 43 就重装/更新驱动后重启);"
+            + "③设置里把「计算设备」换成另一张能看到的卡;"
+            + "④重启电脑后再试。";
     }
 
     /// <summary>按输入尺寸选择 ONNX 推理设备:大图(>256px)→ DirectML GPU(快,实测 512→2048 快 7.7 倍);
@@ -965,7 +974,7 @@ public static class EsrganOnnxService
         if (wantGpu && dmDevice < 0)
             throw new InvalidOperationException(
                 $"ONNX 超分:无法把 GPU 编号 {gpuId} 映射到可用的 DirectML 设备(不降级到慢速 CPU)——"
-                + "请在设置里重新选择显卡后重试;若反复出现,建议更新显卡驱动。");
+                + "请在设置里重新选择显卡(或改选 CPU)后重试;独显被系统/供电关掉(未插电、Eco 模式、被禁用)时也会出现这条。");
         // 预创建独立会话池(每个并行 worker 一个;绕开共享缓存锁,支持并发 Run)
         // 计时起点:用于"会话已就绪(启动 X.Xs)"这一行进度(每批都会重建会话 = 每批一笔固定开销)。
         var poolStartAt = DateTime.UtcNow;
@@ -1578,7 +1587,7 @@ public static class EsrganOnnxService
             if (dmDevice < 0)
                 throw new InvalidOperationException(
                     $"ONNX 超分:无法把 GPU 编号 {gpuId} 映射到可用的 DirectML 设备(不降级到慢速 CPU)——"
-                    + "请在设置里重新选择显卡后重试;若反复出现,建议更新显卡驱动。");
+                    + "请在设置里重新选择显卡(或改选 CPU)后重试;独显被系统/供电关掉(未插电、Eco 模式、被禁用)时也会出现这条。");
         }
         else dmDevice = -1;
 
