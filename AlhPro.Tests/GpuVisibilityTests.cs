@@ -105,7 +105,7 @@ public class GpuVisibilityTests
     }
 
     [Fact]
-    public void DescribeMissingGpu_包含卡名状态码与四步处置()
+    public void DescribeMissingGpu_包含卡名状态码与逐步处置()
     {
         var text = GpuVisibility.DescribeMissingGpu("NVIDIA GeForce RTX 5060 Laptop GPU", 22);
         Assert.Contains("NVIDIA GeForce RTX 5060 Laptop GPU", text);
@@ -113,5 +113,16 @@ public class GpuVisibilityTests
         Assert.Contains("GPU 模式", text);
         Assert.Contains("计算设备", text);
         Assert.Contains("重启", text);
+        Assert.Contains("插上电源", text);          // 真机线索:用户当时没插电
+        Assert.DoesNotContain("设备本身没报错", text);
+    }
+
+    [Fact]
+    public void DescribeMissingGpu_设备没报错时点明供电与显卡模式()
+    {
+        var text = GpuVisibility.DescribeMissingGpu("NVIDIA GeForce RTX 5060 Laptop GPU", 0);
+        Assert.Contains("设备本身没报错", text);
+        Assert.Contains("没插电源", text);
+        Assert.Contains("重新检测", text);
     }
 }
