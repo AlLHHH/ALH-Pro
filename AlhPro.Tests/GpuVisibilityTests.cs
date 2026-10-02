@@ -125,4 +125,21 @@ public class GpuVisibilityTests
         Assert.Contains("没插电源", text);
         Assert.Contains("重新检测", text);
     }
+
+    /// <summary>给界面看的文案【不许出现具体型号】(用户要求:提示要覆盖所有显卡,不能像在说某一款),
+    /// 但卡名仍必须进日志 —— 所以默认(不给名字)是通用说法,传 includeName:true 才带卡名。</summary>
+    [Fact]
+    public void DescribeMissingGpu_界面文案不点具体型号()
+    {
+        var ui = GpuVisibility.DescribeMissingGpu("NVIDIA GeForce RTX 5060 Laptop GPU", 22, includeName: false);
+        Assert.DoesNotContain("NVIDIA", ui);
+        Assert.DoesNotContain("5060", ui);
+        Assert.Contains("有一张显卡", ui);
+        Assert.Contains("设备管理器", ui);          // 处置步骤仍然完整
+        Assert.Contains("插上电源", ui);
+        Assert.Contains("日志", ui);                // 明确告诉用户"细节在日志里"
+
+        var log = GpuVisibility.DescribeMissingGpu("NVIDIA GeForce RTX 5060 Laptop GPU", 22, includeName: true);
+        Assert.Contains("NVIDIA GeForce RTX 5060 Laptop GPU", log);
+    }
 }

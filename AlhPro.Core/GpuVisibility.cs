@@ -73,16 +73,22 @@ public static class GpuVisibility
     };
 
     /// <summary>
-    /// 独显「注册表可见、枚举不见」时的完整告警文案(含那位用户现在就能做的处置步骤)。
+    /// 独显「注册表可见、枚举不见」时的完整告警文案(含用户现在就能做的处置步骤)。
     /// 真机补充线索(2026-10-02):该用户当时【没有插电源】—— 不少笔记本在电池供电时会自动切成
     /// 「仅核显 / 关闭独显」,这正是"注册表还在、两套枚举都没有、驱动版本也没变"的典型成因,
     /// 所以处置第①条就是"先插上电源"。
+    /// 【includeName】给界面用的文案一律【不点具体型号】(用户要求:提示要覆盖所有显卡,不能只像在说某一款),
+    /// 精确卡名只进日志/诊断包(排查时要靠它定位是哪一张卡)。
     /// </summary>
-    public static string DescribeMissingGpu(string name, int? problemCode)
+    public static string DescribeMissingGpu(string name, int? problemCode, bool includeName = true)
     {
         bool noProblemReported = problemCode.GetValueOrDefault(0) == 0;
-        return "⚠ 显卡「" + name + "」在注册表(系统设备表)里还在,但【Vulkan 引擎枚举】和【DXGI(DirectML)枚举】里都没有它"
+        string subject = includeName && !string.IsNullOrWhiteSpace(name)
+            ? "显卡「" + name + "」"
+            : "有一张显卡(通常是独立显卡)";
+        return "⚠ " + subject + "在注册表(系统设备表)里还在,但【Vulkan 引擎枚举】和【DXGI(DirectML)枚举】里都没有它"
             + " —— 程序据此判它当前不可用。"
+            + (includeName ? "" : "   (具体是哪一张卡、什么问题代码,已写进日志;把日志发给作者即可定位)")
             + Environment.NewLine + "   设备状态:" + ExplainProblemCode(problemCode)
             + (noProblemReported
                 ? Environment.NewLine + "   设备本身没报错却看不见 ⇒ 更可能是【供电 / 显卡模式】把它关掉了:笔记本没插电源(电池供电时不少机型会自动切成「仅核显 / 关闭独显」)、厂商软件的节能(Eco)模式、MUX 切到仅核显,或驱动崩过一次后没能重新加载。"
@@ -90,7 +96,7 @@ public static class GpuVisibility
             + Environment.NewLine + "   现在就能试的处置:"
             + "①先给笔记本【插上电源】(电池供电是最常见的诱因),插好后点软件里的「重新检测」再看设备列表;"
             + "②设备管理器 → 显示适配器,看它有没有被禁用或带黄色感叹号(被禁用→右键「启用设备」;问题代码 43→重装/更新显卡驱动后重启);"
-            + "③笔记本 GPU 模式(Armoury Crate / 联想电脑管家 / NVIDIA 控制面板「管理显示模式」)是否被切到「仅核显 / Eco / 省电」,切回「混合输出 / 独显优先」;"
+            + "③笔记本的 GPU 模式(厂商控制中心 / 显卡驱动里的「管理显示模式」)是否被切到「仅核显 / Eco / 省电」,切回「混合输出 / 独显优先」;"
             + "④把软件里的「计算设备」改成另一张能看到的硬件卡(比如核显/另一张独显),先把活干起来;"
             + "⑤重启电脑后再试。";
     }

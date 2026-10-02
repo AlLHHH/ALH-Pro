@@ -572,8 +572,26 @@ public static class EsrganOnnxService
     /// 内联红字提示)必须先看本标志,否则"未探测"会被当成"不可用"而误报慢速提示。</summary>
     public static bool DmlProbeCompleted => Volatile.Read(ref _dmlProbeState) == 2;
 
-    /// <summary>DirectML 不可用的原因(完整诊断串;可用或未探测时为空)。供诊断包/界面直接显示。</summary>
+    /// <summary>DirectML 不可用的原因(完整诊断串,含卡名/错误码;可用或未探测时为空)。供【日志/诊断包】显示。</summary>
     public static string DmlUnavailableReason => _dmlUnavailableReason;
+
+    /// <summary>给【界面】看的 DirectML 不可用原因:只说明"在哪一步失败、下一步做什么",
+    /// 【绝不出现具体显卡型号】—— 用户要求提示要能覆盖所有显卡,不能像在说某一款;
+    /// 完整诊断串(卡名 + HRESULT)只进日志与诊断包(DmlUnavailableReason)。</summary>
+    public static string DmlUnavailableReasonForUi
+    {
+        get
+        {
+            try
+            {
+                return string.IsNullOrEmpty(_dmlUnavailableReason)
+                    ? "在目标显卡上创建 DirectML 会话失败(错误码与卡名已写入日志)"
+                    : "在目标显卡上创建 DirectML 会话失败 —— 常见原因是显存不足、显卡驱动异常、"
+                      + "独显被禁用/被供电或节能策略关掉;详细的错误码与卡名已写入日志(把日志发给作者即可定位)";
+            }
+            catch { return "在目标显卡上创建 DirectML 会话失败(详见日志)"; }
+        }
+    }
 
     /// <summary>解析"本次探测应该建 DirectML 会话的唯一设备号"。-1 = 解析不出。
     /// 顺序:①设置里指定的卡(尊重用户选择,经 ResolveDmlDevice 名称匹配到真卡);
@@ -827,14 +845,16 @@ public static class EsrganOnnxService
         _dmlWarned = true;
         AppLogger.Warn($"⚠ GPU 加速(DirectML)不可用 — {detail}。已自动改用 CPU(稳定但慢数倍)。"
             + "本结论来自「在目标设备上真实建 DirectML 会话失败」的实测,不是驱动版本推断 —— "
-            + "请按下面的处置逐条排查,不要盲目更新驱动。\n" + DmlUnavailableAdvice());
+            + "请按下面的处置逐条排查,不要盲目更新驱动。\n" + DmlUnavailableAdvice(includeCardName: true));
     }
 
     /// <summary>DirectML 不可用时给用户的【可执行处置】文案(日志 / 弹窗 / 内联提示共用)。
-    /// 若发现"注册表里看得见、但两套枚举里都没有"的显卡,直接点名该卡 + 问题代码 + 逐条处置
+    /// 若发现"注册表里看得见、但两套枚举里都没有"的显卡,直接给出该卡的状态 + 逐条处置
     /// (真机 2026-10-02:用户当时没插电源,笔记本自动切成了仅核显 —— 所以第①条就是插上电源重测);
-    /// 否则给通用排查顺序。不再写"建议更新显卡驱动(50 系需较新驱动)"这种把用户带偏的结论。</summary>
-    public static string DmlUnavailableAdvice()
+    /// 否则给通用排查顺序。不再写"建议更新显卡驱动(50 系需较新驱动)"这种把用户带偏的结论。
+    /// 【includeCardName】默认 false:给界面看的文案【不点具体型号】,提示要能覆盖所有显卡;
+    /// 只有写日志/诊断包时才传 true,那里需要精确卡名来定位。</summary>
+    public static string DmlUnavailableAdvice(bool includeCardName = false)
     {
         try
         {
@@ -845,7 +865,7 @@ public static class EsrganOnnxService
             foreach (var a in EngineService.HardwareDxgiAdapters()) dxgiNames.Add(a.Name);
             var missing = AlhPro.Core.GpuVisibility.MissingFromEnumerations(regNames, engineNames, dxgiNames);
             if (missing.Count > 0)
-                return AlhPro.Core.GpuVisibility.DescribeMissingGpu(missing[0], GpuStatusProbe.ProblemCodeOf(missing[0]));
+                return AlhPro.Core.GpuVisibility.DescribeMissingGpu(missing[0], GpuStatusProbe.ProblemCodeOf(missing[0]), includeCardName);
         }
         catch { }
         return "没检测到「注册表可见却枚举不到」的显卡,按下面顺序排查:"
