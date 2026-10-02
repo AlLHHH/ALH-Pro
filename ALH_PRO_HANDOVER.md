@@ -142,6 +142,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 - 请求 JSON body 用 `[IO.File]::WriteAllText(..., UTF8Encoding($false))` 无 BOM(有 BOM → curl 报 "Problems parsing JSON")。
 - 勿 `Invoke-RestMethod -Body "中文JSON"`(PS5.1 序列化会坏)。
 
+### 6. 更新公告怎么写(用户 2026-10-02 要求,长期有效)
+三处公告口径必须一致,**简单直白地写清"新增了什么功能、修复了什么",不写技术细节、不写 GitHub 术语**:
+- 软件内「更新说明」:`RELEASE_NOTES.md` + `release_history.json`
+- GitHub Release 正文:仓库根目录 `发布公告_vX.X.X.md`
+- 官网更新日志:`website/changelog.html`
+
+写法要求:
+- 每条一行,**以「新增:…」/「修复:…」开头**,一件事一条,普通用户看得懂。
+- 不写类名 / 函数名 / 错误码 / 枚举顺序 / 重构 / 提交号这类内部细节;需要留证据的技术细节写进本交接文档或提交信息,不进公告。
+- 面向"用户能得到什么结果",不写"代码里怎么改的"。
+- 长度一屏内,一般 2~5 条。
+
 ---
 
 ## 六、本次会话(DeepSeek 维护)改动 — 已提交在 `main`
