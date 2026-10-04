@@ -324,6 +324,39 @@ public static class AdFetcher
             _adsChangedAtUtc = DateTime.UtcNow;   // 内容变了 → 之前缓存的广告图一律按过期处理
         }
         Publish(ads);
+
+        // 【2026-10-04 用户报「广告图也要等很久才加载出来」】列表一拿到就**后台预取图片**:
+        // 图片原来只在"轮播到那张卡"的一瞬间才开始下载(文字先出现、图几秒后才补上)。预取后,
+        // 等 30 秒轮播转到带图的卡时,图早就在本地缓存里了(缓存 2 小时有效,有效期内一个请求都不发)。
+        _ = PrefetchImagesAsync(ads);
+    }
+
+    /// <summary>已经预取成功的图片地址(同一张不用重复排队)。</summary>
+    private static readonly System.Collections.Generic.HashSet<string> _prefetched
+        = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>后台把广告图先下到本地缓存,轮到显示时就是本地文件(不再"文字先来、图等几秒")。
+    /// 顺序执行、失败静默:不并发打网络,顺带把"哪家通道能通"喂给后面的图片(见 <see cref="RememberChannel"/>)。
+    /// 缓存仍在有效期内时 <see cref="FetchImageToTempAsync"/> 直接返回本地文件,所以重复调用也很便宜。</summary>
+    public static async Task PrefetchImagesAsync(AdInfo[]? ads = null)
+    {
+        try
+        {
+            var list = ads is { Length: > 0 } ? ads : Latest;
+            if (list is not { Length: > 0 }) return;
+            foreach (var a in list)
+            {
+                var url = a?.Image;
+                if (string.IsNullOrWhiteSpace(url)) continue;
+                lock (_prefetched) { if (_prefetched.Contains(url)) continue; }
+                var local = await FetchImageToTempAsync(url).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(local))
+                {
+                    lock (_prefetched) { _prefetched.Add(url); }
+                }
+            }
+        }
+        catch { }
     }
 
     /// <summary>按编号顺序把已拿到的卡摊成数组(增量发布与最终结果共用)。</summary>
