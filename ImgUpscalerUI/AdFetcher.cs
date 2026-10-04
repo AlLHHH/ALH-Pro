@@ -2,6 +2,7 @@ using System;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
+using AlhPro.Core;
 
 namespace ALHPro;
 
@@ -38,32 +39,10 @@ public static class AdFetcher
     }
 
     /// <summary>把 GitHub raw URL 转成多个国内可达镜像 URL(供图片加载做多镜像回退)。
+    /// 实现在 <see cref="AdMirror.MirrorsFor"/> —— 纯逻辑、可单测。
+    /// 【2026-10-04 修】原实现在这里手写,jsDelivr 那条拼成了 <c>@main/ad/ad/img4.jpg</c>(多一层 ad/)→ 永远 404。
     /// raw.githubusercontent.com 国内直连常被墙/超时,不放在首选;jsDelivr 实测最稳,排最前。</summary>
-    public static System.Collections.Generic.IEnumerable<string> ToMirrorUrls(string url)
-    {
-        var list = new System.Collections.Generic.List<string>();
-        if (string.IsNullOrWhiteSpace(url)) return list;
-        if (url.Contains("raw.githubusercontent.com", StringComparison.OrdinalIgnoreCase))
-        {
-            // 【2026-09-17】顺序按"国内实测可用"重排:公共加速镜像在前,jsDelivr 次之,raw 原图最后
-            var rel = "";
-            try { rel = url.Substring(url.IndexOf("main/ad/") + "main/".Length); } catch { }
-            if (rel.Length > 0)
-            {
-                // 【2026-09-17 真机实测重排】jsDelivr 排第一(用户机器上只有它是直连真通的);
-                // ghfast/gitmirror 在那边不是超时就是 DNS 解析不了,已移除。
-                list.Add("https://cdn.jsdelivr.net/gh/AlLHHH/ALH-Pro@main/ad/" + rel);
-            }
-            list.Add("https://gh-proxy.com/" + url);
-            list.Add("https://ghproxy.net/" + url);
-            list.Add(url);   // 原图最后(该域名可能被 hosts 加速器劫持到 127.0.0.1)
-        }
-        else
-        {
-            list.Add(url);   // 非 raw 域名(已是其它源):原样用
-        }
-        return list;
-    }
+    public static System.Collections.Generic.IEnumerable<string> ToMirrorUrls(string url) => AdMirror.MirrorsFor(url);
 
     /// <summary>最近一次缓存到的广告卡数组(线程安全);启动即有默认本地兜底,网络拉取成功后再替换。</summary>
     public static volatile AdInfo[] Latest = DefaultAds();
@@ -141,24 +120,50 @@ public static class AdFetcher
         return c;
     }
 
+    /// <summary>图片缓存有效期:同一个文件名超过这段时间就重新下载一次。
+    /// 【2026-10-04 修】原来只判断"缓存文件存在且非空"就永远复用 ⇒ 作者替换同名图片后界面一直显示旧图,
+    /// 只能等启动时清掉 3 天前的文件。现在:超过有效期重下;广告内容一改立即重下(见 RefreshAsync)。</summary>
+    public static readonly TimeSpan ImageCacheTtl = TimeSpan.FromHours(2);
+
+    /// <summary>下载失败后的静默期:这段时间内不再重试同一张图(有旧图就先用旧图),避免离线时每 30 秒各端点轮一遍。</summary>
+    private static readonly TimeSpan ImageRetryCooldown = TimeSpan.FromMinutes(10);
+
+    private static readonly System.Collections.Generic.Dictionary<string, DateTime> _imgRetryAfterUtc = new();
+
     /// <summary>
     /// 把广告图取到本地临时文件并返回路径(供 BitmapImage 直接读本地文件,避免网络图加载失败/裂图)。
     /// 【2026-09-17 用户要求:图片也要显示、一条不行换下一条、直到拿到为止】
     /// 顺序:① api.github.com contents(base64 解出字节;这条通道在本机是通的)
-    ///       → ② jsDelivr → ③ gh-proxy → ④ ghproxy → ⑤ raw 原地址;同一张图成功后缓存,不重复下载。
+    ///       → ② jsDelivr → ③ gh-proxy → ④ ghproxy → ⑤ raw 原地址。
+    /// 缓存策略见 <see cref="ImageCacheTtl"/>:过期或广告内容变化就重下,重下失败则退回旧图(不裂图)。
     /// </summary>
     public static async Task<string?> FetchImageToTempAsync(string url)
     {
         if (string.IsNullOrWhiteSpace(url)) return null;
         try
         {
-            string name = "ad.jpg";
-            try { name = System.IO.Path.GetFileName(new Uri(url).AbsolutePath); } catch { }
-            if (string.IsNullOrWhiteSpace(name)) name = "ad.jpg";
+            var name = AdMirror.CacheFileName(url);
             var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ALHPro", "ad");
             System.IO.Directory.CreateDirectory(dir);
             var cache = System.IO.Path.Combine(dir, name);
-            try { if (System.IO.File.Exists(cache) && new System.IO.FileInfo(cache).Length > 0) return cache; } catch { }
+
+            // 缓存能不能直接用?存在 + 非空 + 写入时间不早于 max(现在 - 有效期, 广告内容上次变化时间)。
+            // 后者保证"作者换了同名图片"最多等一个有效期就自动刷新,而不是永远不刷新。
+            var minWrite = DateTime.UtcNow - ImageCacheTtl;
+            if (_adsChangedAtUtc > minWrite) minWrite = _adsChangedAtUtc;
+            bool exists = false; long len = 0; DateTime write = DateTime.MinValue;
+            try
+            {
+                var fi = new System.IO.FileInfo(cache);
+                exists = fi.Exists;
+                if (exists) { len = fi.Length; write = fi.LastWriteTimeUtc; }
+            }
+            catch { }
+            if (AdMirror.IsCacheReusable(exists, len, write, minWrite)) return cache;
+
+            // 刚下载失败过 → 静默期内不再重试(有旧图就用旧图,不裂图也不空转)。
+            if (_imgRetryAfterUtc.TryGetValue(cache, out var until) && DateTime.UtcNow < until)
+                return exists && len > 0 ? cache : null;
 
             byte[]? bytes = null;
             // ① GitHub API Contents(最稳的一条路)
@@ -183,23 +188,30 @@ public static class AdFetcher
                     catch { }
                 }
             }
-            if (bytes is not { Length: > 0 }) return null;
+            if (bytes is not { Length: > 0 })
+            {
+                _imgRetryAfterUtc[cache] = DateTime.UtcNow + ImageRetryCooldown;
+                return exists && len > 0 ? cache : null;   // 下载失败:有旧图先用旧图
+            }
+            _imgRetryAfterUtc.Remove(cache);
             System.IO.File.WriteAllBytes(cache, bytes);
             return cache;
         }
         catch { return null; }
     }
 
-    /// <summary>收掉上次异常退出留下的广告图缓存(启动时清一次,避免 %TEMP% 堆积)。</summary>
+    /// <summary>收掉上次异常退出留下的广告图缓存(启动时清一次,避免 %TEMP% 堆积)。
+    /// 【2026-10-04】从"清 3 天前"收紧到"清 1 天前":文件名相同的图片本来就可能被替换,缓存留太久只会让人以为改图没生效。</summary>
     public static void PruneImageCache()
     {
         try
         {
             var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ALHPro", "ad");
             if (!System.IO.Directory.Exists(dir)) return;
+            var cutoff = DateTime.Now - TimeSpan.FromDays(1);
             foreach (var f in System.IO.Directory.EnumerateFiles(dir))
             {
-                try { if (DateTime.Now - System.IO.File.GetLastWriteTime(f) > TimeSpan.FromDays(3)) System.IO.File.Delete(f); } catch { }
+                try { if (System.IO.File.GetLastWriteTime(f) < cutoff) System.IO.File.Delete(f); } catch { }
             }
         }
         catch { }
@@ -208,11 +220,34 @@ public static class AdFetcher
     /// <summary>广告拉取失败是否已提示过一次(避免一次启动里反复刷屏;网络波动/被墙很常见,只需友好提示一次)。</summary>
     private static bool _adWarnedOnce;
 
+    /// <summary>上一次拿到的广告内容指纹,以及内容发生变化的时刻(UTC)。
+    /// 【2026-10-04】作者一改 ad/adN.json(文案或图片地址),指纹就变 → 图片缓存立即失效、下次显示时重新下载,
+    /// 不用等缓存有效期,也避免"改了图没反应"。</summary>
+    private static string _lastAdsFingerprint = "";
+    private static DateTime _adsChangedAtUtc = DateTime.MinValue;
+
+    /// <summary>把广告列表摊成指纹用的行(按编号顺序,内容一变指纹就变)。</summary>
+    private static System.Collections.Generic.List<string> FingerprintLines(AdInfo[] ads)
+    {
+        var lines = new System.Collections.Generic.List<string>(ads.Length);
+        foreach (var a in ads)
+            lines.Add($"{a.Title}|{a.Text}|{a.Image}|{a.Link}|{a.LinkText}|{a.Sponsor}");
+        return lines;
+    }
+
     /// <summary>启动时一次性拉取(失败静默,保留旧缓存)。</summary>
     public static async Task RefreshAsync()
     {
         var ads = await FetchAllAsync().ConfigureAwait(false);
-        if (ads is { Length: > 0 }) Latest = ads;    }
+        if (ads is not { Length: > 0 }) return;
+        var fp = AdMirror.Fingerprint(FingerprintLines(ads));
+        if (!string.Equals(fp, _lastAdsFingerprint, StringComparison.Ordinal))
+        {
+            _lastAdsFingerprint = fp;
+            _adsChangedAtUtc = DateTime.UtcNow;   // 内容变了 → 之前缓存的广告图一律按过期处理
+        }
+        Latest = ads;
+    }
 
     /// <summary>拉取并解析全部广告文件(自适应:从 ad1 开始,遇到不存在的文件即停,最多 20 个)。
     /// 【2026-09-17 用户要求:直到所有广告都出来】原来是"一次通不过就放弃",现在改成**多轮重试**:
