@@ -106,4 +106,78 @@ public class AdMirrorTests
     {
         Assert.NotEmpty(AdMirror.Fingerprint(null));
     }
+
+    // ===================== 【2026-10-04 用户报「软件内广告等好久都不出现」】 =====================
+    // 一次刷新要按编号试 ad1…adN,每条文件都从固定顺序重头试:死通道(实测 jsDelivr 超时 7 秒)挡在前面,
+    // 9 个文件就白等两分钟。记住第一条文件探出来的可用通道(按 host 认),后面的文件与广告图直接先试它。
+
+    [Fact]
+    public void 通道host_能认出各家镜像与内嵌URL()
+    {
+        Assert.Equal("raw.githubusercontent.com", AdMirror.HostOf("https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/ad1.json"));
+        // gh-proxy 的地址里嵌着一条 https://…,只能按"第一个 /"取 host
+        Assert.Equal("gh-proxy.com", AdMirror.HostOf("https://gh-proxy.com/https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/ad1.json"));
+        Assert.Equal("api.github.com", AdMirror.HostOf("https://API.github.com/repos/AlLHHH/ALH-Pro/contents/ad/{0}"));   // 统一小写
+        Assert.Equal("api", AdMirror.HostOf("api"));       // 非 URL 标识原样返回
+        Assert.Equal("", AdMirror.HostOf(""));
+        Assert.Equal("", AdMirror.HostOf(null));
+    }
+
+    [Fact]
+    public void 优先通道_命中则排最前且不留重复()
+    {
+        var urls = new List<string>
+        {
+            "https://api.github.com/repos/AlLHHH/ALH-Pro/contents/ad/{0}",
+            "https://cdn.jsdelivr.net/gh/AlLHHH/ALH-Pro@main/ad/{0}",
+            "https://gh-proxy.com/https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/{0}",
+            "https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/{0}",
+        };
+
+        var reordered = AdMirror.PreferHost(urls, "gh-proxy.com");
+
+        Assert.Equal(4, reordered.Count);                                  // 不能把命中的那条复制一份
+        Assert.Equal("https://gh-proxy.com/https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/{0}", reordered[0]);
+        Assert.Single(reordered, u => u.Contains("gh-proxy.com", StringComparison.Ordinal));
+        Assert.Equal("https://api.github.com/repos/AlLHHH/ALH-Pro/contents/ad/{0}", reordered[1]);   // 其余保持原顺序
+    }
+
+    [Fact]
+    public void 优先通道_本来就在最前则原样返回()
+    {
+        var urls = new List<string>
+        {
+            "https://api.github.com/repos/AlLHHH/ALH-Pro/contents/ad/{0}",
+            "https://cdn.jsdelivr.net/gh/AlLHHH/ALH-Pro@main/ad/{0}",
+        };
+
+        var reordered = AdMirror.PreferHost(urls, "api.github.com");
+
+        Assert.Equal(urls, reordered);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("没这条通道.com")]
+    public void 优先通道_空值或未命中保持原顺序(string? preferred)
+    {
+        var urls = new List<string>
+        {
+            "https://api.github.com/repos/AlLHHH/ALH-Pro/contents/ad/{0}",
+            "https://cdn.jsdelivr.net/gh/AlLHHH/ALH-Pro@main/ad/{0}",
+        };
+
+        var reordered = AdMirror.PreferHost(urls, preferred);
+
+        Assert.Equal(urls, reordered);
+    }
+
+    [Fact]
+    public void 优先通道_空列表不抛异常()
+    {
+        Assert.Empty(AdMirror.PreferHost(null, "gh-proxy.com"));
+        Assert.Empty(AdMirror.PreferHost(new List<string>(), "gh-proxy.com"));
+    }
 }

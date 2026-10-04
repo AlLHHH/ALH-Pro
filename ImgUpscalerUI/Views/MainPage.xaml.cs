@@ -821,14 +821,14 @@ public sealed partial class MainPage : Page
             var ct = _adCts.Token;
             _ = Task.Run(async () =>
             {
-                await AdFetcher.RefreshAsync().ConfigureAwait(false);
+                await AdFetcher.RefreshAsync(() => DispatcherQueue.TryEnqueue(RenderAds)).ConfigureAwait(false);
                 DispatcherQueue.TryEnqueue(RenderAds);
                 while (!ct.IsCancellationRequested)
                 {
                     try
                     {
                         await System.Threading.Tasks.Task.Delay(AdFetcher.PollInterval, ct).ConfigureAwait(false);
-                        await AdFetcher.RefreshAsync().ConfigureAwait(false);
+                        await AdFetcher.RefreshAsync(() => DispatcherQueue.TryEnqueue(RenderAds)).ConfigureAwait(false);
                         DispatcherQueue.TryEnqueue(RenderAds);
                         DispatcherQueue.TryEnqueue(RotateAd);
                     }
@@ -847,7 +847,8 @@ public sealed partial class MainPage : Page
         try { _adCts?.Cancel(); } catch { }
     }
 
-    /// <summary>启动:立即用默认内容渲染 + 每 10 分钟轮询(作者改 ad/adN.json push,用户侧最长 10 分钟看到新内容);本地每 30 秒轮播一张卡。</summary>
+    /// <summary>启动:立即用默认内容渲染 + 每 10 分钟轮询(作者改 ad/adN.json push,用户侧最长 10 分钟看到新内容);本地每 30 秒轮播一张卡。
+    /// 【2026-10-04】RefreshAsync 传了回调:每拉到一张在线广告就重绘一次,不用等整轮跑完 —— 这就是"广告等好久都不出现"的那一半修复。</summary>
     private async Task InitAdAsync()
     {
         // 本次运行点「✕」或设置隐藏 → 不显示也不轮询(重启恢复)
@@ -856,14 +857,14 @@ public sealed partial class MainPage : Page
         DispatcherQueue.TryEnqueue(() => { RenderAds(); StartAdRotateTimer(); });
         _adCts = new System.Threading.CancellationTokenSource();
         var ct = _adCts.Token;
-        await AdFetcher.RefreshAsync().ConfigureAwait(false);   // 首次拉取(替换默认)
+        await AdFetcher.RefreshAsync(() => DispatcherQueue.TryEnqueue(RenderAds)).ConfigureAwait(false);   // 首次拉取(替换默认)
         DispatcherQueue.TryEnqueue(RenderAds);
         while (!ct.IsCancellationRequested)
         {
             try
             {
                 await System.Threading.Tasks.Task.Delay(AdFetcher.PollInterval, ct).ConfigureAwait(false);
-                await AdFetcher.RefreshAsync().ConfigureAwait(false);
+                await AdFetcher.RefreshAsync(() => DispatcherQueue.TryEnqueue(RenderAds)).ConfigureAwait(false);
                 DispatcherQueue.TryEnqueue(RenderAds);
                 DispatcherQueue.TryEnqueue(RotateAd);   // 拉新后立即刷到新内容
             }

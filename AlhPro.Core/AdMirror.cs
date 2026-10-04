@@ -79,6 +79,45 @@ public static class AdMirror
     public static bool IsCacheReusable(bool exists, long bytes, DateTime lastWriteUtc, DateTime minWriteUtc)
         => exists && bytes > 0 && lastWriteUtc >= minWriteUtc;
 
+    /// <summary>
+    /// 取 URL 的 host(<c>://</c> 之后到第一个 <c>/</c>,小写;非 URL 标识原样返回,空值返回空串)。
+    /// <para>故意不用 <see cref="Uri"/>:gh-proxy 的地址里还嵌着一条 <c>https://raw.githubusercontent.com/…</c>,
+    /// 用 Uri 解析容易把内层当成路径的一部分。这里只需要"哪家镜像",按字符串取就够且可预测。</para>
+    /// </summary>
+    public static string HostOf(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return "";
+        int k = url.IndexOf("://", StringComparison.Ordinal);
+        if (k < 0) return url.Trim().ToLowerInvariant();
+        int start = k + 3;
+        int end = url.IndexOf('/', start);
+        var host = end < 0 ? url.Substring(start) : url.Substring(start, end - start);
+        return host.ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// 把候选通道列表重排成「上次成功的那家镜像排最前,其余保持原顺序」(没命中或本来就在最前 → 原样返回、不留重复项)。
+    /// <para>【2026-10-04 用户报「软件内广告等好久都不出现」】一次刷新要按编号顺序试 ad1…adN,每条文件都从固定顺序
+    /// 从头试一遍:排在前面的通道若在这台机器上必超时(实测本机 jsDelivr 超时 7 秒、api.github.com 403、raw 超时 9 秒),
+    /// 9 个文件就白等两分钟。记住第一条文件探出来的可用通道(实测 gh-proxy 能用),后面的文件和广告图直接先试它。</para>
+    /// </summary>
+    public static IReadOnlyList<string> PreferHost(IEnumerable<string>? urls, string? preferredHost)
+    {
+        var list = new List<string>();
+        if (urls is not null)
+            foreach (var u in urls)
+                if (!string.IsNullOrEmpty(u)) list.Add(u);
+        if (string.IsNullOrWhiteSpace(preferredHost) || list.Count == 0) return list;
+
+        var want = preferredHost.Trim();
+        int idx = list.FindIndex(u => string.Equals(HostOf(u), want, StringComparison.OrdinalIgnoreCase));
+        if (idx <= 0) return list;
+        var winner = list[idx];
+        list.RemoveAt(idx);
+        list.Insert(0, winner);
+        return list;
+    }
+
     /// <summary>广告内容指纹(FNV-1a 64 位十六进制)。内容没变 → 指纹不变 → 图片缓存继续复用。</summary>
     public static string Fingerprint(IEnumerable<string>? lines)
     {

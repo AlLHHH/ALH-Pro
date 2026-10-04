@@ -177,6 +177,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 - `d93e1ed`:自检对**不稳定显卡**(AMD 独显/RTX50系 Blackwell/老GTX/纯核显)显示"⚠️ 当前显卡可能并不完全支持 ALH Pro 的运行"。
 - `1302cec`:自检修正"只能 CPU"误判——Vulkan 不可用 ≠ DirectML 不可用(超分/补帧走 ONNX/DirectML GPU)。
 
+**广告/联网(2026-10-04)**
+- 「软件内广告等好久都不出现」修复。根因两条:①`AdFetcher.RefreshAsync` 是**整轮拉完才 `Latest = ads`**
+  (在线广告必须等 `FetchAllAsync` 整个跑完,才顶掉那两张内置软广);②每条文件都从"本机必超时的 jsDelivr(7 s)"
+  重头试,且默认先问 `api.github.com` —— **未认证 60 次/小时额度,和"检查更新"共用**,广告(一轮最多 20 个文件)
+  把额度吃干后更新检查一起 403(实测日志 15:44:18 `403 (rate limit exceeded)`)。
+  改法:①逐张发布(`FetchAllAsync(onProgress)` → `RefreshAsync(回调)` → `MainPage` 每拉到一张就 `DispatcherQueue.TryEnqueue(RenderAds)`);
+  ②记住上次用通的**通道 host** 并优先它(存 `%LOCALAPPDATA%\ALHPro\ad-channel.txt`,跨启动生效;
+  `AdMirror.HostOf` / `AdMirror.PreferHost` 纯函数 + 8 个单测);③API 一旦失败(403/超时)**冷却 10 分钟**,
+  冷却期内一条都不问它(额度留给更新检查),后续轮次直接 break 不再空等 20/40/60 s。
+  真机实测(本机,2026-10-04):首张在线广告 **≈2 分 10 秒 → 冷启动 0.9~8.7 s / 记住通道后 0.24~1.8 s**,
+  9 张齐全 21~25 s;**广告图也从 7.45 s 降到 235~374 ms**(通道记忆同样用在图上)。
+
 **其他被拒绝的方向**(保持现状,勿重做):
 - AMD→ONNX 强制切换(被撤销)——AMD 补帧是间歇性,ncnn 有时正常。
 - 自检"真出图验证"(跑引擎出图)→ 会慢 10~30 秒,用户明确不要,保持轻量。
@@ -227,6 +239,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 - 【2026-10-04 15:49】deploy 已把「广告卡图片不生效修复(`commit 882f186`)」+「启动链不再静默失败加固(启动痕迹/
   Navigate try-catch/原生消息框兜底/无窗口实例提示/图片放大页 try-catch)」发布进 `发布版\`;启动验证窗口标题
   `ALH Pro v1.4.5`,并已实测生成 `%LOCALAPPDATA%\ALHPro\启动痕迹.txt`(7 个落地点,共 360 ms)。
+- 【2026-10-04 16:2x】deploy 已把「广告卡出现慢修复(逐张发布 + 通道记忆 + API 冷却)」发布进 `发布版\`;
+  启动验证窗口标题 `ALH Pro v1.4.5`。
 - `发布版\engines\rife\rife-v4.26` **已删除**。
 - 【2026-09-16】补帧下拉**精简为 2 项**(序号 0 = `通用画质最新 (RIFE v4.13)`、1 = `通用画质 (RIFE v4.6)`)。
   另 4 支老架构模型的权重(`rife-anime` / `rife-HD` / `rife-UHD` / `rife-v2.3`,共 226.9 MB)
