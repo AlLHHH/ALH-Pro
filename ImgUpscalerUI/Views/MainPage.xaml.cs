@@ -873,21 +873,27 @@ public sealed partial class MainPage : Page
         }
     }
 
+    /// <summary>当前卡片对应的"取图批次":每次翻页 +1,用来丢弃翻页前那次下载的结果。</summary>
+    private int _adImageToken;
+
     /// <summary>把远程广告图设为 AdImage。【2026-09-17 用户要求:图片也要显示出来】
     /// 走 AdFetcher.FetchImageToTempAsync —— 先 api.github.com contents(本机唯一稳定的通道),再 jsDelivr/镜像,
     /// 拿到字节写进本地缓存文件再交给 BitmapImage(本地文件一定能显示,不会出现"网络图加载不出");
-    /// 全部失败才隐藏图框(不裂图)。卡片文字先渲染,图片后到就后显示。</summary>
-    private async void SetAdImage(string? url)
+    /// 全部失败才隐藏图框(不裂图)。卡片文字先渲染,图片后到就后显示。
+    /// 【2026-10-04】加 <paramref name="token"/>:广告列表一拉完就后台预取,图多数已在本地,这里几乎是瞬间;
+    /// 若翻页了(批次不同)就丢弃这次结果,避免把上一张卡的图盖到新卡上。</summary>
+    private async void SetAdImage(string? url, int token)
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(url)) { AdImageFrame.Visibility = Visibility.Collapsed; return; }
+            if (string.IsNullOrWhiteSpace(url)) { if (token == _adImageToken) AdImageFrame.Visibility = Visibility.Collapsed; return; }
             var local = await AdFetcher.FetchImageToTempAsync(url);
+            if (token != _adImageToken) return;                     // 已经翻到别的卡了:这次结果作废
             if (string.IsNullOrWhiteSpace(local)) { AdImageFrame.Visibility = Visibility.Collapsed; return; }
             AdImage.Source = new BitmapImage(new Uri(local));
             AdImageFrame.Visibility = Visibility.Visible;
         }
-        catch { try { AdImageFrame.Visibility = Visibility.Collapsed; } catch { } }
+        catch { if (token == _adImageToken) { try { AdImageFrame.Visibility = Visibility.Collapsed; } catch { } } }
     }
 
     /// <summary>渲染当前轮播的广告卡(必须在 UI 线程)。数据为空或用户已关/本次已关 → 隐藏。</summary>
@@ -914,12 +920,15 @@ public sealed partial class MainPage : Page
         var ph = AdPlaceholderImage();
         if (!string.IsNullOrWhiteSpace(ad.Image))
         {
-            SetAdImage(ad.Image);
+            // 先摆占位图、图框亮着,图到了再替换(图已在预取缓存里时几乎是瞬间→不会再看到"占位图挂几秒")
+            AdImage.Source = ph;
             AdImageFrame.Visibility = Visibility.Visible;
+            SetAdImage(ad.Image, ++_adImageToken);
         }
         else
         {
             // 无图 → 纯文字卡:图隐藏(仅隐藏外框,不占位),标题/文案顶上
+            _adImageToken++;                   // 让前一张卡还在下载的图作废
             AdImage.Source = ph;
             AdImageFrame.Visibility = Visibility.Collapsed;
         }
