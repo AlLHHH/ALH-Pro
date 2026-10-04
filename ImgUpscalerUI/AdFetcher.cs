@@ -166,24 +166,31 @@ public static class AdFetcher
                 return exists && len > 0 ? cache : null;
 
             byte[]? bytes = null;
-            // ① GitHub API Contents(最稳的一条路)
-            try
+            // ① GitHub API Contents(有额度时最稳的一条路)。【2026-10-04】API 已在冷却期(403 限流/被墙)就跳过它,
+            // 直接走镜像 —— 别为了几张图再把"60 次/小时"的额度花掉,那是"检查更新"也要用的。
+            if (DateTime.UtcNow >= _apiCooldownUntilUtc)
             {
-                var api = $"https://api.github.com/repos/AlLHHH/ALH-Pro/contents/ad/{name}";
-                var body = await _http.GetStringAsync(api).ConfigureAwait(false);
-                var b64 = ExtractBase64Content(body);
-                if (b64 is not null) bytes = Convert.FromBase64String(b64);
+                try
+                {
+                    var api = $"https://api.github.com/repos/AlLHHH/ALH-Pro/contents/ad/{name}";
+                    var body = await _http.GetStringAsync(api).ConfigureAwait(false);
+                    var b64 = ExtractBase64Content(body);
+                    if (b64 is not null) { bytes = Convert.FromBase64String(b64); RememberChannel(api); }
+                }
+                catch
+                {
+                    _apiCooldownUntilUtc = DateTime.UtcNow + ApiRetryCooldown;   // 403/超时 → 与 JSON 通道共用冷却
+                }
             }
-            catch { }
-            // ②~⑤ 镜像
+            // ②~⑤ 镜像(上一轮用通的通道排最前,免得每张图都先等死通道超时)
             if (bytes is not { Length: > 0 })
             {
-                foreach (var u in ToMirrorUrls(url))
+                foreach (var u in AdMirror.PreferHost(ToMirrorUrls(url), _preferredHost))
                 {
                     try
                     {
                         var b = await _http.GetByteArrayAsync(u).ConfigureAwait(false);
-                        if (b is { Length: > 0 }) { bytes = b; break; }
+                        if (b is { Length: > 0 }) { bytes = b; RememberChannel(u); break; }
                     }
                     catch { }
                 }
@@ -220,6 +227,65 @@ public static class AdFetcher
     /// <summary>广告拉取失败是否已提示过一次(避免一次启动里反复刷屏;网络波动/被墙很常见,只需友好提示一次)。</summary>
     private static bool _adWarnedOnce;
 
+    /// <summary>安全上限:最多探测 ad1..ad20(自适应停止,这里只是兜底)。</summary>
+    private const int MaxFiles = 20;
+
+    /// <summary>GitHub API Contents 通道(URL 模板,`{0}` = 广告文件名)。它返回的是 base64 包着 JSON,所以单独走
+    /// <see cref="FetchViaApiAsync"/> 解析;这里用真实 URL 模板是为了"哪家通道"能统一按 host 认(见 AdMirror.HostOf)。</summary>
+    private const string ApiChannel = "https://api.github.com/repos/AlLHHH/ALH-Pro/contents/ad/{0}";
+
+    /// <summary>上次用通的那家通道 host(广告文件与广告图共用),**跨启动记住**。
+    /// 【2026-10-04 修「广告等好久都不出现」】冷启动时不必再从"本机必超时的 jsDelivr(7 秒)"开始等:
+    /// 真机实测,记住通道后第一条广告文件 0.3 秒就回来(冷启动 8.7 秒)。</summary>
+    private static volatile string? _preferredHost = LoadPreferredHost();
+
+    /// <summary>GitHub API Contents 通道暂停使用的截止时刻(UTC)。
+    /// 【2026-10-04 定位到的根因之一】一次刷新最多要问 20 个文件,而**未认证** api.github.com 限额只有
+    /// 60 次/小时/出口 IP,还和"检查更新"共用 —— 广告把额度吃干后更新检查也一起 403
+    /// (诊断日志 2026-10-04 15:44:18 就是 `403 (rate limit exceeded)`;实测 403 后每个文件还得再等
+    /// jsDelivr 超时 7 秒 + raw 超时 9 秒,9 个文件就是两分钟)。
+    /// 现在 API 一旦失败就冷却:冷却期内一个文件都不问它,优先走镜像,把额度留给更新检查。</summary>
+    private static DateTime _apiCooldownUntilUtc = DateTime.MinValue;
+
+    /// <summary>API 通道失败后的冷却时长(取轮询间隔:下次轮询时再试一次,通了就继续用它 —— 它是最快的一条)。</summary>
+    private static readonly TimeSpan ApiRetryCooldown = TimeSpan.FromMinutes(10);
+
+    /// <summary>把"上次用通的通道 host"存在本地(纯文本一行),下次启动直接先试它。</summary>
+    private static string AdChannelStateFile => System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ALHPro", "ad-channel.txt");
+
+    /// <summary>读上次记住的通道(读不到就 null = 按默认顺序试)。全程 try/catch:这只是提速缓存,不影响任何功能。</summary>
+    private static string? LoadPreferredHost()
+    {
+        try
+        {
+            var f = AdChannelStateFile;
+            if (System.IO.File.Exists(f))
+            {
+                var s = System.IO.File.ReadAllText(f).Trim();
+                if (s.Length is > 0 and < 64) return s;
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>记住这次用通的通道(只记 host;写文件失败不影响任何功能)。</summary>
+    private static void RememberChannel(string? url)
+    {
+        var host = AdMirror.HostOf(url);
+        if (host.Length == 0 || string.Equals(host, _preferredHost, StringComparison.OrdinalIgnoreCase)) return;
+        _preferredHost = host;
+        try
+        {
+            var f = AdChannelStateFile;
+            var dir = System.IO.Path.GetDirectoryName(f);
+            if (!string.IsNullOrEmpty(dir)) System.IO.Directory.CreateDirectory(dir);
+            System.IO.File.WriteAllText(f, host);
+        }
+        catch { }
+    }
+
     /// <summary>上一次拿到的广告内容指纹,以及内容发生变化的时刻(UTC)。
     /// 【2026-10-04】作者一改 ad/adN.json(文案或图片地址),指纹就变 → 图片缓存立即失效、下次显示时重新下载,
     /// 不用等缓存有效期,也避免"改了图没反应"。</summary>
@@ -235,10 +301,21 @@ public static class AdFetcher
         return lines;
     }
 
-    /// <summary>启动时一次性拉取(失败静默,保留旧缓存)。</summary>
-    public static async Task RefreshAsync()
+    /// <summary>启动时一次性拉取(失败静默,保留旧缓存)。
+    /// <paramref name="onUpdated"/>:每拿到一张新卡就回调一次(界面借此立刻重绘),可空。</summary>
+    public static async Task RefreshAsync(Action? onUpdated = null)
     {
-        var ads = await FetchAllAsync().ConfigureAwait(false);
+        // 【2026-10-04 修「广告等好久都不出现」】原实现是"整轮全拉完才 Latest = ads",
+        // 于是首屏那两张内置兜底卡要顶到整轮(最坏几分钟)结束才被在线广告换掉。
+        // 现在每拿到一张就先发布一次:在线广告一张一张出现,不再等整轮。
+        void Publish(AdInfo[] ads)
+        {
+            if (ads is not { Length: > 0 }) return;
+            Latest = ads;
+            try { onUpdated?.Invoke(); } catch { }
+        }
+
+        var ads = await FetchAllAsync(Publish).ConfigureAwait(false);
         if (ads is not { Length: > 0 }) return;
         var fp = AdMirror.Fingerprint(FingerprintLines(ads));
         if (!string.Equals(fp, _lastAdsFingerprint, StringComparison.Ordinal))
@@ -246,20 +323,31 @@ public static class AdFetcher
             _lastAdsFingerprint = fp;
             _adsChangedAtUtc = DateTime.UtcNow;   // 内容变了 → 之前缓存的广告图一律按过期处理
         }
-        Latest = ads;
+        Publish(ads);
+    }
+
+    /// <summary>按编号顺序把已拿到的卡摊成数组(增量发布与最终结果共用)。</summary>
+    private static AdInfo[] Snapshot(System.Collections.Generic.Dictionary<int, AdInfo> got)
+    {
+        var result = new System.Collections.Generic.List<AdInfo>(got.Count);
+        for (int i = 1; i <= MaxFiles; i++) if (got.TryGetValue(i, out var a)) result.Add(a);
+        return result.ToArray();
     }
 
     /// <summary>拉取并解析全部广告文件(自适应:从 ad1 开始,遇到不存在的文件即停,最多 20 个)。
     /// 【2026-09-17 用户要求:直到所有广告都出来】原来是"一次通不过就放弃",现在改成**多轮重试**:
     /// 没拿到结论的编号留到下一轮(间隔 20/40/60… 秒,最多 6 轮),任一编号 404 才是"真的没有"(停止)。
-    /// 目的是在"网关只放行部分域名"的机器上也能最终把 9 张卡全部拿到。</summary>
-    public static async Task<AdInfo[]> FetchAllAsync()
+    /// 目的是在"网关只放行部分域名"的机器上也能最终把 9 张卡全部拿到。
+    /// <para><paramref name="onProgress"/>:每多拿到一张就回调一次(已拿到的按编号顺序),界面可以边拉边显示。</para></summary>
+    public static async Task<AdInfo[]> FetchAllAsync(Action<AdInfo[]>? onProgress = null)
     {
-        const int MaxFiles = 20;   // 安全上限,杜绝异常端点导致无限循环
         var got = new System.Collections.Generic.Dictionary<int, AdInfo>();
+        int published = 0;
         int firstMissing = MaxFiles + 1;
         for (int round = 1; round <= 4; round++)
         {
+            // 第二轮起只走 API 通道;API 已冷却(限流/被墙)就一条通道都没有 → 不必空等 20/40/60 秒。
+            if (round > 1 && DateTime.UtcNow < _apiCooldownUntilUtc) break;
             bool allDone = true;
             bool allowMirrors = round == 1;   // 只有第一轮试镜像(之后只重试能通的 API 通道)
             for (int i = 1; i <= MaxFiles; i++)
@@ -270,17 +358,24 @@ public static class AdFetcher
                 if (json is null) { firstMissing = i; break; }              // 404 → 该编号不存在,到此为止
                 if (string.IsNullOrWhiteSpace(json)) { allDone = false; continue; }   // 本轮失败 → 下轮再试
                 var ad = ParseAd(json);
-                if (ad is not null) got[i] = ad;
+                if (ad is not null)
+                {
+                    got[i] = ad;
+                    // 逐张发布:在线广告一张一张顶掉内置兜底,不用等整轮跑完(见 RefreshAsync 的注释)。
+                    if (onProgress is not null && got.Count != published)
+                    {
+                        published = got.Count;
+                        try { onProgress(Snapshot(got)); } catch { }
+                    }
+                }
             }
             if (allDone) break;
             try { await Task.Delay(TimeSpan.FromSeconds(20 * round)).ConfigureAwait(false); } catch { break; }
         }
         // 按编号顺序输出(避免依赖 Linq)
-        var result = new System.Collections.Generic.List<AdInfo>();
-        for (int i = 1; i <= MaxFiles; i++) if (got.TryGetValue(i, out var a)) result.Add(a);
         // 【2026-09-17 用户要求:这类网络信息不要出现在日志里】成功/失败都静默:
         // 广告只是作者推广位,拉到就显示、拉不到就用内置默认,不需要打扰用户,也不需要留痕。
-        return result.ToArray();
+        return Snapshot(got);
     }
 
     /// <summary>把 https://api.github.com/.../contents/... 返回的 {"content":"&lt;base64&gt;","encoding":"base64"} 里的 base64 取出来。
@@ -320,35 +415,50 @@ public static class AdFetcher
         catch { return ""; }
     }
 
-    /// <summary>拉取单个广告文件原文。顺序:① GitHub API(本机网关只放行 api.github.com,更新检查一直成功就是证据)
-    /// → ② jsDelivr → ③ gh-proxy → ④ ghproxy → ⑤ raw 原地址。
-    /// 文件确实不存在(404)→ 返回 null(供调用方停止自适应拉取);其它失败返回空串(继续尝试下一端点)。</summary>
+    /// <summary>镜像通道(URL 模板,`{0}` = 广告文件名)。顺序按真机实测可用性排 ——
+    /// 说明见 <see cref="FetchFileRawAsync"/> 里的历史注释(jsDelivr 排第一)。</summary>
+    private static string[] MirrorChannels() => new[]
+    {
+        $"https://cdn.jsdelivr.net/gh/{AdMirror.Repo}@{AdMirror.Branch}/ad/{{0}}",
+        $"https://gh-proxy.com/https://raw.githubusercontent.com/{AdMirror.Repo}/{AdMirror.Branch}/ad/{{0}}",
+        $"https://ghproxy.net/https://raw.githubusercontent.com/{AdMirror.Repo}/{AdMirror.Branch}/ad/{{0}}",
+        $"https://raw.githubusercontent.com/{AdMirror.Repo}/{AdMirror.Branch}/ad/{{0}}",
+    };
+
+    /// <summary>拉取单个广告文件原文。顺序:① GitHub API(有额度时最稳最快)
+    /// → ② cdn.jsdelivr.net → ③ gh-proxy.com → ④ ghproxy.net → ⑤ raw 原地址。
+    /// 文件确实不存在(404)→ 返回 null(供调用方停止自适应拉取);其它失败返回空串(继续尝试下一端点)。
+    /// <para>【2026-10-04】两处提速:API 失败即冷却(免得 20 个文件白问 20 次、把 60 次/小时的额度吃干);
+    /// 记住上次成功的通道并优先它(见 <see cref="AdMirror.PreferHost"/>)—— 否则每个文件都要重头等一遍死通道超时。</para></summary>
     private static async Task<string?> FetchFileRawAsync(string file, bool allowMirrors)
     {
-        var viaApi = await FetchViaApiAsync("ad", file).ConfigureAwait(false);
-        if (viaApi is null) return null;            // API 说没有 → 判定该编号不存在
-        if (viaApi.Length > 0) return viaApi;       // API 成功 → 直接返回(最稳的一条路)
+        // 候选通道:API(不在冷却期时)+ 镜像(只在第一轮)。上次用通的那家排最前。
+        var channels = new System.Collections.Generic.List<string>(6);
+        if (DateTime.UtcNow >= _apiCooldownUntilUtc) channels.Add(ApiChannel);
+        if (allowMirrors) channels.AddRange(MirrorChannels());
+        var ordered = AdMirror.PreferHost(channels, _preferredHost);
+
         // 【2026-09-17 用户反馈"后台一直在跑"】镜像在用户网络下全部超时(7 秒/条 × 3 条 × 9 文件 × 多轮 ≈ 二十多分钟空转),
         // 所以只在第一轮试镜像;后续轮次只重试 API 通道(它才是这台机器上真正能通的那条)。
 
-        string[] urls =
-        {
-            // 【2026-09-17 按真机网络实测重排】用户机器上 raw.githubusercontent.com / api.github.com 被 hosts 加速器
-            // (Watt Toolkit)劫持到 127.0.0.1,加速器只转发 api.github.com、不转发 raw → 广告永远拉不到;
-            // ghfast.top 超时 12 秒、raw.gitmirror.com 连 DNS 都解析不了,排前面等于把时间全耗在死路上。
-            // jsDelivr 实测直接通(真实 Cloudflare IP、1 秒内返回),所以它排第一。
-            $"https://cdn.jsdelivr.net/gh/AlLHHH/ALH-Pro@main/ad/{file}",
-            $"https://gh-proxy.com/https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/{file}",
-            $"https://ghproxy.net/https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/{file}",
-            $"https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/{file}",
-        };
         bool sawNotFound = false;
-        foreach (var url in urls)
+        foreach (var ch in ordered)
         {
+            if (ch == ApiChannel)
+            {
+                var viaApi = await FetchViaApiAsync("ad", file).ConfigureAwait(false);
+                if (viaApi is null) return null;              // API 明确说文件不存在 → 停止自适应
+                if (viaApi.Length > 0) { RememberChannel(ApiChannel); return viaApi; }
+                // 403(限流)/超时/被墙 → 冷却:后面的文件不再逐个问 API(额度留给"检查更新")。
+                _apiCooldownUntilUtc = DateTime.UtcNow + ApiRetryCooldown;
+                continue;
+            }
+
+            var url = string.Format(ch, file);
             try
             {
                 var json = await _http.GetStringAsync(url).ConfigureAwait(false);
-                if (!string.IsNullOrWhiteSpace(json)) return json;
+                if (!string.IsNullOrWhiteSpace(json)) { RememberChannel(url); return json; }
             }
             catch (HttpRequestException hre)
             {
@@ -356,7 +466,7 @@ public static class AdFetcher
                 if (hre.StatusCode == System.Net.HttpStatusCode.NotFound) { sawNotFound = true; continue; }
                 // 非 404 失败:静默(用户要求不要把这类网络信息写进日志)
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 // 【日志友好化】广告文件拉取失败【不刷屏、不说人看不懂的技术英文】。
                 // 网络抖动/被墙很常见(尤其国内直连 GitHub),没必要每个文件每个端点都刷一条原始异常。
