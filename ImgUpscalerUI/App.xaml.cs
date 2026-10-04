@@ -38,6 +38,50 @@ namespace ALHPro
         private static bool _fatalDialogShown;   // 全局异常提示只弹一次(防刷屏)
         private static System.Threading.Mutex? _singleInstance;   // 单实例锁(Mutex,进程存活期间持有;退出自动释放)
 
+        // ===== 启动痕迹(2026-10-04 新增:排查「双击没反应」)=====
+        // 【为什么需要】全程序第一行日志在 OnLaunched 里的 AppLogger.Info("========== 应用启动 =========="),
+        // 它【之前】的整段入口(WinAppSDK/XAML 加载、apphost、COM 初始化)一行日志都没有。
+        // 于是"用户双击后什么都没发生"永远分不清两种情况:
+        //   ①连托管代码都没跑起来(WinAppSDK/DLL/杀软拦截)—— 代码层无线索,只能靠事件日志;
+        //   ②已经跑进来了、死在建窗口那一步。
+        // 这个文件每次启动【整份重写】,记录本次启动走到了哪一步:
+        //   - 文件不存在 ⇒ 连 App 构造函数都没进(候选:WinAppSDK 组件缺失/被杀软拦/apphost 失败);
+        //   - 最后一行是"App 构造函数进入" ⇒ 死在 App.xaml 或 OnLaunched 之前;
+        //   - 最后一行是"准备创建主界面" ⇒ 死在 MainPage 构造/Navigate;
+        //   - 最后一行是"窗口已 Activate" ⇒ 窗口其实起来了(再看是不是被别的实例/弹窗挡住)。
+        private static readonly System.Collections.Generic.List<string> _startupTrace = new();
+
+        /// <summary>记录一条启动痕迹(整份重写文件,只保留本次启动的轨迹)。失败静默——诊断功能本身绝不能影响启动。</summary>
+        private static void StartupTrace(string stage)
+        {
+            try
+            {
+                _startupTrace.Add($"{DateTime.Now:HH:mm:ss.fff}  {stage}");
+                var dir = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ALHPro");
+                System.IO.Directory.CreateDirectory(dir);
+                System.IO.File.WriteAllLines(
+                    System.IO.Path.Combine(dir, "启动痕迹.txt"), _startupTrace, new System.Text.UTF8Encoding(true));
+            }
+            catch { }
+        }
+
+        // 兜底提示:窗口还【没有】的时候(XamlRoot 为空)只能用 Win32 原生消息框——
+        // App.xaml.cs 里那个 ContentDialog 兜底要求 XamlRoot != null,而 Activate 之前它恒为空,
+        // 于是"建主界面时抛异常"会表现为【进程活着、没有窗口、也没有任何提示】= 用户说的"双击没反应"。
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = false)]
+        private static extern int MessageBox(IntPtr hWnd, string text, string caption, uint type);
+
+        private const uint MB_OK = 0x0;
+        private const uint MB_ICONERROR = 0x10;
+        private const uint MB_ICONWARNING = 0x30;
+
+        /// <summary>弹一个系统原生消息框(显示失败时兜底:窗口还没建起来也必须让用户看到东西)。</summary>
+        private static void ShowNativeMessage(string text, string caption, uint icon)
+        {
+            try { MessageBox(IntPtr.Zero, text, caption, MB_OK | icon); } catch { }
+        }
+
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
         private struct MemoryStatusEx
         {
@@ -448,7 +492,11 @@ namespace ALHPro
 
         public App()
         {
+            // 【启动痕迹 2026-10-04】第一处落地点:能执行到这里,说明托管代码已经跑起来、App 构造函数已进入。
+            // 放在 InitializeComponent 之前 —— 万一 App.xaml 加载就失败,这一行反而是唯一线索。
+            StartupTrace("App 构造函数进入(即将加载 App.xaml)");
             this.InitializeComponent();
+            StartupTrace("App.xaml 加载完成");
             // 全局未处理异常:记录到诊断日志并阻止崩溃(便于定位问题)。
             // 关键:窗口已就绪时给用户一个可见提示(否则"空白窗继续跑"用户不知发生什么)。
             UnhandledException += (_, e) =>
@@ -456,6 +504,7 @@ namespace ALHPro
                 try
                 {
                     var ex = e.Exception;
+                    StartupTrace("未处理异常: " + ex.GetType().Name + " — " + ex.Message);
                     var extra = "";
                     try { extra = $" HRESULT=0x{ex.HResult:X8}"; } catch { }
                     AppLogger.Error($"未处理异常{extra}", ex);
@@ -497,6 +546,19 @@ namespace ALHPro
                                 }
                                 catch { }
                             });
+                        }
+                        else
+                        {
+                            // 【关键兜底 2026-10-04】窗口还没建好(或已销毁)时 XamlRoot 恒为 null,
+                            // 上面那个 ContentDialog 分支永远进不去 —— 原来的实现于是【什么都不提示】,
+                            // 用户看到的就是"双击后毫无反应"。这里改用系统原生消息框,保证一定看得见。
+                            // 放后台线程弹:不阻塞 UI 线程(即便界面还能继续跑,也不影响用户看到这条提示)。
+                            _ = System.Threading.Tasks.Task.Run(() => ShowNativeMessage(
+                                "程序启动时发生异常,已记录到诊断日志。\n\n" +
+                                "日志位置:%LOCALAPPDATA%\\ALHPro\\diagnostic.log\n" +
+                                "启动痕迹:%LOCALAPPDATA%\\ALHPro\\启动痕迹.txt\n\n" +
+                                "异常信息:" + ex.Message,
+                                "ALH Pro 启动问题", MB_ICONERROR));
                         }
                     }
                 }
@@ -575,6 +637,7 @@ namespace ALHPro
 
         protected override void OnLaunched(LaunchActivatedEventArgs e)
         {
+            StartupTrace("OnLaunched 进入");
             // ===== 【拖放最优解】提权自愈:以管理员运行时,用普通权限重新拉起自己并立刻退出 =====
             // WindowsAppSDK 官方结论:提权的 WinUI3 程序**不支持拖放**(UIPI 设计,无 API 可绕)
             // → 本软件不需要管理员,所以"保证跑在普通权限"就是唯一正解。
@@ -613,6 +676,8 @@ namespace ALHPro
             }
             if (!createdNew)
             {
+                StartupTrace("检测到已有实例在运行(Mutex 未创建成功)");
+                bool shown = false;
                 try
                 {
                     // 找到已运行窗口:置前(设置前台 + 最小化还原)
@@ -622,11 +687,29 @@ namespace ALHPro
                         {
                             Win32_SafeShowWindow(p.MainWindowHandle);
                             SetForegroundWindow(p.MainWindowHandle);
+                            shown = true;
                             break;
                         }
                     }
                 }
                 catch { }
+                if (shown)
+                {
+                    StartupTrace("已把已有窗口置前,本实例退出");
+                }
+                else
+                {
+                    // 【2026-10-04 加固】已有 ALHPro 进程但【一个窗口都没有】(上次启动卡在建窗口那一步,
+                    // 或者窗口已销毁而进程没退干净)。旧逻辑此时直接 Environment.Exit(0) ——
+                    // 用户看到的就是"双击了很多次、每次都没反应",而且每双击一次还多留一个无窗口进程。
+                    // 这里明确告诉他发生了什么、怎么恢复。
+                    StartupTrace("已有实例但没有窗口 → 提示用户结束进程后重试");
+                    ShowNativeMessage(
+                        "ALH Pro 已经在运行,但它没有可显示的窗口(上次启动可能没走完)。\n\n" +
+                        "请打开「任务管理器」(Ctrl+Shift+Esc),切到「详细信息」页,结束所有 ALHPro.exe,然后重新双击本程序。\n\n" +
+                        "也可以在「运行」(Win+R)里执行:taskkill /IM ALHPro.exe /F",
+                        "ALH Pro 已经在运行", MB_ICONWARNING);
+                }
                 Environment.Exit(0);
                 return;
             }
@@ -674,8 +757,36 @@ namespace ALHPro
             }
             catch { }
             // 页面(含视图)构造完成后再 Activate:窗口一出现就是完整内容
-            _ = rootFrame.Navigate(typeof(MainPage), e.Arguments);
+            // 【2026-10-04 加固】原来这里是 `_ = rootFrame.Navigate(...)` —— 导航是【同步】执行完 MainPage
+            // 构造的,一旦 MainPage / 首个视图构造抛异常,这一行会把整个 OnLaunched 掀掉 ⇒ 后面的
+            // window.Activate() 永不执行 ⇒ 进程活着、没有窗口、也没有任何提示(用户说的"双击没反应")。
+            // 现在:出错也必须把窗口显示出来,并明确告诉用户、把崩溃诊断落到磁盘。
+            StartupTrace("准备创建主界面(Navigate MainPage)");
+            try
+            {
+                _ = rootFrame.Navigate(typeof(MainPage), e.Arguments);
+                StartupTrace("主界面构造完成");
+            }
+            catch (Exception exNav)
+            {
+                try { AppLogger.Error("主界面(MainPage)构造失败", exNav); } catch { }
+                try { WriteCrashDiagnostic(exNav); } catch { }
+                StartupTrace("主界面构造失败: " + exNav.GetType().Name + " — " + exNav.Message);
+                try
+                {
+                    rootFrame.Content = new Microsoft.UI.Xaml.Controls.TextBlock
+                    {
+                        Text = "主界面加载失败,已记录到诊断日志。\n\n" +
+                               "%LOCALAPPDATA%\\ALHPro\\diagnostic.log\n\n" + exNav.Message,
+                        TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                        Margin = new Microsoft.UI.Xaml.Thickness(24),
+                        IsTextSelectionEnabled = true,
+                    };
+                }
+                catch { }
+            }
             window.Activate();
+            StartupTrace("窗口已 Activate");
             // ===== Activate 后的非关键启动任务:纯 IO 后台并行(日志清理/自检/临时文件清理) =====
             _ = System.Threading.Tasks.Task.Run((System.Action)(() =>
             {

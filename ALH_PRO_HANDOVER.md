@@ -192,6 +192,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 3. **RTX 3070 超分黑帧**:ncnn-Vulkan 长视频连续处理 GPU 队列累积异常。**2026-09-27 起不再有"事后判黑 ⇒ 后续批改走 ONNX"的兜底**(作者要求删除:黑色转场素材会被误判,反而把整条任务拖去 ONNX 慢路);视频路径只剩事前探测与输出端黑场留痕,单图/分块成品另有自带源图豁免的 `GuardSilentBlackOutput` 守卫。
 4. **RTX 3070 nvenc 失败(7.49 秒/帧慢)**:驱动 560.70 偏旧。**代码治不了根子,须用户升级驱动到 ≥610**。
 5. **"驱动最低版本"门槛**:阈值需要真机数据校准,DeepSeek 单看诊断包设阈值会误伤(4060@572.83 是好的)。
+6. **"装完双击没反应"(2026-10-04 已做加固 + 取证路径)**:零窗口零提示只可能来自启动链那几个断点,**与显卡品牌无关**
+   (全工程唯一的 `Environment.Exit` 是单实例退出,**不存在"GPU 不支持就退出"**的逻辑;Intel Arc B390 一例已逐行核对 1.4.5 新显卡枚举代码,未见未捕获异常/越界/死循环)。已落地加固(下次发布起):
+   - ① `App.xaml.cs` 新增**启动痕迹** `%LOCALAPPDATA%\ALHPro\启动痕迹.txt`:每次启动**整份重写**,依次记录
+     `App 构造函数进入 → App.xaml 加载完成 → OnLaunched 进入 → 准备创建主界面 → 主界面构造完成 → 窗口已 Activate`。
+     **文件不存在 = 连托管代码都没跑起来**(WinAppSDK 组件缺失/被杀软拦/apphost 失败);**最后一行就是死点**。
+   - ② `rootFrame.Navigate(typeof(MainPage))` 包上 try/catch:主界面构造抛异常不再掀掉整个 `OnLaunched`
+     (旧行为:Navigate 同步执行、异常一抛 `window.Activate()` 永不执行 ⇒ 进程活着、没窗口、零提示)。
+   - ③ 全局未处理异常在**窗口还没建好时**(`XamlRoot` 为空,旧代码那个 ContentDialog 分支永远进不去)改用 Win32 原生 `MessageBox`,不再静默。
+   - ④ 已有实例但**一个窗口都没有**时明确弹框告知(去任务管理器结束 `ALHPro.exe` 后重试)——旧行为是 `Environment.Exit(0)` 静默退出,表现为"双击很多次都没反应"且每双击一次多留一个无窗口进程。
+   - ⑤ `Views\MainPage.xaml.cs` 的**图片放大页**分支补 try/catch(原来只有视频页分支有,而首装默认就落在这个页面)。
+   **用户取证**:让他双击运行 `启动诊断\启动问题诊断.bat`(只读、免管理员、不联网),桌面生成 `ALHPro启动诊断_<时间戳>.zip`:
+   `启动痕迹.txt` + `diagnostic.log` 上次启动之后的全部内容 + `崩溃诊断_*.txt` + 事件日志(Application Error 1000 / .NET Runtime 1026 /
+   显示驱动 `Display`/`nvlddmkm`/`igfx` 等)+ 安装目录关键文件清单(`coreclr.dll`、`Microsoft.UI.Xaml.dll`、`msvcp140.dll`、
+   `vcruntime140_threads.dll`…)+ 显卡与驱动版本 + 杀软保护历史。
+   判断顺序:**先看 zip 里「启动痕迹」的最后一行**,再看 `%LOCALAPPDATA%\ALHPro\` 目录存不存在(不存在=死在第 1 步之前,只能靠事件日志)。
+   注:`README.md:99` 本来就写了"首次打开要等 1~2 分钟"(2.4GB 安装包被杀软全盘扫描)——相当一部分"没反应"其实停在这一步。
 
 ---
 
@@ -208,6 +224,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 ## 九、当前发布版状态
 
 - `发布版\ALHPro.exe` = v1.4.5.0,最近 deploy 时间含前面大部分改动。
+- 【2026-10-04 15:49】deploy 已把「广告卡图片不生效修复(`commit 882f186`)」+「启动链不再静默失败加固(启动痕迹/
+  Navigate try-catch/原生消息框兜底/无窗口实例提示/图片放大页 try-catch)」发布进 `发布版\`;启动验证窗口标题
+  `ALH Pro v1.4.5`,并已实测生成 `%LOCALAPPDATA%\ALHPro\启动痕迹.txt`(7 个落地点,共 360 ms)。
 - `发布版\engines\rife\rife-v4.26` **已删除**。
 - 【2026-09-16】补帧下拉**精简为 2 项**(序号 0 = `通用画质最新 (RIFE v4.13)`、1 = `通用画质 (RIFE v4.6)`)。
   另 4 支老架构模型的权重(`rife-anime` / `rife-HD` / `rife-UHD` / `rife-v2.3`,共 226.9 MB)

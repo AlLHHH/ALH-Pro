@@ -1246,11 +1246,31 @@ public sealed partial class MainPage : Page
         }
         if (tag == "upscale")
         {
-            AppLogger.Info("进入页面:图片放大");
-            _upView ??= new UpscaleView();
-            _upView.StatusChanged -= OnStatusChanged;
-            _upView.StatusChanged += OnStatusChanged;
-            ContentRoot.Children.Add(_upView);
+            // 【2026-10-04 加固】这一支原来【没有 try/catch】(视频页那一支有,见下面 video 分支)。
+            // 首装默认就落在这个页面,而它是 MainPage 构造期(NavList.SelectedIndex 赋值)同步创建的:
+            // 一旦 UpscaleView 构造里(例如读显卡信息、查引擎、加载 XAML)抛异常,异常会一路掀掉
+            // MainPage 构造 → rootFrame.Navigate 失败 → 窗口 Activate 不了 ⇒ "双击后毫无反应"。
+            // 现在和视频页保持一致:出错就在内容区显示原因,窗口照常出来。
+            try
+            {
+                AppLogger.Info("进入页面:图片放大");
+                _upView ??= new UpscaleView();
+                _upView.StatusChanged -= OnStatusChanged;
+                _upView.StatusChanged += OnStatusChanged;
+                ContentRoot.Children.Add(_upView);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error($"图片放大页加载失败 HRESULT=0x{ex.HResult:X8}", ex);
+                _upView = null;
+                ContentRoot.Children.Add(new TextBlock
+                {
+                    Text = "图片放大页加载失败(已记录到诊断日志):\n" + ex.Message,
+                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                    FontSize = 13,
+                    Margin = new Microsoft.UI.Xaml.Thickness(20),
+                });
+            }
         }
         else if (tag == "video")
         {
