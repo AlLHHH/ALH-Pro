@@ -2,6 +2,11 @@
 
 > 写于 2026-09-07,由 DeepSeek Harness 会话整理。当前 `main` 分支,版本 **v1.3.2**。
 > 本文件是"项目现状 + 发布流程 + 已知问题 + 陷阱"的权威备忘,接手维护请先读它。
+>
+> **相关研究文档**:`RESEARCH_50SERIES.md`(50 系 / Blackwell 引擎重建)、
+> `RESEARCH_NEW_MODELS_LANDING.md`(新模型的接入点清单与 8 条静默回退点)、
+> `RESEARCH_ALH_PRO_MAX_MODELS.md`(付费版 ALH Pro Max 的模型选型 + 上架合规清单,2026-10-04)、
+> `licenses\模型权重来源与校验值.md`(随包权重出处与 SHA256)、`ENGINE_REALESRGAN_REBUILD.md`(引擎重编配方)。
 
 ---
 
