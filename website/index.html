@@ -16,12 +16,37 @@
 <link rel="icon" type="image/png" sizes="32x32" href="assets/img/favicon-32.png">
 <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
 <link rel="canonical" href="https://alhpro.cn/">
+<!-- 【2026-10-06 新增】分享卡片(og: 协议 + Twitter Card):在 IM / 社区 / 搜索结果里分享本页时,
+     标题、描述、缩略图用这里声明的,平台不再自己猜。og:image 必须写绝对地址(各平台都不解析相对路径);
+     缩略图用的是 assets/img/og-cover.png(1200×630);改了页面文案后,跑一次
+     python website/tools/make_og_cover.py website/assets/img/logo.png website/assets/img/og-cover.png 重新生成。 -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="ALH Pro">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:title" content="ALH Pro — 本地视频/图片处理工具(超分 · 补帧 · 抠图 · 音频增强)">
+<meta property="og:description" content="ALH Pro 是本地运行的视频 / 图片 AI 处理工具:视频超分、AI 补帧、图片无损放大与 AI 抠图,全部在你自己的电脑上完成、不上传素材;免费下载,支持 Windows 10 / 11。">
+<meta property="og:url" content="https://alhpro.cn/">
+<meta property="og:image" content="https://alhpro.cn/assets/img/og-cover.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="ALH Pro — 本地视频 / 图片 AI 处理工具(超分 · 补帧 · 抠图 · 音频增强)">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="ALH Pro — 本地视频/图片处理工具(超分 · 补帧 · 抠图 · 音频增强)">
+<meta name="twitter:description" content="ALH Pro 是本地运行的视频 / 图片 AI 处理工具:视频超分、AI 补帧、图片无损放大与 AI 抠图,全部在你自己的电脑上完成、不上传素材;免费下载,支持 Windows 10 / 11。">
+<meta name="twitter:image" content="https://alhpro.cn/assets/img/og-cover.png">
+<!-- 【2026-10-06】sameAs / codeRepository 是给搜索引擎建立「ALH Pro = alhpro.cn」这个实体用的:
+     现在品牌词的结果全被 github.com/AlLHHH/ALH-Pro 与第三方镜像页占着,这一条把两者绑到一起。
+     故意不加 softwareVersion —— 页面上已有一处版本号,再写一处就多一个要同步的地方。 -->
 <script type="application/ld+json">
 {"@context":"https://schema.org","@type":"SoftwareApplication","name":"ALH Pro",
  "alternateName":"ALH-Pro","applicationCategory":"MultimediaApplication",
  "operatingSystem":"Windows 10 / 11(64 位)","inLanguage":"zh-CN",
  "url":"https://alhpro.cn/","downloadUrl":"https://alhpro.cn/download.html",
  "offers":{"@type":"Offer","price":"0","priceCurrency":"CNY"},
+ "license":"https://opensource.org/licenses/MIT",
+ "author":{"@type":"Person","name":"AlL.H"},
+ "codeRepository":"https://github.com/AlLHHH/ALH-Pro",
+ "sameAs":["https://github.com/AlLHHH/ALH-Pro"],
  "description":"本地运行的视频 / 图片 AI 处理工具:视频超分、AI 补帧、图片无损放大、AI 抠图。"}
 </script>
 <link rel="stylesheet" href="assets/css/style.css">
