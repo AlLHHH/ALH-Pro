@@ -1,5 +1,7 @@
 # ALH Pro
 
+**🌐 官网与下载:https://alhpro.cn** ｜ [下载安装包](https://alhpro.cn/download.html) · [使用教程](https://alhpro.cn/tutorial.html) · [常见问题](https://alhpro.cn/faq.html) · [更新日志](https://alhpro.cn/changelog.html) · [开源许可清单](https://alhpro.cn/licenses.html) · [隐私政策](https://alhpro.cn/privacy.html)
+
 图片/视频/音频 AI 增强工具(本地运行),支持:图片超分、AI 抠图、视频超分、视频补帧、视频去重、音频分离/增强/真超分。
 
 **所有处理在本机完成,不上传、不收集任何用户数据。** 全程中文界面。
@@ -8,8 +10,7 @@
 
 - 引擎:waifu2x / Real-ESRGAN / RIFE(基于 nihui/ncnn)、U²-Net / ISNet / BiRefNet(基于 ONNX Runtime)、FFmpeg
 - 系统要求:Windows 10/11 x64(无 GPU 也可用,自动降级 CPU)
-- **官网与下载:https://alhpro.cn/**(Windows 安装包 / 完整版 / 模型包 / 使用教程 / 常见问题)
-  · 仓库:https://github.com/AlLHHH/ALH-Pro
+- 仓库:https://github.com/AlLHHH/ALH-Pro
 
 ---
 
@@ -136,6 +137,24 @@ ALH Pro 采用 **MIT 许可**(标准开源许可之一)。**版权归 AlL.H 所�
 - **唯一要求**:分发时保留 `LICENSE` 里的版权与许可声明(即「© 2026 AlL.H」与 MIT 全文)。
 - **不再有限制**:不存在「禁止商用 / 禁止再分发」这类附加条款 —— 这是换成 MIT 的直接结果。
 - **第三方开源组件**(如 waifu2x、Real-ESRGAN、RIFE、U²-Net、ISNet、BiRefNet、ffmpeg、ONNX Runtime 等)版权归各原作者所有,遵循各自开源许可(如 MIT / BSD),详见 `THIRD_PARTY_NOTICES.txt`。本许可仅约束 ALH Pro 自身原创部分,不影响上述开源组件的原有许可。
+
+---
+
+## 🔗 相关链接
+
+| 内容 | 地址 |
+| --- | --- |
+| 官网(首页) | https://alhpro.cn/ |
+| 下载(安装包 / 完整版 / 模型包 / 网盘) | https://alhpro.cn/download.html |
+| 使用教程 | https://alhpro.cn/tutorial.html |
+| 常见问题(FAQ) | https://alhpro.cn/faq.html |
+| 更新日志 | https://alhpro.cn/changelog.html |
+| 开源许可清单 | https://alhpro.cn/licenses.html |
+| 隐私政策(本地运行、不联网、不上传) | https://alhpro.cn/privacy.html |
+| 第三方许可与来源 | 仓库根目录 `THIRD_PARTY_NOTICES.txt`、`声明.md` |
+| 历史版本(Releases) | https://github.com/AlLHHH/ALH-Pro/releases |
+
+> 官网是唯一的官方下载渠道之一(GitHub Releases 与官网并列)。网上出现的其他"ALH Pro 下载站"与本项目无关。
 
 ---
 
