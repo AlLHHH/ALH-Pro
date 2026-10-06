@@ -1,0 +1,17 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 官网与下载(安装包 / 完整版 / 模型包)
+    url: https://alhpro.cn/download.html
+    about: 请先从官网下载最新版。官网与 GitHub Releases 是本项目仅有的两个官方下载渠道。
+  - name: 使用教程
+    url: https://alhpro.cn/tutorial.html
+    about: 安装、显卡设置、超分 / 补帧 / 抠图 / 音频处理的图文步骤。
+  - name: 常见问题(FAQ)
+    url: https://alhpro.cn/faq.html
+    about: 装不上 / 双击没反应 / 提示未知发布者 / 跑得慢 / 首次启动较慢 —— 先看这里。
+  - name: 开源许可清单与第三方来源
+    url: https://alhpro.cn/licenses.html
+    about: 随包引擎与模型各自的许可、来源与校验值。
+  - name: 隐私政策(本地运行、不联网上传)
+    url: https://alhpro.cn/privacy.html
+    about: 所有处理在本机完成,不上传、不收集用户数据;广告与镜像域名清单也在这里。

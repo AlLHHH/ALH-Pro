@@ -83,6 +83,25 @@ if ($NotesFile) {
     $body = $mm.Value.Trim()
     $notesFrom = "RELEASE_NOTES.md 的 ## v$Version 节"
 }
+
+# ===== ②b 固定页脚:官网与帮助页链接 =====
+# 【为什么要加】GitHub Release 页是用户和搜索引擎都会看到的地方:统一在正文末尾挂官网与帮助页链接,
+# 既给用户导航,也给 alhpro.cn 提供稳定外链(多条独立页面的链接比只挂一条首页更有用)。
+# 用"逐行 URL"而不是 Markdown 表格,免得个别客户端把表格渲染成一坨。已有 alhpro.cn 就不重复追加。
+$siteFooter = @(
+    '',
+    '---',
+    '',
+    '🌐 官网与下载:**https://alhpro.cn**',
+    '',
+    '- 下载(安装包 / 完整版 / 模型包 / 网盘):https://alhpro.cn/download.html',
+    '- 使用教程:https://alhpro.cn/tutorial.html',
+    '- 常见问题:https://alhpro.cn/faq.html',
+    '- 更新日志:https://alhpro.cn/changelog.html',
+    '- 开源许可清单:https://alhpro.cn/licenses.html',
+    '- 隐私政策:https://alhpro.cn/privacy.html'
+) -join "`r`n"
+if ($body -notmatch 'alhpro\.cn') { $body = $body.TrimEnd() + "`r`n" + $siteFooter }
 Say ("   发布公告: {0} 字(来自 {1})" -f $body.Length, $notesFrom)
 
 if ($DryRun) {
