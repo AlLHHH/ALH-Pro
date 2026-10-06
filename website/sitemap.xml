@@ -1,23 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  ALH Pro 官网站点地图(2026-09-22 新增)。
-  【为什么要它】此前站点既没有 sitemap 也没有 robots.txt,首页又没有 canonical ⇒
-  搜索引擎把 alhpro.cn/index.html 与 alhpro.cn/ 当成两个地址收录(用户实测"搜到的是 index")。
-  现在:每页各自声明 canonical(指向这里的 loc),这里再集中列一次。
-  【维护】新增/改名页面时,必须同步改本文件与该页的 <link rel="canonical">;
-  lastmod 用「该页最后改动的日期」(W3C 日期格式,时区可省)。
-  (2026-09-24:随 v1.4.2 发版更新首页 / 下载页 / 更新日志 / 隐私说明,并给**全部页面**的页脚加了
-   官方 QQ 群一行 ⇒ 七个页面的 lastmod 统一为 2026-09-24。)
-  (2026-09-27:随 v1.4.3 发版更新首页 / 下载页 / 更新日志 / 隐私说明 / 常见问题 / 使用教程，
-   这六个页面的 lastmod 统一为 2026-09-27。)
-  (2026-09-29:随 v1.4.4 发版更新首页 / 下载页 / 更新日志 / 隐私说明，
-   这四页的 lastmod 改为 2026-09-29;常见问题 / 使用教程本次未改动,仍为 2026-09-27。)
-  (2026-10-02:随 v1.4.5 发版**只更新了更新日志页**,该页 lastmod 改为 2026-10-02;
-   首页 / 下载页 / 隐私说明暂留 2026-09-29 —— 它们的版本号与下载直链要等 v1.4.5 的
-   GitHub Release 与安装包就绪后再改,到时候随发布一并更新。)
-  (2026-10-06: 七个页面新增 og:/Twitter 分享卡片,首页 JSON-LD 补 sameAs/codeRepository;
-   本次七页内容都动过,故 lastmod 统一改为 2026-10-06。)
--->
+<!-- 站点地图:新增 / 改名页面时,同步更新这里与该页面的 <link rel="canonical"> 和 lastmod -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://alhpro.cn/</loc>
