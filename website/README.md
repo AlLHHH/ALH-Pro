@@ -269,6 +269,17 @@ server {
 (指向 `favicon.ico` 与 `assets/img/` 下两张 PNG)、以及 `robots.txt` / `sitemap.xml` 里的域名。
 **域名一旦从 `alhpro.cn` 变化,这三处 + sitemap + robots 全都要跟着改。**
 
+**分享卡片(2026-10-06 新增):** 每页 head 里都多了一组 `og:` 协议 + `twitter:` 标签,
+分享到 IM / 社区 / 搜索结果时用的标题、描述、缩略图由它们决定;
+缩略图是 `assets/img/og-cover.png`(1200×630,由 `tools/make_og_cover.py` 生成)。
+**改了页面主标题 / 描述 / 卖点文案后,这些标签里的对应文字要一起改**;改了封面上的文案则重跑一次:
+
+```
+python website/tools/make_og_cover.py website/assets/img/logo.png website/assets/img/og-cover.png
+```
+
+**注意:`og:image` / `twitter:image` 必须写绝对地址** —— 各平台都不解析相对路径。
+
 **给将来预留的兜底(本期未实现,别在页面上承诺):**
 
 - **安装包镜像 / 更新检查接口**:将来若自建,可在 `download.html` 增加一个“国内镜像”区块,
