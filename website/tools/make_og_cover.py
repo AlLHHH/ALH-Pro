@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""生成官网分享卡片 website/assets/img/og-cover.png(1200x630)。
+r"""生成官网分享卡片 website/assets/img/og-cover.png(1200x630)。
 
 用途:各页 <meta property="og:image"> / <meta name="twitter:image"> 的缩略图 ——
 在 IM、社区、搜索结果里分享 alhpro.cn 链接时显示的那张图。
@@ -77,7 +77,7 @@ def main():
     d.text((82, 340), t2, font=fit(d, t2, REG, 1040, 46), fill=FG_SOFT)
 
     # 卖点行(强调色)
-    t3 = "全程在本机运行 · 不上传素材 · 免费开源(MIT)"
+    t3 = "全程在本机运行 · 不上传素材 · 免费版开源(MIT)"
     d.text((82, 412), t3, font=fit(d, t3, BOLD, 1040, 34), fill=ACCENT)
 
     # 底栏:左域名 / 右平台

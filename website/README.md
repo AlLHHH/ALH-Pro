@@ -280,6 +280,20 @@ python website/tools/make_og_cover.py website/assets/img/logo.png website/assets
 
 **注意:`og:image` / `twitter:image` 必须写绝对地址** —— 各平台都不解析相对路径。
 
+**品牌图标(2026-10-06 统一为黑底白字):** `assets/img/logo.png`、`assets/img/favicon-32.png`、
+`assets/img/apple-touch-icon.png` 与根目录 `favicon.ico`(含 16/32/48/64/128/256 六个尺寸)
+**全部由应用图标母版 `assets/icon.ico` 缩放导出**,不要手工画 ——
+生成脚本是仓库根的 `tools/make_brand_icons.py`,跑一次即可:
+
+```
+python tools/make_brand_icons.py
+```
+
+这样网站、应用内导航(`ImgUpscalerUI/Assets/ALHPro_icon.png`)、EXE 图标与安装器图标
+永远是同一个字形。配色口径:**黑底白字 = 免费版 ALH Pro**(现行);
+**白底黑字 = 留给专业版 ALH Pro Max**(将来用 `--variant max` 生成)。
+封面图 `og-cover.png` 里也用这份 logo,所以**换母版后两个脚本都要重跑**。
+
 **给将来预留的兜底(本期未实现,别在页面上承诺):**
 
 - **安装包镜像 / 更新检查接口**:将来若自建,可在 `download.html` 增加一个“国内镜像”区块,

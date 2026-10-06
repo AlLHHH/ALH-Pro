@@ -6,7 +6,7 @@
 
 **所有处理在本机完成,不上传、不收集任何用户数据。** 全程中文界面。
 
-**© 2026 AlL.H. · MIT 许可。** 本软件开源(MIT):任何人都可以自由使用、修改、分发,包括商业用途,只需保留版权与许可声明(详见 `LICENSE`)。开源引擎与模型版权归各原作者所有(见 THIRD_PARTY_NOTICES.txt)。
+**© 2026 AlL.H. · MIT 许可。** 免费版开源(MIT):任何人都可以自由使用、修改、分发,包括商业用途,只需保留版权与许可声明(详见 `LICENSE`)。开源引擎与模型版权归各原作者所有(见 THIRD_PARTY_NOTICES.txt)。
 
 - 引擎:waifu2x / Real-ESRGAN / RIFE(基于 nihui/ncnn)、U²-Net / ISNet / BiRefNet(基于 ONNX Runtime)、FFmpeg
 - 系统要求:Windows 10/11 x64(无 GPU 也可用,自动降级 CPU)

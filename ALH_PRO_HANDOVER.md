@@ -7,6 +7,10 @@
 > `RESEARCH_NEW_MODELS_LANDING.md`(新模型的接入点清单与 8 条静默回退点)、
 > `RESEARCH_ALH_PRO_MAX_MODELS.md`(付费版 ALH Pro Max 的模型选型 + 上架合规清单,2026-10-04)、
 > `licenses\模型权重来源与校验值.md`(随包权重出处与 SHA256)、`ENGINE_REALESRGAN_REBUILD.md`(引擎重编配方)。
+>
+> **品牌资产口径**(2026-10-06):所有 logo / favicon 都由**母版 `assets\icon.ico`** 经
+> `tools\make_brand_icons.py` 缩放导出,不要手工画 —— **黑底白字 = 免费版 ALH Pro(现行),
+> 白底黑字 = 保留给专业版 ALH Pro Max**(脚本 `--variant max`)。
 
 ---
 
