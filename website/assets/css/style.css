@@ -246,21 +246,20 @@ pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-spa
 
 .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--fg); font-weight: 650; font-size: 16px; white-space: nowrap; }
 .brand:hover { color: var(--accent); text-decoration: none; }
-/* 【2026-10-06】图标改成「黑底白字」后,原先为白底 logo 配的浅色托盘
-   (background: var(--plate) + padding: 2px + border: 1px)会在深色顶栏上露出一圈白框,
-   故只留圆角;翻牌动画同时去掉 filter:invert() —— 反相会把图标翻成「白底黑字」,
-   而那是留给 ALH Pro Max 的配色。 */
+/* 【2026-10-06】图标是「黑底白字」:旧版给白底 logo 配的浅色托盘
+   (background: var(--plate) + padding: 2px + border: 1px)已删除 —— 它会在深色顶栏上
+   露出一圈白框。翻牌到背面时靠 filter:invert() 反相成「白底黑字」那一面。 */
 .brand-logo {
   width: 28px; height: 28px; border-radius: 7px;
   transition: transform var(--t) var(--ease-out);
   animation: logoFlip 4.6s var(--ease) infinite;
 }
-/* 顶栏 logo 翻牌:只做整圈旋转(停在 360/720 的整数倍,不镜像)。
-   4.6s 一轮只翻两次、每次 ~320ms,其余静止;reduce 下 §20 整个关掉。 */
+/* 顶栏 logo 翻牌:整圈旋转(停在 360/720 的整数倍,不镜像)+ 到背面时反相
+   (黑底白字 ↔ 白底黑字)。4.6s 一轮只翻两次、每次 ~320ms,其余静止;reduce 下 §20 整个关掉。 */
 @keyframes logoFlip {
-  0%, 40%   { transform: perspective(160px) rotateY(0deg); }
-  47%, 67%  { transform: perspective(160px) rotateY(360deg); }
-  74%, 100% { transform: perspective(160px) rotateY(720deg); }
+  0%, 40%   { filter: invert(0); transform: perspective(160px) rotateY(0deg); }
+  47%, 67%  { filter: invert(1); transform: perspective(160px) rotateY(360deg); }
+  74%, 100% { filter: invert(0); transform: perspective(160px) rotateY(720deg); }
 }
 /* hover 提示:动画占着 transform,所以改用一圈高亮描边(仅 hover 时出现) */
 .brand:hover .brand-logo { box-shadow: 0 0 0 1px var(--line-strong); }
