@@ -1,15 +1,15 @@
 @charset "UTF-8";
 /* ============================================================================
    ALH Pro 官网 · 样式表
-   目标:动效丰富、但**滚动期一帧都不掉**。纯静态、零外部依赖(无 CDN/在线字体/图标库/图片)。
+   目标:动效丰富、但滚动期一帧都不掉。纯静态、零外部依赖(无 CDN/在线字体/图标库/图片)。
 
    滚动性能铁律(改样式前必读)
-     1. 滚动路径上**只动 `transform` / `opacity`**,不动会重排重绘的属性(box-shadow、尺寸…)。
-     2. `backdrop-filter` **受预算管制**(§23):只给少数固定条与大块面板,半径 ≤14px,**禁止**写进
-        animation/transition,**禁止玻璃套玻璃**,≤720px 关次级面板模糊;依据见 §0(旧版 UpdateLayer ×16)。
-     3. **滚动相关代码里禁止调用任何 scroll API**(scrollTo/scrollIntoView/scrollTop=):实测会让
+     1. 滚动路径上只动 `transform` / `opacity`,不动会重排重绘的属性(box-shadow、尺寸…)。
+     2. `backdrop-filter` 受预算管制(§23):只给少数固定条与大块面板,半径 ≤14px,禁止写进
+        animation/transition,禁止玻璃套玻璃,≤720px 关次级面板模糊;依据见 §0(旧版 UpdateLayer ×16)。
+     3. 滚动相关代码里禁止调用任何 scroll API(scrollTo/scrollIntoView/scrollTop=):实测会让
         scrollY 回退 51~63 帧("牵引感"的唯一来源),去掉后回退 0 帧。
-     4. 滚动联动优先用 **CSS 滚动驱动动画**(`animation-timeline`);不支持时 `@supports` 降级。
+     4. 滚动联动优先用 CSS 滚动驱动动画(`animation-timeline`);不支持时 `@supports` 降级。
      5. `will-change` 只给真的每帧在动的极少数元素,离开视口就摘掉。
      6. 入场错开 ≤60ms/级;悬停位移 ≤2px、只改颜色/边框。
      7. `prefers-reduced-motion: reduce` 下关掉全部位移与动画(§20);长列表用 `content-visibility`(§17)。
@@ -20,7 +20,7 @@
 /* ===========================================================================
    §0 实测基线(同机同脚本滚轮输入、3 秒窗口、3 次中位数;原始数据在 D:\deep\_verify\):
       玻璃+大面积 backdrop-filter vs 无动效 —— UpdateLayer 30828/14.7ms vs 1900/1.4ms、Paint 1950 vs 573、
-      主线程 606ms vs 259ms。→ 卡顿来自**大面积** backdrop-filter;滚动回退 63 次/525px 全部来自
+      主线程 606ms vs 259ms。→ 卡顿来自大面积 backdrop-filter;滚动回退 63 次/525px 全部来自
       scrollIntoView。故 §23 只给少数层上玻璃,滚动路径上不调任何 scroll API。
    =========================================================================== */
 
@@ -123,9 +123,8 @@
 }
 
 /* ---------- §1.2 浅色主题(已整块删除)----------
-   原来这里是一整套 `@media (prefers-color-scheme: light)` 覆盖(--bg:#fafafa / --fg:#111827 …),
-   系统浅色时会把整站刷白(手机默认浅色 → 手机上就是白的)。按用户要求「手机版网页也要黑色」:
-   **深色是唯一主题**,这里不再保留任何浅色分支。注:§21 打印样式的白底黑字是给纸张的,保留。 */
+   深色是唯一主题:不再保留任何 @media (prefers-color-scheme: light) 分支,
+   系统浅色下站点同样保持黑色。注:§21 打印样式的白底黑字是给纸张的,保留。 */
 
 /* ===========================================================================
    §2 基础重置与排版
@@ -308,7 +307,7 @@ pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-spa
 }
 
 /* ===========================================================================
-   §6 页内章节条(JS 依据 h2[id] 生成;跟随只作用于这条**内部横向滚动容器**,绝不调页面级 scroll API)
+   §6 页内章节条(JS 依据 h2[id] 生成;跟随只作用于这条内部横向滚动容器,绝不调页面级 scroll API)
    =========================================================================== */
 .page-toc {
   position: sticky; top: var(--header-h); z-index: 45;
@@ -340,7 +339,7 @@ pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-spa
 .page-toc a[aria-current="true"]::after { transform: scaleX(1); }
 
 /* ===========================================================================
-   §7 首屏:光斑 = 预渲染径向渐变 + **只动 transform**(不用 filter: blur,大面积 filter 拖垮滚动)。
+   §7 首屏:光斑 = 预渲染径向渐变 + 只动 transform(不用 filter: blur,大面积 filter 拖垮滚动)。
    =========================================================================== */
 .hero {
   position: relative;
@@ -386,7 +385,7 @@ pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-spa
 .hero:not(.is-live) .aurora-blob { animation-play-state: paused; }
 
 /* 视差:CSS 滚动驱动动画(view()),同样零 JS、不占主线程。
-   注意这里用 **2D translate**:`translate3d` 会强制元素生成独立合成层,
+   注意这里用 2D translate:`translate3d` 会强制元素生成独立合成层,
    对"一次入场/一次性滚过"的元素来说反而更贵(实测 UpdateLayer 涨到 16 倍)。 */
 @supports (animation-timeline: view()) {
   .aurora {
@@ -435,8 +434,7 @@ pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-spa
 .hero .lede strong { color: var(--fg); }
 
 /* ---------- §7.2 (已删除)首屏数据条 ----------
-   原来首屏那排"0.25 秒/帧 · 3 处 · 827 MB · 0 次"数字卡按用户要求删除
-   (实测速度表也一并删掉了 —— 官网不再出现速度数字),这里不再保留样式。 */
+   首屏原先的数字卡与速度表已删除,官网不再出现速度数字,这里不保留样式。 */
 
 /* ===========================================================================
    §8 卡片网格:平面 + 1px 细边框 + 极浅阴影;进入 viewport 时轻微放大 1.02→1
@@ -450,7 +448,7 @@ pre code { background: none; border: 0; padding: 0; font-size: 13.5px; white-spa
   background: var(--surface); box-shadow: var(--shadow-1);
   transition: border-color var(--t) var(--ease), box-shadow var(--t) var(--ease), transform var(--t) var(--ease-out), translate var(--t) var(--ease-out);
 }
-/* 2026-09:**普通卡片不做位移/换阴影/扫光**;只有"卡内有主入口按钮"的卡片给 hover 反馈(见 §23.10) */
+/* 2026-09:普通卡片不做位移/换阴影/扫光;只有"卡内有主入口按钮"的卡片给 hover 反馈(见 §23.10) */
 .card > * { position: relative; z-index: 1; }
 /* 卡片内的跟随光(光在卡片里):位置由 site.js §8b 每帧写 --mx/--my;只过渡 opacity。 */
 .card::after {
@@ -508,7 +506,7 @@ tbody tr:last-child td { border-bottom: 0; }
 td code { font-size: .86em; }
 .td-center { text-align: center; white-space: nowrap; }
 /* 计数元素:JS 会给出与最终文本等宽的固定宽度,让"每帧改一次数字"不影响外部布局。
-   注意**不能**用 `contain: size` —— 尺寸隔离会让元素失去内容基线,
+   注意不能用 `contain: size` —— 尺寸隔离会让元素失去内容基线,
    行内块的基线退化成底边,数字与单位的对齐会错位(实测过,截图可见)。
    固定宽度已经足够:元素尺寸不变 → 父级排版不重算。 */
 .count { display: inline-block; font-variant-numeric: tabular-nums; }
@@ -551,7 +549,7 @@ summary .when { color: var(--muted); font-weight: 400; font-size: 13.5px; margin
 .details-body.is-animating { overflow: hidden; }
 
 /* ===========================================================================
-   §13 按钮:悬停位移 ≤2px;主按钮是页面上唯一一处渐变(光泽扫过已于 2026-09 按用户要求删除)
+   §13 按钮:悬停位移 ≤2px;主按钮是页面上唯一一处渐变(光泽扫过已删除)
    =========================================================================== */
 .btn {
   position: relative; overflow: hidden;
@@ -573,12 +571,12 @@ summary .when { color: var(--muted); font-weight: 400; font-size: 13.5px; margin
 .btn-note.dl-tip { color: var(--accent); font-weight: 600; margin-top: 10px; }
 
 /* 备用下载链接:常显下划线(站点链接默认只在 hover 时才有下划线,而这几个要一眼看出能点);
-   hover 再提亮一档(与站内其它链接的 hover 反馈同一套口径)。 */
+   hover 再提亮一档(与站内其它链接的 hover 反馈同一套规则)。 */
 .dl-alt { text-decoration: underline; }
 .dl-alt:hover { color: var(--accent-top); }
 
-/* 2026-09 按用户反馈:按钮上的「光泽扫过」(`.btn-primary::after` + `@keyframes btnShine`)整段删除
-   —— 用户要求所有 hover 光效一律不要。按钮只剩"轻微上移 + 次级按钮底色变化"这点反馈。 */
+/* 按钮上的「光泽扫过」(`.btn-primary::after` + `@keyframes btnShine`)已整段删除:
+   hover 光效一律不要,按钮只剩"轻微上移 + 次级按钮底色变化"这点反馈。 */
 @media (hover: hover) and (pointer: fine) {
   /* 同上:玻璃药丸的顶边高光也在 box-shadow 里,悬停不换它 */
   .btn:hover { transform: translateY(-2px); }
@@ -599,7 +597,7 @@ summary .when { color: var(--muted); font-weight: 400; font-size: 13.5px; margin
   color: var(--fg-soft);        /* 文字仍保持可读,只是比正常按钮弱一档 */
   box-shadow: none;
 }
-/* 禁用的按钮 hover **完全不反应**(底色/边框都不动,只有光标提示不可用) */
+/* 禁用的按钮 hover 完全不反应(底色/边框都不动,只有光标提示不可用) */
 .btn.is-disabled:hover,
 .btn:disabled:hover { transform: none; box-shadow: none; }
 
@@ -817,7 +815,7 @@ h2.is-in .wtok { opacity: 1; transform: none; }
   h2::before { transform: scaleX(1) !important; transition: none !important; }
   .flow > li::after { transform: scaleY(1) !important; }
   .flow > li::before { transition: none !important; }
-  /* 卡片的跟随高光/扫光已在 2026-09 按用户要求删除;这里只剩其余位移类的兜底 */
+  /* 卡片的跟随高光/扫光已删除;这里只剩其余位移类的兜底 */
   .lic:hover, .names li:hover, .btn:hover { transform: none !important; }
 }
 
@@ -868,7 +866,7 @@ h2.is-in .wtok { opacity: 1; transform: none; }
 .demo-art { color: var(--fg-soft); }
 
 /* 演示里的小标签 / 小说明 —— 每个动画都要能一眼看出"这一半是什么、前后差在哪"。
-   没有文字的纯图形动画,用户看不懂(实测反馈),所以每个演示都必须带标签。 */
+   纯图形动画不配文字很难看懂,所以每个演示都带标签。 */
 .demo-tag {
   display: inline-block; flex: 0 0 auto;
   padding: 1px 6px; border-radius: 4px;
@@ -986,7 +984,7 @@ h2.is-in .wtok { opacity: 1; transform: none; }
 }
 .dp-cell svg { width: 100%; height: 100%; }
 /* 偶数是重复帧:画面淡下去 + 划一道斜线。
-   注意淡出必须加在**里面的图**上,不能加在整格上 —— 整格 opacity 会把划线的 ::after
+   注意淡出必须加在里面的图上,不能加在整格上 —— 整格 opacity 会把划线的 ::after
    一起变淡(实测截图里几乎看不见红线),而"帧框留着、画面划掉"也更贴近真实语义。 */
 .dp-cell:nth-child(even) svg { animation: dpDrop 4.4s var(--ease) infinite; }
 .dp-cell:nth-child(even)::after {
@@ -1208,7 +1206,7 @@ h2.is-in .wtok { opacity: 1; transform: none; }
   .card .fit-list .fit-k { font-size: 13.4px; }
 }
 
-/* §24 首屏 CTA:Windows 下载 + 手机版「敬请期待」灰按钮 + GitHub 图标 —— **三个入口排成一组**
+/* §24 首屏 CTA:Windows 下载 + 手机版「敬请期待」灰按钮 + GitHub 图标 —— 三个入口排成一组
    (GitHub 图标不用 margin-left:auto 顶到整行最右,而是紧跟其后,间距即 .btn-row 的 12px gap) */
 .hero-cta { align-items: center; }
 .hero-cta button.btn { white-space: nowrap; }            /* 「手机版 · 敬请期待」不许在中间断行 */
@@ -1222,8 +1220,8 @@ h2.is-in .wtok { opacity: 1; transform: none; }
 
 /* ===========================================================================
    §23 液态玻璃(顶栏 / 面板 / 全站流动背景)—— 说明与实测数据见 README「液态玻璃」行
-   硬预算:blur ≤14px(桌面 10 / 顶栏 12 / ≤720px 8~10),**绝不写进 animation/transition**;
-   **禁止玻璃套玻璃**;磨砂只给顶栏/章节条/提示块/表格容器/三列大卡;降级见 §23.5~§23.8。
+   硬预算:blur ≤14px(桌面 10 / 顶栏 12 / ≤720px 8~10),绝不写进 animation/transition;
+   禁止玻璃套玻璃;磨砂只给顶栏/章节条/提示块/表格容器/三列大卡;降级见 §23.5~§23.8。
    =========================================================================== */
 
 /* ---------- §23.1 全站流动背景:底(纯黑)+ 4 层柔光(统一 --bg-mask 向四周淡出)+ 细节(§23.1b)+ 动效 ----------
@@ -1304,8 +1302,8 @@ body::after {
   background: var(--glass-header);
   -webkit-backdrop-filter: blur(var(--glass-blur-strong)) saturate(170%);
   backdrop-filter: blur(var(--glass-blur-strong)) saturate(170%);
-  /* 2026-09 按用户「卡片不要那么多边缘高光」:顶边亮线、底边高光、外圈投影**全部删除**,
-     浮层只靠 1px 底边压边(未吸顶时是 transparent,吸顶时见 .is-stuck)。 */
+  /* 顶边亮线、底边高光、外圈投影全部删除,浮层只靠 1px 底边压边
+     (未吸顶时是 transparent,吸顶时见 .is-stuck)。 */
   box-shadow: none;
   transition: border-color var(--t) var(--ease), background-color var(--t) var(--ease);
 }
@@ -1324,7 +1322,7 @@ body::after {
 }
 
 /* ---------- §23.3 面板玻璃 ----------
-   2026-09 按用户「卡片不要那么多边缘高光」:面板**不再有**外圈投影/顶边亮线/四周内高光/静态对角高光,
+   面板不再有外圈投影 / 顶边亮线 / 四周内高光 / 静态对角高光,
    只剩「半透明底 + 模糊 + 1px 极淡边框(--glass-line)」,即干净的黑卡片。 */
 .card, .note, .table-scroll, .toc, details, .lic, .demo, .site-footer {
   background-color: var(--glass-panel);
@@ -1338,7 +1336,7 @@ body::after {
 /* 页脚是通栏大面板:给玻璃皮但不加模糊(面积太大,糊它不划算) */
 .site-footer { background-color: var(--glass-panel-2); }
 
-/* ---------- §23.9 背景层跟随光:很淡的冷色光,在玻璃**后面**跟着鼠标走(位置见 site.js §8)---------- */
+/* ---------- §23.9 背景层跟随光:很淡的冷色光,在玻璃后面跟着鼠标走(位置见 site.js §8)---------- */
 .pointer-glow {
   position: fixed; left: 0; top: 0; width: 620px; height: 620px; margin: -310px 0 0 -310px;
   z-index: -1; pointer-events: none; border-radius: 50%; opacity: 0;
@@ -1436,9 +1434,7 @@ body::after {
 
 /* =============================================================================
    §首屏下方的官方 QQ 群(两张纯文字小卡,左右摆放)
-   用户四轮反馈定稿:① 页脚一行文字"不直观" → ② "两张卡片放右边" → ③ "太冗余了,只显示文字"
-   → ④ "放在我画圈的位置(首屏按钮下方那片),左右摆放,左边一群"。
-   所以:**不再改首屏的列布局**(回到原来那个单列 .hero-inner),只在最后追加一行 flex 容器放两张小卡;
+   不占用首屏原有列布局(保持单列 .hero-inner),只在后面追加一行 flex 容器放两张小卡;
    卡片只显示文字(群号 + 是否已满),不放徽标 / 按钮 / 说明;窄屏一行放不下时自动换行。
    入场动画由既有的 `.has-js .hero-inner > *`(第 7 个子元素 = 540ms)接管,这里不用另写。
    ============================================================================= */
