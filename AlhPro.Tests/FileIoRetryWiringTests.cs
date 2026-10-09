@@ -14,15 +14,17 @@ namespace AlhPro.Tests;
 ///
 /// 所以这里不是"检查源码里出现了某个函数名",而是:
 /// ① 那个**方法体**里必须只剩 `RetryFileCopy`(裸 `File.Copy(..., true)` 一个都不许留);
-/// ② 整份 VideoService 的裸 `File.Copy/File.Move` 只允许出现在重试接线层自己身上。
-/// 真有人后来把这层摘掉,这两条会立刻变红(纯 `IO_RETRY` 单测看不出来)。</summary>
+/// ② 整份 VideoService 的裸 `File.Copy/File.Move` 只允许出现在重试接线层自己身上;
+/// ③ 退避循环本身只许有 **Core 那一份**(`IO_RETRY.Run`)—— 视频侧转发、引擎侧直接调,
+///    宿主里再抄一遍就成了两套口径。
+/// 真有人后来把这层摘掉,这三条会立刻变红(纯 `IO_RETRY` 单测看不出来)。</summary>
 public class FileIoRetryWiringTests
 {
     /// <summary>VideoService 里**允许**直接调 BCL 文件 API 的地方(白名单,每条都写理由):
-    /// 重试接线层自身、已废弃方法、只做探测/清理且失败无语义的落点。</summary>
+    /// 重试接线层自身(动作名与 op 仍在这里,循环在 Core)、已废弃方法、只做探测/清理且失败无语义的落点。</summary>
     private static readonly string[] AllowedMethodAnchors =
     {
-        "private static void RetryFileIo(",                 // 重试骨架:必须在这里真正调用一次 File.Copy/Move/Delete
+        "private static void RetryFileIo(",                 // 接线缝:必须转发到 AlhPro.Core.IO_RETRY.Run
         "private static async Task InterpKeyframeGapsAsync(", // [Obsolete] 历史回溯路径,不在任何活动调用链
     };
 
@@ -55,6 +57,8 @@ public class FileIoRetryWiringTests
         Assert.Contains("catch (Exception ex)", body);
         Assert.DoesNotContain("catch (Exception ex) when", body);   // 不能只在"可自愈"时才接住 —— 那样长期占用照样丢任务
         Assert.Contains("AppLogger.Error(", body);    // 少帧必须吵,不许静默
+        Assert.Contains("非占用类错误", body);         // 软失败也要分清"被占用"和"磁盘满/路径非法"
+        Assert.DoesNotContain("(退避重试后仍被占用)", body);   // 不允许把没核实的死因写死进日志
     }
 
     /// <summary>★ 同类裸拷贝的另两处:尾帧容积(补 1~3 帧末帧定格)与 tempo 重采样的退化素材分支(n&lt;2)。
@@ -130,6 +134,11 @@ public class FileIoRetryWiringTests
         Assert.Equal(1, CountOccurrences(wiring, "File.Move(src, dst, true)"));
         Assert.Equal(1, CountOccurrences(wiring, "File.Delete(path)"));
 
+        // ③ 循环只有 Core 那一份:宿主里再出现一次退避循环 = 两套口径
+        Assert.Contains("AlhPro.Core.IO_RETRY.Run(action, path, op, AppLogger.Info)", wiring);
+        Assert.DoesNotContain("Thread.Sleep(AlhPro.Core.IO_RETRY.DelayMsFor", code);
+        Assert.DoesNotContain("attempt > AlhPro.Core.IO_RETRY.MaxRetries", code);
+
         foreach (var (needle, label) in new[]
         {
             ("File.Copy(Path.Combine(", "File.Copy"),
@@ -142,35 +151,95 @@ public class FileIoRetryWiringTests
         }
     }
 
-    /// <summary>★ 放弃重试时的说明必须带动作与路径(1830 的日志只有 .NET 英文原话 + 一个帧号,定位不了哪一步)。</summary>
+    /// <summary>★ 把类头那句声明真正检查掉:整份 VideoService 里的裸 `File.Copy/File.Move` 只允许两种形态 ——
+    /// ① 在重试接线层的 op 里(`CopyFrame` → `InterpSegmentAsync` 之间,即 `RetryFileCopy` 等的 lambda);
+    /// ② 与 `try {` **同一行**的尽力而为拷贝(失败不影响正确性);
+    /// 已废弃的 `InterpKeyframeGapsAsync` 整段豁免(它不在任何活动调用链上)。
+    /// 以后有人在新落点上写一句裸 `File.Copy` 就想"反正有重试层兜着",这条会立刻红。</summary>
+    [Fact]
+    public void Every_raw_bcl_file_call_is_retried_or_same_line_best_effort()
+    {
+        string code = CodeOnly(Source());
+        int deadFrom = code.IndexOf("private static async Task InterpKeyframeGapsAsync(", StringComparison.Ordinal);
+        Assert.True(deadFrom > 0, "找不到已废弃的 InterpKeyframeGapsAsync(豁免区间算不出来 ⇒ 不许静默放水)");
+        int deadTo = code.IndexOf("\n    private static ", deadFrom + 10, StringComparison.Ordinal);
+        Assert.True(deadTo > deadFrom, "算不出已废弃方法的结尾");
+        string live = code.Substring(0, deadFrom) + code.Substring(deadTo);
+
+        int wiringFrom = live.IndexOf("private static void CopyFrame(", StringComparison.Ordinal);
+        int wiringTo = live.IndexOf("private static async Task<int> InterpSegmentAsync(", StringComparison.Ordinal);
+        Assert.True(wiringFrom > 0 && wiringTo > wiringFrom, "定位不到重试接线层");
+
+        int checkedCalls = 0;
+        foreach (string needle in new[] { "File.Copy(", "File.Move(" })
+        {
+            int i = 0;
+            while ((i = live.IndexOf(needle, i, StringComparison.Ordinal)) >= 0)
+            {
+                int lineStart = live.LastIndexOf('\n', i) + 1;
+                int lineEnd = live.IndexOf('\n', i);
+                if (lineEnd < 0) lineEnd = live.Length;
+                string line = live.Substring(lineStart, lineEnd - lineStart);
+                bool inWiring = i >= wiringFrom && i < wiringTo;
+                bool bestEffort = line.Contains("try {") || line.Contains("catch");
+                Assert.True(inWiring || bestEffort,
+                    $"裸 {needle} 既不在重试接线层、也不是同行的尽力而为拷贝(瞬时占用会直接冒泡):{line.Trim()}");
+                checkedCalls++;
+                i += needle.Length;
+            }
+        }
+        // 扫到的数量下限 = 接线层的 2 处(复制/改名)+ 4 处"同行 try"的尽力而为拷贝;
+        // 低于这个数说明掩码/定位写坏了,这条契约在放水,必须变红。
+        Assert.True(checkedCalls >= 6, $"只扫到 {checkedCalls} 处裸拷贝 —— 扫描范围不对,这条契约在放水");
+    }
+
+    /// <summary>★ 引擎侧"每对帧暂存进 layer_in"的两个拷贝也必须在同一层重试。
+    /// 这两行在**视频活路径**上(`VideoService` 调 `InterpLayerBatchAsync`),而调用方的 catch 只清临时
+    /// 目录再 `throw` ⇒ 一次瞬时占用照样带走整条任务;它又是 VideoService 的 private 助手够不着的地方,
+    /// 所以只能共用 Core 的 `Run`。</summary>
+    [Fact]
+    public void Engine_layer_batch_staging_copies_go_through_the_retry_layer()
+    {
+        string code = CodeOnly(ReadRepoFile("ImgUpscalerUI", "EngineService.cs"));
+        string body = Slice(code, "public static async Task<List<string>> InterpLayerBatchAsync(", "var ttaArgs =");
+        Assert.Contains("AlhPro.Core.IO_RETRY.Run(\"暂存帧\", a, () => File.Copy(a, fa, true), AppLogger.Info)", body);
+        Assert.Contains("AlhPro.Core.IO_RETRY.Run(\"暂存帧\", b, () => File.Copy(b, fb, true), AppLogger.Info)", body);
+        Assert.DoesNotContain("File.Copy(a, Path.Combine(inDir", body);
+        Assert.DoesNotContain("File.Copy(b, Path.Combine(inDir", body);
+        // 目标路径必须在 lambda 外算好,否则每次重试 ++n 会写到别的帧号上
+        Assert.Contains("string fa = Path.Combine(inDir, $\"frame_{++n:D6}.png\");", body);
+        Assert.Contains("string fb = Path.Combine(inDir, $\"frame_{++n:D6}.png\");", body);
+    }
+
+    /// <summary>★ 放弃重试时的说明必须带动作与路径(1830 的日志只有 .NET 英文原话 + 一个帧号,定位不了哪一步)。
+    /// 2026-10-09 起重试骨架搬进 Core(引擎侧共用同一层),所以这几条断言指向 `AlhPro.Core\IO_RETRY.cs`。</summary>
     [Fact]
     public void Give_up_uses_the_core_wording_with_action_and_path()
     {
-        string code = CodeOnly(Source());
-        Assert.Contains("AlhPro.Core.IO_RETRY.DescribeGiveUp(action, path, ex)", code);
-        Assert.Contains("AlhPro.Core.IO_RETRY.DescribeRecovered(action, path, attempt - 1)", code);
-        Assert.Contains("throw new IOException(AlhPro.Core.IO_RETRY.DescribeGiveUp(", code);
+        string core = CodeOnly(Core());
+        Assert.Contains("public static void Run(string action, string path, Action op, Action<string>? log = null)", core);
+        Assert.Contains("throw new IOException(DescribeGiveUp(action, path, ex), ex)", core);
+        Assert.Contains("log?.Invoke(DescribeRecovered(action, path, attempt - 1))", core);
     }
 
-    /// <summary>★ 重试次数不许在接线里写死(口径唯一来源是 Core 的常量)。</summary>
+    /// <summary>★ 重试次数与退避不许写死(口径唯一来源是 Core 的常量,循环也只有 Core 那一份)。</summary>
     [Fact]
     public void Retry_count_comes_from_the_core_constant()
     {
-        string code = CodeOnly(Source());
-        Assert.Contains("attempt > AlhPro.Core.IO_RETRY.MaxRetries", code);
-        int wiring = code.IndexOf("private static void RetryFileIo(", StringComparison.Ordinal);
-        string body = code.Substring(wiring, Math.Min(1200, code.Length - wiring));
-        Assert.DoesNotContain("attempt > 10", body);
-        Assert.DoesNotContain("Thread.Sleep(50)", body);
+        string core = CodeOnly(Core());
+        Assert.Contains("if (attempt > MaxRetries)", core);
+        Assert.Contains("Thread.Sleep(DelayMsFor(attempt))", core);
+        Assert.DoesNotContain("attempt > 10", core);
+        Assert.DoesNotContain("Thread.Sleep(50)", core);
     }
 
-    /// <summary>★ 判据本身也要真的存在(判据删了接线就只是空转)。</summary>
+    /// <summary>★ 判据本身要真的接在重试循环上(判据删了或没接上,接线就只是空转)。</summary>
     [Fact]
     public void The_transient_violation_judgement_is_wired()
     {
-        string code = CodeOnly(Source());
-        Assert.Contains("AlhPro.Core.IO_RETRY.IsTransientShareViolation(ex)", code);
-        Assert.Contains("AlhPro.Core.IO_RETRY.DelayMsFor(attempt)", code);
+        string core = CodeOnly(Core());
+        Assert.Contains("catch (Exception ex) when (IsTransientShareViolation(ex))", core);
+        Assert.Contains("Thread.Sleep(DelayMsFor(attempt))", core);
     }
 
     /// <summary>★ **自拷贝短路**必须还在:帧数对齐的"末帧补足"在源就是最后一帧时,`File.Copy(a, a, true)`
@@ -197,16 +266,20 @@ public class FileIoRetryWiringTests
     [Fact]
     public void First_transient_hit_is_logged_with_action_and_path()
     {
-        string code = CodeOnly(Source());
-        Assert.Contains("AlhPro.Core.IO_RETRY.DescribeTransient(action, path, attempt, ex)", code);
-        string body = Slice(code, "private static void RetryFileIo(",
-            "private static async Task<int> InterpSegmentAsync(");
+        string core = CodeOnly(Core());
+        Assert.Contains("log?.Invoke(DescribeTransient(action, path, attempt, ex))", core);
+        int run = core.IndexOf("public static void Run(", StringComparison.Ordinal);
+        Assert.True(run > 0, "Core 里找不到重试骨架 Run(...)");
+        string body = core.Substring(run, Math.Min(1400, core.Length - run));
         Assert.Contains("if (attempt == 1)", body);   // 只落首次,不是每次重试都刷屏
     }
 
     // ────────────────────────────── helpers ──────────────────────────────
 
     private static string Source() => ReadRepoFile("ImgUpscalerUI", "VideoService.cs");
+
+    /// <summary>重试骨架与判据的所在地(视频侧与引擎侧共用同一层)。</summary>
+    private static string Core() => ReadRepoFile("AlhPro.Core", "IO_RETRY.cs");
 
     /// <summary>去掉整行注释(避免注释里提到的 `File.Copy(...)` 被当成真调用)。</summary>
     private static string CodeOnly(string text)

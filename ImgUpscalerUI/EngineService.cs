@@ -2949,8 +2949,13 @@ public static partial class EngineService
         int n = 0;
         foreach (var (a, b) in pairList)
         {
-            File.Copy(a, Path.Combine(inDir, $"frame_{++n:D6}.png"), true);
-            File.Copy(b, Path.Combine(inDir, $"frame_{++n:D6}.png"), true);
+            // 【瞬时占用】这两个拷贝在视频活路径上(源帧就是引擎/ffmpeg 刚写过的那批 JPG),
+            // 一次杀软扫描就能让整条任务失败 —— 走与视频侧同一层的退避重试。
+            // 目标路径必须在这里算好:放进 lambda 会让 ++n 在每次重试时再自增一次,写到别的文件名上。
+            string fa = Path.Combine(inDir, $"frame_{++n:D6}.png");
+            string fb = Path.Combine(inDir, $"frame_{++n:D6}.png");
+            AlhPro.Core.IO_RETRY.Run("暂存帧", a, () => File.Copy(a, fa, true), AppLogger.Info);
+            AlhPro.Core.IO_RETRY.Run("暂存帧", b, () => File.Copy(b, fb, true), AppLogger.Info);
         }
         var ttaArgs = tta ? " -x -z" : "";
         var modelArgs = !string.IsNullOrEmpty(model) ? $" -m {model}" : "";
