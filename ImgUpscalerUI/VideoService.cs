@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using AlhPro.Core;
 
 namespace ALHPro;
 
@@ -2006,7 +2007,7 @@ public static class VideoService
                             inFps, tempoSrcIdx, 1, inFps, gpuId, srcDur, interpModel, tta, progress, ct);
                         foreach (var f in Directory.EnumerateFiles(framesIn, "*.jpg")) File.Delete(f);
                         foreach (var f in Directory.EnumerateFiles(framesFinal, "*.jpg"))
-                            File.Copy(f, Path.Combine(framesIn, Path.GetFileName(f)), true);
+                            RetryFileCopy(f, Path.Combine(framesIn, Path.GetFileName(f)));
                         foreach (var f in Directory.EnumerateFiles(framesFinal, "*.jpg")) File.Delete(f);
                         frameCount = resR.frameCount;
                         effectiveFps = inFps;
@@ -2624,7 +2625,7 @@ public static class VideoService
             {
                 // 不补帧:拆帧结果直接作为处理帧
                 foreach (var f in frameFiles)
-                    File.Copy(f, Path.Combine(framesFinal, Path.GetFileName(f)), true);
+                    RetryFileCopy(f, Path.Combine(framesFinal, Path.GetFileName(f)));
                 finalDurs = frameDurs != null
                     ? new System.Collections.Generic.List<double>(frameDurs) : null;
                 progress?.Report((interpPctBase + interpPctSpan, $"帧准备完成({frameFiles.Length} 帧)"));
@@ -2952,7 +2953,7 @@ public static class VideoService
                             Directory.CreateDirectory(batchOut);
                             // 只拷贝【代表帧】进引擎(唯一帧;重复槽不占引擎输入/PNG 峰值)
                             foreach (var g in curPG)
-                                File.Copy(upFiles[g.rep], Path.Combine(batchIn, Path.GetFileName(upFiles[g.rep])), true);
+                                RetryFileCopy(upFiles[g.rep], Path.Combine(batchIn, Path.GetFileName(upFiles[g.rep])));
                             progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
                                 $"超分 已处理 {batchStartSlot} 帧 / 共 {total} 帧(批次 {batchInfo.Number}/{batchCount}){EtaStr(batchStartSlot, total, (DateTime.UtcNow - srStageStart).TotalSeconds - srIdleSec)}..."));
                             // 引擎真的开始出活时再报一句(带【实际启动耗时】),此后回到引擎自己的逐帧口径
@@ -3094,9 +3095,9 @@ public static class VideoService
                                     if (f.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
                                         EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality);
                                     else
-                                        File.Move(f, dst, overwrite: true);
+                                        RetryFileMove(f, dst);
                                 }
-                                catch { try { File.Copy(f, Path.Combine(upOutput, Path.GetFileName(f)), true); } catch { } }
+                                catch { try { RetryFileCopy(f, Path.Combine(upOutput, Path.GetFileName(f))); } catch { } }
                             }                            // ===== 回填重复槽位:拷贝代表帧的超分输出到该组重复槽(决策②=拷贝,非硬链接)=====
                             // 硬约束:重复槽与代表帧同批 → 代表帧输出已在本批 upOutput 落盘,此处同 task 内立即拷贝,
                             // 无跨批依赖(批并行跑,跨批引用会在代表帧未产出时崩溃)。
@@ -3600,14 +3601,14 @@ public static class VideoService
                     {
                         var last = seq[seq.Length - 1];
                         for (long i = seq.Length; i < expected; i++)
-                            File.Copy(last, Path.Combine(framesFinal, $"frame_{i + 1:D6}.jpg"), true);
+                            RetryFileCopy(last, Path.Combine(framesFinal, $"frame_{i + 1:D6}.jpg"));
                         AppLogger.Info($"帧数对齐:输出 {seq.Length} 帧 < 预期 {expected},末帧补足 {expected - seq.Length} 帧(防吞尾)");
                     }
                     else
                     {
                         for (long i = expected; i < seq.Length; i++)
                         {
-                            try { File.Delete(Path.Combine(framesFinal, $"frame_{i + 1:D6}.jpg")); } catch { }
+                            try { RetryFileDelete(Path.Combine(framesFinal, $"frame_{i + 1:D6}.jpg")); } catch { }
                         }
                     }
                 }
@@ -4207,7 +4208,7 @@ public static class VideoService
                 if (!await ValidateVideoFileAsync(outTmp, 1))
                     throw new InvalidOperationException("视频合成失败:输出文件无效(无法被解码)");
                 // 校验通过,才以最终文件名出现在输出目录(合帧期间输出目录只有 .tmp,不会误以为完成)
-                File.Move(outTmp, outputVideo, true);
+                RetryFileMove(outTmp, outputVideo);
                 // ===== 编码实测回报(resolve "编码慢" 是 CPU 软编线程限制还是硬编解 JPG 瓶颈)=====
                 encSw.Stop();
                 double encSec = encSw.Elapsed.TotalSeconds;
@@ -4880,8 +4881,85 @@ public static class VideoService
     /// <summary>复制文件(失败静默忽略)。</summary>
     private static void CopyFrame(string src, string dst)
     {
-        try { File.Copy(src, dst, true); }
+        try { RetryFileCopy(src, dst); }
         catch { }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════════
+    // 【2026-10-09 · t65】帧文件"瞬时占用"重试(判据在 AlhPro.Core.IO_RETRY,这里只接线)
+    //
+    // 【为什么必须有这一层 —— 1830 诊断包】那台 RTX 5060 Ti 跑 90 秒素材(超分 2x + 补帧 120fps),
+    // 超分 10808 帧全跑完(170 ms/帧、共 90 分 31 秒)后,在"合帧前的帧数对齐"里一次 `File.Copy`
+    // 撞上 `...\upscaled\frame_010809.jpg ... used by another process` ⇒ 异常冒泡到本方法外层,
+    // 整条任务按「成功 0,失败 1,输出 0 个文件」收尾(90 分钟的帧全部作废)。
+    //
+    // 【占用来自哪里】帧目录里的 JPG 在流水线里被多批并发的超分引擎、合帧/校验的 ffmpeg、
+    // 杀软/索引器反复打开 —— 都是毫秒~秒级瞬时状态。旧代码在"对齐补帧 / 批输入拷贝 / 引擎输出搬运 /
+    // 分段输入拷贝 / 成片改名"这些点上**没有重试**,一次瞬时占用 = 一次整任务失败。
+    //
+    // 【口径】只在 IOException / UnauthorizedAccessException 且 HResult 是
+    // ERROR_SHARING_VIOLATION(0x80070020)/ ERROR_LOCK_VIOLATION(0x80070021)时退避重试;
+    // 磁盘满、路径非法、文件不存在这类**不会自愈**的错误立刻照旧抛出,不拖时间(判据有单测)。
+    // 重试耗尽仍失败:把"哪一步 + 哪个文件"写进异常消息(旧日志只有 .NET 英文原话与一个帧号)。
+    // ══════════════════════════════════════════════════════════════════════════════
+
+    /// <summary>复制(overwrite=true),遇瞬时占用退避重试;耗尽后抛带"动作+路径"的异常。
+    /// 【自拷贝短路】同一路径复制到自己(帧数对齐的"末帧补足"在源就是最后一帧时会走到)
+    /// 在 Windows 上必然报共享冲突(0x80070020)—— `CopyFile` 把源文件开着的同时要独占写目标,
+    /// 而两者是同一个文件。这种冲突**退避一万次也不会自愈**,必须直接当成"已经是目标状态"返回。</summary>
+    private static void RetryFileCopy(string src, string dst)
+    {
+        if (IsSameFile(src, dst)) return;
+        RetryFileIo("复制帧", src, () => File.Copy(src, dst, true));
+    }
+
+    /// <summary>两个路径是不是同一个文件(按绝对路径比,Windows 大小写不敏感)。
+    /// 路径非法时 <see cref="Path.GetFullPath(string)"/> 会抛 —— 那种情况交给下面真正做 IO 时抛,
+    /// 这里只判不了就当"不是同一个文件"。</summary>
+    private static bool IsSameFile(string src, string dst)
+    {
+        try
+        {
+            return string.Equals(Path.GetFullPath(src), Path.GetFullPath(dst),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>改名/移动(overwrite=true),遇瞬时占用退避重试(杀软扫描刚写出的成片也会锁)。</summary>
+    private static void RetryFileMove(string src, string dst)
+        => RetryFileIo("搬移文件", src, () => File.Move(src, dst, true));
+
+    /// <summary>删除,遇瞬时占用退避重试。调用方已有的"删不掉不影响正确性"语义照旧(它自己 catch)。</summary>
+    private static void RetryFileDelete(string path)
+        => RetryFileIo("删除帧", path, () => File.Delete(path));
+
+    /// <summary>重试骨架:第 1 次失败即判"能不能自愈",不能就立刻抛(保持旧行为);
+    /// 能自愈则按 <see cref="AlhPro.Core.IO_RETRY.DelayMsFor"/> 退避重试,成功时如实记一行(便于统计占用频次)。</summary>
+    private static void RetryFileIo(string action, string path, Action op)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                op();
+                if (attempt > 1)
+                    AppLogger.Info(AlhPro.Core.IO_RETRY.DescribeRecovered(action, path, attempt - 1));
+                return;
+            }
+            catch (Exception ex) when (AlhPro.Core.IO_RETRY.IsTransientShareViolation(ex))
+            {
+                if (attempt > AlhPro.Core.IO_RETRY.MaxRetries)
+                    throw new IOException(AlhPro.Core.IO_RETRY.DescribeGiveUp(action, path, ex), ex);
+                // 首次撞上就落一行(带动作/路径/HResult):以后再看诊断包能直接数出"这台机器上有多少次瞬时占用"。
+                if (attempt == 1)
+                    AppLogger.Info(AlhPro.Core.IO_RETRY.DescribeTransient(action, path, attempt, ex));
+                Thread.Sleep(AlhPro.Core.IO_RETRY.DelayMsFor(attempt));
+            }
+        }
     }
 
     private static async Task<int> InterpSegmentAsync(string rife, string framesOut, string framesFinal,
@@ -4896,7 +4974,7 @@ public static class VideoService
         var segIn = Path.Combine(workDir, $"seg_{start}_{end}_in");
         Directory.CreateDirectory(segIn);
         for (int i = start; i < end; i++)
-            File.Copy(Path.Combine(framesOut, $"frame_{i + 1:D6}.jpg"), Path.Combine(segIn, $"frame_{i - start + 1:D6}.jpg"), true);
+            RetryFileCopy(Path.Combine(framesOut, $"frame_{i + 1:D6}.jpg"), Path.Combine(segIn, $"frame_{i - start + 1:D6}.jpg"));
 
         // 模型目录前置校验:缺失立即明确报错(而不是等下半天引擎报 stderr 尾部的晦涩错误)
         var rifeDir = Path.GetDirectoryName(rife) ?? ".";
@@ -5081,8 +5159,8 @@ public static class VideoService
                     // 尾部插值修正:追加末帧副本(锚点 +1,目标帧数 +倍率),
                     // 让最后一段(如源 37→38)得到真实插值,而不是被 RIFE 复制成末帧冻结;
                     // 副本段产生的冻结帧会在合帧"帧数对齐"时被裁掉。
-                    File.Copy(Path.Combine(segIn, $"frame_{segLen:D6}.jpg"),
-                              Path.Combine(segIn, $"frame_{segLen + 1:D6}.jpg"), true);
+                    RetryFileCopy(Path.Combine(segIn, $"frame_{segLen:D6}.jpg"),
+                              Path.Combine(segIn, $"frame_{segLen + 1:D6}.jpg"));
                     targetFrames += interpScale;
                 }
                 finalOut = Path.Combine(workDir, $"seg_{start}_{end}_out");
@@ -5130,7 +5208,7 @@ public static class VideoService
             // 单帧段:直接复制,不插值
             finalOut = Path.Combine(workDir, $"seg_{start}_{end}_out");
             Directory.CreateDirectory(finalOut);
-            File.Copy(Path.Combine(segIn, "frame_000001.jpg"), Path.Combine(finalOut, "frame_000001.jpg"), true);
+            RetryFileCopy(Path.Combine(segIn, "frame_000001.jpg"), Path.Combine(finalOut, "frame_000001.jpg"));
         }
 
         var files = EnumerateFrameFiles(finalOut)
@@ -5166,7 +5244,8 @@ public static class VideoService
         {
             AppLogger.Error($"✗ 本段有 {dropped} 帧没能交付到最终目录(共 {files.Count} 帧;首条原因:{firstErr})。"
                 + $"已让后面的帧顶上空出的编号 ⇒ 帧序列仍连续,但**本段总帧数少了 {dropped} 帧**,"
-                + "成片会比目标帧数短一点(进度与 ETA 按实际帧数计)。请检查磁盘是否写满、是否有杀毒/同步软件锁住临时目录。");
+                + $"成片会比目标帧数短一点(进度与 ETA 按实际帧数计)。这种占用程序已自动退避重试 {AlhPro.Core.IO_RETRY.MaxRetries} 次;"
+                + "仍失败通常是杀毒/同步软件长时间锁住临时目录。");
         }
         try { Directory.Delete(segIn, true); } catch { }
         if (finalOut != segIn) { try { Directory.Delete(finalOut, true); } catch { } }
@@ -5183,18 +5262,18 @@ public static class VideoService
             if (src.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
                 EngineService.ConvertPngToJpg(src, dst, VideoFrameJpgQuality);
             else
-                File.Move(src, dst, overwrite: true);   // 同名同扩展名直接搬(跨目录 Move),不再解码重编码
+                RetryFileMove(src, dst);   // 同名同扩展名直接搬(跨目录 Move),不再解码重编码;带瞬时占用退避重试
             return true;
         }
         catch (Exception ex) { error = DescribeFileError(ex); }
         // 兜底①:退回复制(Move 的失败常是"源被刚退出的引擎进程短暂占着")
-        try { File.Copy(src, dst, true); return true; }
+        try { RetryFileCopy(src, dst); return true; }
         catch (Exception ex) { error += " / 复制也失败: " + DescribeFileError(ex); }
         // 兜底②:等 150ms 再复制一次(句柄释放有延迟,尤其是刚 kill 过引擎进程时)
         try
         {
             System.Threading.Thread.Sleep(150);
-            File.Copy(src, dst, true);
+            RetryFileCopy(src, dst);
             return true;
         }
         catch (Exception ex)
@@ -6848,9 +6927,9 @@ public static class VideoService
         int idx = 0;
         for (int n = 0; n < src.Length; n++)
         {
-            if (drop.Contains(n + 1)) { try { File.Delete(src[n]); } catch { } continue; }
+            if (drop.Contains(n + 1)) { try { RetryFileDelete(src[n]); } catch { } continue; }
             idx++;
-            File.Move(src[n], Path.Combine(framesIn, $"frame_{idx:D6}.jpg"), true);
+            RetryFileMove(src[n], Path.Combine(framesIn, $"frame_{idx:D6}.jpg"));
         }
         // 保留帧源号(0-based,升序):"补回"用它把内容帧放回源时间轴
         var kept = new System.Collections.Generic.List<int>();
@@ -7645,11 +7724,11 @@ public static class VideoService
                 {
                     idx++;
                     if (idx != n + 1)
-                        File.Move(files[n], Path.Combine(framesIn, $"frame_{idx:D6}.jpg"), true);
+                        RetryFileMove(files[n], Path.Combine(framesIn, $"frame_{idx:D6}.jpg"));
                 }
                 else
                 {
-                    try { File.Delete(files[n]); } catch { }
+                    try { RetryFileDelete(files[n]); } catch { }
                 }
             }
             hbRe.Done(0);
@@ -8994,7 +9073,7 @@ public static class VideoService
             }
             if (!File.Exists(tmp))
                 throw new InvalidOperationException("裁剪输出失败");
-            File.Move(tmp, output, true);
+            RetryFileMove(tmp, output);
         }
         catch
         {

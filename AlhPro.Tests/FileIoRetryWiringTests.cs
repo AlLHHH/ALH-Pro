@@ -1,0 +1,211 @@
+using AlhPro.Core;
+using System;
+using System.IO;
+using System.Linq;
+using Xunit;
+
+namespace AlhPro.Tests;
+
+/// <summary>【接线契约 · 2026-10-09 · t65】帧文件"瞬时占用重试"必须**真的接在**关键落点上。
+///
+/// 判据由 <see cref="FileIoRetryTests"/> 钉死,这里钉接线:诊断包 `ALHPro_Diag_20261009_1830`
+/// 那次事故的形态是 —— 判据(退避重试)有了也没用,因为出事那一步根本**没调用**它:
+/// 「合帧前的帧数对齐」里一次裸 `File.Copy` 撞上单帧占用 ⇒ 异常冒泡 ⇒ 90 分 31 秒、10808 帧全部作废。
+///
+/// 所以这里不是"检查源码里出现了某个函数名",而是:
+/// ① 那个**方法体**里必须只剩 `RetryFileCopy`(裸 `File.Copy(..., true)` 一个都不许留);
+/// ② 整份 VideoService 的裸 `File.Copy/File.Move` 只允许出现在重试接线层自己身上。
+/// 真有人后来把这层摘掉,这两条会立刻变红(纯 `IO_RETRY` 单测看不出来)。</summary>
+public class FileIoRetryWiringTests
+{
+    /// <summary>VideoService 里**允许**直接调 BCL 文件 API 的地方(白名单,每条都写理由):
+    /// 重试接线层自身、已废弃方法、只做探测/清理且失败无语义的落点。</summary>
+    private static readonly string[] AllowedMethodAnchors =
+    {
+        "private static void RetryFileIo(",                 // 重试骨架:必须在这里真正调用一次 File.Copy/Move/Delete
+        "private static async Task InterpKeyframeGapsAsync(", // [Obsolete] 历史回溯路径,不在任何活动调用链
+    };
+
+    /// <summary>★ 出事那一步(帧数对齐的"末帧补足")必须走重试。</summary>
+    [Fact]
+    public void The_frame_count_alignment_fill_goes_through_the_retry_helper()
+    {
+        string code = CodeOnly(Source());
+        int start = code.IndexOf("if (seq.Length > 0 && seq.Length != expected)", StringComparison.Ordinal);
+        Assert.True(start > 0, "找不到帧数对齐那一段(锚点失效 ⇒ 这条契约必须变红,不许静默放水)");
+        string body = code.Substring(start, 1500);
+        Assert.Contains("RetryFileCopy(last,", body);
+        Assert.DoesNotContain("File.Copy(last,", body);
+    }
+
+    /// <summary>★ 长任务里"把一帧交给最终目录"的每一个落点都要走重试(补帧分段 / 引擎输出搬运 / 逐帧交付)。</summary>
+    [Fact]
+    public void Frame_delivery_paths_go_through_the_retry_helper()
+    {
+        string code = CodeOnly(Source());
+        string seg = Slice(code, "private static async Task<int> InterpSegmentAsync(",
+            "private static bool TryDeliverFrame(");
+        Assert.Contains("RetryFileCopy(Path.Combine(framesOut,", seg);
+        Assert.Contains("RetryFileCopy(Path.Combine(segIn, \"frame_000001.jpg\")", seg);   // 单帧段直接复制
+
+        // 逐帧交付(TryDeliverFrame):Move 与两级兜底 Copy 都走重试
+        string deliver = Slice(code, "private static bool TryDeliverFrame(", "private static string DescribeFileError(");
+        Assert.Contains("RetryFileMove(src, dst);", deliver);
+        Assert.Contains("try { RetryFileCopy(src, dst); return true; }", deliver);          // 兜底①
+        int sleep = deliver.IndexOf("System.Threading.Thread.Sleep(150);", StringComparison.Ordinal);
+        Assert.True(sleep > 0, "找不到交付兜底②(150ms 等待)");
+        Assert.Contains("RetryFileCopy(src, dst);", deliver.Substring(sleep, 200));         // 兜底②
+
+        // 批输入:代表帧拷进引擎输入目录(旧写法是裸 File.Copy(upFiles[g.rep], …))
+        Assert.Contains("RetryFileCopy(upFiles[g.rep],", code);
+        Assert.DoesNotContain("File.Copy(upFiles[g.rep],", code);
+
+        // 引擎输出搬运:同一处不许再有裸 File.Move(f, dst …)
+        int conv = code.IndexOf("EngineService.ConvertPngToJpg(f, dst, VideoFrameJpgQuality);", StringComparison.Ordinal);
+        Assert.True(conv > 0, "找不到引擎输出搬运那一段");
+        string engineOut = code.Substring(conv, 400);
+        Assert.Contains("RetryFileMove(f, dst);", engineOut);
+        Assert.DoesNotContain("File.Move(f, dst", engineOut);
+    }
+
+    /// <summary>★ 成片落地(`outTmp` → 最终文件名)与裁剪输出也要走重试 —— 这里被杀软/播放器占用同样会丢成品。</summary>
+    [Fact]
+    public void Final_output_move_goes_through_the_retry_helper()
+    {
+        Assert.Contains("RetryFileMove(outTmp, outputVideo);", CodeOnly(Source()));
+    }
+
+    /// <summary>★ 白名单之外,不许再有裸 `File.Copy/File.Move`(裸调用 = 一次瞬时占用就能让长任务失败)。</summary>
+    [Fact]
+    public void No_unwired_bcl_file_moves_or_copies_outside_the_retry_layer()
+    {
+        string code = CodeOnly(Source());
+        foreach (string anchor in AllowedMethodAnchors)
+            Assert.Contains(anchor, code);   // 白名单锚点自己不能失效(否则这套检查会静默放水)
+
+        int from = code.IndexOf("private static void CopyFrame(", StringComparison.Ordinal);
+        int to = code.IndexOf("private static async Task<int> InterpSegmentAsync(", StringComparison.Ordinal);
+        Assert.True(from > 0 && to > from, "必须能定位重试接线层(CopyFrame → InterpSegmentAsync 之间)");
+        string wiring = code.Substring(from, to - from);
+        Assert.Equal(1, CountOccurrences(wiring, "File.Copy(src, dst, true)"));
+        Assert.Equal(1, CountOccurrences(wiring, "File.Move(src, dst, true)"));
+        Assert.Equal(1, CountOccurrences(wiring, "File.Delete(path)"));
+
+        foreach (var (needle, label) in new[]
+        {
+            ("File.Copy(Path.Combine(", "File.Copy"),
+            ("File.Move(Path.Combine(", "File.Move"),
+        })
+        {
+            Assert.Equal(0, CountOccurrences(RemoveAll(wiring, label == "File.Copy"
+                ? new[] { "File.Copy(src, dst, true)" }
+                : new[] { "File.Move(src, dst, true)" }), needle));
+        }
+    }
+
+    /// <summary>★ 放弃重试时的说明必须带动作与路径(1830 的日志只有 .NET 英文原话 + 一个帧号,定位不了哪一步)。</summary>
+    [Fact]
+    public void Give_up_uses_the_core_wording_with_action_and_path()
+    {
+        string code = CodeOnly(Source());
+        Assert.Contains("AlhPro.Core.IO_RETRY.DescribeGiveUp(action, path, ex)", code);
+        Assert.Contains("AlhPro.Core.IO_RETRY.DescribeRecovered(action, path, attempt - 1)", code);
+        Assert.Contains("throw new IOException(AlhPro.Core.IO_RETRY.DescribeGiveUp(", code);
+    }
+
+    /// <summary>★ 重试次数不许在接线里写死(口径唯一来源是 Core 的常量)。</summary>
+    [Fact]
+    public void Retry_count_comes_from_the_core_constant()
+    {
+        string code = CodeOnly(Source());
+        Assert.Contains("attempt > AlhPro.Core.IO_RETRY.MaxRetries", code);
+        int wiring = code.IndexOf("private static void RetryFileIo(", StringComparison.Ordinal);
+        string body = code.Substring(wiring, Math.Min(1200, code.Length - wiring));
+        Assert.DoesNotContain("attempt > 10", body);
+        Assert.DoesNotContain("Thread.Sleep(50)", body);
+    }
+
+    /// <summary>★ 判据本身也要真的存在(判据删了接线就只是空转)。</summary>
+    [Fact]
+    public void The_transient_violation_judgement_is_wired()
+    {
+        string code = CodeOnly(Source());
+        Assert.Contains("AlhPro.Core.IO_RETRY.IsTransientShareViolation(ex)", code);
+        Assert.Contains("AlhPro.Core.IO_RETRY.DelayMsFor(attempt)", code);
+    }
+
+    /// <summary>★ **自拷贝短路**必须还在:帧数对齐的"末帧补足"在源就是最后一帧时,`File.Copy(a, a, true)`
+    /// 在 Windows 上必然报共享冲突(0x80070020)、退避一万次也不会成功 —— 只能直接跳过。
+    /// 真有人把这层删掉,这条会红(不然那次事故又会原样复现)。</summary>
+    [Fact]
+    public void Self_copy_short_circuits_before_any_retry()
+    {
+        string code = CodeOnly(Source());
+        string copy = Slice(code, "private static void RetryFileCopy(", "private static void RetryFileMove(");
+        int same = copy.IndexOf("IsSameFile(src, dst)", StringComparison.Ordinal);
+        int io = copy.IndexOf("RetryFileIo(\"复制帧\"", StringComparison.Ordinal);
+        Assert.True(same > 0, "RetryFileCopy 里找不到自拷贝判据 IsSameFile(src, dst)");
+        Assert.True(io > same, "自拷贝判据必须在真正做 IO(RetryFileIo)之前短路");
+        Assert.Contains("if (IsSameFile(src, dst)) return;", copy);
+
+        Assert.Contains("private static bool IsSameFile(string src, string dst)", code);
+        Assert.Contains("Path.GetFullPath(src), Path.GetFullPath(dst)", code);
+        Assert.Contains("StringComparison.OrdinalIgnoreCase", code);   // Windows 路径大小写不敏感
+    }
+
+    /// <summary>★ **首次**撞上瞬时占用必须落一行日志(带动作/路径/HResult)。
+    /// 1830 的诊断包里只有 .NET 的英文原话与一个帧号 —— 连"是哪一步在读这一帧"都看不出来。</summary>
+    [Fact]
+    public void First_transient_hit_is_logged_with_action_and_path()
+    {
+        string code = CodeOnly(Source());
+        Assert.Contains("AlhPro.Core.IO_RETRY.DescribeTransient(action, path, attempt, ex)", code);
+        string body = Slice(code, "private static void RetryFileIo(",
+            "private static async Task<int> InterpSegmentAsync(");
+        Assert.Contains("if (attempt == 1)", body);   // 只落首次,不是每次重试都刷屏
+    }
+
+    // ────────────────────────────── helpers ──────────────────────────────
+
+    private static string Source() => ReadRepoFile("ImgUpscalerUI", "VideoService.cs");
+
+    /// <summary>去掉整行注释(避免注释里提到的 `File.Copy(...)` 被当成真调用)。</summary>
+    private static string CodeOnly(string text)
+        => string.Join("\n", text.Split('\n').Where(l => !l.TrimStart().StartsWith("//")));
+
+    /// <summary>取两个锚点之间的源码片段(start 含、end 不含);两个锚点都必须存在,
+    /// 且 end 必须在 start 之后(锚点失效时立刻变红,不许静默放水)。</summary>
+    private static string Slice(string code, string start, string end)
+    {
+        int i = code.IndexOf(start, StringComparison.Ordinal);
+        Assert.True(i > 0, $"找不到片段起点:{start}");
+        int j = code.IndexOf(end, i + start.Length, StringComparison.Ordinal);
+        Assert.True(j > i, $"找不到片段终点(或终点在起点之前):{end}");
+        return code.Substring(i, j - i);
+    }
+
+    private static string RemoveAll(string text, string[] needles)
+    {
+        foreach (var n in needles) text = text.Replace(n, "");
+        return text;
+    }
+
+    private static int CountOccurrences(string text, string needle)
+    {
+        int n = 0, i = 0;
+        while ((i = text.IndexOf(needle, i, StringComparison.Ordinal)) >= 0) { n++; i += needle.Length; }
+        return n;
+    }
+
+    private static string ReadRepoFile(params string[] parts)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            var cand = Path.Combine(new[] { dir.FullName }.Concat(parts).ToArray());
+            if (File.Exists(cand)) return File.ReadAllText(cand);
+            dir = dir.Parent;
+        }
+        throw new FileNotFoundException("找不到仓库文件: " + string.Join('/', parts));
+    }
+}
