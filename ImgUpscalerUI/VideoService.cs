@@ -3600,9 +3600,26 @@ public static class VideoService
                     if (seq.Length < expected)
                     {
                         var last = seq[seq.Length - 1];
+                        // 【这里不许让整条任务失败】1830 那次就是死在这个循环里的第一次 `File.Copy`
+                        // (帧被别的进程占着,退避 8 秒仍没撒手)。可这一段的语义本来就只是"末帧定格补足",
+                        // 少补一两帧 = 成片短一两帧(几毫秒),比 90 分钟全废轻得多。
+                        // 所以:退避重试仍然全力做,但**真补不上就不再抛**——补不上的帧数记进日志。
+                        long filled = 0;
+                        int failed = 0;
+                        string firstFail = "";
                         for (long i = seq.Length; i < expected; i++)
-                            RetryFileCopy(last, Path.Combine(framesFinal, $"frame_{i + 1:D6}.jpg"));
-                        AppLogger.Info($"帧数对齐:输出 {seq.Length} 帧 < 预期 {expected},末帧补足 {expected - seq.Length} 帧(防吞尾)");
+                        {
+                            try { RetryFileCopy(last, Path.Combine(framesFinal, $"frame_{i + 1:D6}.jpg")); filled++; }
+                            catch (Exception ex)
+                            {
+                                failed++;
+                                if (firstFail.Length == 0) firstFail = ex.Message.Split('\n')[0];
+                            }
+                        }
+                        AppLogger.Info($"帧数对齐:输出 {seq.Length} 帧 < 预期 {expected},末帧补足 {filled} 帧(防吞尾)");
+                        if (failed > 0)
+                            AppLogger.Error($"帧数对齐:有 {failed} 帧末帧定格补不上(退避重试后仍被占用),成片帧数保持 {seq.Length + filled} 帧"
+                                + $"(比预期少 {failed} 帧,约 {failed / Math.Max(1.0, outFps) * 1000:0}ms);任务继续 —— {firstFail}");
                     }
                     else
                     {
