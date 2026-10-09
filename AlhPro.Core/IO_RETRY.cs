@@ -41,6 +41,13 @@ public static class IO_RETRY
     private const int SharingViolation = unchecked((int)0x80070020);
     private const int LockViolation = unchecked((int)0x80070021);
 
+    // 【实测记录·2026-10-09】0x80070005(ERROR_ACCESS_DENIED)**故意不收**:
+    // `File.Move(src, dst, true)` 覆盖一个正被别的进程独占打开的 dst 时,Windows 报的正是 0x80070005
+    // —— 但同样的 0x80070005 也是"只读文件/ACL 拒绝/目录不允许写"的报错。判宽了,批量循环里每个
+    // 文件都要白等一轮退避(12 次 ≈ 7.2 秒),而那是**永久**失败、退避一万次也没用。
+    // 目的端被占用(输出文件被播放器打开)本来就有专门的兜底文案与行为(见 VideoService 合帧段的
+    // `catch (IOException) when (File.Exists(outputVideo))`),那条路保持逐字不变。
+
     /// <summary>这个异常是不是"文件被另一个进程/线程瞬时占用",值得退避重试。
     /// 【只认这两类】<see cref="System.IO.IOException"/>(含 <see cref="System.IO.FileNotFoundException"/> 等派生)
     /// 与 <see cref="System.UnauthorizedAccessException"/>(只读属性/ACL 也会走这个 HResult)。</summary>

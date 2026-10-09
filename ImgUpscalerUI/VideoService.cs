@@ -3604,22 +3604,24 @@ public static class VideoService
                         // (帧被别的进程占着,退避 8 秒仍没撒手)。可这一段的语义本来就只是"末帧定格补足",
                         // 少补一两帧 = 成片短一两帧(几毫秒),比 90 分钟全废轻得多。
                         // 所以:退避重试仍然全力做,但**真补不上就不再抛**——补不上的帧数记进日志。
+                        // 且第一个补不上就收手:同一个源帧连续补不上,后面几十上百次基本也补不上,
+                        // 而逐帧各等一轮退避在重灾时(149 帧)是 18 分钟静默停顿,只是把日志刷长。
                         long filled = 0;
-                        int failed = 0;
                         string firstFail = "";
-                        for (long i = seq.Length; i < expected; i++)
+                        try
                         {
-                            try { RetryFileCopy(last, Path.Combine(framesFinal, $"frame_{i + 1:D6}.jpg")); filled++; }
-                            catch (Exception ex)
+                            for (long i = seq.Length; i < expected; i++)
                             {
-                                failed++;
-                                if (firstFail.Length == 0) firstFail = ex.Message.Split('\n')[0];
+                                RetryFileCopy(last, Path.Combine(framesFinal, $"frame_{i + 1:D6}.jpg"));
+                                filled++;
                             }
                         }
+                        catch (Exception ex) { firstFail = ex.Message.Split('\n')[0]; }
+                        long shortBy = expected - seq.Length - filled;
                         AppLogger.Info($"帧数对齐:输出 {seq.Length} 帧 < 预期 {expected},末帧补足 {filled} 帧(防吞尾)");
-                        if (failed > 0)
-                            AppLogger.Error($"帧数对齐:有 {failed} 帧末帧定格补不上(退避重试后仍被占用),成片帧数保持 {seq.Length + filled} 帧"
-                                + $"(比预期少 {failed} 帧,约 {failed / Math.Max(1.0, outFps) * 1000:0}ms);任务继续 —— {firstFail}");
+                        if (shortBy > 0)
+                            AppLogger.Error($"帧数对齐:有 {shortBy} 帧末帧定格补不上(退避重试后仍被占用),成片帧数保持 {seq.Length + filled} 帧"
+                                + $"(比预期少 {shortBy} 帧,约 {shortBy / Math.Max(1.0, outFps) * 1000:0}ms);任务继续 —— {firstFail}");
                     }
                     else
                     {
@@ -3676,13 +3678,17 @@ public static class VideoService
                             if (add >= 1 && add <= 3)
                             {
                                 var lastF = seqA[^1];
+                                int added = 0;
+                                string addFail = "";
                                 for (int i = 0; i < add; i++)
                                 {
-                                    try { File.Copy(lastF, Path.Combine(framesFinal, $"frame_{seqA.Count + i + 1:D6}.jpg"), true); }
-                                    catch { }
+                                    try { RetryFileCopy(lastF, Path.Combine(framesFinal, $"frame_{seqA.Count + added + 1:D6}.jpg")); added++; }
+                                    catch (Exception ex) { addFail = ex.Message.Split('\n')[0]; break; }
                                 }
-                                AppLogger.Info($"尾帧容积:补 {add} 帧末帧定格({seqA.Count} → {seqA.Count + add} 帧,"
+                                AppLogger.Info($"尾帧容积:补 {added} 帧末帧定格({seqA.Count} → {seqA.Count + added} 帧,"
                                     + $"标称帧率保持 {outFps:0.###}fps,总长≈{muxDur:0.###}s)");
+                                if (addFail.Length > 0)
+                                    AppLogger.Warn($"尾帧容积:有 {add - added} 帧末帧定格补不上(退避重试后仍被占用),尾部约缺 {(add - added) / Math.Max(1.0, outFps) * 1000:0}ms —— {addFail}");
                             }
                             else
                             {
@@ -7824,7 +7830,8 @@ public static class VideoService
         int n = files.Length;
         if (n < 2)
         {
-            foreach (var f in files) File.Copy(f, Path.Combine(framesFinal, Path.GetFileName(f)), true);
+            // n<2 的退化素材(0/1 帧):同样是"拷一帧就完事",别让瞬时占用把整条任务带走
+            foreach (var f in files) RetryFileCopy(f, Path.Combine(framesFinal, Path.GetFileName(f)));
             return (n, inFps);
         }
         var idx = srcIdx ?? Enumerable.Range(0, n).ToList();
