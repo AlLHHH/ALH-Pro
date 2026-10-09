@@ -49,12 +49,32 @@ public class FileIoRetryWiringTests
         Assert.True(start > 0, "找不到帧数对齐的\"末帧补足\"分支");
         string body = code.Substring(start, 1200);
         Assert.Contains("long filled = 0;", body);
-        Assert.Contains("int failed = 0;", body);
+        Assert.Contains("long shortBy = expected - seq.Length - filled;", body);   // 缺口按"还差多少"如实算
         Assert.Contains("filled++", body);            // 成功补了几帧要如实数
-        Assert.Contains("failed++", body);            // 补不上几帧也要如实数
+        Assert.DoesNotContain("failed++", body);      // 第一个补不上就收手(逐帧继续 = 永久占用时 N×7 秒静默停顿)
         Assert.Contains("catch (Exception ex)", body);
         Assert.DoesNotContain("catch (Exception ex) when", body);   // 不能只在"可自愈"时才接住 —— 那样长期占用照样丢任务
         Assert.Contains("AppLogger.Error(", body);    // 少帧必须吵,不许静默
+    }
+
+    /// <summary>★ 同类裸拷贝的另两处:尾帧容积(补 1~3 帧末帧定格)与 tempo 重采样的退化素材分支(n&lt;2)。
+    /// 尾帧容积原来还"无条件报补了 add 帧" —— 补不上也报,把丢的帧藏进了日志里。</summary>
+    [Fact]
+    public void Tail_volume_and_tempo_degenerate_copies_go_through_the_retry_helper()
+    {
+        string code = CodeOnly(Source());
+
+        string tail = Slice(code, "int add = (int)Math.Round(muxDur * outFps) - seqA.Count;", "tailGapSec = gap;");
+        Assert.Contains("RetryFileCopy(lastF,", tail);
+        Assert.DoesNotContain("File.Copy(lastF,", tail);
+        Assert.Contains("int added = 0;", tail);
+        Assert.Contains("尾帧容积:补 {added} 帧", tail);   // 报的是真实补上的帧数
+        Assert.Contains("AppLogger.Warn(", tail);          // 补不上必须吵
+
+        string tempo = Slice(code, "private static async Task<(int frameCount, double outFps)> RunTempoResampleAsync(",
+            "double F = targetFps ?? inFps * interpScale;");
+        Assert.Contains("RetryFileCopy(f, Path.Combine(framesFinal, Path.GetFileName(f)))", tempo);
+        Assert.DoesNotContain("File.Copy(f, Path.Combine(framesFinal,", tempo);
     }
 
     /// <summary>★ 长任务里"把一帧交给最终目录"的每一个落点都要走重试(补帧分段 / 引擎输出搬运 / 逐帧交付)。</summary>
