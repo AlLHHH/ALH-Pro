@@ -146,4 +146,112 @@ public class FileIoRetryTests
         Assert.Contains("80070020", msg);                      // HResult 数值可比、跨语言可靠
         Assert.Contains(IO_RETRY.DelayMsFor(1).ToString(), msg); // 报出这次要退避多久
     }
+
+    /// <summary>★ 真机锁,不是反射造的 HResult:判据认的必须是 Windows 真会抛的那个异常。
+    /// (本机实测:`File.Copy` 撞上 `FileShare.None` 的源 = `IOException` / 0x80070020。)</summary>
+    [Fact]
+    public void Real_windows_sharing_violation_is_classified_as_transient()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "alh_io_retry_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string src = Path.Combine(dir, "frame_010809.jpg");
+            string dst = Path.Combine(dir, "frame_010810.jpg");
+            File.WriteAllText(src, "x");
+            using (new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                var ex = Record.Exception(() => File.Copy(src, dst, true));
+                Assert.NotNull(ex);
+                Assert.True(IO_RETRY.IsTransientShareViolation(ex),
+                    $"真机上的占用没被判成瞬时占用:{ex.GetType().Name} HResult=0x{ex.HResult:X8} —— {ex.Message}");
+            }
+            Assert.False(File.Exists(dst));
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    /// <summary>★ 反向也钉住:目的端被独占时 `File.Move` 报的是 ACCESS_DENIED(0x80070005),**故意**不重试
+    /// (同一个值也是"只读文件/ACL 永久拒绝",判宽会让批量循环里每个文件白等一轮退避)。
+    /// 以后谁想顺手把 0x5 加进重试集合,这条会先红。</summary>
+    [Fact]
+    public void Real_locked_destination_move_is_not_treated_as_transient()
+    {
+        if (!OperatingSystem.IsWindows()) return;   // 这套判据是 Windows 错误码口径,别的系统不适用
+        string dir = Path.Combine(Path.GetTempPath(), "alh_io_retry_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string src = Path.Combine(dir, "from.mp4");
+            string dst = Path.Combine(dir, "to.mp4");
+            File.WriteAllText(src, "s");
+            File.WriteAllText(dst, "d");
+            using (new FileStream(dst, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                var ex = Record.Exception(() => File.Move(src, dst, true));
+                Assert.NotNull(ex);
+                Assert.False(IO_RETRY.IsTransientShareViolation(ex),
+                    $"目的端被独占被判成了「可重试」({ex.GetType().Name} HResult=0x{ex.HResult:X8})—— 这会牵连只读/ACL 永久拒绝");
+            }
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    /// <summary>★ 端到端(正面):真锁 250ms 后放开 ⇒ `Run` 必须自己等到放开并成功。
+    /// 这是 1830 那类事故的**紧反馈回路** —— 判据单测只证明"认得出",这条证明"真的能骑过去"。</summary>
+    [Fact]
+    public void Run_rides_out_a_lock_that_is_released_mid_retry()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        string dir = Path.Combine(Path.GetTempPath(), "alh_io_retry_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        string src = Path.Combine(dir, "frame_010809.jpg");
+        string dst = Path.Combine(dir, "frame_010810.jpg");
+        File.WriteAllText(src, "frame");
+        var log = new System.Collections.Generic.List<string>();
+        try
+        {
+            using (var hold = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                System.Threading.Tasks.Task.Run(async () => { await System.Threading.Tasks.Task.Delay(250); hold.Dispose(); });
+                IO_RETRY.Run("复制帧", src, () => File.Copy(src, dst, true), log.Add);
+            }
+            Assert.True(File.Exists(dst), "重试没把「锁 250ms 后放开」这次占用骑过去");
+            Assert.Contains(log, l => l.Contains("复制帧"));   // 撞上过要留痕(诊断包里能数出这台机器有多少次占用)
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    /// <summary>★ 端到端(反面):锁着不放 ⇒ `Run` 必须在**有界**时间内放弃,抛出带"动作 + 完整路径"的
+    /// `IOException`,而且这个包装异常仍要能被判据认出来(内层是真占用)—— 宿主那两处"补不上就算了"的
+    /// 软失败靠 `IsTransientShareViolation(ex)` 分辨"被占用"与"磁盘满/路径非法",这条把该前提钉住。
+    /// 代价是这一条要真等一轮退避(约 7 秒);换来"永远不会无限等"这个承诺由真机锁验证。</summary>
+    [Fact]
+    public void Run_gives_up_with_action_and_path_when_the_lock_never_ends()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        string dir = Path.Combine(Path.GetTempPath(), "alh_io_retry_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        string src = Path.Combine(dir, "frame_010809.jpg");
+        string dst = Path.Combine(dir, "frame_010810.jpg");
+        File.WriteAllText(src, "frame");
+        var log = new System.Collections.Generic.List<string>();
+        try
+        {
+            using (new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var ex = Record.Exception(() => IO_RETRY.Run("复制帧", src, () => File.Copy(src, dst, true), log.Add));
+                sw.Stop();
+                var io = Assert.IsType<IOException>(ex);
+                Assert.Contains("复制帧", io.Message);
+                Assert.Contains(src, io.Message);
+                Assert.True(IO_RETRY.IsTransientShareViolation(io),
+                    "放弃时抛的包装异常要能看出根因是占用(判据要穿透 InnerException)");
+                Assert.InRange(sw.ElapsedMilliseconds, 2000, 20000);
+            }
+            Assert.False(File.Exists(dst));
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
 }

@@ -3115,7 +3115,9 @@ public static class VideoService
                                     if (s == g.rep) continue;
                                     string dupJpg = Path.Combine(upOutput, Path.ChangeExtension(Path.GetFileName(upFiles[s]), ".jpg"));
                                     if (File.Exists(dupJpg)) continue;   // 已存在(异常回退已写),不覆盖
-                                    try { File.Copy(repJpg, dupJpg, true); backfilled++; }
+                                    // 这里的源是引擎刚写完的帧(正被杀软/索引器扫的窗口期),和 1830 的形态一样,
+                                    // 所以也走重试;真放弃就还是"少一帧"(外层 catch 保持不变,不升级成任务级失败)。
+                                    try { RetryFileCopy(repJpg, dupJpg); backfilled++; }
                                     catch { }
                                     if ((backfilled & 0x3F) == 0)   // 每 64 个拷贝报一次进度,长静止组不冻进度
                                         progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
@@ -3616,11 +3618,17 @@ public static class VideoService
                                 filled++;
                             }
                         }
-                        catch (Exception ex) { firstFail = ex.Message.Split('\n')[0]; }
+                        // 软失败也要分清是哪一种:退避重试耗尽是"文件被占用"(1830 的形态),
+                        // 磁盘满/路径非法是另一回事 —— 一律写成"被占用"会把真错藏进一句错的原因里。
+                        catch (Exception ex)
+                        {
+                            firstFail = (AlhPro.Core.IO_RETRY.IsTransientShareViolation(ex) ? "文件被占用" : "非占用类错误")
+                                + ":" + ex.Message.Split('\n')[0];
+                        }
                         long shortBy = expected - seq.Length - filled;
                         AppLogger.Info($"帧数对齐:输出 {seq.Length} 帧 < 预期 {expected},末帧补足 {filled} 帧(防吞尾)");
                         if (shortBy > 0)
-                            AppLogger.Error($"帧数对齐:有 {shortBy} 帧末帧定格补不上(退避重试后仍被占用),成片帧数保持 {seq.Length + filled} 帧"
+                            AppLogger.Error($"帧数对齐:有 {shortBy} 帧末帧定格补不上,成片帧数保持 {seq.Length + filled} 帧"
                                 + $"(比预期少 {shortBy} 帧,约 {shortBy / Math.Max(1.0, outFps) * 1000:0}ms);任务继续 —— {firstFail}");
                     }
                     else
@@ -3683,12 +3691,17 @@ public static class VideoService
                                 for (int i = 0; i < add; i++)
                                 {
                                     try { RetryFileCopy(lastF, Path.Combine(framesFinal, $"frame_{seqA.Count + added + 1:D6}.jpg")); added++; }
-                                    catch (Exception ex) { addFail = ex.Message.Split('\n')[0]; break; }
+                                    catch (Exception ex)
+                                    {
+                                        addFail = (AlhPro.Core.IO_RETRY.IsTransientShareViolation(ex) ? "文件被占用" : "非占用类错误")
+                                            + ":" + ex.Message.Split('\n')[0];
+                                        break;
+                                    }
                                 }
                                 AppLogger.Info($"尾帧容积:补 {added} 帧末帧定格({seqA.Count} → {seqA.Count + added} 帧,"
                                     + $"标称帧率保持 {outFps:0.###}fps,总长≈{muxDur:0.###}s)");
                                 if (addFail.Length > 0)
-                                    AppLogger.Warn($"尾帧容积:有 {add - added} 帧末帧定格补不上(退避重试后仍被占用),尾部约缺 {(add - added) / Math.Max(1.0, outFps) * 1000:0}ms —— {addFail}");
+                                    AppLogger.Warn($"尾帧容积:有 {add - added} 帧末帧定格补不上,尾部约缺 {(add - added) / Math.Max(1.0, outFps) * 1000:0}ms —— {addFail}");
                             }
                             else
                             {
@@ -4909,7 +4922,7 @@ public static class VideoService
     }
 
     // ══════════════════════════════════════════════════════════════════════════════
-    // 【2026-10-09 · t65】帧文件"瞬时占用"重试(判据在 AlhPro.Core.IO_RETRY,这里只接线)
+    // 【2026-10-09 · t65】帧文件"瞬时占用"重试(判据/文案/重试骨架都在 AlhPro.Core.IO_RETRY,这里只接线)
     //
     // 【为什么必须有这一层 —— 1830 诊断包】那台 RTX 5060 Ti 跑 90 秒素材(超分 2x + 补帧 120fps),
     // 超分 10808 帧全跑完(170 ms/帧、共 90 分 31 秒)后,在"合帧前的帧数对齐"里一次 `File.Copy`
@@ -4960,30 +4973,10 @@ public static class VideoService
     private static void RetryFileDelete(string path)
         => RetryFileIo("删除帧", path, () => File.Delete(path));
 
-    /// <summary>重试骨架:第 1 次失败即判"能不能自愈",不能就立刻抛(保持旧行为);
-    /// 能自愈则按 <see cref="AlhPro.Core.IO_RETRY.DelayMsFor"/> 退避重试,成功时如实记一行(便于统计占用频次)。</summary>
+    /// <summary>重试骨架在 <see cref="AlhPro.Core.IO_RETRY.Run"/> (视频侧与引擎侧同一层,循环只有一份);
+    /// 这里只补"动作名"和日志出口。第 1 次失败即判"能不能自愈",不能就立刻抛(保持旧行为)。</summary>
     private static void RetryFileIo(string action, string path, Action op)
-    {
-        for (int attempt = 1; ; attempt++)
-        {
-            try
-            {
-                op();
-                if (attempt > 1)
-                    AppLogger.Info(AlhPro.Core.IO_RETRY.DescribeRecovered(action, path, attempt - 1));
-                return;
-            }
-            catch (Exception ex) when (AlhPro.Core.IO_RETRY.IsTransientShareViolation(ex))
-            {
-                if (attempt > AlhPro.Core.IO_RETRY.MaxRetries)
-                    throw new IOException(AlhPro.Core.IO_RETRY.DescribeGiveUp(action, path, ex), ex);
-                // 首次撞上就落一行(带动作/路径/HResult):以后再看诊断包能直接数出"这台机器上有多少次瞬时占用"。
-                if (attempt == 1)
-                    AppLogger.Info(AlhPro.Core.IO_RETRY.DescribeTransient(action, path, attempt, ex));
-                Thread.Sleep(AlhPro.Core.IO_RETRY.DelayMsFor(attempt));
-            }
-        }
-    }
+        => AlhPro.Core.IO_RETRY.Run(action, path, op, AppLogger.Info);
 
     private static async Task<int> InterpSegmentAsync(string rife, string framesOut, string framesFinal,
         int start, int end, int interpScale, string interpModel, double? timeStep, bool tta, int gpuId, int globalIdx,

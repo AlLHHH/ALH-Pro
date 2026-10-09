@@ -17,7 +17,8 @@ namespace AlhPro.Core;
 /// 旧代码对其中几处(`File.Copy` / `File.Move`)**没有**任何重试,一次瞬时占用直接冒泡到
 /// `ProcessVideoAsync` 外层 ⇒ 整条任务按失败收尾(正是上面那 90 分钟)。
 ///
-/// 【口径纪律】这里只放**判据与文案**(纯函数);`VideoService` 只做接线(重试循环 + 日志)。
+/// 【口径纪律】判据、文案、**重试骨架**都在这里,视频侧与引擎侧共用同一层(循环只有一份);
+/// 宿主只负责给出"动作名"与日志出口(`Run` 的 `log` 回调 —— Core 引用不到 UI 层的 `AppLogger`)。
 /// "哪些 HResult 才算瞬时占用"必须有单测钉住(见 `FileIoRetryTests`):判宽了会把真正的
 /// 「磁盘满 / 文件不存在 / 路径非法」也一起重试(白等),判窄了就等于没修(继续丢任务)。
 /// </summary>
@@ -93,4 +94,30 @@ public static class IO_RETRY
     public static string DescribeTransient(string action, string path, int attempt, Exception ex)
         => $"ℹ {action} {Path.GetFileName(path)} 被别的进程占着(第 {attempt} 次尝试失败,HResult=0x{ex.HResult:X8}),"
            + $"退避 {DelayMsFor(attempt)}ms 后重试(最多 {MaxRetries} 次):{path}";
+
+    /// <summary>重试骨架:只在 <see cref="IsTransientShareViolation"/> 为真时退避重试,
+    /// 其余异常(磁盘满 / 文件不存在 / 路径非法 / 权限)第 1 次就照旧抛出,不多等一毫秒。
+    /// 重试耗尽仍失败时抛的 <see cref="IOException"/> 把"哪一步 + 哪个文件"写进消息。
+    /// <paramref name="log"/> 是宿主的日志出口(可为空);<paramref name="op"/> 必须可重复执行
+    /// (复制/改名/删除这类幂等动作)。</summary>
+    public static void Run(string action, string path, Action op, Action<string>? log = null)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                op();
+                if (attempt > 1) log?.Invoke(DescribeRecovered(action, path, attempt - 1));
+                return;
+            }
+            catch (Exception ex) when (IsTransientShareViolation(ex))
+            {
+                if (attempt > MaxRetries)
+                    throw new IOException(DescribeGiveUp(action, path, ex), ex);
+                // 首次撞上就落一行(带动作/路径/HResult):以后再看诊断包能直接数出"这台机器上有多少次瞬时占用"。
+                if (attempt == 1) log?.Invoke(DescribeTransient(action, path, attempt, ex));
+                Thread.Sleep(DelayMsFor(attempt));
+            }
+        }
+    }
 }
