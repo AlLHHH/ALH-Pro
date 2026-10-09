@@ -38,6 +38,25 @@ public class FileIoRetryWiringTests
         Assert.DoesNotContain("File.Copy(last,", body);
     }
 
+    /// <summary>★ **补不上的帧不许把整条任务带走**。1830 就是死在这个循环里:
+    /// 一帧被占 ⇒ 异常冒泡 ⇒ 90 分 31 秒、10808 帧全废、输出 0 个。
+    /// 这段的语义只是"末帧定格补足",少一两帧 = 成片短几毫秒,必须软失败 + 记数。</summary>
+    [Fact]
+    public void Frame_count_fill_never_throws_away_the_whole_task()
+    {
+        string code = CodeOnly(Source());
+        int start = code.IndexOf("if (seq.Length < expected)", StringComparison.Ordinal);
+        Assert.True(start > 0, "找不到帧数对齐的\"末帧补足\"分支");
+        string body = code.Substring(start, 1200);
+        Assert.Contains("long filled = 0;", body);
+        Assert.Contains("int failed = 0;", body);
+        Assert.Contains("filled++", body);            // 成功补了几帧要如实数
+        Assert.Contains("failed++", body);            // 补不上几帧也要如实数
+        Assert.Contains("catch (Exception ex)", body);
+        Assert.DoesNotContain("catch (Exception ex) when", body);   // 不能只在"可自愈"时才接住 —— 那样长期占用照样丢任务
+        Assert.Contains("AppLogger.Error(", body);    // 少帧必须吵,不许静默
+    }
+
     /// <summary>★ 长任务里"把一帧交给最终目录"的每一个落点都要走重试(补帧分段 / 引擎输出搬运 / 逐帧交付)。</summary>
     [Fact]
     public void Frame_delivery_paths_go_through_the_retry_helper()
