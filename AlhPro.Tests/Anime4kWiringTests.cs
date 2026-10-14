@@ -85,15 +85,17 @@ public class Anime4kWiringTests
         Assert.Contains("模型已自动从", cs);
     }
 
-    /// <summary>「现实 · 1x 修复」**不是真模型**:必须把 Tag 映射成真正的权重名(alhreal2x)再下发引擎,
-    /// 否则引擎会去找一个不存在的模型 —— 找不到权重时 exit=0、只出坏帧(本仓库踩过)。</summary>
+    /// <summary>1x 的「现实」条目**不是真模型**:必须把 Tag 映射成真正的权重名再下发引擎,
+    /// 否则引擎会去找一个不存在的模型 —— 找不到权重时 exit=0、只出坏帧(本仓库踩过)。
+    /// 【2026-10-14】那条路原来借的是自训的 `alhpro-real2x`,它已按用户要求删除 ⇒
+    /// RealEngineModel 现在指官方 `realesr-animevideov3`(官方唯一带原生 2x 权重的 realesrgan 模型)。</summary>
     [Fact]
     public void Real_1x_maps_to_a_real_engine_model()
     {
-        Assert.Equal("alhpro-real2x", AlhPro.Core.Upscale1x.RealEngineModel);
+        Assert.Equal("realesr-animevideov3", AlhPro.Core.Upscale1x.RealEngineModel);
         Assert.Contains("AlhPro.Core.Upscale1x.RealEngineModel", ReadFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs"));
         // 1x 条目要能被 Core 认出来;Rev11 起「现实 · 1x 修复」已下线 ⇒ 它的 Tag 不再算 1x 可选条目
-        //   (常量与回退路径仍在:Anime4K 不可用时内部就按 alhreal2x 2x→缩回 跑)
+        //   (常量与回退路径仍在:Anime4K 不可用时内部就按官方 2x 权重 2x→缩回 跑)
         Assert.True(AlhPro.Core.Upscale1x.Is1xEntry("anime4k"));
         Assert.False(AlhPro.Core.Upscale1x.Is1xEntry("alhpro-real1x"));
         Assert.False(AlhPro.Core.Upscale1x.Is1xEntry("realesrgan-x4plus"));
@@ -128,10 +130,19 @@ public class Anime4kWiringTests
         var dropdown = xaml.Substring(combo, end - combo);
         Assert.Contains(Anime4k.MenuText, dropdown);
         Assert.Contains(Anime4k.Tooltip, dropdown);
-        // 【Rev11 · 2026-09-27】「现实 · 1x 修复」已下线 ⇒ 它的文案/Tag **不许**再出现在这个下拉里
-        Assert.DoesNotContain(Upscale1x.RealMenuText, dropdown);
-        Assert.DoesNotContain(Upscale1x.RealTooltip, dropdown);
+        // 【Rev11 · 2026-09-27 下线 / 2026-10-14 常量删除】「现实 · 1x 修复」的 Tag 不许再出现在这个下拉里。
+        // 它原来的两条文案常量(RealMenuText / RealTooltip)已随这次删除一起拿掉,所以这里只钉 Tag。
+        // ⚠ 不能改用"现实 · 1x 修复"字面量来做 DoesNotContain:anime4k 那条的悬停提示里**故意**保留了
+        //   "原「现实 · 1x 修复」条目已于 2026-09-27 下线"这句历史说明(它在同一个下拉区间内)。
         Assert.DoesNotContain($"Tag=\"{Upscale1x.RealTag}\"", dropdown);
+        // 【2026-10-14 整体删除四支自训 2x】下拉里不许再出现它们的名字(用户:"还有那几个测试的模型可以删掉了")
+        // ⚠ 这一段的注释里**有意**留着"这里原本是 `alhpro-real2x` …"的删除说明(与仓库既有做法一致)⇒
+        //   判禁令前必须先把注释剥掉,否则会被自己的历史说明绊倒(2026-10-14 第一次跑就是这么红的)。
+        var visible = System.Text.RegularExpressions.Regex.Replace(dropdown, "<!--.*?-->", "",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        Assert.DoesNotContain("alhreal2x", visible);
+        Assert.DoesNotContain("alhgame2x", visible);
+        Assert.DoesNotContain("alhpro-", visible);
         // 1x 条目必须挂在这个下拉里(上一版按第一个 </ComboBox> 找锚点,插进了 waifu2x 那个下拉 ✗)
         Assert.Contains($"Tag=\"{Anime4k.ModelTag}\"", dropdown);
         // 而且不许出现在 waifu2x 的下拉里 —— 【2026-09-25】那个下拉已从视频页删除,所以直接钉"它不存在":

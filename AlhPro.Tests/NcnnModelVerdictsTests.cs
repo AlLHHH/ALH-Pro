@@ -37,8 +37,9 @@ public class NcnnModelVerdictsTests
     {
         var e = RealDiagPackage();
         Assert.False(NcnnModelVerdicts.IsModelUsable(e, "realesrgan2026", 0, "anime4k"));       // 它自己失败 ⇒ 禁
-        Assert.True(NcnnModelVerdicts.IsModelUsable(e, "realesrgan2026", 0, "alhpro-real2x"));  // 自训模型回落引擎级 ⇒ 可用
-        Assert.True(NcnnModelVerdicts.IsModelUsable(e, "realesrgan2026", 0, "alhpro-game2x"));
+        // 【2026-10-14】这里原来借用自训的 alhpro-real2x / alhpro-game2x —— 它们已按用户要求删除。
+        //   本用例要证明的性质是"没有单模型结论的模型回落到引擎级判定",用任意未测模型名即可 ⇒ 换成合成名。
+        Assert.True(NcnnModelVerdicts.IsModelUsable(e, "realesrgan2026", 0, "untested-model"));
     }
 
     [Fact]
@@ -50,7 +51,7 @@ public class NcnnModelVerdictsTests
             new("realesrgan2026|0|anime4k", true, 1),
         };
         Assert.False(NcnnModelVerdicts.EngineUsable(e, "realesrgan2026", 0));
-        Assert.False(NcnnModelVerdicts.IsModelUsable(e, "realesrgan2026", 0, "alhpro-real2x"));
+        Assert.False(NcnnModelVerdicts.IsModelUsable(e, "realesrgan2026", 0, "untested-model"));
     }
 
     [Fact]
@@ -128,7 +129,7 @@ public class NcnnModelVerdictsTests
         var e = new List<NcnnModelVerdicts.Entry>
         {
             new("realesrgan2026|0|realesr-animevideov3", true, 1),
-            new("realesrgan2026|0|alhpro-real2x", false, 1),     // 真模型(只有 ncnn 权重)失败
+            new("realesrgan2026|0|untested-model", false, 1),     // 真模型(有 ncnn 权重)失败
         };
         Assert.False(NcnnModelVerdicts.ModelOnlyRisk(e, "realesrgan2026", 0));
     }
@@ -148,7 +149,7 @@ public class NcnnModelVerdictsTests
         var e = new List<NcnnModelVerdicts.Entry>
         {
             new("realesrgan2026|0|realesr-animevideov3", true, 1),
-            new("realesrgan2026|10|alhpro-real2x", false, 1),   // 双位数设备号:不许被 engine|1 误吃
+            new("realesrgan2026|10|untested-model", false, 1),   // 双位数设备号:不许被 engine|1 误吃
             new("waifu2x|0|models-cunet", false, 1),            // 别的引擎
         };
         Assert.True(NcnnModelVerdicts.ModelOnlyRisk(e, "realesrgan2026", 0));

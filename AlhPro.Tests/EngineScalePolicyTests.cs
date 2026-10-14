@@ -16,9 +16,10 @@ public class EngineScalePolicyTests
     [Fact]
     public void RealEsrgan_never_gets_engine_scale_one()
     {
+        // 【2026-10-14】末四支自训 2x 模型(alhpro-real2x / -game2x / -game2x-v2 / -game2x-v3)已按用户要求删除,
+        //   这里不再列它们 —— 留着会让人以为引擎还有这些权重。
         string[] models = { "realesr-animevideov3", "realesrgan-x4plus", "realesrgan-x4plus-anime",
-                            "realesr-general-x4v3", "realesr-general-wdn-x4v3", "unknown-model",
-                            "alhpro-real2x", "alhpro-game2x", "alhpro-game2x-v2", "alhpro-game2x-v3" };   // 末四支 = 自训 2x(Rev4 + Rev5 + Rev6)
+                            "realesr-general-x4v3", "realesr-general-wdn-x4v3", "unknown-model" };
         for (double want = 0.25; want <= 4.001; want += 0.25)
             foreach (var m in models)
             {
@@ -45,44 +46,16 @@ public class EngineScalePolicyTests
     [InlineData("realesr-general-wdn-x4v3", 2.0, 4, 0.5)]
     [InlineData("realesr-general-wdn-x4v3", 4.0, 4, 1.0)]
     [InlineData("realesr-general-wdn-x4v3", 1.0, 4, 0.25)]
-    // 【2026-09-15 Rev4 · 自训的两支实验模型:只有 **2x** 原生权重】
-    // 实测(220×220 输入、-t 0、`-m models -n alhpro-real2x`):-s 2 → 440×440 正常;
-    // -s 4 → 880×880 但成图是**镜像平铺的错帧**(切成 2×2 镜像重复、下半幅偏黄),与"2x 后双三次放大"
-    // 的 PSNR 只有 7.27 dB —— 引擎按目标倍数贴回分块,而网络只放大 2x。**exit=0、零报错**。
-    // ⇒ 这几条就是钉住"它们永远按原生 2x 跑,再由上层缩放到目标尺寸"。
-    [InlineData("alhpro-real2x", 2.0, 2, 1.0)]    // 原生 2x:正常路径,不缩回
-    [InlineData("alhpro-real2x", 3.0, 2, 1.5)]    // 目标 3x → 按 2x 跑再放大
-    [InlineData("alhpro-real2x", 4.0, 2, 2.0)]    // 目标 4x → 按 2x 跑再放大(下发 -s 4 会得到错帧)
-    [InlineData("alhpro-real2x", 1.0, 2, 0.5)]    // 目标 1x → 2x 后缩回
-    [InlineData("alhpro-game2x", 2.0, 2, 1.0)]
-    [InlineData("alhpro-game2x", 4.0, 2, 2.0)]
+    // 【2026-10-14 删除】这里原有六行 InlineData 钉"自训的两支实验模型只有 **2x** 原生权重"
+    //   (实测 -s 4 → 镜像平铺的错帧 / PSNR 7.27dB / exit=0 零报错)。四支自训 2x 模型已按用户要求
+    //   整体删除(用户:"还有那几个测试的模型可以删掉了"),权重与判定分支都不在了 ⇒ 这几行随之删除。
+    //   历史实测数据留在这里备查:-s 2 → 正常;-s 4 → 880×880 但成图镜像平铺、下半幅偏黄。
     public void RealEsrgan_scale_is_pinned(string model, double want, int expectEngine, double expectRatio)
     {
         var d = EngineScalePolicy.Decide("realesrgan", model, want);
         Assert.Equal(expectEngine, d.EngineScale);
         Assert.Equal(expectRatio, d.ShrinkRatio, 6);
         Assert.Equal(Math.Abs(expectRatio - 1.0) > 1e-6, d.NeedsShrinkBack);
-    }
-
-    /// <summary>自训 2x 模型:原生 2x 是正常路径(不刷日志);3x/4x 才给"为什么改了倍数"的理由,
-    /// 且理由要说**实测到的那件事**(镜像平铺的错帧),不许搬 x4plus 的"全黑"来充数。</summary>
-    [Fact]
-    public void X2_only_models_rewrite_the_scale_with_an_honest_reason()
-    {
-        foreach (var m in new[] { "alhpro-real2x", "alhpro-game2x" })
-        {
-            Assert.Equal("", EngineScalePolicy.Decide("realesrgan", m, 2.0).Reason);
-            var d4 = EngineScalePolicy.Decide("realesrgan", m, 4.0);
-            Assert.Contains("2x 原生权重", d4.Reason);
-            Assert.Contains("镜像平铺", d4.Reason);
-            Assert.DoesNotContain("全黑", d4.Reason);   // 这两支在 3x/4x 上实测的是错帧,不是全黑
-            Assert.True(EngineScalePolicy.IsX2OnlyModel(m));
-            Assert.False(EngineScalePolicy.Is4xOnlyModel(m));   // 与 4x 系判定互斥
-        }
-        // 官方模型不能被误判进 2x 单独那一档
-        Assert.False(EngineScalePolicy.IsX2OnlyModel("realesr-animevideov3"));
-        Assert.False(EngineScalePolicy.IsX2OnlyModel("realesrgan-x4plus"));
-        Assert.False(EngineScalePolicy.IsX2OnlyModel(null));
     }
 
     /// <summary>1x 护栏必须给出可读理由(用户要看得懂"为什么改了倍数"),2x/4x 正常路径不要噪音。</summary>
@@ -135,7 +108,10 @@ public class EngineScalePolicyTests
         Assert.True(EngineScalePolicy.ModelHasNative1x("realesrgan", ExperimentalEsrgan.Fix1x));
         Assert.True(ExperimentalEsrgan.Is1xModel(ExperimentalEsrgan.Fix1x));
         // 其它模型仍然没有原生 1x ⇒ 那条"绝不返回 1"的护栏不受影响
-        foreach (var m in ExperimentalEsrgan.All)
+        // 【2026-10-14】原先进的是 `ExperimentalEsrgan.All`(当时是四支自训 2x + Fix1x);
+        //   四支已删、`All` 现在只剩 Anime4K 那条着色器条目(不是 realesrgan 权重模型)⇒ 改成显式的官方模型清单。
+        foreach (var m in new[] { "realesr-animevideov3", "realesrgan-x4plus", "realesrgan-x4plus-anime",
+                                  "realesr-general-x4v3", "realesr-general-wdn-x4v3" })
         {
             Assert.False(EngineScalePolicy.ModelHasNative1x("realesrgan", m));
             Assert.False(ExperimentalEsrgan.Is1xModel(m));
@@ -153,16 +129,20 @@ public class EngineScalePolicyTests
         Assert.Contains("1x 修复", d.Reason);
     }
 
-    /// <summary>**1x 目标 + 2x/4x 模型**这条路的实测结论必须写进理由里(用户要能看懂"为什么 1x 会更糊")。
-    /// 实测(素材(13) 第 20 秒):2x 超分再缩回 1080p = detail 822 / 边宽 5.86px,原片 = 1152 / 7.02px。</summary>
+    /// <summary>**1x 目标 + 没有 1x 权重的模型**这条路的理由必须说清"引擎没有 1x 权重、-s 1 会静默全黑"。
+    /// 【2026-10-14 改写】原来这条用的是自训的 `alhpro-game2x-v2`,它已按用户要求删除;
+    ///   现在用官方的 `realesr-animevideov3`(它同样没有 1x 权重,1x 目标下走同一条 eng<=1 护栏分支,
+    ///   结论也一致:引擎倍数 2、缩回 0.5)。原来断言的"比原片更软"那句来自已删的 2x-only 分支 ⇒ 去掉。
+    /// 【名字 · 独立复审 F3】原来叫 `..._with_a_2x_only_model_...`,而产品里**已经没有任何 2x-only 模型**
+    ///   (animevideov3 有 2/3/4x 权重、其余是 4x-only)⇒ 名字改回它真正测的东西:没有 1x 权重时的护栏。</summary>
     [Fact]
-    public void One_x_target_with_a_2x_model_states_the_measured_softness()
+    public void One_x_target_with_a_model_that_has_no_1x_weights_is_guarded_by_the_black_frame_rule()
     {
-        var d = EngineScalePolicy.Decide("realesrgan", ExperimentalEsrgan.Game2xV2, 1.0);
+        var d = EngineScalePolicy.Decide("realesrgan", "realesr-animevideov3", 1.0);
         Assert.Equal(2, d.EngineScale);
         Assert.Equal(0.5, d.ShrinkRatio, 6);
-        Assert.Contains("比原片更软", d.Reason);
-        Assert.Contains("1x 修复", d.Reason);      // 给出出路:换 1x 修复模型
+        Assert.Contains("1x 权重", d.Reason);       // 说清为什么不能下发 -s 1
+        Assert.Contains("全黑", d.Reason);          // 实测后果
     }
 
     // ═══════════ 【2026-09-27 恢复】引擎"exit=0 却整帧全黑"的判据测试 ═══════════
@@ -186,23 +166,20 @@ public class EngineScalePolicyTests
 
     /// <summary>`NativeWeightLabel` 逐条取值(与合同一一对应)。
     /// 【为什么要有这个函数】各支模型的原生权重倍率不同(animevideov3 = 2/3/4x、x4plus 系 = 只有 4x、
-    /// 自训两支 = 只有 2x、waifu2x 三支 = 2x);倍率与权重不一致时上层用重采样补齐 —— **那不是超分**,
+    /// 计划中的 1x 修复 = 只有 2x、waifu2x 三支 = 2x);倍率与权重不一致时上层用重采样补齐 —— **那不是超分**,
     /// 所以要把这件事统一印在悬停提示里。</summary>
     [Theory]
     // Real-CUGAN:models-se 三档都同时具备 up2x/up3x/up4x
     [InlineData("realcugan", "models-se:-1", "权重 2x / 3x / 4x")]
     [InlineData("realcugan", "models-se:0", "权重 2x / 3x / 4x")]
     [InlineData("realcugan", "models-se:3", "权重 2x / 3x / 4x")]
-    // Real-ESRGAN:1x 修复(2x 跑再缩回)/ 4x-only 系 / 只有 2x 权重的自训 / animevideov3
+    // Real-ESRGAN:1x 修复(2x 跑再缩回)/ 4x-only 系 / animevideov3(三档权重)
     [InlineData("realesrgan", "alhpro-fix1x", "权重 2x(缩回 1x)")]
     [InlineData("realesrgan", "realesrgan-x4plus", "权重 4x")]
     [InlineData("realesrgan", "realesrgan-x4plus-anime", "权重 4x")]
     [InlineData("realesrgan", "realesr-general-x4v3", "权重 4x")]
     [InlineData("realesrgan", "realesr-general-wdn-x4v3", "权重 4x")]
-    [InlineData("realesrgan", "alhpro-real2x", "权重 2x")]
-    [InlineData("realesrgan", "alhpro-game2x", "权重 2x")]
-    [InlineData("realesrgan", "alhpro-game2x-v2", "权重 2x")]
-    [InlineData("realesrgan", "alhpro-game2x-v3", "权重 2x")]
+    // 【2026-10-14 删除】原先这里还有四行"自训 2x 模型 → 权重 2x";四支自训模型已按用户要求整体删除。
     [InlineData("realesrgan", "realesr-animevideov3", "权重 2x / 3x / 4x")]
     [InlineData("realesrgan", "realesr-animevideov3-x2", "权重 2x / 3x / 4x")]   // 名字判定与 NormalizeModel 同源
     // waifu2x:随包三支都是 2x 权重
@@ -227,7 +204,7 @@ public class EngineScalePolicyTests
     {
         string[] engines = { "realesrgan", "waifu2x", "realcugan", "anime4k", "other", "" };
         string[] models = { "realesr-animevideov3", "realesrgan-x4plus", "realesr-general-x4v3",
-                            "realesr-general-wdn-x4v3", "alhpro-real2x", "alhpro-game2x-v2", "alhpro-game2x-v3",
+                            "realesr-general-wdn-x4v3",
                             "alhpro-fix1x", "models-cunet", "models-upconv_7_photo",
                             "models-upconv_7_anime_style_art_rgb", "models-se:-1", "models-se:0", "models-se:3",
                             "anime4k", "alhpro-real1x", "whatever", "" };
@@ -242,8 +219,9 @@ public class EngineScalePolicyTests
             }
     }
 
-    /// <summary>与 `Decide` 的判据必须**同源**:够 4x-only 的模型在两边都得按 4x 处理/提示;
-    /// 只有 2x 权重的自训模型两边都得说 2x。任一处"各说各话"就直接红。</summary>
+    /// <summary>与 `Decide` 的判据必须**同源**:够 4x-only 的模型在两边都得按 4x 处理/提示。
+    /// 任一处"各说各话"就直接红。
+    /// 【2026-10-14】原先还有一段"只有 2x 权重的自训模型两边都得说 2x"——那四支已按用户要求删除。</summary>
     [Fact]
     public void Native_weight_label_agrees_with_the_engine_scale_decision()
     {
@@ -252,12 +230,6 @@ public class EngineScalePolicyTests
         {
             Assert.Equal(4, EngineScalePolicy.Decide("realesrgan", m, 2.0).EngineScale);
             Assert.Equal("权重 4x", EngineScalePolicy.NativeWeightLabel("realesrgan", m));
-        }
-        // 只有 2x 权重的自训:目标 2x 时引擎倍数就是 2 ⇒ 提示「权重 2x」
-        foreach (var m in new[] { "alhpro-real2x", "alhpro-game2x-v2", "alhpro-game2x-v3" })
-        {
-            Assert.Equal(2, EngineScalePolicy.Decide("realesrgan", m, 2.0).EngineScale);
-            Assert.Equal("权重 2x", EngineScalePolicy.NativeWeightLabel("realesrgan", m));
         }
         // animevideov3:三档都有权重 ⇒ 目标 2/3/4 直接下发,提示写三档
         Assert.Equal(3, EngineScalePolicy.Decide("realesrgan", "realesr-animevideov3", 3.0).EngineScale);

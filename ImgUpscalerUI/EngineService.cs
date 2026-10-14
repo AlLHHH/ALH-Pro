@@ -863,7 +863,8 @@ public static partial class EngineService
         {
             // 【2026-09-22 口径修正】引擎级只认不带模型的那条(default 探测)。
             // 实测证据:用户 5060 机器上 anime4k 探测超时被强杀,旧口径"任一支失败即整条不可用"
-            // 把 realesrgan2026 整体判成走 ONNX ⇒ 四支自训模型(只有 ncnn 权重)全军覆没。
+            // 把 realesrgan2026 整体判成走 ONNX ⇒ 凡"只有 ncnn 权重的模型"都会跟着一起用不上
+            // (当年那四支自训 2x 就是这么全军覆没的;它们已于 2026-10-14 按用户要求删除)。
             // 详见 AlhPro.Core.NcnnModelVerdicts 注释。
             var engineLevel = AlhPro.Core.NcnnModelVerdicts.EngineUsable(NcnnVerdictEntries(), EngineId(engine), gpuId);
             if (engineLevel.HasValue) return engineLevel;

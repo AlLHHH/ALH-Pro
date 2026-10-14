@@ -73,14 +73,16 @@ public class InterpDropdownContractTests
 
     /// <summary>用户要求:"超分模型鼠标放上去要用提示、官方提示,并且最后显示模型大小"。
     /// 【2026-09-25】waifu2x 的模型下拉已随引擎项一起从视频页删除(用户裁定)→ 那条断言改成
-    /// "它**不该再存在**";Real-ESRGAN 那 10 项照旧逐项要求提示 + 模型大小。</summary>
+    /// "它**不该再存在**";Real-ESRGAN 那 6 项照旧逐项要求提示 + 模型大小。</summary>
     [Fact]
     public void Every_super_resolution_item_carries_a_tooltip_that_ends_with_the_model_size()
     {
         var xaml = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml");
 
-        // Real-ESRGAN 10 项(5 官方 + 3 自训 + Rev10 追加的两个 1x 修复条目)
-        AssertItemsAllHaveTooltipWithSize(ComboItems(xaml, "VideoEsrganModelCombo"), 9, "Real-ESRGAN");
+        // 【Rev12 · 2026-10-14】5 项官方放大模型 + 末尾 1 项 1x 修复(Anime4K)= **6** 项。
+        //   原先这里的 9 = 5 官方 + 3 自训 + Anime4K;四支自训 2x 已按用户要求整体删除
+        //   (用户:"还有那几个测试的模型可以删掉了")⇒ 与 VideoModelOrder.Count 同步降到 6。
+        AssertItemsAllHaveTooltipWithSize(ComboItems(xaml, "VideoEsrganModelCombo"), 6, "Real-ESRGAN");
         // waifu2x 那个下拉与它的 3 个模型项都已删除 ⇒ 视频页不许再有它的入口
         Assert.DoesNotContain("VideoWaifu2xModelCombo", xaml);
         Assert.DoesNotContain("models-cunet", xaml);

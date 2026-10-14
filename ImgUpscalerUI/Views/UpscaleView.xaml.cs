@@ -1705,15 +1705,10 @@ public sealed partial class UpscaleView : UserControl
                                 if (!System.IO.Path.GetFileName(onnxPath).Contains(want, StringComparison.OrdinalIgnoreCase))
                                     dropped.Add($"所选模型({model},稳定引擎只有 cunet)");
                             }
-                            // 【2026-09-22 同一缺口 · 图片路径】自训那三支只有 ncnn 权重:走 ONNX 时
-                            // ResolveEsrganOnnxPath 会把它们按"通用"分支换成官方模型(x4plus / 动漫),
-                            // 这里必须一起列进"被忽略项" —— 否则用户在界面上选着自训模型、实际跑的是另一支,
-                            // 与他自己的发布说明("不会闷声换模型")相反 ✗。完整解释走日志(与视频路径同一句 Core 文案)。
-                            if (engine == "realesrgan" && AlhPro.Core.ExperimentalEsrgan.IsExperimental(model))
-                            {
-                                dropped.Add($"所选模型({AlhPro.Core.ExperimentalEsrgan.Label(model)},这支只有 ncnn 权重)");
-                                Log("  " + AlhPro.Core.ExperimentalEsrgan.OnnxFallbackNotice(model));
-                            }
+                            // 【2026-10-14 删掉一段】这里原本还有"自训那三支只有 ncnn 权重"的告知:它们走 ONNX 时
+                            // 会被 ResolveEsrganOnnxPath 按"通用"分支换成官方模型,所以要列进"被忽略项"。
+                            // 那四支自训 2x 已按用户要求整体删除(用户:"还有那几个测试的模型可以删掉了")
+                            // ⇒ 这个分支没有触发条件了,连同 Core.ExperimentalEsrgan.OnnxFallbackNotice 的调用一起删除。
                             if (dropped.Count > 0)
                             {
                                 var capMsg = $"当前引擎(ONNX 稳定引擎)不支持 {string.Join(" / ", dropped)} — 已忽略,其余参数照常生效";

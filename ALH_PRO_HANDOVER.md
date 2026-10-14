@@ -255,6 +255,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
   `ALH Pro v1.4.5`,并已实测生成 `%LOCALAPPDATA%\ALHPro\启动痕迹.txt`(7 个落地点,共 360 ms)。
 - 【2026-10-04 16:2x】deploy 已把「广告卡出现慢修复(逐张发布 + 通道记忆 + API 冷却)」发布进 `发布版\`;
   启动验证窗口标题 `ALH Pro v1.4.5`。
+- 【2026-10-14】deploy 已把「删掉四支自训 2x 模型 + 下拉序号迁移到 Rev12」发布进 `发布版\`
+  (commit `e132271`,启动验证窗口标题 `ALH Pro v1.4.5`)。删的是 `alhpro-real2x` / `alhpro-game2x`(Rev7 已下架)/
+  `-game2x-v2` / `-game2x-v3`:权重、下拉项、蓝色「测试」小标、Core 登记与文案、自检报告那一行一并删除
+  ⇒ 视频页超分模型 **9 → 6 项**(5 支官方放大模型 + Anime4K);`engines\realesrgan\models\alhpro\` 与
+  `发布版\engines\realesrgan\models\alhpro\` 两份权重都已删(两处是独立副本,deploy 的 `/XD engines` 不会同步)。
+  Rev12:旧 5/6/7 → `animevideov3`、旧 8(Anime4K)→ 5,见 `VideoModelOrder.cs`;Anime4K 着色器不可用时那条
+  「按 2x 超分再缩回」的回退改用官方 `realesr-animevideov3`(`Upscale1x.RealEngineModel`)。
+  `dotnet test` 1573 全绿(基线 1577)。
 - `发布版\engines\rife\rife-v4.26` **已删除**。
 - 【2026-09-16】补帧下拉**精简为 2 项**(序号 0 = `通用画质最新 (RIFE v4.13)`、1 = `通用画质 (RIFE v4.6)`)。
   另 4 支老架构模型的权重(`rife-anime` / `rife-HD` / `rife-UHD` / `rife-v2.3`,共 226.9 MB)

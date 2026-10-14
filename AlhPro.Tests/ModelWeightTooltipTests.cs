@@ -12,7 +12,7 @@ namespace AlhPro.Tests;
 ///   ① 视频页(`Views/VideoView.xaml`)**每一个超分模型项**的悬停提示**末尾**都有一行绿字,内容以「权重」开头
 ///      (Anime4K 那项写「着色器(无权重)」),且**与 Core 的 <see cref="EngineScalePolicy.NativeWeightLabel"/>
 ///      逐字一致**(手上写死的那两项单独钉);
-///   ② 绿字色值就是 `#7BD88F`(全文件只许出现这一种拼法),且**只出现在这 13 个超分模型项上** ——
+///   ② 绿字色值就是 `#7BD88F`(全文件只许出现这一种拼法),且**只出现在这 9 个超分模型项上** ——
 ///      补帧(RIFE)等其它提示一行都不加(本轮只做超分模型);
 ///   ③ 图片页 `Views/UpscaleView.xaml.cs` 的 `PopulateModelCombo` **每一项**都设了悬停提示(此前一项都没有),
 ///      基础文字只用模型**已有**字段(Label),末尾同样接 Core 算出来的权重行。
@@ -27,18 +27,18 @@ public class ModelWeightTooltipTests
     private static readonly (string Tag, string Content, string Engine, string Model)[] Items =
     {
         // 【2026-09-25】waifu2x 的 3 个模型项已随引擎项一起从视频页删除(用户裁定「直接删掉在视频页面」)
-        // ⇒ 这里不再列它们;视频页现在共 **13** 个超分模型项(Real-ESRGAN 8 + 1x 栏 2 + Real-CUGAN 3)。
-        // Real-ESRGAN 组合(官方 5 项 + 自训 3 项;富文本项没有 Content 属性)
+        // ⇒ 这里不再列它们;视频页现在共 **9** 个超分模型项(Real-ESRGAN 5 + 1x 栏 1 + Real-CUGAN 3)。
+        // 【2026-10-14 收缩】原先 Real-ESRGAN 是 5 项官方 + 3 项自训 = 8 项(1x 栏 2 项);
+        //   四支自训 2x 模型已按用户要求整体删除(用户:"还有那几个测试的模型可以删掉了")⇒ 那三行随之删除。
+        // Real-ESRGAN 组合(官方 5 项;富文本 x4plus 项没有 Content 属性)
         ("realesr-animevideov3", "动漫 · animevideov3（快）", "realesrgan", "realesr-animevideov3"),
         ("realesr-general-x4v3", "通用 · general-x4v3（快）", "realesrgan", "realesr-general-x4v3"),
         ("realesr-general-wdn-x4v3", "通用 · wdn-x4v3（快）", "realesrgan", "realesr-general-wdn-x4v3"),
         ("realesrgan-x4plus-anime", "动漫 · x4plus-anime（中）", "realesrgan", "realesrgan-x4plus-anime"),
         ("realesrgan-x4plus", "", "realesrgan", "realesrgan-x4plus"),
-        ("alhpro-real2x", "", "realesrgan", "alhpro-real2x"),
-        ("alhpro-game2x-v2", "", "realesrgan", "alhpro-game2x-v2"),
-        ("alhpro-game2x-v3", "", "realesrgan", "alhpro-game2x-v3"),
-        // 1x 一栏:Rev11 起只剩 Anime4K(走着色器、没有权重文件)⇒ 写死(不蹭 Core 判据)
-        //   「现实 · 1x 修复」条目已于 2026-09-27 下线,不再出现在下拉里 —— 它对应的引擎模型仍是回退路径用的那支。
+        // 1x 一栏:Rev12 起只剩 Anime4K 一项(走着色器、没有权重文件)⇒ 写死(不蹭 Core 判据)
+        //   「现实 · 1x 修复」条目已于 2026-09-27 下线,不再出现在下拉里 —— 它那条回退路径用的官方模型
+        //   (realesr-animevideov3)本身就是上表第 0 项。
         ("anime4k", "", "@handwritten", "着色器(无权重)"),
         // Real-CUGAN 组合(3 项)
         ("models-se:-1", "动漫 · models-se -1（中）", "realcugan", "models-se:-1"),
@@ -86,13 +86,13 @@ public class ModelWeightTooltipTests
         }
     }
 
-    /// <summary>绿字色值唯一、且**只**出现在这 13 个超分模型项上(补帧等其它提示一行都没有)。</summary>
+    /// <summary>绿字色值唯一、且**只**出现在这些超分模型项上(补帧等其它提示一行都没有)。</summary>
     [Fact]
     public void The_weight_line_uses_the_project_green_and_only_super_resolution_items_have_one()
     {
         string xaml = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml");
         int green = xaml.Split(Green).Length - 1;
-        Assert.Equal(Items.Length, green);                       // 13 项,一项不多一项不少
+        Assert.Equal(Items.Length, green);                       // 9 项,一项不多一项不少
         Assert.Equal(green, xaml.Split("#7BD88F").Length - 1);    // 色值只许这一种写法(没有 #7bd88f / #7BD88F 混写)
         Assert.DoesNotContain("Foreground=\"#7bd88f\"", xaml);
         Assert.DoesNotContain("Foreground=\"#7BD88E\"", xaml);   // 防手误改色值
@@ -114,7 +114,7 @@ public class ModelWeightTooltipTests
         int endQuote = xaml.IndexOf("\"/>", tipPos, StringComparison.Ordinal);
         string tip = xaml[tipPos..endQuote];
         // 【注意】不能用「权重」二字判:补帧提示里本来就有"权重与代码同为 MIT"这种合法用法 ⇒
-        // 只判"没有绿字行"(而全文件绿字行总数 = 13 的断言已经保证了没有多出来的一行)。
+        // 只判"没有绿字行"(而全文件绿字行总数 = Items.Length 的断言已经保证了没有多出来的一行)。
         Assert.DoesNotContain("#7BD88F", tip);
         Assert.DoesNotContain("<Run ", tip);
     }
@@ -138,7 +138,7 @@ public class ModelWeightTooltipTests
             Assert.Equal("&#x0a;" + expected, actual);
             coreCovered++;
         }
-        Assert.Equal(11, coreCovered);   // 12 项里 11 项走 Core 判据、1 项写死(Rev11 删掉 real1x 后)
+        Assert.Equal(8, coreCovered);   // 9 项里 8 项走 Core 判据、1 项写死(Rev12:自训三支已删)
     }
 
     // ───────────────────────── ③ 图片页:每一项都挂提示(此前一项都没有) ─────────────────────────

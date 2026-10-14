@@ -3019,21 +3019,11 @@ public static class VideoService
                                                 $"ℹ 稳定引擎(ONNX)的 waifu2x 仅有 cunet 模型,已按 cunet 处理 —— 你选的「{model}」需要 ncnn 引擎;写实片源建议改选 Real-ESRGAN"));
                                         }
                                     }
-                                    // 【2026-09-22 用户追问"自训模型兼容性"时查出来的真缺口】
-                                    // 自训那三支(现实 · alhreal2x / 游戏 · alhgame2x-v2 / -v3)**只有 ncnn 权重**,
-                                    // 走 ONNX 时上面那个 ResolveEsrganOnnxPath 会把它们按"通用"分支解析成**官方模型**
-                                    // (x4plus.onnx,机器上没有就退 animevideov3.onnx)—— 而**一句提示都没有** ✗。
-                                    // 这与 RELEASE_NOTES 第 40 行与官网 changelog 写的"软件会明确告诉你…不会闷声换模型"
-                                    // **正好相反**,也违反本仓库"静默换模型是明令禁止的"这条规矩。
-                                    // 文案的唯一出处是 AlhPro.Core.ExperimentalEsrgan.OnnxFallbackNotice ——
-                                    // 它一直写着、也有单测,但**在本轮之前全仓库没有任何地方调用它**(这才是缺口本身)。
-                                    if (engine == "realesrgan" && AlhPro.Core.ExperimentalEsrgan.IsExperimental(model))
-                                    {
-                                        string selNotice = AlhPro.Core.ExperimentalEsrgan.OnnxFallbackNotice(model);
-                                        AppLogger.Warn("⚠ 视频超分:" + selNotice);
-                                        progress?.Report((upBase + (int)((upEnd - upBase) * batchStartSlot / Math.Max(1, total)),
-                                            selNotice));
-                                    }
+                                    // 【2026-10-14 删掉一段】这里原本还有"自训那三支只有 ncnn 权重、走 ONNX 会被换成
+                                    // 官方模型"的如实告知(2026-09-22 用户追问"自训模型兼容性"时查出来的缺口,
+                                    // 当时全仓库没人调用 Core.ExperimentalEsrgan.OnnxFallbackNotice —— 那才是缺口本身)。
+                                    // 四支自训 2x 已按用户要求整体删除(用户:"还有那几个测试的模型可以删掉了")
+                                    // ⇒ 没有"选了自训模型"这种情形了,这条告知与那个 Core 文案一并删除。
                     // 视频降噪(用户那个「启用视频降噪」开关):拆帧阶段由 nlmeans 处理,超分阶段由 waifu2x 自带降噪处理。
                     // 正常情况下上面已用探测结果保证二者择一;这里兜的是【探测通过、但本批仍走了 ONNX】的边角情形
                     // (例如用户勾了兼容模式)——那时模型档不生效,
