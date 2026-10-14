@@ -19,7 +19,7 @@ namespace AlhPro.Tests;
 /// 这里钉住修复后的三条契约(纯逻辑判据在 NcnnModelVerdictsTests,这里钉"接线不许再接错"):
 ///   ① 探测调用点一律先过 `EngineService.NcnnProbeModel`,不许把界面 Tag 原样喂进去;
 ///   ② 兜底口径只统计真 ncnn 模型(伪模型不参与);
-///   ③ 伪模型清单只认 anime4k —— 官方/自训模型名不许被误判成伪模型(否则真会被跳过)。
+///   ③ 伪模型清单只认两个界面专用 Tag —— 官方模型名不许被误判成伪模型(否则真会被跳过)。
 /// **诚实边界**:契约只能证明接线与判据,证明不了"这条卡上确实快回来了" —— 那由真机跑一次 2x 得到
 /// (日志里应出现「使用 ncnn-Vulkan」且每帧耗时回到百毫秒级)。</summary>
 public class NcnnProbePoisoningTests
@@ -74,7 +74,9 @@ public class NcnnProbePoisoningTests
         var real1x = AlhPro.Core.NcnnProbePlan.For(AlhPro.Core.Upscale1x.RealTag);
         Assert.True(real1x.ShouldProbe);
         Assert.Equal(AlhPro.Core.Upscale1x.RealEngineModel, real1x.Model);
-        Assert.Equal("alhpro-real2x", real1x.Model);   // 与 ExperimentalEsrgan.Real2x 同值(改这里就说明换了权重)
+        // 【2026-10-14】这支真权重原来借的是自训的 alhpro-real2x,它已按用户要求删除
+        // ⇒ 现在是官方 realesr-animevideov3(官方唯一带原生 2x 权重的 realesrgan 模型)。
+        Assert.Equal("realesr-animevideov3", real1x.Model);
 
         // ③ 真模型/未指定:原样透传(未指定 = 探引擎默认模型)
         Assert.Equal("realesr-animevideov3", AlhPro.Core.NcnnProbePlan.For("realesr-animevideov3").Model);
@@ -105,7 +107,8 @@ public class NcnnProbePoisoningTests
         Assert.True(AlhPro.Core.NcnnModelVerdicts.IsNonNcnnModel(AlhPro.Core.Upscale1x.RealTag));
     }
 
-    /// <summary>★ 官方三支 + 自训三支 + 1x 现实**真正下发的那支权重** + waifu2x 各档都必须判为真模型。</summary>
+    /// <summary>★ 官方各支 + 1x 现实**真正下发的那支权重** + waifu2x 各档都必须判为真模型。
+    /// 【2026-10-14】原清单里还有三支自训 2x(alhpro-real2x / -game2x-v2 / -game2x-v3),它们已按用户要求删除。</summary>
     [Fact]
     public void Real_ncnn_model_names_are_not_treated_as_pseudo_models()
     {
@@ -113,7 +116,7 @@ public class NcnnProbePoisoningTests
                  {
                      "realesrgan-x4plus", "realesrgan-x4plus-anime", "realesr-animevideov3",
                      "realesr-animevideov3-x2", "realesr-general-x4v3", "realesr-general-wdn-x4v3",
-                     "alhpro-real2x", "alhpro-game2x-v2", "alhpro-game2x-v3",
+                     "alhpro-fix1x",
                      "models-cunet", "models-upconv_7_photo", null, "", "  ",
                  })
             Assert.False(AlhPro.Core.NcnnModelVerdicts.IsNonNcnnModel(m), $"被误判成伪模型:{m}");

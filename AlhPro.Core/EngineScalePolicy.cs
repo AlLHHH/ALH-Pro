@@ -36,40 +36,27 @@ public static class EngineScalePolicy
     public static bool ModelHasNative1x(string engine, string model)
         => ExperimentalEsrgan.Is1xModel(model);
 
-    /// <summary>**只有 2x 原生权重**的模型 = 两支自训模型(游戏向 / 现实向,见 <see cref="ExperimentalEsrgan"/>)。
-    /// 【为什么必须登记】2026-09-15 真机实测(本机 4060 Laptop,220×220 输入,`-t 0`,`-m models -n alhpro-real2x`):
-    ///   · `-s 2` → 440×440、正常(mean 126.43/max 254);
-    ///   · `-s 3` → 660×660、`-s 4` → 880×880,**两份都是 exit=0、没有任何报错**,
-    ///     但 `-s 4` 的成图是**镜像平铺的错帧**(画面被切成 2×2 的镜像重复,下半幅还整体偏黄),
-    ///     与"2x 成图再双三次放大"的 PSNR 只有 7.27 dB —— 即引擎按目标倍数贴回分块、而网络实际只放大 2x,
-    ///     于是把 2x 的内容当目标倍数铺了出去。**画面明显错、却不报错**,这正是本仓库最怕的那类静默故障。
-    ///   ⇒ 所以这两支必须固定按原生 2x 跑,再由上层缩放到目标尺寸(与 x4plus 系走"原生 4x + 缩回"同一手法)。
-    /// 【与 Is4xOnlyModel 的关系】两支自训模型的名字既不含 "x4plus" 也不含 "general-x4v3",
-    /// 若不在这里登记就会被当成"普通模型"→ 目标 4x 时下发 `-s 4` → 错帧。两个判定互斥(2x / 4x)。</summary>
-    public static bool IsX2OnlyModel(string model) => ExperimentalEsrgan.IsX2Only(model);
-
     /// <summary>该模型**原生权重**的倍率提示文字(给界面的悬停提示末尾那行绿字用,纯逻辑)。
     ///
     /// 【用户要求(2026-09-25)】「**在每一个模型的悬停提示里面最后加一个绿字提醒「权重 2x」这样子**」。
     /// 背景:各支超分模型的原生权重倍率并不一样 —— animevideov3 有 2x/3x/4x、Real-CUGAN models-se 有
-    /// 2x/3x/4x、x4plus 系只有 **4x**、自训那几支只有 **2x**、waifu2x 三支都是 **2x**;倍率与权重不一致时
+    /// 2x/3x/4x、x4plus 系只有 **4x**、waifu2x 三支都是 **2x**;倍率与权重不一致时
     /// 上层会用重采样补齐(**那不是超分**)。这件事原先只散写在部分提示里,现在统一成一行绿字。
     ///
     /// 【判据复用】这里的分类**完全复用 <see cref="Decide"/> 里那些谓词**
-    /// (<see cref="ExperimentalEsrgan.Is1xModel"/> / <see cref="Is4xOnlyModel"/> / <see cref="IsX2OnlyModel"/>),
+    /// (<see cref="ExperimentalEsrgan.Is1xModel"/> / <see cref="Is4xOnlyModel"/>),
     /// 不新造第二套 —— 否则"提示说 4x、实际按 2x 跑"这种自相矛盾迟早出现。
     ///
     /// 【返回值】空串 = 认不出/不适用(调用方据此**不加**绿字行):
     ///   · Real-CUGAN → `权重 2x / 3x / 4x`
     ///   · realesrgan + 1x 修复模型 → `权重 2x(缩回 1x)`
     ///   · realesrgan + 4x-only(x4plus 系 / general-x4v3 / wdn-x4v3)→ `权重 4x`
-    ///   · realesrgan + 只有 2x 权重的自训模型 → `权重 2x`
     ///   · realesrgan + animevideov3 → `权重 2x / 3x / 4x`
     ///   · waifu2x + cunet / upconv_7_photo / upconv_7_anime_style_art_rgb → `权重 2x`
     ///   · 其它(含 Anime4K —— 它走着色器、根本没有权重文件)→ `""`
-    /// 【注】界面上的「动漫 · Anime4K 修复」与「现实 · 1x 修复」两项各自写死一行绿字
-    /// (前者 `着色器(无权重)`、后者 `权重 2x(缩回 1x)`),因为它们不是引擎权重模型(Tag 是 `anime4k` /
-    /// `alhpro-real1x`),不该硬蹭这里的判据。</summary>
+    /// 【注】界面上的「动漫 · Anime4K 修复」那一项自己写死一行绿字 `着色器(无权重)`,因为它不是引擎权重模型
+    /// (Tag 是 `anime4k`),不该硬蹭这里的判据。(2026-09-27 起 1x 档只剩这一条;原先「现实 · 1x 修复」那条
+    /// 写死 `权重 2x(缩回 1x)`,它已下线。)</summary>
     public static string NativeWeightLabel(string engine, string model)
     {
         string m = model ?? "";
@@ -87,10 +74,9 @@ public static class EngineScalePolicy
         }
         if (!string.Equals(engine, "realesrgan", StringComparison.OrdinalIgnoreCase))
             return "";   // 其它引擎(Anime4K 走着色器、没有权重)与认不出的名字 ⇒ 调用方不加绿字行
-        // Real-ESRGAN:判据与 Decide 逐条同一套谓词(顺序也一致:先 1x、再 4x-only、再 2x-only)。
+        // Real-ESRGAN:判据与 Decide 逐条同一套谓词(顺序也一致:先 1x、再 4x-only)。
         if (ExperimentalEsrgan.Is1xModel(m)) return "权重 2x(缩回 1x)";
         if (Is4xOnlyModel(m)) return "权重 4x";
-        if (IsX2OnlyModel(m)) return "权重 2x";
         // animevideov3:名字口径与 PipelineOrderPlan.NormalizeModel 同一处(它有原生的 x2/x3/x4 三套权重)。
         if (PipelineOrderPlan.NormalizeModel(m) == "animevideov3") return "权重 2x / 3x / 4x";
         return "";
@@ -110,7 +96,7 @@ public static class EngineScalePolicy
     /// 【Real-CUGAN · 2026-09-24 新增】**也绝不返回 1**:随包的 models-se 三档只有 up2x/up3x/up4x,
     /// 没有任何 1x 权重 ⇒ 目标 ≤1x 一律走"2x 放大后缩回"(与 Real-ESRGAN 的 1x 护栏同一手法);
     /// 2/3/4 按目标直接下发(三档都有对应权重,不需要像 x4plus 那样固定 4x)。
-    /// 【Real-ESRGAN】**绝不返回 1**:x4plus 系固定 4;只有 2x 权重的自训模型(游戏向/现实向)固定 2;
+    /// 【Real-ESRGAN】**绝不返回 1**:x4plus 系固定 4;
     /// 其余(animevideov3)按 ceil 到 2/3/4,目标 ≤1 时改走 2x 再缩回(缺 x1 权重会静默全黑,见类注释)。</summary>
     public static Decision Decide(string engine, string model, double requestedScale)
     {
@@ -138,25 +124,10 @@ public static class EngineScalePolicy
         }
         if (Is4xOnlyModel(model))
             return new Decision(4, want / 4.0, "");
-        // 【只有 2x 权重】固定原生 2x,再缩回目标(下发 -s 3/-s 4 会得到镜像平铺的错帧、且 exit=0 不报错)。
-        // 目标正好 2x = 正常路径,不留理由(不刷日志);其余目标才给理由,让用户看得懂"为什么改了倍数"。
-        if (IsX2OnlyModel(model))
-        {
-            if (Math.Abs(want - 2.0) < 1e-6)
-                return new Decision(2, 1.0, "");
-            // 【措辞只写实测到的事】>2x 那档实测过(3x/4x = 镜像平铺错帧);<2x 那档没测,
-            // 只陈述"没有 1x 权重"这一事实,不搬 x4plus 那些"全黑"的实测数字来吓人。
-            // 【2026-09-20 1x 目标加一句实话】实测:2x 超分再缩回 1080p,detail 822、边宽 5.86px,
-            // **比原始 1080p(detail 1152 / 7.02px)还软** ⇒ 1x 目标下这条路径只会让画面更糊,
-            // 必须把结论写进理由里,并给出可执行的两条出路(换 1x 修复模型 / 把目标改成 2x)。
-            string why = want > 2.0
-                ? $"该模型只有 2x 原生权重(实测下发 -s {(int)want} 会输出镜像平铺的错帧、且 exit=0 不报错)"
-                : "该模型只有 2x 原生权重(没有 x1 权重)";
-            string tail = Math.Abs(want - 1.0) < 1e-6
-                ? ":改用 2x 超分后再缩放到目标尺寸(⚠ 实测这条路径比原片更软:detail 822 对原片 1152)—— 1x 想要更清晰请改用「1x 修复(同尺寸)」模型,或把目标改为 2x"
-                : ":改用 2x 超分后再缩放到目标尺寸";
-            return new Decision(2, want / 2.0, why + tail);
-        }
+        // 【2026-10-14 删了一段】原先这里还有一条"只有 2x 原生权重的**自训**模型(游戏向/现实向)固定 2"的分支:
+        // 那几支权重已按用户要求删除(见 ExperimentalEsrgan 类注释),判据 IsX2OnlyModel 随之作废 ——
+        // 现在官方 realesrgan 里没有"只有 2x 权重"的模型(animevideov3 有原生 x2/x3/x4 三套)。
+        // 历史实测(下发 -s 3/-s 4 = 镜像平铺的错帧、exit=0 不报错)记在 git 历史里,不再留在代码中。
         int eng = Math.Clamp((int)Math.Ceiling(want), 1, 4);
         if (eng <= 1)
             return new Decision(2, want / 2.0,

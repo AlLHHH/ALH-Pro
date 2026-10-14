@@ -7,7 +7,8 @@ namespace AlhPro.Core;
 ///   · `anime4k`(= <see cref="Anime4k.ModelTag"/>)——「动漫 · Anime4K 修复(快)」:实际走 ffmpeg + libplacebo
 ///     **着色器**,完全不经过 ncnn;
 ///   · `alhpro-real1x`(= <see cref="Upscale1x.RealTag"/>)——「现实 · 1x 修复(中)」:它自己也写明**不是真模型**,
-///     真正下发给引擎的是 <see cref="Upscale1x.RealEngineModel"/>(自训现实 2x,再缩回原尺寸)。
+///     真正下发给引擎的是 <see cref="Upscale1x.RealEngineModel"/>(2026-10-14 起 = **官方** `realesr-animevideov3`,
+///     按 2x 跑再缩回原尺寸;此前借的是自训的 alhpro-real2x,那支已删除)。
 /// 而视频开跑前的"显卡兼容性预检"曾把**当前选中的 Tag 原样**当模型名交给 `EnsureNcnnProbeAsync`
 /// ⇒ ncnn 被要求加载一个不存在的权重 ⇒ 探 60 秒无响应被强杀 ⇒ 落一条 `realesrgan2026|0|&lt;Tag&gt; = false`
 /// 的**假失败结论**。在没有"引擎级(default)结论"的机器上(如"独显 + 核显"⇒ 不走免探测快速通道、
@@ -17,7 +18,7 @@ namespace AlhPro.Core;
 /// 【换算规则(与界面的判定逐条对应)】
 ///   ① 走着色器的条目(anime4k)⇒ **不探测**(该批根本不用 ncnn;探测只会白等一分钟并写脏结论);
 ///   ② "1x 现实"条目 ⇒ 用 <see cref="Upscale1x.RealEngineModel"/> 探(与真正下发给引擎的模型一致);
-///   ③ 其余(官方三支 / 自训三支 / waifu2x 各档)⇒ 原样透传。
+///   ③ 其余(官方的 animevideov3 / x4plus-anime / x4plus / general-x4v3 / wdn-x4v3 / waifu2x 各档)⇒ 原样透传。
 ///
 /// ⚠ 这条换算同时用于"探测"与"下发给引擎"两处,别再各写一份 —— 两处不一致就会出现
 /// "探测说可用、引擎却拿不到权重"(exit 0 只出坏帧,本仓库踩过)。

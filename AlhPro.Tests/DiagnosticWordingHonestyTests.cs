@@ -283,9 +283,12 @@ public class DiagnosticWordingHonestyTests
     public void The_self_check_report_line_offers_no_imaginary_fallback()
     {
         string src = ReadRepoFile("ImgUpscalerUI", "VulkanCheck.cs");
+        // 【2026-10-14】这一段原来的结束锚点是后面那条"· 自训模型…"报告行 —— 四支自训 2x 已按用户要求
+        // 整体删除、那行也删了 ⇒ 锚点改到它后面的"· 视频补帧(RIFE):"行(CodeOnly 会剥掉注释,区间里多出的
+        // 删除说明注释不影响下面的断言)。
         string line = Block(CodeOnly(src),
             "sb.Append(\"· 动漫超分(Real-CUGAN):\")",
-            "sb.Append(\"· 自训模型");
+            "sb.Append(\"· 视频补帧(RIFE):\")");
         Assert.Equal(3, Count(line, "RealCugan.UnavailableNotice"));   // 实测不可用 / 未测 / 无 GPU 三支同源
         Assert.DoesNotContain("走 ONNX", line);
         Assert.DoesNotContain("按 CPU", line);

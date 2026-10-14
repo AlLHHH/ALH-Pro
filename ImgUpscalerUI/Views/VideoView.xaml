@@ -8,51 +8,23 @@
     mc:Ignorable="d">
 
     <UserControl.Resources>
-        <!-- 【蓝色「测试」小药丸 · 2026-09-15 第二次改小;2026-09-21 先撤掉、当天又按用户裁决放回】
-             【命名 · 用户 2026-09-21 第四次定稿:名字前面加 alh】四项自训模型写作 `类别 · alh+名字（快）`:
-             `现实 · alhreal2x（快）` / `游戏 · alhgame2x（快）` / `游戏 · alhgame2x-v2（快）` / `游戏 · alhgame2x-v3（快）`
-             (用户原话"改名字 前面加上alh";写法示例 `现实 alhreal2x` 由用户给出 —— alh 与名字**连写、不加连字符**)。
-             类别词仍是「游戏」/「现实」,**不出现"实验/实验性"字样**;括号里写**速度档**(`快`,见 Core.ExperimentalEsrgan.SpeedTier)——
-             【2026-09-16 用户定稿】"括号内要写快 而不是时间":括号与官方项共用一套词(`快`/`中`/`超慢`),
-             测出来的秒/帧数字挪到悬停提示与下拉下方那行提示里(那两处才是写数字的地方)。
-             【宽度这笔账 · 2026-09-21 真机实测,不是估算】收起状态(组合框 235px)的像素布局:
-               内容起点 x=16(3px 蓝条)→ 文字 x=25..183 → 下拉箭头 x=207..214 ⇒ 文字右侧**只剩约 18px**。
-               行 = 蓝条 3 + 间距 6 + 文字 + 间距 6 [+ 药丸 30];自训四项最长那两行文字实测 168px,
-               带药丸要 36px ⇒ **超出 18px、药丸会被箭头裁掉**(即 2026-09-14 那次"下拉框被遮挡")。
-             【裁决 · 2026-09-21 用户选"加宽 22px"】左栏 300 → 322(见上面 ColumnDefinitions 的注释):
-               余量 18 → 40px ⇒ 药丸原样放回仍有余量 ✓
-             ⚠ 以后再动这一行:**必须量收起状态**(截图找箭头的左边缘),别只看展开的下拉 ——
-               展开态的下拉项是**按内容自动变宽**的(实测:内容 177px → 项宽 201px、内容 195px → 项宽 219px),
-               "展开态没被裁"**不等于**"收起态不会被裁"。 -->
-        <Style x:Key="TestBadgePill" TargetType="Border">
-            <Setter Property="Background" Value="#232E42"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="CornerRadius" Value="4"/>
-            <Setter Property="Padding" Value="4,0"/>
-            <Setter Property="VerticalAlignment" Value="Center"/>
-        </Style>
-        <Style x:Key="TestBadgeText" TargetType="TextBlock">
-            <Setter Property="Text" Value="测试"/>
-            <Setter Property="FontSize" Value="11"/>
-            <Setter Property="Foreground" Value="#8FA9D6"/>
-            <Setter Property="VerticalAlignment" Value="Center"/>
-        </Style>
+        <!-- 【2026-10-14 删掉了两个样式】这里原本是蓝色「测试」小药丸(`TestBadgePill` / `TestBadgeText`)
+             和它上方那段 2026-09-21 的宽度实测账:药丸只服务四支自训 2x 模型,而那四支已按用户要求删除
+             (用户原话:"还有那几个测试的模型可以删掉了")⇒ 样式与用法一并删除;左栏宽度也从 322 退回 300
+             (那 22px 本来就是为药丸加的,见下面 ColumnDefinitions 的注释)。
+             历史实测数字与命名经过(2026-09-15 定名、2026-09-21 加 `alh` 前缀)见 git 历史。 -->
     </UserControl.Resources>
 
     <Grid>
         <Grid.ColumnDefinitions>
-            <!-- 【宽度 300 → 322 · 2026-09-21 用户裁决】
-                 【为什么要加这 22px】自训四项的名字加了项目前缀 `alh`(用户 2026-09-21:"改名字 前面加上alh"),
-                 而末尾那个蓝色「测试」药丸要放回去。收起状态实测(截图找像素,不是估算):
-                   组合框宽 235px 时,内容起点 x=16(3px 蓝条)→ 文字 x=25..183 → 下拉箭头 x=207..214
-                   ⇒ 文字右侧只剩 **约 18px**;药丸要 6(间距)+30(药丸)= 36px ⇒ **放不下,硬塞会被箭头裁掉**
-                   (那正是 2026-09-14 用户抱怨过的"下拉框被遮挡")。
-                 三条出路(改类别词 / 换更小的标记 / 加宽面板)摆在用户面前,用户选了**加宽 22px**:
-                 300 → 322 ⇒ 文字右侧余量 18 → 40px,药丸放回后仍有余量 ✓
-                 【与 2026-09-14 那次"410 → 300"不矛盾】那次是 110px 的大改(右侧任务列表明显被挤窄),用户要求缩回;
-                 这次是 22px 的最小必要增量,且是用户点名选的方案。
-                 【其余标签不受影响】该面板里那些标签本来就按 ≈212px 可用宽度缩写过了,加宽只会给它们留更多余量。 -->
-            <ColumnDefinition Width="322"/>
+            <!-- 【宽度 322 → 300 · 2026-10-14】
+                 322 是 2026-09-21 为末尾那个蓝色「测试」药丸加的:自训模型名字加了 `alh` 前缀后,
+                 收起状态文字右侧只剩约 18px,而药丸要 36px(6 间距 + 30)⇒ 用户裁决"加宽 22px"。
+                 四支自训模型已于 2026-10-14 按用户要求整体删除 ⇒ 药丸与样式一并删除,这 22px 的用途消失,
+                 宽度退回落款前的 300,把宽度还给右侧任务列表(2026-09-14 用户抱怨"右侧被挤窄"时要求的就是这个方向)。
+                 【以后若再加宽】必须量**收起状态**的截图(找下拉箭头左边缘),别只看展开的下拉 ——
+                 展开项是按内容自动变宽的(实测:内容 177px → 项宽 201px),"展开态没被裁"不等于"收起态不会被裁"。 -->
+            <ColumnDefinition Width="300"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
@@ -129,7 +101,7 @@
                     </RadioButtons>
                     <TextBlock x:Name="VideoModelLabel" Text="超分模型" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="VideoEsrganModelCombo" Visibility="Collapsed"
-                              ToolTipService.ToolTip="Real-ESRGAN 模型(按速度与体积排列)。&#x0a;末尾四项为本项目自训的 2x 模型(现实 · alhreal2x / 游戏 · alhgame2x / 游戏 · alhgame2x-v2 / 游戏 · alhgame2x-v3;名字里的 alh 与末尾那个蓝色「测试」小标都表示「这不是官方权重」)。"
+                              ToolTipService.ToolTip="Real-ESRGAN 模型(按速度与体积排列)。&#x0a;每支的速度、体积与权重档位见各自的悬停说明。"
                               SelectionChanged="Combo_Changed">
                         <!-- 【标签长度 · 2026-09-14 用户反馈"下拉框被遮挡"】左栏内部留白吃掉约 104px,
                              即使左栏加宽到 410,ComboBox 也只有 306px ⇒ 文字可用宽度 ~250px。
@@ -179,95 +151,21 @@
                                 <TextBlock Text="）" VerticalAlignment="Center"/>
                             </StackPanel>
                         </ComboBoxItem>
-                        <!-- ===== 【Rev4 · 2026-09-15】末尾**追加**两支自训的 2x 模型(序号 5=现实向、6=游戏向)=====
-                             为什么追加在最后而不是插到中间:追加不动老序号 ⇒ Rev4 的迁移是**恒等映射**,
-                             老用户存的 0~4 升级后仍然指向同一支模型(Rev2 期间加 wdn 用的也是这个手法)。
-                             【命名 · 用户 2026-09-15 定稿 · 第三次改英文名】文字要**跟已有各项同一个格式**
-                             —— `类别 · 名字（括号内速度）`(已有项:`动漫 · animevideov3（快）` / `通用 · x4plus（超慢）`),
-                             所以这两项写成 `现实 · alhreal2x（快）` / `游戏 · alhgame2x（快）`(2026-09-21 起名字前面加 `alh`);
-                             类别用「游戏」/「现实」,**名字用英文**(= 权重文件名后缀 real2x / game2x 前面加 alh),
-                             括号里写**速度档**(「快」,口径见 Core.ExperimentalEsrgan.SpeedTier)——【2026-09-16 用户定稿】"括号内要写快 而不是时间",**不许出现"实验"**。
-                             权重文件:engines\realesrgan\models\alhpro-real2x.param/.bin、alhpro-game2x.param/.bin
-                             ⚠ Tag 必须与文件名一字不差:引擎按 `models/{Tag}.param` 取权重(视频路径下发的是
-                               `-m models -n {Tag}`,见 EngineService.UpscaleDirAsync;实测这两支名字不在引擎内置表里,
-                               所以它**不会**被追加 -x{scale} 后缀)。
-                             ⚠ 只有 2x 原生权重:3x/4x 目标由 Core.EngineScalePolicy 固定按 2x 跑再放大到目标
-                               (实测给 2x 权重下发 -s 4 会输出**镜像平铺的错帧**、exit=0 不报错)。
-                             ⚠ 【R/B 缺陷 · 2026-09-15 **已修好**,别把旧说法抄回来】这两份导出权重曾经 **R/B 通道颠倒**
-                               (旧实测:源 R143/G110/B92、官方 R143/G111/B89、本模型 R94/G111/B137,画面整幅偏蓝)。
-                               本轮**重训 + 重新导出**后通道验收闸已 PASS(现实向 Δ+0.20/+0.34/+0.24、
-                               游戏向 Δ+0.11/+0.12/+0.18,判据「每通道差 小于 5」;多宽度 1920/2048/2348/2560 全过)
-                               ⇒ 界面文案里**不得再出现"偏蓝 / R-B 颠倒 / 需重新导出 / 不可用于正片"**。
-                               两处文案与 Core.ExperimentalEsrgan 里的**逐字相同**(有单测钉住),改时一起改。
-                             ⚠ Content 是 StackPanel(富文本),读模型名一律走 Tag —— 别改成读 Content。 -->
-                        <ComboBoxItem Tag="alhpro-real2x" AutomationProperties.Name="现实 · alhreal2x（快）测试">
-                            <!-- 【可访问性 · 2026-09-15】这几项(以及上面的 x4plus 项)的 Content 是 StackPanel(富文本),
-                                 UIA 算出来的 Name 是**空**的 —— 读屏软件念不出选了什么,自动化脚本也只能靠猜序号。
-                                 这里显式给一个名字 = 界面文字 + 药丸上的「测试」(= Core 的 MenuText + Badge,有单测钉住)。
-                                 (UIA 名字不受下拉宽度限制,所以给全。)
-                                 【命名 · 用户定稿】文字里**不许出现"实验"**;括号里是**快慢档形容词**(「快」),
-                                 不是秒/帧(那个数字放在悬停提示与下拉下方提示里)。
-                                 【宽度 · 2026-09-21】药丸占 36px(6 间距 + 30),而收起状态文字右侧只剩 18px
-                                 ⇒ 已按用户裁决把左栏 300 → 322,见文件头那条实测。 -->
-                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">现实 · alhreal2x:自训 2x 超分模型(训练数据:实拍照片与人像)。&#x0a;留出视频实测(540p→1080p):PSNR 31.56 · SSIM 0.952 · 边缘 PSNR 21.55;色偏 游戏 0.34 / 动漫 0.18 / 实拍 1.48(判据 小于 5)。&#x0a;detail 3.55 / 2.14 / 63.44(游戏 / 动漫 / 实拍)。&#x0a;1080p 约 0.35 秒/帧 · 模型大小 2.4 MB。 倍率:原生 2x;目标 3x/4x 由 2x 成片放大。<Run Foreground="#7BD88F">&#x0a;权重 2x</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <Border Width="3" Height="14" CornerRadius="1.5" Background="#8FA9D6" VerticalAlignment="Center" ToolTipService.ToolTip="ALH Pro 自训模型(独立分支 models\\alhpro)"/>
-                                <TextBlock Text="现实 · alhreal2x（快）" VerticalAlignment="Center"/>
-                                <Border Style="{StaticResource TestBadgePill}">
-                                    <TextBlock Style="{StaticResource TestBadgeText}"/>
-                                </Border>
-                            </StackPanel>
-                        </ComboBoxItem>
-                        <!-- 【Rev7 · 2026-09-21 **移除**了原来的第 6 项「游戏 · alhgame2x」(v1)】
-                             用户原话:"不要训练那么多模型了 我要留两个最好的游戏 1个现实就行 后面慢慢优化"。
-                             依据(实测,三支游戏向里 v1 最弱):detail 288 对 v2 672 / v3 760、PSNR 31.62 对 32.67 / 31.99,
-                             而且它只用一段 138 帧录像训练(v2 用 26 段 942 帧)。
-                             ⚠ 这是**移除中间项** ⇒ 后面序号整体前移,VideoModelOrder Rev7 已配映射(7→6、8→7;
-                               选了被移除那支的老用户被挪到 v2 = 同族最保真的那支)。
-                             ⚠ 它的权重**仍在** `models\alhpro\alhpro-game2x.*`:Core 把它登记在 Retired 里继续认识 ——
-                               否则 EsrganModelDir 会去根目录找权重,而引擎找不到权重时 exit=0、只出坏帧。 -->
-                        <!-- 【Rev5 · 2026-09-19 追加】游戏向第二代「游戏 · alhgame2x-v2」:
-                             同一套原生 2x 配方,训练数据换成用户自己的 26 段录像(旧那支只用了一段 30 秒);
-                             留出视频实测全面超过 v1(PSNR 31.80 / SSIM 0.9767 / 边缘 PSNR 21.69 对 31.38 / 0.9681 / 21.24,
-                             锯齿代理 50.82 对 51.23),三档 detail 也都高于 v1。
-                             ⚠ 这是**追加**(v1 原样保留):VideoModelOrder Rev5 与 Rev4 之间是恒等映射。
-                             ⚠ 文案与 Core.ExperimentalEsrgan 里的 v2 分支**逐字相同**(有单测钉住),改时一起改。 -->
-                        <ComboBoxItem Tag="alhpro-game2x-v2" AutomationProperties.Name="游戏 · alhgame2x-v2（快）测试">
-                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">游戏 · alhgame2x-v2:自训 2x 超分模型(训练数据:26 段游戏录像 · 942 帧)。&#x0a;留出视频实测(540p→1080p):PSNR 32.67 · SSIM 0.954 · 边缘 PSNR 22.67;色偏 游戏 0.21 / 动漫 0.00 / 实拍 1.27(判据 小于 5)。&#x0a;detail 2.77 / 1.68 / 70.58(游戏 / 动漫 / 实拍)。&#x0a;1080p 约 0.35 秒/帧 · 模型大小 2.4 MB。 倍率:原生 2x;目标 3x/4x 由 2x 成片放大。<Run Foreground="#7BD88F">&#x0a;权重 2x</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <Border Width="3" Height="14" CornerRadius="1.5" Background="#8FA9D6" VerticalAlignment="Center" ToolTipService.ToolTip="ALH Pro 自训模型(独立分支 models\\alhpro)"/>
-                                <TextBlock Text="游戏 · alhgame2x-v2（快）" VerticalAlignment="Center"/>
-                                <Border Style="{StaticResource TestBadgePill}">
-                                    <TextBlock Style="{StaticResource TestBadgeText}"/>
-                                </Border>
-                            </StackPanel>
-                        </ComboBoxItem>
-                        <!-- 【Rev6 · 2026-09-20 追加】游戏向第三代「游戏 · alhgame2x-v3(锐化优先)」:
-                             配方把像素项降到 0.5、VGG 感知抬到 2.0、并新增边缘强度项 3.0(150 分钟 / it 19458)。
-                             留出视频实测(12 用例):PSNR 31.99 · SSIM 0.953 · 边缘 PSNR 22.10;detail **760.1**、锯齿 **50.91**
-                             —— detail 与锯齿都是这几支里最好的;保真低于 v2(32.67/0.954/22.67)、高于 v1。
-                             ⚠ **短板如实写在提示里**:实拍照片 ΔB +8.85 级偏蓝(判据 小于 5)⇒ 照片请用 v2;
-                               平坦区噪声 1.42×(v2 1.18×);边缘"更有力"但宽度未变窄(4.93px 对 v2 5.04)。
-                             ⚠ 这是**追加**(v1/v2 原样保留):VideoModelOrder Rev6 与 Rev5 之间是恒等映射。
-                             ⚠ 文案与 Core.ExperimentalEsrgan 里的 v3 分支**逐字相同**(有单测钉住),改时一起改。 -->
-                        <ComboBoxItem Tag="alhpro-game2x-v3" AutomationProperties.Name="游戏 · alhgame2x-v3（快）测试">
-                            <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">游戏 · alhgame2x-v3:自训 2x 超分模型(锐化优先:留出视频实测 detail 760、锯齿 50.91,两项都优于其它几支)。&#x0a;留出视频实测(540p→1080p):PSNR 31.99 · SSIM 0.953 · 边缘 PSNR 22.10;最干净的 v2 是 32.67 / 0.954 / 22.67。&#x0a;色偏 游戏 0.49 / 动漫 0.13 / 实拍 8.85(判据 小于 5:照片偏蓝,照片请用 v2);detail 3.72 / 2.28 / 77.26。&#x0a;1080p 约 0.35 秒/帧 · 模型大小 2.4 MB。 倍率:原生 2x;目标 3x/4x 由 2x 成片放大。<Run Foreground="#7BD88F">&#x0a;权重 2x</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <Border Width="3" Height="14" CornerRadius="1.5" Background="#8FA9D6" VerticalAlignment="Center" ToolTipService.ToolTip="ALH Pro 自训模型(独立分支 models\\alhpro)"/>
-                                <TextBlock Text="游戏 · alhgame2x-v3（快）" VerticalAlignment="Center"/>
-                                <Border Style="{StaticResource TestBadgePill}">
-                                    <TextBlock Style="{StaticResource TestBadgeText}"/>
-                                </Border>
-                            </StackPanel>
-                        </ComboBoxItem>
+                        <!-- 【2026-10-14 删掉三支自训模型 · Rev12】这里原本是三项自训 2x 模型(序号 5/6/7:
+                             `alhpro-real2x` / `alhpro-game2x-v2` / `alhpro-game2x-v3`)连同它们的注释与那个蓝色「测试」药丸。
+                             用户原话:"还有那几个测试的模型可以删掉了" ⇒ 权重、下拉项、药丸样式、Core 登记与提示文案一并删除。
+                             ⚠ 序号前移由 VideoModelOrder Rev12 显式迁移:旧 5/6/7 → 0(animevideov3)、旧 8(Anime4K) → 5,
+                               不许靠越界兜底(旧 8 若落成 0 就成了"1x 档拿到 2x 放大模型"的静默错位)。
+                             ⚠ 这些模型当年的实测数据、命名经过与 R/B 通道验收记录随权重一起作废,需要时查 git 历史。 -->
                         <!-- 【Rev9 · 2026-09-21 **Anime4K 不进这个列表**】
                              用户:"an4K 那个不在列表显示 只在选择 1x 时模型锁住 并且显示 an4K 并且给提示"。
                              为什么它不该在列表里:它不是放大模型(没有权重、不放大),挂在列表里会让"想放大的人"选到它。
                              所以这里**刻意没有** anime4k 项(有单测钉住"列表里不许出现它")。 -->
-                        <!-- 【Rev10 · 2026-09-21 追加 / Rev11 · 2026-09-27 **删掉「现实 · 1x 修复」**】
+                        <!-- 【Rev10 · 2026-09-21 追加 / Rev11 · 2026-09-27 **删掉「现实 · 1x 修复」** / Rev12 · 2026-10-14 序号前移】
                              用户 2026-09-27:"还有1x 那个 第二个现实档先删掉吧" ⇒ 1x 档现在**只有 Anime4K 一条**。
                              它原来是列表**最后一项**(序号 9),删掉后 0..8 一个都没动;老存档里存过 9 的由
                              VideoModelOrder Rev11 映射显式改到 8(Anime4K),并写日志 —— 不许靠越界兜底。
+                             Rev12 又删掉三支自训模型(旧 5/6/7) ⇒ 它现在序号 5(`VideoModelOrder.Anime4kIndex` 8 → 5)。
                              ⚠ 文案与 Core 的常量**逐字一致**(有单测钉住):Anime4k.MenuText。
                              选到 1x 时,下拉里只有 Anime4K 可选,其余放大模型由代码置灰(见 VideoView.UpdateModelScaleAvailability)。 -->
                         <ComboBoxItem Tag="anime4k" AutomationProperties.Name="动漫 · Anime4K 修复（快）">

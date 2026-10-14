@@ -326,7 +326,9 @@ public class RememberParamsPresetTests
     {
         string xaml = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml");
         // ① 「现实 · 1x 修复」条目已于 2026-09-27 下线(Rev11)⇒ **不再去 XAML 找那一项**;
-        //    但它的引擎侧真名(ExperimentalEsrgan.Fix1x)仍被"Anime4K 不可用时的回退路径"使用,故只钉 Core 这一侧。
+        //    但 Core 仍认 `Fix1x` 是 1x 修复模型(那支权重尚未训练、不进下拉),故只钉 Core 这一侧。
+        //    【2026-10-14 更正】回退路径(本机 Anime4K 不可用时那条"按 2x 缩回")用的是
+        //    `Upscale1x.RealEngineModel`(现为官方 realesr-animevideov3),**不是** Fix1x —— 原注释说反了。
         Assert.True(ExperimentalEsrgan.Is1xModel(ExperimentalEsrgan.Fix1x), "Fix1x 必须被 Core 认成 1x 修复模型");
         Assert.Equal("", EngineScalePolicy.NativeWeightLabel("realesrgan", Upscale1x.RealTag));   // 界面 Tag 本身不是权重模型
         Assert.Equal("权重 2x(缩回 1x)", EngineScalePolicy.NativeWeightLabel("realesrgan", ExperimentalEsrgan.Fix1x));

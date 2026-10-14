@@ -1302,34 +1302,21 @@ public sealed partial class VideoView : UserControl
         // 否则这条提示不显示、且 Core.EngineScalePolicy 会误判成普通模型(那条已同步修)。
         bool x4plusModel = up && SelectedEngineIsReal
             && (esrModel.Contains("x4plus") || esrModel.Contains("general-x4v3") || esrModel.Contains("wdn-x4v3"));
-        // 【2026-09-15 Rev4 · 自训的三支(现实 · alhreal2x / 游戏 · alhgame2x-v2 / 游戏 · alhgame2x-v3)】在下拉正下方如实说明数字:
-        // (Rev7 · 2026-09-21:原第 4 支「游戏 · alhgame2x」已按用户要求从下拉移除,见 VideoModelOrder Rev7 的映射)
-        // 提示只在悬停里(ToolTip)的话,用户不悬停就看不到,于是很容易以为"新加的两支更强"。
-        // 文案与实测数字集中在 Core.ExperimentalEsrgan(不与 XAML 的 ToolTip 各写一份,免得两处数字对不上);
-        // 措辞按用户要求只用**事实陈述**,不用"实验性/测试版"这类定性词。
-        // 选 3x/4x 时再补一句:这两支只有 2x 原生权重,会被 Core.EngineScalePolicy 固定按 2x 跑再放大到目标。
-        bool experimentalModel = up && SelectedEngineIsReal && AlhPro.Core.ExperimentalEsrgan.IsExperimental(esrModel);
+        // 【2026-10-14 删掉一段】原先这里还有"自训的三支(现实 · alhreal2x / 游戏 · alhgame2x-v2 / -v3)"专用的
+        // 下拉下方提示:那三支权重已按用户要求删除(用户:"还有那几个测试的模型可以删掉了"),
+        // 连带 Core 登记、XAML 三项与这段接线一并删除。历史见 VideoModelOrder Rev12 与 git 历史。
         if (EsrganModelHint != null)
         {
             if (scaleIdx == 0)
             {
                 // 【一行 · 用户:"提示太长了 导致界面被下移"】这段在切倍率时会实时替换,写得越长下面被顶得越多
-                //   ⇒ 只留一句;完整说明在两项自己的悬停提示里(见 XAML)。
-                EsrganModelHint.Text = "1x 不放大:这里只列 1x 修复模型(动漫用 Anime4K、现实用它自己的)。";
-            }
-            else if (experimentalModel)
-            {
-                var eh = AlhPro.Core.ExperimentalEsrgan.Hint(esrModel);
-                if (scaleIdx is 2 or 3)   // 3x/4x:引擎会按原生 2x 跑,再由 App 放大到目标
-                    eh += $"(本次目标 {scaleIdx + 1}x:会按 2x 超分后再放大到 {scaleIdx + 1}x,不是原生 {scaleIdx + 1}x 权重)";
-                // 【2026-09-22 用户追问"自训模型兼容性"时补的】这三支**只有 ncnn 权重**:
-                // 本机若走 ONNX 稳定引擎(实测 ncnn 不可用 / 勾了兼容模式 / 手选 CPU),它们用不上,
-                // 处理时会被换成官方模型。**必须在这里先说** —— 这是用户"选之前"唯一能看到的地方,
-                // 等到处理时那条提示已经晚了(而且用户会以为是自己素材的问题)。
-                if (OnnxUpscaleRouteLikely())
-                    eh += " ⚠ 本机走稳定引擎(ONNX)⇒ 这支只有 ncnn 权重,用不上(会按官方模型处理)";
-                EsrganModelHint.Text = eh;
-                // (提示行始终可见,只换文字,见 XAML)
+                //   ⇒ 只留一句;完整说明在那一项自己的悬停提示里(见 XAML)。
+                // 【2026-10-14 改口径】1x 档现实那条 2026-09-27 就下线了,文案里不该再提"现实用它自己的"。
+                // 【2026-10-14 复审修正】上一版写的是"(走着色器,不用引擎权重)" —— 半句真话:
+                //   着色器**可用**时确实不碰引擎权重,但探测不过的机器会走回退(用官方 realesr-animevideov3
+                //   按 2x 跑再缩回,即**用**引擎权重),而这项自己的悬停提示也正是这么写的
+                //   (VideoView.xaml 里"探测不过会自动改为「按 2x 超分后缩回原尺寸」")⇒ 常显这行不能只讲一半。
+                EsrganModelHint.Text = "1x 不放大:这一档只有「动漫 · Anime4K 修复」;着色器不可用时自动按 2x 超分再缩回原尺寸。";
             }
             else if (x4plusModel)
             {
@@ -3202,14 +3189,11 @@ public sealed partial class VideoView : UserControl
     ///   0 动漫·animevideov3(4MB) 1 通用·general-x4v3(5MB) 2 通用·wdn-x4v3(5MB) 3 动漫·x4plus-anime(9MB) 4 通用·x4plus(41MB 超慢)。
     /// 换位对应 VideoModelOrder Rev3 的迁移(2→3、3→4、4→2);这里必须与 XAML 的项顺序严格一一对应,
     /// 否则预设摘要会印出与实际不同的模型(此前就踩过:数组漏了一项,序号 3 显示成别的模型)。
-    /// 【2026-09-15 Rev4】末尾**追加**两支自训的 2x 模型(5 现实 · alhreal2x、6 游戏 · alhgame2x;2026-09-21 起名字前缀为 alh):
-    /// 【Rev7 · 2026-09-21】"游戏 · alhgame2x"已从下拉移除 ⇒ 现在末尾三项是 real2x / alhgame2x-v2 / alhgame2x-v3。
-    /// 【不能手抄字面量】末尾这几项由 Core.ExperimentalEsrgan.All 遍历生成 ⇒ 移除/追加会**自动**跟上下拉与摘要。
-    ///   追加不改老序号 ⇒ VideoModelOrder Rev4 是恒等映射。
-    ///   ⚠ 这两项**不再手抄字面量**,而是由 Core.ExperimentalEsrgan.SummaryText 生成 ——
-    ///   之前手抄的那版名字里带了"实验/测试"字样,被用户当场纠正("不要写实验,括号里写速度"),
-    ///   手抄的名字列表就是漂移源头(本仓库也踩过"数组漏一项、序号显示成别的模型")。用户定名与实测速度
-    ///   都只有 Core 那一份,这里跟着走。</summary>
+    /// 【Rev12 · 2026-10-14】末尾那三支自训 2x(现实 · alhreal2x / 游戏 · alhgame2x-v2 / -v3)已按用户要求删除
+    ///   ⇒ 现在是 5 支官方放大模型 + 末尾 1 个 1x 修复条目(动漫·Anime4K 修复)。
+    /// 【不能手抄字面量】末尾那格由 Core 常量取名 ⇒ 移除/追加会**自动**跟上下拉与摘要。
+    ///   ⚠ 别在这里手抄名字:手抄的名字列表就是漂移源头(本仓库踩过"数组漏一项、序号显示成别的模型")。用户定名
+    ///   只有 Core 那一份,这里跟着走。</summary>
     private static readonly string[] UpEsrganModelNames = BuildUpEsrganModelNames();
 
     private static string[] BuildUpEsrganModelNames()
@@ -3218,9 +3202,9 @@ public sealed partial class VideoView : UserControl
         {
             "动漫·animevideov3", "通用·general-x4v3(快)", "通用·wdn-x4v3(快)", "动漫·x4plus-anime", "通用·x4plus(超慢)",
         };
-        foreach (var m in AlhPro.Core.ExperimentalEsrgan.All)
-            names.Add(AlhPro.Core.ExperimentalEsrgan.SummaryText(m));
-        // 【2026-09-27 · Rev11】最后一格是 1x 档的 Anime4K(下拉序号 8 = VideoModelOrder.Anime4kIndex)。
+        // 【2026-10-14 · Rev12】原先这里还有 `foreach (var m in Core.ExperimentalEsrgan.All)` 追加三支自训 2x
+        // 模型的名字:那三支已按用户要求删除(权重、下拉项、登记与文案一并删)⇒ 循环随之去掉。
+        // 【2026-09-27 · Rev11】最后一格是 1x 档的 Anime4K(下拉序号 5 = VideoModelOrder.Anime4kIndex)。
         // 不带它的话,选了 Anime4K 的预设摘要会落到越界兜底、显示成「动漫·animevideov3」——
         // 那是**假话**(用户选的是 1x 修复,摘要却印一个 2x/4x 放大模型);名字取 Core 常量,别再抄一份措辞。
         names.Add(AlhPro.Core.Anime4k.MenuText);
@@ -11368,9 +11352,10 @@ public sealed partial class VideoView : UserControl
             // Real-ESRGAN(界面上排第一,也是默认):从模型下拉 Tag 读模型名(默认 realesr-animevideov3)
             _ => ("realesrgan", SelModel(VideoEsrganModelCombo, "realesr-animevideov3")),
         };
-        // 【Rev10】「现实 · 1x 修复」**不是真模型**:它内部用自训的 alhreal2x 按 2x 跑再缩回原尺寸
-        //   ⇒ 下发给引擎的必须是真正的权重名(alhpro-real2x),否则引擎会去找一个不存在的模型
-        //     (找不到权重时 exit=0、只出坏帧 —— 本仓库踩过)。
+        // 【Rev10】(2026-10-14 更新)「现实 · 1x 修复」**不是真模型**:它内部按 2x 跑再缩回原尺寸
+        //   ⇒ 下发给引擎的必须是真正的权重名,否则引擎会去找一个不存在的模型(找不到权重时 exit=0、只出坏帧
+        //     —— 本仓库踩过)。它原来借自训的 alhpro-real2x,那支已按用户要求删除 ⇒
+        //     Upscale1x.RealEngineModel 现指官方 realesr-animevideov3(见那边的类注释:官方唯一带原生 2x 权重的)。
         if (model == AlhPro.Core.Upscale1x.RealTag)
             model = AlhPro.Core.Upscale1x.RealEngineModel;
         // 视频降噪由现有「启用视频降噪 + 强度(弱/中/强)」统一驱动,不再单开一个 waifu2x 专用下拉(割裂):
@@ -11504,7 +11489,7 @@ public sealed partial class VideoView : UserControl
             //   · 「动漫 · Anime4K 修复」的 Tag 是 anime4k,它走着色器、根本不用 ncnn —— 原样喂给探测会让 ncnn
             //     去加载一个不存在的模型 ⇒ 探 60 秒无响应被强杀 ⇒ 落一条**假的 realesrgan 失败结论** ⇒
             //     之后所有 2x/3x/4x 视频超分都被判走 ONNX(实测 2x 超分 3880 ms/帧 vs 标称 0.27 秒/帧);
-            //   · 「现实 · 1x 修复」的 Tag 不是真模型 ⇒ 用真正的权重 alhpro-real2x 去探。
+            //   · 「现实 · 1x 修复」的 Tag 不是真模型 ⇒ 用 Upscale1x.RealEngineModel(现为官方 animevideov3)去探。
             var probePlan = AlhPro.Core.NcnnProbePlan.For(model);
             // 【2026-09-24】探测目标引擎 = **本次真正要跑的那支**(原来写死 "realesrgan"):
             // Real-CUGAN 是独立引擎、有自己的权重名域(models-se),拿 realesrgan 的键去探会写脏结论。
@@ -11543,10 +11528,10 @@ public sealed partial class VideoView : UserControl
                 }
             }
         }
-        // ===== 【1x 修复 · 2026-09-21 Rev10】1x 档现在有**两个**模型条目(用户:"1x 也是可以选模型 加一个现实的1x模型")=====
+        // ===== 【1x 修复 · 2026-09-27 Rev11 起只剩一条】1x 档现在只有「动漫 · Anime4K 修复」可选 =====
         //   · 动漫 · Anime4K 修复  ⇒ 跑 libplacebo 着色器(不变尺寸;超分阶段跳过,最快)
-        //   · 现实 · 1x 修复      ⇒ 用自训的 alhreal2x 按 2x 跑,再缩回原尺寸(干净素材上实测更接近原片)
-        // Anime4K 要先探一次:探不过(缺 Vulkan/libplacebo)就**自动改用「现实 · 1x 修复」**并写日志
+        //   · (原「现实 · 1x 修复」2026-09-27 已按用户要求下线;它那条"2x 跑再缩回"的路保留为**回退**)
+        // Anime4K 要先探一次:探不过(缺 Vulkan/libplacebo)就**自动改用「2x 超分后缩回原尺寸」**并写日志
         // (那条路只用引擎、不依赖 Vulkan 着色器)⇒ 缺 Vulkan 的机器一样能用 1x,不会整批失败。
         if (VideoScaleRadios.SelectedIndex == 0 && up)
         {
@@ -11561,7 +11546,7 @@ public sealed partial class VideoView : UserControl
             else
             {
                 anime4k1x = false;
-                upscaleShrink1x = true;    // ← "现实 · 1x 修复"这条路:2x 超分(alhreal2x)后缩回,与用户选的那支无关
+                upscaleShrink1x = true;    // ← 回退那条路:2x 超分(官方 animevideov3)后缩回,与用户选的那支无关
                 // 【2026-09-24 修一个被掩盖的老洞】回退到"现实 · 1x 修复"时,必须把下面要下发给引擎的 `model`
                 // 一起换成**真权重**:否则它还是 Tag `anime4k`,引擎会按 `-n anime4k` 去找一个不存在的权重
                 // (找不到权重时 exit=0 只出坏帧 —— 本仓库踩过)。此前这条洞被"anime4k 预检必然失败 ⇒ 整批被判
@@ -11573,7 +11558,7 @@ public sealed partial class VideoView : UserControl
                 //   ⚠ 界面上的模型框仍显示"动漫 · Anime4K 修复"(1x 档只剩这一条可选),所以日志必须写清楚实际路线 ——
                 //     不能让用户以为它真的跑了 Anime4K。
                 if (wantAnime4k)
-                    try { Log("⚠ 本机 Anime4K 着色器不可用(需要可用的 Vulkan 显卡/libplacebo)⇒ 本批自动改为「按 2x 超分后缩回原尺寸」(1x 档的「现实 · 1x 修复」条目已于 2026-09-27 下线,界面仍显示 Anime4K 那一条)"); } catch { }
+                    try { Log($"⚠ 本机 Anime4K 着色器不可用(需要可用的 Vulkan 显卡/libplacebo)⇒ 本批自动改为「按 2x 超分后缩回原尺寸」(用的是官方模型 {AlhPro.Core.Upscale1x.RealEngineModel};1x 档那条「现实 · 1x 修复」已于 2026-09-27 下线,界面仍显示 Anime4K 那一项)"); } catch { }
             }
             scaleLabel = anime4k1x ? "1x(Anime4K 修复)" : "1x(现实修饰·2x缩回)";
         }
@@ -12097,11 +12082,11 @@ public sealed partial class VideoView : UserControl
                 }
             : "关";
         Log($"▶ 参数:设备={devStr} | " +
-            // 【2026-09-15 Rev4】两支自训模型在日志里也带上"名字 + 实测速度"的括号(用户要求:这几处的括号内容
-            // 写速度,不写"测试"这类定性词)。日志是排查"这次到底用的哪支模型、该有多快"的唯一凭据。
+            // 【2026-10-14】这句原先还拼 Core.ExperimentalEsrgan.LogSuffix(model)(给自训模型补"名字 + 实测速度"的括号,
+            // 用户 2026-09-15 要求括号里写速度不写"测试")。四支自训 2x 已按用户要求删除 ⇒ 没有模型需要这个后缀了。
             // 【2026-09-24】Real-CUGAN 的 model 是 `models-se:-1` 这种 Tag(不能直读成模型名),
             // 所以这里补上引擎名 + 该 Tag 的人话名 —— 日志必须能一眼看出"这一批用的是哪条引擎、哪支模型"。
-            $"超分={(up ? $"开({EngineService.EngineLabel(engine)}·{AlhPro.Core.RealCugan.DisplayOrSelf(model)}{AlhPro.Core.ExperimentalEsrgan.LogSuffix(model)}·{scaleLabel})" : "关")}" + " | " +
+            $"超分={(up ? $"开({EngineService.EngineLabel(engine)}·{AlhPro.Core.RealCugan.DisplayOrSelf(model)}·{scaleLabel})" : "关")}" + " | " +
             $"补帧={(interp ? $"{interpModel}·{interpScale}x{(tta ? "·TTA" : "")}·时间步{(timeStep ?? 0):0.00}" : "关")} | " +
             $"去重={dedupDesc} | " +
             // 【2026-09-21】转场识别这一项不止印开关:阈值(滑块值)也印出来 ——
