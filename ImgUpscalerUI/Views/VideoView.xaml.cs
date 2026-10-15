@@ -4828,6 +4828,23 @@ public sealed partial class VideoView : UserControl
     }
 
 
+    /// <summary>【2026-10-15 · 反馈"预览界面会闪退/卡退"】把"用户此刻在预览页点到了哪一步"记进
+    /// `App.UiAction`,崩溃诊断会带出这一行(文件里原来的「最近界面操作」只会是"日志行追加",看不出用户动作)。
+    /// 只写一个字符串:不碰控件、不抛、不改任何行为。</summary>
+    private static void Crumb(string what)
+    {
+        try { App.UiAction = what; } catch { }
+    }
+
+    /// <summary>视图序号 → 界面上的名字(面包屑/提示文案共用)。</summary>
+    private static string ViewModeName(int mode) => mode switch
+    {
+        ViewBoth => "两者同时",
+        ViewSplit => "左右对比",
+        ViewEffect => "看处理效果",
+        _ => "看原片",
+    };
+
     /// <summary>两页共用的外壳:素材名/信息、装载原片、复位版式与视图。</summary>
     private void ShowOverlayShell(VideoItem item)
     {
@@ -4879,6 +4896,20 @@ public sealed partial class VideoView : UserControl
         // 重复帧预览:显示已有的(预估/分析)结果,未分析则提示
         DupSummaryText.Text = string.IsNullOrEmpty(item.DupSummary) ? "(点「分析重复帧」看精细分布)" : item.DupSummary;
         RenderDupStrip(item);
+        // 【2026-10-15 · "预览页会闪退/卡退"反馈】进页面时留一行现场(分辨率/显存/已装载播放器数)。
+        // 目的只有一个:万一真出问题,日志里能说清"当时是什么负载",不必再靠猜。不改任何行为。
+        try
+        {
+            Crumb((_trimMode ? "裁剪页" : "视频预览页") + " · 进入:" + item.Name);
+            int loaded = 0;
+            foreach (var el in new[] { PreviewPlayer, EffectPlayer, CmpPlayerTop, CmpPlayerBottom })
+            {
+                try { if (el?.Source != null) loaded++; } catch { }
+            }
+            AppLogger.Info($"[预览] 进入{(_trimMode ? "裁剪" : "预览")}页:{item.Name} · {item.BaseInfo} · " +
+                $"显存 {SafeRender.TotalVramGB:0.#}GB(空闲 {SafeRender.FreeVramText}) · 已装载播放器 {loaded}/4 · 视图=看原片");
+        }
+        catch { }
     }
 
     /// <summary>双击视频 → 裁剪页:只有裁剪(时间线首尾两把手 + 拖动时画面跟着跳)。</summary>
@@ -5007,6 +5038,7 @@ public sealed partial class VideoView : UserControl
 
     private void PreviewClose_Click(object sender, RoutedEventArgs e)
     {
+        Crumb((_trimMode ? "裁剪页" : "视频预览页") + " · 点「退出」关闭页面");
         // 【倒装】四个播放器全部停播并释放源(否则退出预览后仍可能后台解码/出声);
         // 记账一起清空 ⇒ 下次进预览页会重新装(不会误判成"还是那条片")
         foreach (var el in new[] { PreviewPlayer, EffectPlayer, CmpPlayerTop, CmpPlayerBottom })
@@ -5704,6 +5736,7 @@ public sealed partial class VideoView : UserControl
     /// <summary>「预览效果」按钮:打开预览页(默认把视频设成右侧选中的那个)。</summary>
     private async void RunPreviewBtn_Click(object sender, RoutedEventArgs e)
     {
+        Crumb("主页面 · 点「预览效果」");   // 【2026-10-15】这一路历史上崩过(对话框并发),面包屑留痕
         if (_running || _runItems != null || _effBusy)
         {
             await ShowPauseHintAsync("正在处理/预览中 —— 请等这一段跑完再试。");
@@ -6371,6 +6404,7 @@ public sealed partial class VideoView : UserControl
             _zmWantPath = _cmpClipPath;
             _compareMode = mode == ViewBoth || mode == ViewSplit;
             UpdatePreviewLoadWarn();   // 【用户要求】高分辨率素材红字提示(解码负载)✔
+            Crumb($"视频预览页 · 切到「{ViewModeName(mode)}」");   // 【2026-10-15】崩溃诊断的用户操作面包屑
             // 【两者同时 · 方案 B —— 已按用户实测撤回】用户实测:① 切换卡 ② 右边看着仍降采样(符合事先说明:
             // 并排每侧只有 ~775px,屏幕尺寸就是上限)③ **左边卡不动** ✗✗ 第③条是硬故障(把原片装进一个同时
             // 被对比机制驱动的播放器,装载/起播时序打架)⇒ 立即退回原合成片路径 ✔
@@ -7643,6 +7677,7 @@ public sealed partial class VideoView : UserControl
         try
         {
             PlayWatchBegin("预览·播放/暂停");
+            Crumb("视频预览页 · 播放/暂停");
             if (_compareMode) { ToggleComparePlayback(); return; }
             // 【倒装】单视图(mode 打印出来便于事后核对)用**这个视图的角色播放器**:
             //   看原片 → CmpPlayerTop;看处理效果 → CmpPlayerBottom(裁剪页 → PreviewPlayer,由 ViewPlayersOf 保证)
@@ -8954,6 +8989,7 @@ public sealed partial class VideoView : UserControl
     // ========================================================================================
     private async void EffectRunBtn_Click(object sender, RoutedEventArgs e)
     {
+        Crumb("视频预览页 · 点「开始预览」(真跑一小段)");
         if (_effBusy) return;
         if (EffectVideoCombo.SelectedItem is not VideoItem item) return;
         await StartEffectPreviewAsync(item, _effStart, _effRealLen);
@@ -9276,6 +9312,7 @@ public sealed partial class VideoView : UserControl
                 _cmpClipW = r.Width; _cmpClipH = r.Height;
             }
             Log($"对比片:合成完成({kind} · 用时 {sw.Elapsed.TotalSeconds:0.#} 秒 · {r.Detail})");
+            Crumb("视频预览页 · 对比片合成完成(切单播放器)");
             ApplyPreviewView();   // 若此刻正在看这一档 → 无缝换成单播放器(位置与播放状态都续上)
         });
     }
@@ -9829,6 +9866,21 @@ public sealed partial class VideoView : UserControl
                 }
             }
             catch { }
+            // 【2026-10-15 · 反馈"预览界面会闪退/卡退"】显存偏小的机器上,「两者同时 / 左右对比」
+            // 要**同时解码两条片**(页面上最多四条播放器都装着源),4K 原生解码时最吃紧,而用户的要求是
+            // "处理后的画面不降采样"(见 XAML 里 CmpPlayerBottom 的硬规矩)⇒ 这里只把"怎么办"写清楚,
+            // **不改任何解码/播放行为**、不弹窗、不挡操作(与上面几条红字提示同一口径)。
+            try
+            {
+                int vmode = PreviewViewRadios?.SelectedIndex ?? _lastViewMode;
+                if ((vmode == ViewBoth || vmode == ViewSplit)
+                    && SafeRender.TotalVramGB > 0 && SafeRender.TotalVramGB < 6.5)
+                {
+                    string vw = $"⚠ 本机显存 {SafeRender.TotalVramGB:0.#}GB:「{ViewModeName(vmode)}」要同时解码两条片(4K 素材更吃紧),比单视图更容易掉帧甚至卡住 —— 卡的话先切回「看原片 / 看处理效果」,或把预览倍率降到 2x";
+                    txt = string.IsNullOrEmpty(txt) ? vw : txt + "；" + vw;
+                }
+            }
+            catch { }
             PreviewLoadWarn.Text = txt ?? "";
             PreviewLoadWarn.Visibility = string.IsNullOrEmpty(txt) ? Visibility.Collapsed : Visibility.Visible;
         }
@@ -10261,6 +10313,7 @@ public sealed partial class VideoView : UserControl
 
     private void EffectCancelBtn_Click(object sender, RoutedEventArgs e)
     {
+        Crumb("视频预览页 · 点「取消」中止预览");
         PreviewDeckStatus("正在取消…");
         try { _effCts?.Cancel(); } catch { }
     }
@@ -10268,6 +10321,7 @@ public sealed partial class VideoView : UserControl
     /// <summary>「保存此预览」:把这次的预览成片另存到你选的位置(系统保存窗口)。</summary>
     private async void SavePreview_Click(object sender, RoutedEventArgs e)
     {
+        Crumb("视频预览页 · 点「保存此预览」");
         AppLogger.Info($"[save] 点击进入: hasResult={_effHasResult} outPath={_effOutPath ?? "(null)"}");
         if (string.IsNullOrEmpty(_effOutPath) || !File.Exists(_effOutPath))
         {

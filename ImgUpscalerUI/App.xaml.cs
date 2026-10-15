@@ -589,6 +589,12 @@ namespace ALHPro
         /// 崩溃诊断会把它一并写出:COMException 有时不带托管堆栈,靠这条才能定位到具体调用点。</summary>
         internal static string UiBreadcrumb = "";
 
+        /// <summary>【2026-10-15】最近一次**用户操作**(录像页/预览页/裁剪页…用户点了哪一步)。
+        /// 为什么不并进 UiBreadcrumb:那条会被"日志滚动到底/日志行追加"这类**高频内部动作**反复覆盖,
+        /// 真出问题时读出来只会是"日志行追加(界面文本框)",看不出用户当时在干什么。
+        /// 有反馈"预览界面会闪退/卡退"但拿不到现场 ⇒ 崩溃诊断里多这一行,下次就能直接指到那一步。</summary>
+        internal static string UiAction = "";
+
         /// <summary>崩溃时把 版本/系统/驱动/GPU/引擎/异常堆栈 写到磁盘(即使软件崩了也能拿到这份诊断)。</summary>
         private static void WriteCrashDiagnostic(Exception? ex)
         {
@@ -629,6 +635,8 @@ namespace ALHPro
                 // 只能靠时间线猜是哪一处 WinRT 调用 —— 2026-09-12 那次就是这样,查了半天才靠"崩前最后一行"
                 // 推断到日志刷新/自动滚动。有了这条,下次直接指到具体调用。
                 if (!string.IsNullOrEmpty(UiBreadcrumb)) sb.AppendLine("最近界面操作: " + UiBreadcrumb);
+                // 【用户操作面包屑·2026-10-15】与上一条互补:上一条是"界面在刷什么",这条是"用户点到了哪一步"。
+                if (!string.IsNullOrEmpty(UiAction)) sb.AppendLine("最近用户操作: " + UiAction);
                 System.IO.File.WriteAllText(path, sb.ToString());
                 AppLogger.Info("崩溃诊断已写入: " + path);
             }
