@@ -197,12 +197,17 @@ namespace ALHPro
             }
         }
 
+        /// <summary>上一次清理因"最近还在写"而保留的临时目录数(设置页「立即清理」拿它给用户一句实话:
+        /// 清完盘没变小,得让他知道是为什么)。</summary>
+        internal static int LastKeptLiveDirs;
+
         /// <summary>清理临时文件残留(系统 %TEMP%、用户自定义临时目录、本软件历史用过的临时根目录;imgup_*/alh_* 前缀,绝不碰用户文件)。
         /// 返回 (删除目录数, 删除文件数, 释放字节数, 是否因"任务处理中"整轮跳过),供"立即清理"反馈。</summary>
         internal static (int dirs, int files, long bytes, bool skipped) CleanupTempDirs()
         {
             int dirs = 0, files = 0;
             long bytes = 0;
+            LastKeptLiveDirs = 0;   // 因"最近还在写"而保留的临时目录数(每次清理重算)
             // 【修复 关窗误删正在用的临时目录 · 2026-09-16 用户实测】处理长视频时关窗,这里会把后台线程
             // 正在写的 imgup_video_* 工作目录整个删掉 → 线程下一次碰帧就 DirectoryNotFoundException(frames_final),
             // 日志里看着像"任务莫名失败"(用户截图里的"卡住"就是这一串的下游)。
@@ -252,16 +257,50 @@ namespace ALHPro
             // 【修复 崩溃/强杀后残留 200 多 G】TempRoot 会自动选"剩余最大盘",可能与 %TEMP% 不同盘——
             // 处理中途被防火墙杀/未响应强杀后,workDir(imgup_video_*) 残留在本盘不会被上面清到,累积成 200 多 G。
             try { AddCleanupRoot(EngineService.TempRoot); } catch { }
+            // 【2026-10-15 真机事故 · 跨版本删活目录】上面那道"有任务在跑就整轮跳过"的闸门
+            // (EngineService.AnyProcessing)是**进程内**的:它只看得见自己这个 App 在跑什么。
+            // 本软件与 ALH Pro Max 会落在**同一个临时根**(两边都按"剩余空间最大的固定盘 + \ALHProTemp"
+            // 自动选路径,本机都是 D:\ALHProTemp),各自的启动清理都只认自己的状态 ⇒ 谁后启动,谁就把对方
+            // **正在跑的**工作目录当残留删掉。现场(2026-10-15 20:17):Max 跑着一趟 300 帧验证任务
+            // (超分刚跑完 118.8 秒,刚进补帧第一段),本软件此时被打开 → 启动清理删掉
+            // D:\ALHProTemp\imgup_video_371e… ⇒ Max 下一秒 DirectoryNotFoundException:
+            // `Could not find a part of the path '…\imgup_video_371e…\seg_0_300_out'`,整趟白跑。
+            // 这类"任务莫名失败"以前一直查不到外部删除者,根因就在这里。
+            // 判据:树里**最新一次写入**距今 < 4 小时 ⇒ 不清(真在跑的任务每秒都在写帧,4 小时远长于任何
+            // "写帧→编码"之间的空档;静置 ≥4 小时的残照旧当残留清)。用户手动「立即清理」也走这条:
+            // 他点清理的动机常常正是"任务看着慢/盘不够",那一刻对面八成正跑着 —— 手一抖就是几小时白跑。
+            int keptLive = 0;
+            bool IsLiveWorkDir(string dir)
+            {
+                try
+                {
+                    var (sz, newestUtc) = AlhPro.Core.TempCleanup.TryDirSizeAndNewest(dir);
+                    if (!AlhPro.Core.TempCleanup.ShouldKeepLiveWorkDir(
+                            newestUtc, DateTime.UtcNow, AlhPro.Core.TempCleanup.DefaultLiveWorkWindow))
+                        return false;
+                    keptLive++;
+                    string idle = newestUtc == default
+                        ? "写入时间量不出来"
+                        : $"{Math.Max(0, (DateTime.UtcNow - newestUtc).TotalMinutes):F0} 分钟前还在写";
+                    AppLogger.Info($"临时目录 {dir} 本次不清理({idle},占 {sz / 1073741824.0:F1} GB)：" +
+                        "它可能是另一个窗口/ALH Pro Max 正在跑的任务 —— 两个产品共用同一个临时根,启动清理只看得见自己的处理状态;" +
+                        $"静置 ≥{AlhPro.Core.TempCleanup.DefaultLiveWorkWindow.TotalHours:F0} 小时的照旧当残留清");
+                    return true;
+                }
+                catch { return false; }
+            }
             foreach (var root in roots)
             {
                 try
                 {
                     foreach (var d in Directory.EnumerateDirectories(root, "imgup*"))
                     {
+                        if (IsLiveWorkDir(d)) continue;   // 【2026-10-15】最近还在写的:可能是另一个版本在跑,别删
                         try { dirs++; bytes += DirSize(d); Directory.Delete(d, true); } catch { /* 占用中忽略,下次再清 */ }
                     }
                     foreach (var d in Directory.EnumerateDirectories(root, "alh_*"))
                     {
+                        if (IsLiveWorkDir(d)) continue;   // 【2026-10-15】同上
                         try { dirs++; bytes += DirSize(d); Directory.Delete(d, true); } catch { /* 占用中忽略,下次再清 */ }
                     }
                     foreach (var f in Directory.EnumerateFiles(root, "alh_*.wav"))
@@ -317,6 +356,10 @@ namespace ALHPro
                 }
                 catch { }
             }
+            LastKeptLiveDirs = keptLive;
+            if (keptLive > 0)
+                AppLogger.Info($"清理临时文件残留:保留 {keptLive} 个最近还在写的临时目录(可能是另一个窗口/ALH Pro Max 正在跑的任务;" +
+                    $"删除 {dirs} 个目录 / {files} 个文件 / {bytes / 1024.0 / 1024.0:0.#} MB)");
             return (dirs, files, bytes, false);
         }
 
