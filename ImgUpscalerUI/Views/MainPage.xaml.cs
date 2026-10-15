@@ -3061,9 +3061,15 @@ public sealed partial class MainPage : Page
             try
             {
                 var (dirs, files, bytes, skipped) = App.CleanupTempDirs();
+                // 【2026-10-15】有目录因为"最近还在写"被留下时必须说清:不然用户只看到"清了 0 个、盘没变小"。
+                string liveNote = App.LastKeptLiveDirs > 0
+                    ? $"\n另外 {App.LastKeptLiveDirs} 个临时目录最近还在写,这次没清 —— 它们可能是另一个窗口或 ALH Pro Max 正在跑的任务"
+                      + "(两个产品共用同一个临时根;静置 4 小时后会自动当残留清掉)。"
+                    : "";
                 AppLogger.Info(skipped
                     ? "清理临时文件残留:已整轮跳过(有处理任务在跑,不删正在使用的临时文件/临时目录)"
-                    : $"已清理临时文件残留:目录 {dirs} 个、文件 {files} 个,释放 {bytes / 1048576.0:0.#} MB");
+                    : $"已清理临时文件残留:目录 {dirs} 个、文件 {files} 个,释放 {bytes / 1048576.0:0.#} MB"
+                      + (App.LastKeptLiveDirs > 0 ? $";保留 {App.LastKeptLiveDirs} 个最近还在写的临时目录" : ""));
                 var dlg = new ContentDialog
                 {
                     Title = skipped ? "已跳过清理" : "清理完成",
@@ -3071,7 +3077,7 @@ public sealed partial class MainPage : Page
                     {
                         Text = skipped
                             ? "当前有任务正在处理,已跳过这次清理。\n临时帧/临时目录正在被任务使用,删掉会让这一单白跑(以前关窗时删正在用的目录,任务就会报一句「找不到路径」)。\n任务结束后再点一次「立即清理」即可。"
-                            : $"已清理:目录 {dirs} 个 · 文件 {files} 个,释放 {bytes / 1048576.0:0.#} MB\n当前临时位置:{(string.IsNullOrWhiteSpace(AppSettings.TempDir) ? "自动" : AppSettings.TempDir)}",
+                            : $"已清理:目录 {dirs} 个 · 文件 {files} 个,释放 {bytes / 1048576.0:0.#} MB\n当前临时位置:{(string.IsNullOrWhiteSpace(AppSettings.TempDir) ? "自动" : AppSettings.TempDir)}" + liveNote,
                         TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
                     },
                     CloseButtonText = "好的",

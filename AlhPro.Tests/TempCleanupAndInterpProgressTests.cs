@@ -126,6 +126,42 @@ public class TempCleanupAndInterpProgressTests
         Assert.Contains("Title = skipped ? \"已跳过清理\" : \"清理完成\",", mp);
     }
 
+    /// <summary>⑥b【2026-10-15 真机事故 · 跨版本删活目录】启动清理必须给"最近还在写"的临时目录放行。
+    ///
+    /// 【现场】ALH Pro Max 正跑一趟 300 帧验证任务(20:15:40 起;20:17:49 超分 300 帧刚跑完、118.8 秒,
+    /// 20:17:50 刚进补帧第一段),本软件 20:17:51 被打开 —— 启动清理把两个产品**共用**的临时根
+    /// `D:\ALHProTemp` 下的 `imgup_video_*` 全删了,Max 那个活动工作目录也在内 ⇒ Max 下一秒在
+    /// `InterpSegmentAsync` 里抛 `DirectoryNotFoundException: Could not find a part of the path
+    /// 'D:\ALHProTemp\imgup_video_371e…\seg_0_300_out'`,整趟 138 秒白跑。
+    /// 根因不是"谁写错了":上面那道 `AnyProcessing` 闸门(见本文件第 ①组)是**进程内**的,看不见另一个
+    /// 产品在跑什么;两边自动选临时根又都落在同一个盘(`<剩余最大的盘>\ALHProTemp`)⇒ 谁后启动谁删对方的活目录。
+    /// 判据:树里**最新一次写入**距今 < 4 小时 ⇒ 跳过(见 AlhPro.Core.TempCleanup)。
+    /// 用户手动「立即清理」也走这条:他点清理的动机常常正是"任务看着慢/盘不够",那一刻对面八成正跑着;
+    /// 代价只是最近 4 小时写过的残留这次没清掉(设置页会说明"没清几个、为什么")。</summary>
+    [Fact]
+    public void Startup_cleanup_keeps_recently_written_work_dirs()
+    {
+        var app = ReadRepoFile("ImgUpscalerUI", "App.xaml.cs");
+
+        Assert.Contains("AlhPro.Core.TempCleanup.TryDirSizeAndNewest(dir)", app);
+        Assert.Contains("AlhPro.Core.TempCleanup.ShouldKeepLiveWorkDir(", app);
+        Assert.Contains("AlhPro.Core.TempCleanup.DefaultLiveWorkWindow", app);
+
+        // 两条前缀(imgup* / alh_*)都必须过这道关:只护一条会漏掉另一批工作目录
+        var code = StripLineComments(app);
+        Assert.Equal(2, Regex_Count(code, @"if \(IsLiveWorkDir\(d\)\) continue;"));
+        // 而且必须排在真正删除之前
+        int liveAt = code.IndexOf("if (IsLiveWorkDir(d)) continue;", StringComparison.Ordinal);
+        int delAt = code.IndexOf("Directory.Delete(d, true);", StringComparison.Ordinal);
+        Assert.True(liveAt > 0 && delAt > liveAt, "放行判断必须排在删除之前");
+
+        // 保留了几个要如实记账(不然用户只看到"清了 0 个、盘没变小")
+        Assert.Contains("保留 {keptLive} 个最近还在写的临时目录", app);
+        Assert.Contains("LastKeptLiveDirs = keptLive;", app);
+        var mp = ReadRepoFile("ImgUpscalerUI", "Views", "MainPage.xaml.cs");
+        Assert.Contains("App.LastKeptLiveDirs", mp);   // 弹窗里要说清"有几个没清、为什么"
+    }
+
     // ===================== 三、补帧段级进度:不许把"正在重算"演成"卡死" =====================
 
     /// <summary>⑦ 段级进度包装器:帧号【不再】被 Math.Max 钳成单调;变小 = 新一轮引擎重算本段,如实采用。
