@@ -283,7 +283,7 @@ namespace ALHPro
                         ? "写入时间量不出来"
                         : $"{Math.Max(0, (DateTime.UtcNow - newestUtc).TotalMinutes):F0} 分钟前还在写";
                     AppLogger.Info($"临时目录 {dir} 本次不清理({idle},占 {sz / 1073741824.0:F1} GB)：" +
-                        "它可能是另一个窗口/ALH Pro Max 正在跑的任务 —— 两个产品共用同一个临时根,启动清理只看得见自己的处理状态;" +
+                        "它可能是另一个窗口/ALH Pro Max 正在跑的任务 —— 两个产品共用同一个临时根,而这道清理只看得见自己这个进程的处理状态;" +
                         $"静置 ≥{AlhPro.Core.TempCleanup.DefaultLiveWorkWindow.TotalHours:F0} 小时的照旧当残留清");
                     return true;
                 }
