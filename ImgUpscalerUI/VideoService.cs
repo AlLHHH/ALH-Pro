@@ -6457,6 +6457,44 @@ public static class VideoService
     /// 某一种编码硬解不了(如旧卡硬解 AV1)只禁用该编码,其它编码仍优先硬解,不再"一次失败、全会话软解"。</summary>
     private static readonly System.Collections.Generic.HashSet<string> _hwDecodeBrokenCodecs = new();
 
+    /// <summary>【2026-10-15 · 预览"卡"的定位前提】本会话已知"某素材是什么编码"(按路径缓存,只当缓存用)。
+    /// 【为什么预览页需要它】预览**播放**走 Media Foundation(系统解码器),而处理路径走自带 ffmpeg 的
+    /// d3d11va 硬解 —— 两套完全不同的解码栈。HEVC/AV1 这类编码,系统没装扩展时会**静默软解**
+    /// ⇒ 1080p 还凑合、4K 必卡。没有"源是什么编码"这一行事实,所有关于"卡在哪一层"的说法都只是猜。</summary>
+    private static readonly System.Collections.Generic.Dictionary<string, string> _codecByPath =
+        new(System.StringComparer.OrdinalIgnoreCase);
+    private static readonly object _codecByPathLock = new();
+
+    /// <summary>最近一次探到的源素材编码(如 h264/hevc/av1);未知为 null。供界面与日志引用。</summary>
+    public static string? LastSourceCodecName { get; private set; }
+
+    /// <summary>探"这个文件是什么编码"(公开给预览页用;失败返回 "",绝不抛)。已探过的路径直接命中缓存,
+    /// 所以同一素材切视图/反复播放不会重复跑 ffprobe。</summary>
+    public static async Task<string> ProbeSourceCodecAsync(string video, CancellationToken ct)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(video)) return "";
+            lock (_codecByPathLock)
+            {
+                if (_codecByPath.TryGetValue(video, out string? hit)) return hit;
+            }
+            string ff = FfmpegPath ?? "";
+            string codec = ff.Length > 0 ? await ProbeVideoCodecName(ff, video, ct) : "";
+            if (codec.Length > 0)
+            {
+                LastSourceCodecName = codec;
+                lock (_codecByPathLock)
+                {
+                    if (_codecByPath.Count > 16) _codecByPath.Clear();   // 只当缓存用,不做无界增长
+                    _codecByPath[video] = codec;
+                }
+            }
+            return codec;
+        }
+        catch { return ""; }
+    }
+
     /// <summary>探测输入视频的编码器名(如 h264/hevc/av1),用于区分硬解可用性;失败/探不出返回 ""。</summary>
     private static async Task<string> ProbeVideoCodecName(string ffmpeg, string video, CancellationToken ct)
     {
