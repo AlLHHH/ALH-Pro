@@ -3088,7 +3088,47 @@ public static class VideoService
                                         RetryFileMove(f, dst);
                                 }
                                 catch { try { RetryFileCopy(f, Path.Combine(upOutput, Path.GetFileName(f))); } catch { } }
-                            }                            // ===== 回填重复槽位:拷贝代表帧的超分输出到该组重复槽(决策②=拷贝,非硬链接)=====
+                            }
+                            // 【缺帧审计 · 2026-10-15】引擎退出码 0 却少写若干帧时,旧行为是**完全静默**:
+                            // 代表帧没有产出 ⇒ 下面回填循环的第一句 `if (!File.Exists(repJpg)) continue;` 会连同它的
+                            // **全部重复槽**一起跳过 ⇒ 合帧/编码按 `frame_%06d` 连续编号读时直接少帧(或撞上"文件不存在"报错),
+                            // 而日志里查不到任何线索。真机实测(2026-10-15,RTX 4060 Laptop,老版 2022 引擎):
+                            // 目录模式 `-t 384` 是"同批里好帧与黑帧混排、退出码仍为 0",`-t 320` 是整批全黑。
+                            // 【本审计只做"帧名/帧数"对账】像素判黑属 2026-09-27 作者明令删除的"事后判黑",**不接回**
+                            // (见本文件下方「源帧黑场豁免判据删除」留档与 AlhPro.Core.FrameInspect 的类注释)。
+                            // 缺失帧用现有 WriteFallbackFrame(源帧缩放、尺寸与同目录其他帧对齐)兜底 ——
+                            // 与"整批失败 ⇒ 该批回退原帧"同一手法、同一尺寸口径(混分辨率会让容器按第一帧声明流头 ⇒ 花屏)。
+                            {
+                                var repNames = new List<string>();
+                                foreach (var g in curPG) repNames.Add(Path.GetFileName(upFiles[g.rep]));
+                                var landed = new List<string>();
+                                try
+                                {
+                                    foreach (var f in Directory.EnumerateFiles(upOutput, "*.*"))
+                                    {
+                                        try { if (new FileInfo(f).Length > 0) landed.Add(Path.GetFileName(f)); } catch { }   // 0 字节 = 没产出
+                                    }
+                                }
+                                catch { }
+                                var missingReps = AlhPro.Core.BatchOutputAudit.MissingOutputs(repNames, landed);
+                                if (missingReps.Count > 0)
+                                {
+                                    var missingStems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                                    foreach (var n in missingReps) missingStems.Add(AlhPro.Core.BatchOutputAudit.FrameStem(n));
+                                    int filled = 0;
+                                    foreach (var g in curPG)
+                                    {
+                                        if (!missingStems.Contains(AlhPro.Core.BatchOutputAudit.FrameStem(Path.GetFileName(upFiles[g.rep]))))
+                                            continue;
+                                        foreach (var s in g.slots) { WriteFallbackFrame(upFiles[s], upOutput, upScale); filled++; }
+                                    }
+                                    AppLogger.Warn($"⚠ 超分批次 {batchInfo.Number}/{batchCount}:引擎少写了 {missingReps.Count} 个代表帧的产出"
+                                        + $"({string.Join(", ", missingReps.Take(3))}{(missingReps.Count > 3 ? " …" : "")})"
+                                        + $"——连同重复槽共 {filled} 帧已用源帧兜底补齐(尺寸对齐,不中断任务);"
+                                        + "实际分块/引擎/帧数见同批上面那行「超分批次」");
+                                }
+                            }
+                            // ===== 回填重复槽位:拷贝代表帧的超分输出到该组重复槽(决策②=拷贝,非硬链接)=====
                             // 硬约束:重复槽与代表帧同批 → 代表帧输出已在本批 upOutput 落盘,此处同 task 内立即拷贝,
                             // 无跨批依赖(批并行跑,跨批引用会在代表帧未产出时崩溃)。
                             // 拷贝路径与 :1486/:1512 的"src==dst 原地重写"互补:这里写不同文件(rep→slot),不会踩到
@@ -3129,7 +3169,10 @@ public static class VideoService
                                     + $"引擎 {engineSecDbg:0.0}s = {engineSecDbg * 1000.0 / perDbg:0} ms/帧 · "
                                     + $"落盘+回填 {landSecDbg:0.00}s = {landSecDbg * 1000.0 / perDbg:0} ms/帧 · "
                                     + $"本批墙钟 {swBatchDbg.Elapsed.TotalSeconds:0.0}s · "
-                                    + $"引擎参数 -s {upScale:0.##} -t 0(自动){SafeRender.GetEngineThreadArgs()} -f jpg · "
+                                    + (onnxModelPath == null
+                                        ? $"引擎参数 -s {upScale:0.##} -t 0(首跑=引擎自选 auto;显存不足才降 512/256/128,"
+                                          + $"**实际生效值见同批上面那行「超分批次」**){SafeRender.GetEngineThreadArgs()} -f jpg · "
+                                        : $"引擎参数(稳定引擎 ONNX) -s {upScale:0.##} · ")
                                     + $"并发路数 {(fastMode ? 1 : SafeRender.GetVideoConcurrency())} · "
                                     + $"批开始空闲显存 {SafeRender.FreeVramGB:0.#}G");
                             }
@@ -3304,13 +3347,24 @@ public static class VideoService
                 // 补帧方法、分段(segBounds)、帧数对齐(globalTarget)、时长表(finalDurs)全部照旧,不分叉。
                 if (upscaleFirst)
                 {
-                    // 超分输出必须全是 .jpg:InterpSegmentAsync 按 frame_%06d.jpg 读输入(文件名硬编码 .jpg),
-                    // 而超分异常回退路径可能在 upOutput 留下 .png(见本阶段的 File.Copy 兜底)。这里统一成 JPG,
+                    // ===== 【2026-10-15 修 · 用户报「补帧突然极慢 / h264 处理失败」的根因】补帧必须吃**缩回后的帧** =====
+                    // 上面超分收尾处(`framesFinal = upOutput;` → 1x 缩回 ⇒ `framesFinal = shrunkDir;`)已经把帧缩回原始尺寸了,
+                    // 而这里原先一律把 upOutput(引擎倍率尺寸;4x 模型就是 16 倍面积)喂给补帧,后果三条:
+                    //   ① 缩回白跑一遍(真机实测 1440×1440→5760×5760:缩回本身要跑 + 盘上多一整份帧);
+                    //   ② 补帧在 5760×5760(33.2 Mpx)上跑 ⇒ 命中「ncnn 大尺寸静默输出全黑」故障带 ⇒ 被安全规则强制改用
+                    //      ONNX 稳定引擎(**每段**建会话数秒),用户看到的就是「补帧慢得离谱」;
+                    //   ③ 成片尺寸也错(1x 档却输出 4x),而 H.264 尺寸上限是按**计划输出尺寸**(1x)判的 ⇒ 真编码时帧是
+                    //      5760×5760 > 4096 ⇒ 硬编连续失败 ⇒ 用户看到「h264 处理失败」。
+                    // 口径本来就是「1x 缩回后补帧吃源尺寸帧」(见下面 RIFE 探测那段注释与 PipelineOrderPlan 的 areaScale),
+                    // 这里把实现对齐口径:缩回成功读缩回目录,缩回失败/不需要则照旧读超分输出。
+                    string interpInDir = upscaleShrink1x ? framesFinal : upOutput;
+                    // 补帧输入必须全是 .jpg:InterpSegmentAsync 按 frame_%06d.jpg 读输入(文件名硬编码 .jpg),
+                    // 而超分异常回退路径可能在超分输出目录留下 .png(见本阶段的 File.Copy 兜底)。这里统一成 JPG,
                     // 正常路径(引擎直出 JPG)是空跑,不会重编码。
                     // 【G】同样传 progress + ct(可取消)并上报"整理帧(JPG)"进度;百分比沿用超分阶段结束值 upEnd。
                     {
                         var reencWatch = System.Diagnostics.Stopwatch.StartNew();
-                        int reencFrames = ReencodeDirPngToJpg(upOutput, 0, progress, ct, upEnd);
+                        int reencFrames = ReencodeDirPngToJpg(interpInDir, 0, progress, ct, upEnd);
                         reencWatch.Stop();
                         LastFrameReencodeSeconds = reencWatch.Elapsed.TotalSeconds;
                         LastFrameReencodeFrames = reencFrames;
@@ -3323,14 +3377,15 @@ public static class VideoService
                     int probeW = srcW, probeH = srcH;
                     try
                     {
-                        var f0 = Directory.EnumerateFiles(upOutput, "*.jpg")
+                        var f0 = Directory.EnumerateFiles(interpInDir, "*.jpg")
                             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).FirstOrDefault();
                         if (f0 != null) { using var b0 = new System.Drawing.Bitmap(f0); probeW = b0.Width; probeH = b0.Height; }
                     }
                     catch { }
-                    AppLogger.Info($"[阶段顺序] 超分阶段完成({total} 帧)→ 进入补帧阶段(输入 = 超分输出 {Path.GetFileName(upOutput)} {probeW}×{probeH},{total} 帧)");
+                    AppLogger.Info($"[阶段顺序] 超分阶段完成({total} 帧)→ 进入补帧阶段(输入 = {Path.GetFileName(interpInDir)} {probeW}×{probeH},{total} 帧)"
+                        + (ReferenceEquals(interpInDir, upOutput) ? "" : $"(1x 缩回后的帧;超分输出 {Path.GetFileName(upOutput)} 不参与补帧)"));
                     xInterpWatch.Start();   // 【任务 X3】新顺序的补帧阶段(与旧顺序那次互斥,Start/Stop 累计)
-                    await InterpStageAsync(upOutput, framesInterp, probeW, probeH, stageFractionalMult, stageTargetFrames);
+                    await InterpStageAsync(interpInDir, framesInterp, probeW, probeH, stageFractionalMult, stageTargetFrames);
                     xInterpWatch.Stop();
                     framesFinal = framesInterp;   // 编码/合帧继续读 framesFinal(= 补帧输出)
                 }

@@ -2297,12 +2297,32 @@ public static partial class EngineService
             // fullFrame=true 用生产帧尺寸 1080×1920 —— 见下方 overload 的说明。
             var inPng = Path.Combine(EngineService.TempRoot, $"eng_probe_{Guid.NewGuid():N}.png");
             var outPng = Path.Combine(EngineService.TempRoot, $"eng_probe_out_{Guid.NewGuid():N}.png");
+            // 【2026-10-15 · 生产帧尺寸探测改成"目录批处理 + 生产参数形态"】
+            // 【为什么要换】本探测原来走**单文件**且**不下发 -f**(引擎默认写 PNG),而生产视频超分走的是
+            //   `EngineService.UpscaleDirAsync` ⇒ **目录批处理 + `-f jpg`**。真机实测(2026-10-15,RTX 4060 Laptop):
+            //   **同一帧、同一个 tile,单文件正常、目录模式却出纯黑帧(32297B、平均亮度 0)、退出码仍是 0**
+            //   (老版 2022 exe `-t 384`;单文件同参数 721632B 正常)。⇒ "单文件探测通过"根本不能推出
+            //   "视频那条路能出图" —— 探测必须跑生产真正走的形态,否则"设备可用"是个假结论(设备会被继续用,成片一路黑)。
+            //   `-t` 仍保持 0(auto):生产首跑就是 auto(`UpscaleDirAsync` 的 RunEngAsync 起步 t=0),
+            //   实测两版引擎的 auto 都正常;显存不足时的降级(512/256/128)不属探测职责。
+            // 【只放 1 帧】探测时长必须留在 60 秒超时内(x4plus 单帧实测 24.1s,两帧就会撞超时 ⇒ 健康卡被误判不可用);
+            //   实测**1 帧的目录批处理就足以复现**上面那个形态差异,不需要更多帧。
+            // 【小图档(fullFrame=false)保持单文件原样】它只回答"引擎在这张卡上能不能起来"(挑卡用),
+            //   320×240 上单文件/目录/格式三种形态都不复现黑帧(实测),不动它 = 不动挑卡行为。
+            var probeInDir = Path.Combine(EngineService.TempRoot, $"eng_probe_in_{Guid.NewGuid():N}");
+            var probeOutDir = Path.Combine(EngineService.TempRoot, $"eng_probe_out_{Guid.NewGuid():N}");
+            var probeOutFiles = new List<string>();
             try
             {
+                string probeInput = inPng;       // 引擎 -i:fullFrame 传目录(生产形态),小图档传单文件
+                string probeOutput = outPng;     // 引擎 -o
                 if (fullFrame)
                 {
                     // 生产帧尺寸(1080×1920 = 短竖屏视频原生帧):只有够大才复现"小图能过、真实分辨率静默出空帧/黑帧"。
                     // 三段内容刻意都不黑(上亮/中灰/下中亮):这样"某个 1/3 条带近黑"只可能来自引擎故障,而不是素材本身。
+                    // 目录模式要求输入/输出目录都已存在(见 UpscaleDirAsync 的同名注释)。
+                    Directory.CreateDirectory(probeInDir);
+                    Directory.CreateDirectory(probeOutDir);
                     using (var bmp = new System.Drawing.Bitmap(1080, 1920))
                     {
                         using (var g = System.Drawing.Graphics.FromImage(bmp))
@@ -2313,8 +2333,10 @@ public static partial class EngineService
                             using var b2 = new System.Drawing.SolidBrush(System.Drawing.Color.FromArgb(150, 158, 140));
                             g.FillRectangle(b2, 0, 1280, 1080, 640);                                    // 下 1/3:中亮
                         }
-                        bmp.Save(inPng, System.Drawing.Imaging.ImageFormat.Png);
+                        bmp.Save(Path.Combine(probeInDir, "probe_000001.png"), System.Drawing.Imaging.ImageFormat.Png);
                     }
+                    probeInput = probeInDir;
+                    probeOutput = probeOutDir;
                 }
                 else
                 {
@@ -2329,23 +2351,24 @@ public static partial class EngineService
                         bmp.Save(inPng, System.Drawing.Imaging.ImageFormat.Png);
                     }
                 }
-                // 引擎参数:fullFrame=false 统一 -s 2(2x 模型,与原口径逐字一致);
-                // fullFrame=true 用与生产【逐字一致】的形态:真实模型 + -t 0 + 现行 -j(1:1:1)。
+                // 引擎参数:fullFrame=false 统一 -s 2(2x 模型,与原口径逐字一致,单文件);
+                // fullFrame=true = 生产形态【目录批处理 + 真实模型 + -t 0 + 现行 -j(1:1:1) + `-f jpg`】——
+                //   与 `UpscaleDirAsync` 的分支逐项对齐(outFormat 在生产视频路径恒为 "jpg",见 VideoService 的两处调用)。
                 string args;
                 if (fullFrame && engine == "waifu2x")
                 {
                     var modelDir = Path.Combine(Path.GetDirectoryName(exe)!, string.IsNullOrEmpty(model) ? "models-cunet" : model);
-                    args = $"-i \"{inPng}\" -o \"{outPng}\" -s 2 -n 0 -t 0 -g {gpuId} -m \"{modelDir}\"{SafeRender.GetEngineThreadArgs()}";
+                    args = $"-i \"{probeInput}\" -o \"{probeOutput}\" -s 2 -n 0 -t 0 -g {gpuId} -m \"{modelDir}\"{SafeRender.GetEngineThreadArgs()} -f jpg";
                 }
                 else if (fullFrame && engine == AlhPro.Core.RealCugan.EngineName)
                 {
                     // 【Real-CUGAN:CLI 与 Real-ESRGAN 不兼容,不能照抄下一行】`-n` 是**降噪档**、`-m` 才是模型目录。
                     // 把它当 realesrgan 拼(`-m <模型目录> -n <模型名>`)会得到一个非法降噪档名 ⇒ 引擎报错或按错档跑。
-                    args = RealCuganArgs(inPng, outPng, model, gpuId, engineScale: 2, tta: false, tile: 0);
+                    args = RealCuganArgs(probeInput, probeOutput, model, gpuId, engineScale: 2, tta: false, tile: 0, format: "jpg");
                 }
                 else if (fullFrame)
                 {
-                    args = $"-i \"{inPng}\" -o \"{outPng}\" -s 2 -m {AlhPro.Core.EsrganModelDir.For(model)} -n {model ?? "realesrgan-x4plus"} -t 0 -g {gpuId}{SafeRender.GetEngineThreadArgs()}";
+                    args = $"-i \"{probeInput}\" -o \"{probeOutput}\" -s 2 -m {AlhPro.Core.EsrganModelDir.For(model)} -n {model ?? "realesrgan-x4plus"} -t 0 -g {gpuId}{SafeRender.GetEngineThreadArgs()} -f jpg";
                 }
                 else
                 {
@@ -2392,27 +2415,57 @@ public static partial class EngineService
                     // 【失败形态分类,决定对用户怎么说】
                     // 退出码非 0 = 初始化/运行期崩溃(0xC0000005 访问违例是驱动缺陷的典型特征);
                     // 退出码 0 但无产出/产出 0 字节 = 静默失败;产出非空但近黑 = 坏帧(另一类问题)。
+                    // 产出文件:fullFrame 走**目录模式** ⇒ 产出在 probeOutDir 里(引擎还会改名:带 alpha 的 PNG 直出 JPG
+                    // 时写成 "xxx.jpg.png",见 EnsureFinalOutput 的注释),所以这里按目录枚举、不看固定文件名。
+                    if (fullFrame)
+                    {
+                        try
+                        {
+                            probeOutFiles = Directory.Exists(probeOutDir)
+                                ? EnumerateImageFiles(probeOutDir).ToList()
+                                : new List<string>();
+                        }
+                        catch { probeOutFiles = new List<string>(); }
+                    }
+                    else if (File.Exists(outPng))
+                    {
+                        probeOutFiles = new List<string> { outPng };
+                    }
+                    var nonEmptyOut = new List<string>();
+                    foreach (var f in probeOutFiles)
+                    {
+                        try { if (new FileInfo(f).Length > 0) nonEmptyOut.Add(f); } catch { }
+                    }
                     if (p.ExitCode != 0)
                         Note(AlhPro.Core.ProbeFailureKind.CrashExitCode, $"exit=0x{p.ExitCode:X8}");
-                    else if (!File.Exists(outPng))
-                        Note(AlhPro.Core.ProbeFailureKind.NoOutput, "退出码 0 但无产出文件");
-                    else if (new FileInfo(outPng).Length == 0)
+                    else if (probeOutFiles.Count == 0)
+                        Note(AlhPro.Core.ProbeFailureKind.NoOutput,
+                            fullFrame ? "退出码 0 但输出目录里没有任何帧图" : "退出码 0 但无产出文件");
+                    else if (nonEmptyOut.Count == 0)
                         Note(AlhPro.Core.ProbeFailureKind.EmptyOutput, "产出文件 0 字节");
                     else
                         Note(AlhPro.Core.ProbeFailureKind.DefectiveFrame, "产出非空,但判为缺陷帧(近黑/带状近黑)");
-                    // 判定:退出码 0 且输出文件存在(引擎正常出图)
-                    bool ok = p.ExitCode == 0 && File.Exists(outPng) && new FileInfo(outPng).Length > 0;
-                    // 【黑帧自检】引擎输出存在但全黑(静默黑帧 bug,如旧 ncnn on 50系/AMD 驱动异常)→ 该设备视为不可用,
+                    // 判定:退出码 0 且至少有一帧非空产出(引擎正常出图)
+                    bool ok = p.ExitCode == 0 && nonEmptyOut.Count > 0;
+                    // 【黑帧自检】引擎输出存在但全黑/带状黑(静默黑帧 bug,如旧 ncnn 在部分驱动上)→ 该设备视为不可用,
                     // 立即改用其它卡/ONNX;否则黑帧设备会被误判"可用",后续补帧/超分一路黑。
                     // 判据 = FrameInspect.IsDefectiveFrame(整帧近黑【或】任一 1/3 主条带近黑)——
                     // 带状黑("下 2/3 全黑、上 1/3 正常")也拦得住,不是只查整帧全黑。
+                    // 【为什么逐帧判】(2026-10-15)目录模式实测会出现"同批里好帧与黑帧混排、退出码 0"
+                    // (老版 2022 exe `-t 384`)⇒ 只判"第一张产出"会漏;这里对**每一张非空产出**判。
                     // 【2026-09-27】事后判黑已按作者要求删除(作者反馈:黑色转场内容被误判 ⇒ 转 ONNX 跑的超级慢);
-                    // 这里是**事前探测**,保留(探测输入是程序自造图,见上面 2207-2234 的生成段,不依赖用户素材)。
-                    if (ok) { try { if (IsBlackProbeOutput(outPng)) { ok = false; } } catch { } }
+                    // 这里是**事前探测**,保留(探测输入是程序自造图,见上面的生成段,不依赖用户素材)。
+                    if (ok)
+                    {
+                        foreach (var f in nonEmptyOut)
+                        {
+                            try { if (IsBlackProbeOutput(f)) { ok = false; break; } } catch { }
+                        }
+                    }
                     if (ok)
                     {
                         AppLogger.Info($"[探测] 引擎 {engine} GPU(-g {gpuId})可用(" +
-                            (fullFrame ? "生产帧尺寸 1080×1920 出图,非黑/非带状黑" : "320×240 小图出图,非黑") + ")");
+                            (fullFrame ? "生产形态:目录批处理 + -f jpg + 生产帧尺寸 1080×1920 逐帧出图,非黑/非带状黑" : "320×240 小图出图,非黑") + ")");
                         return new AlhPro.Core.ProbeAttempt(true, AlhPro.Core.ProbeFailureKind.None, "probe ok");
                     }
                     AppLogger.Warn($"[探测] 引擎 {engine} GPU(-g {gpuId})探测不可用({AlhPro.Core.ProbeDiagnosis.ShortName(failKind)}"
@@ -2440,6 +2493,9 @@ public static partial class EngineService
             {
                 try { File.Delete(inPng); } catch { }
                 try { File.Delete(outPng); } catch { }
+                // 目录模式的探测目录(可能带引擎写出的帧:实测单帧 2x ≈0.9MB JPG)
+                try { if (Directory.Exists(probeInDir)) Directory.Delete(probeInDir, true); } catch { }
+                try { if (Directory.Exists(probeOutDir)) Directory.Delete(probeOutDir, true); } catch { }
             }
         }
         catch (Exception ex)
@@ -3685,6 +3741,12 @@ public static partial class EngineService
         var watchDir = watchStage != null ? outputDir : null;
         var watchTotal = watchStage != null ? inCount : 0;
 
+        // 【诊断 · 2026-10-15】本批最终**真正生效**的引擎 exe 与 `-t`(见方法末尾的「超分批次」小结行)。
+        // 【为什么必须有】旧日志里只有引擎名(realesrgan)与"路线=ncnn-Vulkan":**看不出选中的是 2026 重编版还是
+        // 2022 老版 exe**(FindRealESRGAN 会静默兜底到老版),也看不出 OOM 降级后实际跑的是 512/256/128
+        // (调用方那条「超分诊断」写的是首跑的 `-t 0(自动)`)。而排查"某批静默出黑帧/少出帧"时,恰好只需要这两项。
+        string usedExeName = "";
+        int usedTile = 0;
         // 显存不足(如 vkAllocateMemory 失败)时自动降分块重试,避免爆显存崩溃
         async Task RunEngAsync(string exe, Func<int, string> buildArgs)
         {
@@ -3697,10 +3759,12 @@ public static partial class EngineService
             // 现在:调用点必须用 {t}(正常路径 t=0 与旧行为逐字一致),OOM 时才真正改成显式小分块。
             int t = 0;
             int attempts = 0;
+            usedExeName = Path.GetFileName(exe);
             while (true)
             {
                 try
                 {
+                    usedTile = t;   // 本批"最终生效"的分块(重试时会被下一轮覆盖 ⇒ 成功那一次的值留在这里)
                     await RunEngFallbackGpuAsync(exe, buildArgs(t), progress, ct, watchStage ?? "", watchTotal, watchDir, globalBaseFrames, globalTotalFrames, pctLo, pctHi, onEngineReady).ConfigureAwait(false);
                     return;
                 }
@@ -3814,6 +3878,16 @@ public static partial class EngineService
         }
 
         var outCount = Directory.EnumerateFiles(outputDir).Count();
+        // 【诊断 · 2026-10-15】本批小结(只写日志文件):如实报出"哪支 exe / 最终生效的 -t / 格式 / 帧数"。
+        // 【为什么要它】调用方那条「超分诊断」写的是首跑值 `-t 0(自动)`(OOM 降级后实际跑 512/256/128),
+        // 而且"引擎少写了几帧"这件事在旧日志里没有任何痕迹 —— 用户报"视频超分失败/合帧失败"时,
+        // 诊断包里这两项恰好是唯一能定性的信息。放在 throw 之前 ⇒ 失败那批也留痕。
+        AppLogger.Info($"[超分批次] {engine}/{model} · 引擎 {usedExeName} · -s {engineScale} -t {usedTile}{(usedTile == 0 ? "(auto)" : "")} -f {outFormat}"
+            + $" · 输入 {inCount} 帧 / 输出 {outCount} 帧");
+        if (outCount < inCount)
+            AppLogger.Warn($"⚠ 超分批产出不足:输入 {inCount} 帧 / 输出 {outCount} 帧(缺 {inCount - outCount})"
+                + $"——引擎 {usedExeName} -t {usedTile}{(usedTile == 0 ? "(auto)" : "")} -f {outFormat};"
+                + "调用方会按帧名对账并对缺失帧用源帧兜底(尺寸对齐),不再静默少帧");
         // 【2026-09-27】原先这里还有 ProbeBatchBlackOutputHint(批量输出抽样判黑 → 记 Warn),已按作者要求删除:
         // 那是"引擎产出之后判黑帧"的事后判定,素材的黑色转场/夜戏会被它反复命中,日志刷屏且误导排查。
         // 代价:引擎静默出黑片时不再有这条线索 —— 输出端黑场自检(只报数字、不参与判定)仍是唯一留痕处。
