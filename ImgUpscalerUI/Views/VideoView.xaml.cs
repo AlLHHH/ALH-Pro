@@ -4900,6 +4900,7 @@ public sealed partial class VideoView : UserControl
         // 目的只有一个:万一真出问题,日志里能说清"当时是什么负载",不必再靠猜。不改任何行为。
         try
         {
+            JankWatchStop(false);   // 进页面即复位"卡顿计量"(上一页残留的观察作废)
             Crumb((_trimMode ? "裁剪页" : "视频预览页") + " · 进入:" + item.Name);
             int loaded = 0;
             foreach (var el in new[] { PreviewPlayer, EffectPlayer, CmpPlayerTop, CmpPlayerBottom })
@@ -4908,6 +4909,33 @@ public sealed partial class VideoView : UserControl
             }
             AppLogger.Info($"[预览] 进入{(_trimMode ? "裁剪" : "预览")}页:{item.Name} · {item.BaseInfo} · " +
                 $"显存 {SafeRender.TotalVramGB:0.#}GB(空闲 {SafeRender.FreeVramText}) · 已装载播放器 {loaded}/4 · 视图=看原片");
+            // 【2026-10-15 · "预览卡"定位的第一事实】源素材是什么编码 —— 预览**播放**走 Media Foundation
+            // (系统解码器),与处理路径那套自带 ffmpeg 的 d3d11va 硬解**完全是两条路**;HEVC/AV1/VP9 这类
+            // 编码没装系统扩展时会静默软解(4K 软解必卡)。探测在后台线程跑(ffprobe ≈50ms,按路径缓存),
+            // 只写日志、不动界面、不改任何播放行为。
+            string srcPath = item.Path;
+            _jankSrcPath = srcPath;   // 万一这次播放真的卡了,解码吞吐自检要用它
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    string codec = await VideoService.ProbeSourceCodecAsync(srcPath, CancellationToken.None);
+                    string cn = codec.ToLowerInvariant() switch
+                    {
+                        "hevc" or "h265" => "H.265(HEVC)",
+                        "h264" or "avc" => "H.264(AVC)",
+                        "av1" => "AV1",
+                        "vp9" => "VP9",
+                        "mpeg4" => "MPEG-4",
+                        "" => "未知(ffprobe 没探到)",
+                        _ => codec.ToUpperInvariant(),
+                    };
+                    bool needsExt = codec.ToLowerInvariant() is "hevc" or "h265" or "av1" or "vp9";
+                    AppLogger.Info($"[预览解码] 素材 {item.Name} 源编码={cn} · 预览播放走 Media Foundation(系统解码器)"
+                        + (needsExt ? " —— 该编码要有系统扩展才有硬解,没装就是软解(4K 软解必卡)" : ""));
+                }
+                catch { }
+            });
         }
         catch { }
     }
@@ -5985,6 +6013,174 @@ public sealed partial class VideoView : UserControl
     private bool _playWatch;   // 正在观察这一次起播
     private string _playTag = "";
 
+    // ===== 【2026-10-15 · 把"卡"变成数字】播放期间每 500ms 采一次"正在播的那条"的位置,
+    // 与"墙钟 × 实际倍率"比对;位置推进明显落后 ⇒ 这一次是真的卡(而不是感觉卡)。
+    // 【为什么必须在 UI 线程】读 MediaPlayerElement/MediaPlayer 的属性只能在 UI 线程,后台读会抛
+    // 0x8001010E 并直接崩进程(本文件多处注释记着这条真机教训)⇒ 用 DispatcherQueueTimer。
+    // 【为什么挂在 PlayWatchBegin 上】那是"用户按下播放"的唯一入口(预览·播放/暂停、对比·起播),
+    // 不播就不采;没有人在播时自己收表 ⇒ 不需要额外的暂停钩子,也不会有常驻定时器。
+    // 【为什么要有这条】以前只有"点下去→画面开始动"的起播延迟(①②③),以及对比模式每 5 秒的
+    // [地面] 行;**"播着播着一直卡"从来没有计量**。用户说"卡"时,这一行给出次数与最差值。
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _jankTimer;
+    private long _jankT0, _jankLastAt;
+    private double _jankLastPos;
+    private string _jankWho = "";
+    private int _jankSamples, _jankStalls;
+    private double _jankWorstAdvance, _jankWorstWindow, _jankWorstExpect;
+
+    private void JankWatchBegin()
+    {
+        try
+        {
+            _jankT0 = Environment.TickCount64;
+            _jankLastAt = _jankT0;
+            _jankLastPos = double.NaN;
+            _jankWho = "";
+            _jankSamples = 0; _jankStalls = 0;
+            _jankWorstAdvance = double.MaxValue; _jankWorstWindow = 0; _jankWorstExpect = 0;
+            _jankTimer ??= DispatcherQueue.CreateTimer();
+            _jankTimer.Interval = TimeSpan.FromMilliseconds(500);
+            _jankTimer.IsRepeating = true;
+            _jankTimer.Tick -= JankWatch_Tick;
+            _jankTimer.Tick += JankWatch_Tick;
+            _jankTimer.Start();
+        }
+        catch { }
+    }
+
+    /// <summary>找出"此刻真的在播"的那条播放器(UI 线程调用,只读)。优先用当前视图的源/成片专用条。</summary>
+    private (Microsoft.UI.Xaml.Controls.MediaPlayerElement? el, string who) FindPlayingPlayer()
+    {
+        try
+        {
+            var cand = new (Microsoft.UI.Xaml.Controls.MediaPlayerElement? el, string who)[]
+            {
+                (_resPlayer, "成片条"), (_srcPlayer, "源文件条"),
+                (PreviewPlayer, "预览片条"), (EffectPlayer, "处理效果条"),
+                (CmpPlayerTop, "对比·上条"), (CmpPlayerBottom, "对比·下条"),
+            };
+            foreach (var (el, who) in cand)
+            {
+                var mp = el?.MediaPlayer;
+                if (mp?.PlaybackSession == null) continue;
+                if (mp.PlaybackSession.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing)
+                    return (el, who);
+            }
+        }
+        catch { }
+        return (null, "");
+    }
+
+    private void JankWatch_Tick(object? sender, object e)
+    {
+        try
+        {
+            var (el, who) = FindPlayingPlayer();
+            if (el == null) { JankWatchStop(true); return; }   // 都停了:收表并给一条结论
+            long now = Environment.TickCount64;
+            double pos, rate;
+            try
+            {
+                var se = el.MediaPlayer.PlaybackSession;
+                pos = se.Position.TotalSeconds;
+                rate = se.PlaybackRate > 0 ? se.PlaybackRate : 1.0;   // 用播放器报的实际倍率(慢放预览时≠1)
+            }
+            catch { return; }
+            if (_jankWho != who || double.IsNaN(_jankLastPos))
+            {
+                _jankWho = who; _jankLastPos = pos; _jankLastAt = now; return;   // 换了播放器/第一条采样:只记基线
+            }
+            double window = now - _jankLastAt;
+            double advance = (pos - _jankLastPos) * 1000;
+            double expect = window * rate;
+            _jankLastPos = pos; _jankLastAt = now;
+            if (window < 300) return;
+            _jankSamples++;
+            if (advance >= expect * 0.5) return;   // 走了一半以上:算跟得上(位置回调本身有节拍误差)
+            _jankStalls++;
+            if (advance < _jankWorstAdvance) { _jankWorstAdvance = advance; _jankWorstWindow = window; _jankWorstExpect = expect; }
+            if (window >= 900 && advance < expect * 0.35)
+                AppLogger.Warn($"[预览卡顿] {who} 在 {window:0} ms 里位置只前进 {advance:0} ms(期望 {expect:0} ms,倍率 {rate:0.###})—— 这一刻画面是真的停住了");
+        }
+        catch { }
+    }
+
+    private void JankWatchStop(bool log)
+    {
+        try { _jankTimer?.Stop(); } catch { }
+        try
+        {
+            if (log && _jankSamples >= 2)
+            {
+                double sec = (Environment.TickCount64 - _jankT0) / 1000.0;
+                if (_jankStalls == 0)
+                    AppLogger.Info($"[预览卡顿] 本次播放观察 {sec:0.#} 秒 · 采样 {_jankSamples} 次 · 一次卡顿都没有(播放顺畅)");
+                else
+                    AppLogger.Warn($"[预览卡顿] 本次播放观察 {sec:0.#} 秒 · 采样 {_jankSamples} 次 · 卡顿 {_jankStalls} 次 · " +
+                        $"最差一次 {_jankWorstWindow:0} ms 窗口只前进 {_jankWorstAdvance:0} ms(期望 {_jankWorstExpect:0} ms)" +
+                        $"—— 位置推进跟不上墙钟 = 卡在解码/呈现侧(不是界面线程在忙别的)");
+            }
+        }
+        catch { }
+        if (log && _jankStalls > 0) KickDecodeThroughputProbe(_jankSrcPath);
+        _jankSamples = 0; _jankStalls = 0;
+    }
+
+    // ===== 【2026-10-15 · "卡"之后的因果自检】上面只证明"位置跟不上墙钟"(症状)。真要知道是不是
+    // **解码本身**跟不上,得量一次吞吐:用自带 ffmpeg + d3d11va(与处理路径同一套硬解)解这个素材
+    // 48 帧,和素材自身帧率比。只在"确实卡过"之后触发,每个会话只做一次(平时零开销)。
+    // 【诚实边界】这是 ffmpeg+d3d11va 的吞吐,**不是** Media Foundation 的实测(预览播放走 MF);
+    // 两者都是 GPU 解码,量级可参考,但不当作同一件事 —— 日志里照实这么写。
+    private bool _decodeProbeDone;
+    private string _jankSrcPath = "";
+
+    private void KickDecodeThroughputProbe(string srcPath)
+    {
+        if (_decodeProbeDone || string.IsNullOrWhiteSpace(srcPath)) return;
+        _decodeProbeDone = true;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                string ff = VideoService.FfmpegPath ?? "";
+                if (ff.Length == 0) return;
+                string? fpsStr = VideoService.ProbeFps(srcPath);
+                const int frames = 48;
+                double need = 30;
+                if (double.TryParse(fpsStr, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out double needParsed) && needParsed > 0)
+                    need = needParsed;
+                var psi = new System.Diagnostics.ProcessStartInfo(ff)
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardError = true,
+                    RedirectStandardOutput = true,
+                };
+                foreach (var a in new[] { "-hide_banner", "-nostdin", "-hwaccel", "d3d11va", "-i", srcPath,
+                                          "-an", "-sn", "-frames:v", frames.ToString(), "-f", "null", "-" })
+                    psi.ArgumentList.Add(a);
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                using var p = System.Diagnostics.Process.Start(psi);
+                if (p == null) return;
+                _ = p.StandardError.ReadToEndAsync();
+                _ = p.StandardOutput.ReadToEndAsync();
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+                try { await p.WaitForExitAsync(cts.Token); } catch { try { p.Kill(true); } catch { } }
+                sw.Stop();
+                double sec = sw.Elapsed.TotalSeconds;
+                if (sec <= 0.05) return;
+                double fps = frames / sec;
+                AppLogger.Info($"[预览解码自检] 自带 ffmpeg+d3d11va 解该素材 {frames} 帧用 {sec:0.##} 秒 ≈ {fps:0.#} fps" +
+                    $" · 素材 {need:0.##} fps ⇒ " +
+                    (fps >= need * 1.5
+                        ? "解码吞吐有余量,卡不在解码本身(更像是合成/呈现与播放抢资源)"
+                        : "解码吞吐本来就吃紧 ⇒ 换更低分辨率或代理预览才有解(这也解释了别的软件为什么不卡:它们默认降采样)"));
+            }
+            catch { }
+        });
+    }
+
     private void PlayWatchBegin(string tag)
     {
         _playTag = tag;
@@ -5992,6 +6188,7 @@ public sealed partial class VideoView : UserControl
         _playT1 = 0; _playT2 = 0;
         _playWatch = true;
         PlayWatchArmFirstFrame();
+        JankWatchBegin();
     }
 
     /// <summary>【2026-09-21 加:真正的"跟手"指标】点下去 → **播放器的位置真的开始往前走**。
@@ -9117,6 +9314,15 @@ public sealed partial class VideoView : UserControl
         _cmpClipPct = 0;
         lock (_cmpBakeLock) { _cmpBakePendingPct = -1; }
         Log($"对比片:开始后台合成({EffTime(startSec)} 起 {lenSec:0.#} 秒,左原片 + 右处理后 · 整幅并排(「左右对比」用两个播放器实时裁切,不需要合成片))");
+        // 【2026-10-15 · "预览卡"留痕】播放中跑合成 = 播放(Media Foundation 解码)与合成(ffmpeg 解码+编码)
+        // 抢同一块 GPU。弱卡上这就是"一进对比就卡"的一个合理解释 ⇒ 留一行痕,好把用户说的"卡"和
+        // "合成正在跑"在时间上对上。只写日志,不改合成时机(用户明确要求合成放后台、主观等待 0)。
+        try
+        {
+            if (FindPlayingPlayer().el != null)
+                AppLogger.Info("[预览卡顿] 对比片将在预览播放期间合成(合成要一整条解码+编码,会和播放抢资源;这时若卡,先暂停播放等它合完)");
+        }
+        catch { }
         // 【2026-09-22 删掉一段死代码】这里原来还有一个 `var prog = new Progress<...>` 回调,里面写着
         // `正在生成 {(…):0}% 处的对比画面 {…}%` —— 实测**它从来没被用**(真正的回调在 BakeCompareClipAsync 里
         // 自己建),留着只会让"那句旧文案"随时被复制回来 ✗。文案现在只从 CompareBuildText 一处出 ✔
