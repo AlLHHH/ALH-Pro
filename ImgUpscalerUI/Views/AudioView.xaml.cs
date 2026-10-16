@@ -610,13 +610,15 @@ public sealed partial class AudioView : UserControl
             {
                 try
                 {
-                    _ = new Microsoft.UI.Xaml.Controls.ContentDialog
+                    var dlgBusy = new Microsoft.UI.Xaml.Controls.ContentDialog
                     {
                         Title = "处理中",
                         Content = "音频正在处理中,暂不可预览。请等待处理完成后再双击预览。",
                         CloseButtonText = "好的",
                         XamlRoot = this.XamlRoot,
-                    }.ShowAsync();
+                    };
+                    // 【2026-10-16】走串行闸门:别的对话框开着时排队/降级,不再抛 0x80000019。
+                    _ = ALHPro.SafeDialog.ShowAsync(dlgBusy, "处理中提示");
                 }
                 catch { }
                 return;
@@ -1227,8 +1229,9 @@ public sealed partial class AudioView : UserControl
                         CloseButtonText = "关闭",
                         XamlRoot = this.XamlRoot,
                     };
-                    var r = await dlg.ShowAsync();
-                    if (r == ContentDialogResult.Primary)
+                    // 【2026-10-16】走串行闸门:音频跑完时用户很可能正开着别的框(公告/提示) ⇒ 排队而不是抛。
+                    var (shownAudioDone, r) = await ALHPro.SafeDialog.TryShowAsync(dlg, "处理完成");
+                    if (shownAudioDone && r == ContentDialogResult.Primary)
                         ProcessStartHelper.OpenSelect(_allOutputs);
                 }
             }

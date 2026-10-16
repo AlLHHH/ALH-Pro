@@ -162,8 +162,37 @@ public class TempCleanupAndInterpProgressTests
         Assert.Contains("App.LastKeptLiveDirs", mp);   // 弹窗里要说清"有几个没清、为什么"
     }
 
-    // ===================== 三、补帧段级进度:不许把"正在重算"演成"卡死" =====================
+    /// <summary>⑥c【2026-10-17 · 文件级同根因】目录有了"最近还在写吗"这道关,但**文件**以前是照删的:
+    /// `imgup_*.raw`(节奏重采样,单个几 MB)、`alh_*.wav`、`.alh_pro_w.tmp`,以及 `<root>\ALHPro\<子目录>`
+    /// 里的 `preview_*` / `cmp_*` / `seg_*`。对面(ALH Pro Max)正在写这些名字的文件时,免费版的启动清理
+    /// 同样会把它们删掉 —— 与 ⑥b 是**同一个根因**(两个产品共用一个临时根,而这道清理只看得见自己进程的
+    /// 处理状态),所以必须用同一道判据(<see cref="AlhPro.Core.TempCleanup.ShouldKeepLiveWorkDir"/>)。
+    /// 另外 `<root>\ALHPro\<preview|frames|cache|tmp>*` 那种"整目录删"也要过关:对面同样叫这些名字。
+    ///
+    /// 【红检口径】把任一处 `if (IsLiveFile(f)) continue;` 删掉 ⇒ 下面"删除点数 = 放行判断数"立刻变红
+    /// (那处删除就没有放行判断了)。**为什么盯计数而不是盯"存在 IsLiveFile("**:只断言存在,会让
+    /// "以后新加一个文件删除却没加判断"这种回退一路绿灯 —— 这正是本轮要防的形态。</summary>
+    [Fact]
+    public void Cleanup_keeps_recently_written_temp_files_too()
+    {
+        var code = StripLineComments(ReadRepoFile("ImgUpscalerUI", "App.xaml.cs"));
 
+        // 每一个文件删除点都必须先过放行判断(当前 4 处:根下 alh_*.wav / imgup_* / .alh_pro_w.tmp + ALHPro 子目录模式循环)
+        Assert.Equal(Regex_Count(code, @"File\.Delete\(f\);"),
+                     Regex_Count(code, @"if \(IsLiveFile\(f\)\) continue;"));
+
+        // ALHPro 子目录里的"整目录删"同样要过关(名字与对面一样:preview*/frames*/cache*/tmp*)
+        Assert.Contains("if (IsLiveWorkDir(sub)) continue;", code);
+        int subLiveAt = code.IndexOf("if (IsLiveWorkDir(sub)) continue;", StringComparison.Ordinal);
+        int subDelAt = code.IndexOf("Directory.Delete(sub, true);", StringComparison.Ordinal);
+        Assert.True(subLiveAt > 0 && subDelAt > subLiveAt, "子目录的放行判断必须排在删除之前");
+
+        // 留下了几个文件要如实记账(与目录同一句"没清为什么")
+        Assert.Contains("LastKeptLiveFiles = keptFiles;", code);
+        Assert.Contains("App.LastKeptLiveFiles", ReadRepoFile("ImgUpscalerUI", "Views", "MainPage.xaml.cs"));
+    }
+
+    // ===================== 三、补帧段级进度:不许把"正在重算"演成"卡死" =====================
     /// <summary>⑦ 段级进度包装器:帧号【不再】被 Math.Max 钳成单调;变小 = 新一轮引擎重算本段,如实采用。
     /// 另:带 ⚠ 的告警要原样放行(降级换引擎那句必须能被用户看见)。</summary>
     [Fact]

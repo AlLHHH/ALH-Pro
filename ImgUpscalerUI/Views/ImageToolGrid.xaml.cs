@@ -594,7 +594,9 @@ public sealed partial class ImageToolGrid : UserControl
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = this.XamlRoot,
         };
-        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+        // 【2026-10-16】走串行闸门;弹不出来 = 用户没确认 ⇒ 不改名(与"点了取消"同样处理)。
+        var (shownRename, renameResult) = await ALHPro.SafeDialog.TryShowAsync(dlg, "设置输出文件名");
+        if (!shownRename || renameResult != ContentDialogResult.Primary) return;
         var name = box.Text.Trim();
         if (name.Length > 0)
         {
@@ -638,7 +640,9 @@ public sealed partial class ImageToolGrid : UserControl
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = this.XamlRoot,
         };
-        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+        // 【2026-10-16】同上:走串行闸门,弹不出来按"用户没确认"处理(不改名)。
+        var (shownBatch, batchResult) = await ALHPro.SafeDialog.TryShowAsync(dlg, "批量改名");
+        if (!shownBatch || batchResult != ContentDialogResult.Primary) return;
         var name = box.Text.Trim();
         if (name.Length == 0) return;
 
@@ -933,7 +937,7 @@ public sealed partial class ImageToolGrid : UserControl
             CloseButtonText = "确定",
             XamlRoot = this.XamlRoot,
         };
-        await dlg.ShowAsync();
+        await ALHPro.SafeDialog.ShowAsync(dlg, "提示");
     }
 
     private async Task ShowErrorAsync(string msg)
@@ -945,6 +949,6 @@ public sealed partial class ImageToolGrid : UserControl
             CloseButtonText = "关闭",
             XamlRoot = this.XamlRoot,
         };
-        await dlg.ShowAsync();
+        await ALHPro.SafeDialog.ShowAsync(dlg, "错误");
     }
 }

@@ -654,7 +654,9 @@ public sealed partial class UpscaleView : UserControl
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = this.XamlRoot,
         };
-        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+        // 【2026-10-16】走串行闸门;弹不出来 = 用户没确认 ⇒ 不保存。
+        var (shownSave, saveResult) = await ALHPro.SafeDialog.TryShowAsync(dlg, "保存为预设");
+        if (!shownSave || saveResult != ContentDialogResult.Primary) return;
         string name = string.IsNullOrWhiteSpace(box.Text) ? defaultName : box.Text.Trim();
         list.Add(new UpscalePreset { Name = name, SavedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), Params = CollectSettings() });
         SaveImgPresets(list);
@@ -863,7 +865,8 @@ public sealed partial class UpscaleView : UserControl
             }
             catch (Exception ex) { AppLogger.Warn("导入图片预设失败(格式不对):" + ex.Message); }
         };
-        await dlg.ShowAsync();
+        // 【2026-10-16】预设窗口本身也是一个 ContentDialog ⇒ 必须走闸门,否则内部按钮再弹提示就是 0x80000019。
+        await ALHPro.SafeDialog.ShowAsync(dlg, "图片预设");
     }
 
     /// <summary>预设名 → 安全文件名:去掉 Windows 文件名非法字符(\/:*?"<>|)及首尾空格,空则给默认名。</summary>
@@ -936,7 +939,9 @@ public sealed partial class UpscaleView : UserControl
     private async Task ShowPresetHintAsync(string msg)
     {
         var dlg = new ContentDialog { Title = "参数预设", Content = new TextBlock { Text = msg, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap }, CloseButtonText = "知道了", XamlRoot = this.XamlRoot };
-        await dlg.ShowAsync();
+        // 【2026-10-16】这个提示经常在「图片预设」窗口开着的时候被调用(应用/导入/删除都在窗口内)
+        // ⇒ 必须排队等它关掉再弹;旧写法直接抛 COMException 0x80000019(未处理=崩溃)。
+        await ALHPro.SafeDialog.ShowAsync(dlg, "参数预设提示");
     }
 
     private sealed class UpscaleSettings
@@ -2059,8 +2064,9 @@ public sealed partial class UpscaleView : UserControl
                 TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
             };
         }
-        var result = await dlg.ShowAsync();
-        if (result == ContentDialogResult.Primary)
+        // 【2026-10-16】走串行闸门(处理完成框与图片工具页/预设提示可能同时想弹)。
+        var (shownDone, result) = await ALHPro.SafeDialog.TryShowAsync(dlg, "处理完成");
+        if (shownDone && result == ContentDialogResult.Primary)
             ProcessStartHelper.OpenSelect(outputFiles.Count > 0 ? outputFiles : new System.Collections.Generic.List<string> { dir });
         if (failLately == 0) MainPage.MaybeShowSponsorPrompt();   // 仅全部导出成功才弹赞助提示(有失败不打扰)
     }
@@ -2074,7 +2080,7 @@ public sealed partial class UpscaleView : UserControl
             CloseButtonText = "关闭",
             XamlRoot = this.XamlRoot,
         };
-        await dlg.ShowAsync();
+        await ALHPro.SafeDialog.ShowAsync(dlg, "处理失败");
     }
 
     public event Action<string>? StatusChanged;

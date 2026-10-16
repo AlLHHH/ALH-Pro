@@ -814,12 +814,6 @@ public static class VideoService
             // 这种机器上的视频会**静默**走 CPU 软编,正好是这条策略要消灭的情况。现在一律要求可用硬编。
             await EnsureHwProbeAsync(ffmpeg, ct);
             ct.ThrowIfCancellationRequested();
-            if (!AlhPro.Core.CpuFallbackPolicy.AllowsCpuFallback() && !HasAnyWorkingHwEncoder())
-            {
-                AppLogger.Error("视频处理未开始:本机没有可用的硬件编码器 —— 按「视频不落 CPU」策略直接报错"
-                    + $"(设置里的计算设备 = {(AppSettings.GpuIndex >= 0 ? "GPU " + AppSettings.GpuIndex : "未检测到可用显卡/仅本次会话降级")})");
-                throw new InvalidOperationException(AlhPro.Core.CpuFallbackPolicy.DescribeNoHwEncoder());
-            }
 
             // ===== 【2026-09-30 · t64 B/D】开跑前:参数级编码预检 + 标称帧率护栏 =====
             // 【位置是硬要求】必须在下面「2) 拆帧」**之前** —— B 的全部价值就是"在做几十分钟无用功之前停下":
@@ -834,6 +828,25 @@ public static class VideoService
             // 去重后的定稿值仍由**同一个** Core 判据在「帧数台账」那行给出(测试钉住"两个入口同判据")。
             double plannedNominalFps = AlhPro.Core.VideoEncodeGuard.PlanNominalOutputFps(
                 targetFps, fpsMode, inFps, inFps, interpScale, frameInterp);
+            // 【硬编闸门 · 2026-10-16 加固】探测结论为"一个可用硬编都没有"时,先别拒绝 ——
+            // 探测写死 1280×720@30,与"这次这组尺寸+帧率能不能编"不等价:真机日志里同一分钟出现过
+            // 探测「全部不可用」而紧跟着参数级预检 h264_nvenc 编 1920×3416@480fps 通过(2026-09-27 16:54)。
+            // 旧写法只认探测 ⇒ 那台其实编得动的机器上视频功能整会话不可用(闩锁不放开,只能重启)。
+            if (!AlhPro.Core.CpuFallbackPolicy.AllowsCpuFallback() && !HasAnyWorkingHwEncoder())
+            {
+                var recovered = await RecoverHwEncoderByPreflightAsync(ffmpeg, gpuId, plannedOutW, plannedOutH,
+                    plannedNominalFps, codecPref, ct);
+                ct.ThrowIfCancellationRequested();
+                if (recovered == null)
+                {
+                    AppLogger.Error("视频处理未开始:本机没有可用的硬件编码器 —— 按「视频不落 CPU」策略直接报错"
+                        + "(已用本次任务真实尺寸+帧率逐档实测过,一个都编不出来)"
+                        + $"(设置里的计算设备 = {(AppSettings.GpuIndex >= 0 ? "GPU " + AppSettings.GpuIndex : "未检测到可用显卡/仅本次会话降级")})");
+                    throw new InvalidOperationException(AlhPro.Core.CpuFallbackPolicy.DescribeNoHwEncoder());
+                }
+                progress?.Report((6, $"· 探测未认可,但实测 {recovered} 能编本次尺寸,继续"));
+            }
+
             AppLogger.Info($"编码预检计划:输出 {plannedOutW}×{plannedOutH}(源 {srcW}×{srcH}"
                 + (upscaleRuns ? $" × 目标 {scale:0.##}x" : " 不放大") + $";1x缩回={upscaleShrink1x})"
                 + $" · 标称 {plannedNominalFps:0.##} fps"
@@ -5831,6 +5844,12 @@ public static class VideoService
     private static bool _hwProbed;
     private static readonly object _hwLock = new();
 
+    /// <summary>本会话硬件编码探测里【每一档失败的第一行原因】(最多 12 条)。
+    /// 【为什么要留】旧写法是 `catch { }` 把每一档的原因全吞掉 ⇒ 真机日志里只剩一句"全部不可用",
+    /// 既看不出是驱动太旧、参数被拒、还是输出不合格 —— 1660 / 1050 Ti 那类报障整整三周无法定性,就是这条。
+    /// 只用于日志留痕,不参与任何判断。</summary>
+    private static readonly System.Collections.Generic.List<string> _hwProbeFailures = new();
+
     /// <summary>【自动化自验缝】让硬件编码这次调用必定失败(故意塞一个不存在的选项),用来在真机上验证
     /// "重试 N 次 → 报错(不退回 CPU 软编)"这条路径 —— 否则手上没有能稳定复现的硬编失败样本。
     /// 只在 ALH_FORCE_HW_ENCODE_FAIL=1 时生效;不设该变量时零副作用(参数原样返回)。</summary>
@@ -6039,6 +6058,7 @@ public static class VideoService
     private static async Task EnsureHwProbeAsync(string ffmpeg, CancellationToken ct = default)
     {
         lock (_hwLock) { if (_hwProbed) return; _hwProbed = true; }
+        _hwProbeFailures.Clear();
         // 依优先级探测;能真编出一帧【有效】文件才算可用(驱动过老/无对应硬件会失败被跳过)。
         // H.264 与 H.265(hevc)各探一遍,方便用户选编码格式时直接给出可用的。
         foreach (var enc in new[] { "h264_nvenc", "h264_amf", "h264_qsv", "hevc_nvenc", "hevc_amf", "hevc_qsv" })
@@ -6056,59 +6076,10 @@ public static class VideoService
             // 【关键】探测参数 = 真实编码参数(EncoderArgs 里的 -preset/-pix_fmt/-cq 全带上)。
             // 原先只给 `-c:v {enc}`,探的是"这台机器有没有这个编码器",而真实命令要问的是
             // "这套参数在这台机器上能不能编" —— 两者不等价,差集就得靠整片重跑试出来。
-            var realArgs = EncoderArgs(enc);
-            bool nvenc = enc.Contains("nvenc", StringComparison.OrdinalIgnoreCase);
-            // 逐级放宽,第一个成功的组合就是要记的配方:
-            //   ① 主 ffmpeg + 真实参数
-            //   ② 主 ffmpeg + 去掉 -preset(50 系常见:-preset p4 被拒 exit -22,去掉就能硬编)
-            //   ③④ 备用 ffmpeg(8.x,对 Blackwell 的 NVENC 适配更全)+ 上述两种参数
-            // ②③④ 只对 nvenc 有意义:-preset 是 nvenc 独有(amf 用 -quality、qsv 没有,替换是空操作),
-            // 备用 ffmpeg 也只为更新版的 NVENC 而存在,给它探 amf/qsv 纯属白跑。
-            var attempts = new System.Collections.Generic.List<(string Ff, string Args, bool NoPreset)>
-                { (ffmpeg, realArgs, false) };
-            if (nvenc)
-            {
-                attempts.Add((ffmpeg, StripPreset(realArgs), true));
-                var bak = BackupFfmpegPath;
-                if (bak != null)
-                {
-                    attempts.Add((bak, realArgs, false));
-                    attempts.Add((bak, StripPreset(realArgs), true));
-                }
-            }
-            foreach (var (ff, args, noPreset) in attempts)
-            {
-                if (ct.IsCancellationRequested) return;
-                var tmp = Path.Combine(EngineService.TempRoot, $"imgup_encprobe_{enc}_{Guid.NewGuid():N}.mp4");
-                try
-                {
-                    // 探测分辨率 1280×720:之前 320×240 太小,部分编码器(QSV/核显硬编)小图能编出有效文件,
-                    // 但真实大分辨率视频下却输出无效文件(用户① RTX2070+核显双卡机实测:qsv 探测可用,合帧却黑屏/失败)。
-                    // nvenc 也拒绝过小分辨率(64x64 报 incorrect parameters)。
-                    await RunAsync(ff,
-                        // 探测要多编几帧(≥5):ValidateVideoFileAsync 对 <5 帧判无效(防 QSV 假成功)。
-                        // 原 `-frames:v 1` 只产 1 帧 → 探测恒失败 → 硬编被静默禁用(全走 CPU 软编),等于速度回归。
-                        // 改 rate=30 duration=0.4(≈12 帧)且不截断到 1 帧,既快又通过校验。
-                        $"-y -f lavfi -i \"testsrc=size=1280x720:rate=30:duration=0.4\" {args} \"{tmp}\"",
-                        null, ct);
-                    // 不只看"文件非 0 字节":QSV 那类会写出非空但解不开的文件,必须真校验一遍
-                    if (await ValidateVideoFileAsync(tmp, 5))
-                    {
-                        lock (_hwLock)
-                        {
-                            if (!WorkingHwEncoders.Contains(enc)) WorkingHwEncoders.Add(enc);
-                            HwRecipes[enc] = new HwEncoderRecipe(ff, noPreset);
-                        }
-                        if (noPreset || !ReferenceEquals(ff, ffmpeg))
-                            AppLogger.Info($"硬件编码探测:{enc} 需放宽参数才可用(" +
-                                $"{(noPreset ? "去掉 -preset" : "")}{(noPreset && !ReferenceEquals(ff, ffmpeg) ? " + " : "")}" +
-                                $"{(!ReferenceEquals(ff, ffmpeg) ? "备用 ffmpeg" : "")})");
-                        break;
-                    }
-                }
-                catch { /* 该组合在这台机器不可用,继续放宽 */ }
-                finally { try { File.Delete(tmp); } catch { } }
-            }
+            // "逐级放宽"的候选组合与失败留痕都在 TryProbeEncoderAsync 里(与探测误判补救共用同一段)。
+            await TryProbeEncoderAsync(enc, ffmpeg, 5,
+                (args, tmp) => $"-y -f lavfi -i \"testsrc=size=1280x720:rate=30:duration=0.4\" {args} \"{tmp}\"",
+                "", _hwProbeFailures, ct);
         }
         // ===== NVDEC(JPG 序列硬件解码)探测 =====
         // 只在【已有可用 nvenc】时才探:软编时瓶颈是编码器本身,硬解救不了(见 HwJpegDecode 的实测)。
@@ -6229,7 +6200,12 @@ public static class VideoService
         {
             AppLogger.Info("硬件编码器探测:" + (WorkingHwEncoders.Count > 0
                 ? "可用 [" + string.Join(", ", WorkingHwEncoders) + "]"
-                : "全部不可用(将用 CPU 软编)"));
+                : "全部不可用 —— 按「视频不落 CPU」策略视频任务开不了;开跑前会用**本次任务的真实尺寸+帧率**"
+                  + "再实测一次(见「探测未认可…」那行),仍不行才报错"));
+            // 【每一档为什么失败必须留痕】旧写法 catch { } 全吞 ⇒ 日志只剩上面这一句,
+            // 1660/1050 Ti 那种"探测说没有、真实参数却能编"的机器无从定性(实证见 RecoverHwEncoderByPreflightAsync)。
+            if (WorkingHwEncoders.Count == 0 && _hwProbeFailures.Count > 0)
+                AppLogger.Info("硬件编码探测失败原因(每档第一行):" + string.Join(" | ", _hwProbeFailures));
             // 【I · 2026-09-13】NVDEC(JPG 序列硬解)探测结论也按【三态】写一行 —— 这样诊断包里一眼能分清
             // "没探(本机无可用 NVENC)"、"确定不支持"、"探测超时(结论未知)"与"可用",不必再靠读异常文案猜。
             AppLogger.Info("JPG 序列硬解码(NVDEC)探测结论:" + _hwJpegDecode switch
@@ -6242,10 +6218,14 @@ public static class VideoService
             // 【备用 ffmpeg 缺失要说清】内置主 ffmpeg 需要 NVIDIA 驱动 ≥610 才能开 NVENC;
             // 驱动较旧(实测 572.83)的机器是靠 engines\ffmpeg8\ffmpeg.exe 这个备用包兜住的。
             // 而 engines\ 是 gitignore、deploy.ps1 也不同步 —— 漏拷一次,硬编就静默消失,用户只会觉得"变慢了"。
+            // 【2026-10-16 文案更正】这里原来写"本机将使用 CPU 软编(明显更慢)" —— 那是 09-23「视频不落 CPU」
+            // 之前的口径,现在的真实行为是"视频任务报错",照旧文案写会让用户以为还能用。
             if (WorkingHwEncoders.Count == 0 && BackupFfmpegPath == null)
             {
-                AppLogger.Warn("⚠ 硬件编码不可用,且未找到备用 ffmpeg(engines\\ffmpeg8\\ffmpeg.exe)—— 本机将使用 CPU 软编(明显更慢)。"
-                    + "若显卡支持硬编:补齐该备用 ffmpeg,或把 NVIDIA 驱动更新到 610 以上(内置 ffmpeg 的 NVENC 需要 610+)。");
+                AppLogger.Warn("⚠ 硬件编码不可用,且未找到备用 ffmpeg(engines\\ffmpeg8\\ffmpeg.exe)。"
+                    + "若显卡支持硬编:补齐该备用 ffmpeg,或把 NVIDIA 驱动更新到 610 以上(内置 ffmpeg 的 NVENC 需要 610+)。"
+                    + "本机**没有**「CPU 软编」这条退路(「视频不落 CPU」策略):下面会按本次任务真实参数再实测一次,"
+                    + "仍不可用才会在开跑前报错。");
             }
             else if (WorkingHwEncoders.Count > 0 && BackupFfmpegPath == null)
             {
@@ -6253,6 +6233,128 @@ public static class VideoService
                     + "需要 engines\\ffmpeg8\\ffmpeg.exe 兜底,当前未找到该文件。");
             }
         }
+    }
+
+    /// <summary>用一个硬件编码器真编一小段,成功即记入 <see cref="WorkingHwEncoders"/> / <see cref="HwRecipes"/>
+    /// 并返回 true。**探测(1280×720@30)与"探测误判补救"(本次任务真实尺寸+帧率)共用本函数** ——
+    /// 两条路问的必须是同一个问题:"这套参数在这台机器上编得出来吗"。
+    ///
+    /// 【逐级放宽的四个组合,第一个成功的就是要记的配方】
+    ///   ① 主 ffmpeg + 真实参数
+    ///   ② 主 ffmpeg + 去掉 -preset(50 系常见:-preset p4 被拒 exit -22,去掉就能硬编)
+    ///   ③④ 备用 ffmpeg(8.x,对 Blackwell 的 NVENC 适配更全)+ 上述两种参数
+    /// ②③④ 只对 nvenc 有意义:-preset 是 nvenc 独有(amf 用 -quality、qsv 没有,替换是空操作),
+    /// 备用 ffmpeg 也只为更新版的 NVENC 而存在,给它探 amf/qsv 纯属白跑。
+    ///
+    /// 【minFrames】探测要多编几帧(≥5):<see cref="ValidateVideoFileAsync"/> 对 &lt;5 帧判无效(防 QSV 假成功);
+    /// 补偿路径按本次任务真实参数只编 1 帧(与 <c>PreflightEncodeOrThrowAsync</c> 同口径)。
+    /// 【失败原因必须留痕】旧写法 `catch { }` 把每一档的原因全吞掉 ⇒ 真机日志里只有一句"全部不可用",
+    /// 1660 / 1050 Ti 那类报障因此三周都定性不了。现在每档留第一行,由调用方在一个可用硬编都没有时写进日志。</summary>
+    private static async Task<bool> TryProbeEncoderAsync(string enc, string ffmpeg, int minFrames,
+        Func<string, string, string> buildCommand, string logSuffix,
+        System.Collections.Generic.List<string> failures, CancellationToken ct)
+    {
+        var realArgs = EncoderArgs(enc);
+        bool nvenc = enc.Contains("nvenc", StringComparison.OrdinalIgnoreCase);
+        var attempts = new System.Collections.Generic.List<(string Ff, string Args, bool NoPreset)>
+            { (ffmpeg, realArgs, false) };
+        if (nvenc)
+        {
+            attempts.Add((ffmpeg, StripPreset(realArgs), true));
+            var bak = BackupFfmpegPath;
+            if (bak != null)
+            {
+                attempts.Add((bak, realArgs, false));
+                attempts.Add((bak, StripPreset(realArgs), true));
+            }
+        }
+        string lastWhy = "(未跑)";
+        foreach (var (ff, args, noPreset) in attempts)
+        {
+            if (ct.IsCancellationRequested) return false;
+            var tmp = Path.Combine(EngineService.TempRoot, $"imgup_encprobe_{enc}_{Guid.NewGuid():N}.mp4");
+            try
+            {
+                // 探测分辨率 1280×720:之前 320×240 太小,部分编码器(QSV/核显硬编)小图能编出有效文件,
+                // 但真实大分辨率视频下却输出无效文件(用户① RTX2070+核显双卡机实测:qsv 探测可用,合帧却黑屏/失败)。
+                // nvenc 也拒绝过过小分辨率(64x64 报 incorrect parameters)。
+                await RunAsync(ff, buildCommand(args, tmp), null, ct);
+                // 不只看"文件非 0 字节":QSV 那类会写出非空但解不开的文件,必须真校验一遍
+                if (await ValidateVideoFileAsync(tmp, minFrames))
+                {
+                    lock (_hwLock)
+                    {
+                        if (!WorkingHwEncoders.Contains(enc)) WorkingHwEncoders.Add(enc);
+                        HwRecipes[enc] = new HwEncoderRecipe(ff, noPreset);
+                    }
+                    if (noPreset || !ReferenceEquals(ff, ffmpeg))
+                        AppLogger.Info($"硬件编码探测:{enc} 需放宽参数才可用(" +
+                            $"{(noPreset ? "去掉 -preset" : "")}{(noPreset && !ReferenceEquals(ff, ffmpeg) ? " + " : "")}" +
+                            $"{(!ReferenceEquals(ff, ffmpeg) ? "备用 ffmpeg" : "")}){logSuffix}");
+                    return true;
+                }
+                lastWhy = $"命令退出 0 但输出不合格(<{minFrames} 帧/解不开)";
+            }
+            catch (Exception ex)
+            {
+                if (ct.IsCancellationRequested) return false;
+                lastWhy = FirstLine(ex.Message);
+            }
+            finally { try { File.Delete(tmp); } catch { } }
+        }
+        if (failures.Count < 12) failures.Add($"{enc}:{lastWhy}");
+        return false;
+    }
+
+    /// <summary>【探测误判的补救 · 2026-10-16】探测说"一个可用硬编都没有"时,**不直接拒绝这次视频任务**:
+    /// 先用**本次任务真实要用的尺寸 + 标称帧率**把候选编码器各试 1 帧,能编就把该编码器+配方记进
+    /// <see cref="WorkingHwEncoders"/> / <see cref="HwRecipes"/> 并返回它;一个都不行才返回 null(由调用方报错)。
+    ///
+    /// 【为什么必须有(真机实证)】探测写死 `testsrc=1280x720 rate=30`,回答的是"这台机器能不能编 720p30";
+    /// 而这次任务要问的是"**这组尺寸+帧率**能不能编"。本机日志里两者直接打过架:
+    ///   2026-09-27 16:53:05 / 16:54:58 `硬件编码器探测:全部不可用(将用 CPU 软编)`
+    ///   2026-09-27 16:53:06 / 16:54:59 `编码预检通过:h264_nvenc 能编 1920×3416 @ 480 fps`(同一支 ffmpeg.exe)
+    /// —— 探测那一刻起 `WorkingHwEncoders` 就是空的,而闸门(<c>ProcessVideoAsync</c> 里那处)只认探测结果,
+    /// 于是这台"其实编得动"的机器上视频功能会**整会话不可用**,直到重启(闩锁 _hwProbed 不放开)。
+    /// 1660 / 1050 Ti 用户的"视频超分失败"最可能就是这一类,而旧代码连失败原因都不记(见 _hwProbeFailures)。
+    ///
+    /// 【代价可控】只在"探测说没有硬编"的机器上跑,最多 6 个编码器 × 最多 4 个组合 × 1 帧;
+    /// 通常第一个候选就命中(与上面日志同形)。失败也只是几次 1 秒级预检的耗时,发生在整片开始之前。</summary>
+    internal static async Task<string?> RecoverHwEncoderByPreflightAsync(string ffmpeg, int gpuId, int width, int height,
+        double nominalFps, int codecPref, CancellationToken ct)
+    {
+        // 候选顺序与 PickVideoEncoder 同源:厂商匹配的硬编优先,再看其余(hevc 优先时把 hevc 那档提到前面)。
+        var name = gpuId >= 0 ? GpuInfo.GetEngineDeviceName(gpuId) : "";
+        string vH264 = "", vHevc = "";
+        if (name.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase)) { vH264 = "h264_nvenc"; vHevc = "hevc_nvenc"; }
+        else if (name.Contains("AMD", StringComparison.OrdinalIgnoreCase) || name.Contains("Radeon", StringComparison.OrdinalIgnoreCase))
+        { vH264 = "h264_amf"; vHevc = "hevc_amf"; }
+        else if (name.Contains("Intel", StringComparison.OrdinalIgnoreCase)) { vH264 = "h264_qsv"; vHevc = "hevc_qsv"; }
+        var order = new System.Collections.Generic.List<string>();
+        void Add(string e) { if (e.Length > 0 && !order.Contains(e)) order.Add(e); }
+        if (codecPref == 2) { Add(vHevc); Add(vH264); }
+        else { Add(vH264); Add(vHevc); }
+        foreach (var e in new[] { "h264_nvenc", "h264_amf", "h264_qsv", "hevc_nvenc", "hevc_amf", "hevc_qsv" }) Add(e);
+
+        var failures = new System.Collections.Generic.List<string>();
+        foreach (var enc in order)
+        {
+            ct.ThrowIfCancellationRequested();
+            double fps = nominalFps > 0 ? nominalFps : 30;
+            int w = width > 0 ? width : 2, h = height > 0 ? height : 2;
+            bool ok = await TryProbeEncoderAsync(enc, ffmpeg, 1,
+                (args, tmp) => AlhPro.Core.VideoEncodeGuard.BuildPreflightCommand(w, h, fps, args, tmp),
+                $" · 本次任务真实参数 {w}×{h} @ {fps:0.###} fps", failures, ct);
+            if (ok)
+            {
+                AppLogger.Warn($"⚠ 探测说本机没有可用硬编,但按本次任务真实参数实测 **{enc} 能编 {w}×{h} @ {fps:0.###} fps**"
+                    + $" ⇒ 继续用硬编(探测写死 1280×720@30,与真实任务不等价;上面的「全部不可用」不代表编不了)");
+                return enc;
+            }
+        }
+        AppLogger.Warn("⚠ 探测说没有可用硬编,按本次任务真实参数逐个实测也都编不出来:"
+            + string.Join(" | ", failures));
+        return null;
     }
 
     /// <summary>本会话"实测可用硬编"的快照(只读;候选链要用它,不能在编码过程中边改边读)。
