@@ -10,7 +10,9 @@ namespace ALHPro;
 /// 「广告」动态区数据源:拉取仓库 ad/ 目录下的 5 个独立广告文件 ad1.json~ad5.json(作者编辑后 push,用户端轮询到即更新)。
 /// 复用 UpdateChecker 的多端点(官方 raw + 国内镜像)与 5 秒超时/静默策略。
 /// 每个文件定义一张卡 {title,text,image,link,linkText};image 可空(无图则纯文字卡)。
-/// 客户端本地每 60 秒轮播下一张(不联网),网络只在启动/每 10 分钟拉一次缓存。
+/// 客户端本地每 30 秒轮播下一张(不联网),网络只在启动/每 10 分钟拉一次。
+/// 【2026-10-17 用户要求】拉到的那一份**落本地缓存**(%LOCALAPPDATA%\ALHPro\ads\,见 <see cref="AdCache"/>)。
+/// 启动先读缓存立刻显示上次的广告,再联网检测有没有更新 —— 不再"先摆内置兜底卡、等网络"。
 /// 失败(无网/超时/JSON 异常)一律静默:单文件 404/损坏跳过,全坏则隐藏整个区域,不打扰用户。
 /// </summary>
 public static class AdFetcher
@@ -44,8 +46,13 @@ public static class AdFetcher
     /// raw.githubusercontent.com 国内直连常被墙/超时,不放在首选;jsDelivr 实测最稳,排最前。</summary>
     public static System.Collections.Generic.IEnumerable<string> ToMirrorUrls(string url) => AdMirror.MirrorsFor(url);
 
-    /// <summary>最近一次缓存到的广告卡数组(线程安全);启动即有默认本地兜底,网络拉取成功后再替换。</summary>
+    /// <summary>最近一次拿到的广告卡数组(线程安全);启动先由 <see cref="LoadCachedAds"/> 换成"上次成功拉到的那份"
+    /// (本地读不到才留下面两张内置兜底卡),网络拉取成功后再替换。</summary>
     public static volatile AdInfo[] Latest = DefaultAds();
+
+    /// <summary>界面当前这条列表的"张数下限"(本地缓存的张数 / 上一轮完整结果的张数)。
+    /// 渐进发布时不许发比它更短的列表:半截的一轮(某几个文件这轮没拉到)不该把一整排广告顶少。</summary>
+    private static int _adBaselineCount;
 
     /// <summary>默认本地兜底广告(启动立即显示,避免首次进软件无广告;网络拉取成功后覆盖)。</summary>
     private static AdInfo[] DefaultAds() => new[]
@@ -136,8 +143,11 @@ public static class AdFetcher
     /// 顺序:① api.github.com contents(base64 解出字节;这条通道在本机是通的)
     ///       → ② jsDelivr → ③ gh-proxy → ④ ghproxy → ⑤ raw 原地址。
     /// 缓存策略见 <see cref="ImageCacheTtl"/>:过期或广告内容变化就重下,重下失败则退回旧图(不裂图)。
+    /// <para>【2026-10-17 <paramref name="preferLocal"/>】只求"先把图显示出来"的调用方(渲染广告卡、后台预取)传 true:
+    /// 本地已有旧图就**立刻**返回,刷新丢到后台做(见 <see cref="ScheduleImageRefresh"/>)。
+    /// 原来必须先在网上等一轮(最坏 7 秒/端点 × 5 个端点)图才补上来 —— 那正是"打开软件广告图还要等"的观感来源。</para>
     /// </summary>
-    public static async Task<string?> FetchImageToTempAsync(string url)
+    public static async Task<string?> FetchImageToTempAsync(string url, bool preferLocal = false)
     {
         if (string.IsNullOrWhiteSpace(url)) return null;
         try
@@ -160,6 +170,14 @@ public static class AdFetcher
             }
             catch { }
             if (AdMirror.IsCacheReusable(exists, len, write, minWrite)) return cache;
+
+            // 【2026-10-17】本地有旧图、调用方又只求"先显示出来":立刻给旧图,刷新放后台(下一次轮播/重绘就是新图)。
+            // 这样"启动先把上次的广告连图一起显示出来"才真的成立(否则图文卡还要等一轮网络才补上图)。
+            if (preferLocal && exists && len > 0)
+            {
+                ScheduleImageRefresh(url, cache);
+                return cache;
+            }
 
             // 刚下载失败过 → 静默期内不再重试(有旧图就用旧图,不裂图也不空转)。
             if (_imgRetryAfterUtc.TryGetValue(cache, out var until) && DateTime.UtcNow < until)
@@ -207,9 +225,31 @@ public static class AdFetcher
         catch { return null; }
     }
 
+    /// <summary>后台补刷一张"已在本地但已过期"的广告图:同一张最多每 10 分钟排一次,失败静默(旧图照用)。
+    /// 【2026-10-17】给 <see cref="FetchImageToTempAsync"/> 的 preferLocal 用 —— 先显示旧图不等于不管更新:
+    /// 刷到了会直接覆盖缓存文件,之后的轮播/重绘就是新图(作者替换同名图片的场景仍有兜底)。</summary>
+    private static void ScheduleImageRefresh(string url, string cache)
+    {
+        try
+        {
+            lock (_imgRefreshAtUtc)
+            {
+                if (_imgRefreshAtUtc.TryGetValue(cache, out var until) && DateTime.UtcNow < until) return;
+                _imgRefreshAtUtc[cache] = DateTime.UtcNow + ImageRetryCooldown;
+            }
+            // 不带 preferLocal:走完整下载路径(下载/写缓存/失败静默都在那条路上)
+            _ = Task.Run(async () => { try { await FetchImageToTempAsync(url).ConfigureAwait(false); } catch { } });
+        }
+        catch { }
+    }
+
+    private static readonly System.Collections.Generic.Dictionary<string, DateTime> _imgRefreshAtUtc = new();
+
     /// <summary>收掉上次异常退出留下的广告图缓存(启动时清一次,避免 %TEMP% 堆积)。
-    /// 【2026-10-04】从"清 3 天前"收紧到"清 1 天前":文件名相同的图片本来就可能被替换,缓存留太久只会让人以为改图没生效。</summary>
-    public static void PruneImageCache()
+    /// 【2026-10-04】从"清 3 天前"收紧到"清 1 天前":文件名相同的图片本来就可能被替换,缓存留太久只会让人以为改图没生效。
+    /// 【2026-10-17】多一个 <paramref name="keepFileNames"/>:广告列表现在跨启动留着(见 <see cref="LoadCachedAds"/>),
+    /// 它引用的图**无论多旧都留着** —— 否则下次打开又得联网下图,等于白缓存一场。</summary>
+    public static void PruneImageCache(System.Collections.Generic.ISet<string>? keepFileNames = null)
     {
         try
         {
@@ -218,7 +258,13 @@ public static class AdFetcher
             var cutoff = DateTime.Now - TimeSpan.FromDays(1);
             foreach (var f in System.IO.Directory.EnumerateFiles(dir))
             {
-                try { if (System.IO.File.GetLastWriteTime(f) < cutoff) System.IO.File.Delete(f); } catch { }
+                try
+                {
+                    if (AdCache.IsImagePrunable(System.IO.Path.GetFileName(f),
+                            System.IO.File.GetLastWriteTime(f), cutoff, keepFileNames))
+                        System.IO.File.Delete(f);
+                }
+                catch { }
             }
         }
         catch { }
@@ -227,8 +273,8 @@ public static class AdFetcher
     /// <summary>广告拉取失败是否已提示过一次(避免一次启动里反复刷屏;网络波动/被墙很常见,只需友好提示一次)。</summary>
     private static bool _adWarnedOnce;
 
-    /// <summary>安全上限:最多探测 ad1..ad20(自适应停止,这里只是兜底)。</summary>
-    private const int MaxFiles = 20;
+    /// <summary>安全上限:最多探测 ad1..ad20(自适应停止,这里只是兜底)。与本地缓存同一口径(<see cref="AdCache.MaxFiles"/>)。</summary>
+    private const int MaxFiles = AdCache.MaxFiles;
 
     /// <summary>GitHub API Contents 通道(URL 模板,`{0}` = 广告文件名)。它返回的是 base64 包着 JSON,所以单独走
     /// <see cref="FetchViaApiAsync"/> 解析;这里用真实 URL 模板是为了"哪家通道"能统一按 host 认(见 AdMirror.HostOf)。</summary>
@@ -286,6 +332,82 @@ public static class AdFetcher
         catch { }
     }
 
+    /// <summary>广告列表的本地缓存目录(<c>%LOCALAPPDATA%\ALHPro\ads\</c>)。格式与判据在纯逻辑类 <see cref="AdCache"/>。</summary>
+    private static string AdsCacheDir =>
+        AdCache.Dir(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+
+    /// <summary>上次成功保存本地缓存的时刻(UTC;读不到就是 MinValue),只用于日志。</summary>
+    public static DateTime CacheSavedUtc { get; private set; } = DateTime.MinValue;
+
+    /// <summary>启动时先把**上次成功拉到的那份广告**从本地读回来(同步、极快、全程 try/catch)。
+    /// 【2026-10-17 用户要求】「上次刷新成功后缓存在本地,直到下次打开时使用时检测到更新然后再更新广告」:
+    /// 原实现每次启动都是两张内置兜底卡先顶着、等一轮网络(本机实测冷启动 8.7 秒,被墙时几分钟),
+    /// 现在打开就能看到上次的广告,网络那边只是"检测有没有更新"。
+    /// <para>读回来时同步记住内容指纹:这一轮再拉到同样内容就不算"变了",不会被误判成更新而白刷图片缓存。</para>
+    /// <returns>true = 读到了(界面可以直接显示真广告)。</returns></summary>
+    public static bool LoadCachedAds()
+    {
+        try
+        {
+            var dir = AdsCacheDir;
+            if (!System.IO.Directory.Exists(dir)) return false;
+            var list = new System.Collections.Generic.List<AdInfo>();
+            for (int i = 1; i <= AdCache.MaxFiles; i++)
+            {
+                var f = System.IO.Path.Combine(dir, AdCache.FileNameOf(i));
+                if (!System.IO.File.Exists(f)) break;   // 断号即止(与联网拉取同一口径)
+                var ad = AdCache.ParseAd(System.IO.File.ReadAllText(f));
+                if (ad is null) continue;               // 单个文件坏了只丢它自己,后面照读
+                list.Add(ad);
+            }
+            if (list.Count == 0) return false;
+            var ads = list.ToArray();
+            Latest = ads;
+            _adBaselineCount = ads.Length;
+            _lastAdsFingerprint = AdMirror.Fingerprint(FingerprintLines(ads));
+            try
+            {
+                var stamp = System.IO.Path.Combine(dir, AdCache.StampFileName);
+                if (System.IO.File.Exists(stamp)
+                    && DateTime.TryParse(System.IO.File.ReadAllText(stamp).Trim(), null,
+                        System.Globalization.DateTimeStyles.RoundtripKind, out var t))
+                    CacheSavedUtc = t.ToUniversalTime();
+            }
+            catch { }
+            return true;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>把这一轮**完整**拉到的广告写进本地缓存(残缺的一轮不写,免得把好缓存覆盖成半截)。
+    /// 先写 <c>.tmp</c> 再改名:中途断电/被杀也只会留下一个不被读的文件,不会得到半截 JSON。</summary>
+    private static void SaveCachedAds(AdInfo[] ads)
+    {
+        try
+        {
+            var dir = AdsCacheDir;
+            System.IO.Directory.CreateDirectory(dir);
+            for (int i = 0; i < ads.Length; i++)
+            {
+                var f = System.IO.Path.Combine(dir, AdCache.FileNameOf(i + 1));
+                var tmp = f + ".tmp";
+                System.IO.File.WriteAllText(tmp, AdCache.ToJson(ads[i]), new System.Text.UTF8Encoding(false));
+                System.IO.File.Move(tmp, f, overwrite: true);
+            }
+            // 作者删了广告 → 把多出来的旧缓存文件收掉(编号在本次张数之外的;认不出编号的不动)
+            foreach (var f in System.IO.Directory.EnumerateFiles(dir, "ad*.json"))
+            {
+                var idx = AdCache.IndexOf(System.IO.Path.GetFileName(f));
+                if (idx <= 0 || idx > ads.Length) { try { System.IO.File.Delete(f); } catch { } }
+            }
+            var savedUtc = DateTime.UtcNow;
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, AdCache.StampFileName), savedUtc.ToString("o"));
+            CacheSavedUtc = savedUtc;
+            _adBaselineCount = ads.Length;
+        }
+        catch { }
+    }
+
     /// <summary>上一次拿到的广告内容指纹,以及内容发生变化的时刻(UTC)。
     /// 【2026-10-04】作者一改 ad/adN.json(文案或图片地址),指纹就变 → 图片缓存立即失效、下次显示时重新下载,
     /// 不用等缓存有效期,也避免"改了图没反应"。</summary>
@@ -315,7 +437,15 @@ public static class AdFetcher
             try { onUpdated?.Invoke(); } catch { }
         }
 
-        var ads = await FetchAllAsync(Publish).ConfigureAwait(false);
+        // 【2026-10-17】渐进发布加一道下限:本地缓存/上一轮完整结果有 N 张时,半截的一轮(某个文件这轮没拉到、
+        // 只拿到 2 张)不许把界面上那排广告顶少 —— 上一轮的内容先留着,等这一轮完整了再换。
+        void PublishProgressive(AdInfo[] ads)
+        {
+            if (ads is not { Length: > 0 } || ads.Length < _adBaselineCount) return;
+            Publish(ads);
+        }
+
+        var (ads, complete) = await FetchAllDetailedAsync(PublishProgressive).ConfigureAwait(false);
         if (ads is not { Length: > 0 }) return;
         var fp = AdMirror.Fingerprint(FingerprintLines(ads));
         if (!string.Equals(fp, _lastAdsFingerprint, StringComparison.Ordinal))
@@ -324,6 +454,8 @@ public static class AdFetcher
             _adsChangedAtUtc = DateTime.UtcNow;   // 内容变了 → 之前缓存的广告图一律按过期处理
         }
         Publish(ads);
+        // 【2026-10-17 用户要求】整份拉到才落本地缓存:残缺的一轮不写,免得把上次的好缓存换成半截。
+        if (complete) SaveCachedAds(ads);
 
         // 【2026-10-04 用户报「广告图也要等很久才加载出来」】列表一拿到就**后台预取图片**:
         // 图片原来只在"轮播到那张卡"的一瞬间才开始下载(文字先出现、图几秒后才补上)。预取后,
@@ -349,7 +481,7 @@ public static class AdFetcher
                 var url = a?.Image;
                 if (string.IsNullOrWhiteSpace(url)) continue;
                 lock (_prefetched) { if (_prefetched.Contains(url)) continue; }
-                var local = await FetchImageToTempAsync(url).ConfigureAwait(false);
+                var local = await FetchImageToTempAsync(url, preferLocal: true).ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(local))
                 {
                     lock (_prefetched) { _prefetched.Add(url); }
@@ -367,12 +499,14 @@ public static class AdFetcher
         return result.ToArray();
     }
 
-    /// <summary>拉取并解析全部广告文件(自适应:从 ad1 开始,遇到不存在的文件即停,最多 20 个)。
+    /// <summary>拉取并解析全部广告文件,并说明这一轮**完整不完整**(供 <see cref="RefreshAsync"/> 决定能不能落本地缓存)。
     /// 【2026-09-17 用户要求:直到所有广告都出来】原来是"一次通不过就放弃",现在改成**多轮重试**:
     /// 没拿到结论的编号留到下一轮(间隔 20/40/60… 秒,最多 6 轮),任一编号 404 才是"真的没有"(停止)。
     /// 目的是在"网关只放行部分域名"的机器上也能最终把 9 张卡全部拿到。
-    /// <para><paramref name="onProgress"/>:每多拿到一张就回调一次(已拿到的按编号顺序),界面可以边拉边显示。</para></summary>
-    public static async Task<AdInfo[]> FetchAllAsync(Action<AdInfo[]>? onProgress = null)
+    /// <para><paramref name="onProgress"/>:每多拿到一张就回调一次(已拿到的按编号顺序),界面可以边拉边显示。</para>
+    /// <para>【2026-10-17】Complete = 从 ad1 到"第一个不存在的编号"之间每个编号都拿到了 —— 只有这种完整的一轮
+    /// 才允许覆盖本地缓存,否则一次网络抖动就会把用户攒下的整份广告换成残缺的几张。</para></summary>
+    public static async Task<(AdInfo[] Ads, bool Complete)> FetchAllDetailedAsync(Action<AdInfo[]>? onProgress = null)
     {
         var got = new System.Collections.Generic.Dictionary<int, AdInfo>();
         int published = 0;
@@ -408,8 +542,16 @@ public static class AdFetcher
         // 按编号顺序输出(避免依赖 Linq)
         // 【2026-09-17 用户要求:这类网络信息不要出现在日志里】成功/失败都静默:
         // 广告只是作者推广位,拉到就显示、拉不到就用内置默认,不需要打扰用户,也不需要留痕。
-        return Snapshot(got);
+        // 完整性:1..(第一个不存在的编号-1) 全都拿到才算完整(见方法注释)。
+        bool complete = true;
+        for (int i = 1; i < firstMissing; i++)
+            if (!got.ContainsKey(i)) { complete = false; break; }
+        return (Snapshot(got), complete);
     }
+
+    /// <summary>拉取全部广告文件(只要结果;完整性判据见 <see cref="FetchAllDetailedAsync"/>)。</summary>
+    public static async Task<AdInfo[]> FetchAllAsync(Action<AdInfo[]>? onProgress = null)
+        => (await FetchAllDetailedAsync(onProgress).ConfigureAwait(false)).Ads;
 
     /// <summary>把 https://api.github.com/.../contents/... 返回的 {"content":"&lt;base64&gt;","encoding":"base64"} 里的 base64 取出来。
     /// 不引 JSON 库:手取字段即可(接口返回稳定),并把 base64 里的 "\n" 转义还原。</summary>
@@ -514,45 +656,7 @@ public static class AdFetcher
         return sawNotFound ? null : string.Empty;   // 全端点 404 → null;否则空串(非404失败,继续尝试但不中断)
     }
 
-    /// <summary>解析单个广告文件;字段缺失/异常返回 null。</summary>
-    public static AdInfo? ParseAd(string json)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            // 顶层直接就是单张卡(ad1.json 形如 {title,text,image,link,linkText});兼容旧 banner.json 把卡放在 "ad" 键下。
-            var el = root.ValueKind == JsonValueKind.Object && root.TryGetProperty("ad", out var adEl)
-                ? adEl : root;
-            var ad = new AdInfo
-            {
-                Title = GetString(el, "title"),
-                Text = GetString(el, "text"),
-                Image = GetString(el, "image"),
-                Link = GetString(el, "link"),
-                LinkText = GetString(el, "linkText"),
-                Sponsor = GetString(el, "sponsor"),
-            };
-            if (string.IsNullOrWhiteSpace(ad.Title) && string.IsNullOrWhiteSpace(ad.Text)) return null;   // 无内容视为无效
-            return ad;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static string? GetString(JsonElement obj, string name)
-        => obj.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-}
-
-/// <summary>单张广告卡(可空字段=未提供;image 空则纯文字卡;sponsor=广告主名,有则显示「推广」角标,合规:广告可识别)。</summary>
-public sealed class AdInfo
-{
-    public string? Title { get; set; }
-    public string? Text { get; set; }
-    public string? Image { get; set; }
-    public string? Link { get; set; }
-    public string? LinkText { get; set; }
-    public string? Sponsor { get; set; }
+    /// <summary>解析单个广告文件;字段缺失/异常返回 null。
+    /// 【2026-10-17】实现挪到 <see cref="AdCache.ParseAd"/> —— 本地缓存要"写进去还能读回来",解析规则必须可单测。</summary>
+    public static AdInfo? ParseAd(string json) => AdCache.ParseAd(json);
 }
