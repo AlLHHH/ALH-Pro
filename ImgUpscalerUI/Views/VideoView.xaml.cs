@@ -12604,6 +12604,18 @@ public sealed partial class VideoView : UserControl
                     okCount++;
                     }   // ← if (pv != null) / else 的收尾(预览分支不走到这里)
                 }
+                // 【2026-10-17】失败收尾"删输出"前的最后一道闸:成片一旦落盘并通过解码校验
+                // (VideoService.LastOutputCompleted),后面再出错也只可能是收尾的活出错 —— 那时删它
+                // 等于把用户这一整趟白跑掉(概率低,代价是一整趟)。标记为 true 时只记一行日志、保住成片。
+                void DropFailedOutput()
+                {
+                    if (VideoService.LastOutputCompleted && File.Exists(outPath))
+                    {
+                        Log($"  ⚠ 成片已产出并保留(本次失败只出在收尾):{Path.GetFileName(outPath)}");
+                        return;
+                    }
+                    try { if (File.Exists(outPath)) File.Delete(outPath); } catch { }
+                }
                 double? tStart = null, tEnd = null, itemFpsNow = inFps;
                 try
                 {
@@ -12646,7 +12658,7 @@ public sealed partial class VideoView : UserControl
                         catch (Exception ex2)
                         {
                             // 重跑失败:该项标失败,继续下一个(不中断整个任务)
-                            try { if (File.Exists(outPath)) File.Delete(outPath); } catch { }
+                            DropFailedOutput();
                             item.StatusText = "✗ 失败";
                             AppLogger.Error($"视频处理失败: {item.Name}", ex2);
                             Log($"  ✗ 失败:{ex2.Message}");
@@ -12656,7 +12668,7 @@ public sealed partial class VideoView : UserControl
                     }
                     else
                     {
-                        try { if (File.Exists(outPath)) File.Delete(outPath); } catch { }
+                        DropFailedOutput();
                         if (pv != null)
                         {
                             // 预览:用户放弃"仍要进行" → 结束本次预览(原因交回面板显示)
@@ -12672,7 +12684,36 @@ public sealed partial class VideoView : UserControl
                 }
                 catch (Exception ex)
                 {
-                    try { if (File.Exists(outPath)) File.Delete(outPath); } catch { }
+                    // 【2026-10-17】成片已落盘并通过解码校验(VideoService.LastOutputCompleted)时,后面的异常只
+                    // 可能来自收尾的诊断/统计 —— 绝不能删成片,也不该把这趟判成"白跑":按完成处理并在日志里写明。
+                    if (VideoService.LastOutputCompleted && File.Exists(outPath))
+                    {
+                        AppLogger.Error($"视频收尾出错,但成片已产出并保留: {item.Name}(成片未被删除)", ex);
+                        if (pv != null)
+                        {
+                            Log($"  ⚠ 收尾出错,但预览成片已产出:{ex.Message}");
+                            pv.Done.TrySetResult(outPath);
+                            return;
+                        }
+                        long doneBytes = 0;
+                        try { doneBytes = new FileInfo(outPath).Length; } catch { }
+                        item.Progress = 100;
+                        item.StatusText = "✓ 完成(收尾告警)";
+                        item.EtaText = "";
+                        item.IsDone = true;
+                        ScheduleAutoRemove(item);
+                        item.OutputInfo = $"输出:{Path.GetFileName(outPath)}"
+                            + (doneBytes > 0 ? $" · {doneBytes / 1048576.0:0.0} MB" : "")
+                            + " · 收尾有告警(成片已保留)";
+                        RefreshVideoProgress(items, $"完成 {item.Name}");
+                        UpdateTaskPanel("完成", finished: false);
+                        outputFiles.Add(outPath);
+                        Log($"  ✓ {Path.GetFileName(outPath)}(收尾告警,成片已保留)");
+                        Log($"    ⚠ {ex.Message}");
+                        okCount++;
+                        continue;
+                    }
+                    DropFailedOutput();
                     AppLogger.Error($"视频处理失败: {item.Name}", ex);
                     if (pv != null)
                     {

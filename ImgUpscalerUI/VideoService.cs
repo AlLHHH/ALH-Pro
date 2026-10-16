@@ -451,6 +451,8 @@ public static class VideoService
         LastDedupReport = null;
         LastDedupShort = null;
         LastVideoEncoderInfo = "libx264 (CPU 软编)";
+        // 【2026-10-17】成片是否已产出:每趟处理开始先清零(界面侧靠它决定失败时敢不敢删输出文件)
+        LastOutputCompleted = false;
         // 中文路径 → 8.3 短路径:防「中文 Windows 用户名/文件名 + GBK 代码页」下 ffmpeg
         // "Illegal byte sequence"(用户实测 8月28日.mp4 在 C:\Users\小花\ 下必现)。
         // 只影响传给 ffmpeg 的路径字符串;日志/文件系统操作仍用原路径。
@@ -4177,6 +4179,8 @@ public static class VideoService
             double uEncSec = 0, uOutDur = 0, uOutFps = 0;   // 【任务 U】结算用:编码耗时 / 成片时长 / 成片帧率
             string uBlackSeg = "";                          // 【任务 U 补充】输出端黑场自检结果(空 = 无黑场)
             var encSw = System.Diagnostics.Stopwatch.StartNew();
+            // 【2026-10-17】成片是否已经搬到最终路径(搬完 + 过了解码校验):它决定"后面收尾出错"算不算失败
+            bool outputMoved = false;
             try
             {
                 // 【2026-09-23 用户要求 · 视频这一侧「绝不落 CPU」】硬件编码失败**不再**回退 CPU 软编:
@@ -4312,6 +4316,11 @@ public static class VideoService
                     throw new InvalidOperationException("视频合成失败:输出文件无效(无法被解码)");
                 // 校验通过,才以最终文件名出现在输出目录(合帧期间输出目录只有 .tmp,不会误以为完成)
                 RetryFileMove(outTmp, outputVideo);
+                // 【2026-10-17】成片此刻已经落盘、也过了 ValidateVideoFileAsync ⇒ 它就是一份能播的成片。
+                // 从这里往下只剩"收尾"(编码实测日志、滤镜成本抽样、统计台账):这些活再出错,
+                // 不许把成片判死、也不许让界面把"这趟当失败"去删输出(见 LastOutputCompleted 的说明)。
+                outputMoved = true;
+                LastOutputCompleted = true;
                 // ===== 编码实测回报(resolve "编码慢" 是 CPU 软编线程限制还是硬编解 JPG 瓶颈)=====
                 encSw.Stop();
                 double encSec = encSw.Elapsed.TotalSeconds;
@@ -4343,6 +4352,15 @@ public static class VideoService
                         LastJpegDecodeCostPerFrame = decodePer;
                     }
                 }
+            }
+            // 【2026-10-17】成片已落盘之后的收尾异常:只记一条告警,**不抛出** —— 以前它会一路冒泡到界面,
+            // 界面的失败收尾 File.Delete(outPath) 就把刚做好的成片删了(用户白跑一整趟;概率低但代价极大)。
+            // 取消照旧往外传(界面侧收到取消不会删成片,只是停批)。
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) when (outputMoved)
+            {
+                AppLogger.Warn($"⚠ 成片已产出({Path.GetFileName(outputVideo)}),但收尾的诊断/统计出错(成片保留、本趟照常算完成):"
+                    + $"{ex.GetType().Name}: {ex.Message}");
             }
             catch (IOException ex) when (File.Exists(outputVideo))
             {
@@ -5944,6 +5962,16 @@ public static class VideoService
     /// <summary>最近一次合帧里【后处理滤镜链本身】的每帧成本(秒/帧,抽样实测;已减掉 JPG 解码那份)。
     /// 用途:诊断"这条片子慢在滤镜还是编码"—— 2026-09-13 之前报的数里混着解码,会误导优化方向。</summary>
     public static double LastPostFilterCostPerFrame { get; private set; }
+
+    /// <summary>【2026-10-17】最近一次处理里**成片是否已经搬到位**(搬完并过了 <c>ValidateVideoFileAsync</c> 的
+    /// 解码校验 ⇒ 这就是一份能播的成片)。它只用来回答一个问题:"失败时能不能把输出文件删掉"。
+    /// 现场:合帧 try 里 `RetryFileMove(outTmp, outputVideo)` 之后还有收尾的活(编码实测日志、滤镜成本抽样、
+    /// 统计台账),这些活万一抛异常,会一路冒泡到界面;界面的失败收尾一律 `File.Delete(outPath)` ——
+    /// 于是"成片刚移好、紧接着收尾出错"就会把**已经做好的成片删掉**,用户白跑一整趟(概率低,但代价极大)。
+    /// 现在:①后面这段收尾异常在 <c>ProcessVideoAsync</c> 内就被拦下(只写日志,不影响成片与"完成"判定);
+    /// ②界面侧删输出前先看这个标记 —— 为 true 就绝不删(见 `VideoView.DropFailedOutput`)。
+    /// 每次处理开始先清零(见方法开头的静态字段清零块)。</summary>
+    public static bool LastOutputCompleted { get; private set; }
 
     /// <summary>最近一次合帧里【JPG 序列解码】的每帧成本(秒/帧,抽样实测;NVDEC 硬解还是软件解码见日志)。</summary>
     public static double LastJpegDecodeCostPerFrame { get; private set; }
