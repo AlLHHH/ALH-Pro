@@ -27,6 +27,25 @@ public class Anime4kWiringTests
         Assert.True(anime > 0 && post > anime, "Anime4K 必须插在后处理之前(先修复再锐化)");
     }
 
+    /// <summary>**后处理的"作用面"必须按本任务真实输出高度缩放**(2026-10-16,用户反馈"后处理怎么调都没效果")。
+    /// 这一条也是"漏了不报错、只是悄悄没生效"的接线:
+    ///   · 不传 plannedOutH ⇒ 退回旧行为:4K 上作用面只有 1080p 的一半(实测弱约 4 dB);
+    ///   · 传了别的尺寸(源尺寸/写死的 1080)⇒ 缩放系数错 = 强度照样不对。
+    /// 所以 plannedOutH 必须来自 VideoEncodeGuard.PlanOutputSize(与编码预检/帧数台账同一个真实输出尺寸),
+    /// 并且缩放后要留一行可追溯的日志(本仓库既有要求:不静默改画面)。</summary>
+    [Fact]
+    public void Post_filter_strength_scales_with_the_real_output_height()
+    {
+        var src = ReadFile("ImgUpscalerUI", "VideoService.cs");
+        Assert.Contains(
+            "AlhPro.Core.VideoPostFilters.Build(postSharpen, postClarity, postUsm, postDetail, postAa, postEdge, plannedOutH)",
+            src);
+        int plan = src.IndexOf("var (plannedOutW, plannedOutH) = AlhPro.Core.VideoEncodeGuard.PlanOutputSize(", StringComparison.Ordinal);
+        int call = src.IndexOf("AlhPro.Core.VideoPostFilters.Build(postSharpen", StringComparison.Ordinal);
+        Assert.True(plan > 0 && call > plan, "plannedOutH 必须来自 PlanOutputSize(且后处理构造在它之后)");
+        Assert.Contains("作用面同比放大", src);
+    }
+
     [Fact]
     public void Job_start_probes_and_flips_the_flags()
     {
