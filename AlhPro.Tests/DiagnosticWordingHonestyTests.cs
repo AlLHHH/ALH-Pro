@@ -74,7 +74,13 @@ public class DiagnosticWordingHonestyTests
     public void Ram_tiers_and_weakness_use_the_same_nominal_capacity_basis()
     {
         string src = ReadRepoFile("ImgUpscalerUI", "SafeRender.cs");
-        Assert.Contains("internal static double NominalGB(double gib) => Math.Round(gib, MidpointRounding.AwayFromZero);", CodeOnly(src));
+        // 【2026-10-17】归一的实现搬进 Core(与弱点判据同一个来源);这里钉"接线",可执行案例见 WeakDeviceJudgementTests
+        Assert.Contains("internal static double NominalGB(double gib) => AlhPro.Core.WeakDeviceRules.NominalGb(gib);", CodeOnly(src));
+        string core = ReadRepoFile("AlhPro.Core", "WeakDeviceRules.cs");
+        Assert.Contains("public static double NominalGb(double measuredGb) => Math.Round(measuredGb, MidpointRounding.AwayFromZero);", core);
+        Assert.Contains("public const double MinVramGb = 6.0;", core);
+        Assert.Contains("public const double MinNominalRamGb = 8.0;", core);
+        Assert.Contains("public const int MaxFewCores = 4;", core);
         // 三条实测读数写在文档里(案例表):8GB→7.9、16GB→15.9、32GB→31.797
         Assert.Contains("7.9", src);
         Assert.Contains("15.9", src);
@@ -88,12 +94,14 @@ public class DiagnosticWordingHonestyTests
         Assert.Contains("if (v >= 3 && r >= 8) return DeviceProfile.Low;", profile);
         Assert.Contains("if (!gpu) return DeviceProfile.UltraLow;", profile);
         Assert.Contains("return ProfileFor(v, r, c, gpu);", CodeOnly(src));
-        // 弱点判据:同口径(内存那条;显存/核数/核显照旧)
+        // 弱点判据:口径同源(内存那条也在 Core 里归一);SafeRender 侧只负责喂本机读数
         string weak = Block(src, "private static bool ComputeWeakDevice()", "private static string ComputeWeakReason()");
-        Assert.Contains("bool smallRam = NominalGB(TotalRamGB) < 8;", weak);
-        Assert.DoesNotContain("bool smallRam = TotalRamGB < 8;", weak);
-        string reason = Block(src, "private static string ComputeWeakReason()", "return string.Join(\"、\", list);");
-        Assert.Contains("if (NominalGB(TotalRamGB) < 8) list.Add($\"内存 {TotalRamGB:0.#}GB\");", reason);
+        Assert.Contains("AlhPro.Core.WeakDeviceRules.IsWeak(CurrentGpuPresence(), TotalVramGB, TotalRamGB,", weak);
+        Assert.Contains("CpuCoreCount, OnlyIntegratedGpu());", weak);
+        Assert.DoesNotContain("bool smallRam = TotalRamGB < 8;", weak);   // 旧写法(裸读数)
+        Assert.DoesNotContain("TotalVramGB < 6", weak);                    // 门槛不在这边再抄一份
+        string reason = Block(src, "private static string ComputeWeakReason()", "private static AlhPro.Core.GpuPresence CurrentGpuPresence()");
+        Assert.Contains("AlhPro.Core.WeakDeviceRules.Describe(CurrentGpuPresence(), TotalVramGB, TotalRamGB,", reason);
     }
 
     // ───────────────────────── A2:两件事必须分两句说 ─────────────────────────
@@ -121,36 +129,62 @@ public class DiagnosticWordingHonestyTests
     }
 
     /// <summary>**A2 · 页面调用点**:那句合并了两种判据的老话必须删掉,改叫唯一来源的 `DeviceHintText`;
-    /// 且"没有可用 GPU"要等 Vulkan 自检**跑完**(`Done`)才成立 —— 自检未完成时 GpuAvailable 还是 false,
-    /// 拿它当结论会在启动早期误报(bundle 15:51 那条就是这类)。
-    /// 这条红了 = 页面又自己拼文案,或把 Done 守卫删了。</summary>
+    /// 且"没有可用 GPU"必须等 Vulkan 自检**给出结论**(而不是"跑起来了")才成立。
+    /// 【2026-10-17 再收紧】上一版用的是 `VulkanCheck.Done && !GpuAvailable`,而 `Done` 在探测**进入时**就已置位、
+    /// `GpuAvailable` 要等引擎枚举完才有值 ⇒ 启动早期把"还不知道"读成"确定没有 GPU"(用户真机日志同一秒先报弱、
+    /// 后面才写"补枚举成功")。现在统一走 `NoGpuDetected`(=有结论且不可用)。
+    /// 这条红了 = 页面又自己拼文案,或判据退回 `Done && !GpuAvailable` 那种"拿没测完当结论"的写法。</summary>
     [Fact]
     public void The_video_page_asks_the_shared_helper_and_waits_for_the_probe()
     {
         string code = CodeOnly(ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs"));
         Assert.DoesNotContain("无 GPU/弱设备:视频超分/补帧将用 CPU 计算", code);
         Assert.DoesNotContain("SafeRender.DeviceProfile.UltraLow || !ALHPro.VulkanCheck.GpuAvailable", code);
-        Assert.Contains("bool noGpu = ALHPro.VulkanCheck.Done && !ALHPro.VulkanCheck.GpuAvailable;", code);
+        Assert.Contains("bool noGpu = ALHPro.VulkanCheck.NoGpuDetected;", code);
+        Assert.DoesNotContain("VulkanCheck.Done && !VulkanCheck.GpuAvailable", code);
         Assert.Contains("string devHint = SafeRender.DeviceHintText(noGpu, SafeRender.Profile, SafeRender.WeakDeviceReason);", code);
         Assert.Contains("if (devHint.Length > 0) Log(devHint);", code);
     }
 
     /// <summary>**A2 · 弱设备原因清单(第三句错话)**:bundle 15:51 与 16:21 打出
     /// 「检测到设备配置较低(**未检测到可用 GPU(Vulkan)**、显存仅 4GB、内存 7.9GB)」,而同一份日志 15:34 写着
-    /// 「Vulkan 自检:GPU 引擎可用(设备枚举成功)」、15:47 写着「RIFE GPU(1)真机探测通过 → ncnn-Vulkan」。
-    /// 原因:`ComputeWeakReason` 只看 `!GpuAvailable`(**没等自检跑完**),而 `ComputeWeakDevice` 有 Done 守卫。
-    /// 这条红了 = 原因清单又在"自检没跑完/GPU 明明可用"时说"未检测到可用 GPU"。</summary>
+    /// 「Vulkan 自检:GPU 引擎可用(设备枚举成功)」。
+    /// 【2026-10-17 再收紧】只把判据从 `!GpuAvailable` 改成 `Done &amp;&amp; !GpuAvailable` 还不够:`Done` 在探测**进入时**
+    /// 就置位,启动早期照样会写这句(用户真机 RTX 4060 就是这样被说成"设备配置较低")。现在理由清单本体在
+    /// Core(`WeakDeviceRules.Describe`),只有三态里的 **Absent** 才允许出现这句。
+    /// 这条红了 = 这句错话又冒出来,或 UI 侧绕开三态直接读 `GpuAvailable`。</summary>
     [Fact]
     public void The_weak_device_reason_list_uses_the_same_guards_as_the_verdict()
     {
         string src = ReadRepoFile("ImgUpscalerUI", "SafeRender.cs");
-        string reason = Block(src, "private static string ComputeWeakReason()", "return string.Join(\"、\", list);");
-        Assert.Contains("if (ALHPro.VulkanCheck.Done && !ALHPro.VulkanCheck.GpuAvailable) list.Add(\"未检测到可用 GPU(Vulkan)\");", reason);
-        Assert.DoesNotContain("if (!ALHPro.VulkanCheck.GpuAvailable) list.Add", reason);   // 旧写法(无 Done 守卫)
+        string core = ReadRepoFile("AlhPro.Core", "WeakDeviceRules.cs");
+        // 理由清单本体:只有 Absent(=有结论且不可用)才写"未检测到可用 GPU"
+        string describe = Block(core, "public static string Describe(GpuPresence presence", "return string.Join(\"、\", list);");
+        Assert.Contains("if (IsNoGpu(presence)) list.Add(\"未检测到可用 GPU(Vulkan)\");", describe);
+        // 判据本体:没结论一律 Unknown;只有"有结论且不可用"才是 Absent,也才等于"没有 GPU"
+        Assert.Contains("=> !probeConcluded ? GpuPresence.Unknown : (gpuAvailable ? GpuPresence.Usable : GpuPresence.Absent);",
+            CodeOnly(core));
+        Assert.Contains("public static bool IsNoGpu(GpuPresence presence) => presence == GpuPresence.Absent;", CodeOnly(core));
+        // UI 侧:理由/判据都问三态,不再自己读 GpuAvailable
+        string reason = Block(src, "private static string ComputeWeakReason()", "private static AlhPro.Core.GpuPresence CurrentGpuPresence()");
+        Assert.Contains("AlhPro.Core.WeakDeviceRules.Describe(CurrentGpuPresence(), TotalVramGB, TotalRamGB,", reason);
+        Assert.Contains("AlhPro.Core.WeakDeviceRules.Resolve(ALHPro.VulkanCheck.ProbeConcluded,", src);
         string weak = Block(src, "private static bool ComputeWeakDevice()", "private static string ComputeWeakReason()");
-        Assert.Contains("bool noGpu = ALHPro.VulkanCheck.Done && !ALHPro.VulkanCheck.GpuAvailable;", weak);
-        Assert.Contains("bool smallVram = TotalVramGB < 6;", weak);
-        Assert.Contains("bool fewCores = CpuCoreCount <= 4;", weak);
+        Assert.Contains("AlhPro.Core.WeakDeviceRules.IsWeak(CurrentGpuPresence(), TotalVramGB, TotalRamGB,", weak);
+        // 全 UI 侧都不许再出现"Done 且不可用"这种把"没测完"当结论的判据
+        foreach (var f in new[]
+                 {
+                     new[] { "ImgUpscalerUI", "SafeRender.cs" },
+                     new[] { "ImgUpscalerUI", "Views", "VideoView.xaml.cs" },
+                     new[] { "ImgUpscalerUI", "EngineService.cs" },
+                     new[] { "ImgUpscalerUI", "EsrganOnnxService.cs" },
+                 })
+            Assert.DoesNotContain("VulkanCheck.Done && !VulkanCheck.GpuAvailable", CodeOnly(ReadRepoFile(f)));
+        // 而"不能拿没测完当结论"这件事的判据本体:ProbeConcluded 进入时清零、任何出口都在 finally 里置位
+        string vk = CodeOnly(ReadRepoFile("ImgUpscalerUI", "VulkanCheck.cs"));
+        Assert.Contains("public static bool NoGpuDetected => ProbeConcluded && !GpuAvailable;", vk);
+        Assert.Contains("finally { ProbeConcluded = true; }", vk);
+        Assert.Equal(4, Count(vk, "ProbeConcluded = false;"));   // 进入探测 + 三处重探前置(补枚举 / 重新检测 / 轻量重试)
     }
 
     // ───────────────────────── B:自检汇总行只反映标题说的东西 ─────────────────────────

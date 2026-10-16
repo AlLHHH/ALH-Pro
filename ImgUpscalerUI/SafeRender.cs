@@ -210,8 +210,10 @@ public static class SafeRender
     ///   · 标称 16GB → 报 **15.9** ⇒ `r &gt;= 16` 不成立 ⇒ Balanced 永远够不着;
     ///   · 标称 32GB → 本机报 **31.797** ⇒ `r &gt;= 32` 不成立 ⇒ High 永远够不着。
     /// 归一口径 = 最近的整数 GiB(7.9→8、15.9→16、31.797→32;正好半整数时 AwayFromZero)。
-    /// 【只归一内存】显存走另一条来源、另一套判据(那边已有 0.05G 容差,见 GetVideoConcurrency 的注释),本轮不动。</summary>
-    internal static double NominalGB(double gib) => Math.Round(gib, MidpointRounding.AwayFromZero);
+    /// 【只归一内存】显存走另一条来源、另一套判据(那边已有 0.05G 容差,见 GetVideoConcurrency 的注释),本轮不动。
+    /// 【2026-10-17】实现挪到 <see cref="AlhPro.Core.WeakDeviceRules.NominalGb"/> —— 画像档位与弱设备判据
+    /// 现在共用同一个口径,不再各写一份(两份实现正是"内存 7.9GB 被判小"那类误报的温床)。</summary>
+    internal static double NominalGB(double gib) => AlhPro.Core.WeakDeviceRules.NominalGb(gib);
 
     /// <summary>当前空闲物理内存(GB,系统 API 实测);失败按总量的 40% 保守估。</summary>
     public static double FreeRamGB => _ramFree ??= ProbeFreeRam(TotalRamGB * 0.4);
@@ -1033,13 +1035,48 @@ public static class SafeRender
     public enum DeviceProfile { UltraLow, Low, Balanced, High }
 
     private static DeviceProfile? _profile;
-    /// <summary>当前硬件画像(按显存/内存/核心数/有无GPU推导,缓存)。</summary>
-    public static DeviceProfile Profile => _profile ??= ComputeProfile();
+    /// <summary>当前硬件画像(按显存/内存/核心数/有无GPU推导,缓存)。
+    /// 【2026-10-17 · 缓存改成"跟着自检状态走"】原先是 `_profile ??=`,而启动早期会读到"自检还没结论"
+    /// 的那一瞬(旧写法直接看 `GpuAvailable`,那时它还是 false)⇒ 一台 8GB 显存 / 32GB 内存 / 10 核的
+    /// RTX 4060 Laptop 被钉死在 UltraLow,直到进程结束都不会纠正(用户当场反问「我设备低???」)。
+    /// 现在把 Vulkan 自检状态当**缓存键**:状态一变(引擎枚举出设备 / 补枚举完成)三处缓存一起作废重算。</summary>
+    public static DeviceProfile Profile { get { RefreshVulkanState(); return _profile ??= ComputeProfile(); } }
+
+    /// <summary>Vulkan 自检状态快照 —— **画像与弱设备结论的缓存键**。含"有没有结论"
+    /// (见 <see cref="AlhPro.VulkanCheck.ProbeConcluded"/>):探测进行中与探测完了是两种状态,
+    /// 前端那次误判必须能被后端测出 GPU 这件事纠正。</summary>
+    private static (bool Concluded, bool Available, int Devices) VulkanState()
+    {
+        try
+        {
+            return (ALHPro.VulkanCheck.ProbeConcluded, ALHPro.VulkanCheck.GpuAvailable,
+                    ALHPro.VulkanCheck.Devices.Count);
+        }
+        catch { return (false, false, 0); }
+    }
+
+    private static (bool, bool, int) _stateAtCompute;
+    private static bool _stateKnown;
+
+    /// <summary>状态变了就把「硬件画像 / 弱设备 / 弱设备理由」三处缓存一起作废(下次访问按新状态重算)。</summary>
+    private static void RefreshVulkanState()
+    {
+        var s = VulkanState();
+        if (_stateKnown && s == _stateAtCompute) return;
+        _stateKnown = true;
+        _stateAtCompute = s;
+        _profile = null;
+        _weak = null;
+        _weakReason = null;
+    }
 
     private static DeviceProfile ComputeProfile()
     {
         double v = TotalVramGB, r = TotalRamGB; int c = CpuCoreCount;
-        bool gpu = true; try { gpu = ALHPro.VulkanCheck.GpuAvailable; } catch { }
+        // 【2026-10-17】"没有 GPU"必须是**有结论的**没有(三态见 AlhPro.Core.GpuPresence):
+        // 以前拿 `GpuAvailable` 裸读数,自检还没跑完的那一刻就掉到 UltraLow。
+        bool gpu = true;
+        try { gpu = !ALHPro.VulkanCheck.NoGpuDetected; } catch { }
         return ProfileFor(v, r, c, gpu);
     }
 
@@ -1085,70 +1122,61 @@ public static class SafeRender
 
     private static bool? _weak;
     private static string? _weakReason;
-    /// <summary>真弱设备(无GPU/核显/显存&lt;6/内存&lt;8/核数≤4) → 显示黄字提示。</summary>
-    public static bool IsWeakDevice => _weak ??= ComputeWeakDevice();
-    /// <summary>弱设备原因文案(如 "未检测到可用 GPU(Vulkan)、显存 8GB")。</summary>
-    public static string WeakDeviceReason => _weakReason ??= ComputeWeakReason();
+    /// <summary>真弱设备(无GPU/核显/显存&lt;6/内存&lt;8/核数≤4) → 显示黄字提示。
+    /// 判据本体在 <see cref="AlhPro.Core.WeakDeviceRules.IsWeak"/>(纯逻辑,可喂真机画像定点验证):
+    /// 2026-10-17 之前这里把"自检还没结论"读成"没有 GPU",于是一台 RTX 4060 Laptop 被判成弱设备。
+    /// 缓存键含 Vulkan 自检状态 ⇒ 结论会随自检完成而自愈(见 <see cref="RefreshVulkanState"/>)。</summary>
+    public static bool IsWeakDevice { get { RefreshVulkanState(); return _weak ??= ComputeWeakDevice(); } }
+    /// <summary>弱设备原因文案(如 "未检测到可用 GPU(Vulkan)、显存仅 4GB");**只有真的成立的理由**才会出现。</summary>
+    public static string WeakDeviceReason { get { RefreshVulkanState(); return _weakReason ??= ComputeWeakReason(); } }
 
     private static bool ComputeWeakDevice()
     {
         try
         {
-            // 无 GPU:只在 Vulkan 自检【已完成】时才判定(否则首次启动自检未跑完,GpuAvailable 暂为 false,
-            // 会误把强机当无 GPU);显存/内存/核数是即时硬件值,不受自检时序影响。
-            bool noGpu = ALHPro.VulkanCheck.Done && !ALHPro.VulkanCheck.GpuAvailable;
-            bool smallVram = TotalVramGB < 6;
-            // 【2026-09-26 修】内存判据也要先归一到标称容量:8GB 标称机实报 7.9 ⇒ 旧写法 `TotalRamGB < 8`
-            // 会把一台 8GB 机判成"内存小"的弱设备(用户诊断包那台就是这样被误报的)。
-            bool smallRam = NominalGB(TotalRamGB) < 8;
-            bool fewCores = CpuCoreCount <= 4;
-            // 【裸设备·核显】只有【没有独显】才算弱(仅核显/无GPU);混合本(核显+独显)不算——否则会误判强机为弱设备
-            bool igpu = false;
-            try
-            {
-                bool hasDiscrete = false;
-                if (ALHPro.VulkanCheck.Devices.Count > 0)
-                    hasDiscrete = ALHPro.VulkanCheck.Devices.Any(d => GpuInfo.ScoreDeviceName(d.Name) > 0);
-                else
-                    foreach (var n in GpuInfo.GetAdapterNames())
-                        if (GpuInfo.ScoreDeviceName(n) > 0) { hasDiscrete = true; break; }
-                igpu = !hasDiscrete;   // 无独显 → 只有核显/无 GPU → 弱
-            }
-            catch { }
-            return noGpu || smallVram || smallRam || fewCores || igpu;
+            return AlhPro.Core.WeakDeviceRules.IsWeak(CurrentGpuPresence(), TotalVramGB, TotalRamGB,
+                CpuCoreCount, OnlyIntegratedGpu());
         }
         catch { return false; }
     }
+
     private static string ComputeWeakReason()
     {
-        var list = new System.Collections.Generic.List<string>();
         try
         {
-            // 【2026-09-26 修 · 第三句错话,同一诊断包】这里原先只看 `!VulkanCheck.GpuAvailable`,
-            // 而自检**跑完之前**那个标志一直是 false ⇒ 日志里出现「⚠ 检测到设备配置较低(**未检测到可用 GPU(Vulkan)**、
-            // 显存仅 4GB、内存 7.9GB)」,而同一份日志更早/更晚都写着「Vulkan 自检:GPU 引擎可用(设备枚举成功)」、
-            // 「RIFE GPU(1)真机探测通过 → 使用 ncnn-Vulkan」(bundle 15:51:22 vs 15:34:57/15:47:27)。
-            // 判据与 ComputeWeakDevice 对齐:**自检已完成**且确实不可用,才允许写"未检测到可用 GPU"。
-            if (ALHPro.VulkanCheck.Done && !ALHPro.VulkanCheck.GpuAvailable) list.Add("未检测到可用 GPU(Vulkan)");
-            if (TotalVramGB < 6) list.Add($"显存仅 {TotalVramGB:0.#}GB");
-            // 【2026-09-26】判据与显示统一走"标称容量"口径(理由见 NominalGB):8GB 标称机会报 7.9,
-            // 用裸读数判就会把 8GB 机写成"内存 7.9GB"的弱设备 —— 同一处误报的第二半。
-            if (NominalGB(TotalRamGB) < 8) list.Add($"内存 {TotalRamGB:0.#}GB");
-            if (CpuCoreCount <= 4) list.Add("核心数较少");
-            try
-            {
-                bool hasDiscrete = false;
-                if (ALHPro.VulkanCheck.Devices.Count > 0)
-                    hasDiscrete = ALHPro.VulkanCheck.Devices.Any(d => GpuInfo.ScoreDeviceName(d.Name) > 0);
-                else
-                    foreach (var n in GpuInfo.GetAdapterNames())
-                        if (GpuInfo.ScoreDeviceName(n) > 0) { hasDiscrete = true; break; }
-                if (!hasDiscrete) list.Add("核显(共享显存,较慢)");
-            }
-            catch { }
+            return AlhPro.Core.WeakDeviceRules.Describe(CurrentGpuPresence(), TotalVramGB, TotalRamGB,
+                CpuCoreCount, OnlyIntegratedGpu());
         }
-        catch { }
-        return string.Join("、", list);
+        catch { return ""; }
+    }
+
+    /// <summary>自检给出的 GPU 三态。**唯一判据**:只有自检给出结论(<c>ProbeConcluded</c>)且结论是
+    /// "不可用"才可能是 Absent;探测进行中/只有旧缓存 = Unknown(按"有 GPU"处理,不冤枉好机器)。</summary>
+    private static AlhPro.Core.GpuPresence CurrentGpuPresence()
+    {
+        try
+        {
+            return AlhPro.Core.WeakDeviceRules.Resolve(ALHPro.VulkanCheck.ProbeConcluded,
+                ALHPro.VulkanCheck.GpuAvailable);
+        }
+        catch { return AlhPro.Core.GpuPresence.Unknown; }
+    }
+
+    /// <summary>是不是"只有核显、没有独显"(**混合本不算**:核显+独显的机器照旧能用独显)。
+    /// 优先看引擎真实枚举的设备表,空表时退回注册表适配器名;出错一律返回 false(不据此判弱)。</summary>
+    private static bool OnlyIntegratedGpu()
+    {
+        try
+        {
+            bool hasDiscrete = false;
+            if (ALHPro.VulkanCheck.Devices.Count > 0)
+                hasDiscrete = ALHPro.VulkanCheck.Devices.Any(d => GpuInfo.ScoreDeviceName(d.Name) > 0);
+            else
+                foreach (var n in GpuInfo.GetAdapterNames())
+                    if (GpuInfo.ScoreDeviceName(n) > 0) { hasDiscrete = true; break; }
+            return !hasDiscrete;
+        }
+        catch { return false; }
     }
 
     // ---------- 持久化 ----------

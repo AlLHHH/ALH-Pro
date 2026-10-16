@@ -688,7 +688,9 @@ public sealed partial class VideoView : UserControl
                     foreach (var v in _videos)
                         if (v.ProbeWidth > 0 && v.ProbeHeight > 0) { pw = v.ProbeWidth; ph = v.ProbeHeight; break; }
                     bool noVulkan;
-                    try { noVulkan = !VulkanCheck.GpuAvailable; } catch { noVulkan = false; }
+                    // 【2026-10-17】"Vulkan 不可用"同样要等自检给出结论(旧写法把"还没测"当成"不可用",
+                    // 于是启动早期会多出一条"补帧兼容性:无独显/Vulkan 不可用"的假警报)。
+                    try { noVulkan = VulkanCheck.NoGpuDetected; } catch { noVulkan = false; }
                     var risk = AlhPro.Core.InterpSizePolicy.JudgeEngineRisk(pw, ph,
                         gpuIs50Series: EngineService.IsBlackwellGpu(),
                         gpuRiskyOldNcnn: noVulkan,
@@ -716,11 +718,18 @@ public sealed partial class VideoView : UserControl
                 CompatHintPanel.Visibility = weak ? Visibility.Visible : Visibility.Collapsed;
                 if (weak && CompatHint != null)
                 {
-                    CompatHint.Text = $"⚠ 检测到设备配置较低({SafeRender.WeakDeviceReason}),建议勾选「兼容模式」防止爆显存/卡顿。";
+                    // 【2026-10-17】不再硬编码「(核显/小显存/内存小)」:那是三类可能的合并说法,而这次误报
+                    // 正是"只有一条理由、还把'还不知道'写成'没有 GPU'"。理由串由 Core 统一给,写什么就是什么。
+                    string weakWhy = SafeRender.WeakDeviceReason;
+                    CompatHint.Text = weakWhy.Length > 0
+                        ? $"⚠ 检测到设备偏弱({weakWhy}),建议勾选「兼容模式」防止爆显存/卡顿。"
+                        : "⚠ 检测到设备偏弱,建议勾选「兼容模式」防止爆显存/卡顿。";
                     if (!_compatWarnLogged)
                     {
                         _compatWarnLogged = true;
-                        AppLogger.Info($"⚠ 检测到设备配置较低({SafeRender.WeakDeviceReason}),建议勾选「兼容模式」防止爆显存/卡顿");
+                        AppLogger.Info(weakWhy.Length > 0
+                            ? $"⚠ 检测到设备偏弱({weakWhy}),建议勾选「兼容模式」防止爆显存/卡顿"
+                            : "⚠ 检测到设备偏弱,建议勾选「兼容模式」防止爆显存/卡顿");
                     }
                 }
             }
@@ -11283,7 +11292,15 @@ public sealed partial class VideoView : UserControl
             if (resourceRisk)
                 lines.Add("⚠ 高倍率补帧 + 设备偏弱:可能因显存不足中途出错。建议:点「一键开启兼容模式」自动降分块/批大小,或改用 2x。");
             if (weakDevice)
-                lines.Add("⚠ 设备配置较低(核显/小显存/内存小),处理会明显偏慢。建议:开启「兼容模式」或先跑几秒小片段确认。");
+            {
+                // 【2026-10-17】原句是硬编码的「设备配置较低(核显/小显存/内存小)」—— 三个猜测一起报,
+                // 用户真机是 8GB 显存的 RTX 4060 + 31.8GB 内存 + 10 核,看到这句直接反问「我设备低???」。
+                // 现在只报**真正成立**的理由(由 Core 的判据同源给出),没有理由就不报括号内容。
+                string weakWhy = SafeRender.WeakDeviceReason;
+                lines.Add(weakWhy.Length > 0
+                    ? $"⚠ 设备偏弱({weakWhy}),处理会明显偏慢。建议:开启「兼容模式」或先跑几秒小片段确认。"
+                    : "⚠ 设备偏弱,处理会明显偏慢。建议:开启「兼容模式」或先跑几秒小片段确认。");
+            }
 
             var dlg = new ContentDialog
             {
@@ -11490,9 +11507,12 @@ public sealed partial class VideoView : UserControl
         //   那台 GTX 1050 Ti 机 GPU 探测通过、RIFE 走 ncnn-Vulkan、DirectML 也建会话成功,用户却读到
         //   「无 GPU…将用 CPU 计算」⇒ 观感就是"10 系显卡检测不到"。现在文案由 SafeRender.DeviceHintText
         //   统一给(纯函数、有定点案例):**只有"没有可用 GPU"才允许说"将用 CPU"**,偏弱就只说偏弱。
-        //   【判据收紧】"没有可用 GPU"必须等 Vulkan 自检**跑完**(Done)才成立 —— 自检未完成时
-        //   GpuAvailable 暂为 false,拿它当结论会在启动早期误报(与 ComputeWeakDevice 同一处口径)。
-        bool noGpu = ALHPro.VulkanCheck.Done && !ALHPro.VulkanCheck.GpuAvailable;
+        //   【判据收紧 · 2026-10-17 再修】"没有可用 GPU"必须**自检给出结论**且结论是不可用才成立。
+        //   上一版写成 `Done && !GpuAvailable`,而 `Done` 在探测【进入时】就为 true、`GpuAvailable` 要等
+        //   引擎枚举完才有值 ⇒ 启动早期把"还不知道"读成"确定没有 GPU":用户真机日志里同一秒先出现
+        //   「⚠ 检测到设备配置较低(未检测到可用 GPU(Vulkan))」,紧接着才是「补枚举成功/GPU 引擎可用」。
+        //   现在统一走 VulkanCheck.NoGpuDetected(与 Look 侧 SafeRender 的三态判据同源)。
+        bool noGpu = ALHPro.VulkanCheck.NoGpuDetected;
         string devHint = SafeRender.DeviceHintText(noGpu, SafeRender.Profile, SafeRender.WeakDeviceReason);
         if (devHint.Length > 0) Log(devHint);
         // ===== 高倍率补帧预警:核显/小显存跑 4x 及以上大概率极慢或失败(不拦,知情即可) =====
