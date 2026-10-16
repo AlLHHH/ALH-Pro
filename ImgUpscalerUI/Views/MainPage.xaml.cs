@@ -853,7 +853,18 @@ public sealed partial class MainPage : Page
     {
         // 本次运行点「✕」或设置隐藏 → 不显示也不轮询(重启恢复)
         if (AdIsHiddenNow) return;
-        // 先用默认本地兜底立即渲染(避免首次进软件无广告),再异步拉取覆盖
+        // 【2026-10-17 用户要求】先把**上次成功拉到的那份广告**从本地读回来(顺带清一次广告图缓存,留住它引用的图):
+        // 打开软件就能看到上次的广告,不必先摆两张内置兜底卡等网络;网络那边只负责"检测有没有更新"。
+        bool fromCache = AdFetcher.LoadCachedAds();
+        try { AdFetcher.PruneImageCache(AlhPro.Core.AdCache.ReferencedImageNames(AdFetcher.Latest)); } catch { }
+        if (fromCache)
+        {
+            var savedAt = AdFetcher.CacheSavedUtc == DateTime.MinValue
+                ? "时间未知"
+                : AdFetcher.CacheSavedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+            AppLogger.Info($"广告:已载入本地缓存 {AdFetcher.Latest.Length} 张(上次保存 {savedAt})");
+        }
+        // 缓存读到了就渲染真广告,读不到才用内置兜底;再异步拉取覆盖
         DispatcherQueue.TryEnqueue(() => { RenderAds(); StartAdRotateTimer(); });
         _adCts = new System.Threading.CancellationTokenSource();
         var ct = _adCts.Token;
@@ -881,13 +892,14 @@ public sealed partial class MainPage : Page
     /// 拿到字节写进本地缓存文件再交给 BitmapImage(本地文件一定能显示,不会出现"网络图加载不出");
     /// 全部失败才隐藏图框(不裂图)。卡片文字先渲染,图片后到就后显示。
     /// 【2026-10-04】加 <paramref name="token"/>:广告列表一拉完就后台预取,图多数已在本地,这里几乎是瞬间;
-    /// 若翻页了(批次不同)就丢弃这次结果,避免把上一张卡的图盖到新卡上。</summary>
+    /// 若翻页了(批次不同)就丢弃这次结果,避免把上一张卡的图盖到新卡上。
+    /// 【2026-10-17】传 preferLocal:本地已有旧图就先显示出来、刷新放后台 —— 启动就能看到上次那条广告的图。</summary>
     private async void SetAdImage(string? url, int token)
     {
         try
         {
             if (string.IsNullOrWhiteSpace(url)) { if (token == _adImageToken) AdImageFrame.Visibility = Visibility.Collapsed; return; }
-            var local = await AdFetcher.FetchImageToTempAsync(url);
+            var local = await AdFetcher.FetchImageToTempAsync(url, preferLocal: true);
             if (token != _adImageToken) return;                     // 已经翻到别的卡了:这次结果作废
             if (string.IsNullOrWhiteSpace(local)) { AdImageFrame.Visibility = Visibility.Collapsed; return; }
             AdImage.Source = new BitmapImage(new Uri(local));
@@ -915,7 +927,7 @@ public sealed partial class MainPage : Page
     }
 
     /// <summary>展示一张卡:有图→图文卡;无图→纯文字卡(图隐藏)。</summary>
-    private void ShowAdAt(AdInfo ad)
+    private void ShowAdAt(AlhPro.Core.AdInfo ad)
     {
         var ph = AdPlaceholderImage();
         if (!string.IsNullOrWhiteSpace(ad.Image))
@@ -1883,13 +1895,13 @@ public sealed partial class MainPage : Page
         "二、联网行为(会自动发生的仅前三项,全部列在下面;第 4 项仅在您主动点击时发生)\n" +
         "前三项是本软件会自动发生的全部联网行为。它们的共同点是:只从公开仓库取回公开的文本或图片,请求走 HTTPS,请求头里只有一个固定的程序标识与软件版本号(形如 ALHPro/1.4.0);不涉及您的文件内容、文件名、路径、画面/音频,也不涉及显卡机型等设备信息。\n" +
         "1. 检查更新:启动软件时自动访问 GitHub 官方接口 api.github.com 查询是否有新版本(直连不通时改用镜像 gh-proxy.com 转发同一个接口),只读取公开的最新版本号;检测到新版本会提示您,不自动下载、不自动安装。\n" +
-        "2. 广告素材拉取:启动软件时、以及运行期间定时刷新,按顺序尝试 cdn.jsdelivr.net、gh-proxy.com、ghproxy.net、raw.githubusercontent.com 四个地址(任一成功即停),只取回公开的广告文案与图片(adN.json 及对应广告图)用于界面广告位展示;广告不含个性化推荐,不读取您的设备标识、处理记录或使用行为,也不向广告方回传任何数据。\n" +
+        "2. 广告素材拉取:启动软件时、以及运行期间定时刷新,按顺序尝试 cdn.jsdelivr.net、gh-proxy.com、ghproxy.net、raw.githubusercontent.com 四个地址(任一成功即停),只取回公开的广告文案与图片(adN.json 及对应广告图)用于界面广告位展示;取回的内容会在您本机保存一份(仅本地,不回传),下次打开软件先显示上次的内容、再联网检查有没有更新;广告不含个性化推荐,不读取您的设备标识、处理记录或使用行为,也不向广告方回传任何数据。\n" +
         "3. 界面提示文案拉取:启动软件时、以及运行期间约每 10 分钟,访问与上一条相同的一组地址,只取回公开的纯文本提示文件(hintN.json,其中可能包含一条可点击的官方链接)用于底部状态栏的提示条;提示条每 30 秒在本机轮换,轮换本身不联网。该过程同样是只读拉取,不回传您的任何信息。\n" +
         "4. 问卷入口:仅当您主动点击问卷链接时,才由浏览器打开问卷页面,由该问卷平台按其自身政策处理(本软件不代为提交、不读取结果)。\n" +
         "另:除上述四项外,只有当您主动点击「官网下载」「GitHub下载」「网盘下载」「查看更新详情」等链接(由默认浏览器打开对应网页),或您主动下载模型包时才会联网;这些完全由您的操作触发,不点击、不下载就不会发生,之后的一切由对应网站的规则决定。\n" +
         "不传输什么:以上联网行为均为只读拉取,不上传您的文件内容(图片/视频/音频,以及处理过程中产生的中间帧、临时文件)、文件名、文件路径、画面或音频数据,也不上传显卡型号、显存、驱动版本、CPU、内存、系统版本等设备信息;本软件不做使用行为统计,没有埋点、没有第三方统计 SDK。\n" +
         "补充:广告与提示文案托管在公开代码仓库及其公共镜像 / CDN 上,这些服务在技术上会看到请求来自哪台机器(IP 与请求头),这是任何网络请求都无法避免的;我们能控制的是——请求里不含您的文件信息、设备信息或使用记录。\n" +
-        "失败会怎样:任一联网失败(断网、内网、GitHub 不可达)均静默忽略,改用软件内置的兜底内容(内置提示文案 / 隐藏广告位),不影响任何功能与画质。\n\n" +
+        "失败会怎样:任一联网失败(断网、内网、GitHub 不可达)均静默忽略,改用本机已缓存的内容(上次成功取回的广告 / 提示文案),本机也没有缓存时才用软件内置的兜底内容(内置提示文案 / 内置广告卡),不影响任何功能与画质。\n\n" +
         "三、第三方服务\n" +
         "软件集成的开源引擎与模型(FFmpeg、Real-ESRGAN、waifu2x-ncnn、Real-CUGAN、RIFE、Anime4K 着色器、ONNX Runtime、BiRefNet、Demucs、LavaSR 等)均为本地调用,不会向它们的作者或任何第三方传输您的数据。\n\n" +
         "四、广告\n" +
