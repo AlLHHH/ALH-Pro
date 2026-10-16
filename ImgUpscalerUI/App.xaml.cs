@@ -201,6 +201,10 @@ namespace ALHPro
         /// 清完盘没变小,得让他知道是为什么)。</summary>
         internal static int LastKeptLiveDirs;
 
+        /// <summary>上一次清理因"最近还在写"而保留的临时**文件**数(与 <see cref="LastKeptLiveDirs"/> 同一道判据:
+        /// 两个产品共用一个临时根,对面正在写的 imgup_*.raw / 预览帧同样不能删)。</summary>
+        internal static int LastKeptLiveFiles;
+
         /// <summary>清理临时文件残留(系统 %TEMP%、用户自定义临时目录、本软件历史用过的临时根目录;imgup_*/alh_* 前缀,绝不碰用户文件)。
         /// 返回 (删除目录数, 删除文件数, 释放字节数, 是否因"任务处理中"整轮跳过),供"立即清理"反馈。</summary>
         internal static (int dirs, int files, long bytes, bool skipped) CleanupTempDirs()
@@ -289,6 +293,23 @@ namespace ALHPro
                 }
                 catch { return false; }
             }
+            // 【2026-10-17 补 · 文件级同类风险】目录有上面这道关了,但同一棵树里的**文件**以前是照删的:
+            // `imgup_*.raw`(节奏重采样,单个几 MB)、`alh_*.wav`、`.alh_pro_w.tmp`,以及
+            // `<root>\ALHPro\<子目录>` 里的 `preview_*` / `cmp_*` / `seg_*`。对面(ALH Pro Max)正在写
+            // 这几个名字的文件时,免费版的启动清理同样会把它删掉 —— 与目录那次是**同一个根因**
+            // (两个产品共用一个临时根,而这道清理只看得见自己进程的状态),所以用同一道判据:
+            // 时间量不出来也保留(宁可留着占盘,也不误删对面正在跑的任务)。
+            int keptFiles = 0;
+            bool IsLiveFile(string file)
+            {
+                DateTime t;
+                try { t = File.GetLastWriteTimeUtc(file); } catch { t = default; }
+                if (!AlhPro.Core.TempCleanup.ShouldKeepLiveWorkDir(
+                        t, DateTime.UtcNow, AlhPro.Core.TempCleanup.DefaultLiveWorkWindow))
+                    return false;
+                keptFiles++;
+                return true;
+            }
             foreach (var root in roots)
             {
                 try
@@ -305,6 +326,7 @@ namespace ALHPro
                     }
                     foreach (var f in Directory.EnumerateFiles(root, "alh_*.wav"))
                     {
+                        if (IsLiveFile(f)) continue;   // 【2026-10-17】文件级同判据:对面正在写的别删
                         try { var fi = new FileInfo(f); bytes += fi.Length; File.Delete(f); files++; } catch { }
                     }
                     // 【修复 imgup_* 文件永远清不掉】上面只删目录,而 imgup_ 开头还有一批【文件】
@@ -313,10 +335,12 @@ namespace ALHPro
                     // (实测某机器 _pipe_verify\temp 里躺了 19 个 imgup_rhythm_*.raw、5MB,从 09-13 攒到 09-16)。
                     foreach (var f in Directory.EnumerateFiles(root, "imgup_*"))
                     {
+                        if (IsLiveFile(f)) continue;   // 【2026-10-17】对面正在写的 imgup_*.raw 别删
                         try { var fi = new FileInfo(f); bytes += fi.Length; File.Delete(f); files++; } catch { }
                     }
                     foreach (var f in Directory.EnumerateFiles(root, ".alh_pro_w.tmp"))
                     {
+                        if (IsLiveFile(f)) continue;   // 【2026-10-17】同上
                         try { var fi = new FileInfo(f); bytes += fi.Length; File.Delete(f); files++; } catch { }
                     }
                     // 【2026-09-18 用户:"设置里面的清理很多东西感觉都清理不到"】实测根因:
@@ -337,7 +361,9 @@ namespace ALHPro
                                  || nm.StartsWith("cache", StringComparison.OrdinalIgnoreCase)
                                  || nm.StartsWith("tmp", StringComparison.OrdinalIgnoreCase))
                                 {
-                                    // 本软件自己的临时子目录:整目录删
+                                    // 本软件自己的临时子目录:整目录删 —— 但【2026-10-17】先过"最近还在写吗":
+                                    // 对面(ALH Pro Max)的预览/分帧目录也叫这些名字,且共用同一个临时根。
+                                    if (IsLiveWorkDir(sub)) continue;
                                     try { dirs++; bytes += DirSize(sub); Directory.Delete(sub, true); } catch { }
                                 }
                                 else
@@ -346,6 +372,7 @@ namespace ALHPro
                                     foreach (var pat in new[] { "preview_*", "cmp_*", "seg_*", "alh_*", "imgup_*" })
                                         foreach (var f in Directory.EnumerateFiles(sub, pat))
                                         {
+                                            if (IsLiveFile(f)) continue;   // 【2026-10-17】文件级同判据
                                             try { var fi = new FileInfo(f); bytes += fi.Length; File.Delete(f); files++; } catch { }
                                         }
                                 }
@@ -357,8 +384,10 @@ namespace ALHPro
                 catch { }
             }
             LastKeptLiveDirs = keptLive;
-            if (keptLive > 0)
-                AppLogger.Info($"清理临时文件残留:保留 {keptLive} 个最近还在写的临时目录(可能是另一个窗口/ALH Pro Max 正在跑的任务;" +
+            LastKeptLiveFiles = keptFiles;
+            if (keptLive > 0 || keptFiles > 0)
+                AppLogger.Info($"清理临时文件残留:保留 {keptLive} 个最近还在写的临时目录 / {keptFiles} 个最近还在写的文件" +
+                    "(可能是另一个窗口/ALH Pro Max 正在跑的任务;" +
                     $"删除 {dirs} 个目录 / {files} 个文件 / {bytes / 1024.0 / 1024.0:0.#} MB)");
             return (dirs, files, bytes, false);
         }
@@ -579,13 +608,16 @@ namespace ALHPro
                             {
                                 try
                                 {
-                                    await new Microsoft.UI.Xaml.Controls.ContentDialog
+                                    var dlgFatal = new Microsoft.UI.Xaml.Controls.ContentDialog
                                     {
                                         Title = "程序遇到问题",
                                         Content = $"运行中发生异常:\n{ex.Message}\n\n已记录到诊断日志(设置 → 诊断日志),可导出诊断包反馈。",
                                         CloseButtonText = "知道了",
                                         XamlRoot = fe.XamlRoot,
-                                    }.ShowAsync();
+                                    };
+                                    // 【2026-10-16】走串行闸门:崩溃提示若正好撞上别的对话框,
+                                    // 旧写法会直接抛 COMException 被 catch 吞掉 ⇒ 用户什么都看不到。
+                                    await ALHPro.SafeDialog.ShowAsync(dlgFatal, "程序遇到问题");
                                 }
                                 catch { }
                             });
@@ -1092,7 +1124,9 @@ namespace ALHPro
                     CloseButtonText = "确定",
                     XamlRoot = root,
                 };
-                _ = dlg.ShowAsync();
+                // 【2026-10-16】走串行闸门:页面加载失败往往正撞在启动公告/须知上,
+                // 旧写法 fire-and-forget 抛出的 COMException 没人接 ⇒ 用户看不到任何提示。
+                _ = ALHPro.SafeDialog.ShowAsync(dlg, "页面加载失败");
             }
             catch { }
         }

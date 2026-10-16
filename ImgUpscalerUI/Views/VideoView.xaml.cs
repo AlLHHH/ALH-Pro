@@ -3953,13 +3953,15 @@ public sealed partial class VideoView : UserControl
             {
                 try
                 {
-                    _ = new Microsoft.UI.Xaml.Controls.ContentDialog
+                    var dlgBusy = new Microsoft.UI.Xaml.Controls.ContentDialog
                     {
                         Title = "处理中",
                         Content = "视频正在处理中,暂不可预览。请等待处理完成后再双击预览。",
                         CloseButtonText = "好的",
                         XamlRoot = this.XamlRoot,
-                    }.ShowAsync();
+                    };
+                    // 【2026-10-16】走串行闸门:别处(公告/完成框)开着时排队,不再抛 0x80000019。
+                    _ = ALHPro.SafeDialog.ShowAsync(dlgBusy, "处理中提示");
                 }
                 catch { }
                 return;
@@ -4264,14 +4266,11 @@ public sealed partial class VideoView : UserControl
         // 任务跑完会弹「处理完成」,此时再点「预览效果」→ 这里想弹第二个 → ContentDialog.ShowAsync()
         // 抛 COMException 0x80000019("Only a single ContentDialog can be open at any time"),
         // 而且是**未处理异常**(写进崩溃诊断,用户只看到"点了没反应")。
-        // 这里改成:弹不出来就**降级**成界面状态条 + 日志,绝不把异常抛到顶层。
-        try
+        // 【2026-10-16 升级】先走 SafeDialog 的串行闸门:前一个对话框关掉后**接着弹**(提示不再丢);
+        // 连排队都没弹出来(等超时/出异常)才降级成界面状态条 + 日志。
+        var (shownHint, _) = await ALHPro.SafeDialog.TryShowAsync(dlg, "提示");
+        if (!shownHint)
         {
-            await dlg.ShowAsync();   // 故意不走 SafeDialog:这里的 catch 会把提示写到状态栏+日志,比通用降级更有用
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Warn($"提示弹窗没能显示(多半是已有另一个对话框开着,WinUI 同时只允许一个):{ex.Message} ⇒ 已改为写在状态栏/日志里");
             try { VideoStatus.Text = msg; } catch { }          // 主面板状态行
             try { PreviewDeckStatus(msg); } catch { }          // 预览页那一行
             Log(msg);                                          // 左下角日志留痕,便于回看
@@ -11119,13 +11118,24 @@ public sealed partial class VideoView : UserControl
                     PrimaryButtonStyle = ButtonStyle(Windows.UI.Color.FromArgb(255, 217, 48, 48), Windows.UI.Color.FromArgb(255, 255, 255, 255)),
                     CloseButtonStyle = ButtonStyle(Windows.UI.Color.FromArgb(255, 0, 103, 192), Windows.UI.Color.FromArgb(255, 255, 255, 255)),
                 };
-                var r4k = await ALHPro.SafeDialog.ShowAsync(dlg4k, "4K 提醒");
-                if (r4k != Microsoft.UI.Xaml.Controls.ContentDialogResult.Primary)
+                // 【2026-10-16】必须用 TryShowAsync:旧写法把"没弹出来"返回的 None 当成"用户点了取消",
+                // 于是偶尔一次对话框冲突会**静默中止整批任务**并写一行"用户选择取消"的假日志。
+                // 弹不出来只是提示没送达,不是用户的决定 ⇒ 按"仍要继续"处理,并如实写日志。
+                var (shown4k, r4k) = await ALHPro.SafeDialog.TryShowAsync(dlg4k, "4K 提醒");
+                if (!shown4k)
+                {
+                    Log("⚠ 输出超 4K,但确认框没能弹出来(多半有别的对话框开着) ⇒ 按「仍要继续」继续处理;"
+                        + "想先降分辨率请点「停止处理」:" + string.Join(" / ", over4k));
+                }
+                else if (r4k != Microsoft.UI.Xaml.Controls.ContentDialogResult.Primary)
                 {
                     Log("⚠ 检测到输出超 4K,用户选择「取消」,已停止处理。");
                     return false;
                 }
-                Log($"⚠ 输出超 4K,用户选择「仍要继续」:{string.Join(" / ", over4k)}");
+                else
+                {
+                    Log($"⚠ 输出超 4K,用户选择「仍要继续」:{string.Join(" / ", over4k)}");
+                }
             }
 
             // ===== 【第 3 项】DirectML 不可用 → 超分将落到 CPU:开始前就给出【量级】并醒目提示 =====
@@ -11225,13 +11235,22 @@ public sealed partial class VideoView : UserControl
                         PrimaryButtonStyle = ButtonStyle(Windows.UI.Color.FromArgb(255, 217, 48, 48), Windows.UI.Color.FromArgb(255, 255, 255, 255)),
                         CloseButtonStyle = ButtonStyle(Windows.UI.Color.FromArgb(255, 0, 103, 192), Windows.UI.Color.FromArgb(255, 255, 255, 255)),
                     };
-                    var rCpu = await ALHPro.SafeDialog.ShowAsync(dlgCpu, "CPU 提醒");
-                    if (rCpu != ContentDialogResult.Primary)
+                    // 【2026-10-16】同 4K 提醒:只有"真弹出来了且用户点了取消"才停止;弹不出来按继续处理。
+                    var (shownCpu, rCpu) = await ALHPro.SafeDialog.TryShowAsync(dlgCpu, "CPU 提醒");
+                    if (!shownCpu)
+                    {
+                        Log("⚠ 超分将用 CPU 且预计超过 30 分钟,但确认框没能弹出来(多半有别的对话框开着)"
+                            + " ⇒ 按「仍要继续」继续处理;想停下来请点「停止处理」。");
+                    }
+                    else if (rCpu != ContentDialogResult.Primary)
                     {
                         Log("⚠ 超分将用 CPU 且预计超过 30 分钟,用户选择「取消」,已停止处理。");
                         return false;
                     }
-                    Log("⚠ 超分将用 CPU 且预计超过 30 分钟,用户选择「仍要继续」。");
+                    else
+                    {
+                        Log("⚠ 超分将用 CPU 且预计超过 30 分钟,用户选择「仍要继续」。");
+                    }
                 }
             }
 
@@ -11284,8 +11303,9 @@ public sealed partial class VideoView : UserControl
                 DefaultButton = Microsoft.UI.Xaml.Controls.ContentDialogButton.Primary,
                 XamlRoot = this.XamlRoot,
             };
-            var r = await ALHPro.SafeDialog.ShowAsync(dlg, "提示");
-            if (r == Microsoft.UI.Xaml.Controls.ContentDialogResult.Secondary)
+            // 【2026-10-16】弹不出来时不许当成"先改参数":那会让点了「开始处理」的用户看到"没反应"。
+            var (shownDiag, r) = await ALHPro.SafeDialog.TryShowAsync(dlg, "开始前诊断");
+            if (shownDiag && r == Microsoft.UI.Xaml.Controls.ContentDialogResult.Secondary)
             {
                 FastModeCheck.IsChecked = true;   // 一键开启兼容模式(源头降资源)
                 Log("⚠ 已开启「兼容模式」(降低分块/批大小,处理更稳)。");
@@ -11293,7 +11313,9 @@ public sealed partial class VideoView : UserControl
                 if (CompatHintPanel != null) CompatHintPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
                 return true;
             }
-            return r == Microsoft.UI.Xaml.Controls.ContentDialogResult.Primary;
+            if (!shownDiag)
+                Log("⚠ 开始前诊断没能弹出来(多半有别的对话框开着) ⇒ 按「知道了,开始」继续处理。");
+            return !shownDiag || r == Microsoft.UI.Xaml.Controls.ContentDialogResult.Primary;
         }
         catch { return true; }   // 诊断出错不拦截,照常处理
     }

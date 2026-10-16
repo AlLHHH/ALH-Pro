@@ -488,7 +488,9 @@ public sealed partial class MainPage : Page
                 CloseButtonText = "关闭",
                 XamlRoot = this.XamlRoot,
             };
-            var r = await dlg.ShowAsync();
+            // 【2026-10-16】走串行闸门;弹不出来(超时/异常)当"这次不弹"处理:既不算填写过,也不算关闭过。
+            var (shownSurvey, r) = await ALHPro.SafeDialog.TryShowAsync(dlg, "问卷邀请");
+            if (!shownSurvey) return;
             if (r == ContentDialogResult.Primary)
             {
                 try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(SurveyUrl) { UseShellExecute = true }); } catch { }
@@ -1563,7 +1565,8 @@ public sealed partial class MainPage : Page
             {
                 dlg.CloseButtonText = "关闭";
             }
-            await dlg.ShowAsync();
+            // 【2026-10-16】走串行闸门:启动时的公告常常与"问卷/更新提示"抢同一个时刻,排队比丢弃好。
+            await ALHPro.SafeDialog.ShowAsync(dlg, "更新说明");
             if (fromStartup)
             {
                 AppSettings.LastShownVersion = ver;
@@ -1674,7 +1677,19 @@ public sealed partial class MainPage : Page
             }
         };
         timer.Start();
-        await dlg.ShowAsync();
+        // 【2026-10-16】必须走 SafeDialog 的串行闸门(旧写法是裸 ShowAsync:启动瞬间若还有别的框没收尾
+        // 就是未处理 COMException,而这里失败等于**首次启动直接退出**,代价太大)。
+        // 弹不出来时重试几次:启动早期有别的弹窗/正在收尾是常态,排队+重试比"退出程序"合理得多。
+        bool shownBeta = false;
+        for (int attempt = 1; attempt <= 3 && !shownBeta; attempt++)
+        {
+            var (shown, _) = await ALHPro.SafeDialog.TryShowAsync(dlg, "启动须知");
+            shownBeta = shown;
+            if (!shownBeta) await Task.Delay(1200);
+        }
+        if (!shownBeta)
+            AppLogger.Warn("启动须知弹窗连续 3 次没能显示 ⇒ 本次按「未同意」处理(界面可能直接退出);"
+                + "若看不到弹窗,请把左下角日志与诊断日志发给作者(这是对话框冲突,不是你的操作问题)");
         timer.Stop();
         checkTimer.Stop();
         _betaNoticeDlg = null;
@@ -1776,7 +1791,8 @@ public sealed partial class MainPage : Page
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = this.XamlRoot,
         };
-        try { _ = dlg.ShowAsync(); } catch { }
+        // 【2026-10-16】走串行闸门(这几个"关于"页弹窗以前是 fire-and-forget,异步冲突时静默不显示)。
+        _ = ALHPro.SafeDialog.ShowAsync(dlg, "更新详情");
     }
 
     /// <summary>用户协议全文(首次启动弹窗 + 「关于」页共用,保证两处一致)。</summary>
@@ -1809,7 +1825,7 @@ public sealed partial class MainPage : Page
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = this.XamlRoot,
         };
-        try { _ = dlg.ShowAsync(); } catch { }
+        _ = ALHPro.SafeDialog.ShowAsync(dlg, "用户协议");
     }
 
     /// <summary>「关于」页查看《声明》(免责 / 赞助 / 版权许可 / 第三方软件)。</summary>
@@ -1833,7 +1849,7 @@ public sealed partial class MainPage : Page
             CloseButtonText = "关闭",
             XamlRoot = this.XamlRoot,
         };
-        try { _ = dlg.ShowAsync(); } catch { }
+        _ = ALHPro.SafeDialog.ShowAsync(dlg, "声明");
     }
 
     /// <summary>《声明》全文(与仓库根 声明.md 一致,此处内嵌供关于页展示)。</summary>
@@ -1883,7 +1899,7 @@ public sealed partial class MainPage : Page
             CloseButtonText = "关闭",
             XamlRoot = this.XamlRoot,
         };
-        try { _ = dlg.ShowAsync(); } catch { }
+        _ = ALHPro.SafeDialog.ShowAsync(dlg, "隐私政策");
     }
 
     /// <summary>《隐私政策》全文(明确"无账号、无个人信息收集/上传";接广告/上架需此告知义务)。</summary>
@@ -3074,14 +3090,16 @@ public sealed partial class MainPage : Page
             {
                 var (dirs, files, bytes, skipped) = App.CleanupTempDirs();
                 // 【2026-10-15】有目录因为"最近还在写"被留下时必须说清:不然用户只看到"清了 0 个、盘没变小"。
-                string liveNote = App.LastKeptLiveDirs > 0
-                    ? $"\n另外 {App.LastKeptLiveDirs} 个临时目录最近还在写,这次没清 —— 它们可能是另一个窗口或 ALH Pro Max 正在跑的任务"
+                // 【2026-10-17】文件级同判据(imgup_*.raw / 预览帧)也一样,一起报出来。
+                string liveNote = (App.LastKeptLiveDirs > 0 || App.LastKeptLiveFiles > 0)
+                    ? $"\n另外 {App.LastKeptLiveDirs} 个临时目录、{App.LastKeptLiveFiles} 个临时文件最近还在写,这次没清 —— 它们可能是另一个窗口或 ALH Pro Max 正在跑的任务"
                       + "(两个产品共用同一个临时根;静置 4 小时后会自动当残留清掉)。"
                     : "";
                 AppLogger.Info(skipped
                     ? "清理临时文件残留:已整轮跳过(有处理任务在跑,不删正在使用的临时文件/临时目录)"
                     : $"已清理临时文件残留:目录 {dirs} 个、文件 {files} 个,释放 {bytes / 1048576.0:0.#} MB"
-                      + (App.LastKeptLiveDirs > 0 ? $";保留 {App.LastKeptLiveDirs} 个最近还在写的临时目录" : ""));
+                      + (App.LastKeptLiveDirs > 0 || App.LastKeptLiveFiles > 0
+                          ? $";保留 {App.LastKeptLiveDirs} 个最近还在写的临时目录 / {App.LastKeptLiveFiles} 个文件" : ""));
                 var dlg = new ContentDialog
                 {
                     Title = skipped ? "已跳过清理" : "清理完成",
@@ -3095,7 +3113,8 @@ public sealed partial class MainPage : Page
                     CloseButtonText = "好的",
                     XamlRoot = this.XamlRoot,
                 };
-                await dlg.ShowAsync();
+                // 【2026-10-16】走串行闸门:这个结果框常常在「设置」弹窗还开着的时候弹出来。
+                await ALHPro.SafeDialog.ShowAsync(dlg, "清理结果");
             }
             catch { }
         };
@@ -3353,7 +3372,8 @@ public sealed partial class MainPage : Page
                         CloseButtonText = "好的",
                         XamlRoot = this.XamlRoot,
                     };
-                    await okDlg.ShowAsync();
+                    // 【2026-10-16】走串行闸门:导出诊断包时设置弹窗往往还开着。
+                    await ALHPro.SafeDialog.ShowAsync(okDlg, "诊断包已导出");
                 }
                 finally
                 {

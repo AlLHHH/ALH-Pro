@@ -1050,8 +1050,9 @@ public sealed partial class CutoutView : UserControl
             CloseButtonText = "关闭",
             XamlRoot = this.XamlRoot,
         };
-        var result = await dlg.ShowAsync();
-        if (result == ContentDialogResult.Primary)
+        // 【2026-10-16】走串行闸门:处理完成框开着时再弹同页的提示/失败框不会抛 0x80000019。
+        var (shown, result) = await ALHPro.SafeDialog.TryShowAsync(dlg, "处理完成");
+        if (shown && result == ContentDialogResult.Primary)
             ProcessStartHelper.OpenSelect(outputFiles.Count > 0 ? outputFiles : new System.Collections.Generic.List<string> { dir });
     }
 
@@ -1064,7 +1065,7 @@ public sealed partial class CutoutView : UserControl
             CloseButtonText = "关闭",
             XamlRoot = this.XamlRoot,
         };
-        await dlg.ShowAsync();
+        await ALHPro.SafeDialog.ShowAsync(dlg, "处理失败");
     }
 
     /// <summary>模型缺失提示条「查看安装方法」:弹窗给出白话步骤(含网盘完整版说明)。</summary>
@@ -1094,7 +1095,7 @@ public sealed partial class CutoutView : UserControl
             CloseButtonText = "知道了",
             XamlRoot = this.XamlRoot,
         };
-        await dlg.ShowAsync();
+        await ALHPro.SafeDialog.ShowAsync(dlg, "抠图模型怎么装");
     }
 
     public event Action<string>? StatusChanged;
