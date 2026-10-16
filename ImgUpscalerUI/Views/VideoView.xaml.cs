@@ -803,7 +803,7 @@ public sealed partial class VideoView : UserControl
         => model != null && model.Contains("animevideov3", StringComparison.OrdinalIgnoreCase) ? 43 : 86;
 
     /// <summary>切模型时把「边缘增强」带成推荐值。
-    /// 【判据:当前值是不是"推荐值的集合"】等于 0 / 30 / 60 就认为用户没自定义过 → 跟着模型走;
+    /// 【判据:当前值是不是"推荐值的集合"】等于 0 / 43 / 86 就认为用户没自定义过 → 跟着模型走;
     /// 其它数值(如用户手调成 45)一律保留。
     /// 【为什么不用"用户是否拖过滑条"的标记】实测踩坑:初始化/载入设置时会**程序化**给滑条赋 0,
     /// 那也会触发 Slider_Changed → 标记被误置 → 自动默认全被挡掉(真机 UIA 验证时发现切模型后仍是 0)。
@@ -815,7 +815,13 @@ public sealed partial class VideoView : UserControl
         if (cur != 0 && cur != 43 && cur != 86) return;      // 用户自定义过 → 不动(43/86 = 新刻度下的推荐档)
         var tag = (VideoEsrganModelCombo.SelectedItem as Microsoft.UI.Xaml.Controls.ComboBoxItem)?.Tag as string;
         var want = RecommendedEdgeBoost(tag);
-        if (cur != want) PostEdgeSlider.Value = want;
+        if (cur != want)
+        {
+            PostEdgeSlider.Value = want;
+            // 【不许静默改参数 · 2026-10-16】这条自动改写原先一句日志都没有:用户反馈"边缘那个数一直在 86"
+            //   时,日志里完全看不出是它干的(只看得到存盘值变成 86)。留一行痕,下次能一眼归因。
+            Log($"边缘增强:跟随当前模型给推荐档 {want}(0/43/86 视为未自定义,可手动改)");
+        }
     }
 
     private void Combo_Changed(object sender, Microsoft.UI.Xaml.Controls.SelectionChangedEventArgs e)
@@ -824,7 +830,15 @@ public sealed partial class VideoView : UserControl
         // 【Rev9 · 2026-09-21 修】锁定/解锁会改模型下拉的选中项(插入临时项、恢复原选择)——
         // 那**不是**"用户换了模型",不许触发"推荐边缘增强":否则切一下 1x 就会把用户的后处理参数改掉
         // (真机验证时实测「边缘增强」被从 0 改成 86 ✗)。_syncingScaleModel 在联动期间为 true,正好当守卫。
-        if (ReferenceEquals(sender, VideoEsrganModelCombo) && !_syncingScaleModel) ApplyRecommendedEdgeBoost();
+        // 【2026-10-16 修 · 用户反馈"记住上次参数有问题:边缘那个数一直在 86"】还要排除"恢复设置/套预设"期:
+        //   `ApplyVideoParams` 先回填 `PostEdgeSlider.Value = d.PostEdge`,**之后**才赋
+        //   `VideoEsrganModelCombo.SelectedIndex`(含越界回退 0 那一句)—— 恢复的模型序号与下拉当前项不同时,
+        //   那句赋值就会触发本函数;而 `ApplyVideoParams` 的两个调用点(`LoadSettings` 载入设置 /
+        //   `ApplyPreset` 套预设)都在 `_suppressEvents = true` 块里。少了这个守卫,用户存下的 0 会被换成
+        //   该模型的推荐档(非 animevideov3 → 86),紧接着 `SaveSettings()`/`OnOptionChanged` 又把它写回盘
+        //   ⇒ 用户看到的是"永远是 86、关不掉",而且只在重启/套预设那一瞬间发生(所以很难归因)。
+        //   回归测试:AlhPro.Tests.RememberParamsPresetTests.Restoring_settings_must_not_get_overwritten_by_the_recommended_edge_boost
+        if (ReferenceEquals(sender, VideoEsrganModelCombo) && !_syncingScaleModel && !_suppressEvents) ApplyRecommendedEdgeBoost();
         OnOptionChanged();
     }
 
@@ -1886,7 +1900,8 @@ public sealed partial class VideoView : UserControl
         public int PostDenoise { get; set; }
         public int PostAa { get; set; }
         /// <summary>「边缘增强」强度 0-100(0=关)。实测依据见 VideoPostFilters.Build 注释;
-        /// 默认按模型给(animevideov3 → 30,其它四支 → 60),用户手动调过则以用户为准。</summary>
+        /// 默认按模型给(animevideov3 → 43,其它四支 → 86;新刻度 100 = 安全上限 0.70),
+        /// 用户手动调过则以用户为准。</summary>
         public int PostEdge { get; set; }
         /// <summary>【果冻修复 · 2026-09-21 整块功能已删除】三个字段(`Jello` / `MotionBlur` / `DeShake`)
         /// **只保留、不再使用** —— 老设置文件与老预设里可能有它们,删字段会让反序列化多出"多余属性"

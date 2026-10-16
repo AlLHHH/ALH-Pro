@@ -342,6 +342,58 @@ public class RememberParamsPresetTests
         Assert.True(Upscale1x.Is1xEntry(Anime4k.ModelTag));
     }
 
+    // ═══════ 2026-10-16:恢复设置/套预设期不许被"推荐边缘增强"覆写(用户反馈"边缘那个数一直在 86") ═══════
+
+    /// <summary>**【2026-10-16 · 用户反馈】"记住上次参数貌似有问题:边缘(增强)一直在 86"**。
+    /// 86 在代码里只有一个来源:`RecommendedEdgeBoost`(非 animevideov3 → 86,新刻度里就是当年那个 0.6 档)。
+    /// 缺陷不在推荐值本身(那是 2026-09-15 定的功能:切模型跟着给推荐档),而在**它会在"恢复设置"时也开火**:
+    ///   · `ApplyVideoParams` 先回填 `PostEdgeSlider.Value = d.PostEdge`,**之后**才赋
+    ///     `VideoEsrganModelCombo.SelectedIndex`(含越界回退 0 那一句),而该下拉是 `SelectionChanged="Combo_Changed"`;
+    ///   · `ApplyVideoParams` 的两个调用点(载入设置 / 套预设)**都在 `_suppressEvents = true` 块里**,
+    ///     但那两句赋值触发的 `Combo_Changed` 里,`ApplyRecommendedEdgeBoost()` 原先只被 `_syncingScaleModel` 挡着、
+    ///     **不看 `_suppressEvents`** ⇒ 用户存下的 0 被静默换成 86,紧接着 `SaveSettings()` 又把它写回盘 ⇒ 关不掉。
+    /// 【红检口径】把 `Combo_Changed` 那句里的 `!_suppressEvents` 删掉 ⇒ 立刻变红;把 `LoadSettings`/`ApplyPreset`
+    /// 里任一 `_suppressEvents = true;` 删掉 ⇒ 也变红(这两半合起来才是"用户存的值不被改")。
+    /// 这条红了 = 又有一条路径能在"用户没换模型"的情况下改写「边缘增强」。</summary>
+    [Fact]
+    public void Restoring_settings_must_not_get_overwritten_by_the_recommended_edge_boost()
+    {
+        string src = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs");
+
+        // ① 唯一的开火点必须同时被两道守卫挡着:
+        //    _syncingScaleModel(Rev9:锁定/解锁改选中项 ≠ 用户换模型)+ _suppressEvents(恢复设置/套预设期)
+        string combo = BlockCode(src,
+            "private void Combo_Changed(object sender, Microsoft.UI.Xaml.Controls.SelectionChangedEventArgs e)",
+            "private bool _syncingScaleModel;");
+        Assert.Contains("if (ReferenceEquals(sender, VideoEsrganModelCombo) && !_syncingScaleModel && !_suppressEvents) ApplyRecommendedEdgeBoost();", combo);
+
+        // ② 危险顺序仍在:先回填「边缘增强」,后动模型下拉(那条 SelectionChanged 就是这么打进来的)
+        string apply = BlockCode(src, "private void ApplyVideoParams(VideoSettings d)", "private VideoSettings CollectVideoParams()");
+        int edgeAt = apply.IndexOf("PostEdgeSlider.Value = d.PostEdge", StringComparison.Ordinal);
+        int modelAt = apply.IndexOf("VideoEsrganModelCombo.SelectedIndex = d.UpEsrganModel", StringComparison.Ordinal);
+        Assert.True(edgeAt > 0, "ApplyVideoParams 里找不到「边缘增强」的回填");
+        Assert.True(modelAt > edgeAt, "恢复顺序变了:PostEdge 回填必须在模型下拉赋值之前");
+
+        // ③ 两个调用点都必须在抑制块里(否则 ① 里那道 `!_suppressEvents` 永远不会成立、白写)
+        string load = BlockCode(src, "private void LoadSettings()", "ApplyVideoParams(d);");
+        Assert.Contains("_suppressEvents = true;", load);
+        Assert.DoesNotContain("_suppressEvents = false;", load);
+        string preset = BlockCode(src, "private async void ApplyPreset(VideoPreset preset)", "ApplyVideoParams(preset.Params);");
+        Assert.Contains("_suppressEvents = true;", preset);
+        Assert.DoesNotContain("_suppressEvents = false;", preset);
+
+        // ④ 43/86 的口径只有一处,且界面提示里写的必须就是这两个数字(2026-09-20 改刻度后曾长期写着旧数字 30/60,
+        //    用户看到滑条上是 86、提示里却写着 60,自然认不出这个数从哪来)
+        string rec = BlockCode(src, "private static int RecommendedEdgeBoost(string? model)", "private void ApplyRecommendedEdgeBoost()");
+        Assert.Contains("? 43 : 86;", rec);
+        // 自动改写用户参数必须留痕(用户反馈"一直在 86"时,日志里原先一句都没有 ⇒ 没法归因)
+        string boost = BlockCode(src, "private void ApplyRecommendedEdgeBoost()", "private void Combo_Changed(");
+        Assert.Contains("Log($\"边缘增强:跟随当前模型给推荐档", boost);
+        string xaml = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml");
+        Assert.Contains("animevideov3 用 43,其它四支用 86", xaml);
+        Assert.DoesNotContain("animevideov3 用 30", xaml);
+    }
+
     // ───────────────────────── 工具 ─────────────────────────
 
     /// <summary>取 XAML 里某个 Tag 那一项的绿字行文本(含开头的 `&#x0a;`)。</summary>
