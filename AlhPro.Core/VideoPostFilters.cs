@@ -29,7 +29,19 @@ namespace AlhPro.Core;
 ///      (out = in + a·(in − blur(in)) 复合后会出现 a²·blur(d) 项,且中间 8-bit 钳制不可交换)。
 ///   ④ 这条链本来就只跑【一次 ffmpeg】(拼成一个 -vf 串,一次解码一次编码),所以"减少滤镜趟数"在
 ///      ffmpeg 调用层面已经是最小值 1;能省的只有每帧的滤镜计算量,而那只能靠改画面或换实现。
-/// 【本文件不做的事】不做任何合并/近似 —— 需要改画面或换实现的方案一律由用户看 A/B 对比后决定。</summary>
+/// 【本文件不做的事】不做任何合并/近似 —— 需要改画面或换实现的方案一律由用户看 A/B 对比后决定。
+/// 【2026-10-16 分辨率自适应 · 为什么同一个滑条在 4K 上"看着没用"】用户反馈"后处理的那些东西不管怎么
+///   调整都没有效果"。查下来链路是通的(滑条 → 本函数 → -vf → 合帧命令,逐段有单测钉住),真正的原因是
+///   **强度被输出分辨率稀释**:smartblur 的 luma_radius、unsharp 的矩阵尺寸、cas 的核都是【固定像素】,
+///   输出 4K 时相对作用面只有 1080p 的一半。实测(同一帧 lanczos 放到 3840×2160 再施加同一组滤镜;
+///   PSNR 越小 = 改动越大,脚本 `D:\deep\_tools\postfx\measure4.ps1`):
+///     · 四档全 100:1080p 26.83 dB → 4K 只有 30.70 dB(弱了约 4 dB);全 50:30.88 → 35.38;预设 29.09 → 34.29。
+///     · 按 输出高度÷1080 同比放大半径/强度后,4K 重新量到 26.18 / 31.31 / 29.24 dB —— 与 1080p 齐平(±0.7 dB)。
+///   ⇒ Build 多一个 outputHeight,作用面随输出分辨率同比放大;**0 或 ≤1080 时产出与旧版逐字相同**。
+///   代价(实测):4K 上滤镜部分 85.6 → 104.7 ms/帧,相对整片超分的秒级/帧可忽略;平坦区扰动比 1080p
+///   参考多约 1.1 dB,是把强度拉回来的必然代价,1:1 看不到噪点/色带。
+///   ⚠ 这条只修"不同输出分辨率下强度不一致",**修不了"预览窗口缩小后看不出"** —— 高频差异会被缩放抹平,
+///   要 1:1 看才分得出(那是另一个提案,用户本轮未采纳)。</summary>
 public static class VideoPostFilters
 {
     /// <summary>**每一档的"安全上限"**(滑块 100 对应的实际滤镜强度)。
@@ -75,29 +87,61 @@ public static class VideoPostFilters
         return Math.Clamp((int)Math.Round(v), 0, 100);
     }
 
+    /// <summary>定标时用的参考输出高度:滑块刻度就是在 1080p 上量出来的(见 <see cref="SafeMax"/> 的实测记录)。</summary>
+    public const int ReferenceHeight = 1080;
+
+    /// <summary>后处理实际施加的帧高 → 作用面缩放系数(1.0~2.0,见类注释的"分辨率自适应")。
+    /// ≤1080(含 0 = 未知)一律返回 1.0,即**改动前后产出逐字相同**;
+    /// &gt;2160 不再继续放大:ffmpeg 的 smartblur 半径上限 5、unsharp 的 luma 矩阵 lx+ly ≤ 25(13:13 已顶格),
+    /// 而滤镜计算量随半径上升,8K 本来就极少(应用对超 4K 另有告警)。</summary>
+    public static double ResolutionScale(int outputHeight)
+    {
+        if (outputHeight <= ReferenceHeight) return 1.0;
+        return Math.Min(2.0, outputHeight / (double)ReferenceHeight);
+    }
+
+    /// <summary>smartblur 半径:按分辨率放大后钳在 ffmpeg 允许的范围内(smartblur 接受小数半径)。</summary>
+    private static double Radius(double baseRadius, double scale)
+        => Math.Clamp(baseRadius * scale, 0.1, 5.0);
+
     /// <summary>按强度构造后处理滤镜链(顺序 = 锐化 → 清晰 → 钝化蒙版 → 保留细节 → 边缘增强);全为 0 时返回 null。
     /// 参数范围 0-100,100 = <see cref="SafeMax"/> 里那档的安全上限(实测依据见该类注释)。
+    /// <paramref name="outputHeight"/> = 后处理实际施加的帧高(超分链里就是合帧时的输出高);
+    /// 传 0 或 ≤1080 时产出与旧版**逐字相同**(分辨率自适应只往上放大,不缩小)。
     /// 【边缘增强 edgeBoost · 2026-09-15 新增】用户反馈"边缘糊/没对上焦",实测数据(游戏帧,1080p→2x):
     ///   官方 animevideov3 边缘宽度 2.23px / 强边缘对比 52.3 → 加 0.3 档后 2.15px / 58.0(+11%),过冲 1.05%→1.40%;
     ///   其它模型(edge 较弱的那几支)用 0.6 档:2.24→2.16px、对比 56.6→69.3(+22%),过冲 1.23%→1.96%。
     ///   所以界面默认按模型给 0.3 / 0.6(见 VideoView 的按模型推荐值)。
     /// 【与"锐化"的区别】同一族机制(带阈值的 smartblur 反向强度),但**阈值取 8**:只加强明确边缘,
     ///   平坦区/噪点/细碎纹理不动 —— 这就是实测里"边缘变窄而 detail 不掉"的原因;锐化那档阈值是 3/6,作用面更宽。</summary>
-    public static string? Build(int sharpen, int clarity, int usm, int detail, int aa = 0, int edgeBoost = 0)
+    public static string? Build(int sharpen, int clarity, int usm, int detail, int aa = 0, int edgeBoost = 0, int outputHeight = 0)
     {
         var inv = CultureInfo.InvariantCulture;
+        double s = ResolutionScale(outputHeight);
         var parts = new System.Collections.Generic.List<string>();
         if (sharpen > 0)
-            parts.Add($"smartblur=luma_radius=1:luma_strength=-{Strength("sharpen", sharpen).ToString("0.00", inv)}:luma_threshold={(sharpen <= 60 ? 3 : 6)}");
+            parts.Add($"smartblur=luma_radius={Radius(1, s).ToString("0.##", inv)}:luma_strength=-{Strength("sharpen", sharpen).ToString("0.00", inv)}:luma_threshold={(sharpen <= 60 ? 3 : 6)}");
         if (clarity > 0)
-            parts.Add($"unsharp=13:13:{Strength("clarity", clarity).ToString("0.00", inv)}:13:13:0");
+        {
+            // 【为什么只有这一档不改半径】unsharp 的 luma 矩阵 lx+ly 被 ffmpeg 限死在 25 以内,13:13 已经顶格
+            // (实测 23:23 直接初始化失败:"luma matrix size (lx/2+ly/2)*2=44 greater than maximum value 25"),
+            // 所以分辨率差只能靠同比加量补:实测 4K 上 0.25 → 42.14 dB(比 1080p 的 39.60 明显弱),
+            // ×2 到 0.50 → 39.4 dB ≈ 1080p;上限 0.60(再往上过冲开始明显)。
+            double clarityAmount = Math.Min(0.60, Strength("clarity", clarity) * s);
+            parts.Add($"unsharp=13:13:{clarityAmount.ToString("0.00", inv)}:13:13:0");
+        }
         if (usm > 0)
-            parts.Add($"smartblur=luma_radius=2:luma_strength=-{Strength("usm", usm).ToString("0.00", inv)}:luma_threshold=8");
+            parts.Add($"smartblur=luma_radius={Radius(2, s).ToString("0.##", inv)}:luma_strength=-{Strength("usm", usm).ToString("0.00", inv)}:luma_threshold=8");
         if (detail > 0)
-            parts.Add($"cas=strength={Strength("detail", detail).ToString("0.00", inv)}");
+        {
+            // cas 没有半径参数(核尺寸固定)⇒ 同样只能同比加量。实测 4K 上 0.30 → 40.88 dB(弱)、0.60 → 40.53,
+            // 而 1.00 → PSNR 16.70 dB(画面直接崩)⇒ 上限钳 0.70,留出安全余量。
+            double cas = Math.Min(0.70, Strength("detail", detail) * s);
+            parts.Add($"cas=strength={cas.ToString("0.00", inv)}");
+        }
         // 边缘增强:阈值 8 = 只动明确边缘(实测依据见方法注释)
         if (edgeBoost > 0)
-            parts.Add($"smartblur=luma_radius=1:luma_strength=-{Strength("edge", edgeBoost).ToString("0.00", inv)}:luma_threshold=8");
+            parts.Add($"smartblur=luma_radius={Radius(1, s).ToString("0.##", inv)}:luma_strength=-{Strength("edge", edgeBoost).ToString("0.00", inv)}:luma_threshold=8");
         // 边缘抗锯齿不再产出 ffmpeg 滤镜(见类注释);aa 只保留形参以免调用方签名变化。
         _ = aa;
         return parts.Count > 0 ? string.Join(",", parts) : null;

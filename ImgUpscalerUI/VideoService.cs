@@ -3554,8 +3554,17 @@ public static class VideoService
                 AppLogger.Info($"1x 修复:已启用 {AlhPro.Core.Anime4k.DisplayName} 着色器(原分辨率修复+锐化,不放大;" +
                     $"着色器 {AlhPro.Core.Anime4k.ShaderRelativePath},随 ffmpeg 目录下发)");
             }
-            var postFilter = AlhPro.Core.VideoPostFilters.Build(postSharpen, postClarity, postUsm, postDetail, postAa, postEdge);
-            if (postFilter != null) preParts.Add(postFilter);
+            // 【2026-10-16 分辨率自适应】后处理的作用面按"本任务真实输出高度"同比放大(实测见 VideoPostFilters 类注释):
+            // 这些滤镜的核半径是**固定像素**,4K 上照搬 1080p 的刻度会弱约 4 dB ⇒ 同一滑条在不同输出分辨率下观感不一致。
+            // 传 plannedOutH(帧数台账/编码预检用的同一个真实输出高);1080p 及以下产出与旧版逐字相同。
+            var postFilter = AlhPro.Core.VideoPostFilters.Build(postSharpen, postClarity, postUsm, postDetail, postAa, postEdge, plannedOutH);
+            if (postFilter != null)
+            {
+                preParts.Add(postFilter);
+                double postScale = AlhPro.Core.VideoPostFilters.ResolutionScale(plannedOutH);
+                if (postScale > 1.0)
+                    AppLogger.Info($"后处理:输出 {plannedOutW}×{plannedOutH} ⇒ 作用面同比放大 {postScale:0.##}×(以 1080p 定标,同一滑条在任何输出分辨率下强度一致)");
+            }
             // 视频降噪(空间+时间,去噪点/闪烁/压缩噪点),放最前:先降噪再锐化
             // 【已挪走】视频降噪原先挂在这里(合帧滤镜链)→ 作用在"超分后的帧"上,4K 下 1.56 秒/帧;
             // 现改为拆帧阶段应用(源分辨率,0.49 秒/帧,便宜 2.5~3.5 倍);waifu2x 引擎则交给模型自带降噪档。

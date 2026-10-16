@@ -153,6 +153,80 @@ public class VideoPostFilterTests
         Assert.EndsWith(":13:13:0", VideoPostFilters.Build(0, 25, 0, 0));
     }
 
+    /// <summary>**分辨率自适应**(2026-10-16) —— 修的是用户说的"后处理的那些东西不管怎么调整都没有效果"。
+    /// 根因:这一族的核半径是**固定像素**(smartblur 的 luma_radius / unsharp 的矩阵 / cas 的核),
+    /// 输出 4K 时相对作用面只有 1080p 的一半 ⇒ 同一组刻度在 4K 上弱约 4 dB
+    /// (实测四档全 100:1080p 26.83 dB vs 4K 30.70 dB)。规则:作用面按 输出高度÷1080 **同比放大**。
+    /// 这里把 1080p 与 4K 两条链**逐字**钉住 —— 改这里就是改成片画面,必须用户看 A/B 后决定。</summary>
+    [Fact]
+    public void Output_height_scales_the_effective_strength()
+    {
+        // ① ≤1080(含 0 = 未知)必须与旧行为**逐字相同**:一个字都不许变
+        foreach (int h in new[] { 0, 720, 1080 })
+        {
+            Assert.Equal(Preset1, VideoPostFilters.Build(29, 50, 70, 80, aa: 0, outputHeight: h));
+            Assert.Equal(VideoPostFilters.Build(29, 50, 70, 80, aa: 0),
+                         VideoPostFilters.Build(29, 50, 70, 80, aa: 0, outputHeight: h));
+        }
+        // ② 4K(×2):两档 smartblur 半径 1→2、2→4(强度本身不变);
+        //    清晰没法放半径(见下一条)⇒ 加量 0.125→0.25;cas 加量 0.24→0.48
+        Assert.Equal(
+            "smartblur=luma_radius=2:luma_strength=-0.20:luma_threshold=3," +
+            "unsharp=13:13:0.25:13:13:0," +
+            "smartblur=luma_radius=4:luma_strength=-0.35:luma_threshold=8," +
+            "cas=strength=0.48",
+            VideoPostFilters.Build(29, 50, 70, 80, aa: 0, outputHeight: 2160));
+        // ③ 只放大作用面,不改档位开关:全 0 仍然是空链,AA 仍然不产出滤镜
+        Assert.Null(VideoPostFilters.Build(0, 0, 0, 0, 0, 0, 2160));
+        Assert.Equal(VideoPostFilters.Build(20, 25, 35, 40, 0, 0, 2160),
+                     VideoPostFilters.Build(20, 25, 35, 40, 45, 0, 2160));
+    }
+
+    [Fact]
+    public void Resolution_scale_never_shrinks_and_is_capped_at_2x()
+    {
+        Assert.Equal(1.0, VideoPostFilters.ResolutionScale(0));      // 未知
+        Assert.Equal(1.0, VideoPostFilters.ResolutionScale(720));
+        Assert.Equal(1.0, VideoPostFilters.ResolutionScale(1080));
+        Assert.Equal(1440 / 1080.0, VideoPostFilters.ResolutionScale(1440), 9);
+        Assert.Equal(2.0, VideoPostFilters.ResolutionScale(2160), 9);
+        // 8K 与 4K 产出同一条链:>2160 不再放大(ffmpeg 的 smartblur 半径上限 5、unsharp 的 luma 矩阵
+        // lx+ly ≤ 25 都已顶格,而滤镜计算量随半径上升;8K 本来就极少)⇒ 这也是"上界不失控"的证据
+        Assert.Equal(VideoPostFilters.Build(20, 25, 35, 40, 0, 0, 2160),
+                     VideoPostFilters.Build(20, 25, 35, 40, 0, 0, 4320));
+    }
+
+    [Fact]
+    public void Unsharp_kernel_never_exceeds_the_ffmpeg_limit()
+    {
+        // ffmpeg 要求 luma 矩阵 lx+ly ≤ 25,13:13 已经是上限(实测 23:23 直接初始化失败:
+        //   "luma matrix size (lx/2+ly/2)*2=44 greater than maximum value 25")⇒ 任何分辨率下都必须停在 13:13,
+        // 分辨率差只能靠"同比加量"补(4K 上 0.25→0.50,实测 39.4 dB ≈ 1080p 的 39.60)
+        foreach (int h in new[] { 720, 1080, 1440, 2160, 4320 })
+        {
+            var chain = VideoPostFilters.Build(0, 100, 0, 0, 0, 0, h)!;
+            Assert.StartsWith("unsharp=13:13:", chain);
+            Assert.EndsWith(":13:13:0", chain);
+        }
+        Assert.Equal("unsharp=13:13:0.25:13:13:0", VideoPostFilters.Build(0, 100, 0, 0, 0, 0, 1080));
+        Assert.Equal("unsharp=13:13:0.50:13:13:0", VideoPostFilters.Build(0, 100, 0, 0, 0, 0, 2160));
+        // 1440p 是中间档(×1.333):smartblur 半径带小数、unsharp 加量
+        Assert.Equal("smartblur=luma_radius=1.33:luma_strength=-0.70:luma_threshold=6",
+            VideoPostFilters.Build(100, 0, 0, 0, 0, 0, 1440));
+        Assert.Equal("smartblur=luma_radius=2.67:luma_strength=-0.50:luma_threshold=8",
+            VideoPostFilters.Build(0, 0, 100, 0, 0, 0, 1440));
+    }
+
+    [Fact]
+    public void Cas_never_reaches_the_measured_cliff()
+    {
+        // 实测 cas = 1.00 会把画面做坏(PSNR 16.70 dB / SSIM 0.527)⇒ 加量上限钳 0.70,
+        // 4K 上滑块 100 = 0.60(实测 40.53 dB,与 1080p 的 39.80 同档)
+        Assert.Equal("cas=strength=0.60", VideoPostFilters.Build(0, 0, 0, 100, 0, 0, 2160));
+        Assert.Equal("cas=strength=0.60", VideoPostFilters.Build(0, 0, 0, 999, 0, 0, 4320));
+        Assert.True(VideoPostFilters.Strength("detail", 100) * VideoPostFilters.ResolutionScale(2160) < 0.70);
+    }
+
     private static int CountOf(string haystack, string needle)
     {
         int n = 0, i = 0;
