@@ -1738,7 +1738,9 @@ public sealed partial class MainPage : Page
             block.Inlines.Add(new Microsoft.UI.Xaml.Documents.LineBreak());
         }
         // 补充一句更详细的说明(按设备状态)
-        var extra = VulkanCheck.GpuAvailable
+        // 【2026-10-17】判据改成"自检有结论且结论是不可用"(NoGpuDetected):报告一般在自检完成后渲染,
+        // 但用 Done/裸 GpuAvailable 都可能在启动早期把"还没测"写成"当前以 CPU 计算"。
+        var extra = !VulkanCheck.NoGpuDetected
             ? "若处理大图/高倍率时提示显存不足,程序会自动降低分块重试;仍失败时可在「计算设备」里改用 CPU。"
             : "当前以 CPU 计算,速度会明显慢;若电脑有独立显卡却检测不到,请更新显卡驱动(需支持 Vulkan)后点「重新检测」。";
         block.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = extra, FontSize = 11 });

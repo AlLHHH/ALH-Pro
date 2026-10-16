@@ -1471,7 +1471,9 @@ public static partial class EngineService
         // Blackwell:历史上是 2022 版 ncnn 的 Vulkan 驱动问题(引擎够新则不一定)
         if (treatBlackwellAsRisky && IsBlackwellGpu()) return true;
         // Vulkan 不可用(无独显/驱动缺):引擎 GPU 无法跑,CPU 模式也崩 → 风险
-        try { if (!ALHPro.VulkanCheck.GpuAvailable) return true; } catch { }
+        // 【2026-10-17】必须等自检**给出结论**才算"不可用":旧写法 `!GpuAvailable` 在自检还没跑完的那一刻
+        // 也是 false ⇒ 启动早期把整机按"无 GPU"推去 ONNX/CPU(与 VideoView/SafeRender 同一处误报)。
+        try { if (ALHPro.VulkanCheck.NoGpuDetected) return true; } catch { }
         // 其余(AMD/Intel 核显/NVIDIA 老卡):Vulkan 正常即可用,不预判(避免误报)
         return false;
     }

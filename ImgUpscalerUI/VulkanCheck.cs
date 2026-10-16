@@ -19,6 +19,18 @@ public static class VulkanCheck
     /// <summary>检测结果:是否有可用的 GPU(Vulkan)。</summary>
     public static bool GpuAvailable { get; private set; }
 
+    /// <summary>自检是否**已经给出结论**(引擎枚举跑完 / 引擎缺失 / 探测异常都算)。
+    /// 【为什么需要它 · 2026-10-17 用户真机 RTX 4060 Laptop】`Done` 在探测**进入时**就置位,而枚举结果要
+    /// 几秒后才填 ⇒ 那段时间 `Done == true &amp;&amp; GpuAvailable == false`,旧判据 `Done &amp;&amp; !GpuAvailable`
+    /// 把"还不知道"读成了"确定没有 GPU":日志里 00:32:07 报「检测到设备配置较低(未检测到可用 GPU(Vulkan))」,
+    /// **同一秒**又写着「补枚举成功,枚举到 1 个 Vulkan 设备」「GPU 引擎可用(Vulkan 设备枚举成功)」——
+    /// 8GB 显存、nvidia-smi 空闲 7GB 的机器被说成低配。判"没有 GPU"一律用 <see cref="NoGpuDetected"/>。</summary>
+    public static bool ProbeConcluded { get; private set; }
+
+    /// <summary>**唯一判据**:确定没有可用 GPU(Vulkan)。只有自检给出结论、且结论是"不可用"才为真;
+    /// Unknown(探测进行中 / 缓存里只有旧结论)一律 false —— 没有结论就不许说用户没有显卡。</summary>
+    public static bool NoGpuDetected => ProbeConcluded && !GpuAvailable;
+
     /// <summary>友好报告(给用户看:当前设备 + 会有什么问题 + 建议)。</summary>
     public static string Report { get; private set; } = "";
 
@@ -75,7 +87,7 @@ public static class VulkanCheck
         {
             System.Threading.Interlocked.Exchange(ref _lastEnsureTicks, now);
             try { AppLogger.Info("Vulkan 自检:设备表为空(缓存命中或尚未枚举),现场补一次引擎设备枚举"); } catch { }
-            System.Threading.Tasks.Task.Run(() => { try { Done = false; RunOnce(); } catch { } });
+            System.Threading.Tasks.Task.Run(() => { try { Done = false; ProbeConcluded = false; RunOnce(); } catch { } });
         }
 
         var sw = Stopwatch.StartNew();
@@ -102,10 +114,20 @@ public static class VulkanCheck
         }
     }
 
-    /// <summary>自检主体(调用方须已持有 _runLock 并已把 Done 置位)。</summary>
+    /// <summary>自检主体(调用方须已持有 _runLock 并已把 Done 置位)。
+    /// 【结论标志】<see cref="ProbeConcluded"/> 进入时清零、**任何出口**(引擎缺失的提前 return / 正常结束 /
+    /// 探测异常)都在 finally 里置位 ⇒ 界面读到"没结论"时不会把用户冤枉成无显卡。</summary>
     private static void RunOnceCore()
     {
         _engineRan = true;
+        ProbeConcluded = false;
+        try { RunOnceCoreInner(); }
+        finally { ProbeConcluded = true; }
+    }
+
+    /// <summary>真正的探测过程(退出路径见 <see cref="RunOnceCore"/>)。</summary>
+    private static void RunOnceCoreInner()
+    {
         try
         {
             var exe = FindWaifu2x();
@@ -819,6 +841,7 @@ public static class VulkanCheck
         AppSettings.VulkanGpuOk = null;
         try { AppSettings.Save(); } catch { }
         Done = false;
+        ProbeConcluded = false;
         Devices.Clear();
         System.Threading.Tasks.Task.Run(() =>
         {
@@ -831,6 +854,6 @@ public static class VulkanCheck
     /// 不清 AppSettings 缓存(避免覆盖用户已保存的报告/选择),仅重新枚举设备一次。</summary>
     public static void ReProbe()
     {
-        try { Done = false; RunOnce(); } catch { }
+        try { Done = false; ProbeConcluded = false; RunOnce(); } catch { }
     }
 }

@@ -904,7 +904,9 @@ public static class EsrganOnnxService
         try
         {
             // 探测尚未完成(启动后极短暂窗口):保守判断,避免因 Vulkan 误判而否定 GPU
-            if (!VulkanCheck.GpuAvailable && !EngineService.IsBlackwellGpu()) return -1;
+            // 【2026-10-17】改成"自检给出结论且结论是不可用"才降 CPU:旧写法 `!GpuAvailable` 在探测进行中
+            // 同样是 false,等于用一次"还不知道"把用户的 GPU 静默降级成 CPU(注释说的是保守,代码做的是相反)。
+            if (VulkanCheck.NoGpuDetected && !EngineService.IsBlackwellGpu()) return -1;
         }
         catch { }
         int fallback = AppSettings.GpuIndex >= 0 ? AppSettings.GpuIndex : 0;
