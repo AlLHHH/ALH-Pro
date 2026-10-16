@@ -3065,6 +3065,61 @@ public sealed partial class MainPage : Page
                 AppLogger.Info("临时文件目录已恢复自动(剩余空间最大的盘)");
             }
         };
+        // 【2026-10-17】自定义临时目录的准入:只允许**空目录**或**软件自己的目录**(里面有标记文件)。
+        // 为什么:挑了别的目录,它就成了本软件的临时根 —— 启动清理与「立即清理残留」会去扫它,而免费版与
+        // ALH Pro Max 认同一个临时根(见 AlhPro.Core.TempCleanup 里 2026-10-15 那次跨版本删活目录的事故),
+        // 把用户的普通文件夹当临时根,就可能删掉他的东西。判据本体在 Core 里(纯函数,可单测)。
+        static (AlhPro.Core.CustomTempRoot.Verdict Verdict, string Full, string Suggested) InspectTempDir(string dir)
+        {
+            string full = dir.TrimEnd('\\', '/');
+            try { full = System.IO.Path.GetFullPath(full).TrimEnd('\\', '/'); } catch { }
+            bool exists = System.IO.Directory.Exists(full);
+            string? root = null;
+            try { root = System.IO.Path.GetPathRoot(full)?.TrimEnd('\\', '/'); } catch { }
+            bool isDriveRoot = !string.IsNullOrEmpty(root) && string.Equals(full, root, StringComparison.OrdinalIgnoreCase);
+            bool hasMarker = false, isEmpty = false;
+            if (exists && !isDriveRoot)
+            {
+                try { hasMarker = System.IO.File.Exists(System.IO.Path.Combine(full, AlhPro.Core.CustomTempRoot.MarkerFileName)); } catch { }
+                if (!hasMarker)
+                {
+                    // 数不出来(权限/占用)⇒ 当"非空"看:宁可拒绝,也别把别人的目录当临时根
+                    try { isEmpty = !System.IO.Directory.EnumerateFileSystemEntries(full).Any(); } catch { isEmpty = false; }
+                }
+            }
+            return (AlhPro.Core.CustomTempRoot.Check(exists, isDriveRoot, isEmpty, hasMarker),
+                    full, System.IO.Path.Combine(full, AlhPro.Core.CustomTempRoot.SuggestedSubDirName));
+        }
+        // 认下这个目录当临时根:顺手写一个标记文件(下次再挑它、或另一个版本来扫,就知道这是本软件的目录)
+        static void AcceptTempDir(string dir)
+        {
+            try
+            {
+                System.IO.Directory.CreateDirectory(dir);
+                var marker = System.IO.Path.Combine(dir, AlhPro.Core.CustomTempRoot.MarkerFileName);
+                if (!System.IO.File.Exists(marker))
+                    System.IO.File.WriteAllText(marker, AlhPro.Core.CustomTempRoot.MarkerContent, new System.Text.UTF8Encoding(false));
+            }
+            catch (Exception ex) { AppLogger.Warn($"⚠ 临时目录标记文件没写成(不影响使用):{ex.Message}"); }
+            AppSettings.TempDir = dir;
+            AppSettings.Save();
+        }
+        // 不能当临时根时,把原因告诉用户 —— 不要默默保持原设置,不然他以为软件没反应
+        async Task RejectTempDirAsync(AlhPro.Core.CustomTempRoot.Verdict v)
+        {
+            var dlg = new ContentDialog
+            {
+                Title = "这个位置不能当临时目录",
+                Content = new TextBlock
+                {
+                    Text = AlhPro.Core.CustomTempRoot.Describe(v) + "\n\n临时文件位置没有改动。",
+                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                },
+                CloseButtonText = "好的",
+                XamlRoot = this.XamlRoot,
+            };
+            await ALHPro.SafeDialog.ShowAsync(dlg, "临时目录选择");
+        }
         tmpPickBtn.Click += async (_, _) =>
         {
             try
@@ -3074,13 +3129,60 @@ public sealed partial class MainPage : Page
                 WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
                 picker.FileTypeFilter.Add("*");
                 var folder = await picker.PickSingleFolderAsync();
-                if (folder != null)
+                if (folder == null) return;
+                var (verdict, full, suggested) = InspectTempDir(folder.Path);
+                if (verdict == AlhPro.Core.CustomTempRoot.Verdict.Ok)
                 {
-                    AppSettings.TempDir = folder.Path;
-                    AppSettings.Save();
+                    AcceptTempDir(full);
                     RefreshTmpUi();
-                    AppLogger.Info($"临时文件目录已设为: {folder.Path}");
+                    AppLogger.Info($"临时文件目录已设为: {full}");
+                    return;
                 }
+                if (verdict == AlhPro.Core.CustomTempRoot.Verdict.NotEmpty)
+                {
+                    // 里头有别的文件 ⇒ 给一条出路:在它里面新建专用子目录(直接拒绝等于不让他用这块盘)
+                    var dlg = new ContentDialog
+                    {
+                        Title = "这个文件夹不是空的",
+                        Content = new TextBlock
+                        {
+                            Text = "临时文件会直接写在这里、清理残留时也会扫这里,所以只能选空文件夹。\n\n"
+                                 + "要在这里新建一个专用子文件夹来用吗?\n" + suggested,
+                            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                        },
+                        PrimaryButtonText = "新建并改用这里",
+                        CloseButtonText = "取消",
+                        DefaultButton = ContentDialogButton.Primary,
+                        XamlRoot = this.XamlRoot,
+                    };
+                    var (shown, r) = await ALHPro.SafeDialog.TryShowAsync(dlg, "临时目录选择");
+                    if (!shown)
+                    {
+                        AppLogger.Warn($"⚠ 临时目录没换成:{full} 里已经有别的文件,而询问框没能弹出来(设置保持不变)");
+                        return;
+                    }
+                    if (r != ContentDialogResult.Primary)
+                    {
+                        AppLogger.Info($"临时目录没换(用户取消):{full} 里已经有别的文件");
+                        return;
+                    }
+                    try { System.IO.Directory.CreateDirectory(suggested); } catch { }
+                    var (v2, full2, _) = InspectTempDir(suggested);
+                    if (v2 == AlhPro.Core.CustomTempRoot.Verdict.Ok)
+                    {
+                        AcceptTempDir(full2);
+                        RefreshTmpUi();
+                        AppLogger.Info($"临时文件目录已设为: {full2}(在原文件夹里新建的专用子目录)");
+                    }
+                    else
+                    {
+                        AppLogger.Warn($"⚠ 临时目录没换成:{AlhPro.Core.CustomTempRoot.Describe(v2)}");
+                        await RejectTempDirAsync(v2);
+                    }
+                    return;
+                }
+                AppLogger.Warn($"⚠ 临时目录没换成:{AlhPro.Core.CustomTempRoot.Describe(verdict)}");
+                await RejectTempDirAsync(verdict);
             }
             catch (Exception ex) { AppLogger.Info("选择临时目录失败: " + ex.Message); }
         };
