@@ -202,6 +202,58 @@ setTimeout(function () {
       </table>
     </div>
 
+    <h2 id="source">FFmpeg 对应源码(GPLv3)</h2>
+    <p data-reveal>安装包里的 <code>engines\ffmpeg\</code> 与 <code>engines\ffmpeg8\</code> 是启用了
+      <code>--enable-gpl --enable-version3</code> 的 FFmpeg,按 <strong>GNU GPL v3</strong> 分发;
+      GPLv3 第 6 条要求:分发二进制的一方要同时给出<strong>对应源码</strong>。
+      下面这两份源码就是随包二进制<strong>同一版本</strong>的完整源码(含上游提交号),
+      构建脚本与完整构建配置也一并给出 —— <strong>任何人都可以下载、重建、再分发,不用注册、不用付费</strong>。</p>
+
+    <div class="table-scroll" data-reveal>
+      <table>
+        <thead>
+          <tr><th>随包二进制</th><th>版本 / 上游提交</th><th>对应源码</th><th>许可</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>主 FFmpeg</strong><br><span class="small muted"><code>engines\ffmpeg\ffmpeg.exe</code><br>
+              145,810,432 字节<br>SHA256 <code>4FD34432B34097836A8347E04ABF8DF709F168CCD92D1994EBC8C53B5D31539F</code></span></td>
+            <td><code>N-126247-gb79d4c4c0a-20260823</code><br>
+              <span class="small muted">提交 <code>b79d4c4c0a160fc46988e98505af6039a53ad53e</code><br>
+              树对象 <code>3afd407281a06fae884ae5ee395194ac206466ab</code></span></td>
+            <td><a href="src/ffmpeg-src-N-126247-gb79d4c4c0a.tar.gz" download>本站源码包(17.7 MB)</a><br>
+              <span class="small muted">或 <a href="https://github.com/FFmpeg/FFmpeg/archive/b79d4c4c0a160fc46988e98505af6039a53ad53e.tar.gz">上游同一提交的快照</a></span></td>
+            <td>GPLv3</td>
+          </tr>
+          <tr>
+            <td><strong>备用 FFmpeg8</strong>(共享构建,驱动较旧时的编码兜底)<br>
+              <span class="small muted"><code>engines\ffmpeg8\ffmpeg.exe</code> + 8 个同族 DLL<br>
+              541,184 字节<br>SHA256 <code>EF4D9585DE831269ADCB027D830EB1E1F97E504E16D4C1EC6295764B92BAEFC6</code></span></td>
+            <td><code>n8.1.2-50-g1a748fe2cd-20260903</code><br>
+              <span class="small muted">提交 <code>1a748fe2cd43e3ead22fafb1b5b7d77f153898a8</code><br>
+              树对象 <code>e064592f5b4fd313a825734da8e7c9c4f0ffab5f</code></span></td>
+            <td><a href="src/ffmpeg-src-n8.1.2-50-g1a748fe2cd.tar.gz" download>本站源码包(17.0 MB)</a><br>
+              <span class="small muted">或 <a href="https://github.com/FFmpeg/FFmpeg/archive/1a748fe2cd43e3ead22fafb1b5b7d77f153898a8.tar.gz">上游同一提交的快照</a></span></td>
+            <td>GPLv3</td>
+          </tr>
+          <tr>
+            <td><strong>构建脚本</strong><br><span class="small muted">把上面两个提交编成 Windows 二进制的那套脚本(BtbN)</span></td>
+            <td>BtbN/FFmpeg-Builds<br><span class="small muted">快照 <code>63ac3265b0789ea16c7b1f8351cd2ad195a28722</code><br>(2026-10-10)</span></td>
+            <td><a href="src/btbn-ffmpeg-builds-scripts-20261011.tar.gz" download>本站快照(116 KB)</a><br>
+              <span class="small muted">或 <a href="https://github.com/BtbN/FFmpeg-Builds">上游仓库</a></span></td>
+            <td>见仓库内各文件</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="small muted" data-reveal>两个构建的<strong>完整 configuration 行</strong>(逐字取自随包 <code>ffmpeg.exe -version</code>)
+      与这两个 exe 的大小/SHA256、源码包的校验值,见 <a href="src/README-corresponding-source.txt">src/README-corresponding-source.txt</a>,与软件随包的
+      <code>licenses\ffmpeg-源码获取.txt</code> 同一口径。
+      <strong>ALH Pro Max(付费版)随包的两个 ffmpeg 二进制与免费版逐字节相同</strong>(实测 SHA256 一致),本节源码同样覆盖它。
+      想核对"源码是不是这一份":用上面的提交 + 构建脚本 + 那行 configuration 重建,得到的就是与随包 ffmpeg 同配置的构建。
+      两个 FFmpeg 源码包是从上游官方 Git 服务器(<code>git.ffmpeg.org</code>)检出上面那两个提交后打包的,
+      文件树与上游该提交完全一致、未作任何改动(tar 记录了打包时间,所以字节与 GitHub 的自动归档不同,内容相同)。</p>
+
     <h2 id="legacy">老版本下载</h2>
     <p class="small muted">保留最近两个正式版 <strong>v1.4.3</strong> 与 <strong>v1.4.2</strong>(更早的版本已下架)。装好后软件里的「检查更新」会提示升到最新版。</p>
     <div class="table-scroll" data-reveal>

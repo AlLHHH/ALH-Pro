@@ -164,9 +164,19 @@ while ($true) {
    若主机/OSS 支持,再把 `/index.html` 301 到 `/` —— 两条都能让"首页只被收录成一个地址"更彻底。
    改完到 Google Search Console / Bing 网站管理员工具里**提交 sitemap 并请求重新抓取**,旧的标题与摘要(抓取缓存)才会更新。
 7. **不要在页面里加统计脚本。** 若确实需要,请先确认合规要求并自行申报,再统一加。
-8. **上线文件清单**:`*.html`(7 个)、`assets/`、`favicon.ico`、`robots.txt`、`sitemap.xml`。
+8. **上线文件清单**:`*.html`(7 个)、`assets/`、`src/`(4 个文件:3 个 FFmpeg 对应源码包 + `README-corresponding-source.txt`,GPLv3 —— 见 `download.html#source`)、`favicon.ico`、`robots.txt`、`sitemap.xml`。
    上传时 `.ico` 要 `image/x-icon`、`.png` 要 `image/png`、`.xml` 要 `application/xml`、`.txt` 要 `text/plain`
    —— 图标若被 OSS 传成 `application/octet-stream`,浏览器会**拒用**,表现和"没有图标"一样。
+9. **`src/` 里的 GPLv3 源码包必须一起传。** `website/src/` 四个文件(`*.tar.gz` 三个,合计约 32 MB,外加
+   `README-corresponding-source.txt` 11 KB)是安装包里
+   FFmpeg 的**对应源码**镜像,`download.html` 的「FFmpeg 对应源码」章节直接链到
+   `https://alhpro.cn/src/…`。它们在 `.gitignore` 里(**不进公开 git 仓库**,只走 OSS/FTP 上传),
+   所以 `git clone` / Git 拉取式部署**不会**带上它们 —— 用那种方式部署时,必须另行把 `src/` 四个文件传上去。
+   **漏传的后果不是报错,而是三个链接 404**(GPLv3 §6(d) 的公开位置就是这几个 URL,不能断)。
+   上传后务必用 `curl.exe -I --ssl-no-revoke https://alhpro.cn/src/ffmpeg-src-N-126247-gb79d4c4c0a.tar.gz`
+   之类的命令逐条验一遍(返回 `200` 且 `Content-Length` 与本地文件一致;`src/README-corresponding-source.txt` 也要 200)。
+   OSS 上 `.tar.gz` 的 Content-Type 建议设成 `application/gzip`(设成 `application/octet-stream` 也能下,
+   只是浏览器会直接存盘、不给文件名以外的提示);`.txt` 建议 `text/plain; charset=utf-8`。
 
 ---
 
@@ -215,7 +225,7 @@ server {
 
 1. 新建 Bucket:地域选国内、读写权限设为**公共读**;
 2. 开启「静态页面」:默认首页 `index.html`(可选错误页 `404.html`);
-3. 上传 `website/` 下全部文件与目录(保留 `assets/` 层级);
+3. 上传 `website/` 下全部文件与目录(保留 `assets/` 与 `src/` 层级;`src/` 里是 GPLv3 对应源码包 + 说明 txt,共四个文件,漏传会让 `download.html#source` 的链接 404);
 4. 上传时确认 `.html` / `.css` / `.js` 的对象 Content-Type 带 **`charset=utf-8`**,否则中文可能乱码;
 5. 绑定**自定义域名**(需该域名已备案),开启 CDN 加速;
 6. 建议给 `assets/` 下的文件设置较长的缓存时间,`index.html` 设置较短。
@@ -326,7 +336,7 @@ python tools/make_brand_icons.py
 | 第三方脚本供应链 | 全站**零外部依赖**:页面里的外部域名全是**超链接**(GitHub / 百度网盘 / 工信部 / 许可页),没有外链脚本、字体、CDN |
 | 目录列举 | `?list-type=2`、`?prefix=` 等一律返回首页,**没有桶列举** ✓ |
 | 敏感文件 | `.git/config`、`.env`、`README.md`、`package.json`、`*.zip`、`*.bak`、`*.map`、`phpinfo.php`、`web.config` **全部 404** ✓ |
-| AccessKey 泄露 | 站点文件 + 仓库根脚本/文档 + OSS 上传目录(31 个文件)里**没有** `LTAI…` 开头的 AK,也没有 `AccessKeySecret` 字样 ✓ |
+| AccessKey 泄露 | 站点文件 + 仓库根脚本/文档 + OSS 上传目录(35 个文件,含 `src/` 四个源码包/说明文件)里**没有** `LTAI…` 开头的 AK,也没有 `AccessKeySecret` 字样 ✓ |
 | 源站能不能被直连(绕过 CDN) | `alhpro.oss-cn-hongkong.aliyuncs.com` → **403 拒绝匿名访问** ✓(`alh-pro`、`alhprocn` 两个名字不存在 ⇒ 404) |
 
 > 一句话:静态站没有"注入/登录/上传"这类经典入口,真正的风险不在"被黑",而在**配置**与**账单**。
