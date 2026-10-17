@@ -31,6 +31,11 @@ public static class VulkanCheck
     /// Unknown(探测进行中 / 缓存里只有旧结论)一律 false —— 没有结论就不许说用户没有显卡。</summary>
     public static bool NoGpuDetected => ProbeConcluded && !GpuAvailable;
 
+    /// <summary>这台机器**过去某次**真的枚举到过 Vulkan 设备(跨会话记住;「重新检测」不清)。
+    /// 用来兜住"这次探测失败"的反例:跑过 GPU 的机器这次没枚举到,只当"暂时不知道",
+    /// 不说没有显卡、也不弹低配卡片(2026-10-17 用户真机要求)。</summary>
+    public static bool GpuEverConfirmed => AppSettings.GpuEverConfirmed;
+
     /// <summary>友好报告(给用户看:当前设备 + 会有什么问题 + 建议)。</summary>
     public static string Report { get; private set; } = "";
 
@@ -796,6 +801,10 @@ public static class VulkanCheck
         if (!GpuAvailable) return;
         try
         {
+            // 【永不再误报】只要这次真的枚举到了设备,就永久记住"这台机器有可用 GPU"(跨会话;重新检测也不清)。
+            // 以后哪怕某次探测失败(驱动刚重启/引擎启动慢/杀软占了 exe),也只当"暂时不知道",
+            // 不许把好机器说成没显卡、更不许弹低配卡片 —— 2026-10-17 用户明确要求。
+            AppSettings.GpuEverConfirmed = true;
             AppSettings.VulkanReport = Report;
             AppSettings.VulkanCheckDone = true;
             AppSettings.VulkanGpuOk = true;

@@ -203,8 +203,10 @@ public class WeakDeviceJudgementTests
         Assert.True(WeakDeviceRules.NeedsStartCard(GpuPresence.Usable, 3, 8, 8, onlyIntegratedGpu: false));
         // 只有核显(共享显存):弹
         Assert.True(WeakDeviceRules.NeedsStartCard(GpuPresence.Usable, 8, 32, 10, onlyIntegratedGpu: true));
-        // 确认没有可用 GPU:弹
-        Assert.True(WeakDeviceRules.NeedsStartCard(GpuPresence.Absent, 8, 32, 10, onlyIntegratedGpu: false));
+        // 确认没有可用 GPU(真·无显卡机器:显存读数也是 0):弹
+        Assert.True(WeakDeviceRules.NeedsStartCard(GpuPresence.Absent, 0, 32, 10, onlyIntegratedGpu: false));
+        // 但"没枚举到却有 8GB 显存"不是低配机,不弹(第二道保险)
+        Assert.False(WeakDeviceRules.NeedsStartCard(GpuPresence.Absent, 8, 32, 10, onlyIntegratedGpu: false));
         // 自检还没结论:不弹(4060 那台误报的源头)
         Assert.False(WeakDeviceRules.NeedsStartCard(GpuPresence.Unknown, 8, 31.8, 10, onlyIntegratedGpu: false));
         // 好机器当然不弹
@@ -212,21 +214,60 @@ public class WeakDeviceJudgementTests
         // 只是内存小/核数少(显存够用):黄字提,卡片不弹
         Assert.True(WeakDeviceRules.IsWeak(GpuPresence.Usable, 8, 4, 4, onlyIntegratedGpu: false));
         Assert.False(WeakDeviceRules.NeedsStartCard(GpuPresence.Usable, 8, 4, 4, onlyIntegratedGpu: false));
+        // 跑过 GPU 的机器:连 4GB 那档也永不弹
+        Assert.False(WeakDeviceRules.NeedsStartCard(GpuPresence.Usable, 4, 7.9, 8,
+            onlyIntegratedGpu: false, gpuEverConfirmed: true));
+    }
+
+    /// <summary>【2026-10-17 用户要求】"一定不要再出现我这种设备也会弹出的情况"。
+    /// 这台机器跑过 GPU(4060 Laptop / 8GB / 32GB / 10 核),哪怕某次探测失败没枚举到,
+    /// 也只能当"暂时不知道":不说没有显卡、不判弱、不弹卡片。</summary>
+    [Fact]
+    public void 跑过GPU的机器_这次没枚举到也不许说没显卡也不许弹卡片()
+    {
+        // 没跑过 GPU、这次也没枚举到 ⇒ 有结论的 Absent(真·无显卡机器照旧提醒)
+        Assert.Equal(GpuPresence.Absent, WeakDeviceRules.Resolve(probeConcluded: true, gpuAvailable: false));
+        Assert.True(WeakDeviceRules.IsWeak(GpuPresence.Absent, 0, 8, 8, onlyIntegratedGpu: false));
+        Assert.True(WeakDeviceRules.NeedsStartCard(GpuPresence.Absent, 0, 8, 8, onlyIntegratedGpu: false));
+
+        // 跑过 GPU 的机器这次没枚举到 ⇒ 绝不当作"没有显卡"
+        var presence = WeakDeviceRules.Resolve(probeConcluded: true, gpuAvailable: false, gpuEverConfirmed: true);
+        Assert.Equal(GpuPresence.Unknown, presence);
+        Assert.False(WeakDeviceRules.IsNoGpu(presence));
+        Assert.False(WeakDeviceRules.IsWeak(presence, 8, 31.8, 10, onlyIntegratedGpu: false));      // 用户那台
+        Assert.False(WeakDeviceRules.NeedsStartCard(presence, 8, 31.8, 10, onlyIntegratedGpu: false));
+
+        // 自检进行中照旧 Unknown(不论有没有跑过 GPU)
+        Assert.Equal(GpuPresence.Unknown, WeakDeviceRules.Resolve(probeConcluded: false, gpuAvailable: true));
+        Assert.Equal(GpuPresence.Unknown, WeakDeviceRules.Resolve(probeConcluded: false, gpuAvailable: false,
+            gpuEverConfirmed: true));
     }
 
     /// <summary>两套判据不许再混用:黄字仍看 IsWeakDevice(显存&lt;6 一档也算),
-    /// 开始前卡片看 NeedsStartCardForWeakDevice(显存&lt;4 / 只有核显 / 没 GPU)。</summary>
+    /// 开始前卡片看 NeedsStartCardForWeakDevice(显存&lt;4 / 只有核显 / 没 GPU),且"跑过 GPU"要跨会话记住。</summary>
     [Fact]
     public void 黄字与开始前卡片各用各的门槛()
     {
         string core = CodeOnly(ReadRepoFile("AlhPro.Core", "WeakDeviceRules.cs"));
         Assert.Contains("public const double CardVramGb = 4.0;", core);
-        Assert.Contains("public static bool NeedsStartCard(GpuPresence presence, double vramGb, double ramGb, int cores, bool onlyIntegratedGpu)", core);
-        Assert.Contains("=> IsNoGpu(presence) || vramGb < CardVramGb || onlyIntegratedGpu;", core);
+        Assert.Contains("public static bool NeedsStartCard(GpuPresence presence, double vramGb, double ramGb, int cores, bool onlyIntegratedGpu,", core);
+        Assert.Contains("if (gpuEverConfirmed) return false;", core);        // 跑过 GPU ⇒ 永不弹
+        Assert.Contains("if (vramGb >= MinVramGb) return false;", core);     // 6GB 以上显存 ⇒ 不是低配机
+        Assert.Contains("return gpuEverConfirmed ? GpuPresence.Unknown : GpuPresence.Absent;", core);
 
         string sr = CodeOnly(ReadRepoFile("ImgUpscalerUI", "SafeRender.cs"));
         Assert.Contains("public static bool NeedsStartCardForWeakDevice", sr);
         Assert.Contains("AlhPro.Core.WeakDeviceRules.NeedsStartCard(CurrentGpuPresence(), TotalVramGB, TotalRamGB,", sr);
+        Assert.Contains("ALHPro.VulkanCheck.GpuEverConfirmed", sr);
+
+        // "跑过 GPU"这件事要真的存下来(跨会话;重新检测也不清)
+        string vk = CodeOnly(ReadRepoFile("ImgUpscalerUI", "VulkanCheck.cs"));
+        Assert.Contains("public static bool GpuEverConfirmed => AppSettings.GpuEverConfirmed;", vk);
+        Assert.Contains("AppSettings.GpuEverConfirmed = true;", vk);
+        string settings = CodeOnly(ReadRepoFile("ImgUpscalerUI", "AppSettings.cs"));
+        Assert.Contains("public static bool GpuEverConfirmed { get; set; }", settings);
+        Assert.Contains("GpuEverConfirmed = d.GpuEverConfirmed;", settings);
+        Assert.Contains("GpuEverConfirmed = GpuEverConfirmed,", settings);
 
         string vv = CodeOnly(ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs"));
         Assert.Contains("bool weakDevice = SafeRender.NeedsStartCardForWeakDevice && FastModeCheck.IsChecked != true;", vv);

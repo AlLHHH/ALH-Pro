@@ -1161,7 +1161,7 @@ public static class SafeRender
             try
             {
                 return AlhPro.Core.WeakDeviceRules.NeedsStartCard(CurrentGpuPresence(), TotalVramGB, TotalRamGB,
-                    CpuCoreCount, OnlyIntegratedGpu());
+                    CpuCoreCount, OnlyIntegratedGpu(), ALHPro.VulkanCheck.GpuEverConfirmed);
             }
             catch { return false; }
         }
@@ -1174,7 +1174,7 @@ public static class SafeRender
         try
         {
             return AlhPro.Core.WeakDeviceRules.Resolve(ALHPro.VulkanCheck.ProbeConcluded,
-                ALHPro.VulkanCheck.GpuAvailable);
+                ALHPro.VulkanCheck.GpuAvailable, ALHPro.VulkanCheck.GpuEverConfirmed);
         }
         catch { return AlhPro.Core.GpuPresence.Unknown; }
     }

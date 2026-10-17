@@ -161,9 +161,10 @@ public class DiagnosticWordingHonestyTests
         // 理由清单本体:只有 Absent(=有结论且不可用)才写"未检测到可用 GPU"
         string describe = Block(core, "public static string Describe(GpuPresence presence", "return string.Join(\"、\", list);");
         Assert.Contains("if (IsNoGpu(presence)) list.Add(\"未检测到可用 GPU(Vulkan)\");", describe);
-        // 判据本体:没结论一律 Unknown;只有"有结论且不可用"才是 Absent,也才等于"没有 GPU"
-        Assert.Contains("=> !probeConcluded ? GpuPresence.Unknown : (gpuAvailable ? GpuPresence.Usable : GpuPresence.Absent);",
-            CodeOnly(core));
+        // 判据本体:没结论一律 Unknown;只有"有结论且不可用"才是 Absent ——
+        // 但"这台机器以前跑过 GPU、这次没枚举到"只当 Unknown,不许把好机器说成没显卡(2026-10-17 用户要求)
+        Assert.Contains("if (!probeConcluded) return GpuPresence.Unknown;", CodeOnly(core));
+        Assert.Contains("return gpuEverConfirmed ? GpuPresence.Unknown : GpuPresence.Absent;", CodeOnly(core));
         Assert.Contains("public static bool IsNoGpu(GpuPresence presence) => presence == GpuPresence.Absent;", CodeOnly(core));
         // UI 侧:理由/判据都问三态,不再自己读 GpuAvailable
         string reason = Block(src, "private static string ComputeWeakReason()", "private static AlhPro.Core.GpuPresence CurrentGpuPresence()");
