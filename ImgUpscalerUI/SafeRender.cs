@@ -1150,6 +1150,23 @@ public static class SafeRender
         catch { return ""; }
     }
 
+    /// <summary>开始前诊断卡片该不该为"设备弱"弹一次。**口径与黄字不同**:
+    /// 【2026-10-17 用户裁决】4GB 显存的机器(1050 Ti/1650)是"能跑但慢",视频页黄字提示就够了,
+    /// 不该每次开始都弹卡片 ⇒ 卡片只给 显存&lt;4GB / 只有核显 / 确认没有 GPU 的机器。
+    /// 判据在 <see cref="AlhPro.Core.WeakDeviceRules.NeedsStartCard"/>;黄字仍是 <see cref="IsWeakDevice"/>。</summary>
+    public static bool NeedsStartCardForWeakDevice
+    {
+        get
+        {
+            try
+            {
+                return AlhPro.Core.WeakDeviceRules.NeedsStartCard(CurrentGpuPresence(), TotalVramGB, TotalRamGB,
+                    CpuCoreCount, OnlyIntegratedGpu());
+            }
+            catch { return false; }
+        }
+    }
+
     /// <summary>自检给出的 GPU 三态。**唯一判据**:只有自检给出结论(<c>ProbeConcluded</c>)且结论是
     /// "不可用"才可能是 Absent;探测进行中/只有旧缓存 = Unknown(按"有 GPU"处理,不冤枉好机器)。</summary>
     private static AlhPro.Core.GpuPresence CurrentGpuPresence()

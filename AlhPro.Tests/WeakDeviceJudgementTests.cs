@@ -186,6 +186,54 @@ public class WeakDeviceJudgementTests
         Assert.DoesNotContain("if (!VulkanCheck.GpuAvailable && !EngineService.IsBlackwellGpu()) return -1;", onnx);
     }
 
+    /// <summary>【2026-10-17 用户裁决】4GB 显存一档(1050 Ti/1650 这类)属于"能跑但慢":视频页黄字照提,
+    /// 但不该每次开始都弹「开始前诊断」卡片。卡片只留给 显存&lt;4GB / 只有核显 / 确认没有 GPU 的机器。</summary>
+    [Fact]
+    public void 四GB显卡只留黄字提示_不该每次开始都弹卡片()
+    {
+        // GTX 1050 Ti 的真实画像:显存 4GB / 内存 7.9GB / 8 核 / GPU 可用 ⇒ 黄字要有,卡片不要
+        Assert.True(WeakDeviceRules.IsWeak(GpuPresence.Usable, 4, 7.9, 8, onlyIntegratedGpu: false));
+        Assert.False(WeakDeviceRules.NeedsStartCard(GpuPresence.Usable, 4, 7.9, 8, onlyIntegratedGpu: false));
+
+        // 5GB 也是一个道理(黄字照提,不弹卡片)
+        Assert.True(WeakDeviceRules.IsWeak(GpuPresence.Usable, 5, 16, 8, onlyIntegratedGpu: false));
+        Assert.False(WeakDeviceRules.NeedsStartCard(GpuPresence.Usable, 5, 16, 8, onlyIntegratedGpu: false));
+
+        // 3GB 显存:该弹卡片了
+        Assert.True(WeakDeviceRules.NeedsStartCard(GpuPresence.Usable, 3, 8, 8, onlyIntegratedGpu: false));
+        // 只有核显(共享显存):弹
+        Assert.True(WeakDeviceRules.NeedsStartCard(GpuPresence.Usable, 8, 32, 10, onlyIntegratedGpu: true));
+        // 确认没有可用 GPU:弹
+        Assert.True(WeakDeviceRules.NeedsStartCard(GpuPresence.Absent, 8, 32, 10, onlyIntegratedGpu: false));
+        // 自检还没结论:不弹(4060 那台误报的源头)
+        Assert.False(WeakDeviceRules.NeedsStartCard(GpuPresence.Unknown, 8, 31.8, 10, onlyIntegratedGpu: false));
+        // 好机器当然不弹
+        Assert.False(WeakDeviceRules.NeedsStartCard(GpuPresence.Usable, 8, 31.8, 10, onlyIntegratedGpu: false));
+        // 只是内存小/核数少(显存够用):黄字提,卡片不弹
+        Assert.True(WeakDeviceRules.IsWeak(GpuPresence.Usable, 8, 4, 4, onlyIntegratedGpu: false));
+        Assert.False(WeakDeviceRules.NeedsStartCard(GpuPresence.Usable, 8, 4, 4, onlyIntegratedGpu: false));
+    }
+
+    /// <summary>两套判据不许再混用:黄字仍看 IsWeakDevice(显存&lt;6 一档也算),
+    /// 开始前卡片看 NeedsStartCardForWeakDevice(显存&lt;4 / 只有核显 / 没 GPU)。</summary>
+    [Fact]
+    public void 黄字与开始前卡片各用各的门槛()
+    {
+        string core = CodeOnly(ReadRepoFile("AlhPro.Core", "WeakDeviceRules.cs"));
+        Assert.Contains("public const double CardVramGb = 4.0;", core);
+        Assert.Contains("public static bool NeedsStartCard(GpuPresence presence, double vramGb, double ramGb, int cores, bool onlyIntegratedGpu)", core);
+        Assert.Contains("=> IsNoGpu(presence) || vramGb < CardVramGb || onlyIntegratedGpu;", core);
+
+        string sr = CodeOnly(ReadRepoFile("ImgUpscalerUI", "SafeRender.cs"));
+        Assert.Contains("public static bool NeedsStartCardForWeakDevice", sr);
+        Assert.Contains("AlhPro.Core.WeakDeviceRules.NeedsStartCard(CurrentGpuPresence(), TotalVramGB, TotalRamGB,", sr);
+
+        string vv = CodeOnly(ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs"));
+        Assert.Contains("bool weakDevice = SafeRender.NeedsStartCardForWeakDevice && FastModeCheck.IsChecked != true;", vv);
+        Assert.DoesNotContain("bool weakDevice = SafeRender.IsWeakDevice", vv);
+        Assert.Contains("bool weak = SafeRender.IsWeakDevice && FastModeCheck.IsChecked != true;", vv);   // 黄字口径不变
+    }
+
     // ───────────────── 工具 ─────────────────
 
     private static int Count(string src, string needle)
