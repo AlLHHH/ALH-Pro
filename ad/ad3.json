@@ -1,6 +1,9 @@
 {
   "_note": "字符安全上限(实测): title≤14字, text≤40字, linkText≤6字, sponsor≤8字。超出仍会换行完整显示、只是卡片变高;别太长以免左栏过高。",
-  "title": "你知道吗",
-  "text": "如果AlL.H收到赞助 会很开心哦",
-  "sponsor": "ALH Pro"
+  "title": "AE 脚本收纳工具GoodGoodBox",
+  "text": "你是否因为屏幕过小，导致许多脚本没有地方放？不放工作需要又麻烦，打开又得反复关闭。这款窗口收纳工具专门为屏幕小的 AE 工作用户使用（可以收纳任何软件）",
+  "image": "https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/img5.png",
+  "link": "https://xn--1qu55qntu.top/ggb.html",
+  "linkText": "去看看",
+  "sponsor": "GoodGoodBox"
 }
