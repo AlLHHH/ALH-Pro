@@ -3870,13 +3870,57 @@ public static partial class EngineService
                 $"-t {t} -g {gpuId}{SafeRender.GetEngineThreadArgs()} -f {outFormat}").ConfigureAwait(false);
         }
 
-        // 非引擎原生倍数:批量缩放到目标倍数
+        // 非引擎原生倍数:把整批输出缩放到目标倍数
         if (Math.Abs(engineScale - scale) > 0.001)
         {
             var ratio = scale / engineScale;
-            progress?.Report((95, $"输出 {scale:0.##}x(引擎 {engineScale}x 放大后精确调整)..."));
-            foreach (var f in EnumerateImageFiles(outputDir))
-                await Task.Run(() => ResizeImage(f, f, ratio), ct).ConfigureAwait(false);
+            var shrinkFiles = EnumerateImageFiles(outputDir).ToArray();
+            if (shrinkFiles.Length > 0)
+            {
+                // 【2026-10-17 用户反馈】以前这里是 `foreach + Task.Run` 逐帧**串行**缩放,整段只报一条
+                // 不动的「输出 2x(引擎 4x 放大后精确调整)...」——4x-only 权重选 2x 时缩回是纯 CPU 活,
+                // 用户看到的就是"为什么逐帧缩放、还没有进度"。
+                // 现在:按 AlhPro.Core.ShrinkPolicy 有上限并行,每缩完一帧刷新「超分 缩放回 2x 第 N 帧 / 共 M 帧」
+                // (≥200 ms 报一次,首末帧必报),进度条落在本批引擎已跑完的位置、不倒退。
+                // 结果与文件语义不变:原地覆盖同名文件,坏帧照旧由 GDI+/WinRT 那层抛(调用方的整批回退接住)。
+                int shrinkDone = 0;
+                int shrinkPct = AlhPro.Core.ShrinkPolicy.Pct(pctLo, pctHi, globalBaseFrames + inCount, globalTotalFrames);
+                long lastShrinkReport = 0;
+                var shrinkReportLock = new object();
+                void ReportShrink(bool force)
+                {
+                    if (!force && Environment.TickCount64 - Volatile.Read(ref lastShrinkReport) < 200) return;
+                    lock (shrinkReportLock)
+                    {
+                        if (!force && Environment.TickCount64 - lastShrinkReport < 200) return;
+                        lastShrinkReport = Environment.TickCount64;
+                        progress?.Report((shrinkPct,
+                            $"超分 缩放回 {scale:0.##}x 第 {Volatile.Read(ref shrinkDone)} 帧 / 共 {shrinkFiles.Length} 帧"));
+                    }
+                }
+                ReportShrink(force: true);
+                try
+                {
+                    await Parallel.ForEachAsync(
+                        shrinkFiles,
+                        new ParallelOptions
+                        {
+                            MaxDegreeOfParallelism = AlhPro.Core.ShrinkPolicy.Workers(Environment.ProcessorCount),
+                            CancellationToken = ct,
+                        },
+                        (f, _) =>
+                        {
+                            ResizeImage(f, f, ratio);
+                            Interlocked.Increment(ref shrinkDone);
+                            ReportShrink(force: false);
+                            return ValueTask.CompletedTask;
+                        }).ConfigureAwait(false);
+                }
+                finally
+                {
+                    ReportShrink(force: true);
+                }
+            }
         }
 
         var outCount = Directory.EnumerateFiles(outputDir).Count();
