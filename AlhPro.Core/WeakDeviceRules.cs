@@ -36,6 +36,12 @@ public static class WeakDeviceRules
     /// <summary>核数小于等于这个数算"核心数较少"。</summary>
     public const int MaxFewCores = 4;
 
+    /// <summary>**开始前诊断卡片**里的"弱设备"门槛:显存不到这个数才值得每次开始前拦一下。
+    /// 【2026-10-17 用户裁决】4GB 显存的机器(1050 Ti、1650 这类)是"能跑但慢",视频页黄字提示够了;
+    /// 每次开始都弹一张卡片太吵 ⇒ 卡片只留给 显存&lt;4GB / 只有核显 / 确认没有 GPU 的机器,
+    /// 4GB 一档只留黄字(<see cref="IsWeak"/> 判据不变,黄字口径也不变)。</summary>
+    public const double CardVramGb = 4.0;
+
     /// <summary>自检状态 → 三态。**判据只有一条**:自检有没有给出结论。
     /// <paramref name="probeConcluded"/> 为 false 时无论 <paramref name="gpuAvailable"/> 是什么都是
     /// <see cref="GpuPresence.Unknown"/> —— 那正是启动早期那段"Done 已置位、结果还没出来"的窗口。</summary>
@@ -58,6 +64,12 @@ public static class WeakDeviceRules
            || NominalGb(ramGb) < MinNominalRamGb
            || cores <= MaxFewCores
            || onlyIntegratedGpu;
+
+    /// <summary>开始前诊断卡片要不要因为"设备弱"而弹出来(只管弹卡片;黄字提示仍看 <see cref="IsWeak"/>)。
+    /// 只有 确认没有 GPU / 只有核显 / 显存不到 <see cref="CardVramGb"/> 这三种情况值得拦一次。
+    /// 4GB 一档(显存 4~5.xGB 的独显)属于"能跑但慢":黄字照常提,不再每次开始弹卡片。</summary>
+    public static bool NeedsStartCard(GpuPresence presence, double vramGb, double ramGb, int cores, bool onlyIntegratedGpu)
+        => IsNoGpu(presence) || vramGb < CardVramGb || onlyIntegratedGpu;
 
     /// <summary>用户能读懂的短理由清单(顿号分隔;空串 = 不弱)。只列**真的成立**的那几条 ——
     /// 没结论时绝不许出现"未检测到可用 GPU(Vulkan)"(2026-10-17 误报的原话)。</summary>

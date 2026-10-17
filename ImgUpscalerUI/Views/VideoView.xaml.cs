@@ -11279,7 +11279,9 @@ public sealed partial class VideoView : UserControl
                 || CurrentIsIntegratedGpu() || SafeRender.TotalVramGB < 6.5;
             bool resourceRisk = interpOn && (highRate || (SelectedTargetFps() is { } tfRes && tfRes >= 90))
                 && weakGpu;
-            bool weakDevice = SafeRender.IsWeakDevice && FastModeCheck.IsChecked != true;
+            // 【2026-10-17 用户裁决】4GB 显存一档("能跑但慢")只留黄字;卡片只给
+            // 显存<4GB / 只有核显 / 确认没有 GPU 的机器(判据见 SafeRender.NeedsStartCardForWeakDevice)。
+            bool weakDevice = SafeRender.NeedsStartCardForWeakDevice && FastModeCheck.IsChecked != true;
 
             // 无硬风险 → 不弹,直接开始
             if (!diskRisk && !resourceRisk && !weakDevice) return true;
