@@ -31,9 +31,11 @@ public static class VulkanCheck
     /// Unknown(探测进行中 / 缓存里只有旧结论)一律 false —— 没有结论就不许说用户没有显卡。</summary>
     public static bool NoGpuDetected => ProbeConcluded && !GpuAvailable;
 
-    /// <summary>这台机器**过去某次**真的枚举到过 Vulkan 设备(跨会话记住;「重新检测」不清)。
+    /// <summary>这台机器**过去某次**真的枚举到过 Vulkan 设备(跨会话记住;只有用户手动点「重新检测」才会清掉)。
     /// 用来兜住"这次探测失败"的反例:跑过 GPU 的机器这次没枚举到,只当"暂时不知道",
-    /// 不说没有显卡、也不弹低配卡片(2026-10-17 用户真机要求)。</summary>
+    /// 不说没有显卡、也不弹低配卡片(2026-10-17 用户真机要求)。
+    /// 注意:用户说"重新检测就是要重新检测" —— 手动重检必须真的从头测,所以 <see cref="Recheck"/> 里会清掉它,
+    /// 测完是什么就报什么;这里只在**自动**探测(启动/后台补测)失败时当保险用。</summary>
     public static bool GpuEverConfirmed => AppSettings.GpuEverConfirmed;
 
     /// <summary>友好报告(给用户看:当前设备 + 会有什么问题 + 建议)。</summary>
@@ -801,8 +803,9 @@ public static class VulkanCheck
         if (!GpuAvailable) return;
         try
         {
-            // 【永不再误报】只要这次真的枚举到了设备,就永久记住"这台机器有可用 GPU"(跨会话;重新检测也不清)。
-            // 以后哪怕某次探测失败(驱动刚重启/引擎启动慢/杀软占了 exe),也只当"暂时不知道",
+            // 【永不再误报】只要这次真的枚举到了设备,就永久记住"这台机器有可用 GPU"(跨会话)。
+            // 只有用户手动点「重新检测」会清掉这条记录(那是用户要的"真的重新测"),自动探测失败绝不清。
+            // 以后哪怕某次自动探测失败(驱动刚重启/引擎启动慢/杀软占了 exe),也只当"暂时不知道",
             // 不许把好机器说成没显卡、更不许弹低配卡片 —— 2026-10-17 用户明确要求。
             AppSettings.GpuEverConfirmed = true;
             AppSettings.VulkanReport = Report;
@@ -840,6 +843,9 @@ public static class VulkanCheck
     }
 
     /// <summary>重新检测(设置界面「重新检测」按钮):清缓存、重跑所有检测并更新缓存与报告。
+    /// **必须是真的重新检测**(2026-10-17 用户原话:「重新检测就是要重新检测啊」):连
+    /// <see cref="GpuEverConfirmed"/> 这条"过去跑过 GPU"的记录也一起清掉,之后测出什么就报什么 ——
+    /// 手动重检失败时如实说"没检测到可用 GPU",不许拿旧记录把负结论吞掉。
     /// 完成后触发 Completed 事件(供界面刷新显示)。</summary>
     public static event Action? Completed;
     public static void Recheck()
@@ -848,6 +854,7 @@ public static class VulkanCheck
         AppSettings.VulkanReport = "";
         AppSettings.VulkanReportVersion = "";
         AppSettings.VulkanGpuOk = null;
+        AppSettings.GpuEverConfirmed = false;   // 手动重检 = 真的重新测:旧记录不参与这一次的结论
         try { AppSettings.Save(); } catch { }
         Done = false;
         ProbeConcluded = false;

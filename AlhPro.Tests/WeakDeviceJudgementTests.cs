@@ -260,10 +260,16 @@ public class WeakDeviceJudgementTests
         Assert.Contains("AlhPro.Core.WeakDeviceRules.NeedsStartCard(CurrentGpuPresence(), TotalVramGB, TotalRamGB,", sr);
         Assert.Contains("ALHPro.VulkanCheck.GpuEverConfirmed", sr);
 
-        // "跑过 GPU"这件事要真的存下来(跨会话;重新检测也不清)
+        // "跑过 GPU"这件事要真的存下来(跨会话)。但用户说「重新检测就是要重新检测啊」:
+        // 手动重检必须连这条记录一起清掉,这次测出什么就报什么。
         string vk = CodeOnly(ReadRepoFile("ImgUpscalerUI", "VulkanCheck.cs"));
         Assert.Contains("public static bool GpuEverConfirmed => AppSettings.GpuEverConfirmed;", vk);
         Assert.Contains("AppSettings.GpuEverConfirmed = true;", vk);
+        int recheckAt = vk.IndexOf("public static void Recheck()", StringComparison.Ordinal);
+        Assert.True(recheckAt > 0, "VulkanCheck.Recheck() 不见了");
+        string recheckBody = vk.Substring(recheckAt, Math.Min(1500, vk.Length - recheckAt));
+        Assert.Contains("AppSettings.GpuEverConfirmed = false;", recheckBody);   // 手动重检 = 真的重新测
+        Assert.Contains("AppSettings.VulkanGpuOk = null;", recheckBody);          // 旧结论也不许留
         string settings = CodeOnly(ReadRepoFile("ImgUpscalerUI", "AppSettings.cs"));
         Assert.Contains("public static bool GpuEverConfirmed { get; set; }", settings);
         Assert.Contains("GpuEverConfirmed = d.GpuEverConfirmed;", settings);
