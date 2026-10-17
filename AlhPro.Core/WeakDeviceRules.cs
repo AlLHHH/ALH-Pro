@@ -44,9 +44,16 @@ public static class WeakDeviceRules
 
     /// <summary>自检状态 → 三态。**判据只有一条**:自检有没有给出结论。
     /// <paramref name="probeConcluded"/> 为 false 时无论 <paramref name="gpuAvailable"/> 是什么都是
-    /// <see cref="GpuPresence.Unknown"/> —— 那正是启动早期那段"Done 已置位、结果还没出来"的窗口。</summary>
-    public static GpuPresence Resolve(bool probeConcluded, bool gpuAvailable)
-        => !probeConcluded ? GpuPresence.Unknown : (gpuAvailable ? GpuPresence.Usable : GpuPresence.Absent);
+    /// <see cref="GpuPresence.Unknown"/> —— 那正是启动早期那段"Done 已置位、结果还没出来"的窗口。
+    /// 【2026-10-17 再加一道】<paramref name="gpuEverConfirmed"/> = 这台机器**过去某次**真的枚举到过设备:
+    /// 那么"这次没枚举到"就不可信(驱动刚重启 / 引擎启动慢 / 杀软占了 exe),一律当 Unknown,
+    /// 绝不把跑过 GPU 的机器说成没有显卡。用户原话:「一定不要再出现我这种设备也会弹出的情况了」。</summary>
+    public static GpuPresence Resolve(bool probeConcluded, bool gpuAvailable, bool gpuEverConfirmed = false)
+    {
+        if (!probeConcluded) return GpuPresence.Unknown;
+        if (gpuAvailable) return GpuPresence.Usable;
+        return gpuEverConfirmed ? GpuPresence.Unknown : GpuPresence.Absent;
+    }
 
     /// <summary>只有"有结论且不可用"才是"没有 GPU"。</summary>
     public static bool IsNoGpu(GpuPresence presence) => presence == GpuPresence.Absent;
@@ -66,10 +73,19 @@ public static class WeakDeviceRules
            || onlyIntegratedGpu;
 
     /// <summary>开始前诊断卡片要不要因为"设备弱"而弹出来(只管弹卡片;黄字提示仍看 <see cref="IsWeak"/>)。
-    /// 只有 确认没有 GPU / 只有核显 / 显存不到 <see cref="CardVramGb"/> 这三种情况值得拦一次。
-    /// 4GB 一档(显存 4~5.xGB 的独显)属于"能跑但慢":黄字照常提,不再每次开始弹卡片。</summary>
-    public static bool NeedsStartCard(GpuPresence presence, double vramGb, double ramGb, int cores, bool onlyIntegratedGpu)
-        => IsNoGpu(presence) || vramGb < CardVramGb || onlyIntegratedGpu;
+    /// 只有 只有核显 / 显存不到 <see cref="CardVramGb"/> / 确认没有 GPU 这几种情况值得拦一次。
+    /// 4GB 一档(显存 4~5.xGB 的独显)属于"能跑但慢":黄字照常提,不再每次开始弹卡片。
+    /// 【2026-10-17 用户要求:他这台永远不许弹】另加两道保险:
+    /// ①<paramref name="gpuEverConfirmed"/>(这台机器跑过 GPU)⇒ 一律不弹;
+    /// ②显存 ≥ <see cref="MinVramGb"/> 的独显机不是低配机,哪怕这次没枚举到也不弹。</summary>
+    public static bool NeedsStartCard(GpuPresence presence, double vramGb, double ramGb, int cores, bool onlyIntegratedGpu,
+        bool gpuEverConfirmed = false)
+    {
+        if (onlyIntegratedGpu) return true;          // 核显是真的慢,该拦
+        if (gpuEverConfirmed) return false;          // 跑过 GPU 的机器:永远不弹
+        if (vramGb >= MinVramGb) return false;       // 6GB 以上显存:不是低配机,枚举失败也不吓人
+        return IsNoGpu(presence) || vramGb < CardVramGb;
+    }
 
     /// <summary>用户能读懂的短理由清单(顿号分隔;空串 = 不弱)。只列**真的成立**的那几条 ——
     /// 没结论时绝不许出现"未检测到可用 GPU(Vulkan)"(2026-10-17 误报的原话)。</summary>

@@ -38,6 +38,12 @@ public static class AppSettings
     /// <summary>首次 Vulkan 自检的友好报告文本(设置界面「计算设备」区常驻显示)。</summary>
     public static string VulkanReport { get; set; } = "";
 
+    /// <summary>这台机器**至少一次**真的枚举到了可用 Vulkan 设备(跨会话记住;「重新检测」也不清)。
+    /// 用途:自检偶发失败(驱动刚重启/引擎启动慢/杀软占了 exe)时,绝不许把一台真能跑 GPU 的机器
+    /// 说成"没有显卡",更不许弹低配卡片 —— 2026-10-17 用户要求:他这台 RTX 4060 Laptop / 8GB / 32GB / 10 核,
+    /// 永远不许再看到那张"设备配置较低"的弹窗。</summary>
+    public static bool GpuEverConfirmed { get; set; }
+
     /// <summary>启动自检完成后的正式报告文本(设置界面「计算设备」区常驻显示)。</summary>
     public static string SelfCheckReport { get; set; } = "";
 
@@ -95,6 +101,7 @@ public static class AppSettings
             // 默认"选独显"由设备下拉默认选中推荐项(最佳独显)实现。
             VulkanCheckDone = d.VulkanCheckDone;
             VulkanGpuOk = d.VulkanGpuOk;
+            GpuEverConfirmed = d.GpuEverConfirmed;
             SelfCheckDone = d.SelfCheckDone;
             VulkanReport = d.VulkanReport ?? "";
             SelfCheckReport = d.SelfCheckReport ?? "";
@@ -129,6 +136,7 @@ public static class AppSettings
                         PreviewDiag = PreviewDiag,
                         VulkanCheckDone = VulkanCheckDone,
                         VulkanGpuOk = VulkanGpuOk,
+                        GpuEverConfirmed = GpuEverConfirmed,
                         SelfCheckDone = SelfCheckDone,
                         VulkanReport = VulkanReport,
                         SelfCheckReport = SelfCheckReport,
@@ -154,6 +162,7 @@ public static class AppSettings
         public string PreviewDiag { get; set; } = "";
         public bool VulkanCheckDone { get; set; }
         public bool? VulkanGpuOk { get; set; }
+        public bool GpuEverConfirmed { get; set; }
         public bool SelfCheckDone { get; set; }
         public string VulkanReport { get; set; } = "";
         public string SelfCheckReport { get; set; } = "";
