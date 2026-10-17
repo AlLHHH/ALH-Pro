@@ -32,6 +32,26 @@ public static class NcnnVerdictKey
     public static bool BelongsTo(string key, string engineId, int gpuId)
         => key is not null && key.StartsWith(PrefixFor(engineId, gpuId), System.StringComparison.Ordinal);
 
+    /// <summary>补帧(RIFE)探测结论里"尺寸档"那一段 —— 只此一处实现。
+    /// <para>
+    /// 【2026-10-15 · 5760×5760 毒化事故,真机证据】旧实现只有 sd/fhd/uhd 三档(uhd = ≥3840×2160):
+    /// 一次 5760×5760(33.2 Mpx)的探测得出"出图但画面坏帧"之后,这条结论被**同档**的 3840×2160
+    /// (8.3 Mpx)任务沿用 —— 可 5760×5760 恰好落在 <see cref="InterpSizePolicy.NcnnRefusePixels"/>
+    /// 定义的实测故障带里(ncnn 在该尺寸会静默全黑,本来就不会交给 ncnn 跑),而 4K 上 ncnn 是好的。
+    /// 后果:之后所有 4K 补帧都"沿用已缓存结论:不可用 → 走 ONNX"(慢),直到结论过期。
+    /// </para>
+    /// <para>
+    /// 现在:① 故障带单独一档(<c>uhd8k</c>),它与 4K 档互相不背书(档与档之间只做精确匹配);
+    /// ② 4K 档由 <c>uhd</c> 改名为 <c>uhd4k</c> —— 旧版本留下的 <c>…:uhd:…</c> 结论(探测尺寸不明,
+    /// 可能在 4K~33 Mpx 之间任何尺寸)一律不再命中,于是在真实尺寸上重探一次即自愈;
+    /// 也不会因为"每次都读不到"而反复重探(新结论写在 <c>uhd4k</c> 上)。
+    /// </para></summary>
+    public static string SizeBucket(long pixels)
+        => pixels >= InterpSizePolicy.NcnnRefusePixels ? "uhd8k"
+         : pixels >= 3840L * 2160 ? "uhd4k"
+         : pixels >= 1920L * 1080 ? "fhd"
+         : "sd";
+
     /// <summary>把多支模型的结论折叠成一条:空 → null(未测);全 true → true;出现 false → false(保守)。
     /// 顺序无关,且只要有一支失败就一定是 false —— 这条是本函数存在的全部理由。</summary>
     public static bool? Summarize(System.Collections.Generic.IEnumerable<bool>? measured)
