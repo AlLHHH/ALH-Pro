@@ -60,10 +60,17 @@ ALH Pro — 第三方组件许可声明
    构建: BtbN(https://github.com/BtbN/FFmpeg-Builds,gpl 变体)
    许可: GNU GPL version 3(构建启用 --enable-gpl --enable-version3)
    许可全文: 本目录 COPYING.GPLv3(与发布版随附)
-   对应源码: https://ffmpeg.org/download.html
-             https://github.com/FFmpeg/FFmpeg
+   对应源码: 本站镜像(两个构建的同版本源码包 + 构建脚本快照):
+             https://alhpro.cn/download.html#source
+             上游同一提交的快照:
+             https://github.com/FFmpeg/FFmpeg/archive/b79d4c4c0a160fc46988e98505af6039a53ad53e.tar.gz
+             https://github.com/FFmpeg/FFmpeg/archive/1a748fe2cd43e3ead22fafb1b5b7d77f153898a8.tar.gz
+             对应随包文件: engines\ffmpeg\ffmpeg.exe  = N-126247-gb79d4c4c0a-20260823(145,810,432 字节)
+                           engines\ffmpeg8\ffmpeg.exe = n8.1.2-50-g1a748fe2cd-20260903(541,184 字节)
+             构建脚本: https://github.com/BtbN/FFmpeg-Builds
+             完整构建配置(configuration 逐字)见随包 licenses\ffmpeg-源码获取.txt
    说明: 本软件以独立进程方式调用 ffmpeg/ffprobe,未与其链接;
-         依 GPLv3 第 6 条提供对应源码获取途径。
+         依 GPLv3 第 6 条在本站公开提供对应源码(任何人可下载、重建、再分发)。
    版权: FFmpeg 开发团队
 
 9. Microsoft ONNX Runtime(抠图/超分/补帧/音频 AI 推理)
