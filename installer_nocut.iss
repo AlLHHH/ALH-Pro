@@ -17,8 +17,8 @@
 ; 已核实:经 GitHub API 查得 v1.3.3/v1.3.2/…/v1.0 每个 Release 都带 models_v1.1.zip 附件,
 ; 最新可用 tag 为 v1.3.3(2026-09-08)。
 ; ⇒ v1.3.4 Release 建好并上传模型附件后,可把本行改回 v1.3.4(不改也能正常工作)。
-; 【2026-10-02 版本升到 1.4.5,ModelsUrl 故意暂不动】v1.4.5 的 Release 还没建、附件也没挂 ⇒ 继续指向 v1.4.4(真实存在)。
-#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.4/models_v1.1.zip"
+; 【2026-10-17 已改指 v1.4.5】v1.4.5 的 Release 已建,models_v1.1.zip 附件与 v1.4.4 逐字节相同。
+#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.5/models_v1.1.zip"
 #define ModelsFile "models_v1.1.zip"
 ; 完整版(含模型,网盘/整包)说明:安装完成后可到软件内「使用教程」或 GitHub 说明页找完整版直链
 
