@@ -753,6 +753,17 @@ public static partial class EngineService
             AppLogger.Info($"[探测] 补帧 {model} GPU({gpuId})沿用已缓存结论:" + (cached.Value ? "可用 → 走 ncnn-Vulkan" : "不可用 → 走 ONNX"));
             return cached.Value;
         }
+        // 【2026-10-15 · 5760×5760 毒化事故的源头】实测故障带(≥InterpSizePolicy.NcnnRefusePixels,
+        // 真机 7680×4320 静默全黑)里的尺寸**根本不会交给 ncnn**(InterpSizePolicy 按尺寸拒跑),
+        // 所以【不要探】:探了只会得到一条"出图但画面坏帧"的结论,还会被同尺寸档的其它任务复用。
+        // 这里直接按"本次别走 ncnn"返回,并且**不写任何缓存结论** —— 故障带是已知限制,不是这张卡的判决。
+        var rifeSizeVerdict = AlhPro.Core.InterpSizePolicy.JudgeInputSize(frameW, frameH);
+        if (rifeSizeVerdict.RefuseNcnn)
+        {
+            AppLogger.Info($"[探测] 补帧 {model} GPU({gpuId})输入 {frameW}×{frameH} 属实测故障带(ncnn 会静默全黑)"
+                + " ⇒ 不探测、也不写任何缓存结论(该尺寸本来就不交给 ncnn),本次直接用稳定引擎(ONNX)");
+            return false;
+        }
         // 【2026-09-28 · t58 M1 + L3】与超分探测同口径的两道闸:
         //   ① M1:本会话这一键试过且没测通 ⇒ 不再重探(与超分共用 <see cref="_sessionNotConcluded"/>);
         //   ② L3:取消闸门 —— RIFE 探测**此前没有**这道闸(超分探测有):ct 一取消,`IsRifeGpuUsableAsync`
@@ -814,8 +825,8 @@ public static partial class EngineService
     /// 二进制文件名/体积必然不同,于是 key 不同 —— 老结论不会被套到新二进制上。
     /// 否则最坏情况正是"新引擎第一次跑就沿用旧结论、真正的探测永不发生"。
     /// 【为什么要带尺寸档】探测按生产帧尺寸做(小图能跑 ≠ 真帧能跑),所以 1080p 上测出来的结论
-    /// 不能拿去给 4K 任务背书。只分三档(SD/FHD/UHD)而不是每个分辨率一个 key:档位有限,
-    /// 不会变成"每换一个分辨率就重测一遍";同一档内复用,一次探测管到底。
+    /// 不能拿去给 4K 任务背书。档位由 <see cref="AlhPro.Core.NcnnVerdictKey.SizeBucket"/> 统一给出
+    /// (2026-10-15 起故障带单独一档:旧的三档实现会让 5760×5760 的坏帧结论给 4K 背书,详见那边的注释)。
     /// 指纹只取【文件名 + 字节数】而不含时间戳:文件没变就不该因为"重装一次"白等一遍探测。</summary>
     private static string RifeProbeKey(string rifeExe, string model, int frameW, int frameH)
     {
@@ -827,8 +838,7 @@ public static partial class EngineService
         }
         catch { id = Path.GetFileName(rifeExe); }
         long area = (long)(frameW <= 0 ? 320 : frameW) * (frameH <= 0 ? 240 : frameH);
-        string bucket = area >= 3840L * 2160 ? "uhd" : area >= 1920L * 1080 ? "fhd" : "sd";
-        return $"rife:{id}:{bucket}:{model}";
+        return $"rife:{id}:{AlhPro.Core.NcnnVerdictKey.SizeBucket(area)}:{model}";
     }
 
     /// <summary>【本机实测优先】某引擎的 ncnn-Vulkan 在本机该 GPU 上是否算"风险"(=该走 ONNX)。
