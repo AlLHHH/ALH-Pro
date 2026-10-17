@@ -26,9 +26,9 @@
 ; 【2026-09-22 改正】这里原本写着 v1.3.6 —— **那个 tag 根本不存在**(是个从没建过的版本号),
 ; 而注释还写着"两边都指向 v1.3.5",自相矛盾。既然 v1.4.1 的 Release 已带上 models_v1.1.zip,改成它。
 ; (installer.iss 里真正生效的那处仍是 v1.3.5:那份附件实测 200,不影响使用;要统一到 v1.4.1 需重打包。)
-; 【2026-10-02 版本升到 1.4.5,ModelsUrl 故意暂不动】v1.4.5 的 Release 还没建、附件也没挂 ⇒ 继续指向 v1.4.4(真实存在)。
-; 等 v1.4.5 的 Release 建好、models_v1.1.zip 挂上去,再改成 v1.4.5。
-#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.4/models_v1.1.zip"
+; 【2026-10-17 已改指 v1.4.5】v1.4.5 的 Release 已建,models_v1.1.zip 附件与 v1.4.4 逐字节相同。
+; (本脚本仍未引用这两个定义,改它只为与 installer.iss 对照时不误导。)
+#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.5/models_v1.1.zip"
 #define ModelsFile "models_v1.1.zip"
 ; 完整版(含模型,网盘/整包)说明:安装完成后可到软件内「使用教程」或 GitHub 说明页找完整版直链
 

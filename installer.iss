@@ -31,10 +31,9 @@
 ; 等 v1.3.6 的 Release 建好并上传附件后,把本行改回 v1.3.6。
 ; 【2026-09-29 改指 v1.4.4】v1.4.4 的 tag / Release 建好、并把 models_v1.1.zip 挂成附件后,本行随之指到 v1.4.4
 ; (模型包内容仍是 v1.1,文件名不变)。
-; 【2026-10-02 版本升到 1.4.5,本行**故意暂不动**】v1.4.5 的 tag / Release 还没建、models_v1.1.zip 也还没挂上去 ⇒
-; 本行继续指向 v1.4.4(那里的附件真实存在,模型包内容与文件名都没变,功能不受影响)。
-; 等 v1.4.5 的 Release 建好、附件传完,再把本行改成 v1.4.5。
-#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.4/models_v1.1.zip"
+; 【2026-10-17 已改指 v1.4.5】v1.4.5 的 tag / Release 已建,models_v1.1.zip 附件与 v1.4.4 逐字节相同。
+; 若本行指向的 Release 被删或附件被移除,安装包里的"下载模型包"会 404,改回任一存在同名附件的 tag 即可。
+#define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.5/models_v1.1.zip"
 #define ModelsFile "models_v1.1.zip"
 ; 完整版(含模型,网盘/整包)说明:安装完成后可到软件内「使用教程」或 GitHub 说明页找完整版直链
 
