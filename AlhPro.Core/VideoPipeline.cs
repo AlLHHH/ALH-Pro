@@ -298,11 +298,10 @@ public static class VideoPipeline
             }
             if (segs.Count == 0) return null;
             var inv = CultureInfo.InvariantCulture;
-            var sb = new StringBuilder("setpts=(");
+            var terms = new System.Collections.Generic.List<string>(segs.Count);
             for (int k = 0; k < segs.Count; k++)
             {
                 var (s, e, p0, d) = segs[k];
-                if (k > 0) sb.Append(" + ");
                 // 末段只留 gte(N,s)、去掉 lt(N,e) 上界:setpts 位于滤镜链末尾,其前面还有
                 // minterpolate/fps 重采样,送进来的帧数比时长表多 1 是常态。而末段的 e 就是
                 // durs.Count,多出来的那一帧会让【所有】段项都为 0 → PTS=0(与首帧同刻),
@@ -310,8 +309,31 @@ public static class VideoPipeline
                 // (前面各段仍带 lt 上界),所以末段去掉上界不会与它们重叠。
                 bool last = k == segs.Count - 1;
                 string range = last ? $"gte(N\\,{s})" : $"lt(N\\,{e})*gte(N\\,{s})";
-                sb.Append($"({range}*({p0.ToString("0.######", inv)}+(N-{s})*{d.ToString("0.######", inv)}))");
+                terms.Add($"({range}*({p0.ToString("0.######", inv)}+(N-{s})*{d.ToString("0.######", inv)}))");
             }
+
+            // 【2026-10-20 致命修复】各段必须用**平衡树**相加,不能用扁平的 "... + ... + ..."
+            // 一条长链。ffmpeg 的表达式解析器对括号/运算符嵌套深度有上限(实测:平铺 80 段还行、
+            // 100 段就解析失败),而 `a + b + c + ...` 是左结合 → 段数 = 深度:141 段直接超限。
+            // 解析器这时返回的是 AVERROR(ENOMEM),ffmpeg 只打印
+            //   「[Parsed_setpts_3] Error while parsing expression ...」
+            //   「Error initializing filters」/「Error opening output files: Cannot allocate memory」
+            // 于是**整条视频任务失败**在最后一步(前面的拆帧/超分/补帧几个小时全白做),而报错
+            // 文案看起来像"内存不够",实际与内存、显卡、CPU 都无关 —— 用户诊断包
+            // ALHPro_Diag_20261020_2150 就是这么挂的(426 帧 → 141 段,exit -12)。
+            // 两两合并后深度 ≈ log2(段数)(400 段约 9 层),与段数解耦;段数上限 400 的
+            // Windows 命令行长度约束仍由上面的循环守住。
+            var layer = terms;
+            while (layer.Count > 1)
+            {
+                var next = new System.Collections.Generic.List<string>((layer.Count + 1) / 2);
+                for (int j = 0; j < layer.Count; j += 2)
+                    next.Add(j + 1 < layer.Count ? $"({layer[j]} + {layer[j + 1]})" : layer[j]);
+                layer = next;
+            }
+
+            var sb = new StringBuilder("setpts=(");
+            sb.Append(layer[0]);
             sb.Append(")/TB");
             return sb.ToString();
         }
