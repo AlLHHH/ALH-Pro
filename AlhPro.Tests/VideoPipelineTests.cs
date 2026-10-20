@@ -1,5 +1,8 @@
 using AlhPro.Core;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using Xunit;
 
 namespace AlhPro.Tests;
@@ -278,6 +281,84 @@ public class VideoPipelineTests
         Assert.Contains("gte(N\\,2)", parts[1]);
         // 表尾之外那一帧(N = 4 = 表长)不能被任何 lt(N,4) 关在门外
         Assert.DoesNotContain("lt(N\\,4)", expr);
+    }
+
+    // ---------- BuildVfrSetptsExpr:相邻段必须"平衡相加",不能拼成一条长链 ----------
+    // 【2026-10-20 致命修复】用户诊断包 ALHPro_Diag_20261020_2150:426 帧 VFR 时长表被合并成
+    // 141 段,旧实现拼成 `(t0) + (t1) + ... + (t140)` 一条左结合长链;ffmpeg 表达式解析器对嵌套
+    // 深度有上限(实测:平铺 64/80 段能过、100 段就失败),超限返回 AVERROR(ENOMEM),日志只剩
+    //   「[Parsed_setpts_3] Error while parsing expression ...」
+    //   「Error initializing filters」/「Error opening output files: Cannot allocate memory」
+    // 于是整条视频在最后一步合帧时失败(前面拆帧/超分/补帧全白做),而文案看起来像内存/显卡问题。
+    // 修法:两两合并成平衡二叉树,深度 ≈ log2(段数),与段数解耦。
+
+    private static List<double> SegmentedDurations(int frames, int framesPerSeg)
+    {
+        var durs = new List<double>(frames);
+        for (int i = 0; i < frames; i++)
+        {
+            int k = i / framesPerSeg;
+            durs.Add(k % 2 == 0 ? 0.02 : 0.013333);   // 与真机那组时长表同款(20ms / 13.333ms 交替)
+        }
+        return durs;
+    }
+
+    /// <summary>拼接必须是平衡的:最外层(深度 1)不允许出现 `+`,否则就是又回到了长链。</summary>
+    [Fact]
+    public void BuildVfrSetpts_sums_are_balanced_not_one_long_chain()
+    {
+        var expr = VideoPipeline.BuildVfrSetptsExpr(SegmentedDurations(426, 3));
+        Assert.NotNull(expr);
+
+        int depth = 0, plusAtDepth1 = 0, maxDepth = 0;
+        foreach (char c in expr!)
+        {
+            if (c == '(') { depth++; if (depth > maxDepth) maxDepth = depth; }
+            else if (c == ')') depth--;
+            else if (c == '+' && depth == 1) plusAtDepth1++;
+        }
+
+        Assert.Equal(0, plusAtDepth1);                  // 修前:141 段 → 深度 1 上有 140 个 `+`
+        Assert.True(maxDepth <= 24, $"表达式嵌套深度 {maxDepth} 过深(平衡树应在 log2(段数) 量级)");
+        // 段数(条件项)一个都不能少:426 帧 / 每段 3 帧 = 142 段
+        Assert.Equal(142, System.Text.RegularExpressions.Regex.Matches(expr!, @"gte\(N\\,").Count);
+    }
+
+    /// <summary>真解析回归:把 141 段的表达式交给随包 ffmpeg 解析(1 帧 lavfi 输入,亚秒级)。
+    /// 修前这条会 exit -12 —— 与用户诊断包里的报错逐字一致。引擎目录不存在时跳过。</summary>
+    [Fact]
+    public void BuildVfrSetpts_expression_actually_parses_in_ffmpeg()
+    {
+        string? ff = null;
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && ff is null)
+        {
+            foreach (var baseName in new[] { Path.Combine("engines", "ffmpeg"), Path.Combine("发布版", "engines", "ffmpeg") })
+            {
+                var candidate = Path.Combine(dir.FullName, baseName, "ffmpeg.exe");
+                if (File.Exists(candidate)) { ff = candidate; break; }
+            }
+            dir = dir.Parent;
+        }
+        if (ff is null) return;   // 全新克隆/没装引擎:跳过,不误报
+
+        var expr = VideoPipeline.BuildVfrSetptsExpr(SegmentedDurations(426, 3));
+        Assert.NotNull(expr);
+
+        var psi = new ProcessStartInfo(ff) { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false };
+        foreach (var a in new[]
+                 {
+                     "-hide_banner", "-v", "error",
+                     "-f", "lavfi", "-i", "testsrc2=size=64x64:rate=151",
+                     "-frames:v", "1", "-vf", expr!, "-f", "null", "-",
+                 })
+            psi.ArgumentList.Add(a);
+
+        using var p = Process.Start(psi)!;
+        string err = p.StandardError.ReadToEnd();
+        Assert.True(p.WaitForExit(20000), "ffmpeg 解析超时");
+        Assert.True(p.ExitCode == 0,
+            $"ffmpeg 解析 setpts 表达式失败(exit {p.ExitCode}):{err.Trim()}");
     }
 
     // ---------- IsVfrByRateRatio ----------
