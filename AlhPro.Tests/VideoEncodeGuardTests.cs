@@ -212,6 +212,34 @@ public class VideoEncodeGuardTests
             AlhPro.Core.VideoEncodeGuard.ClassifyEncodeFailure("[vost#0:0/x @ 0x1] Task finished with error: Invalid argument"));
     }
 
+    /// <summary>【2026-10-20 · 用户诊断包「编码失败」】命令行拼错必须单独成档:它不是显卡问题、
+    /// 重试也没有任何意义。真实原话取自那台机器的诊断日志(音画对齐的 `-itsoffset -0.083`
+    /// 与下一个 `-i` 之间少一个空格 ⇒ 自己的源文件被当成了输出 url)。</summary>
+    [Fact]
+    public void A_malformed_command_line_is_its_own_kind_and_is_never_blamed_on_the_gpu()
+    {
+        const string realStderr =
+            "[2026-10-20 18:05:29] Option itsoffset (set the input ts offset) cannot be applied to output url "
+            + "E:\\download\\x.mp4 -- you are trying to apply an input option to an output file or vice versa.\n"
+            + "Error parsing options for output file E:\\download\\x.mp4.\n"
+            + "Error opening output files: Invalid argument";
+
+        Assert.Equal(AlhPro.Core.VideoEncodeGuard.EncodeFailureKind.CommandLine,
+            AlhPro.Core.VideoEncodeGuard.ClassifyEncodeFailure(realStderr));
+        // 只带最后那句也算(不同 ffmpeg 版本裁掉前两句时照样认得出)
+        Assert.Equal(AlhPro.Core.VideoEncodeGuard.EncodeFailureKind.CommandLine,
+            AlhPro.Core.VideoEncodeGuard.ClassifyEncodeFailure("Error opening output files: Invalid argument"));
+        // 不能被编码器那档吞掉(它同样带 Invalid argument 字样)
+        Assert.NotEqual(AlhPro.Core.VideoEncodeGuard.EncodeFailureKind.EncoderInit,
+            AlhPro.Core.VideoEncodeGuard.ClassifyEncodeFailure(realStderr));
+
+        var msg = AlhPro.Core.VideoEncodeGuard.DescribeCommandLineFailure(realStderr);
+        Assert.Contains("软件自身的缺陷", msg);
+        Assert.Contains("和显卡、驱动都没有关系", msg);
+        Assert.Contains("不用改你的设置", msg);          // ★ 不许再把人支去折腾驱动
+        Assert.DoesNotContain("请更新显卡驱动", msg);
+    }
+
     /// <summary>★ C:候选链 —— 1527 那台(可用 `[h264_qsv, hevc_qsv]`)打不开 qsv 时要先试**同厂商的 hevc_qsv**;
     /// 只有 qsv 一个可用时链是空的(要能报"本机没有备选硬编");CPU 编码器永不入链。</summary>
     [Fact]
