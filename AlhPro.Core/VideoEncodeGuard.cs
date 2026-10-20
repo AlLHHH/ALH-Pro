@@ -190,6 +190,13 @@ public static class VideoEncodeGuard
         /// <summary>编码器**打不开/初始化失败**:同一个编码器再试 N 次也是同样结果 ⇒ 该换一个可用硬编
         /// (1527 那台 `h264_qsv` 3 次都是这个形态,而 `hevc_qsv` 就在可用列表里)。</summary>
         EncoderInit,
+
+        /// <summary>【2026-10-20 · 用户诊断包】命令行本身写错了(ffmpeg 还没开始编码就拒绝):
+        /// 重试同一个错命令毫无意义,而且**与显卡/驱动完全无关** —— 旧逻辑把它当"瞬时失败"重试 3 次、
+        /// 再报「硬件编码器坏了,请更新显卡驱动」,用户白等一小时去折腾驱动。
+        /// 实测原话:`-itsoffset -0.083-i "源.mp4"`(少一个空格)⇒
+        /// `Option itsoffset cannot be applied to output url …` / `Error parsing options for output file …`。</summary>
+        CommandLine,
     }
 
     /// <summary>"打不开编码器"的**文本身份**(ffmpeg / 各厂商 SDK 的原话,全部实测或来自厂商文档)。
@@ -212,9 +219,41 @@ public static class VideoEncodeGuard
         "Error creating an encoder context",            // 通用:编码器上下文创建失败
     };
 
-    /// <summary>把 ffmpeg 输出(或异常文本)分类成"打不开"或"瞬时失败"。</summary>
+    /// <summary>【2026-10-20】"命令本身写错了"的**文本身份**:ffmpeg 在**读参数阶段**就拒绝的原话
+    /// (此时还没碰编码器/显卡,与驱动无关)。每条都取自用户诊断包里的真实输出。</summary>
+    public static readonly string[] CommandLineMarkers =
+    {
+        "Error parsing options for output file",
+        "you are trying to apply an input option to an output file",
+        "Error opening output files: Invalid argument",
+    };
+
+    /// <summary>文本是否属于"命令参数写错"(见 <see cref="CommandLineMarkers"/>)。</summary>
+    public static bool IsCommandLineFailure(string? output)
+    {
+        if (string.IsNullOrWhiteSpace(output)) return false;
+        foreach (var marker in CommandLineMarkers)
+            if (output.Contains(marker, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    /// <summary>把 ffmpeg 输出(或异常文本)分类成"命令写错"/"打不开"/"瞬时失败"。
+    /// **命令写错优先判**:它的原话里也可能带 `Invalid argument`,不能被下面的编码器档吞掉。</summary>
     public static EncodeFailureKind ClassifyEncodeFailure(string? output)
-        => IsEncoderInitFailure(output) ? EncodeFailureKind.EncoderInit : EncodeFailureKind.Transient;
+        => IsCommandLineFailure(output) ? EncodeFailureKind.CommandLine
+         : IsEncoderInitFailure(output) ? EncodeFailureKind.EncoderInit
+         : EncodeFailureKind.Transient;
+
+    /// <summary>【2026-10-20】命令写错时的报错正文:说清"这是软件自己的问题、与显卡无关、不用改设置",
+    /// 并明确**不要**再去更新驱动(旧文案正是把人支去折腾驱动的)。</summary>
+    public static string DescribeCommandLineFailure(string? reason)
+    {
+        string why = string.IsNullOrWhiteSpace(reason) ? "(未给出原因)" : reason.Trim();
+        return "编码命令的参数拼错了(这是软件自身的缺陷,和显卡、驱动都没有关系),已停下。\n"
+             + "为什么不再重试:同一个错命令重试多少遍都是同一个结果,重试只会让你多等。\n"
+             + "怎么办:不用改你的设置,也不用更新驱动 —— 把这份日志/诊断包反馈给作者即可。\n"
+             + "最后一次原因:" + why;
+    }
 
     /// <summary>文本是否属于"编码器打不开/初始化失败"(见 <see cref="EncoderInitMarkers"/>)。</summary>
     public static bool IsEncoderInitFailure(string? output)
@@ -255,11 +294,19 @@ public static class VideoEncodeGuard
     /// ⇒ **固定偏移的音画不同步**,而软件原有自检只比「时长」(31.04 = 31.04)看不见它。
     /// 用 `-itsoffset`(输入级参数)而不用 `asetpts`/`atrim`:**滤镜与 `-c:a copy` 互斥**
     /// (ffmpeg 会直接报错),会把“能原样复制音轨”的机器逼成重编码。
-    /// 1ms 以内视为 0(返回空串):常见 MP4 的 start_time 就是 0,这条改动对它们是**零操作**。</summary>
+    /// 1ms 以内视为 0(返回空串):常见 MP4 的 start_time 就是 0,这条改动对它们是**零操作**。
+    ///
+    /// 【2026-10-20 修 · 编码 100% 失败】返回串**两头都带空格**:调用处是
+    /// `$"... {trimArgs} {audioShiftArgs}-i \"{input}\""`,靠返回值自己把前后隔开。
+    /// 旧版只带前导空格 ⇒ 拼出 `-itsoffset -0.083-i "src.mp4"`,ffmpeg 把 `-0.083-i` 当数值、
+    /// 后面的源文件被当成**输出** url,直接 `exit -22 … Option itsoffset cannot be applied to output url`,
+    /// 于是任何「源视频流 start_time ≠ 0」的素材(剪映/手机/网盘转码很常见)都在**跑完全部处理后**
+    /// 才在建编码命令时失败,还被误报成「硬件编码器坏了,请更新显卡驱动」。
+    /// 返回空串时仍是空串(零操作,不会平白多出空格)。</summary>
     public static string AudioOffsetArgs(double videoStartSeconds)
     {
         if (!double.IsFinite(videoStartSeconds) || Math.Abs(videoStartSeconds) < 0.001) return "";
-        return " -itsoffset -" + videoStartSeconds.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture);
+        return " -itsoffset -" + videoStartSeconds.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture) + " ";
     }
 
     /// <summary>换编码器的**候选链**(按顺序;只含本机**实测可用**的硬编,且不含 <paramref name="current"/>)。

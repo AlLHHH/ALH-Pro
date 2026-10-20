@@ -4258,6 +4258,19 @@ public static class VideoService
                         string filterNote = filterProblem
                             ? "\n⚠ 注意:这次失败发生在**滤镜链**(如 Anime4K 着色器 / 后处理滤镜),不是编码器本身 —— 请检查滤镜相关设置,以及 engines\\ffmpeg\\shaders 与 engines\\ffmpeg8\\shaders 两个目录里是否都有着色器文件。"
                             : "";
+                        // ===== 【2026-10-20 · 用户诊断包】命令参数拼错 ≠ 显卡坏了 =====
+                        // 实测:音画对齐的 `-itsoffset -0.083` 与下一个 `-i` 之间少了空格 ⇒
+                        // `Option itsoffset cannot be applied to output url` / `Error parsing options for output file`。
+                        // 旧逻辑把它归为"瞬时失败"⇒ 重试 3 次(全是同一个错)再报「请更新显卡驱动」,
+                        // 用户白等一小时后去折腾驱动。这里直接停,并如实说是软件缺陷。
+                        if (AlhPro.Core.VideoEncodeGuard.ClassifyEncodeFailure(whyFull)
+                            == AlhPro.Core.VideoEncodeGuard.EncodeFailureKind.CommandLine)
+                        {
+                            AppLogger.Error($"⚠ 编码命令参数有误(软件缺陷,与显卡/驱动无关),已停止:{why}");
+                            progress?.Report((96, "⚠ 编码命令参数有误(软件缺陷),已停止并留下日志..."));
+                            throw new InvalidOperationException(
+                                AlhPro.Core.VideoEncodeGuard.DescribeCommandLineFailure(whyFull), ex);
+                        }
                         // ===== 【2026-09-30 · t64 C】"打不开编码器"与"跑起来后瞬时失败"分成两条路 =====
                         // 【真机依据】1527 那台 3 次全是 `Could not open encoder before EOF`(打不开 = 确定性失败,
                         // 同一个编码器再试还是打不开),而同一台机器 `hevc_qsv` 就在可用列表里 —— 旧逻辑
