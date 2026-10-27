@@ -360,10 +360,10 @@ public static partial class EngineService
     /// 所以开跑前探一次,探不过就回退到旧的「2x 超分后缩回」行为(调用点见 VideoView 的 1x 分支),绝不让任务白白失败。
     /// 【为什么用 lavfi 合成图】不依赖任何素材、64×64 单帧,亚秒级;结果按会话缓存,不会每批重试。
     /// 【工作目录是关键】滤镜里只能传**文件名** —— 绝对路径里的 `D:` 会被 ffmpeg 的滤镜参数解析当成选项分隔符
-    /// (实测报 "No option name near '/Video2X Qt6/...'",看着像路径不存在,其实是解析错误),
+    /// (实测报 "No option name near '/同类工具 Qt6/...'",看着像路径不存在,其实是解析错误),
     /// 所以必须让 ffmpeg 以**自己所在目录**为工作目录(cwd = engines\ffmpeg ⇒ 相对 `shaders\anime4k-v4-a.glsl`)。
     /// 【上一轮的误判更正】曾把一次 "Failed initializing vulkan device" 当成"这版 ffmpeg 用不了 Anime4K";
-    /// 复测(连跑 3 次)全部通过,输出与 Video2X 自带的 Anime4K 逐帧 44.4 dB = 同一处理 ⇒ 那次是瞬时故障。</summary>
+    /// 复测(连跑 3 次)全部通过,输出与开源 Anime4K 着色器的 Anime4K 逐帧 44.4 dB = 同一处理 ⇒ 那次是瞬时故障。</summary>
     public static async Task<bool> EnsureAnime4kProbeAsync(CancellationToken ct = default)
     {
         lock (_anime4kLock) { if (_anime4kOk.HasValue) return _anime4kOk.Value; }

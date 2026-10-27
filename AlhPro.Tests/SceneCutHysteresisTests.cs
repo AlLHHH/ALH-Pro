@@ -139,7 +139,7 @@ public class SceneCutHysteresisTests
     public void Min_scene_len_matches_the_recorded_external_default()
     {
         Assert.Equal(15, SceneCutJudge.MinSceneLen);
-        Assert.Equal(ExternalPractice.PySceneDetectMinSceneLenFramesDefault, SceneCutJudge.MinSceneLen);
+        Assert.Equal(ExternalPractice.SceneMinLenFramesDefault, SceneCutJudge.MinSceneLen);
         // 默认参数确实用的是这个常量(传 0 个间距参数 = 走默认)
         var diffs = Enumerable.Repeat(999.0, 100).ToList();
         Assert.Equal(SceneCutJudge.Detect(diffs, null, SceneCutJudge.MinSceneLen).Count,

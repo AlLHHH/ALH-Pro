@@ -15,20 +15,20 @@ namespace AlhPro.Core;
 ///
 /// ==== 【任务 W · 2026-09-14】联网核对"外部怎么做",结论逐条写在这里(出处见 ExternalPractice) ====
 /// ① **"切点不插值"确实是业界做法**,而且是**唯一**做法(本项目原先只是推断,现在有逐条出处):
-///    · Hybrid(RIFE 的集成方)作者 Selur:**"The scene change detection basically just cuts the scene into
+///    ·某混合工具(RIFE 的集成方)作者业界作者:**"The scene change detection basically just cuts the scene into
 ///      chunks, feeds these chunks into RIFE and then adds duplicates around the scene changes to meet the
 ///      desired frame rate."**(<https://forum.selur.net/thread-3940.html>,帖 #14,第 2 页)—— 即"分段 + 切点补重复帧";
 ///    · VSGAN-tensorrt-docker(VapourSynth 里做 VFI 的参考工程)的标准写法就是"切点处用**原始帧**替换插值帧":
 ///      `clip = core.akarin.Select([clip, clip_orig], clip_sc, "x._SceneChangeNext 1 0 ?")`
 ///      (<https://github.com/styler00dollar/VSGAN-tensorrt-docker>)—— 与我们的
 ///      <see cref="CutAwareSchedule"/>"切点强制拷贝、绝不合成"**同一条规则**。
-/// ② **没有更好的做法**:Selur 明确说 RIFE 本身"blindly interpolating",想改成"预测末帧再插值"只能去改 RIFE 的代码;
+/// ② **没有更好的做法**:业界作者 明确说 RIFE 本身"blindly interpolating",想改成"预测末帧再插值"只能去改 RIFE 的代码;
 ///    唯一被提到的替代是"切点做混合(morph)",而那正是**没有切点保护时的默认坏行为**——
-///    Selur 的原话:"If you want morphing on scene changes instead, simply disable the scene change detection."
+///   业界作者 的原话:"If you want morphing on scene changes instead, simply disable the scene change detection."
 /// ③ **阈值标定参照**(我们 diff≥25 的量级是对的):
 ///    · PySceneDetect `ContentDetector` 默认 `threshold = 27.0`,度量口径正是"0~255 量级的平均像素变化"
 ///      (HSV 加权 dHue/dSat/dLum),<https://www.scenedetect.com/docs/latest/api/detectors.html> —— 27 与我们的 25 同量级;
-///    · Selur / VSGAN 用的 `misc.SCDetect` 默认 `threshold=0.10`(归一化口径,**不能直接换算到 0~255**)。
+///    ·业界作者 / VSGAN 用的 `misc.SCDetect` 默认 `threshold=0.10`(归一化口径,**不能直接换算到 0~255**)。
 /// ④ **已知残差(业界同样没解决)**:切点强制拷贝 = 该处重复一帧,在**摇镜**上会被看成"末帧卡一下"
 ///    (forum.selur.net thread-3940 里用户的原话抱怨);这是"宁可不插、也不出鬼影"的代价,不是我们的缺陷。
 /// ⑤ **【仅建议,未实施】切点最小间距(滞回)**:PySceneDetect 默认 `min_scene_len = 15` 帧
@@ -46,7 +46,7 @@ public static class SceneCutJudge
 
     /// <summary>强切阈值:帧差足够大时不必再看拉普拉斯。【待实测标定】
     /// 【任务 W】**外部没有对应的"二级阈值"设计**可参照:PySceneDetect 只有一个阈值 + (AdaptiveDetector)
-    /// 一条"与滚动均值之比"的自适应判据;Selur/VSGAN 走 `misc.SCDetect` 的单一归一化阈值。
+    /// 一条"与滚动均值之比"的自适应判据;业界作者/VSGAN 走 `misc.SCDetect` 的单一归一化阈值。
     /// 所以本值纯属本工程口径,**不据外部资料调整**(避免拿"没有出处"的数字改判据)。</summary>
     public const double StrongDiffThreshold = 50.0;
 
@@ -63,7 +63,7 @@ public static class SceneCutJudge
     ///
     /// 【依据 1 · 外部成熟实现】PySceneDetect 的 `ContentDetector`/`AdaptiveDetector` 默认 `min_scene_len = 15` 帧
     /// (<https://www.scenedetect.com/docs/latest/api/detectors.html>)。本工程早就把它记在
-    /// <see cref="ExternalPractice.PySceneDetectMinSceneLenFramesDefault"/> 里,当时标的是"**仅建议、不实施**";
+    /// <see cref="ExternalPractice.SceneMinLenFramesDefault"/> 里,当时标的是"**仅建议、不实施**";
     /// 2026-09-15 按下面两类**实测误判**正式接上,取值沿用同一个 15(不引入我们自己的偏好)。
     ///
     /// 【依据 2 · 本工程实测的两类"连判相邻切点"误判】

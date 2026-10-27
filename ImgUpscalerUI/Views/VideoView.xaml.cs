@@ -6646,7 +6646,7 @@ public sealed partial class VideoView : UserControl
                         && _previewItem != null && !string.IsNullOrWhiteSpace(_previewItem.Path)
                         && !string.IsNullOrEmpty(_effOutPath);
             _twoFileSrc = _previewItem?.Path; _twoFileProc = _effOutPath;
-            // 【2026-09-18 架构调整(用户:"要的是实时滑动 实时响应 像 topaz 一样…能不能好好重构一下")】
+            // 【2026-09-18 架构调整(用户:"要的是实时滑动 实时响应 像商业软件一样…能不能好好重构一下")】
             // 左右对比**不再用"烘焙一条分割片"**(每个位置要重合成,4K 上要 1~9 秒 → 拖线永远不跟手),
             // 改成**两个播放器实时裁切**:上层 = 原片(**源文件,不重编码**,裁到线的左边),
             // 下层 = 处理后片段(线的右边露出来)。拖线时**只改两边的裁切矩形** —— 零 seek、零重合成,
@@ -6909,7 +6909,7 @@ public sealed partial class VideoView : UserControl
             ApplyMuteState();
             // 播放条(四个视图同一套)刷一次:片段播完后不再有位置回调,不主动读一次会一直显示 0:00/0:00
             RefreshCompareBar();
-            TryMaskSplit(isSplit);   // 【Topaz 式】左右对比走"同一条片 + 遮罩线";失败自动退回上面的常规版式 ✓
+            TryMaskSplit(isSplit);   // 【遮罩式】左右对比走"同一条片 + 遮罩线";失败自动退回上面的常规版式 ✓
             // 【倒装 · 四条时间线统一】把"刚才在看的那条"的时刻/播放状态接到"现在要看的这条"上,
             // 并把**不在这个视图里的那一对暂停**(只暂停,绝不卸载)。
             // 必须放在 TryMaskSplit **之后**:遮罩模式要知道"上层那条装的也是同一条片"(两条都要对)✔
@@ -7646,8 +7646,8 @@ public sealed partial class VideoView : UserControl
         catch { }
     }
 
-    // ===== 【2026-09-18 定稿 · Topaz 式左右对比】一份画面画两次 + 一层遮罩 =====
-    // Topaz 的 split 不是"两个视频互相对齐",而是:一份解码结果 → 画两次 → 一层擦除遮罩决定哪份露出来。
+    // ===== 【2026-09-18 定稿 · 遮罩式左右对比】一份画面画两次 + 一层遮罩 =====
+    //某商业软件的 split 不是"两个视频互相对齐",而是:一份解码结果 → 画两次 → 一层擦除遮罩决定哪份露出来。
     // 于是四条结论是**结构性**的(不是调参调出来的):
     //   ① 左右永远是同一帧 ② 线即时(改遮罩不生成任何东西)③ 不存在漂移(一个时间轴/一个时钟)
     //   ④ 不存在"换片闪一下"(播放期间从不换媒体源)
@@ -7677,7 +7677,7 @@ public sealed partial class VideoView : UserControl
     private bool _maskSplitPlaying;
     private string? _maskOnPath;     // 两个播放器当前装的同一条片(= 那条并排合成片)
 
-    /// <summary>Topaz 式左右对比:两个播放器装**同一条并排合成片**,上层露左半(原片)、下层露右半(处理后),
+    /// <summary>遮罩式左右对比:两个播放器装**同一条并排合成片**,上层露左半(原片)、下层露右半(处理后),
     /// **线 = 上层播放器的裁切遮罩** ⇒ 拖动即时、零生成;同一文件 + 同一 `MediaTimelineController`
     /// ⇒ 同一帧、不漂移、不换片不闪、倍率经 ClockRate 持久。
     /// 【2026-09-27】入口被 `MaskSplitEnabled` 关掉 ⇒ `want` 恒假,整套代码保留、一键可恢复(见常量处说明)✔</summary>
@@ -7959,7 +7959,7 @@ public sealed partial class VideoView : UserControl
     /// 播放/定位/倍速三处入口都在"控制器生效时"改走控制器 ✔。</summary>
     private Windows.Media.MediaTimelineController? _tlCtrl;
 
-    /// <summary>控制器是否正在生效(= 左右对比且已就绪;含 Topaz 式遮罩模式)。null 安全。</summary>
+    /// <summary>控制器是否正在生效(= 左右对比且已就绪;含 遮罩式遮罩模式)。null 安全。</summary>
     private bool TlActive => _tlCtrl != null && !_cmpSingle
                           && PreviewViewRadios?.SelectedIndex == ViewSplit && _compareMode
                           && (_cmpSegPath != null || _maskSplitActive);
@@ -8669,7 +8669,7 @@ public sealed partial class VideoView : UserControl
             _compareSplit = RatioFromScreenX(rawX, w, h);
             _splitDragTick = Environment.TickCount64;   // 【跟手】记下"用户刚拖过":迟到的合成完成时不许再把线拽回去 ✓
             ApplyCompareSplit();
-            // 【Topaz 式】遮罩模式下:线就是上层的裁切 → 拖动时**立刻**重算裁切 ⇒ 画面分界跟着手走、零生成 ✓
+            // 【遮罩式】遮罩模式下:线就是上层的裁切 → 拖动时**立刻**重算裁切 ⇒ 画面分界跟着手走、零生成 ✓
             // ⚠ 必须走**轻量路径** ✗→✓:曾经这里调的是重方法 TryMaskSplit(会打日志/判断装载/重发倍率)✗
             //   ⇒ 用户实测"日志刷屏 + 卡死 + 处理侧黑屏 + 不协调" ✓ 现改为只改裁切与线 ✔
             if (_maskSplitActive) ApplyMaskSplitClipOnly();
@@ -8979,7 +8979,7 @@ public sealed partial class VideoView : UserControl
     }
 
     /// <summary>滚轮 = 在档位梯子上上下走一档(以光标为中心,光标下那一点保持不动)。
-    /// 【2026-09-19 改成 Topaz 语义(用户:"学习topaz的缩放")】档位以**像素**为基准:
+    /// 【2026-09-19 改成新语义(用户:"学习同类软件的缩放")】档位以**像素**为基准:
     ///   适应 / 50% / 100% / 200% / 400% / 800%,其中 **100% = 1 视频像素 : 1 屏幕像素(1:1)** ✔
     ///   上一版把"适应窗口"当 1.0、最大 8 倍 ⇒ 没有 1:1 锚点、百分比也没意义 ✗</summary>
     private void PlayerArea_Wheel(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
@@ -9002,7 +9002,7 @@ public sealed partial class VideoView : UserControl
         }
         catch { }
         // 【2026-09-19 放开:单画面视图随时可缩放】用户实测"滚轮没有缩放" —— 根因是它被绑死在"必须有处理结果"上 ✗。
-        // 像 Topaz 那样:**预览窗里有画面就能缩放**。这里只排除对比视图(两者同时走 _zmOn 那条;左右对比保持"擦除"语义)✔
+        // 像某商业软件 那样:**预览窗里有画面就能缩放**。这里只排除对比视图(两者同时走 _zmOn 那条;左右对比保持"擦除"语义)✔
         if (_compareMode) return;
         try
         {
@@ -10288,7 +10288,7 @@ public sealed partial class VideoView : UserControl
     /// 拖动只改这两个矩形 + 挪线 —— **不解码、不换片、不重烘焙** ⇒ 手到线到 ✔
     /// 【为什么用"两条都铺满 + 各裁一半",而不是"把两半的宽度直接改小"】改宽度会让 Uniform 把画面重新缩进那一半
     /// ⇒ 拖动时两幅**各自在缩放**(一边缩一边放、比例还不一样),那是"擦除比较"里最刺眼的假象;裁切则两幅缩放恒定、
-    /// 只有**可见范围**在变 ✔(这也是 Topaz 式擦除比较的标准做法)。
+    /// 只有**可见范围**在变 ✔(这也是 遮罩式擦除比较的标准做法)。
     /// 【单一映射】分界 x 由"视频框"推出:**线、上层裁切、下层裁切、逆运算**四处共用同一个 x ✔
     /// (本文件记过那次事故:线用视频框、裁切用播放区留白 ⇒ 中心重合、越靠边越偏 ✗)</summary>
     private void ApplyTwoFileSplitLayout(double aw, double ah)

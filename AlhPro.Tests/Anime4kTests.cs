@@ -7,7 +7,7 @@ namespace AlhPro.Tests;
 
 /// <summary>1x 修复档(Anime4K)的滤镜串与路径约定(2026-09-21 用户定案:把 1x 档从「2x 放大后缩回」换成 Anime4K)。
 /// 【为什么单测】这里错了**不会在编译期报错**,而是运行时 ffmpeg 直接报一句看不懂的话:
-/// 绝对路径里的 `D:` 会被滤镜参数解析当成**选项分隔符**(实测报 "No option name near '/Video2X Qt6/...'",
+/// 绝对路径里的 `D:` 会被滤镜参数解析当成**选项分隔符**(实测报 "No option name near '/同类工具 Qt6/...'",
 /// 看着像路径不存在,其实是解析错误);反斜杠在滤镜里是转义字符,同样会被吃掉。
 /// ⇒ 约定:只传**文件名 + 正斜杠**,并且要求 ffmpeg 以自己所在目录为工作目录。</summary>
 public class Anime4kTests

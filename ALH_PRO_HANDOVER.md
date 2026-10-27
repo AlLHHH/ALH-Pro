@@ -214,7 +214,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 > ⚠️ 这些**根子在真机/驱动/引擎层面**,DeepSeek 无法仅凭代码解决,需要真机数据。
 
 1. **闪退(某用户 RTX 3070)**:日志只到"设置保存"就断,无异常堆栈。**需要 Windows 事件查看器崩溃记录**(Application Error 1000 / .NET Runtime 1026)才能定位。诊断包已含崩溃堆栈(见上),下次导出即带。
-2. **AMD 6750 补帧间歇 140→1 帧**:waifu2x-ncnn-vulkan / rife-ncnn-vulkan 的**引擎层共性问题**(同类软件 SVFI/Video2X 也有,GitHub issue #71/#1140)。已有"残缺自动降级 ONNX"兜底,但**没真机验证**。
+2. **AMD 6750 补帧间歇 140→1 帧**:waifu2x-ncnn-vulkan / rife-ncnn-vulkan 的**引擎层共性问题**(同类软件也有,GitHub issue #71/#1140)。已有"残缺自动降级 ONNX"兜底,但**没真机验证**。
 3. **RTX 3070 超分黑帧**:ncnn-Vulkan 长视频连续处理 GPU 队列累积异常。**2026-09-27 起不再有"事后判黑 ⇒ 后续批改走 ONNX"的兜底**(作者要求删除:黑色转场素材会被误判,反而把整条任务拖去 ONNX 慢路);视频路径只剩事前探测与输出端黑场留痕,单图/分块成品另有自带源图豁免的 `GuardSilentBlackOutput` 守卫。
 4. **RTX 3070 nvenc 失败(7.49 秒/帧慢)**:驱动 560.70 偏旧。**代码治不了根子,须用户升级驱动到 ≥610**。
 5. **"驱动最低版本"门槛**:阈值需要真机数据校准,DeepSeek 单看诊断包设阈值会误伤(4060@572.83 是好的)。

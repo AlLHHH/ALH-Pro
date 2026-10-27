@@ -95,7 +95,7 @@ public static class PipelineOrderPlan
     public const double MinInterpSecondsPerFrame = 0.005;
 
     /// <summary>安全边际:预估节省低于它就不切换顺序(15%)。
-    /// 【出处】本仓库口径(任务 Q1),**外部没有可参照的公开数值** —— 社区工具(SVP/Flowframes/Hybrid)
+    /// 【出处】本仓库口径(任务 Q1),**外部没有可参照的公开数值** —— 社区工具(某插帧社区/某插帧工具/某混合工具)
     /// 根本不做"按实测单帧耗时自动选阶段顺序"这件事,所以这条边际只能自定义。【不确定度】无外部对照,
     /// 15% 是"避免在临界点抖动"的经验值。(原先还有"在线参数可覆盖"这一层,该功能已于 2026-09-14 删除。)</summary>
     public const double MinSavingsPercent = 15.0;
