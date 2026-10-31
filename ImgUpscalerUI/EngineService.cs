@@ -2413,6 +2413,15 @@ public static partial class EngineService
                     return new AlhPro.Core.ProbeAttempt(false, AlhPro.Core.ProbeFailureKind.StartupFailed,
                         "进程为空(引擎未启动起来)");
                 }
+                // 【2026-10-31 · 真实故障修复】上面 RedirectStandardOutput/Error 之后**必须排空这两条流**:
+                // 引擎(尤其 Real-CUGAN)即使不加 -v 也会逐层打印 [done-vk]/[fwd-vk]/[vkex] 数百行;
+                // Windows 匿名管道缓冲很小(几 KB),父进程只重定向不读 ⇒ 子进程写满即阻塞在 WriteFile 上,
+                // 表现为"探测器几十秒一个字节都没有 → 被当 hang 杀掉"。真机证据(RTX 5070 Ti,2026-10-31 诊断包):
+                // realcugan 每次都在 60 秒上限被强杀,而同一台机器的 realesrgan/waifu2x/RIFE 探测全部通过 ——
+                // 差别只在输出量。本机复现:同参数、同一 exe,控制台直跑 2.6 秒出图;改成"重定向但不读"⇒ 70 秒不退出。
+                // 顺带把尾部留作证据:以前超时日志里一行引擎输出都没有,根本判不了是谁的问题。
+                var drainOutTask = DrainTailAsync(p.StandardOutput);
+                var drainErrTask = DrainTailAsync(p.StandardError);
                 using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 // 探测超时:小图 15 秒(旧 5 秒对"冷启动慢的 ncnn 卡"会误报 hang,如 4060 首次加载 Vulkan 要 >5s);
                 // 【生产帧尺寸探测必须给足 60 秒】实测(4060,1080×1920,-s 2):waifu2x-cunet 1.6s、
@@ -2492,6 +2501,14 @@ public static partial class EngineService
                         "——已终止本次探测");
                     try { p.Kill(entireProcessTree: true); } catch { }
                     Note(AlhPro.Core.ProbeFailureKind.Hang, $"{probeTimeoutSec} 秒无响应");
+                    // 【为什么要把尾部打出来】以前超时只写"无响应",用户和我们都无从判断到底是真挂死、
+                    // 还是父进程没排空管道把子进程堵住(2026-10-31 的 Real-CUGAN 就是后者)。
+                    // 现在:有输出 ⇒ 引擎在跑、只是慢;一个字节都没有 ⇒ 要么卡在初始化,要么就是管道堵死。
+                    string hungTail = await DrainTailTextAsync(drainOutTask, drainErrTask).ConfigureAwait(false);
+                    if (hungTail.Length > 0)
+                        AppLogger.Warn("[探测] 引擎被杀前的最后输出(尾部):" + hungTail);
+                    else
+                        AppLogger.Warn("[探测] 引擎被杀前一个字节输出都没有(没有任何 [done-vk]/[fwd-vk] 进度行)");
                 }
                 catch (OperationCanceledException)
                 {
@@ -2612,6 +2629,9 @@ public static partial class EngineService
                     if (p == null) { onFailure?.Invoke(AlhPro.Core.ProbeFailureKind.StartupFailed, "进程为空"); return false; }
                     using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     waitCts.CancelAfter(TimeSpan.FromSeconds(timeoutSec));
+                    // 同超分探测:重定向了就必须读走,否则引擎输出写满管道会被堵死(RIFE 输出量小,但没理由留同一个坑)
+                    var rfOutTask = DrainTailAsync(p.StandardOutput);
+                    var rfErrTask = DrainTailAsync(p.StandardError);
                     try
                     {
                         await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
@@ -2642,6 +2662,8 @@ public static partial class EngineService
                     {
                         AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId}) {timeoutSec} 秒无响应(疑似 hang),按不可用处理");
                         try { p.Kill(entireProcessTree: true); } catch { }
+                        string rfTail = await DrainTailTextAsync(rfOutTask, rfErrTask).ConfigureAwait(false);
+                        if (rfTail.Length > 0) AppLogger.Warn("[探测] RIFE 被杀前的最后输出(尾部):" + rfTail);
                         onFailure?.Invoke(AlhPro.Core.ProbeFailureKind.Hang, $"{timeoutSec} 秒无响应");
                         return false;   // 超时=真 hang,不重试(重试只会再白等一个超时);仅快速失败(非超时)才走重试
                     }
@@ -3071,6 +3093,45 @@ public static partial class EngineService
         }
         catch (OperationCanceledException) { }
         catch (Exception) { /* 读取失败不影响主流程 */ }
+    }
+
+    /// <summary>把一条重定向流读干净、只保留尾部 <paramref name="keepTail"/> 个字符。
+    /// 【为什么必须有它】探测路径只需要"别把子进程堵死"和"失败时有个尾巴可看";
+    /// 真把整段输出攒进内存既没必要,也会让 Real-CUGAN 那种逐层打印的引擎把内存吃光。
+    /// 【为什么不传 ct】读流的生命周期跟着进程走:调用方取消/超时后先杀进程,流自然读到 EOF;
+    /// 传 ct 会让"杀进程前先抛取消"多一种竞态,得不偿失。</summary>
+    private static async Task<string> DrainTailAsync(StreamReader reader, int keepTail = 4096)
+    {
+        var sb = new StringBuilder(Math.Min(keepTail, 8192));
+        var buf = new char[8192];
+        try
+        {
+            while (true)
+            {
+                int n = await reader.ReadAsync(buf.AsMemory(), CancellationToken.None).ConfigureAwait(false);
+                if (n <= 0) break;
+                sb.Append(buf, 0, n);
+                if (sb.Length > keepTail * 2) sb.Remove(0, sb.Length - keepTail);
+            }
+        }
+        catch (Exception) { /* 进程被杀/管道断了:尾巴有多少算多少 */ }
+        if (sb.Length > keepTail) sb.Remove(0, sb.Length - keepTail);
+        return sb.ToString();
+    }
+
+    /// <summary>等两条排空任务收尾(最多等 1.5 秒),拼出尾部并裁到 1200 字符 —— 供"探测被杀前看到了什么"写日志用。</summary>
+    private static async Task<string> DrainTailTextAsync(Task<string> outTask, Task<string> errTask)
+    {
+        try
+        {
+            await Task.WhenAny(Task.WhenAll(outTask, errTask), Task.Delay(1500)).ConfigureAwait(false);
+        }
+        catch (Exception) { }
+        string o = outTask.Status == TaskStatus.RanToCompletion ? outTask.Result : "";
+        string e = errTask.Status == TaskStatus.RanToCompletion ? errTask.Result : "";
+        string t = (o + (e.Length > 0 ? "\n[stderr]\n" + e : "")).Trim();
+        if (t.Length > 1200) t = "…" + t[^1200..];
+        return t;
     }
 
     /// <summary>轮询输出目录已生成的帧数,逐帧报告"超分 第 N 帧 / 共 M 帧"(目录模式引擎不输出百分比)。
