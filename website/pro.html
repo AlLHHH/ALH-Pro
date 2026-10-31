@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>ALH Pro 专业版 — 敬请期待</title>
-<meta name="description" content="ALH Pro 专业版:给长期批量处理、对画质与效率要求更高的人准备的版本。目前仍在打磨,开放前不接单、不预售。免费版继续更新。">
+<title>ALH Pro 专业版 — 长期维护 · 更多模型与调优</title>
+<meta name="description" content="ALH Pro 专业版面向长期使用:新模型与调优先进专业版,问题优先在专业版上修。目前仍在打磨,开放前不接单、不预售,免费版继续更新。">
 <meta name="theme-color" content="#0a0a0b">
 
 <link rel="icon" href="favicon.ico" sizes="any">
@@ -16,16 +16,16 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="ALH Pro">
 <meta property="og:locale" content="zh_CN">
-<meta property="og:title" content="ALH Pro 专业版 — 敬请期待">
-<meta property="og:description" content="给长期批量处理、对画质与效率要求更高的人准备的版本。目前仍在打磨,开放前不接单、不预售;免费版继续更新。">
+<meta property="og:title" content="ALH Pro 专业版 — 长期维护 · 更多模型与调优">
+<meta property="og:description" content="面向长期使用:新模型与调优先进专业版,问题优先在专业版上修。目前仍在打磨,开放前不接单、不预售。">
 <meta property="og:url" content="https://alhpro.cn/pro.html">
 <meta property="og:image" content="https://alhpro.cn/assets/img/og-cover.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="ALH Pro 专业版 — 敬请期待">
+<meta property="og:image:alt" content="ALH Pro 专业版">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="ALH Pro 专业版 — 敬请期待">
-<meta name="twitter:description" content="给长期批量处理、对画质与效率要求更高的人准备的版本。目前仍在打磨,开放前不接单、不预售;">
+<meta name="twitter:title" content="ALH Pro 专业版 — 长期维护 · 更多模型与调优">
+<meta name="twitter:description" content="面向长期使用:新模型与调优先进专业版,问题优先在专业版上修。">
 <meta name="twitter:image" content="https://alhpro.cn/assets/img/og-cover.png">
 
 <link rel="stylesheet" href="assets/css/style.css">
@@ -55,70 +55,108 @@
   </div>
 </header>
 
-<main id="main">
+<main id="main" class="pro-main">
 
-  <section class="hero hero--page">
-    <div class="aurora" aria-hidden="true">
-      <span class="aurora-blob b1"></span>
-      <span class="aurora-blob b2"></span>
-      <span class="aurora-blob b3"></span>
-    </div>
+  <section class="pro-hero">
+    <div class="wrap pro-hero-inner">
+      <div>
+        <p class="pro-kicker">Pro</p>
+        <h1 class="pro-title">专业版</h1>
+        <p class="pro-title-sub">长期维护,更多模型与调优</p>
 
-    <div class="wrap hero-inner">
-      <p class="pro-hero-badge">PRO · 即将开放</p>
-      <h1 class="hero-title">ALH Pro <span class="pro-title-accent">专业版</span></h1>
-      <p class="page-meta">
-        给<strong>长期批量处理、对画质和效率要求更高</strong>的人准备的版本。<br>
-        现在还在打磨:开放前<strong>不接单、不预售、不收定金</strong>,这里只放一句实话——快了。
-      </p>
+        <p class="pro-lede">
+          面向长期使用的人:新的超分与补帧模型先进专业版,针对显卡和片源的调优也先在这里落地;
+          出了问题优先在专业版上修。<strong>现在还在打磨</strong>,开放前不接单、不预售,免费版继续更新。
+        </p>
 
-      <div class="cta-row">
-        <span class="btn btn-pro pro-cta-disabled" aria-disabled="true">
-          <span class="pro-tag">PRO</span>
-          敬请期待
-        </span>
-        <a class="btn btn-ghost" href="download.html">先看免费版</a>
+        <div class="pro-actions">
+          <span class="btn btn-pro" aria-disabled="true">敬请期待</span>
+          <a class="btn btn-ghost" href="download.html">先看免费版</a>
+        </div>
       </div>
 
-      <p class="btn-note small">免费版<strong>不会停更</strong>。专业版做出来以后,免费版继续更新、继续免费。</p>
+      <aside class="pro-panel" aria-label="专业版与免费版共用的内核">
+        <p class="pro-panel-note">专业版和免费版共用同一套处理内核,只是更新节奏和可调范围不同。</p>
+        <dl class="pro-kernel">
+          <div>
+            <dt>超分</dt>
+            <dd>Real-ESRGAN / Real-CUGAN / waifu2x,<em>按片源选用</em></dd>
+          </div>
+          <div>
+            <dt>补帧</dt>
+            <dd>RIFE <em>去重识别、转场切分、指定帧率都在同一套时间轴上</em></dd>
+          </div>
+          <div>
+            <dt>抠图</dt>
+            <dd>人像 · 产品 · 动漫 <em>按素材类型分开的模型组</em></dd>
+          </div>
+          <div>
+            <dt>音频</dt>
+            <dd>降噪 · 分离 <em>与视频任务同一条流水线</em></dd>
+          </div>
+        </dl>
+        <p class="pro-panel-foot">内核同源,所以<strong>免费版不会停在原地</strong>:专业版里站得住的改动,会继续回流到免费版。</p>
+      </aside>
     </div>
   </section>
 
-  <section class="wrap section">
-    <h2 class="section-title">为什么要等</h2>
-    <p class="lead">不是换个皮肤卖钱。专业版要做的是免费版刻意没做的那部分:更高的处理上限、真正能挂一夜的批量跑法,以及出了问题能第一时间修。</p>
+  <section class="pro-section">
+    <div class="wrap">
+      <div class="pro-section-head">
+        <h2 class="pro-section-title">专业版会多出来的三件事</h2>
+        <p class="pro-section-lead">不是换一套界面,也不是把按钮换个颜色。多出来的部分集中在「模型」「调优」「维护」这三件最耗时间的事情上。</p>
+      </div>
 
-    <div class="grid grid-3">
-      <article class="card pro-card">
-        <span class="card-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.6 15.4l5.2-5.2 3.4 3.4 6.2-6.2"/><path d="M15.2 7.4h4.4v4.4"/></svg>
-        </span>
-        <h3>更高的处理上限</h3>
-        <p>更高倍率、更大模型、更激进的重建参数。免费版为了在普通机器上跑得稳,这些一直是收着的;专业版会放开,代价是要更强的显卡。</p>
-      </article>
-
-      <article class="card pro-card">
-        <span class="card-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.4" width="18" height="4.6" rx="1.6"/><rect x="3" y="11.2" width="18" height="4.6" rx="1.6"/><rect x="3" y="18" width="18" height="2.6" rx="1.3"/></svg>
-        </span>
-        <h3>能挂一夜的批量</h3>
-        <p>把一堆素材排进队列,设好参数就去睡。失败的那一条自动重试,跑完给一份清单——哪条成了、哪条没成、为什么。</p>
-      </article>
-
-      <article class="card pro-card">
-        <span class="card-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.4l2.2 4.7 5.1.7-3.7 3.6.9 5.1-4.5-2.4-4.5 2.4.9-5.1L4.7 8.8l5.1-.7z"/></svg>
-        </span>
-        <h3>问题先在你这边修</h3>
-        <p>专业版用户碰到的问题排在最前面:反馈、复现、修、出包,一条线走完。免费版的问题同样会修,只是排在后面。</p>
-      </article>
+      <div class="pro-rows">
+        <div class="pro-row">
+          <h3>模型</h3>
+          <p>新出的超分与补帧模型,先在专业版上接入、验证、适配,再决定要不要下发。按片源分开调:<strong>动漫走线条与色块</strong>,<strong>实拍走细节与噪点</strong>,老片和低码率素材单独一组参数,不用自己在参数里摸索。</p>
+        </div>
+        <div class="pro-row">
+          <h3>调优</h3>
+          <p>针对新显卡和新驱动做参数适配,把「默认设置就能出可用结果」当作验收标准。同一份素材在不同显卡上跑出来的效果和耗时都盯一遍,异常的那条路会单独修,而不是让你自己降低倍率。</p>
+        </div>
+        <div class="pro-row">
+          <h3>维护</h3>
+          <p><strong>长期维护更新</strong>:专业版有明确的维护周期,不是一次性卖完就算。你报的问题排在前面,复现、修、发版走一条线;修复跟着版本走,不靠单独打补丁文件。</p>
+        </div>
+      </div>
     </div>
+  </section>
 
-    <div class="note pro-note">
-      <p class="note-title">现在的状态</p>
-      <p>专业版还没到能拿出手的程度,所以这一页只有一句话:<strong>敬请期待</strong>。
-        什么时候开放、多少钱、买断还是年费 —— 到能兑现的时候再写在这里,不做预告式营销。</p>
-      <p>想第一时间知道:加官方 QQ 群,或者留着免费版里那个「检查更新」。</p>
+  <section class="pro-section">
+    <div class="wrap">
+      <div class="pro-section-head">
+        <h2 class="pro-section-title">现在能确定的,和还不能确定的</h2>
+        <p class="pro-section-lead">开放前先把能说清的说清楚,其余留空。</p>
+      </div>
+
+      <div class="pro-split">
+        <div class="pro-col pro-col--known">
+          <h3 class="pro-col-title">已经确定</h3>
+          <ul class="pro-list">
+            <li>长期维护更新,有固定的维护节奏。</li>
+            <li>新模型与调优先进专业版,验证过再考虑下发。</li>
+            <li>问题优先在专业版上修,修复随版本发布。</li>
+            <li>与免费版同源内核,处理逻辑不另起一套。</li>
+          </ul>
+        </div>
+        <div class="pro-col pro-col--unknown">
+          <h3 class="pro-col-title">还没确定</h3>
+          <ul class="pro-list">
+            <li>开放时间。</li>
+            <li>价格与授权方式:买断还是年费。</li>
+            <li>具体包含哪些模型,以及上限放到多高。</li>
+            <li>是否提供试用。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="pro-close">
+        <h3 class="pro-close-title">开放时,会先写在这一页</h3>
+        <p>不接单、不预售、不收定金,也不做「名额有限」那套。等它真的能交付了,时间、价格、包含什么,一次性写清楚。
+          想早点知道,可以加官方 QQ 群 <strong>1057761060</strong>(1群)或 <strong>1028704070</strong>(2群),或者留着免费版里的「检查更新」。</p>
+      </div>
     </div>
   </section>
 
