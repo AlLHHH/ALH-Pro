@@ -1444,3 +1444,48 @@ body::after {
 }
 /* 满了的那张淡一档:不用徽标也能一眼看出该加哪个 */
 .qq-card.is-full { color: var(--muted); }
+
+/* ---------- §30 专业版(PRO)视觉 —— 2026-10-31 新增,只作用于本站的专业版入口,不动其它按钮 ---------- */
+/* 金色系:深色底上比主色蓝更“贵”,也不抢主按钮的蓝。发光只用极淡的一圈,不做动态。 */
+.btn-pro {
+  border-color: rgba(236, 200, 132, .58);
+  background-image: linear-gradient(180deg, rgba(246, 214, 155, .26) 0%, rgba(206, 158, 86, .13) 62%, rgba(180, 132, 66, .10) 100%);
+  color: #ffeccb;
+  font-weight: 640;
+  letter-spacing: .012em;
+  box-shadow: inset 0 1px 0 rgba(255, 246, 222, .30), 0 0 0 1px rgba(230, 192, 122, .10), 0 8px 22px -12px rgba(230, 192, 122, .55);
+}
+.btn-pro:hover {
+  border-color: rgba(246, 214, 155, .88);
+  background-image: linear-gradient(180deg, rgba(252, 226, 176, .36) 0%, rgba(214, 166, 94, .18) 62%, rgba(180, 132, 66, .13) 100%);
+  color: #fff7e5;
+}
+.btn-pro svg { color: #f0cf92; }
+.btn-pro .pro-tag {
+  font-size: 10px; font-weight: 700; letter-spacing: .14em;
+  padding: 2.5px 6px; border-radius: 5px; margin-right: 1px;
+  color: #241a06;
+  background-image: linear-gradient(180deg, #f6dda8, #d8ae63);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 240, .75);
+}
+
+.pro-hero-badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 5px 13px; border-radius: var(--pill);
+  border: 1px solid rgba(230, 192, 122, .34);
+  background: rgba(230, 192, 122, .08);
+  color: #eccf96; font-size: 12.5px; letter-spacing: .14em; font-weight: 650;
+  text-transform: uppercase;
+}
+.pro-hero-badge::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: #e6c07a; box-shadow: 0 0 0 3px rgba(230, 192, 122, .16);
+}
+.pro-title-accent {
+  background-image: linear-gradient(96deg, #f7e6c2 0%, #e6c07a 46%, #b98f45 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.pro-cta-disabled { opacity: .85; cursor: default; }
+.pro-cta-disabled:hover { border-color: rgba(230, 192, 122, .40); background-image: linear-gradient(180deg, rgba(230, 192, 122, .17), rgba(230, 192, 122, .05)); color: #f2dcae; }
+.pro-card .card-icon { color: #e6c07a; }
+.pro-note { margin-top: 18px; }
