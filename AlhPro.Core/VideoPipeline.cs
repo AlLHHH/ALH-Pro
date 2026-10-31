@@ -385,6 +385,27 @@ public static class VideoPipeline
         return (long)(sourceFrames - 1) * Math.Max(1, mult) + 1;
     }
 
+    /// <summary>补帧之后"本该有多少帧"。指定帧率时用按真实时长算出的 <paramref name="targetFramesOverride"/>,
+    /// 否则就是 (源帧数-1)×round(倍率)+1。用于**只读对账**(见 FrameCountOffBy)。</summary>
+    public static long ExpectedInterpFrames(int sourceFrames, double mult, long targetFramesOverride = 0)
+    {
+        if (targetFramesOverride > 0) return targetFramesOverride;
+        if (sourceFrames <= 0) return 0;
+        double m = double.IsFinite(mult) && mult > 1 ? mult : 1;
+        return (long)Math.Round((sourceFrames - 1) * m + 1);
+    }
+
+    /// <summary>输出帧数与"本该有的帧数"是否差得多(超过 <paramref name="tolerance"/> 帧)。
+    /// 只用来**报警**,不参与任何帧数裁剪:2x 补帧变成 1.9x 时,成片会比原片慢 5%、音画逐渐错位,
+    /// 而合帧的"均值补尾 / 帧率自愈"会把这点偏差悄悄吸收掉,日志里看不出来。</summary>
+    public static bool FrameCountOffBy(long actualFrames, long expectedFrames, long tolerance = 1)
+    {
+        if (expectedFrames <= 0) return false;
+        long diff = actualFrames - expectedFrames;
+        if (diff < 0) diff = -diff;
+        return diff > Math.Max(0, tolerance);
+    }
+
     /// <summary>把源帧时长表按补帧倍率展开成"输出帧时长表"(供 setpts 重定时),返回追加的条目数。
     /// 每源帧展开 mult 条、每条 = 该源帧时长 / mult(总时长严格不变);
     /// **末段的最后一个源帧只展开 1 条**,承载它(尾部容积)的整段时长 —— 与 InterpSegmentTarget 配套,

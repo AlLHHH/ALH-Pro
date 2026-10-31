@@ -181,6 +181,44 @@ public class InterpFrameCountTests
         Assert.Equal(0, VideoPipeline.CountTimestampCollisions(new List<double> { 0.5, 0.5 }, 0));
     }
 
+    // ===== 帧数对账(2026-10-31):用户报"开了去重 / 转场识别就变速、音画不同步"。
+    // 这两个纯函数只用来报警,不裁剪任何帧;数字取自真机日志,拿日志里的「输出 N 帧」一减就知道差多少。
+
+    /// <summary>口径一:没指定帧率时 = (源帧数-1)×步长+1。</summary>
+    [Theory]
+    [InlineData(855, 2.0, 1709L)]      // 2x 补帧、855 帧
+    [InlineData(4321, 2.0, 8641L)]     // 2026-10-19 那台:4321 帧 × 2x = 8641(与其日志一致)
+    [InlineData(396, 10.504, 4150L)]   // 同机「一拍4」:395×10.504+1 = 4150.08 → 4150(其日志印的是 4149,差 1 帧属分段边界,对账容忍)
+    [InlineData(261, 4.009, 1043L)]    // 22:50 那次:260×4.009+1 = 1043.34 → 1043
+    public void Expected_frames_follow_the_conservation_formula(int srcFrames, double mult, long expected)
+        => Assert.Equal(expected, VideoPipeline.ExpectedInterpFrames(srcFrames, mult));
+
+    /// <summary>口径二:指定帧率时用"按真实时长算出来的目标帧数",不信倍率换算。</summary>
+    [Fact]
+    public void Expected_frames_prefer_the_target_fps_count()
+    {
+        Assert.Equal(2603, VideoPipeline.ExpectedInterpFrames(261, 4.009, 2603));
+        Assert.Equal(1298, VideoPipeline.ExpectedInterpFrames(649, 2.0, 1298));
+    }
+
+    /// <summary>差 1 帧不吵(分段边界的正常抖动),差 2 帧以上才报警;正负都算差。</summary>
+    [Theory]
+    [InlineData(2603, 2603, false)]   // 一帧不差
+    [InlineData(2604, 2603, false)]   // 多 1 帧:分段边界
+    [InlineData(2602, 2603, false)]   // 少 1 帧:同上
+    [InlineData(2606, 2603, true)]    // 多 3 帧:该吵
+    [InlineData(2601, 2603, true)]    // 少 2 帧:该吵
+    public void Frame_count_check_tolerates_one_frame_only(long actual, long expected, bool shouldWarn)
+        => Assert.Equal(shouldWarn, VideoPipeline.FrameCountOffBy(actual, expected));
+
+    /// <summary>不知道目标(0)时永远不吵,免得在没算出来的路径上刷假警报。</summary>
+    [Fact]
+    public void Frame_count_check_is_silent_without_a_target()
+    {
+        Assert.False(VideoPipeline.FrameCountOffBy(123, 0));
+        Assert.False(VideoPipeline.FrameCountOffBy(0, 0));
+    }
+
     /// <summary>均匀时间轴也要按同一条判据看(这是同款隐患的第二种形态):
     /// · 回退时造的均匀表 = 容器时长 ÷ 帧数(每格恰好 ≈ 一个时基格)→ 不撞格;
     /// · 但"1/输出帧率"那种均匀表在标称帧率比它粗时会撞格(这里 68 帧)——

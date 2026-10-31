@@ -2572,7 +2572,15 @@ public static class VideoService
                         xBatchLineShown = true;
                     }
                 }
-                frameScale = frameCount > 0 ? Math.Min(6.0, (double)origCountEst / frameCount) : 1.0;
+                // 去重强度(原帧数 ÷ 去重后帧数):一拍2.5 约 2.5、一拍8 约 8。
+                // 【上限 6.0】密度还原系数封顶,否则 RIFE 要给两张关键帧之间插太多帧(一步跨 8 帧的画面,
+                // 中间全是它自己编的),观感更糟。超了就在日志里写明"被封顶",免得事后以为是算法自己算错。
+                double dedupRatio = frameCount > 0 ? (double)origCountEst / frameCount : 1.0;
+                frameScale = Math.Min(6.0, dedupRatio);
+                if (dedupRatio > 6.05)
+                    AppLogger.Warn($"⚠ 去重强度 {dedupRatio:0.##} 倍超过密度还原上限 6 倍(按 6 倍补帧):"
+                        + $"关键帧之间的空档里,插进去的帧全部是补帧模型猜的,画面会偏软。"
+                        + "想让成片更稳,把去重档位调低(比如一拍4 或手动帧差)再跑一遍");
                 bool v4Model = IsV4Model(interpModel);
                 // ===== 方案 C(真实时间轴插值/对齐丝滑):「密度还原 → 整段一次 RIFE → 帧数精确对齐」=====
                 // 整段序列喂给 RIFE,光流上下文足(估得准、不糊不扭);密度还原把各状态的真实停留时长铺回同一条
@@ -3900,14 +3908,17 @@ public static class VideoService
                         ? $";【指定帧率口径】按 {targetFpsDecl.Value.ToString("0.##", inv)} fps 应得 {targetFpsWantFrames} 帧"
                           + $"({frameCount} 帧源 ⇒ 每源帧 {multDiag:0.###} 帧,非整数倍率 {interpScale}x)"
                         : ""));
-                // 【任务 N · 帧数守恒自检】只在"不会被别的机制调整帧数"的路径上判:
-                //   · VFR 路径【不做】合帧前的"帧数对齐"(那会破坏时间轴)→ 少了就是被丢了(任务 N 的丢帧)、
-                //     多了就是末帧冻结副本没去掉,两种情况都让"2x 不再是 2x",必须吵;
-                //   · 去重(密度还原)/指定输出帧率/韵律重采样那几条路径帧数本就不等于本式,不参与判定。
-                bool countCheckApplies = vfrPassthrough && vfrSetpts != null && tempoSrcIdx == null && frameScale <= 1.001;
-                if (countCheckApplies && finalNDiag != expectDiag)
-                    AppLogger.Warn($"⚠ 帧数守恒自检:输出 {finalNDiag} 帧 ≠ 目标 {expectDiag} 帧(({frameCount}-1)×{multDiag:0.###}+1);"
-                        + "补帧倍率会因此对不上(2x 不等于 2x)、或成片尾部少了内容");
+                // 【任务 N · 帧数守恒自检】2026-10-31 起放宽成"所有补帧路径都对账":
+                //   原来只在「VFR 素材」上判,而**去重(密度还原)与指定帧率**这两条路径恰恰不判 ——
+                //   也就正好是用户报"开了去重 / 转场识别就变速、音画不同步"的那两条。
+                //   这里只报警、不裁剪、不改任何行为:合帧的「均值补尾」与「帧率自愈」会把小偏差悄悄吸收,
+                //   日志里看不出问题;差 1 帧不吵(分段边界本就允许),差得多就写明方向。
+                long expectLedger = AlhPro.Core.VideoPipeline.ExpectedInterpFrames(frameCount, multDiag, targetFpsWantFrames);
+                if (AlhPro.Core.VideoPipeline.FrameCountOffBy(finalNDiag, expectLedger, 1))
+                    AppLogger.Warn($"⚠ 帧数对账:输出 {finalNDiag} 帧 ≠ 应有 {expectLedger} 帧"
+                        + $"(差 {finalNDiag - expectLedger} 帧;去重后 {frameCount} 帧 × 步长 {multDiag:0.###} 帧"
+                        + (targetFpsWantFrames > 0 ? $",指定帧率口径 {targetFpsWantFrames} 帧" : "")
+                        + ")。合帧会用均值补尾 / 帧率自愈吸收这点偏差,但成片时长与节奏会偏离原片,越往后音画错位越明显");
             }
             string vfArg, videoMap;
             string vfChainBody = "";   // 有独立 -vf 链时才填(供"编码阶段拆分"抽样实测滤镜链成本)
