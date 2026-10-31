@@ -409,13 +409,19 @@ public static class VideoPipeline
     /// <summary>把源帧时长表按补帧倍率展开成"输出帧时长表"(供 setpts 重定时),返回追加的条目数。
     /// 每源帧展开 mult 条、每条 = 该源帧时长 / mult(总时长严格不变);
     /// **末段的最后一个源帧只展开 1 条**,承载它(尾部容积)的整段时长 —— 与 InterpSegmentTarget 配套,
-    /// 保证"表长 == 文件数 == (源帧数-1)×mult+1"。</summary>
+    /// 保证"表长 == 文件数 == (源帧数-1)×mult+1"。
+    /// **单帧段只展开 1 条**:段长 &lt;2 时 RIFE 不收(见 InterpSegmentAsync,"1 帧目录 + -n 2"必崩),
+    /// 实际只落 1 个文件;这里若仍按 mult 展开,表就比文件多 (mult-1) 条,合帧会从尾部裁掉等量时长、
+    /// 再被 k=muxDur/sumDur 整体放大 ⇒ 成片慢放(与 2026-10-31 那条 1.196× 同一类账)。</summary>
     public static int AppendExpandedDurations(List<double> dst, IReadOnlyList<double> srcDurs, int s, int e, int mult, bool lastSegment)
     {
         if (dst == null) return 0;
         int m = Math.Max(1, mult);
+        int lo = Math.Max(0, s), hi = Math.Min(e, srcDurs.Count);
+        bool copyOnly = hi - lo <= 1;   // 单帧段:引擎不收,直接复制 1 帧
+        if (copyOnly) m = 1;
         int added = 0;
-        for (int k = Math.Max(0, s); k < Math.Min(e, srcDurs.Count); k++)
+        for (int k = lo; k < hi; k++)
         {
             bool tailFrame = lastSegment && k == srcDurs.Count - 1;
             int copies = tailFrame ? 1 : m;
@@ -430,39 +436,73 @@ public static class VideoPipeline
     /// 但指定帧率算出来的是**分数**步长(真机:60×21.632÷518 = 2.506),再 round 成整数 3 → 总帧数
     /// 1555 ≫ 需要的 1298,多出来的只能被合帧裁掉(尾部丢内容)。
     ///
-    /// 【口径 · 绝对定位】第 i 段(源帧区间 [start, end)) 在**整片输出**里应累计到的帧号 = `round(end×k)`
-    /// (k = (totalOut-1)÷(totalSrc-1),末段直接 = totalOut)。于是本段 RIFE 的 `-n`
-    ///   = 该累计帧号 − 目前已经有的输出帧数(即前面各段产出之和,含首帧的那个 1)。
+    /// 【口径 · 绝对定位】第 i 段(源帧区间 [start, end)) 的**最后一个源帧下标是 end−1**,
+    /// 它按 k 帧/源帧的步长应落在整片输出的 `round((end−1)×k) + 1` 帧(第 1 个输出帧 = 源帧 0)。
+    /// 于是本段 RIFE 的 `-n` = 该累计帧号 − 目前已经有的输出帧数(即前面各段产出之和,含首帧的那个 1)。
     /// 这样"Σ各段 = 全局目标"是**构造性**成立的,不依赖任何舍入补偿;末段自然吸收全部舍入余量
-    /// ⇒ 合帧阶段一帧都不用裁,尾部内容不再丢。segLen ≤ 1 时退回自然产量(段内没有可插值的间隔)。</summary>
+    /// ⇒ 合帧阶段一帧都不用裁,尾部内容不再丢。
+    ///
+    /// 【2026-10-31 修正 · 转场识别导致的"越切越不对"】旧口径用 `round(end×k)`,比正确位置多 `k−1` 帧
+    /// (2.5 帧/源帧差 1.5 帧、8x 差 7 帧、16x 差 15 帧):每过一个切点,这一段就多铺 k−1 帧 ⇒ 段内被放慢、
+    /// 切点在成片里后移;而总帧数是锚定的 ⇒ 后面各段反向被压缩、末段集中压短。用户感知就是
+    /// 「开了转场识别,节奏/音画慢慢就不对了」。改成 (end−1)×k+1 后,段内步长恒等于 k,切点精确落位。
+    /// segLen ≤ 1 时直接返回 1(与"单帧段只复制不插值"的产出对齐,否则表会比文件多一条)。</summary>
     public static int InterpSegmentTargetExact(int segLen, int segEnd, int totalSrc, long totalOut, long producedSoFar)
     {
         int len = Math.Max(1, segLen);
         if (totalSrc <= 1 || totalOut <= 0) return len + 1;
+        // 单帧段:段落盘只复制 1 帧(源码注释:"1 帧目录 + -n 2"必崩 0xC0000005),这里必须同样只算 1 帧。
+        if (len <= 1) return 1;
         long cumulative = segEnd >= totalSrc
             ? totalOut
-            // 【必须 AwayFromZero】默认的银行家舍入在恰好落在 .5 时会进位到偶数:
-            // 真机 518 帧目标 1298 帧时 segEnd×k = 1299.5 → 默认舍入给 1300,末段反而要"倒扣",帧数对账出现 ±1 抖动。
-            : (long)Math.Round(segEnd * ((double)(totalOut - 1) / (totalSrc - 1)), MidpointRounding.AwayFromZero);
+            // 【必须 AwayFromZero】默认的银行家舍入在恰好落在 .5 时会进位到偶数,帧数对账会出现 ±1 抖动。
+            : (long)Math.Round((segEnd - 1) * ((double)(totalOut - 1) / (totalSrc - 1)), MidpointRounding.AwayFromZero) + 1;
         long want = cumulative - Math.Max(0, producedSoFar);
         return (int)Math.Min(int.MaxValue, Math.Max(len + 1, want));
     }
 
-    /// <summary>【指定帧率专用】时间轴展开按**每段精确目标帧数**分配槽位:每源帧槽数 = targetFrames ÷ 段长,
-    /// 末段的最后一个源帧只 1 槽(与 InterpSegmentTargetExact 的末段口径一致)。
-    /// 之所以不能用整数倍率的 AppendExpandedDurations:分数步长下"表长 == 文件数"这条不变量会被破坏,
-    /// 而帧数与时长表不同源正是历史上"时长表按均值补尾 → 尾部时间轴失真"那类静默错的成因。</summary>
+    /// <summary>【指定帧率专用】时间轴展开按**每段精确目标帧数**分配槽位:段内第 k 个源帧的槽数 =
+    /// round((k+1) × targetFrames ÷ 段长) − 已分配槽数(累计取整 / Bresenham),因此 **Σ槽数 == targetFrames**
+    /// 由构造保证,不靠事后补裁。末段的最后一个源帧固定 1 槽(整段时长由它兜住,与 InterpSegmentTargetExact
+    /// 的末段口径一致),其余 targetFrames−1 槽在同一规则下分给前面的源帧。
+    ///
+    /// 【为什么必须精确(2026-10-31 真机回归)】旧实现给每个源帧都摊 `round(targetFrames ÷ 段长)` 槽:
+    /// 518 帧、目标 1298 帧时 = round(2.506) = **3** 槽 ⇒ 表长 1552,而补帧实际只落 1298 个文件;
+    /// 合帧的"帧数对齐"从尾部裁掉 254 条时长 → 表总时长 18.09s(源 21.63s),再被 `k = muxDur / sumDur`
+    /// 整体放大 **1.196 倍** ⇒ 画面慢放 1.2 倍、音频不变 ⇒ 音画逐渐错位。这个 1.195× 与 2026-09-16
+    /// 修掉的「指定帧率慢放」是同一个数 —— 当时只修了均匀时间轴那条路,而"指定帧率 + 去重帧 / VFR(保节奏)"
+    /// 走的正是本函数,于是同一症状换条路又回来了(用户 2026-10-31 反馈的「开去重就变速」)。</summary>
     public static int AppendExpandedDurationsExact(List<double> dst, IReadOnlyList<double> srcDurs,
         int s, int e, int targetFrames, bool lastSegment)
     {
         if (dst == null) return 0;
         int lo = Math.Max(0, s), hi = Math.Min(e, srcDurs.Count);
+        if (hi <= lo) return 0;
+        // 单帧段:引擎不收(段长 <2 直接复制 1 帧),时间轴也只该有 1 条,否则表比文件多 (target-1) 条。
+        if (hi - lo == 1) { dst.Add(Math.Max(0.0005, srcDurs[lo])); return 1; }
         int len = Math.Max(1, hi - lo);
-        int added = 0;
+        // 目标帧数不允许少于源帧数:少于就等于"要凭空吞掉内容",那不是时间轴能表达的事。
+        int total = Math.Max(len, targetFrames);
+        bool hasTail = lastSegment && hi >= srcDurs.Count && hi > lo;
+        int bodyLen = hasTail ? len - 1 : len;
+        int bodyTotal = hasTail ? total - 1 : total;
+        if (bodyLen <= 0) bodyTotal = 0;
+        else if (bodyTotal < bodyLen) bodyTotal = bodyLen;
+        int added = 0, cum = 0;
         for (int k = lo; k < hi; k++)
         {
-            bool tailFrame = lastSegment && k == srcDurs.Count - 1;
-            int slots = tailFrame ? 1 : Math.Max(1, (int)Math.Round(targetFrames / (double)len));
+            int slots;
+            if (hasTail && k == hi - 1)
+            {
+                slots = 1;
+            }
+            else
+            {
+                int idx = k - lo + 1;   // 1-based,在"除尾帧外的源帧"里的位置
+                long c = (long)Math.Round(idx * (bodyTotal / (double)bodyLen), MidpointRounding.AwayFromZero);
+                slots = (int)Math.Max(1, c - cum);
+                cum += slots;
+            }
             double d = Math.Max(0.0005, srcDurs[k] / slots);
             for (int i = 0; i < slots; i++) { dst.Add(d); added++; }
         }

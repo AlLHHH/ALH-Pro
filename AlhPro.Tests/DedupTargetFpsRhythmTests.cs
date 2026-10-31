@@ -350,8 +350,9 @@ public class DedupTargetFpsRhythmTests
         Assert.Contains("double multRife = multTargetFpsOverride > 1.0 ? multTargetFpsOverride : multStage;", svc);
 
         // ② 分段目标"严格相加 = 全局目标"(否则下游还要裁尾 = 又丢内容)。
-        // 口径 · 绝对定位:第 i 段把整片输出补到第 round(end×k) 帧(k = (totalOut-1)÷(totalSrc-1)),
-        // 减去已产出帧数就是本段 `-n`;末段锚到全局目标 ⇒ 合计**构造性**等于目标,一帧不用裁。
+        // 口径 · 绝对定位:段的最后一个源帧是 end−1,它应落在第 round((end−1)×k)+1 帧
+        // (k = (totalOut-1)÷(totalSrc-1)),减去已产出帧数就是本段 `-n`;末段锚到全局目标
+        // ⇒ 合计**构造性**等于目标,一帧不用裁。(2026-10-31 修正:旧口径 round(end×k) 每段多 k−1 帧)
         Assert.Equal(1298, VideoPipeline.InterpSegmentTargetExact(518, 518, 518, 1298, producedSoFar: 0));
         const int totalSrc = 518, totalOut = 1298;
         int[] lens = { 130, 129, 129, 130 };   // 合计 518
@@ -367,19 +368,160 @@ public class DedupTargetFpsRhythmTests
         // 【关键判据】引擎产出必须**恰好**等于目标帧数:少了会被"末帧补足"伪造冻结帧,多了又被裁尾 = 又丢内容
         Assert.Equal(totalOut, cum);
 
-        // ③ 时长表与文件数同源:分数步长下每帧槽数只能是整数,故槽位总数与目标帧数会差**不到一段**的零头
-        // (下游 AlignDurationsToCount 按均值补/裁这点零头)。这里钉住"差得在段长以内",而不是假装严格相等。
+        // ③ 时长表与文件数同源:槽位总数必须**严格等于**目标帧数。
+        // 【2026-10-31 真机回归】旧实现给每源帧摊 `round(target÷段长)` 槽,518 帧→1298 帧时摊成 3 槽、
+        // 表长 1552;合帧"帧数对齐"从尾部裁掉 254 条 → 表总时长 18.09s(源 21.63s),再被 k=muxDur/sumDur
+        // 放大 1.196 倍 ⇒ 画面慢放 1.2 倍、音频不变 ⇒ 音画不同步。现在是累计取整(Bresenham),构造性相等。
         var durs = new double[20];
         for (int i = 0; i < durs.Length; i++) durs[i] = 1.0 / 23.976;
         var dst = new System.Collections.Generic.List<double>();
         int segTarget = VideoPipeline.InterpSegmentTargetExact(10, 10, 20, 50, producedSoFar: 0);
         VideoPipeline.AppendExpandedDurationsExact(dst, durs, 0, 10, segTarget, lastSegment: false);
-        Assert.True(Math.Abs(dst.Count - segTarget) < 10, $"时长表 {dst.Count} 与目标帧数 {segTarget} 差得超过一段");
-        // 末段最后一个源帧只 1 槽(承载尾部容积):槽位总数 ≈ 目标帧数(同样只差不到一段)
+        Assert.Equal(segTarget, dst.Count);
+        // 末段最后一个源帧只 1 槽(承载尾部容积):槽位总数同样严格等于本段目标帧数
         var dst2 = new System.Collections.Generic.List<double>();
         int lastTarget = VideoPipeline.InterpSegmentTargetExact(10, 20, 20, 50, producedSoFar: segTarget);
         VideoPipeline.AppendExpandedDurationsExact(dst2, durs, 10, 20, lastTarget, lastSegment: true);
-        Assert.True(Math.Abs(dst2.Count - lastTarget) < 10, $"末段时长表 {dst2.Count} 与目标帧数 {lastTarget} 差得超过一段");
+        Assert.Equal(lastTarget, dst2.Count);
+    }
+
+    /// <summary>时长表与帧数**严格同长**(2026-10-31 真机回归:指定帧率 + 去重帧时画面慢放 1.2 倍)。
+    ///
+    /// 用户 2026-10-31 反馈「补帧时开去重或转场识别 ⇒ 视频变速、音画不同步」。链路:去重大量删帧后
+    /// `frameDurs != null` ⇒ preserveRhythm 为真(走 setpts 可变时间轴)⇒ 指定帧率时时间表按
+    /// `AppendExpandedDurationsExact` 展开。旧实现每源帧摊 `round(target÷段长)` 槽,518 帧/1298 帧时
+    /// 摊成 3 槽、表长 1552,而补帧只落 1298 个文件 ⇒ `AlignDurationsToCount` 从尾部裁 254 条 ⇒
+    /// 表总时长 18.09s(源 21.63s)⇒ `k = muxDur / sumDur = 1.196` 把整条时间轴放大 ⇒ **画面慢放 1.2 倍**,
+    /// 音频按原速 ⇒ 越到后面错位越多。这与 2026-09-16 修掉的「指定帧率慢放 1.195×」同一个数、同一条判据。
+    /// 现在改成累计取整分配槽位,Σ槽数 == 目标帧数由**构造**保证,下游的均值补尾/裁尾一次都不用触发。</summary>
+    [Fact]
+    public void Exact_duration_table_never_drifts_from_the_frame_count()
+    {
+        // 真机那组参数:源 519 帧 / 去重后 518 帧 @23.976fps,指定 60fps × 21.632s ≈ 1298 帧
+        const int totalSrc = 518, totalOut = 1298;
+        var srcDurs = new double[totalSrc];
+        for (int i = 0; i < srcDurs.Length; i++) srcDurs[i] = 1.0 / 23.976;
+
+        // ① 不分段(没开转场识别)
+        var one = new System.Collections.Generic.List<double>();
+        int t1 = VideoPipeline.InterpSegmentTargetExact(totalSrc, totalSrc, totalSrc, totalOut, producedSoFar: 0);
+        Assert.Equal(totalOut, t1);
+        int added1 = VideoPipeline.AppendExpandedDurationsExact(one, srcDurs, 0, totalSrc, t1, lastSegment: true);
+        Assert.Equal(totalOut, added1);
+        Assert.Equal(totalOut, one.Count);
+
+        // ② 分四段(开了转场识别):逐段按同一个"绝对定位 + 已产出"口径,合计必须仍等于目标帧数
+        int[] lens = { 130, 129, 129, 130 };
+        var multi = new System.Collections.Generic.List<double>();
+        int segEnd = 0;
+        long cum = 0;
+        for (int i = 0; i < lens.Length; i++)
+        {
+            int start = segEnd;
+            segEnd += lens[i];
+            int seg = VideoPipeline.InterpSegmentTargetExact(lens[i], segEnd, totalSrc, totalOut, cum);
+            VideoPipeline.AppendExpandedDurationsExact(multi, srcDurs, start, segEnd, seg, lastSegment: i == lens.Length - 1);
+            cum += seg;
+        }
+        Assert.Equal(totalOut, cum);
+        Assert.Equal(totalOut, multi.Count);
+
+        // ③ 总时长守恒:每源帧的槽时长之和 = 该源帧时长 ⇒ 表总时长 == 源总时长(不会因分配而伸缩)
+        Assert.Equal(srcDurs.Sum(), one.Sum(), 6);
+        Assert.Equal(srcDurs.Sum(), multi.Sum(), 6);
+
+        // ④ 任意(段长, 目标帧数)组合都不许漂:这是本函数的唯一不变量
+        foreach (int len in new[] { 2, 3, 7, 10, 41, 130, 518 })
+        foreach (int ratioTenth in new[] { 10, 12, 15, 20, 25, 30, 41, 50 })
+        {
+            int target = (int)Math.Round(len * ratioTenth / 10.0);
+            if (target < len) target = len;
+            var durs = new double[len + 5];
+            for (int i = 0; i < durs.Length; i++) durs[i] = 0.04;
+            var table = new System.Collections.Generic.List<double>();
+            // 段在"整表末尾"时才允许 lastSegment(末帧只 1 槽那条规则)
+            int added = VideoPipeline.AppendExpandedDurationsExact(table, durs, 0, len, target, lastSegment: true);
+            Assert.Equal(target, added);
+            Assert.Equal(target, table.Count);
+            Assert.Equal(durs.Skip(0).Take(len).Sum(), table.Sum(), 6);
+        }
+    }
+
+    /// <summary>单帧段(转场识别切出一个孤立帧)的时长表也必须是 1 条(2026-10-31)。
+    /// 段长 &lt;2 时 `InterpSegmentAsync` 不交给引擎、直接复制 1 帧(见源码"1 帧目录 + -n 2 必崩"),
+    /// 若时长表仍按倍率展开 mult 条,表就比文件多 (mult-1) 条 ⇒ 合帧裁尾 + `k=muxDur/sumDur` 放大 ⇒ 慢放。</summary>
+    [Fact]
+    public void Single_frame_segment_expands_to_exactly_one_duration_entry()
+    {
+        var durs = new[] { 0.04, 0.04, 0.04, 0.04, 0.04, 0.04, 0.04, 0.04 };
+
+        var integerPath = new System.Collections.Generic.List<double>();
+        int a1 = VideoPipeline.AppendExpandedDurations(integerPath, durs, 3, 4, mult: 5, lastSegment: false);
+        Assert.Equal(1, a1);
+        Assert.Single(integerPath);
+        Assert.Equal(0.04, integerPath[0], 6);
+
+        var exactPath = new System.Collections.Generic.List<double>();
+        int a2 = VideoPipeline.AppendExpandedDurationsExact(exactPath, durs, 3, 4, targetFrames: 6, lastSegment: false);
+        Assert.Equal(1, a2);
+        Assert.Single(exactPath);
+        Assert.Equal(0.04, exactPath[0], 6);
+    }
+
+    /// <summary>切点必须落在"按 k 帧/源帧算出来的真实位置"上(2026-10-31 · 用户报「开了转场识别节奏就不对」)。
+    /// 旧口径 `round(end×k)` 让每段多铺 k−1 帧(2.5x 差 1.5 帧、8x 差 7 帧、16x 差 15 帧)⇒ 切点在成片里逐步后移、
+    /// 段内被放慢,而总帧数锚定 ⇒ 后面各段与末段反向被压缩。现在改用 `round((end−1)×k)+1`:
+    /// 每段结束时的累计帧数必须**正好**是该位置,且段内步长恒等于 k(误差 &lt; 0.02 帧/源帧)。</summary>
+    [Fact]
+    public void Cut_points_land_on_their_true_positions_and_step_stays_k()
+    {
+        const int totalSrc = 518;
+        double k = (1298.0 - 1) / (totalSrc - 1);      // 2.5087…帧/源帧(指定 60fps 的分数步长)
+        int[] lens = { 130, 129, 129, 130 };
+        long cum = 0;
+        int segEnd = 0;
+        for (int i = 0; i < lens.Length; i++)
+        {
+            segEnd += lens[i];
+            int seg = VideoPipeline.InterpSegmentTargetExact(lens[i], segEnd, totalSrc, 1298, cum);
+            cum += seg;
+
+            long trueFrame = segEnd >= totalSrc
+                ? 1298
+                : (long)Math.Round((segEnd - 1) * k, MidpointRounding.AwayFromZero) + 1;
+            Assert.Equal(trueFrame, cum);
+
+            if (lens[i] >= 2)
+            {
+                double step = (seg - 1) / (double)(lens[i] - 1);
+                Assert.True(Math.Abs(step - k) < 0.02, $"第 {i + 1} 段步长 {step:0.###} 偏离 k={k:0.###} ⇒ 该段被放慢/加快");
+            }
+        }
+        Assert.Equal(1298, cum);
+    }
+
+    /// <summary>高倍率(8x / 16x)多切点时的旧口径误差必须被钉住:旧公式每段多 k−1 帧,
+    /// 20 个切点累计能错开十几帧 ⇒ 成片里"越往后越不对"。这里按新口径要求切点位置与理想位置完全一致。</summary>
+    [Fact]
+    public void Many_cuts_at_high_multiplier_never_drift()
+    {
+        foreach (double mult in new[] { 2.0, 4.0, 8.0, 16.0 })
+        {
+            const int totalSrc = 300;
+            long totalOut = VideoPipeline.InterpOutputFrameCount(totalSrc, (int)mult);
+            double k = (totalOut - 1.0) / (totalSrc - 1);
+            long cum = 0;
+            int segEnd = 0;
+            for (int cut = 1; cut <= 20; cut++)
+            {
+                segEnd = cut * 15;                       // 每 15 源帧一个切点,共 20 段
+                int seg = VideoPipeline.InterpSegmentTargetExact(15, segEnd, totalSrc, totalOut, cum);
+                cum += seg;
+                long trueFrame = (long)Math.Round((segEnd - 1) * k, MidpointRounding.AwayFromZero) + 1;
+                Assert.Equal(trueFrame, cum);
+            }
+            Assert.Equal(totalOut, cum);
+        }
     }
 
     private static int Count(string text, string pattern)
