@@ -1753,6 +1753,9 @@ public static partial class EngineService
         // (视频页那份下拉 2026-09-12 按用户要求单独调过顺序并带序号迁移;图片页这份不动,避免动到图片预设里的序号。)
         // 【标签(2026-09-12 用户要求)】耗时档写「中」、不再写"轻量通用"(与视频页保持一致口径)。
         ("通用 · realesr-general-x4v3（5MB · 中）", "realesr-general-x4v3"),
+        // 【2026-11-01 用户】视频页有的这支图片页也要有(视频模型多、图片少一支 wdn):同样只追加在末尾,
+        // 老预设的序号不动。
+        ("通用 · realesr-general-wdn-x4v3（5MB · 中）", "realesr-general-wdn-x4v3"),
     };
 
     /// <summary>分块尺寸:大图按 tile 分块超分再拼接(防显存爆)。
