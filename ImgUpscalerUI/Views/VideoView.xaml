@@ -137,17 +137,18 @@
                         <ComboBoxItem Content="动漫 · x4plus-anime（中）" Tag="realesrgan-x4plus-anime">
                             <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">动漫 · x4plus-anime:官方动漫插画模型。&#x0a;适用:动漫插画 / 静态图;长视频建议用 animevideov3。&#x0a;速度 1080p 约 3.3~4.4 秒/帧 · 模型大小 9.0 MB。<Run Foreground="#7BD88F">&#x0a;权重 4x</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
                         </ComboBoxItem>
-                        <!-- 「通用 · realesrgan-x4plus」按体积(33.5MB)与耗时(最慢)排在最后,并红字标出"超慢"
+                        <!-- 「通用 · realesrgan-x4plus」按体积(33.5MB)与耗时(最慢)排在最后,并在括号里标出"慢"
                              (用户要求:不删除、只警示)。
                               依据(2026-09-11 本机 4060 Laptop 实测,源 1920×1080 每帧):x4plus 14.48s / x4plus-anime 4.84s /
                               animevideov3 0.84s;x4plus 还有"只有 4x 权重"的问题(选 2x 也照样全量算 4x 再缩回)。
                               注:本项 Content 是 StackPanel(富文本),读模型名一律走 Tag —— 不要改成读 Content。 -->
                         <ComboBoxItem Tag="realesrgan-x4plus">
                             <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">通用 · x4plus:官方通用模型。&#x0a;只有 4x 权重:选 2x / 3x 也按 4x 全量计算再缩回。&#x0a;速度 1080p 约 15.9 秒/帧 · 模型大小 33.5 MB。&#x0a;建议只用于单张图片。<Run Foreground="#7BD88F">&#x0a;权重 4x</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
-                            <!-- 「慢」直接在括号里改成红字「超慢」,不再另挂一个红字标记(用户:冗余了) -->
+                            <!-- 【2026-11-01】括号里原来用红字写「超慢」,用户要求「红字慢的红关掉,不要有红色」⇒
+                                 改成普通色的「慢」,不再带任何红色强调(这一项的位置与排序不变,仍然排最后)。 -->
                             <StackPanel Orientation="Horizontal" Spacing="0">
                                 <TextBlock Text="通用 · x4plus（" VerticalAlignment="Center"/>
-                                <TextBlock Text="超慢" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="#E5484D"/>
+                                <TextBlock Text="慢" VerticalAlignment="Center"/>
                                 <TextBlock Text="）" VerticalAlignment="Center"/>
                             </StackPanel>
                         </ComboBoxItem>

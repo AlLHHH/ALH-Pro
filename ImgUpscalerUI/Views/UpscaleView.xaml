@@ -33,20 +33,20 @@
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
 
                     <TextBlock Text="超分引擎" Style="{StaticResource SectionTitle}"/>
-                    <!-- 顺序与视频页一致:Real-ESRGAN 在上(索引 0)、waifu2x 在下(索引 1)。
-                         存盘仍用旧约定(0=waifu2x / 1=Real-ESRGAN),换算见 UpscaleView 的 ModeFromStored/ModeToStored,
-                         默认选中保持"动漫(waifu2x)"不变(SelectedIndex=1)。 -->
+                    <!-- 顺序与视频页一致:Real-ESRGAN 在上(索引 0)、Real-CUGAN 在下(索引 1)。
+                         存盘沿用旧约定(0=动漫 / 1=真实),换算见 UpscaleView 的 ModeFromStored/ModeToStored;
+                         动漫档 2026-11-01 由 waifu2x 换成 Real-CUGAN(用户:图片页的 waifu 直接删掉,把视频的模型搬过来)。 -->
                     <RadioButtons x:Name="ModeRadios" SelectedIndex="1"
-                                  ToolTipService.ToolTip="算法模式:动漫插画用 waifu2x;真实照片用 Real-ESRGAN">
+                                  ToolTipService.ToolTip="算法模式:动漫插画用 Real-CUGAN;真实照片用 Real-ESRGAN">
                         <RadioButton Content="Real-ESRGAN"/>
-                        <RadioButton Content="waifu2x"/>
+                        <RadioButton Content="Real-CUGAN"/>
                     </RadioButtons>
 
                     <StackPanel x:Name="ModelPanel" Spacing="6">
                         <TextBlock x:Name="ModelLabel" Text="超分模型" Style="{StaticResource SectionTitle}"/>
                         <ComboBox x:Name="ModelCombo" HorizontalAlignment="Stretch"
                                   SelectedIndex="0"
-                                  ToolTipService.ToolTip="超分模型(动漫:waifu2x;照片:Real-ESRGAN)"/>
+                                  ToolTipService.ToolTip="超分模型(动漫:Real-CUGAN;照片:Real-ESRGAN)"/>
                     </StackPanel>
 
                     <TextBlock Text="放大倍数" Style="{StaticResource SectionTitle}"/>
@@ -62,26 +62,13 @@
                          但 waifu2x 级联实测通过后 3x/4x 一律可用,代码里唯一碰它的地方(UpdateScaleAvailability)
                          就只剩一句"把它设为 Collapsed" ⇒ 用户永远看不到、代码只读不写 = 死界面。 -->
 
-                    <StackPanel x:Name="NoisePanel" Spacing="6">
-                        <TextBlock Text="降噪级别" Style="{StaticResource SectionTitle}"/>
-                        <ComboBox x:Name="NoiseCombo" HorizontalAlignment="Stretch"
-                                  SelectedIndex="0"
-                                  ToolTipService.ToolTip="降噪级别:不降噪/弱/中/强(仅动漫模式 waifu2x 生效)">
-                            <ComboBoxItem Content="不降噪"/>
-                            <ComboBoxItem Content="弱"/>
-                            <ComboBoxItem Content="中"/>
-                            <ComboBoxItem Content="强"/>
-                        </ComboBox>
-                        <TextBlock x:Name="NoiseHint" FontSize="10" Opacity="0.6"
-                                   Foreground="#E8A33D" TextWrapping="Wrap"
-                                   Text="Real-ESRGAN 不支持降噪,可用下方「预处理降噪」弥补"
-                                   Visibility="Collapsed"/>
-                    </StackPanel>
+                    <!-- 【2026-11-01 删除「降噪级别」下拉】它只对 waifu2x 生效(waifu2x 的 -n 档),
+                         图片页动漫档换成 Real-CUGAN 后没有任何控件能用到它(降噪已并进模型档位)。 -->
 
-                    <!-- 照片模式弥补:预处理降噪(waifu2x cunet 先降噪,再超分) -->
+                    <!-- 照片模式弥补:预处理降噪(cunet 先降噪,再超分;引擎仍是 waifu2x ncnn,界面不再提单它) -->
                     <StackPanel x:Name="PhotoDenoisePanel" Spacing="6" Visibility="Collapsed">
                         <CheckBox x:Name="PreDenoiseCheck"
-                                  Content="预处理降噪 (waifu2x)"
+                                  Content="预处理降噪"
                                   ToolTipService.ToolTip="照片模式专属:先降噪再超分,适合噪点多的照片(Real-ESRGAN 本身不降噪)"/>
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <TextBlock Text="强度" FontSize="11" Opacity="0.7"

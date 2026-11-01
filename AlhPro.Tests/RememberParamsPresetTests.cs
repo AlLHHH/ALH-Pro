@@ -282,7 +282,7 @@ public class RememberParamsPresetTests
         Assert.True(assign > byIndex, "找不到「合法就赋值」那句");
         Assert.True(fallback > assign, "F5:两个都无效时必须显式回落(ModelCombo.SelectedIndex = 0)");
         // 回落的就是该模式的首选项(PopulateModelCombo 的兜底也是 0),两边口径一致
-        string populate = BlockCode(src, "void PopulateModelCombo(bool isAnime)", "ModelCombo.SelectionChanged += (_, _) =>");
+        string populate = BlockCode(src, "void PopulateModelCombo(bool isCugan)", "ModelCombo.SelectionChanged += (_, _) =>");
         Assert.Contains("ModelCombo.SelectedIndex = (saved >= 0 && saved < ModelCombo.Items.Count) ? saved : 0;", populate);
     }
 

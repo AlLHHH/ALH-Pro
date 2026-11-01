@@ -148,7 +148,7 @@ public class ModelWeightTooltipTests
     {
         string src = ReadRepoFile("ImgUpscalerUI", "Views", "UpscaleView.xaml.cs");
         // 装配处:动漫模式与照片模式两个循环都调用同一个装配函数
-        Assert.Contains("SetModelItemToolTip(item, m.Label, m.Engine, m.Model);", src);
+        Assert.Contains("SetModelItemToolTip(item, t.Label, AlhPro.Core.RealCugan.EngineName, t.Tag);", src);
         Assert.Contains("SetModelItemToolTip(item, m.Label, \"realesrgan\", m.Name);", src);
         // 装配函数:真的设了工具提示;基础文字只用已有的 Label;绿字来自 Core
         Assert.Contains("ToolTipService.SetToolTip(item, tb);", src);
@@ -157,7 +157,7 @@ public class ModelWeightTooltipTests
         Assert.Contains("0x7B, 0xD8, 0x8F", src);              // #7BD88F,与视频页同一个绿
         Assert.Contains("Text = label", src);                  // 基础文字 = 既有字段,不编造数字
         // 只设提示:不动 Content(模型仍按索引读写,图片预设存的是序号)
-        Assert.Contains("Content = m.Label", src);
+        Assert.Contains("Content = t.Label", src);
         Assert.DoesNotContain("Content = m.Label + ", src);
     }
 

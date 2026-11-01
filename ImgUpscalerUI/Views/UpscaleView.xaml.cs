@@ -17,10 +17,11 @@ public sealed partial class UpscaleView : UserControl
     private string? _customOutDir;
     private CancellationTokenSource? _cts;
     private int _gpuCount;   // 枚举到的 GPU 数量(用于 gpuId 计算)
-    // ===== 算法模式:界面顺序 Real-ESRGAN(上,索引 0) / waifu2x(下,索引 1) =====
-    // 存盘与内置预设沿用旧约定(0=waifu2x / 1=Real-ESRGAN),靠下面两个换算函数解耦,
-    // 这样老用户存过的模式和已有预设不会被界面顺序调整翻转。
-    private bool IsAnimeMode => ModeRadios.SelectedIndex == 1;          // waifu2x(动漫)
+    // ===== 算法模式:界面顺序 Real-ESRGAN(上,索引 0) / Real-CUGAN(下,索引 1) =====
+    // 存盘与内置预设沿用旧约定(0=动漫档 / 1=真实档),靠下面两个换算函数解耦,老存盘不会被翻转。
+    // 【2026-11-01】动漫档由 waifu2x 换成 Real-CUGAN:引擎与视频页同一套(models-se 三档),
+    // 所以老存盘的 Mode=0 自动落到 CUGAN,不需要写迁移代码。
+    private bool IsCuganMode => ModeRadios.SelectedIndex == 1;          // Real-CUGAN(动漫)
     private static int ModeToStored(int uiIndex) => uiIndex == 1 ? 0 : 1;  // ui 1=waifu → 存 0
     private static int ModeFromStored(int stored) => stored == 0 ? 1 : 0;  // 存 0=waifu → ui 1
     private int _lastJpgQuality = 2;   // 上次 JPG 模式选中的码率档(0-4):切到 PNG 时把"无损"占位替换,保存时保留 JPG 真实档
@@ -44,45 +45,36 @@ public sealed partial class UpscaleView : UserControl
     public UpscaleView()
     {
         this.InitializeComponent();
-        NoiseCombo.SelectedIndex = 0;
-        // ModelCombo 按模式动态填充:动漫=waifu2x 模型,照片=Real-ESRGAN 模型(选项显示模型名)
-        PopulateModelCombo(isAnime: true);
+        // ModelCombo 按模式动态填充:动漫=Real-CUGAN 三档,照片=Real-ESRGAN 模型(选项显示模型名)
+        PopulateModelCombo(isCugan: true);
         ModelCombo.SelectedIndex = 0;
         // 计算设备:统一在「设置」里选择(AppSettings.GpuIndex),页面不再显示下拉
         _gpuCount = GpuInfo.EngineDeviceCount;
         RefreshQualityCombo();   // 输出码率档位:按当前格式(PNG/JPG)填充对应选项
         EnsureBuiltinImgPresets();   // 确保自带图片预设存在(官方预设)
 
-        // 【界面顺序:Real-ESRGAN(索引 0)在上、waifu2x(索引 1)在下】与视频页统一;
-        // 存盘/预设沿用旧约定(0=waifu2x, 1=Real-ESRGAN),经 ModeFromStored/ModeToStored 换算,
-        // 这样老用户存的选择和已有预设不会被顺序调整翻转。
+        // 【界面顺序:Real-ESRGAN(索引 0)在上、Real-CUGAN(索引 1)在下】与视频页统一;
+        // 存盘/预设沿用旧约定(0=动漫 1=真实),经 ModeFromStored/ModeToStored 换算。
         ModeRadios.SelectionChanged += (_, _) =>
         {
-            var isAnime = ModeRadios.SelectedIndex == 1;
-            AppLogger.UserAction($"图片:切换算法 → {(isAnime ? "waifu2x" : "Real-ESRGAN")}");
+            var isCugan = ModeRadios.SelectedIndex == 1;
+            AppLogger.UserAction($"图片:切换算法 → {(isCugan ? "Real-CUGAN" : "Real-ESRGAN")}");
             ModelCombo.IsEnabled = true;
-            NoiseCombo.IsEnabled = isAnime;   // Real-ESRGAN 不支持降噪,照片模式禁用
             ModelPanel.Opacity = 1.0;
-            NoisePanel.Opacity = isAnime ? 1.0 : 0.5;
-            NoiseHint.Visibility = isAnime ? Visibility.Collapsed : Visibility.Visible;
-            PhotoDenoisePanel.Visibility = isAnime ? Visibility.Collapsed : Visibility.Visible;
-            if (!isAnime)
-                ToolTipService.SetToolTip(NoiseCombo, "Real-ESRGAN 不支持降噪,请用下方「预处理降噪」");
-            else
-                ToolTipService.SetToolTip(NoiseCombo, null);
-            PopulateModelCombo(isAnime);
-            UpdateScaleAvailability();   // 模型变化 → 倍率支持变化(如 waifu2x 无 4x 权重)
+            PhotoDenoisePanel.Visibility = isCugan ? Visibility.Collapsed : Visibility.Visible;
+            PopulateModelCombo(isCugan);
+            UpdateScaleAvailability();   // 模型变化 → 倍率支持变化(如 CUGAN 只有 2x 权重)
         };
         // 按模式填充模型下拉(选项显示模型名)
-        void PopulateModelCombo(bool isAnime)
+        void PopulateModelCombo(bool isCugan)
         {
             var saved = ModelCombo.SelectedIndex;
             ModelCombo.Items.Clear();
-            if (isAnime)
-                foreach (var m in EngineService.AnimeModels)
+            if (isCugan)
+                foreach (var t in AlhPro.Core.RealCugan.Tags)
                 {
-                    var item = new ComboBoxItem { Content = m.Label };   // Label=模型名(含体量 MB · 快/中/慢)
-                    SetModelItemToolTip(item, m.Label, m.Engine, m.Model);
+                    var item = new ComboBoxItem { Content = t.Label };
+                    SetModelItemToolTip(item, t.Label, AlhPro.Core.RealCugan.EngineName, t.Tag);
                     ModelCombo.Items.Add(item);
                 }
             else
@@ -141,7 +133,6 @@ public sealed partial class UpscaleView : UserControl
         ModeRadios.SelectionChanged += (_, _) => SaveSettings();
         ModelCombo.SelectionChanged += (_, _) => SaveSettings();
         ScaleRadios.SelectionChanged += (_, _) => { SaveSettings(); RefreshOutSpec(); };
-        NoiseCombo.SelectionChanged += (_, _) => SaveSettings();
         TtaCheck.Checked += (_, _) => SaveSettings();
         TtaCheck.Unchecked += (_, _) => SaveSettings();
         FmtCombo.SelectionChanged += (_, _) => { RefreshQualityCombo(); SaveSettings(); };
@@ -224,8 +215,7 @@ public sealed partial class UpscaleView : UserControl
             // 旧文件里残留的 4(旧语义 4x)由 Clamp 收敛到 3=4x,方向正确(0~3 两套语义重叠,无法逐值区分)。
             if (d.Scale is >= 0 and <= 4)
                 ScaleRadios.SelectedIndex = Math.Clamp(d.Scale, 0, 3);
-            if (d.Noise is >= 0 and <= 3) NoiseCombo.SelectedIndex = d.Noise;
-            TtaCheck.IsChecked = d.Tta;
+                TtaCheck.IsChecked = d.Tta;
             SelectedOnlyCheck.IsChecked = d.SelectedOnly;
             // 计算设备已在全局设置(AppSettings),页面不再恢复旧 Gpu 值
             // 格式下拉顺序:0=JPG 1=PNG——存读一致(223 行存的就是 SelectedIndex),不再做旧语义迁移
@@ -296,7 +286,7 @@ public sealed partial class UpscaleView : UserControl
                 // 这里与 CollectSettings 共用同一个 SelectedModelName()(不许各算一份)。
                 W2xModelName = SelectedModelName(),
                 Scale = ScaleRadios.SelectedIndex,
-                Noise = NoiseCombo.SelectedIndex,
+                Noise = -1,   // 动漫档已是 Real-CUGAN:降噪强度由模型 tag 决定,旧字段只为兼容保留
                 Tta = TtaCheck.IsChecked == true,
                 SelectedOnly = SelectedOnlyCheck.IsChecked == true,
                 Fmt = FmtCombo.SelectedIndex,
@@ -334,9 +324,9 @@ public sealed partial class UpscaleView : UserControl
     private string SelectedModelName()
     {
         int i = ModelCombo.SelectedIndex;
-        if (!IsAnimeMode)
+        if (!IsCuganMode)
             return i >= 0 && i < EngineService.PhotoModels.Length ? EngineService.PhotoModels[i].Name : "";
-        return i >= 0 && i < EngineService.AnimeModels.Length ? EngineService.AnimeModels[i].Model : "";
+        return i >= 0 && i < AlhPro.Core.RealCugan.Tags.Length ? AlhPro.Core.RealCugan.Tags[i].Tag : "";
     }
 
     /// <summary>按【模型名】在当前模式的模型表里找下标;-1 = 没找到(调用方退回存的下标)。
@@ -351,8 +341,8 @@ public sealed partial class UpscaleView : UserControl
         }
         else
         {
-            for (int i = 0; i < EngineService.AnimeModels.Length; i++)
-                if (EngineService.AnimeModels[i].Model == name) return i;
+            for (int i = 0; i < AlhPro.Core.RealCugan.Tags.Length; i++)
+                if (AlhPro.Core.RealCugan.Tags[i].Tag == name) return i;
         }
         return -1;
     }
@@ -364,7 +354,7 @@ public sealed partial class UpscaleView : UserControl
         W2xModel = ModelCombo.SelectedIndex,
         W2xModelName = SelectedModelName(),
         Scale = ScaleRadios.SelectedIndex,
-        Noise = NoiseCombo.SelectedIndex,
+        Noise = -1,
         Tta = TtaCheck.IsChecked == true,
         // 【F3 · 2026-09-25 t47 审计】「只处理选中的图片」也要进预设快照:它此前只在 SaveSettings(设置文件)
         // 里存、在 LoadSettings 里恢复 —— 而 ApplyImgSettings 一条都不读 ⇒ "存了却没生效"(与视频页那个
@@ -481,7 +471,7 @@ public sealed partial class UpscaleView : UserControl
     {
         ( "通用变清晰", 4, new Func<UpscaleSettings>(() => new UpscaleSettings
         {
-            Remember = true, Mode = 0, W2xModel = 0, W2xModelName = "models-cunet", Scale = 1, Noise = 2, Tta = false, SelectedOnly = false,
+            Remember = true, Mode = 0, W2xModel = 0, W2xModelName = "models-se:-1", Scale = 1, Noise = -1, Tta = false, SelectedOnly = false,
             Fmt = 0, Detail = 0, Sharpen = 0, Clarity = 0, Deblur = 0, Usm = 20, Edge = 0, DetailEnhance = 50,
             Denoise = 50, Aa = 30, Dehaze = 0, ImgQualityMode = 2, ImgQualityCustom = 92, ImgQuality = 92,
             PreDenoise = true, DenoiseLevel = 0, OutDir = "",
@@ -605,8 +595,7 @@ public sealed partial class UpscaleView : UserControl
             // 与 LoadSettings 同一读法:同一字段只允许一套语义。两处不一致会让同一个预设/设置值
             // 在"应用预设"与"重启恢复"下得到不同倍率(用户看到"预设每次套出来都不一样")
             if (d.Scale is >= 0 and <= 4) ScaleRadios.SelectedIndex = Math.Clamp(d.Scale, 0, 3);
-            if (d.Noise is >= 0 and <= 3) NoiseCombo.SelectedIndex = d.Noise;
-            TtaCheck.IsChecked = d.Tta;
+                TtaCheck.IsChecked = d.Tta;
             if (d.Fmt is >= 0 and <= 1) FmtCombo.SelectedIndex = d.Fmt;
             RefreshQualityCombo();
             if (FmtCombo.SelectedIndex == 0)
@@ -924,7 +913,7 @@ public sealed partial class UpscaleView : UserControl
     {
         if (!string.IsNullOrEmpty(d.W2xModelName)) return d.W2xModelName;
         if (photo) return d.W2xModel >= 0 && d.W2xModel < EngineService.PhotoModels.Length ? EngineService.PhotoModels[d.W2xModel].Name : "?";
-        return d.W2xModel >= 0 && d.W2xModel < EngineService.AnimeModels.Length ? EngineService.AnimeModels[d.W2xModel].Model : "?";
+        return d.W2xModel >= 0 && d.W2xModel < AlhPro.Core.RealCugan.Tags.Length ? AlhPro.Core.RealCugan.Tags[d.W2xModel].Tag : "?";
     }
 
     /// <summary>预设里模型的显示名(带体量与快慢标注);优先按名定位,找不到才用下标。</summary>
@@ -933,7 +922,7 @@ public sealed partial class UpscaleView : UserControl
         int i = FindModelIndexByName(d.W2xModelName, photo);
         if (i < 0) i = d.W2xModel;
         if (photo) return i >= 0 && i < EngineService.PhotoModels.Length ? EngineService.PhotoModels[i].Label : "?";
-        return i >= 0 && i < EngineService.AnimeModels.Length ? EngineService.AnimeModels[i].Label : "?";
+        return i >= 0 && i < AlhPro.Core.RealCugan.Tags.Length ? AlhPro.Core.RealCugan.Tags[i].Label : "?";
     }
 
     private async Task ShowPresetHintAsync(string msg)
@@ -1014,7 +1003,7 @@ public sealed partial class UpscaleView : UserControl
         // 照片模式 Real-ESRGAN(2022 ncnn)在 Blackwell/Vulkan 不可用设备无法 GPU → 已自动 ONNX;动漫 waifu2x 官方新版稳定
         if (ToolGrid.Items.Count > 0 && !_running)
         {
-            if (!IsAnimeMode && EngineService.ShouldUseOnnxEsrgan())
+            if (!IsCuganMode && EngineService.ShouldUseOnnxEsrgan())
             {
                 SpeedHint.Text = "✅ 已按此显卡自动选用稳定引擎处理(无需其他设置)";
                 SpeedHint.Visibility = Visibility.Visible;
@@ -1154,8 +1143,7 @@ public sealed partial class UpscaleView : UserControl
             ModeRadios.SelectedIndex = 1;          // 动漫(waifu2x,界面第二项)
             ModelCombo.SelectedIndex = 0;
             ScaleRadios.SelectedIndex = 0;         // 1x超分
-            NoiseCombo.SelectedIndex = 0;
-            TtaCheck.IsChecked = false;
+                TtaCheck.IsChecked = false;
             FmtCombo.SelectedIndex = 0;            // JPG
             RefreshQualityCombo();
             ImgQualityCombo.SelectedIndex = 2;     // 默认(推荐)
@@ -1386,13 +1374,13 @@ public sealed partial class UpscaleView : UserControl
     private async void RegionUpscaleAsync(ImageItem item, int x, int y, int w, int h)
     {
         if (_running) return;
-        var isAnime = IsAnimeMode;
+        var isCugan = IsCuganMode;
         string engine, model;
-        if (isAnime)
+        if (isCugan)
         {
-            var sel = EngineService.AnimeModels[Math.Clamp(ModelCombo.SelectedIndex, 0, EngineService.AnimeModels.Length - 1)];
-            engine = sel.Engine;
-            model = sel.Model;
+            var sel = AlhPro.Core.RealCugan.Tags[Math.Clamp(ModelCombo.SelectedIndex, 0, AlhPro.Core.RealCugan.Tags.Length - 1)];
+            engine = AlhPro.Core.RealCugan.EngineName;
+            model = sel.Tag;
         }
         else
         {
@@ -1401,7 +1389,7 @@ public sealed partial class UpscaleView : UserControl
             model = EngineService.PhotoModels[Math.Clamp(ModelCombo.SelectedIndex, 0, EngineService.PhotoModels.Length - 1)].Name;
         }
         var scale = EngineScaleOf(ScaleRadios.SelectedIndex);   // 与主流程同一映射(选区不做 1x 缩回,故文件名里的倍数就是真实倍数)
-        var noise = NoiseCombo.SelectedIndex == 0 ? -1 : NoiseCombo.SelectedIndex - 1;   // 0=不降噪,1/2/3=弱/中/强(映射到 -n 0/1/2,整体偏轻避免揉成一团)
+        var noise = -1;   // Real-CUGAN 的降噪由模型 tag(models-se:N)决定;realesrgan 不用 -n
         var tta = TtaCheck.IsChecked == true;
         var gpuId = CurrentGpuId;
         var srcDir = Path.GetDirectoryName(item.OriginalPath.Length > 0 ? item.OriginalPath : item.Path)!;
@@ -1466,7 +1454,7 @@ public sealed partial class UpscaleView : UserControl
         }
         if (items.Length == 0 || _running) return;
         // 引擎前置校验:所选算法缺引擎立即提示(不让它失败后才知道)
-        var needEngine = IsAnimeMode
+        var needEngine = IsCuganMode
             ? (EngineService.FindWaifu2x() is null ? "waifu2x 引擎" : null)
             : (EngineService.FindRealESRGAN() is null ? "Real-ESRGAN 引擎" : null);
         if (needEngine != null)
@@ -1517,13 +1505,13 @@ public sealed partial class UpscaleView : UserControl
         EngineCapHint.Text = "";                              // 清掉上一轮的引擎能力提示(每轮重新判定)
         EngineCapHint.Visibility = Visibility.Collapsed;
 
-        var isAnime = IsAnimeMode;
+        var isCugan = IsCuganMode;
         string engine, model;
-        if (isAnime)
+        if (isCugan)
         {
-            var sel = EngineService.AnimeModels[Math.Clamp(ModelCombo.SelectedIndex, 0, EngineService.AnimeModels.Length - 1)];
-            engine = sel.Engine;
-            model = sel.Model;
+            var sel = AlhPro.Core.RealCugan.Tags[Math.Clamp(ModelCombo.SelectedIndex, 0, AlhPro.Core.RealCugan.Tags.Length - 1)];
+            engine = AlhPro.Core.RealCugan.EngineName;
+            model = sel.Tag;
         }
         else
         {
@@ -1533,7 +1521,7 @@ public sealed partial class UpscaleView : UserControl
         }
         bool upscaleShrink1x = ScaleRadios.SelectedIndex == 0;   // 1x 超分(2x 放大后缩回)
         var scale = EngineScaleOf(ScaleRadios.SelectedIndex);   // 与「放大选区」共用同一映射,避免两处再次分叉
-        var noise = NoiseCombo.SelectedIndex == 0 ? -1 : NoiseCombo.SelectedIndex - 1;   // 0=不降噪,1/2/3=弱/中/强(映射到 -n 0/1/2,整体偏轻避免揉成一团)
+        var noise = -1;   // Real-CUGAN 的降噪由模型 tag(models-se:N)决定;realesrgan 不用 -n
         var tta = TtaCheck.IsChecked == true;
         var gpuId = CurrentGpuId;
         var outExt = FmtCombo.SelectedIndex == 0 ? ".jpg" : ".png";   // 下拉顺序:0=JPG 1=PNG
@@ -1567,7 +1555,7 @@ public sealed partial class UpscaleView : UserControl
             _ => 9 - (int)Math.Round(Math.Clamp(imgQ, 1, 100) / 100.0 * 7),   // JPG 自定义:反向映射 9~2
         };
         // 照片模式弥补:预处理降噪(先 waifu2x 照片模型降噪,再超分)
-        var preDenoise = !isAnime && PreDenoiseCheck.IsChecked == true;
+        var preDenoise = !isCugan && PreDenoiseCheck.IsChecked == true;
         var denoiseLevel = DenoiseLevelCombo.SelectedIndex + 1;   // 1-3
 
         // 输出目录已提前创建(见 _running 之前)
@@ -1699,8 +1687,7 @@ public sealed partial class UpscaleView : UserControl
                             // 【必须显式告知】ONNX 稳定引擎的权重是固定的:降噪档与 TTA 传进去也没有任何效果。
                             // 静默忽略 = 界面显示"已开降噪/TTA"而实际没做(预览≠结果),所以写日志 + 界面上方黄字提示。
                             var dropped = new List<string>();
-                            if (isAnime && noise >= 0) dropped.Add($"降噪级别({NoiseCombo.SelectedIndex})");
-                            if (tta) dropped.Add("高级增强(TTA)");
+                                                if (tta) dropped.Add("高级增强(TTA)");
                             // 模型同理:ONNX 侧 waifu2x 目前只有 cunet 一份,选了 upconv_7_photo / upconv_7_anime
                             // 实际仍跑 cunet(实测确认会被静默忽略)→ 与"预览≠结果"同性质,必须告知。
                             if (engine == "waifu2x" && !string.IsNullOrEmpty(model))

@@ -100,23 +100,22 @@ public class VideoPageWaifu2xRemovedTests
 
     // ───────────────────────── ③ 图片页一行未动 ─────────────────────────
 
-    /// <summary>图片页的 waifu2x 照常可用:它的模式单选(Real-ESRGAN / waifu2x)、模型表与降噪级别都还在,
-    /// 而且**没有**被改去用 `EngineChoice`(那是视频页的存盘口径,图片页一直用自己的两模式约定)。</summary>
+    /// <summary>【2026-11-01 改判】图片页的动漫档由 waifu2x 换成 Real-CUGAN(用户:图片放大的 waifu 直接删掉、
+    /// 把视频的模型搬过来):模式单选仍是 Real-ESRGAN / 动漫两档,但动漫档的模型表改成 Core 的
+    /// `RealCugan.Tags`(models-se 三档),只对 waifu2x 生效的「降噪级别」下拉连同代码一起删除;
+    /// 存盘口径仍用图片页自己的两模式约定,不掺视频页的 `EngineChoice`。</summary>
     [Fact]
-    public void Image_page_still_offers_waifu2x_untouched()
+    public void Image_page_switches_anime_slot_to_real_cugan()
     {
         string cs = ReadRepoFile("ImgUpscalerUI", "Views", "UpscaleView.xaml.cs");
-        Assert.Contains("PopulateModelCombo(isAnime: true);", cs);              // 动漫模式 = waifu2x 模型表
-        Assert.Contains("EngineService.AnimeModels", cs);
+        Assert.Contains("PopulateModelCombo(isCugan: true);", cs);              // 动漫模式 = Real-CUGAN 模型表
+        Assert.Contains("AlhPro.Core.RealCugan.Tags", cs);
         Assert.Contains("EngineService.PhotoModels", cs);
-        Assert.Contains("ModeRadios.SelectedIndex == 1", cs);                   // 两个模式单选:0=Real-ESRGAN 1=waifu2x
-        Assert.Contains("NoiseCombo.SelectedIndex = 0;", cs);                   // waifu2x 的降噪级别
-        Assert.Contains("NoiseCombo.IsEnabled = isAnime;", cs);
+        Assert.Contains("ModeRadios.SelectedIndex == 1", cs);                   // 两个模式单选:0=Real-ESRGAN 1=Real-CUGAN
+        Assert.DoesNotContain("NoiseCombo", cs);                                // 降噪级别下拉已整块删除
+        Assert.DoesNotContain("NoiseCombo", ReadRepoFile("ImgUpscalerUI", "Views", "UpscaleView.xaml"));
+        Assert.Contains("ModeRadios", ReadRepoFile("ImgUpscalerUI", "Views", "UpscaleView.xaml"));
         Assert.DoesNotContain("EngineChoice", cs);                              // 图片页不掺视频页的存盘口径
-        // 图片页的两个文件不在 t45 的改动面里(用 git 工作区状态旁证由 output 给出;这里只钉源码事实)
-        string xaml = ReadRepoFile("ImgUpscalerUI", "Views", "UpscaleView.xaml");
-        Assert.Contains("ModeRadios", xaml);
-        Assert.Contains("NoiseCombo", xaml);
     }
 
     // ───────────────────────── ④ 引擎分支不删 ─────────────────────────
