@@ -38,6 +38,32 @@ namespace ALHPro
         private static bool _fatalDialogShown;   // 全局异常提示只弹一次(防刷屏)
         private static System.Threading.Mutex? _singleInstance;   // 单实例锁(Mutex,进程存活期间持有;退出自动释放)
 
+        /// <summary>本产品的「单实例锁」名字。
+        /// 【2026-11-02 修复】原来写死 "ALHPro_SingleInstance_Mutex",而 ALH Pro Max 与免费版
+        /// 的可执行文件名都叫 ALHPro.exe、锁名一样 ⇒ Max 开着时双击免费版,免费版会以为"已有实例"
+        /// 而直接退出,用户看到的就是「点了没反应 / 闪一下就没了」。
+        /// 现在按 exe 的产品名取后缀(免费版 Product=ALH Pro、Max Product=ALH Pro Max),
+        /// 两个产品各持各的锁,可以同时运行;同一产品的第二个实例仍会被挡下并置前已有窗口。</summary>
+        private static string SingleInstanceMutexName()
+        {
+            string tag = "ALHPro";
+            try
+            {
+                var exePath = Environment.ProcessPath;
+                if (!string.IsNullOrEmpty(exePath))
+                {
+                    var product = System.Diagnostics.FileVersionInfo.GetVersionInfo(exePath).ProductName;
+                    if (!string.IsNullOrWhiteSpace(product)) tag = product.Trim();
+                }
+            }
+            catch { }
+            // Mutex 名字里不能有反斜杠(会被当成命名空间分隔),其它字符一并收紧为字母数字
+            var sb = new System.Text.StringBuilder("ALHPro_SingleInstance_");
+            foreach (var ch in tag)
+                sb.Append(char.IsLetterOrDigit(ch) ? ch : '_');
+            return sb.ToString();
+        }
+
         // ===== 启动痕迹(2026-10-04 新增:排查「双击没反应」)=====
         // 【为什么需要】全程序第一行日志在 OnLaunched 里的 AppLogger.Info("========== 应用启动 =========="),
         // 它【之前】的整段入口(WinAppSDK/XAML 加载、apphost、COM 初始化)一行日志都没有。
@@ -745,7 +771,8 @@ namespace ALHPro
             // 第二次启动:尝试已有窗口(置前),本进程退出——杜绝多实例并存互相覆盖设置文件
             // (那正是"图片格式/码率记不住"的元凶;多个旧实例持续用默认值写盘)。
             bool createdNew;
-            _singleInstance = new System.Threading.Mutex(true, "ALHPro_SingleInstance_Mutex", out createdNew);
+            string mutexName = SingleInstanceMutexName();
+            _singleInstance = new System.Threading.Mutex(true, mutexName, out createdNew);
             // 【降权的子实例】旧(管理员)实例可能还没来得及退出 → 多等一会儿再判定"已有实例",
             // 否则会出现"旧实例退出、新实例也自杀" = 程序不见了 ✗。
             if (!createdNew && DeElevate.HasFlag())
@@ -754,7 +781,7 @@ namespace ALHPro
                 {
                     System.Threading.Thread.Sleep(100);
                     try { _singleInstance.Dispose(); } catch { }
-                    _singleInstance = new System.Threading.Mutex(true, "ALHPro_SingleInstance_Mutex", out createdNew);
+                    _singleInstance = new System.Threading.Mutex(true, mutexName, out createdNew);
                 }
             }
             if (!createdNew)
@@ -764,15 +791,27 @@ namespace ALHPro
                 try
                 {
                     // 找到已运行窗口:置前(设置前台 + 最小化还原)
-                    foreach (var p in System.Diagnostics.Process.GetProcessesByName("ALHPro"))
+                    // 【2026-11-02】只认「同一产品」的窗口 —— 免费版与 ALH Pro Max 的进程名都叫 ALHPro,
+                    // 之前会把 Max 的窗口当成自己的置前(点免费版却弹出 Max)。
+                    string selfProduct = "";
+                    try { selfProduct = System.Diagnostics.FileVersionInfo.GetVersionInfo(Environment.ProcessPath ?? "").ProductName ?? ""; } catch { }
+                    string selfProcName = "ALHPro";
+                    try { selfProcName = System.Diagnostics.Process.GetCurrentProcess().ProcessName; } catch { }
+                    foreach (var p in System.Diagnostics.Process.GetProcessesByName(selfProcName))
                     {
-                        if (p.MainWindowHandle != IntPtr.Zero)
+                        if (p.MainWindowHandle == IntPtr.Zero) continue;
+                        try
                         {
-                            Win32_SafeShowWindow(p.MainWindowHandle);
-                            SetForegroundWindow(p.MainWindowHandle);
-                            shown = true;
-                            break;
+                            var exePath = p.MainModule?.FileName;
+                            if (string.IsNullOrEmpty(exePath)) continue;
+                            var product = System.Diagnostics.FileVersionInfo.GetVersionInfo(exePath).ProductName ?? "";
+                            if (!string.Equals(product, selfProduct, StringComparison.OrdinalIgnoreCase)) continue;
                         }
+                        catch { continue; }   // 读不到别的进程的模块信息(权限/位数不同)就跳过,不冒险置前
+                        Win32_SafeShowWindow(p.MainWindowHandle);
+                        SetForegroundWindow(p.MainWindowHandle);
+                        shown = true;
+                        break;
                     }
                 }
                 catch { }
