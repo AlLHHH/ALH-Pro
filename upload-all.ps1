@@ -70,7 +70,7 @@ if ($pushOk) {
 } else {
     Write-Host ''
     Write-Host '==========================================' -ForegroundColor Red
-    Write-Host '  ⚠ 上传失败(见上方报错)。请检查:' -ForegroundColor Red
+    Write-Host '  ⚠ 上传失败(见上方提示错误)。请检查:' -ForegroundColor Red
     Write-Host '   1) 电脑能否上网?'
     Write-Host '   2) GitHub 是否登录/授权?可手动运行: git push' -ForegroundColor Red
     Write-Host '      若弹出登录窗口,登录后重试。'

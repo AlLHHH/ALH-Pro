@@ -58,7 +58,7 @@ public class Anime4kDeviceWiringTests
         // 抽样实测链(编码阶段拆分)也要带,否则"抽样的滤镜路径 ≠ 真实合帧的滤镜路径"
         Assert.Contains("if (chain.Contains(\"libplacebo\", StringComparison.OrdinalIgnoreCase))", code);
         Assert.Contains("$\"-nostdin -y -v error {devArgs}{hw}-framerate {fpsArg} \"", code);
-        // 只在真的挂了这个滤镜时才加(不挂滤镜时一字不改)
+        // 只在真的停住这个滤镜时才加(不挂滤镜时一字不改)
         Assert.Contains("chain.Contains(\"libplacebo\"", code);
     }
 

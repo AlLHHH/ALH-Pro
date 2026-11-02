@@ -17,7 +17,7 @@ internal static class ExifFix
 {
     /// <summary>读取 EXIF 方向标签(0x0112)。无标记 / 读取失败 / 非法值一律返回 1(正常)。
     /// 【注意】请在【已经加载好的位图】上读,不要再 new Bitmap(path) 单独解码一次 ——
-    /// 大图那样会白白卡住主线程(CutoutView 的注释记录过这个代价)。</summary>
+    /// 大图那样会白白停住主线程(CutoutView 的注释记录过这个代价)。</summary>
     public static int ReadOrientation(System.Drawing.Image img)
     {
         try

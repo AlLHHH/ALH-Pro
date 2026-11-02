@@ -115,7 +115,7 @@ begin
     if not FileExists(ZipPath) then
     begin
       MsgBox('抠图模型包下载失败。' + #13#10#13#10 +
-        '可能原因:网络不稳定 / GitHub 国内直连慢或被限制。' + #13#10 +
+        '可能原因:网络偶发 / GitHub 国内直连慢或被限制。' + #13#10 +
         '建议:1) 用加速器或 GitHub 镜像重试;' + #13#10 +
         '2) 下载 models_v1.1.zip 手动解压到 程序目录\engines\rembg\;' + #13#10 +
         '3) 仅需超分/补帧可先不装(不影响其它功能)。', mbError, MB_OK);
@@ -128,8 +128,8 @@ begin
         '-xf "' + ZipPath + '" -C "' + ExpandConstant('{app}\engines\rembg') + '"',
         '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     begin
-      MsgBox('抠图模型包解压失败/卡住。' + #13#10#13#10 +
-        '请手动解压:下载 models_v1.1.zip → 解压到 程序目录\engines\rembg\(提示:解压需几分钟,进度条看似"卡住"是正常解压中)。', mbError, MB_OK);
+      MsgBox('抠图模型包解压失败/停住。' + #13#10#13#10 +
+        '请手动解压:下载 models_v1.1.zip → 解压到 程序目录\engines\rembg\(提示:解压需几分钟,进度条看似"停住"是正常解压中)。', mbError, MB_OK);
       Result := False;
       Exit;
     end;

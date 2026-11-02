@@ -11,7 +11,7 @@ namespace AlhPro.Tests;
 /// 「上次刷新成功后缓存在本地,直到下次打开时使用时检测到更新然后再更新广告」。
 /// <para>最要紧的一条是"存进去必须能读回来":缓存文件字段名一旦写成 PascalCase,
 /// <see cref="AdCache.ParseAd"/> 按小写名取值会一条都读不回来 —— 整份缓存静默失效,
-/// 用户看到的还是那两张内置兜底卡,而且没有任何报错(见 <c>缓存JSON_字段名必须小写…</c>)。</para>
+/// 用户看到的还是那两张内置兜底卡,而且没有任何提示错误(见 <c>缓存JSON_字段名必须小写…</c>)。</para>
 /// </summary>
 public class AdCacheTests
 {

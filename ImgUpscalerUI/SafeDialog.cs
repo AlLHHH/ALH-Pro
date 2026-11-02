@@ -4,9 +4,9 @@ namespace ALHPro;
 ///
 /// 【为什么必须有】WinUI **同一时刻只允许一个 ContentDialog**：已有对话框开着时再调
 /// `ShowAsync()` 会抛 `COMException 0x80000019`（"Only a single ContentDialog can be open at any time"）。
-/// 如果那个调用点没有 try/catch，就是**未处理异常**：写一份崩溃诊断、用户只看到"点了没反应"。
+/// 如果那个调用点没有 try/catch，就是**未处理异常**：写一份退出诊断、用户只看到"点了没反应"。
 ///
-/// 【三次真机崩溃都出自这里，所以是"一类问题"而不是"一个 bug"】
+/// 【三次真机进程退出都出自这里，所以是"一类问题"而不是"一个 问题"】
 ///   ① 任务跑完的「处理完成」开着 → 点「预览效果」→ `ShowPauseHintAsync` 抛（22:09 实测）；
 ///   ② 启动时的「更新公告」开着 → 直接点「开始处理」→ 跑完要弹「处理完成」→ `ShowResultAsync` 抛（22:23 实测）；
 ///   ③ 图片页/抠图页/图片工具页里同形的一串调用点（2026-10-16 复审发现，见下）。
@@ -25,7 +25,7 @@ namespace ALHPro;
 /// —— 第二个参数只进日志，说明"哪个弹窗没弹出来"。</summary>
 internal static class SafeDialog
 {
-    /// <summary>等前一个对话框关闭的上限（毫秒）。超过就跳过这次弹窗，避免把调用方卡死。</summary>
+    /// <summary>等前一个对话框关闭的上限（毫秒）。超过就跳过这次弹窗，避免把调用方长时间无响应。</summary>
     public const int DefaultWaitMs = 15000;
 
     private static readonly System.Threading.SemaphoreSlim _gate = new(1, 1);

@@ -21,7 +21,7 @@ public sealed class DedupTooStrongException : InvalidOperationException
 /// <summary>【2026-09-24】Real-CUGAN 需要 GPU:它**只有 ncnn-Vulkan 权重**(没有 ONNX 版本),
 /// 而本仓库重编版的 CPU 档(-g -1)实测不可用(启动后访问违例、0 帧产出)。
 /// 因此"没有可用 GPU / 用户选了 CPU / 真机探测失败"这三种情况下必须**明确拒绝**并给出替代方案 ——
-/// 不许静默换成别的超分模型(本仓库的硬规矩),也不许跑一条必然崩/必然坏帧的路径。</summary>
+/// 不许静默换成别的超分模型(本仓库的硬规矩),也不许跑一条必然崩/必然无效画面的路径。</summary>
 public sealed class RealCuganNeedsGpuException : InvalidOperationException
 {
     public RealCuganNeedsGpuException(string message) : base(message) { }
@@ -34,7 +34,7 @@ public sealed class RealCuganNeedsGpuException : InvalidOperationException
 /// 是为了让"用户看到的每一句话"与"我们为什么这么设计"永远一致。
 ///
 /// 【用户会看到什么】① 说明为什么不能像 Real-ESRGAN 那样自动换引擎(它只有 ncnn-Vulkan 权重:
-/// 没有 ONNX 版本可换,而 CPU 档在本仓库重编版上实测会崩、0 帧产出);② 四步可执行下一步
+/// 没有 ONNX 版本可换,而 CPU 档在本仓库重编版上实测会退出、0 帧产出);② 四步可执行下一步
 /// (重跑一次 → 关掉占显存的程序 / 重启软件 → 更新驱动 → 把「超分引擎」改成 **Real-ESRGAN**);
 /// ③ 附上引擎给出的那一行失败原因。
 ///
@@ -52,8 +52,8 @@ internal static class RealCuganRefusal
             : "Real-CUGAN 需要 GPU,当前这台机器上没有可用的 GPU 路线。";
         return head
             + "**这是设计如此,不是没想办法**:它只有 ncnn-Vulkan 权重 —— **没有 ONNX 版本可换**,"
-            + "而它的 CPU 档在本仓库重编版上实测会崩(启动后访问违例、0 帧产出);"
-            + "所以我们宁可明确拒绝,也不跑一条必然崩 / 必然坏帧的路(更不会悄悄换成别的超分模型)。"
+            + "而它的 CPU 档在本仓库重编版上实测会退出(启动后访问违例、0 帧产出);"
+            + "所以我们宁可明确拒绝,也不跑一条必然崩 / 必然无效画面的路(更不会悄悄换成别的超分模型)。"
             + "可以这样做:① **重跑一次** —— 可能只是一次探测超时(显存正被别的程序占用,或驱动刚从休眠唤醒);"
             + "② 关掉占显存的程序(浏览器 / 剪辑软件 / 另一个正在跑的 ALH Pro 任务)后重试,或重启软件;"
             + "③ 更新显卡驱动后重试;"
@@ -438,7 +438,7 @@ public static class VideoService
         bool motionCompDedup = false,   // 镜头运动补偿:背景 pan 下识别"人物定格"(对齐后残差极小)。默认关(老版行为);需手动开
         bool dedupOnlyTrueHold = false, // 只删"真定格"(SSIM≥0.995):默认关 → 用老版旧阈值(0.85~0.97);开 → 收紧到只删真定格
         int fpsMode = 0,   // 输出帧率基准:0=原帧率×倍率(B,标准);1=内容/处理帧×倍率(A,补帧.mp4 同款节奏)
-        double contentFps = 0,   // 内容帧率模式(去重模型 7):按 fc 时间网格均匀采样,不做逐帧判定;≤0=报错
+        double contentFps = 0,   // 内容帧率模式(去重模型 7):按 fc 时间网格均匀采样,不做逐帧判定;≤0=提示错误
         double animeHoldN = 0,   // 动漫模式(去重模型 2):动画帧率变种"一拍N"(2/3/2.5=混合拍二+三/4/5/6;0/1=不采样=内容帧率=输入帧率)
         bool tempoResample = false,   // 节奏重采样(实验):任意 t 插帧按关键帧真实时长分布(自研任意 t 方案)
         // 【任务 S3 · 2026-09-13】「平滑时间轴」:统一输出帧率并按场景切换对齐,避免播放顿挫与切点拖影。
@@ -532,7 +532,7 @@ public static class VideoService
         // 由 fpsMode(方案 B/C)与 globalTarget=原帧数×倍率 保证(帧数乘以 frameScale 展开)。
 
         // 3x 补帧仅 v4 架构模型支持(其他模型只能 2 的幂级联);指定输出帧率时倍率会自动算,不在此校验。
-        // 用户选了非 v4 模型却要 3x:自动切换到 v4.13(保持 3x),而不是报错失败
+        // 用户选了非 v4 模型却要 3x:自动切换到 v4.13(保持 3x),而不是提示错误失败
         bool isV4Arch = IsV4Model(interpModel);
         if (frameInterp && targetFps == null && interpScale == 3 && !isV4Arch)
         {
@@ -807,7 +807,7 @@ public static class VideoService
             catch { }
 
             // 【2026-09-23 用户要求 · 视频这一侧「绝不落 CPU」】硬编可用性是视频任务的**前提**,所以在这里提前探一次:
-            // 本机一个可用硬编都没有 ⇒ 立刻报错,而不是"先处理一小时、最后编码掉到 CPU 再慢一整轮"
+            // 本机一个可用硬编都没有 ⇒ 立刻提示错误,而不是"先处理一小时、最后编码掉到 CPU 再慢一整轮"
             // (实测 5060:编码阶段 17.0s → 115.7s,**7 倍**)。
             // 探测本身有闩锁(_hwProbed),所以后面编码前那次调用会变成空操作,不会白探两遍。
             // ct.ThrowIfCancellationRequested 放在前面:用户点过停止时不能报成"本机没有硬编"。
@@ -841,7 +841,7 @@ public static class VideoService
                 ct.ThrowIfCancellationRequested();
                 if (recovered == null)
                 {
-                    AppLogger.Error("视频处理未开始:本机没有可用的硬件编码器 —— 按「视频不落 CPU」策略直接报错"
+                    AppLogger.Error("视频处理未开始:本机没有可用的硬件编码器 —— 按「视频不落 CPU」策略直接提示错误"
                         + "(已用本次任务真实尺寸+帧率逐档实测过,一个都编不出来)"
                         + $"(设置里的计算设备 = {(AppSettings.GpuIndex >= 0 ? "GPU " + AppSettings.GpuIndex : "未检测到可用显卡/仅本次会话降级")})");
                     throw new InvalidOperationException(AlhPro.Core.CpuFallbackPolicy.DescribeNoHwEncoder());
@@ -949,8 +949,8 @@ public static class VideoService
                 }
                 else
                 {
-                    // 【先报进度再探测】这一步要起引擎真跑一帧(可用/黑帧判定),探测失败还会 3 次退避 ≈ 20 秒 ——
-                    // 期间界面若一条消息都没有,用户就会觉得"点了开始没反应/卡住"(真机反馈"开始处理时卡3秒")。
+                    // 【先报进度再探测】这一步要起引擎真跑一帧(可用/全黑画面判定),探测失败还会 3 次退避 ≈ 20 秒 ——
+                    // 期间界面若一条消息都没有,用户就会觉得"点了开始没反应/停住"(真机反馈"开始处理时卡3秒")。
                     // 先给条进度(百分比落在拆帧前段),把这段等待变成"可见的检测中"。
                     progress?.Report((1, $"正在检测超分引擎兼容性({engine},首次约 1~20 秒,结论会记住)..." + StageElapsed()));
                     try
@@ -981,7 +981,7 @@ public static class VideoService
                     + "(不叠 nlmeans,更对症且不额外耗时)");
             else if (videoDenoise <= 0 && denoiseViaModel)
                 AppLogger.Info($"视频降噪:未开启(关)→ waifu2x 引擎不再启用模型自带降噪(-n {waifu2xNoiseArg}"
-                    + $"{(waifu2xNoiseArg == AlhPro.Core.Waifu2x.NoiseOff ? "" : ";注意:1x 档为规避引擎崩溃只能退到最轻档 0")})");
+                    + $"{(waifu2xNoiseArg == AlhPro.Core.Waifu2x.NoiseOff ? "" : ";注意:1x 档为规避引擎进程退出只能退到最轻档 0")})");
             // ===== HDR / 广色域适配:源为 HDR(PQ/HLG)或宽色域(≠BT.709)→ 拆帧时转成 BT.709 SDR(避免偏色/掉信息),黄字提示 =====
             (string? hdrDesc, string? hdrVf) = await ProbeHdrToSdrAsync(inputVideo, ct);
             if (hdrVf != null)
@@ -1188,7 +1188,7 @@ public static class VideoService
                 }
                 else if (dedupMode == 3)
                 {
-                    // 手动-内容帧率采样:用户填任意值(留空=报错,不做猜测);段级校正在小偏差内微调
+                    // 手动-内容帧率采样:用户填任意值(留空=提示错误,不做猜测);段级校正在小偏差内微调
                     if (contentFps <= 0.01)
                         throw new InvalidOperationException("内容帧率未填写:请先填写素材真实内容帧率(动漫素材可直接用「动漫模式」选一拍N)");
                     double userFc = Math.Clamp(contentFps, 1.0, Math.Max(2.0, inFps));
@@ -1561,8 +1561,8 @@ public static class VideoService
             // (方法主体层),不能像原来那样声明在超分阶段里:`if (upscaleRuns) { …探测… }` 那段已经**上移到
             // 阶段顺序判定之前**,而批次循环还在很后面 —— 两者要读的是同一组变量。
             // 早声明的理由与 `segBounds`/`frameScale` 那几行完全一样:它只依赖 engine/model/gpuId 这些外层入参。
-            // 【2026-09-27】原先这里还有一个 `ncnnUnreliable`(被"超分批检出黑帧"置位 ⇒ 后续批次整体改走 ONNX),
-            // 已按作者要求连它一起删除:作者反馈"黑色转场内容被判成坏帧 ⇒ 转 ONNX 跑的超级慢"。
+            // 【2026-09-27】原先这里还有一个 `ncnnUnreliable`(被"超分批检出全黑画面"置位 ⇒ 后续批次整体改走 ONNX),
+            // 已按作者要求连它一起删除:作者反馈"黑色转场内容被判成无效画面 ⇒ 转 ONNX 跑的超级慢"。
             // 现在"走 ncnn 还是走 ONNX"只由**事前探测**的结论决定(upGpu / waifuOnnx / upOnnxDml / 用户开关),
             // 不再有任何"跑到中途因为判黑而改路"的路径(与 2026-09-16 补帧侧裁决同口径)。
             // 该变量既已无人置位,`UpscaleBackendPlan.UseOnnx/DescribeBackend` 上那个永不触发的
@@ -1616,7 +1616,7 @@ public static class VideoService
             //   · 旧顺序(3x/4x/不实际超分):输入 framesIn(源帧)、输出 framesFinal,在 3) 块里原地调用;
             //   · 新顺序(1x/2x):输入 upOutput(超分输出)、输出 framesInterp,在超分阶段之后调用。
             // probeW/probeH = 本阶段真正要处理的帧尺寸:RIFE 的 GPU 兼容性探测必须按【真实帧尺寸】做 ——
-            // 小图能跑 ≠ 真帧能跑(显存/着色器分块压力差一个量级,实测过"小图通过、真分辨率上静默出坏帧")。
+            // 小图能跑 ≠ 真帧能跑(显存/着色器分块压力差一个量级,实测过"小图通过、真分辨率上静默出无效画面")。
             // 【边用边删】每段跑完即删该段已消费的输入帧:分段互不共享输入帧(段 [s,e) 只读 frame_{s+1}..frame_{e}),
             // 且 InterpSegmentAsync 在段首就把这一段全部复制进自己的 segIn 目录,其后所有重试/降级路径
             // (ncnn 原卡、换另一张卡、ONNX DirectML、残缺重算)都只读 segIn —— 故这些帧可证明已消费。
@@ -1676,27 +1676,27 @@ public static class VideoService
 
             async Task InterpStageAsync(string segSrcDir, string segOutDir, int probeW, int probeH, double fractionalMult, long targetFramesOverride)
             {
-                // 【任务 O2 · 2026-09-13】8K 级输入下 ncnn RIFE 会**静默输出全黑帧**(真机实测
-                // 7680×4320 + -n 119 → 117/119 全黑,exit=0 无报错;1080p/2160p 同命令 0 黑帧)。
-                // 与其白跑一遍再靠事后抽样抓黑帧(还有抽样漏掉的风险),不如按尺寸预检直接改走稳定引擎(ONNX)。
+                // 【任务 O2 · 2026-09-13】8K 级输入下 ncnn RIFE 会**静默输出全全黑画面**(真机实测
+                // 7680×4320 + -n 119 → 117/119 全黑,exit=0 无提示;1080p/2160p 同命令 0 全黑画面)。
+                // 与其白跑一遍再靠事后抽样抓全黑画面(还有抽样漏掉的风险),不如按尺寸预检直接改走稳定引擎(ONNX)。
                 var sizeVerdict = AlhPro.Core.InterpSizePolicy.JudgeInputSize(probeW, probeH);
                 bool forceOnnxInterp = sizeVerdict.RefuseNcnn;
                 if (forceOnnxInterp)
                 {
                     AppLogger.Warn($"⚠ 补帧输入尺寸预检:{sizeVerdict.Reason} → 本阶段改用稳定引擎(ONNX)补帧,不交给 ncnn");
-                    progress?.Report((interpPctBase, $"⚠ 补帧输入 {probeW}×{probeH} 属于 ncnn 已知故障尺寸(会静默出全黑帧),改用稳定引擎(ONNX)..."));
+                    progress?.Report((interpPctBase, $"⚠ 补帧输入 {probeW}×{probeH} 属于 ncnn 已知故障尺寸(会静默出全全黑画面),改用稳定引擎(ONNX)..."));
                 }
                 else if (sizeVerdict.Warn)
                 {
                     AppLogger.Warn($"⚠ 补帧输入尺寸提示:{sizeVerdict.Reason}");
                 }
-                // 【O2 · 1 帧目录 + -n 2 崩溃护栏】RIFE 至少要两帧输入、且目标帧数必须大于输入帧数
+                // 【O2 · 1 帧目录 + -n 2 进程退出护栏】RIFE 至少要两帧输入、且目标帧数必须大于输入帧数
                 // (真机实测"1 帧目录 + `-n 2`"→ 0xC0000005 访问违例)。本仓调用点**本就不可达**:
                 // 单帧段走"直接复制不进引擎"、且 `-n` 有 `segLen + 1` 下限(见下方 InterpSegmentAsync),
                 // 这里只做防御性提示,不改变控制流。
                 if (AlhPro.Core.InterpSizePolicy.IsDegenerateSegmentInput(frameCount, (int)Math.Min(int.MaxValue, globalTarget)))
                     AppLogger.Warn($"⚠ 补帧入参护栏:输入 {frameCount} 帧 / 目标 {globalTarget} 帧构成退化入参"
-                        + "(RIFE 至少需 2 帧输入且目标 > 输入,实测会崩 0xC0000005);本阶段按逐帧复制处理,不给引擎");
+                        + "(RIFE 至少需 2 帧输入且目标 > 输入,实测会退出 0xC0000005);本阶段按逐帧复制处理,不给引擎");
                 // 【任务 N】这里印的"输出 N 帧"改成用【真实倍率 mult】算的帧数守恒目标:
                 // 2x + 未去重时 = (源帧数-1)×2+1(真机那次是 855 → 1709);末段不再产出末帧冻结副本。
                 int multStage = AlhPro.Core.VideoPipeline.InterpMultiplier(interpScale, frameScale);
@@ -1707,7 +1707,7 @@ public static class VideoService
                 long expectStage = AlhPro.Core.VideoPipeline.InterpOutputFrameCount(frameCount, (int)Math.Round(multRife));
                 progress?.Report((interpPctBase, $"RIFE 补帧({interpScale}x,源 {frameCount} 帧 → 输出 {expectStage} 帧,模型 {interpModel})..."));
                 if (interpScale >= 4)
-                    AppLogger.Warn($"⚠ 高倍率补帧({interpScale}x):输出帧数是源 {interpScale} 倍,处理耗时会明显变长,属正常,请耐心等待(非卡死)");
+                    AppLogger.Warn($"⚠ 高倍率补帧({interpScale}x):输出帧数是源 {interpScale} 倍,处理耗时会明显变长,属正常,请耐心等待(非长时间无响应)");
                 // ===== RIFE GPU 探测(任何可能静默 hang 的设备都不放过,不预检白等 8 分钟)=====
                 // 实测 2 帧插 1 帧能否 GPU 出图;不能 → 本视频补帧改用 ONNX(慢但确定能跑),日志+进度提示。
                 // rife 非空由调用点保证(两处调用都只在 frameInterp 成立时;而 frameInterp 且 RifePath 缺失
@@ -1718,10 +1718,10 @@ public static class VideoService
                 {
                     // 【50 系不再"一律禁用 ncnn"】旧逻辑:Blackwell 一律直接改走 ONNX、不做任何探测。
                     // 现在改为"先真机探测、再按结果决定":探测通过 → 用 ncnn-Vulkan 补帧(最快那条路);
-                    // 失败(hang/崩/坏帧)→ 才改走 ONNX,并明确告知用户"为稳定性改用 ONNX"。
+                    // 失败(hang/崩/无效画面)→ 才改走 ONNX,并明确告知用户"为稳定性改用 ONNX"。
                     // 结论跨任务缓存(EnsureRifeNcnnProbeAsync),同一设备不会每次任务都白等一遍探测。
                     // 【按真实帧尺寸探】探测帧尺寸 = 本阶段真正要处理的尺寸(旧实现固定 320×240):小图能跑 ≠ 真帧能跑,
-                    // 显存/着色器分块压力差一个量级,实测过"小图通过、真分辨率上静默出坏帧"的形态。
+                    // 显存/着色器分块压力差一个量级,实测过"小图通过、真分辨率上静默出无效画面"的形态。
                     // 新顺序(1x/2x)下探测尺寸 = 超分后的尺寸(probeW/probeH),旧顺序 = 源尺寸(与改动前逐字一致)。
                     // 【2026-09-18 用户要求:这类"正在检测…首次约 N 秒"的提示别再无脑弹】
                     // 只有**真的会做实测**的卡(50 系/AMD/Intel/已知有风险)才提示;纯 NVIDIA 非 50 系走快速通道,
@@ -1733,8 +1733,8 @@ public static class VideoService
                     bool rifeOk = await EngineService.EnsureRifeNcnnProbeAsync(rifeExe, interpModel, gpuId, ct, probeW, probeH).ConfigureAwait(false);
                     if (!rifeOk)
                     {
-                        // 【按形态说话】失败原因由探测带回(初始化即崩 ≠ 出图但坏帧),措辞集中在 AlhPro.Core.ProbeDiagnosis:
-                        // 前者在 Blackwell 上就是 NVIDIA 的 cooperative-matrix 驱动缺陷(要说清"不是本软件的问题"),
+                        // 【按形态说话】失败原因由探测带回(初始化即崩 ≠ 出图但无效画面),措辞集中在 AlhPro.Core.ProbeDiagnosis:
+                        // 前者在 Blackwell 上就是 NVIDIA 的 cooperative-matrix 驱动问题(要说清"不是本软件的问题"),
                         // 后者属引擎并发/渲染(不许甩锅给驱动)。
                         AppLogger.Warn($"⚠ RIFE {interpModel} 在本机 GPU({gpuId})真机探测失败——为稳定性改用 ONNX 补帧路线。"
                             + EngineService.LastProbeUserMessage);
@@ -1758,7 +1758,7 @@ public static class VideoService
                 // 后者就是"补回(还原源时间轴)"在用的同一套层批原语与并发结构(InterpLayerBatchAsync:
                 // 一批帧对平铺成目录序列、一次引擎进程跑完,二叉树逐层细分,每层一次引擎调用)——
                 // 本任务**没有**新写并发/降级链;帧数校验、失败回退在这里补齐。
-                // 【2026-09-27】原先还有"黑帧检出"(fres.anyBlack → 清半成品)这一环,已随事后判黑整体删除。
+                // 【2026-09-27】原先还有"全黑画面检出"(fres.anyBlack → 清半成品)这一环,已随事后判黑整体删除。
                 if (flatPlan.Flatten && !forceOnnxInterp && interpGpu >= 0 && flatPlan.TargetFrames >= 2)
                 {
                     int targetN = flatPlan.TargetFrames;
@@ -1769,7 +1769,7 @@ public static class VideoService
                             frameCount, frameDurs, flatPlan, interpGpu, interpModel, tta, sceneCutPairs, progress, ct);
                         if (fres.written != targetN)
                             throw new InvalidOperationException($"合成帧数 {fres.written} ≠ 目标 {targetN} 帧");
-                        // 【2026-09-27】原先这里还有 `if (fres.anyBlack) throw`(合成输出检出黑帧 → 清半成品回退分段补帧),
+                        // 【2026-09-27】原先这里还有 `if (fres.anyBlack) throw`(合成输出检出全黑画面 → 清半成品回退分段补帧),
                         // 已随事后判黑整体删除:素材的黑色转场/夜戏会被判成"GPU 队列异常"⇒ 白白放弃整段合成。
                         // 现在只保留上面那条**帧数**校验(那是时间轴契约,与判黑无关)。
                         flattenActive = true;
@@ -2033,7 +2033,7 @@ public static class VideoService
                     catch (Exception ex)
                     {
                         if (ct.IsCancellationRequested) throw;   // 取消必须立刻传播,绝不吞(否则会回退再跑一遍标准补帧)
-                        // 【2026-09-27】原先这里还有一句"黑帧换路全失败(BlackFrameRerouteException)→ 必须让任务失败"的
+                        // 【2026-09-27】原先这里还有一句"全黑画面换路全失败(BlackFrameRerouteException)→ 必须让任务失败"的
                         // 显式重抛。事后判黑与换路整套已删除 ⇒ 这条异常类型不复存在,重抛也一并删除。
                         // 这个 catch 的既有口径不变:除取消外一律按"展开兜底"(tempoSrcIdx=null)继续跑。
                         AppLogger.Info($"补回来失败(按展开兜底):{ex.Message}");
@@ -2169,7 +2169,7 @@ public static class VideoService
                 }
                 else
                 {
-                    // 开关为关 ⇒ 两条路读的是**同一份空表**:这条路不做保护,那条路也不会偷偷做(那正是历史缺陷)。
+                    // 开关为关 ⇒ 两条路读的是**同一份空表**:这条路不做保护,那条路也不会偷偷做(那正是历史问题)。
                     sceneCutPairs.Clear();
                     AppLogger.Info("转场识别=关(用户未勾选「转场识别」)→ 本次不做切点检测;两条路径读同一份(空)切点表");
                     progress?.Report((9, "转场识别:未勾选,按无转场处理" + StageElapsed()));
@@ -2178,7 +2178,7 @@ public static class VideoService
                 // 3b) 分段补帧(输入 framesIn,输出 framesFinal)
                 progress?.Report((10, $"RIFE 补帧({interpScale}x,源 {frameCount} 帧 → 输出 {(long)Math.Round((double)((frameCount - 1) * interpScale)) + 1} 帧,模型 {interpModel})..."));
                 if (interpScale >= 4)
-                    AppLogger.Warn($"⚠ 高倍率补帧({interpScale}x):输出帧数是源 {interpScale} 倍,处理耗时会明显变长,属正常,请耐心等待(非卡死)");
+                    AppLogger.Warn($"⚠ 高倍率补帧({interpScale}x):输出帧数是源 {interpScale} 倍,处理耗时会明显变长,属正常,请耐心等待(非长时间无响应)");
                 // ===== RIFE GPU 探测(任何可能静默 hang 的设备都不放过,不预检白等 8 分钟)=====
                 // 实测 2 帧插 1 帧能否 GPU 出图;不能 → 本视频补帧改用 ONNX(慢但确定能跑),日志+进度提示。
                 int interpGpu = gpuId;
@@ -2186,10 +2186,10 @@ public static class VideoService
                 {
                     // 【50 系不再"一律禁用 ncnn"】旧逻辑:Blackwell 一律直接改走 ONNX、不做任何探测。
                     // 现在改为"先真机探测、再按结果决定":探测通过 → 用 ncnn-Vulkan 补帧(最快那条路);
-                    // 失败(hang/崩/坏帧)→ 才改走 ONNX,并明确告知用户"为稳定性改用 ONNX"。
+                    // 失败(hang/崩/无效画面)→ 才改走 ONNX,并明确告知用户"为稳定性改用 ONNX"。
                     // 结论跨任务缓存(EnsureRifeNcnnProbeAsync),同一设备不会每次任务都白等一遍探测。
                     // 【按源分辨率探】探测帧尺寸=本视频源尺寸(旧实现固定 320×240):小图能跑 ≠ 真帧能跑,
-                    // 显存/着色器分块压力差一个量级,实测过"小图通过、真分辨率上静默出坏帧"的形态。
+                    // 显存/着色器分块压力差一个量级,实测过"小图通过、真分辨率上静默出无效画面"的形态。
                     bool rifeWillRun2 = true;
                     try { rifeWillRun2 = EngineService.RifeProbeWillRun(rife, interpModel, gpuId, srcW, srcH); } catch { }
                     if (rifeWillRun2)
@@ -2197,8 +2197,8 @@ public static class VideoService
                     bool rifeOk = await EngineService.EnsureRifeNcnnProbeAsync(rife, interpModel, gpuId, ct, srcW, srcH).ConfigureAwait(false);
                     if (!rifeOk)
                     {
-                        // 【按形态说话】失败原因由探测带回(初始化即崩 ≠ 出图但坏帧),措辞集中在 AlhPro.Core.ProbeDiagnosis:
-                        // 前者在 Blackwell 上就是 NVIDIA 的 cooperative-matrix 驱动缺陷(要说清"不是本软件的问题"),
+                        // 【按形态说话】失败原因由探测带回(初始化即崩 ≠ 出图但无效画面),措辞集中在 AlhPro.Core.ProbeDiagnosis:
+                        // 前者在 Blackwell 上就是 NVIDIA 的 cooperative-matrix 驱动问题(要说清"不是本软件的问题"),
                         // 后者属引擎并发/渲染(不许甩锅给驱动)。
                         AppLogger.Warn($"⚠ RIFE {interpModel} 在本机 GPU({gpuId})真机探测失败——为稳定性改用 ONNX 补帧路线。"
                             + EngineService.LastProbeUserMessage);
@@ -2281,7 +2281,7 @@ public static class VideoService
             {
                 int probePct = 6;
                 // 【2026-09-24】Real-CUGAN 只支持 GPU:用户在"计算设备"里选了 CPU(-g -1)、
-                // 或本机确实没有可用 GPU 时,直接**明确拒绝**并给替代方案 —— 不跑那条实测会崩的 CPU 档,
+                // 或本机确实没有可用 GPU 时,直接**明确拒绝**并给替代方案 —— 不跑那条实测会退出的 CPU 档,
                 // 也不静默换模型。判据与真实原因都写在异常消息里(用户看得到)。
                 if (doUpscale && engine == AlhPro.Core.RealCugan.EngineName && gpuId < 0)
                 {
@@ -2291,8 +2291,8 @@ public static class VideoService
                 {
                     // 【50 系不再"一律禁用 ncnn"】旧逻辑:Blackwell + waifu2x 直接改走 ONNX,不做任何实测。
                     // 旧口径漏检的根因已写明在 EngineService.IsEngineGpuUsableAsync(fullFrame) 上:
-                    // 320×240(甚至 1×1)小图能过,真实分辨率才静默出 0KB 空帧/黑帧且【退出码 0】——
-                    // 于是探测判"可用",坏帧一路进成片。现在改为:先按【生产形态】真机探测
+                    // 320×240(甚至 1×1)小图能过,真实分辨率才静默出 0KB 空帧/全黑画面且【退出码 0】——
+                    // 于是探测判"可用",无效画面一路进成片。现在改为:先按【生产形态】真机探测
                     // (1080×1920 + 真实模型 + 生产 -j + 带状黑判据),通过 → 就走 ncnn-Vulkan
                     // (真机实测 0.24~0.6 秒/帧,而"ONNX 落 CPU"是 8 秒/帧);失败 → 才改走 ONNX 并明确告知用户。
                     // 【2026-09-24】探测按 NcnnProbePlan 走:①「动漫 · Anime4K 修复」走着色器、根本不用 ncnn
@@ -2314,7 +2314,7 @@ public static class VideoService
                     {
                         if (engine == "waifu2x" && EngineService.IsBlackwellGpu())
                         {
-                            // waifu2x 在 50 系:ncnn CPU 模式同样会崩(实测 exit -1073741819)——
+                            // waifu2x 在 50 系:ncnn CPU 模式同样会退出(实测 exit -1073741819)——
                             // 不能像其他引擎那样"降 CPU",而是整段改走 ONNX 稳定版(DirectML/CPU 都行)
                             waifuOnnx = true;
                             upOnnxDml = true;
@@ -2381,9 +2381,9 @@ public static class VideoService
                 }
                 else if (engine == "waifu2x" && EngineService.IsBlackwellGpu())
                 {
-                    // 用户选了 CPU(-g -1):50 系 waifu2x 的 ncnn CPU 模式有崩溃 bug → 直接整段走 ONNX 更稳
+                    // 用户选了 CPU(-g -1):50 系 waifu2x 的 ncnn CPU 模式有进程退出 问题 → 直接整段走 ONNX 更稳
                     waifuOnnx = true;
-                    AppLogger.Warn("⚠ 50系 waifu2x:CPU(-g -1)模式有崩溃 bug,自动改走 ONNX 稳定版");
+                    AppLogger.Warn("⚠ 50系 waifu2x:CPU(-g -1)模式有进程退出 问题,自动改走 ONNX 稳定版");
                 }
                 // ===== 设备实际用途诊断(进诊断包:一眼分辨"显示 GPU 却实际跑 CPU/慢路径")=====
                 // 超分阶段已在此定死:waifuOnnx → ONNX 整段;upGpu<0 → ONNX DirectML 或 CPU;否则 ncnn-GPU。
@@ -2671,7 +2671,7 @@ public static class VideoService
                 // 目录已是 JPG(未补帧,直接复制 framesIn)则空跑。
                 // 【G · 2026-09-13】这一整批重编码【耗时正比于帧数】(用户那条 2668 帧要跑几十秒~几分钟),
                 // 过去它无进度、不可取消(调的是 1 参重载 → progress/ct 都是默认值),界面只停在上一阶段的
-                // "预计还剩几秒",用户看到的却是卡死。现在:传 progress + ct(可取消),并上报中性文案
+                // "预计还剩几秒",用户看到的却是长时间无响应。现在:传 progress + ct(可取消),并上报中性文案
                 // "整理帧(JPG) 第 N / M 帧"(沿用本阶段的当前百分比,只换文字不回退;AA 关着也照发)。
                 // 耗时计入 LastFrameReencodeSeconds(它本来就含在"处理阶段"墙钟里,现在也有日志可核对了)。
                 {
@@ -2737,7 +2737,7 @@ public static class VideoService
                 // 已上移到「阶段顺序判定」之前(见上方 `if (upscaleRuns) { ... }` 那一整段)。原因:
                 // 标定与判定必须先知道**本次真正会走的后端**,否则标定可能测到生产不会走的后端,并把偏小的
                 // 错单帧耗时永久落盘(判定于是偏向「补帧→超分」—— 2026-09-25 那次 39 分钟误判的同一类)。
-                // 【2026-09-27】后端此后不会再"跑到中途改路":按黑帧置位 ncnnUnreliable 的那条路已删除
+                // 【2026-09-27】后端此后不会再"跑到中途改路":按全黑画面置位 ncnnUnreliable 的那条路已删除
                 //(连同 UpscaleBackendPlan 上那个永不触发的参数一起移除)。
                 // 这里只保留 1x 缩回需要的真实尺寸(origW/origH)与引擎倍率 upScale。
                 // 分批目录批处理超分 + 并行 2 批(多 worker):
@@ -2755,7 +2755,7 @@ public static class VideoService
                 // 原理:InterpLayerBatchAsync 的 slotSrc 会把同一源文件写进多个输出槽(:4076 静止帧对 / :4079 phi≤0.001 /
                 // :4080 phi≥0.999),framesFinal 里会有多份字节相同帧。超分对相同输入是字节级确定的。
                 // → 按内容哈希把相同帧归组,只让"唯一帧"进引擎,重复槽位拷贝代表帧的超分结果。
-                // 硬约束:重复槽位必须与代表帧【同批】(批并行跑,跨批引用会在代表帧未产出时崩溃)。
+                // 硬约束:重复槽位必须与代表帧【同批】(批并行跑,跨批引用会在代表帧未产出时进程退出)。
                 //        回填放在本批 PNG→JPG 转换后、同一个 task 内立即做。
                 // 进度/ETA 按【槽位】记账(不是组号):静止素材多时按组号推进会虚高(违反"预览=结果")。
                 // finally 删源帧按【本批显式槽位列表】删(槽位不再连续,:1448 的 start..end 区间写法失效)。
@@ -2836,7 +2836,7 @@ public static class VideoService
                 // 【为什么加这道闸门】本轮把档位整体 ×2(下界 50→80、正常 300→600、好 700/1400),
                 // 一批在同一时刻占盘的帧数跟着 ×2(输入帧 + 本批输出帧并存)。原来只有下面那道
                 // "整任务预估 vs 剩余空间"的闸门,而它有两个毛病:① 算的是全片口径 + 1.6 安全系数,
-                // 批大小在里面的权重随素材长度变化(短素材几乎影响不到判定);② 它只会**报错**,
+                // 批大小在里面的权重随素材长度变化(短素材几乎影响不到判定);② 它只会**提示错误**,
                 // 不会把批调小 —— 而"能跑就跑小一点"才是档位放大后该有的动作。
                 // 纯逻辑在 AlhPro.Core.RenderPolicy.LimitBatchByTempDisk(有单测),这里只负责取余量 + 记日志。
                 double tempFreeGB = 0;
@@ -2993,7 +2993,7 @@ public static class VideoService
                                 }
                                 catch { }
                             };
-                            // 视频超分:50系/无独显/手动CPU + Real-ESRGAN/waifu2x + ONNX 模型在 → 走 ONNX 逐帧(不走会崩的 ncnn-vulkan)
+                            // 视频超分:50系/无独显/手动CPU + Real-ESRGAN/waifu2x + ONNX 模型在 → 走 ONNX 逐帧(不走会退出的 ncnn-vulkan)
                             // 【2026-09-25 B3】"走 ncnn 还是走 ONNX"的判据抽成纯函数 AlhPro.Core.UpscaleBackendPlan.UseOnnx
                             // (真值表与改动前的 if/else **逐字等价**,有单测钉住;realcugan 无 ONNX 通道 ⇒ 恒 false)。
                             // 本块只保留"取 ONNX 模型路径"这一步:解析逻辑与改动前一一对应(realesrgan → ResolveEsrganOnnxPath,
@@ -3012,7 +3012,7 @@ public static class VideoService
                             // 【让"批间停顿"可见】本批的计算引擎还没起来 —— ncnn 是"进程启动 + 模型加载",
                             // ONNX 稳定引擎是"每批新建 DirectML 推理会话",两者都是秒级固定开销。
                             // 先如实说明"正在启动(约 N 秒)",别让进度条与文案在这几秒里一动不动
-                            // (用户唯一的感受就是"卡死")。文案刻意不含「完成」二字:UI 会把含"完成"的
+                            // (用户唯一的感受就是"长时间无响应")。文案刻意不含「完成」二字:UI 会把含"完成"的
                             // 进度行改写成"✓ …"并清掉当前步骤行,会误判成阶段结束。
                             // 只加这一行进度上报:处理顺序/参数/并发一律不变。
                             {
@@ -3086,16 +3086,16 @@ public static class VideoService
                             double engineSecDbg = swBatchDbg.Elapsed.TotalSeconds;
                             // 【峰值优化】本批超分 PNG 立即转 JPG 再落 upOutput(不再全量 PNG 累积到最后统一转):
                             // 超分过程中只有"当前批的 PNG"存在,upOutput 全程 JPG,峰值降 70%+。
-                            // 【2026-09-27 删除"超分批黑帧防御"】原来这里对每张输出判黑(ConvertPngToJpg 的 out isBlack /
-                            // IsBlackPng),命中就走"只重跑被判黑的那几帧 → 换 ONNX → 仍黑则回退源帧",并在缺陷帧达到
+                            // 【2026-09-27 删除"超分批全黑画面防御"】原来这里对每张输出判黑(ConvertPngToJpg 的 out isBlack /
+                            // IsBlackPng),命中就走"只重跑被判黑的那几帧 → 换 ONNX → 仍黑则回退源帧",并在无效帧达到
                             // "系统性"程度(整批空产 / 占比 ≥20%)时把 ncnnUnreliable 置位,让后续批次整体改走 ONNX。
-                            // 作者反馈:素材里正常的黑色转场/淡入淡出/夜戏被判成"引擎输出坏帧"⇒ 该批重跑 / 换 ONNX ⇒
+                            // 作者反馈:素材里正常的黑色转场/淡入淡出/夜戏被判成"引擎输出无效画面"⇒ 该批重跑 / 换 ONNX ⇒
                             // 整条任务转 ONNX 慢路。故整段(判黑 → 重跑 → 换路 → 回退 → 置位)删除。
-                            // 现在只剩"把本批输出转成 JPG 落进 upOutput",与改动前【未命中黑帧时】逐字一致:
+                            // 现在只剩"把本批输出转成 JPG 落进 upOutput",与改动前【未命中全黑画面时】逐字一致:
                             //   · 引擎写 PNG(图片分块路径/降级重算/ONNX):解码一次转成 JPG(q96);
                             //   · 引擎直出 JPG(outFormat:"jpg"):直接【搬】过去(引擎写的是 q100,不再重编码);
-                            //   · 转不了(0KB 空帧/坏帧,退出码仍 0)→ 仍复制原文件兜底,绝不因此少帧(合帧按编号连续读)。
-                            // 代价(与 2026-09-16 补帧侧裁决同口径):引擎真出黑帧时按原样采用、照旧写进成片 ——
+                            //   · 转不了(0KB 空帧/无效画面,退出码仍 0)→ 仍复制原文件兜底,绝不因此少帧(合帧按编号连续读)。
+                            // 代价(与 2026-09-16 补帧侧裁决同口径):引擎真出全黑画面时按原样采用、照旧写进成片 ——
                             // 事前兼容性判定(InterpSizePolicy.JudgeEngineRisk + 开跑前的尺寸/显卡预检)是唯一防线。
                             foreach (var f in Directory.EnumerateFiles(batchOut, "*.*")
                                 .Where(x => x.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
@@ -3114,9 +3114,9 @@ public static class VideoService
                             }
                             // 【缺帧审计 · 2026-10-15】引擎退出码 0 却少写若干帧时,旧行为是**完全静默**:
                             // 代表帧没有产出 ⇒ 下面回填循环的第一句 `if (!File.Exists(repJpg)) continue;` 会连同它的
-                            // **全部重复槽**一起跳过 ⇒ 合帧/编码按 `frame_%06d` 连续编号读时直接少帧(或撞上"文件不存在"报错),
+                            // **全部重复槽**一起跳过 ⇒ 合帧/编码按 `frame_%06d` 连续编号读时直接少帧(或撞上"文件不存在"提示错误),
                             // 而日志里查不到任何线索。真机实测(2026-10-15,RTX 4060 Laptop,老版 2022 引擎):
-                            // 目录模式 `-t 384` 是"同批里好帧与黑帧混排、退出码仍为 0",`-t 320` 是整批全黑。
+                            // 目录模式 `-t 384` 是"同批里好帧与全黑画面混排、退出码仍为 0",`-t 320` 是整批全黑。
                             // 【本审计只做"帧名/帧数"对账】像素判黑属 2026-09-27 作者明令删除的"事后判黑",**不接回**
                             // (见本文件下方「源帧黑场豁免判据删除」留档与 AlhPro.Core.FrameInspect 的类注释)。
                             // 缺失帧用现有 WriteFallbackFrame(源帧缩放、尺寸与同目录其他帧对齐)兜底 ——
@@ -3153,9 +3153,9 @@ public static class VideoService
                             }
                             // ===== 回填重复槽位:拷贝代表帧的超分输出到该组重复槽(决策②=拷贝,非硬链接)=====
                             // 硬约束:重复槽与代表帧同批 → 代表帧输出已在本批 upOutput 落盘,此处同 task 内立即拷贝,
-                            // 无跨批依赖(批并行跑,跨批引用会在代表帧未产出时崩溃)。
+                            // 无跨批依赖(批并行跑,跨批引用会在代表帧未产出时进程退出)。
                             // 拷贝路径与 :1486/:1512 的"src==dst 原地重写"互补:这里写不同文件(rep→slot),不会踩到
-                            // 硬链接的并发原地写坏帧问题。纯磁盘 IO,每次拷贝后查 ct,极长静止组(重复槽多)也即时可取消。
+                            // 硬链接的并发原地写无效画面问题。纯磁盘 IO,每次拷贝后查 ct,极长静止组(重复槽多)也即时可取消。
                             int backfilled = 0;
                             foreach (var g in curPG)
                             {
@@ -3216,9 +3216,9 @@ public static class VideoService
                         catch (Exception batchEx)
                         {
                             // ===== 超分批次失败加固 =====
-                            // realesrgan/waifu2x ncnn-vulkan 在长时间运行会中途 AccessViolation 崩溃(exit -1073741819),
+                            // realesrgan/waifu2x ncnn-vulkan 在长时间运行会中途 AccessViolation 进程退出(exit -1073741819),
                             // 原逻辑无外层 catch → 异常冒泡 → await Task.WhenAll(tasks) 抛错 → 整个超分阶段/任务失败
-                            // ("成功 0,失败 1")。现在:引擎崩溃/异常时【该批帧直接回退原帧】,不中断整个任务——
+                            // ("成功 0,失败 1")。现在:引擎进程退出/异常时【该批帧直接回退原帧】,不中断整个任务——
                             // 视频仍能出,只是这批帧未超分(画质略低),绝不"整段视频全丢"。
                             // 取消异常不吞(仍走取消);
                             string head = batchEx.Message.Split('\n')[0];
@@ -3437,7 +3437,7 @@ public static class VideoService
                     ct.ThrowIfCancellationRequested();
                     resTasks.Add(Task.Run(() =>
                     {
-                        // ResizeImageTo 内部已兜底:坏帧→同尺寸占位帧,保持编号连续可解码,合帧不中断。
+                        // ResizeImageTo 内部已兜底:无效画面→同尺寸占位帧,保持编号连续可解码,合帧不中断。
                         EngineService.ResizeImageTo(f, f, outWidth.Value, outHeight.Value);
                         int d = Interlocked.Increment(ref doneRes);
                         if (d % 20 == 0 || d == resFiles.Length)
@@ -3493,7 +3493,7 @@ public static class VideoService
             //   帧数 = (真实帧数-1)×倍率 + 1   (素材1: (38-1)×4+1 = 149)
             //   帧率 = 原帧率×倍率 = (真实帧数-1)×倍率 ÷ 真实时长   (素材1: 37×4/1.7751 = 83.376 = 20.844×4)
             // 视频末帧 PTS = (帧数-1)÷帧率 = 真实时长 = 原末帧 PTS(素材1: 148/83.376 = 1.7751s)✓
-            // 反例(本 bug 根源):帧数=原帧数×倍率(152)配原帧率×倍率(83.376) → 末帧 1.8114(+2% 慢=变速感);
+            // 反例(本 问题 根源):帧数=原帧数×倍率(152)配原帧率×倍率(83.376) → 末帧 1.8114(+2% 慢=变速感);
             // 旧折中 (152-1)/1.7751=85.066 时长虽对,但帧率≠原帧率×倍率,不满足 B 方案标签。
             long trueFrames = 0;
             double trueDur = 0;
@@ -3758,7 +3758,7 @@ public static class VideoService
                             // 改帧率会把输出变成 59.67 / 47.037 这类非标准帧率 —— 60Hz 屏上每帧 1.27 个刷新周期,
                             // 于是全程轻微顿挫、开头那一下最明显(用户实测预览:23.976×2 本该 47.952,成片却是 47.037,
                             // 还比真实慢 1.9%)。补 1~3 帧末帧定格在几秒素材上完全看不出(播放器本来也会在末帧停留),
-                            // 换来标准帧率 + 整片速度正确;只有缺口大到要补 4 帧以上(观感会明显"卡住")才回退老办法。
+                            // 换来标准帧率 + 整片速度正确;只有缺口大到要补 4 帧以上(观感会明显"停住")才回退老办法。
                             int add = (int)Math.Round(muxDur * outFps) - seqA.Count;
                             if (add >= 1 && add <= 3)
                             {
@@ -4196,10 +4196,10 @@ public static class VideoService
             {
                 // 【2026-09-23 用户要求 · 视频这一侧「绝不落 CPU」】硬件编码失败**不再**回退 CPU 软编:
                 // 同一台设备按 AlhPro.Core.CpuFallbackPolicy 的间隔重试(重启子进程,专挡"瞬时失败"),
-                // 全失败就报错并给出可操作的建议(更新驱动/重启;软件不提供 CPU 软编选项,见 B8)。
+                // 全失败就提示错误并给出可操作的建议(更新驱动/重启;软件不提供 CPU 软编选项,见 B8)。
                 // 【真机依据】5060 那台"上一次任务"nvenc 还是 16.7 fps,下一次就 exit -542398533 ⇒ 属瞬时,
                 // 不是"这台机器编不了";而旧逻辑一次都不重试就掉 libx264:编码 17.0s → 115.7s(**7 倍**),
-                // 那行回报还误标成"(硬编)"。driverOld(驱动过旧)是确定性失败 ⇒ 不重试,直接报错让他去更新驱动。
+                // 那行回报还误标成"(硬编)"。driverOld(驱动过旧)是确定性失败 ⇒ 不重试,直接提示错误让他去更新驱动。
                 int hwAttempt = 0;
                 // 【2026-09-30 · t64 C】本次已经用过的编码器(打不开就换下一个,不许再拿同一个重试)
                 var triedEncoders = new System.Collections.Generic.List<string>();
@@ -4255,7 +4255,7 @@ public static class VideoService
                         string whyFull = (ex.Message ?? "").Trim();
                         string why = whyFull.Split('\n')[0];
                         bool driverOld = IsNvencDriverTooOld(whyFull);
-                        // 【2026-09-23 修 A9 的"报错指错人"】实测:Anime4K 找不到着色器时,ffmpeg 的错是
+                        // 【2026-09-23 修 A9 的"提示错误指错人"】实测:Anime4K 找不到着色器时,ffmpeg 的错是
                         // `[libplacebo] Cannot read file ...` + `[AVFilterGraph] Error initializing filters`,
                         // 而旧文案一律说"硬件编码(nvenc)失败" ⇒ 用户去折腾显卡驱动,真因却在滤镜/着色器。
                         // 这里认出滤镜类失败就把它说清楚(合帧命令里滤镜与编码同进程,exit code 分不出来,只能看文本)。
@@ -4273,12 +4273,12 @@ public static class VideoService
                         // 实测:音画对齐的 `-itsoffset -0.083` 与下一个 `-i` 之间少了空格 ⇒
                         // `Option itsoffset cannot be applied to output url` / `Error parsing options for output file`。
                         // 旧逻辑把它归为"瞬时失败"⇒ 重试 3 次(全是同一个错)再报「请更新显卡驱动」,
-                        // 用户白等一小时后去折腾驱动。这里直接停,并如实说是软件缺陷。
+                        // 用户白等一小时后去折腾驱动。这里直接停,并如实说是软件问题。
                         if (AlhPro.Core.VideoEncodeGuard.ClassifyEncodeFailure(whyFull)
                             == AlhPro.Core.VideoEncodeGuard.EncodeFailureKind.CommandLine)
                         {
-                            AppLogger.Error($"⚠ 编码命令参数有误(软件缺陷,与显卡/驱动无关),已停止:{why}");
-                            progress?.Report((96, "⚠ 编码命令参数有误(软件缺陷),已停止并留下日志..."));
+                            AppLogger.Error($"⚠ 编码命令参数有误(软件问题,与显卡/驱动无关),已停止:{why}");
+                            progress?.Report((96, "⚠ 编码命令参数有误(软件问题),已停止并留下日志..."));
                             throw new InvalidOperationException(
                                 AlhPro.Core.VideoEncodeGuard.DescribeCommandLineFailure(whyFull), ex);
                         }
@@ -4408,24 +4408,24 @@ public static class VideoService
                     fpsOut = fo;
                 uOutDur = durOut; uOutFps = fpsOut;   // 【任务 U】结算用(拿不到就让结算标"未采集")
                 string warn = "";
-                // 允差 = max(3%, 1 拍):尾帧保留/拍型取整可能差 1 拍,小素材上显示 5% 是正常的,不可算 bug
+                // 允差 = max(3%, 1 拍):尾帧保留/拍型取整可能差 1 拍,小素材上显示 5% 是正常的,不可算 问题
                 double oneBeat = Math.Max(0.01, 1.0 / Math.Max(1, outFps));
                 double durTol = Math.Max(0.03, oneBeat / Math.Max(0.01, muxDur));
                 if (Math.Abs(durOut - muxDur) / Math.Max(0.01, muxDur) > durTol)
                     warn += $"时长 {durOut:0.###}s vs 预期 {muxDur:0.###}s(偏差 {(durOut - muxDur) / muxDur * 100:0.#}%);";
                 if (Math.Abs(fpsOut - outFps) / Math.Max(0.01, outFps) > 0.03)
                     warn += $"帧率 {fpsOut:0.##}vs 预期 {outFps:0.##};";
-                // 【输出端黑场自检】后处理与编码两个阶段原本【没有任何黑帧防线】(防线只覆盖超分引擎输出那一步),
-                // 所以后处理滤镜产生的黑帧能一路进成片且零日志 —— 用户实际就是这样报上来的。
+                // 【输出端黑场自检】后处理与编码两个阶段原本【没有任何全黑画面防线】(防线只覆盖超分引擎输出那一步),
+                // 所以后处理滤镜产生的全黑画面能一路进成片且零日志 —— 用户实际就是这样报上来的。
                 // 这里在成片落盘后扫一遍,把黑场位置写进日志与任务提示,让它再也藏不住。
                 // 【2026-09-27 · 这里只报数字,不参与任何判定】事后判黑(超分批重跑/换 ONNX/补帧换路/回退源帧)
                 // 已按作者要求整体删除;这一段**只把数字写进日志与结算行**,不改任何处理行为、不改交付内容 ——
                 // 故按"只写日志、不改变行为"保留(作者口径:这类留痕要留)。
-                // 【2026-09-22】把源片与裁剪起点也传进去:让自检能区分"源自带的黑场"与"处理链产生的黑帧"
-                // (见 ScanBlackSegmentsAsync 的说明;源自带的黑场不再当缺陷报,也不再把用户叫来发日志)。
+                // 【2026-09-22】把源片与裁剪起点也传进去:让自检能区分"源自带的黑场"与"处理链产生的全黑画面"
+                // (见 ScanBlackSegmentsAsync 的说明;源自带的黑场不再当问题报,也不再把用户叫来发日志)。
                 string blackSeg = await ScanBlackSegmentsAsync(outputVideo, ct,
                     inputVideo, trimStart ?? 0).ConfigureAwait(false);
-                uBlackSeg = blackSeg;   // 【任务 U 补充】结算行要用它报"有无黑帧"
+                uBlackSeg = blackSeg;   // 【任务 U 补充】结算行要用它报"有无全黑画面"
                 if (blackSeg.Length > 0) warn += $"成片含全黑片段({blackSeg});";
                 AppLogger.Info($"输出校验:{Path.GetFileName(outputVideo)} 帧率 {fpsOut:0.##}fps,时长 {durOut:0.###}s" +
                     (warn.Length > 0 ? " ⚠ " + warn : " ✓"));
@@ -4497,7 +4497,7 @@ public static class VideoService
                     + $"(帧数口径:准备=拆出源帧、补帧=最终帧数、超分=本阶段输入帧、后处理/编码=最终帧数);"
                     + $"补帧/超分用的是各自的独立秒表(墙钟,含引擎探测/兼容性回退的等待)");
                 // 【任务 X1 · 界面与文件的最后一行对得上】上面每一行都写文件;下面四行是界面版(只留结论)。
-                // 【任务 U 补充 · 为"音画滞后仍在几十 ms、无黑帧"这条要求提供**可核验的数字**】
+                // 【任务 U 补充 · 为"音画滞后仍在几十 ms、无全黑画面"这条要求提供**可核验的数字**】
                 // 画面时长 vs 源容器时长(填平时由"帧率保险"把它钉到 muxDur,理论差 ≤ 半帧);
                 // 音频流时长单独问 ffprobe —— 画面/音频各自与源容器的差就是"音画滞后"的上界。
                 // 拿不到的一律写"未采集",不编数。
@@ -4516,7 +4516,7 @@ public static class VideoService
                     string vidDiffTxt = uOutDur > 0.01
                         ? $"成片容器 {uOutDur:0.###}s vs 源容器 {muxDur:0.###}s(差 {(uOutDur - muxDur) * 1000:0}ms,理论 ≤ 半帧)"
                         : "成片时长未采集";
-                    AppLogger.Info($"· 音画/黑帧:{vidDiffTxt};{avTxt};"
+                    AppLogger.Info($"· 音画/全黑画面:{vidDiffTxt};{avTxt};"
                         + $"输出端黑场自检{(uBlackSeg.Length > 0 ? "⚠ 含全黑片段 " + uBlackSeg : "✓ 无全黑片段")}");
                     progress?.Report((100, "· " + AlhPro.Core.LogShortText.ClampToChineseLimit(
                         $"音画:{(uOutDur > 0.01 ? $"画面 {uOutDur:0.###}s / 源 {muxDur:0.###}s" : "未采集")}"
@@ -4827,7 +4827,7 @@ public static class VideoService
     // SegmentContentFpsCoreSync(段级分析)取代。留着只会让人以为"静止检测在用"。
 
     /// <summary>CPU 重算预计时长(分钟)估算:补帧 CPU 软解约 2~6 秒/帧(随分辨率),给个上界让用户有"可等"预期。
-    /// 避免降级后进度条久不动,用户以为卡死。</summary>
+    /// 避免降级后进度条久不动,用户以为长时间无响应。</summary>
     private static string EstimateCpuTime(int segFrames, int watchTotal)
     {
         try
@@ -4847,7 +4847,7 @@ public static class VideoService
     /// **不是**"全局目标 − 已输出"这种差值算法 —— 差值算法在"各段非末段按 段长×mult 产出"时数值恰好相等
     /// ((总帧数-1)×mult+1),但表/文件数的对齐由 Core 的纯函数统一保证,不再依赖两处各算一遍。
     /// appendTailCopy = true(末段,非 VFR):给 RIFE 追加末帧副本,让最后一段真实插值,
-    /// 避免 RIFE -n 把末帧复制成 3 帧(尾部"卡住");副本产生的冻结帧由合帧对齐裁掉。</summary>
+    /// 避免 RIFE -n 把末帧复制成 3 帧(尾部"停住");副本产生的冻结帧由合帧对齐裁掉。</summary>
     /// <summary>从 RIFE 命令行参数里解析出 ONNX 补帧所需的输入目录/输出目录/目标帧数;解析失败返回 false。</summary>
     private static bool TryGetRifeOnnxFrames(string args, out string? sIn, out string? oDir, out int target)
     {
@@ -4868,7 +4868,7 @@ public static class VideoService
 
     /// <summary>ONNX 逐对补帧(50 系/GPU 不可用设备稳定路线):逐对插值、进度汇报、响应取消。
     /// 输入 sIn 的 frame_*.jpg,输出 oDir 的 frame_*.png;target=目标帧数。
-    /// 【2026-09-27】原注释里的"黑帧防御"已随事后判黑整体删除:现在逐对失败只会复制原帧(异常路径),
+    /// 【2026-09-27】原注释里的"全黑画面防御"已随事后判黑整体删除:现在逐对失败只会复制原帧(异常路径),
     /// 不再对"输出近黑"做任何判定与回退。</summary>
     private static async Task RifeOnnxInterpDirAsync(string sIn, string oDir, int target, int gpuId,
         int watchTotal, string? watchDir, CancellationToken ct,
@@ -4887,10 +4887,10 @@ public static class VideoService
 
             // ===== 多路并行补帧(治"独显占用低/速度慢")=====
             // 关键不变量:输出帧号严格用 InterpFraming 预分配(串行时完全一致),帧号精确连续、不重不漏,
-            // 否则合帧缺号/乱序 → 整段视频黑帧/花屏(已用单测钉住 ComputeLayout)。
+            // 否则合帧缺号/乱序 → 整段视频全黑画面/花屏(已用单测钉住 ComputeLayout)。
             var (per, totalOut) = AlhPro.Core.InterpFraming.ComputeLayout(Math.Max(1, target), pairs);
             // 【任务级选卡 · 修形参未使用】形参 gpuId 此前【从未被引用】(恒按全局 AppSettings.GpuIndex 解析),
-            // 于是"本次任务选了哪张卡"在 ONNX 补帧这条路上被忽略(H 系列自检点名的缺陷)。
+            // 于是"本次任务选了哪张卡"在 ONNX 补帧这条路上被忽略(H 系列自检点名的问题)。
             // 现在:gpuId>=0(具体的引擎编号)= 按它解析;gpuId<0(-2 自动 / -1)= 才回落到全局设置与启动探测结论
             // (-1 不表示"落 CPU":补帧绝不落 CPU 是硬约定,这里一律按自动处理)。
             // 【设备解析的真实语义,注释按实现改】ResolveDmlDevice 在"名称匹配不到"时【返回 -1】,
@@ -4918,7 +4918,7 @@ public static class VideoService
             Microsoft.ML.OnnxRuntime.InferenceSession[] sessions;
             // 【让"段间停顿"可见】ONNX 路线每次调用都要新建 DirectML 会话(实测同样是秒级开销):
             // 建会话前先报一行"正在启动",建好后报"已就绪(启动 X.Xs)" —— 与 ncnn 引擎的启动提示同口径,
-            // 让用户知道这几秒是在建推理会话,而不是卡死。只多两行进度上报,处理逻辑一字不改。
+            // 让用户知道这几秒是在建推理会话,而不是长时间无响应。只多两行进度上报,处理逻辑一字不改。
             var onnxStartAt = DateTime.UtcNow;
             progress?.Report((0, $"补帧(ONNX 稳定引擎):正在创建 {concurrency} 路推理会话(约数秒)…"));
             AppLogger.Info($"补帧(ONNX 稳定引擎):正在创建 {concurrency} 路推理会话(每段一次,秒级固定开销);"
@@ -4983,10 +4983,10 @@ public static class VideoService
                                         CopyFrame(files[p], outF);
                                     }
                                 }
-                                // 【2026-09-27 删除"ONNX 补帧输出黑帧 ⇒ 回退该对源帧"】作者反馈:素材里正常的黑色转场/
-                                // 淡入淡出/夜戏会被这条判成"DirectML 静默出坏帧"⇒ 白白回退该帧(画质掉档)并刷告警。
+                                // 【2026-09-27 删除"ONNX 补帧输出全黑画面 ⇒ 回退该对源帧"】作者反馈:素材里正常的黑色转场/
+                                // 淡入淡出/夜戏会被这条判成"DirectML 静默出无效画面"⇒ 白白回退该帧(画质掉档)并刷告警。
                                 // 事后判黑已整体删除;这里只剩上面的"逐对失败复制原帧"(那是**异常**路径,与判黑无关)。
-                                // 代价:DirectML 真出黑帧时该帧按原样采用,事前预检是唯一防线(与 2026-09-16 补帧侧同口径)。
+                                // 代价:DirectML 真出全黑画面时该帧按原样采用,事前预检是唯一防线(与 2026-09-16 补帧侧同口径)。
                                 // 进度:补帧阶段 10~45%,按已产中间帧数估算(并行安全:Interlocked 计数)。
                                 // 文案格式是契约:上层 segProg / etaRegex 靠「第 N 帧 / 共 M 帧」提取帧号。
                                 int dn = Interlocked.Increment(ref doneCount);
@@ -5101,7 +5101,7 @@ public static class VideoService
         for (int i = start; i < end; i++)
             RetryFileCopy(Path.Combine(framesOut, $"frame_{i + 1:D6}.jpg"), Path.Combine(segIn, $"frame_{i - start + 1:D6}.jpg"));
 
-        // 模型目录前置校验:缺失立即明确报错(而不是等下半天引擎报 stderr 尾部的晦涩错误)
+        // 模型目录前置校验:缺失立即明确提示错误(而不是等下半天引擎报 stderr 尾部的晦涩错误)
         var rifeDir = Path.GetDirectoryName(rife) ?? ".";
         if (!Directory.Exists(Path.Combine(rifeDir, interpModel)))
             throw new InvalidOperationException($"缺少补帧模型:{interpModel}。");
@@ -5112,8 +5112,8 @@ public static class VideoService
             // ===== 补帧降级链(用户指定):独显 ncnn → ONNX(DirectML GPU)→ 换卡(另一块 GPU)→ 不落 CPU =====
             // ncnn-CPU 太慢,不做兜底。ONNX 是独立运行时(DirectML),ncnn 崩的卡 DirectML 常能正常 GPU 加速,
             // 故优先于换卡。ONNX 内部已做"逐对失败复制原帧",尽力出帧,不抛异常。
-            // 换卡后失败/黑帧或 ONNX 不可用且无卡可换 → 该段报错(绝不回落慢速 CPU)。
-            // 【2026-09-27】这里的"黑帧"只指**引擎异常形态**(ncnn 崩/空跑),不再有"输出近黑"的事后判定 ——
+            // 换卡后失败/全黑画面或 ONNX 不可用且无卡可换 → 该段提示错误(绝不回落慢速 CPU)。
+            // 【2026-09-27】这里的"全黑画面"只指**引擎异常形态**(ncnn 崩/空跑),不再有"输出近黑"的事后判定 ——
             // 判黑与换路整套已按作者要求删除(黑色转场素材被误判 ⇒ 全片换路重算,ONNX 慢一二十倍)。
             async Task<bool> TryOnnxAsync()
             {
@@ -5127,16 +5127,16 @@ public static class VideoService
                 }
                 return false;
             }
-            // 【任务 O2】已知 ncnn 在本段输入尺寸下会**静默输出全黑帧**(8K 级,真机实测 117/119 全黑、exit=0):
+            // 【任务 O2】已知 ncnn 在本段输入尺寸下会**静默输出全全黑画面**(8K 级,真机实测 117/119 全黑、exit=0):
             // 直接走稳定引擎(ONNX),既不白跑一遍、也不给"事后抽样没抓到"留机会。
             if (forceOnnx)
             {
                 if (await TryOnnxAsync().ConfigureAwait(false)) return;
                 throw new InvalidOperationException(
-                    "补帧输入分辨率过大(8K 级):ncnn 引擎在该尺寸下会静默输出全黑帧(实测 7680×4320 → 117/119 全黑、退出码 0),"
+                    "补帧输入分辨率过大(8K 级):ncnn 引擎在该尺寸下会静默输出全全黑画面(实测 7680×4320 → 117/119 全黑、退出码 0),"
                     + "而稳定引擎(ONNX)当前不可用。请改选「不补帧」,或降低超分倍数/换用较低分辨率素材后重试。");
             }
-            // 降级链:ONNX 优先 → 换另一块 GPU(ncnn)重跑 → 无卡可换则报错(不回落 CPU)。
+            // 降级链:ONNX 优先 → 换另一块 GPU(ncnn)重跑 → 无卡可换则提示错误(不回落 CPU)。
             async Task TryDegradeAsync(int? altGpu)
             {
                 if (await TryOnnxAsync().ConfigureAwait(false)) return;   // ① 先 ONNX DirectML GPU
@@ -5147,11 +5147,11 @@ public static class VideoService
                     await TryGpuAsync(altGpu.Value, null).ConfigureAwait(false);   // 换卡后再失败不再降级
                     return;
                 }
-                // ③ 无卡可换、ONNX 又不可用 → 该段报错(禁用 CPU 兜底)
+                // ③ 无卡可换、ONNX 又不可用 → 该段提示错误(禁用 CPU 兜底)
                 throw new InvalidOperationException(
                     "补帧失败:没有可用的加速显卡。请在「计算设备」里选一块显卡,或确认已启用显卡加速后重试。");
             }
-            // 尝试一块 GPU(ncnn);失败/黑帧/0帧 → 走降级链(ONNX→换卡→报错),不回落 CPU。
+            // 尝试一块 GPU(ncnn);失败/全黑画面/0帧 → 走降级链(ONNX→换卡→提示错误),不回落 CPU。
             async Task TryGpuAsync(int g, int? altGpu)
             {
                 try
@@ -5166,13 +5166,13 @@ public static class VideoService
                     // (见下),2026-09-27 又把其余各处的判黑一并删除 ⇒ 这里只剩"0帧 / 残缺帧"两条真失败形态。
                     if (g >= 0 && watchDir != null && Directory.Exists(watchDir))
                     {
-                        // 【2026-09-16 用户裁决:删掉事后黑帧判定,改为"事前兼容性提示"】
+                        // 【2026-09-16 用户裁决:删掉事后全黑画面判定,改为"事前兼容性提示"】
                         // 原实现抽 8~48 帧判黑,命中就把整段作废、改用 ONNX 重算。实测代价(200 帧 1440p×4x 一段):
                         //   ncnn 重算整段 ≈ 53 秒,而 ONNX 只有 1 路 ≈ 10~20 分钟 —— ncnn 本身跑完全段只花 53 秒。
                         // 更糟的是**误判**:暗场素材里"输出黑 = 源帧本来就黑"(引擎正确复制), 判定却常因
                         //   "输出帧号→源帧号 ±1 偏移"或"判据不对称(输出带条带判定、源侧只判整帧)"而判成故障。
                         // 真机实证(合成素材:黑→灰→白三段)黑段被整段判故障 → 降级 ONNX,产出帧数还退回旧口径。
-                        // 用户裁决:收益远小于代价 ⇒ **不再做事后黑帧检测/降级**;黑帧的防与治移到事前预检。
+                        // 用户裁决:收益远小于代价 ⇒ **不再做事后全黑画面检测/降级**;全黑画面的防与治移到事前预检。
                         // 【保留的两条守卫】与"画面黑不黑"无关,是真正的失败形态:
                         //   ① 0 帧(引擎空跑,exit=0 却没输出)—— 补帧等于没做,必须救;
                         //   ② 帧数残缺(< 目标一半,AMD 6750 实测 140→1 帧)—— 同上。
@@ -5209,8 +5209,8 @@ public static class VideoService
 
             if (gpuNow >= 0)
             {
-                // 优先独显:只跑选定的 GPU(gpuNow)。失败/黑帧/0帧 → ONNX → 换卡 → 报错(不用 CPU)。
-                // 多卡机器给 altGpu=另一块卡;单卡给 null(无卡可换时尽快报错,不落 CPU)。
+                // 优先独显:只跑选定的 GPU(gpuNow)。失败/全黑画面/0帧 → ONNX → 换卡 → 提示(不用 CPU)。
+                // 多卡机器给 altGpu=另一块卡;单卡给 null(无卡可换时尽快提示错误,不落 CPU)。
                 int? alt = null;
                 try
                 {
@@ -5224,7 +5224,7 @@ public static class VideoService
             else
             {
                 // ===== ONNX 补帧路线(50 系/GPU 不可用设备):ncnn-CPU 慢,若 ONNX 模型在 → 走 ONNX(DirectML/CPU 逐对)=====
-                // 50 系 ncnn-Vulkan 崩(黑帧/静默 hang)→ 原逻辑直接降 ncnn-CPU(慢);
+                // 50 系 ncnn-Vulkan 崩(全黑画面/静默 hang)→ 原逻辑直接降 ncnn-CPU(慢);
                 // 现在优先 ONNX:DirectML GPU 可跑(50 系 DirectML 正常),失败自动 CPU。
                 if (RifeOnnxService.Available() && TryGetRifeOnnxFrames(args, out var onnxSegIn, out var onnxOut, out var onnxTarget))
                 {
@@ -5236,7 +5236,7 @@ public static class VideoService
                 else
                 {
                     // GPU 不可用(无独显/50 系 ncnn 崩)且 ONNX 模型缺失:此前会静默降 ncnn-CPU(数小时,太慢)。
-                    // 按用户要求不落 CPU:直接报错,而不是让视频慢到像卡死。
+                    // 按用户要求不落 CPU:直接提示错误,而不是让视频慢到像长时间无响应。
                     throw new InvalidOperationException(
                         "补帧失败:没有可用的显卡加速(且未检测到补帧引擎)。请在「计算设备」里选一块显卡后重试。");
                 }
@@ -5244,7 +5244,7 @@ public static class VideoService
         }
 
         // TTA 开关(所有模型可用);时间步仅 v4 架构模型支持
-        // 实测:rife-v4.26 模型加 -x(空间TTA)会卡死;加 -z 也会卡(目录/单对都测过)——
+        // 实测:rife-v4.26 模型加 -x(空间TTA)会长时间无响应;加 -z 也会卡(目录/单对都测过)——
         // v4.26 的 TTA 完全不可用(引擎/该模型权重兼容问题)。故 v4.26 一律不传 TTA;UI 侧同时禁勾选。
         var ttaArgs = tta ? (IsV4Model(interpModel) && interpModel == "rife-v4.26" ? "" : " -x -z") : "";
         var gpuArg = gpuId >= 0 ? gpuId : -1;   // ncnn:-1 = CPU
@@ -5341,7 +5341,7 @@ public static class VideoService
         // ===== 【B7 · 2026-09-23】交付逐帧结果:不再"失败了也照样推进编号 + 静默吞异常" =====
         // 原写法是"在目的文件名的插值表达式里直接自增全局帧号"配 `catch { try { Copy } catch { } }`:
         // 两次都失败时这一帧**没了**,但编号已经被吃掉 ⇒ framesFinal 里出现空洞,而下游是按
-        // `frame_%06d.jpg` 顺序读的(编码/拼接),撞上"文件不存在"要么直接报错、要么少帧静默变短 ——
+        // `frame_%06d.jpg` 顺序读的(编码/拼接),撞上"文件不存在"要么直接提示错误、要么少帧静默变短 ——
         // 日志里连一条提示都没有,真机排查时完全看不出。
         // 现在的口径:① 只有**真的交付成功**才推进编号(序列始终连续);② 失败一定留痕(逐帧 WARN + 段末 ERROR 汇总);
         // ③ 失败前多给两次机会(引擎进程刚退出时句柄可能还没放开,Move 会因共享冲突失败)。
@@ -5431,7 +5431,7 @@ public static class VideoService
         var workDir = Path.GetDirectoryName(framesFinal)!;
         var ts = timeStep is > 0 and <= 1 ? timeStep.Value.ToString("0.##", inv) : "0.5";
         var gpuArg = gpuId >= 0 ? gpuId : -1;   // ncnn:-1 = CPU
-        // v4.26 的 TTA(-x/-z)均卡死:一律不传(同上,UI 侧禁勾选)
+        // v4.26 的 TTA(-x/-z)均长时间无响应:一律不传(同上,UI 侧禁勾选)
         var ttaArgs = tta ? (interpModel == "rife-v4.26" ? "" : " -x -z") : "";
         int gOut = 1;
         double outFpsSafe = outFps > 0.01 ? outFps : 60;
@@ -5540,9 +5540,9 @@ public static class VideoService
     }
 
     // 【2026-09-27 删除"源帧黑场豁免"判据】原先这里有四个成员:
-    //   IsFileDefective(单个源帧是不是缺陷帧)、NeighborFrame(取 ±1 号源帧,`frame_%06d` 命名口径)、
+    //   IsFileDefective(单个源帧是不是无效帧)、NeighborFrame(取 ±1 号源帧,`frame_%06d` 命名口径)、
     //   SourceFrameJustifiesBlack(该源帧能否解释输出黑)、DefectiveFramesAllComeFromNearBlack(整批豁免判定)。
-    // 它们只为"超分批黑帧降级链"做防误杀(判黑之后要区分"GPU 真故障"与"素材本来就是黑场"),而那条链
+    // 它们只为"超分批全黑画面降级链"做防误杀(判黑之后要区分"GPU 真故障"与"素材本来就是黑场"),而那条链
     // 已按作者要求整体删除 ⇒ 这四处再没有任何生产调用方,一并删除(其中 ShouldExemptAsSourceBlack /
     // IsFrameJustifiedByDarkSource 两个"批量豁免"判据也已从 AlhPro.Core.FrameInspect 删除;
     // FrameInspect 里剩下的 IsSilentBlackFailure 只服务【单图/分块成品】的自带源图豁免守卫
@@ -5893,17 +5893,17 @@ public static class VideoService
     private static readonly System.Collections.Generic.List<string> _hwProbeFailures = new();
 
     /// <summary>【自动化自验缝】让硬件编码这次调用必定失败(故意塞一个不存在的选项),用来在真机上验证
-    /// "重试 N 次 → 报错(不退回 CPU 软编)"这条路径 —— 否则手上没有能稳定复现的硬编失败样本。
+    /// "重试 N 次 → 提示(不退回 CPU 软编)"这条路径 —— 否则手上没有能稳定复现的硬编失败样本。
     /// 只在 ALH_FORCE_HW_ENCODE_FAIL=1 时生效;不设该变量时零副作用(参数原样返回)。</summary>
     private static string SeamBreakHwEncode(string args)
         => Environment.GetEnvironmentVariable("ALH_FORCE_HW_ENCODE_FAIL") == "1"
            ? args + " -x_alh_force_hw_encode_fail" : args;
 
     /// <summary>本机有没有【实测可用】的硬件编码器(必须先 await <see cref="EnsureHwProbeAsync"/>)。
-    /// 【用途】视频任务开跑前的一次闸门:一个硬编都没有、用户又没显式选 CPU 时直接报错,
+    /// 【用途】视频任务开跑前的一次闸门:一个硬编都没有、用户又没显式选 CPU 时直接提示错误,
     /// 不让他白等一小时处理完再在编码这步慢一整轮(见 <see cref="AlhPro.Core.CpuFallbackPolicy"/>)。
     /// 【自验缝】环境变量 ALH_FORCE_NO_HW_ENCODER=1 时假装"本机没有可用硬编",用来在真机上把这条
-    /// 报错路径跑出来(本机有 nvenc,否则这条分支永远走不到)。不设该变量时零副作用。</summary>
+    /// 提示路径跑出来(本机有 nvenc,否则这条分支永远走不到)。不设该变量时零副作用。</summary>
     internal static bool HasAnyWorkingHwEncoder()
     {
         if (Environment.GetEnvironmentVariable("ALH_FORCE_NO_HW_ENCODER") == "1") return false;
@@ -5925,7 +5925,7 @@ public static class VideoService
         NotProbed,
         /// <summary>实测通过:8 帧 JPG 序列真的解出来并编出有效文件(唯一会启用硬解的状态)。</summary>
         Usable,
-        /// <summary>确定不可用:命令真跑完但报错/输出无效(exit≠0、输出解不开、帧数不足等)。</summary>
+        /// <summary>确定不可用:命令真跑完但提示错误/输出无效(exit≠0、输出解不开、帧数不足等)。</summary>
         Unsupported,
         /// <summary>探测超时(6 秒硬超时被触发,进程被我们杀掉):**结论未知** —— 既不能当支持,也不能当不支持。</summary>
         ProbeTimeout,
@@ -6138,10 +6138,10 @@ public static class VideoService
         // 【2026-09-12 加固,三个改动都是踩过的坑】
         //  ① 用【真会去编码的那个 ffmpeg】探(encFfmpeg 的配方来源),而不是永远用主 ffmpeg ——
         //     主 ffmpeg 能过、实际编码用的是备用 ffmpeg8 时,探测结论对不上真实路径。
-        //  ② 从"1 帧图 + 1 帧解码"改成【8 帧序列 + 必须解出 8 帧】—— 单帧探不出"多帧序列下 cuvid 卡住"。
+        //  ② 从"1 帧图 + 1 帧解码"改成【8 帧序列 + 必须解出 8 帧】—— 单帧探不出"多帧序列下 cuvid 停住"。
         //     实测:ffmpeg8 + h264_nvenc + `-c:v mjpeg_cuvid` 解 1080p JPG **序列**,20 帧的命令永不结束(挂到超时强杀),
         //     而同命令去掉 cuvid 0.67 秒完成。单帧探测对这种形态完全无感。
-        //  ③ 探测本身加【硬超时】:即使某台机器真被 cuvid 卡住,也只损失这几秒并把该路径判为不可用,
+        //  ③ 探测本身加【硬超时】:即使某台机器真被 cuvid 停住,也只损失这几秒并把该路径判为不可用,
         //     绝不会让整个视频任务无声挂死(以前的写法一旦挂住就是整任务不动)。
         //     【超时值以代码为准 = 6 秒】本段早先写过"30 秒",与下面 CancelAfter(6) 自相矛盾 —— 2026-09-12 自检统一:
         //     正常 NVDEC 解 8 帧 720p 连 1 秒都用不到,6 秒已是 6 倍余量;真卡的机器多等 24 秒毫无收益。
@@ -6253,7 +6253,7 @@ public static class VideoService
             AppLogger.Info("硬件编码器探测:" + (WorkingHwEncoders.Count > 0
                 ? "可用 [" + string.Join(", ", WorkingHwEncoders) + "]"
                 : "全部不可用 —— 按「视频不落 CPU」策略视频任务开不了;开跑前会用**本次任务的真实尺寸+帧率**"
-                  + "再实测一次(见「探测未认可…」那行),仍不行才报错"));
+                  + "再实测一次(见「探测未认可…」那行),仍不行才提示错误"));
             // 【每一档为什么失败必须留痕】旧写法 catch { } 全吞 ⇒ 日志只剩上面这一句,
             // 1660/1050 Ti 那种"探测说没有、真实参数却能编"的机器无从定性(实证见 RecoverHwEncoderByPreflightAsync)。
             if (WorkingHwEncoders.Count == 0 && _hwProbeFailures.Count > 0)
@@ -6263,7 +6263,7 @@ public static class VideoService
             AppLogger.Info("JPG 序列硬解码(NVDEC)探测结论:" + _hwJpegDecode switch
             {
                 HwJpegDecode.Usable => "可用(合帧将用 -c:v mjpeg_cuvid)",
-                HwJpegDecode.Unsupported => "确定不可用(命令报错或输出不合格)→ 合帧走软件解码",
+                HwJpegDecode.Unsupported => "确定不可用(命令提示错误或输出不合格)→ 合帧走软件解码",
                 HwJpegDecode.ProbeTimeout => "探测超时(6 秒未完成,【结论未知,不等于不支持】)→ 合帧走软件解码",
                 _ => "未探测(本机没有可用 NVENC,或探测被取消)→ 合帧走软件解码",
             });
@@ -6271,13 +6271,13 @@ public static class VideoService
             // 驱动较旧(实测 572.83)的机器是靠 engines\ffmpeg8\ffmpeg.exe 这个备用包兜住的。
             // 而 engines\ 是 gitignore、deploy.ps1 也不同步 —— 漏拷一次,硬编就静默消失,用户只会觉得"变慢了"。
             // 【2026-10-16 文案更正】这里原来写"本机将使用 CPU 软编(明显更慢)" —— 那是 09-23「视频不落 CPU」
-            // 之前的口径,现在的真实行为是"视频任务报错",照旧文案写会让用户以为还能用。
+            // 之前的口径,现在的真实行为是"视频任务提示错误",照旧文案写会让用户以为还能用。
             if (WorkingHwEncoders.Count == 0 && BackupFfmpegPath == null)
             {
                 AppLogger.Warn("⚠ 硬件编码不可用,且未找到备用 ffmpeg(engines\\ffmpeg8\\ffmpeg.exe)。"
                     + "若显卡支持硬编:补齐该备用 ffmpeg,或把 NVIDIA 驱动更新到 610 以上(内置 ffmpeg 的 NVENC 需要 610+)。"
                     + "本机**没有**「CPU 软编」这条退路(「视频不落 CPU」策略):下面会按本次任务真实参数再实测一次,"
-                    + "仍不可用才会在开跑前报错。");
+                    + "仍不可用才会在开跑前提示错误。");
             }
             else if (WorkingHwEncoders.Count > 0 && BackupFfmpegPath == null)
             {
@@ -6360,7 +6360,7 @@ public static class VideoService
 
     /// <summary>【探测误判的补救 · 2026-10-16】探测说"一个可用硬编都没有"时,**不直接拒绝这次视频任务**:
     /// 先用**本次任务真实要用的尺寸 + 标称帧率**把候选编码器各试 1 帧,能编就把该编码器+配方记进
-    /// <see cref="WorkingHwEncoders"/> / <see cref="HwRecipes"/> 并返回它;一个都不行才返回 null(由调用方报错)。
+    /// <see cref="WorkingHwEncoders"/> / <see cref="HwRecipes"/> 并返回它;一个都不行才返回 null(由调用方提示错误)。
     ///
     /// 【为什么必须有(真机实证)】探测写死 `testsrc=1280x720 rate=30`,回答的是"这台机器能不能编 720p30";
     /// 而这次任务要问的是"**这组尺寸+帧率**能不能编"。本机日志里两者直接打过架:
@@ -6427,7 +6427,7 @@ public static class VideoService
     /// 【失败语义(与 C 的分工)】
     ///   · **打不开编码器**(初始化失败,判据在 <see cref="AlhPro.Core.VideoEncodeGuard"/>):换候选链里的
     ///     下一个**本机实测可用硬编**(优先同厂商另一档,如 h264_qsv ⇒ hevc_qsv),日志写清"换用 X";
-    ///     链空了才报错(<see cref="AlhPro.Core.CpuFallbackPolicy.DescribeHwEncodeInitFailure"/>)。
+    ///     链空了才提示错误(<see cref="AlhPro.Core.CpuFallbackPolicy.DescribeHwEncodeInitFailure"/>)。
     ///   · **瞬时失败**:同一编码器再试 1 次(预检只花 1 秒);仍失败 ⇒ 停下。编码阶段那 3 次重试留给
     ///     "预检通过、真编时才失败"那种情况(5060 那台就是那种),本函数不改变它。
     /// 【不改状态】不写 WorkingHwEncoders / HwRecipes / 会话台账;临时文件用完就删。
@@ -6561,7 +6561,7 @@ public static class VideoService
             // ⇒ 改走 HEVC:先厂商 hevc_*(qsv 那一档也接受 —— 总比确定失败强),再本机任一实测可用的 hevc。
             // ⚠ 这里**故意不看** WorkingHwEncoders 有没有认证过厂商 HEVC:探测是"用生产参数编一小帧",
             //   探测没过 ≠ 这个尺寸编不了;而 h264 在这个尺寸是**确定**编不了 ⇒ 让开跑前那次参数级预检
-            //   用真参数试一次 hevc 才是正解(它失败会如实报错,不会白跑几十分钟)。
+            //   用真参数试一次 hevc 才是正解(它失败会如实提示错误,不会白跑几十分钟)。
             if (AlhPro.Core.VideoEncodeGuard.ExceedsH264Limit(outWidth, outHeight)
                 && !chosen.StartsWith("hevc", StringComparison.OrdinalIgnoreCase))
             {
@@ -6612,7 +6612,7 @@ public static class VideoService
     }
 
     // 【2026-09-23 删掉 BrokenHwEncoders】它原来是"硬编失败一次 → 本会话所有任务静默走 CPU 软编"的载体。
-    // 按用户要求「视频不落 CPU」,现在硬编失败是"重试 N 次 → 报错",没有什么"记坏以后走 CPU"的状态了
+    // 按用户要求「视频不落 CPU」,现在硬编失败是"重试 N 次 → 提示",没有什么"记坏以后走 CPU"的状态了
     // ⇒ 字段连同它的两处用法一起删掉(死代码);这也顺手根除了旧注释里记的那个坑:
     // 用户点一次「停止」被误判成"硬编坏了",此后本会话全部任务静默慢数倍直到重启。
 
@@ -6705,7 +6705,7 @@ public static class VideoService
     ///      ② ApplyEdgeSmoothInMemory:LockBits(32bppArgb)→ 拆 3 个通道平面(3×w×h 字节)
     ///         → 每通道一次 3×3 边缘平滑 → 合回 32bpp;③ SaveJpegViaGdi 再拷一张 24bppRgb(GDI+ DrawImage);
     ///      ④ GDI+ JPEG 编码。全流程只有一次解码、一次编码(AA 搭在中间,不多一代损失)。
-    ///      【2026-09-27】原 ② 是"黑帧采样(ForEachSample 抽样)"、判黑搭在这条最热路径上,已随事后判黑删除;
+    ///      【2026-09-27】原 ② 是"全黑画面采样(ForEachSample 抽样)"、判黑搭在这条最热路径上,已随事后判黑删除;
     ///      现在这一步只做"解码 → (可选)抗锯齿 → 写 JPG"。
     ///   B. JPG 输入(引擎直出 JPG,视频正常路径)→ EngineService.ApplyEdgeSmoothToJpeg:
     ///      ① new Bitmap(jpg) = JPEG 解码一次;② 同 A 的 ②/③/④(AA + 24bpp 拷贝 + 编码);③ 落盘。
@@ -6759,7 +6759,7 @@ public static class VideoService
         return pngCount;
     }
 
-    /// <summary>PNG → JPG(可选抗锯齿)。分两遍扫,保持原有"坏帧补同尺寸占位、保帧号连续"的行为。
+    /// <summary>PNG → JPG(可选抗锯齿)。分两遍扫,保持原有"无效画面补同尺寸占位、保帧号连续"的行为。
     /// 返回处理的 PNG 帧数(0 = 目录里本来就没有 PNG)。</summary>
     private static int ReencodeDirPngToJpgCore(string dir, int edgeSmooth,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct, int pctFrom, int pctTo, int curPct)
@@ -6865,7 +6865,7 @@ public static class VideoService
                 else if (d % 20 == 0 || d == pngs.Length)
                 {
                     // 【G · 2026-09-13】AA 关(官方预设现已默认清 0)时这条路径原来【一条进度都不发】:
-                    // 整批整理帧期间界面只停在上一阶段的"预计还剩几秒",补帧跑到 2667/2668 之后就像卡死
+                    // 整批整理帧期间界面只停在上一阶段的"预计还剩几秒",补帧跑到 2667/2668 之后就像长时间无响应
                     // (真机反馈)。现在发中性文案"整理帧(JPG) 第 N / M 帧":
                     //   · 沿用【当前进度百分比】curPct —— 只换文字,不推进也不回退:这一步没有自己的进度区间,
                     //     硬塞一个区间会与相邻阶段(缩放 92~98 / 编码 96~100)打架,反而让进度条乱跳;
@@ -6885,7 +6885,7 @@ public static class VideoService
 
     /// <summary>
     /// 探测源视频色彩空间(ffprobe)。若为 HDR(PQ-HLG)或宽色域(≠BT.709),返回源描述 + 转 BT.709 标准 SDR 的滤镜链,
-    /// 用于拆帧阶段提前转换,避免输出偏色/掉信息。保守:任一关键字段未知(unknown)时不做转换(避免 zscale "no path" 报错),
+    /// 用于拆帧阶段提前转换,避免输出偏色/掉信息。保守:任一关键字段未知(unknown)时不做转换(避免 zscale "no path" 提示),
     /// 返回 (null,null)。任何探测/解析失败同样返回 (null,null),不阻断流程。
     /// </summary>
     /// <summary>最近一次探测到的"源素材是 HDR/广色域/10bit"摘要(null = 普通 SDR 8bit)。
@@ -6993,7 +6993,7 @@ public static class VideoService
                 // 【非法标记兜底 · 2026-09-18 诊断包 + 本机 ffmpeg 复现确认】
                 // 源文件把 colour 标记写成保留值(reserved)时,ffmpeg 会在"帧色彩标记 → JPG 编码器"的
                 // 自动转换处直接失败:`Invalid color space` → 拆帧 0 帧 → 任务 1~2 秒失败
-                // (诊断包里那台 AMD RX 6650 XT 的报错与本机在**N 卡**上复现出的报错一字不差 → **与显卡无关**)。
+                // (诊断包里那台 AMD RX 6650 XT 的提示错误与本机在**N 卡**上复现出的提示错误一字不差 → **与显卡无关**)。
                 // 实测修法:输入侧显式把标记盖成 bt709 → exit 0、120/120 帧 ✓(叠不叠转换链都能过)。
                 // 只在"标记非法/未指定"时兜底;真正的 bt709 源不动它。
                 if (!primKnown || !spaceKnown || !trcKnown)
@@ -7224,7 +7224,7 @@ public static class VideoService
     }
 
     /// <summary>去重分析的"心跳":把进度**同时**喂给界面与日志(日志按 5 秒限流)。
-    /// 【为什么必须有】用户报"去重卡住"时,日志里往往只有任务开始那一条 —— 事后完全无法判断它是
+    /// 【为什么必须有】用户报"去重停住"时,日志里往往只有任务开始那一条 —— 事后完全无法判断它是
     /// 停在第几帧、还是根本没开始跑。有了心跳,下一份诊断包就能直接指到帧号(配合耗时一起看)。
     /// 【为什么限流】4 万帧的视频每帧写一行会把日志刷爆;界面进度不限(它是覆盖式的,不落盘)。</summary>
     private sealed class DedupHeartbeat
@@ -7255,7 +7255,7 @@ public static class VideoService
             }
         }
 
-        /// <summary>收尾:无论走到哪一步都要落一条"结束"日志(有了它,"开始有、结束没有"就等于卡住)。</summary>
+        /// <summary>收尾:无论走到哪一步都要落一条"结束"日志(有了它,"开始有、结束没有"就等于停住)。</summary>
         public void Done(int deleted)
             => AppLogger.Info($"{_stage}完成:共 {_total} 帧,判重 {deleted} 帧,用时 {_sw.Elapsed.TotalSeconds:0.#} 秒");
     }
@@ -7272,7 +7272,7 @@ public static class VideoService
     ///    动漫/敏感模式启用(强度联动),标准/智能不启用(保守)。
     /// 返回要删除的帧号(1-based,与 frame_%06d.png 序号对应)。
     /// 【2026-09-12 补】新增 ct(可取消)与 progress(界面进度):此前这个函数**既不能取消、也从不报进度** ——
-    /// 长片/多帧时界面一动不动、点「停止」也停不下来,用户只能判成"去重卡住了"(实测过的真实反馈)。
+    /// 长片/多帧时界面一动不动、点「停止」也停不下来,用户只能判成"去重停住了"(实测过的真实反馈)。
     /// 取消是"每 16 帧检查一次"(检查本身极便宜),不会拖慢正常处理。</summary>
     private static System.Collections.Generic.HashSet<int> DetectDupFramesWithSsim(string framesDir,
         double sadThr, double ssimThr, double protectRatio = 0.06,
@@ -7874,7 +7874,7 @@ public static class VideoService
             // 这是**去重链上唯一一段没有进度输出的逐帧循环**:它给每一帧都做 LoadFullGray + 直方图均衡化
             // (整帧解码),是纯 CPU 重活,却只在整个段跑完之后才报一条。本段今天**不可达**(三个调用点全部传
             // forceGrid: true ⇒ 进的是上面那个"网格抽帧"分支,那条分支根本不解码帧、只按间隔取序号),
-            // 所以这不是当前用户能撞到的缺陷 —— 但它是一个**定时炸弹**:哪天有人把"自动识别拍数"这条路打开
+            // 所以这不是当前用户能撞到的问题 —— 但它是一个**定时炸弹**:哪天有人把"自动识别拍数"这条路打开
             // (forceGrid 传 false),这一段就会变成"界面卡在那里一动不动"的老毛病(本轮修的就是这类体验)。
             // 与其留个"要记得加"的注释,不如现在就按现有风格接上同一个心跳(成本 3 行,零行为变化)。
             var hbPick = new DedupHeartbeat(progress, "去重分析(拍数识别)", len);
@@ -8054,7 +8054,7 @@ public static class VideoService
     /// <paramref name="planSlots"/>/<paramref name="planSlotSrc"/> 直接给出**外部排程**(每个输出槽是要拷源帧、
     /// 还是在某对源帧之间插值),此时本方法只负责"把排程变成真实帧"—— 层批并发、静止帧对保护、引擎缺帧兜底、
     /// JPG 落盘全部照旧,**不另写一套**(用户硬要求)。不传外部排程时,行为与改动前逐字一致。
-    /// 【2026-09-27】返回值里原来的 bool anyBlack(检出黑帧 → 上层清半成品回退分段补帧)已随事后判黑一起删除。</summary>
+    /// 【2026-09-27】返回值里原来的 bool anyBlack(检出全黑画面 → 上层清半成品回退分段补帧)已随事后判黑一起删除。</summary>
     private static async Task<(int frameCount, double outFps)> RunTempoResampleAsync(string rife,
         string framesIn, string framesFinal, int frameCount, double inFps,
         System.Collections.Generic.List<int>? srcIdx, int interpScale, double? targetFps,
@@ -8086,7 +8086,7 @@ public static class VideoService
         if (externalPlan) outN = planSlotSrc!.Length;
         // 每输出槽 → 源帧路径:端点直接映射;中间槽逐槽单对 -s 精确时间步。
         // 关键教训(rife-ncnn-vulkan):【目录模式忽略 -s】(-s 只对单对 -0/-1/-o 有效);
-        // -n 的输出含端点且中间帧数不稳定(实测 -n 6 = [A,3中间,B,B]);故任意 t
+        // -n 的输出含端点且中间帧数偶发(实测 -n 6 = [A,3中间,B,B]);故任意 t
         // 唯一可靠原语 = 单对 -s 逐槽调用(每槽一次引擎进程,~0.4s/槽无 TTA)。
         var slotSrc = new string[outN];
         var slots = new List<(int i, int j, double phi)>();
@@ -8133,10 +8133,10 @@ public static class VideoService
         // 时间轴=精确源位置,画面=最近 dyadic 插值。引擎调用:每层一次层批(共 ≤4 次)。
         var activePairs = slots.Select(s => s.i).Distinct().ToList();
         var pairMids = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<(double phi, string file)>>();
-        // 【2026-09-27 删除"补帧输出黑帧自检 + 换路重算"】原先这里有 5 个计数器(blackDefects/blackChecked/
+        // 【2026-09-27 删除"补帧输出全黑画面自检 + 换路重算"】原先这里有 5 个计数器(blackDefects/blackChecked/
         // blackExempts/blackSamples),分【块级抽样】与【整段抽样】两轮判黑,命中就 RerouteBlackSlotsAsync
         // (ONNX 逐槽重算 → 换卡 ncnn 逐槽重算),全失败则抛 BlackFrameRerouteException 让任务失败。
-        // 作者反馈:素材里正常的黑色转场/淡入淡出/夜戏被判成"补帧输出黑帧"⇒ 全片换路重算(ONNX/换卡,
+        // 作者反馈:素材里正常的黑色转场/淡入淡出/夜戏被判成"补帧输出全黑画面"⇒ 全片换路重算(ONNX/换卡,
         // 慢一二十倍)甚至整条任务失败。事后判黑已整体删除 ⇒ 这一整套连同计数器一起删除。
         // 保留:missingMids(引擎没产出、被兜底成"左端点副本"的节点数)——它只记日志,与判黑无关。
         int missingMids = 0;       // 引擎没产出、被 InterpLayerBatchAsync 兜底成"左端点副本"的节点数(只记日志)
@@ -8210,7 +8210,7 @@ public static class VideoService
                         };
                         // 层批内逐帧进度:轮询输出文件数 → 映射到全局"已处理 X/共 Y 帧"
                         // 【修复 跨批跳格】旧代码 gf=k/batch.Count*slotTotal 只看当前批(batch 开始时 k 归 0,
-                        //  进度会跳回/跳格,用户以为卡死)。改为用"批前已累计 midDone + 当前批已生成 k"折算,
+                        //  进度会跳回/跳格,用户以为长时间无响应)。改为用"批前已累计 midDone + 当前批已生成 k"折算,
                         //  批内逐帧涨、跨批连续,不再跳格。
                         IProgress<(int pct, string msg)>? layerProg = progress == null ? null
                             : new System.Progress<(int pct, string msg)>(lt =>
@@ -8233,7 +8233,7 @@ public static class VideoService
                             double midPhi = (nd.phi0 + nd.phi1) / 2;
                             string midF = mids[k];
                             // 【只记日志】InterpLayerBatchAsync 对"引擎没产出的节点"会兜底成左端点源帧
-                            // (宁可重复不可空)。那种帧不是黑帧(是合法的重复帧),但说明该次引擎调用丢过活,
+                            // (宁可重复不可空)。那种帧不是全黑画面(是合法的重复帧),但说明该次引擎调用丢过活,
                             // 值得在日志里留个数 —— 本任务不改它的行为(避免影响既有去重/统计口径)。
                             if (!midF.EndsWith(".png", StringComparison.OrdinalIgnoreCase)) missingMids++;
                             if (!pairMids.TryGetValue(nd.p, out var list)) pairMids[nd.p] = list = new();
@@ -8244,8 +8244,8 @@ public static class VideoService
                                 nextNodes.Add((nd.p, midPhi, midF, nd.phi1, nd.b));
                             }
                         }
-                        // 【2026-09-27】原先这里还有"块级黑帧自检"(DefectSampling 抽样 + IsBlackPng/IsBlackPngStrict
-                        // + BlackFrameRecovery.IsRealDefect 判"真缺陷"),已按作者要求删除(理由见本函数开头):
+                        // 【2026-09-27】原先这里还有"块级全黑画面自检"(DefectSampling 抽样 + IsBlackPng/IsBlackPngStrict
+                        // + BlackFrameRecovery.IsRealDefect 判"真问题"),已按作者要求删除(理由见本函数开头):
                         // 素材黑色转场/夜戏会被判成"某次引擎调用整块坏掉"⇒ 全片换路重算或任务失败。
                         midDone += batch.Count;
                         int fr = Math.Min(slotTotal, (int)((double)midDone / Math.Max(1, midNeed) * slotTotal));
@@ -8275,12 +8275,12 @@ public static class VideoService
                 throw;
             }
         }
-        // 【2026-09-27】原先这里还有"整段再补一次均匀抽样判黑"(覆盖 pairMids)+ "检出黑帧就必须换路"
+        // 【2026-09-27】原先这里还有"整段再补一次均匀抽样判黑"(覆盖 pairMids)+ "检出全黑画面就必须换路"
         // (RerouteBlackSlotsAsync:ONNX 逐槽重算 → 换卡 ncnn 逐槽重算 → 全失败抛异常让任务失败)。
-        // 已按作者要求整体删除:素材黑色转场/淡入淡出/夜戏会被判成"补帧输出黑帧"⇒ 全片换路重算(慢一二十倍)。
+        // 已按作者要求整体删除:素材黑色转场/淡入淡出/夜戏会被判成"补帧输出全黑画面"⇒ 全片换路重算(慢一二十倍)。
         // 保留的只有下面这条"引擎未产出节点"的日志(只报数字,不参与任何判定)。
         if (missingMids > 0)
-            AppLogger.Info($"{stageName}:引擎未产出的节点 {missingMids} 个(已按「左端点副本」兜底,不是黑帧;"
+            AppLogger.Info($"{stageName}:引擎未产出的节点 {missingMids} 个(已按「左端点副本」兜底,不是全黑画面;"
                 + "若占比大说明该次引擎调用丢过活,建议更新显卡驱动后重试)");
         // 输出:按 j 顺序写帧(帧号连续)。统一重编码成 JPG(源帧已是 JPG,层批中间帧为引擎 PNG),配合下游 framesIn=JPG。
         int written = 0;
@@ -8308,13 +8308,13 @@ public static class VideoService
         return (written, fps);
     }
 
-    // 【2026-09-27 删除"黑帧换路重算"整套】原先这里四个成员:
-    //   RerouteBlackSlotsAsync(黑帧换路编排:ONNX 逐槽重算 → 换卡 ncnn 单对 -s 逐槽重算 → 全失败抛异常让任务失败)、
-    //   OnnxResampleSlotsAsync / NcnnResampleSlotsAsync(两条换路的实现)、VerifyReroutedSlots(换路后逐帧复查看还有没有黑帧)。
-    // 它们只服务"补帧输出检出黑帧"这一件事;事后判黑已按作者要求整体删除
-    // (作者反馈:素材里正常的黑色转场/淡入淡出/夜戏被判成黑帧 ⇒ 全片换路重算,ONNX 比 ncnn 慢一二十倍,
+    // 【2026-09-27 删除"全黑画面换路重算"整套】原先这里四个成员:
+    //   RerouteBlackSlotsAsync(全黑画面换路编排:ONNX 逐槽重算 → 换卡 ncnn 单对 -s 逐槽重算 → 全失败抛异常让任务失败)、
+    //   OnnxResampleSlotsAsync / NcnnResampleSlotsAsync(两条换路的实现)、VerifyReroutedSlots(换路后逐帧复查看还有没有全黑画面)。
+    // 它们只服务"补帧输出检出全黑画面"这一件事;事后判黑已按作者要求整体删除
+    // (作者反馈:素材里正常的黑色转场/淡入淡出/夜戏被判成全黑画面 ⇒ 全片换路重算,ONNX 比 ncnn 慢一二十倍,
     //  甚至整条任务按失败收尾)⇒ 这四个成员再没有任何调用方,一并删除。
-    // 代价(与 2026-09-16 补帧侧裁决同口径):补帧引擎真出黑帧时按原样采用、照旧写进成片 ——
+    // 代价(与 2026-09-16 补帧侧裁决同口径):补帧引擎真出全黑画面时按原样采用、照旧写进成片 ——
     // 事前兼容性判定(InterpSizePolicy.JudgeEngineRisk + 开跑前的尺寸/显卡预检)是唯一防线。
     /// <summary>【任务 S2 · 生产接线这半】算全片"逐对相邻源帧"的图像指标(帧差 + 拉普拉斯能量),
     /// 喂给 <see cref="AlhPro.Core.SceneCutJudge.Detect"/> 判场景硬切。
@@ -8404,8 +8404,8 @@ public static class VideoService
     /// 【落地方式】完全复用"补回(还原源时间轴)"那条路的既有层批并发结构(EngineService.InterpLayerBatchAsync),
     /// 只是把"槽位怎么排"换成上面这套 —— **没有**新写并发与降级链。
     /// 【失败】帧数不符 → 抛异常,由调用方清掉半成品并回退分段补帧(那里有完整降级链)。
-    /// 【2026-09-27】原先这里还有"引擎检出黑帧 → 抛异常回退分段补帧"一路,已随事后判黑整体删除
-    /// (素材黑色转场/夜戏会被判成黑帧 ⇒ 整段合成白做,作者反馈的"转 ONNX 超级慢"同源)。
+    /// 【2026-09-27】原先这里还有"引擎检出全黑画面 → 抛异常回退分段补帧"一路,已随事后判黑整体删除
+    /// (素材黑色转场/夜戏会被判成全黑画面 ⇒ 整段合成白做,作者反馈的"转 ONNX 超级慢"同源)。
     /// 【已知代价(照实写,不靠偷偷加锐化找补)】源里"本来静止"的缺口处会插出轻微软化(小样实测中位 ≈6%);
     /// 切点处由"糊一帧"变成"硬切两帧"——那是切点本身的性质,视觉上更对。</summary>
     private static async Task<(int written, int cuts, int forcedCopies)> FlattenTimelineAsync(
@@ -8482,7 +8482,7 @@ public static class VideoService
         var files = EnumerateFrameFiles(framesDir)
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
         if (files.Length < 2) return drop;
-        // 第一遍:采样帧灰度,算相邻对统计标量(逐段报告,检测不会像卡死)
+        // 第一遍:采样帧灰度,算相邻对统计标量(逐段报告,检测不会像长时间无响应)
         var hb = new DedupHeartbeat(progress, stage, files.Length);
         var prev = SampleGray(files[0], scale, out var sw, out var sh);
         int pairCount = files.Length - 1;
@@ -9024,7 +9024,7 @@ public static class VideoService
     }
 
     /// <summary>去重保护:删掉过多帧说明素材动态过低(如几乎静止的短视频),
-    /// 继续处理会得到只有几帧的"坏"视频(打不开/没补帧),直接报错而不是假装成功。
+    /// 继续处理会得到只有几帧的"坏"视频(打不开/没补帧),直接提示错误而不是假装成功。
     /// 用户确认"仍要进行"时可通过 allowFewFrames 跳过本保护。</summary>
     /// <summary>v4 架构模型判定(统一口径):rife-v4 / rife-v4.6 / rife-v4.13 / rife-v4.26…(可精确补足、非 2 的幂)。
     /// 曾散落 3 处写死 "rife-v4" or "rife-v4.6",导致默认模型 rife-v4.13 走 v2 兜底逻辑(帧数/时长次优)。</summary>
@@ -9070,7 +9070,7 @@ public static class VideoService
             if (p == null) return false;
             var outTask = p.StandardOutput.ReadToEndAsync();
             var errTask = p.StandardError.ReadToEndAsync();
-            // 【修复】校验进程加超时:ffprobe 曾可能挂起,加 30 秒超时,超时就杀进程树并视为无效(避免卡住)。
+            // 【修复】校验进程加超时:ffprobe 曾可能挂起,加 30 秒超时,超时就杀进程树并视为无效(避免停住)。
             var exitTask = p.WaitForExitAsync();
             var finished = await Task.WhenAny(exitTask, Task.Delay(TimeSpan.FromSeconds(30))).ConfigureAwait(false);
             if (finished != exitTask || !p.HasExited)
@@ -9096,26 +9096,26 @@ public static class VideoService
     /// <summary>扫描【成片】里有没有"整片全黑"的片段,返回形如 "1.2s~1.6s、8.4s~8.9s" 的描述(无则空串)。
     /// 【只报数字,不参与任何判定 · 2026-09-27 作者口径确认保留】本方法的结果只写进日志与结算行,
     /// 不改任何处理行为、不改交付内容(事后判黑那套"重跑/换路/回退源帧"已于 2026-09-27 整体删除)。
-    /// 【为什么必须有这一步】黑帧防线原先只覆盖"超分引擎输出"那一步,而 **后处理阶段与编码阶段完全没有检测**。
-    /// 真实案例(用户 3070 Laptop · 花熏25.mp4):任务全程零 WARN、输出校验通过、用户却看到黑帧 ——
-    /// 黑帧不管来自哪一步都无人发现、日志无痕。
+    /// 【为什么必须有这一步】全黑画面防线原先只覆盖"超分引擎输出"那一步,而 **后处理阶段与编码阶段完全没有检测**。
+    /// 真实案例(用户 3070 Laptop · 花熏25.mp4):任务全程零 WARN、输出校验通过、用户却看到全黑画面 ——
+    /// 全黑画面不管来自哪一步都无人发现、日志无痕。
     /// 做法:抽 6fps → 缩到 320 宽 → blackdetect,只为找"整片全黑",不必原分辨率逐帧,成本低一个数量级。
     /// 【阈值是实测选出来的,别随手改大】pic_th=0.98 要求 ≥98% 像素算"黑",配合 pix_th=0.05(亮度 &lt; 约 12.75/255)。
     /// 本机用捆绑 ffmpeg 实测对比:
-    ///   · 暗夜场景(luma=20 深灰,非黑帧):pix_th=0.10 → **误报 1 处**;0.05 → 0 处;0.02 → 0 处
-    ///   · 真黑帧(且经 h264 压缩带噪):0.10 / 0.05 / 0.02 三者都能命中 1 处
-    /// ⇒ 0.10 会把正常夜景当成黑帧,0.05 既有余量拒掉暗场、又留足余量接住压缩噪声后的真黑帧。
-    /// 【2026-09-22 用户裁决:把"源片本来就黑"从缺陷里摘掉】
+    ///   · 暗夜场景(luma=20 深灰,非全黑画面):pix_th=0.10 → **误报 1 处**;0.05 → 0 处;0.02 → 0 处
+    ///   · 真全黑画面(且经 h264 压缩带噪):0.10 / 0.05 / 0.02 三者都能命中 1 处
+    /// ⇒ 0.10 会把正常夜景当成全黑画面,0.05 既有余量拒掉暗场、又留足余量接住压缩噪声后的真全黑画面。
+    /// 【2026-09-22 用户裁决:把"源片本来就黑"从问题里摘掉】
     ///   起因:整机自测发现这条告警**反复误报** —— 用户素材 `GIRL LIKE ME_1.mp4` 开头本来就是 0.417s 黑场(淡入),
-    ///   成片如实复现,却每次都被当成"处理链产生的缺陷"并要求用户发日志给作者 ✗。
+    ///   成片如实复现,却每次都被当成"处理链产生的问题"并要求用户发日志给作者 ✗。
     ///   实测证据(成片 0s~0.396s ↔ 源 0s~0.417s;源 `YAVG=16`);另一条历史告警 `3s~3.17s` 换算到源时间
     ///   (那次区间起点 2.738s)正好落在源自带的 `5.755~5.881` 黑段上 ⇒ **同一个误报**。
-    ///   根因:流水线内部那条黑帧防线当时有"相邻源帧本来就黑就放行"的豁免,**而输出端这条没有**
+    ///   根因:流水线内部那条全黑画面防线当时有"相邻源帧本来就黑就放行"的豁免,**而输出端这条没有**
     ///   ⇒ 两条防线口径不一致。
     ///   【2026-09-27 更新】流水线内部那条防线(判黑 → 重跑/换路/回退源帧,判据曾是
     ///   `AlhPro.Core.BlackFrameRecovery.IsRealDefect`)已按作者要求整体删除 ⇒ 现在**只剩输出端这一条**
     ///   留痕口径,不存在"两条口径不一致"的问题。
-    ///   现在:每处成片黑段都去**源片同位置**探一帧亮度,源片那里也黑 ⇒ 不算缺陷(只在对账行里计数)。
+    ///   现在:每处成片黑段都去**源片同位置**探一帧亮度,源片那里也黑 ⇒ 不算问题(只在对账行里计数)。
     ///   ⚠ 探不到、探测失败、没传源片 ⇒ **一律照旧报**(宁可多报,不可漏报是这条防线的底线)。
     /// 【时间轴怎么对得上】本工程有硬不变量:输出时长恒 = 原处理时长(结算行每次都核对"成片容器 vs 源容器");
     ///   去重只把被删帧的时长并进前一帧、指定帧率与平滑时间轴都保时长 ⇒ **源时刻 = 裁剪起点 + 成片时刻**
@@ -9143,7 +9143,7 @@ public static class VideoService
             if (p == null) return "";
             var errTask = p.StandardError.ReadToEndAsync();
             var exitTask = p.WaitForExitAsync(ct);
-            // 加超时:卡住的话不能把整个任务拖住(这一步只是附加检查,失败就当没发现)
+            // 加超时:停住的话不能把整个任务拖住(这一步只是附加检查,失败就当没发现)
             var done = await Task.WhenAny(exitTask, Task.Delay(TimeSpan.FromMinutes(5), ct)).ConfigureAwait(false);
             if (done != exitTask)
             {
@@ -9182,7 +9182,7 @@ public static class VideoService
                 if (exempt > 0)
                 {
                     AppLogger.Info($"输出端黑场自检:成片 {exempt} 处黑段在**源片同一时刻也是黑的** ⇒ 判定为源自带的黑场"
-                        + $"(淡入淡出/夜戏/转场),不再当缺陷上报;剩下 {kept.Count} 处需你核对。"
+                        + $"(淡入淡出/夜戏/转场),不再当问题上报;剩下 {kept.Count} 处需你核对。"
                         + "这是**只报数字**的留痕口径:流水线内部那套事后判黑/换路已于 2026-09-27 按作者要求删除。");
                 }
                 segRanges = kept;
@@ -9377,7 +9377,7 @@ public static class VideoService
     /// <summary>运行命令并返回完整输出行(供解析,如转场检测)。
     /// 【同样带无进展看门狗】这里跑的多是"把整片解码一遍"的探测(freezedetect / scdet / showinfo),
     /// 挂死风险与拆帧同级;而 ProbeHdrToSdrAsync / ProbeVideoCodecName / 帧率探测三处传的是
-    /// CancellationToken.None —— 没有看门狗就是永久卡住,用户连「停止」都点不动(只能强制结束)。
+    /// CancellationToken.None —— 没有看门狗就是永久停住,用户连「停止」都点不动(只能强制结束)。
     /// 正常探测全程持续输出(metadata=print 每帧一行 + ffmpeg 自己的 frame=/speed= 统计),
     /// 故静默阈值沿用 RunAsync 同一套(启动 90s / 运行 120s),不会误杀"慢但正常"的长片探测。</summary>
     private static async Task<List<string>> RunCaptureAsync(string exe, string args, CancellationToken ct)
@@ -9448,7 +9448,7 @@ public static class VideoService
         }
         // 顺序保持"先 stderr 全部行、再 stdout 全部行"(与改造前一致):调用方按行解析,换序会读错字段
         // 【必须给上限】理由同 RunAsync:Kill 只是"请求终止",进程卡在内核态驱动调用时不会真退出、
-        // 也无法读到 EOF;无限 await 两个管道 = 任务永久卡死(看门狗已经打过"已强制终止"的日志也没用)。
+        // 也无法读到 EOF;无限 await 两个管道 = 任务永久长时间无响应(看门狗已经打过"已强制终止"的日志也没用)。
         // 最多等 5 秒,等不到就放弃输出、直接按停滞处理(调用侧本来就有非致命兜底,不会因此误判成功)。
         bool drained = true;
         var drainAll = Task.WhenAll(drainErr, drainOut);
@@ -9496,7 +9496,7 @@ public static class VideoService
     // ==================== 左右对比:把「左原片 + 右处理后」合成一条对比片(2026-09-18) ====================
     // 【为什么是"合成一条",而不是并排摆两个播放器】
     //   两个 MediaPlayerElement = 两个解码器 + 两条时钟。用户真机反馈的五条症状全是这一个根因:
-    //   播放卡 / 有时卡死(seek 纠偏把管线拖死,实测片段卡在 1.8 秒)/ 单边卡 /
+    //   播放卡 / 有时长时间无响应(seek 纠偏把管线拖死,实测片段卡在 1.8 秒)/ 单边卡 /
     //   左右时间对不上(时钟漂移)/ 播放中拖进度两边不协调。合成成一条后只有一个解码器、一条时钟。
     //
     // 【这条命令是实测钉出来的,不要随手改】(本机 4060 Laptop + 4K 素材实测)
@@ -9849,7 +9849,7 @@ public static class VideoService
         }
     }
 
-    /// <summary>拆帧那趟的阶段名:链里挂了 Anime4K 着色器时叫「1x 修复(Anime4K)」。
+    /// <summary>拆帧那趟的阶段名:链里停住 Anime4K 着色器时叫「1x 修复(Anime4K)」。
     /// 【为什么】1x + Anime4K 那条路**整段超分阶段被跳过**(见 upscaleRuns 的判据):它不跑引擎,
     ///   只是把着色器挂在拆帧这趟的滤镜链首(见 preParts 的构造)。于是进度行原本只写「拆帧 N 帧」✗,
     ///   用户看到的就像是"1x 什么都没跑、也没有属于它的进度" ⇒ 这一步只是**把名字说对**,不改变任何处理行为。
@@ -9888,7 +9888,7 @@ public static class VideoService
         var lastChunkAt = DateTime.UtcNow;
         // ===== 无进展看门狗状态 =====
         // 时间戳必须是"每次 RunAsync 调用私有"(闭包捕获):用全局静态会被并发任务互相"喂狗"
-        // (如 2/3 路并行超分),A 的心跳让 B 真卡死也判不出来,用户无限等。EngineService 同款教训。
+        // (如 2/3 路并行超分),A 的心跳让 B 真长时间无响应也判不出来,用户无限等。EngineService 同款教训。
         bool sawAnyOutput = false;      // 是否已出现任何输出:区分"启动即挂死"与"跑了一半挂死"
         bool killRequested = false;     // 看门狗已判死,等待循环据此收手
         string? killReason = null;
@@ -9969,7 +9969,7 @@ public static class VideoService
 
         // ===== 无进展看门狗 =====
         // 为什么必须有:ffmpeg/引擎被驱动挂死时进程"活着但永不退出",原等待循环 while(!p.HasExited)
-        // 会无限转下去,唯一出路是用户手动点「强制结束」(实测有用户同一文件连续 7 次卡死在拆帧)。
+        // 会无限转下去,唯一出路是用户手动点「强制结束」(实测有用户同一文件连续 7 次长时间无响应在拆帧)。
         // 判据用"输出静默"而非固定总时长:ffmpeg 拆帧/编码期间会持续打印 frame=/speed= 统计,
         // 引擎也会打印百分比,正常干活时不可能长时间完全静默;而总时长无法设阈值(长视频本来就要跑很久)。
         // 阈值取宽,宁可漏判也不可误杀"慢但正常"的作业——误杀会让每个视频任务都失败,代价远大于多等一会儿。
@@ -10011,8 +10011,8 @@ public static class VideoService
         // 【为什么】Kill 只是"请求终止":进程若卡在内核态的驱动调用里(TerminateProcess 要等该调用返回),
         // 它会继续活着、继续占着 stdout/stderr 管道 —— 这时 `await Task.WhenAll(drainOut, drainErr)`
         // (读到 EOF 才返回)会**永远等下去**。表现就是:日志里已经打了"看门狗:…已强制终止",界面却再也
-        // 不动、点停止也没反应,用户只能强杀软件 —— 与"去重/拆帧卡住"的反馈完全一致,而看门狗以为它赢了。
-        // 现在最多等 5 秒:等不到就放弃管道,继续往下走(该走回退走回退、该报错报错),绝不再无限等待。
+        // 不动、点停止也没反应,用户只能强杀软件 —— 与"去重/拆帧停住"的反馈完全一致,而看门狗以为它赢了。
+        // 现在最多等 5 秒:等不到就放弃管道,继续往下走(该走回退走回退、该提示错误提示错误),绝不再无限等待。
         bool drained = true;
         var drainAll = Task.WhenAll(drainOut, drainErr);
         if (await Task.WhenAny(drainAll, Task.Delay(TimeSpan.FromSeconds(5))).ConfigureAwait(false) != drainAll)
@@ -10027,7 +10027,7 @@ public static class VideoService
         App.ActiveProcesses.Unregister(p.Id);
         if (ct.IsCancellationRequested)
             throw new OperationCanceledException();
-        // 进程没退出时**不许读 ExitCode**(未退出会抛 InvalidOperationException,把"卡死"伪装成别的错);
+        // 进程没退出时**不许读 ExitCode**(未退出会抛 InvalidOperationException,把"长时间无响应"伪装成别的错);
         // 也不许走"回退重跑"——它可能还在往同一个帧目录写文件,重跑会与它交叉写出错误帧数(静默坏结果)。
         if (!p.HasExited || !drained)
             throw new EngineStallException(killReason
@@ -10169,7 +10169,7 @@ public static class VideoService
         }
     }
 
-    /// <summary>逐块异步读取子进程输出(实时解析进度)。keepTail=只保留的尾部字符数(RunAsync 报错只需尾巴);
+    /// <summary>逐块异步读取子进程输出(实时解析进度)。keepTail=只保留的尾部字符数(RunAsync 提示只需尾巴);
     /// 传 0 = 全量保留(RunCaptureAsync 的调用方要逐行解析 scdet/showinfo 输出,截断会丢帧)。</summary>
     private static async Task<string> DrainAsync(System.IO.StreamReader reader,
         Action<string> onChunk, CancellationToken ct, int keepTail = 8192)

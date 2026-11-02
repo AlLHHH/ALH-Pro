@@ -6,7 +6,7 @@ namespace AlhPro.Tests;
 /// <summary>探测失败形态 → 判定与文案的单测。
 /// 【为什么必须有】这里守的是两条"不许说错话"的硬约束:
 ///   ①只有"初始化即崩/挂死"才允许提到 NVIDIA/驱动 —— 否则会把用户引向等驱动修复,而问题其实在别处;
-///   ②"出图但坏帧"一律不得出现 NVIDIA/驱动字样 —— 否则会把我们自己的并发问题(已修的 -j 那类)
+///   ②"出图但无效画面"一律不得出现 NVIDIA/驱动字样 —— 否则会把我们自己的并发问题(已修的 -j 那类)
 ///     永远甩给厂商,排查方向被带偏。
 /// 文案类逻辑最容易在后续改动里被顺手改坏,所以用测试钉住。</summary>
 public class ProbeDiagnosisTests
@@ -53,12 +53,12 @@ public class ProbeDiagnosisTests
     [Fact]
     public void Defective_frame_never_blames_nvidia()
     {
-        // 坏帧是另一类问题(引擎并发/渲染),无论是否 Blackwell 都不得提 NVIDIA。
+        // 无效画面是另一类问题(引擎并发/渲染),无论是否 Blackwell 都不得提 NVIDIA。
         foreach (var bw in new[] { true, false })
         {
             var s = ProbeDiagnosis.Describe(ProbeFailureKind.DefectiveFrame, bw, "RIFE");
             Assert.DoesNotContain("NVIDIA", s);
-            Assert.DoesNotContain("驱动缺陷", s);
+            Assert.DoesNotContain("驱动问题", s);
             Assert.Contains("ONNX", s);
         }
     }

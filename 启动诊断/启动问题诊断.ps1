@@ -1,6 +1,6 @@
 ﻿# ============================================================================
 # ALH Pro 启动问题诊断(用户侧一键收集,只读,不改动系统)
-# 用途:用户反馈「装完双击没反应 / 打不开 / 闪退」时,让用户运行本脚本,
+# 用途:用户反馈「装完双击没反应 / 打不开 / 启动即退出」时,让用户运行本脚本,
 #       把生成的 ALHPro启动诊断_*.zip 发回来,就能判断卡在哪一步。
 # 用法:双击同目录的「启动问题诊断.bat」;或在本目录执行:
 #       powershell -NoProfile -ExecutionPolicy Bypass -File .\启动问题诊断.ps1
@@ -135,7 +135,7 @@ Save-Report '02_ALHPro进程与文件.txt' {
     }
 }
 
-# ---- 3. 软件自己的日志与崩溃诊断 -------------------------------------------
+# ---- 3. 软件自己的日志与退出诊断 -------------------------------------------
 Save-Report '03_软件日志(尾部).txt' {
     $dir = Join-Path $env:LOCALAPPDATA 'ALHPro'
     "日志目录: $dir"
@@ -153,21 +153,21 @@ Save-Report '03_软件日志(尾部).txt' {
             for ($i = $lines.Count - 1; $i -ge 0; $i--) { if ($lines[$i] -match '应用启动') { $idx = $i; break } }
             if ($idx -ge 0) { $lines[$idx..($lines.Count-1)] } else { "⚠ 整个日志里没有「应用启动」记录" ; $lines }
         } else { "✗ 没有 diagnostic.log" }
-        $crash = Get-ChildItem $dir -Filter '崩溃诊断_*.txt' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending
+        $crash = Get-ChildItem $dir -Filter '退出诊断_*.txt' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending
         if ($crash) {
             $latest = $crash | Select-Object -First 1
-            "--- 崩溃诊断文件 $($crash.Count) 个,最新: $($latest.Name) ---"
+            "--- 退出诊断文件 $($crash.Count) 个,最新: $($latest.Name) ---"
             Get-Content $latest.FullName -Encoding UTF8
-        } else { "没有 崩溃诊断_*.txt(说明没走到「已捕获的异常」那一步)" }
+        } else { "没有 退出诊断_*.txt(说明没走到「已捕获的异常」那一步)" }
     }
     "--- 单实例锁:是否有别的用户会话在跑(多用户同时登录也会互相挡住)---"
     try { Get-Process ALHPro -ErrorAction SilentlyContinue | ForEach-Object { "  PID=$($_.Id) 会话=$($_.SessionId) 用户=$($_.StartInfo.EnvironmentVariables["USERNAME"])" } } catch { }
 }
 
-# ---- 4. 系统事件日志(崩溃/卡死/被拦截)-------------------------------------
+# ---- 4. 系统事件日志(进程退出/长时间无响应/被拦截)-------------------------------------
 Save-Report '04_事件日志.txt' {
     $since = (Get-Date).AddDays(-7)
-    "--- 应用程序日志:近 7 天 错误/警告 中与 ALHPro 或崩溃相关的(最多 60 条)---"
+    "--- 应用程序日志:近 7 天 错误/警告 中与 ALHPro 或进程退出相关的(最多 60 条)---"
     try {
         Get-WinEvent -FilterHashtable @{ LogName='Application'; Level=1,2,3; StartTime=$since } -MaxEvents 400 -ErrorAction Stop |
             Where-Object { $_.Message -match 'ALHPro|\.NET Runtime|Application Error|Application Hang|Windows Error Reporting|KERNELBASE|coreclr' } |

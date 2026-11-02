@@ -7,18 +7,18 @@ using Xunit;
 namespace AlhPro.Tests;
 
 /// <summary>自训模型的**分支目录**(`models\alhpro\`)。
-/// 【为什么必须钉住】这个引擎找不到模型时**不报错** —— 它会画一张坏帧、退出码仍是 0。
+/// 【为什么必须钉住】这个引擎找不到模型时**不提示** —— 它会画一张无效画面、退出码仍是 0。
 /// 所以"某条调用路径忘了改目录"这种疏漏不会有任何日志,只会静默出坏画面(本仓库已踩过两次同类事故)。
 /// 【2026-10-14 大改】四支自训 2x 模型已按用户要求整体删除(用户:"还有那几个测试的模型可以删掉了")
 /// ⇒ 分支目录的依据只剩还没训练完的 1x 修复(`alhpro-fix1x`,不进下拉)。
 /// 这里做三件事:①目录选择逻辑;②**那四支已删的模型不许再映射到分支目录**(老预设里存着它们时,
-/// 引擎会去一个不存在的目录找一个不存在的权重 —— 只出坏帧、不退错);③分支目录与根目录下都不再有那些权重。</summary>
+/// 引擎会去一个不存在的目录找一个不存在的权重 —— 只出无效画面、不退错);③分支目录与根目录下都不再有那些权重。</summary>
 public class EsrganModelDirTests
 {
     [Theory]
     // 计划中的 1x 修复(尚未训练完,不进下拉):它是"自训"这一定义的唯一现存成员
     [InlineData("alhpro-fix1x", EsrganModelDir.AlhPro)]
-    // 【已删除的四支 · 不许再指向分支目录】它们已经没有权重了,指向分支目录只会让引擎静默出坏帧
+    // 【已删除的四支 · 不许再指向分支目录】它们已经没有权重了,指向分支目录只会让引擎静默出无效画面
     [InlineData("alhpro-real2x", EsrganModelDir.Official)]
     [InlineData("alhpro-game2x", EsrganModelDir.Official)]
     [InlineData("alhpro-game2x-v2", EsrganModelDir.Official)]
@@ -61,7 +61,7 @@ public class EsrganModelDirTests
     }
 
     /// <summary>【2026-10-14 独立复审 F1 的自动守卫】**已经发出去**的下拉项,按 <see cref="EsrganModelDir.For"/>
-    /// 找到的那个目录里必须真有它的权重 —— 否则引擎"找不到权重、exit=0、只画坏帧"(本文件最上面那条)。
+    /// 找到的那个目录里必须真有它的权重 —— 否则引擎"找不到权重、exit=0、只画无效画面"(本文件最上面那条)。
     /// 现在分支目录是空的 ⇒ 这条同时挡住"先把 `alhpro-fix1x` 接进下拉、权重却还没随包发"的接法;
     /// 等那支权重真落地,这条自动变成它的验收测试(权重不在就红)。
     /// 【权重命名】官方 `realesr-animevideov3` 的权重是**按倍率分文件**的(`-x2/-x3/-x4.param`),
@@ -108,7 +108,7 @@ public class EsrganModelDirTests
                 .Concat(new[] { 2, 3, 4 }.Select(s => $"{tag}-x{s}.param"))
                 .ToArray();
             Assert.True(candidates.Any(f => File.Exists(Path.Combine(target, f))),
-                $"下拉项 {tag} 按 EsrganModelDir.For 会去 {target} 找权重,但那里没有 {string.Join(" / ", candidates)} —— 引擎会静默画坏帧");
+                $"下拉项 {tag} 按 EsrganModelDir.For 会去 {target} 找权重,但那里没有 {string.Join(" / ", candidates)} —— 引擎会静默画无效画面");
         }
     }
 }

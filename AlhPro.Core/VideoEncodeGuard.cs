@@ -14,7 +14,7 @@ namespace AlhPro.Core;
 ///     而真实任务要问的是"这次这个 **输出尺寸 + 标称帧率** 能不能编" —— 两者不等价,
 ///     差集只能靠整片重跑试出来(那一次超分 4x 已经跑完 **1425 帧 / 49.5 分钟**才在编码这步失败)。
 ///   C `h264_qsv` **3 次打不开编码器**(ffmpeg 原话 `Could not open encoder before EOF` / `Invalid argument`),
-///     而同一台机器 `hevc_qsv` 就在可用列表里 —— 旧逻辑只会在**同一个**编码器上重试 3 次再报错,
+///     而同一台机器 `hevc_qsv` 就在可用列表里 —— 旧逻辑只会在**同一个**编码器上重试 3 次再提示错误,
 ///     从不换一个(同机 NVENC 探测不到,可用硬编只有 `[h264_qsv, hevc_qsv]`)。
 ///   D 那条任务的标称帧率是 **471.85 fps**(源 ~30fps × 补帧 16x),日志里写了、
 ///     但**没有**任何面向用户的提醒(超分/补帧/编码一路照跑)。
@@ -162,7 +162,7 @@ public static class VideoEncodeGuard
         => $"编码预检通过:{encoder} 能编 {width}×{height} @ {Fmt(fps)} fps(1 帧真实参数;"
          + "之后成功路径的参数与耗时口径均未改动)";
 
-    /// <summary>预检失败的**用户可见**报错(必须让他知道"现在是开跑前停下的,不是跑完几十分钟才失败")。
+    /// <summary>预检失败的**用户可见**提示错误(必须让他知道"现在是开跑前停下的,不是跑完几十分钟才失败")。
     /// 【文案红线】不许提"去设置里选 CPU 软编" —— 那个选项不存在(<see cref="CpuFallbackPolicy"/> 的 B8 口径)。</summary>
     public static string DescribePreflightFailure(string encoder, int width, int height, double fps,
         string? detail = null, string? triedEncoders = null)
@@ -202,7 +202,7 @@ public static class VideoEncodeGuard
     /// <summary>"打不开编码器"的**文本身份**(ffmpeg / 各厂商 SDK 的原话,全部实测或来自厂商文档)。
     /// 【为什么不含 `Invalid argument`】1527 的输出里确实有 `Invalid argument`,但它同样出现在
     /// 与编码器初始化**无关**的失败里(例如超分错帧那类)⇒ 单凭它会把"瞬时失败"误判成"打不开",
-    /// 于是本该重试的任务被直接换编码器/报错。判据只认下面这些**指向编码器打开动作**的原话。</summary>
+    /// 于是本该重试的任务被直接换编码器/提示错误。判据只认下面这些**指向编码器打开动作**的原话。</summary>
     public static readonly string[] EncoderInitMarkers =
     {
         "Could not open encoder",                       // 1527 真机原话(h264_qsv 打不开)
@@ -244,12 +244,12 @@ public static class VideoEncodeGuard
          : IsEncoderInitFailure(output) ? EncodeFailureKind.EncoderInit
          : EncodeFailureKind.Transient;
 
-    /// <summary>【2026-10-20】命令写错时的报错正文:说清"这是软件自己的问题、与显卡无关、不用改设置",
+    /// <summary>【2026-10-20】命令写错时的提示错误正文:说清"这是软件自己的问题、与显卡无关、不用改设置",
     /// 并明确**不要**再去更新驱动(旧文案正是把人支去折腾驱动的)。</summary>
     public static string DescribeCommandLineFailure(string? reason)
     {
         string why = string.IsNullOrWhiteSpace(reason) ? "(未给出原因)" : reason.Trim();
-        return "编码命令的参数拼错了(这是软件自身的缺陷,和显卡、驱动都没有关系),已停下。\n"
+        return "编码命令的参数拼错了(这是软件自身的问题,和显卡、驱动都没有关系),已停下。\n"
              + "为什么不再重试:同一个错命令重试多少遍都是同一个结果,重试只会让你多等。\n"
              + "怎么办:不用改你的设置,也不用更新驱动 —— 把这份日志/诊断包反馈给作者即可。\n"
              + "最后一次原因:" + why;
@@ -293,7 +293,7 @@ public static class VideoEncodeGuard
     /// ⇒ 源视频流的 start_time ≠ 0 时(剪映/手机导出很常见),两者就差这一个 start_time
     /// ⇒ **固定偏移的音画不同步**,而软件原有自检只比「时长」(31.04 = 31.04)看不见它。
     /// 用 `-itsoffset`(输入级参数)而不用 `asetpts`/`atrim`:**滤镜与 `-c:a copy` 互斥**
-    /// (ffmpeg 会直接报错),会把“能原样复制音轨”的机器逼成重编码。
+    /// (ffmpeg 会直接提示错误),会把“能原样复制音轨”的机器逼成重编码。
     /// 1ms 以内视为 0(返回空串):常见 MP4 的 start_time 就是 0,这条改动对它们是**零操作**。
     ///
     /// 【2026-10-20 修 · 编码 100% 失败】返回串**两头都带空格**:调用处是

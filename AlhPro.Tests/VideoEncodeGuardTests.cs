@@ -167,7 +167,7 @@ public class VideoEncodeGuardTests
         Assert.DoesNotContain("rate=30", cmd);    // ★ 旧探测的写死帧率
     }
 
-    /// <summary>★ B:预检失败的报错必须说清"是**开跑前**停下的"(用户最痛的是白跑 49.5 分钟),
+    /// <summary>★ B:预检失败的提示错误必须说清"是**开跑前**停下的"(用户最痛的是白跑 49.5 分钟),
     /// 并且不许提"去设置里选 CPU 软编"(那个选项不存在 —— B8 文案红线)。</summary>
     [Fact]
     public void The_preflight_failure_text_says_it_stopped_before_processing()
@@ -207,7 +207,7 @@ public class VideoEncodeGuardTests
         Assert.Equal(AlhPro.Core.VideoEncodeGuard.EncodeFailureKind.Transient,
             AlhPro.Core.VideoEncodeGuard.ClassifyEncodeFailure(null));
         // ★ 单凭 `Invalid argument` **不算**打不开:它同样出现在与编码器初始化无关的失败里,
-        //   误判会把本该重试的任务直接换编码器/报错(1527 的输出里两句话是同时出现的,所以以第一句为准)
+        //   误判会把本该重试的任务直接换编码器/提示错误(1527 的输出里两句话是同时出现的,所以以第一句为准)
         Assert.Equal(AlhPro.Core.VideoEncodeGuard.EncodeFailureKind.Transient,
             AlhPro.Core.VideoEncodeGuard.ClassifyEncodeFailure("[vost#0:0/x @ 0x1] Task finished with error: Invalid argument"));
     }
@@ -234,7 +234,7 @@ public class VideoEncodeGuardTests
             AlhPro.Core.VideoEncodeGuard.ClassifyEncodeFailure(realStderr));
 
         var msg = AlhPro.Core.VideoEncodeGuard.DescribeCommandLineFailure(realStderr);
-        Assert.Contains("软件自身的缺陷", msg);
+        Assert.Contains("软件自身的问题", msg);
         Assert.Contains("和显卡、驱动都没有关系", msg);
         Assert.Contains("不用改你的设置", msg);          // ★ 不许再把人支去折腾驱动
         Assert.DoesNotContain("请更新显卡驱动", msg);
@@ -279,7 +279,7 @@ public class VideoEncodeGuardTests
         Assert.Contains("Could not open encoder before EOF", log);
     }
 
-    /// <summary>★ C:打不开且没有备选时的报错 —— 不许写成"连续 3 次失败"(那条路我们一次都没重试),
+    /// <summary>★ C:打不开且没有备选时的提示错误 —— 不许写成"连续 3 次失败"(那条路我们一次都没重试),
     /// 也不许指向已不存在的 CPU 选项。</summary>
     [Fact]
     public void The_init_failure_without_any_alternative_says_it_did_not_retry()

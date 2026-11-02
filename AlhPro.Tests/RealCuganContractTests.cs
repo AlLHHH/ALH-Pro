@@ -10,7 +10,7 @@ namespace AlhPro.Tests;
 ///
 /// 【为什么必须单测 · 这件事在本仓库踩过两次】
 ///  ① **CLI 不兼容**:Real-CUGAN 的 `-n` 是**降噪档**(-1/0/1/2/3),`-m` 才是模型目录;
-///     Real-ESRGAN 正好相反(`-m` 目录 / `-n` 模型名)。照抄 realesrgan 的拼法**不会编译报错**,
+///     Real-ESRGAN 正好相反(`-m` 目录 / `-n` 模型名)。照抄 realesrgan 的拼法**不会编译提示错误**,
 ///     只会让引擎按错档跑或报参数错 —— 编译、启动、跑一段小视频都可能看不出来。
 ///  ② **安装器会把刚装好的引擎再删一次**:`installer*.iss` 的 `[InstallDelete]` 里有一条
 ///     `Name: "{app}\engines\realcugan"`(v1.0 时代删旧引擎用的)。忘记删掉它,升级安装就会把
@@ -35,7 +35,7 @@ public class RealCuganContractTests
     }
 
     /// <summary>非法标签**绝不**返回空目录名:空串会让引擎去找 `\up2x-*.param`,
-    /// 找不到权重时它不报错、只画一张坏帧、exit=0(本仓库的固定事故形态)。</summary>
+    /// 找不到权重时它不提示、只画一张无效画面、exit=0(本仓库的固定事故形态)。</summary>
     [Fact]
     public void Invalid_tags_fall_back_to_the_shipped_directory_and_default_level()
     {
@@ -95,7 +95,7 @@ public class RealCuganContractTests
     // ───────────────────────── ② 纯逻辑:引擎倍数护栏 ─────────────────────────
 
     /// <summary>Real-CUGAN 的 models-se 只有 2x/3x/4x 权重(没有 1x)⇒ 目标 ≤1x 必须走"2x 后缩回",
-    /// **绝不能下发 `-s 1`**(没有 x1 权重的模型在 ncnn-vulkan 引擎里会静默输出全黑帧、exit=0)。</summary>
+    /// **绝不能下发 `-s 1`**(没有 x1 权重的模型在 ncnn-vulkan 引擎里会静默输出全全黑画面、exit=0)。</summary>
     [Fact]
     public void Scale_policy_never_asks_realcugan_for_1x_and_keeps_native_2_3_4()
     {

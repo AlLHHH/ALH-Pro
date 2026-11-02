@@ -340,7 +340,7 @@ public sealed partial class VideoView : UserControl
     private string? _customOutDir;
     private bool _suppressEvents;
     private bool _settingsLoaded;   // LoadSettings 完成后才允许保存(防构造/加载期的 -1 值污染 video-settings.json)
-    // 【启动崩溃修复 · 2026-09-14】XAML 解析是否已完成(解析期 = InitializeComponent() 还没返回)。
+    // 【启动进程退出修复 · 2026-09-14】XAML 解析是否已完成(解析期 = InitializeComponent() 还没返回)。
     //   InitializeComponent() 是**同步**加载 XBF:逐个元素创建 + 赋初值。只要元素在 XAML 里带了初值
     //   (IsChecked="True" / SelectedIndex="0" / Value=...),WinUI 就在赋值那一刻**同步**派发
     //   Checked/SelectionChanged/ValueChanged —— 而此刻"排在它后面"的控件**还没被创建**,事件链路里
@@ -493,7 +493,7 @@ public sealed partial class VideoView : UserControl
         // 视频降噪联动:未勾选「启用视频降噪」时,强度置灰禁用
         void SetDenoiseUi(bool on)
         {
-            // 【注意】IsEnabled 定义在 Control 上,StackPanel 没有(2026-09-21 编译期直接报错 CS1061)⇒ 逐项设;
+            // 【注意】IsEnabled 定义在 Control 上,StackPanel 没有(2026-09-21 编译期直接提示错误 CS1061)⇒ 逐项设;
             // 容器只能改透明度(灰显)。
             foreach (var rb in new[] { DenoiseWeakRadio, DenoiseMediumRadio, DenoiseStrongRadio })
                 if (rb != null) rb.IsEnabled = on;
@@ -659,7 +659,7 @@ public sealed partial class VideoView : UserControl
             // 引擎兼容自检(不限 50 系):结论【一律以真机实测为准】,不按显卡型号猜。
             // · Real-ESRGAN:本机实测 ncnn 不可用 → 处理时会自动改用 ONNX 稳定引擎(视频页已无 waifu2x 可换)
             // · RIFE:补帧下拉现在是 v4.13 / v4.6 / v4.26 三支,三支本机实测都可用 ⇒ 不再需要按模型提示
-            //   (v4.26 的唯一限制是 TTA 卡死,那一项由 v426TtaBroken 在控件层置灰,不进这条兼容提示)
+            //   (v4.26 的唯一限制是 TTA 长时间无响应,那一项由 v426TtaBroken 在控件层置灰,不进这条兼容提示)
             string? compatMsg = null;
             bool upOn = UpscaleToggle.IsChecked == true;
             bool interpOn = InterpToggle.IsChecked == true;
@@ -675,8 +675,8 @@ public sealed partial class VideoView : UserControl
             // 补帧那 4 支非 v4 老模型(动漫/高清/超高清/经典兼容)已下架 ⇒ 它们的"ncnn 不可用"提示条件恒不成立,整段已删。
             // 引擎兼容提示只留上面 realesrgan 那一条(它是唯一还可能实测失败的引擎;
             // RIFE 的三支 v4.13/v4.6/v4.26 都已通过本机实测)。
-            // 【2026-09-16 用户裁决:黑帧检测已删除 ⇒ 兼容性提示成为**唯一防线**】
-            // 补帧这条链路上,已知会"静默出黑帧"的组合必须在使用者**开始处理之前**就说清楚:
+            // 【2026-09-16 用户裁决:全黑画面检测已删除 ⇒ 兼容性提示成为**唯一防线**】
+            // 补帧这条链路上,已知会"静默出全黑画面"的组合必须在使用者**开始处理之前**就说清楚:
             //   ① 8K 级输入(实测 117/119 全黑)② RTX 50 系(Blackwell)③ 无独显 / Vulkan 不可用
             // 判据在 Core.InterpSizePolicy.JudgeEngineRisk(纯逻辑、有单测),和管线里那道预检**同源** ——
             // 界面说的和真跑时做的是同一件事,不会各说各话。
@@ -1046,12 +1046,12 @@ public sealed partial class VideoView : UserControl
 
     private void OnOptionChanged()
     {
-        // 【启动崩溃修复 · 2026-09-14】XAML 解析期一律直接返回 —— 根因与证据见 _uiReady 字段说明。
+        // 【启动进程退出修复 · 2026-09-14】XAML 解析期一律直接返回 —— 根因与证据见 _uiReady 字段说明。
         //   解析期(XBF 边创建边赋初值)派发的事件不能处理:此刻排在后面的控件还没建好,
         //   链路里读它们(RunBtn/PauseBtn/ResumeBtn/VideoList/SpeedHint… 都在 XAML 611 行之后)
         //   就是空引用,异常会从属性赋值里冒出来 → 整页加载失败 → 应用启动即崩。
         //   解析期不做参数联动/写盘是本页**既有语义**(修复前靠 InterpHint 哨兵拦掉 611 行之前的全部事件);
-        //   本标志位把它变成"拦掉全部",于是新增控件再也不会引入这类崩溃。
+        //   本标志位把它变成"拦掉全部",于是新增控件再也不会引入这类进程退出。
         if (!_uiReady) return;
         if (_suppressEvents) return;
         // 保留历史哨兵(InterpHint 声明在 XAML 611 行):双保险,行为不变
@@ -1366,7 +1366,7 @@ public sealed partial class VideoView : UserControl
         // ⇒ 倍率与「指定帧率」这两个门槛恒为"可用";判断保留不动:一是改动面最小(牵动 TTA 与 3x/12x/16x、
         // 指定帧率共五处开关),二是将来若再放回非 v4 老模型,门槛会自动重新生效 —— 而不是静默把限制放开。
         bool v4Model = InterpModelCombo.SelectedIndex is 0 or 1 or 2;
-        // v4.26 的 TTA(-x/-z)实测卡死 ⇒ 它是三项里唯一 TTA 要禁的一支(2026-09-24 加回时的实测结论,
+        // v4.26 的 TTA(-x/-z)实测长时间无响应 ⇒ 它是三项里唯一 TTA 要禁的一支(2026-09-24 加回时的实测结论,
         // 见 VideoService.cs:4841 的同一口径)。非 v4 老模型已下架 ⇒ 不再有其它索引要算进来。
         bool v426TtaBroken = InterpModelCombo.SelectedIndex is 2;
         TtaCheck.IsEnabled = interp && !v426TtaBroken;
@@ -1390,7 +1390,7 @@ public sealed partial class VideoView : UserControl
             {
                 0 => "推荐:通用画质 v4.13(最新,支持任意帧数精确补齐,最稳).",
                 1 => "通用画质 v4.6:与 v4.13 同架构、功能一样,效果/稳定性略逊;留作 v4.13 出问题时的备用.",
-                2 => "通用画质再新 v4.26:实测三支里最快(1080p 79~92 ms/输出帧),功能同 v4.13;唯一限制是「高质量 TTA」会卡死,已自动置灰.",
+                2 => "通用画质再新 v4.26:实测三支里最快(1080p 79~92 ms/输出帧),功能同 v4.13;唯一限制是「高质量 TTA」会长时间无响应,已自动置灰.",
                 _ => "请选择补帧模型(下拉现在是 v4.13 / v4.6 / v4.26 三支).",
             };
             InterpModelHint.Text = hint;
@@ -1867,7 +1867,7 @@ public sealed partial class VideoView : UserControl
         // 【2026-09-22 已删】这里原来是 `public bool SceneMinSegment`(「最短补帧段 60 帧」开关)——
         // 用户裁决整块撤掉(规则 + 开关),见 VideoView.xaml 里那段留档。字段一并删除:
         // 它只在我这台开发机的两次部署里落过盘,**从未发布给任何用户**;System.Text.Json 反序列化时
-        // 忽略未知属性 ⇒ 本机设置文件里若还留着 "SceneMinSegment": true,读盘不受影响、也不会报错。
+        // 忽略未知属性 ⇒ 本机设置文件里若还留着 "SceneMinSegment": true,读盘不受影响、也不会提示错误。
         // (⚠ 若哪天要删的是**已发布过**的字段,规矩是"保留字段、只停止读取" —— 这条不适用,因为它没发布过。)
         // 【「转场识别」默认口径的**版本标记**(2026-09-15 定稿)】**不是**"要把 Scene 改成什么"的动作指令。
         // 当前口径(SceneDefaultPolicy Rev2):**默认关**,且升级**绝不改变用户已有的勾选状态**。
@@ -1960,7 +1960,7 @@ public sealed partial class VideoView : UserControl
         /// <summary>「只处理选中的项目」(视频列表上方的那个勾选框)。【2026-09-25 新增(字段)· t47 审计 F3】
         /// 【为什么现在才有】这个开关一直只活在界面上:处理时读一次(RunBatchAsync),既不入存档也不入预设
         /// ⇒ 重启软件、或套一个参数预设之后,它永远回到**未勾选** —— 用户没动过它,它自己变了(本仓库最忌讳
-        /// 的一类 bug)。与图片页 UpscaleView 的 SelectedOnly 同款语义(那边一直有字段 + 存档读写),
+        /// 的一类 问题)。与图片页 UpscaleView 的 SelectedOnly 同款语义(那边一直有字段 + 存档读写),
         /// 这次把视频页这一侧补齐。
         /// 【老文件怎么读】旧 JSON 里没有这个字段 ⇒ System.Text.Json 不赋值 ⇒ 反序列化后 false(未勾选),
         /// 正是历史默认行为,不需要迁移、也不需要 Rev(它没有"序号语义")。</summary>
@@ -2172,7 +2172,7 @@ public sealed partial class VideoView : UserControl
         }
         catch (Exception ex)
         {
-            ProtectCorruptPresetFile(ex.Message.Split('\n')[0]);   // 文件损坏/无法反序列化 → 备份 + 只读保护(不崩溃、不覆盖)
+            ProtectCorruptPresetFile(ex.Message.Split('\n')[0]);   // 文件损坏/无法反序列化 → 备份 + 只读保护(不进程退出、不覆盖)
             return new();
         }
     }
@@ -2595,7 +2595,7 @@ public sealed partial class VideoView : UserControl
         if (d.PostEdge is >= 0 and <= 100) PostEdgeSlider.Value = d.PostEdge;
         // 【2026-09-21 果冻修复整块已删】**故意不读 d.MotionBlur / d.DeShake**(原先这两行就是读它们的)。
         // 界面控件与处理端滤镜链都已删除 ⇒ 即使老设置文件里存着"中/强"或"去抖=开",也**一个字节都不采纳** ——
-        // 否则就会出现"界面上没有了、处理时还在偷偷加 CPU 逐帧滤镜"的静默行为(本仓库最忌讳的一类 bug)。
+        // 否则就会出现"界面上没有了、处理时还在偷偷加 CPU 逐帧滤镜"的静默行为(本仓库最忌讳的一类 问题)。
         // 字段本身保留在 VideoSettings 里(反序列化兼容 + 预设快照结构稳定)。
         if (d.Quality is >= 0 and <= 5) QualityCombo.SelectedIndex = d.Quality;
         if (d.BitrateMbps > 0) BitrateBox.Text = d.BitrateMbps.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
@@ -3034,7 +3034,7 @@ public sealed partial class VideoView : UserControl
         var file = await picker.PickSingleFileAsync();
         if (file == null) return 0;
         // 【格式校验】视频预设必须是 .alhpreset(或内容含视频专属字段)。若误选图片预设(.alhimg),
-        // 公开字段(如 Scale/Tta)会错读成视频参数且不报错——必须显式校验并明确提示,绝不静默混入。
+        // 公开字段(如 Scale/Tta)会错读成视频参数且不提示——必须显式校验并明确提示,绝不静默混入。
         if (!file.FileType.Equals(".alhpreset", StringComparison.OrdinalIgnoreCase))
         {
             await ShowPresetHintAsync("文件不是视频预设格式。请导入「ALH Pro 视频预设」(.alhpreset)文件;图片预设(.alhimg)请在图片页导入。");
@@ -3403,10 +3403,10 @@ public sealed partial class VideoView : UserControl
             Codec = CodecCombo.SelectedIndex >= 0 ? CodecCombo.SelectedIndex : 0,
             Format = FormatCombo.SelectedIndex >= 0 ? FormatCombo.SelectedIndex : 0,
             FastMode = FastModeCheck.IsChecked == true,
-            // 【2026-09-14 启动崩溃修复】这个复选框是较晚新增的,这里保留"控件未创建时按界面默认值记"的兜底
+            // 【2026-09-14 启动进程退出修复】这个复选框是较晚新增的,这里保留"控件未创建时按界面默认值记"的兜底
             //   (平滑时间轴默认开),避免万一有别的路径在控件没建好时收集参数、
             //   把 null 记成"关"而覆盖用户设置。
-            //   ⚠ 注意:它**不是**本次启动崩溃的解 —— 真正抛异常的是 VideoView.xaml.cs:528
+            //   ⚠ 注意:它**不是**本次启动进程退出的解 —— 真正抛异常的是 VideoView.xaml.cs:528
             //   `RunBtn.IsEnabled`(经 XAML:691 → OnOptionChanged → UpdateOptions → UpdateRunState),
             //   而 SaveSettings/CollectVideoParams 这条路在解析期已被 `!_settingsLoaded` 提前拦掉。
             //   根因证据与整体拦截见 _uiReady 字段说明。
@@ -3462,8 +3462,8 @@ public sealed partial class VideoView : UserControl
         if (show)
         {
             // 【2026-09-12 起:不再给 Height 做动画 —— 这是布局循环的经典成因】
-            // 依据:那台 50 系笔记本 22:31 的崩溃诊断是 **LayoutCycleException**("Layout cycle detected"),
-            // 而且崩溃文件里【没有】「最近界面操作」面包屑 → 说明异常是从 XAML 的布局过程本身抛出的,
+            // 依据:那台 50 系笔记本 22:31 的退出诊断是 **LayoutCycleException**("Layout cycle detected"),
+            // 而且进程退出文件里【没有】「最近界面操作」面包屑 → 说明异常是从 XAML 的布局过程本身抛出的,
             // 不是从我们某次控件调用里抛的,**外面包 try/catch 根本拦不到**。
             // 给 Height/Width 这类"参与测量排布"的属性做动画,会在动画每一帧都让下游重新测量;
             // 面板下面又挂着会自增长的日志区与滚动条,两者互相触发就成环 → WinUI 直接判布局循环崩掉。
@@ -3538,15 +3538,15 @@ public sealed partial class VideoView : UserControl
 
     /// <summary>【界面日志刷新抑制(2026-09-12)】一旦本次运行检出"布局循环"(LayoutCycleException),就把它置 true:
     /// 之后日志**只写文件、不再改界面文本框与滚动条** —— 因为继续高频改那个会自增长的日志区,
-    /// 只会让布局再次成环,界面永久卡死(而那台 50 系笔记本的实测是:界面死了、后台任务其实还在正常跑,
+    /// 只会让布局再次成环,界面永久长时间无响应(而那台 50 系笔记本的实测是:界面死了、后台任务其实还在正常跑,
     /// 用户只能重启软件把任务一起打断 —— 代价比"少刷几行界面日志"大得多)。
     /// 只在内存里生效,重启软件自动恢复。</summary>
     internal static volatile bool SuppressUiLogUpdates;
     /// <summary>把"日志滚到底部"推迟到当前布局收尾之后再执行(2026-09-12)。
     /// 【为什么必须推迟】直接在调用里 ChangeView:若此刻 XAML 正在测量/排布(日志区边填边量、又正值面板显隐),
     /// 就会在布局过程中再次改动滚动位置 → 布局失效 → 重测 → 成环,WinUI 抛 **LayoutCycleException**。
-    /// 该异常是在框架布局代码里抛的,**外面包 try/catch 根本拦不到** —— 那台 50 系笔记本 22:31 的崩溃诊断
-    /// 正是 LayoutCycleException,且崩溃文件里连「最近界面操作」面包屑都没有(因为异常不来自我们的调用栈)。
+    /// 该异常是在框架布局代码里抛的,**外面包 try/catch 根本拦不到** —— 那台 50 系笔记本 22:31 的退出诊断
+    /// 正是 LayoutCycleException,且进程退出文件里连「最近界面操作」面包屑都没有(因为异常不来自我们的调用栈)。
     /// TryEnqueue 让滚动发生在下一次空闲,脱离布局过程;入队回调里仍包 try/catch(队列里抛同样会成未处理异常)。
     /// 观感上无差别:滚到底只是"下一帧"完成,人眼看不出。</summary>
     private void ScrollLogToBottomDeferred()
@@ -3606,7 +3606,7 @@ public sealed partial class VideoView : UserControl
         // 【UI 刷新绝不许把任务带崩】下面两句是 WinRT/原生控件操作:文本越长布局越贵,
         // 而 ScrollViewer.ChangeView 在布局进行中/文本高速增长时会抛 COMException(实测 0x80070490
         // "找不到元素")或 LayoutCycleException —— 50 系笔记本一天内崩两次,两次都紧跟在"刷新日志行"
-        // 之后,崩完界面不再更新、用户只看到"卡住"。日志文件已经落了盘(上面那行),界面刷不动就少刷一次,
+        // 之后,崩完界面不再更新、用户只看到"停住"。日志文件已经落了盘(上面那行),界面刷不动就少刷一次,
         // 绝不能让它把正在跑的任务拖死。
         if (SuppressUiLogUpdates) return;   // 布局循环已检出:界面日志停刷(文件日志上面已落盘)
         try
@@ -3626,7 +3626,7 @@ public sealed partial class VideoView : UserControl
     }
 
     /// <summary>界面刷新失败只记一次(避免每帧一条把日志刷爆),并记下"是哪一处 UI 操作":
-    /// 崩溃诊断里会带上这条面包屑,下次再崩就能直接指到具体调用,不用像这次一样靠时间线推断。</summary>
+    /// 退出诊断里会带上这条面包屑,下次再崩就能直接指到具体调用,不用像这次一样靠时间线推断。</summary>
     private static int _uiFailLogged;
     internal static void NoteUiRefreshFailure(string where, Exception ex)
     {
@@ -4271,10 +4271,10 @@ public sealed partial class VideoView : UserControl
             CloseButtonText = "确定",
             XamlRoot = this.XamlRoot,
         };
-        // 【2026-09-23 修 A1】WinUI **同一时刻只允许一个 ContentDialog**。实测崩溃:
+        // 【2026-09-23 修 A1】WinUI **同一时刻只允许一个 ContentDialog**。实测进程退出:
         // 任务跑完会弹「处理完成」,此时再点「预览效果」→ 这里想弹第二个 → ContentDialog.ShowAsync()
         // 抛 COMException 0x80000019("Only a single ContentDialog can be open at any time"),
-        // 而且是**未处理异常**(写进崩溃诊断,用户只看到"点了没反应")。
+        // 而且是**未处理异常**(写进退出诊断,用户只看到"点了没反应")。
         // 【2026-10-16 升级】先走 SafeDialog 的串行闸门:前一个对话框关掉后**接着弹**(提示不再丢);
         // 连排队都没弹出来(等超时/出异常)才降级成界面状态条 + 日志。
         var (shownHint, _) = await ALHPro.SafeDialog.TryShowAsync(dlg, "提示");
@@ -4582,7 +4582,7 @@ public sealed partial class VideoView : UserControl
             // 即使实测证明 ncnn 可用。现在只看实测结论(ShouldUseOnnx* 内部:有结论用结论;
             // 没结论时只在"无独显 / Vulkan 不可用"这两种确实只能 CPU 的情况下才为真)。
             // 【2026-09-24 Real-CUGAN】它**没有 ONNX 版本** ⇒ 永远不走 ONNX,按 ncnn 估。
-            // 【2026-09-27 改正括号里那句】旧写"探测不过时是 ncnn-CPU" —— 它的 CPU 档在重编版上实测会崩,
+            // 【2026-09-27 改正括号里那句】旧写"探测不过时是 ncnn-CPU" —— 它的 CPU 档在重编版上实测会退出,
             // 探测不过的真实结果是**开跑前明确拒绝**(RealCuganNeedsGpuException),不存在 ncnn-CPU 这一档。
             if (SelectedEngineIsRealCugan) return false;
             if (!SelectedEngineIsReal)
@@ -4851,8 +4851,8 @@ public sealed partial class VideoView : UserControl
     }
 
 
-    /// <summary>【2026-10-15 · 反馈"预览界面会闪退/卡退"】把"用户此刻在预览页点到了哪一步"记进
-    /// `App.UiAction`,崩溃诊断会带出这一行(文件里原来的「最近界面操作」只会是"日志行追加",看不出用户动作)。
+    /// <summary>【2026-10-15 · 反馈"预览界面会启动即退出/无响应退出"】把"用户此刻在预览页点到了哪一步"记进
+    /// `App.UiAction`,退出诊断会带出这一行(文件里原来的「最近界面操作」只会是"日志行追加",看不出用户动作)。
     /// 只写一个字符串:不碰控件、不抛、不改任何行为。</summary>
     private static void Crumb(string what)
     {
@@ -4919,7 +4919,7 @@ public sealed partial class VideoView : UserControl
         // 重复帧预览:显示已有的(预估/分析)结果,未分析则提示
         DupSummaryText.Text = string.IsNullOrEmpty(item.DupSummary) ? "(点「分析重复帧」看精细分布)" : item.DupSummary;
         RenderDupStrip(item);
-        // 【2026-10-15 · "预览页会闪退/卡退"反馈】进页面时留一行现场(分辨率/显存/已装载播放器数)。
+        // 【2026-10-15 · "预览页会启动即退出/无响应退出"反馈】进页面时留一行现场(分辨率/显存/已装载播放器数)。
         // 目的只有一个:万一真出问题,日志里能说清"当时是什么负载",不必再靠猜。不改任何行为。
         try
         {
@@ -5158,7 +5158,7 @@ public sealed partial class VideoView : UserControl
     private bool _zmOn;
     private bool _zmWant;                    // ApplyPreviewView 登记:这个视图要不要进入该形态
     private string? _zmWantPath;
-    // 【bug 记录 · 2026-09-19 用户:"缩放完回去 视频直接就只有一小部分了"】
+    // 【问题 记录 · 2026-09-19 用户:"缩放完回去 视频直接就只有一小部分了"】
     // 根因:ApplyHostClips 拿"**当前**"裁切矩形去和画面框取交集,而那个"当前"就是它上一次写进去的结果
     // ⇒ 交集只会越缩越小、回不去 ✗。修法:把"遮罩/分割算出来的**基准裁切**"单独记账(下面这个字段),
     // 每次都用【基准 ∩ 画面框】重新算 —— 缩放回适应时交集自然又是整幅 ✔
@@ -5376,10 +5376,10 @@ public sealed partial class VideoView : UserControl
     private bool _effDirty;                    // 左侧参数改过 → 现有结果已过期,提示重新预览
     private int _ptlDrag;                      // 预览时间线正在拖谁:0=没拖 1=起点游标 2=右端把手
     private long _lastScrubTick;               // 定位节流(MediaPlayer 定位较贵)
-    // ---- 统一"合并式定位"(2026-09-18:用户反馈"播放不跟手/不稳定")--------------------------------
+    // ---- 统一"合并式定位"(2026-09-18:用户反馈"播放不跟手/偶发")--------------------------------
     // 病因:进度条拖动/时间线擦洗时**每个 ValueChanged / PointerMoved 都发一次 seek**。
     //   MediaPlayer 的一次定位在 4K/8K 上要几十~几百毫秒(要回关键帧重解码),当事件以每秒几十次涌来时,
-    //   请求会排成一串 → 界面看着"不跟手",偶尔还把管线堵住(表现为"卡住/不稳定")。
+    //   请求会排成一串 → 界面看着"不跟手",偶尔还把管线堵住(表现为"停住/偶发")。
     // 做法:拖动期间只记下**最新目标**,由一个 ~110ms 的小定时器把最新那一次落地(合并掉中间的);
     //   松手/单击则立即落地。拖动时画面依旧跟着走(≈8 次/秒),但不再制造 seek 风暴。
     // ===== 【2026-09-23 修 · 用户:"左右预览不协调"—— 这套定位原来是**全局唯一一个槽位**】=====
@@ -5433,7 +5433,7 @@ public sealed partial class VideoView : UserControl
     private string? _effLoadedPath;            // 结果播放器当前装的是哪条片(0=没装;换片才重装,装的时候续上同一时刻)
     private bool _effAutoPlay;                 // 下一次装片后自动起播(新预览结果)
     // ---- 对比模式的「单播放器」路径(2026-09-18):左原片+右处理后后台合成一条对比片,一个播放器播 ----
-    // 根因:两个 MediaPlayerElement = 两个解码器 + 两条时钟 → 卡 / 卡死 / 单边卡 / 时间漂移 / 拖动不协调(五条同源)。
+    // 根因:两个 MediaPlayerElement = 两个解码器 + 两条时钟 → 卡 / 长时间无响应 / 单边卡 / 时间漂移 / 拖动不协调(五条同源)。
     // 2026-09-18 晚:拆成两个视图 —— 两种合成布局都还是**一条片一个播放器**:
     //   · 两者同时 = 整幅并排(每半边整幅缩一半,合成片 W×H/2)
     //   · 左右对比 = 分割线(线左右各取一版画面的同一处、各 1:1,合成片 W×H)—— 线随手即时滑动,
@@ -5486,7 +5486,7 @@ public sealed partial class VideoView : UserControl
     // 【为什么必须有】用户报"预览播放有延迟还会卡",而当时的日志**给不出任何可判定的数据**:
     //   ① 起播那条 `③状态变→画面开始走` 挂在 PositionChanged 上,而该事件的节拍本身就是 ~250ms
     //      ⇒ 四次实测全是 234/250ms = **量到的是事件节拍,不是延迟**(量程地板);而且它在第一次回调
-    //      就把观察标志关掉了 ⇒ 后面真的卡住也不会再报。
+    //      就把观察标志关掉了 ⇒ 后面真的停住也不会再报。
     //   ② 位置回调里那条"近 5 秒速率调整…"只在**进了同步分支**时才打 ⇒ 没进就一片空白,
     //      "回调没触发"与"走了另一条路"分不清(用户 2026-09-21 那次左右对比播放 13 秒,日志里
     //      一条同步行都没有 —— 到底哪一层没跑,谁也不知道 ✗)。
@@ -5539,7 +5539,7 @@ public sealed partial class VideoView : UserControl
 
     // ==================== 【① 倒装(2026-09-19 定稿)】四个视图各配"角色播放器" ====================
     // 病根:四个视角共用 PreviewPlayer/EffectPlayer ⇒ 换到"需要另一个文件的视角"就必须**重装媒体**
-    // (4K 成片开一次 ≈3.5 秒:黑屏 + 卡住 + 倍率复位;铁证日志 `[性能] 切视图装片耗时 3559/4665 ms`)。
+    // (4K 成片开一次 ≈3.5 秒:黑屏 + 停住 + 倍率复位;铁证日志 `[性能] 切视图装片耗时 3559/4665 ms`)。
     // 为什么是"倒装"而不是"给对比再加一对播放器":
     //   · 对比子系统(TryMaskSplit / SetCompareSync / 看门狗 / 裁切 / CmpSeek 映射)是本文件最脆的一层,
     //     它已经绑死在 PreviewPlayer(上半=原片半幅)/EffectPlayer(下半=处理后半幅)上 ⇒ **一字不改**才最安全;
@@ -5654,7 +5654,7 @@ public sealed partial class VideoView : UserControl
 
     /// <summary>"媒体回调要用的缓存引用"有没有变成孤儿 —— **只看症状,不做引用比较**。
     /// 【为什么不做 ReferenceEquals】本文件记过:`PlaybackSession` 两次取到的包装对象不保证同一实例;
-    /// 拿引用相等当判据,一旦包装不稳定就会**每 150ms 判一次"不一致"** ⇒ 日志刷屏 + 反复重挂回调 ✗。
+    /// 拿引用相等当判据,一旦包装偶发就会**每 150ms 判一次"不一致"** ⇒ 日志刷屏 + 反复重挂回调 ✗。
     /// 症状判据(与用户可见现象一一对应):
     ///   ① 缓存是 null 而活体是有的(元素是**懒创建** MediaPlayer 的:装片那一刻它才出现);
     ///   ② 活体有片子(时长 >0.05s)而缓存读回 0/0s —— 后者正是"地面数据写着 `原片[停 0/0s]` 而画面其实在正常播"那种现场。
@@ -6624,7 +6624,7 @@ public sealed partial class VideoView : UserControl
             _zmWantPath = _cmpClipPath;
             _compareMode = mode == ViewBoth || mode == ViewSplit;
             UpdatePreviewLoadWarn();   // 【用户要求】高分辨率素材红字提示(解码负载)✔
-            Crumb($"视频预览页 · 切到「{ViewModeName(mode)}」");   // 【2026-10-15】崩溃诊断的用户操作面包屑
+            Crumb($"视频预览页 · 切到「{ViewModeName(mode)}」");   // 【2026-10-15】退出诊断的用户操作面包屑
             // 【两者同时 · 方案 B —— 已按用户实测撤回】用户实测:① 切换卡 ② 右边看着仍降采样(符合事先说明:
             // 并排每侧只有 ~775px,屏幕尺寸就是上限)③ **左边卡不动** ✗✗ 第③条是硬故障(把原片装进一个同时
             // 被对比机制驱动的播放器,装载/起播时序打架)⇒ 立即退回原合成片路径 ✔
@@ -7869,7 +7869,7 @@ public sealed partial class VideoView : UserControl
         catch (Exception ex) { AppLogger.Warn("遮罩左右对比异常(自动退回合成片方案):" + ex.Message); _maskSplitActive = false; }
     }
 
-    /// <summary>【拖拽热路径 · 只改"线 + 裁切"】用户实测:拖动分割线时日志刷屏、卡死、处理侧黑屏、不协调 ✗。
+    /// <summary>【拖拽热路径 · 只改"线 + 裁切"】用户实测:拖动分割线时日志刷屏、长时间无响应、处理侧黑屏、不协调 ✗。
     /// 根因:拖拽里调了**重方法** TryMaskSplit(重算几何 + 打日志 + 重新装载判断 + 重新下发倍率)✗
     /// —— 每次指针移动都做一遍 ⇒ 日志风暴 + 主线程被占 + 倍率反复写入让管线反复重配置(黑屏)+ 两条各自重定时(不协调)✓。
     /// 本方法只做两件事:改上层的裁切矩形、挪线 ✔(无日志、无装载、不碰倍率、不碰控制器)✔</summary>
@@ -8671,7 +8671,7 @@ public sealed partial class VideoView : UserControl
             ApplyCompareSplit();
             // 【遮罩式】遮罩模式下:线就是上层的裁切 → 拖动时**立刻**重算裁切 ⇒ 画面分界跟着手走、零生成 ✓
             // ⚠ 必须走**轻量路径** ✗→✓:曾经这里调的是重方法 TryMaskSplit(会打日志/判断装载/重发倍率)✗
-            //   ⇒ 用户实测"日志刷屏 + 卡死 + 处理侧黑屏 + 不协调" ✓ 现改为只改裁切与线 ✔
+            //   ⇒ 用户实测"日志刷屏 + 长时间无响应 + 处理侧黑屏 + 不协调" ✓ 现改为只改裁切与线 ✔
             if (_maskSplitActive) ApplyMaskSplitClipOnly();
         }
         catch { }
@@ -8779,7 +8779,7 @@ public sealed partial class VideoView : UserControl
                     }
                     // ② 原片同步。【2026-09-17 方案D(用户选定:不许有任何新增耗时)】
                     //    旧做法是"播放中 seek 纠偏" ✗ —— seek 会把媒体管线拖死(实测片段卡在 1.8 秒),
-                    //    而且两边各自 seek 落地时刻不同 → "卡死 / 单边卡 / 时间对不上 / 滑动不协调"。
+                    //    而且两边各自 seek 落地时刻不同 → "长时间无响应 / 单边卡 / 时间对不上 / 滑动不协调"。
                     //    新做法:**只用播放速率微调**(最多 ±2%)把原片拉回片段的时间点 ——
                     //    零额外解码、零额外 seek、零额外耗时;偏差 ≤60ms 就恢复 1.0 倍速(不会一直微调)。
                     // 【2026-09-18 单播放器对比】这一整段彻底不需要了:对比片里两半本来就是同一条流,
@@ -8816,7 +8816,7 @@ public sealed partial class VideoView : UserControl
                                 else
                                 {
                                     // 速率微调:drift > 0 = 原片跑快了 → 稍微降速;drift < 0 = 原片落后 → 稍微提速
-                                    // 【2026-09-18 用户:"有时候左边会卡住 然后就不协调了 对不上了"】真凶就是这一行 ✗→✓
+                                    // 【2026-09-18 用户:"有时候左边会停住 然后就不协调了 对不上了"】真凶就是这一行 ✗→✓
                     // 旧公式假设"左=用户的源文件(从 0 起)、右=预览片段(也从 0 起,对应源文件的 _effStart 秒)" ✗。
                     // 但**遮罩模式两条装的是同一条合成片**,时间轴完全相同 ⇒ 再减 _effStart 就等于凭空造出
                     // 一个几秒的"假漂移" ✗ → 于是硬对齐(seek)不停触发 → 左边每次都卡 ~1 秒 → 两边对不上 ✓✓。
@@ -8824,7 +8824,7 @@ public sealed partial class VideoView : UserControl
                         ? op.Position.TotalSeconds - clipPos          // 同一文件、同轴:直接比 ✓
                         : op.Position.TotalSeconds - _effStart - clipPos;
                                     long nowMs = Environment.TickCount64;
-                                    // 【2026-09-18 日志逮到的真 bug】"合成片自动起播"那条路径不会对齐原片,
+                                    // 【2026-09-18 日志逮到的真 问题】"合成片自动起播"那条路径不会对齐原片,
                                     // 实测漂到 **2192 ms**(用户看到的"偶现不协调");±2% 的微调要 100 秒才追得回来,
                                     // 所以漂移大到一定程度必须**一次性硬拉回**(对齐),不能只靠调速。
                                     // 平时(≤500ms)仍然只调速、绝不 seek —— 保留"零额外解码"的设计。
@@ -8984,7 +8984,7 @@ public sealed partial class VideoView : UserControl
     ///   上一版把"适应窗口"当 1.0、最大 8 倍 ⇒ 没有 1:1 锚点、百分比也没意义 ✗</summary>
     private void PlayerArea_Wheel(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
-        return;   // 【2026-09-19 用户要求:撤销实时缩放】滚轮不再缩放(见 XAML 顶栏注释:卡死/比例不一致/只剩一小块)
+        return;   // 【2026-09-19 用户要求:撤销实时缩放】滚轮不再缩放(见 XAML 顶栏注释:长时间无响应/比例不一致/只剩一小块)
         // 【别让滚轮"没反应却什么都不说"】用户实测反馈:"滚轮没有缩放" —— 其实就是当时**还没有预览结果**,
         // 两侧没有可比的东西,所以形态没开。这里给一句明确的话,并把原因写进日志 ✔
         try
@@ -9657,7 +9657,7 @@ public sealed partial class VideoView : UserControl
             double rate = 1.0;
             if (tb.Tag is string ts) double.TryParse(ts, NumberStyles.Float, CultureInfo.InvariantCulture, out rate);
             if (rate <= 0) rate = 1.0;
-            // 【用户报的 BUG:还没处理(没有结果/播放器还没建)时倍速键能勾出多个】
+            // 【用户报的 问题:还没处理(没有结果/播放器还没建)时倍速键能勾出多个】
             // 根因:老代码 `var se = EffectPlayer.MediaPlayer?.PlaybackSession; if (se == null) return;` ——
             //   提前 return 了,而 ToggleButton 点击时**自己已经把勾选切了**,于是我那句"只留一个勾"的
             //   UpdateRateButtons() 从没执行 → 多个按钮同时呈选中态。而且它只往"结果播放器"上设速率,
@@ -9666,7 +9666,7 @@ public sealed partial class VideoView : UserControl
             //   最后**无条件**校正勾选(任何提前退出路径都不会再出现多选)。
             _cmpRate = rate;
             UpdateRateButtons();
-            // 【BUG 修复:用户"偶现左边不生效变速"】根因:老代码只把速率设到**一个**播放器上
+            // 【问题 修复:用户"偶现左边不生效变速"】根因:老代码只把速率设到**一个**播放器上
             // (结果播放器,或者"当前在看的那个")—— 而「左右对比」是**两个播放器**(左原片 + 右处理片段),
             // 原片那条**从来没被设过** → 左边一直是原速。现在:对比模式下**两条都设**,一个都不能漏。
             ApplyCmpRateToAll(force: true);
@@ -9791,7 +9791,7 @@ public sealed partial class VideoView : UserControl
     }
 
     /// <summary>静音状态。**默认静音**(用户 2026-09-18:"我要默认关")。
-    /// 【上一版的 bug】原来写成 `wantMute = _previewMuted || 慢动作` —— 把"用户开关"和"慢动作自动静音"
+    /// 【上一版的 问题】原来写成 `wantMute = _previewMuted || 慢动作` —— 把"用户开关"和"慢动作自动静音"
     /// 混成了一个状态,于是慢动作下 wantMute 恒为 true,**按钮怎么点都关不掉**(用户报"静音键不可关")。
     /// 现在:按钮是唯一真相,点了就生效;慢动作"声音变调"交给**默认静音**兜住
     /// (想听就自己打开,那时听到变调是用户的选择,不再由软件替他决定)。</summary>
@@ -10095,7 +10095,7 @@ public sealed partial class VideoView : UserControl
                 }
             }
             catch { }
-            // 【2026-10-15 · 反馈"预览界面会闪退/卡退"】显存偏小的机器上,「两者同时 / 左右对比」
+            // 【2026-10-15 · 反馈"预览界面会启动即退出/无响应退出"】显存偏小的机器上,「两者同时 / 左右对比」
             // 要**同时解码两条片**(页面上最多四条播放器都装着源),4K 原生解码时最吃紧,而用户的要求是
             // "处理后的画面不降采样"(见 XAML 里 CmpPlayerBottom 的硬规矩)⇒ 这里只把"怎么办"写清楚,
             // **不改任何解码/播放行为**、不弹窗、不挡操作(与上面几条红字提示同一口径)。
@@ -10105,7 +10105,7 @@ public sealed partial class VideoView : UserControl
                 if ((vmode == ViewBoth || vmode == ViewSplit)
                     && SafeRender.TotalVramGB > 0 && SafeRender.TotalVramGB < 6.5)
                 {
-                    string vw = $"⚠ 本机显存 {SafeRender.TotalVramGB:0.#}GB:「{ViewModeName(vmode)}」要同时解码两条片(4K 素材更吃紧),比单视图更容易掉帧甚至卡住 —— 卡的话先切回「看原片 / 看处理效果」,或把预览倍率降到 2x";
+                    string vw = $"⚠ 本机显存 {SafeRender.TotalVramGB:0.#}GB:「{ViewModeName(vmode)}」要同时解码两条片(4K 素材更吃紧),比单视图更容易掉帧甚至停住 —— 卡的话先切回「看原片 / 看处理效果」,或把预览倍率降到 2x";
                     txt = string.IsNullOrEmpty(txt) ? vw : txt + "；" + vw;
                 }
             }
@@ -11582,7 +11582,7 @@ public sealed partial class VideoView : UserControl
 
         var multi = pv == null && items.Length > 1;   // 预览永远是单视频:不建独立批次输出文件夹
 
-        // 手动-内容帧率采样:输入留空 → 在 _running 置真【之前】拦截(防止界面永久卡死)
+        // 手动-内容帧率采样:输入留空 → 在 _running 置真【之前】拦截(防止界面永久长时间无响应)
         {
             var dOn2 = DedupCheck.IsChecked == true;
             var dModel2 = DedupModelCombo.SelectedIndex + 1;
@@ -11598,7 +11598,7 @@ public sealed partial class VideoView : UserControl
 
         VideoService.LastDedupReport = null;   // 清掉上次的报告,避免误显示
 
-        // 多视频:自动创建独立输出文件夹(避免文件混杂)——创建/校验必须在 _running=true 之前(早退不卡死)
+        // 多视频:自动创建独立输出文件夹(避免文件混杂)——创建/校验必须在 _running=true 之前(早退不长时间无响应)
         // 预览:输出到 %TEMP%\ALHPro\preview(跑完交回界面播放、随后删除),绝不往素材目录里扔文件
         var baseDir = pv != null
             ? Path.Combine(Path.GetTempPath(), "ALHPro", "preview")
@@ -11672,7 +11672,7 @@ public sealed partial class VideoView : UserControl
             _ => ("realesrgan", SelModel(VideoEsrganModelCombo, "realesr-animevideov3")),
         };
         // 【Rev10】(2026-10-14 更新)「现实 · 1x 修复」**不是真模型**:它内部按 2x 跑再缩回原尺寸
-        //   ⇒ 下发给引擎的必须是真正的权重名,否则引擎会去找一个不存在的模型(找不到权重时 exit=0、只出坏帧
+        //   ⇒ 下发给引擎的必须是真正的权重名,否则引擎会去找一个不存在的模型(找不到权重时 exit=0、只出无效画面
         //     —— 本仓库踩过)。它原来借自训的 alhpro-real2x,那支已按用户要求删除 ⇒
         //     Upscale1x.RealEngineModel 现指官方 realesr-animevideov3(见那边的类注释:官方唯一带原生 2x 权重的)。
         if (model == AlhPro.Core.Upscale1x.RealTag)
@@ -11740,7 +11740,7 @@ public sealed partial class VideoView : UserControl
         if (dedupModel == 3 && dedupAlgo == 3 &&
             double.TryParse(ContentFpsBox.Text, NumberStyles.Float, inv, out var cff) && cff > 0)
             contentFpsNow = cff;
-        // 内容帧率留空的拦截已提前到 _running 之前(此处不再 return,避免界面永久卡死)
+        // 内容帧率留空的拦截已提前到 _running 之前(此处不再 return,避免界面永久长时间无响应)
         var dedupHi = (int)DedupHiSlider.Value;
         var dedupLo = (int)DedupLoSlider.Value;
         var dedupFrac = DedupFracSlider.Value;
@@ -11781,7 +11781,7 @@ public sealed partial class VideoView : UserControl
         //   留在后台线程会抛 0x8001010E(已真机复现:选 Real-ESRGAN 视频必崩)——await 不带
         //   ConfigureAwait(false),让方法自然地回到 UI 线程;内部改 SelectedIndex 的 DispatcherQueue
         //   兜底保留(双保险,即使未来路径变化也不跨线程改控件)。
-        // 【2026-09-24】Real-CUGAN 也走这一段(它同样是 ncnn-Vulkan 引擎、同样会"小图能跑、真帧尺寸出黑帧",
+        // 【2026-09-24】Real-CUGAN 也走这一段(它同样是 ncnn-Vulkan 引擎、同样会"小图能跑、真帧尺寸出全黑画面",
         // 而且它**没有 ONNX 兜底**)⇒ 预检必须覆盖它,否则选 Real-CUGAN 的用户连一句提示都看不到。
         // waifu2x 不在此列:它的探测入口在别处(denoise 路径)/(与既有行为一致,本次不改)。
         if (up && (SelectedEngineIsReal || SelectedEngineIsRealCugan))
@@ -11789,7 +11789,7 @@ public sealed partial class VideoView : UserControl
             // 【口径统一到与处理流水线同一个入口(2026-09-12 自检发现)】这里原来调的是
             // EngineService.IsEngineGpuUsableAsync(engine, gpuId, ct) 这个 3 参重载 = fullFrame:false =
             // **320×240 小图**探测(15 秒)。而本项目自己实测过的失败形态恰恰是:
-            //   "320×240 能跑、真帧尺寸(1080×1920)才静默出空帧/黑帧,退出码还是 0"(见 EngineService 里
+            //   "320×240 能跑、真帧尺寸(1080×1920)才静默出空帧/全黑画面,退出码还是 0"(见 EngineService 里
             //   fullFrame 的注释与 VideoService 的调用点)—— 也就是说:小图探测通过 ≠ 能用,
             //   这个"兼容性检测"会给用户一个不可靠的 OK,而真正的问题要等到流水线里才暴露。
             // 改为调用与流水线【完全相同】的入口 EnsureNcnnProbeAsync,于是三件事一起对上:
@@ -11800,8 +11800,8 @@ public sealed partial class VideoView : UserControl
             // 走的是"免探测快速通道" —— 探测**秒回、不做任何实测**,这句"首次约 15~60 秒"是虚的。
             // 现在:只有**真的会做实测**的卡(50 系 / AMD / Intel / 已经实测出不可用)才显示提示;
             // 免探测的卡只在日志里记一行(留痕,便于将来对号)。
-            // 探测调用本身**保留** —— 它走快速通道直接给结论,零成本,而且它是"小图能跑、真帧尺寸出黑帧"
-            // 这个真实坑的唯一防线(见 EngineService 里 fullFrame 的注释),删掉会把静默黑帧放回来。
+            // 探测调用本身**保留** —— 它走快速通道直接给结论,零成本,而且它是"小图能跑、真帧尺寸出全黑画面"
+            // 这个真实坑的唯一防线(见 EngineService 里 fullFrame 的注释),删掉会把静默全黑画面放回来。
             bool willProbe = true;
             // 【2026-09-24】用**探测计划**决定"探不探、拿哪个模型探"—— 这里必须用上面已经映射过的 `model`
             // (10871 那条:1x 现实的 Tag 已换成真权重),**不能再直接读下拉 Tag**:
@@ -11830,7 +11830,7 @@ public sealed partial class VideoView : UserControl
             if (!usable)
             {
                 // 【Real-CUGAN 没有 ONNX 版本】探测失败时不能像 Real-ESRGAN 那样"自动换稳定引擎":
-                // 它只剩 ncnn-Vulkan 一条路(重编版的 CPU 档实测会崩)⇒ 处理时会被**明确拒绝**。
+                // 它只剩 ncnn-Vulkan 一条路(重编版的 CPU 档实测会退出)⇒ 处理时会被**明确拒绝**。
                 // 所以在开跑前就把话说清楚,并给出替代方案 —— 不让用户等一轮之后才被告知失败。
                 if (SelectedEngineIsRealCugan)
                 {
@@ -11868,11 +11868,11 @@ public sealed partial class VideoView : UserControl
                 upscaleShrink1x = true;    // ← 回退那条路:2x 超分(官方 animevideov3)后缩回,与用户选的那支无关
                 // 【2026-09-24 修一个被掩盖的老洞】回退到"现实 · 1x 修复"时,必须把下面要下发给引擎的 `model`
                 // 一起换成**真权重**:否则它还是 Tag `anime4k`,引擎会按 `-n anime4k` 去找一个不存在的权重
-                // (找不到权重时 exit=0 只出坏帧 —— 本仓库踩过)。此前这条洞被"anime4k 预检必然失败 ⇒ 整批被判
+                // (找不到权重时 exit=0 只出无效画面 —— 本仓库踩过)。此前这条洞被"anime4k 预检必然失败 ⇒ 整批被判
                 // 走 ONNX(ONNX 侧会替换成它自己的模型)"挡住了,所以看不出来。
                 model = AlhPro.Core.Upscale1x.RealEngineModel;
                 // 【2026-09-27 · Rev11 起这里不再切下拉选中项】原先会去模型框里按 Tag 选中「现实 · 1x 修复」,
-                //   而那一项已按作者要求下线 ⇒ 继续找就是一段**永远找不到目标的死代码**(不会崩,但也什么都不做)。
+                //   而那一项已按作者要求下线 ⇒ 继续找就是一段**永远找不到目标的死代码**(不会退出,但也什么都不做)。
                 //   现在只留日志:本批实际走的是"按 2x 超分再缩回原尺寸"(引擎模型已在上面的 `model = ...` 里换成真权重)。
                 //   ⚠ 界面上的模型框仍显示"动漫 · Anime4K 修复"(1x 档只剩这一条可选),所以日志必须写清楚实际路线 ——
                 //     不能让用户以为它真的跑了 Anime4K。
@@ -12165,7 +12165,7 @@ public sealed partial class VideoView : UserControl
                 {
                     bool first = stepLogFull == null;
                     lastStepLogAt = DateTime.Now;
-                    // 文件日志:阶段首行 + 每 30 秒补一行。原先只记首行,任务卡住时整个阶段在诊断包里
+                    // 文件日志:阶段首行 + 每 30 秒补一行。原先只记首行,任务停住时整个阶段在诊断包里
                     // 只剩一条采样,无法区分"真僵死"与"慢但仍在跑"(实测有用户同一文件连卡 7 次都定位不了)。
                     // AppLogger 每行自带时间戳,故最后一条进度行的时间+帧号即冻结点。
                     if (first || DateTime.Now - lastStepFileLogAt >= TimeSpan.FromSeconds(30))
@@ -12177,7 +12177,7 @@ public sealed partial class VideoView : UserControl
                     }
                     // 【包 try/catch】这几句是 UI 线程上的原生控件操作(改文本 + ScrollViewer.ChangeView),
                     // 实测会在布局繁忙时抛 COMException 0x80070490 / LayoutCycleException。崩在这里的后果不是
-                    // "少刷一行日志",而是任务再也收不到界面更新、用户只看到"卡住",收尾时还会报一堆找不到路径的假错。
+                    // "少刷一行日志",而是任务再也收不到界面更新、用户只看到"停住",收尾时还会报一堆找不到路径的假错。
                     try
                     {
                         if (SuppressUiLogUpdates) stepLogFull = stepNewFull;   // 布局循环已检出:只记状态、不碰界面
@@ -12239,7 +12239,7 @@ public sealed partial class VideoView : UserControl
             }
             // 整体进度 = (已完成数 + 当前视频内部进度) / 当前剩余总数;
             // 暂停删除未处理项后,已完成数不变、剩余变少 → 进度条直接跳变更新
-            // items 就是本批要处理的视频(items ⊆ _videos),故去掉 && _videos.Contains(否则每帧 O(N²),卡死)。
+            // items 就是本批要处理的视频(items ⊆ _videos),故去掉 && _videos.Contains(否则每帧 O(N²),长时间无响应)。
             int done = items.Count(IsItemDone);
             int active = items.Count(it => !IsItemDone(it));
             var overall = done + active > 0
@@ -12353,7 +12353,7 @@ public sealed partial class VideoView : UserControl
                         if (lastItemEtaShown > 0 && itemRemain > 0)
                             itemRemain = 0.7 * itemRemain + 0.3 * lastItemEtaShown;
                         // 【K2】单调 + 硬下限:本片剩余同样不得低于"当前阶段剩余"(与整批同一规则、同一函数)——
-                        // 真机 bug:编码阶段还有 3.7 分钟,本片剩余却显示 0:30。
+                        // 真机 问题:编码阶段还有 3.7 分钟,本片剩余却显示 0:30。
                         itemRemain = AlhPro.Core.EtaText.ClampWholeRemaining(itemRemain, stageRemain, lastItemEtaShown);
                         lastItemEtaShown = itemRemain;
                         it.EtaText = itemRemain > 5 ? "本片剩余 " + FormatTime(itemRemain) : "";
@@ -12538,7 +12538,7 @@ public sealed partial class VideoView : UserControl
                     // 而阶段切换处恰好都是重活:清源帧/中间帧目录(逐文件 File.Delete)、
                     // Directory.EnumerateFiles(...).Count() 数万帧、Directory.Delete(workDir, true)…
                     // 表现就是"补帧完换超分等中间操作短暂未响应"(真机日志的 [临时清理] 正落在这个位置;
-                    // 5080 帧那种任务里这一段会明显卡住)。
+                    // 5080 帧那种任务里这一段会明显停住)。
                     // 放到线程池后:进度仍靠 IProgress 回报(Progress<T> 自带回 UI 线程),界面刷新不受影响;
                     // await 之后的 item.StatusText 等 UI 赋值仍在 UI 线程执行(ProcessOneAsync 自身带 UI 上下文)。
                     await Task.Run(() => VideoService.ProcessVideoAsync(item.Path, outPath,
@@ -12755,7 +12755,7 @@ public sealed partial class VideoView : UserControl
             VideoStatus.Text = $"完成 {okCount} 个";
             var taskSpan = DateTime.Now - taskStart;
             Log($"任务结束:成功 {okCount},失败 {failCount},耗时 {(int)taskSpan.TotalMinutes}分{taskSpan.Seconds}秒,输出 {outputFiles.Count} 个文件");
-            // 写入"最近一次任务摘要"(诊断包带上,快速定位黑帧/补帧/编码等问题,不用在超长日志里翻)
+            // 写入"最近一次任务摘要"(诊断包带上,快速定位全黑画面/补帧/编码等问题,不用在超长日志里翻)
             try
             {
                 var summary = new System.Text.StringBuilder();
@@ -12905,7 +12905,7 @@ public sealed partial class VideoView : UserControl
         // 保护:任务完成时窗口可能已关闭(XamlRoot 为 null)→ 不再弹窗,避免未处理异常
         if (dlg.XamlRoot == null) return;
         var rDone = await ALHPro.SafeDialog.ShowAsync(dlg, "处理完成");
-        // 【2026-09-23 修 A1(第二次实测崩溃点)】弹不出来(例如启动时的「更新公告」还开着)时,
+        // 【2026-09-23 修 A1(第二次实测进程退出点)】弹不出来(例如启动时的「更新公告」还开着)时,
         // 把结论写到主状态栏 + 日志 —— 用户至少知道"跑完了、输出在哪",而不是什么都没有,
         // 也不会再因为 WinUI 只允许一个对话框而抛未处理异常。
         if (rDone == ContentDialogResult.None)

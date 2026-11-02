@@ -185,14 +185,14 @@ public static class VulkanCheck
                     }
                 }
                 // D3D12 转译层设备(名字形如 "Microsoft Direct3D12 (NVIDIA ...)"):编号夹在原生设备中间、
-                // 名字又像独显,用户和推荐算法都会选中;但经其计算的补帧/超分输出是损坏帧(真机实测)。
+                // 名字又像独显,用户和推荐算法都会选中;但经其计算的补帧/超分输出是无效画面(真机实测)。
                 // 从设备表整体剔除 → 下拉/推荐/-g 全部不再可达。剔除前留痕,诊断包仍能看出"有转译层、剔了哪几个"。
                 var translated = devices.Where(d => AlhPro.Core.GpuName.IsD3D12Translation(d.Name)).ToList();
                 if (translated.Count > 0)
                 {
                     AppLogger.Warn("⚠ 引擎枚举到 D3D12 转译层 Vulkan 设备:"
                         + string.Join(" / ", translated.Select(d => $"#{d.Id} {d.Name}"))
-                        + " ——经其计算的补帧/超分输出为损坏帧,已排除;同卡原生 Vulkan 设备仍可选");
+                        + " ——经其计算的补帧/超分输出为无效画面,已排除;同卡原生 Vulkan 设备仍可选");
                     devices.RemoveAll(d => AlhPro.Core.GpuName.IsD3D12Translation(d.Name));
                 }
                 // 引擎枚举到 Vulkan 设备即认为有 GPU(编号对错是另一回事,用户可在设置里换)
@@ -333,7 +333,7 @@ public static class VulkanCheck
         // 工作站卡不一定带 Quadro/RTX A 字样("NVIDIA RTX 5000 Ada Generation" 就是),
         // 上面修掉 Blackwell 误判后它们会一路落到 "unknown"(报告里对自己的显卡一言不发)。
         // 判据:没有 GeForce 这个消费级标记 + 名字里直接写了架构代号。
-        // 必须排在 Blackwell 判定之后 —— 真是 50 系的卡,"有崩溃风险"比"是专业卡"重要得多。
+        // 必须排在 Blackwell 判定之后 —— 真是 50 系的卡,"有进程退出风险"比"是专业卡"重要得多。
         if (!name.Contains("GeForce", StringComparison.OrdinalIgnoreCase)
             && Regex.IsMatch(name, @"\b(Ada|Ampere|Turing|Hopper|Pascal|Volta)\b", RegexOptions.IgnoreCase))
             return "pro";
@@ -342,7 +342,7 @@ public static class VulkanCheck
         if (Regex.IsMatch(name, @"RTX\s*2[0-9]{2}", RegexOptions.IgnoreCase)) return "turing";     // 20系
         if (Regex.IsMatch(name, @"GTX\s*16[0-9]{2}", RegexOptions.IgnoreCase)) return "turing";    // 16系(图灵)
         // 【GTX 10 系必须与"真·老卡"分开(2026-09-12 自检)】原来一条正则把 (6|7|8|9|10) 都归成 oldgtx,
-        // 于是自检报告对 GTX 1050/1060/1070/1080 用户说"可能不支持完整 GPU 加速,遇到报错请改用 CPU" —— 说反了:
+        // 于是自检报告对 GTX 1050/1060/1070/1080 用户说"可能不支持完整 GPU 加速,遇到提示错误请改用 CPU" —— 说反了:
         // Pascal(Vulkan 1.2/1.3、DX12 齐备,驱动至今仍在维护)用 ncnn-Vulkan 完全能跑,只是算力比新卡低、显存 3~6GB。
         // 真正 GPU 加速可能不完整的是 Kepler/Maxwell(GTX 600/700/900 系,驱动已停更、显存 2~4GB)。
         if (Regex.IsMatch(name, @"GTX\s*10[0-9]{2}", RegexOptions.IgnoreCase)) return "pascal";   // GTX 10 系(Pascal)
@@ -443,7 +443,7 @@ public static class VulkanCheck
             System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : (double?)null;
     }
 
-    /// <summary>判断本机是否存在"不稳定/有黑帧风险"的显卡(基于多年诊断包经验):
+    /// <summary>判断本机是否存在"偶发/有全黑画面风险"的显卡(基于多年诊断包经验):
     /// AMD 独显(补帧间歇 1帧)、RTX 50系(Blackwell ncnn 崩)、老 GTX(6/7/8/9/10 系 Vulkan 支持不全)、纯核显(共享显存高倍易不足)。
     /// 返回 true 且 out 给出可读提示;无则 false(可能是稳的 N 卡 20/30/40 系)。</summary>
     private static bool HasRiskyGpu(out string msg)
@@ -474,7 +474,7 @@ public static class VulkanCheck
             }
             // 【2026-09-17 用户反馈:不许一口咬定"是 A 卡的问题"】A 卡能不能用,取决于真机实测结论
             // (EngineService 的 ncnn 探测),而不是型号。这里只保留"遇到异常会自动兜底"的说明,不再下结论。
-            if (amdDedicated) risky = "AMD 独显:以真机实测结论为准(ncnn 实测通过就直接用);若高倍率补帧遇到间歇丢帧/黑帧,软件会自动改用 ONNX DirectML 或 CPU";
+            if (amdDedicated) risky = "AMD 独显:以真机实测结论为准(ncnn 实测通过就直接用);若高倍率补帧遇到间歇丢帧/全黑画面,软件会自动改用 ONNX DirectML 或 CPU";
             else if (nvArch == "blackwell") risky = "RTX 50 系:是否走 ncnn 由首次处理时真机实测决定(重编版 ncnn 已在 50 系笔记本上实测通过)";
             else if (nvArch == "oldgtx") risky = "GTX 600/700/800/900 系:驱动已停更,GPU 加速可能不完整(软件会先真机实测)";
             else if (anyIgpu && !amdDedicated && !names.Any(n => CardKind(n) == "nvidia" || CardKind(n) == "amd"))
@@ -540,9 +540,9 @@ public static class VulkanCheck
         else if (!gpuOk)
             sb.Append("结论:❌ 未检测到可用显卡(GPU):本机只能 CPU 软件计算,图片放大/抠图可用,视频超分与补帧会非常慢。建议:更新显卡驱动(需支持 Vulkan),或确认显卡未被禁用。\n");
         else if (DriverTooOld(out string driverHint))
-            sb.Append("结论:⚠️ 本机显卡可用,但显卡驱动偏旧(").Append(driverHint).Append(")。较新的显卡/引擎特性可能不可用,若处理中出现黑屏/崩溃/硬编失败,建议更新显卡驱动到最新版。\n");
+            sb.Append("结论:⚠️ 本机显卡可用,但显卡驱动偏旧(").Append(driverHint).Append(")。较新的显卡/引擎特性可能不可用,若处理中出现黑屏/进程退出/硬编失败,建议更新显卡驱动到最新版。\n");
         else if (HasRiskyGpu(out string riskyGpuMsg))
-            sb.Append("结论:⚠️ 当前显卡可能并不完全支持 ALH Pro 的运行(").Append(riskyGpuMsg).Append(")。部分功能(高倍率补帧/超分)可能出现黑帧/崩溃/较慢,软件已自动优先用稳定路线;若仍异常,建议更新显卡驱动、降低倍率,或改用支持的显卡。\n");
+            sb.Append("结论:⚠️ 当前显卡可能并不完全支持 ALH Pro 的运行(").Append(riskyGpuMsg).Append(")。部分功能(高倍率补帧/超分)可能出现全黑画面/进程退出/较慢,软件已自动优先用稳定路线;若仍异常,建议更新显卡驱动、降低倍率,或改用支持的显卡。\n");
         else
             sb.Append("结论:✅ 本电脑可以运行 ALH Pro。\n");
 
@@ -706,7 +706,7 @@ public static class VulkanCheck
             notes.Add("专业卡(Quadro/RTX A/TITAN):GPU 加速可用,显存通常较大,适合高倍率大图");
 
         if (amdDedicated)
-            notes.Add("AMD 独显:Vulkan 驱动差异较大,若处理中出现黑屏/崩溃会自动改用 ONNX DirectML 或 CPU,无需手动设置");
+            notes.Add("AMD 独显:Vulkan 驱动差异较大,若处理中出现黑屏/进程退出会自动改用 ONNX DirectML 或 CPU,无需手动设置");
         if (amdIgpu || (intelIgpu && !amdDedicated))
             // 【别让用户找不到开关】「兼容模式」复选框只在【视频处理页】;这里是设置页/自检报告的全局提示,
             // 原话"建议勾选「兼容模式」"会让图片页用户满处找一个不存在的开关(2026-09-12 自检发现)。
@@ -715,7 +715,7 @@ public static class VulkanCheck
             notes.Add("Intel Arc 独显:支持 GPU 加速,驱动较新时稳定;个别旧驱动需更新后再试");
 
         if (gpuOk && notes.Count == 0)
-            notes.Add("若处理中出现黑屏或崩溃,可尝试更新显卡驱动,或在计算设备中选择 CPU");
+            notes.Add("若处理中出现黑屏或进程退出,可尝试更新显卡驱动,或在计算设备中选择 CPU");
         if (notes.Count == 0) notes.Add("各项功能均可正常使用");
         sb.Append(string.Join(";", notes)).Append('\n');
 
@@ -761,7 +761,7 @@ public static class VulkanCheck
         // 【2026-09-24 新增 Real-CUGAN 一行】它**没有 ONNX 版本** ⇒ 不能用上面的 RouteOf(那句会写成
         // "走 ONNX DirectML",而实际没有那条路)。
         // 【2026-09-27 改正三支】此前"失败/不可用时只能按 CPU 计算"是**假的**:它的 CPU 档(-g -1)在重编版上
-        // 实测会崩(访问违例、0 帧产出),真实行为是**开跑前明确拒绝**(VideoService.RealCuganNeedsGpuException)。
+        // 实测会退出(访问违例、0 帧产出),真实行为是**开跑前明确拒绝**(VideoService.RealCuganNeedsGpuException)。
         // 事实部分统一取自 AlhPro.Core.RealCugan.UnavailableNotice;出路那半句**按情形给** ——
         // 「本机无可用 GPU」时不能叫用户改选 Real-ESRGAN:视频页还有一道硬编守门(CpuFallbackPolicy),
         // 没有可用显卡时任何引擎都不会开跑,那句话同样是假出路(独立复核抓到,已改)。

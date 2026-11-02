@@ -110,7 +110,7 @@ public class StartupPageMapTests
         Assert.DoesNotContain("Tag == \"matting\"", cs);
         Assert.DoesNotContain("new VideoMattingView()", cs);
         Assert.DoesNotContain("StartupPageMap.PageForTag(\"matting\")", cs);
-        // 被删的文件不许再出现在仓库里(引用它的地方会编译报错,这里只是把"彻底删干净"钉成契约)
+        // 被删的文件不许再出现在仓库里(引用它的地方会编译提示错误,这里只是把"彻底删干净"钉成契约)
         Assert.False(File.Exists(RepoPath("ImgUpscalerUI", "Views", "VideoMattingView.xaml")));
         Assert.False(File.Exists(RepoPath("ImgUpscalerUI", "Views", "VideoMattingView.xaml.cs")));
         Assert.False(File.Exists(RepoPath("ImgUpscalerUI", "VideoMattingService.cs")));

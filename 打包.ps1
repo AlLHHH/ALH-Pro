@@ -8,7 +8,7 @@
 #     $utf8 = New-Object System.Text.UTF8Encoding($true)
 #     [System.IO.File]::WriteAllText($p, [System.IO.File]::ReadAllText($p, (New-Object System.Text.UTF8Encoding($false))), $utf8)
 #   注意:某些编辑器/补丁工具保存时会**静默去掉 BOM** —— 改完本文件请复检前 3 字节。
-#   (历史上"5.1 触发 AMSI 崩溃 AmsiScanBuffer"的现象也出现在 BOM 丢失的长中文脚本上;
+#   (历史上"5.1 触发 AMSI 进程退出 AmsiScanBuffer"的现象也出现在 BOM 丢失的长中文脚本上;
 #    带 BOM 的版本今天用 5.1 跑完整流程、含 ISCC 编译 245 秒,全程正常。)
 #
 # 为什么要有这个脚本(而不是每次手敲 ISCC):
@@ -63,7 +63,7 @@ if ((Test-Path $repoV426) -and !(Test-Path (Join-Path $pubV426 'flownet.bin'))) 
 # ===== ①d Real-CUGAN 引擎:仓库有、发布版缺 → 自动补 =====
 # 【2026-09-24】Real-CUGAN 重新随包(重编引擎 + models-se 权重)。engines\ 是 gitignore、
 # deploy.ps1 也不同步 engines ⇒ 漏了它用户会"文件在、引擎没装",而且 50 系上那份官方 20220728 exe
-# 会出坏帧(所以必须带 2026 重编版,不能靠下载兜底)。
+# 会出无效画面(所以必须带 2026 重编版,不能靠下载兜底)。
 $repoRc = Join-Path $root 'engines\realcugan'
 $pubRc = Join-Path $pub 'engines\realcugan'
 if ((Test-Path $repoRc) -and !(Test-Path (Join-Path $pubRc 'realcugan-ncnn-vulkan-2026.exe'))) {
@@ -220,8 +220,8 @@ $required = @(
     @{ p = 'engines\rife\rife-v4.13'; why = '补帧模型 v4.13(下拉第 1 项)' },
     @{ p = 'engines\rife\rife-v4.6'; why = '补帧模型 v4.6(下拉第 2 项)' },
     @{ p = 'engines\rife\rife-v4.26'; why = '补帧模型 v4.26(2026-09-24 上架的下拉第 3 项;缺了引擎会抛「缺少补帧模型」)' },
-    @{ p = 'engines\realcugan\realcugan-ncnn-vulkan-2026.exe'; why = 'Real-CUGAN 重编引擎(官方 20220728 版在 50 系上出坏帧,必须用这一份)' },
-    @{ p = 'engines\realcugan\models-se\up2x-conservative.param'; why = 'Real-CUGAN 权重(models-se;缺了引擎 exit=0 只出坏帧)' },
+    @{ p = 'engines\realcugan\realcugan-ncnn-vulkan-2026.exe'; why = 'Real-CUGAN 重编引擎(官方 20220728 版在 50 系上出无效画面,必须用这一份)' },
+    @{ p = 'engines\realcugan\models-se\up2x-conservative.param'; why = 'Real-CUGAN 权重(models-se;缺了引擎 exit=0 只出无效画面)' },
     @{ p = 'engines\realcugan\models-se\up3x-conservative.param'; why = 'Real-CUGAN 权重(3x 档)' },
     @{ p = 'engines\realcugan\models-se\up4x-conservative.param'; why = 'Real-CUGAN 权重(4x 档)' },
     @{ p = 'licenses\Real-CUGAN-MIT-bilibili-2022.txt'; why = 'Real-CUGAN 算法/权重许可原文(MIT © 2022 bilibili;SHA256 必须 = 8CAD8CFD…3CBA)' },

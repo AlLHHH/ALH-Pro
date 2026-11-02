@@ -1,7 +1,7 @@
 namespace AlhPro.Core;
 
 /// <summary>视频处理的「绝不落 CPU」策略(2026-09-23 用户要求:「落到 CPU 根本不现实太慢了 —— 应该重试几次,
-/// 如果还是不行直接报错,不应该落到 CPU」)。
+/// 如果还是不行直接提示错误,不应该落到 CPU」)。
 ///
 /// 【真机依据】RTX 5060 Laptop 上硬件编码**瞬时**失败(ffmpeg exit -542398533)后,旧逻辑一次都不重试就掉到
 /// libx264:编码阶段 17.0s → 115.7s(**7 倍**);而同一台机器"上一次任务"的 nvenc 还是 16.7 fps
@@ -16,17 +16,17 @@ namespace AlhPro.Core;
 /// 【2026-09-23 二次修正 · 例外条款作废(本轮 B8)】原文写着「唯一例外:用户在『设置 → 计算设备』里显式选
 /// 『CPU 计算』(引擎设备号 &lt; 0)—— 那是他自己的选择,照跑」。但设置页的「计算设备」下拉**只列显卡、
 /// 早就不再提供 CPU 选项**(见 MainPage.xaml.cs 那段「不再提供 CPU 选项」的说明),所以那条例外在实际产品里
-/// **无处可达** ⇒ 它只会变成一句"照着做也找不到"的假建议(报错文案原文就写着"请到设置里选「CPU 计算」")。
+/// **无处可达** ⇒ 它只会变成一句"照着做也找不到"的假建议(出错提示原文就写着"请到设置里选「CPU 计算」")。
 /// 更麻烦的是它还留下一个真口子:Vulkan 自检失败时 MainPage 会把 GpuIndex 临时置 -1(仅本次会话,
 /// 目的只是别把用户选好的卡覆盖掉),按旧判据 <c>gpuId &lt; 0</c> 就等于"用户主动选了 CPU"
 /// ⇒ 视频会**静默**走 CPU 软编(正是这条策略要消灭的东西)。
-/// 现在把口径写死:<see cref="AllowsCpuFallback"/> 恒为 false —— 视频要么用硬编,要么在开跑前就报错。
+/// 现在把口径写死:<see cref="AllowsCpuFallback"/> 恒为 false —— 视频要么用硬编,要么在开跑前就提示错误。
 /// 若将来真把「CPU 计算」放回设置页,只需让这一个方法接到那个开关上(其余调用点一个都不用动)。
 ///
 /// 【2026-09-30 · t64 C:重试策略只管"瞬时失败"】本类的重试间隔只适用于**跑起来之后的瞬时失败**
 /// (5060 那台:`exit -542398533`,上一次任务 16.7 fps、下一次就编不了 ⇒ 重试有依据)。
 /// 编码器**打不开/初始化失败**是另一条路:同一个编码器重试不会有不同结果,正解是换本机另一个
-/// 实测可用硬编(判据与候选链在 <see cref="VideoEncodeGuard"/>)⇒ 那条路的报错文案是
+/// 实测可用硬编(判据与候选链在 <see cref="VideoEncodeGuard"/>)⇒ 那条路的出错提示是
 /// <see cref="DescribeHwEncodeInitFailure"/>,不是"连续 3 次失败"。
 /// 纯逻辑、零副作用 ⇒ 可单测(见 <c>CpuFallbackPolicyTests</c>)。</summary>
 public static class CpuFallbackPolicy
@@ -48,7 +48,7 @@ public static class CpuFallbackPolicy
     public static int RetryDelayMsAfterAttempt(int attempt)
         => attempt >= 1 && attempt <= HwEncodeRetryDelaysMs.Length ? HwEncodeRetryDelaysMs[attempt - 1] : 0;
 
-    /// <summary>本机连一个可用硬编都没有时的报错正文(给用户看的,必须让他能自己救回来)。
+    /// <summary>本机连一个可用硬编都没有时的提示错误正文(给用户看的,必须让他能自己救回来)。
     /// 【文案红线 · B8】不许再让用户去设置里找「CPU 计算」——那个选项不存在(找得到才怪)。
     /// 能给的自救只有三条:更新驱动、重启、换/修显卡;实在不行就说清"这块功能本机用不了",
     /// 而不是把人支去一个点不到的地方。</summary>
@@ -56,12 +56,12 @@ public static class CpuFallbackPolicy
         => "本机没有可用的硬件编码器(已实测 nvenc / amf / qsv 三种都无法编码,也可能是没检测到可用显卡),"
          + "视频处理按「不落 CPU」的设定直接停下。\n"
          + "为什么要停:实测 CPU 软编比硬编慢 7 倍以上(同一段片子编码 17.0 秒 → 115.7 秒),"
-         + "几分钟的视频会拖成几小时,所以这里选择报错而不是悄悄变慢。\n"
+         + "几分钟的视频会拖成几小时,所以这里选择提示错误而不是悄悄变慢。\n"
          + "怎么办:① 更新显卡驱动(或重装一次驱动)后重试;② 刚更新过驱动的话重启一次电脑;"
          + "③ 笔记本请确认没有把独显禁用(设备管理器里显卡应无黄色感叹号)。\n"
          + "说明:视频处理**不提供** CPU 软编选项 —— 图片放大 / 抠图 / 音频处理不受影响(那三项用 CPU 完全可用)。";
 
-    /// <summary>硬件编码重试若干次仍失败时的报错正文。</summary>
+    /// <summary>硬件编码重试若干次仍失败时的提示错误正文。</summary>
     public static string DescribeHwEncodeFailure(string encoder, int attempts, string? reason, bool driverTooOld)
     {
         string why = string.IsNullOrWhiteSpace(reason) ? "(未给出原因)" : reason.Trim();
@@ -72,7 +72,7 @@ public static class CpuFallbackPolicy
              + "(实测 CPU 软编慢 7 倍以上)。\n最后一次原因:" + why + "\n" + advice + "。";
     }
 
-    /// <summary>【2026-09-30 · t64 C】编码器**打不开**(初始化失败)且本机再没有别的可用硬编时的报错正文。
+    /// <summary>【2026-09-30 · t64 C】编码器**打不开**(初始化失败)且本机再没有别的可用硬编时的提示错误正文。
     ///
     /// 【为什么必须与 <see cref="DescribeHwEncodeFailure"/> 分开】那条说的是"**连续 3 次**失败" ——
     /// 那是**瞬时失败**的结论(有重试才有这个数)。而"打不开编码器"是**确定性**的:同一个编码器

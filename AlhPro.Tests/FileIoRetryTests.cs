@@ -97,7 +97,7 @@ public class FileIoRetryTests
     [Fact]
     public void Total_wait_is_bounded_and_long_enough_to_ride_out_a_scan()
     {
-        // 10 次退避合计要"够长"(覆盖杀软/索引器毫秒~秒级句柄),但又不能长到用户以为卡死。
+        // 10 次退避合计要"够长"(覆盖杀软/索引器毫秒~秒级句柄),但又不能长到用户以为长时间无响应。
         int total = 0;
         for (int attempt = 1; attempt <= IO_RETRY.MaxRetries; attempt++) total += IO_RETRY.DelayMsFor(attempt);
         Assert.InRange(total, 1500, 15_000);

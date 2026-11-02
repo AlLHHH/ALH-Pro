@@ -9,7 +9,7 @@ namespace AlhPro.Core;
 ///   ① 老存档/老预设里可能还带着 Tag `alhpro-real1x`(它没有对应的引擎权重,必须排除在 ncnn 模型判定之外,
 ///      见 <see cref="NcnnModelVerdicts.NonNcnnModels"/> 与 <see cref="NcnnProbePlan"/>);
 ///   ② Anime4K 着色器不可用时的回退路径要拿一个**真权重**下发给引擎(否则引擎按 `-n anime4k` 找不到权重,
-///      静默出一张坏帧、exit=0 —— 本仓库踩过)。
+///      静默出一张无效画面、exit=0 —— 本仓库踩过)。
 ///
 /// 【界面上怎么区分】选到 1x 时,超分模型下拉里**只有 1x 修复项可选**,其余放大模型一律置灰
 /// (用户 2026-09-21:"选倍率后 不支持的模型就灰掉" —— 只灰 1x 这一档,2x/3x/4x 保持原状不减能力)。</summary>
@@ -25,7 +25,7 @@ public static class Upscale1x
     /// 【为什么是这一支】官方 realesrgan 里唯一带**原生 2x** 权重的模型:general-x4v3 / wdn-x4v3 / x4plus /
     /// x4plus-anime 都只有 4x 权重,拿它们跑回退等于"整趟 4x 只为缩回 1x",纯浪费。
     /// 回退的语义本来就是"按 2x 超分后缩回原尺寸",与原来完全一致。
-    /// 【它没有 1x 权重】下发 `-s 1` 会静默输出全黑帧(exit=0),所以引擎倍数由
+    /// 【它没有 1x 权重】下发 `-s 1` 会静默输出全全黑画面(exit=0),所以引擎倍数由
     /// <see cref="EngineScalePolicy.Decide"/> 固定在 2、再由上层缩回 1x。</summary>
     public const string RealEngineModel = "realesr-animevideov3";
 

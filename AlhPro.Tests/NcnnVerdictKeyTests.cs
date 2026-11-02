@@ -78,7 +78,7 @@ public class NcnnVerdictKeyTests
     [Fact]
     public void Summarize_is_false_if_any_measured_model_failed_regardless_of_order()
     {
-        // 保守方向:一支失败就整条不可用 —— 否则"x4plus 出坏帧"会被"animevideov3 通过"盖过去
+        // 保守方向:一支失败就整条不可用 —— 否则"x4plus 出无效画面"会被"animevideov3 通过"盖过去
         Assert.False(NcnnVerdictKey.Summarize(new[] { true, false }));
         Assert.False(NcnnVerdictKey.Summarize(new[] { false, true, true }));
         Assert.False(NcnnVerdictKey.Summarize(new[] { false }));

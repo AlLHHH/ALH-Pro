@@ -31,7 +31,7 @@ internal static class UpscaleCalibrator
 
     /// <summary>标定总超时(秒):两次引擎启动 + 采样帧都在这条线内。超时 ⇒ 放弃标定、保守用旧顺序。
     /// 【为什么是 180】正常(Real-CUGAN 1080p,两点法 9 帧)约 17 秒;就算落到 ONNX CPU(实测 8 秒/帧)
-    /// 9 帧也只有 ~75 秒。180 秒足够,又不会让用户以为软件卡死。</summary>
+    /// 9 帧也只有 ~75 秒。180 秒足够,又不会让用户以为软件长时间无响应。</summary>
     public const double TimeoutSeconds = 180.0;
 
     /// <summary>本次任务里标定累计花掉的墙钟秒数(可被 <see cref="ConsumeCalibratedSeconds"/> **只取一次**)。
@@ -70,7 +70,7 @@ internal static class UpscaleCalibrator
         LastTotalSeconds = 0;
         LastRejectReason = "";
 
-        // 【不给用户留"卡死"的印象】标定自己带一条超时线:引擎在某些驱动上会静默卡住(实测过 `-g -1` 档),
+        // 【不给用户留"长时间无响应"的印象】标定自己带一条超时线:引擎在某些驱动上会静默停住(实测过 `-g -1` 档),
         // 而没有超时的等待会像死机。超时只取消**标定这次**(linked token),不影响整个任务。
         using var calibCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         calibCts.CancelAfter(TimeSpan.FromSeconds(TimeoutSeconds));
@@ -119,12 +119,12 @@ internal static class UpscaleCalibrator
             AppLogger.Info($"超分单帧耗时标定:{n} 帧那次 {tN:0.###} s(平均 {tN / Math.Max(1, n):0.###} s/帧,含地板)");
 
             // 【F1-I3】样本体检:0 字节空帧/没落地/帧数对不上 ⇒ 拒收,不落盘。
-            // 【2026-09-27 删掉"判黑"这一条】作者反馈:素材里正常的黑色转场/淡入淡出/夜戏被当成"引擎输出坏帧"
+            // 【2026-09-27 删掉"判黑"这一条】作者反馈:素材里正常的黑色转场/淡入淡出/夜戏被当成"引擎输出无效画面"
             // ⇒ 整条任务转 ONNX 慢路。事后判黑已整体删除,标定也不再问"样本帧黑不黑"。
             // 【保留的三种坏法为什么还要拦】ncnn 在 50 系/部分驱动上会**静默输出 0KB 空帧且退出码 0** ——
             // 那时两次耗时都"正常"、差值也够大,但算出来的是"引擎在空转"的偏小单帧耗时;
             // 若不拒收就会永久落盘,让判定偏向「补帧→超分」(2026-09-25 那类误判)。
-            // 代价(诚实口径):引擎真出黑帧时标定不再拒收 —— 与 2026-09-16 补帧侧同口径,事前预检是唯一防线。
+            // 代价(诚实口径):引擎真出全黑画面时标定不再拒收 —— 与 2026-09-16 补帧侧同口径,事前预检是唯一防线。
             string? defect = InspectSample(calibOut, n);
             if (defect is not null) return Reject($"样本输出不合格:{defect}");
 
@@ -141,7 +141,7 @@ internal static class UpscaleCalibrator
         catch (OperationCanceledException)
         {
             // 用户取消 vs 标定自身超时:两者对用户含义不同,必须分开写(不许含混)
-            return Reject(ct.IsCancellationRequested ? "已取消" : $"标定超时(超过 {TimeoutSeconds:0} 秒,引擎可能卡住)");
+            return Reject(ct.IsCancellationRequested ? "已取消" : $"标定超时(超过 {TimeoutSeconds:0} 秒,引擎可能停住)");
         }
         catch (Exception ex)
         {

@@ -30,7 +30,7 @@ namespace AlhPro.Tests;
 ///   自检报告写「本机实测 ncnn 不可用 —— …只能按 CPU 计算(明显慢)」「失败只能按 CPU,没有 ONNX 兜底」,
 ///   诊断包的逐引擎探测行写「实测不可用 → 走 ONNX 稳定引擎」,ncnn 结论汇总行写「→走 ONNX」。
 ///   三条都指向**不存在**的出路:它没有 ONNX 版本(engines\ 下没有任何 realcugan 的 .onnx),而 CPU 档
-///   (`-g -1`)在本仓库重编版上实测会崩(访问违例、0 帧产出)。真实行为是**开跑前明确拒绝**
+///   (`-g -1`)在本仓库重编版上实测会退出(访问违例、0 帧产出)。真实行为是**开跑前明确拒绝**
 ///   (`VideoService.RealCuganNeedsGpuException`;视频页预检 `ShowPauseHintAsync` 早就说对了 ⇒ 只有报告在说假话)。
 ///   修法:短句口径抽到唯一来源 `AlhPro.Core.RealCugan.UnavailableNotice`,三处报告点(自检报告的模型兼容性行 /
 ///   诊断包探测行 / `NcnnModelVerdicts.Describe`)全引它;顺带修掉诊断包「ncnn 实测结论(导出时实时)」写两遍的重复行。
@@ -274,13 +274,13 @@ public class DiagnosticWordingHonestyTests
 
     /// <summary>**C · 唯一短句口径**:Real-CUGAN 不可用时的说法必须来自 Core 的单一来源,并且**只提真实存在的处置**
     /// (明确拒绝 + 改选 Real-ESRGAN),不许出现"走 ONNX"(它没有 ONNX 版本)也不许出现"降 CPU 凑合"
-    /// (CPU 档实测会崩:访问违例、0 帧产出)。这条红了 = 有人把口径又复制回调用点、或写回那两条假出路。</summary>
+    /// (CPU 档实测会退出:访问违例、0 帧产出)。这条红了 = 有人把口径又复制回调用点、或写回那两条假出路。</summary>
     [Fact]
     public void The_real_cugan_notice_names_only_routes_that_actually_exist()
     {
         Assert.False(RealCugan.HasOnnxFallback);                       // 前提:没有 ONNX 版本
         Assert.Contains("明确拒绝", RealCugan.UnavailableNotice);        // 真实行为(见 VideoService 的异常)
-        Assert.Contains("CPU 档在重编版上实测会崩", RealCugan.UnavailableNotice);
+        Assert.Contains("CPU 档在重编版上实测会退出", RealCugan.UnavailableNotice);
         Assert.DoesNotContain("走 ONNX", RealCugan.UnavailableNotice);   // 那条路不存在
         Assert.DoesNotContain("按 CPU 计算", RealCugan.UnavailableNotice);
         // 【出路不许写进唯一口径】"改选 Real-ESRGAN" 只在**有可用 GPU** 时成立:没有显卡的机器上视频页

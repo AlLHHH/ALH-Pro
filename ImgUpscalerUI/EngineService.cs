@@ -19,7 +19,7 @@ public static partial class EngineService
     /// 【它现在只决定"要不要真机探测",不再决定"禁不禁 ncnn"】原先据此一律改走 ONNX;现在 ncnn
     /// 能否用由 EnsureNcnnProbeAsync 实测决定(见 NcnnGpuRisky / ShouldUseOnnx*),50 系探测通过就走 ncnn。
     /// 仍需名字判定的场景:①探测的快速通道(纯 NVIDIA 非 Blackwell 且机内无非 N 卡 → 不探测直接判可用)
-    /// ②少数确实只见于 50 系的引擎缺陷兜底(如 waifu2x 的 ncnn CPU 模式崩溃 exit -1073741819)。
+    /// ②少数确实只见于 50 系的引擎问题兜底(如 waifu2x 的 ncnn CPU 模式进程退出 exit -1073741819)。
     /// 测试钩子:环境变量 ALH_FORCE_BLACKWELL=1 时强制视为 50 系(开发/诊断用,正常用户不生效)。</summary>
     public static bool IsBlackwellGpu()
     {
@@ -53,7 +53,7 @@ public static partial class EngineService
     }
 
     /// <summary>waifu2x 是否应走 ONNX 路线:①【本机实测】ncnn 不可用(优先判据)
-    /// ②无独显/Vulkan 不可用(此时只能 CPU,而 waifu2x ncnn CPU 模式有 bug 会崩)。
+    /// ②无独显/Vulkan 不可用(此时只能 CPU,而 waifu2x ncnn CPU 模式有问题会退出)。
     /// 50 系 waifu2x 20250915 新版引擎兼容 Blackwell —— 但"到底行不行"不再靠型号猜,由真机探测决定
     /// (EnsureNcnnProbeAsync:生产帧尺寸 1080×1920 + 带状黑判据);探测通过就用 ncnn(快),失败才 ONNX。
     /// 未探测过时按"Blackwell 不算风险"处理 = 与本次改动前的行为逐字节一致(不引入回归)。</summary>
@@ -80,8 +80,8 @@ public static partial class EngineService
     private static readonly TimeSpan NcnnVerdictTtlOk = TimeSpan.FromDays(7);
     private static readonly TimeSpan NcnnVerdictTtlFail = TimeSpan.FromDays(1);
     private static bool? _nonNvidiaCache;
-    /// <summary>本会话内确认"ncnn CPU(-g -1)模式崩溃"(exit -1073741819 内存访问违规)后置位:
-    /// 之后所有引擎的 CPU 兜底直接跳过,改为 GPU 0 重算,避免反复崩溃拖慢/卡住(双卡机/部分机型实测)。</summary>
+    /// <summary>本会话内确认"ncnn CPU(-g -1)模式进程退出"(exit -1073741819 内存访问违规)后置位:
+    /// 之后所有引擎的 CPU 兜底直接跳过,改为 GPU 0 重算,避免反复进程退出拖慢/停住(双卡机/部分机型实测)。</summary>
     private static bool _ncnnCpuBroken;
     /// <summary>GPU 引擎重试的【递归深度】(0=顶层失败,该重试;≥1=已在重试递归里,直接走降级链防无限递归)。
     /// 此前是静态 bool 闩锁:置位后永不复位 → 宣传的"同设备重试 3 次"整个进程只兑现一次(诊断包里第二次 GPU 失败
@@ -94,15 +94,15 @@ public static partial class EngineService
 
     /// <summary>最近一次探测失败的【用户可读原因】(空 = 上次探测通过/还没探过)。
     /// 供调用方(视频/图片路径)在提示里原样引用,避免各处自写一套措辞;
-    /// 措辞规则集中在 AlhPro.Core.ProbeDiagnosis,并有单测守着"坏帧不许甩锅给驱动"这条约束。</summary>
+    /// 措辞规则集中在 AlhPro.Core.ProbeDiagnosis,并有单测守着"无效画面不许甩锅给驱动"这条约束。</summary>
     public static string LastProbeUserMessage { get; private set; } = "";
 
     /// <summary>【F2 · 2026-09-13 自检修】"要用的那张卡"是不是纯 NVIDIA 且非 50 系 —— 即可以走免探测快速通道的那种卡。
     /// 与旧的 <c>!HasNonNvidiaGpu()</c>(看整机有没有 A/I 卡)不同:混显笔记本(Intel 核显 + N 卡)现在也能走快速通道,
     /// 因为它要用的本来就是那张 N 卡 —— 旧判据让这类机器在每个首次任务上白等一次生产帧尺寸探测(最坏 60 秒)。
-    /// 三条判据:名字是 NVIDIA、不是 D3D12 转译层(经转译层跑 ncnn 输出损坏帧)、不是 Blackwell(50 系)。
+    /// 三条判据:名字是 NVIDIA、不是 D3D12 转译层(经转译层跑 ncnn 输出无效画面)、不是 Blackwell(50 系)。
     /// 【拿不准就返回 false】设备表为空/编号越界/名字为空 → 一律老实真机探测:多花最坏 15~60 秒可接受,
-    /// "误判为可用 → 用户拿到损坏帧"不可接受(判错方向的代价不对称)。
+    /// "误判为可用 → 用户拿到无效画面"不可接受(判错方向的代价不对称)。
     /// 注:本函数只搬动"要不要探测"的判据,探测本身仍是同一套生产帧尺寸口径(不新增第二套判据)。</summary>
     private static bool TargetGpuIsPlainNvidia(int gpuId)
     {
@@ -140,9 +140,9 @@ public static partial class EngineService
     }
 
     // 【引擎身份键】realesrgan 会被规整成 realesrgan / realesrgan2026(见 RealEsrganEngineId):
-    // 新旧引擎共用同一个键的话,旧版在 50 系上"出坏帧"的结论会把新引擎一起判死。
+    // 新旧引擎共用同一个键的话,旧版在 50 系上"出无效画面"的结论会把新引擎一起判死。
     // 【F1 · 2026-09-13 自检修:键里补上"模型"维度】旧键只有 engine|gpu,于是"animevideov3 实测通过"
-    // 会给 x4plus(实测最慢、最易出坏帧的那支)背书 —— 同一张卡上不同模型的可用性本来就不一样,
+    // 会给 x4plus(实测最慢、最易出无效画面的那支)背书 —— 同一张卡上不同模型的可用性本来就不一样,
     // 结论缓存 7 天,等于长期拿别人的体检报告。现在键 = engine|gpu|model(null/空 = 引擎级结论,如 waifu2x)。
     // 【副作用(可接受)】旧键(没有模型段)读不到,等价于"没测过" → 首次处理时自动重测一次;
     // 这正是想要的语义:结论本来就该按模型算。RIFE 那条键里本来就带模型(见 RifeProbeKey),不受影响。
@@ -340,12 +340,12 @@ public static partial class EngineService
     /// <summary>【50 系路由核心】真机探测某引擎的 ncnn-Vulkan 在本机该 GPU 上能否按【生产形态】跑通,
     /// 结论缓存(进程内 + 落盘),供 NcnnGpuRisky / ShouldUseOnnx* 决定走 ncnn 还是 ONNX。
     /// 【与旧探测口径的区别 —— 旧口径正是"50 系一律禁用"的根因】
-    /// ①探测图用【生产帧尺寸 1080×1920】(旧 320×240 太小:真机证据是"小图能过、真实分辨率静默出 0KB 空帧/黑帧,
+    /// ①探测图用【生产帧尺寸 1080×1920】(旧 320×240 太小:真机证据是"小图能过、真实分辨率静默出 0KB 空帧/全黑画面,
     ///   退出码还是 0",于是探测判"可用"→ 整段黑);
     /// ②参数与生产逐字一致(-s 2 -n 0 -t 0 -j 1:1:1 + 真实模型),而不是裸 -s 2;
     /// ③判据含【带状近黑】:IsBlackProbeOutput → FrameInspect.IsDefectiveFrame = 整帧 ≥95% 近黑 或 任一 1/3 主条带 ≥95% 近黑
     ///   (整帧量词在"下 2/3 全黑、上 1/3 正常"时只黑 66%,判不出来 —— 这正是旧探测漏检的形态)。
-    /// gpuId&lt;0(用户选 CPU)直接返回 false:ncnn CPU 模式在 50 系上有崩溃 bug(实测 exit -1073741819)。
+    /// gpuId&lt;0(用户选 CPU)直接返回 false:ncnn CPU 模式在 50 系上有进程退出 问题(实测 exit -1073741819)。
     /// <param name="force">true = 忽略快速通道与缓存,无条件真机重测一次(仅"导出诊断包"用)。
     /// 【为什么需要它】诊断报告一直显示"未测"有两个独立原因:①报告文本是【按版本缓存的快照】,
     /// 生成于任何探测之前、之后永不刷新;②纯 NVIDIA 非 Blackwell 机型走快速通道**从不落盘结论**。
@@ -356,7 +356,7 @@ public static partial class EngineService
     private static readonly object _anime4kLock = new();
 
     /// <summary>本机能不能在 1x 档用 Anime4K 着色器(`libplacebo` 滤镜 + `custom_shader_path`)。
-    /// 【为什么必须先探】libplacebo 依赖可用的 Vulkan:没有的话滤镜初始化失败 ⇒ ffmpeg 直接报错、**整批编码失败** ✗。
+    /// 【为什么必须先探】libplacebo 依赖可用的 Vulkan:没有的话滤镜初始化失败 ⇒ ffmpeg 直接提示错误、**整批编码失败** ✗。
     /// 所以开跑前探一次,探不过就回退到旧的「2x 超分后缩回」行为(调用点见 VideoView 的 1x 分支),绝不让任务白白失败。
     /// 【为什么用 lavfi 合成图】不依赖任何素材、64×64 单帧,亚秒级;结果按会话缓存,不会每批重试。
     /// 【工作目录是关键】滤镜里只能传**文件名** —— 绝对路径里的 `D:` 会被 ffmpeg 的滤镜参数解析当成选项分隔符
@@ -391,7 +391,7 @@ public static partial class EngineService
 
     /// <summary>跑一次探测(不含缓存与日志结论)。见 <see cref="EnsureAnime4kProbeAsync"/> 的说明。</summary>
     /// <summary>Anime4K 的 Vulkan 设备参数。
-    /// 【为什么要它】双显卡机(核显+独显)上 libplacebo 可能把 Vulkan 设备选到核显而卡住或失败;
+    /// 【为什么要它】双显卡机(核显+独显)上 libplacebo 可能把 Vulkan 设备选到核显而停住或失败;
     /// libplacebo 滤镜自己没有选设备的选项(只有 inherit_device,已用 ffmpeg -h filter=libplacebo 查实),
     /// 必须走 ffmpeg 的设备初始化。
     /// 【2026-09-23 收口:从"测试钩子"升级为"自动选择"】
@@ -538,7 +538,7 @@ public static partial class EngineService
                 catch { }
                 if (tail.Length > 400) tail = tail.Substring(tail.Length - 400);
                 AppLogger.Warn("[探测] 1x 修复(Anime4K):探测超时(60 秒)"
-                    + (tail.Length > 0 ? $" stderr 尾部:{tail.Replace("\n", " | ")}" : " (超时前无任何 stderr 输出 ⇒ 更像挂死/设备初始化卡住,不是单纯慢)"));
+                    + (tail.Length > 0 ? $" stderr 尾部:{tail.Replace("\n", " | ")}" : " (超时前无任何 stderr 输出 ⇒ 更像挂死/设备初始化停住,不是单纯慢)"));
                 AppLogger.Info($"[探测] Anime4K 探测命令:{psi.FileName} {psi.Arguments} (cwd={psi.WorkingDirectory})");
                 return false;
             }
@@ -617,7 +617,7 @@ public static partial class EngineService
         // "realesrgan-x4plus 在 4060 上要 24.1 秒" ⇒ 健康卡完全可能被一次瞬时超时判死。
         // 现在"要不要再试一次 / 试几次 / 退避多久"全由 AlhPro.Core.ProbeRetryPolicy 按【档位】决定(可单测):
         //   · 本函数走 pipeline 档(fullFrame:true):超时/无响应 → 退避 3 秒重试一次;
-        //     确定性失败(初始化即崩 / 进程起不来 / 参数或编译错误 / 出图但坏帧 / 无产出)→ 一次都不重试(理由见 Core)。
+        //     确定性失败(初始化即崩 / 进程起不来 / 参数或编译错误 / 出图但无效画面 / 无产出)→ 一次都不重试(理由见 Core)。
         //   · 小图活性检查(fullFrame:false,挑卡/编号纠正/核显切换)另有自己的档(1.5 秒×最多 3 次,见 Core 的两个 profile)。
         // 只有【重试后仍失败】才落失败结论(TTL 1 天);重试成功即成功(TTL 7 天,见 SaveNcnnVerdict 的 TTL 口径)。
         // 每次重试决策与结果都经 log 回调进日志(第几次、为什么、退避多久、结果),绝不静默。
@@ -656,7 +656,7 @@ public static partial class EngineService
             return false;
         }
         // 结论按【引擎|GPU|模型】记账(决策键);明细带上失败形态与探测次数 ——
-        // 诊断包里一眼能分出"初始化即崩"还是"出图但坏帧",也一眼能看出"这次是不是重试过"。
+        // 诊断包里一眼能分出"初始化即崩"还是"出图但无效画面",也一眼能看出"这次是不是重试过"。
         SaveNcnnVerdict(engine, gpuId, model, ok,
             (ok ? "probe ok" : "probe failed: " + AlhPro.Core.ProbeDiagnosis.ShortName(failKind))
             + $"; model={model ?? "(default)"}; attempts={outcome.Attempts}");
@@ -669,7 +669,7 @@ public static partial class EngineService
         }
         else
         {
-            // 【按形态说话】初始化即崩(Blackwell 上=NVIDIA 驱动缺陷)与"出图但坏帧"是两回事,不能混为一谈
+            // 【按形态说话】初始化即崩(Blackwell 上=NVIDIA 驱动问题)与"出图但无效画面"是两回事,不能混为一谈
             LastProbeUserMessage = AlhPro.Core.ProbeDiagnosis.Describe(failKind, IsBlackwellGpu(),
                 EngineLabel(engine));
             // 【措辞自洽】"共探测 N 次"一律取实际尝试数(attempts);重试过就说"已重试 k 次仍失败",
@@ -755,7 +755,7 @@ public static partial class EngineService
         }
         // 【2026-10-15 · 5760×5760 毒化事故的源头】实测故障带(≥InterpSizePolicy.NcnnRefusePixels,
         // 真机 7680×4320 静默全黑)里的尺寸**根本不会交给 ncnn**(InterpSizePolicy 按尺寸拒跑),
-        // 所以【不要探】:探了只会得到一条"出图但画面坏帧"的结论,还会被同尺寸档的其它任务复用。
+        // 所以【不要探】:探了只会得到一条"出图但画面无效画面"的结论,还会被同尺寸档的其它任务复用。
         // 这里直接按"本次别走 ncnn"返回,并且**不写任何缓存结论** —— 故障带是已知限制,不是这张卡的判决。
         var rifeSizeVerdict = AlhPro.Core.InterpSizePolicy.JudgeInputSize(frameW, frameH);
         if (rifeSizeVerdict.RefuseNcnn)
@@ -826,7 +826,7 @@ public static partial class EngineService
     /// 否则最坏情况正是"新引擎第一次跑就沿用旧结论、真正的探测永不发生"。
     /// 【为什么要带尺寸档】探测按生产帧尺寸做(小图能跑 ≠ 真帧能跑),所以 1080p 上测出来的结论
     /// 不能拿去给 4K 任务背书。档位由 <see cref="AlhPro.Core.NcnnVerdictKey.SizeBucket"/> 统一给出
-    /// (2026-10-15 起故障带单独一档:旧的三档实现会让 5760×5760 的坏帧结论给 4K 背书,详见那边的注释)。
+    /// (2026-10-15 起故障带单独一档:旧的三档实现会让 5760×5760 的无效画面结论给 4K 背书,详见那边的注释)。
     /// 指纹只取【文件名 + 字节数】而不含时间戳:文件没变就不该因为"重装一次"白等一遍探测。</summary>
     private static string RifeProbeKey(string rifeExe, string model, int frameW, int frameH)
     {
@@ -1067,7 +1067,7 @@ public static partial class EngineService
                 // 【已移除】原 ①b「Windows 官方 GPU 偏好(EnumAdapterByGpuPreference)」:
                 //   本项目手写的 IDXGIFactory6 声明漏了 IDXGIObject::GetPrivateData,槽位整体前移一位,
                 //   实测按该签名调用会跨签名 UB —— 在委托探针里直接 AccessViolation 终止进程(不可 catch)。
-                //   槽位修好后 ① 名字匹配已真正生效,该兜底收益远小于崩溃风险,故整段删除。
+                //   槽位修好后 ① 名字匹配已真正生效,该兜底收益远小于进程退出风险,故整段删除。
                 if (hwAdapters.Count > 0 && !AlhPro.Core.GpuName.IsIntegrated(want.Name))
                 {
                     var biggest = hwAdapters.OrderByDescending(a => a.DedicatedVramBytes).First();
@@ -1098,7 +1098,7 @@ public static partial class EngineService
             // 【2026-09-23 用户要求「视频不落 CPU」后的下游差异】视频侧(ONNX 超分/补帧)拿到 -1 会直接抛出
             // "无法把 GPU 编号映射到可用的 DirectML 设备(不降级到慢速 CPU)",而抠图/图片侧允许改用 CPU。
             AppLogger.Warn($"⚠ 设备映射:引擎编号 {engineGpu} 未匹配到同名 DirectML 硬件设备 → 返回 -1(按 CPU 处理)。"
-                + "若随后出现「无法映射到可用的 DirectML 设备」的报错,请把本行连同设备表一起发给作者。"
+                + "若随后出现「无法映射到可用的 DirectML 设备」的提示错误,请把本行连同设备表一起发给作者。"
                 + $"可用引擎设备={string.Join(",", devs.Select(d => d.Id + ":" + d.Name))}"
                 + $" DXGI错误={(string.IsNullOrEmpty(LastDxgiError) ? "无" : LastDxgiError)}");
             return -1;
@@ -1155,7 +1155,7 @@ public static partial class EngineService
         //   ① settingsIndex < 0 → 用户主动选 CPU,原样尊重;
         //   ② 编号在表里 → 原样返回;但若它恰好是【核显】且表里另有独显(陈旧注册表索引撞号的典型症状)
         //      → 换成最佳独显并留痕日志 ← 这正是"选独显却跑核显"的根治点,旧代码这里不会纠正;
-        //   ③ 编号不在表里 → 换表内设备(绝不落 CPU;转译层设备照传会输出损坏帧,必须先换);
+        //   ③ 编号不在表里 → 换表内设备(绝不落 CPU;转译层设备照传会输出无效画面,必须先换);
         //   ④ 表为空(未枚举)→ 返回 -1(2026-10-02 起不再按"注册表适配器数量"兜底:那个数量会把陈旧编号判成合法引擎编号)。
         try
         {
@@ -1325,7 +1325,7 @@ public static partial class EngineService
     //   IDXGIAdapter:  (继承 IDXGIObject) +EnumOutputs=7 GetDesc=8 CheckInterfaceSupport=9
     //   IDXGIAdapter1: +GetDesc1=10
     // 【实测证明 2026-09-10】在本机用独立探针直接调槽位验证:
-    //   factory slot 11 → hr=0x887A0001(那其实是 CreateSoftwareAdapter(module=0) 的报错),slot 12 → hr=0,返回真实显卡名
+    //   factory slot 11 → hr=0x887A0001(那其实是 CreateSoftwareAdapter(module=0) 的提示错误),slot 12 → hr=0,返回真实显卡名
     //   adapter slot 9  → hr=0x887A0004(CheckInterfaceSupport),slot 10 → hr=0,返回 'NVIDIA GeForce RTX 4060 Laptop GPU'
     private const int SlotEnumAdapters1 = 12;
     private const int SlotGetDesc1 = 10;
@@ -1492,7 +1492,7 @@ public static partial class EngineService
     /// 逐个做真机探测,返回第一个【实际可用】的引擎编号;-1=全部不可用。
     /// 不只按名字推荐——名字对但驱动/编号/引擎支持有问题时,实测能拦住(真机:RTX5060 三卡机选中 Intel 核显)。
     /// 【口径说明(2026-09-12 自检)】这里的探测是 **320×240 小图的"活性检查"**(fullFrame:false),
-    /// **不等于"可用性"**:本项目实测过的失败形态正是"小图能过、生产帧尺寸才静默出空帧/黑帧"。
+    /// **不等于"可用性"**:本项目实测过的失败形态正是"小图能过、生产帧尺寸才静默出空帧/全黑画面"。
     /// 所以日志与文案一律写"320×240 活性检查",别再说"1×1 可用";真正的可用性结论来自
     /// `EnsureNcnnProbeAsync`(生产帧尺寸 1080×1920 + 带状黑判据)。
     /// 为什么不升级成生产帧口径:首次自检要给每张候选卡多等一次生产帧探测(实测 x4plus 在 4060 上 24.1 秒),
@@ -1515,7 +1515,7 @@ public static partial class EngineService
                 AppLogger.Info(d.Id + ": " + d.Name + " → " + (ok ? "320×240 活性检查通过" : "不可用"));
                 if (ok) return d.Id;
             }
-            // ② 独显全不可用 → 核显作"底牌"兜底(核显也是计算设备,能用就用,总比报错强)
+            // ② 独显全不可用 → 核显作"底牌"兜底(核显也是计算设备,能用就用,总比提示错误强)
             var igpu = devs.Where(d => GpuInfo.ScoreDeviceName(d.Name) == 0).OrderBy(d => d.Id).Take(2);
             foreach (var d in igpu)
             {
@@ -1776,14 +1776,14 @@ public static partial class EngineService
     public static string? FindWaifu2x() => FindExe("waifu2x", "waifu2x-ncnn-vulkan.exe");
 
     /// <summary>新版 Real-ESRGAN 引擎(2026 重编译:官方 MIT 前端 + 含 Blackwell 修复的 ncnn)。
-    /// 官方 2022 版 exe 在 50 系上会出坏帧,必须靠新版才能走 ncnn 快路。</summary>
+    /// 官方 2022 版 exe 在 50 系上会出无效画面,必须靠新版才能走 ncnn 快路。</summary>
     public static string? FindRealEsrgan2026() => FindExe("realesrgan", "realesrgan-ncnn-vulkan-2026.exe");
 
     /// <summary>实际使用的 Real-ESRGAN 引擎:有新版就用新版,否则回退官方 2022 版。</summary>
     public static string? FindRealESRGAN() => FindRealEsrgan2026() ?? FindExe("realesrgan", "realesrgan-ncnn-vulkan.exe");
 
     /// <summary>【2026-09-24 重新上架】Real-CUGAN 重编引擎(2025/2026 ncnn + 官方同一份 MIT 前端源码)。
-    /// 官方 20220728 那份 exe 实测 `VK_EXT_robustness2` = 0 处 ⇒ 在 NVIDIA 50 系上属「退出码 0 + 坏帧」,
+    /// 官方 20220728 那份 exe 实测 `VK_EXT_robustness2` = 0 处 ⇒ 在 NVIDIA 50 系上属「退出码 0 + 无效画面」,
     /// **不能随包**,必须用重编版(配方见 tools\engine-build\README_REALCUGAN.md)。</summary>
     public static string? FindRealCugan2026() => FindExe("realcugan", "realcugan-ncnn-vulkan-2026.exe");
 
@@ -1814,7 +1814,7 @@ public static partial class EngineService
     }
 
     /// <summary>Real-ESRGAN 引擎的"身份键"。装了新版就用 "realesrgan2026",否则沿用 "realesrgan"。
-    /// 【为什么必须区分】探测结论按 "引擎|GPU" 落盘缓存(成功 7 天):官方 2022 版在 50 系上"出坏帧"是真结论,
+    /// 【为什么必须区分】探测结论按 "引擎|GPU" 落盘缓存(成功 7 天):官方 2022 版在 50 系上"出无效画面"是真结论,
     /// 若沿用同一个键,新引擎会被这条旧结论直接判死 → 又回到又慢又糊的 ONNX。换了引擎就必须重新实测。</summary>
     public static string RealEsrganEngineId => FindRealEsrgan2026() is not null ? "realesrgan2026" : "realesrgan";
 
@@ -1930,7 +1930,7 @@ public static partial class EngineService
     public static void ExitProcessing()
     {
         if (System.Threading.Interlocked.Decrement(ref _processingCount) < 0)
-            System.Threading.Interlocked.Exchange(ref _processingCount, 0);   // 兜底:万一配对写漏,也不许把清理永久卡死
+            System.Threading.Interlocked.Exchange(ref _processingCount, 0);   // 兜底:万一配对写漏,也不许把清理永久长时间无响应
     }
 
     /// <summary>当前是否有处理任务在跑(关窗清理/手动「立即清理」据此跳过,避免删掉正在用的临时帧)。</summary>
@@ -1982,7 +1982,7 @@ public static partial class EngineService
     private static DateTime _lastEngineStartLog = DateTime.MinValue;
     // 引擎"无进展看门狗":时间戳已改为 RunAsync 每次调用私有(局部变量 lastOutTicks/lastFrameTicks,
     // 闭包捕获)——原全局静态已被并发任务"喂狗"导致看门狗失效,已废弃(无引用)。
-    // (引擎崩溃=进程退出→RunAsync 抛异常→降级链接管,不依赖看门狗;看门狗兜底"引擎 hang 不退出的情况")
+    // (引擎进程退出=进程退出→RunAsync 抛异常→降级链接管,不依赖看门狗;看门狗兜底"引擎 hang 不退出的情况")
     // 分块处理已改为"一次目录批量启动引擎"(UnscaleTiledAsync),不再逐块启动,故不再需要单块平均耗时心跳字段。
 
     /// <summary>启动引擎子进程,实时读取输出并解析进度,支持取消(杀进程树)。返回引擎日志尾部。</summary>
@@ -2025,7 +2025,7 @@ public static partial class EngineService
         // ===== 引擎"已就绪"回调(2026-09-13 新增)=====
         // "已就绪" = 引擎真的跑起来了(首次产出输出 / 首帧落盘,说明进程启动 + 模型加载已完成、开始出活)。
         // 调用方靠它把界面上的"正在启动引擎(约 N 秒…)"换成带【实际启动耗时】的一句:批次之间的进程启动
-        // 停顿因此变成用户看得见的进度,不再像卡死。处理顺序/参数/并发一律不变,只是多报一行进度。
+        // 停顿因此变成用户看得见的进度,不再像长时间无响应。处理顺序/参数/并发一律不变,只是多报一行进度。
         // 只报一次(降级链可能在同一批里再起进程):Interlocked 抢位,后到的直接丢弃。
         int readySignaled = 0;
         void SignalEngineReady()
@@ -2040,7 +2040,7 @@ public static partial class EngineService
         int maxPct = 0;
         bool killRequested = false;
         // 看门狗时间戳(每次 RunAsync 私有,不再用全局静态共享——否则多引擎并发时 A 的心跳会"喂狗"B,
-        // B 真卡死看门狗也不判死,用户无限等)。闭包捕获,每个引擎进程独立哨兵。
+        // B 真长时间无响应看门狗也不判死,用户无限等)。闭包捕获,每个引擎进程独立哨兵。
         long lastOutTicks = DateTime.Now.Ticks;
         long lastFrameTicks = DateTime.Now.Ticks;
         var watchTask = (watchDir != null && totalFrames > 0 && stage.Length > 0)
@@ -2050,7 +2050,7 @@ public static partial class EngineService
             : Task.CompletedTask;
         // 引擎无进度输出时(部分模型/CPU 软算):每 4 秒若有变化就渐 +1(上限 98),避免进度条"空→满"跳变。
         // 【关键修复】watchDir(目录轮询)场景禁用空闲心跳:它会 10 秒内把进度虚推到 96~98%,
-        // 之后真实帧/块进度(数值更小)被 Math.Max 卡住 → 进度条永远定格 98% 假装满——"进度条不会动"的根因。
+        // 之后真实帧/块进度(数值更小)被 Math.Max 停住 → 进度条永远定格 98% 假装满——"进度条不会动"的根因。
         int lastIdlePct = -1;
         using var idleTimer = watchDir == null
             ? new System.Threading.Timer(_ =>
@@ -2202,7 +2202,7 @@ public static partial class EngineService
         watchCts.Cancel();
         try { await watchTask.ConfigureAwait(false); } catch (OperationCanceledException) { }
         App.ActiveProcesses.Unregister(p.Id);
-        // 进程没退出时不许读 ExitCode(会抛 InvalidOperationException,把"卡死"伪装成别的错),
+        // 进程没退出时不许读 ExitCode(会抛 InvalidOperationException,把"长时间无响应"伪装成别的错),
         // 也不许走"回退重跑"(它可能还在往同一个输出目录写文件,重跑会与它交叉写出错结果)。
         if (!p.HasExited || !drained)
             throw new InvalidOperationException(killReason
@@ -2239,25 +2239,25 @@ public static partial class EngineService
     /// 注意:仅探测(小图,毫秒级),不影响正常处理;结果不缓存(显卡/驱动随时可能变)。
     /// 【行为】这个 3 参重载 = fullFrame:false = 小图活性检查/挑卡档:确定性失败与瞬时超时都退避 1.5 秒、
     /// 最多 3 次(挑卡路径的旧保险,定值见 AlhPro.Core.ProbeRetryPolicy.DeviceLivenessCheck)。
-    /// 需要"能堵住 Blackwell 静默空帧/黑帧"的强判据时,用 fullFrame:true 的重载(见下)。</summary>
+    /// 需要"能堵住 Blackwell 静默空帧/全黑画面"的强判据时,用 fullFrame:true 的重载(见下)。</summary>
     public static async Task<bool> IsEngineGpuUsableAsync(string engine, int gpuId, CancellationToken ct)
         => await IsEngineGpuUsableAsync(engine, gpuId, ct, fullFrame: false, model: null).ConfigureAwait(false);
 
     /// <summary>同上,但 fullFrame=true 时按【生产形态】探测:1080×1920 真帧尺寸 + 生产参数
     /// (-s 2 -n 0 -t 0 -j 1:1:1 + 真实模型)。这是"50 系该走 ncnn 还是 ONNX"的判据来源。
     /// 【为什么小图不够】真机证据(诊断包):320×240 甚至 1×1 探测都能通过,真实分辨率却静默输出
-    /// 0KB 空帧/黑帧、【退出码还是 0】——于是旧探测判"可用",整段视频的黑帧一路进成片。
+    /// 0KB 空帧/全黑画面、【退出码还是 0】——于是旧探测判"可用",整段视频的全黑画面一路进成片。
     /// 判据仍沿用 IsBlackProbeOutput(= FrameInspect.IsDefectiveFrame:整帧 ≥95% 近黑 或 任一 1/3 主条带 ≥95% 近黑),
-    /// 因此"下 2/3 全黑、上 1/3 正常"这种带状坏帧也能被这一层拦住。
+    /// 因此"下 2/3 全黑、上 1/3 正常"这种带状无效画面也能被这一层拦住。
     /// 【2026-09-27】别把这里的判黑和"事后判黑"混为一谈:事后那套(超分批重跑/换 ONNX/补帧换路)已按作者要求
     /// 整体删除;这一处是**事前探测**,探测图由程序自造,保留。</summary>
     public static async Task<bool> IsEngineGpuUsableAsync(string engine, int gpuId, CancellationToken ct, bool fullFrame, string? model)
         => await IsEngineGpuUsableAsync(engine, gpuId, ct, fullFrame, model, null).ConfigureAwait(false);
 
     /// <summary>同上,并把【失败形态】回传给 onFailure(只报最终决定性的那一次,不报每次重试)。
-    /// 【为什么需要它】原返回 bool 把失败原因全丢了,调用方只能含糊说"崩溃/空帧/黑帧/超时"。
-    /// 而"初始化即崩"与"出图但坏帧"是两件完全不同的事:前者在 Blackwell 上就是 NVIDIA 的
-    /// cooperative-matrix 驱动缺陷(必须说清楚,否则用户会一直来找我们),后者属引擎并发/渲染
+    /// 【为什么需要它】原返回 bool 把失败原因全丢了,调用方只能含糊说"进程退出/空帧/全黑画面/超时"。
+    /// 而"初始化即崩"与"出图但无效画面"是两件完全不同的事:前者在 Blackwell 上就是 NVIDIA 的
+    /// cooperative-matrix 驱动问题(必须说清楚,否则用户会一直来找我们),后者属引擎并发/渲染
     /// (绝不能甩给驱动)。文案规则见 AlhPro.Core.ProbeDiagnosis(有单测守着这两条约束)。</summary>
     public static async Task<bool> IsEngineGpuUsableAsync(string engine, int gpuId, CancellationToken ct, bool fullFrame, string? model, Action<AlhPro.Core.ProbeFailureKind, string>? onFailure)
     {
@@ -2315,7 +2315,7 @@ public static partial class EngineService
             // 【2026-10-15 · 生产帧尺寸探测改成"目录批处理 + 生产参数形态"】
             // 【为什么要换】本探测原来走**单文件**且**不下发 -f**(引擎默认写 PNG),而生产视频超分走的是
             //   `EngineService.UpscaleDirAsync` ⇒ **目录批处理 + `-f jpg`**。真机实测(2026-10-15,RTX 4060 Laptop):
-            //   **同一帧、同一个 tile,单文件正常、目录模式却出纯黑帧(32297B、平均亮度 0)、退出码仍是 0**
+            //   **同一帧、同一个 tile,单文件正常、目录模式却出纯全黑画面(32297B、平均亮度 0)、退出码仍是 0**
             //   (老版 2022 exe `-t 384`;单文件同参数 721632B 正常)。⇒ "单文件探测通过"根本不能推出
             //   "视频那条路能出图" —— 探测必须跑生产真正走的形态,否则"设备可用"是个假结论(设备会被继续用,成片一路黑)。
             //   `-t` 仍保持 0(auto):生产首跑就是 auto(`UpscaleDirAsync` 的 RunEngAsync 起步 t=0),
@@ -2323,7 +2323,7 @@ public static partial class EngineService
             // 【只放 1 帧】探测时长必须留在 60 秒超时内(x4plus 单帧实测 24.1s,两帧就会撞超时 ⇒ 健康卡被误判不可用);
             //   实测**1 帧的目录批处理就足以复现**上面那个形态差异,不需要更多帧。
             // 【小图档(fullFrame=false)保持单文件原样】它只回答"引擎在这张卡上能不能起来"(挑卡用),
-            //   320×240 上单文件/目录/格式三种形态都不复现黑帧(实测),不动它 = 不动挑卡行为。
+            //   320×240 上单文件/目录/格式三种形态都不复现全黑画面(实测),不动它 = 不动挑卡行为。
             var probeInDir = Path.Combine(EngineService.TempRoot, $"eng_probe_in_{Guid.NewGuid():N}");
             var probeOutDir = Path.Combine(EngineService.TempRoot, $"eng_probe_out_{Guid.NewGuid():N}");
             var probeOutFiles = new List<string>();
@@ -2333,7 +2333,7 @@ public static partial class EngineService
                 string probeOutput = outPng;     // 引擎 -o
                 if (fullFrame)
                 {
-                    // 生产帧尺寸(1080×1920 = 短竖屏视频原生帧):只有够大才复现"小图能过、真实分辨率静默出空帧/黑帧"。
+                    // 生产帧尺寸(1080×1920 = 短竖屏视频原生帧):只有够大才复现"小图能过、真实分辨率静默出空帧/全黑画面"。
                     // 三段内容刻意都不黑(上亮/中灰/下中亮):这样"某个 1/3 条带近黑"只可能来自引擎故障,而不是素材本身。
                     // 目录模式要求输入/输出目录都已存在(见 UpscaleDirAsync 的同名注释)。
                     Directory.CreateDirectory(probeInDir);
@@ -2378,7 +2378,7 @@ public static partial class EngineService
                 else if (fullFrame && engine == AlhPro.Core.RealCugan.EngineName)
                 {
                     // 【Real-CUGAN:CLI 与 Real-ESRGAN 不兼容,不能照抄下一行】`-n` 是**降噪档**、`-m` 才是模型目录。
-                    // 把它当 realesrgan 拼(`-m <模型目录> -n <模型名>`)会得到一个非法降噪档名 ⇒ 引擎报错或按错档跑。
+                    // 把它当 realesrgan 拼(`-m <模型目录> -n <模型名>`)会得到一个非法降噪档名 ⇒ 引擎提示错误或按错档跑。
                     args = RealCuganArgs(probeInput, probeOutput, model, gpuId, engineScale: 2, tta: false, tile: 0, format: "jpg");
                 }
                 else if (fullFrame)
@@ -2401,7 +2401,7 @@ public static partial class EngineService
                 };
                 // 【2026-09-24 · 重试判据已下沉到 AlhPro.Core.ProbeRetryPolicy ⇒ 这里只做【一次】尝试】
                 // 旧写法两处都与判据冲突,故一并收拢到 Core 的单一判据:
-                //   ① 确定性失败(退出码非 0 / 无产出 / 空产出 / 坏帧)在流水线档不再重试 ——
+                //   ① 确定性失败(退出码非 0 / 无产出 / 空产出 / 无效画面)在流水线档不再重试 ——
                 //      这些形态是确定性的(引擎已经退出、或已经交出结果,每次都会重现),重试只是把等待拉长;
                 //      但在【小图活性检查档】仍然退避 1.5 秒、最多 3 次(挑卡路径的旧保险,见 Core 的 profile 注释);
                 //   ② 超时(真 hang)不再当场判死 —— 真机踩过(2026-09-22 22:22 realesrgan GPU(0) 60 秒无响应
@@ -2437,8 +2437,8 @@ public static partial class EngineService
                 {
                     await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
                     // 【失败形态分类,决定对用户怎么说】
-                    // 退出码非 0 = 初始化/运行期崩溃(0xC0000005 访问违例是驱动缺陷的典型特征);
-                    // 退出码 0 但无产出/产出 0 字节 = 静默失败;产出非空但近黑 = 坏帧(另一类问题)。
+                    // 退出码非 0 = 初始化/运行期进程退出(0xC0000005 访问违例是驱动问题的典型特征);
+                    // 退出码 0 但无产出/产出 0 字节 = 静默失败;产出非空但近黑 = 无效画面(另一类问题)。
                     // 产出文件:fullFrame 走**目录模式** ⇒ 产出在 probeOutDir 里(引擎还会改名:带 alpha 的 PNG 直出 JPG
                     // 时写成 "xxx.jpg.png",见 EnsureFinalOutput 的注释),所以这里按目录枚举、不看固定文件名。
                     if (fullFrame)
@@ -2468,14 +2468,14 @@ public static partial class EngineService
                     else if (nonEmptyOut.Count == 0)
                         Note(AlhPro.Core.ProbeFailureKind.EmptyOutput, "产出文件 0 字节");
                     else
-                        Note(AlhPro.Core.ProbeFailureKind.DefectiveFrame, "产出非空,但判为缺陷帧(近黑/带状近黑)");
+                        Note(AlhPro.Core.ProbeFailureKind.DefectiveFrame, "产出非空,但判为无效帧(近黑/带状近黑)");
                     // 判定:退出码 0 且至少有一帧非空产出(引擎正常出图)
                     bool ok = p.ExitCode == 0 && nonEmptyOut.Count > 0;
-                    // 【黑帧自检】引擎输出存在但全黑/带状黑(静默黑帧 bug,如旧 ncnn 在部分驱动上)→ 该设备视为不可用,
-                    // 立即改用其它卡/ONNX;否则黑帧设备会被误判"可用",后续补帧/超分一路黑。
+                    // 【全黑画面自检】引擎输出存在但全黑/带状黑(静默全黑画面 问题,如旧 ncnn 在部分驱动上)→ 该设备视为不可用,
+                    // 立即改用其它卡/ONNX;否则全黑画面设备会被误判"可用",后续补帧/超分一路黑。
                     // 判据 = FrameInspect.IsDefectiveFrame(整帧近黑【或】任一 1/3 主条带近黑)——
                     // 带状黑("下 2/3 全黑、上 1/3 正常")也拦得住,不是只查整帧全黑。
-                    // 【为什么逐帧判】(2026-10-15)目录模式实测会出现"同批里好帧与黑帧混排、退出码 0"
+                    // 【为什么逐帧判】(2026-10-15)目录模式实测会出现"同批里好帧与全黑画面混排、退出码 0"
                     // (老版 2022 exe `-t 384`)⇒ 只判"第一张产出"会漏;这里对**每一张非空产出**判。
                     // 【2026-09-27】事后判黑已按作者要求删除(作者反馈:黑色转场内容被误判 ⇒ 转 ONNX 跑的超级慢);
                     // 这里是**事前探测**,保留(探测输入是程序自造图,见上面的生成段,不依赖用户素材)。
@@ -2545,16 +2545,16 @@ public static partial class EngineService
     }
 
     /// <summary>探测 RIFE 补帧引擎能否用 GPU(-g)插出一帧(2 帧输入→1 帧中间帧)。
-    /// 用途:补帧开始前实测(50 系/AMD/Intel 等:RIFE 可能静默 hang,不出图也不报错——
+    /// 用途:补帧开始前实测(50 系/AMD/Intel 等:RIFE 可能静默 hang,不出图也不提示——
     /// 不预检用户只能白等 8 分钟看门狗)。失败返回 false,调用方改用 CPU。
     /// 注意:RIFE 单对模式(-0 -1 -o)而非目录模式(目录模式需 ≥2 帧输入,探测用单对最快)。</summary>
     public static async Task<bool> IsRifeGpuUsableAsync(string rifeExe, string model, int gpuId, CancellationToken ct)
         => await IsRifeGpuUsableAsync(rifeExe, model, gpuId, ct, null).ConfigureAwait(false);
 
     /// <summary>同上,并回传失败形态 —— 理由同 IsEngineGpuUsableAsync:调用方要按形态说话
-    /// (初始化即崩 ≠ 出图但坏帧;前者在 Blackwell 上是 NVIDIA 驱动缺陷,后者不许甩给驱动)。
+    /// (初始化即崩 ≠ 出图但无效画面;前者在 Blackwell 上是 NVIDIA 驱动问题,后者不许甩给驱动)。
     /// <param name="frameW"/><param name="frameH">探测用的帧尺寸。默认 320×240(给不掌握视频尺寸的调用方兜底);
-    /// 【为什么必须能传生产尺寸】实测过的漏检形态正是"小图能跑、真分辨率上崩/静默出坏帧":320×240 只占
+    /// 【为什么必须能传生产尺寸】实测过的漏检形态正是"小图能跑、真分辨率上崩/静默出无效画面":320×240 只占
     /// 1080p 的 1/27 像素、4K 的 1/108,显存与着色器分块压力都差一个量级 —— 在小图上探测通过,不等于真帧上能跑。
     /// 视频路径知道源分辨率,就必须按源分辨率探(见 VideoService 调用处)。</summary>
     public static async Task<bool> IsRifeGpuUsableAsync(string rifeExe, string model, int gpuId, CancellationToken ct, Action<AlhPro.Core.ProbeFailureKind, string>? onFailure, int frameW = 320, int frameH = 240)
@@ -2579,11 +2579,11 @@ public static partial class EngineService
             var o = Path.Combine(tmp, "out.png");
             try
             {
-                // 【探测输入:水平渐变 + 同一渐变右移 2 像素】(2026 换,原来的是"纯黑帧 → 纯白帧"硬切)
+                // 【探测输入:水平渐变 + 同一渐变右移 2 像素】(2026 换,原来的是"纯全黑画面 → 纯纯白画面"硬切)
                 // 【为什么必须换】黑→白硬切对光流是【病态输入】:没有真实运动、只有内容突变,正确输出该是什么
                 //  没有定义。实测(本机 RTX 4060 Laptop / rife-v4.6,新老两代引擎一致)那种输入下"中间帧"均值
                 //  在 320×240 上只有 2.4(近黑!)、1080p 74.4、4K 90.3 —— 随分辨率乱变。于是旧探测只能查
-                //  "通道是否均衡",任何"出黑帧/出糊帧"的损坏都查不出来(本次要堵的盲区)。
+                //  "通道是否均衡",任何"出全黑画面/出糊帧"的损坏都查不出来(本次要堵的盲区)。
                 // 换成"渐变 + 右移 2 像素"(=真实的小位移)后,正确输出有确定预期:均值≈两输入均值、
                 //  方差≈输入方差。实测 13 个模型 × 新老两代引擎:均值偏差 ≤0.24、方差比 1.00(见 _qa/rifeprobe)。
                 // 【必须显式指定 Format24bppRgb —— 这里踩过坑】`new Bitmap(w,h)` 默认是 32bppArgb(带 alpha),
@@ -2638,7 +2638,7 @@ public static partial class EngineService
                     try
                     {
                         await p.WaitForExitAsync(waitCts.Token).ConfigureAwait(false);
-                        // 失败形态分类(同超分探测):非零退出 = 崩溃;退出 0 无产出/空产出 = 静默失败
+                        // 失败形态分类(同超分探测):非零退出 = 进程退出;退出 0 无产出/空产出 = 静默失败
                         if (p.ExitCode != 0)
                             Note(AlhPro.Core.ProbeFailureKind.CrashExitCode, $"exit=0x{p.ExitCode:X8}");
                         else if (!File.Exists(o))
@@ -2647,11 +2647,11 @@ public static partial class EngineService
                             Note(AlhPro.Core.ProbeFailureKind.EmptyOutput, "产出 0 字节");
                         bool ok = p.ExitCode == 0 && File.Exists(o) && new FileInfo(o).Length > 0;
                         // 出帧 ≠ 出对帧:某些设备(真机:D3D12 转译层)exit 0 且出图,但插值结果是整帧红噪点;
-                        // 还有"根本没插、把输入帧抄回来"(全黑/全白帧)—— 三判据一起看,见 ProbeOutputIsSane。
+                        // 还有"根本没插、把输入帧抄回来"(全黑/全纯白画面)—— 三判据一起看,见 ProbeOutputIsSane。
                         if (ok && !ProbeOutputIsSane(o, a, b, out var why))
                         {
-                            AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId})出帧但坏帧({why})——按不可用处理");
-                            Note(AlhPro.Core.ProbeFailureKind.DefectiveFrame, "出帧但坏帧:" + why);
+                            AppLogger.Warn($"[探测] RIFE {model} GPU(-g {gpuId})出帧但无效画面({why})——按不可用处理");
+                            Note(AlhPro.Core.ProbeFailureKind.DefectiveFrame, "出帧但无效画面:" + why);
                             ok = false;
                         }
                         if (ok)
@@ -2697,12 +2697,12 @@ public static partial class EngineService
 
     /// <summary>探测帧健全性:输入是"水平渐变 + 同一渐变右移 2 像素"两帧,正确插值结果必然
     /// 【均值≈两输入均值、方差≈输入方差、三通道均衡、不是近黑/带状近黑】。
-    /// 【四判据,任一不过 = "出帧但坏帧"】(2026 扩充;旧版只查通道均衡,实测有两个盲区)
+    /// 【四判据,任一不过 = "出帧但无效画面"】(2026 扩充;旧版只查通道均衡,实测有两个盲区)
     ///  ①通道均衡 <see cref="AlhPro.Core.DeviceRouting.IsAchromatic"/>:抓"D3D12 转译层整帧红噪点";
-    ///  ②非缺陷帧 <see cref="AlhPro.Core.FrameInspect.IsDefectiveFrame"/>(整帧 ≥95% 近黑【或】任一 1/3 主条带
-    ///    ≥95% 近黑):抓"整帧黑"与"下半 2/3 黑"的条带损坏(近黑帧三通道极差是 0,①对它完全无感);
+    ///  ②非无效帧 <see cref="AlhPro.Core.FrameInspect.IsDefectiveFrame"/>(整帧 ≥95% 近黑【或】任一 1/3 主条带
+    ///    ≥95% 近黑):抓"整帧黑"与"下半 2/3 黑"的条带损坏(近全黑画面三通道极差是 0,①对它完全无感);
     ///  ③均值对得上 <see cref="AlhPro.Core.DeviceRouting.InterpProbeMeanTolerance"/>:抓"输出与正确结果亮度
-    ///    根本不是一回事"(黑帧、白帧、亮度被拉平);
+    ///    根本不是一回事"(全黑画面、纯白画面、亮度被拉平);
     ///  ④结构没被抹平 <see cref="AlhPro.Core.DeviceRouting.InterpProbeStructureRatio"/>:抓"均值对得上、
     ///    通道也均衡,但整帧被抹成一块平的"(任何常数灰帧)。①②③都抓不到它,只有方差能。
     /// 【口径】三张图的像素都按 <see cref="AlhPro.Core.FrameInspect.ForEachSample"/> 的同一采样网格取,
@@ -2723,7 +2723,7 @@ public static partial class EngineService
         }
         if (AlhPro.Core.FrameInspect.IsDefectiveFrame(oSum, oN, w, h))
         {
-            reason = "缺陷帧(近黑/带状近黑)";
+            reason = "无效帧(近黑/带状近黑)";
             return false;
         }
         // 预期值 = 两个输入帧自己的均值/方差。读不到输入帧(异常)就跳过 ③④ —— 只留"不误杀"的那两条。
@@ -2806,7 +2806,7 @@ public static partial class EngineService
     /// <summary>运行引擎命令;若命令使用 GPU(-g ≥0)且启动失败(如新显卡 RTX 50 系与 ncnn-vulkan
     /// 兼容问题 "invalid gpu device"),按降级链重算:当前 GPU → 其他 GPU(引擎自检过的,尊重用户
     /// 主动选的卡;绝不给"选了 GPU1 却只降 CPU"这种无视其他卡的处理)→ CPU。失败不再直接中断任务。
-    /// CPU(-g -1)模式在这批引擎二进制上也有崩溃风险(实测 waifu2x 20250915 CPU 模式 exit -1073741819),
+    /// CPU(-g -1)模式在这批引擎二进制上也有进程退出风险(实测 waifu2x 20250915 CPU 模式 exit -1073741819),
     /// 故 CPU 失败时反向再试 GPU 0,双路都死才报带指引的错误。</summary>
     private static async Task RunEngFallbackGpuAsync(string exe, string args,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct,
@@ -2816,12 +2816,12 @@ public static partial class EngineService
     {
         bool usesGpu = System.Text.RegularExpressions.Regex.IsMatch(args, @"-g\s+[0-9]+");
         string runArgs = args;
-        // CPU(-g -1)本会话已确认崩溃(exit -1073741819):直接改用 GPU 0 重算,不再尝试 CPU,避免反复崩溃拖慢/卡住
+        // CPU(-g -1)本会话已确认进程退出(exit -1073741819):直接改用 GPU 0 重算,不再尝试 CPU,避免反复进程退出拖慢/停住
         if (!usesGpu && _ncnnCpuBroken)
         {
             runArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g 0");
-            AppLogger.Info($"⚠ 本会话已确认 ncnn CPU(-g -1)模式崩溃,跳过 CPU,自动改用 GPU 0({GpuName(0)}) 重算");
-            progress?.Report((0, $"⚠ ncnn CPU 模式崩溃,自动改用 GPU 0({GpuName(0)}) 重算..."));
+            AppLogger.Info($"⚠ 本会话已确认 ncnn CPU(-g -1)模式进程退出,跳过 CPU,自动改用 GPU 0({GpuName(0)}) 重算");
+            progress?.Report((0, $"⚠ ncnn CPU 模式进程退出,自动改用 GPU 0({GpuName(0)}) 重算..."));
         }
         try
         {
@@ -2830,21 +2830,21 @@ public static partial class EngineService
         }
         catch (InvalidOperationException ex) when (!usesGpu)
         {
-            // CPU(-g -1)初始模式:这批 ncnn 引擎的 CPU 模式有 bug(实测 waifu2x 20250915
+            // CPU(-g -1)初始模式:这批 ncnn 引擎的 CPU 模式有 问题(实测 waifu2x 20250915
             // -g -1 直接 exit -1073741819 内存访问违规)→ 反向试 GPU 0,再失败抛指引异常
-            // 闩锁只在"引擎二进制自身崩溃"时置位:退出码落在 NTSTATUS 0xC0000000 段(表现为 ≤ -1073741824)
-            // 才是访问违规/堆损坏一类崩溃。原先任何 InvalidOperationException 都置位——磁盘满、看门狗判死、
+            // 闩锁只在"引擎二进制自身进程退出"时置位:退出码落在 NTSTATUS 0xC0000000 段(表现为 ≤ -1073741824)
+            // 才是访问违规/堆损坏一类进程退出。原先任何 InvalidOperationException 都置位——磁盘满、看门狗判死、
             // 命令行写错全算,之后整个会话把用户【主动选的 CPU】悄悄改写成 -g 0;在"GPU 才是坏件"的机器上
-            // 正好反了,还把真实错误(如磁盘满)掩盖成"CPU 模式崩溃"。本次调用内仍照常重试 GPU 0。
-            // 【修正阈值方向】崩溃码 0xC0000005 = -1073741819 > -1073741824,原先 `<=` 永不匹配 → 闩锁永不生效。
-            // NTSTATUS 0xC0000000~0xFFFFFFFF 区段的崩溃码作为有符号 long 落在 [-1073741824, -1],因此用 `>= -1073741824L`(且为负)。
+            // 正好反了,还把真实错误(如磁盘满)掩盖成"CPU 模式进程退出"。本次调用内仍照常重试 GPU 0。
+            // 【修正阈值方向】进程退出码 0xC0000005 = -1073741819 > -1073741824,原先 `<=` 永不匹配 → 闩锁永不生效。
+            // NTSTATUS 0xC0000000~0xFFFFFFFF 区段的进程退出码作为有符号 long 落在 [-1073741824, -1],因此用 `>= -1073741824L`(且为负)。
             if (long.TryParse(ExtractExit(ex.Message), out var exitCodeNum)
                 && exitCodeNum < 0 && exitCodeNum >= -1073741824L)
-                _ncnnCpuBroken = true;   // 记录本会话 CPU 崩溃,后续跳过 CPU
+                _ncnnCpuBroken = true;   // 记录本会话 CPU 进程退出,后续跳过 CPU
             string head = ex.Message.Split('\n')[0];
             if (head.Length > 90) head = head[..90];
             string gpu0Name = GpuName(0);
-            AppLogger.Info($"⚠ CPU 模式不可用(引擎 CPU 路径不稳定: {head})——自动改用 GPU 0({gpu0Name}) 重算");
+            AppLogger.Info($"⚠ CPU 模式不可用(引擎 CPU 路径偶发: {head})——自动改用 GPU 0({gpu0Name}) 重算");
             progress?.Report((0, $"⚠ CPU 模式不可用,自动改用 GPU 0({gpu0Name}) 重算(更快更稳)..."));
             var gpuArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-g\s+-?\d+", "-g 0");
             try
@@ -2860,7 +2860,7 @@ public static partial class EngineService
                 // **写明入口是图片页**。替换 engines/waifu2x/ 文件那条照旧有效(图片页仍在用这个引擎)。
                 throw new InvalidOperationException(
                     $"超分引擎在 GPU 和 CPU 模式都不行(exit {ExtractExit(gpuEx.Message)}):\n" +
-                    $"这多半是引擎版本与显卡不兼容(如 RTX 50 系 + 旧版 ncnn-vulkan,或引擎自身 CPU 模式 bug)。\n" +
+                    $"这多半是引擎版本与显卡不兼容(如 RTX 50 系 + 旧版 ncnn-vulkan,或引擎自身 CPU 模式 问题)。\n" +
                     $"建议:①换用 **Real-ESRGAN** 引擎(视频页 / 图片页都有这一个档位,它有 ONNX 稳定路线;官方新版兼容 50 系/Blackwell);" +
                     "②图片页可改用 waifu2x(waifu2x 已从视频页移除,它现在只在图片页提供);" +
                     "③或到 https://github.com/nihui/waifu2x-ncnn-vulkan/releases 下载最新版替换 engines/waifu2x/ 下的文件。" +
@@ -2875,7 +2875,7 @@ public static partial class EngineService
 
             // 【失败反复重试 2~3 次再降级(不轻易掉)】同一条 GPU 命令(同参数/同设备)重跑多次:
             // 瞬时驱动抽风/编译着色器/显存短暂被占,重试能救回;全部失败才走下方降级链。
-            // 只在 GPU 初始模式重试(_gpuRetryDepth 防递归),CPU 模式(-g -1)不重试(已知会崩)。
+            // 只在 GPU 初始模式重试(_gpuRetryDepth 防递归),CPU 模式(-g -1)不重试(已知会退出)。
             const int GpuRetryTimes = 3;
             int retriedTimes = 0;
             if (Interlocked.CompareExchange(ref _gpuRetryDepth, 0, 0) == 0)
@@ -2904,11 +2904,11 @@ public static partial class EngineService
                     }
                 }
                 finally { Interlocked.Decrement(ref _gpuRetryDepth); }   // 归还深度:下一次任务/下一批重新获得完整重试次数
-                AppLogger.Warn($"⚠ GPU 已重试 {retriedTimes} 次全部失败({head}),按降级链处理(备用GPU→报错,不自动转CPU)");
+                AppLogger.Warn($"⚠ GPU 已重试 {retriedTimes} 次全部失败({head}),按降级链处理(备用GPU→提示错误,不自动转CPU)");
             }
             else
             {
-                AppLogger.Warn($"⚠ GPU 二次失败({head}),不再重试,走降级链(备用GPU→报错,不自动转CPU)");
+                AppLogger.Warn($"⚠ GPU 二次失败({head}),不再重试,走降级链(备用GPU→提示错误,不自动转CPU)");
             }
 
             // 【OOM 减半分块】GPU 显存不足且当前 -t > 64:先把分块减半在 GPU 上重试(显存降到约 1/4,能留在 GPU 上跑),
@@ -2920,7 +2920,7 @@ public static partial class EngineService
                 {
                     int tHalved = Math.Max(64, tCur / 2);
                     var oomArgs = System.Text.RegularExpressions.Regex.Replace(args, @"-t\s+\d+", $"-t {tHalved}");
-                    AppLogger.Warn($"⚠ 显存不足,分块 {tCur}→{tHalved} 在 GPU 上重试(不是卡死,是自动降分块)...");
+                    AppLogger.Warn($"⚠ 显存不足,分块 {tCur}→{tHalved} 在 GPU 上重试(不是长时间无响应,是自动降分块)...");
                     progress?.Report((0, $"⚠ 显存不足,自动降低分块 {tCur}→{tHalved} 重试(更快更稳)..."));
                     try
                     {
@@ -2963,13 +2963,13 @@ public static partial class EngineService
                 }
             }
 
-            // ② 【原则 A:任何情况不自动转 CPU】当前及其它 GPU 都失败 → 直接报错给可行建议,而非默默跑慢速 CPU。
+            // ② 【原则 A:任何情况不自动转 CPU】当前及其它 GPU 都失败 → 直接提示错误给可行建议,而非默默跑慢速 CPU。
             // 超分/补帧在 CPU 上慢到不可接受;只有用户在设置里【手动选 CPU】才走 CPU(见上方 !usesGpu 分支,那里保留)。
             // 【2026-09-25 话术校准(与上面那条同因)】两页共用的失败分支里不许再让视频页用户去"换用 waifu2x":
             // 视频页已把它移除 ⇒ 首选出路写 **Real-ESRGAN**,waifu2x 必须写明"图片页可改用"。
             throw new InvalidOperationException(
                 $"超分引擎在当前及其它 GPU 上均失败(exit {ExtractExit(ex.Message)}):\n" +
-                $"这多半是引擎与显卡/驱动不兼容(如 RTX 50 系 + 旧版 ncnn-vulkan 的已知崩溃)。\n" +
+                $"这多半是引擎与显卡/驱动不兼容(如 RTX 50 系 + 旧版 ncnn-vulkan 的已知进程退出)。\n" +
                 $"建议:①换用 **Real-ESRGAN** 引擎(视频页 / 图片页都有,官方新版兼容 50 系/Blackwell);" +
                 $"②图片页可改用 waifu2x(waifu2x 已从视频页移除,只在图片页提供);③更新 NVIDIA 显卡驱动;" +
                 $"④或到 https://github.com/nihui/waifu2x-ncnn-vulkan/releases 下载最新版替换 engines/waifu2x/ 下的文件。" +
@@ -3061,9 +3061,9 @@ public static partial class EngineService
         catch (InvalidOperationException ex) when (gpuId >= 0)
         {
             // 「补帧绝不落 CPU」:原先这里用 -g -1 重跑 ncnn-CPU,直接违反该约定,而且 CPU 补帧慢到
-            // 用户以为卡死(看门狗判死抛的 EngineStallException 也派生自 InvalidOperationException,
+            // 用户以为长时间无响应(看门狗判死抛的 EngineStallException 也派生自 InvalidOperationException,
             // 同样会被这个 catch 捞去走 CPU)。改为按既定降级链换一张卡再试;没有第二张卡就把异常抛回
-            // 调用方,由上层接 ONNX(DirectML) 或明确报错——绝不静默降级到 CPU。
+            // 调用方,由上层接 ONNX(DirectML) 或明确提示错误——绝不静默降级到 CPU。
             int? altGpu = TryGetAlternateGpu(gpuId);
             if (altGpu == null) throw;
             AppLogger.Info($"降级:任意 t 层批 GPU{gpuId} 失败({ex.Message.Split('\n')[0]}),改用 GPU{altGpu}(不落 CPU)");
@@ -3214,7 +3214,7 @@ public static partial class EngineService
         // 故 realesrgan 的 1x 超分中间倍率用 4x(4x→缩 0.25=原尺寸);waifu2x 用 2x。
         // 【修"静默错尺寸"】原条件写成 `upscaleShrink1x && scale <= 1.001`,只在"调用方传 1"时成立;
         // 而图片页现在传的是 2(EngineScaleOf:1x超分也要真 2x 放大再缩回)——条件恒假,于是 ncnn 路径的
-        // 1x 超分【直接输出了 2x 尺寸】,界面与预设却都写着"输出仍 1x",全程不报错。
+        // 1x 超分【直接输出了 2x 尺寸】,界面与预设却都写着"输出仍 1x",全程不提示。
         // 改为:只要 upscaleShrink1x 为真,就按引擎可用上限放大,再精确缩回源尺寸(不再依赖调用方传 1)。
         if (upscaleShrink1x)
         {
@@ -3248,14 +3248,14 @@ public static partial class EngineService
         {
             int iw = 0, ih = 0;
             try { using (var probe = new System.Drawing.Bitmap(input)) { iw = probe.Width; ih = probe.Height; } }
-            catch { /* 探不到尺寸就走单张路径,由引擎报错 */ }
+            catch { /* 探不到尺寸就走单张路径,由引擎提示错误 */ }
             int safeWholeTile = Math.Max(tileSize * 3, tileSize);   // 整图直跑安全上限(能整跑就不分块,省启动开销)
             if (iw > safeWholeTile || ih > safeWholeTile)
             {
                 // 分块拼接(SetPixel 羽化 + 合成 + 保存)很吃 CPU,放后台线程,避免卡 UI
                 var tiled = await Task.Run(() => UpscaleTiledAsync(input, output, engine, model,
                     scale, noise, gpuId, tta, progress, ct, tileSize)).ConfigureAwait(false);
-                // 【2026-09-27 · 保留(不带行为改路,只对"成品"报错)】拼好的成品同样要过"exit=0 却整帧全黑"的守卫。
+                // 【2026-09-27 · 保留(不带行为改路,只对"成品"提示错误)】拼好的成品同样要过"exit=0 却整帧全黑"的守卫。
                 // 为什么这次**恢复**它而不是连着视频那条链一起删:判据 IsSilentBlackFailure = 输出近黑 且 输入不近黑,
                 // 【自带源图豁免】—— 单张静帧不存在"黑转场"这回事,不会被素材本来就黑误伤;
                 // 它修的是"引擎 exit=0 却整帧全黑"(缺权重/驱动静默失败),图片页没有别的兜底,
@@ -3274,7 +3274,7 @@ public static partial class EngineService
                 throw new FileNotFoundException($"缺少 waifu2x 模型:{model}。");
             // waifu2x 只支持 2 的幂倍数(2/4/8...);非 2 的幂(如 3x/1.5x)用更高倍数放大后再缩回,画质更好(不吞画质)
             var engineScale = CeilPowerOfTwo(scale);
-            // 1x:引擎 -s 1 会段错误崩溃,不再直连 -s 1。不降噪直接复制原图;降噪则用 2x 降噪模型处理后高保真缩回 1x
+            // 1x:引擎 -s 1 会段错误进程退出,不再直连 -s 1。不降噪直接复制原图;降噪则用 2x 降噪模型处理后高保真缩回 1x
             if (engineScale == 1)
             {
                 if (noise < 0)
@@ -3333,7 +3333,7 @@ public static partial class EngineService
                 await Task.Run(() => ResizeImage(output, output, scale / engineScale), ct)
                     .ConfigureAwait(false);
             }
-            // 【2026-09-27 · 保留】缺权重时引擎同样 exit=0 只画坏帧 → 抛可读错误中止(判据与上一处同一套,
+            // 【2026-09-27 · 保留】缺权重时引擎同样 exit=0 只画无效画面 → 抛可读错误中止(判据与上一处同一套,
             // 自带源图豁免;视频批量路径保持已删除)。
             GuardSilentBlackOutput(input, output, engine, model, engineScale);
             return output;
@@ -3369,9 +3369,9 @@ public static partial class EngineService
         }
     }
 
-    /// <summary>逐块单文件超分:一块(≤tile)用"单文件 + -t 0"整块处理(引擎不内部切块→无接缝、无黑帧)。
+    /// <summary>逐块单文件超分:一块(≤tile)用"单文件 + -t 0"整块处理(引擎不内部切块→无接缝、无全黑画面)。
     /// 关键:引擎"目录批量 + -t tileSize"会 vkQueueSubmit 失败→全黑;引擎内部 tiling(-t 带数值)也出接缝;
-    /// 实测"单文件 + -t 0"整块直算最干净(无接缝、无黑帧),故逐块各自调用,由 App 羽化拼接。</summary>
+    /// 实测"单文件 + -t 0"整块直算最干净(无接缝、无全黑画面),故逐块各自调用,由 App 羽化拼接。</summary>
     private static async Task UpOneTileAsync(string input, string output, string engine, string model,
         double scale, int noise, int gpuId, bool tta,
         IProgress<(int pct, string msg)>? progress, CancellationToken ct, int tileSize)
@@ -3414,7 +3414,7 @@ public static partial class EngineService
             // -m 显式模型目录(models),-n 模型名(=realesrgan-x4plus)——显式写全,不依赖引擎默认/工作目录
             var args = $"-i \"{input}\" -o \"{output}\" -s {engineScale} -m {AlhPro.Core.EsrganModelDir.For(model)} -n {model} " +
                 $"-t 0 -g {gpuId}{SafeRender.GetEngineThreadArgs()}";
-            // 实测:realesrgan(2022 版)加 -x(TTA)会卡死(120秒无输出,引擎兼容问题)——禁用,仅 waifu2x 新版支持 TTA;
+            // 实测:realesrgan(2022 版)加 -x(TTA)会长时间无响应(120秒无输出,引擎兼容问题)——禁用,仅 waifu2x 新版支持 TTA;
             // 50 系适配升级新版引擎后如支持再放开。
             await RunEngFallbackGpuAsync(exe, args, progress, ct).ConfigureAwait(false);
             EnsureFinalOutput(output);
@@ -3444,7 +3444,7 @@ public static partial class EngineService
         using (var src = new System.Drawing.Bitmap(input)) { srcW = src.Width; srcH = src.Height; }
 
         // 【尺寸/内存保护】超大图避免最终拼整图时 OOM:GDI+ 32bpp canvas = 4 字节/像素,再加上百块 PNG。
-        // 超出安全上限直接报清晰错误并提示降倍率,而不是处理几十分钟后崩在拼图这一步(用户以为卡死/白跑)。
+        // 超出安全上限直接报清晰错误并提示降倍率,而不是处理几十分钟后崩在拼图这一步(用户以为长时间无响应/白跑)。
         int outWg = (int)Math.Round(srcW * scale);
         int outHg = (int)Math.Round(srcH * scale);
         const int MaxDim = 32768;
@@ -3481,8 +3481,8 @@ public static partial class EngineService
                 }
         }
 
-        // 2) 一次目录批量启动引擎处理所有块(-t 0:引擎不内部 tiling → 无接缝/黑帧;且省去逐块启动引擎的开销)。
-        //    实测"目录批量 + -t 0"一次启动可正常处理全部块(无黑帧/无接缝),而逐块启动每块都要一次启动开销,
+        // 2) 一次目录批量启动引擎处理所有块(-t 0:引擎不内部 tiling → 无接缝/全黑画面;且省去逐块启动引擎的开销)。
+        //    实测"目录批量 + -t 0"一次启动可正常处理全部块(无全黑画面/无接缝),而逐块启动每块都要一次启动开销,
         //    块多时会显著拖慢(用户反馈"一块一块重新启动引擎太慢")。这里一次喂整个块目录给引擎。
         //    【数字更正 2026-09-13】这里原来写"每块 3~6 秒启动开销"—— 那是**旧推算**,真机基准直接量到的
         //    引擎启动开销是 **1.0~1.3 秒**(1 帧目录,补帧引擎);超分引擎同量级【待实测标定】。
@@ -3526,7 +3526,7 @@ public static partial class EngineService
                 await Task.Run(() => ResizeImage(f, f, scale / engineScale2), ct).ConfigureAwait(false);
         }
         // 【2026-09-27 删除"分块黑块逐块重算/转 ONNX"】原逻辑:目录批量跑完后若有黑块(HasBlackPng)→
-        // 有 ONNX 版就抛 BLACKOUT_NEED_ONNX 让上层换 ONNX,没有就报错停止。那是一条**事后判黑并据此改行为**
+        // 有 ONNX 版就抛 BLACKOUT_NEED_ONNX 让上层换 ONNX,没有就提示错误停止。那是一条**事后判黑并据此改行为**
         // 的链(素材黑色转场/淡入淡出会被误判 ⇒ 整块图重跑/换引擎 ⇒ 转 ONNX 慢路),按作者要求整体删除。
         // 【怎么保证不破坏分块主流程】这条链接在"引擎批跑完成 → 羽化拼接"之间,只做判定+抛出,不碰 outDir 里的
         // 任何块、也不改 engineScale2 的缩放与下面的拼接循环 ⇒ 删掉它之后 index/坐标/尺寸/羽化参数全部原样,
@@ -3645,10 +3645,10 @@ public static partial class EngineService
             x.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase));
 
     // ===== 【2026-09-27 · 事后判黑已按作者要求收缩:只留"单图/分块成品"这一条】=====
-    // 作者原话:"黑帧判断这个功能直接删掉 —— 有用户反馈黑色转场内容转 ONNX 跑的超级慢"。
-    // 删除界线:凡是"引擎产出之后判黑帧、并据此改变行为(重跑/换路/回退源帧/置位 ncnnUnreliable/让任务失败)"
+    // 作者原话:"全黑画面判断这个功能直接删掉 —— 有用户反馈黑色转场内容转 ONNX 跑的超级慢"。
+    // 删除界线:凡是"引擎产出之后判全黑画面、并据此改变行为(重跑/换路/回退源帧/置位 ncnnUnreliable/让任务失败)"
     // 的代码一律删除 —— 这条界线的**目的**是别再让素材里的正常黑色转场把整条任务拖去 ONNX 慢路。
-    // 【已删除,不许接回】HasBlackPng(目录里任一张被判黑 ⇒ 抛 BLACKOUT_NEED_ONNX 换 ONNX 或报错停止)、
+    // 【已删除,不许接回】HasBlackPng(目录里任一张被判黑 ⇒ 抛 BLACKOUT_NEED_ONNX 换 ONNX 或提示错误停止)、
     // ProbeBatchBlackOutputHint(批量路径按 DefectSampling 抽样判黑 ⇒ 只记 Warn;DefectSampling 本体也一并删除)。
     // 【恢复保留(2026-09-27 本次收口)】GuardSilentBlackOutput —— 单图/分块【成品】的守卫:
     //   判据 = FrameInspect.IsSilentBlackFailure(输出近黑【且】输入不近黑)⇒ **自带源图豁免**,
@@ -3657,14 +3657,14 @@ public static partial class EngineService
     //   "真实故障静默出黑图且零日志"。【别搞混】HasBlackPng 是**单图分块路径**那条(判黑 ⇒ 抛 BLACKOUT_NEED_ONNX ⇒ 整张改走 ONNX 重试),它同样按 2026-09-27 的界线删除;视频批量的逐帧判黑走的是 UpscaleDirAsync 那条路,与它不是同一条 —— 两者都已删除。
     // 【保留】引擎**事前探测**里的判黑(下面 IsBlackProbeOutput;RIFE 探测见 ProbeOutputIsSane):
     // 探测输入是程序自造的渐变/色块图,不依赖用户素材,不会被黑色转场误伤。
-    // 【代价(与 2026-09-16 补帧侧裁决同口径)】视频批量路径下引擎真出黑帧时不再拦:成片可能带黑段,
+    // 【代价(与 2026-09-16 补帧侧裁决同口径)】视频批量路径下引擎真出全黑画面时不再拦:成片可能带黑段,
     // 事前兼容性判定(InterpSizePolicy.JudgeEngineRisk + 开跑前的尺寸/显卡预检)是唯一防线。
 
-    /// <summary>【只给事前探测用】探测产出这一张图是不是缺陷帧(整帧近全黑【或】任一 1/3 主条带近全黑)。
-    /// 同步把"读不出的帧"(0 字节 / 空 / 损坏)视为缺陷帧返回 true —— ncnn-vulkan 在 50 系/部分驱动上会静默输出
-    /// 0KB 空帧(退出码 0 不报错);探测路径宁可按"设备不可用"处理,也不许把空帧当可用设备放过去。
+    /// <summary>【只给事前探测用】探测产出这一张图是不是无效帧(整帧近全黑【或】任一 1/3 主条带近全黑)。
+    /// 同步把"读不出的帧"(0 字节 / 空 / 损坏)视为无效帧返回 true —— ncnn-vulkan 在 50 系/部分驱动上会静默输出
+    /// 0KB 空帧(退出码 0 不提示);探测路径宁可按"设备不可用"处理,也不许把空帧当可用设备放过去。
     /// 【判定口径】走 FrameInspect.IsDefectiveFrame = 整帧 ≥95% 近黑【或】任一条 1/3 主条带 ≥95% 近黑:
-    /// 实测(ncnn-vulkan,RTX 4060)坏帧更常见的形态是"每帧下 2/3 全黑、上 1/3 正常",整帧口径会漏检。
+    /// 实测(ncnn-vulkan,RTX 4060)无效画面更常见的形态是"每帧下 2/3 全黑、上 1/3 正常",整帧口径会漏检。
     /// 【唯一调用方】ProbeEngineGpuOnceAsync 的生产尺寸探测(探测图由程序自造,见该函数 2207-2234 段)。
     /// 【为什么不与下面 IsBlackPng 合并】判据逐字相同(都是 failIsDefect:true),但探测这条路径按
     /// 2026-09-27 的硬约束**冻结**(它是"设备可用性"的唯一判据,不许顺手动);两者各自独立。⚠ **改阈值 / 改采样几何时必须同时改 `NearBlackProbe`与这里**(两处实现逐字相同是有意的:探测路径按 2026-09-27 硬约束**冻结**,不做"委托给另一个函数"的重构,以免动到"设备可用性"的唯一判据)。</summary>
@@ -3683,7 +3683,7 @@ public static partial class EngineService
                 sums.Add((int)p.R + (int)p.G + (int)p.B);
             });
             // IsDefectiveFrame = 整帧近全黑【或】任一 1/3 主条带近全黑:
-            // 实测坏帧是"下 2/3 全黑、上 1/3 正常",只黑约 66% 像素,整帧口径必然漏检(详见 FrameInspect 注释)。
+            // 实测无效画面是"下 2/3 全黑、上 1/3 正常",只黑约 66% 像素,整帧口径必然漏检(详见 FrameInspect 注释)。
             return AlhPro.Core.FrameInspect.IsDefectiveFrame(sums.ToArray(), total, bmp.Width, bmp.Height);
         }
         catch { return true; }
@@ -3691,41 +3691,41 @@ public static partial class EngineService
 
     /// <summary>【任务 O1 ③ · 2026-09-13 新增 / 2026-09-27 恢复保留】"引擎 exit=0 却整帧全黑"的防线
     /// (只服务【单图 / 分块成品】路径)。
-    /// 为什么必须保留:实测 Real-ESRGAN 在缺 x1 权重时**不报错**,只是把整张图画成全黑(mean=0/uniq=1),
-    /// 而单图路径此前没有任何黑帧防线 → 黑图被静默保存成"超分结果";图片页也没有别的兜底,删掉它就等于
+    /// 为什么必须保留:实测 Real-ESRGAN 在缺 x1 权重时**不提示**,只是把整张图画成全黑(mean=0/uniq=1),
+    /// 而单图路径此前没有任何全黑画面防线 → 黑图被静默保存成"超分结果";图片页也没有别的兜底,删掉它就等于
     /// "真实故障静默出黑图且零日志"。
-    /// 判据复用既有纯函数:FrameInspect.IsSilentBlackFailure(输出缺陷帧 且 源帧不是缺陷帧)
+    /// 判据复用既有纯函数:FrameInspect.IsSilentBlackFailure(输出无效帧 且 源帧不是无效帧)
     /// —— **自带源图豁免**:源帧本来就是黑场(夜景/本来就黑的图)时不算引擎故障,不误杀。
     /// 【为什么这条不违反"删掉事后判黑"的裁决】作者要删的是"判黑 ⇒ 改路/重跑/回退"那条链
     /// (黑色转场被误判 ⇒ 整条任务转 ONNX 慢路);本守卫命中即抛可读错误,**不换引擎、不改路线**,
     /// 且单张静帧不存在"黑转场"这回事 ⇒ 不会被素材误伤。
-    /// 【视频(批量)路径**不接回**】那条路径的黑帧降级链按作者要求已删除(2026-09-27),
+    /// 【视频(批量)路径**不接回**】那条路径的全黑画面降级链按作者要求已删除(2026-09-27),
     /// 这里只守单图/分块成品。</summary>
     internal static void GuardSilentBlackOutput(string input, string output, string engine, string model, int engineScale)
     {
         try
         {
             if (!File.Exists(output)) return;
-            if (new FileInfo(output).Length == 0) return;          // 空/坏帧由既有校验处理,不在这里判
-            bool outBlack = IsBlackPng(output);                    // 读不出的算缺陷(failIsDefect: true)
+            if (new FileInfo(output).Length == 0) return;          // 空/无效画面由既有校验处理,不在这里判
+            bool outBlack = IsBlackPng(output);                    // 读不出的算问题(failIsDefect: true)
             if (!outBlack) return;
             bool inBlack = IsBlackPngStrict(input);                // 源帧黑场?只判"真近黑",不把没写完当黑
             if (!AlhPro.Core.FrameInspect.IsSilentBlackFailure(inBlack, outBlack)) return;
-            string msg = $"超分引擎输出全黑帧(引擎退出码 0 却整帧全黑):引擎={engine},模型={model},引擎倍数={engineScale}x。"
-                + "这通常说明该模型缺少对应倍率的权重(实测:模型只有 x2/x3/x4 时下发 -s 1 会画成纯黑且不报错),"
+            string msg = $"超分引擎输出全全黑画面(引擎退出码 0 却整帧全黑):引擎={engine},模型={model},引擎倍数={engineScale}x。"
+                + "这通常说明该模型缺少对应倍率的权重(实测:模型只有 x2/x3/x4 时下发 -s 1 会画成纯黑且不提示),"
                 + "或显卡驱动/引擎在该尺寸下静默失败。已中止本次输出,请换模型或换倍率后重试(不会把黑图当结果保存)。";
             AppLogger.Warn($"⚠ {msg}");
             throw new InvalidOperationException(msg);
         }
         catch (InvalidOperationException) { throw; }               // 上面那条要抛出去,不能被下面的 catch 吞掉
-        catch (Exception ex) { AppLogger.Warn($"⚠ 黑帧防线判定失败(忽略,不阻塞):{ex.Message.Split('\n')[0]}"); }
+        catch (Exception ex) { AppLogger.Warn($"⚠ 全黑画面防线判定失败(忽略,不阻塞):{ex.Message.Split('\n')[0]}"); }
     }
 
     /// <summary>检测单个 PNG 是否近全黑(95% 以上像素 RGB 和 &lt; 24)。
-    /// 同步把"读不出的帧"(0 字节 / 空 / 损坏)视为缺陷帧返回 true —— ncnn-vulkan 在 50 系/部分驱动上会静默输出 0KB 空帧
-    /// (退出码 0 不报错),若这里返回 false,空帧会被当成正常帧放行。
+    /// 同步把"读不出的帧"(0 字节 / 空 / 损坏)视为无效帧返回 true —— ncnn-vulkan 在 50 系/部分驱动上会静默输出 0KB 空帧
+    /// (退出码 0 不提示),若这里返回 false,空帧会被当成正常帧放行。
     /// 【判定口径】走 FrameInspect.IsDefectiveFrame = 整帧 ≥95% 近黑【或】任一条 1/3 主条带 ≥95% 近黑:
-    /// 实测(ncnn-vulkan,RTX 4060)坏帧更常见的形态是"每帧下 2/3 全黑、上 1/3 正常",整帧口径会漏检。
+    /// 实测(ncnn-vulkan,RTX 4060)无效画面更常见的形态是"每帧下 2/3 全黑、上 1/3 正常",整帧口径会漏检。
     /// 【2026-09-27 · 用途已收缩】唯一调用方 = 上面的 GuardSilentBlackOutput(单图/分块成品);
     /// 视频批量路径(逐帧判黑 / 目录巡检)与补帧/标定侧的判黑已删除,不许再拿它扩大用途。</summary>
     internal static bool IsBlackPng(string file) => NearBlackProbe(file, failIsDefect: true);
@@ -3733,11 +3733,11 @@ public static partial class EngineService
     /// <summary>只判"真·近全黑 / 带状近全黑"(可解码、确实 ≥95% 像素[或某个 1/3 条带]近黑)。
     /// 空/0字节/未写完/解码失败的帧 → false(不算黑)。
     /// 【为什么要与 IsBlackPng 分开】守卫要判"源帧是不是本来就黑场",此时"源帧还没写完/读不出"应当
-    /// **不算黑**(否则会把"读不出"当成"素材本来就黑"而放行真实故障);而输出侧读不出应当算缺陷。
+    /// **不算黑**(否则会把"读不出"当成"素材本来就黑"而放行真实故障);而输出侧读不出应当算问题。
     /// 两者只差 failIsDefect 这一个入参,实现共用 NearBlackProbe。</summary>
     internal static bool IsBlackPngStrict(string file) => NearBlackProbe(file, failIsDefect: false);
 
-    /// <summary>上面两个入口的唯一实现:差别只在"读不出的帧"算不算缺陷(failIsDefect)。
+    /// <summary>上面两个入口的唯一实现:差别只在"读不出的帧"算不算问题(failIsDefect)。
     /// 判定阈值统一走 AlhPro.Core.FrameInspect(纯函数,可单测)。</summary>
     private static bool NearBlackProbe(string file, bool failIsDefect)
     {
@@ -3754,7 +3754,7 @@ public static partial class EngineService
                 sums.Add((int)p.R + (int)p.G + (int)p.B);
             });
             // IsDefectiveFrame = 整帧近全黑(原语义一字未改)【或】任一 1/3 主条带近全黑:
-            // 实测坏帧是"下 2/3 全黑、上 1/3 正常",只黑约 66% 像素,整帧口径必然漏检(详见 FrameInspect 注释)。
+            // 实测无效画面是"下 2/3 全黑、上 1/3 正常",只黑约 66% 像素,整帧口径必然漏检(详见 FrameInspect 注释)。
             return AlhPro.Core.FrameInspect.IsDefectiveFrame(sums.ToArray(), total, bmp.Width, bmp.Height);
         }
         catch { return failIsDefect; }
@@ -3820,14 +3820,14 @@ public static partial class EngineService
         // 【诊断 · 2026-10-15】本批最终**真正生效**的引擎 exe 与 `-t`(见方法末尾的「超分批次」小结行)。
         // 【为什么必须有】旧日志里只有引擎名(realesrgan)与"路线=ncnn-Vulkan":**看不出选中的是 2026 重编版还是
         // 2022 老版 exe**(FindRealESRGAN 会静默兜底到老版),也看不出 OOM 降级后实际跑的是 512/256/128
-        // (调用方那条「超分诊断」写的是首跑的 `-t 0(自动)`)。而排查"某批静默出黑帧/少出帧"时,恰好只需要这两项。
+        // (调用方那条「超分诊断」写的是首跑的 `-t 0(自动)`)。而排查"某批静默出全黑画面/少出帧"时,恰好只需要这两项。
         string usedExeName = "";
         int usedTile = 0;
-        // 显存不足(如 vkAllocateMemory 失败)时自动降分块重试,避免爆显存崩溃
+        // 显存不足(如 vkAllocateMemory 失败)时自动降分块重试,避免爆显存进程退出
         async Task RunEngAsync(string exe, Func<int, string> buildArgs)
         {
             // 【t 的语义(实测)】0 = 让引擎自己决定分块大小(auto);>0 = 显式指定分块边长。
-            // 视频路径默认就用 auto(见下面调用点的注释与实测:auto 无接缝/无黑帧)。
+            // 视频路径默认就用 auto(见下面调用点的注释与实测:auto 无接缝/无全黑画面)。
             // 【为什么初始值是 0 而不是 tileSize】原来写 `preTiled ? 0 : tileSize`,但两个调用点的 lambda
             // 都把 `-t 0` 硬编码了、**根本没用这个 t** —— 于是下面"显存不足降半分块"的重试管线形同虚设:
             // t 从 512 减到 256/128 全是空转,命令一字未变,日志却写着"分块 512→256 重试"。
@@ -3872,7 +3872,7 @@ public static partial class EngineService
         // 图片路径一直是按 4x 跑再缩回的(见 UpOneTileAsync 的注释),视频路径此前漏了这一步。
         // 【任务 O1 · 2026-09-13】判定收成唯一来源 Core.EngineScalePolicy:
         //   旧实现 here 是 `Math.Clamp((int)Math.Ceiling(scale), 1, 4)`,scale ≤ 1 时正好落到 1 →
-        //   给没有 x1 权重的模型下发 `-s 1` → **输出全黑且 exit=0 不报错**(真机实测)。
+        //   给没有 x1 权重的模型下发 `-s 1` → **输出全黑且 exit=0 不提示**(真机实测)。
         //   现在 Real-ESRGAN 分支绝不返回 1:目标 ≤1x 改走"2x 放大后缩回"(与图片侧同一个手法)。
         var scalePolicy = AlhPro.Core.EngineScalePolicy.Decide(engine, model, scale);
         int engineScale = scalePolicy.EngineScale;
@@ -3890,7 +3890,7 @@ public static partial class EngineService
                 throw new FileNotFoundException($"缺少 waifu2x 模型:{model}。");
             if (engineScale == 1)
             {
-                // 与单图路径完全一致:-s 1 在部分机型段错误崩溃,不再直连;
+                // 与单图路径完全一致:-s 1 在部分机型段错误进程退出,不再直连;
                 // 不降噪时直接复制原图,降噪则用 2x 降噪模型处理后缩回 1x(画质更好)
                 if (noise < 0)
                 {
@@ -3931,12 +3931,12 @@ public static partial class EngineService
         else
         {
             var exe = FindRealESRGAN() ?? throw new FileNotFoundException("未找到 Real-ESRGAN 引擎");
-            // 同单张路径:显式给出 -m 模型目录 + -n 模型名(缺 -m 会找不到模型加载失败);TTA(-x)在 2022 老引擎上会卡死,故不传
+            // 同单张路径:显式给出 -m 模型目录 + -n 模型名(缺 -m 会找不到模型加载失败);TTA(-x)在 2022 老引擎上会长时间无响应,故不传
             // -t 0 的语义是【引擎自己决定分块大小(auto)】,不是"关闭 tiling"——实测 ncnn-vulkan 引擎帮助里写的是
             //   "-t tile-size (>=32/0=auto, default=0)",0 即 auto(旧注释写成"关闭引擎内部 tiling",与引擎语义相反)。
-            // 行为不变(仍传 0):整帧直算交给引擎按显存自选分块,分块过大才会 vkQueueSubmit 失败 → 黑帧/OOM,
+            // 行为不变(仍传 0):整帧直算交给引擎按显存自选分块,分块过大才会 vkQueueSubmit 失败 → 全黑画面/OOM,
             // 那种情况由 RunEngAsync 的"降分块重试"与上层的"批次异常回退原帧"接住。
-            // 【2026-09-27】原注释写的是"上层的黑帧降级链接住"——那条链(判黑 → 重跑/换路/回退)已按作者要求删除,
+            // 【2026-09-27】原注释写的是"上层的全黑画面降级链接住"——那条链(判黑 → 重跑/换路/回退)已按作者要求删除,
             // 现在视频路径上真正兜底的是 UpscaleDirAsync 调用方的 catch:整批异常 ⇒ 该批回退原帧,不中断任务。
             // 视频帧整帧直算(OOM 时 RunEngAsync 自动降级重试/减 tile),避免逐帧"一块一块"。
             // 【2026-09-23 修 A5,同上】`-t 0` 写死会让"显存不足自动降分块"变成空转 ⇒ 改成 `{t}`。
@@ -3956,7 +3956,7 @@ public static partial class EngineService
                 // 用户看到的就是"为什么逐帧缩放、还没有进度"。
                 // 现在:按 AlhPro.Core.ShrinkPolicy 有上限并行,每缩完一帧刷新「超分 缩放回 2x 第 N 帧 / 共 M 帧」
                 // (≥200 ms 报一次,首末帧必报),进度条落在本批引擎已跑完的位置、不倒退。
-                // 结果与文件语义不变:原地覆盖同名文件,坏帧照旧由 GDI+/WinRT 那层抛(调用方的整批回退接住)。
+                // 结果与文件语义不变:原地覆盖同名文件,无效画面照旧由 GDI+/WinRT 那层抛(调用方的整批回退接住)。
                 int shrinkDone = 0;
                 int shrinkPct = AlhPro.Core.ShrinkPolicy.Pct(pctLo, pctHi, globalBaseFrames + inCount, globalTotalFrames);
                 long lastShrinkReport = 0;
@@ -4009,7 +4009,7 @@ public static partial class EngineService
                 + $"——引擎 {usedExeName} -t {usedTile}{(usedTile == 0 ? "(auto)" : "")} -f {outFormat};"
                 + "调用方会按帧名对账并对缺失帧用源帧兜底(尺寸对齐),不再静默少帧");
         // 【2026-09-27】原先这里还有 ProbeBatchBlackOutputHint(批量输出抽样判黑 → 记 Warn),已按作者要求删除:
-        // 那是"引擎产出之后判黑帧"的事后判定,素材的黑色转场/夜戏会被它反复命中,日志刷屏且误导排查。
+        // 那是"引擎产出之后判全黑画面"的事后判定,素材的黑色转场/夜戏会被它反复命中,日志刷屏且误导排查。
         // 代价:引擎静默出黑片时不再有这条线索 —— 输出端黑场自检(只报数字、不参与判定)仍是唯一留痕处。
         if (outCount == 0)
             throw new InvalidOperationException("引擎批处理未生成输出");
@@ -4086,7 +4086,7 @@ public static partial class EngineService
     /// 同样效果的 C# 实现(与图片页共用 ApplyEdgeSmoothInMemory)4K 单帧 1.19 秒,**多核并行后约 0.1 秒/帧**。
     /// 放在这里做还顺带白赚一次:本方法本来就要把超分后的 PNG 重编码成 JPG(降临时盘),
     /// 抗锯齿在同一张位图上做完再写,**不额外增加一次 JPG 重编码**。
-    /// 【2026-09-27】原来自带 `out bool nearBlack`(顺带报告该帧是否缺陷帧)供超分批的黑帧降级链使用;
+    /// 【2026-09-27】原来自带 `out bool nearBlack`(顺带报告该帧是否无效帧)供超分批的全黑画面降级链使用;
     /// 那条链已按作者要求删除 ⇒ 这里不再做任何判黑,只负责"解码 → (可选)抗锯齿 → 写 JPG"。
     /// 数据:_qa\encbench(编码/滤镜实测)、_qa\imgpost(滤镜逐个计时)。</summary>
     public static void ConvertPngToJpg(string pngPath, string jpgPath, float quality, int edgeSmooth)
@@ -5374,7 +5374,7 @@ public static partial class EngineService
                         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
                         g.DrawImage(src, 0, 0, w, h);
                     }
-                    // 【修复 全黑帧】JPG 分支此前直接写 outputPath——视频流水线里 outputPath==path,而 src Bitmap 仍持有该文件句柄,
+                    // 【修复 全全黑画面】JPG 分支此前直接写 outputPath——视频流水线里 outputPath==path,而 src Bitmap 仍持有该文件句柄,
                     // File.Create 触发共享冲突 → 走 catch → 每帧都被换成深灰占位。改成也先写临时文件,src 释放后再覆盖目标。
                     if (isJpg) SaveJpegViaWinRT(dst, tmpJpg);
                     else dst.Save(tmp, System.Drawing.Imaging.ImageFormat.Png);
@@ -5385,7 +5385,7 @@ public static partial class EngineService
             }
             catch (Exception ex)
             {
-                // 【兜底】源帧损坏/0字节/非图像(引擎偶发写出坏帧或磁盘不足截断)→ GDI+ 读源抛
+                // 【兜底】源帧损坏/0字节/非图像(引擎偶发写出无效画面或磁盘不足截断)→ GDI+ 读源抛
                 // "Parameter is not valid"。此时【不能删帧/不跳过】——合帧按编号连续读,缺帧会造成编号断档 → ffmpeg 提前停止/输出截断。
                 string head = ex.Message.Split('\n')[0];
                 if (head.Length > 70) head = head[..70];
@@ -5393,7 +5393,7 @@ public static partial class EngineService
                 using var ph = new System.Drawing.Bitmap(w, h);
                 using (var g = System.Drawing.Graphics.FromImage(ph))
                 {
-                    g.Clear(System.Drawing.Color.FromArgb(24, 24, 24));   // 深灰,avoid 黑帧被误判为损坏
+                    g.Clear(System.Drawing.Color.FromArgb(24, 24, 24));   // 深灰,avoid 全黑画面被误判为损坏
                 }
                 if (isJpg) SaveJpegViaWinRT(ph, tmpJpg);
                 else ph.Save(tmp, System.Drawing.Imaging.ImageFormat.Png);

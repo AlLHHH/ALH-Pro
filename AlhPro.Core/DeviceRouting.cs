@@ -3,7 +3,7 @@ namespace AlhPro.Core;
 /// <summary>
 /// 计算设备选择与探测帧健全性的【纯判定】部分。硬件枚举、日志、会话创建都留在 UI 工程,
 /// 这里只认数字 —— 因为这两条规则恰恰是拿不到真机就无法验证的那种:
-/// 转译层设备只在特定机器上出现,损坏帧只在特定驱动上产生。抽出来才能用单测钉住。
+/// 转译层设备只在特定机器上出现,无效画面只在特定驱动上产生。抽出来才能用单测钉住。
 /// </summary>
 public static class DeviceRouting
 {
@@ -20,7 +20,7 @@ public static class DeviceRouting
     /// (注册表 [0 Intel][1 NVIDIA],引擎实际 [1 NVIDIA][2 Intel]),此时编号 2 ≥ 数量 2,
     /// 数量比对会把选中的独显误判成无效并掉成 CPU。
     /// 为什么编号不在表里时【不能】原样照传:引擎内部的 -g 编号不受我们剔除表的影响,
-    /// 照传 -g 1 仍会命中已被剔除的 D3D12 转译层设备并输出损坏帧。必须换成推荐的原生设备。
+    /// 照传 -g 1 仍会命中已被剔除的 D3D12 转译层设备并输出无效画面。必须换成推荐的原生设备。
     /// </remarks>
     public static (int Id, bool Remapped) ResolveEngineDevice(
         int settingsIndex, IReadOnlyCollection<int> availableIds, int recommendedId, int deviceCount)
@@ -88,7 +88,7 @@ public static class DeviceRouting
         int bestId = -1, bestScore = -1;
         foreach (var d in devices)
         {
-            if (GpuName.IsD3D12Translation(d.Name)) continue;   // 转译层:宁缺毋滥(输出损坏帧)
+            if (GpuName.IsD3D12Translation(d.Name)) continue;   // 转译层:宁缺毋滥(输出无效画面)
             int s = GpuName.Score(d.Name);
             if (s > bestScore) { bestScore = s; bestId = d.Id; }
         }
@@ -97,7 +97,7 @@ public static class DeviceRouting
 
     /// <summary>
     /// 三通道均值极差容差。定标依据(真机实测):正常灰帧 ≤3、好卡实测 0.00,
-    /// 损坏帧 24~30。取 12 = 两侧都留出数倍余量,不靠边界吃饭。
+    /// 无效画面 24~30。取 12 = 两侧都留出数倍余量,不靠边界吃饭。
     /// </summary>
     public const double AchromaticSpreadTolerance = 12;
 
@@ -116,7 +116,7 @@ public static class DeviceRouting
     /// <summary>【补帧探测:输出均值与"预期均值"的容差】(0~255 灰度口径)。
     /// 预期均值 = 两个输入探测帧各自均值的平均(探测输入是"渐变 + 同一渐变右移 2 像素",
     /// 正确插值结果必然保持这个均值)。定标依据(本机 RTX 4060 Laptop / rife-v4.6,320×240 / 1080p / 4K 三档实测):
-    /// 新老两代引擎的输出均值与预期值偏差都 ≤0.5,而"输出了黑帧/白帧"这类损坏的偏差是 127 上下。
+    /// 新老两代引擎的输出均值与预期值偏差都 ≤0.5,而"输出了全黑画面/纯白画面"这类损坏的偏差是 127 上下。
     /// 取 24 = 实测偏差的 48 倍余量、损坏值的 1/5 左右,两侧都不靠边界吃饭。</summary>
     public const double InterpProbeMeanTolerance = 24;
 
@@ -131,7 +131,7 @@ public static class DeviceRouting
     /// 方差保住输入结构的 <see cref="InterpProbeStructureRatio">比例</see>。纯数学,可单测。
     /// 【为什么要"预期值"而不是写死 127】探测输入换成了"渐变 + 右移 2 像素",它的正确输出由输入自己决定
     /// (均值≈两输入均值、方差≈输入方差),写死常数会把判据绑死在某一对输入图上。传参进来即可自校准。
-    /// 【为什么要有方差这一条】黑帧/白帧由"均值"抓,但"整帧被抹成一块平的灰"均值能对得上、通道也均衡,
+    /// 【为什么要有方差这一条】全黑画面/纯白画面由"均值"抓,但"整帧被抹成一块平的灰"均值能对得上、通道也均衡,
     /// 只有方差能抓(实测真引擎的方差比≈1.00,0.25 是 4 倍余量)。</summary>
     public static bool IsPlausibleInterpOf(double outMeanR, double outMeanG, double outMeanB, double outVariance,
         double expectedMean, double expectedVariance)

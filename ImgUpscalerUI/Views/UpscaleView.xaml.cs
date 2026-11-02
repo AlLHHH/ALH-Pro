@@ -219,7 +219,7 @@ public sealed partial class UpscaleView : UserControl
             SelectedOnlyCheck.IsChecked = d.SelectedOnly;
             // 计算设备已在全局设置(AppSettings),页面不再恢复旧 Gpu 值
             // 格式下拉顺序:0=JPG 1=PNG——存读一致(223 行存的就是 SelectedIndex),不再做旧语义迁移
-            // (旧迁移 d.Fmt==0?1:0 会把新存的 1(PNG) 转回 0(JPG):用户选 PNG 重开变 JPG 的 bug 根源)
+            // (旧迁移 d.Fmt==0?1:0 会把新存的 1(PNG) 转回 0(JPG):用户选 PNG 重开变 JPG 的 问题 根源)
             if (d.Fmt is >= 0 and <= 1) FmtCombo.SelectedIndex = d.Fmt;
             // 关键:LoadSettings 在事件挂接前执行,设置 Fmt 不会触发 SelectionChanged→RefreshQualityCombo;
             // 必须手动刷新码率下拉(否则 PNG 时仍显示 JPG 的"默认(推荐)"档——用户反馈"PNG 出现 JPG 码率样式")
@@ -358,7 +358,7 @@ public sealed partial class UpscaleView : UserControl
         Tta = TtaCheck.IsChecked == true,
         // 【F3 · 2026-09-25 t47 审计】「只处理选中的图片」也要进预设快照:它此前只在 SaveSettings(设置文件)
         // 里存、在 LoadSettings 里恢复 —— 而 ApplyImgSettings 一条都不读 ⇒ "存了却没生效"(与视频页那个
-        // 漏项方向相反、同一类缺陷)。写侧在这里补齐,读侧见 ApplyImgSettings 里那行。
+        // 漏项方向相反、同一类问题)。写侧在这里补齐,读侧见 ApplyImgSettings 里那行。
         SelectedOnly = SelectedOnlyCheck.IsChecked == true,
         Fmt = FmtCombo.SelectedIndex,
         Detail = (int)DetailSlider.Value,
@@ -496,7 +496,7 @@ public sealed partial class UpscaleView : UserControl
     ///   · 同名、是官方、且 OfficialRev &lt; 当前 Rev → 用新基线【覆盖参数】并记下新 Rev(只覆盖这一次)。
     ///     这条是刻意为之:老用户手里的官方预设必须被更新,否则永远带着旧语义的档位。
     ///   · 用户自建的其它预设(名字不同)一律不碰、不删、不改参数。
-    /// 【为什么从"字符串判断"改成"Rev 判断"——实测 BUG】此前这里靠 SavedAt 里是否含「内置」来决定要不要
+    /// 【为什么从"字符串判断"改成"Rev 判断"——实测 问题】此前这里靠 SavedAt 里是否含「内置」来决定要不要
     /// 做倍率换算。但早期版本写入的官方预设 SavedAt 是 "2026-09-04 22:12:03" 这种【不带「内置」】的格式,
     /// 判断直接落空 → 整段迁移被跳过(而且两条 IsOfficial 本就是 true,changed 恒为 false,连文件都没重写)。
     /// 真机后果:老用户升级后「通用变清晰」静默从 1x超分 变成 2x、「清晰MAX」从 3x 变成 4x ——
@@ -530,7 +530,7 @@ public sealed partial class UpscaleView : UserControl
                 // 同名但本来不是官方 → 只标记为官方,不动参数(用户自己攒的同名预设保留原样)
                 // 【必须 continue】原实现只置 IsOfficial 就往下走,而紧接着的 `OfficialRev < rev` 对用户自建
                 // 预设必然成立(其 OfficialRev = 0)→ **用户攒的参数被官方基线整份覆盖**,还先被写进了官方模型名;
-                // 日志却宣称"你自建的预设未动"。2026-09-12 自检发现(与视频页同一个 bug)。
+                // 日志却宣称"你自建的预设未动"。2026-09-12 自检发现(与视频页同一个 问题)。
                 // 现在:标记为官方 + 把 Rev 补到当前值(表示已按当前基线结算过),然后 continue,参数一个都不动。
                 if (!existing.IsOfficial)
                 {
@@ -824,7 +824,7 @@ public sealed partial class UpscaleView : UserControl
             var file = await picker.PickSingleFileAsync();
             if (file == null) return;
             // 【格式校验】图片预设必须是 .alhimg(或内容含图片专属字段)。若用户误选了视频预设(.alhpreset),
-            // 公开字段(如 Scale)会错读成图片参数且不报错——必须显式校验并明确提示,绝不静默混入。
+            // 公开字段(如 Scale)会错读成图片参数且不提示——必须显式校验并明确提示,绝不静默混入。
             if (!file.FileType.Equals(ImgPresetExt, StringComparison.OrdinalIgnoreCase))
             {
                 await ShowPresetHintAsync("文件不是图片预设格式。请导入「ALH Pro 图片预设」(.alhimg)文件;视频预设(.alhpreset)请在视频页导入。");
@@ -929,7 +929,7 @@ public sealed partial class UpscaleView : UserControl
     {
         var dlg = new ContentDialog { Title = "参数预设", Content = new TextBlock { Text = msg, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap }, CloseButtonText = "知道了", XamlRoot = this.XamlRoot };
         // 【2026-10-16】这个提示经常在「图片预设」窗口开着的时候被调用(应用/导入/删除都在窗口内)
-        // ⇒ 必须排队等它关掉再弹;旧写法直接抛 COMException 0x80000019(未处理=崩溃)。
+        // ⇒ 必须排队等它关掉再弹;旧写法直接抛 COMException 0x80000019(未处理=进程退出)。
         await ALHPro.SafeDialog.ShowAsync(dlg, "参数预设提示");
     }
 
@@ -1015,7 +1015,7 @@ public sealed partial class UpscaleView : UserControl
     }
 
     /// <summary>按当前模型刷新放大倍数可用性(引擎/模型原生权重决定):
-    /// waifu2x 模型权重虽为 2x,但引擎实测 -s 3/-s 4 用级联(2x 跑两遍)输出正常、不崩溃,
+    /// waifu2x 模型权重虽为 2x,但引擎实测 -s 3/-s 4 用级联(2x 跑两遍)输出正常、不进程退出,
     /// 故 3x/4x 已放开;Real-ESRGAN 有对应权重,全亮。</summary>
     private void UpdateScaleAvailability()
     {
@@ -1469,7 +1469,7 @@ public sealed partial class UpscaleView : UserControl
             await ShowErrorAsync("已选「自定义码率」,请在上方填入质量值(1~100),例如 92");
             return;
         }
-        // 输出目录:多张时创建子文件夹——必须在 _running=true 之前(创建失败不再崩溃+永久卡死)
+        // 输出目录:多张时创建子文件夹——必须在 _running=true 之前(创建失败不再进程退出+永久长时间无响应)
         var firstSrc = items[0].OriginalPath.Length > 0 ? items[0].OriginalPath : items[0].Path;
         var baseDir = _customOutDir ?? Path.GetDirectoryName(firstSrc)!;
         string outDir;
@@ -1719,7 +1719,7 @@ public sealed partial class UpscaleView : UserControl
                             if (engine == "realesrgan" && !esrganNcnnOk)
                                 Log("⚠ 自检:当前显卡与老引擎不兼容且未找到稳定版,回退旧引擎(可能失败,建议改用 waifu2x)");
                                 // 【把原因说清】探测带回的失败形态直接进日志 + 黄字提示:
-                                // "初始化即崩"在 50 系上就是 NVIDIA 的驱动缺陷,不能让它看起来像我们的问题。
+                                // "初始化即崩"在 50 系上就是 NVIDIA 的驱动问题,不能让它看起来像我们的问题。
                                 if (!string.IsNullOrEmpty(EngineService.LastProbeUserMessage))
                                 {
                                     Log("  " + EngineService.LastProbeUserMessage);
@@ -1745,7 +1745,7 @@ public sealed partial class UpscaleView : UserControl
                     catch (Exception ex)
                     {
                         // 【2026-09-29】原先这里还有一条"黑块修复:命中 BLACKOUT_NEED_ONNX ⇒ 整张改用 ONNX 稳定引擎重试"
-                        // —— 抛出方(分块路径里的 HasBlackPng 判黑)已随"删掉事后黑帧判断"整条删除(作者定案),
+                        // —— 抛出方(分块路径里的 HasBlackPng 判黑)已随"删掉事后全黑画面判断"整条删除(作者定案),
                         // 这个分支永远不会再命中 ⇒ 一并删掉(留着死分支会让排查者误以为图片页还有这条 ONNX 兜底)。
                         // 下面那段 `if (!retried && !succeeded)` 与 ONNX 无关,是**转码重试**,原样保留。
                         if (!retried && !succeeded)

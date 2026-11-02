@@ -30,7 +30,7 @@ public class TempDiskBatchGateTests
         Assert.Contains("未触发", g.Note);
     }
 
-    /// <summary>★ 核心行为:余量不够就**把批调小**(而不是报错)。</summary>
+    /// <summary>★ 核心行为:余量不够就**把批调小**(而不是提示错误)。</summary>
     [Fact]
     public void Gate_shrinks_the_batch_instead_of_failing()
     {
@@ -46,7 +46,7 @@ public class TempDiskBatchGateTests
     }
 
     /// <summary>地板优先:余量连"最小批"都放不下时不再往下压(压到 1 帧/批也救不了整任务),
-    /// 并如实写进 Note —— 那种情形该由"整任务守门"去报错。</summary>
+    /// 并如实写进 Note —— 那种情形该由"整任务守门"去提示错误。</summary>
     [Fact]
     public void Gate_never_goes_below_the_floor()
     {

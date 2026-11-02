@@ -7,11 +7,11 @@ using Xunit;
 
 namespace AlhPro.Tests;
 
-/// <summary>【2026-10-17 · 对话框安全】把"同一时刻只能有一个 ContentDialog"这一类崩溃钉在源码层。
+/// <summary>【2026-10-17 · 对话框安全】把"同一时刻只能有一个 ContentDialog"这一类进程退出钉在源码层。
 ///
-/// 背景(2026-09-23 真机两份崩溃诊断,同一签名 `COMException 0x80000019: Only a single ContentDialog
+/// 背景(2026-09-23 真机两份退出诊断,同一签名 `COMException 0x80000019: Only a single ContentDialog
 /// can be open at any time`):用户开着公告点「开始处理」、或任务跑完的「处理完成」还开着就点「预览效果」,
-/// 第二个弹窗直接抛未处理异常 —— 用户只看到"点了没反应",程序留下一个崩溃诊断文件。
+/// 第二个弹窗直接抛未处理异常 —— 用户只看到"点了没反应",程序留下一个退出诊断文件。
 /// 现场当时只把**那两个**调用点各自 try/catch 了,全仓其余同类调用点(复审时数出 12 处裸调用)仍然是雷。
 ///
 /// 这组断言把 2026-10-17 的收口方式钉住:
@@ -23,7 +23,7 @@ namespace AlhPro.Tests;
 public class DialogSafetyTests
 {
     /// <summary>① 除了 SafeDialog 自己,**任何文件都不许直接调 `dlg.ShowAsync()`**。
-    /// 红了 = 有人新加/回退了一个裸调用点 ⇒ 那个点在"已有对话框开着"时就是一次未处理崩溃。</summary>
+    /// 红了 = 有人新加/回退了一个裸调用点 ⇒ 那个点在"已有对话框开着"时就是一次未处理进程退出。</summary>
     [Fact]
     public void Every_content_dialog_goes_through_SafeDialog()
     {
@@ -74,7 +74,7 @@ public class DialogSafetyTests
 
     /// <summary>④ 两条"程序自己出事"的提示(运行中未处理异常 / 页面加载失败)也必须走闸门:
     /// 它们以前是 fire-and-forget,异步 COMException 没人观察 ⇒ 用户什么都看不到,
-    /// 而这两条恰好最需要被看到(前者正是崩溃诊断对应的那条提示)。</summary>
+    /// 而这两条恰好最需要被看到(前者正是退出诊断对应的那条提示)。</summary>
     [Fact]
     public void Crash_and_page_load_notices_go_through_SafeDialog()
     {

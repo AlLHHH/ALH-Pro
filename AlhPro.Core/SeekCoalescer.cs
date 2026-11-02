@@ -23,7 +23,7 @@ namespace AlhPro.Core;
 ///
 /// ================= 判据(与旧实现逐字一致,不许改) =================
 ///   · 最小间隔 <see cref="MinIntervalMs"/>(110ms):拖动期间合并掉中间目标,不制造 seek 风暴;
-///   · 在飞超时 <see cref="InFlightTimeoutMs"/>(900ms):落地判不出来就放行下一次,免得卡死;
+///   · 在飞超时 <see cref="InFlightTimeoutMs"/>(900ms):落地判不出来就放行下一次,免得长时间无响应;
 ///   · 落地判定:位置落进目标 ±<see cref="LandToleranceSec"/>(0.35s,播放器会吸附到帧/关键帧),
 ///     或者相对"发定位前的位置"动过 &gt; <see cref="LandMovedSec"/>(0.05s,播放中定位就是这种情形)。
 /// 【线程】调用点分布在 UI 线程与媒体线程 ⇒ 内部加锁;所有方法都不碰 UI,纯字段运算(可单测)。

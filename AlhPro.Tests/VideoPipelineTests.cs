@@ -325,7 +325,7 @@ public class VideoPipelineTests
     }
 
     /// <summary>真解析回归:把 141 段的表达式交给随包 ffmpeg 解析(1 帧 lavfi 输入,亚秒级)。
-    /// 修前这条会 exit -12 —— 与用户诊断包里的报错逐字一致。引擎目录不存在时跳过。</summary>
+    /// 修前这条会 exit -12 —— 与用户诊断包里的提示错误逐字一致。引擎目录不存在时跳过。</summary>
     [Fact]
     public void BuildVfrSetpts_expression_actually_parses_in_ffmpeg()
     {

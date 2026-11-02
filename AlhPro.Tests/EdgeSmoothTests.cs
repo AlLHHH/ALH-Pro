@@ -173,7 +173,7 @@ public class EdgeSmoothTests
     [Fact]
     public void Buffer_too_small_is_left_untouched()
     {
-        // 尺寸与缓冲不匹配(调用方 bug):不越界、不改动,而不是按错误尺寸乱写
+        // 尺寸与缓冲不匹配(调用方 问题):不越界、不改动,而不是按错误尺寸乱写
         var src = new byte[10];
         Array.Fill(src, (byte)200);
         var got = (byte[])src.Clone();

@@ -33,7 +33,7 @@
                     <CheckBox x:Name="SrsCheck"
                               Content="AI 升采样率(低采样率源 → 48kHz)"
                               IsChecked="False"
-                              ToolTipService.ToolTip="电话/老录音等低采样率音频(8k/16k/22k/32k):AI 补出缺失高频并升级到 48kHz,听得见的变清晰;44.1k 音乐已全频带,会自动跳过(不报错)"
+                              ToolTipService.ToolTip="电话/老录音等低采样率音频(8k/16k/22k/32k):AI 补出缺失高频并升级到 48kHz,听得见的变清晰;44.1k 音乐已全频带,会自动跳过(不提示)"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
                     <TextBlock x:Name="SrsHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
                                FontSize="11" Opacity="0.6"/>

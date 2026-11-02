@@ -77,7 +77,7 @@ public class FfmpegSafePathTests
             }
             else
             {
-                Assert.Equal(file, result);   // 8.3 禁用时回退原样(不报错即可)
+                Assert.Equal(file, result);   // 8.3 禁用时回退原样(不提示即可)
             }
         }
         finally

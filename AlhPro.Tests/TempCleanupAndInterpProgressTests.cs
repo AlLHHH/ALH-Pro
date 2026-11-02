@@ -5,17 +5,17 @@ using Xunit;
 
 namespace AlhPro.Tests;
 
-/// <summary>「临时残留清理」与「补帧进度如实显示」两条接线契约(2026-09-16 用户实测"处理到一半卡住"的两处根因)。
+/// <summary>「临时残留清理」与「补帧进度如实显示」两条接线契约(2026-09-16 用户实测"处理到一半停住"的两处根因)。
 ///
 /// 【现场】1440×1440 源、496 帧、补帧 4x(目标 1981 帧)+ 超分 2x。界面停在
-/// `补帧 第 1981 帧 / 共 1981 帧` 一动不动,用户以为卡死;日志证明 ONNX 稳定引擎一直在出帧。三层原因:
-///   ① ncnn-Vulkan 那段输出黑帧(队列异常,退出码 0)→ 自动降级成 ONNX DirectML 重算该整段(约 6 倍慢);
+/// `补帧 第 1981 帧 / 共 1981 帧` 一动不动,用户以为长时间无响应;日志证明 ONNX 稳定引擎一直在出帧。三层原因:
+///   ① ncnn-Vulkan 那段输出全黑画面(队列异常,退出码 0)→ 自动降级成 ONNX DirectML 重算该整段(约 6 倍慢);
 ///   ② 段级进度包装器把帧号钳成"单调不回退" —— 重算轮从第 1 帧重新报数,于是永远显示上一轮的最大值 1981/1981;
 ///      而且包装器把所有消息都重写成帧号文案,连"⚠ 补帧改用 ONNX…重算该段"这句都被整句吃掉,用户看不到降级;
 ///   ③ 用户关窗 → `window.Closed` 里 CleanupTempDirs() 把后台线程正在写的 imgup_video_* 工作目录整个删掉 →
 ///      线程下一次碰帧就是 DirectoryNotFoundException(frames_final),日志里像"任务莫名失败"。
 ///
-/// 这三处全是"编译不报错、集成测试不好跑"(要么得真跑一遍抽到黑帧,要么得在处理中途关窗)—— 只能把源码接线钉住。</summary>
+/// 这三处全是"编译不提示、集成测试不好跑"(要么得真跑一遍抽到全黑画面,要么得在处理中途关窗)—— 只能把源码接线钉住。</summary>
 public class TempCleanupAndInterpProgressTests
 {
     // ===================== 一、「处理中」总闸 =====================
@@ -102,7 +102,7 @@ public class TempCleanupAndInterpProgressTests
     }
 
     /// <summary>⑤ 清理必须有第二个时机:启动期。关窗那次会被闸门整轮跳过(处理中关窗),
-    /// 若没有启动期兜底,残留就再没有时机可清 —— 而且被强杀/崩溃留下的 imgup_video_* 只有启动期才清得掉。</summary>
+    /// 若没有启动期兜底,残留就再没有时机可清 —— 而且被强杀/进程退出留下的 imgup_video_* 只有启动期才清得掉。</summary>
     [Fact]
     public void Cleanup_also_runs_at_startup()
     {
@@ -192,7 +192,7 @@ public class TempCleanupAndInterpProgressTests
         Assert.Contains("App.LastKeptLiveFiles", ReadRepoFile("ImgUpscalerUI", "Views", "MainPage.xaml.cs"));
     }
 
-    // ===================== 三、补帧段级进度:不许把"正在重算"演成"卡死" =====================
+    // ===================== 三、补帧段级进度:不许把"正在重算"演成"长时间无响应" =====================
     /// <summary>⑦ 段级进度包装器:帧号【不再】被 Math.Max 钳成单调;变小 = 新一轮引擎重算本段,如实采用。
     /// 另:带 ⚠ 的告警要原样放行(降级换引擎那句必须能被用户看见)。</summary>
     [Fact]
@@ -223,15 +223,15 @@ public class TempCleanupAndInterpProgressTests
         Assert.Contains("改用 ONNX/换卡重算该段(不落 CPU)", svc);
     }
 
-    // ===================== 四、启动清理绝不许枚举盘根(否则一打开就闪退) =====================
+    // ===================== 四、启动清理绝不许枚举盘根(否则一打开就启动即退出) =====================
 
-    /// <summary>⑧ 启动残留清理【绝不许把盘根(C:\ / D:\ / E:\)拿去枚举 · 2026-09-16 用户实测"一打开软件就闪退"。
+    /// <summary>⑧ 启动残留清理【绝不许把盘根(C:\ / D:\ / E:\)拿去枚举 · 2026-09-16 用户实测"一打开软件就启动即退出"。
     ///
     /// 【现场】旧版 CleanupTempDirs 里有一句"把所有固定盘根目录也加进扫描列表"(DriveInfo.GetDrives()),
     /// 接着对每个 root 做 EnumerateDirectories(root, "imgup*")。而本机枚举 D:\ 盘根会让任意 .NET 8 进程
     /// 直接 AccessViolation(退出码 0xC0000005):CLR 打的是 "Fatal error.",走 fail-fast 直接杀进程 ——
     /// 连外层那句 `try { CleanupTempDirs(); } catch { }` 都拦不住(独立控制台程序复刻该写法,3/3 全崩)。
-    /// 偏偏这句在 09-16 被挪进了 OnLaunched 的后台启动任务 ⇒ publish 版一打开就闪退(事件日志栈:
+    /// 偏偏这句在 09-16 被挪进了 OnLaunched 的后台启动任务 ⇒ publish 版一打开就启动即退出(事件日志栈:
     /// FileSystemEnumerator.MoveNext → App.CleanupTempDirs → OnLaunched)。编译期完全看不出来,只能钉接线。</summary>
     [Fact]
     public void CleanupTempDirs_never_enumerates_a_raw_drive_root()

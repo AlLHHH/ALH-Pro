@@ -19,7 +19,7 @@ namespace ALHPro
 
         /// <summary>当前进程是否以管理员权限运行。
         /// 【为什么要判它】Windows 的 UIPI 会**静默禁止**不同完整性级别进程之间的拖放:软件一旦以管理员身份运行,
-        /// 从资源管理器(普通权限)把文件拖进来就**毫无反应,也不会有任何报错** —— 用户实测反馈
+        /// 从资源管理器(普通权限)把文件拖进来就**毫无反应,也不会有任何提示错误** —— 用户实测反馈
         /// "一部分人的电脑拖放素材不行",绝大多数就是这一条。本程序自身**不需要**管理员权限
         /// (app.manifest 是 asInvoker,设置全写在 %LOCALAPPDATA%\ALHPro),所以这不影响任何功能,只影响拖放。
         /// 判出来是为了**明确告知用户**(见 MainPage 的启动提示),不是去绕过系统限制 —— 那个限制绕不过去。</summary>
@@ -159,7 +159,7 @@ namespace ALHPro
                 {
                     if (IsRunningElevated)
                         AppLogger.Warn("⚠ 本程序正以【管理员权限】运行:Windows 会禁止从资源管理器拖入文件(UIPI),"
-                            + "表现为「拖进去没反应、也没有任何报错」。想用拖放请关闭后以普通权限重新打开"
+                            + "表现为「拖进去没反应、也没有任何提示错误」。想用拖放请关闭后以普通权限重新打开"
                             + "(快捷方式 → 属性 → 兼容性 → 取消勾选「以管理员身份运行」);不想重启也可以点各页面的「添加」按钮选文件。"
                             + "本程序不需要管理员权限,处理功能完全不受影响。");
                 }
@@ -214,7 +214,7 @@ namespace ALHPro
             LastKeptLiveDirs = 0;   // 因"最近还在写"而保留的临时目录数(每次清理重算)
             // 【修复 关窗误删正在用的临时目录 · 2026-09-16 用户实测】处理长视频时关窗,这里会把后台线程
             // 正在写的 imgup_video_* 工作目录整个删掉 → 线程下一次碰帧就 DirectoryNotFoundException(frames_final),
-            // 日志里看着像"任务莫名失败"(用户截图里的"卡住"就是这一串的下游)。
+            // 日志里看着像"任务莫名失败"(用户截图里的"停住"就是这一串的下游)。
             // 有任务在跑就整轮跳过(含文件),残留留给下一次启动清理 —— 启动期有单实例 Mutex,是最安全的清理时机
             // (见 OnLaunched 的后台启动任务里那次 CleanupTempDirs)。
             if (EngineService.AnyProcessing)
@@ -233,14 +233,14 @@ namespace ALHPro
                 if (n > 0) AppLogger.Info($"回收残留引擎进程 {n} 个(它们会占着 GPU 不放,是'编码变慢/硬编不可用'的常见诱因)");
             }
             catch { }
-            // 【修复 一打开软件就闪退 · 2026-09-16 用户实测】旧版这里把"所有固定盘根目录"也塞进了扫描列表
+            // 【修复 一打开软件就启动即退出 · 2026-09-16 用户实测】旧版这里把"所有固定盘根目录"也塞进了扫描列表
             // (DriveInfo.GetDrives() → C:\ / D:\ / E:\),接着对每个 root 做 EnumerateDirectories。
             // 而本机【枚举 D:\ 盘根】会让任意 .NET 8 进程直接 AccessViolation(退出码 0xC0000005)硬崩:
             // CLR 打的是 "Fatal error." —— 走的是 fail-fast 直接杀进程,外层 try/catch【根本拦不住】
             // (独立控制台程序复刻该写法,3/3 全崩;事件日志里的栈正是
             //  FileSystemEnumerator.MoveNext → App.CleanupTempDirs → OnLaunched 的后台启动任务)。
             // 所以这里【绝不再枚举盘根】:下面每个候选目录都要过 NormalizeCleanupRoot 把关,
-            // 盘根(X:\)/空串/不存在/解析失败一律不放行 —— 宁可漏清几个残留,也绝不闪退。
+            // 盘根(X:\)/空串/不存在/解析失败一律不放行 —— 宁可漏清几个残留,也绝不启动即退出。
             // 残留并不需要扫盘根:本软件写临时文件只会落在 %TEMP%、<盘>\ALHProTemp(见 EngineService
             // "盘根不可写"那处修复)或用户自定义目录,全都由 UsedTempRoots/TempRoot/TempDir 覆盖。
             var roots = new System.Collections.Generic.List<string>();
@@ -258,7 +258,7 @@ namespace ALHPro
             // 换盘/换自定义路径后,旧盘旧目录的 imgup_*/alh_* 残留不会被扫到 → 历史用过的根目录一并扫。
             try { foreach (var r in ALHPro.EngineService.UsedTempRoots) AddCleanupRoot(r); } catch { }
             try { AddCleanupRoot(AppSettings.TempDir); } catch { }
-            // 【修复 崩溃/强杀后残留 200 多 G】TempRoot 会自动选"剩余最大盘",可能与 %TEMP% 不同盘——
+            // 【修复 进程退出/强杀后残留 200 多 G】TempRoot 会自动选"剩余最大盘",可能与 %TEMP% 不同盘——
             // 处理中途被防火墙杀/未响应强杀后,workDir(imgup_video_*) 残留在本盘不会被上面清到,累积成 200 多 G。
             try { AddCleanupRoot(EngineService.TempRoot); } catch { }
             // 【2026-10-15 真机事故 · 跨版本删活目录】上面那道"有任务在跑就整轮跳过"的闸门
@@ -395,7 +395,7 @@ namespace ALHPro
         /// <summary>把关"这个目录能不能拿去扫残留",返回规范化后的目录(供去重),不放行时返回 null。
         /// 【盘根(X:\)一律不放行】—— 见 CleanupTempDirs 里的注释:本机枚举 D:\ 盘根会让进程
         /// AccessViolation 硬崩,而且 CLR 是 fail-fast,外层 try/catch 拦不住,只能在源头掐掉。
-        /// 空串/解析失败同样不放行(宁可漏清,绝不闪退)。</summary>
+        /// 空串/解析失败同样不放行(宁可漏清,绝不启动即退出)。</summary>
         private static string? NormalizeCleanupRoot(string? path)
         {
             if (string.IsNullOrWhiteSpace(path)) return null;
@@ -569,7 +569,7 @@ namespace ALHPro
             StartupTrace("App 构造函数进入(即将加载 App.xaml)");
             this.InitializeComponent();
             StartupTrace("App.xaml 加载完成");
-            // 全局未处理异常:记录到诊断日志并阻止崩溃(便于定位问题)。
+            // 全局未处理异常:记录到诊断日志并阻止进程退出(便于定位问题)。
             // 关键:窗口已就绪时给用户一个可见提示(否则"空白窗继续跑"用户不知发生什么)。
             UnhandledException += (_, e) =>
             {
@@ -580,9 +580,9 @@ namespace ALHPro
                     var extra = "";
                     try { extra = $" HRESULT=0x{ex.HResult:X8}"; } catch { }
                     AppLogger.Error($"未处理异常{extra}", ex);
-                    WriteCrashDiagnostic(ex);   // 崩溃时也把版本/系统/驱动/GPU/引擎/堆栈写到磁盘,崩溃后仍可拿到
+                    WriteCrashDiagnostic(ex);   // 进程退出时也把版本/系统/驱动/GPU/引擎/堆栈写到磁盘,进程退出后仍可拿到
                     // 【自愈:检出"布局循环"就停掉界面日志刷新】
-                    // 实测(2026-09-12 22:31,50 系笔记本):LayoutCycleException 抛出后**界面永久卡死**,
+                    // 实测(2026-09-12 22:31,50 系笔记本):LayoutCycleException 抛出后**界面永久长时间无响应**,
                     // 而后台任务其实一直在正常跑(日志显示补帧推进到 171/285)—— 用户只能重启软件,把任务一起打断。
                     // 这类异常是在框架布局代码里抛的,外面 try/catch 拦不到;唯一能自愈的办法是**不再喂它**:
                     // 停掉"既自增长、又要改滚动位置"的界面日志刷新(改成只写文件)。
@@ -615,7 +615,7 @@ namespace ALHPro
                                         CloseButtonText = "知道了",
                                         XamlRoot = fe.XamlRoot,
                                     };
-                                    // 【2026-10-16】走串行闸门:崩溃提示若正好撞上别的对话框,
+                                    // 【2026-10-16】走串行闸门:进程退出提示若正好撞上别的对话框,
                                     // 旧写法会直接抛 COMException 被 catch 吞掉 ⇒ 用户什么都看不到。
                                     await ALHPro.SafeDialog.ShowAsync(dlgFatal, "程序遇到问题");
                                 }
@@ -640,7 +640,7 @@ namespace ALHPro
                 catch { }
                 e.Handled = true;
             };
-            // 后台线程(Task.Run)异常也记录(不崩溃)
+            // 后台线程(Task.Run)异常也记录(不进程退出)
             AppDomain.CurrentDomain.UnhandledException += (_, e) =>
             {
                 try
@@ -661,24 +661,24 @@ namespace ALHPro
         }
 
         /// <summary>最近一次"界面刷新"动作(哪个控件操作在跑 / 抛了什么)。
-        /// 崩溃诊断会把它一并写出:COMException 有时不带托管堆栈,靠这条才能定位到具体调用点。</summary>
+        /// 退出诊断会把它一并写出:COMException 有时不带托管堆栈,靠这条才能定位到具体调用点。</summary>
         internal static string UiBreadcrumb = "";
 
         /// <summary>【2026-10-15】最近一次**用户操作**(录像页/预览页/裁剪页…用户点了哪一步)。
         /// 为什么不并进 UiBreadcrumb:那条会被"日志滚动到底/日志行追加"这类**高频内部动作**反复覆盖,
         /// 真出问题时读出来只会是"日志行追加(界面文本框)",看不出用户当时在干什么。
-        /// 有反馈"预览界面会闪退/卡退"但拿不到现场 ⇒ 崩溃诊断里多这一行,下次就能直接指到那一步。</summary>
+        /// 有反馈"预览界面会启动即退出/无响应退出"但拿不到现场 ⇒ 退出诊断里多这一行,下次就能直接指到那一步。</summary>
         internal static string UiAction = "";
 
-        /// <summary>崩溃时把 版本/系统/驱动/GPU/引擎/异常堆栈 写到磁盘(即使软件崩了也能拿到这份诊断)。</summary>
+        /// <summary>进程退出时把 版本/系统/驱动/GPU/引擎/异常堆栈 写到磁盘(即使软件崩了也能拿到这份诊断)。</summary>
         private static void WriteCrashDiagnostic(Exception? ex)
         {
             try
             {
                 var dir = System.IO.Path.GetDirectoryName(AppLogger.LogFile) ?? System.AppContext.BaseDirectory;
-                var path = System.IO.Path.Combine(dir, $"崩溃诊断_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
+                var path = System.IO.Path.Combine(dir, $"退出诊断_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
                 var sb = new System.Text.StringBuilder();
-                sb.AppendLine($"ALH Pro 崩溃诊断 {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                sb.AppendLine($"ALH Pro 退出诊断 {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
                 sb.AppendLine($"版本: v{UpdateChecker.CurrentVersion}");
                 sb.AppendLine($"系统: {Environment.OSVersion} · {(Environment.Is64BitOperatingSystem ? "64 位" : "32 位")}");
                 try { sb.AppendLine($"硬件: {SafeRender.CpuName} · 显存 {SafeRender.TotalVramGB:0.#}GB / 内存 {SafeRender.TotalRamGB:0.#}GB"); } catch { }
@@ -713,7 +713,7 @@ namespace ALHPro
                 // 【用户操作面包屑·2026-10-15】与上一条互补:上一条是"界面在刷什么",这条是"用户点到了哪一步"。
                 if (!string.IsNullOrEmpty(UiAction)) sb.AppendLine("最近用户操作: " + UiAction);
                 System.IO.File.WriteAllText(path, sb.ToString());
-                AppLogger.Info("崩溃诊断已写入: " + path);
+                AppLogger.Info("退出诊断已写入: " + path);
             }
             catch { }
         }
@@ -843,7 +843,7 @@ namespace ALHPro
             // 【2026-10-04 加固】原来这里是 `_ = rootFrame.Navigate(...)` —— 导航是【同步】执行完 MainPage
             // 构造的,一旦 MainPage / 首个视图构造抛异常,这一行会把整个 OnLaunched 掀掉 ⇒ 后面的
             // window.Activate() 永不执行 ⇒ 进程活着、没有窗口、也没有任何提示(用户说的"双击没反应")。
-            // 现在:出错也必须把窗口显示出来,并明确告诉用户、把崩溃诊断落到磁盘。
+            // 现在:出错也必须把窗口显示出来,并明确告诉用户、把退出诊断落到磁盘。
             StartupTrace("准备创建主界面(Navigate MainPage)");
             try
             {
@@ -879,7 +879,7 @@ namespace ALHPro
                 // 【把临时残留清理挪到启动期 · 2026-09-16】以前只在关窗时清;关窗那次若撞上"正在处理"
                 // 会被闸门整轮跳过(见 CleanupTempDirs),清理就再没有第二个时机了 → 残留会一路攒下去。
                 // 启动期是最安全的清理时机:单实例 Mutex 已确保没有另一个实例在用同一批临时文件;
-                // 被强杀/崩溃留下的 imgup_video_* 也只有在这里才清得掉(旧实现"关窗清理"永远碰不到它们)。
+                // 被强杀/进程退出留下的 imgup_video_* 也只有在这里才清得掉(旧实现"关窗清理"永远碰不到它们)。
                 try { CleanupTempDirs(); } catch { }
                 try { VulkanCheck.LoadOrRun(); } catch { }             // Vulkan 自检(首次)
                 try { CroppedStorage.Clean(); } catch { }              // 清理历史裁剪临时文件
@@ -1102,8 +1102,8 @@ namespace ALHPro
 
         void OnNavigationFailed(object sender, NavigationFailedEventArgs e)
         {
-            // 页面加载失败(XAML 解析/构造异常,如之前视频页 ContextFlyout 崩溃):
-            // 记录完整堆栈,不裸抛(裸抛=直接闪退,用户毫无头绪)
+            // 页面加载失败(XAML 解析/构造异常,如之前视频页 ContextFlyout 进程退出):
+            // 记录完整堆栈,不裸抛(裸抛=直接启动即退出,用户毫无头绪)
             try { AppLogger.Error($"页面加载失败:{e.SourcePageType?.FullName ?? "?"} HRESULT=0x{e.Exception?.HResult:X8}", e.Exception); } catch { }
             var root = MainWindow?.Content?.XamlRoot;   // Navigate 可能在 Activate 前执行,XamlRoot 可能为 null
             if (root == null)

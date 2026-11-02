@@ -6,7 +6,7 @@ using Xunit;
 namespace AlhPro.Tests;
 
 /// <summary>【2026-09-23 第二批核查修复 · 契约测试】本轮按用户「修」的指示处理的是核查报告里的
-/// B4 / B5 / B6 / B7 / B8 + C1~C4。这些条目大多是**文案与死代码**,不会编译报错、也不会让测试变红,
+/// B4 / B5 / B6 / B7 / B8 + C1~C4。这些条目大多是**文案与死代码**,不会编译提示错误、也不会让测试变红,
 /// 正是最容易"改过又漂回去"的一类 ⇒ 每条都钉一个源码契约。
 /// (纯逻辑部分另有 <c>CpuFallbackPolicyTests</c>;这里只管"代码/文案里到底还有没有那个东西"。)
 ///
@@ -105,7 +105,7 @@ public class AuditFixes_20260923_Tests
         Assert.Contains("优先显卡加速", cs);
     }
 
-    /// <summary>★ 批大小的报错正文里不许再写死具体帧数(B6):档位改过一次,写死的 "(700 的硬条件)" 就成了假话。</summary>
+    /// <summary>★ 批大小的提示错误正文里不许再写死具体帧数(B6):档位改过一次,写死的 "(700 的硬条件)" 就成了假话。</summary>
     [Fact]
     public void The_batch_rule_line_does_not_hardcode_a_retired_frame_count()
     {
@@ -115,7 +115,7 @@ public class AuditFixes_20260923_Tests
     }
 
     /// <summary>★ 使用教程里的过时指引:RIFE 模型只剩两支 v4(没有 v2.3)、VFR 已无开关、
-    /// 50 系不再按型号一刀切、视频处理不再落到纯 CPU(会直接报错)。</summary>
+    /// 50 系不再按型号一刀切、视频处理不再落到纯 CPU(会直接提示错误)。</summary>
     [Fact]
     public void The_tutorial_drops_retired_options()
     {

@@ -106,7 +106,7 @@ public class NcnnProbeHonestyTests
 
     /// <summary>**E1 真话没丢**:探测**跑完**并判不可用时,照旧得出「实测不可用」(而且 Real-CUGAN 那条出路
     /// 照旧按"没有 ONNX 版本"说)。判据 <see cref="NcnnProbeWording.IsConclusiveOutcome"/> 逐形态钉住:
-    /// 跑完的形态(崩溃退出码 / 无产出 / 空产出 / 坏帧 / 引擎文件不在)才允许落盘并说"不可用"。</summary>
+    /// 跑完的形态(进程退出退出码 / 无产出 / 空产出 / 无效画面 / 引擎文件不在)才允许落盘并说"不可用"。</summary>
     [Fact]
     public void A_completed_probe_that_judged_unavailable_still_says_unavailable()
     {

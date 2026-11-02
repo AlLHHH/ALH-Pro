@@ -85,7 +85,7 @@ public class NcnnProbePoisoningTests
     }
 
     /// <summary>★ 1x Anime4K 回退到「现实 · 1x 修复」时,下发给引擎的模型名必须同步换成真权重
-    /// (否则引擎按 `-n anime4k` 找一个不存在的权重 ⇒ exit 0 只出坏帧;此前被"预检必然失败 ⇒ 整批走 ONNX"挡住)。</summary>
+    /// (否则引擎按 `-n anime4k` 找一个不存在的权重 ⇒ exit 0 只出无效画面;此前被"预检必然失败 ⇒ 整批走 ONNX"挡住)。</summary>
     [Fact]
     public void The_anime4k_fallback_rewrites_the_engine_model()
     {

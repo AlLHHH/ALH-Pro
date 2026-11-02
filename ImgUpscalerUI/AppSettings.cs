@@ -12,7 +12,7 @@ public static class AppSettings
 
     /// <summary>全局计算设备(gpuId 语义):-1=CPU(软件计算),≥0=GPU 编号。三个功能页共用,设置弹窗统一修改。
     /// ⚠ 编号**不是稳定身份**:实测同一台笔记本两次启动之间引擎枚举顺序会变(诊断包:同一张 NVIDIA
-    /// 先被判为 id 0、后又被判为 id 1)→ 只存编号会把任务悄悄挪到**核显**上(实测后果:ncnn 黑帧、
+    /// 先被判为 id 0、后又被判为 id 1)→ 只存编号会把任务悄悄挪到**核显**上(实测后果:ncnn 全黑画面、
     /// DirectML 也黑,只能回退源帧)。所以必须连 <see cref="GpuName"/> 一起存,启动时按名字解析编号。</summary>
     public static int GpuIndex { get; set; } = 0;
 
@@ -84,7 +84,7 @@ public static class AppSettings
             if (!File.Exists(FilePath))
             {
                 // 首次启动:自动采用推荐 GPU(跳过 Intel/AMD 核显选独立显卡),不再默认 0(核显)。
-                // 此前默认 0 会让"软件推荐 NVIDIA 但实际用核显"——补帧/超分极慢,用户以为卡死。
+                // 此前默认 0 会让"软件推荐 NVIDIA 但实际用核显"——补帧/超分极慢,用户以为长时间无响应。
                 // 用引擎推荐编号(VulkanCheck.Devices,按 -g 编号),不用注册表索引(双卡机上两者编号可能相反)。
                 try { GpuIndex = GpuInfo.GetRecommendedEngineId(); } catch { }
                 try { GpuName = GpuInfo.GetEngineDeviceName(GpuIndex) ?? ""; } catch { }

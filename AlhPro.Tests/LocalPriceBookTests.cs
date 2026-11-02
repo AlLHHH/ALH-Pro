@@ -8,7 +8,7 @@ namespace AlhPro.Tests;
 
 /// <summary>【2026-09-25 A+B】本机实测超分单帧耗时的**记录/折算/拒收**单测(契约 A1)。
 ///
-/// 缺陷背景:顺序判定只读 `PipelineOrderPlan.UpscaleRates`(开发机一台机器的实测)⇒
+/// 问题背景:顺序判定只读 `PipelineOrderPlan.UpscaleRates`(开发机一台机器的实测)⇒
 /// 「别人的机器用我的机器的秒/帧决定先超分还是先补帧」(用户 2026-09-25 原话)。
 /// 本文件钉的是新口径的**数据面**:`SecondsPerFrame1080p` 的面积折算、`TryBuild` 的六条拒收、
 /// 机器指纹不匹配不采信、JSON 容错。</summary>

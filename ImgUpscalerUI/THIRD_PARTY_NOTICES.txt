@@ -162,7 +162,7 @@ ALH Pro — 第三方组件许可声明
       (engines\realcugan\realcugan-ncnn-vulkan-2026.exe),前端源码取自上面那个 MIT 仓库、
       只改了 MinGW 宽字符 printf 的一处兼容补丁;重构配方见 tools\engine-build\README_REALCUGAN.md。
       为什么要重编:上游 20220728 那份 exe 实测不含 VK_EXT_robustness2 处理(0 处)——
-      在 NVIDIA 50 系(Blackwell)上属「退出码 0、却输出坏帧」那一类。
+      在 NVIDIA 50 系(Blackwell)上属「退出码 0、却输出无效画面」那一类。
     说明: 上游 GitHub 仓库内 Real-CUGAN/weights_v3/ 目录只含一句
           "Please download the weight files from netdisks and put them here.";
           经百度网盘 / GoogleDrive / 和彩云 分发的"完整包/更新参数包"未随附任何许可文本,

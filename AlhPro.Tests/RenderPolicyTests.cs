@@ -6,7 +6,7 @@ namespace AlhPro.Tests;
 
 /// <summary>
 /// 安全渲染策略(显存/GPU类别 → 分块大小 & 批大小)的单测。
-/// 这是"改错就爆显存/黑帧/卡死"的逻辑,必须保护。
+/// 这是"改错就爆显存/全黑画面/长时间无响应"的逻辑,必须保护。
 /// </summary>
 public class RenderPolicyTests
 {
@@ -76,7 +76,7 @@ public class RenderPolicyTests
     [Fact]
     public void OnnxTileSize_never_exceeds_the_measured_safe_optimum()
     {
-        // 上限必须是实测安全的 1024 —— 再大在本机实测中会【静默慢 13.7~20 倍】(显存溢出,不报错)。
+        // 上限必须是实测安全的 1024 —— 再大在本机实测中会【静默慢 13.7~20 倍】(显存溢出,不提示)。
         // 这条断言的作用:将来有人想"大显存就放大"时,必须先有真机数据,并先改掉这条测试。
         for (double v = 1; v <= 64; v += 0.5)
             Assert.InRange(RenderPolicy.OnnxTileSize(v, v * 0.75), 512, 1024);
@@ -260,7 +260,7 @@ public class RenderPolicyTests
     [Fact]
     public void PlanVideoBatches_long_clip_stepdown_is_intentional()
     {
-        // 钉住这条"台阶"本身,免得以后有人当 bug 修掉:899 帧 → 2 批(700/批);900 帧 → 1 批(1400/批)。
+        // 钉住这条"台阶"本身,免得以后有人当 问题 修掉:899 帧 → 2 批(700/批);900 帧 → 1 批(1400/批)。
         // 依据是用户口径"设备好 视频长 考虑批内扩大"——批数下降是刻意的收益,不是回退。
         // 【2026-09-23 档位 ×2】每批 700/1400 → ⌈899/700⌉=2、⌈900/1400⌉=1。
         var justUnder = RenderPolicy.PlanVideoBatches(10.4, 899, 899);

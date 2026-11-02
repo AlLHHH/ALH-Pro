@@ -4,13 +4,13 @@ using Xunit;
 namespace AlhPro.Tests;
 
 /// <summary>补帧入参预检的单测(任务 O2)。
-/// 【真机依据】7680×4320 + `-n 119` → **117/119 帧全黑**、exit=0 无报错;1080p/2160p 同命令 **0 黑帧**;
-/// 另:1 帧目录 + `-n 2` → **0xC0000005 崩溃**。</summary>
+/// 【真机依据】7680×4320 + `-n 119` → **117/119 帧全黑**、exit=0 无提示;1080p/2160p 同命令 **0 全黑画面**;
+/// 另:1 帧目录 + `-n 2` → **0xC0000005 进程退出**。</summary>
 public class InterpSizePolicyTests
 {
     [Theory]
     [InlineData(1920, 1080)]   // 实测安全
-    [InlineData(3840, 2160)]   // 实测安全(8.29 Mpx,0 黑帧)
+    [InlineData(3840, 2160)]   // 实测安全(8.29 Mpx,0 全黑画面)
     [InlineData(2560, 1440)]
     public void Safe_sizes_pass_untouched(int w, int h)
     {
@@ -58,7 +58,7 @@ public class InterpSizePolicyTests
 
     /// <summary>退化入参:RIFE 至少 2 帧输入,且目标帧数必须大于输入帧数(1 帧目录 + -n 2 = 崩)。</summary>
     [Theory]
-    [InlineData(1, 2, true)]    // 实测崩溃组合
+    [InlineData(1, 2, true)]    // 实测进程退出组合
     [InlineData(1, 1, true)]
     [InlineData(2, 2, true)]    // 目标 = 输入:没有可插的位置
     [InlineData(2, 3, false)]   // 最小可用
@@ -80,7 +80,7 @@ public class InterpSizePolicyTests
                 {
                     int target = System.Math.Max(segLen + 1, VideoPipeline.InterpSegmentTarget(segLen, mult, last));
                     Assert.False(InterpSizePolicy.IsDegenerateSegmentInput(segLen, target),
-                        $"segLen={segLen} mult={mult} last={last} → -n {target} 会崩");
+                        $"segLen={segLen} mult={mult} last={last} → -n {target} 会退出");
                 }
     }
 }

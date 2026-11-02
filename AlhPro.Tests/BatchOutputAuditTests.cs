@@ -6,8 +6,8 @@ namespace AlhPro.Tests;
 /// <summary>
 /// 超分批"引擎少写帧"对账(AlhPro.Core.BatchOutputAudit)的单测。
 /// 【承重场景】引擎退出码 0 却少产出若干帧 ⇒ 旧代码(只判"输出目录一个文件都没有")静默放行 ⇒
-/// 合帧按 `frame_%06d` 连续读时少帧/报错,日志里无痕迹。真机实测(2026-10-15,RTX 4060 Laptop,
-/// 老版 2022 realesrgan-ncnn-vulkan 目录模式 `-t 384`)就是"同批里好帧与黑帧混排、退出码 0"。
+/// 合帧按 `frame_%06d` 连续读时少帧/提示错误,日志里无痕迹。真机实测(2026-10-15,RTX 4060 Laptop,
+/// 老版 2022 realesrgan-ncnn-vulkan 目录模式 `-t 384`)就是"同批里好帧与全黑画面混排、退出码 0"。
 /// 这里钉的是**匹配口径**(主名、剥多层扩展名、大小写、非图片产出不算数),像素判黑不在本类职责内。
 /// </summary>
 public class BatchOutputAuditTests

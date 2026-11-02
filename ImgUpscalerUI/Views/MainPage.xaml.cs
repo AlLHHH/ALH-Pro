@@ -46,7 +46,7 @@ public sealed partial class MainPage : Page
         {
             int page0 = _startupPage >= 0 ? _startupPage : LoadLastPage();
             _startupPageIndex = page0;
-            // 【2026-09-23 修 A2 · 这一行就是那个 bug】原来是把"启动页编号"**直接**赋给导航列表的
+            // 【2026-09-23 修 A2 · 这一行就是那个 问题】原来是把"启动页编号"**直接**赋给导航列表的
             // SelectedIndex —— 当时两套编号并不一致(启动页 2 = 视频处理;而导航列表第 3 项才是视频处理,
             // 第 3 项是"视频抠图")⇒ 真机实测"设置里选视频处理 → 开机进视频抠图"。
             // 现在走唯一换算(纯逻辑 + 单测);视频抠图下线后两者顺序一致,换算退化成恒等值但保留。
@@ -113,7 +113,7 @@ public sealed partial class MainPage : Page
                     // 【按设备名重新解析编号 · 2026-09-18 诊断包定位到的真凶】
                     // 引擎的设备编号**不是稳定身份**:同一台笔记本两次启动之间,同一张 NVIDIA 先被判为 id 0、
                     // 后又被判为 id 1(诊断包里两条日志白纸黑字)。老代码只把**编号**存进设置 → 编号一翻,
-                    // 存下来的 "1" 就指向了 **AMD 780M 核显** → 核显跑 ncnn → GPU 队列异常 → 黑帧;
+                    // 存下来的 "1" 就指向了 **AMD 780M 核显** → 核显跑 ncnn → GPU 队列异常 → 全黑画面;
                     // 连 ONNX/DirectML 回退也指向核显 → 两条路都黑,最后只能回退源帧 ✗。
                     // 现在:设置里连**设备名**一起存(名字才是稳定身份)→ 每次启动按名字在当前枚举里找编号;
                     // 名字找不到(换卡/驱动改名)→ 用"最优秀且实测可用"的独显兜底(核显只有没独显时才用)。
@@ -1307,7 +1307,7 @@ public sealed partial class MainPage : Page
             catch (Exception ex)
             {
                 AppLogger.Error($"视频页加载失败 HRESULT=0x{ex.HResult:X8}", ex);
-                // 不闪退:显示错误信息,便于定位
+                // 不启动即退出:显示错误信息,便于定位
                 _videoView = null;
                 ContentRoot.Children.Add(new TextBlock
                 {
@@ -2191,7 +2191,7 @@ public sealed partial class MainPage : Page
                 });
                 content.Children.Add(new TextBlock
                 {
-                    Text = "特别致谢(不分先后)— 帮忙找 Bug、反馈问题,让 ALH Pro 越来越好",
+                    Text = "特别致谢(不分先后)— 帮忙找 问题、反馈问题,让 ALH Pro 越来越好",
                     FontSize = 12,
                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                     TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
@@ -2492,7 +2492,7 @@ public sealed partial class MainPage : Page
             gpuCount = 2; gpuIds.Add(0); gpuIds.Add(1);
         }
         // 【不再提供 CPU 选项】原则:始终用显卡(推荐或其它),不主动/自动转 CPU。默认选中推荐项。
-        // 引擎枚举 gpuIds 至少含 GPU 0/1 兜底,故下拉恒有 GPU 可选(彻底无 GPU 时按原则 A 会报错而非跑 CPU)。
+        // 引擎枚举 gpuIds 至少含 GPU 0/1 兜底,故下拉恒有 GPU 可选(彻底无 GPU 时按原则 A 会提示错误而非跑 CPU)。
         int recIdx = gpuRec >= 0 && gpuRec < gpuIds.Count ? gpuRec : 0;
         int sel = AppSettings.GpuIndex >= 0 ? gpuIds.IndexOf(AppSettings.GpuIndex) : -1;
         gpuCombo.SelectedIndex = sel >= 0 ? sel : recIdx;
@@ -2620,7 +2620,7 @@ public sealed partial class MainPage : Page
         });
         content.Children.Add(new TextBlock
         {
-            Text = "防止处理大图/视频时电脑卡死或闪退。选【自动】就行:程序按这台电脑的配置自动限制,换电脑会重新检测、自动调整。",
+            Text = "防止处理大图/视频时电脑长时间无响应或启动即退出。选【自动】就行:程序按这台电脑的配置自动限制,换电脑会重新检测、自动调整。",
             FontSize = 12, Opacity = 0.75, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
 
@@ -3243,7 +3243,7 @@ public sealed partial class MainPage : Page
         });
         content.Children.Add(new TextBlock
         {
-            Text = "日志会记录你的操作和报错(含原因)。出问题时,点下方「导出诊断包(zip)」把诊断包发给作者,即可快速定位。",
+            Text = "日志会记录你的操作和提示错误(含原因)。出问题时,点下方「导出诊断包(zip)」把诊断包发给作者,即可快速定位。",
             FontSize = 12, Opacity = 0.75, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
         });
 
@@ -3397,13 +3397,14 @@ public sealed partial class MainPage : Page
                     gathered++;
                     // ② 日志(可有可无,失败不阻塞)
                     try { System.IO.File.Copy(AppLogger.LogFile, System.IO.Path.Combine(tmpDir, "diagnostic.log"), true); gathered++; } catch { }
-                    // ②b 崩溃诊断文件(闪退时 WriteCrashDiagnostic 写在日志目录的 崩溃诊断_*.txt)——诊断包必须带上,
-                    //     否则闪退只有"日志停在一处",拿不到异常堆栈,定位不了。
+                    // ②b 退出诊断文件(启动即退出时 WriteCrashDiagnostic 写在日志目录的 退出诊断_*.txt)——诊断包必须带上,
+                    //     否则启动即退出只有"日志停在一处",拿不到异常堆栈,定位不了。
                     try
                     {
                         var logDir = System.IO.Path.GetDirectoryName(AppLogger.LogFile);
                         if (logDir != null && System.IO.Directory.Exists(logDir))
-                            foreach (var cd in System.IO.Directory.EnumerateFiles(logDir, "崩溃诊断_*.txt"))
+                            // 通配写成 *诊断_*.txt:旧版本写下的文件名前缀不同,一并带上,老用户的诊断包不会缺。
+                            foreach (var cd in System.IO.Directory.EnumerateFiles(logDir, "*诊断_*.txt"))
                             { System.IO.File.Copy(cd, System.IO.Path.Combine(tmpDir, System.IO.Path.GetFileName(cd)), true); gathered++; }
                     }
                     catch { }
@@ -3629,7 +3630,7 @@ public sealed partial class MainPage : Page
     /// <summary>处理完成(且全部成功)后按概率弹出"赞助作者"赞助提示。
     /// 参数(作者定案):35% 概率;点「赞助作者」并停留 ≥5 秒 → 24 小时不再弹;点「暂时不了」→ 2 小时不弹。
     /// 【冷却语义】`AppSettings.SponsorPromptTime` 存的是【到期时刻】,判据为 `Now &lt; 到期`。
-    /// 历史 BUG:原先存 `Now.AddHours(10)`(未来时刻)却用 `Now - 它 &lt; 10h` 判断,
+    /// 历史 问题:原先存 `Now.AddHours(10)`(未来时刻)却用 `Now - 它 &lt; 10h` 判断,
     /// 于是从现在起要过 20 小时才解除冷却(前 10 小时差值恒为负、之后才真正计时)。</summary>
     private const double SponsorShowProbability = 0.35;   // 每次合格时机弹出的概率(35%)
 

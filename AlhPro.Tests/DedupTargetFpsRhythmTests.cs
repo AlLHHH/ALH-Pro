@@ -29,7 +29,7 @@ namespace AlhPro.Tests;
 /// 现在是一个**预设下拉**(选中即生效),倍率与"大约输出多少帧率"写在下面那行提示里。
 /// 取值必须只走 `SelectedTargetFps()` 一处 —— 否则"下拉选 120、某条老代码却去读输入框"这类错位会静默生效。
 ///
-/// 【为什么用契约测试】两条都是"组合条件错位 + 沉默":编译不报错、单测也测不到(要真跑一条删帧疏密不均的
+/// 【为什么用契约测试】两条都是"组合条件错位 + 沉默":编译不提示、单测也测不到(要真跑一条删帧疏密不均的
 /// 去重素材 / 真人把界面点一遍),只能按本仓库既定手法把源码接线钉住(同 TempSpaceGateTests / SceneSwitchCoverageTests)。</summary>
 public class DedupTargetFpsRhythmTests
 {
@@ -90,7 +90,7 @@ public class DedupTargetFpsRhythmTests
         var svc = ReadRepoFile("ImgUpscalerUI", "VideoService.cs");
         var cs = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs");
         // 【只查代码行,不查注释】沿革说明(为什么删、删了哪几样)必须能留在源码里 —— 那是给后来人看的;
-        // 这里要钉的是**活代码里**不许再引用它们(真有活引用编译期就报错了,再钉一道防有人"照着注释恢复")。
+        // 这里要钉的是**活代码里**不许再引用它们(真有活引用编译期就提示错误了,再钉一道防有人"照着注释恢复")。
         var svcCode = string.Join("\n", svc.Split('\n').Where(l => !l.TrimStart().StartsWith("//")));
         var csCode = string.Join("\n", cs.Split('\n').Where(l => !l.TrimStart().StartsWith("//")));
 
@@ -287,7 +287,7 @@ public class DedupTargetFpsRhythmTests
     /// <summary>记忆参数 / 预设的往返契约(2026-09-16 · 用户要求「预设 记住参数什么的记得也要更新」)。
     ///
     /// 「指定帧率」是「输出倍率」组里多出来的第 7 项(序号 6),但它**不是倍率**。于是存盘这一环有两个坑,
-    /// 都是静默的 —— 编译不报错、跑起来也不报错,只有用户重开软件/套预设时才会发现"怎么不是我要的那个":
+    /// 都是静默的 —— 编译不提示、跑起来也不提示,只有用户重开软件/套预设时才会发现"怎么不是我要的那个":
     ///   ① **存**:若把下拉选中项(6)直接写进 `InterpScale`(约定 0~5=2x…16x),
     ///      读取端那条 `is >= 0 and <= 5` 会静默丢弃它 ⇒ 下次开软件真实倍率变回 2x;
     ///      预设摘要又要拿它去 `InterpScaleMap.Label(6)` 印成 "2x"(把序号当倍率),等于告诉用户一个错数。

@@ -36,8 +36,8 @@ public static class ExperimentalEsrgan
         => !string.IsNullOrEmpty(model) && model.Contains(Fix1x, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>是不是本项目自训的模型(权重住独立分支目录,不是引擎内置 zoo)。
-    /// 【为什么单独留一个判据】<see cref="EsrganModelDir.For"/> 靠它选目录,而这个引擎**找不到权重时不报错**:
-    /// 它会画一张坏帧、退出码 0 ⇒ 目录选错是**静默故障**,判据只能有一处、由单测钉住。
+    /// 【为什么单独留一个判据】<see cref="EsrganModelDir.For"/> 靠它选目录,而这个引擎**找不到权重时不提示**:
+    /// 它会画一张无效画面、退出码 0 ⇒ 目录选错是**静默故障**,判据只能有一处、由单测钉住。
     /// 2026-10-14 四支自训 2x 下线后,这里只剩计划中的 <see cref="Fix1x"/> 一支。</summary>
     public static bool IsSelfTrained(string? model) => Is1xModel(model);
 }

@@ -214,7 +214,7 @@ public static class CutoutService
         float[,] mask;
         progress?.Report((30, "AI 分析主体..."));
         // 推理期平滑推进:ONNX 推理无进度回调(CPU 一张 10~40s),期间进度条停在 30%
-        // 会让人误以为卡死/只有"空和满"两端——用定时器在 30→66 渐进上涨,推理结束由真实阶段(70)覆盖。
+        // 会让人误以为长时间无响应/只有"空和满"两端——用定时器在 30→66 渐进上涨,推理结束由真实阶段(70)覆盖。
         int smoothPct = 30;
         using var smoothTimer = new System.Threading.Timer(_ =>
         {
@@ -428,7 +428,7 @@ public static class CutoutService
     /// <summary>抠图专用的【设备级】DirectML 废止标志(键 = 设备号,进程级)。
     /// 【为什么必须按设备级、且一次就置位】实测(2026-09-22 21:09~21:11,见性能报告 §二补):
     /// birefnet-lite 在 DML 上先报 DmlCommandRecorder 80004005,紧接着同进程内 D3D 设备被系统挂起
-    /// (`887A0005 GPU 设备实例已经被暂停`);此后**即使推理不报错也只剩 CPU 速度**——
+    /// (`887A0005 GPU 设备实例已经被暂停`);此后**即使推理不提示也只剩 CPU 速度**——
     /// 干净进程里 isnet 的 DML 是 406 ms,被污染后同进程里是 1048 ms(CPU 1080 ms),释放失败会话也救不回来。
     /// 所以只要出现【持续性设备错误】就立刻认定"本进程内这台设备的 DML 不能再用于抠图",直接走 CPU
     /// (CPU 反而更快),而不是继续白试(实测每次白试 2~6 秒)。
@@ -444,7 +444,7 @@ public static class CutoutService
 
     /// <summary>丢弃并释放某 (模型, 设备) 的缓存会话(推理失败后调用)。
     /// 【为什么必须释放】失败的 DirectML 会话会一直挂在缓存里:①它可能占着大量显存(1024² 输入模型),
-    /// ②下一次同组合调用会拿到这个"跑起来就报错"的会话。实测同进程里 birefnet-lite 的 DML 会话失败后,
+    /// ②下一次同组合调用会拿到这个"跑起来就提示错误"的会话。实测同进程里 birefnet-lite 的 DML 会话失败后,
     /// 随后 isnet 的 GPU 推理从 406 ms 掉到 1090 ms(≈CPU 速度)—— 释放失败会话是为了不让它继续占坑。
     /// 【为什么要占信号量】同一会话不能并发 Run(见 GetOrCreateSession),别的线程可能正在用它;
     /// 先拿到该组合的信号量再释放,才不会把别人脚下的会话抽掉。</summary>
@@ -1068,7 +1068,7 @@ public static class CutoutService
         var bmp = System.Drawing.Image.FromFile(input) as System.Drawing.Bitmap
             ?? throw new InvalidOperationException("无法读取图片");
         // 【尺寸/内存保护(对齐图片超分)】超大图(>4K)全分辨率 mask/输出会 OOM——提前给清晰错误提示降级,
-        // 而不是处理中途爆内存(用户以为卡死/白跑)。
+        // 而不是处理中途爆内存(用户以为长时间无响应/白跑)。
         const int MaxDim = 16384;
         const long MaxPx = 160_000_000L;   // 约 1.6 亿像素
         long px = (long)bmp.Width * bmp.Height;

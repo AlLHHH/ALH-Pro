@@ -412,7 +412,7 @@ public sealed partial class CutoutView : UserControl
         if (!_peeking) return;
         _peeking = false;
         // 精确恢复按住前的显示源(可能是彩色预览/蒙版/原图)——原先无脑恢复蒙版,
-        // 若按住前显示的是"彩色预览"(ComposeColorPreviewAsync 生成),松手会变黑白蒙版(用户反馈 bug)
+        // 若按住前显示的是"彩色预览"(ComposeColorPreviewAsync 生成),松手会变黑白蒙版(用户反馈 问题)
         var prev = _peekPrevSource;
         _peekPrevSource = null;
         if (prev != null)
@@ -720,9 +720,9 @@ public sealed partial class CutoutView : UserControl
             return;
         }
         // 输出目录:多张时创建子文件夹(WebP 转码件优先用原始目录,避免落到应用私有目录)
-        // 【修复 崩溃+永久卡死】目录创建/路径拼接原先在 _running=true 之后、且在 try 之外:
+        // 【修复 进程退出+永久长时间无响应】目录创建/路径拼接原先在 _running=true 之后、且在 try 之外:
         // 用户手填的路径含非法字符或盘满/只读时,Path.Combine/Directory.CreateDirectory 抛异常,
-        // 异常从 async void 逃逸 → 进程崩溃;即便不崩,_running 已 true 而 finally 在更内侧的 try 里
+        // 异常从 async void 逃逸 → 进程进程退出;即便不崩,_running 已 true 而 finally 在更内侧的 try 里
         // → 列表锁死、RunBtn 永久灰(只能重启)。与超分页 UpscaleView 的正确写法保持一致:
         // 全部移到 _running=true 之前,失败给出可行动提示后直接 return。
         var firstSrc = items[0].OriginalPath.Length > 0 ? items[0].OriginalPath : items[0].Path;
@@ -855,7 +855,7 @@ public sealed partial class CutoutView : UserControl
                 {
                     // 预处理(可选):先降噪/超分,再抠图(输出分辨率=预处理后尺寸)
                     // 有 EXIF 旋转的图先标准化方向,否则标记坐标与处理结果错位
-                    // NormalizeExif 内部会 new Bitmap(input) 解码整张图(仅为读 EXIF)—— 大图会卡住 UI 线程
+                    // NormalizeExif 内部会 new Bitmap(input) 解码整张图(仅为读 EXIF)—— 大图会停住 UI 线程
                     // (这正是"开始处理时卡顿"的根因,每张都同步解码),故放到后台线程执行。
                     string srcPath = await Task.Run(() => EngineService.NormalizeExif(item.Path));
                     if (!ReferenceEquals(srcPath, item.Path))

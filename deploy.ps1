@@ -25,7 +25,7 @@ foreach ($wa in @('Microsoft.WindowsAppRuntime.dll','Microsoft.UI.Xaml.dll','Mic
 }
 
 Write-Host "==> 2/3 同步到 发布版\(排除 engines)..."
-# 先结束正在运行的 ALHPro(否则 ALHPro.exe 被锁,robocopy 无限重试等待→卡死)
+# 先结束正在运行的 ALHPro(否则 ALHPro.exe 被锁,robocopy 无限重试等待→长时间无响应)
 Get-Process ALHPro -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
 robocopy $pub $dst /E /XD engines /XF DirectML.Debug.dll DirectML.Debug.pdb DirectML.pdb ALHPro.pdb onnxruntime.lib "*.obj" /NFL /NDL /NJH /NP | Out-Null

@@ -11,7 +11,7 @@ public enum GpuCategory
 
 /// <summary>
 /// 安全渲染的纯策略函数(从 SafeRender 抽出、可单测)。
-/// 这些是"显存/GPU类别 → 分块大小/批大小"的映射——改错会导致爆显存/黑帧/卡死,
+/// 这些是"显存/GPU类别 → 分块大小/批大小"的映射——改错会导致爆显存/全黑画面/长时间无响应,
 /// 是最需要测试保护的逻辑。硬件探测(IsBlackwellGpu/设备名/FreeRam/FreeVram)留在 SafeRender,
 /// 这里只做纯计算。
 /// </summary>
@@ -20,7 +20,7 @@ public static class RenderPolicy
     /// <summary>视频逐帧超分的分块大小,按"有效显存 + GPU 类别"决定。</summary>
     public static int VideoTileSize(double vramGB, GpuCategory cat)
     {
-        // 显存是硬约束:小显存一律保守(爆显存→黑帧/崩溃比慢更糟)
+        // 显存是硬约束:小显存一律保守(爆显存→全黑画面/进程退出比慢更糟)
         if (vramGB < 4) return 256;
         // 50系/AMD:驱动/稳定性风险,保守(主路径走 ONNX,此处只是 ncnn 兜底)
         if (cat is GpuCategory.Blackwell or GpuCategory.Amd) return vramGB >= 10 ? 640 : 512;
@@ -42,7 +42,7 @@ public static class RenderPolicy
     /// 【实测锚点】(RTX 4060 Laptop 8GB / waifu2x-cunet2x / 2x / DirectML,每百万像素耗时):
     ///   256→337、512→385、768→360、【1024→327(最优)】ms/Mpix;1280→崩塌 13.7~20 倍(显存溢出);1536/1920→OOM。
     /// 【为什么上限就钉在 1024】①效率曲线从 256 到 1024 基本平坦,1024 略优(块大→块数少→重叠浪费少);
-    /// ②再往上只多几个百分点,而一旦超过显存会【静默慢十余倍】(不是崩溃,用户只看到"卡"),不值得冒险;
+    /// ②再往上只多几个百分点,而一旦超过显存会【静默慢十余倍】(不是进程退出,用户只看到"卡"),不值得冒险;
     /// ③小显存按 √(显存/8) 收缩(显存需求随像素近似线性)。
     /// 【为什么不按显卡型号】旧策略把 50 系/AMD 一律压到 512,而实测 8GB 上 1024 既安全又快约 15%。
     /// integrated=true(核显/共享显存)时一律 512:核显报的"显存总量"是共享内存,不是真实可用量。
@@ -122,12 +122,12 @@ public static class RenderPolicy
     /// 【硬条件】只有"性能档 = Fast 且空闲内存 ≥ <see cref="StrongDeviceFreeRamGB"/> 才给" ——
     /// 见 <see cref="TierBaseFrames"/>;上界抬高同时必须抬高**峰值守门**(见 TempSpaceEstimate.NeedBytes
     /// 的"每批并存帧"项、<see cref="LimitBatchByTempDisk"/> 与 VideoService 的守门复算),不允许只抬上限不给守门。
-    /// 【黑帧代价:2026-09-29 起不再存在 —— 本段改为留痕】它原本在论证"批 ×2 会不会放大黑帧重跑的代价"
-    /// (整批重跑 / 零星黑帧只重跑那几帧 / 90 + 帧数×3 秒、上限 240 秒的预算 …)。那套**事后黑帧降级链已按作者
-    /// 要求整条删除**(2026-09-16 补帧侧先删、2026-09-27 超分侧与标定侧补齐;作者原话:"黑帧判定简直就是垃圾
-    /// 没有用 反而连累" —— 素材里正常的黑色转场会被误判成引擎坏帧,把整条任务推到 ONNX 慢路)。
-    /// ⇒ 抬批大小**不再有"黑帧代价"这一项权衡**;防"引擎静默出坏帧"改由开跑前的事前预检与引擎探测负责。
-    /// ⚠ 别再照这段去算"黑帧代价"。</summary>
+    /// 【全黑画面代价:2026-09-29 起不再存在 —— 本段改为留痕】它原本在论证"批 ×2 会不会放大全黑画面重跑的代价"
+    /// (整批重跑 / 零星全黑画面只重跑那几帧 / 90 + 帧数×3 秒、上限 240 秒的预算 …)。那套**事后全黑画面降级链已按作者
+    /// 要求整条删除**(2026-09-16 补帧侧先删、2026-09-27 超分侧与标定侧补齐;作者原话:"全黑画面判定简直就是垃圾
+    /// 没有用 反而连累" —— 素材里正常的黑色转场会被误判成引擎无效画面,把整条任务推到 ONNX 慢路)。
+    /// ⇒ 抬批大小**不再有"全黑画面代价"这一项权衡**;防"引擎静默出无效画面"改由开跑前的事前预检与引擎探测负责。
+    /// ⚠ 别再照这段去算"全黑画面代价"。</summary>
     public const int StrongDeviceLargeFramesPerBatch = 1400;
 
     /// <summary>「视频长」门槛之一(按时长):源帧数 ≥ 900(≈30 秒 @30fps)。【依据】用户点名的"短素材"是
@@ -151,7 +151,7 @@ public static class RenderPolicy
     /// 【为什么要它】档位 ×2 之后,一批在同一时刻占盘的帧数也 ×2(输入帧 + 本批输出帧并存);
     /// 原来只有一道"整任务预估 vs 剩余空间"的闸门(超过就**直接让任务失败**),粒度太粗:
     /// ① 它算的是全片口径 + 1.6 安全系数,批大小在里面的权重随素材长度变化,短的素材几乎影响不到判定;
-    /// ② 它只会**报错**,不会**自动把批调小** —— 而这正是档位放大后需要的动作(能跑就跑小点,别失败)。
+    /// ② 它只会**提示错误**,不会**自动把批调小** —— 而这正是档位放大后需要的动作(能跑就跑小点,别失败)。
     /// 【0.65 的来历】用户直接给的数;含义是"一批最多吃掉余量的 65%,留 35% 给编码器临时文件、
     /// 其它进程与并发批"。它比"整任务守门的 1.6 安全系数"更松(后者等价于批占比 ≤ 1/1.6 = 0.625),
     /// 所以**常见情形下它是第二道、不会误伤**;真正会拦住的是"余量小 + 单帧大(4K/8K)"那种峰值极端。</summary>
@@ -346,7 +346,7 @@ public static class RenderPolicy
     public readonly record struct VideoBatchInfo(int Number, int SlotCount, int StartSlot, int EndSlot);
 
     /// <summary>把"每批的槽位数"变成带编号的批次清单(纯函数,可单测)。
-    /// 【为什么要有它 —— 真机 bug 2026-09-13】超分批日志原来在 async 任务里现算 `第 {bi+1}/{batchCount} 批`,
+    /// 【为什么要有它 —— 真机 问题 2026-09-13】超分批日志原来在 async 任务里现算 `第 {bi+1}/{batchCount} 批`,
     /// 而 `bi` 是 **for 循环变量**(C# 里 for 的循环变量只有一个、被所有闭包共享;foreach 才是每轮一份)。
     /// 任务在 finally 里读到的往往是"循环已经推进、甚至已经结束"之后的值 —— 实测日志出现
     /// 「超分批 13/12(槽位 2640~2666)」与「超分批 2/12(槽位 0~239)」:槽位区间是对的(它是每轮局部量),
@@ -397,7 +397,7 @@ public static class RenderPolicy
     /// 整任务那道闸门(带 1.6)原样保留 —— 两道闸门管的是不同的事。
     /// 【地板】调小不得低于 <paramref name="floorFrames"/>:批太小会把"每批一次引擎启动"的开销摊到每帧上。
     /// 万一余量连地板都放不下,这里**不再往下压**(压到 1 帧/批也救不了整任务),并如实写进 Note ——
-    /// 那种情形该由整任务守门去报错。
+    /// 那种情形该由整任务守门去提示错误。
     /// 【拿不到余量怎么办】freeDiskGB ≤ 0 或单帧体积 ≤ 0(探测失败)→ 原样返回,并说明"没做这道闸门"
     /// (与仓库既有口径一致:拿不到数据就不做判定,而不是猜一个)。</summary>
     public static TempDiskBatchGate LimitBatchByTempDisk(int batchFrames, double freeDiskGB,
@@ -415,7 +415,7 @@ public static class RenderPolicy
         int floor = Math.Max(1, floorFrames);
         int target = Math.Min(batchFrames, maxByDisk);
         bool belowFloor = target < floor;
-        if (belowFloor) target = Math.Min(batchFrames, floor);   // 地板优先:再压也救不了整任务,交给整任务守门报错
+        if (belowFloor) target = Math.Min(batchFrames, floor);   // 地板优先:再压也救不了整任务,交给整任务守门提示错误
         double batchGB = target * perFrameMb / 1024.0;
         double budgetGB = budgetMb / 1024.0;
         string note = target < batchFrames

@@ -134,7 +134,7 @@ public sealed partial class ImageToolGrid : UserControl
             };
             try
             {
-                // 【修复 加图卡死】System.Drawing.Bitmap 是全图同步解码,在 UI 线程执行会逐张卡顿(大图+多张=未响应)。
+                // 【修复 加图长时间无响应】System.Drawing.Bitmap 是全图同步解码,在 UI 线程执行会逐张卡顿(大图+多张=未响应)。
                 // 移到后台线程读尺寸/EXIF,主线程只做轻量赋值。
                 int pw = 0, ph = 0;
                 await Task.Run(() =>
@@ -209,7 +209,7 @@ public sealed partial class ImageToolGrid : UserControl
     }
 
     /// <summary>把界面刷新切回 UI 线程。
-    /// 【真机 bug 2026-09-18 用户报"超分图片最后显示失败,但结果其实已经出来了"】
+    /// 【真机 问题 2026-09-18 用户报"超分图片最后显示失败,但结果其实已经出来了"】
     /// 日志里的原始调用栈(0x8001010E = 应用程序调用一个已为另一线程整理的接口):
     ///   ListViewBase.get_SelectedItems() ← ImageToolGrid.UpdateListState()
     ///   ← ImageToolGrid.set_IsProcessing() ← UpscaleView.RunBtn_Click(…)<Task.ThrowAsync>

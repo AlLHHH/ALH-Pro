@@ -98,7 +98,7 @@ public static class LavaSrService
 
         // 3) backbone → hidden → head
         var melTensor = new DenseTensor<float>(Flatten(mel), new[] { 1, NMELS, nFrames });
-        // 【修复】共享静态会话的 Run 用 _lock 串行化(ONNX Run 非线程安全,当前顺序处理未触发,但并发会崩)
+        // 【修复】共享静态会话的 Run 用 _lock 串行化(ONNX Run 非线程安全,当前顺序处理未触发,但并发会退出)
         IDisposableReadOnlyCollection<DisposableNamedOnnxValue>? bOut, hOut;
         lock (_lock)
         {

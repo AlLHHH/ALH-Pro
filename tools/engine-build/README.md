@@ -1,6 +1,6 @@
 # engine-build — 重建 Real-ESRGAN 引擎(50 系 NVIDIA 可用版)
 
-这个目录让"官方 2022 版 Real-ESRGAN 在 50 系上出坏帧"的修复**可复现**。
+这个目录让"官方 2022 版 Real-ESRGAN 在 50 系上出无效画面"的修复**可复现**。
 背景、证据与验证数据见仓库根目录 `ENGINE_REALESRGAN_REBUILD.md`。
 
 ## 目录内容

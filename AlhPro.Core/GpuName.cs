@@ -17,11 +17,11 @@ public static class GpuName
 
     /// <summary>名字里同样含 "RTX 50xx" 但【不是】Blackwell、且完全支持 ncnn-Vulkan 的卡:
     /// "NVIDIA RTX 5000 Ada Generation"、"NVIDIA RTX 5880 Ada Generation"、"Quadro RTX 5000"(Turing)。
-    /// 只写 RTX\s*50\d{2} 会把这些卡一并推到 ONNX —— 白白损失速度,用户侧没有任何报错可查。</summary>
+    /// 只写 RTX\s*50\d{2} 会把这些卡一并推到 ONNX —— 白白损失速度,用户侧没有任何提示错误可查。</summary>
     private static readonly Regex OlderArchWord =
         new(@"\b(Ada|Turing|Ampere|Hopper|Pascal|Volta|Quadro)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    /// <summary>该显卡名是否属于 RTX 50 系(Blackwell)——2022 版 ncnn-Vulkan 引擎在其上会崩。</summary>
+    /// <summary>该显卡名是否属于 RTX 50 系(Blackwell)——2022 版 ncnn-Vulkan 引擎在其上会退出。</summary>
     public static bool IsBlackwell(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return false;
@@ -39,7 +39,7 @@ public static class GpuName
     /// 而它们要用的恰恰就是那张纯 NVIDIA 独显。改为按目标 gpuId 的那张卡判定后,这个函数就是第一步。
     /// 实测口径:本机与用户机器上真实枚举到的设备名(见 AlhPro.Tests/GpuNameNvidiaTests)。
     /// 注意:它【不排除】D3D12 转译层那种伪装名(名字里确实有 NVIDIA),调用方必须再排除
-    /// <see cref="IsD3D12Translation"/> —— 否则会把"跑起来出损坏帧"的设备当成可用。</summary>
+    /// <see cref="IsD3D12Translation"/> —— 否则会把"跑起来出无效画面"的设备当成可用。</summary>
     public static bool IsNvidia(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return false;
@@ -49,7 +49,7 @@ public static class GpuName
 
     /// <summary>D3D12 转译层(Mesa Dozen 等)伪装成的"Vulkan"设备,名字形如
     /// "Microsoft Direct3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)"。ncnn 会把它当普通 Vulkan 设备枚举、
-    /// 编号还夹在原生设备中间,但经其计算的补帧/超分输出是【损坏帧】(真机:插值帧整帧红噪点+底部黑带,
+    /// 编号还夹在原生设备中间,但经其计算的补帧/超分输出是【无效画面】(真机:插值帧整帧红噪点+底部黑带,
     /// 源帧正常);名字含 NVIDIA/RTX 又会被打分算法当成独显推荐。判错代价不对称:漏判 = 用户拿到损坏视频
     /// 且日志无异常;误判 = 剔除一个本可用的设备(而同一块物理卡的原生 Vulkan 设备总在表里,不会无路可走)。</summary>
     public static bool IsD3D12Translation(string? name)

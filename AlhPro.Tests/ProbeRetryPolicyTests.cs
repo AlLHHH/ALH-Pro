@@ -101,8 +101,8 @@ public class ProbeRetryPolicyTests
     }
 
     /// <summary>★ 挑卡/活性检查档:确定性失败也退避 **1.5 秒**、最多 **3 次**(恢复被顺带删掉的旧保险);
-    /// 瞬时卡死也重试,但**只重试一次(共 2 次)** —— 这一档要在多张候选卡上逐个试,卡死每次都等满 15 秒超时,
-    /// 若也试 3 次,"所有候选都卡死"的机器上启动自检最坏 ≈4.8 分钟(独立审查算过)⇒ 卡死单独限 2 次,最坏 ≈3.2 分钟。</summary>
+    /// 瞬时长时间无响应也重试,但**只重试一次(共 2 次)** —— 这一档要在多张候选卡上逐个试,长时间无响应每次都等满 15 秒超时,
+    /// 若也试 3 次,"所有候选都长时间无响应"的机器上启动自检最坏 ≈4.8 分钟(独立审查算过)⇒ 长时间无响应单独限 2 次,最坏 ≈3.2 分钟。</summary>
     [Fact]
     public void Liveness_profile_restores_the_old_insurance_and_caps_hang_at_two_attempts()
     {
@@ -110,7 +110,7 @@ public class ProbeRetryPolicyTests
         Assert.True(Liveness.RetryHang);
         Assert.True(Liveness.RetryDeterministicFailures);
         Assert.Equal(3, Liveness.MaxAttempts);        // 确定性失败:三次保险
-        Assert.Equal(2, Liveness.HangMaxAttempts);    // 卡死:单独限两次(见注释)
+        Assert.Equal(2, Liveness.HangMaxAttempts);    // 长时间无响应:单独限两次(见注释)
         Assert.Equal(1500, Liveness.BackoffMs);
 
         Assert.Equal(2, ProbeRetryPolicy.MaxAttempts(Liveness, ProbeFailureKind.Hang));
@@ -150,7 +150,7 @@ public class ProbeRetryPolicyTests
                 if (ProbeRetryPolicy.ShouldRetry(profile, kind))
                 {
                     Assert.False(string.IsNullOrWhiteSpace(ProbeRetryPolicy.WhyRetry(profile, kind)));
-                    // 卡死可以有单独上限(HangMaxAttempts>0 时只约束 Hang);其余形态一律用该档的 MaxAttempts
+                    // 长时间无响应可以有单独上限(HangMaxAttempts>0 时只约束 Hang);其余形态一律用该档的 MaxAttempts
                     int expected = kind == ProbeFailureKind.Hang && profile.HangMaxAttempts > 0
                         ? profile.HangMaxAttempts
                         : profile.MaxAttempts;
@@ -297,11 +297,11 @@ public class ProbeRetryPolicyTests
         Assert.Equal(new[] { 1, 2, 3 }, probe.AttemptNumbers);
     }
 
-    /// <summary>瞬时 Hang 在挑卡档同样重试(队长裁定):小图 15 秒没退出,也可能只是驱动/设备初始化卡住。</summary>
+    /// <summary>瞬时 Hang 在挑卡档同样重试(队长裁定):小图 15 秒没退出,也可能只是驱动/设备初始化停住。</summary>
     [Fact]
     public async Task Liveness_also_retries_a_transient_hang()
     {
-        // 【2026-09-24 队长裁定后】挑卡档的卡死只重试**一次**(共 2 次):第一次卡死 → 退避 1.5 秒 → 第二次通过。
+        // 【2026-09-24 队长裁定后】挑卡档的长时间无响应只重试**一次**(共 2 次):第一次长时间无响应 → 退避 1.5 秒 → 第二次通过。
         var (outcome, probe, delays, _) = await RunAsync(Liveness,
             Fail(ProbeFailureKind.Hang, "15 秒无响应"), Pass());
 

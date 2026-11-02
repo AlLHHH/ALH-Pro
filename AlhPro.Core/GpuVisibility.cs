@@ -61,7 +61,7 @@ public static class GpuVisibility
     public static string ExplainProblemCode(int? problemCode) => problemCode switch
     {
         null => "未能读到该设备的问题代码(它可能已从系统里移除/未呈现,或状态查询失败)—— 请先在设备管理器里确认它是否列出",
-        0 => "设备状态正常(没有被禁用、驱动也没有报错)",
+        0 => "设备状态正常(没有被禁用、驱动也没有提示错误)",
         22 => "该设备【已被禁用】(问题代码 22)——在设备管理器里右键「启用设备」即可恢复",
         43 => "驱动报告异常(问题代码 43:设备未能正常启动)——重装/更新显卡驱动后重启电脑",
         18 => "需要重新安装驱动(问题代码 18)",
@@ -91,7 +91,7 @@ public static class GpuVisibility
             + (includeName ? "" : "   (具体是哪一张卡、什么问题代码,已写进日志;把日志发给作者即可定位)")
             + Environment.NewLine + "   设备状态:" + ExplainProblemCode(problemCode)
             + (noProblemReported
-                ? Environment.NewLine + "   设备本身没报错却看不见 ⇒ 更可能是【供电 / 显卡模式】把它关掉了:笔记本没插电源(电池供电时不少机型会自动切成「仅核显 / 关闭独显」)、厂商软件的节能(Eco)模式、MUX 切到仅核显,或驱动崩过一次后没能重新加载。"
+                ? Environment.NewLine + "   设备本身没有提示却看不见 ⇒ 更可能是【供电 / 显卡模式】把它关掉了:笔记本没插电源(电池供电时不少机型会自动切成「仅核显 / 关闭独显」)、厂商软件的节能(Eco)模式、MUX 切到仅核显,或驱动崩过一次后没能重新加载。"
                 : "")
             + Environment.NewLine + "   现在就能试的处置:"
             + "①先给笔记本【插上电源】(电池供电是最常见的诱因),插好后点软件里的「重新检测」再看设备列表;"

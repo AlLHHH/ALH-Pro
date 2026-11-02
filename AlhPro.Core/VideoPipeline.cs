@@ -93,7 +93,7 @@ public static class VideoPipeline
         if (interp && interpScale > 1)
         {
             // 整段一次 RIFE 成本 ≈ 【新增】帧数 × 每帧(按面积)。
-            // 【2026-09-13 修单位 bug】原来写 frames * interpScale(等于按"输出帧数"算),而 RIFE 只为
+            // 【2026-09-13 修单位 问题】原来写 frames * interpScale(等于按"输出帧数"算),而 RIFE 只为
             // 【新增】的帧做推理:N 帧做 k 倍补帧 → 新增 (k-1)N 帧、输出 kN-1 帧。
             // 于是旧写法在 k=2 时把成本高估 2 倍、k=4 时高估 1.33 倍,高倍率补帧的 ETA 被显著拉长。
             // 常数 0.09 秒/帧(1080p)保持不动 —— 本机批量实测 RIFE v4.13 ≈0.102 秒/输出帧,同量级。
@@ -318,7 +318,7 @@ public static class VideoPipeline
             // 解析器这时返回的是 AVERROR(ENOMEM),ffmpeg 只打印
             //   「[Parsed_setpts_3] Error while parsing expression ...」
             //   「Error initializing filters」/「Error opening output files: Cannot allocate memory」
-            // 于是**整条视频任务失败**在最后一步(前面的拆帧/超分/补帧几个小时全白做),而报错
+            // 于是**整条视频任务失败**在最后一步(前面的拆帧/超分/补帧几个小时全白做),而提示错误
             // 文案看起来像"内存不够",实际与内存、显卡、CPU 都无关 —— 用户诊断包
             // ALHPro_Diag_20261020_2150 就是这么挂的(426 帧 → 141 段,exit -12)。
             // 两两合并后深度 ≈ log2(段数)(400 段约 9 层),与段数解耦;段数上限 400 的

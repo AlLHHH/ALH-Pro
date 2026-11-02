@@ -14,7 +14,7 @@ namespace AlhPro.Tests;
 ///      全流程**只采样一次、只判定一次**,结果存进共享表给两条路用。
 ///      (历史上两条路各自调了一次 `ComputeSceneCutMetricsAsync` —— 同一份判据、两次全片解码、两套口径。)
 ///
-/// 这类"某处悄悄走另一套"的缺陷编译与运行都不报错,只能把源码接线钉住。</summary>
+/// 这类"某处悄悄走另一套"的问题编译与运行都不提示,只能把源码接线钉住。</summary>
 public class SceneSwitchCoverageTests
 {
     /// <summary>① **判据只有一套、只算一次**:全流程只有一处 `await ComputeSceneCutMetricsAsync(` 与一处

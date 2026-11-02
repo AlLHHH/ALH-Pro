@@ -1,9 +1,9 @@
 namespace AlhPro.Core;
 
 /// <summary>超分引擎"实际下发倍数"的策略(纯逻辑,可单测)。
-/// 【任务 O1 · 2026-09-13 真机基准发现:Real-ESRGAN 用 1x 会静默输出全黑帧】
+/// 【任务 O1 · 2026-09-13 真机基准发现:Real-ESRGAN 用 1x 会静默输出全全黑画面】
 /// 实测:`realesr-animevideov3` 传 `-s 1` → 输出**纯黑**(mean=0.00 / std=0.00 / uniq=1,两张不同帧复现),
-/// **exit=0 无报错**,引擎 stdout 只有 `_wfopen models/realesr-animevideov3-x1.param failed / network graph not ready`
+/// **exit=0 无提示**,引擎 stdout 只有 `_wfopen models/realesr-animevideov3-x1.param failed / network graph not ready`
 /// —— 模型目录里根本没有 x1 权重(实测目录只有 x2/x3/x4 三套 + general-x4v3/x4plus/x4plus-anime)。
 /// 也就是说:引擎**不会**因为权重缺失而失败退出,而是"画一张全黑给你、还报成功"。
 /// 【为什么必须有这条策略】waifu2x 路径早在 `EngineService.UpscaleImageAsync/UpscaleDirAsync` 里就有 1x 护栏
@@ -29,7 +29,7 @@ public static class EngineScalePolicy
     }
 
     /// <summary>该模型有没有原生 1x 权重。
-    /// 【2026-09-20 变更】原来恒为 false(Real-ESRGAN 全家都只有 x2/x3/x4 权重,传 `-s 1` 会**静默输出全黑帧**)。
+    /// 【2026-09-20 变更】原来恒为 false(Real-ESRGAN 全家都只有 x2/x3/x4 权重,传 `-s 1` 会**静默输出全全黑画面**)。
     /// 现在多了一种:**1x 修复模型**(同尺寸:去压缩痕 + 边缘恢复,见 <see cref="ExperimentalEsrgan.Is1xModel"/>)——
     /// 它的网络尾层就是 3 通道、倍率写死 1 ⇒ `-s 1` 是它的**原生**用法,不是护栏,也不会有全黑问题
     /// (⚠ 上线前必须真机跑一次 `-s 1` 确认非黑、尺寸不变 —— 这是本仓库对"静默全黑"的固定验收动作)。</summary>
@@ -113,7 +113,7 @@ public static class EngineScalePolicy
         if (!string.Equals(engine, "realesrgan", StringComparison.OrdinalIgnoreCase))
             return new Decision(PathUtil.CeilPowerOfTwo(want), 1.0, "");
         // 【1x 修复模型】倍率写死 1(同尺寸):1x 目标是它的原生用法 ⇒ 引擎倍数 1、不缩放。
-        // 【为什么可以下发 -s 1】以前禁止 -s 1 是因为**没有 x1 权重**的模型会静默输出全黑帧;
+        // 【为什么可以下发 -s 1】以前禁止 -s 1 是因为**没有 x1 权重**的模型会静默输出全全黑画面;
         // 这一支的网络尾层就是 3 通道、倍率 1 ⇒ -s 1 正常(真机验收见 ModelHasNative1x 的注释)。
         if (ExperimentalEsrgan.Is1xModel(model))
         {
@@ -127,11 +127,11 @@ public static class EngineScalePolicy
         // 【2026-10-14 删了一段】原先这里还有一条"只有 2x 原生权重的**自训**模型(游戏向/现实向)固定 2"的分支:
         // 那几支权重已按用户要求删除(见 ExperimentalEsrgan 类注释),判据 IsX2OnlyModel 随之作废 ——
         // 现在官方 realesrgan 里没有"只有 2x 权重"的模型(animevideov3 有原生 x2/x3/x4 三套)。
-        // 历史实测(下发 -s 3/-s 4 = 镜像平铺的错帧、exit=0 不报错)记在 git 历史里,不再留在代码中。
+        // 历史实测(下发 -s 3/-s 4 = 镜像平铺的错帧、exit=0 不提示)记在 git 历史里,不再留在代码中。
         int eng = Math.Clamp((int)Math.Ceiling(want), 1, 4);
         if (eng <= 1)
             return new Decision(2, want / 2.0,
-                "该模型没有 1x 权重(-s 1 会静默输出全黑帧,exit=0 不报错):改用 2x 放大后缩回目标尺寸");
+                "该模型没有 1x 权重(-s 1 会静默输出全全黑画面,exit=0 不提示):改用 2x 放大后缩回目标尺寸");
         return new Decision(eng, want / eng, "");
     }
 }

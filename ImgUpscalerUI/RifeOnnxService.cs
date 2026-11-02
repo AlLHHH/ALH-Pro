@@ -248,7 +248,7 @@ public static class RifeOnnxService
                 EsrganOnnxService.TripDmlDead(dmDevice, ex);
                 throw;
             }
-            // 偶发失败:本对帧换 CPU 重算一次(代价有界,绝不出黑帧/半帧)。但连击达上限就认定设备不可用 → 抛出,
+            // 偶发失败:本对帧换 CPU 重算一次(代价有界,绝不出全黑画面/半帧)。但连击达上限就认定设备不可用 → 抛出,
             // 由调用方复制原帧。原先这里写 _dmlBad[gpuId] 永久闩锁,一次抖动就让剩下整段视频都在 CPU 上补帧。
             if (EsrganOnnxService.NoteDmlTransientFailure(dmDevice))
                 throw new InvalidOperationException(
@@ -557,7 +557,7 @@ public static class RifeOnnxService
     static Bitmap FromTensor(float[] t, int w, int h)
     {
         // 数值防御(源头不黑):模型输出若含 NaN/Inf(数值溢出/除0)→ 该帧已损坏,直接抛出让调用方回退源帧,
-        // 避免 (int)NaN=0 → 全黑帧 写进输出。正常帧无 NaN,仅一次数组扫描,开销远小于推理。
+        // 避免 (int)NaN=0 → 全全黑画面 写进输出。正常帧无 NaN,仅一次数组扫描,开销远小于推理。
         for (int i = 0; i < t.Length; i++)
             if (float.IsNaN(t[i]) || float.IsInfinity(t[i]))
                 throw new InvalidOperationException("ONNX 输出含 NaN/Inf(数值异常),该帧补帧结果无效");

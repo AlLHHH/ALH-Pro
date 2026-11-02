@@ -2,7 +2,7 @@ namespace AlhPro.Core;
 
 /// <summary>
 /// RIFE 补帧的【输出帧号分配】纯逻辑。抽到 Core 是为了能单测钉住——并行补帧时帧号必须
-/// 精确连续、不重不漏,否则合帧阶段 ffmpeg 按序读会缺号/乱序 → 整段视频黑帧/花屏。
+/// 精确连续、不重不漏,否则合帧阶段 ffmpeg 按序读会缺号/乱序 → 整段视频全黑画面/花屏。
 /// 这是"补帧并行化绝不破坏输出"的基石:并行只是提速,帧号分配必须与串行时完全一致。
 /// </summary>
 public static class InterpFraming

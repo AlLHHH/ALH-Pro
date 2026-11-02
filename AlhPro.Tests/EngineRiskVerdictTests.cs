@@ -3,8 +3,8 @@ using Xunit;
 
 namespace AlhPro.Tests;
 
-/// <summary>【2026-09-16 用户裁决:删掉事后黑帧检测 ⇒ 事前兼容性判定成为唯一防线】
-/// Core.InterpSizePolicy.JudgeEngineRisk 的判据:哪些"尺寸 + 显卡"组合已知会**静默输出黑帧**,
+/// <summary>【2026-09-16 用户裁决:删掉事后全黑画面检测 ⇒ 事前兼容性判定成为唯一防线】
+/// Core.InterpSizePolicy.JudgeEngineRisk 的判据:哪些"尺寸 + 显卡"组合已知会**静默输出全黑画面**,
 /// 以及有 ONNX 可用时该不该直接换稳定引擎。
 ///
 /// 【为什么要有它】删掉事后检测之后,如果这条预检漏判,成片会带着黑段交出去、日志里也查不到 ——
@@ -18,10 +18,10 @@ public class EngineRiskVerdictTests
         var v = InterpSizePolicy.JudgeEngineRisk(7680, 4320, gpuIs50Series: false, gpuRiskyOldNcnn: false, onnxModelAvailable: true);
         Assert.True(v.UseStableEngine);
         Assert.True(v.Warn);
-        Assert.Contains("全黑帧", v.Reason);
+        Assert.Contains("全全黑画面", v.Reason);
     }
 
-    /// <summary>同样是 8K,但本机没有 ONNX 模型 → 换不了,必须明确提示"会出黑帧"(不许静默照跑)。</summary>
+    /// <summary>同样是 8K,但本机没有 ONNX 模型 → 换不了,必须明确提示"会出全黑画面"(不许静默照跑)。</summary>
     [Fact]
     public void Eight_k_without_onnx_warns_loudly_instead_of_silently_running()
     {
@@ -40,7 +40,7 @@ public class EngineRiskVerdictTests
         Assert.Contains("RTX 50", v.Reason);
     }
 
-    /// <summary>无独显 / Vulkan 不可用:同属已知会出坏帧的组合。</summary>
+    /// <summary>无独显 / Vulkan 不可用:同属已知会出无效画面的组合。</summary>
     [Fact]
     public void No_vulkan_device_is_treated_as_risky()
     {

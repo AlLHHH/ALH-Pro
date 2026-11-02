@@ -1,6 +1,6 @@
 // SafeRender.cs — 安全渲染:给显存(VRAM)/内存(RAM)加"墙"。
 // AI 处理(放大/补帧/超分)按墙自适应缩小 分块大小/批大小/并发数,
-// 让单次处理峰值不越过墙,避免显存/内存越界导致程序崩溃或拖垮设备。
+// 让单次处理峰值不越过墙,避免显存/内存越界导致程序进程退出或拖垮设备。
 // 注意:墙不是"硬性内存锁"(无法阻止进程分配),而是"参数上限"——
 // 通过限制引擎单次吃进去的规模,从源头把峰值压在墙内,这才是既有效又不会把程序搞崩的做法。
 //
@@ -271,7 +271,7 @@ public static class SafeRender
     };
 
     /// <summary>跑一次 nvidia-smi 返回首行输出;不存在/超时/非 NVIDIA 一律 null。
-    /// 【必须带超时】探测在资源自检里同步调用,驱动异常时挂住就等于 UI 卡死;
+    /// 【必须带超时】探测在资源自检里同步调用,驱动异常时挂住就等于 UI 长时间无响应;
     /// 且用异步读——同步 ReadLine 在子进程不输出时会一起挂住,连超时的机会都没有。</summary>
     private static string? RunNvidiaSmi(string arguments)
     {
@@ -385,7 +385,7 @@ public static class SafeRender
     /// <summary>显存总量(GB):①nvidia-smi(NVIDIA 最准)②DXGI DedicatedVideoMemory(唯一跨厂商真值,
     /// AMD/Intel 独显不再被低估)③注册表 qwMemorySize(核显走这条:报告的是共享内存配额,即核显真实预算)
     /// ④保守 4.0。兜底值从 8.0 降到 4.0 是有意的:全探测失败时低估只让分块变小(慢但安全),
-    /// 而高估会让 4GB 卡按 8GB 去开 640 分块 → 爆显存 → 黑帧/崩溃,代价大得多。</summary>
+    /// 而高估会让 4GB 卡按 8GB 去开 640 分块 → 爆显存 → 全黑画面/进程退出,代价大得多。</summary>
     private static double ProbeTotalVramGb()
     {
         var smi = ProbeNvidiaSmi("memory.total");
@@ -442,7 +442,7 @@ public static class SafeRender
 
     /// <summary>视频逐帧超分专用分块大小【显卡家族感知】:不同显卡家族的 ncnn-Vulkan 稳定性/显存表现不同,
     /// 一刀切 GetTileSize 会让 1660Ti/20系(小显存)和 50系(Blackwell)、A卡(驱动差异)用同一参数,适配差。
-    /// 各家族取舍(基于权威 ncnn 引擎参数 + 项目历史黑帧/爆显存实测):
+    /// 各家族取舍(基于权威 ncnn 引擎参数 + 项目历史全黑画面/爆显存实测):
     /// - Blackwell(RTX50):⚠ 仍按保守 tile 处理,但【这条依据已过时、待重估】—— 原文写的是
     ///   "ncnn-Vulkan 易崩,主路径走 ONNX",而路由如今已改成"真机探测后决定"。若探测表明 50 系能正常跑
     ///   ncnn,这里的保守值就是白亏吞吐。重估需要真机数据(探测结论 + 实际吞吐),拿到之前不动数值。
@@ -539,7 +539,7 @@ public static class SafeRender
         // RTX 4060 Laptop 8GB 实报 8188 MiB → 7.996GB → ×0.75 = **5.997**,与门槛 6.0 只差 3 MB,
         // 却让整张 8GB 卡掉回"单路"(真机日志:批号严格 1→2→3→4→5→6 串行,引擎一个接一个)。
         // 而两路并行是实测有收益的:同一批 20 帧(1080p→2x、生产同参数),
-        //   单路 5.47s(3.66 帧/秒) vs 两路各 20 帧共 6.6s(5.97 帧/秒)= **1.63 倍**,且输出 0 黑帧。
+        //   单路 5.47s(3.66 帧/秒) vs 两路各 20 帧共 6.6s(5.97 帧/秒)= **1.63 倍**,且输出 0 全黑画面。
         // 所以显存档位比较带 0.05G(50 MB)容差:挡的仍然是"真不够"(6GB 卡墙为 4.5,落在容差之外),
         // 挡的不该是"MiB→GB 的换算零头"。这条只影响墙落在 [5.95,6.0) 的卡 —— 也就是标称 8GB 这一档。
         const double vramEps = 0.05;
@@ -778,7 +778,7 @@ public static class SafeRender
     private static long SumOwnCpuMs()
     {
         long ms = 0;
-        // 本进程(UI 线程做 PNG↔JPG 转码/去重 SSIM/黑帧检查,CPU 占用不小);它不在 ActiveProcesses 里
+        // 本进程(UI 线程做 PNG↔JPG 转码/去重 SSIM/全黑画面检查,CPU 占用不小);它不在 ActiveProcesses 里
         // (那只是子进程表),故与下面的循环不会重复计数。
         try { using var self = Process.GetCurrentProcess(); ms += (long)self.TotalProcessorTime.TotalMilliseconds; } catch { }
         try
@@ -905,31 +905,31 @@ public static class SafeRender
     /// <summary>AI 引擎(ncnn)线程参数(-j 加载:计算:保存)。三个线程数一律取 1 —— 依据是实测,不再是"按核数调优"。
     /// 【compute 为什么恒 1 —— 2026 实测:本机 RTX 4060 Laptop 8GB / 驱动 572.83 / 16 核,
     ///  waifu2x-ncnn-vulkan 20250915 + models-cunet,2x,1080×1920 四帧目录批,-t 0,同素材同参数逐档对比】
-    /// · compute=4(旧中档在本机解析出的 -j 1:4:1)是【坏帧制造机】:6 次运行里 5 次(83%)打印 200+ 条
+    /// · compute=4(旧中档在本机解析出的 -j 1:4:1)是【无效画面制造机】:6 次运行里 5 次(83%)打印 200+ 条
     ///   "vkQueueSubmit failed",输出【每帧下 2/3 全黑、上 1/3 正常】或整帧全黑;
-    ///   而【退出码全是 0、引擎不报任何错】—— 用户侧只看到"超分成片里有黑帧"。
+    ///   而【退出码全是 0、引擎不报任何错】—— 用户侧只看到"超分成片里有全黑画面"。
     ///   同机 compute=1 → 0 失败、0.497 秒/帧、GPU 利用率 92.4%;compute=2 → 5/5 干净。
     /// · 【提高 compute 既无吞吐收益、还更慢】同一素材逐档实测:1:1:1 = 0.87 秒/帧、GPU 59.5%;
     ///   1:2:1 = 1.03 / 53.3%;1:4:1(旧值)= 1.27~1.38 / 46~50%。
     ///   另一组生产形态实测 1:2:1=0.415、1:1:1=0.469、1:4:1(旧)=0.509 秒/帧,
     ///   1:6:1 / 1:8:1 / 2:4:4 / 4:8:8 全落在 ±10% 噪声内 —— "档位越高越快"从来就不成立。
-    ///   超分本身是 GPU 瓶颈:多开 compute 线程只是把 Vulkan 提交队列挤爆,引擎反复重投/卡住,
+    ///   超分本身是 GPU 瓶颈:多开 compute 线程只是把 Vulkan 提交队列挤爆,引擎反复重投/停住,
     ///   GPU 利用率从 92% 掉到 18~25%,活干得更少 —— 这就是用户报的"超分慢 + GPU 占用很低"。
     /// · 硬上界 2:后续任何"按核数/并发调 compute"的尝试都不得越过 2(≥4 必掉进上述 vkQueueSubmit 风暴)。
     ///   连"多路并发按路数分摊"也不再需要:compute 恒 1 时,即便 SplitCores 许可 2 路并发,
     ///   聚合 proc 线程也只有 2 个,天然到不了 ≥4 的坏区间(原先的 ÷并发路数 正是为压制这个而存在)。
     /// 【旧注释的依据已作废,故不再沿用】旧注释称"compute=8 会让 realesrgan x4plus 系全黑",但 2026 在
     ///  1080×1920 上【没能复现】:1:8:1 与 1:6:1 都是 3.82/3.83 秒/帧、0 失败。旧依据靠不住,
-    ///  而"compute≥4 → 83% 坏帧"这条是可复现的实测,所以取 1,而不是沿用"封顶 6/8"那套。
-    /// 【load / save】恒 1:save>1 历史上同样会触发 vkQueueSubmit failed(黑帧,表现为"导出全黑/开头黑");
+    ///  而"compute≥4 → 83% 无效画面"这条是可复现的实测,所以取 1,而不是沿用"封顶 6/8"那套。
+    /// 【load / save】恒 1:save>1 历史上同样会触发 vkQueueSubmit failed(全黑画面,表现为"导出全黑/开头黑");
     ///  save 只写磁盘,单线程不会明显拖慢,稳定优先。
     /// 【共用性】本函数被图片超分 / 视频超分 / 逐块超分 / 补帧(rife)等多处共用。
-    ///  收紧到 1 是【更保守】的方向,不会给任何一条路径引入新的黑帧风险;也已逐档实测确认没有路径变慢。</summary>
+    ///  收紧到 1 是【更保守】的方向,不会给任何一条路径引入新的全黑画面风险;也已逐档实测确认没有路径变慢。</summary>
     public static string GetEngineThreadArgs()
     {
         const int load = 1;
-        const int compute = 1;   // 硬上界 2(见上):≥4 必出 vkQueueSubmit 风暴 → 带状/整帧黑帧
-        const int save = 1;      // 恒 1:防 ncnn-vulkan save 并发触发 GPU 队列失败(黑帧)
+        const int compute = 1;   // 硬上界 2(见上):≥4 必出 vkQueueSubmit 风暴 → 带状/整帧全黑画面
+        const int save = 1;      // 恒 1:防 ncnn-vulkan save 并发触发 GPU 队列失败(全黑画面)
         return $" -j {load}:{compute}:{save}";
     }
 

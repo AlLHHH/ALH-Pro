@@ -55,7 +55,7 @@ public class Waifu2xNoiseTests
         foreach (var scale in new[] { 0, 1, -5 })
             for (int lv = -3; lv <= 6; lv++)
                 Assert.True(Waifu2x.NoiseLevelFor(lv, scale) != Waifu2x.NoiseOff,
-                    $"engineScale={scale} 档位 {lv} 不得返回 -1(1x 崩溃护栏)");
+                    $"engineScale={scale} 档位 {lv} 不得返回 -1(1x 进程退出护栏)");
         // 1x 下档位仍是非递减的(关=弱=0,中=1,强=2)
         Assert.Equal(0, Waifu2x.NoiseLevelFor(0, 1));
         Assert.Equal(0, Waifu2x.NoiseLevelFor(1, 1));

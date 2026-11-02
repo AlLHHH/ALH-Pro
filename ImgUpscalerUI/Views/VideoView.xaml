@@ -183,9 +183,9 @@
                          ⚠ Tag 里那对冒号是**语义**,不是装饰:Real-CUGAN 的 -n 是降噪档、-m 才是模型目录
                            (与 Real-ESRGAN 正好相反),拼错会静默按错档跑。
                          ⚠ 只列 models-se 的三档:它们都同时具备 up2x/up3x/up4x 权重。
-                           models-pro / models-nose **没有随包**,列出来会让引擎找不到权重、exit=0 只出坏帧。 -->
+                           models-pro / models-nose **没有随包**,列出来会让引擎找不到权重、exit=0 只出无效画面。 -->
                     <ComboBox x:Name="VideoRealcuganModelCombo" Visibility="Collapsed"
-                              ToolTipService.ToolTip="Real-CUGAN 降噪档(动漫专用超分)。&#x0a;注意:这里是**同一份 models-se 权重**、只是降噪档(-n)不同 —— 不是三个不同的模型,所以命名与其他引擎保持同一格式「适用 · 档名 档位（速度）」。&#x0a;引擎:realcugan-ncnn-vulkan(2026 重编版,含 50 系所需的健壮性修复)。&#x0a;⚠ 实测速度(口径:本机 RTX 4060,1080p 2x,40 帧目录批量按帧摊,三次独立进程冷跑):约 1.65 秒/帧(1.63~1.68)。同口径 animevideov3 2x 是 0.27 秒/帧 ⇒ 约 6.2 倍慢。&#x0a;⚠ 实测随 GPU 占用波动:单机复现可能落在约 4~30 倍(量级可信、精确倍数不可复现)。&#x0a;⚠ 必须有 GPU:它只有 ncnn-Vulkan 权重(没有 ONNX 版本、CPU 档在本机实测会崩),没有可用显卡时会被拒绝处理。"
+                              ToolTipService.ToolTip="Real-CUGAN 降噪档(动漫专用超分)。&#x0a;注意:这里是**同一份 models-se 权重**、只是降噪档(-n)不同 —— 不是三个不同的模型,所以命名与其他引擎保持同一格式「适用 · 档名 档位（速度）」。&#x0a;引擎:realcugan-ncnn-vulkan(2026 重编版,含 50 系所需的健壮性修复)。&#x0a;⚠ 实测速度(口径:本机 RTX 4060,1080p 2x,40 帧目录批量按帧摊,三次独立进程冷跑):约 1.65 秒/帧(1.63~1.68)。同口径 animevideov3 2x 是 0.27 秒/帧 ⇒ 约 6.2 倍慢。&#x0a;⚠ 实测随 GPU 占用波动:单机复现可能落在约 4~30 倍(量级可信、精确倍数不可复现)。&#x0a;⚠ 必须有 GPU:它只有 ncnn-Vulkan 权重(没有 ONNX 版本、CPU 档在本机实测会退出),没有可用显卡时会被拒绝处理。"
                               SelectionChanged="Combo_Changed">
                         <ComboBoxItem Content="动漫 · models-se -1（中）" Tag="models-se:-1">
                             <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">Real-CUGAN 官方保守档(-n -1 = conservative):尽量保留原纹理、不做强打磨,动漫线条最干净。&#x0a;适用:干净或轻压缩的动漫片源。&#x0a;实测速度:1080p 2x 约 1.65 秒/帧(同口径 animevideov3 约 0.27 秒/帧 ⇒ 约 6.2 倍)。&#x0a;⚠ 实测随 GPU 占用波动:单机复现可能落在约 4~30 倍(量级可信、精确倍数不可复现)。&#x0a;模型大小:25.4 MB(models-se 权重目录,2x/3x/4x 共 11 个文件)。<Run Foreground="#7BD88F">&#x0a;权重 2x / 3x / 4x</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
@@ -336,7 +336,7 @@
 
                     <TextBlock Text="补帧模型" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="InterpModelCombo" HorizontalAlignment="Stretch"
-                              ToolTipService.ToolTip="补帧模型:悬停每一项看官方说明、速度与模型大小。&#x0a;下拉为三支 v4 架构模型 —— 都能用 3x/4x/12x/16x 与指定帧率;「高质量 TTA」只有 v4.13 / v4.6 能开(v4.26 的 TTA 实测卡死,选中它会被自动取消并置灰)。&#x0a;以前选过 动漫专用 / 高清 / 超高清 / 经典兼容 的话,设置会自动改用 v4.13。"
+                              ToolTipService.ToolTip="补帧模型:悬停每一项看官方说明、速度与模型大小。&#x0a;下拉为三支 v4 架构模型 —— 都能用 3x/4x/12x/16x 与指定帧率;「高质量 TTA」只有 v4.13 / v4.6 能开(v4.26 的 TTA 实测长时间无响应,选中它会被自动取消并置灰)。&#x0a;以前选过 动漫专用 / 高清 / 超高清 / 经典兼容 的话,设置会自动改用 v4.13。"
                               SelectedIndex="0" SelectionChanged="Combo_Changed">
                         <!-- 【2026-09-16 用户裁决:只留 13 + 一个兼容性强的】下拉从 7 项精简到 2 项;
                              【2026-09-24 用户裁决:把 v4.26 作为第 3 支加回来】现在是 3 项。
@@ -346,10 +346,10 @@
                              切过去不丢任何功能;反之拿老架构当备用代价太大(用户一旦选到就只能 2x)。
                              v4.26 回来的理由(实测,不是推测):同一份 rife-ncnn-vulkan-2026.exe 直接能跑它,
                              1080p 两次冷跑 92.2 / 79.0 ms/输出帧,比 v4.13(103.8 / 91.2)只快不慢;权重 10.90 MB 现在随包。
-                             ⚠ v4.26 的「高质量 TTA」(-x/-z)**实测卡死** ⇒ 它是唯一一项 TTA 会被置灰的(见 VideoView.xaml.cs 的 v426TtaBroken)。
+                             ⚠ v4.26 的「高质量 TTA」(-x/-z)**实测长时间无响应** ⇒ 它是唯一一项 TTA 会被置灰的(见 VideoView.xaml.cs 的 v426TtaBroken)。
                              ⚠ 序号即取值口径:0=v4.13、1=v4.6、2=v4.26(一律**末尾追加**,不许插队)。
                              老设置里存的 3~6 仍会被读设置时的范围检查挡掉 ⇒ 自动落到 0(v4.13);
-                             但**存的 2 会被解释成 v4.26**(2026-09-16 之前 2 曾是「动漫专用」)—— 已下架 8 天,且两支都是 v4 补帧模型,不会崩,
+                             但**存的 2 会被解释成 v4.26**(2026-09-16 之前 2 曾是「动漫专用」)—— 已下架 8 天,且两支都是 v4 补帧模型,不会退出,
                              这里如实记一笔而不做迁移:补帧侧没有 VideoModelOrder 那样的序号迁移表。
                              老 4 项的权重仍在 alh-pro\_retired_rife\(装机包因此小约 226MB),要恢复就搬回 engines\rife\ 并把本段改回来。 -->
                         <ComboBoxItem Content="通用画质最新 (RIFE v4.13)"
@@ -360,7 +360,7 @@
                              且用的是同一份 rife-ncnn-vulkan-2026.exe —— 不需要新引擎、不需要新 exe。
                              ⚠ 顺序即序号,只许追加:2 = rife-v4.26。 -->
                         <ComboBoxItem Content="通用画质再新 (RIFE v4.26)"
-                                      ToolTipService.ToolTip="通用画质再新 (RIFE v4.26):RIFE 4.26 的 ncnn 权重(上游 Practical-RIFE 系列,权重与代码同为 MIT)。&#x0a;本机实测(1080p,同素材)约 80~93 ms/输出帧,与 v4.13 同档(两次独立实测互有快慢,没有稳定差距)。&#x0a;功能:同 v4.13/v4.6,支持 3x/4x/12x/16x 与指定帧率。&#x0a;⚠ 唯一限制:「高质量 TTA」(-x/-z)在这支上实测会卡死,选中它时该项自动置灰。&#x0a;模型大小:10.9 MB。"/>
+                                      ToolTipService.ToolTip="通用画质再新 (RIFE v4.26):RIFE 4.26 的 ncnn 权重(上游 Practical-RIFE 系列,权重与代码同为 MIT)。&#x0a;本机实测(1080p,同素材)约 80~93 ms/输出帧,与 v4.13 同档(两次独立实测互有快慢,没有稳定差距)。&#x0a;功能:同 v4.13/v4.6,支持 3x/4x/12x/16x 与指定帧率。&#x0a;⚠ 唯一限制:「高质量 TTA」(-x/-z)在这支上实测会长时间无响应,选中它时该项自动置灰。&#x0a;模型大小:10.9 MB。"/>
                     </ComboBox>
                     <!-- 补帧模型提示:随所选模型动态更新,说明推荐/各模型的问题(选 v4.13 提示推荐,选其它提示风险) -->
                     <TextBlock x:Name="InterpModelHint" FontSize="10" Opacity="0.65" TextWrapping="Wrap"
@@ -739,7 +739,7 @@
                          勾选框(DeShakeCheck)、橙色提示(JellySlowHint,提示"CPU 逐帧滤镜会明显增加导出时间")。
                          【为什么整块删、而不是只删界面】它是一条 CPU 逐帧滤镜链(tmix 混合帧 / ffmpeg deshake),
                          处理端**也已同时停用**(连形参一起删):只删界面不删处理端 = "界面上没了、处理时还在偷偷加
-                         CPU 逐帧滤镜"的静默行为,那是本仓库最忌讳的一类 bug。
+                         CPU 逐帧滤镜"的静默行为,那是本仓库最忌讳的一类 问题。
                          【老设置/老预设里的 Jello / MotionBlur / DeShake 三个字段保留】按本仓库规矩"老文件字段一律
                          保留、只停止读取":字段结构不动(反序列化兼容 + 预设快照不丢字段),读取时忽略、写回写关。 -->
 
@@ -835,7 +835,7 @@
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>
-                    <CheckBox x:Name="FastModeCheck" Content="兼容模式（低配设备）" ToolTipService.ToolTip="勾选后自动降低显存占用、防止爆显存/卡死,画质与功能基本不受影响;配置好的设备可不开"
+                    <CheckBox x:Name="FastModeCheck" Content="兼容模式（低配设备）" ToolTipService.ToolTip="勾选后自动降低显存占用、防止爆显存/长时间无响应,画质与功能基本不受影响;配置好的设备可不开"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
                     <TextBlock x:Name="FastModeHint" Style="{StaticResource HintText}" TextWrapping="Wrap"
                                Text="给配置较低/没独显的电脑用的:自动降低显存占用、防止爆显存,画质和功能基本不受影响"/>
@@ -949,7 +949,7 @@
                                日志长过 220 → 滚动条出现 → 内容宽度变窄 → 自动折行 → 高度变化 →
                                又不需要滚动条了 → 宽度变回来 → 再折行 …… 来回横跳 = WinUI 判"布局循环"
                                (LayoutCycleException)。实测:50 系笔记本开【去重】时日志行暴增、正好越过这个临界点,
-                               于是界面被冻死(后台任务其实还在跑,只能重启软件)。这就是"开了去重就卡死"的真正原因。
+                               于是界面被冻死(后台任务其实还在跑,只能重启软件)。这就是"开了去重就长时间无响应"的真正原因。
                              常驻滚动条 = 内容宽度恒定 → 折行结果恒定 → 高度不会再变 → 环路断掉。
                              代价:日志区一直留着一条滚动条槽(观感,可接受);换来的是界面绝不因日志变长而死。 -->
                         <ScrollViewer x:Name="VideoLogScroll" MaxHeight="220"
@@ -1184,7 +1184,7 @@
 
                     <!-- ② 画面区:结果播放器在下层、原片在上层(对比时把原片裁到分割线左边)
                          【2026-09-19 结构还原】这里曾经被我包过一层"缩放层+裁切框",用户实测
-                         "播放期间换视角会黑屏 卡住" ✗ —— 本文件早有的注释就写着"视频面(SwapChainPanel)对裁切有脾气",
+                         "播放期间换视角会黑屏 停住" ✗ —— 本文件早有的注释就写着"视频面(SwapChainPanel)对裁切有脾气",
                          多包的那层 + 给它设的裁切正是最可疑处 ⇒ **结构整个还原成原来的扁平结构**,缩放一并撤掉 ✔ -->
                     <Grid x:Name="PlayerArea" Grid.Row="1" Margin="14,0,14,8" SizeChanged="PlayerArea_SizeChanged"
                           Tapped="PlayerArea_Tapped" PointerMoved="PlayerArea_PointerMoved"
@@ -1251,7 +1251,7 @@
                             <TextBlock x:Name="CmpBuildingLabel" Text="正在后台合成对比片…" FontSize="12" Foreground="#E8ECF2"/>
                         </Border>
                         <!-- 【2026-09-19 结构还原】画面区**回到原来的扁平结构**(两层画面 + 标签 + 提示 + 分割线,
-                             不再多包一层"裁切框/缩放层")。原因:用户实测"播放期间换视角会黑屏 卡住" ✗,
+                             不再多包一层"裁切框/缩放层")。原因:用户实测"播放期间换视角会黑屏 停住" ✗,
                              而本文件早有的注释就写着"视频面(SwapChainPanel)对裁切有脾气"——
                              多包的那层 + 我给它设的裁切,正是最可疑的那一处 ⇒ 结构整个还原,缩放一并撤掉 ✔ -->
                         <Grid x:Name="CompareSplitter" Width="28" HorizontalAlignment="Left" Visibility="Collapsed"

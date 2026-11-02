@@ -16,7 +16,7 @@ namespace AlhPro.Tests;
 ///    本轮不再拿它当告警,只保留"如实上报"。
 /// ② 「进同步分支」的具体动作:那段代码的前提是 `clipPlaying && !clipAtEnd` —— **停住态/片尾时只做
 ///    `origMp.Pause()`,位置一个像素都不纠**。于是"停住态漂移"永远没人管。本轮加了收口点。
-/// ③ 「单播放器=False 遮罩=True」**不是 bug**:2026-09-18/19 起「左右对比」的架构就是
+/// ③ 「单播放器=False 遮罩=True」**不是 问题**:2026-09-18/19 起「左右对比」的架构就是
 ///    遮罩式遮罩(两条装同一条合成片、线=上层裁切),`_cmpSingle` 只在"有烘焙分割片"时才为 true,
 ///    那条路已被放弃 ⇒ 日志长期 `单播放器=False` 是**设计**,不是故障。但它**没有共享时钟**,
 ///    所以"消灭第二条时钟"的初衷没达成 —— 本轮的做法是"在每个入口把两条拉回同一时刻"。
@@ -125,7 +125,7 @@ public class PreviewPairSyncTests
         Assert.DoesNotContain("private async Task AlignPausedAsync()", code);
     }
 
-    /// <summary>【2026-09-23 顺手修的既有 bug】进「视频处理」页那一刻的那条日志会抛
+    /// <summary>【2026-09-23 顺手修的既有 问题】进「视频处理」页那一刻的那条日志会抛
     /// `NullReferenceException 0x80004003`(控件还没进可视树,写 TextBlock.Text 就抛),
     /// 每次启动一条 WARN,而且**那一行日志在界面日志框里是丢的**。
     /// 证据:日志里 `进入页面:视频处理` → `倍率切换:…` → `⚠ 界面刷新失败…视频日志追加/自动滚动`。
@@ -178,7 +178,7 @@ public class PreviewPairSyncTests
             Assert.Contains(site, code);
         // 回调是**按会话**订阅的 ⇒ 换会话必须"先摘再挂"(SetCompareSync 在已订阅时会提前返回)
         Assert.Contains("SetCompareSync(false);\n            if (_compareMode) SetCompareSync(true);", code);
-        // 看门狗永久对账(限流 2 秒),防这类 bug 再悄悄回来。
+        // 看门狗永久对账(限流 2 秒),防这类 问题 再悄悄回来。
         // 【2026-09-23 补齐】不只查"原片"那条:成片条(左右对比的主时钟)与播放条同样会踩,
         // 所以判据要覆盖三条缓存 + "活体有片子而缓存读回 0/0s"这种症状。
         Assert.Contains("if (RefsLookStale(om, os, eff, se, se?.NaturalDuration.TotalSeconds ?? 0))", code);

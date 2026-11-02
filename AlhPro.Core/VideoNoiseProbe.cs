@@ -81,7 +81,7 @@ public static class VideoNoiseProbe
     public static string Fmt(double v) => double.IsNaN(v) ? "未测出" : v.ToString("0.000");
 
     // ===== 度量实现(纯函数,吃灰度数组;UI 侧只负责抽帧与解码)=====
-    // 【为什么数学放在 Core】它决定"降不降",错了不会报错 —— 必须有单测(见 VideoNoiseProbeTests)。
+    // 【为什么数学放在 Core】它决定"降不降",错了不会提示错误 —— 必须有单测(见 VideoNoiseProbeTests)。
     // UI 侧只做两件事:用 ffmpeg 抽帧、把帧解码成灰度 float[](口径与这里的函数一一对应)。
 
     /// <summary>3×3 盒均值(可分离:先横后纵;边界取最近像素)。与 Python 标定脚本的 reflect 只差边缘 1 像素。</summary>
@@ -167,7 +167,7 @@ public static class VideoNoiseProbe
 
     /// <summary>一次算齐三项(UI 侧抽完帧就调它)。
     /// 【尺寸不符的帧必须先剔掉再算三项】第一版只在颗粒/块效应里跳过了它们,时间维却拿着整张表去索引
-    /// ⇒ 中途换分辨率的源会直接越界崩溃(单测当场抓到)。现在先过滤,再拿同一份干净表算全部指标,
+    /// ⇒ 中途换分辨率的源会直接越界进程退出(单测当场抓到)。现在先过滤,再拿同一份干净表算全部指标,
     /// 帧数也按"真正用上的帧"报。
     /// <param name="burstLength">这些帧是"每 N 帧一段连续帧"(0 或 1 = 整串当一段)。
     /// 【为什么要有它】闪烁**必须看相邻帧**:真机对拍时按 10%~90% 铺点取 6 帧(帧间隔十几秒),

@@ -84,7 +84,7 @@ public sealed class StreamMux : IDisposable
 
         var proc = Process.Start(psi) ?? throw new InvalidOperationException("无法启动合帧 ffmpeg(边产边喂)");
         var mux = new StreamMux(proc, outputPath);
-        // stdout/stderr 必须持续排空:否则 ffmpeg 写满了就卡住(表现为"编码不动了")
+        // stdout/stderr 必须持续排空:否则 ffmpeg 写满了就停住(表现为"编码不动了")
         _ = Task.Run(() => Drain(proc.StandardOutput, null));
         _ = Task.Run(() => Drain(proc.StandardError, mux._err));
         return mux;

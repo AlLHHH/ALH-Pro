@@ -75,7 +75,7 @@ public class LocalCalibrationWiringTests
         Assert.Contains("catch (OperationCanceledException)", src);
         Assert.Contains("catch (Exception ex)", src);
         Assert.Contains("LastRejectReason", src);
-        // ⑦ 超时保护:引擎卡住时不让用户白等(只取消标定这次,不影响任务)
+        // ⑦ 超时保护:引擎停住时不让用户白等(只取消标定这次,不影响任务)
         Assert.Contains("CreateLinkedTokenSource(ct)", src);
         // ⑧ UI 只收一句短话(逐帧 progress 不接进来,免得混进"每帧速率")
         Assert.Contains("LogShortText.ClampToChineseLimit(", src);
@@ -94,7 +94,7 @@ public class LocalCalibrationWiringTests
         Assert.True(decideAt > 0, "判定必须带上本机标定表");
         Assert.True(calibAt < decideAt, "标定必须发生在判定之前(先标定、再判定)");
         // 【F1-I1 · 结构断言】"探测 + 设备定稿"整段(`if (upscaleRuns) { … }`)必须在**标定之前** ——
-        // 这就是 F1 的修法本身:否则标定可能测到生产根本不会走的后端(ncnn 黑帧 ⇒ 偏小错价永久落盘)。
+        // 这就是 F1 的修法本身:否则标定可能测到生产根本不会走的后端(ncnn 全黑画面 ⇒ 偏小错价永久落盘)。
         int probeAt = svc.IndexOf("if (upscaleRuns)", StringComparison.Ordinal);
         Assert.True(probeAt > 0, "必须先有'探测 + 设备定稿'整段(if (upscaleRuns))");
         Assert.True(probeAt < calibAt, "探测/设备定稿必须在标定之前(否则标定可能测到生产不走的后端)");
@@ -173,7 +173,7 @@ public class LocalCalibrationWiringTests
         Assert.Contains("超时", doc);
         Assert.Contains("素材帧数不足", doc);
         // §5 四条已知限制(逐条)
-        Assert.Contains("第 1 批", doc);                     // §5.1 黑帧中途切 ONNX 的漂移
+        Assert.Contains("第 1 批", doc);                     // §5.1 全黑画面中途切 ONNX 的漂移
         Assert.Contains("VideoPipeline.cs", doc);            // §5.2 ETA 常数仍是开发机数字
         Assert.Contains("采样帧来自本次素材", doc);            // §5.3 换素材/面积折算误差
         Assert.Contains("热降频", doc);                      // §5.4 两次启动的地板不同 ⇒ 快照

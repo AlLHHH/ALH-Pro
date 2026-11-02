@@ -24,7 +24,7 @@ public static class EdgeSmooth
     public static void Channel(byte[] src, int w, int h, int strength)
     {
         if (src == null || w <= 0 || h <= 0) return;
-        if ((long)w * h > src.Length) return;      // 尺寸与缓冲不匹配:调用方 bug,这里不猜、不动
+        if ((long)w * h > src.Length) return;      // 尺寸与缓冲不匹配:调用方 问题,这里不猜、不动
         double mix = MixFor(strength);
         if (mix <= 0) return;
         var orig = new byte[src.Length];

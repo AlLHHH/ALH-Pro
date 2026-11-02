@@ -22,7 +22,7 @@
 ; GitHub Release 模型包直链(与 Release 附件名必须一致;仓库=AlLHHH/ALH-Pro)
 ; 【历史遗留,本脚本当前未引用】这两个定义只在 installer.iss 的 DownloadAndExtractModels() 里用到;
 ; 完整版不下载模型,留着只为与 installer.iss 对照。本体版那边的维护规则同样适用:
-;   ModelsUrl **必须指向一个真实存在、且确实挂了该附件的 Release**,否则"下载并安装模型包"必然 404。
+;   ModelsUrl **必须指向一个真实存在、且确实停住该附件的 Release**,否则"下载并安装模型包"必然 404。
 ; 【2026-09-22 改正】这里原本写着 v1.3.6 —— **那个 tag 根本不存在**(是个从没建过的版本号),
 ; 而注释还写着"两边都指向 v1.3.5",自相矛盾。既然 v1.4.1 的 Release 已带上 models_v1.1.zip,改成它。
 ; (installer.iss 里真正生效的那处仍是 v1.3.5:那份附件实测 200,不影响使用;要统一到 v1.4.1 需重打包。)

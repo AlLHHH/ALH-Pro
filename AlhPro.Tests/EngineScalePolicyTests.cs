@@ -7,7 +7,7 @@ namespace AlhPro.Tests;
 
 /// <summary>超分引擎"实际下发倍数"与"静默全黑"判定的单测(任务 O1)。
 /// 【真机依据】Real-ESRGAN 对 `realesr-animevideov3` 传 `-s 1` → 输出纯黑(mean=0.00/std=0.00/uniq=1,
-/// 两张不同帧复现)且 **exit=0 无报错**,stdout 里只有 `_wfopen models/realesr-animevideov3-x1.param failed`
+/// 两张不同帧复现)且 **exit=0 无提示**,stdout 里只有 `_wfopen models/realesr-animevideov3-x1.param failed`
 /// —— 模型目录实测只有 x2/x3/x4 三套权重(x4plus / general-x4v3 / x4plus-anime 同样没有 x1)。
 /// 这里把"绝不返回 1"钉成不变量,并钉住各模型 × 各目标倍数的下发倍数与缩放比。</summary>
 public class EngineScalePolicyTests
@@ -47,7 +47,7 @@ public class EngineScalePolicyTests
     [InlineData("realesr-general-wdn-x4v3", 4.0, 4, 1.0)]
     [InlineData("realesr-general-wdn-x4v3", 1.0, 4, 0.25)]
     // 【2026-10-14 删除】这里原有六行 InlineData 钉"自训的两支实验模型只有 **2x** 原生权重"
-    //   (实测 -s 4 → 镜像平铺的错帧 / PSNR 7.27dB / exit=0 零报错)。四支自训 2x 模型已按用户要求
+    //   (实测 -s 4 → 镜像平铺的错帧 / PSNR 7.27dB / exit=0 零提示错误)。四支自训 2x 模型已按用户要求
     //   整体删除(用户:"还有那几个测试的模型可以删掉了"),权重与判定分支都不在了 ⇒ 这几行随之删除。
     //   历史实测数据留在这里备查:-s 2 → 正常;-s 4 → 880×880 但成图镜像平铺、下半幅偏黄。
     public void RealEsrgan_scale_is_pinned(string model, double want, int expectEngine, double expectRatio)
@@ -146,7 +146,7 @@ public class EngineScalePolicyTests
     }
 
     // ═══════════ 【2026-09-27 恢复】引擎"exit=0 却整帧全黑"的判据测试 ═══════════
-    // 契约:FrameInspect.IsSilentBlackFailure(inputBlack, outputBlack) = 输出缺陷帧且源帧不缺陷,
+    // 契约:FrameInspect.IsSilentBlackFailure(inputBlack, outputBlack) = 输出无效帧且源帧不问题,
     // 用来把"引擎静默出坏片"从"素材本来就是黑场"里区分出来(唯一调用方 = EngineService.GuardSilentBlackOutput)。
     // 【2026-09-27 沿革】同一天先按作者要求删掉了"事后判黑 ⇒ 改路/重跑"那条链(素材里的正常黑色转场被误判
     // ⇒ 换引擎 ⇒ 整条任务转 ONNX 慢路),这条判据随之被一并误删;收口时按作者指令**恢复**它 ——

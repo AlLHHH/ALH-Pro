@@ -7,9 +7,9 @@ using Xunit;
 
 namespace AlhPro.Tests;
 
-/// <summary>【t48 · 2026-09-25】闭环 t47 只读审计查出的「记住参数 / 预设」缺陷 F1~F6。
+/// <summary>【t48 · 2026-09-25】闭环 t47 只读审计查出的「记住参数 / 预设」问题 F1~F6。
 ///
-/// 这一组缺陷的共同危害只有两句话(评审时也拿它当尺子):
+/// 这一组问题的共同危害只有两句话(评审时也拿它当尺子):
 ///   · **用户没动过的东西自己变了** —— F1 预设的 Rev 章漏盖(读侧永远把新数据当老数据);F2 老刻度的
 ///     5 个后处理强度被原样按新刻度喂进去(**画面直接变**,这条是真的);
 ///   · **存了却从来没生效** —— F3 视频页「只处理选中的项目」既不入存档也不入预设;F4 图片页设置文件
@@ -346,7 +346,7 @@ public class RememberParamsPresetTests
 
     /// <summary>**【2026-10-16 · 用户反馈】"记住上次参数貌似有问题:边缘(增强)一直在 86"**。
     /// 86 在代码里只有一个来源:`RecommendedEdgeBoost`(非 animevideov3 → 86,新刻度里就是当年那个 0.6 档)。
-    /// 缺陷不在推荐值本身(那是 2026-09-15 定的功能:切模型跟着给推荐档),而在**它会在"恢复设置"时也开火**:
+    /// 问题不在推荐值本身(那是 2026-09-15 定的功能:切模型跟着给推荐档),而在**它会在"恢复设置"时也开火**:
     ///   · `ApplyVideoParams` 先回填 `PostEdgeSlider.Value = d.PostEdge`,**之后**才赋
     ///     `VideoEsrganModelCombo.SelectedIndex`(含越界回退 0 那一句),而该下拉是 `SelectionChanged="Combo_Changed"`;
     ///   · `ApplyVideoParams` 的两个调用点(载入设置 / 套预设)**都在 `_suppressEvents = true` 块里**,

@@ -5,15 +5,15 @@ using Xunit;
 
 namespace AlhPro.Tests;
 
-/// <summary>【2026-09-23 用户要求】「落到 CPU 根本不现实太慢了 —— 应该重试几次,如果还是不行直接报错,
+/// <summary>【2026-09-23 用户要求】「落到 CPU 根本不现实太慢了 —— 应该重试几次,如果还是不行直接提示错误,
 /// 不应该落到 CPU」。范围经用户确认:**只视频这一侧**(图片/抠图/音频允许 CPU)。
 ///
 /// 这里钉两样:
-///   ① 纯逻辑判据(<see cref="AlhPro.Core.CpuFallbackPolicy"/>)—— 谁能落 CPU、重试几次、报错说什么;
-///   ② 源码契约 —— 旧的两处"自动落 CPU"写法必须**再也搜不到**(它们不会编译报错,只会静默变慢):
+///   ① 纯逻辑判据(<see cref="AlhPro.Core.CpuFallbackPolicy"/>)—— 谁能落 CPU、重试几次、提示错误说什么;
+///   ② 源码契约 —— 旧的两处"自动落 CPU"写法必须**再也搜不到**(它们不会编译提示错误,只会静默变慢):
 ///      · VideoService 里"硬编失败 → libx264 软编"那一整段;
 ///      · EngineService 里"GPU 黑块 → 用 ncnn-CPU 逐块重算"那一整段。
-/// **诚实边界**:契约只能证明"这条降级路径被删掉了",证明不了"真机跑起来确实走的是重试+报错" ——
+/// **诚实边界**:契约只能证明"这条降级路径被删掉了",证明不了"真机跑起来确实走的是重试+提示错误" ——
 /// 后者要真实失败一次才能看到(本轮无法在真机上人为制造硬编失败,见交接清单的"未实测"清单)。</summary>
 public class CpuFallbackPolicyTests
 {
@@ -36,7 +36,7 @@ public class CpuFallbackPolicyTests
         Assert.All(AlhPro.Core.CpuFallbackPolicy.HwEncodeRetryDelaysMs, ms => Assert.True(ms > 0, "重试间隔必须为正"));
         Assert.True(AlhPro.Core.CpuFallbackPolicy.HwEncodeRetryDelaysMs[1]
                     > AlhPro.Core.CpuFallbackPolicy.HwEncodeRetryDelaysMs[0], "第二次间隔应更长");
-        // 第 n 次失败后该等多久;没有下一次了必须返回 0(调用方据此判定"放弃并报错")
+        // 第 n 次失败后该等多久;没有下一次了必须返回 0(调用方据此判定"放弃并提示错误")
         Assert.Equal(AlhPro.Core.CpuFallbackPolicy.HwEncodeRetryDelaysMs[0],
                      AlhPro.Core.CpuFallbackPolicy.RetryDelayMsAfterAttempt(1));
         Assert.Equal(AlhPro.Core.CpuFallbackPolicy.HwEncodeRetryDelaysMs[1],
@@ -47,7 +47,7 @@ public class CpuFallbackPolicyTests
         Assert.NotNull(p);
     }
 
-    /// <summary>报错文案必须能自己救回来:说清"硬编不可用" + 给可执行的自救动作(更新驱动/重启),
+    /// <summary>出错提示必须能自己救回来:说清"硬编不可用" + 给可执行的自救动作(更新驱动/重启),
     /// 而且**不许**再让人去设置里找「CPU 计算」—— 那个选项不存在(B8)。</summary>
     [Fact]
     public void The_no_encoder_error_tells_the_user_how_to_recover()
@@ -64,7 +64,7 @@ public class CpuFallbackPolicyTests
         Assert.DoesNotContain("CPU 计算", msg); // ★ 不许再指向那个已不存在的设置项
     }
 
-    /// <summary>重试全失败的报错:要带上编码器名、尝试次数、最后一次原因,并按是否驱动过旧给不同建议。</summary>
+    /// <summary>重试全失败的提示错误:要带上编码器名、尝试次数、最后一次原因,并按是否驱动过旧给不同建议。</summary>
     [Fact]
     public void The_retry_exhausted_error_carries_encoder_attempts_and_reason()
     {
@@ -88,7 +88,7 @@ public class CpuFallbackPolicyTests
 
     // ───────────────────────── ② 源码契约 ─────────────────────────
 
-    /// <summary>★ 视频编码失败**不许**再出现"改用 CPU 软编"那条路(它不会编译报错,只会静默慢 7 倍)。</summary>
+    /// <summary>★ 视频编码失败**不许**再出现"改用 CPU 软编"那条路(它不会编译提示错误,只会静默慢 7 倍)。</summary>
     [Fact]
     public void Video_encoder_failure_no_longer_falls_back_to_cpu()
     {
@@ -97,7 +97,7 @@ public class CpuFallbackPolicyTests
         Assert.DoesNotContain("(CPU 软编,硬件编码回退)", code);             // 旧回退的显示名
         Assert.DoesNotContain("BrokenHwEncoders.Add(", code);              // 旧"记坏→以后静默走 CPU"
         Assert.DoesNotContain("HashSet<string> BrokenHwEncoders", code);   // 旧字段本身
-        // 新路径必须在:重试 + 两类报错 + 开跑前的闸门
+        // 新路径必须在:重试 + 两类提示错误 + 开跑前的闸门
         Assert.Contains("CpuFallbackPolicy.RetryDelayMsAfterAttempt", code);
         Assert.Contains("CpuFallbackPolicy.DescribeHwEncodeFailure", code);
         Assert.Contains("CpuFallbackPolicy.DescribeNoHwEncoder", code);
@@ -118,8 +118,8 @@ public class CpuFallbackPolicyTests
     /// <summary>★ GPU 黑块那套**视频批量**事后判定已整体删除(2026-09-27),且**绝不许**再出现 CPU 逐块重算;
     /// 而"单图/分块成品"的自带源图豁免守卫 `GuardSilentBlackOutput` 按同一次收口**恢复保留**。
     /// 【原契约】2026-09-23 那次要求:检测到 GPU 黑块时不许用 ncnn-CPU 逐块重算视频帧(视频专用路径),
-    /// 必须明确报错停止 —— 当时钉的三条是"没有 CPU 调用形态 / 没有那句旧文案 / 有'按「视频不落 CPU」策略停止'"。
-    /// 【为什么契约变了】2026-09-27 作者要求"黑帧判断这个功能直接删掉":视频那条"检测到黑块 → 换 ONNX 或报错停止"
+    /// 必须明确提示错误停止 —— 当时钉的三条是"没有 CPU 调用形态 / 没有那句旧文案 / 有'按「视频不落 CPU」策略停止'"。
+    /// 【为什么契约变了】2026-09-27 作者要求"全黑画面判断这个功能直接删掉":视频那条"检测到黑块 → 换 ONNX 或提示错误停止"
     /// 的链本身(**单图分块**路径 EngineService.UpscaleTiledAsync 里的 HasBlackPng 分支 —— 注意这是单图路径、不是视频批量)已删除 ⇒ "停止"的文案不复存在,
     /// 但"绝不用 CPU 逐块重算视频帧"这条**更强**了(连同判黑一起没了)。
     /// 【2026-09-27 二次收口】同一次大删除里被一并误删的**单图/分块成品守卫**已按作者指令恢复:

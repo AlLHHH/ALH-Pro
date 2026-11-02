@@ -175,7 +175,7 @@ public class SceneDefaultPolicyTests
 
         var cs = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs");
         // 【只查代码行,不查注释】留一段沿革说明是好事;但**活代码里**不许再引用已移除的控件
-        // (真有活引用编译期就会报错;这里再钉一道,防止有人把注释里那行恢复成真代码)。
+        // (真有活引用编译期就会提示错误;这里再钉一道,防止有人把注释里那行恢复成真代码)。
         var csCode = string.Join("\n", cs.Split('\n').Where(l => !l.TrimStart().StartsWith("//")));
         Assert.DoesNotContain("SmoothTimelineCheck", csCode);
         Assert.Contains("var smoothTimelineNow = true;", csCode);      // 处理侧仍传 true(VFR 门在 VideoService 里)
@@ -316,7 +316,7 @@ public class SceneDefaultPolicyTests
         // ③ 界面:控件没了(注释里写留档是允许的),而且**新加的重置按钮要有 AutomationId** ——
         //    2026-09-22 整机自测时逮到:视频页 9 个「重置」按钮**都没有 AutomationId**,UIA 只能按模糊的名字
         //    「重置」去猜(永远选中第一个)⇒ 自测无法验证"点这一行的重置"。用户手点没影响,但这属于
-        //    "无障碍/自动化拿不到"的缺陷,顺手补上我这轮新加的那个。
+        //    "无障碍/自动化拿不到"的问题,顺手补上我这轮新加的那个。
         var xamlRaw = ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml");
         Assert.DoesNotContain("x:Name=\"SceneMinSegmentCheck\"", xamlRaw);
         Assert.Contains("x:Name=\"ResetSceneBtn\"", xamlRaw);

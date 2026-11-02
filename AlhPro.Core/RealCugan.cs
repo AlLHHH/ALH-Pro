@@ -6,7 +6,7 @@ namespace AlhPro.Core;
 /// <summary>Real-CUGAN 的**唯一真相**:CLI 语义、模型标签、引擎/权重文件名(纯逻辑,可单测)。
 ///
 /// 【为什么必须单独抽一层 · 实测踩过】Real-CUGAN 的 CLI 与 Real-ESRGAN **不兼容**,
-/// 照抄 realesrgan 的参数拼法一定会错(要么引擎报错、要么静默按错档跑):
+/// 照抄 realesrgan 的参数拼法一定会错(要么引擎提示错误、要么静默按错档跑):
 ///   · Real-ESRGAN:`-n &lt;模型名&gt;`、`-m &lt;模型目录&gt;`
 ///   · Real-CUGAN :**`-n` 是降噪档**(-1/0/1/2/3)、**`-m` 才是模型目录**(models-se / models-pro / models-nose)
 ///     —— 实测 `realcugan-ncnn-vulkan.exe -h` 的输出,见 t2 文档 §2.1。
@@ -19,7 +19,7 @@ namespace AlhPro.Core;
 ///
 /// 【只随包 models-se】models-pro / models-nose 在本仓库**不进安装包**(少 13 MB 且没有额外能力);
 /// 因此 <see cref="Tags"/> 里只登记 models-se 的档位,别在界面下拉里放 pro/nose ——
-/// 引擎找不到权重时**不报错、只画一张坏帧、exit=0**(本仓库为此专门有过两次事故记录)。</summary>
+/// 引擎找不到权重时**不提示、只画一张无效画面、exit=0**(本仓库为此专门有过两次事故记录)。</summary>
 public static class RealCugan
 {
     /// <summary>引擎名(与 realesrgan / waifu2x 同级,进引擎单选、探测缓存键、日志)。</summary>
@@ -30,7 +30,7 @@ public static class RealCugan
 
     /// <summary>本仓库用 2025/2026 版 ncnn 重编后的引擎文件名。
     /// 【为什么必须带 2026 后缀】官方 20220728 那份 exe 实测 `VK_EXT_robustness2` **0 处**
-    /// (与 Real-ESRGAN 官方 2022 版逐项同类)⇒ 在 NVIDIA 50 系上属「退出码 0 + 坏帧」那一类;
+    /// (与 Real-ESRGAN 官方 2022 版逐项同类)⇒ 在 NVIDIA 50 系上属「退出码 0 + 无效画面」那一类;
     /// 后缀同时是 <c>EngineService.EngineIsRebuilt2026</c> 的判据,决定"要不要按显卡型号预判风险"。</summary>
     public const string Rebuilt2026ExeName = "realcugan-ncnn-vulkan-2026.exe";
 
@@ -42,7 +42,7 @@ public static class RealCugan
 
     /// <summary>界面可选的三个档位。**都是 models-se**,且都同时具备 up2x / up3x / up4x 权重
     /// (实测逐个数过 models-se 目录里的文件:conservative / no-denoise / denoise3x 各带 2x/3x/4x;
-    ///  denoise1x / denoise2x 只有 up2x ⇒ **不进下拉**,否则 3x/4x 目标会加载不存在的权重、静默出坏帧)。</summary>
+    ///  denoise1x / denoise2x 只有 up2x ⇒ **不进下拉**,否则 3x/4x 目标会加载不存在的权重、静默出无效画面)。</summary>
     public static readonly (string Tag, string Label, string Hint)[] Tags =
     {
         ("models-se:-1", "动漫 · models-se -1（中）",
@@ -55,7 +55,7 @@ public static class RealCugan
 
     /// <summary>引擎在哪条路线上能跑:Real-CUGAN **只有 ncnn 权重**(engines\ 下没有任何 realcugan 的 .onnx)
     /// ⇒ 探测失败时**没有可换的路线**。注意:也不能"降 CPU 凑合"—— 它的 CPU 档(`-g -1`)在本仓库重编版上
-    /// **实测会崩**(启动后访问违例、0 帧产出,见 <c>VideoService.RealCuganRefusal</c> 的注释),
+    /// **实测会退出**(启动后访问违例、0 帧产出,见 <c>VideoService.RealCuganRefusal</c> 的注释),
     /// 所以真实处置是**开跑前明确拒绝**(见 <see cref="UnavailableNotice"/>),而不是落到 CPU。
     /// 四类机器上的口径表见 <c>licenses\模型权重来源与校验值.md</c> 的「四类机器」一节(该文件逐台标注了
     /// 哪些是实测、哪些**未实测** —— 未实测的那几条不许当成结论)。</summary>
@@ -70,7 +70,7 @@ public static class RealCugan
     /// 【改动这里必须同时改动 <c>VideoService.RealCuganRefusal</c>】那句是拒绝处理时给用户看的长版,
     /// 二者说的是同一件事。</summary>
     public const string UnavailableNotice =
-        "它只有 ncnn-Vulkan 权重(没有 ONNX 版本可换,CPU 档在重编版上实测会崩)"
+        "它只有 ncnn-Vulkan 权重(没有 ONNX 版本可换,CPU 档在重编版上实测会退出)"
         + "⇒ 不会降 CPU、也不会静默换成别的模型,而是在开跑前明确拒绝";
 
     /// <summary>引擎身份键是不是 Real-CUGAN。重编版叫 `realcugan2026`(见 <c>EngineService.RealCuganEngineId</c>),
@@ -83,7 +83,7 @@ public static class RealCugan
         => !string.IsNullOrWhiteSpace(tag) && tag.IndexOf(':') > 0;
 
     /// <summary>解析权重目录(冒号前)。非法标签一律回落到随包目录 —— 绝不返回空串
-    /// (空串会让引擎去找 `\up2x-*.param`,找不到就画坏帧、exit=0)。</summary>
+    /// (空串会让引擎去找 `\up2x-*.param`,找不到就画无效画面、exit=0)。</summary>
     public static string ModelDir(string? tag)
     {
         if (!IsRealCuganTag(tag)) return ShippedModelDir;

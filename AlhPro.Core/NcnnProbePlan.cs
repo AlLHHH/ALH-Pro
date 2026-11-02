@@ -21,7 +21,7 @@ namespace AlhPro.Core;
 ///   ③ 其余(官方的 animevideov3 / x4plus-anime / x4plus / general-x4v3 / wdn-x4v3 / waifu2x 各档)⇒ 原样透传。
 ///
 /// ⚠ 这条换算同时用于"探测"与"下发给引擎"两处,别再各写一份 —— 两处不一致就会出现
-/// "探测说可用、引擎却拿不到权重"(exit 0 只出坏帧,本仓库踩过)。
+/// "探测说可用、引擎却拿不到权重"(exit 0 只出无效画面,本仓库踩过)。
 /// </summary>
 public static class NcnnProbePlan
 {

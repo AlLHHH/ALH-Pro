@@ -10,7 +10,7 @@ namespace AlhPro.Tests;
 /// 2026-10-15 真机事故的钉子:补帧(RIFE)探测结论的"尺寸档"必须把**实测故障带**单独分出来。
 /// <para>
 /// 事故链条(diagnostic.log + ncnn-probe.txt 双证据):
-/// ① 一趟 5760×5760(33.2 Mpx)的任务在故障带里探测 ncnn ⇒ 记下"出图但画面坏帧"(判决本身没错);
+/// ① 一趟 5760×5760(33.2 Mpx)的任务在故障带里探测 ncnn ⇒ 记下"出图但画面无效画面"(判决本身没错);
 /// ② 旧键只有 sd/fhd/uhd 三档,5760×5760 与 3840×2160 同属 uhd ⇒ 这条结论被 4K 任务沿用;
 /// ③ 于是之后所有 4K 补帧都"沿用已缓存结论:不可用 → 走 ONNX" —— 而 4K(8.3 Mpx)上 ncnn 本来是好的,
 ///    用户感受就是"补帧突然慢得离谱"。
@@ -22,7 +22,7 @@ public class RifeProbeSizeBucketTests
     [InlineData(320, 240, "sd")]                 // 探测兜底尺寸
     [InlineData(1280, 720, "sd")]                // 门槛没变:旧口径就是"到 1920×1080 才算 fhd"
     [InlineData(1920, 1080, "fhd")]
-    [InlineData(3840, 2160, "uhd4k")]            // 实测安全点(ncnn 0 黑帧)
+    [InlineData(3840, 2160, "uhd4k")]            // 实测安全点(ncnn 0 全黑画面)
     public void SizeBucket_maps_normal_frame_sizes(int w, int h, string expected)
         => Assert.Equal(expected, NcnnVerdictKey.SizeBucket((long)w * h));
 
@@ -30,7 +30,7 @@ public class RifeProbeSizeBucketTests
     public void SizeBucket_keeps_the_defect_band_out_of_the_4k_bucket()
     {
         // 核心回归:5760×5760 = 33.18 Mpx ≥ InterpSizePolicy.NcnnRefusePixels(33 Mpx,实测故障带),
-        // 它绝不能和 3840×2160 共用一个档,否则一次大尺寸坏帧会把之后所有 4K 补帧拖去 ONNX。
+        // 它绝不能和 3840×2160 共用一个档,否则一次大尺寸无效画面会把之后所有 4K 补帧拖去 ONNX。
         Assert.NotEqual(NcnnVerdictKey.SizeBucket(5760L * 5760), NcnnVerdictKey.SizeBucket(3840L * 2160));
         Assert.Equal("uhd8k", NcnnVerdictKey.SizeBucket(5760L * 5760));
         Assert.Equal("uhd8k", NcnnVerdictKey.SizeBucket(7680L * 4320));

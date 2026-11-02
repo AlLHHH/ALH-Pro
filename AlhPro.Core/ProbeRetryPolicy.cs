@@ -28,7 +28,7 @@ public readonly record struct ProbeRetryProfile(
     bool RetryDeterministicFailures,
     int MaxAttempts,
     int BackoffMs,
-    int HangMaxAttempts = 0);   // 0 = 与 MaxAttempts 相同;>0 = 卡死(Hang)单独限次
+    int HangMaxAttempts = 0);   // 0 = 与 MaxAttempts 相同;>0 = 长时间无响应(Hang)单独限次
 
 /// <summary>【探测失败要不要重试】的纯逻辑判据 + 编排(2026-09-24)。
 ///
@@ -42,7 +42,7 @@ public readonly record struct ProbeRetryProfile(
 /// 【为什么超时/无响应值得重试】它是**唯一**可能由"当时的瞬时状态"造成的形态 —— 进程一直没退出,
 /// 既可能是真 hang,也可能只是慢(GPU 被别的任务占着、驱动刚在忙、显存刚被回收)。这种"忙/慢"会自己好。
 /// 【为什么确定性形态在流水线档不重试】初始化即崩/进程起不来(进程**已经退出**,退出码就是它的结论)、
-/// 出图但坏帧/无产出/空产出(引擎**跑完了**并交出结果,说明它在这张卡上的行为是确定的,重算一遍同样结果)、
+/// 出图但无效画面/无产出/空产出(引擎**跑完了**并交出结果,说明它在这张卡上的行为是确定的,重算一遍同样结果)、
 /// 引擎文件缺失(与显卡无关):重试只是把"不能用"这个结论推迟十几秒再告诉用户,结论不会变。
 /// 【为什么挑卡档反而要重试确定性形态】见 <see cref="ProbeRetryProfile"/>:那里"一次瞬时抽风"的代价是
 /// **选错卡/整段落 CPU**,而不是"多等一次";旧代码就是 1.5 秒×3 的保险,队长裁定恢复。
@@ -66,13 +66,13 @@ public static class ProbeRetryPolicy
 
     /// <summary>【小图活性检查/挑卡档】<c>FindBestWorkingGpuAsync</c> 的挑卡、编号纠正、核显切换(fullFrame:false,
     /// 320×240,单次 15 秒):**确定性失败也退避 1.5 秒、最多 3 次**(恢复 t3 里被顺带删掉的旧保险);
-    /// 瞬时卡死同样重试,但**只重试一次**(共 2 次,见下)。
+    /// 瞬时长时间无响应同样重试,但**只重试一次**(共 2 次,见下)。
     /// 【代价与收益】确定性失败最坏 ≈ 3×15 + 2×1.5 ≈ 48 秒(只发生在"探测真的失败"时,正常卡首探几百毫秒);
     /// 换来的是"一次驱动抽风不至于把独显判成没有 GPU、让整个会话停在错卡/核显上"。
-    /// 【为什么卡死(Hang)单独限 2 次 · 2026-09-24 队长裁定】这一档要在**多张候选卡**上逐个试
-    /// (FindBestWorkingGpuAsync 最多 4 独显 + 2 核显),而独立审查算过:若卡死也试 3 次,
-    /// "所有候选都卡死"的机器上启动自检最坏 **≈4.8 分钟**(6×48 秒)⇒ 把用户晾在启动界面上。
-    /// 卡死与"进程崩一下"不同:它每次都要等满 15 秒超时,乘上候选数就是分钟级。所以卡死只留**一次**重试
+    /// 【为什么长时间无响应(Hang)单独限 2 次 · 2026-09-24 队长裁定】这一档要在**多张候选卡**上逐个试
+    /// (FindBestWorkingGpuAsync 最多 4 独显 + 2 核显),而独立审查算过:若长时间无响应也试 3 次,
+    /// "所有候选都长时间无响应"的机器上启动自检最坏 **≈4.8 分钟**(6×48 秒)⇒ 把用户晾在启动界面上。
+    /// 长时间无响应与"进程崩一下"不同:它每次都要等满 15 秒超时,乘上候选数就是分钟级。所以长时间无响应只留**一次**重试
     /// (足以覆盖"驱动/显存刚开始回收"这类瞬时状态),最坏降到 6×31.5 ≈ **3.2 分钟**;确定性形态的三次保险不变。
     /// 【为什么退避 1.5 秒而不是 3 秒】这一档本来就快、且它是启动自检的热路径:1.5 秒足够给驱动/显存一个回收窗口,
     /// 又不会让自检明显变慢(与旧代码逐字一致)。</summary>
@@ -97,8 +97,8 @@ public static class ProbeRetryPolicy
             : IsDeterministicFailure(kind) && profile.RetryDeterministicFailures;
 
     /// <summary>这个形态在**这一档**下允许的总尝试次数(可重试 = 该形态的上限,否则 1)。
-    /// 卡死(Hang)可以有自己的上限(见 <see cref="ProbeRetryProfile.HangMaxAttempts"/>):挑卡档要在多张卡上逐个试,
-    /// 卡死每次都要等满超时,乘上候选数就是分钟级 —— 所以那里卡死只重试一次,而确定性形态保留三次保险。</summary>
+    /// 长时间无响应(Hang)可以有自己的上限(见 <see cref="ProbeRetryProfile.HangMaxAttempts"/>):挑卡档要在多张卡上逐个试,
+    /// 长时间无响应每次都要等满超时,乘上候选数就是分钟级 —— 所以那里长时间无响应只重试一次,而确定性形态保留三次保险。</summary>
     public static int MaxAttempts(ProbeRetryProfile profile, ProbeFailureKind kind)
     {
         if (!ShouldRetry(profile, kind)) return 1;
@@ -128,9 +128,9 @@ public static class ProbeRetryPolicy
     {
         string baseReason = kind switch
         {
-            ProbeFailureKind.CrashExitCode => "进程已退出,退出码就是它的结论(初始化崩溃/驱动缺陷不会因为等几秒而消失)",
+            ProbeFailureKind.CrashExitCode => "进程已退出,退出码就是它的结论(初始化进程退出/驱动问题不会因为等几秒而消失)",
             ProbeFailureKind.StartupFailed => "进程起不来是环境问题(路径/权限/被杀),重试同样起不来",
-            ProbeFailureKind.DefectiveFrame => "引擎跑完了并交出坏帧,说明它在这张卡上的行为是确定的,重算一遍还是坏帧",
+            ProbeFailureKind.DefectiveFrame => "引擎跑完了并交出无效画面,说明它在这张卡上的行为是确定的,重算一遍还是无效画面",
             ProbeFailureKind.NoOutput => "引擎跑完却没交产出文件,属结构性失败(参数/模型加载),重试只是白等",
             ProbeFailureKind.EmptyOutput => "引擎跑完交出 0 字节产出,属结构性失败,重试只是白等",
             ProbeFailureKind.EngineMissing => "引擎文件不存在,与显卡无关,重试一万次也还是不存在",
@@ -154,7 +154,7 @@ public static class ProbeRetryPolicy
 
     /// <summary>重试那一次的【结果】行(通过 / 仍失败),与 <see cref="DescribeRetry"/> 配对
     /// ⇒ 日志里"第几次、为什么、结果"三段齐全。
-    /// 【分母必须 >= 分子】重试的两次失败形态可能不同(第一次超时、第二次变成崩溃):分母按**实际发起过的
+    /// 【分母必须 >= 分子】重试的两次失败形态可能不同(第一次超时、第二次变成进程退出):分母按**实际发起过的
     /// 尝试上限**说,绝不许出现"重试第 2/1 次"这种自相矛盾(调用方用 <see cref="RunAsync"/> 时已保证)。</summary>
     public static string DescribeRetryResult(int attempt, int allowedAttempts, ProbeAttempt r)
         => r.Ok

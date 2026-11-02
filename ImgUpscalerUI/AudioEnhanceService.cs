@@ -152,7 +152,7 @@ public static class AudioEnhanceService
             // 读取 WAV(44.1k stereo float32)
             var (mix, samples) = ReadWav(inputWav);
             int total = samples;
-            // 内存预估(4 轨输出缓冲/选择/拷贝等 ≈ 80B/采样):超阈值提前明确报错,避免整进程 OOM
+            // 内存预估(4 轨输出缓冲/选择/拷贝等 ≈ 80B/采样):超阈值提前明确提示错误,避免整进程 OOM
             double estMB = total * 80.0 / (1024.0 * 1024.0);
             if (estMB > 2500)
                 throw new InvalidOperationException(
@@ -402,7 +402,7 @@ public static class AudioEnhanceService
                 for (int s = 0; s < samples; s++)
                     for (int c = 0; c < channels; c++)
                         mix[c, s] = br.ReadInt16() / 32768f;
-                // 立体声保护:Demucs 需双声道;单声道输入复制到双声道(避免越界崩溃)
+                // 立体声保护:Demucs 需双声道;单声道输入复制到双声道(避免越界进程退出)
                 if (channels == 1)
                 {
                     var stereo = new float[2, samples];

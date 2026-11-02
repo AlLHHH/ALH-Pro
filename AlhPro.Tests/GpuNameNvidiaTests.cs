@@ -35,7 +35,7 @@ public class GpuNameNvidiaTests
     {
         // 转译层设备名形如 "Microsoft Direct3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)"。
         // IsNvidia 对它返回 true(名字里确实有 NVIDIA)—— 所以快速通道判据必须再排除 IsD3D12Translation,
-        // 否则会把"经转译层跑 ncnn 出损坏帧"的设备当成可用。这条约束与 DeviceRouting 的既有口径一致。
+        // 否则会把"经转译层跑 ncnn 出无效画面"的设备当成可用。这条约束与 DeviceRouting 的既有口径一致。
         const string n = "Microsoft Direct3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)";
         Assert.True(GpuName.IsNvidia(n));
         Assert.True(GpuName.IsD3D12Translation(n));

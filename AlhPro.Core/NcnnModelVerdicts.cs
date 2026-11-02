@@ -2,7 +2,7 @@ namespace AlhPro.Core;
 
 /// <summary>ncnn 真机探测结论的【判定口径】(纯逻辑,可单测)。
 ///
-/// 【为什么单独抽出来】2026-09-22 用户机器(RTX 5060 Laptop)诊断包实测暴露了一个判死的缺陷:
+/// 【为什么单独抽出来】2026-09-22 用户机器(RTX 5060 Laptop)诊断包实测暴露了一个判死的问题:
 /// `ncnn-probe.txt` 里有三条结论 ——
 ///     realesrgan2026|0|anime4k   False    probe failed: 无响应(超时被强杀)
 ///     realesrgan2026|0|          True     probe ok; model=(default)
@@ -120,7 +120,7 @@ public static class NcnnModelVerdicts
         }
         if (ok == 0 && fail == 0) return NotConcludedOrPlain($"{engineId}=未测(首次处理时自动实测)", notConcludedReason);
         // 【2026-09-27 改】这一行原来对所有引擎一律写"→走 ONNX",但 Real-CUGAN **没有 ONNX 版本**
-        // (CPU 档实测会崩)⇒ 报告在这里就替用户编了一条不存在的出路。口径统一取自 RealCugan。
+        // (CPU 档实测会退出)⇒ 报告在这里就替用户编了一条不存在的出路。口径统一取自 RealCugan。
         if (engine == false) return $"{engineId}=实测不可用({fail} 支模型失败)—— " + NcnnProbeWording.UnavailableRoute(engineId);
         // 引擎可用:如实指出个别失败的模型,别让人以为整条坏了
         return fail == 0
@@ -292,7 +292,7 @@ public static class NcnnProbeWording
             or ProbeFailureKind.CrashExitCode                       // 进程已退出:退出码就是结论
             or ProbeFailureKind.NoOutput                            // 引擎跑完却没交产出(结构性失败)
             or ProbeFailureKind.EmptyOutput                         // 引擎跑完交出 0 字节
-            or ProbeFailureKind.DefectiveFrame                      // 引擎跑完交出坏帧
+            or ProbeFailureKind.DefectiveFrame                      // 引擎跑完交出无效画面
             or ProbeFailureKind.EngineMissing;                      // 引擎文件不在(与显卡无关,但结论确定)
     }
 
@@ -311,7 +311,7 @@ public static class NcnnProbeWording
     /// 与"不可用"完全分开:这次**不落盘任何结论**,关掉占显存的程序后重试即可。</summary>
     public static string VramShortfallHint(double freeGB, double needGB)
         => $"本次先不跑这项实测:显卡当前只有 {freeGB:0.#}GB 空闲显存,而生产帧尺寸(1080×1920)的实测至少要留约 {needGB:0.#}GB"
-         + "(否则引擎容易卡住,白等一分钟还可能被误判成'不可用')。"
+         + "(否则引擎容易停住,白等一分钟还可能被误判成'不可用')。"
          + "可以先关掉占显存的程序(游戏 / 浏览器 / 剪辑软件)再重试,或把「计算设备」改成 CPU(慢但稳);"
          + "这次不会记成「不可用」,下次照旧会再试。";
 

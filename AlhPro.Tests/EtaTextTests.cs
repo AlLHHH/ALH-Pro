@@ -5,7 +5,7 @@ namespace AlhPro.Tests;
 
 /// <summary>「预计还剩」文案的单测(从 VideoService.EtaStr 抽出的纯逻辑)。
 /// 对应 2026-09-13 真机反馈:补帧跑到 2667/2668 时界面显示"预计还剩几秒",用户追问"几???",
-/// 而后面还有整批 PNG→JPG 收尾要跑几分钟 —— 这是"阶段末假装马上好"的体验 bug。</summary>
+/// 而后面还有整批 PNG→JPG 收尾要跑几分钟 —— 这是"阶段末假装马上好"的体验 问题。</summary>
 public class EtaTextTests
 {
     [Fact]
@@ -161,7 +161,7 @@ public class EtaTextTests
     [Fact]
     public void Whole_remaining_never_below_current_stage_remaining()
     {
-        // 【真机 bug 的场景】进度行显示"编码 第 1324 帧 / 共 2665 帧 本阶段预计还剩 3.7 分钟",
+        // 【真机 问题 的场景】进度行显示"编码 第 1324 帧 / 共 2665 帧 本阶段预计还剩 3.7 分钟",
         // 而"本片剩余"显示 0:30 —— 3.7 分钟 = 222 秒。整片剩余必须被抬到 ≥ 222 秒。
         double whole = 30;          // 按"已用÷进度"外推出来的错值(编码只占整体进度的 96~100 四个点)
         double stage = 3.7 * 60;    // 编码阶段自己的剩余(实测速率)

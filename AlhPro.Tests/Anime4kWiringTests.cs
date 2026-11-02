@@ -7,7 +7,7 @@ using Xunit;
 namespace AlhPro.Tests;
 
 /// <summary>**接线契约**:1x 修复档(Anime4K)必须真的接进流水线与流水线调用点。
-/// 【为什么要这么测】这条能力横跨三处,任何一处漏了都**不报错、只是悄悄没生效**(或者悄悄走了旧行为):
+/// 【为什么要这么测】这条能力横跨三处,任何一处漏了都**不提示、只是悄悄没生效**(或者悄悄走了旧行为):
 ///   ① 合帧滤镜链里没加滤镜 ⇒ 1x 档什么都不做(画面=原片,用户以为"修复开了没用");
 ///   ② VideoService 没收到 anime4k1x ⇒ 同上;
 ///   ③ 探测结果没用来翻 upscaleShrink1x ⇒ 变成"既跑 2x 超分又不加滤镜"(白花几倍时间)。
@@ -28,7 +28,7 @@ public class Anime4kWiringTests
     }
 
     /// <summary>**后处理的"作用面"必须按本任务真实输出高度缩放**(2026-10-16,用户反馈"后处理怎么调都没效果")。
-    /// 这一条也是"漏了不报错、只是悄悄没生效"的接线:
+    /// 这一条也是"漏了不提示、只是悄悄没生效"的接线:
     ///   · 不传 plannedOutH ⇒ 退回旧行为:4K 上作用面只有 1080p 的一半(实测弱约 4 dB);
     ///   · 传了别的尺寸(源尺寸/写死的 1080)⇒ 缩放系数错 = 强度照样不对。
     /// 所以 plannedOutH 必须来自 VideoEncodeGuard.PlanOutputSize(与编码预检/帧数台账同一个真实输出尺寸),
@@ -84,7 +84,7 @@ public class Anime4kWiringTests
     ///   · 1x   ⇒ 只有 1x 修复条目可选(Rev11 起只剩「动漫 · Anime4K 修复」一条),其余放大模型全部置灰;
     ///   · 2x+  ⇒ 反过来:放大模型全可选(**不减少任何现有能力**),1x 条目置灰;
     ///   · 切换倍率时当前选中项若不可用 ⇒ 自动切到该档"上次用的那支",并写日志(不静默)。
-    /// 【为什么必须钉】灰错了不会报错:只会在 1x 下让用户选到一个"根本不放大"的放大模型(白跑一遍还看不出问题)。</summary>
+    /// 【为什么必须钉】灰错了不会提示错误:只会在 1x 下让用户选到一个"根本不放大"的放大模型(白跑一遍还看不出问题)。</summary>
     [Fact]
     public void One_x_only_allows_the_1x_entries_and_vice_versa()
     {
@@ -94,7 +94,7 @@ public class Anime4kWiringTests
         Assert.Contains("AlhPro.Core.Upscale1x.Is1xEntry(", cs);
         // 1x 只留 1x 条目、2x+ 只留放大模型(对称)
         Assert.Contains("bool usable = is1x ? is1xEntry : !is1xEntry;", cs);
-        // 只置灰**已存在**的项,绝不碰集合(碰 Items 会触发 WinRT E_INVALIDARG 崩溃,踩过)
+        // 只置灰**已存在**的项,绝不碰集合(碰 Items 会触发 WinRT E_INVALIDARG 进程退出,踩过)
         Assert.DoesNotContain("VideoEsrganModelCombo.Items.Add(", cs);
         Assert.DoesNotContain("VideoEsrganModelCombo.Items.Remove", cs);
         Assert.DoesNotContain("VideoEsrganModelCombo.Items.IndexOf(", cs);
@@ -105,7 +105,7 @@ public class Anime4kWiringTests
     }
 
     /// <summary>1x 的「现实」条目**不是真模型**:必须把 Tag 映射成真正的权重名再下发引擎,
-    /// 否则引擎会去找一个不存在的模型 —— 找不到权重时 exit=0、只出坏帧(本仓库踩过)。
+    /// 否则引擎会去找一个不存在的模型 —— 找不到权重时 exit=0、只出无效画面(本仓库踩过)。
     /// 【2026-10-14】那条路原来借的是自训的 `alhpro-real2x`,它已按用户要求删除 ⇒
     /// RealEngineModel 现在指官方 `realesr-animevideov3`(官方唯一带原生 2x 权重的 realesrgan 模型)。</summary>
     [Fact]
@@ -184,7 +184,7 @@ public class Anime4kWiringTests
     }
 
     /// <summary>不支持的项直接**隐藏**(不只置灰):用户抱怨"要滚过 8 个用不了的才看到能用的"。
-    /// 隐藏只改项自身的 Visibility —— 依然不碰集合(碰集合会触发 WinRT E_INVALIDARG 崩溃)。</summary>
+    /// 隐藏只改项自身的 Visibility —— 依然不碰集合(碰集合会触发 WinRT E_INVALIDARG 进程退出)。</summary>
     [Fact]
     public void Unsupported_items_are_hidden_not_just_greyed()
     {

@@ -107,11 +107,11 @@ Source: "发布版\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs cre
 ; 内置主 ffmpeg 的 NVENC 需要 NVIDIA 驱动 ≥610.00(nvenc API 13.1);驱动较旧的机器(实测 572.83)主 ffmpeg 直接报
 ;   "Driver does not support the required nvenc API version. Required: 13.1 Found: 13.0",而且会写出 0 字节文件。
 ; 这类机器【全靠 ffmpeg8 这个备用包】才能用上显卡编码(实测 4K 下 15~19 fps,CPU 软编只有它的几分之一)。
-; 少了它会怎样(2026-09-23 口径更新):视频处理**不会**再静默退回 CPU 软编,而是**开跑前直接报错**
+; 少了它会怎样(2026-09-23 口径更新):视频处理**不会**再静默退回 CPU 软编,而是**开跑前直接提示错误**
 ;   (「本机没有可用的硬件编码器…」,见 AlhPro.Core.CpuFallbackPolicy)——用户会明确看到"少了东西",
 ;   而不是只觉得"变慢了"。所以这一条既是功能也是排障入口,漏拷一定会在编译期就暴露。
 ; engines\ 是 gitignore、deploy.ps1 也不同步 engines,最容易漏;显式写一条的收益是:
-; **漏拷时 Inno 在编译期就报错(找不到 Source),不会发出一份"悄悄变慢"的包**。
+; **漏拷时 Inno 在编译期就提示错误(找不到 Source),不会发出一份"悄悄变慢"的包**。
 Source: "发布版\engines\ffmpeg8\*"; DestDir: "{app}\engines\ffmpeg8"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [InstallDelete]
@@ -138,7 +138,7 @@ var
   Extracted: Boolean;
 begin
   Result := True;
-  // 下载前确认(1.4GB 慢/易断,用户知情可跳过 → 安装本身不受影响,避免"卡住停止不了")
+  // 下载前确认(1.4GB 慢/易断,用户知情可跳过 → 安装本身不受影响,避免"停住停止不了")
   if MsgBox('即将从 GitHub 下载模型包(约 1.4GB,视网络 10~60 分钟,国内直连可能失败)。' + #13#10 + #13#10 +
             '点「是」开始下载(失败或中途取消的话,软件本身已经装好,可稍后用网盘完整版或手动补装);' + #13#10 +
             '点「否」跳过模型(以后想装:软件内「使用教程」有详细步骤)。', mbConfirmation, MB_YESNO) <> IDYES then
@@ -167,7 +167,7 @@ begin
     if not FileExists(ZipPath) then
     begin
       MsgBox('模型包下载失败。' + #13#10#13#10 +
-        '可能原因:网络不稳定 / GitHub 国内直连慢或被限制。' + #13#10 +
+        '可能原因:网络偶发 / GitHub 国内直连慢或被限制。' + #13#10 +
         '建议:1) 用加速器或 GitHub 镜像重试;' + #13#10 +
         '2) 询问社区拿「完整版(含模型)」网盘链接,或下载 models_v1.1.zip 手动解压;' + #13#10 +
         '3) 手动解压到 程序目录\engines\rembg\ 即可(软件内「使用教程」有详细步骤)。', mbError, MB_OK);
@@ -181,9 +181,9 @@ begin
         '-xf "' + ZipPath + '" -C "' + ExpandConstant('{app}\engines\rembg') + '"',
         '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     begin
-      MsgBox('模型包解压失败/卡住。' + #13#10#13#10 +
+      MsgBox('模型包解压失败/停住。' + #13#10#13#10 +
         '请手动解压:下载 models_v1.1.zip → 解压到 程序目录\engines\rembg\(' + #13#10 +
-        '提示:1.4GB 解压需几分钟,期间进度条看似"卡住"是正常解压中,请耐心等待;' + #13#10 +
+        '提示:1.4GB 解压需几分钟,期间进度条看似"停住"是正常解压中,请耐心等待;' + #13#10 +
         '若 10 分钟无进展,取消后用系统资源管理器解压更快)。', mbError, MB_OK);
       Result := False;
       Exit;

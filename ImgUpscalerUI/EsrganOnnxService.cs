@@ -42,7 +42,7 @@ public static class EsrganOnnxService
     }
 
     /// <summary>waifu2x ONNX 模型路径(engines/waifu2x/ waifu2x-cunet2x.onnx;nagadomi/nunif 官方导出)。
-    /// 注意:该模型输入名为 x(不是 input)——用于核显/无独显设备(waifu2x ncnn CPU 模式有 bug 会崩)。
+    /// 注意:该模型输入名为 x(不是 input)——用于核显/无独显设备(waifu2x ncnn CPU 模式有问题会退出)。
     /// <paramref name="preferredModel"/>:调用方【用户在下拉里选的 ncnn 模型名】。ONNX 侧目前只有 cunet 一份,
     /// 但若日后补上同名 ONNX(如 waifu2x-upconv_7_photo-2x.onnx),这里会优先用它 —— 否则用户在 50 系
     /// (走 ONNX)上选的模型会被【静默忽略】,画面与预期不符却查不出原因(实测:选「现实 · upconv_7_photo」
@@ -105,7 +105,7 @@ public static class EsrganOnnxService
 
     /// <summary>按所选 Real-ESRGAN 模型名解析对应的 ONNX 模型路径:动漫模型(名字含 anime,如 animevideov3/x4plus-anime)
     /// → 优先动漫 ONNX(保持动漫画质),无则通用;自转的 wdn-x4v3 → 优先它自己的 ONNX;通用模型(x4plus)→
-    /// 通用 ONNX,若无通用 ONNX 则回退动漫 ONNX(风险设备上"能用"优先于"画质精确",避免硬走会崩的 ncnn-GPU)。</summary>
+    /// 通用 ONNX,若无通用 ONNX 则回退动漫 ONNX(风险设备上"能用"优先于"画质精确",避免硬走会退出的 ncnn-GPU)。</summary>
     public static string? ResolveEsrganOnnxPath(string model)
     {
         if (model.Contains("wdn-x4v3", StringComparison.OrdinalIgnoreCase))
@@ -940,7 +940,7 @@ public static class EsrganOnnxService
     }
 
     /// <summary>ONNX 目录批处理(视频逐帧超分用):遍历 inputDir 的 PNG,逐帧 UpscaleAsync 输出到 outputDir。
-    /// 供视频超分在 50 系/无独显设备走 ONNX(不走会崩的 ncnn-vulkan)。modelPath=null 用 Real-ESRGAN。
+    /// 供视频超分在 50 系/无独显设备走 ONNX(不走会退出的 ncnn-vulkan)。modelPath=null 用 Real-ESRGAN。
     /// 【并行优化】视频超分逐帧并行:早期串行(被共享缓存锁串行化,GPU 只用了单路)。
     /// 现用 2 路独立 DirectML 会话并行(实测 2 路 ≈1.25x,tile 分块下 GPU 算力爬升;3/4 路不再增益,仅显存吃紧)。
     /// 仍保留逐帧进度 + 取消,失败帧回退原帧(不中断)。</summary>
@@ -1083,7 +1083,7 @@ public static class EsrganOnnxService
             concurrency = 1;
         }
         // 【让"批间停顿"可见】本批的推理会话已建好 = 稳定引擎"已就绪"(会话创建 + 首帧前的准备是秒级固定开销)。
-        // 视频链路每批都要走一遍这里,不说明的话用户只看到进度条在批与批之间不动,像卡死。
+        // 视频链路每批都要走一遍这里,不说明的话用户只看到进度条在批与批之间不动,像长时间无响应。
         // 只加一行进度上报(附实际耗时),推理参数/并行度/顺序一律不变。
         try
         {
@@ -1106,7 +1106,7 @@ public static class EsrganOnnxService
             Exception? fatal = null;
             // 【F4 日志卫生】逐帧失败不再逐帧打 WARN:真机诊断包里 694 条 WARN 有 676 条是同一句
             // "ONNX 超分失败(DirectML 设备 N 连续 3 次推理失败…)——该帧回退为源帧缩放",把真正有用的线索
-            // (黑帧/补帧降级那 8 条)埋掉了。改成【每批一次汇总】+ 一行明细(样本帧名 + 原因分类)。
+            // (全黑画面/补帧降级那 8 条)埋掉了。改成【每批一次汇总】+ 一行明细(样本帧名 + 原因分类)。
             // 既有统计口径(帧号/进度/去重/失败计数)一字不变:这里只是把"写日志"从每帧一次改成每批一次。
             int fallbackFrames = 0;                                   // 本批因推理失败回退源帧缩放的帧数
             var fallbackReasons = new System.Collections.Concurrent.ConcurrentDictionary<string, int>();
@@ -1250,7 +1250,7 @@ public static class EsrganOnnxService
             return;
         }
 
-        // ===== 分块保护(实测:GPU 整帧喂 1080p → DirectML OOM 崩溃;CPU 慢到 210s/帧)=====
+        // ===== 分块保护(实测:GPU 整帧喂 1080p → DirectML OOM 进程退出;CPU 慢到 210s/帧)=====
         // 【分块改为按显存自适应】此前这里写死 const int Tile = 512,而自适应函数 TileFor() 只被透明底路径用到 ——
         // 于是绝大多数图片/视频帧(不透明)一律按 512 分块。实测 8GB 卡上 1024 才是最优点且未溢出、还更快
         // (见 AlhPro.Core.RenderPolicy.OnnxTileSize 的实测锚点与"为什么上限就钉 1024")。
@@ -1294,7 +1294,7 @@ public static class EsrganOnnxService
                 && AlhPro.Core.GpuFault.IsVramShortage(ex))   // 只对"显存不足"降档;设备摘除原样上抛
             {
                 AppLogger.Warn($"⚠ ONNX 超分:显存不足,分块 {tile}→{tileLadder[li + 1]} 真降档重试"
-                    + $"(图像 {sw}×{sh},自动档 {autoTile};原因:{ex.Message.Split('\n')[0]}。不是卡住,是自动降分块保出图)");
+                    + $"(图像 {sw}×{sh},自动档 {autoTile};原因:{ex.Message.Split('\n')[0]}。不是停住,是自动降分块保出图)");
             }
         }
     }
@@ -1565,7 +1565,7 @@ public static class EsrganOnnxService
         if (gpuId == -2 && sessionOverride == null)
             gpuId = PickDevice(src.Width, src.Height);
         // 【修复 448x449 BroadcastIterator + 分块网格缝】waifu2x-cunet2x ONNX 模型要求输入宽高必须为偶数且 ≥38,
-        // 否则内部 Add 节点广播轴错配直接崩溃(真机 CPU 无 Vulkan/50系走 ONNX 已复现)。
+        // 否则内部 Add 节点广播轴错配直接进程退出(真机 CPU 无 Vulkan/50系走 ONNX 已复现)。
         // 同时该模型输出有固定内裁(实测 out = 2*in - 72,等价于每边裁 18px),导致分块贴回时按 2*in 假设错位,
         // 产生"一块一块"的网格缝(ncnn 引擎内部自会补齐,仅 ONNX 路径踩坑)。
         // 这里给输入【四周各垫 18px(边缘复制)】:模型输出恰好 = 2*内容、无偏移 → 与 RunCoreTiled 的
@@ -1761,7 +1761,7 @@ public static class EsrganOnnxService
                     // 连吃 3 次后调用方(VideoService 的 AnyDmlDeviceUnusable)会让整批立即停手、按批次回退源帧。
                     // 【F4 日志卫生】上面那条"已连续 N 次失败"只在"刚刚达上限"这一次报(计数 == 上限),
                     // 之后每帧再失败不再重复同一句 —— 真机诊断包 694 条 WARN 里 676 条是这一句,
-                    // 把黑帧/补帧降级那 8 条真正有用的线索埋掉了。抛异常的行为一字不变。
+                    // 把全黑画面/补帧降级那 8 条真正有用的线索埋掉了。抛异常的行为一字不变。
                     if (NoteDmlTransientFailure(dmDevice) && TransientStrikeCount(dmDevice) == DmlTransientStrikeLimit)
                         AppLogger.Warn($"⚠ ONNX 超分:DirectML 设备 {dmDevice} 连续 {DmlTransientStrikeLimit} 次推理失败,本进程内视为不可用——"
                             + "剩余帧按批次回退源帧(不降级到慢速 CPU);请重启软件后重试");

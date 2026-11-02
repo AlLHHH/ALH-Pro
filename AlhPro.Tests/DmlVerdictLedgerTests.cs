@@ -182,7 +182,7 @@ public class DmlVerdictLedgerTests
         Assert.True(ledger.ShouldAttempt(Domain, Model, 0, eightDaysLater));
     }
 
-    /// <summary>【2026-09-24 复审修正 · 原先这条断言把缺陷钉成了期望值】AtUnix 落在未来(时钟回拨 / RTC 偏差 /
+    /// <summary>【2026-09-24 复审修正 · 原先这条断言把问题钉成了期望值】AtUnix 落在未来(时钟回拨 / RTC 偏差 /
     /// VM 快照回滚 / 手改文件)时按「未测」处理:摘掉该条并允许重新试一次 —— 与 EngineService 的 ncnn
     /// 结论口径一致(<c>EnsureNcnnVerdictsLoaded_NoLock</c> 对未来时间戳就是丢弃 = 未测)。
     /// 【旧行为错在哪】原实现把年龄压成 0(当作"刚写下"),于是一条未来 1 年的否定结论会让这台机器

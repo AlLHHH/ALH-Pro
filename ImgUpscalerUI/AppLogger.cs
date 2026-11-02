@@ -7,7 +7,7 @@ using System.Text.Json;
 namespace ALHPro;
 
 /// <summary>
-/// 诊断日志:单文件记录用户操作与报错(含原因/堆栈),供用户分享排障。
+/// 诊断日志:单文件记录用户操作与提示错误(含原因/堆栈),供用户分享排障。
 /// 路径:%LOCALAPPDATA%\ALHPro\diagnostic.log
 /// 清理策略(两项复选框,相辅相成):按时间(丢弃早于 N 天的行)+ 按大小(超限只留最新行)。
 /// </summary>
@@ -106,8 +106,8 @@ public static class AppLogger
     /// <summary>记录一条警告(用户需注意的降级/兼容/探测失败等;同步写盘,必落日志)。</summary>
     public static void Warn(string msg) => Write("WARN ", msg, sync: true);
 
-    /// <summary>记录一条错误日志(含原因与堆栈)。错误级日志【同步写盘】——异常/崩溃瞬间资源紧张,
-    /// 走后台线程可能来不及落盘就没了,同步写保证"崩溃前最后一行"一定在日志里。</summary>
+    /// <summary>记录一条错误日志(含原因与堆栈)。错误级日志【同步写盘】——异常/进程退出瞬间资源紧张,
+    /// 走后台线程可能来不及落盘就没了,同步写保证"进程退出前最后一行"一定在日志里。</summary>
     public static void Error(string msg, Exception? ex = null)
     {
         var sb = new StringBuilder(msg);
@@ -127,7 +127,7 @@ public static class AppLogger
         try
         {
             // 后台线程写文件,避免磁盘 IO 卡 UI(日志行数多时很关键);
-            // sync=true(错误级)直接同步写,崩溃/进程被杀也不丢日志。
+            // sync=true(错误级)直接同步写,进程退出/进程被杀也不丢日志。
             Action write = () =>
             {
                 try

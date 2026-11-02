@@ -4,7 +4,7 @@ using Xunit;
 namespace AlhPro.Tests;
 
 /// <summary>
-/// 这两组判定的共同点:真机才有触发条件(转译层设备只出现在特定机器,损坏帧只出现在特定驱动),
+/// 这两组判定的共同点:真机才有触发条件(转译层设备只出现在特定机器,无效画面只出现在特定驱动),
 /// 本机 RTX 4060 复现不出来。单测是唯一能在发布前钉住它们的手段。
 /// </summary>
 public class DeviceRoutingTests
@@ -36,7 +36,7 @@ public class DeviceRoutingTests
     {
         // 真机形状:D3D12 转译层设备(#1)已从表里剔除,剩 [0 原生NVIDIA, 2 Intel];
         // 旧设置里还存着 GpuIndex=1。绝不能把 1 照传给引擎(引擎内部编号不受我们剔除影响,
-        // -g 1 照样命中转译设备并输出损坏帧),必须换成推荐的原生设备并标记重映射让上层留痕。
+        // -g 1 照样命中转译设备并输出无效画面),必须换成推荐的原生设备并标记重映射让上层留痕。
         var (id, remapped) = DeviceRouting.ResolveEngineDevice(1, new[] { 0, 2 }, 0, 3);
         Assert.Equal(0, id);
         Assert.True(remapped);
@@ -81,8 +81,8 @@ public class DeviceRoutingTests
         => Assert.True(DeviceRouting.IsAchromatic(r, g, b));
 
     [Theory]
-    [InlineData(132, 4, 4)]      // 真机损坏帧:G/B 被压到 ~4,R 保留 → 整帧红噪点
-    [InlineData(30, 4, 4)]       // 真机损坏帧实测极差 24~30 区间的低端
+    [InlineData(132, 4, 4)]      // 真机无效画面:G/B 被压到 ~4,R 保留 → 整帧红噪点
+    [InlineData(30, 4, 4)]       // 真机无效画面实测极差 24~30 区间的低端
     [InlineData(4, 132, 4)]      // 通道顺序无关:换成绿噪点同样要判死
     [InlineData(4, 4, 132)]      // 蓝噪点
     [InlineData(128, 128, 140.01)]   // 刚好越过容差(极差 12.01)
@@ -155,7 +155,7 @@ public class DeviceRoutingTests
     public void Translation_layer_device_is_skipped_even_if_named_rtx()
     {
         // 转译层设备(名字含 NVIDIA/RTX 但以 "Microsoft Direct3D12" 开头)会被打分当成独显,
-        // 但绝不能选它(输出损坏帧)。选真实 NVIDIA 独显(引擎枚举那台)。
+        // 但绝不能选它(输出无效画面)。选真实 NVIDIA 独显(引擎枚举那台)。
         var (id, _) = DeviceRouting.ResolveEngineDevice(1,
             new[] { (0, "Microsoft Direct3D12 (NVIDIA GeForce RTX 5070 Ti)"), (2, "NVIDIA GeForce RTX 5070 Ti") }, 3);
         Assert.Equal(2, id);
@@ -191,14 +191,14 @@ public class DeviceRoutingTests
     [InlineData(127, 127, 127, 0, 126.87, 5424)]      // 均值对得上、通道也均衡,但被抹成一块平的 → 靠方差抓
     [InlineData(151, 151, 151, 5424, 126.87, 5424)]   // 偏差 24.13 > 容差
     [InlineData(127, 127, 127, 1300, 126.87, 5424)]   // 方差比 0.24 < 0.25:结构基本被抹平
-    [InlineData(132, 4, 4, 5424, 126.87, 5424)]       // 真机损坏帧(整帧红噪点):颜色那一层拦下
+    [InlineData(132, 4, 4, 5424, 126.87, 5424)]       // 真机无效画面(整帧红噪点):颜色那一层拦下
     public void Broken_interp_output_is_rejected(double r, double g, double b, double var, double expMean, double expVar)
         => Assert.False(DeviceRouting.IsPlausibleInterpOf(r, g, b, var, expMean, expVar));
 
     [Fact]
     public void Interp_judgement_is_calibrated_wide_against_measured_values()
     {
-        // 容差必须【远宽于】实测偏差(≤0.24),又【远窄于】损坏值(黑/白帧偏差 127)
+        // 容差必须【远宽于】实测偏差(≤0.24),又【远窄于】损坏值(黑/纯白画面偏差 127)
         Assert.True(DeviceRouting.InterpProbeMeanTolerance >= 0.24 * 20);
         Assert.True(DeviceRouting.InterpProbeMeanTolerance <= 127 / 4);
         // 结构门槛必须【远低于】实测方差比(1.00),又不至于形同虚设

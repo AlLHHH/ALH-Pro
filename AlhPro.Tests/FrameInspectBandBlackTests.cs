@@ -6,12 +6,12 @@ using Xunit;
 namespace AlhPro.Tests;
 
 /// <summary>
-/// 带状黑帧判定(FrameInspect.IsBandBlack / IsDefectiveFrame)的单测 —— 本轮"坏帧静默进成片"修复的承重测试。
+/// 带状全黑画面判定(FrameInspect.IsBandBlack / IsDefectiveFrame)的单测 —— 本轮"无效画面静默进成片"修复的承重测试。
 /// 【为什么需要它】实测(RTX 4060 Laptop / waifu2x-ncnn-vulkan 20250915 + models-cunet,2x,1080×1920 目录批,
-/// 6 次里 5 次):ncnn-vulkan 的 vkQueueSubmit 失败会输出【每帧下 2/3 全黑、上 1/3 正常】的坏帧 —— 退出码 0、
-/// 引擎不报错、ffmpeg blackdetect 也不报。它只黑约 66% 的像素,所以旧的整帧量词判据(≥95% 近黑)判它"正常",
-/// 坏帧于是静默进成片、零日志、ncnnUnreliable 不置位(`ncnnUnreliable` 这个置位机制已于 2026-09-27 随"删掉事后
-/// 黑帧判断"整条删除,此处只作历史说明;本文件钉的是**判据本身**,该判据现在只服务单图/分块成品那条守卫)。本文件用与生产完全相同的采样几何(SampleGrid)钉住新判据。
+/// 6 次里 5 次):ncnn-vulkan 的 vkQueueSubmit 失败会输出【每帧下 2/3 全黑、上 1/3 正常】的无效画面 —— 退出码 0、
+/// 引擎不提示、ffmpeg blackdetect 也不报。它只黑约 66% 的像素,所以旧的整帧量词判据(≥95% 近黑)判它"正常",
+/// 无效画面于是静默进成片、零日志、ncnnUnreliable 不置位(`ncnnUnreliable` 这个置位机制已于 2026-09-27 随"删掉事后
+/// 全黑画面判断"整条删除,此处只作历史说明;本文件钉的是**判据本身**,该判据现在只服务单图/分块成品那条守卫)。本文件用与生产完全相同的采样几何(SampleGrid)钉住新判据。
 /// 注意:这里不修改 FrameInspectTests.cs 的既有用例 —— 整帧近黑的老语义必须保持原样。
 /// </summary>
 public class FrameInspectBandBlackTests
@@ -31,7 +31,7 @@ public class FrameInspectBandBlackTests
         return sums;
     }
 
-    // ---------- ① 整帧全黑 → 缺陷 ----------
+    // ---------- ① 整帧全黑 → 问题 ----------
 
     [Fact]
     public void Whole_frame_black_is_defective()
@@ -45,7 +45,7 @@ public class FrameInspectBandBlackTests
         Assert.True(FrameInspect.IsDefectiveFrame(sums, sums.Length, w, h));
     }
 
-    // ---------- ② 下 2/3 全黑、上 1/3 正常 → 缺陷【本次要修的形态】 ----------
+    // ---------- ② 下 2/3 全黑、上 1/3 正常 → 问题【本次要修的形态】 ----------
 
     [Fact]
     public void Bottom_two_thirds_black_is_defective_even_though_whole_frame_is_not_near_black()
@@ -56,7 +56,7 @@ public class FrameInspectBandBlackTests
         var sums = BuildSamples(w, h, (_, y) => y < topThirdRows ? Bright : Dark);
 
         // 【承重断言】旧口径(整帧量词)确实抓不到它:只黑约 2/3 像素,达不到 95%
-        // —— 这正是"坏帧静默进成片"的根因,也是本修复存在的理由
+        // —— 这正是"无效画面静默进成片"的根因,也是本修复存在的理由
         Assert.False(FrameInspect.IsNearBlack(sums, sums.Length));
 
         // 新口径(条带)必须抓到:中/下两条 1/3 条带 100% 全黑
@@ -64,7 +64,7 @@ public class FrameInspectBandBlackTests
         Assert.True(FrameInspect.IsDefectiveFrame(sums, sums.Length, w, h));
     }
 
-    // ---------- ③ 全正常 → 不缺陷 ----------
+    // ---------- ③ 全正常 → 不问题 ----------
 
     [Fact]
     public void Ordinary_frame_is_not_defective()
@@ -78,7 +78,7 @@ public class FrameInspectBandBlackTests
         Assert.False(FrameInspect.IsDefectiveFrame(sums, sums.Length, w, h));
     }
 
-    // ---------- ④ 正常暗场(整体偏暗但非全黑)→ 不缺陷【不能误杀】 ----------
+    // ---------- ④ 正常暗场(整体偏暗但非全黑)→ 不问题【不能误杀】 ----------
 
     [Fact]
     public void Dark_but_legit_scene_is_not_defective()
@@ -99,7 +99,7 @@ public class FrameInspectBandBlackTests
     public void Letterbox_bars_are_not_defective()
     {
         // 常见宽银幕黑边(1920×1080 帧里放 2.39:1,上下各约 12.8% 高)不填满任何一条 1/3 条带
-        // —— 这是"三等分"这个切法能成立的边界保障:要被判缺陷,画面里得有连续 ≥1/3 高的纯黑区。
+        // —— 这是"三等分"这个切法能成立的边界保障:要被判为无效,画面里得有连续 ≥1/3 高的纯黑区。
         const int w = 1920, h = 1080;
         FrameInspect.SampleGrid(w, h, out int rows, out int cols);
         int barRows = (int)Math.Round(rows * 0.128);
@@ -133,18 +133,18 @@ public class FrameInspectBandBlackTests
         int y0 = rows / 3, y1 = 2 * rows / 3;      // 中条带
         int bandRows = y1 - y0;
 
-        // 中条带里 90% 的行全黑 → 该条带暗像素比例约 89.5% < 95%:不判缺陷(避免误杀)
+        // 中条带里 90% 的行全黑 → 该条带暗像素比例约 89.5% < 95%:不判为无效(避免误杀)
         int darkRows90 = bandRows * 90 / 100;
         var loose = BuildSamples(w, h, (_, y) => y >= y0 && y < y0 + darkRows90 ? Dark : Bright);
         Assert.False(FrameInspect.IsBandBlack(loose, rows, cols));
 
-        // 提到 ≥95% 就要判缺陷
+        // 提到 ≥95% 就要判为无效
         int darkRows95 = (int)Math.Ceiling(bandRows * 0.95);
         var tight = BuildSamples(w, h, (_, y) => y >= y0 && y < y0 + darkRows95 ? Dark : Bright);
         Assert.True(FrameInspect.IsBandBlack(tight, rows, cols));
     }
 
-    // ---------- 采样几何与数据不符 / 空数据:一律不判缺陷(拿不准不误判) ----------
+    // ---------- 采样几何与数据不符 / 空数据:一律不判为无效(拿不准不误判) ----------
 
     [Fact]
     public void Mismatched_or_empty_sample_data_is_not_defective()

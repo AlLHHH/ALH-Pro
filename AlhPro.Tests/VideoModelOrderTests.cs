@@ -32,7 +32,7 @@ public class VideoModelOrderTests
     /// 所以**不是恒等映射**,必须逐条钉住:
     ///   旧 0..4(五支官方放大模型)不动;旧 5/6/7(real2x / v2 / v3)全部 → 0;旧 8(Anime4K)→ 5。
     /// 【为什么每条都要单测】漏一条就是"老用户存的 v3 变成了 x4plus"或"1x 档落到放大模型上"这种静默错档 ——
-    /// 编译、启动、跑视频都不会报错。</summary>
+    /// 编译、启动、跑视频都不会提示错误。</summary>
     [Theory]
     [InlineData(0, 0)]   // animevideov3 不动
     [InlineData(1, 1)]   // general-x4v3 不动
@@ -288,7 +288,7 @@ public class VideoModelOrderTests
 
     /// <summary>**契约测试**:四支自训 2x 模型与蓝色「测试」药丸必须**彻底消失**(用户 2026-10-14:
     /// "还有那几个测试的模型可以删掉了")。这条与 Xaml_dropdown_order_matches_the_migration_table 互补:
-    /// 那条管"顺序对不对",这条管"删干净没有" —— 残留一项会让迁移表与下拉错位(而编译、启动、跑视频都不报错)。
+    /// 那条管"顺序对不对",这条管"删干净没有" —— 残留一项会让迁移表与下拉错位(而编译、启动、跑视频都不提示)。
     /// 【历史 · 为什么药丸当初会存在】那时四支自训模型要标"这不是官方权重":药丸宽 33px,收起状态下
     /// 文字右侧只剩约 18px 放不下,所以左栏从 300 加宽到 322;模型删了 ⇒ 药丸、宽度、文案一起退回。</summary>
     [Fact]
@@ -315,7 +315,7 @@ public class VideoModelOrderTests
 
     /// <summary>**契约测试**:下拉里那五支官方放大模型的权重必须真的在 `models\` 下(存在才检查,便于无模型的全新克隆)。
     /// 【为什么测】引擎按 `models/{名字}.param` 取权重,Tag 与文件名对不上就是运行时"找不到模型"——
-    /// 实测该引擎缺权重时**exit=0 不报错、只画坏帧**(2026-09-15:2x 权重配 -s 4 = 镜像平铺的错帧)。
+    /// 实测该引擎缺权重时**exit=0 不提示、只画无效画面**(2026-09-15:2x 权重配 -s 4 = 镜像平铺的错帧)。
     /// Rev12 起自训那几支的权重已删除,这里只查官方五支(Anime4K 走着色器,**没有权重文件**)。
     /// ⚠ **animevideov3 是个例外**:它的三档权重是**按倍率分文件**的
     /// (`realesr-animevideov3-x2/-x3/-x4.param`,没有裸 `realesr-animevideov3.param`)——
@@ -341,7 +341,7 @@ public class VideoModelOrderTests
             Assert.True(System.IO.File.Exists(System.IO.Path.Combine(modelsDir, tag + ".bin")),
                 $"{modelsDir} 下缺少 {tag}.bin");
         }
-        // animevideov3:三档同名的倍率后缀(缺哪一档,那一档的目标倍数就会静默出坏帧)
+        // animevideov3:三档同名的倍率后缀(缺哪一档,那一档的目标倍数就会静默出无效画面)
         foreach (var suffix in new[] { "-x2", "-x3", "-x4" })
         {
             Assert.True(System.IO.File.Exists(System.IO.Path.Combine(modelsDir, "realesr-animevideov3" + suffix + ".param")),

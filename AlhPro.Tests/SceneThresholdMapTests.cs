@@ -149,9 +149,9 @@ public class SceneThresholdMapTests
     /// 同时两处实测运动帧对(镜头推移 = 不是切点)必须**不**判切。
     ///
     /// 后半(**把代价写成规格**):这条滑块的语义就是"调大 = 主动少切" —— 用户要的是"快剪素材别在每一处
-    /// 切换都分段,那样每段都要重新启动一次补帧引擎"。所以顶档放掉一部分真切**不是缺陷,是这个旋钮的作用**,
+    /// 切换都分段,那样每段都要重新启动一次补帧引擎"。所以顶档放掉一部分真切**不是问题,是这个旋钮的作用**,
     /// 代价(那些位置照常插帧,可能出现一帧跨切混合)已经写在界面 tooltip 上。
-    /// 这里把它钉住,是为了防止后来人把"漏切"当成 bug、又悄悄把方向改回去(那会让用户的问题原样复现)。</summary>
+    /// 这里把它钉住,是为了防止后来人把"漏切"当成 问题、又悄悄把方向改回去(那会让用户的问题原样复现)。</summary>
     [Fact]
     public void Default_tier_keeps_every_measured_real_cut_and_the_strict_tier_trades_them_away()
     {
@@ -167,7 +167,7 @@ public class SceneThresholdMapTests
         Assert.False(SceneCutJudge.IsCut(25.42, 1.0, 1.09, def));
         Assert.False(SceneCutJudge.IsCut(24.10, 1.0, 0.94, def));
 
-        // ---- 顶档的代价(如实钉住,别当 bug 修)----
+        // ---- 顶档的代价(如实钉住,别当 问题 修)----
         var hi = SceneThresholdMap.For(SceneThresholdMap.SliderMax);
         Assert.False(SceneCutJudge.IsCut(57.11, 1.0, 0.81, hi));   // 连帧差闸都过不了(顶档 75)
         Assert.False(SceneCutJudge.IsCut(80.01, 1.0, 0.35, hi));   // 过了帧差闸,但"清晰度只掉 65%"不够顶档要的 80%

@@ -15,7 +15,7 @@
         <EnableMsixTooling>true</EnableMsixTooling>
         <WindowsPackageType>None</WindowsPackageType>
         <!-- 自包含部署:Windows App Runtime 一起打包进输出目录,发给别人直接运行,
-             无需安装任何运行时(框架依赖模式才需要对方装对应版本运行时,装错版本会闪退) -->
+             无需安装任何运行时(框架依赖模式才需要对方装对应版本运行时,装错版本会启动即退出) -->
         <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
 
         <!-- Project Options -->
@@ -66,12 +66,12 @@
 
     <!-- ===== 关键:VC++ 运行库(自包含部署必须手动带上)=====
          Windows App SDK 自包含模式(SelfContained=true)不自动携带 VC++ 运行库,
-         缺 msvcp140.dll 的干净电脑启动即闪退(转圈后无窗口)。
+         缺 msvcp140.dll 的干净电脑启动即启动即退出(转圈后无窗口)。
          微软许可允许再分发;从仓库 assets\runtime 复制,任何人 clone 后都可构建。
          ⚠ vcruntime140_threads.dll 必须带:新版组件依赖它导出
          __std_parallel_algorithms_hw_threads;缺它报"无法定位程序输入点"(真机实测)。
          ⚠ 不带 d3dcompiler_47.dll:它是 Windows 10/11 系统自带 DLL,系统版本已含所需符号;
-         随包带反而会"程序目录旧文件覆盖系统新版"引发"无法定位程序输入点"报错(真机实测)。 -->
+         随包带反而会"程序目录旧文件覆盖系统新版"引发"无法定位程序输入点"提示错误(真机实测)。 -->
     <ItemGroup>
         <None Include="..\assets\runtime\msvcp140.dll" Link="msvcp140.dll" CopyToOutputDirectory="PreserveNewest" />
         <None Include="..\assets\runtime\vcruntime140.dll" Link="vcruntime140.dll" CopyToOutputDirectory="PreserveNewest" />
