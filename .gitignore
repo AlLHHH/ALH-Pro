@@ -64,3 +64,6 @@ website/src/*.tar.gz
 # 同目录的 README-corresponding-source.txt(约 11 KB:三个包的大小/SHA256/树对象 + 完整
 # configuration 行 + 重建步骤)是**入库**的,这样源码包的来历可随仓库审阅。
 website/
+
+# 本地证据与投诉材料,不公开
+证据包_*/
