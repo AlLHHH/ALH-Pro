@@ -12,6 +12,12 @@ public sealed partial class MainPage : Page
     private VideoView? _videoView;
     // 【2026-09-23】原先这里有一个视频抠图页的缓存字段;该功能整条下线,字段一并删除。
     private AudioView? _audioView;
+    // 【2026-11-02】启动即恢复「音频处理」时,页面必须在窗口就绪(Loaded)之后再挂载。
+    // 原因:MainPage 构造函数里就把音频页塞进 ContentRoot,会让它赶在窗口/合成器就绪前参与首次测量,
+    // 真机实测偶发 XAML 层未捕获异常(0xC000027B),表现为"软件一打开就退出、没有任何提示"。
+    // 同一次进程里从别的页点「音频处理」进去不会触发(那时窗口已就绪)。
+    private bool _mainPageLoaded;
+    private string? _deferredViewTag;
     private TutorialView? _tutorialView;
     private string _currentTag = "upscale";
     private int _startupPageIndex;   // 构造时解析的启动页(0/1/2),供 Loaded 弹窗逻辑引用
@@ -45,6 +51,33 @@ public sealed partial class MainPage : Page
         // MainPage + 挂载视图 → 窗口一出现就是完整界面(用户要求:等渲染完再开窗口)
         {
             int page0 = _startupPage >= 0 ? _startupPage : LoadLastPage();
+            // 【2026-11-02 用户机器实测 · 启动即退出 0xC000027B】上次停在「音频处理」时,启动过程里只要
+            // 把音频页塞进内容区(构造期或 Loaded 期都一样)就会在 Microsoft.UI.Xaml.dll 里抛 stowed
+            // exception 把进程带走,连 App 的兜底都来不及;而运行中手动点进音频页完全正常。
+            // 在根因查清前:启动时不恢复音频页,先落在图片放大(退出时仍会正常记录,不影响其它页面)。
+            if (page0 == 3)
+            {
+                AppLogger.Info("上次停在「音频处理」页:本次先打开「图片放大」(启动即恢复音频页会触发底层崩溃,已临时规避)");
+                page0 = 0;
+            }
+            // 【2026-11-02】还原页崩溃兜底:还原前埋一个标记,页面上来 3 秒后删掉;
+            // 下次启动若还看到这个标记,说明上一次就是在还原这一步被打断的 ⇒ 本次一律从图片放大开始。
+            bool lastStartCrashedWhileRestoring = File.Exists(RestoreGuardFile);
+            if (lastStartCrashedWhileRestoring)
+            {
+                try { File.Delete(RestoreGuardFile); } catch { }
+                AppLogger.Info("检测到上一次启动在还原界面的过程中退出:本次从「图片放大」开始,不再还原上次界面");
+                page0 = 0;
+            }
+            try
+            {
+                if (page0 != 0)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(RestoreGuardFile)!);
+                    File.WriteAllText(RestoreGuardFile, DateTime.Now.ToString("s"));
+                }
+            }
+            catch { }
             _startupPageIndex = page0;
             // 【2026-09-23 修 A2 · 这一行就是那个 问题】原来是把"启动页编号"**直接**赋给导航列表的
             // SelectedIndex —— 当时两套编号并不一致(启动页 2 = 视频处理;而导航列表第 3 项才是视频处理,
@@ -56,7 +89,27 @@ public sealed partial class MainPage : Page
         }
         Loaded += async (_, _) =>
         {
-            // 首个弹窗/检查类任务(视图已在构造时挂载)
+            // 窗口与合成器就绪:启动时被延后的页面(目前只有音频处理)在这里补挂载
+            _mainPageLoaded = true;
+            if (_deferredViewTag is { } pending)
+            {
+                _deferredViewTag = null;
+                try { ShowView(pending); }
+                catch (Exception ex) { AppLogger.Error($"延后挂载视图失败({pending})", ex); }
+            }
+            // 【2026-11-02】界面上来 3 秒后撤掉「还原中」标记:3 秒内没崩 ⇒ 这次还原是安全的
+            try
+            {
+                var timer = this.DispatcherQueue.CreateTimer();
+                timer.Interval = TimeSpan.FromSeconds(3);
+                timer.IsRepeating = false;
+                timer.Tick += (_, _) =>
+                {
+                    try { if (File.Exists(RestoreGuardFile)) File.Delete(RestoreGuardFile); } catch { }
+                };
+                timer.Start();
+            }
+            catch { }
             // 正式版欢迎 + 用户协议:仅第一次启动显示;同意后记标记,以后不再弹;拒绝则退出(非内测,已正式发布)
             if (!File.Exists(BetaAcceptedFile) && !await ShowBetaNoticeAsync())
             {
@@ -1320,11 +1373,37 @@ public sealed partial class MainPage : Page
         }
         else if (tag == "audio")
         {
-            AppLogger.Info("进入页面:音频处理");
-            _audioView ??= new AudioView();
-            _audioView.StatusChanged -= OnStatusChanged;
-            _audioView.StatusChanged += OnStatusChanged;
-            ContentRoot.Children.Add(_audioView);
+            // 启动恢复路径:窗口还没就绪时先记账,等 Loaded 再挂(见字段注释)
+            if (!_mainPageLoaded)
+            {
+                AppLogger.Info("音频页延后到窗口就绪后再挂载(启动恢复路径)");
+                _deferredViewTag = "audio";
+                return;
+            }
+            // 【2026-11-02】原来这里没有 try/catch:音频页构造里会建 MediaPlayer(WinRT COM 对象),
+            // 在"启动即恢复上次停在音频页"这条路径上它偶发抛 XAML 层的未捕获异常(0xC000027B),
+            // 于是软件一打开就退出、连错误框都来不及出。这里补上与图片页/视频页同样的兜底:
+            // 记日志 + 在内容区显示原因,绝不把整个进程带走。
+            try
+            {
+                AppLogger.Info("进入页面:音频处理");
+                _audioView ??= new AudioView();
+                _audioView.StatusChanged -= OnStatusChanged;
+                _audioView.StatusChanged += OnStatusChanged;
+                ContentRoot.Children.Add(_audioView);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error($"音频页加载失败 HRESULT=0x{ex.HResult:X8}", ex);
+                _audioView = null;
+                ContentRoot.Children.Add(new TextBlock
+                {
+                    Text = "音频处理页加载失败(已记录到诊断日志):\n" + ex.Message,
+                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                    FontSize = 13,
+                    Margin = new Microsoft.UI.Xaml.Thickness(20),
+                });
+            }
         }
         else if (tag == "tutorial")
         {
@@ -2359,6 +2438,9 @@ public sealed partial class MainPage : Page
     private static string StartupFile => ParaPaths.SettingsFile("startup-page.txt");
     // 最近一次使用的界面(切换即写,退出时也写):"上次退出界面"模式启动用
     private static string LastPageFile => ParaPaths.SettingsFile("last-page.txt");
+    // 【2026-11-02】还原界面的进度标记:还原前写、界面稳定 3 秒后删。
+    // 下次启动还看到它 ⇒ 上一次是在还原这一步被崩掉的,本次不还原(见构造函数)。
+    private static string RestoreGuardFile => ParaPaths.SettingsFile("restore-guard.txt");
 
     private void LoadStartupPage()
     {

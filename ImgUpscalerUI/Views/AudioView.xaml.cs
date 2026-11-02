@@ -187,7 +187,16 @@ public sealed partial class AudioView : UserControl
         this.InitializeComponent();
         LoadSettings();   // 恢复上次:降噪/AI分离/响亮/低切/清晰/输出格式
         _playStateHandler = PlayStateChanged;
-        GetMediaPlayer();   // 首次创建(之后由 GetMediaPlayer 惰性重建)
+        // 【2026-11-02】首次创建延后到页面进可视树(Loaded),不在构造函数里建。
+        // 原因:设了「启动即恢复上次界面」且上次停在音频页时,构造期 new MediaPlayer()(WinRT COM)
+        // 会赶在窗口/合成器就绪之前执行,实测偶发抛 XAML 层未捕获异常(0xC000027B),
+        // 表现就是"软件一打开就退出、什么提示都没有"。Loaded 之后再建,PreviewAudio 里
+        // GetMediaPlayer() 也会惰性补建,功能不受影响。
+        Loaded += (_, _) =>
+        {
+            try { GetMediaPlayer(); }
+            catch (Exception ex) { LogPlaybackIssue("初始化", ex); }
+        };
         // 页面卸载时释放 MediaPlayer(WinRT COM 对象,持有解码/渲染管线;不释放会泄漏,页面重建即多一个实例)。
         // 【必须同时置 null】:页面实例被 MainPage 缓存复用,不置 null 就没有任何重建路径(见 GetMediaPlayer)。
         Unloaded += (_, _) =>
