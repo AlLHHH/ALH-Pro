@@ -3659,7 +3659,7 @@ public sealed partial class VideoView : UserControl
     {
         int added = 0;
         // 【2026-11-05】批量导入时逐文件 ffprobe,可能几十秒没动静(用户以为卡死)⇒ 列表上方给一个进度框,
-        // 带「取消导入」:取消后本轮已入列的视频整批撤掉,不留半截(用户要求)。
+        // 带「取消导入」:取消时【已经导入成功的保留】,只丢掉正在探测的这一条(用户 2026-11-05 要求)。
         int importTotal = paths.Length;
         int importIndex = 0;
         bool multi = importTotal > 1;
@@ -3704,6 +3704,8 @@ public sealed partial class VideoView : UserControl
                 FpsProbe = await Task.Run(() => VideoService.ProbeFps(p) ?? ""),   // 后台跑 ffprobe,避免逐文件卡 UI 线程
                 Thumb = null,
             };
+            // 探测期间点了「取消导入」:这一条算"导入一半",不入列;前面已经导入成功的照常保留
+            if (_importCts?.IsCancellationRequested == true) { cancelled = true; break; }
             _videos.Add(item);
             batchItems.Add(item);
             added++;
@@ -3721,10 +3723,9 @@ public sealed partial class VideoView : UserControl
             {
                 if (cancelled)
                 {
-                    // 取消:这一批已经入列的全部撤掉,不留半截"导入一半"的项目
-                    foreach (var it in batchItems) { try { _videos.Remove(it); } catch { } }
-                    added = 0;
-                    AppLogger.Info($"导入已取消:回滚本批 {batchItems.Count} 个视频(共 {importTotal} 个待导入)");
+                    // 取消:只丢"导入一半"的那一条(它本来就没入列),已导入成功的全部保留
+                    int skippedTail = Math.Max(0, importTotal - batchItems.Count);
+                    AppLogger.Info($"导入已取消:保留已导入 {batchItems.Count} 个,未导入 {skippedTail} 个(共 {importTotal} 个)");
                 }
                 ImportBox.Visibility = Visibility.Collapsed;
                 ImportBar.IsIndeterminate = false;
