@@ -2426,10 +2426,11 @@ public static class VideoService
                     // 只有"超分与补帧都要真跑"时顺序才有意义;其余情况保持 upscaleFirst 的原值(全局开关口径)。
                     bool calibPrefEsrgan = upGpu >= 0 && engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan();
                     bool calibPrefWaifu2x = upGpu >= 0 && engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx);
+                    bool calibNcnnProbePassed = EngineService.NcnnProbePassed(engine, upGpu);
                     bool calibOnnx = AlhPro.Core.UpscaleBackendPlan.UseOnnx(engine, upGpu, calibPrefEsrgan, calibPrefWaifu2x,
-                        fastMode);
+                        fastMode, calibNcnnProbePassed);
                     string calibBackend = AlhPro.Core.UpscaleBackendPlan.DescribeBackend(engine, upGpu, calibPrefEsrgan,
-                        calibPrefWaifu2x, fastMode, upOnnxDml);
+                        calibPrefWaifu2x, fastMode, upOnnxDml, calibNcnnProbePassed);
                     var calibBook = CalibMemory.All();
                     string calibMachineKey = CalibMemory.MachineKeyOf();
                     int calibEngineScale = Math.Max(1, AlhPro.Core.EngineScalePolicy.Decide(engine, model, upScaleNow).EngineScale);
@@ -3003,8 +3004,12 @@ public static class VideoService
                             {
                                 bool onnxPreferredEsrgan = upGpu >= 0 && engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan();
                                 bool onnxPreferredWaifu2x = upGpu >= 0 && engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx);
+                                // 【2026-11-05】把"ncnn 实测通过"一并交给判定:兼容模式不再无条件压 ONNX(见 UseOnnx 注释)。
+                                bool ncnnProbePassed = EngineService.NcnnProbePassed(engine, upGpu);
+                                if (ncnnProbePassed && fastMode)
+                                    AppLogger.Info("兼容模式已开,但该卡 ncnn 实测可用 → 仍走 ncnn-Vulkan(只按兼容模式降 tile/批大小)");
                                 if (AlhPro.Core.UpscaleBackendPlan.UseOnnx(engine, upGpu, onnxPreferredEsrgan, onnxPreferredWaifu2x,
-                                        fastMode))
+                                        fastMode, ncnnProbePassed))
                                     onnxModelPath = engine == "waifu2x"
                                         ? EsrganOnnxService.FindWaifu2xModel(model)
                                         : EsrganOnnxService.ResolveEsrganOnnxPath(model);

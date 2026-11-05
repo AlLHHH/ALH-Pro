@@ -888,6 +888,16 @@ public static partial class EngineService
         catch { return null; }
     }
 
+    /// <summary>【2026-11-05】这张卡上该引擎**是否已经有 ncnn 实测通过的结论**。
+    /// 只回答"测过且通过"这一件事:没测过(false)、测出不可用(false)、引擎不适用(false)都不算通过。
+    /// 用途:兼容模式(快模式)原本无条件改走 ONNX,不参考探测结果 —— 详见
+    /// <see cref="AlhPro.Core.UpscaleBackendPlan.UseOnnx"/> 的 2026-11-05 修订。
+    public static bool NcnnProbePassed(string engine, int gpuId)
+    {
+        try { return TryGetEngineVerdictSummary(engine, gpuId) == true; }
+        catch { return false; }
+    }
+
     // 【2026-09-24】这里曾有一个便捷入口 `NcnnProbeModel(tag)`(把"伪模型"回落成 null = 探引擎默认)。
     // 现在所有调用点都改用 <see cref="AlhPro.Core.NcnnProbePlan.For"/> —— 它能表达更准的三件事:
     // ① 走着色器的条目**根本不探测**(回落成"探默认模型"仍会白等一分钟，并可能写出一条引擎级结论);

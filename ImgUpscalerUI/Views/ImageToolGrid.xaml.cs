@@ -97,8 +97,20 @@ public sealed partial class ImageToolGrid : UserControl
     // ---------- 列表管理 ----------
     public async Task AddImagesAsync(IEnumerable<string> paths)
     {
-        foreach (var p in paths)
+        // 【2026-11-05】批量导入时逐张解码/转码,几十张就是几十秒没动静(用户以为卡死)。
+        // 只在表头计数处显示「正在导入 3/80」,不动导入顺序、不改解码方式、不改变任何结果。
+        var pathList = paths as System.Collections.Generic.IList<string> ?? paths.ToList();
+        int impTotal = pathList.Count, impIndex = 0;
+        try
         {
+        foreach (var p in pathList)
+        {
+            impIndex++;
+            if (impTotal > 1)
+            {
+                ListCount.Text = $"正在导入 {impIndex}/{impTotal}:{Path.GetFileName(p)}";
+                await Task.Yield();   // 先让这行画出来,再开始解码
+            }
             var path = p;
             // WebP/HEIC/HEIF/AVIF 引擎(System.Drawing)不支持 → WinRT 自动转码为 PNG(存应用私有目录,启动自动清理)
             var ext = Path.GetExtension(path);
@@ -159,7 +171,12 @@ public sealed partial class ImageToolGrid : UserControl
             try { item.Thumb = new BitmapImage(new Uri(path)); } catch (Exception) { }
             Items.Add(item);
         }
-        UpdateListState();
+        }
+        finally
+        {
+            // 收尾统一刷新表头计数(导入中出现过临时文案,这里必定覆盖掉)
+            UpdateListState();
+        }
     }
 
     /// <summary>用 WinRT 图像解码器把引擎/System.Drawing 不支持的格式(WebP/HEIC/HEIF)转码为 PNG。

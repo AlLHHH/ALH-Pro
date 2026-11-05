@@ -28,18 +28,27 @@ public static class UpscaleBackendPlan
     /// <paramref name="gpuId"/> = 超分用的 GPU 序号(&lt;0 = CPU/未探测到);
     /// <paramref name="onnxPreferredEsrgan"/> = `EngineService.ShouldUseOnnxEsrgan()`;
     /// <paramref name="onnxPreferredWaifu2x"/> = `EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx`;
-    /// <paramref name="fastMode"/> = 快模式(ONNX 在中低端 GPU 上更快)。
+    /// <paramref name="fastMode"/> = 兼容模式(弱设备降低显存占用)。
+    /// <param name="ncnnProbePassed"/> = 该引擎在这张卡上**已经有 ncnn 实测通过的结论**
+    /// (`EngineService.NcnnProbePassed(engine, gpuId)`;没测过 / 测出不可用 = false)。
+    /// 【2026-11-05 修订 · 兼容模式不再无条件压 ONNX】原真值表 `onnxPreferred || fastMode` 让兼容模式
+    /// **绕开真机探测结论**直接改走 ONNX 稳定引擎。实测后果(2026-11-04 用户诊断包,RTX 3050 Laptop 4GB):
+    /// 同机 ncnn 探测通过,却因勾了兼容模式走 ONNX,1920×1080→3840×2160 每帧约 11 秒
+    /// (1914 帧 ≈ 6 小时),比 ncnn 慢一个数量级。兼容模式的本来目的是降显存(tile/批大小),不是换引擎;
+    /// 既然这台卡的 ncnn 已实测能跑,就不该被兼容模式踢到 ONNX。
+    /// ⇒ 只有**没有实测通过结论**时,兼容模式才压 ONNX;显存压力仍由兼容模式原有的 tile/批大小缩减承担。
     /// 【2026-09-27】原来的第 5 个参数 `bool ncnnUnreliable`(判黑中途置位 ⇒ 后续批次改走 ONNX)
     /// 随"事后判黑"一起删除:生产调用点当时已全传 `false`,留着就是永不触发的死参数。</summary>
     public static bool UseOnnx(string? engine, int gpuId, bool onnxPreferredEsrgan, bool onnxPreferredWaifu2x,
-        bool fastMode)
+        bool fastMode, bool ncnnProbePassed = false)
     {
         if (gpuId < 0)
             // 手动选 CPU:waifu2x/realesrgan 的 ncnn CPU 模式在部分机器崩 → 直接 ONNX。
             // Real-CUGAN 没有 ONNX 路径,这里返回 false(与重构前逐字一致)。
             return engine == "realesrgan" || engine == "waifu2x";
-        if (engine == "realesrgan") return onnxPreferredEsrgan || fastMode;
-        if (engine == "waifu2x") return onnxPreferredWaifu2x || fastMode;
+        bool fastModeWantsOnnx = fastMode && !ncnnProbePassed;
+        if (engine == "realesrgan") return onnxPreferredEsrgan || fastModeWantsOnnx;
+        if (engine == "waifu2x") return onnxPreferredWaifu2x || fastModeWantsOnnx;
         return false;
     }
 
@@ -98,9 +107,9 @@ public static class UpscaleBackendPlan
     /// realcugan 没有 ONNX 通道 ⇒ 只要 GPU 可用就是 <see cref="NcnnVulkan"/>(它的 CPU 档会在更早处直接拒绝)。
     /// 【2026-09-27】`ncnnUnreliable` 死参数已从签名移除(与 <see cref="UseOnnx"/> 同步)。</summary>
     public static string DescribeBackend(string? engine, int gpuId, bool onnxPreferredEsrgan, bool onnxPreferredWaifu2x,
-        bool fastMode, bool onnxDml)
+        bool fastMode, bool onnxDml, bool ncnnProbePassed = false)
     {
-        if (!UseOnnx(engine, gpuId, onnxPreferredEsrgan, onnxPreferredWaifu2x, fastMode))
+        if (!UseOnnx(engine, gpuId, onnxPreferredEsrgan, onnxPreferredWaifu2x, fastMode, ncnnProbePassed))
             return gpuId >= 0 ? NcnnVulkan : Unknown;   // 没 GPU 又没 ONNX 通道(realcugan)= 后端未确认,不许落盘
         return OnnxDevice(gpuId, onnxDml) == -1 ? OnnxCpu : OnnxDml;
     }

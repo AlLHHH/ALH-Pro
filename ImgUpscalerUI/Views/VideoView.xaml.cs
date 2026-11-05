@@ -3643,8 +3643,25 @@ public sealed partial class VideoView : UserControl
     private async Task AddVideosAsync(string[] paths)
     {
         int added = 0;
+        // 【2026-11-05】批量导入时逐文件 ffprobe,可能几十秒没动静(用户以为卡死)。
+        // 这里只加进度文案:不动导入顺序、不动探测方式,不改变任何结果。
+        int importTotal = paths.Length;
+        int importIndex = 0;
+        if (importTotal > 1)
+        {
+            ImportHint.Visibility = Visibility.Visible;
+            ImportHint.Text = $"正在导入 1/{importTotal}…";
+        }
+        try
+        {
         foreach (var p in paths)
         {
+            importIndex++;
+            if (importTotal > 1)
+            {
+                ImportHint.Text = $"正在导入 {importIndex}/{importTotal}:{Path.GetFileName(p)}";
+                await Task.Yield();   // 让上面这行先画出来,再开始 ffprobe
+            }
             var existing = _videos.FirstOrDefault(v => v.Path == p);
             if (existing != null)
             {
@@ -3670,6 +3687,11 @@ public sealed partial class VideoView : UserControl
             _ = RefreshItemSizeAsync(item);   // 源分辨率(补帧兼容性预检要用;缓存到 item,不在 UI 回调里现探)
             _ = ProbeVfrAsync(item);
             _ = ProbeDupAsync(item);   // 入列:轻量预估重复帧(标"预估"),选中才全文分析
+        }
+        }
+        finally
+        {
+            if (importTotal > 1) ImportHint.Visibility = Visibility.Collapsed;
         }
         if (added > 0) Log($"添加了 {added} 个视频到列表");
         // 仅第一个视频(单视频)自动选中以填充帧率;多视频不自动选中

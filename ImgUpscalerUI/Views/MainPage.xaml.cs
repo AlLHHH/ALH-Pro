@@ -55,9 +55,13 @@ public sealed partial class MainPage : Page
             // 把音频页塞进内容区(构造期或 Loaded 期都一样)就会在 Microsoft.UI.Xaml.dll 里抛 stowed
             // exception 把进程带走,连 App 的兜底都来不及;而运行中手动点进音频页完全正常。
             // 在根因查清前:启动时不恢复音频页,先落在图片放大(退出时仍会正常记录,不影响其它页面)。
-            if (page0 == 3)
+            // 【2026-11-05 扩大范围】除音频页外,"导入素材后直接点 X 关窗口"也会把视频处理页记成上次页面,
+            // 用户反馈下次启动就闪退,删 %LOCALAPPDATA%\ALHPro 才恢复 ⇒ 视频页的启动期恢复同样不安全
+            // (它同样在构造期就建 MediaPlayer/预览会话)。这两个重页一律不在启动时自动恢复。
+            if (page0 == 2 || page0 == 3)
             {
-                AppLogger.Info("上次停在「音频处理」页:本次先打开「图片放大」(启动即恢复音频页会触发底层崩溃,已临时规避)");
+                string pageName = page0 == 3 ? "音频处理" : "视频处理";
+                AppLogger.Info($"上次停在「{pageName}」页:本次先打开「图片放大」(启动即恢复该页会触发底层崩溃,已临时规避)");
                 page0 = 0;
             }
             // 【2026-11-02】还原页崩溃兜底:还原前埋一个标记,页面上来 3 秒后删掉;
@@ -97,11 +101,11 @@ public sealed partial class MainPage : Page
                 try { ShowView(pending); }
                 catch (Exception ex) { AppLogger.Error($"延后挂载视图失败({pending})", ex); }
             }
-            // 【2026-11-02】界面上来 3 秒后撤掉「还原中」标记:3 秒内没崩 ⇒ 这次还原是安全的
+            // 【2026-11-02】界面上来后撤掉「还原中」标记:窗口存活够久没崩 ⇒ 这次还原是安全的(2026-11-05 拉长到 15 秒)
             try
             {
                 var timer = this.DispatcherQueue.CreateTimer();
-                timer.Interval = TimeSpan.FromSeconds(3);
+                timer.Interval = TimeSpan.FromSeconds(15);   // 【2026-11-05】3 秒太短:崩溃可能发生在前几秒之后
                 timer.IsRepeating = false;
                 timer.Tick += (_, _) =>
                 {

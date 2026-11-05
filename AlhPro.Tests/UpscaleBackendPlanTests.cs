@@ -64,6 +64,30 @@ public class UpscaleBackendPlanTests
                 }
     }
 
+    /// <summary>【2026-11-05】兼容模式不该绕开 ncnn 实测结论。
+    /// 实测事故(2026-11-04 用户诊断包,RTX 3050 Laptop 4GB):同机 ncnn 探测通过,
+    /// 却因为勾了兼容模式走 ONNX,1080p→4K 每帧约 11 秒(1914 帧 ≈ 6 小时)。
+    /// 规则:有"ncnn 实测通过"结论时,兼容模式不再把引擎踢到 ONNX;没有结论/测出不可用时仍压 ONNX。
+    [Fact]
+    public void Fast_mode_does_not_override_a_passing_ncnn_probe()
+    {
+        // 兼容模式开 + ncnn 实测通过 ⇒ 留在 ncnn(两个引擎都一样)
+        Assert.False(UpscaleBackendPlan.UseOnnx("realesrgan", 0, false, false, true, true));
+        Assert.False(UpscaleBackendPlan.UseOnnx("waifu2x", 0, false, false, true, true));
+        // 兼容模式开 + 没有通过结论(含没测过) ⇒ 照旧压 ONNX
+        Assert.True(UpscaleBackendPlan.UseOnnx("realesrgan", 0, false, false, true, false));
+        Assert.True(UpscaleBackendPlan.UseOnnx("waifu2x", 0, false, false, true, false));
+        // 探测结论说不可用(onnxPreferred = true)时,即使 ncnnProbePassed 传 true 也仍走 ONNX;
+        // 后者在调用方只可能来自"实测通过",两者不会同时为真 —— 这里钉住"优先项仍然赢"
+        Assert.True(UpscaleBackendPlan.UseOnnx("realesrgan", 0, true, false, true, true));
+        // 没开兼容模式时,新参数不影响任何一格
+        Assert.False(UpscaleBackendPlan.UseOnnx("realesrgan", 0, false, false, false, true));
+        // CPU 手动档仍然一律 ONNX(realesrgan/waifu2x),与 ncnn 结论无关
+        Assert.True(UpscaleBackendPlan.UseOnnx("realesrgan", -1, false, false, true, true));
+        // realcugan 依然恒 false
+        Assert.False(UpscaleBackendPlan.UseOnnx("realcugan", 0, false, false, true, true));
+    }
+
     /// <summary>穷举:函数必须**纯**(同参数同结果,不抛异常),且返回值只取决于五个参数。</summary>
     [Fact]
     public void UseOnnx_is_pure_and_total()
