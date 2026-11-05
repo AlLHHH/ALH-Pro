@@ -3640,27 +3640,52 @@ public sealed partial class VideoView : UserControl
     }
 
     // ---------- 视频添加 ----------
+    /// <summary>导入取消信号:点「取消导入」时置位,循环下一轮就退出并清掉这一批已入列的项。</summary>
+    private System.Threading.CancellationTokenSource? _importCts;
+
+    private void ImportCancelBtn_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _importCts?.Cancel();
+            ImportCancelBtn.IsEnabled = false;
+            ImportText.Text = "正在取消导入…";
+            ImportBar.IsIndeterminate = true;
+        }
+        catch { }
+    }
+
     private async Task AddVideosAsync(string[] paths)
     {
         int added = 0;
-        // 【2026-11-05】批量导入时逐文件 ffprobe,可能几十秒没动静(用户以为卡死)。
-        // 这里只加进度文案:不动导入顺序、不动探测方式,不改变任何结果。
+        // 【2026-11-05】批量导入时逐文件 ffprobe,可能几十秒没动静(用户以为卡死)⇒ 列表上方给一个进度框,
+        // 带「取消导入」:取消后本轮已入列的视频整批撤掉,不留半截(用户要求)。
         int importTotal = paths.Length;
         int importIndex = 0;
-        if (importTotal > 1)
+        bool multi = importTotal > 1;
+        var batchItems = new System.Collections.Generic.List<VideoItem>();
+        if (multi)
         {
-            ImportHint.Visibility = Visibility.Visible;
-            ImportHint.Text = $"正在导入 1/{importTotal}…";
+            _importCts = new System.Threading.CancellationTokenSource();
+            ImportText.Text = $"正在导入 1 / {importTotal}…";
+            ImportBar.Value = 0;
+            ImportBar.IsIndeterminate = false;
+            ImportCancelBtn.IsEnabled = true;
+            ImportBox.Visibility = Visibility.Visible;
         }
+        bool cancelled = false;
         try
         {
         foreach (var p in paths)
         {
+            if (_importCts?.IsCancellationRequested == true) { cancelled = true; break; }
             importIndex++;
-            if (importTotal > 1)
+            if (multi)
             {
-                ImportHint.Text = $"正在导入 {importIndex}/{importTotal}:{Path.GetFileName(p)}";
-                await Task.Yield();   // 让上面这行先画出来,再开始 ffprobe
+                ImportText.Text = $"正在导入 {importIndex} / {importTotal} · {Path.GetFileName(p)}";
+                ImportBar.Value = Math.Round(100.0 * (importIndex - 1) / importTotal);
+                await Task.Yield();   // 让进度框先画出来,再开始 ffprobe
+                if (_importCts?.IsCancellationRequested == true) { cancelled = true; break; }
             }
             var existing = _videos.FirstOrDefault(v => v.Path == p);
             if (existing != null)
@@ -3680,6 +3705,7 @@ public sealed partial class VideoView : UserControl
                 Thumb = null,
             };
             _videos.Add(item);
+            batchItems.Add(item);
             added++;
             // 异步生成缩略图 + 探测时长 + 探测是否为可变帧率(VFR,防变速)
             _ = GenerateThumbAsync(item);
@@ -3691,7 +3717,26 @@ public sealed partial class VideoView : UserControl
         }
         finally
         {
-            if (importTotal > 1) ImportHint.Visibility = Visibility.Collapsed;
+            if (multi)
+            {
+                if (cancelled)
+                {
+                    // 取消:这一批已经入列的全部撤掉,不留半截"导入一半"的项目
+                    foreach (var it in batchItems) { try { _videos.Remove(it); } catch { } }
+                    added = 0;
+                    AppLogger.Info($"导入已取消:回滚本批 {batchItems.Count} 个视频(共 {importTotal} 个待导入)");
+                }
+                ImportBox.Visibility = Visibility.Collapsed;
+                ImportBar.IsIndeterminate = false;
+            }
+            try { _importCts?.Dispose(); } catch { }
+            _importCts = null;
+        }
+        if (cancelled)
+        {
+            // 回滚后把界面状态刷回来(空列表提示、开始按钮、单/多视频 UI)
+            try { UpdateDropHint(); UpdateRunState(); UpdateOptions(); } catch { }
+            return;
         }
         if (added > 0) Log($"添加了 {added} 个视频到列表");
         // 仅第一个视频(单视频)自动选中以填充帧率;多视频不自动选中
