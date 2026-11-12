@@ -85,7 +85,8 @@ public class NcnnProbeHonestyTests
             string block = code[from..to];
             Assert.Contains("NoteNotConcluded(engine, gpuId,", block);
             Assert.Contains("AlhPro.Core.NcnnProbeWording.NotConcluded(", block);
-            Assert.Contains("return false;", block);
+            // 【2026-11-12】三态之后这两条出口返回"未得出结论",而不是"不可用"
+            Assert.Contains("return NotConcluded;", block);
             Assert.DoesNotContain("SaveNcnnVerdict", block);           // 一个字都不许落
         }
         // 判据是 Core 的纯函数,EngineService 不许自己写 if(kind==Hang) 那种
@@ -211,7 +212,7 @@ public class NcnnProbeHonestyTests
         Assert.Contains("NcnnProbeWording.VramShortfallReason(freeGb, needGb)", gateBlock);   // 原因(单一口径)
         Assert.Contains("NcnnProbeWording.NotConcluded(reason)", gateBlock);                // 报告口径
         Assert.Contains("NcnnProbeWording.VramShortfallHint(freeGb, needGb)", gateBlock);   // 给用户的一句话
-        Assert.Contains("return false;", gateBlock);
+        Assert.Contains("return NotConcluded;", gateBlock);   // 没测成 ≠ 不可用(2026-11-12 三态)
         Assert.DoesNotContain("SaveNcnnVerdict", gateBlock);                                 // 不许落盘
         // 闸门判据本体:测不到就不闸;只在"真测到且低于下限"时跳过
         string helper = Block(ReadRepoFile("ImgUpscalerUI", EngineCs),

@@ -554,16 +554,34 @@ public static partial class EngineService
         }
     }
 
+    /// <summary>【2026-11-12】三态版本:**调用方要区分「实测不可用」与「这次没测成」时必须用它**。
+    /// 老 bool 版本把四种情况(实测不可用 / 空闲显存不足跳过 / 本会话已跳过 / 被取消)压成同一个 false,
+    /// 于是"显存不够没探"会被路由成"ncnn 不可用"⇒ 整段切 ONNX。真机事故与代价见
+    /// <see cref="AlhPro.Core.NcnnProbeRouting"/> 的文件头(RTX 5060 Ti,6 秒/帧 vs 0.1~0.3 秒/帧)。</summary>
+    public static async Task<AlhPro.Core.NcnnProbeReport> EnsureNcnnProbeDecisionAsync(
+        string engine, int gpuId, string? model, CancellationToken ct, bool force = false)
+        => await EnsureNcnnProbeCoreAsync(engine, gpuId, model, ct, force).ConfigureAwait(false);
+
+    /// <summary>兼容壳:老调用点只关心"能不能用 ncnn"时仍可用。**新写的路由判断请用三态版本**,
+    /// 否则又会把"没测通"当成"测出不可用"。</summary>
     public static async Task<bool> EnsureNcnnProbeAsync(string engine, int gpuId, string? model, CancellationToken ct,
         bool force = false)
+        => await EnsureNcnnProbeDecisionAsync(engine, gpuId, model, ct, force).ConfigureAwait(false)
+           == AlhPro.Core.NcnnProbeReport.Available;
+
+    private static async Task<AlhPro.Core.NcnnProbeReport> EnsureNcnnProbeCoreAsync(
+        string engine, int gpuId, string? model, CancellationToken ct, bool force)
     {
-        if (gpuId < 0) return false;
+        const AlhPro.Core.NcnnProbeReport Available = AlhPro.Core.NcnnProbeReport.Available;
+        const AlhPro.Core.NcnnProbeReport Unavailable = AlhPro.Core.NcnnProbeReport.Unavailable;
+        const AlhPro.Core.NcnnProbeReport NotConcluded = AlhPro.Core.NcnnProbeReport.NotConcluded;
+        if (gpuId < 0) return Unavailable;
         // 【快速通道:纯 NVIDIA 非 Blackwell + 机内没有非 NVIDIA 显卡 → 不探测,直接判可用】
         // 理由:①这套组合从无"ncnn-Vulkan 跑不通"的实测证据(实测出问题的是 50 系、AMD、无独显);
         // ②一次探测要 ~15 秒,而图片路径上一个任务可能总共只要 2 秒 —— 不能先白等 15 秒;
         // ③真出问题还有引擎自身的"输出全黑 → 该设备判不可用 + 降级链"兜底(见 IsEngineGpuUsableAsync)。
         // 50 系 / AMD / Intel 核显一律照旧真机探测,该走的自适应一点不少。
-        if (!force && TargetGpuIsPlainNvidia(gpuId)) return true;   // F2:同上,改为按目标卡判定
+        if (!force && TargetGpuIsPlainNvidia(gpuId)) return Available;   // F2:同上,改为按目标卡判定
         if (!force)
         {
             var cached = TryGetNcnnVerdict(engine, gpuId, model);
@@ -571,7 +589,7 @@ public static partial class EngineService
             {
                 AppLogger.Info($"[探测] {engine} GPU({gpuId}/{SafeDeviceName(gpuId)})沿用已缓存结论:" +
                     (cached.Value ? "ncnn-Vulkan 可用 → 走 ncnn(不重复试跑)" : "ncnn-Vulkan 不可用 → 走 ONNX(不每批重试)"));
-                return cached.Value;
+                return cached.Value ? Available : Unavailable;
             }
         }
         else
@@ -588,7 +606,7 @@ public static partial class EngineService
             int perAttempt = AlhPro.Core.ProbeRetryPolicy.PipelineFullFrameProbe.MaxAttempts;
             AppLogger.Info($"[探测] {engine} GPU({gpuId})本会话已试过同一键且未测通 —— 跳过重复探测"
                 + $"(不再白等最坏 {perAttempt}×60 秒 + 退避;重启软件即可重试),本次按「未测通」报告");
-            return false;
+            return NotConcluded;
         }
         // 【2026-09-27 · E2】★生产帧尺寸探测前的【空闲显存闸】。
         // 【为什么加】用户诊断包 ALHPro_Diag_20260927_1355:GTX 1050 Ti 4GB,**空闲显存只剩 0.7GB**,
@@ -598,6 +616,9 @@ public static partial class EngineService
         // 【测不到就不闸】AMD/Intel 读不到空闲显存(FreeVramMeasured=false)时一律照旧跑:不许拿"未知"当"不足"。
         // 【刻意**不**记进 M1 台账】这条闸门根本没花等待时间,而且它给用户的承诺正是"关掉占显存的程序后重试" ⇒
         // 同会话内重试必须仍然有效(把"没探过"当"探过了"会当场违背那句提示)。
+        // 【2026-11-12】先重读一次空闲显存:缓存是"启动时那一次"的读数,几分钟后早已无意义
+        // (RTX 5060 Ti 那台机启动时 0.2GB,整个任务因此被误判走在 ONNX 上)。
+        SafeRender.RefreshFreeVram();
         if (VramTooLowForProductionProbe(out double freeGb, out double needGb))
         {
             string reason = AlhPro.Core.NcnnProbeWording.VramShortfallReason(freeGb, needGb);
@@ -605,7 +626,7 @@ public static partial class EngineService
             LastProbeUserMessage = "";
             AppLogger.Warn($"[探测] {engine} GPU({gpuId}) {AlhPro.Core.NcnnProbeWording.NotConcluded(reason)}");
             AppLogger.Info(AlhPro.Core.NcnnProbeWording.VramShortfallHint(freeGb, needGb));
-            return false;
+            return NotConcluded;
         }
         int runNo = Interlocked.Increment(ref _productionProbeRuns);
         AppLogger.Info($"[探测] {engine} GPU({gpuId})首次真机探测(生产帧尺寸 1080×1920,模型 {model ?? "(默认)"} + 带状黑判据,"
@@ -638,7 +659,7 @@ public static partial class EngineService
             MarkSessionNotConcluded(engine, gpuId, model);     // 【t58 M1】本会话同一键不再重探
             LastProbeUserMessage = "";
             AppLogger.Warn($"[探测] {engine} GPU({gpuId}) {AlhPro.Core.NcnnProbeWording.NotConcluded(cancelReason)}");
-            return false;
+            return NotConcluded;
         }
         var failKind = outcome.Kind;
         string failDetail = outcome.Detail ?? "";
@@ -653,7 +674,7 @@ public static partial class EngineService
             MarkSessionNotConcluded(engine, gpuId, model);     // 【t58 M1】本会话同一键不再重探
             LastProbeUserMessage = "";
             AppLogger.Warn($"[探测] {engine} GPU({gpuId}) {AlhPro.Core.NcnnProbeWording.NotConcluded(inconclusiveReason)}");
-            return false;
+            return NotConcluded;
         }
         // 结论按【引擎|GPU|模型】记账(决策键);明细带上失败形态与探测次数 ——
         // 诊断包里一眼能分出"初始化即崩"还是"出图但无效画面",也一眼能看出"这次是不是重试过"。
@@ -685,7 +706,7 @@ public static partial class EngineService
                 + ")→ 为稳定性改用 ONNX(结论已记住,不再重复试)。"
                 + LastProbeUserMessage);
         }
-        return ok;
+        return ok ? Available : Unavailable;
     }
 
     /// <summary>【2026-09-28 · t58 M1】本会话"已试过但没测通"的键台账(**纯内存,永不落盘** ——

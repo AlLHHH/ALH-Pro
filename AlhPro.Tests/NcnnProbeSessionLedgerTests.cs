@@ -189,7 +189,7 @@ public class NcnnProbeSessionLedgerTests
         string code = CodeOnly(ReadRepoFile("ImgUpscalerUI", EngineCs));
         int probe = code.IndexOf("public static async Task<bool> EnsureNcnnProbeAsync(", StringComparison.Ordinal);
         Assert.True(probe > 0);
-        int fast = code.IndexOf("if (!force && TargetGpuIsPlainNvidia(gpuId)) return true;", probe, StringComparison.Ordinal);
+        int fast = code.IndexOf("if (!force && TargetGpuIsPlainNvidia(gpuId)) return Available;", probe, StringComparison.Ordinal);
         int cache = code.IndexOf("var cached = TryGetNcnnVerdict(engine, gpuId, model);", probe, StringComparison.Ordinal);
         int skip = code.IndexOf("if (SessionAlreadyTriedNotConcluded(engine, gpuId, model))", probe, StringComparison.Ordinal);
         int vram = code.IndexOf("if (VramTooLowForProductionProbe(out double freeGb, out double needGb))", probe, StringComparison.Ordinal);
@@ -202,7 +202,7 @@ public class NcnnProbeSessionLedgerTests
         string skipBlock = code[skip..vram];
         Assert.Contains("SessionAlreadyTriedNotConcluded(engine, gpuId, model)", skipBlock);
         Assert.Contains("跳过重复探测", skipBlock);
-        Assert.Contains("return false;", skipBlock);
+        Assert.Contains("return NotConcluded;", skipBlock);
         Assert.DoesNotContain("SaveNcnnVerdict", skipBlock);
         Assert.DoesNotContain("MarkSessionNotConcluded", skipBlock);      // 跳过时不重复记
         // 空闲显存闸:同样不许记台账(它的承诺是"关掉占显存的程序后重试")

@@ -170,6 +170,21 @@ public static class SafeRender
         Volatile.Write(ref _vramFreeProbed, 1);   // 最后置位:别人看到"已探测"时,值必定已写好
     }
 
+    /// <summary>【2026-11-12】**重新读一次**空闲显存,不要沿用"启动时那一次"的读数。
+    /// 触发场景(诊断包 ALHPro_Diag_20261112_1854,RTX 5060 Ti):程序启动时读到空闲 0.2 GB(别的程序占着),
+    /// 两分钟后显存早已变化,但 <see cref="FreeVramGB"/> 的缓存是"只探测一次"的 ⇒ 生产尺寸探测被永久判"显存不足"、
+    /// 跳过、再被当成"不可用"整段切 ONNX(6 秒/帧)。探测前重读一次即可,代价是一次 nvidia-smi / PDH 查询。
+    /// 读不到就还是读不到(<see cref="FreeVramMeasured"/> 仍为 false),不会拿估值冒充实测。</summary>
+    public static void RefreshFreeVram()
+    {
+        try
+        {
+            Volatile.Write(ref _vramFreeProbed, 0);
+            EnsureFreeVramProbed();
+        }
+        catch { }
+    }
+
     /// <summary>空闲显存读数来自哪里(nvidia-smi / PDH 计数器;空 = 未实测)。**只用于日志与诊断包** ——
     /// "这个 6.4 GB 是谁给的"必须在排查时一眼看到,否则又会像 1.3.x 那样把估值当实测值讨论半天。</summary>
     private static string _vramFreeSource = "";

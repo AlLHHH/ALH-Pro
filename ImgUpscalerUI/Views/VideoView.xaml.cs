@@ -11893,8 +11893,16 @@ public sealed partial class VideoView : UserControl
             {
                 try { Log($"超分引擎:本次不做显卡兼容性实测({probePlan.Why})"); } catch { }
             }
-            bool usable = !probePlan.ShouldProbe
-                || await EngineService.EnsureNcnnProbeAsync(probeEngine, gpuId, probePlan.Model, cts.Token);
+            // 【2026-11-12】三态:只有实测判不可用才在这里拦或改道;没测通继续走 ncnn(原因见 NcnnProbeRouting)。
+            AlhPro.Core.NcnnProbeReport probeDecision = AlhPro.Core.NcnnProbeReport.Available;
+            if (probePlan.ShouldProbe)
+                probeDecision = await EngineService.EnsureNcnnProbeDecisionAsync(probeEngine, gpuId, probePlan.Model, cts.Token);
+            bool usable = AlhPro.Core.NcnnProbeRouting.KeepsNcnn(probeDecision);
+            if (probeDecision == AlhPro.Core.NcnnProbeReport.NotConcluded)
+            {
+                try { Log($"本次未能实测该显卡({EngineService.LastNotConcludedReason(probeEngine, gpuId) ?? "未出结论"}),"
+                          + "先按 ncnn 处理;真跑不起来会走引擎自身的降级链(换卡或 CPU)。"); } catch { }
+            }
             if (!usable)
             {
                 // 【Real-CUGAN 没有 ONNX 版本】探测失败时不能像 Real-ESRGAN 那样"自动换稳定引擎":

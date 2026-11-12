@@ -1666,8 +1666,14 @@ public sealed partial class UpscaleView : UserControl
                             // 与上面那段"把 waifu2x 模型名喂给 realesrgan 会写假失败结论"是同一个坑。
                             var plan = AlhPro.Core.NcnnProbePlan.For(model);
                             if (plan.ShouldProbe)
-                                esrganNcnnOk = await EngineService
-                                    .EnsureNcnnProbeAsync("realesrgan", gpuId, plan.Model, ct).ConfigureAwait(false);
+                            {
+                                // 【2026-11-12】三态:没测通(显存不足/被跳过)不算"不可用",照旧用 ncnn。
+                                var decision = await EngineService
+                                    .EnsureNcnnProbeDecisionAsync("realesrgan", gpuId, plan.Model, ct).ConfigureAwait(false);
+                                esrganNcnnOk = AlhPro.Core.NcnnProbeRouting.KeepsNcnn(decision);
+                                if (decision == AlhPro.Core.NcnnProbeReport.NotConcluded)
+                                    Log("本次未能实测该显卡(见上方探测日志),仍按 ncnn 处理;真跑不起来会走引擎自身的降级链(换卡或 CPU)。");
+                            }
                         }
                         string? onnxPath = null;
                         // 手动选 CPU(-1)时:waifu2x/realesrgan 的 ncnn CPU 模式在部分机器崩(实测 exit -1/-1073741819)→ 直接 ONNX(CPU 同样稳定,画质一致)

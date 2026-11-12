@@ -957,10 +957,15 @@ public static class VideoService
                     {
                         // 同样先过探测计划:伪模型/着色器条目别喂给 ncnn 探测(见超分预检处的说明)
                         var dnPlan = AlhPro.Core.NcnnProbePlan.For(model);
-                        denoiseViaModel = dnPlan.ShouldProbe
-                            && await EngineService.EnsureNcnnProbeAsync("waifu2x", gpuId, dnPlan.Model, ct);
+                        var dnDecision = dnPlan.ShouldProbe
+                            ? await EngineService.EnsureNcnnProbeDecisionAsync("waifu2x", gpuId, dnPlan.Model, ct)
+                            : AlhPro.Core.NcnnProbeReport.Available;
+                        // 【2026-11-12】"没测通"不再当作"不可用":显存紧张时照旧用模型档降噪,别把整段降噪摘掉。
+                        denoiseViaModel = AlhPro.Core.NcnnProbeRouting.KeepsNcnn(dnDecision);
                         if (!denoiseViaModel)
                             AppLogger.Info("视频降噪:waifu2x 的 ncnn 引擎在本机不可用(将走 ONNX 稳定引擎),降噪改由拆帧阶段 nlmeans 承担");
+                        else if (dnDecision == AlhPro.Core.NcnnProbeReport.NotConcluded)
+                            AppLogger.Info("视频降噪:waifu2x 本次未能实测(见上方探测日志),仍按模型档降噪(ncnn)处理");
                     }
                     catch
                     {
@@ -1420,7 +1425,23 @@ public static class VideoService
                         AppLogger.Info("韵律源帧:scene 保留帧号探测失败/不足 → 回退标准补帧(旧行为)");
                 }
                 if (frameCount == 0)
-                    throw new InvalidOperationException("视频拆帧失败,未能提取到帧画面(请检查裁剪时间是否有效)");
+                {
+                    // 【2026-11-07 诊断包 20261107_1718】拆到 0 帧有两条完全不同的真因,原来一律报「请检查裁剪时间」,
+                    // 把用户往错方向带:①裁剪区间里确实没画面;②源文件本身不完整(常见:m4s 分片没合成、下载没下完),
+                    // ffprobe 读不出时长/编码,ffmpeg 硬解软解都 exit 0 却一帧不写。这里先补齐事实,再按真因说话。
+                    double probeDur = 0;
+                    string probeCodec = "";
+                    try { probeDur = await ProbeDurationSeconds(inputVideo); } catch { }
+                    try { probeCodec = await ProbeVideoCodecName(ffmpeg, inputVideo, ct); } catch { }
+                    AppLogger.Error($"拆帧 0 帧:源时长 {probeDur.ToString("0.###", inv)}s · 编码 {(probeCodec.Length > 0 ? probeCodec : "未知")} · 裁剪 {trimStart:0.###}~{trimEnd:0.###} · 硬解/软解均正常退出但无输出");
+                    if (probeDur <= 0.001 || probeCodec.Length == 0)
+                        throw new InvalidOperationException(
+                            "这个文件读不出视频信息(时长 " + (probeDur <= 0.001 ? "0" : probeDur.ToString("0.###", inv)) + " 秒、" +
+                            "编码 " + (probeCodec.Length > 0 ? probeCodec : "未知") + "),一帧都解不出来。" +
+                            "多半是视频分片没合成完整(比如把 m4s 直接改名成 mp4,或者下载没下完)。" +
+                            "先用转换器把它合成完整的 mp4 再导入,裁剪设置不用改。");
+                    throw new InvalidOperationException("视频拆帧失败:裁剪的时间段里没有画面,请检查开始/结束时间(源文件本身能读,时长 " + probeDur.ToString("0.###", inv) + " 秒)");
+                }
                 // 去重后有效帧率:按帧数等比换算,保持时长。
                 // 注意:有裁剪时基准帧数按"裁剪段时长"计算,不能按原视频总帧数(否则帧率被稀释导致慢放)
                 if (dedup)
@@ -2300,11 +2321,24 @@ public static class VideoService
                     // ⇒ 落一条假的 realesrgan 失败结论 ⇒ 之后所有 2x/3x/4x 视频超分被判走 ONNX —— 实测 2x 超分
                     // 3880 ms/帧,而软件标称 0.26~0.30 秒/帧);②「现实 · 1x 修复」的 Tag 不是真模型 ⇒ 用真权重探。
                     var upProbePlan = AlhPro.Core.NcnnProbePlan.For(model);
+                    // 【2026-11-12】按三态判定:只有"实测判不可用"才换 ONNX;"没测成"(空闲显存不足/被跳过/取消)
+                    // 继续走 ncnn。旧写法拿 bool 当结论 ⇒ RTX 5060 Ti 那台机(启动时空闲显存 0.2GB)整段被判
+                    // 走 ONNX DirectML(实测 6 秒/帧,而这张卡的 ncnn 是好的:同机 RIFE 探测通过)。
+                    var upProbeDecision = AlhPro.Core.NcnnProbeReport.Available;
                     bool usable = true;
                     if (upProbePlan.ShouldProbe)
                     {
                         progress?.Report((probePct, $"正在检测超分 GPU 兼容性({engine},首次最长约 60 秒,结论会记住)..."));
-                        usable = await EngineService.EnsureNcnnProbeAsync(engine, gpuId, upProbePlan.Model, ct).ConfigureAwait(false);
+                        upProbeDecision = await EngineService
+                            .EnsureNcnnProbeDecisionAsync(engine, gpuId, upProbePlan.Model, ct).ConfigureAwait(false);
+                        usable = AlhPro.Core.NcnnProbeRouting.KeepsNcnn(upProbeDecision);
+                        if (upProbeDecision == AlhPro.Core.NcnnProbeReport.NotConcluded)
+                        {
+                            string why = EngineService.LastNotConcludedReason(engine, gpuId) ?? "本次未能测出结论";
+                            AppLogger.Warn($"⚠ 超分引擎 {engine} 本次未测通({why})—— 仍按 ncnn-Vulkan 处理,"
+                                + "不降级到 ONNX(实测同卡 ONNX 慢约一个数量级);若这张卡实际跑不起来,引擎自身的降级链会接管(换卡或 CPU),不会静默出坏片。");
+                            progress?.Report((probePct, $"超分引擎本次未能实测({why}),先按 ncnn-Vulkan 处理…"));
+                        }
                     }
                     else
                     {
@@ -2332,14 +2366,20 @@ public static class VideoService
                             //   ② 引擎级可用 ⇒ 在其它降噪档里逐个实测,第一个通过的拿来用(三档权重都在包里);换档如实上报;
                             //   ③ 引擎级也不可用 / 三档都不过 ⇒ 才拒绝,且拒绝信息写成「设计如此 + 可执行下一步」。
                             var engineLevelVerdict = EngineService.TryGetNcnnVerdict(AlhPro.Core.RealCugan.EngineName, gpuId);
-                            bool engineLevelOk = engineLevelVerdict
-                                ?? await EngineService.EnsureNcnnProbeAsync(AlhPro.Core.RealCugan.EngineName, gpuId, null, ct).ConfigureAwait(false);
+                            // 【2026-11-12】这里同样按三态:没测通 ≠ 不可用,不然显存一紧张就把 Real-CUGAN 整批拒掉。
+                            var engineLevelDecision = engineLevelVerdict.HasValue
+                                ? AlhPro.Core.NcnnProbeRouting.FromBoolean(engineLevelVerdict.Value)
+                                : await EngineService.EnsureNcnnProbeDecisionAsync(
+                                    AlhPro.Core.RealCugan.EngineName, gpuId, null, ct).ConfigureAwait(false);
+                            bool engineLevelOk = AlhPro.Core.NcnnProbeRouting.KeepsNcnn(engineLevelDecision);
                             string? picked = null;
                             if (engineLevelOk)
                             {
                                 foreach (var alt in AlhPro.Core.RealCugan.AlternativeTags(model))
                                 {
-                                    if (await EngineService.EnsureNcnnProbeAsync(AlhPro.Core.RealCugan.EngineName, gpuId, alt, ct).ConfigureAwait(false))
+                                    if (AlhPro.Core.NcnnProbeRouting.KeepsNcnn(
+                                            await EngineService.EnsureNcnnProbeDecisionAsync(
+                                                AlhPro.Core.RealCugan.EngineName, gpuId, alt, ct).ConfigureAwait(false)))
                                     {
                                         picked = alt;
                                         break;
@@ -4296,8 +4336,9 @@ public static class VideoService
                         if (AlhPro.Core.VideoEncodeGuard.ClassifyEncodeFailure(whyFull)
                             == AlhPro.Core.VideoEncodeGuard.EncodeFailureKind.EncoderInit)
                         {
+                            // 【2026-11-09】带上本次计划输出尺寸:超过 H.264 上限时,换用 h264_* 等于换个编码器再失败一次
                             var next = AlhPro.Core.VideoEncodeGuard.NextEncoderCandidate(
-                                encoder, codecPref, HwEncoderSnapshot(), triedEncoders);
+                                encoder, codecPref, HwEncoderSnapshot(), triedEncoders, plannedOutW, plannedOutH);
                             triedEncoders.Add(encoder);
                             if (next == null)
                             {
@@ -6443,7 +6484,10 @@ public static class VideoService
     {
         var tried = new System.Collections.Generic.List<string>();
         var chain = new System.Collections.Generic.List<string> { intendedEncoder };
-        chain.AddRange(AlhPro.Core.VideoEncodeGuard.FallbackEncoderChain(intendedEncoder, codecPref, HwEncoderSnapshot()));
+        // 【2026-11-09】把本次**计划输出尺寸**传给候选链:超过 H.264 上限时,h264_* 是确定编不了的,
+        // 不能放进候选里再撞一次(旧行为:h264_amf 在 4564×2452 上必失败,还把真因埋掉)。
+        chain.AddRange(AlhPro.Core.VideoEncodeGuard.FallbackEncoderChain(
+            intendedEncoder, codecPref, HwEncoderSnapshot(), width, height));
         string lastDetail = "";
         for (int i = 0; i < chain.Count; i++)
         {
@@ -6472,8 +6516,16 @@ public static class VideoService
             if (i + 1 < chain.Count)
                 AppLogger.Warn(AlhPro.Core.VideoEncodeGuard.DescribeEncoderSwitch(encoder, chain[i + 1], FirstLine(lastDetail)));
         }
+        // 【2026-11-09】真因判定:输出超 H.264 上限 + 本机**没有实测可用的 HEVC** ⇒ 这个尺寸就是编不出来
+        // (实录那趟:试过 hevc_nvenc 失败、h264_amf 因尺寸必失败;文案必须直说尺寸到顶,而不是"编码器坏了")
+        bool h264LimitHit = AlhPro.Core.VideoEncodeGuard.ExceedsH264Limit(width, height)
+            && !HwEncoderSnapshot().Any(e => e.StartsWith("hevc", StringComparison.OrdinalIgnoreCase));
+        if (h264LimitHit)
+            AppLogger.Warn($"⚠ 输出 {width}×{height} 超过 H.264 上限 "
+                + $"{AlhPro.Core.VideoEncodeGuard.H264MaxDimension},且本机没有可用的 HEVC 硬编:"
+                + "已跳过 h264_* 候选(它在这个尺寸上确定编不了)");
         throw new InvalidOperationException(AlhPro.Core.VideoEncodeGuard.DescribePreflightFailure(
-            intendedEncoder, width, height, nominalFps, lastDetail, string.Join(" / ", tried)));
+            intendedEncoder, width, height, nominalFps, lastDetail, string.Join(" / ", tried), h264LimitHit));
     }
 
     /// <summary>预检只编 1 帧:命令由 <see cref="AlhPro.Core.VideoEncodeGuard.BuildPreflightCommand"/> 生成
