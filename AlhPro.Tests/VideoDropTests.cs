@@ -33,6 +33,9 @@ namespace AlhPro.Tests
             Assert.Contains("VideoDropExts", cs);
             foreach (var ext in new[] { ".m4v", ".ts", ".m2ts", ".flv", ".wmv", ".mpg", ".mpeg" })
                 Assert.Contains(ext, cs);
+            // 【2026-11-12】拖放不再按后缀拦截:任何文件都要收下,处理不了由后续探测给原因。
+            Assert.Contains("不再按后缀拦截", cs);
+            Assert.DoesNotContain("格式不支持\";", cs);
         }
 
         [Fact]

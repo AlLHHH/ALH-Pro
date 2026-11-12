@@ -11083,9 +11083,12 @@ public sealed partial class VideoView : UserControl
         {
             // 注意:必须 await(不能 .Result)——UI 线程同步等待会死锁,表现为"拖不进去"
             var items = await e.DataView.GetStorageItemsAsync();
+            // 【2026-11-12 用户要求:只要拖放就能进】不再按后缀拦截 —— 文件一律收下,
+            // 能不能处理交给后续探测去判断并给出具体原因;别让用户卡在"格式不支持"这一步。
             var files = items.OfType<Windows.Storage.StorageFile>()
-                .Where(f => VideoDropExts.Any(x => f.Path.EndsWith(x, StringComparison.OrdinalIgnoreCase)))
-                .Select(f => f.Path).ToArray();
+                .Select(f => f.Path)
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .ToArray();
             if (files.Length > 0)
             {
                 await AddVideosAsync(files);
@@ -11095,9 +11098,9 @@ public sealed partial class VideoView : UserControl
                 var names = items.Select(i => i.Name).Take(3).ToArray();
                 string why = items.Count == 0
                     ? "拖进来的东西里没有文件"
-                    : $"拖进来的 {(names.Length > 0 ? string.Join("、", names) : "文件")} 格式不支持";
-                Log($"拖入被拒:{why}。支持的格式:{string.Join(" ", VideoDropExts)}");
-                ShowDropHint($"{why}。支持 {string.Join(" / ", VideoDropExts).Replace(".", "")}");
+                    : $"拖进来的是文件夹({(names.Length > 0 ? string.Join("、", names) : "未命名")}),请拖文件";
+                Log($"拖入被拒:{why}");
+                ShowDropHint(why);
             }
         }
         else
