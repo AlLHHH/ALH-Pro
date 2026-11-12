@@ -386,6 +386,8 @@ public sealed partial class VideoView : UserControl
     {
         this.InitializeComponent();
         _uiReady = true;   // XAML 解析已完成(此后所有控件都已创建);见 _uiReady 字段说明
+        // 【2026-11-12】"拖到某一行上面没反应"的修法在 XAML:列表行(ItemTemplate 根 Grid)
+        // 自己也挂一份拖放处理,事件在行上就被接住并 e.Handled,不会再冒泡成重复添加。
         // 【第 3 项】确保"DirectML 是否可用"这件事已经有结论(幂等兜底):
         // MainPage 的启动自检只在"存在超分 ONNX 模型(ESRGAN x4plus)"时才调用 EnsureDmlProbeAsync,
         // 而那台机器若只装了 waifu2x/动漫模型(视频超分实际用的就是它们),探测从未发生 →
@@ -408,6 +410,14 @@ public sealed partial class VideoView : UserControl
             // 必须放在**最前面**(下面有 `if (_dupRefreshRun) return;` 的提前返回路径)。
             _uiLogReady = true;
             try { FlushPendingLogLines(); } catch { }
+            // 【2026-11-12】提权运行时 Windows 会直接掐掉资源管理器拖入(光标是个叉),事件根本进不来,
+            // 日志里也不会有任何一行 ⇒ 只能在这里主动说一句,否则用户只看到「拖不进去」。
+            try
+            {
+                if (App.IsRunningElevated)
+                    ShowDropHint("当前以管理员权限运行:Windows 会拦掉从资源管理器拖进来的文件。拖放想用,请关掉后用桌面快捷方式以普通权限打开;急用点上面的「添加视频」。");
+            }
+            catch { }
             if (_dupRefreshRun) return;
             _dupRefreshRun = true;
             try
@@ -10993,11 +11003,7 @@ public sealed partial class VideoView : UserControl
     private async void PickVideoBtn_Click(object sender, RoutedEventArgs e)
     {
         var picker = new FileOpenPicker();
-        picker.FileTypeFilter.Add(".mp4");
-        picker.FileTypeFilter.Add(".mkv");
-        picker.FileTypeFilter.Add(".mov");
-        picker.FileTypeFilter.Add(".webm");
-        picker.FileTypeFilter.Add(".avi");
+        foreach (var ext in VideoDropExts) picker.FileTypeFilter.Add(ext);
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
         WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
         var files = await picker.PickMultipleFilesAsync();
@@ -11029,29 +11035,83 @@ public sealed partial class VideoView : UserControl
         ScheduleSave();
     }
 
+    // 【2026-11-12】拖入诊断:用户反馈"拖不进去、只有一个叉叉"。叉叉是 Windows 自己画的"不接受"
+    // 光标,可能来自三种完全不同的原因:①本程序被提权(UIPI 直接把拖放掐掉,连事件都进不来);
+    // ②拖来的不是文件(浏览器/聊天软件给的是 URL 或文本);③文件后缀不在支持表里。
+    // 三种要么只能改环境、要么该换个入口,所以每次拖入都把格式与权限记进日志,并且当场把原因写到界面上。
+    private static readonly string[] VideoDropExts =
+    {
+        ".mp4", ".mkv", ".mov", ".webm", ".avi",
+        ".m4v", ".ts", ".m2ts", ".flv", ".wmv", ".mpg", ".mpeg",
+    };
+
+    private bool _dragEnterLogged;
+
+    private void DropBorder_DragEnter(object sender, DragEventArgs e)
+    {
+        _dragEnterLogged = false;
+    }
+
     private void DropBorder_DragOver(object sender, DragEventArgs e)
-        => e.AcceptedOperation = DataPackageOperation.Copy;
+    {
+        bool hasItems = e.DataView.Contains(StandardDataFormats.StorageItems);
+        e.AcceptedOperation = hasItems ? DataPackageOperation.Copy : DataPackageOperation.None;
+        if (!_dragEnterLogged)
+        {
+            _dragEnterLogged = true;
+            string fmts;
+            try { fmts = string.Join(",", e.DataView.AvailableFormats); } catch { fmts = "(读不出格式)"; }
+            Log($"拖入:数据格式=[{fmts}] · 有无文件列表={hasItems} · 本程序完整性=" +
+                (App.IsRunningElevated ? "高(提权)" : "中(普通)"));
+        }
+    }
+
+    private void DropBorder_DragLeave(object sender, DragEventArgs e)
+    {
+        _dragEnterLogged = false;
+    }
 
     private async void DropBorder_Drop(object sender, DragEventArgs e)
     {
         // 关键:标记事件已处理,阻止冒泡到外层容器重复触发(否则拖入一次会添加两次)
         e.Handled = true;
-        if (e.DataView.Contains(StandardDataFormats.StorageItems))
+        string formats;
+        try { formats = string.Join(",", e.DataView.AvailableFormats); } catch { formats = "(读不出格式)"; }
+        bool hasItems = e.DataView.Contains(StandardDataFormats.StorageItems);
+        Log($"放下:数据格式=[{formats}] · 有无文件列表={hasItems}");
+        if (hasItems)
         {
             // 注意:必须 await(不能 .Result)——UI 线程同步等待会死锁,表现为"拖不进去"
             var items = await e.DataView.GetStorageItemsAsync();
             var files = items.OfType<Windows.Storage.StorageFile>()
-                .Where(f => f.Path.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)
-                    || f.Path.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase)
-                    || f.Path.EndsWith(".mov", StringComparison.OrdinalIgnoreCase)
-                    || f.Path.EndsWith(".webm", StringComparison.OrdinalIgnoreCase)
-                    || f.Path.EndsWith(".avi", StringComparison.OrdinalIgnoreCase))
+                .Where(f => VideoDropExts.Any(x => f.Path.EndsWith(x, StringComparison.OrdinalIgnoreCase)))
                 .Select(f => f.Path).ToArray();
             if (files.Length > 0)
+            {
                 await AddVideosAsync(files);
+            }
             else
-                Log("拖入的文件不是支持的视频格式(mp4/mkv/mov/webm/avi)");
+            {
+                var names = items.Select(i => i.Name).Take(3).ToArray();
+                string why = items.Count == 0
+                    ? "拖进来的东西里没有文件"
+                    : $"拖进来的 {(names.Length > 0 ? string.Join("、", names) : "文件")} 格式不支持";
+                Log($"拖入被拒:{why}。支持的格式:{string.Join(" ", VideoDropExts)}");
+                ShowDropHint($"{why}。支持 {string.Join(" / ", VideoDropExts).Replace(".", "")}");
+            }
         }
+        else
+        {
+            // 典型:从浏览器/聊天软件直接拖图片或链接,拿到的是文本/URL 而不是文件
+            Log("拖入被拒:这次拖拽里没有文件列表(浏览器、聊天软件常这样给数据)");
+            ShowDropHint("拖进来的不是文件(可能来自浏览器或聊天软件)。请先存到本地,或点上面的「添加视频」。");
+        }
+    }
+
+    /// <summary>把"拖不进来"的原因写到用户看得见的地方(状态行),别只写日志——日志框默认是收起的。</summary>
+    private void ShowDropHint(string text)
+    {
+        try { VideoStatus.Text = text; } catch { }
     }
 
     // ---------- 任务摘要(顶部一行:已处理几个 / 剩余几个) ----------

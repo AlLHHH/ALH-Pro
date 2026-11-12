@@ -1025,17 +1025,22 @@
                       PointerMoved="VideoGridHost_PointerMoved"
                       PointerReleased="VideoGridHost_PointerReleased"
                       PointerCaptureLost="VideoGridHost_PointerCaptureLost"
-                      AllowDrop="True" DragOver="DropBorder_DragOver" Drop="DropBorder_Drop">
+                      AllowDrop="True" DragEnter="DropBorder_DragEnter" DragLeave="DropBorder_DragLeave" DragOver="DropBorder_DragOver" Drop="DropBorder_Drop">
                     <ListView x:Name="VideoList" SelectionMode="Multiple" SelectionChanged="VideoList_SelectionChanged"
                               IsItemClickEnabled="True" ItemClick="VideoList_ItemClick"
                               Background="Transparent" BorderThickness="0"
                               CanDragItems="True" CanReorderItems="True"
                               DoubleTapped="VideoList_DoubleTapped" KeyDown="VideoList_KeyDown"
-                              AllowDrop="True" DragOver="DropBorder_DragOver" Drop="DropBorder_Drop"
-                              ToolTipService.ToolTip="">   <!-- 显式空提示:覆盖 WinUI 对空列表悬停的默认"删除"伪影提示 -->
+                              AllowDrop="True" DragEnter="DropBorder_DragEnter" DragLeave="DropBorder_DragLeave"
+                              DragOver="DropBorder_DragOver" Drop="DropBorder_Drop"
+                              ToolTipService.ToolTip="">   <!-- 显式空提示:覆盖 WinUI 对空列表悬停的默认"删除"伪影提示。
+                              【2026-11-12】列表行自己也要接拖放(见 ItemTemplate 根 Grid):只挂在 ListView 上时,
+                              拖到某一行上面,事件会被项容器吃掉,表现为"按在视频上放下去没反应 + 一个叉"。 -->
                         <ListView.ItemTemplate>
                             <DataTemplate>
-                                <Grid ColumnSpacing="10" Padding="4">
+                                <Grid ColumnSpacing="10" Padding="4"
+                                      AllowDrop="True" DragEnter="DropBorder_DragEnter" DragLeave="DropBorder_DragLeave"
+                                      DragOver="DropBorder_DragOver" Drop="DropBorder_Drop">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="120"/>
                                         <ColumnDefinition Width="*"/>
