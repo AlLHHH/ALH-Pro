@@ -1327,16 +1327,28 @@ public sealed partial class MainPage : Page
     /// <summary>【2026-11-12】窗口级拖放:只要拖进来的是文件就收下,交给当前页面去添加。
     /// 页面自己的拖放处理器仍在自己范围内生效(它们先拿到事件并标记 Handled),这里兜住
     /// "拖到侧栏/空白/图片页"这些以前完全没反应的位置。</summary>
+    // 一次拖拽只记一行:下一轮用户反馈"拖不进去"时,日志里有没有这行能立刻区分
+    // 「拖放事件根本没进窗口」和「进了但被页面逻辑拒了」。
+    private bool _rootDragLogged;
+
     private void Root_DragOver(object sender, Microsoft.UI.Xaml.DragEventArgs e)
     {
         try
         {
-            e.AcceptedOperation = e.DataView.Contains(StandardDataFormats.StorageItems)
-                ? DataPackageOperation.Copy
-                : DataPackageOperation.None;
+            bool hasFiles = e.DataView.Contains(StandardDataFormats.StorageItems);
+            e.AcceptedOperation = hasFiles ? DataPackageOperation.Copy : DataPackageOperation.None;
+            if (!_rootDragLogged)
+            {
+                _rootDragLogged = true;
+                string formats;
+                try { formats = string.Join(",", e.DataView.AvailableFormats); } catch { formats = "(读不出)"; }
+                AppLogger.Info($"窗口拖入({_currentTag ?? "?"}):有文件={hasFiles} · 数据格式=[{formats}]");
+            }
         }
         catch { }
     }
+
+    private void Root_DragLeave(object sender, Microsoft.UI.Xaml.DragEventArgs e) { _rootDragLogged = false; }
 
     private async void Root_Drop(object sender, Microsoft.UI.Xaml.DragEventArgs e)
     {
