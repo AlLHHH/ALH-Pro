@@ -13,6 +13,9 @@ namespace ALHPro.Views;
 
 public sealed partial class UpscaleView : UserControl
 {
+    /// <summary>【2026-11-12】窗口级拖放入口:拖到图片页任意位置都算"添加图片"。</summary>
+    public Task AcceptDroppedFilesAsync(string[] paths) => ToolGrid.AddImagesAsync(paths);
+
     private bool _running;
     private string? _customOutDir;
     private CancellationTokenSource? _cts;

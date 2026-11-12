@@ -1,4 +1,7 @@
-using System;
+﻿using System;
+using System.Linq;
+using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media.Imaging;
@@ -58,10 +61,12 @@ public sealed partial class MainPage : Page
             // 【2026-11-05 扩大范围】除音频页外,"导入素材后直接点 X 关窗口"也会把视频处理页记成上次页面,
             // 用户反馈下次启动就闪退,删 %LOCALAPPDATA%\ALHPro 才恢复 ⇒ 视频页的启动期恢复同样不安全
             // (它同样在构造期就建 MediaPlayer/预览会话)。这两个重页一律不在启动时自动恢复。
-            if (page0 == 2 || page0 == 3)
+            // 【2026-11-09 收窄】只拦音频页:视频处理是用户最常用的页面,一律不让它恢复等于每次开机都回图片放大。
+            // 视频页改为「允许恢复 + 崩溃护栏兜底」(见下方 restore-guard):正常关闭会清掉标记;
+            // 真的在还原阶段崩过一次,下次启动就会看到标记并退回图片放大。
+            if (page0 == 3)
             {
-                string pageName = page0 == 3 ? "音频处理" : "视频处理";
-                AppLogger.Info($"上次停在「{pageName}」页:本次先打开「图片放大」(启动即恢复该页会触发底层崩溃,已临时规避)");
+                AppLogger.Info("上次停在「音频处理」页:本次先打开「图片放大」(启动即恢复该页会触发底层崩溃,已临时规避)");
                 page0 = 0;
             }
             // 【2026-11-02】还原页崩溃兜底:还原前埋一个标记,页面上来 3 秒后删掉;
@@ -227,9 +232,17 @@ public sealed partial class MainPage : Page
                             elevated = new System.Security.Principal.WindowsPrincipal(wid)
                                 .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
                         if (elevated)
+                        {
+                            bool deelevateKnownUseless = DeElevate.RelaunchKnownIneffective();
                             AppLogger.Warn("⚠ 本程序正以管理员权限运行 → Windows(UIPI)会拦截从资源管理器拖入的文件,拖放会没反应。"
-                                         + "解决:关闭本程序,用桌面快捷方式重新打开(快捷方式不要勾选「以管理员身份运行」);"
-                                         + "临时可用页面里的「添加文件/选择视频文件」按钮。");
+                                         + (deelevateKnownUseless
+                                             // 【2026-11-09 用户诊断包】内建 Administrator 账户:资源管理器本身也是高完整性,
+                                             // 自动降权重启也没用(已记在 deelevate-ineffective.txt),别再让用户白折腾快捷方式。
+                                             ? "本机已知自动降权无效(登录账户本身是管理员):拖放用不了,请直接用页面里的「添加文件 / 选择视频文件」按钮;"
+                                             : "解决:关闭本程序,用桌面快捷方式重新打开(快捷方式不要勾选「以管理员身份运行」);"
+                                               + "临时可用页面里的「添加文件/选择视频文件」按钮。")
+                                         + "处理功能完全不受影响。");
+                        }
                         else
                             AppLogger.Info("权限自检:以普通用户权限运行 ✓(拖放不受 UIPI 限制)");
                     }
@@ -1309,6 +1322,50 @@ public sealed partial class MainPage : Page
     {
         OpenNetDisk();
         UpdateBar.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>【2026-11-12】窗口级拖放:只要拖进来的是文件就收下,交给当前页面去添加。
+    /// 页面自己的拖放处理器仍在自己范围内生效(它们先拿到事件并标记 Handled),这里兜住
+    /// "拖到侧栏/空白/图片页"这些以前完全没反应的位置。</summary>
+    private void Root_DragOver(object sender, Microsoft.UI.Xaml.DragEventArgs e)
+    {
+        try
+        {
+            e.AcceptedOperation = e.DataView.Contains(StandardDataFormats.StorageItems)
+                ? DataPackageOperation.Copy
+                : DataPackageOperation.None;
+        }
+        catch { }
+    }
+
+    private async void Root_Drop(object sender, Microsoft.UI.Xaml.DragEventArgs e)
+    {
+        try
+        {
+            if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
+            e.Handled = true;
+            var items = await e.DataView.GetStorageItemsAsync();
+            var paths = items.OfType<StorageFile>()
+                .Select(f => f.Path)
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .ToArray();
+            if (paths.Length == 0)
+            {
+                AppLogger.Info("拖入被拒:这次拖拽里没有文件(可能是文件夹)");
+                return;
+            }
+            AppLogger.Info($"拖入({_currentTag ?? "?"}):{paths.Length} 个文件");
+            if (_currentTag == "video" && _videoView != null)
+                await _videoView.AcceptDroppedFilesAsync(paths);
+            else if (_currentTag == "upscale" && _upView != null)
+                await _upView.AcceptDroppedFilesAsync(paths);
+            else
+                AppLogger.Info($"当前页面({_currentTag})不接收拖入,已忽略");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("窗口级拖放处理失败", ex);
+        }
     }
 
     private void ShowView(string tag)
@@ -2445,6 +2502,13 @@ public sealed partial class MainPage : Page
     // 【2026-11-02】还原界面的进度标记:还原前写、界面稳定 3 秒后删。
     // 下次启动还看到它 ⇒ 上一次是在还原这一步被崩掉的,本次不还原(见构造函数)。
     private static string RestoreGuardFile => ParaPaths.SettingsFile("restore-guard.txt");
+
+    /// <summary>【2026-11-09】正常关闭窗口时把「还原中」标记清掉:15 秒计时器可能还没到就退出,
+    /// 残留标记会让下次启动白白退回图片放大。</summary>
+    public static void ClearRestoreGuard()
+    {
+        try { if (File.Exists(RestoreGuardFile)) File.Delete(RestoreGuardFile); } catch { }
+    }
 
     private void LoadStartupPage()
     {

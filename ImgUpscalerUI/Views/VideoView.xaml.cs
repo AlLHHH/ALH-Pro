@@ -11111,6 +11111,9 @@ public sealed partial class VideoView : UserControl
         }
     }
 
+    /// <summary>【2026-11-12】窗口级拖放入口:拖到页面任意位置(侧栏、空白)都由 MainPage 转进来。</summary>
+    public Task AcceptDroppedFilesAsync(string[] paths) => AddVideosAsync(paths);
+
     /// <summary>把"拖不进来"的原因写到用户看得见的地方(状态行),别只写日志——日志框默认是收起的。</summary>
     private void ShowDropHint(string text)
     {
