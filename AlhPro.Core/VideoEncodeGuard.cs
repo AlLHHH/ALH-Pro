@@ -165,15 +165,31 @@ public static class VideoEncodeGuard
     /// <summary>预检失败的**用户可见**提示错误(必须让他知道"现在是开跑前停下的,不是跑完几十分钟才失败")。
     /// 【文案红线】不许提"去设置里选 CPU 软编" —— 那个选项不存在(<see cref="CpuFallbackPolicy"/> 的 B8 口径)。</summary>
     public static string DescribePreflightFailure(string encoder, int width, int height, double fps,
-        string? detail = null, string? triedEncoders = null)
-        => $"编码预检失败:{encoder} 在 {width}×{height} @ {Fmt(fps)} fps 下连 1 帧都编不出来 —— "
-         + "**已在开始处理之前停下**(拆帧/补帧/超分都还没开始,不会白跑几十分钟)。\n"
-         + "本次用的是这次任务真实要用的输出尺寸 + 标称帧率(不是以往那个写死的 720p 探测)。\n"
-         + (string.IsNullOrWhiteSpace(triedEncoders) ? "" : $"已试过的编码器:{triedEncoders}(本机再没有别的实测可用硬编可换了)。\n")
-         + "怎么办:① 更新显卡驱动(或重装一次)后重试;② 把补帧倍率/指定帧率降到 240 fps 以内;"
-         + "③ 换一个输出分辨率再试。\n"
-         + "说明:视频处理**不提供** CPU 软编选项(实测慢 7 倍以上)。\n"
-         + "最后一次原因:" + (string.IsNullOrWhiteSpace(detail) ? "(未给出原因)" : detail.Trim());
+        string? detail = null, string? triedEncoders = null, bool h264LimitHit = false)
+    {
+        // 【2026-11-09 用户诊断包】尺寸超 H.264 上限、本机又没有可用 HEVC 时,错误必须说人话:
+        // 不是驱动坏了,是这个尺寸 H.264 编不了(H.264 硬编上限 4096,RDNA/NVENC/AMF 都一样)。
+        if (h264LimitHit)
+        {
+            return $"编码预检失败:输出 {width}×{height} 超过了 H.264 硬编的上限 {H264MaxDimension},"
+                + "而本机没有实测可用的 HEVC 硬编(H.265),所以这个尺寸编不出来。\n"
+                + "这次在**开始处理之前**就停下了:拆帧/补帧/超分都还没开始,不会白跑几十分钟。\n"
+                + (string.IsNullOrWhiteSpace(triedEncoders) ? "" : $"已试过的编码器:{triedEncoders}。\n")
+                + "怎么办:① 把输出尺寸降到 4096 以内(降低超分倍率,或把源素材裁小一点再处理);"
+                + "② 换一台带 HEVC 硬编(NVIDIA/AMD/Intel 近几年的卡都支持)的机器;"
+                + "③ 更新显卡驱动后重试(驱动过旧时 HEVC 硬编会打不开)。\n"
+                + "说明:视频处理**不提供** CPU 软编选项(实测慢 7 倍以上)。\n"
+                + "最后一次原因:" + (string.IsNullOrWhiteSpace(detail) ? "(未给出原因)" : detail.Trim());
+        }
+        return $"编码预检失败:{encoder} 在 {width}×{height} @ {Fmt(fps)} fps 下连 1 帧都编不出来 —— "
+            + "**已在开始处理之前停下**(拆帧/补帧/超分都还没开始,不会白跑几十分钟)。\n"
+            + "本次用的是这次任务真实要用的输出尺寸 + 标称帧率(不是以往那个写死的 720p 探测)。\n"
+            + (string.IsNullOrWhiteSpace(triedEncoders) ? "" : $"已试过的编码器:{triedEncoders}(本机再没有别的实测可用硬编可换了)。\n")
+            + "怎么办:① 更新显卡驱动(或重装一次)后重试;② 把补帧倍率/指定帧率降到 240 fps 以内;"
+            + "③ 换一个输出分辨率再试。\n"
+            + "说明:视频处理**不提供** CPU 软编选项(实测慢 7 倍以上)。\n"
+            + "最后一次原因:" + (string.IsNullOrWhiteSpace(detail) ? "(未给出原因)" : detail.Trim());
+    }
 
     // ════════════════════════════════════════════════════════════════════════════
     // C. "打不开编码器" ≠ "跑起来后瞬时失败" —— 前者换一个可用硬编,后者保持重试
@@ -288,6 +304,18 @@ public static class VideoEncodeGuard
     public static bool ExceedsH264Limit(int width, int height)
         => width > H264MaxDimension || height > H264MaxDimension;
 
+    /// <summary>这个编码器在这组输出尺寸上是否**物理上编得了**(目前只有 H.264 系的 4096 上限是实测确证)。
+    ///
+    /// 【2026-11-09 用户诊断包】输出 4564×2452、本机编码器探测结果只有 `h264_amf`、NVENC 两支都没探过 ⇒
+    /// 预检先试 `hevc_nvenc`(对,尺寸必须 HEVC),失败后**换成了 h264_amf** —— 尺寸必然超限、注定再失败一次,
+    /// 还把错误归到"编码器坏了"。候选链里必须先把这档剔掉,才能直接说出真因。</summary>
+    public static bool CanEncodeSize(string encoder, int width, int height)
+    {
+        if (string.IsNullOrWhiteSpace(encoder)) return false;
+        if (!ExceedsH264Limit(width, height)) return true;          // 尺寸没超限:谁都能编
+        return !encoder.StartsWith("h264", StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>【2026-09-30 修 · 音画不同步】由「源视频流的 start_time」算出给**音频输入**的 `-itsoffset`。
     /// 背景:画面来自 JPG 序列(PTS 从 0 开始),而音频保留源素材自己的起始时间
     /// ⇒ 源视频流的 start_time ≠ 0 时(剪映/手机导出很常见),两者就差这一个 start_time
@@ -319,7 +347,7 @@ public static class VideoEncodeGuard
     /// 【为什么不用"WorkingHwEncoders 的顺序"了事】那个顺序是按探测优先级(nvenc &gt; amf &gt; qsv)排的,
     /// 与"这次换谁最可能成"无关(跨厂商换 = 换设备,同厂商换 = 只换编码器,后者代价小得多)。</summary>
     public static IReadOnlyList<string> FallbackEncoderChain(string current, int codecPref,
-        IReadOnlyList<string>? workingEncoders)
+        IReadOnlyList<string>? workingEncoders, int outWidth = 0, int outHeight = 0)
     {
         var chain = new List<string>();
         if (workingEncoders == null || workingEncoders.Count == 0) return chain;
@@ -332,16 +360,19 @@ public static class VideoEncodeGuard
             {
                 string candidate = enc + "_" + family;
                 if (candidate.Equals(current, StringComparison.OrdinalIgnoreCase)) continue;
-                if (hw.Contains(candidate) && !chain.Contains(candidate)) chain.Add(candidate);
+                if (!hw.Contains(candidate) || chain.Contains(candidate)) continue;
+                // 【2026-11-09】输出尺寸超 H.264 上限时,h264_* 是**确定**编不了 ⇒ 不进候选链
+                if (!CanEncodeSize(candidate, outWidth, outHeight)) continue;
+                chain.Add(candidate);
             }
         return chain;
     }
 
     /// <summary>候选链里的第一个"还没试过"的硬编;没有则返回 null(调用方据此报"本机没有备选硬编")。</summary>
     public static string? NextEncoderCandidate(string current, int codecPref, IReadOnlyList<string>? workingEncoders,
-        IReadOnlyCollection<string>? alreadyTried = null)
+        IReadOnlyCollection<string>? alreadyTried = null, int outWidth = 0, int outHeight = 0)
     {
-        foreach (var c in FallbackEncoderChain(current, codecPref, workingEncoders))
+        foreach (var c in FallbackEncoderChain(current, codecPref, workingEncoders, outWidth, outHeight))
         {
             bool tried = false;
             if (alreadyTried != null)

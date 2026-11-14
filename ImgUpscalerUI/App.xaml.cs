@@ -25,14 +25,11 @@ namespace ALHPro
         /// 判出来是为了**明确告知用户**(见 MainPage 的启动提示),不是去绕过系统限制 —— 那个限制绕不过去。</summary>
         public static bool IsRunningElevated { get; } = ComputeIsRunningElevated();
 
+        /// <summary>【2026-11-09】改判「完整性级别」而不是「是否 Administrators 组」:
+        /// 降过完整性级别的进程令牌里仍然有 Administrators 组,用组成员判据会永远以为自己是提权的。</summary>
         private static bool ComputeIsRunningElevated()
         {
-            try
-            {
-                using var id = System.Security.Principal.WindowsIdentity.GetCurrent();
-                return new System.Security.Principal.WindowsPrincipal(id)
-                    .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
-            }
+            try { return DeElevate.IsElevated(); }
             catch { return false; }   // 读不到就当普通权限:宁可不提示,也不误报
         }
         private static bool _fatalDialogShown;   // 全局异常提示只弹一次(防刷屏)
@@ -747,23 +744,58 @@ namespace ALHPro
         protected override void OnLaunched(LaunchActivatedEventArgs e)
         {
             StartupTrace("OnLaunched 进入");
+            try
+            {
+                int rid = DeElevate.GetIntegrityRid();
+                AppLogger.Info($"完整性级别检查:0x{rid:X4}"
+                    + (rid >= 0x3000 ? "(High/提权:拖放会被 UIPI 拦截)" : rid == 0x2000 ? "(Medium:普通权限,拖放可用)" : "(未知)"));
+            }
+            catch { }
             // ===== 【拖放最优解】提权自愈:以管理员运行时,用普通权限重新拉起自己并立刻退出 =====
             // WindowsAppSDK 官方结论:提权的 WinUI3 程序**不支持拖放**(UIPI 设计,无 API 可绕)
             // → 本软件不需要管理员,所以"保证跑在普通权限"就是唯一正解。
             // 这里必须在**单实例锁之前**做:否则新实例会看到旧实例还占着锁而立刻退出,变成"没人运行" ✗。
             if (DeElevate.IsElevated() && !DeElevate.HasFlag())
             {
-                try { AppLogger.Warn("检测到以管理员权限运行 → 拖放会被 Windows(UIPI)拦截,正在以普通权限重新启动…"); } catch { }
-                if (DeElevate.TryRelaunchNormal())
+                if (DeElevate.RelaunchKnownIneffective())
                 {
-                    try { AppLogger.Info("已启动普通权限实例,本(管理员)实例退出"); } catch { }
-                    Exit();
-                    return;
+                    // 【2026-11-09 用户诊断包】内建 Administrator 账户登录时,资源管理器本身也是高完整性,
+                    // 拿它的令牌起新进程仍然是管理员 ⇒ 每次启动都"降权一次、照样提权",用户只看到窗口闪一下。
+                    // 记过之后直接跳过,不再白重启一轮。
+                    try
+                    {
+                        AppLogger.Warn("本机已知「降权重启」无效(账户本身是管理员,资源管理器也是高完整性):"
+                            + "跳过自动重启。拖放会被系统拦截,请用各页面上的「添加视频 / 添加图片」按钮选文件;"
+                            + "处理功能完全不受影响(本程序不需要管理员权限)。");
+                    }
+                    catch { }
                 }
-                try { AppLogger.Warn("降权重启未成功 → 继续以管理员运行;此时请用页面里的「添加文件」按钮,不要依赖拖放"); } catch { }
+                else
+                {
+                    try { AppLogger.Warn("检测到以管理员权限运行 → 拖放会被 Windows(UIPI)拦截,正在以普通权限重新启动…"); } catch { }
+                    if (DeElevate.TryRelaunchNormal())
+                    {
+                        try { AppLogger.Info("已启动普通权限实例,本(管理员)实例退出"); } catch { }
+                        Exit();
+                        return;
+                    }
+                    try { AppLogger.Warn("降权重启未成功 → 继续以管理员运行;此时请用页面里的「添加文件」按钮,不要依赖拖放"); } catch { }
+                }
+            }
+            else if (DeElevate.IsElevated() && DeElevate.HasFlag())
+            {
+                // 降权重启之后仍然是管理员 ⇒ 这台机器降权无效,记下来,下次别再白重启
+                DeElevate.MarkRelaunchIneffective("降权重启后仍以管理员权限运行(账户与资源管理器同为高完整性)");
+                try
+                {
+                    AppLogger.Warn("降权重启无效:重启之后仍然是管理员权限(账户本身是管理员账户)。"
+                        + "已记住本机,下次启动不再白重启;拖放请改用页面上的「添加视频 / 添加图片」按钮。");
+                }
+                catch { }
             }
             else if (!DeElevate.IsElevated())
             {
+                DeElevate.ClearIneffectiveMark();
                 try { AppLogger.Info("权限自检:以普通用户权限运行 ✓(拖放可用)"); } catch { }
             }
 
@@ -981,6 +1013,9 @@ namespace ALHPro
                 // 只落盘防抖缓存的最近状态,绝不能在关闭时实时读窗口——窗口销毁流程(还原→挪位→最小化)
                 // 会把 showCmd 和还原矩形污染成"退场值",这正是最大化恢复失效的原因。
                 try { SaveWindowStateOnClose(); }
+                catch { }
+                // 【2026-11-09】正常关闭 ⇒ 这次启动没有在还原界面时崩掉,撤掉「还原中」标记
+                try { ALHPro.Views.MainPage.ClearRestoreGuard(); }
                 catch { }
             };
         }

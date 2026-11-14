@@ -49,9 +49,14 @@ public class UiConsistencyTests
         var app = ReadRepoFile("ImgUpscalerUI", "App.xaml.cs");
         var mp = ReadRepoFile("ImgUpscalerUI", "Views", "MainPage.xaml.cs");
 
-        // 判据保留:进程是否提权(读不到就当普通权限,宁可漏记也不误报)
+        // 判据保留:进程是否提权(读不到就当普通权限,宁可漏记也不误报)。
+        // 【2026-11-09 改判】原来用「是否属于 Administrators 组」,但降过完整性级别的令牌里
+        // 仍然带着这个组 ⇒ 永远以为自己是提权的,永远白重启一次。改成比「完整性级别」。
         Assert.Contains("public static bool IsRunningElevated { get; } = ComputeIsRunningElevated();", app);
-        Assert.Contains("WindowsBuiltInRole.Administrator", app);
+        Assert.Contains("DeElevate.IsElevated()", app);
+        var de = ReadRepoFile("ImgUpscalerUI", "DeElevate.cs");
+        Assert.Contains("SECURITY_MANDATORY_HIGH_RID", de);
+        Assert.Contains("TokenIntegrityLevel", de);
         // 诊断日志里留一条 —— 用户说"拖不动"时,不必先问他是不是用管理员开的
         Assert.Contains("Windows 会禁止从资源管理器拖入文件(UIPI)", app);
 

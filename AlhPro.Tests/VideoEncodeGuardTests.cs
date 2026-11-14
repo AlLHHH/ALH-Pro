@@ -183,6 +183,45 @@ public class VideoEncodeGuardTests
         Assert.DoesNotContain("CPU 计算", msg);             // ★ 不许指向不存在的设置项(文案红线)
     }
 
+    // ═══════════════════════ B2. 输出尺寸超 H.264 上限(2026-11-09 诊断包) ═══════════════════════
+
+    /// <summary>★ 2026-11-09 用户诊断包:输出 4564×2452、本机探测可用编码器只有 h264_amf ⇒ 旧逻辑换链时
+    /// 选中 h264_amf,在必然超限的尺寸上又失败一次,还把真因埋掉。候选链必须先剔掉 h264_*。</summary>
+    [Fact]
+    public void H264_candidates_are_dropped_when_the_output_exceeds_the_limit()
+    {
+        string[] working = { "h264_amf", "hevc_amf" };
+        // 超限:4564×2452(实录那趟)
+        var over = AlhPro.Core.VideoEncodeGuard.FallbackEncoderChain("hevc_nvenc", 0, working, 4564, 2452);
+        Assert.DoesNotContain(over, e => e.StartsWith("h264", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("hevc_amf", over);
+        // 没超限:照旧把 h264 当候选
+        var ok = AlhPro.Core.VideoEncodeGuard.FallbackEncoderChain("hevc_nvenc", 0, working, 3840, 2160);
+        Assert.Contains("h264_amf", ok);
+        // 尺寸未知(0)=不限制,不许因为尺寸未知就乱删候选
+        Assert.Contains("h264_amf", AlhPro.Core.VideoEncodeGuard.FallbackEncoderChain("hevc_nvenc", 0, working));
+        // CanEncodeSize 本身
+        Assert.False(AlhPro.Core.VideoEncodeGuard.CanEncodeSize("h264_nvenc", 4564, 2452));
+        Assert.True(AlhPro.Core.VideoEncodeGuard.CanEncodeSize("hevc_nvenc", 4564, 2452));
+        Assert.True(AlhPro.Core.VideoEncodeGuard.CanEncodeSize("h264_nvenc", 4096, 2160));
+    }
+
+    /// <summary>★ 尺寸超限且本机没有可用 HEVC 时,错误必须直说"尺寸超过 H.264 上限 4096 + 本机没有 HEVC 硬编",
+    /// 而不是含糊的"编码器连 1 帧都编不出来"。</summary>
+    [Fact]
+    public void The_size_limit_failure_names_the_real_cause()
+    {
+        string msg = AlhPro.Core.VideoEncodeGuard.DescribePreflightFailure(
+            "hevc_nvenc", 4564, 2452, 60, "命令失败 (exit -40)", "hevc_nvenc / h264_amf", h264LimitHit: true);
+        Assert.Contains("4564×2452", msg);
+        Assert.Contains("4096", msg);
+        Assert.Contains("HEVC", msg);
+        Assert.Contains("降低超分倍率", msg);
+        Assert.Contains("开始处理之前", msg);
+        Assert.Contains("不提供", msg);
+        Assert.DoesNotContain("720p", msg);          // 不许串到"写死 720p 探测"那段旧文案
+    }
+
     // ═══════════════════════ C. 打不开 ≠ 瞬时失败 ═══════════════════════
 
     /// <summary>★ C:分类判据必须按**真实原话**分对 —— 1527 那台是"打不开"(该换编码器),
