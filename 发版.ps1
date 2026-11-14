@@ -116,9 +116,13 @@ if (-not $SkipInstaller) {
 
 if (-not $SkipUpload) {
     Step '3/4 发布到 GitHub(发布到GitHub.ps1)'
+    # 模型包 1.25 GB 不在免费版仓库里(清仓库时删掉了),只留在专业版目录;两处都找一遍。
+    $packs = @((Join-Path $root '打包工具\models_v1.1.zip'), 'D:\deep\ALH Pro Max\打包工具\models_v1.1.zip')
+    $pack = $packs | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $pack) { Fail "找不到 models_v1.1.zip(找过:$($packs -join ' / '))。" }
     & (Join-Path $root '发布到GitHub.ps1') -Version $Version `
         -Installer (Join-Path $root "ALHPro_v${Version}_Setup.exe") `
-        -WithModelPack -ModelPack (Join-Path $root '打包工具\models_v1.1.zip') `
+        -WithModelPack -ModelPack $pack `
         -NotesFile (Join-Path $root "发布公告_v$Version.md")
     if ($LASTEXITCODE -ne 0) { Fail "上传 GitHub 失败(安装包或模型包没传上去)。" }
     Ok 'Release 已更新'
