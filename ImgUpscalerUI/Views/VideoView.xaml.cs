@@ -4735,7 +4735,11 @@ public sealed partial class VideoView : UserControl
     {
         try
         {
-            if (!UpscaleWillFallbackToCpu()) { SetCpuFallbackHint(null); return; }
+            if (!UpscaleWillFallbackToCpu())
+            {
+                SetCpuFallbackHint(BackupRouteHint(dur, srcFps, sw, sh));   // null = 本次不是备用路线
+                return;
+            }
             var est = EstimateCpuUpscale(dur, srcFps, sw, sh);
             if (est == null)
             {
@@ -4746,6 +4750,51 @@ public sealed partial class VideoView : UserControl
             SetCpuFallbackHint($"⚠ 本机 DirectML 不可用,超分将使用 CPU:约 {perFrame:0.#} 秒/帧 × {frames} 帧 → 该阶段预计约 {FormatMinutes(stageMin)}" + CpuFallbackHintTail);
         }
         catch { }
+    }
+
+    /// <summary>【2026-11-14】"这次走的是备用路线"的说明。用户 2026-11-14 定调:ONNX 只当保命兜底,
+    /// 但必须当场说清慢多少、大概多久、怎么回到正常路线 —— 而不是让用户跑到一半以为软件坏了。
+    /// 返回 null = 本次不是备用路线(Vulkan 正常走 ncnn 时这条永远不显示)。
+    /// 只有"Vulkan 用不了 + DirectML 还能跑"才算备用路线;DirectML 也不可用时由 CPU 提示接管,不重复说。
+    /// 慢多少用同卡实测比值(20~60 倍:RTX 5060 Ti 8GB ONNX 约 6 秒/帧 vs ncnn 0.1~0.3 秒/帧),
+    /// 具体耗时只在"同配置有实测秒/帧"时给区间,拿不到就不编数字。</summary>
+    private string? BackupRouteHint(double dur, double srcFps, int sw, int sh)
+    {
+        try
+        {
+            if (UpscaleToggle.IsChecked != true) return null;
+            if (!ALHPro.VulkanCheck.NoGpuDetected) return null;        // Vulkan 正常 → 不是备用路线
+            if (!ALHPro.VulkanCheck.DmlAvailable()) return null;       // DML 也不行 → 归 CPU 提示管
+            if (!OnnxUpscaleRouteLikely()) return null;
+
+            const string tail = "。多半是显卡驱动刚升级、还没重启电脑:先重启,再到「设置 → 重新检测」,回到正常路线后重新开始即可。";
+            if (dur <= 0 || srcFps <= 0 || sw <= 0 || sh <= 0)
+                return "⚠ 本次超分走备用路线(ONNX / DirectML):Vulkan 加速现在用不了,同一张卡上实测比正常路线慢 20~60 倍"
+                    + "(时长/尺寸还没探明,给不出总耗时)" + tail;
+
+            long frames = (long)Math.Ceiling(dur * srcFps);
+            if (frames <= 0) return "⚠ 本次超分走备用路线(ONNX / DirectML):Vulkan 加速现在用不了,实测比正常路线慢 20~60 倍" + tail;
+
+            double normPer = 0;
+            try
+            {
+                var hist = PerfMemory.PerFrameFor(PerfFingerprintForCpuEstimate(out _));
+                if (hist.HasValue && hist.Value > 0) normPer = hist.Value;   // 同配置上次实测(1080p 基准)
+            }
+            catch { }
+
+            if (normPer <= 0)
+                return "⚠ 本次超分走备用路线(ONNX / DirectML):Vulkan 加速现在用不了,同一张卡上实测比正常路线慢 20~60 倍"
+                    + $"({frames} 帧;本配置没有实测秒/帧,给不出总耗时)" + tail;
+
+            // 面积归一:实测秒/帧是 1080p 基准,按本次源尺寸面积缩放(与 CPU 预估同一套口径)。
+            double area = Math.Max(1.0, (double)sw * sh / (1920.0 * 1080.0));
+            double loMin = frames * normPer * area * 20 / 60.0;
+            double hiMin = frames * normPer * area * 60 / 60.0;
+            return $"⚠ 本次超分走备用路线(ONNX / DirectML):Vulkan 加速现在用不了,实测比正常路线慢 20~60 倍 →"
+                + $" 该阶段大约 {FormatMinutes(loMin)} ~ {FormatMinutes(hiMin)}(按 {frames} 帧、同配置上次实测 {normPer:0.##} 秒/帧推算)" + tail;
+        }
+        catch { return null; }
     }
 
     /// <summary>预估"超分落到 CPU 后该阶段多久"。(perFrame 秒/帧, stageMin 分钟, frames 帧)。
@@ -11962,10 +12011,34 @@ public sealed partial class VideoView : UserControl
             {
                 try { Log($"超分引擎:本次不做显卡兼容性实测({probePlan.Why})"); } catch { }
             }
+            // 【2026-11-14】上次 Vulkan 判"没有设备"时,开跑前再枚举一次:驱动刚升级、还没重启电脑的那种,
+            // 用户重启完 Vulkan 其实已经好了 —— 不清这个否定结论,整个会话就会一直钉在 ONNX 慢路线上
+            // (实测比 Vulkan 慢 20~60 倍),用户只会觉得"越用越慢"。
+            bool vulkanRecoveredNow = false;
+            try
+            {
+                if (ALHPro.VulkanCheck.NoGpuDetected)
+                {
+                    vulkanRecoveredNow = ALHPro.VulkanCheck.TryRecoverVulkan();
+                    if (vulkanRecoveredNow)
+                    {
+                        // 自检早先把 GpuIndex 降成了 -1(那是"没有显卡"时的自动降级),恢复后必须放回去,
+                        // 否则后面按 GpuIndex 判断路线的分支仍会当成 CPU 场景。
+                        if (AppSettings.GpuIndex < 0)
+                        {
+                            AppSettings.GpuIndex = 0;
+                            try { AppSettings.Save(); } catch { }
+                        }
+                        Log("Vulkan 已恢复(此前枚举不到设备)→ 本次按 ncnn-Vulkan 路线处理,并重新实测一次显卡兼容性");
+                    }
+                }
+            }
+            catch { }
+
             // 【2026-11-12】三态:只有实测判不可用才在这里拦或改道;没测通继续走 ncnn(原因见 NcnnProbeRouting)。
             AlhPro.Core.NcnnProbeReport probeDecision = AlhPro.Core.NcnnProbeReport.Available;
             if (probePlan.ShouldProbe)
-                probeDecision = await EngineService.EnsureNcnnProbeDecisionAsync(probeEngine, gpuId, probePlan.Model, cts.Token);
+                probeDecision = await EngineService.EnsureNcnnProbeDecisionAsync(probeEngine, gpuId, probePlan.Model, cts.Token, force: vulkanRecoveredNow);
             bool usable = AlhPro.Core.NcnnProbeRouting.KeepsNcnn(probeDecision);
             if (probeDecision == AlhPro.Core.NcnnProbeReport.NotConcluded)
             {

@@ -882,4 +882,29 @@ public static class VulkanCheck
     {
         try { Done = false; ProbeConcluded = false; RunOnce(); } catch { }
     }
+
+    /// <summary>【2026-11-14】开跑前问一句"Vulkan 现在到底好没好"：上次结论是"没有设备"时,
+    /// 现场再枚举一次(不清用户已保存的结论)。恢复返回 true。
+    ///
+    /// 为什么必须有这一步:驱动刚升级、机器还没重启时 Vulkan 会枚举不到设备,那时我们会退到
+    /// ONNX 备用路线(比 Vulkan 慢 20~60 倍)。但用户重启后 Vulkan 已经恢复,若还沿用上次的否定结论,
+    /// **整个会话就一直钉在慢路线上** —— 用户会以为软件越用越慢。所以每次开跑前重试一次,
+    /// 恢复了就立刻回到 ncnn(见 VideoView 开跑前那段)。</summary>
+    public static bool TryRecoverVulkan()
+    {
+        try
+        {
+            if (!NoGpuDetected) return GpuAvailable;   // 上次结论是"可用",不用重试
+            ReProbe();
+            bool ok = GpuAvailable;
+            try
+            {
+                if (ok) AppLogger.Info("Vulkan 自检:本次开跑前重试枚举成功,Vulkan 已恢复 → 回 ncnn-Vulkan 路线");
+                else AppLogger.Warn("⚠ Vulkan 自检:开跑前重试仍未枚举到设备(驱动升级后未重启/被禁用/引擎不支持)");
+            }
+            catch { }
+            return ok;
+        }
+        catch { return false; }
+    }
 }

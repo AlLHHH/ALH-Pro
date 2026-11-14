@@ -40,7 +40,7 @@ public class NcnnProbePoisoningTests
         // Real-CUGAN 会写一条脏结论。断言跟着改成"引擎变量 + 计划里的模型",要钉的性质没变:
         // **喂给 ncnn 的模型名一律来自 NcnnProbePlan,绝不是界面 Tag 原样**。
         Assert.Contains("string probeEngine = SelectedEngineName;", videoView);
-        Assert.Contains("EnsureNcnnProbeDecisionAsync(probeEngine, gpuId, probePlan.Model, cts.Token)", videoView);
+        Assert.Contains("EnsureNcnnProbeDecisionAsync(probeEngine, gpuId, probePlan.Model, cts.Token, force: vulkanRecoveredNow)", videoView);
         Assert.Contains("AlhPro.Core.NcnnProbePlan.For(model)", upView);
 
         // 旧写法(把界面 Tag 原样喂进去)必须再也搜不到
