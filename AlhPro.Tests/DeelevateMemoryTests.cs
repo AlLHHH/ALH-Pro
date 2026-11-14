@@ -55,4 +55,37 @@ public class DeelevateMemoryTests
         Assert.Contains("ParaPaths.SettingsFile(\"deelevate-ineffective.txt\")", de);
         Assert.Contains("TimeSpan.FromDays(7)", de);   // 记录会过期,不永久钉死一台机器
     }
+
+    /// <summary>【2026-11-14】记下的"无效"只针对旧方法(复制资源管理器令牌)。
+    /// 内建 Administrator 账户下旧方法必然失败,但新方法(把自己的令牌降到中完整性)不依赖 explorer,
+    /// 这些机器本来能救回来 —— 只要启动流程在"记过无效"之后仍然试一次新方法。</summary>
+    [Fact]
+    public void Known_ineffective_mark_only_skips_the_old_method_not_the_integrity_downgrade()
+    {
+        string app = Read("ImgUpscalerUI", "App.xaml.cs");
+        int guardIdx = app.IndexOf("RelaunchKnownIneffective()", StringComparison.Ordinal);
+        int downgradeIdx = app.IndexOf("TryRelaunchAsMediumIntegrity()", StringComparison.Ordinal);
+        Assert.True(guardIdx > 0, "启动流程必须读这条记录");
+        Assert.True(downgradeIdx > guardIdx, "降令牌完整性级别的重启必须排在「记过无效」之后(即记过也要试)");
+        // 「记过无效」那个分支里不许出现退出:退出就等于又把这台机器钉死在管理员权限上,
+        // 新方法(降完整性级别)也就永远轮不到。分支体取到它后面的 else 为止。
+        int elseIdx = app.IndexOf("else", guardIdx, StringComparison.Ordinal);
+        Assert.True(elseIdx > guardIdx);
+        string knownBadBranch = app.Substring(guardIdx, elseIdx - guardIdx);
+        Assert.DoesNotContain("Exit();", knownBadBranch);
+        Assert.DoesNotContain("return;", knownBadBranch);
+    }
+
+    /// <summary>提权时用户必须有一个"一键回到普通权限"的入口:改快捷方式/装包都替代不了把令牌降级。</summary>
+    [Fact]
+    public void Settings_offers_a_one_click_fix_when_the_process_is_elevated()
+    {
+        string page = Read("ImgUpscalerUI", "Views", "MainPage.xaml.cs");
+        Assert.Contains("修复拖放(以普通权限重启)", page);
+        int idx = page.IndexOf("修复拖放(以普通权限重启)", StringComparison.Ordinal);
+        Assert.True(idx > 0);
+        string near = page.Substring(Math.Max(0, idx - 600), Math.Min(1200, page.Length - Math.Max(0, idx - 600)));
+        Assert.Contains("DeElevate.IsElevated()", near);            // 只对提权进程显示
+        Assert.Contains("TryRelaunchAsMediumIntegrity()", near);     // 走的是能把令牌降级的那条路
+    }
 }

@@ -757,16 +757,15 @@ namespace ALHPro
             // 这里必须在**单实例锁之前**做:否则新实例会看到旧实例还占着锁而立刻退出,变成"没人运行" ✗。
             if (DeElevate.IsElevated() && !DeElevate.HasFlag())
             {
+                // 【2026-11-09 记下的"无效"只针对旧方法】旧方法(复制资源管理器令牌)在内建 Administrator
+                // 账户下必然失败;2026-11-09 之后有了新方法(直接把自己的令牌降到中完整性,不依赖 explorer)。
+                // 所以"记过无效"只跳过旧方法,新方法每次仍要试 —— 不然那些机器永远拿不回拖放。
                 if (DeElevate.RelaunchKnownIneffective())
                 {
-                    // 【2026-11-09 用户诊断包】内建 Administrator 账户登录时,资源管理器本身也是高完整性,
-                    // 拿它的令牌起新进程仍然是管理员 ⇒ 每次启动都"降权一次、照样提权",用户只看到窗口闪一下。
-                    // 记过之后直接跳过,不再白重启一轮。
                     try
                     {
-                        AppLogger.Warn("本机已知「降权重启」无效(账户本身是管理员,资源管理器也是高完整性):"
-                            + "跳过自动重启。拖放会被系统拦截,请用各页面上的「添加视频 / 添加图片」按钮选文件;"
-                            + "处理功能完全不受影响(本程序不需要管理员权限)。");
+                        AppLogger.Warn("本机记录过「复制外壳令牌降权」无效(账户本身是管理员,资源管理器也是高完整性):"
+                            + "跳过旧方法,改试「把自己的令牌降到中完整性」…");
                     }
                     catch { }
                 }
@@ -779,8 +778,16 @@ namespace ALHPro
                         Exit();
                         return;
                     }
-                    try { AppLogger.Warn("降权重启未成功 → 继续以管理员运行;此时请用页面里的「添加文件」按钮,不要依赖拖放"); } catch { }
+                    try { AppLogger.Warn("复制外壳令牌重启未成功 → 改试「把自己的令牌降到中完整性」"); } catch { }
                 }
+                // 新方法:降令牌完整性级别。降级不需要任何特权,内建 Administrator 账户同样适用。
+                if (DeElevate.TryRelaunchAsMediumIntegrity())
+                {
+                    try { AppLogger.Info("已用中完整性令牌启动新实例(拖放可用),本(管理员)实例退出"); } catch { }
+                    Exit();
+                    return;
+                }
+                try { AppLogger.Warn("降权重启都未成功 → 继续以管理员运行;此时请用页面里的「添加文件」按钮,或复制文件后按 Ctrl+V"); } catch { }
             }
             else if (DeElevate.IsElevated() && DeElevate.HasFlag())
             {

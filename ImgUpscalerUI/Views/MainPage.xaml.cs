@@ -2832,6 +2832,35 @@ public sealed partial class MainPage : Page
             }
         };
         content.Children.Add(recheckBtn);
+        // 修复拖放按钮:本进程如果确实是高完整性(被 UAC 提权了),Windows 的 UIPI 会拦掉从资源管理器
+        // 拖进来的文件 —— 这一步只能把本进程的令牌降到中完整性再重开,改不了别处(安装包已是 lowest)。
+        // 只在提权时出现,普通用户看不到。
+        if (DeElevate.IsElevated())
+        {
+            var fixDropBtn = new Button
+            {
+                Content = "修复拖放(以普通权限重启)",
+                FontSize = 11,
+                Padding = new Microsoft.UI.Xaml.Thickness(12, 4, 12, 4),
+                HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left,
+                Margin = new Microsoft.UI.Xaml.Thickness(0, 6, 0, 0),
+            };
+            fixDropBtn.Click += (_, _) =>
+            {
+                fixDropBtn.IsEnabled = false;
+                fixDropBtn.Content = "正在重启…";
+                if (DeElevate.TryRelaunchAsMediumIntegrity())
+                {
+                    Application.Current.Exit();
+                    return;
+                }
+                fixDropBtn.IsEnabled = true;
+                fixDropBtn.Content = "修复拖放(以普通权限重启)";
+                reportText.Text = "这台电脑没能自动降到普通权限。拖放请改用页面上的「添加视频 / 添加图片」按钮,"
+                    + "或在资源管理器里复制文件后到软件里按 Ctrl+V —— 处理功能不受影响。";
+            };
+            content.Children.Add(fixDropBtn);
+        }
         // 「打开引擎目录」:自检报告缺失项时,一键到 engines/ 目录查看/补充引擎与模型(自检可执行化)
         var openEngBtn = new Button
         {
