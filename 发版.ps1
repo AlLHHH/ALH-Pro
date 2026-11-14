@@ -63,7 +63,7 @@ if ($notes -notmatch "(?m)^##\s*v$([regex]::Escape($Version))\b") { Fail "RELEAS
 
 $hist = Get-Content (Join-Path $root 'release_history.json') -Raw | ConvertFrom-Json
 $top = @($hist)[0]
-if ("$($top.version)" -ne $Version) { Fail "release_history.json 的第一条是 v$($top.version),不是 v$Version(首页更新提示读它)。" }
+if ("$($top.v)" -ne $Version) { Fail "release_history.json 的第一条是 v$($top.v),不是 v$Version(首页更新提示读它)。" }
 
 $announce = Join-Path $root "发布公告_v$Version.md"
 if (-not (Test-Path $announce)) { Fail "缺少 $announce(GitHub Release 正文用它)。" }
