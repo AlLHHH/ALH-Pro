@@ -144,7 +144,16 @@ public sealed partial class VideoView
                 return;
             }
             var (perFrame, stageMin, frames) = est.Value;
-            SetCpuFallbackHint($"⚠ 本机 DirectML 不可用,超分将使用 CPU:约 {perFrame:0.#} 秒/帧 × {frames} 帧 → 该阶段预计约 {FormatMinutes(stageMin)}" + CpuFallbackHintTail);
+            // 【2026-11-14 用户定调】预计耗时只认实测:没有同配置实测秒/帧时,不用"保守常数"编一个数字出来。
+            // 编出来的数只会两头不讨好 —— 估少了用户等到天亮,估多了用户当场放弃(上次就是这么被 44 小时吓退的)。
+            var (basePer, _, fromHistory) = CpuPerFrameBase();
+            if (!fromHistory)
+            {
+                SetCpuFallbackHint($"⚠ 本机 DirectML 不可用,超分将使用 CPU(速度极慢)。共 {frames} 帧;"
+                    + "这台机器还没有实测过 CPU 秒/帧,这次给不出预计耗时 —— 跑完会记住实际速度,下次就能算准" + CpuFallbackHintTail);
+                return;
+            }
+            SetCpuFallbackHint($"⚠ 本机 DirectML 不可用,超分将使用 CPU:约 {perFrame:0.#} 秒/帧 × {frames} 帧 → 该阶段预计约 {FormatMinutes(stageMin)}(秒/帧取自同配置上次实测)" + CpuFallbackHintTail);
         }
         catch { }
     }
