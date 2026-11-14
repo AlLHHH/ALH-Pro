@@ -104,13 +104,13 @@ if ($DryRun) {
 # ---------- 执行 ----------
 Step '1/4 部署(deploy.ps1)'
 & (Join-Path $root 'deploy.ps1')
-if ($LASTEXITCODE -ne 0) { Fail "deploy.ps1 失败,后面都不用做。" }
+if (-not $?) { Fail "deploy.ps1 失败,后面都不用做。" }
 Ok '部署完成'
 
 if (-not $SkipInstaller) {
     Step '2/4 打标准版安装包(打包.ps1)'
     & (Join-Path $root '打包.ps1')
-    if ($LASTEXITCODE -ne 0) { Fail "打包.ps1 失败。" }
+    if (-not $?) { Fail "打包.ps1 失败。" }
     Ok '安装包已生成'
 }
 
@@ -124,7 +124,7 @@ if (-not $SkipUpload) {
         -Installer (Join-Path $root "ALHPro_v${Version}_Setup.exe") `
         -WithModelPack -ModelPack $pack `
         -NotesFile (Join-Path $root "发布公告_v$Version.md")
-    if ($LASTEXITCODE -ne 0) { Fail "上传 GitHub 失败(安装包或模型包没传上去)。" }
+    if (-not $?) { Fail "上传 GitHub 失败(安装包或模型包没传上去)。" }
     Ok 'Release 已更新'
 }
 
