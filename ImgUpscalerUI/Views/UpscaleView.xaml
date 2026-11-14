@@ -205,7 +205,7 @@
                             <TextBlock x:Name="EdgeValue" Grid.Column="2" Text="0" TextAlignment="Right"
                                        VerticalAlignment="Center" Style="{StaticResource HintText}"/>
                         </Grid>
-                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="边缘抗锯齿:只磨局部对比度 ≥16 的边缘阶梯,平坦区不动。它是十档里唯一各项指标都变好的一档(PSNR 升、白边降),代价是细节变少 —— Real-ESRGAN 基底 40~60 合适,waifu2x 本来就软,建议 ≤30">
+                        <Grid ColumnSpacing="8" ToolTipService.ToolTip="边缘抗锯齿:只磨局部对比度 ≥16 的边缘阶梯,平坦区不动。它是十档里唯一各项指标都变好的一档(PSNR 升、白边降),代价是细节变少 —— Real-ESRGAN 基底 40~60 合适,动漫档本来就软,建议 ≤30">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="56"/>
                                 <ColumnDefinition Width="*"/>
@@ -257,7 +257,7 @@
                                 HorizontalAlignment="Stretch" Click="ImgResetBtn_Click"/>
                         <CheckBox x:Name="RememberCheck" Grid.Column="1" Content="记住上次参数" IsChecked="True"
                                   VerticalAlignment="Center"
-                                  ToolTipService.ToolTip="记住:算法模式、waifu2x 模型、放大倍数、降噪级别、TTA、输出格式、输出目录、保留细节、锐化、预处理降噪及其强度"/>
+                                  ToolTipService.ToolTip="记住:算法模式、超分模型、放大倍数、TTA、输出格式、输出目录、保留细节、锐化、预处理降噪及其强度"/>
                     </Grid>
 
                     <Border Height="1" Background="{StaticResource AppBorderBrush}"/>

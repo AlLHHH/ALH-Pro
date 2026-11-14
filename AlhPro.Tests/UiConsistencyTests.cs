@@ -89,6 +89,27 @@ public class UiConsistencyTests
         Assert.Contains("Key=\"Space\"", xaml);
     }
 
+    /// <summary>④ 界面上不许出现引擎名(waifu2x / realesrgan / realcugan / ncnn 这类内部叫法)。
+    /// 2026-11-14 用户:「老版本升级后的waifu模型为什么还在 可以选啊」—— 图片页动漫档 11-01 已换成
+    /// Real-CUGAN,唯一还露 waifu2x 的是抠图页那个「抠图前降噪 (waifu2x)」的勾选框标签(底层实现没换)。
+    /// 这类字符串编译器不会管,只能钉在源码上;注释里留档提到引擎名是允许的,所以先剥注释再查。</summary>
+    [Fact]
+    public void No_page_shows_engine_names_to_the_user()
+    {
+        var engineNames = new[] { "waifu2x", "realesrgan", "realcugan", "ncnn", "DirectML" };
+        foreach (var f in new[] { "VideoView.xaml", "CutoutView.xaml", "UpscaleView.xaml", "AudioView.xaml", "MainPage.xaml" })
+        {
+            var xaml = Regex.Replace(ReadRepoFile("ImgUpscalerUI", "Views", f), @"<!--.*?-->", " ", RegexOptions.Singleline);
+            // 只看会显示给用户的属性值:Content / Text / Header / ToolTipService.ToolTip
+            foreach (Match m in Regex.Matches(xaml, "(?:Content|Text|Header|ToolTipService\\.ToolTip)=\"([^\"]*)\"", RegexOptions.Singleline))
+            {
+                foreach (var name in engineNames)
+                    Assert.False(m.Groups[1].Value.Contains(name, StringComparison.OrdinalIgnoreCase),
+                        $"{f} 的界面文案里露出了引擎名「{name}」:" + m.Groups[1].Value);
+            }
+        }
+    }
+
     private static string ReadRepoFile(params string[] parts)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

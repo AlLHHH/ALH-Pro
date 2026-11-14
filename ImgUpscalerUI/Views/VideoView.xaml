@@ -95,7 +95,7 @@
                          ⚠ 顺序/项数改了必须同步 EngineChoice 的界面索引常量。
                          【历史留存】Real-CUGAN 是 2026-09-24 末尾追加的(存盘值 3,不复用历史值 2 ——
                          历史 2 一直被解释成 Real-ESRGAN,改回去会让老用户静默换引擎)。 -->
-                    <RadioButtons x:Name="VideoEngineRadios" SelectedIndex="0" ToolTipService.ToolTip="超分引擎(顺序=推荐度):Real-ESRGAN 会主动合成细节(动漫/写实都明显变清晰);Real-CUGAN 是动漫专用超分(线条与色块最干净,但最慢:实测 1080p 2x 约 1.65 秒/帧,约为 animevideov3 的 6.2 倍,且必须有可用显卡)。waifu2x 已从视频页移除(视频观感远差于图片;需要它请用图片页)"
+                    <RadioButtons x:Name="VideoEngineRadios" SelectedIndex="0" ToolTipService.ToolTip="超分引擎(顺序=推荐度):Real-ESRGAN 会主动合成细节(动漫/写实都明显变清晰);Real-CUGAN 是动漫专用超分(线条与色块最干净,但最慢:实测 1080p 2x 约 1.65 秒/帧,约为 animevideov3 的 6.2 倍,且必须有可用显卡)。超分只会在这两款里选:动漫优先 Real-CUGAN(线条干净),写实优先 Real-ESRGAN(细节更多)"
                                   SelectionChanged="Combo_Changed">
                         <RadioButton Content="Real-ESRGAN"/>
                         <RadioButton Content="Real-CUGAN"/>
@@ -186,7 +186,7 @@
                          ⚠ 只列 models-se 的三档:它们都同时具备 up2x/up3x/up4x 权重。
                            models-pro / models-nose **没有随包**,列出来会让引擎找不到权重、exit=0 只出无效画面。 -->
                     <ComboBox x:Name="VideoRealcuganModelCombo" Visibility="Collapsed"
-                              ToolTipService.ToolTip="Real-CUGAN 降噪档(动漫专用超分)。&#x0a;注意:这里是**同一份 models-se 权重**、只是降噪档(-n)不同 —— 不是三个不同的模型,所以命名与其他引擎保持同一格式「适用 · 档名 档位（速度）」。&#x0a;引擎:realcugan-ncnn-vulkan(2026 重编版,含 50 系所需的健壮性修复)。&#x0a;⚠ 实测速度(口径:本机 RTX 4060,1080p 2x,40 帧目录批量按帧摊,三次独立进程冷跑):约 1.65 秒/帧(1.63~1.68)。同口径 animevideov3 2x 是 0.27 秒/帧 ⇒ 约 6.2 倍慢。&#x0a;⚠ 实测随 GPU 占用波动:单机复现可能落在约 4~30 倍(量级可信、精确倍数不可复现)。&#x0a;⚠ 必须有 GPU:它只有 ncnn-Vulkan 权重(没有 ONNX 版本、CPU 档在本机实测会退出),没有可用显卡时会被拒绝处理。"
+                              ToolTipService.ToolTip="Real-CUGAN 降噪档(动漫专用超分)。&#x0a;注意:这三档用的是**同一套**动漫超分模型,区别只在降噪强度 —— 不是三个不同的模型,所以命名与其他模型保持同一格式「适用 · 档名 档位（速度）」。&#x0a;⚠ 实测速度(口径:本机 RTX 4060,1080p 2x,40 帧目录批量按帧摊,三次独立进程冷跑):约 1.65 秒/帧(1.63~1.68)。同口径 animevideov3 2x 是 0.27 秒/帧 ⇒ 约 6.2 倍慢。&#x0a;⚠ 实测随 GPU 占用波动:单机复现可能落在约 4~30 倍(量级可信、精确倍数不可复现)。&#x0a;⚠ 必须有显卡:它只有显卡版模型(没有 CPU 版,实测在纯 CPU 上会直接退出),没有可用显卡时会被拒绝处理。"
                               SelectionChanged="Combo_Changed">
                         <ComboBoxItem Content="动漫 · models-se -1（中）" Tag="models-se:-1">
                             <ToolTipService.ToolTip><ToolTip><TextBlock TextWrapping="Wrap" MaxWidth="440">Real-CUGAN 官方保守档(-n -1 = conservative):尽量保留原纹理、不做强打磨,动漫线条最干净。&#x0a;适用:干净或轻压缩的动漫片源。&#x0a;实测速度:1080p 2x 约 1.65 秒/帧(同口径 animevideov3 约 0.27 秒/帧 ⇒ 约 6.2 倍)。&#x0a;⚠ 实测随 GPU 占用波动:单机复现可能落在约 4~30 倍(量级可信、精确倍数不可复现)。&#x0a;模型大小:25.4 MB(models-se 权重目录,2x/3x/4x 共 11 个文件)。<Run Foreground="#7BD88F">&#x0a;权重 2x / 3x / 4x</Run></TextBlock></ToolTip></ToolTipService.ToolTip>
@@ -208,7 +208,7 @@
                                Style="{StaticResource HintText}" Margin="0,2,0,0"/>
 
                     <TextBlock Text="视频降噪" Style="{StaticResource SectionTitle}"/>
-                    <CheckBox x:Name="DenoiseToggle" Content="启用视频降噪" ToolTipService.ToolTip="降噪统一发生在**拆帧阶段**(源分辨率、超分之前)。顺序有依据:先降噪再放大,超分才不必去放大噪点 —— Neat Video 官方手册把 resampling 列为会改变噪声特性的效果、结论是先用它降噪;RealBasicVSR 官方也把 image pre-cleaning 放在传播之前并称其 indispensable。&#x0a;强度**只有 弱 / 中 / 强 三档**(原先那个「自动」档已按用户要求下线):干净素材请直接关掉本开关 —— 实测(同一批 6 张连续帧压 JPEG q15)干净/轻压缩源上降噪会让成片 PSNR 掉 0.3~0.9dB(不降噪 36.23 对 现行三档 35.34~35.93)。&#x0a;引擎差异:视频页已移除 waifu2x(2026-09-25),所以视频超分一律走这条拆帧滤镜链 —— 它必定生效,不会静默失效。(waifu2x 自带降噪档现在只在图片页。) "
+                    <CheckBox x:Name="DenoiseToggle" Content="启用视频降噪" ToolTipService.ToolTip="降噪统一发生在**拆帧阶段**(源分辨率、超分之前)。顺序有依据:先降噪再放大,超分才不必去放大噪点 —— Neat Video 官方手册把 resampling 列为会改变噪声特性的效果、结论是先用它降噪;RealBasicVSR 官方也把 image pre-cleaning 放在传播之前并称其 indispensable。&#x0a;强度**只有 弱 / 中 / 强 三档**(原先那个「自动」档已按用户要求下线):干净素材请直接关掉本开关 —— 实测(同一批 6 张连续帧压 JPEG q15)干净/轻压缩源上降噪会让成片 PSNR 掉 0.3~0.9dB(不降噪 36.23 对 现行三档 35.34~35.93)。"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
                     <TextBlock x:Name="DenoiseKindLabel" Text="降噪算法" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="DenoiseKindCombo" SelectedIndex="0" SelectionChanged="Combo_Changed"
@@ -354,14 +354,14 @@
                              这里如实记一笔而不做迁移:补帧侧没有 VideoModelOrder 那样的序号迁移表。
                              老 4 项的权重仍在 alh-pro\_retired_rife\(装机包因此小约 226MB),要恢复就搬回 engines\rife\ 并把本段改回来。 -->
                         <ComboBoxItem Content="通用画质最新 (RIFE v4.13)"
-                                      ToolTipService.ToolTip="通用画质最新 (RIFE v4.13):官方 RIFE 的 ncnn 实现;官方 README 的模型表最新只列到 v4.6,v4.13 比它更新(出处:rife-ncnn-vulkan README)。&#x0a;本工程推荐:支持任意帧数精确补齐、3x/4x/12x/16x 与「高质量 TTA」,最稳。&#x0a;速度:1080p 约 0.06~0.09 秒/输出帧。&#x0a;模型大小:10.3 MB。"/>
+                                      ToolTipService.ToolTip="通用画质最新 (RIFE v4.13):官方 RIFE 的常用实现;官方文档的模型表最新只列到 v4.6,v4.13 比它更新。&#x0a;本工程推荐:支持任意帧数精确补齐、3x/4x/12x/16x 与「高质量 TTA」,最稳。&#x0a;速度:1080p 约 0.06~0.09 秒/输出帧。&#x0a;模型大小:10.3 MB。"/>
                         <ComboBoxItem Content="通用画质 (RIFE v4.6)"
                                       ToolTipService.ToolTip="通用画质 (RIFE v4.6):官方 README 模型表里的 4.6 版(上游 4.6)。&#x0a;与 v4.13 同架构、功能完全一样(3x/4x、指定帧率、TTA 都支持),效果与稳定性略逊;留作 v4.13 在你机器上出问题时的备用。&#x0a;模型大小:10.1 MB。"/>
                         <!-- 【2026-09-24 末尾追加】第 3 支。加它是因为它实测与 v4.13 同档速度,
                              且用的是同一份 rife-ncnn-vulkan-2026.exe —— 不需要新引擎、不需要新 exe。
                              ⚠ 顺序即序号,只许追加:2 = rife-v4.26。 -->
                         <ComboBoxItem Content="通用画质再新 (RIFE v4.26)"
-                                      ToolTipService.ToolTip="通用画质再新 (RIFE v4.26):RIFE 4.26 的 ncnn 权重(上游 Practical-RIFE 系列,权重与代码同为 MIT)。&#x0a;本机实测(1080p,同素材)约 80~93 ms/输出帧,与 v4.13 同档(两次独立实测互有快慢,没有稳定差距)。&#x0a;功能:同 v4.13/v4.6,支持 3x/4x/12x/16x 与指定帧率。&#x0a;⚠ 唯一限制:「高质量 TTA」(-x/-z)在这支上实测会长时间无响应,选中它时该项自动置灰。&#x0a;模型大小:10.9 MB。"/>
+                                      ToolTipService.ToolTip="通用画质再新 (RIFE v4.26):RIFE 4.26 的模型权重(上游 Practical-RIFE 系列,权重与代码同为 MIT 许可)。&#x0a;本机实测(1080p,同素材)约 80~93 ms/输出帧,与 v4.13 同档(两次独立实测互有快慢,没有稳定差距)。&#x0a;功能:同 v4.13/v4.6,支持 3x/4x/12x/16x 与指定帧率。&#x0a;⚠ 唯一限制:「高质量 TTA」(-x/-z)在这支上实测会长时间无响应,选中它时该项自动置灰。&#x0a;模型大小:10.9 MB。"/>
                     </ComboBox>
                     <!-- 补帧模型提示:随所选模型动态更新,说明推荐/各模型的问题(选 v4.13 提示推荐,选其它提示风险) -->
                     <TextBlock x:Name="InterpModelHint" FontSize="10" Opacity="0.65" TextWrapping="Wrap"

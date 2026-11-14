@@ -70,7 +70,8 @@
                     </ComboBox>
 
                     <TextBlock Text="预处理" Style="{StaticResource SectionTitle}"/>
-                    <CheckBox x:Name="PreDenoiseCheck" Content="抠图前降噪 (waifu2x)"
+                    <!-- 【2026-11-14】去掉「(waifu2x)」后缀:界面不露引擎名(底层仍是 1x 降噪模型,没换实现)。 -->
+                    <CheckBox x:Name="PreDenoiseCheck" Content="抠图前降噪"
                               ToolTipService.ToolTip="先用 AI 1x 降噪再抠图:噪点多、压缩痕迹重的图片边缘更干净"
                               Checked="Params_Changed" Unchecked="Params_Changed"/>
                     <Grid ColumnSpacing="8" Margin="24,0,0,0">

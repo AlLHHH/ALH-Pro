@@ -205,10 +205,12 @@ public class RealCuganContractTests
         Assert.Equal(2, items.Count);                       // 视频页只剩两项(waifu2x 已删)
         Assert.Equal("Real-ESRGAN", items[0].Groups[1].Value);
         Assert.Equal("Real-CUGAN", items[1].Groups[1].Value);
-        // 单选项里没有 waifu2x;而**提示**里如实写明它已从视频页移除(需要它请用图片页)——
-        // 这是"不再宣称视频页可用 waifu2x"的正面证据,所以这里**要求**它出现。
+        // 单选项里没有 waifu2x;提示里也不再提它。
+        // 【2026-11-14 改判】原来这里**要求**提示里写「waifu2x 已从视频页移除」,但用户当天反馈
+        // 「老版本升级后 waifu 为什么还在 可以选啊」—— 界面露引擎名本身就是问题(写"有"写"没有"都算),
+        // 现在统一由 UiConsistencyTests.No_page_shows_engine_names_to_the_user 钉死:界面文案里一个引擎名都不许出现。
         Assert.DoesNotContain("Content=\"waifu2x\"", block);
-        Assert.Contains("waifu2x 已从视频页移除", block);
+        Assert.DoesNotContain("waifu2x", block);
 
         // 顺序即索引:常量必须是 0/1,且各自映射到与 XAML 同序的引擎名
         Assert.Equal(new[] { 0, 1 }, new[]
