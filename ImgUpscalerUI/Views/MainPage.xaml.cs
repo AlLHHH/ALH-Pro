@@ -817,7 +817,18 @@ public sealed partial class MainPage : Page
                 {
                     string pendingTag = AppSettings.PendingUpdateTag;
                     AppSettings.PendingUpdateTag = ""; AppSettings.Save();   // 已取走
-                    DispatcherQueue.TryEnqueue(() => ShowUpdateBar(pendingTag));
+                    // 【2026-11-14 修复】pendingTag 是上一次运行留下的"发现新版"记录,升级到该版本后
+                    // 它仍然躺在设置里,启动就无条件弹横幅 —— 用户明明已经是最新,却还看到"发现新版本"。
+                    // 显示之前先按版本比一次:不比当前新的记录直接丢掉。
+                    if (IsTagNewerThanCurrent(pendingTag))
+                    {
+                        var tagToShow = pendingTag;
+                        DispatcherQueue.TryEnqueue(() => ShowUpdateBar(tagToShow));
+                    }
+                    else
+                    {
+                        AppLogger.Info($"[更新] 丢弃过期的待提示 {pendingTag}(当前已是 v{UpdateChecker.CurrentVersion},不需要更新)");
+                    }
                     decided = true;
                 }
                 else
@@ -854,6 +865,10 @@ public sealed partial class MainPage : Page
         }
     }
 
+    /// <summary>这个 tag 是不是比当前版本新。解析不出来一律当"不新"(宁可不弹,也不误报)。</summary>
+    private static bool IsTagNewerThanCurrent(string? tag)
+        => AlhPro.Core.UpdateTag.IsNewer(tag, UpdateChecker.CurrentVersion);
+
     /// <summary>显示顶部「发现新版本」横幅(不弹窗,温和不打断;点按钮跳转,点 ✕ 本次不再显示)。
     /// 用户点关闭 → 本次运行不再提示,下次启动仍会显示,除非设置勾选「不再提示更新」。</summary>
     private void ShowUpdateBar(string latestTag)
@@ -861,6 +876,7 @@ public sealed partial class MainPage : Page
         try
         {
             if (_updatePromptShownThisRun) return;   // 本次运行已提醒过(用户本次点过关闭),不再重复显示
+            if (!IsTagNewerThanCurrent(latestTag)) return;   // 【2026-11-14】不比当前新的,一律不弹
             _updatePromptShownThisRun = true;
             string cur = UpdateChecker.CurrentVersion;
             UpdateBarText.Text = $"发现新版本 {latestTag}(当前 v{cur}) — 建议更新以获得新功能与修复。更新免费,官网 / GitHub / 网盘三个渠道任选;更新不会丢失您的设置。";
@@ -1345,46 +1361,52 @@ public sealed partial class MainPage : Page
     // 【为什么需要】以管理员身份运行时,Windows(UIPI)禁止从资源管理器拖放进来,任何程序都一样;
     // 但剪贴板是通的 —— 用户「复制文件 → 在本窗口 Ctrl+V」就能导入,不必改权限。
     // 顺带覆盖:从聊天软件复制文件、拖放被系统拦掉的机器。
+    // 【2026-11-14 修复】原来用 KeyboardAccelerator 注册这个快捷键,WinUI 会把快捷键文本
+    // 自动画成提示挂到页面根元素上 —— 用户四个页面都能看到一行「Ctrl+V」,像是界面残留。
+    // 改成自己接 KeyDown:功能一样,界面上一个字都不多。
     private void SetupPasteFilesShortcut()
     {
         try
         {
-            var accel = new Microsoft.UI.Xaml.Input.KeyboardAccelerator
-            {
-                Key = Windows.System.VirtualKey.V,
-                Modifiers = Windows.System.VirtualKeyModifiers.Control,
-            };
-            accel.Invoked += async (_, args) =>
-            {
-                try
-                {
-                    var dp = Windows.ApplicationModel.DataTransfer.Clipboard.GetContent();
-                    if (!dp.Contains(StandardDataFormats.StorageItems)) return;   // 没文件就让文本框各管各的
-                    args.Handled = true;
-                    string[] paths;
-                    try
-                    {
-                        var items = await dp.GetStorageItemsAsync();
-                        paths = items.OfType<StorageFile>().Select(f => f.Path)
-                            .Where(p => !string.IsNullOrWhiteSpace(p)).ToArray();
-                    }
-                    catch (Exception ex)
-                    {
-                        AppLogger.Error("粘贴文件:读剪贴板失败", ex);
-                        return;
-                    }
-                    await ImportPathsAsync(paths, "粘贴");
-                }
-                catch (Exception ex)
-                {
-                    AppLogger.Error("粘贴文件处理失败", ex);
-                }
-            };
-            RootGrid.KeyboardAccelerators.Add(accel);
+            RootGrid.KeyDown += RootGrid_KeyDown;
         }
         catch (Exception ex)
         {
             try { AppLogger.Error("注册 Ctrl+V 粘贴快捷键失败", ex); } catch { }
+        }
+    }
+
+    /// <summary>Ctrl+V:剪贴板里有文件就导入;没有文件、或焦点在输入框里,一律放行给文本框自己处理。</summary>
+    private async void RootGrid_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        try
+        {
+            if (e.Key != Windows.System.VirtualKey.V) return;
+            var ctrl = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control);
+            if (!ctrl.HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down)) return;
+            // 焦点在输入框(设置里的路径框等):那是"粘贴文本",不能抢
+            if (Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(Content.XamlRoot)
+                is Microsoft.UI.Xaml.Controls.TextBox) return;
+            var dp = Windows.ApplicationModel.DataTransfer.Clipboard.GetContent();
+            if (!dp.Contains(StandardDataFormats.StorageItems)) return;   // 没文件就让文本框各管各的
+            e.Handled = true;
+            string[] paths;
+            try
+            {
+                var items = await dp.GetStorageItemsAsync();
+                paths = items.OfType<StorageFile>().Select(f => f.Path)
+                    .Where(p => !string.IsNullOrWhiteSpace(p)).ToArray();
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("粘贴文件:读剪贴板失败", ex);
+                return;
+            }
+            await ImportPathsAsync(paths, "粘贴");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("粘贴文件处理失败", ex);
         }
     }
 

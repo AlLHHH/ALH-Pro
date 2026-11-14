@@ -63,6 +63,14 @@ public static class TipFetcher
             if (json is null) break;   // 404:该编号文件不存在 → 停止(后续编号也不会有)
             if (string.IsNullOrWhiteSpace(json)) continue;
             var tip = ParseTip(json);
+            // 【2026-11-14】只给旧版本看的提示:装到该版本(或更新)之后就不再出现。
+            // 起因:用户装到最新的 1.4.9,状态栏还在转「旧版本遇到的问题已在最新版修正,建议更新」
+            // —— 明明是给老用户的劝升级文案,新用户不该看到。作者在提示文件里写 "onlyForOlderThan": "1.4.9" 即可。
+            if (tip is not null && !AlhPro.Core.UpdateTag.AppliesTo(tip.OnlyForOlderThan, UpdateChecker.CurrentVersion))
+            {
+                AppLogger.Info($"[提示] 跳过「{tip.Text}」:只给 {tip.OnlyForOlderThan} 之前的版本看,当前已是 {UpdateChecker.CurrentVersion}");
+                continue;
+            }
             if (tip is not null) result.Add(tip);
         }
         if (result.Count == 0) AppLogger.Info("[提示] 全部提示文件拉取失败/为空(静默隐藏)");
@@ -128,6 +136,7 @@ public static class TipFetcher
                 Text = GetString(el, "text"),
                 Color = GetString(el, "color"),
                 Link = GetString(el, "link"),
+                OnlyForOlderThan = GetString(el, "onlyForOlderThan"),
             };
             if (string.IsNullOrWhiteSpace(tip.Text)) return null;   // 无文案视为无效
             return tip;
@@ -148,4 +157,6 @@ public sealed class TipInfo
     public string? Text { get; set; }
     public string? Color { get; set; }
     public string? Link { get; set; }
+    /// <summary>只给这个版本之前的用户看(如 "1.4.9"):装到 1.4.9 或更新就不再出现。空=所有版本都显示。</summary>
+    public string? OnlyForOlderThan { get; set; }
 }
