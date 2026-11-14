@@ -11,7 +11,7 @@
     <!-- 整体留边 + 圆角卡片布局(用系统标题栏:窗口秒显,无黑屏;左上角图片在左导航顶部) -->
     <!-- 【2026-11-12】整个窗口都收拖放:拖到侧栏、空白、任意页面位置都算"往当前页面添加文件"。
          以前只有视频页那块列表接拖放,拖到别处(尤其是图片页)完全没反应,用户以为软件坏了。 -->
-    <Grid Margin="10" AllowDrop="True" DragOver="Root_DragOver" DragLeave="Root_DragLeave" Drop="Root_Drop">
+    <Grid x:Name="RootGrid" Margin="10" AllowDrop="True" DragOver="Root_DragOver" DragLeave="Root_DragLeave" Drop="Root_Drop">
         <Grid.ColumnDefinitions>
             <!-- 左侧导航 -->
             <ColumnDefinition Width="170"/>

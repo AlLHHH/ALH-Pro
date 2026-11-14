@@ -125,7 +125,7 @@ public class WeakDeviceJudgementTests
     {
         string src = CodeOnly(ReadRepoFile("ImgUpscalerUI", "SafeRender.cs"));
         Assert.Contains("private static void RefreshVulkanState()", src);
-        Assert.Contains("private static (bool Concluded, bool Available, int Devices) VulkanState()", src);
+        Assert.Contains("private static (bool Concluded, bool Available, int Devices, int Dml) VulkanState()", src);
         // 缓存键含"有没有结论"这一位
         Assert.Contains("return (ALHPro.VulkanCheck.ProbeConcluded, ALHPro.VulkanCheck.GpuAvailable,", src);
         // 状态一变,三处缓存一起作废
@@ -137,7 +137,7 @@ public class WeakDeviceJudgementTests
         Assert.Contains("public static bool IsWeakDevice { get { RefreshVulkanState(); return _weak ??= ComputeWeakDevice(); } }", src);
         Assert.Contains("public static string WeakDeviceReason { get { RefreshVulkanState(); return _weakReason ??= ComputeWeakReason(); } }", src);
         // 分档也走三态(不是裸读 GpuAvailable)
-        Assert.Contains("try { gpu = !ALHPro.VulkanCheck.NoGpuDetected; } catch { }", src);
+        Assert.Contains("try { gpu = !ALHPro.VulkanCheck.NoComputeDeviceDetected; } catch { }", src);
     }
 
     /// <summary>"自检没跑完 ≠ 没有 GPU"这件事的判据本体:`ProbeConcluded` 进入探测时清零、**任何出口**

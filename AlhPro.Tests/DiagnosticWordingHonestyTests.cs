@@ -140,7 +140,7 @@ public class DiagnosticWordingHonestyTests
         string code = CodeOnly(ReadRepoFile("ImgUpscalerUI", "Views", "VideoView.xaml.cs"));
         Assert.DoesNotContain("无 GPU/弱设备:视频超分/补帧将用 CPU 计算", code);
         Assert.DoesNotContain("SafeRender.DeviceProfile.UltraLow || !ALHPro.VulkanCheck.GpuAvailable", code);
-        Assert.Contains("bool noGpu = ALHPro.VulkanCheck.NoGpuDetected;", code);
+        Assert.Contains("bool noGpu = ALHPro.VulkanCheck.NoComputeDeviceDetected;", code);
         Assert.DoesNotContain("VulkanCheck.Done && !VulkanCheck.GpuAvailable", code);
         Assert.Contains("string devHint = SafeRender.DeviceHintText(noGpu, SafeRender.Profile, SafeRender.WeakDeviceReason);", code);
         Assert.Contains("if (devHint.Length > 0) Log(devHint);", code);

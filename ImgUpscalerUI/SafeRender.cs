@@ -1059,18 +1059,20 @@ public static class SafeRender
 
     /// <summary>Vulkan 自检状态快照 —— **画像与弱设备结论的缓存键**。含"有没有结论"
     /// (见 <see cref="AlhPro.VulkanCheck.ProbeConcluded"/>):探测进行中与探测完了是两种状态,
-    /// 前端那次误判必须能被后端测出 GPU 这件事纠正。</summary>
-    private static (bool Concluded, bool Available, int Devices) VulkanState()
+    /// 前端那次误判必须能被后端测出 GPU 这件事纠正。
+    /// 【2026-11-14】键里再加 DirectML 探测结论(`DmlFallbackOk`):Vulkan 挂掉但 DirectML 可用的机器,
+    /// 结论要等 DML 探测跑完才能算准;少了这一位,启动早期算出的"没有 GPU"会一路缓存到进程结束。</summary>
+    private static (bool Concluded, bool Available, int Devices, int Dml) VulkanState()
     {
         try
         {
             return (ALHPro.VulkanCheck.ProbeConcluded, ALHPro.VulkanCheck.GpuAvailable,
-                    ALHPro.VulkanCheck.Devices.Count);
+                    ALHPro.VulkanCheck.Devices.Count, ALHPro.EsrganOnnxService.DmlFallbackOk);
         }
-        catch { return (false, false, 0); }
+        catch { return (false, false, 0, -1); }
     }
 
-    private static (bool, bool, int) _stateAtCompute;
+    private static (bool, bool, int, int) _stateAtCompute;
     private static bool _stateKnown;
 
     /// <summary>状态变了就把「硬件画像 / 弱设备 / 弱设备理由」三处缓存一起作废(下次访问按新状态重算)。</summary>
@@ -1090,8 +1092,10 @@ public static class SafeRender
         double v = TotalVramGB, r = TotalRamGB; int c = CpuCoreCount;
         // 【2026-10-17】"没有 GPU"必须是**有结论的**没有(三态见 AlhPro.Core.GpuPresence):
         // 以前拿 `GpuAvailable` 裸读数,自检还没跑完的那一刻就掉到 UltraLow。
+        // 【2026-11-14】改用 NoComputeDeviceDetected:Vulkan 挂了但 DirectML 还能建会话的机器(驱动升级未重启)
+        // 并不是"没有 GPU",把它按无卡机掉到 UltraLow 会连带说出"没有可用 GPU/将用 CPU"这类假话。
         bool gpu = true;
-        try { gpu = !ALHPro.VulkanCheck.NoGpuDetected; } catch { }
+        try { gpu = !ALHPro.VulkanCheck.NoComputeDeviceDetected; } catch { }
         return ProfileFor(v, r, c, gpu);
     }
 

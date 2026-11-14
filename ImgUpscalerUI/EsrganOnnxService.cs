@@ -50,6 +50,9 @@ public static class EsrganOnnxService
     public static string? FindWaifu2xModel(string? preferredModel = null)
     {
         var root = Path.Combine(EngineService.EnginesDir, "waifu2x");
+        // 【2026-11-14】先判目录存在:缺目录时 EnumerateFiles 会抛,而调用方(HasAnyOnnxModel)的 catch 会
+        // 把整条判定吞成 false —— RIFE 那一路明明有模型也会被判成"一条 ONNX 都没有"。
+        if (!Directory.Exists(root)) return null;
         var names = new System.Collections.Generic.List<string>();
         if (!string.IsNullOrWhiteSpace(preferredModel) &&
             !preferredModel.Contains("cunet", StringComparison.OrdinalIgnoreCase))
@@ -71,11 +74,24 @@ public static class EsrganOnnxService
         return null;
     }
 
-    /// <summary>动漫动画模型 ONNX(engines/realesrgan/ realesr-animevideov3.onnx;2.4MB)。
+    /// <summary>本机有没有任何一条能走 ONNX 的模型 —— 与探测用的模型集**同一个来源**(见 FindProbeModel)。
+    /// 【2026-11-14】为什么单独抽出来:"要不要探测 DirectML"与"DirectML 算不算可用"必须是同一套判据。
+    /// 原来探测那处只问 `FindModel()`(通用 x4plus),于是只有 waifu2x/动漫/RIFE 模型的机器从不探测 DML
+    /// ⇒ `DmlFallbackOk` 永远是 -1 ⇒ 被 Vulkan 判定连累成"只能 CPU"(诊断包 ALHPro_Diag_20261113_2340 的
+    /// RTX 5060 就是这么被说成 CPU、估出 44 小时的)。也正因为两者同源,才不会出现"探测用了 A 模型、
+    /// 判定却按 B 模型算"的错位。</summary>
+    public static bool HasAnyOnnxModel()
+    {
+        try { return FindProbeModel() != null; }
+        catch { return false; }
+    }
+
+    /// <summary>动漫动画模型 ONNX(engines/realesrgan/ reales-animevideov3.onnx;2.4MB)。
     /// 50系无独显走 ONNX 时也保持"动漫动画"画质(而非退到 x4plus 通用画质)。</summary>
     public static string? FindAnimeVideoModel()
     {
         var root = Path.Combine(EngineService.EnginesDir, "realesrgan");
+        if (!Directory.Exists(root)) return null;   // 2026-11-14:缺目录时别让 EnumerateFiles 抛
         foreach (var f in new[] { "realesr-animevideov3.onnx", "RealESR-AnimeVideo-v3_x4.onnx" })
         {
             foreach (var found in Directory.EnumerateFiles(root, f, SearchOption.AllDirectories))
@@ -93,6 +109,7 @@ public static class EsrganOnnxService
     public static string? FindWdnModel()
     {
         var root = Path.Combine(EngineService.EnginesDir, "realesrgan");
+        if (!Directory.Exists(root)) return null;   // 2026-11-14:缺目录时别让 EnumerateFiles 抛
         foreach (var f in new[] { "realesr-general-wdn-x4v3.onnx", "realesr_general_wdn_x4v3.onnx" })
         {
             foreach (var found in Directory.EnumerateFiles(root, f, SearchOption.AllDirectories))
@@ -678,9 +695,13 @@ public static class EsrganOnnxService
     /// 而视频超分在 50 系/无独显机器上走的正是 **waifu2x ONNX** 这条路 ——
     /// 若探测只认 x4plus,这种机器上探测会因"模型缺失"而永远拿不到 DirectML 结论,
     /// 于是又回到"静默落 CPU、日志里没有根因"的老问题。任一模型都能建 DirectML 会话,
-    /// 探测只需要"能不能在该设备上把会话建起来"这一个事实。</summary>
+    /// 探测只需要"能不能在该设备上把会话建起来"这一个事实。
+    /// 【2026-11-14】补上 wdn 与 RIFE 两份:原来只有 x4plus/waifu2x/动漫,机器上只装了 wdn 或只装了
+    /// rife49.onnx 时探测仍拿不到模型 ⇒ 明明有 ONNX 可跑却被判"DirectML 不可用"。模型集还必须是
+    /// `HasAnyOnnxModel()` 的唯一来源,否则"要不要探测"与"探出来算不算可用"会各说一套。</summary>
     internal static string? FindProbeModel()
-        => FindModel() ?? FindWaifu2xModel() ?? FindAnimeVideoModel();
+        => FindWdnModel() ?? FindModel() ?? FindWaifu2xModel() ?? FindAnimeVideoModel()
+           ?? ALHPro.RifeOnnxService.FindModel();
 
     /// <summary>实测 DirectML 设备是否可用 —— **只探映射出的那一个目标设备**(见 ResolveProbeDmlDevice)。
     /// 目标设备建会话失败时,再退到"引擎映射表里第一个独显"重试一次(最多 2 次,不是 0..3 的遍历)。
@@ -883,8 +904,10 @@ public static class EsrganOnnxService
         if (!wantsGpu) return -1;
         int maxSide = Math.Max(width, height);
         if (maxSide <= 256) return -1;   // 小图:CPU 更快(不折腾 GPU)
-        // 用户显式选了 CPU(GpuIndex<0):必须尊重(不按尺寸拉回 GPU)——GPU 有问题的机器正是这么选的
-        if (AppSettings.GpuIndex < 0) return -1;
+        // 【2026-11-14】GpuIndex<0 不再直接判 CPU:设置页早已没有「CPU 计算」选项,
+        // 剩下的 -1 只可能是自检自动降级(Vulkan 挂了)或老版本存下的值 —— 那种机器上 DirectML 往往还好用,
+        // 直接返回 -1 会把还能 GPU 加速的 ONNX 拖回 CPU(真机:RTX 5060 被估成 44 小时)。
+        if (AppSettings.GpuIndex < 0 && !VulkanCheck.DmlAvailable()) return -1;
         // 【修复】判定 DirectML 是否可用:用"直接调用 DirectML 建会话"的实测结果(EnsureDmlProbeAsync → _dmlFirstOk),
         // 而不是用 VulkanCheck.GpuAvailable——Vulkan 与 DirectML 是两套完全不同的运行时,
         // 之前用 Vulkan 判定会在"DirectML 可用但 Vulkan 检测失败(无 Vulkan runtime/驱动缺/某 GPU Vulkan 支持不全)"

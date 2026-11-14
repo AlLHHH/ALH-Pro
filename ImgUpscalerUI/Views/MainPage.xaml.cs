@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Linq;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
@@ -28,6 +28,7 @@ public sealed partial class MainPage : Page
     public MainPage()
     {
         this.InitializeComponent();
+        SetupPasteFilesShortcut();
         AppSettings.Load();      // 应用级开关(自动删除已完成项目等)
         SafeRender.Load();       // 加载"安全渲染"墙配置(自动/自定义)
         // 休息提示 + 显眼的「跳过休息」按钮:显示在窗口底部状态栏右侧(任务处理中休息降温时)
@@ -254,11 +255,14 @@ public sealed partial class MainPage : Page
                     // 之前仅"多卡机"探测——单卡机(最常见)不探测,导致 PickDevice 退回 Vulkan 判定,
                     // 在"DirectML 可用但 Vulkan 检测失败"的机器上把 ONNX 超分/视频超分静默拖回 CPU(CPU 在跑)。
                     // 探测极轻(逐号尝试建会话,失败记录 _dmlFirstOk=-1),无 GPU/纯 CPU 机器安全:探测全失败 → 走 CPU。
-                    if (ALHPro.EsrganOnnxService.FindModel() != null)
+                    // 【2026-11-14】触发条件从"有 esrgan 超分模型"改成"有任何一条 ONNX 模型":
+                    // 只有 waifu2x/RIFE ONNX、没装 esrgan ONNX 的机器原来从不探测 DML ⇒ DmlFallbackOk 恒为 -1
+                    // ⇒ Vulkan 一旦不可用就被判成"只能 CPU"(诊断包 ALHPro_Diag_20261113_2340 的 RTX 5060)。
+                    if (ALHPro.EsrganOnnxService.HasAnyOnnxModel())
                     {
                         try { await ALHPro.EsrganOnnxService.EnsureDmlProbeAsync(); } catch { }
                     }
-                    MarkSelfCheckStep(4, ALHPro.EsrganOnnxService.FindModel() == null || ALHPro.EsrganOnnxService.DmlFallbackOk >= 0);   // ⑤ DirectML
+                    MarkSelfCheckStep(4, !ALHPro.EsrganOnnxService.HasAnyOnnxModel() || ALHPro.EsrganOnnxService.DmlFallbackOk >= 0);   // ⑤ DirectML
                     AppLogger.Info("Vulkan 自检:" + (gpuOk ? "GPU 引擎可用(Vulkan 设备枚举成功)" : "GPU 引擎不可用(未枚举到 Vulkan 设备),建议设置中选 CPU") + VulkanCheck.Report);
                     // 【推荐项 = 自检最好的独显】仅当 需要全检(首次/更新) 或 当前设备无效/核显 时才按 1×1 实测重探测;
                     // 否则(已有有效独显、非首次启动)→ 跳过重探测,不每次启动都白跑 GPU(~1-2秒)。
@@ -304,7 +308,17 @@ public sealed partial class MainPage : Page
                         }
                         if (!gpuOk)
                         {
-                            if (AppSettings.GpuIndex >= 0)
+                            // 【2026-11-14 用户真机 RTX 5060 Laptop · 致命误判】Vulkan 与 DirectML 是两套独立运行时:
+                            // 显卡驱动升级后没重启时,Vulkan 枚举为 0(libplacebo: VK_ERROR_INCOMPATIBLE_DRIVER),
+                            // 而 DirectML 建会话成功。此时把处理设备切成 CPU,等于把还能跑的 ONNX(DirectML)GPU 一起关掉,
+                            // 后续界面再报「本机 DirectML 不可用,超分将使用 CPU」就是彻头彻尾的假话(那台机按 CPU 估出 44 小时)。
+                            if (VulkanCheck.DmlAvailable())
+                            {
+                                AppLogger.Info("Vulkan 自检不可用,但 DirectML 实测可用 → 保留当前处理设备,超分/补帧走 ONNX(DirectML GPU);"
+                                    + "Vulkan 多半是显卡驱动升级后未重启,建议重启电脑再点「重新检测」");
+                                autoMsg = "本机 Vulkan 不可用,但 DirectML 可用 → 仍用显卡处理(ONNX 路线);重启电脑后可在设置里重新检测";
+                            }
+                            else if (AppSettings.GpuIndex >= 0)
                             {
                                 // 仅本次会话切 CPU:【不写入设置文件】——驱动抽风/临时枚举失败时,
                                 // 不会把用户选好的 GPU 覆盖掉;显卡恢复后下次启动自动回到用户选的设备
@@ -1327,6 +1341,79 @@ public sealed partial class MainPage : Page
     /// <summary>【2026-11-12】窗口级拖放:只要拖进来的是文件就收下,交给当前页面去添加。
     /// 页面自己的拖放处理器仍在自己范围内生效(它们先拿到事件并标记 Handled),这里兜住
     /// "拖到侧栏/空白/图片页"这些以前完全没反应的位置。</summary>
+    // ---------- Ctrl+V:把资源管理器里复制的文件贴进来 ----------
+    // 【为什么需要】以管理员身份运行时,Windows(UIPI)禁止从资源管理器拖放进来,任何程序都一样;
+    // 但剪贴板是通的 —— 用户「复制文件 → 在本窗口 Ctrl+V」就能导入,不必改权限。
+    // 顺带覆盖:从聊天软件复制文件、拖放被系统拦掉的机器。
+    private void SetupPasteFilesShortcut()
+    {
+        try
+        {
+            var accel = new Microsoft.UI.Xaml.Input.KeyboardAccelerator
+            {
+                Key = Windows.System.VirtualKey.V,
+                Modifiers = Windows.System.VirtualKeyModifiers.Control,
+            };
+            accel.Invoked += async (_, args) =>
+            {
+                try
+                {
+                    var dp = Windows.ApplicationModel.DataTransfer.Clipboard.GetContent();
+                    if (!dp.Contains(StandardDataFormats.StorageItems)) return;   // 没文件就让文本框各管各的
+                    args.Handled = true;
+                    string[] paths;
+                    try
+                    {
+                        var items = await dp.GetStorageItemsAsync();
+                        paths = items.OfType<StorageFile>().Select(f => f.Path)
+                            .Where(p => !string.IsNullOrWhiteSpace(p)).ToArray();
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Error("粘贴文件:读剪贴板失败", ex);
+                        return;
+                    }
+                    await ImportPathsAsync(paths, "粘贴");
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Error("粘贴文件处理失败", ex);
+                }
+            };
+            RootGrid.KeyboardAccelerators.Add(accel);
+        }
+        catch (Exception ex)
+        {
+            try { AppLogger.Error("注册 Ctrl+V 粘贴快捷键失败", ex); } catch { }
+        }
+    }
+
+    /// <summary>把一批路径交给当前页面导入(拖放与 Ctrl+V 共用)。</summary>
+    private async Task ImportPathsAsync(string[] paths, string from)
+    {
+        if (paths == null || paths.Length == 0) return;
+        AppLogger.Info($"{from}:{paths.Length} 个文件 → 当前页面 {_currentTag}");
+        try
+        {
+            switch (_currentTag)
+            {
+                case "video":
+                    await _videoView.AcceptDroppedFilesAsync(paths);
+                    break;
+                case "upscale":
+                    await _upView.AcceptDroppedFilesAsync(paths);
+                    break;
+                default:
+                    AppLogger.Info($"{from}:当前页面({_currentTag})不收文件,已忽略({paths.Length} 个)");
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"{from}:交给页面导入失败", ex);
+        }
+    }
+
     // 一次拖拽只记一行:下一轮用户反馈"拖不进去"时,日志里有没有这行能立刻区分
     // 「拖放事件根本没进窗口」和「进了但被页面逻辑拒了」。
     private bool _rootDragLogged;

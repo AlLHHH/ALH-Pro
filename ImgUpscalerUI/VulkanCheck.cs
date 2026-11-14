@@ -31,6 +31,13 @@ public static class VulkanCheck
     /// Unknown(探测进行中 / 缓存里只有旧结论)一律 false —— 没有结论就不许说用户没有显卡。</summary>
     public static bool NoGpuDetected => ProbeConcluded && !GpuAvailable;
 
+    /// <summary>**面向用户的"这台机器没有可用的计算设备"** = Vulkan 不可用 **且** DirectML 也不可用。
+    /// 【2026-11-14 用户真机 RTX 5060 Laptop】显卡驱动在使用中途升到 32.0.16.1714 后没重启,Vulkan 引擎枚举为 0、
+    /// libplacebo 报 VK_ERROR_INCOMPATIBLE_DRIVER,而 DirectML 建会话成功(DML探测首可用=#0)。
+    /// 用 <see cref="NoGpuDetected"/> 直接说"没有 GPU/将用 CPU"是假话 —— ONNX(DirectML) 明明还能 GPU 加速。
+    /// 判 ncnn 风险(补帧引擎选择)仍用 NoGpuDetected,那才真是 Vulkan 语义。</summary>
+    public static bool NoComputeDeviceDetected => NoGpuDetected && !DmlAvailable();
+
     /// <summary>这台机器**过去某次**真的枚举到过 Vulkan 设备(跨会话记住;只有用户手动点「重新检测」才会清掉)。
     /// 用来兜住"这次探测失败"的反例:跑过 GPU 的机器这次没枚举到,只当"暂时不知道",
     /// 不说没有显卡、也不弹低配卡片(2026-10-17 用户真机要求)。
@@ -500,18 +507,17 @@ public static class VulkanCheck
 
     /// <summary>DirectML(ONNX 加速)是否可用:有 ONNX 超分/补帧模型 + DirectML 探测确认到可用设备。
     /// Vulkan 与 DirectML 是两套独立运行时;Vulkan 不可用 ≠ DirectML 不可用,故用它修正"只能 CPU"误判。
-    /// 仅当 DirectML 探测【已完成且找到设备】(DmlFallbackOk>=0)才报可用,否则保守按不可用(避免误导)。</summary>
-    private static bool DmlAvailable()
+    /// 仅当 DirectML 探测【已完成且找到设备】(DmlFallbackOk>=0)才报可用,否则保守按不可用(避免误导)。
+    /// 【2026-11-14】改成 public:自检联动、设备提示语都要用它,不能各处各判一套。</summary>
+    public static bool DmlAvailable()
     {
         try
         {
             // DirectML 探测确认有可用设备(DmlFallbackOk = _dmlFirstOk,>=0 表示找到可建 DirectML 会话的设备)
             bool dmlDevice = ALHPro.EsrganOnnxService.DmlFallbackOk >= 0;
             if (!dmlDevice) return false;
-            // 有 ONNX 超分/补帧模型才可能走 ONNX
-            return ALHPro.EsrganOnnxService.FindModel() != null
-                || ALHPro.EsrganOnnxService.FindWaifu2xModel() != null
-                || ALHPro.RifeOnnxService.Available();
+            // 有 ONNX 超分/补帧模型才可能走 ONNX(与"要不要探测"共用同一套判据,见 HasAnyOnnxModel)
+            return ALHPro.EsrganOnnxService.HasAnyOnnxModel();
         }
         catch { return false; }
     }
@@ -537,6 +543,10 @@ public static class VulkanCheck
         // ===== 明确结论(一行,用户一眼看懂能不能用)=====
         if (!string.IsNullOrEmpty(err))
             sb.Append("结论:❌ 检测异常:无法确定本机能否正常运行,请更新显卡驱动后重新检测,或到窗口右下角导出诊断包反馈。\n");
+        else if (!gpuOk && DmlAvailable())
+            // 【2026-11-14】Vulkan 挂了不等于没法用显卡:ONNX(DirectML) 仍能跑超分/补帧。
+            // 原来这里直接说「本机只能 CPU」,与下面「可用性:ONNX/DirectML 可用」自相矛盾。
+            sb.Append("结论:⚠️ Vulkan 加速不可用(常见原因:显卡驱动刚升级、还没重启电脑),但 ONNX/DirectML 可用 —— 图片放大、抠图、视频超分与补帧仍由显卡处理。只有 Real-CUGAN 动漫超分(仅 ncnn-Vulkan)与 ncnn 补帧暂时用不了。建议:重启电脑后点「重新检测」。\n");
         else if (!gpuOk)
             sb.Append("结论:❌ 未检测到可用显卡(GPU):本机只能 CPU 软件计算,图片放大/抠图可用,视频超分与补帧会非常慢。建议:更新显卡驱动(需支持 Vulkan),或确认显卡未被禁用。\n");
         else if (DriverTooOld(out string driverHint))
@@ -657,7 +667,7 @@ public static class VulkanCheck
         sb.Append("注意:");
         var notes = new System.Collections.Generic.List<string>();
         if (!string.IsNullOrEmpty(err)) notes.Add("检测异常可能由显卡驱动不支持 Vulkan 引起,请更新驱动后重新检测");
-        if (!gpuOk && string.IsNullOrEmpty(err))
+        if (!gpuOk && string.IsNullOrEmpty(err) && !DmlAvailable())
         {
             notes.Add("未检测到 GPU 加速,视频超分与补帧耗时会很长,建议先用小片段测试");
             notes.Add("若安装有独立显卡却显示不可用,请更新显卡驱动(需支持 Vulkan)或检查显卡是否被禁用");

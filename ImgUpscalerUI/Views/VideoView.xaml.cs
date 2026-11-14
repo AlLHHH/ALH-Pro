@@ -4624,7 +4624,9 @@ public sealed partial class VideoView : UserControl
         try
         {
             if (UpscaleToggle.IsChecked != true) return false;
-            if (AppSettings.GpuIndex < 0) return true;   // ① 用户主动选 CPU
+            // 【2026-11-14】① 只在 DirectML 也不可用时才算"会落 CPU":设置页没有 CPU 选项,
+            // GpuIndex<0 是自检自动降级的结果;若 DML 还能建会话,纹理会走 ONNX GPU,不该吓用户。
+            if (AppSettings.GpuIndex < 0 && !ALHPro.VulkanCheck.DmlAvailable()) return true;
             if (!ALHPro.EsrganOnnxService.DmlProbeCompleted || ALHPro.EsrganOnnxService.DmlFallbackOk >= 0)
                 return false;                            // 未探完 / 探测说可用 → 不当作 CPU 场景(不误报)
             return OnnxUpscaleRouteLikely();             // ② 走 ONNX 路线 + DirectML 实测不可用
@@ -11647,8 +11649,9 @@ public sealed partial class VideoView : UserControl
         //   上一版写成 `Done && !GpuAvailable`,而 `Done` 在探测【进入时】就为 true、`GpuAvailable` 要等
         //   引擎枚举完才有值 ⇒ 启动早期把"还不知道"读成"确定没有 GPU":用户真机日志里同一秒先出现
         //   「⚠ 检测到设备配置较低(未检测到可用 GPU(Vulkan))」,紧接着才是「补枚举成功/GPU 引擎可用」。
-        //   现在统一走 VulkanCheck.NoGpuDetected(与 Look 侧 SafeRender 的三态判据同源)。
-        bool noGpu = ALHPro.VulkanCheck.NoGpuDetected;
+        //   现在统一走 VulkanCheck.NoComputeDeviceDetected(= Vulkan 不可用 **且** DirectML 也不可用):
+        //   光 Vulkan 挂掉不许说"将用 CPU",那种机器上 ONNX(DirectML)照旧跑 GPU。
+        bool noGpu = ALHPro.VulkanCheck.NoComputeDeviceDetected;
         string devHint = SafeRender.DeviceHintText(noGpu, SafeRender.Profile, SafeRender.WeakDeviceReason);
         if (devHint.Length > 0) Log(devHint);
         // ===== 高倍率补帧预警:核显/小显存跑 4x 及以上大概率极慢或失败(不拦,知情即可) =====
