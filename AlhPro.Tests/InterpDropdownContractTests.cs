@@ -224,7 +224,15 @@ public class InterpDropdownContractTests
         while (dir != null)
         {
             var cand = Path.Combine(new[] { dir.FullName }.Concat(parts).ToArray());
-            if (File.Exists(cand)) return File.ReadAllText(cand);
+            if (File.Exists(cand))
+                {
+                    // 2026-11-14: 大类拆成 partial 后,契约断言要看"整个类"的源码,不能只看主文件。
+                    var d2 = Path.GetDirectoryName(cand)!;
+                    var stem = Path.GetFileName(cand).Split('.')[0];
+                var parts2 = Directory.GetFiles(d2, stem + ".*.cs")
+                    .Where(x => !string.Equals(x, cand, StringComparison.OrdinalIgnoreCase));
+                return string.Concat(new[] { cand }.Concat(parts2.OrderBy(x => x, StringComparer.Ordinal)).Select(File.ReadAllText));
+                }
             dir = dir.Parent;
         }
         throw new FileNotFoundException("找不到仓库文件: " + string.Join('/', parts));

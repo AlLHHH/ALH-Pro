@@ -118,7 +118,15 @@ public class TempDirAndOutputKeepTests
         while (dir != null)
         {
             var p = Path.Combine(new[] { dir.FullName }.Concat(parts).ToArray());
-            if (File.Exists(p)) return File.ReadAllText(p);
+            if (File.Exists(p))
+            {
+                // 2026-11-14: 大类拆成 partial 后,契约断言要看"整个类"的源码,不能只看主文件。
+                var d2 = Path.GetDirectoryName(p)!;
+                var stem = Path.GetFileName(p).Split('.')[0];
+                var parts2 = Directory.GetFiles(d2, stem + ".*.cs")
+                    .Where(x => !string.Equals(x, p, StringComparison.OrdinalIgnoreCase));
+                return string.Concat(new[] { p }.Concat(parts2.OrderBy(x => x, StringComparer.Ordinal)).Select(File.ReadAllText));
+            }
             dir = dir.Parent;
         }
         throw new FileNotFoundException("找不到仓库文件: " + string.Join("/", parts));
