@@ -1,6 +1,6 @@
 # ALH Pro
 
-**🌐 官网与下载:https://alhpro.cn** ｜ [下载安装包](https://alhpro.cn/download.html) · [使用教程](https://alhpro.cn/tutorial.html) · [常见问题](https://alhpro.cn/faq.html) · [更新日志](https://alhpro.cn/changelog.html) · [开源许可清单](https://alhpro.cn/licenses.html) · [隐私政策](https://alhpro.cn/privacy.html)
+**🌐 官网与下载:https://alhpro.cn** ｜ [下载安装包](https://alhpro.cn/download.html) · [常见问题](https://alhpro.cn/faq.html) · [更新日志](https://alhpro.cn/changelog.html) · [开源许可清单](https://alhpro.cn/licenses.html) · [隐私政策](https://alhpro.cn/privacy.html)
 
 图片/视频/音频 AI 增强工具(本地运行),支持:图片超分、AI 抠图、视频超分、视频补帧、视频去重、音频分离/增强/真超分。
 
@@ -146,7 +146,6 @@ ALH Pro 采用 **MIT 许可**(标准开源许可之一)。**版权归 AlL.H 所�
 | --- | --- |
 | 官网(首页) | https://alhpro.cn/ |
 | 下载(安装包 / 完整版 / 模型包 / 网盘) | https://alhpro.cn/download.html |
-| 使用教程 | https://alhpro.cn/tutorial.html |
 | 常见问题(FAQ) | https://alhpro.cn/faq.html |
 | 更新日志 | https://alhpro.cn/changelog.html |
 | 开源许可清单 | https://alhpro.cn/licenses.html |

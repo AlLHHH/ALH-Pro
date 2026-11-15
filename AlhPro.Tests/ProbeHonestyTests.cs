@@ -50,15 +50,30 @@ public class ProbeHonestyTests
     private static string CodeOnly(string src)
     {
         var sb = new System.Text.StringBuilder(src.Length);
-        bool line = false, block = false, str = false, chr = false;
+        bool line = false, block = false, str = false, chr = false, verbatim = false;
         for (int i = 0; i < src.Length; i++)
         {
             char c = src[i];
             char next = i + 1 < src.Length ? src[i + 1] : '\0';
+
+            // 逐字字符串 @"..." 里 `""` 是转义的双引号,且里面可以出现 // 与 /* —— 不单独处理会把
+            // 后续整段代码误当注释剥掉(2026-11-15 就因此让"注释里的旧写法"漏进了断言)。
+            if (verbatim)
+            {
+                if (c == '"')
+                {
+                    if (next == '"') { sb.Append(c).Append(next); i++; continue; }
+                    verbatim = false;
+                }
+                sb.Append(c);
+                continue;
+            }
+
             if (line) { if (c == '\n') { line = false; sb.Append(c); } continue; }
             if (block) { if (c == '*' && next == '/') { block = false; i++; } continue; }
             if (!str && !chr && c == '/' && next == '/') { line = true; continue; }
             if (!str && !chr && c == '/' && next == '*') { block = true; i++; continue; }
+            if (!str && !chr && c == '@' && next == '"') { verbatim = true; sb.Append(c).Append(next); i++; continue; }
             if (!chr && c == '"' && (i == 0 || src[i - 1] != '\\')) str = !str;
             else if (!str && c == '\'' && (i == 0 || src[i - 1] != '\\')) chr = !chr;
             sb.Append(c);
@@ -116,5 +131,21 @@ public class ProbeHonestyTests
         Assert.DoesNotContain("engine == \"waifu2x\" && EngineService.IsBlackwellGpu()", vs);
         // 视频页永远给不出 waifu2x ⇒ 这两处"50 系 waifu2x"日志必须是死代码,已删。
         Assert.DoesNotContain("50系 waifu2x", vs);
+    }
+
+    [Fact]
+    public void No_text_offers_waifu2x_as_an_upscale_choice_any_more()
+    {
+        // 【2026-11-15】waifu2x 已经不能当超分模型选:视频页 2026-09-25 删,图片页动漫档 2026-11-01 换成 Real-CUGAN,
+        // 它只剩"降噪"(照片模式预处理降噪 / 抠图前降噪)。文案再劝人"改用 waifu2x",用户会去找一个不存在的档位。
+        // 断言直接钉"会被拼进异常/报告的那半句",不跟注释纠缠。
+        var engine = Read("ImgUpscalerUI", "EngineService.cs");
+        Assert.DoesNotContain("(它只在图片页提供,视频页没有这个档位)", engine);
+        Assert.DoesNotContain("(只在图片页提供)", engine);
+        Assert.DoesNotContain("可改用 waifu2x", engine);
+
+        var report = Read("ImgUpscalerUI", "VulkanCheck.cs");
+        Assert.DoesNotContain("sb.Append(\"· 动漫超分(waifu2x)\")", report);
+        Assert.Contains("sb.Append(\"· 图片降噪(预处理/抠图前):\")", report);
     }
 }

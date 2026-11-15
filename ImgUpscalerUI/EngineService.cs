@@ -1694,6 +1694,17 @@ public static partial class EngineService
     ///   · 只杀**可执行文件位于我们自己的 engines/ 目录下**的进程 ⇒ 别家软件的同名 ffmpeg/引擎一律不碰 ✔
     ///   · 读不到可执行路径的进程**不动**(保守)✔
     ///   · 调用点都在"确认没有任务在跑"之后(见 App.CleanupTempDirs 的闸门)⇒ 不会误杀正在用的引擎 ✔</summary>
+    /// <summary>本进程启动时刻。回收残留引擎时用它划界:比它更晚启动的引擎进程是**本次运行自己拉起来的**
+    /// (导入/探测阶段的 ffmpeg 探针、用户刚点的任务),一律不碰 —— 真机实测过误杀:启动清理把
+    /// 刚为列表探测启动的 ffmpeg 一起杀了,结果列表项显示「? fps」、时长分辨率全空。</summary>
+    private static readonly DateTime _appStartedAt = ResolveAppStart();
+
+    private static DateTime ResolveAppStart()
+    {
+        try { return System.Diagnostics.Process.GetCurrentProcess().StartTime; }
+        catch { return DateTime.Now; }
+    }
+
     public static int KillStaleEngines()
     {
         int killed = 0;
@@ -1725,6 +1736,11 @@ public static partial class EngineService
                         try { path = p.MainModule?.FileName ?? ""; } catch { continue; }   // 读不到 → 不动它
                         if (path.Length == 0) continue;
                         if (!path.StartsWith(engines, StringComparison.OrdinalIgnoreCase)) continue;   // 不是我们的 → 不碰
+                        // 比本进程更晚启动 = 这次运行自己拉起来的(导入探测的 ffmpeg、正在跑的任务)⇒ 不碰,
+                        // 否则会出现"列表里 ? fps"这种自己杀自己的怪事
+                        bool startedAfterUs;
+                        try { startedAfterUs = p.StartTime >= _appStartedAt; } catch { startedAfterUs = true; }  // 读不到就当它在用,保守跳过
+                        if (startedAfterUs) continue;
                         p.Kill(true);
                         killed++;
                         AppLogger.Info($"回收残留引擎进程:{n}(pid {p.Id}){path}");
@@ -2885,10 +2901,10 @@ public static partial class EngineService
             catch (InvalidOperationException gpuEx)
             {
                 // 【2026-09-25 话术校准:这是两页共用的兜底分支 ⇒ 建议必须"页面无关且真的做得到"】
-                // waifu2x 已按用户裁定**从视频页移除**(视频页只剩 Real-ESRGAN / Real-CUGAN),所以
-                // 不能再写"换用 waifu2x 引擎"——视频页用户照做会发现那个档位根本不存在(假出路)。
-                // 首选出路改成 **Real-ESRGAN(两页都有)**;waifu2x 只在图片页提供,所以想用它必须
-                // **写明入口是图片页**。替换 engines/waifu2x/ 文件那条照旧有效(图片页仍在用这个引擎)。
+                // 【2026-11-15 再校准】waifu2x 现在**任何页面都不能当超分模型选**:视频页 2026-09-25 删,
+                // 图片页动漫档 2026-11-01 换成 Real-CUGAN,它只剩"降噪"用途(照片模式预处理降噪、抠图前降噪)。
+                // 所以失败文案里不许再出现"改用 waifu2x"——那是让用户去找一个不存在的档位。
+                // 出路只写存在的:Real-ESRGAN(两页都有) / Real-CUGAN(动漫)。
                 throw new InvalidOperationException(
                     $"超分引擎在 GPU 和 CPU 模式都没能跑起来(exit {ExtractExit(gpuEx.Message)}):\n" +
                     // 【2026-11-15 话术校准】这里原来写"多半是引擎版本与显卡不兼容(如 RTX 50 系 + 旧版 ncnn-vulkan)"
@@ -2897,7 +2913,7 @@ public static partial class EngineService
                     "常见原因:显卡驱动异常、显存被其它程序占满、或引擎与本机显卡不兼容。\n" +
                     "建议:①关掉占显存的程序后重试;" +
                     "②换用 **Real-ESRGAN** 引擎(视频页 / 图片页都有这个档位,它另有 ONNX 稳定路线);" +
-                    "③图片页还可以改用 waifu2x(它只在图片页提供,视频页没有这个档位);" +
+                    "③动漫素材可改选 Real-CUGAN(线条/平涂更干净,注意它只能跑显卡);" +
                     "④还不行就点「导出诊断包」发给我们 —— 里面有引擎的真实退出码与显卡信息,比猜准。" +
                     $"\n--\n{gpuEx.Message}");
             }
@@ -3000,14 +3016,14 @@ public static partial class EngineService
 
             // ② 【原则 A:任何情况不自动转 CPU】当前及其它 GPU 都失败 → 直接提示错误给可行建议,而非默默跑慢速 CPU。
             // 超分/补帧在 CPU 上慢到不可接受;只有用户在设置里【手动选 CPU】才走 CPU(见上方 !usesGpu 分支,那里保留)。
-            // 【2026-09-25 话术校准(与上面那条同因)】两页共用的失败分支里不许再让视频页用户去"换用 waifu2x":
-            // 视频页已把它移除 ⇒ 首选出路写 **Real-ESRGAN**,waifu2x 必须写明"图片页可改用"。
+            // 【2026-09-25 / 2026-11-15 话术校准】两页共用的失败分支里不许让人去"换用 waifu2x":
+            // 视频页 2026-09-25 删了它,图片页动漫档 2026-11-01 换成了 Real-CUGAN ⇒ 界面无处可选。
             throw new InvalidOperationException(
                 $"超分引擎在当前及其它 GPU 上都没能跑起来(exit {ExtractExit(ex.Message)}):\n" +
                 // 【2026-11-15 话术校准】原因未知时不写型号、不说"你的引擎是旧版"(随包就是 2026 重编版)。
                 "常见原因:显卡驱动异常、显存被其它程序占满、或引擎与本机显卡不兼容。\n" +
                 $"建议:①关掉占显存的程序后重试;②换用 **Real-ESRGAN** 引擎(视频页 / 图片页都有,它另有 ONNX 稳定路线);" +
-                $"③图片页还可以改用 waifu2x(只在图片页提供);④更新显卡驱动后重试;" +
+                $"③动漫素材可改选 Real-CUGAN;④更新显卡驱动后重试;" +
                 $"⑤还不行就点「导出诊断包」发给我们 —— 里面有真实退出码与显卡信息。" +
                 $"\n(已按「不自动转 CPU」设置停止,避免慢速超分;确需 CPU 请在设置中手动选择)\n--\n{ex.Message}");
         }

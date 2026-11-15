@@ -30,7 +30,7 @@
 ; (本脚本仍未引用这两个定义,改它只为与 installer.iss 对照时不误导。)
 #define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.9/models_v1.1.zip"
 #define ModelsFile "models_v1.1.zip"
-; 完整版(含模型,网盘/整包)说明:安装完成后可到软件内「使用教程」或 GitHub 说明页找完整版直链
+; 完整版(含模型,网盘/整包)说明:安装完成后可到官网常见问题页或 GitHub 说明页找完整版直链
 
 [Setup]
 AppId={{8F3A2C1E-5D4B-4C6A-9E7F-2A3B4C5D6E7F}
@@ -102,6 +102,32 @@ Type: files; Name: "{app}\D3DCOMPILER_47.dll"
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+
+[Code]
+{==== 覆盖安装前先确认旧版本已经退出 ====
+ 用户反馈「更新到 1.4.9 后界面还显示 1.4.8」的常见成因就是这个:
+ 软件还开着就点下一步,Windows 锁住正在使用的 ALHPro.exe / ALHPro.dll,
+ 安装程序跳过这些文件 —— 于是装完打开还是旧版本,或者新旧文件混在一起。
+ 宁可在这里停一下讲清楚,也不要装出一个版本对不上的目录。}
+function ALHProIsRunning(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := False;
+  if Exec(ExpandConstant('{cmd}'),
+          '/c tasklist /FI "IMAGENAME eq ALHPro.exe" /NH | find /I "ALHPro.exe" >nul',
+          '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Result := (ResultCode = 0);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if ALHProIsRunning() then
+    Result := '检测到 ALH Pro 正在运行。' + #13#10 + #13#10 +
+              '请先完全退出它(关闭窗口;右下角托盘里还有图标就右键退出),再点「下一步」。' + #13#10 + #13#10 +
+              '不退出就覆盖安装的话,Windows 会锁住正在使用的文件,安装程序只能跳过 —— 结果是装完打开仍是旧版本。';
+end;
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "运行 {#MyAppName}"; Flags: nowait postinstall skipifsilent runasoriginaluser

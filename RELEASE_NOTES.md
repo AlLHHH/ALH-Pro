@@ -3,7 +3,7 @@ ALH Pro v1.4.9 — 更新内容
 
 > 📄 重要声明(免责 / 赞助 / 版权许可 / 第三方软件)见仓库根目录 **`声明.md`**;第三方开源许可见 `THIRD_PARTY_NOTICES.txt`。
 
-> 🌐 **官网与下载:https://alhpro.cn** ｜ [使用教程](https://alhpro.cn/tutorial.html) · [常见问题](https://alhpro.cn/faq.html) · [开源许可清单](https://alhpro.cn/licenses.html)
+> 🌐 **官网与下载:https://alhpro.cn** ｜ [常见问题](https://alhpro.cn/faq.html) · [开源许可清单](https://alhpro.cn/licenses.html)
 
 免费版持续更新,版本号见官网。每一版都可以**直接覆盖安装**:不用卸载,设置、预设、模型都会保留。
 

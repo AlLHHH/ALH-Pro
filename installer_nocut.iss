@@ -20,7 +20,7 @@
 ; 【2026-10-20 已改指 v1.4.6】v1.4.6 的 Release 会同时上传 models_v1.1.zip(与 v1.4.5 逐字节相同)。
 #define ModelsUrl "https://github.com/AlLHHH/ALH-Pro/releases/download/v1.4.9/models_v1.1.zip"
 #define ModelsFile "models_v1.1.zip"
-; 完整版(含模型,网盘/整包)说明:安装完成后可到软件内「使用教程」或 GitHub 说明页找完整版直链
+; 完整版(含模型,网盘/整包)说明:安装完成后可到官网常见问题页或 GitHub 说明页找完整版直链
 
 [Setup]
 AppId={{8F3A2C1E-5D4B-4C6A-9E7F-2A3B4C5D6E7F}
@@ -79,6 +79,30 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 
 [Code]
+{==== 覆盖安装前先确认旧版本已经退出 ====
+ 用户反馈「更新到 1.4.9 后界面还显示 1.4.8」的常见成因就是这个:
+ 软件还开着就点下一步,Windows 锁住正在使用的 ALHPro.exe / ALHPro.dll,
+ 安装程序跳过这些文件 —— 于是装完打开还是旧版本,或者新旧文件混在一起。
+ 宁可在这里停一下讲清楚,也不要装出一个版本对不上的目录。}
+function ALHProIsRunning(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := False;
+  if Exec(ExpandConstant('{cmd}'),
+          '/c tasklist /FI "IMAGENAME eq ALHPro.exe" /NH | find /I "ALHPro.exe" >nul',
+          '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Result := (ResultCode = 0);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if ALHProIsRunning() then
+    Result := '检测到 ALH Pro 正在运行。' + #13#10 + #13#10 +
+              '请先完全退出它(关闭窗口;右下角托盘里还有图标就右键退出),再点「下一步」。' + #13#10 + #13#10 +
+              '不退出就覆盖安装的话,Windows 会锁住正在使用的文件,安装程序只能跳过 —— 结果是装完打开仍是旧版本。';
+end;
 {==== 下载并解压模型包(勾选「downloadmodels」任务时执行) ====}
 
 function DownloadAndExtractModels(): Boolean;
@@ -91,7 +115,7 @@ begin
   Result := True;
   if MsgBox('即将从 GitHub 下载抠图模型包(约 1.4GB,视网络 10~60 分钟,国内直连可能失败)。' + #13#10 + #13#10 +
             '点「是」开始下载(失败或中途取消的话,软件本身已经装好,可稍后用网盘完整版或手动补装);' + #13#10 +
-            '点「否」跳过模型(以后想装:软件内「使用教程」有详细步骤)。', mbConfirmation, MB_YESNO) <> IDYES then
+            '点「否」跳过模型(以后想装:官网常见问题页有详细步骤)。', mbConfirmation, MB_YESNO) <> IDYES then
   begin
     Result := True;
     Exit;
