@@ -94,8 +94,7 @@
         <None Include="THIRD_PARTY_NOTICES.txt" Link="THIRD_PARTY_NOTICES.txt" CopyToOutputDirectory="PreserveNewest"/>
         <None Include="..\RELEASE_NOTES.md" Link="RELEASE_NOTES.md" CopyToOutputDirectory="PreserveNewest"/>
         <None Include="..\release_history.json" Link="release_history.json" CopyToOutputDirectory="PreserveNewest"/>
-        <!-- 使用教程:打包到输出目录,软件内教程页读取渲染(替换此文件即可更新教程,无需重编译) -->
-        <None Include="..\使用教程.md" Link="使用教程.md" CopyToOutputDirectory="PreserveNewest"/>
+        <!-- 【2026-11-15 用户要求】使用教程板块下线:不再打包 使用教程.md(教程页一起删)。 -->
         <!-- 标题栏/应用内图标:由 icon.ico 提取的 PNG(ffmpeg 转换)。BitmapImage 不支持 .ico,用 PNG 加载 -->
         <None Include="ALHPro_icon.png" Link="ALHPro_icon.png" CopyToOutputDirectory="PreserveNewest"/>
         <!-- 广告区本地兜底占位图:远程广告图拉取失败/为空时显示(用路径加载,与收款码同款约定,避免裂图) -->
@@ -115,6 +114,9 @@
         <Content Include="Assets\Wide310x150Logo.scale-200.png" />
         <!-- 标题栏/内页图标(ALHPro 品牌,PNG):打包资源,用 ms-appx 协议加载,无运行时 IO 风险 -->
         <Content Include="Assets\ALHPro_icon.png" />
+        <!-- 【2026-11-15】官方 Q 群二维码(群号 767832870):左下角「官方Q群」弹窗用 ms-appx 加载,
+             必须随包输出,否则点开是一张裂图。尺寸 360×460,PNG 约 107 KB。 -->
+        <Content Include="Assets\qrcode_qq.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     </ItemGroup>
 
     <ItemGroup>

@@ -778,7 +778,7 @@ public static class VulkanCheck
         sb.Append("· 动漫超分(Real-CUGAN):")
           .Append(vRealCugan.HasValue
               ? (vRealCugan.Value
-                  ? "ncnn-Vulkan GPU 加速(无 ONNX 版本;随包《使用教程》实测 1080p 2x 约 1.65 秒/帧,是三者里最慢的一支,"
+                  ? "ncnn-Vulkan GPU 加速(无 ONNX 版本;实测 1080p 2x 约 1.65 秒/帧,是三者里最慢的一支,"
                     + "你机器上的真实速度以本机标定为准)\n"
                   : "本机实测 ncnn 不可用 —— " + AlhPro.Core.RealCugan.UnavailableNotice
                     + ";要处理请把视频页的「超分引擎」改选 Real-ESRGAN(本机有可用 GPU,它有 ONNX 稳定路线)\n")

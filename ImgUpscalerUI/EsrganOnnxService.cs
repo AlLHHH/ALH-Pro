@@ -929,7 +929,10 @@ public static class EsrganOnnxService
             // 探测尚未完成(启动后极短暂窗口):保守判断,避免因 Vulkan 误判而否定 GPU
             // 【2026-10-17】改成"自检给出结论且结论是不可用"才降 CPU:旧写法 `!GpuAvailable` 在探测进行中
             // 同样是 false,等于用一次"还不知道"把用户的 GPU 静默降级成 CPU(注释说的是保守,代码做的是相反)。
-            if (VulkanCheck.NoGpuDetected && !EngineService.IsBlackwellGpu()) return -1;
+            // 【2026-11-15】原来还带 `&& !EngineService.IsBlackwellGpu()` —— 那是按显卡型号给 50 系开的后门:
+            // 名字不是 50 系的机器,只要 Vulkan 挂了(驱动升级未重启)就把 ONNX 判成 CPU,哪怕 DirectML 实测可用。
+            // 唯一正确的判据是"两个运行时都不可用"(:VulkanCheck.NoComputeDeviceDetected),与型号无关。
+            if (VulkanCheck.NoComputeDeviceDetected) return -1;
         }
         catch { }
         int fallback = AppSettings.GpuIndex >= 0 ? AppSettings.GpuIndex : 0;

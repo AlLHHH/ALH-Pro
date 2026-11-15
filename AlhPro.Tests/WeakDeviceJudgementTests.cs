@@ -182,7 +182,11 @@ public class WeakDeviceJudgementTests
         Assert.DoesNotContain("if (!ALHPro.VulkanCheck.GpuAvailable) return true;", es);
 
         string onnx = CodeOnly(ReadRepoFile("ImgUpscalerUI", "EsrganOnnxService.cs"));
-        Assert.Contains("if (VulkanCheck.NoGpuDetected && !EngineService.IsBlackwellGpu()) return -1;", onnx);
+        // 【2026-11-15 改判】原来这里钉的是 `NoGpuDetected && !IsBlackwellGpu()` —— 那等于按显卡型号开后门:
+        // 只要名字不是 50 系,Vulkan 挂了(驱动升级未重启)就把 ONNX 判成 CPU,而 DirectML 实测可用。
+        // 现在唯一判据是"两个运行时都不可用",与型号无关。
+        Assert.Contains("if (VulkanCheck.NoComputeDeviceDetected) return -1;", onnx);
+        Assert.DoesNotContain("NoGpuDetected && !EngineService.IsBlackwellGpu()", onnx);
         Assert.DoesNotContain("if (!VulkanCheck.GpuAvailable && !EngineService.IsBlackwellGpu()) return -1;", onnx);
     }
 

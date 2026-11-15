@@ -21,7 +21,7 @@ public sealed partial class MainPage : Page
     // 同一次进程里从别的页点「音频处理」进去不会触发(那时窗口已就绪)。
     private bool _mainPageLoaded;
     private string? _deferredViewTag;
-    private TutorialView? _tutorialView;
+    // 【2026-11-15】使用教程板块下线(用户要求):TutorialView 与 _tutorialView 字段一起删除。
     private string _currentTag = "upscale";
     private int _startupPageIndex;   // 构造时解析的启动页(0/1/2),供 Loaded 弹窗逻辑引用
 
@@ -1410,6 +1410,30 @@ public sealed partial class MainPage : Page
         }
     }
 
+    /// <summary>【2026-11-15】老式拖放(WM_DROPFILES)与命令行参数共用入口。
+    /// 这两条路和 OLE 拖放无关,提权窗口上也能进来 —— 用户说的「有的机器拖不进去」
+    /// 在这两条路上不存在:先按文件类型切到对应页面,再走同一套导入。</summary>
+    public async Task ImportFromShellAsync(string[] paths)
+    {
+        if (paths is null || paths.Length == 0) return;
+        try
+        {
+            bool hasVideo = paths.Any(p =>
+            {
+                var ext = System.IO.Path.GetExtension(p);
+                return AlhPro.DroppedPaths.VideoExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
+            });
+            if (hasVideo && _currentTag != "video") ShowView("video");
+            else if (!hasVideo && _currentTag != "upscale") ShowView("upscale");
+            await Task.Delay(60);   // 页面切换是同步建视图,给它一帧落地时间再塞文件
+            await ImportPathsAsync(paths, hasVideo ? "系统拖放(视频)" : "系统拖放(图片)");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("系统拖放导入失败", ex);
+        }
+    }
+
     /// <summary>把一批路径交给当前页面导入(拖放与 Ctrl+V 共用)。</summary>
     private async Task ImportPathsAsync(string[] paths, string from)
     {
@@ -1466,16 +1490,19 @@ public sealed partial class MainPage : Page
             if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
             e.Handled = true;
             var items = await e.DataView.GetStorageItemsAsync();
-            var paths = items.OfType<StorageFile>()
-                .Select(f => f.Path)
+            // 【2026-11-15】文件夹也要收:按当前页面决定摊开成视频还是图片;
+            // 以前这里只认 StorageFile,拖文件夹进来等于什么都没发生。
+            var raw = items.Select(i => i.Path)
                 .Where(p => !string.IsNullOrWhiteSpace(p))
                 .ToArray();
+            bool images = _currentTag == "upscale";
+            var paths = AlhPro.DroppedPaths.Expand(raw, images);
             if (paths.Length == 0)
             {
-                AppLogger.Info("拖入被拒:这次拖拽里没有文件(可能是文件夹)");
+                AppLogger.Info($"拖入被拒({_currentTag ?? "?"}):{items.Count} 项里没找到{(images ? "图片" : "视频")}");
                 return;
             }
-            AppLogger.Info($"拖入({_currentTag ?? "?"}):{paths.Length} 个文件");
+            AppLogger.Info($"拖入({_currentTag ?? "?"}):{items.Count} 项 → {paths.Length} 个{(images ? "图片" : "视频")}");
             if (_currentTag == "video" && _videoView != null)
                 await _videoView.AcceptDroppedFilesAsync(paths);
             else if (_currentTag == "upscale" && _upView != null)
@@ -1496,10 +1523,10 @@ public sealed partial class MainPage : Page
         // 记录最近使用界面(「上次退出界面」启动模式用);切换即保存,退出时也保存(见 MainWindow_Closed)
         // 索引口径:0=图片放大 1=图片抠图 2=视频处理 3=音频处理(见 StartupPageMap 注释,别再往下挤默认值;
         // 2026-09-23 视频抠图下线前它是第 5 个 4,现已删除)
-        if (tag != "tutorial")
+        // 【2026-11-15】使用教程页已下线,这里不再需要为它跳过「上次界面」的保存。
         {
             // 【2026-09-23 修 A2】换算收进 AlhPro.Core.StartupPageMap(唯一来源);不是功能页就不写
-            // (教程/设置/关于退出时不该把"上次界面"冲成图片放大)。
+            // (设置/关于退出时不该把"上次界面"冲成图片放大)。
             int lp = AlhPro.Core.StartupPageMap.PageForTag(tag);
             if (lp >= 0) SaveLastPage(lp);
         }
@@ -1587,15 +1614,8 @@ public sealed partial class MainPage : Page
                 });
             }
         }
-        else if (tag == "tutorial")
-        {
-            AppLogger.Info("进入页面:使用教程");
-            _tutorialView ??= new TutorialView();
-            ContentRoot.Children.Add(_tutorialView);
-        }
-        // 【2026-09-23 视频抠图整条下线】原先这里有一个视频抠图页的分支(把那个页面加进内容区)。
-        // 功能与页面一起删除(用户定案"以后不会再做了");老配置若还带着那个旧 tag,会落到文件末尾那条
-        // "未识别 tag 一律回图片抠图页"的兜底,不会再进一个不存在的页面。
+        // 【2026-11-15 用户要求】「使用教程」板块整条下线:页面、按钮、Tutorial_Click、教程文件一起删。
+        // 旧配置里若还带着 tag=tutorial,会落到文件末尾"未识别 tag 一律回图片抠图页"的兜底,不会再进空页。
         else if (tag == "cutout")
         {
             AppLogger.Info("进入页面:图片抠图");
@@ -1617,12 +1637,7 @@ public sealed partial class MainPage : Page
 
     private void OnStatusChanged(string s) => StatusText.Text = s;
 
-    /// <summary>左下角「使用教程」:进入教程页(不改变左侧功能导航高亮)。</summary>
-    private void Tutorial_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
-    {
-        NavList.SelectedIndex = -1;
-        ShowView("tutorial");
-    }
+    // 【2026-11-15】左下角「使用教程」按钮与 Tutorial_Click 已随教程板块一起删除。
 
     /// <summary>更新日志入口(当前由「关于 → 查看更新详情」调用;侧边栏入口已按用户要求移除)。</summary>
     private void UpdateLog_Click(object sender, RoutedEventArgs e)
@@ -4005,15 +4020,58 @@ public sealed partial class MainPage : Page
         SetSponsorCooldown(2, "用户选择「暂时不了」");
     }
 
-    /// <summary>左下角「💬 ALH Pro 社区」→ 打开爱发电电圈(官方交流社区)。</summary>
-    private void Community_Click(object sender, RoutedEventArgs e)
+    /// <summary>官方 Q 群号(2026-11-15 用户要求:原先的「ALH Pro 社区」爱发电社区改成 Q 群反馈)。
+    /// 只有这一个号,别再写第二个;二维码图随包在 Assets\qrcode_qq.png。</summary>
+    private const string QqGroupNumber = "767832870";
+
+    /// <summary>左下角「官方Q群」→ 弹出群二维码 + 群号(可一键复制)。
+    /// 【为什么不是直接开浏览器】QQ 群没有稳定的网页入群链接,给码给号最实用;
+    /// 复制群号走剪贴板,用户粘到 QQ 搜索框即可。</summary>
+    private async void Community_Click(object sender, RoutedEventArgs e)
     {
         try
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
-                "https://www.ifdian.net/group/eb504216a38e11f18b2852540025c377") { UseShellExecute = true });
+            var panel = new StackPanel { Spacing = 10, HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center };
+            // 图上已经有群名与群号,这里不再重复一行标题 —— 2026-11-15 用户:「显示的不全…下面那个也太口水话」。
+            panel.Children.Add(new Microsoft.UI.Xaml.Controls.Image
+            {
+                Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri("ms-appx:///Assets/qrcode_qq.png")),
+                Width = 240,
+                Height = 336,          // 图是 480×673,按宽度 240 等比缩放,不裁不拉伸
+                Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
+                HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = "群号 767832870 · 手机 QQ 扫码加入",
+                FontSize = 12,
+                TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
+                MaxWidth = 300,
+                HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Center,
+            });
+            var dlg = new Microsoft.UI.Xaml.Controls.ContentDialog
+            {
+                Title = "官方Q群",
+                Content = panel,
+                PrimaryButtonText = "复制群号",
+                CloseButtonText = "关闭",
+                DefaultButton = Microsoft.UI.Xaml.Controls.ContentDialogButton.Primary,
+                XamlRoot = XamlRoot,
+            };
+            var (shown, r) = await ALHPro.SafeDialog.TryShowAsync(dlg, "官方Q群");
+            if (shown && r == Microsoft.UI.Xaml.Controls.ContentDialogResult.Primary)
+            {
+                var dp = new Windows.ApplicationModel.DataTransfer.DataPackage();
+                dp.SetText(QqGroupNumber);
+                Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(dp);
+                try { Windows.ApplicationModel.DataTransfer.Clipboard.Flush(); } catch { }
+                AppLogger.Info("已复制官方Q群号:" + QqGroupNumber);
+            }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            AppLogger.Error("打开官方Q群信息失败", ex);
+        }
     }
 
     /// <summary>官方网站。写死在这里是因为软件源码里本来没有官网域名(只有 GitHub 链接),

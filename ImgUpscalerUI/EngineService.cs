@@ -103,8 +103,11 @@ public static partial class EngineService
     /// 三条判据:名字是 NVIDIA、不是 D3D12 转译层(经转译层跑 ncnn 输出无效画面)、不是 Blackwell(50 系)。
     /// 【拿不准就返回 false】设备表为空/编号越界/名字为空 → 一律老实真机探测:多花最坏 15~60 秒可接受,
     /// "误判为可用 → 用户拿到无效画面"不可接受(判错方向的代价不对称)。
+    /// 【2026-11-15 补第 4 条】50 系里"随包的 2026 重编引擎"已经有实测通过的记录(5070 Ti / 5060 都在跑),
+    /// 于是再加一个引擎参数:引擎是 2026 重编版时,50 系也准许走快速通道,不再一上车就白等 60 秒探测。
+    /// 判据仍然与型号无关地收敛到"引擎是不是重编版"这一个事实上,不按显卡名字猜能力。
     /// 注:本函数只搬动"要不要探测"的判据,探测本身仍是同一套生产帧尺寸口径(不新增第二套判据)。</summary>
-    private static bool TargetGpuIsPlainNvidia(int gpuId)
+    private static bool TargetGpuIsPlainNvidia(int gpuId, string? engine = null)
     {
         try
         {
@@ -116,17 +119,12 @@ public static partial class EngineService
             }
             return AlhPro.Core.GpuName.IsNvidia(name)
                 && !AlhPro.Core.GpuName.IsD3D12Translation(name)
-                && !AlhPro.Core.GpuName.IsBlackwell(name);
+                && (!AlhPro.Core.GpuName.IsBlackwell(name) || EngineIsRebuilt2026(engine ?? string.Empty));
         }
         catch { return false; }
     }
-    public static async Task<bool> IsWaifu2xNcnnUsableAsync(int gpuId, CancellationToken ct)
-    {
-        if (TargetGpuIsPlainNvidia(gpuId)) return true;   // F2:按"要用的那张卡"判定(见 TargetGpuIsPlainNvidia)
-        // 统一走"生产帧尺寸"探测并共享同一份结论缓存(原先这里另有一套 1×1/320×240 小图缓存,
-        // 小图在 Blackwell 上会假通过 —— 两套缓存还可能给出互相矛盾的结论,故合并为一套)。
-        return await EnsureNcnnProbeAsync("waifu2x", gpuId, null, ct).ConfigureAwait(false);
-    }
+    /// <summary>【2026-11-15】单值壳 IsWaifu2xNcnnUsableAsync 已删:它把"没测成"压成 false,调用方会静默切 ONNX;
+    /// 需要判断可用性的地方一律用三态 EnsureNcnnProbeDecisionAsync + NcnnProbeRouting.KeepsNcnn。</summary>
 
     /// <summary>探测结论落盘条目。
     /// 【为什么用纯文本而不是 JSON】决策键/值都是短标量,JSON 只会引入"私有嵌套类型的反射序列化 +
@@ -581,7 +579,9 @@ public static partial class EngineService
         // ②一次探测要 ~15 秒,而图片路径上一个任务可能总共只要 2 秒 —— 不能先白等 15 秒;
         // ③真出问题还有引擎自身的"输出全黑 → 该设备判不可用 + 降级链"兜底(见 IsEngineGpuUsableAsync)。
         // 50 系 / AMD / Intel 核显一律照旧真机探测,该走的自适应一点不少。
-        if (!force && TargetGpuIsPlainNvidia(gpuId)) return Available;   // F2:同上,改为按目标卡判定
+        // 【2026-11-15】例外:50 系 + 随包 2026 重编引擎(已有多台实测通过)不再白等这次探测,
+        // 判据传进 TargetGpuIsPlainNvidia(engine) 里,与显卡型号解耦、只看"引擎是不是重编版"这一事实。
+        if (!force && TargetGpuIsPlainNvidia(gpuId, engine)) return Available;   // F2:按目标卡 + 引擎版本判定
         if (!force)
         {
             var cached = TryGetNcnnVerdict(engine, gpuId, model);
@@ -981,7 +981,7 @@ public static partial class EngineService
         try
         {
             if (gpuId < 0) return false;
-            if (TargetGpuIsPlainNvidia(gpuId)) return false;                       // 快速通道:不探测,直接判可用
+            if (TargetGpuIsPlainNvidia(gpuId, engine)) return false;               // 快速通道:不探测,直接判可用
             if (TryGetNcnnVerdict(engine, gpuId, model).HasValue) return false;    // 已有结论:沿用缓存
             return true;
         }
@@ -2890,11 +2890,15 @@ public static partial class EngineService
                 // 首选出路改成 **Real-ESRGAN(两页都有)**;waifu2x 只在图片页提供,所以想用它必须
                 // **写明入口是图片页**。替换 engines/waifu2x/ 文件那条照旧有效(图片页仍在用这个引擎)。
                 throw new InvalidOperationException(
-                    $"超分引擎在 GPU 和 CPU 模式都不行(exit {ExtractExit(gpuEx.Message)}):\n" +
-                    $"这多半是引擎版本与显卡不兼容(如 RTX 50 系 + 旧版 ncnn-vulkan,或引擎自身 CPU 模式 问题)。\n" +
-                    $"建议:①换用 **Real-ESRGAN** 引擎(视频页 / 图片页都有这一个档位,它有 ONNX 稳定路线;官方新版兼容 50 系/Blackwell);" +
-                    "②图片页可改用 waifu2x(waifu2x 已从视频页移除,它现在只在图片页提供);" +
-                    "③或到 https://github.com/nihui/waifu2x-ncnn-vulkan/releases 下载最新版替换 engines/waifu2x/ 下的文件。" +
+                    $"超分引擎在 GPU 和 CPU 模式都没能跑起来(exit {ExtractExit(gpuEx.Message)}):\n" +
+                    // 【2026-11-15 话术校准】这里原来写"多半是引擎版本与显卡不兼容(如 RTX 50 系 + 旧版 ncnn-vulkan)"
+                    // 且建议"换官方新版兼容 50 系" —— 我们随包发的就是 2026 重编版,50 系用户看到这句会以为自己在跑
+                    // 旧引擎,把时间花在换引擎/换驱动上。原因未知时只说"没能跑起来",把方向交给诊断包。
+                    "常见原因:显卡驱动异常、显存被其它程序占满、或引擎与本机显卡不兼容。\n" +
+                    "建议:①关掉占显存的程序后重试;" +
+                    "②换用 **Real-ESRGAN** 引擎(视频页 / 图片页都有这个档位,它另有 ONNX 稳定路线);" +
+                    "③图片页还可以改用 waifu2x(它只在图片页提供,视频页没有这个档位);" +
+                    "④还不行就点「导出诊断包」发给我们 —— 里面有引擎的真实退出码与显卡信息,比猜准。" +
                     $"\n--\n{gpuEx.Message}");
             }
         }
@@ -2999,11 +3003,12 @@ public static partial class EngineService
             // 【2026-09-25 话术校准(与上面那条同因)】两页共用的失败分支里不许再让视频页用户去"换用 waifu2x":
             // 视频页已把它移除 ⇒ 首选出路写 **Real-ESRGAN**,waifu2x 必须写明"图片页可改用"。
             throw new InvalidOperationException(
-                $"超分引擎在当前及其它 GPU 上均失败(exit {ExtractExit(ex.Message)}):\n" +
-                $"这多半是引擎与显卡/驱动不兼容(如 RTX 50 系 + 旧版 ncnn-vulkan 的已知进程退出)。\n" +
-                $"建议:①换用 **Real-ESRGAN** 引擎(视频页 / 图片页都有,官方新版兼容 50 系/Blackwell);" +
-                $"②图片页可改用 waifu2x(waifu2x 已从视频页移除,只在图片页提供);③更新 NVIDIA 显卡驱动;" +
-                $"④或到 https://github.com/nihui/waifu2x-ncnn-vulkan/releases 下载最新版替换 engines/waifu2x/ 下的文件。" +
+                $"超分引擎在当前及其它 GPU 上都没能跑起来(exit {ExtractExit(ex.Message)}):\n" +
+                // 【2026-11-15 话术校准】原因未知时不写型号、不说"你的引擎是旧版"(随包就是 2026 重编版)。
+                "常见原因:显卡驱动异常、显存被其它程序占满、或引擎与本机显卡不兼容。\n" +
+                $"建议:①关掉占显存的程序后重试;②换用 **Real-ESRGAN** 引擎(视频页 / 图片页都有,它另有 ONNX 稳定路线);" +
+                $"③图片页还可以改用 waifu2x(只在图片页提供);④更新显卡驱动后重试;" +
+                $"⑤还不行就点「导出诊断包」发给我们 —— 里面有真实退出码与显卡信息。" +
                 $"\n(已按「不自动转 CPU」设置停止,避免慢速超分;确需 CPU 请在设置中手动选择)\n--\n{ex.Message}");
         }
     }

@@ -71,7 +71,7 @@ public class NavIconContractTests
         var xaml = ReadRepoFile("ImgUpscalerUI", "Views", "MainPage.xaml");
         var bottom = BottomEntriesBlock(xaml);
         Assert.DoesNotContain("<FontIcon", bottom);
-        foreach (var label in new[] { "赞助作者", "ALH Pro 社区", "官方网站", "使用教程", "设置", "关于" })
+        foreach (var label in new[] { "赞助作者", "官方Q群", "官方网站", "设置", "关于" })
             Assert.Contains($"Content=\"{label}\"", bottom);
     }
 

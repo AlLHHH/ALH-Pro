@@ -948,6 +948,37 @@ namespace ALHPro
             }
             window.Activate();
             StartupTrace("窗口已 Activate");
+            // ===== 【2026-11-15】老式拖放兜底 ====
+            // WinUI 的 OLE 拖放在提权窗口上会被 UIPI 整条掐断,部分壳还会用老式拖放源。
+            // 这里再挂一条 WM_DROPFILES:能接住的那些,一样走页面导入,用户看不出差别。
+            try
+            {
+                var hwndMain = WinRT.Interop.WindowNative.GetWindowHandle(window);
+                var page = (window.Content as Frame)?.Content as MainPage;
+
+                ShellDrop.FilesDropped += paths =>
+                {
+                    try
+                    {
+                        if (page is not null) _ = page.ImportFromShellAsync(paths);
+                        else AppLogger.Warn("老式拖放收到文件,但主界面还没准备好:" + string.Join("|", paths));
+                    }
+                    catch (Exception ex) { AppLogger.Error("老式拖放转交页面失败", ex); }
+                };
+                ShellDrop.Attach(hwndMain);
+
+                // 拖到 exe / 开始菜单 / 任务栏图标上打开时,路径走命令行 —— 第三种入口,任何权限下都可用。
+                var startup = StartupFiles();
+                if (startup.Length > 0 && page is not null)
+                {
+                    AppLogger.Info($"命令行带了 {startup.Length} 个文件 → 直接导入");
+                    _ = page.ImportFromShellAsync(startup);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("装老式拖放失败", ex);
+            }
             // ===== Activate 后的非关键启动任务:纯 IO 后台并行(日志清理/自检/临时文件清理) =====
             _ = System.Threading.Tasks.Task.Run((System.Action)(() =>
             {
@@ -1179,6 +1210,26 @@ namespace ALHPro
             var dir = Path.GetDirectoryName(StateFile)!;
             Directory.CreateDirectory(dir);
             File.WriteAllText(StateFile, json.ToString());
+        }
+
+        /// <summary>【2026-11-15】启动参数里带的文件(把视频拖到 exe / 开始菜单 / 任务栏图标上打开时就有)。
+        /// 只认真实存在的文件,目录与开关参数一律忽略。</summary>
+        private static string[] StartupFiles()
+        {
+            try
+            {
+                var all = Environment.GetCommandLineArgs();
+                if (all.Length <= 1) return Array.Empty<string>();
+                var list = new System.Collections.Generic.List<string>();
+                for (int i = 1; i < all.Length; i++)
+                {
+                    var a = all[i];
+                    if (string.IsNullOrWhiteSpace(a) || a.StartsWith("-") || a.StartsWith("/")) continue;
+                    try { if (System.IO.File.Exists(a)) list.Add(a); } catch { }
+                }
+                return list.ToArray();
+            }
+            catch { return Array.Empty<string>(); }
         }
 
         void OnNavigationFailed(object sender, NavigationFailedEventArgs e)

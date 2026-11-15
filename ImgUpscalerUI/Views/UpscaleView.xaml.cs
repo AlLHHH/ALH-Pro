@@ -1634,10 +1634,14 @@ public sealed partial class UpscaleView : UserControl
                             _progressSegEnd = 0.4;
                             progress.Report((0, "预处理降噪..."));
                             Log("  预处理降噪(waifu2x 1x)...");
-                            // 预处理降噪也走设备路由:高风险设备(ncnn 不可用)→ ONNX 稳定引擎;否则 ncnn(带降噪档)
+                            // 预处理降噪也走设备路由:【实测不可用】才切 ONNX 稳定引擎,否则 ncnn(带降噪档)。
+                            // 【2026-11-15】原来调 IsWaifu2xNcnnUsableAsync(单值接口):它把"显存不足跳过探测/被取消"
+                            // 也压成 false ⇒ 没测成被当成测出不可用,静默切 ONNX(慢 20~60 倍)。改成三态,与视频页同一口径。
                             bool preOnnx = gpuId < 0
                                 || EngineService.ShouldUseOnnxWaifu2x()
-                                || !await EngineService.IsWaifu2xNcnnUsableAsync(gpuId, ct);
+                                || !AlhPro.Core.NcnnProbeRouting.KeepsNcnn(
+                                       await EngineService.EnsureNcnnProbeDecisionAsync("waifu2x", gpuId, null, ct)
+                                           .ConfigureAwait(false));
                             if (preOnnx && EsrganOnnxService.FindWaifu2xModel() != null)
                                 await AbandonOnCancelAsync(
                                     EsrganOnnxService.UpscaleAsync(srcPath, tmpDenoise, 1,
@@ -1687,7 +1691,10 @@ public sealed partial class UpscaleView : UserControl
                         else if (engine == "waifu2x"
                             && (EngineService.ShouldUseOnnxWaifu2x()
                                 || gpuId < 0
-                                || !await EngineService.IsWaifu2xNcnnUsableAsync(gpuId, ct)))
+                                // 【2026-11-15】同上:只有实测不可用才切 ONNX,没测成仍走 ncnn
+                                || !AlhPro.Core.NcnnProbeRouting.KeepsNcnn(
+                                       await EngineService.EnsureNcnnProbeDecisionAsync("waifu2x", gpuId, null, ct)
+                                           .ConfigureAwait(false))))
                             onnxPath = EsrganOnnxService.FindWaifu2xModel(model);
                         if (onnxPath != null)
                         {

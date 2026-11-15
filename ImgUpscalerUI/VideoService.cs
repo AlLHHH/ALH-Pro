@@ -2346,17 +2346,11 @@ public static partial class VideoService
                     }
                     if (!usable)
                     {
-                        if (engine == "waifu2x" && EngineService.IsBlackwellGpu())
-                        {
-                            // waifu2x 在 50 系:ncnn CPU 模式同样会退出(实测 exit -1073741819)——
-                            // 不能像其他引擎那样"降 CPU",而是整段改走 ONNX 稳定版(DirectML/CPU 都行)
-                            waifuOnnx = true;
-                            upOnnxDml = true;
-                            AppLogger.Warn($"⚠ waifu2x 在本机 50 系 GPU 上真机探测失败——为稳定性改用 ONNX 稳定版(整段视频,兼容模式)。"
-                                + EngineService.LastProbeUserMessage);
-                            progress?.Report((probePct, $"⚠ waifu2x 在本机 50 系 GPU 上不可用,为稳定性改用 ONNX(整段视频)..."));
-                        }
-                        else if (engine == AlhPro.Core.RealCugan.EngineName)
+                        // 【2026-11-15 删掉一块死代码】这里原有 `if (engine == "waifu2x" && EngineService.IsBlackwellGpu())`,
+                        // 会写「⚠ waifu2x 在本机 50 系 GPU 上不可用」并改走 ONNX。但视频页的下拉只有
+                        // Real-ESRGAN / Real-CUGAN(waifu2x 已从视频页移除),engine 永远不可能是 "waifu2x"
+                        // ⇒ 这段走不到,只会在有人搜日志时误导"50 系又出问题了"。50 系的真实处置在下面按引擎分流。
+                        if (engine == AlhPro.Core.RealCugan.EngineName)
                         {
                             // 【F4 · 2026-09-24】修掉"单支档位被瞬时误判 ⇒ 整批拒绝"。
                             // 口径与 AlhPro.Core.NcnnModelVerdicts 一致:**引擎级可用性只认不带模型的那条**
@@ -2419,12 +2413,9 @@ public static partial class VideoService
                             AppLogger.Info($"✅ 超分引擎 {engine} 真机探测通过(生产帧尺寸 1080×1920,GPU {gpuId})→ 使用 ncnn-Vulkan(未因 50 系而禁用)");
                     }
                 }
-                else if (engine == "waifu2x" && EngineService.IsBlackwellGpu())
-                {
-                    // 用户选了 CPU(-g -1):50 系 waifu2x 的 ncnn CPU 模式有进程退出 问题 → 直接整段走 ONNX 更稳
-                    waifuOnnx = true;
-                    AppLogger.Warn("⚠ 50系 waifu2x:CPU(-g -1)模式有进程退出 问题,自动改走 ONNX 稳定版");
-                }
+                // 【2026-11-15 删掉一块死代码】这里原有 `else if (engine == "waifu2x" && EngineService.IsBlackwellGpu())`,
+                // 会写「50系 waifu2x:CPU 模式有问题,自动改走 ONNX」。视频页只能选 Real-ESRGAN / Real-CUGAN,
+                // engine 永远不是 "waifu2x" ⇒ 走不到;留着只会在日志里制造"50 系又出问题"的假信号。
                 // ===== 设备实际用途诊断(进诊断包:一眼分辨"显示 GPU 却实际跑 CPU/慢路径")=====
                 // 超分阶段已在此定死:waifuOnnx → ONNX 整段;upGpu<0 → ONNX DirectML 或 CPU;否则 ncnn-GPU。
                 // 补帧/编码实际设备在各自阶段已记录;这里只汇总超分(最常掉 CPU 的一步)+ 标注哪些环节待确认。

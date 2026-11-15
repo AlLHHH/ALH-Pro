@@ -114,18 +114,9 @@ public class AuditFixes_20260923_Tests
         Assert.Contains("StrongDeviceLargeFramesPerBatch} 的硬条件", cs);   // 改为按常量插值
     }
 
-    /// <summary>★ 使用教程里的过时指引:RIFE 模型只剩两支 v4(没有 v2.3)、VFR 已无开关、
-    /// 50 系不再按型号一刀切、视频处理不再落到纯 CPU(会直接提示错误)。</summary>
-    [Fact]
-    public void The_tutorial_drops_retired_options()
-    {
-        var md = ReadRepoFile("使用教程.md");
-        Assert.DoesNotContain("老素材不兼容时再试 v2.3", md);
-        Assert.DoesNotContain("默认「自动」,录屏", md);
-        Assert.DoesNotContain("新架构与内置引擎暂不完全兼容", md);
-        Assert.DoesNotContain("只有极少数情况(异常)才会落到纯 CPU", md);
-        Assert.Contains("视频处理不会再落到纯 CPU", md);
-    }
+    /// <summary>★ 2026-11-15:使用教程板块已下线,原 `The_tutorial_drops_retired_options`
+    /// (读 `使用教程.md` 断言过时指引)随之删除 —— 断言对象已不存在,留着只是噪音。
+    /// 现在由 `SidebarCommunityContractTests` 守着「不再有教程入口」这件事。</summary>
 
     // ───────────────────────── B7:不许静默丢帧 ─────────────────────────
 

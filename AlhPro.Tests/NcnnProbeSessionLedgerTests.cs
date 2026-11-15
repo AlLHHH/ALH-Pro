@@ -189,7 +189,8 @@ public class NcnnProbeSessionLedgerTests
         string code = CodeOnly(ReadRepoFile("ImgUpscalerUI", EngineCs));
         int probe = code.IndexOf("public static async Task<bool> EnsureNcnnProbeAsync(", StringComparison.Ordinal);
         Assert.True(probe > 0);
-        int fast = code.IndexOf("if (!force && TargetGpuIsPlainNvidia(gpuId)) return Available;", probe, StringComparison.Ordinal);
+        // 【2026-11-15】快速通道现在多带一个 engine 参数(50 系 + 2026 重编引擎也不白等探测),判断顺序不变。
+        int fast = code.IndexOf("if (!force && TargetGpuIsPlainNvidia(gpuId, engine)) return Available;", probe, StringComparison.Ordinal);
         int cache = code.IndexOf("var cached = TryGetNcnnVerdict(engine, gpuId, model);", probe, StringComparison.Ordinal);
         int skip = code.IndexOf("if (SessionAlreadyTriedNotConcluded(engine, gpuId, model))", probe, StringComparison.Ordinal);
         int vram = code.IndexOf("if (VramTooLowForProductionProbe(out double freeGb, out double needGb))", probe, StringComparison.Ordinal);
