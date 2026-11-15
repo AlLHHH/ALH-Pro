@@ -60,9 +60,14 @@ public static class InterpSizePolicy
     ///       <paramref name="Reason"/> = 给日志/界面用的人话说明。</summary>
     public readonly record struct EngineRiskVerdict(bool UseStableEngine, bool Warn, string Reason);
 
-    /// <summary>按"尺寸 + 显卡"判定补帧引擎风险并给出对策。<paramref name="onnxModelAvailable"/> =
-    /// 本机有没有 ONNX 补帧模型(rife49.onnx);没有时无法切稳定引擎,只能提示。</summary>
-    public static EngineRiskVerdict JudgeEngineRisk(int width, int height, bool gpuIs50Series,
+    /// <summary>按"尺寸 + 本机实测结论"判定补帧引擎风险并给出对策。<paramref name="onnxModelAvailable"/> =
+    /// 本机有没有 ONNX 补帧模型(rife49.onnx);没有时无法切稳定引擎,只能提示。
+    ///
+    /// 【2026-11-15 改:NCC 不再按显卡型号猜】<paramref name="ncnnAvailable"/> 是"这台机器上补帧引擎实测结论":
+    /// true=测过且可用,false=测过不可用,null=还没测。原参数 <c>gpuIs50Series</c> 已删除 ——
+    /// 它就是"50 系适配早就做了、却还有 50 系黄字"的根因:只要卡片名字是 50 系,不管实测能不能跑,
+    /// 一律提示"会出无效画面,已改用稳定引擎",等于对用户说反话。</summary>
+    public static EngineRiskVerdict JudgeEngineRisk(int width, int height, bool? ncnnAvailable,
         bool gpuRiskyOldNcnn, bool onnxModelAvailable)
     {
         // ① 8K 级:实测静默全黑 —— 有 ONNX 就直接换,没有就明确提示"会出全黑画面"
@@ -80,10 +85,13 @@ public static class InterpSizePolicy
                     + $"而本机没有 ONNX 补帧模型可切换 ⇒ 建议降低分辨率或改用较小素材");
             }
         }
-        // ② RTX 50 系 / ③ 无独显或 Vulkan 不可用:同属"ncnn 会出无效画面"的已知组合
-        if (gpuIs50Series || gpuRiskyOldNcnn)
+        // ② 本机实测补帧引擎不可用 / ③ 无独显或 Vulkan 不可用:同属"ncnn 会出无效画面"的已知情况。
+        // "还没测过"(null)一律不提示:结论要以本机实测为准,不按显卡型号猜。
+        if (ncnnAvailable == false || gpuRiskyOldNcnn)
         {
-            string why = gpuIs50Series ? "当前显卡是 RTX 50 系(Blackwell)" : "当前设备无独立显卡 / Vulkan 不可用";
+            string why = ncnnAvailable == false
+                ? "本机实测补帧引擎无法用显卡加速"
+                : "当前设备无独立显卡 / Vulkan 不可用";
             if (onnxModelAvailable)
                 return new EngineRiskVerdict(true, true, $"{why}:ncnn 补帧在已知组合下会出无效画面 ⇒ 本次直接改用稳定引擎(ONNX)补帧");
             return new EngineRiskVerdict(false, true, $"⚠ {why}:ncnn 补帧可能出无效画面,且本机没有 ONNX 补帧模型可切换");

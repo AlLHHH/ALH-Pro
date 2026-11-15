@@ -702,7 +702,10 @@ public sealed partial class VideoView : UserControl
                     // 于是启动早期会多出一条"补帧兼容性:无独显/Vulkan 不可用"的假警报)。
                     try { noVulkan = VulkanCheck.NoGpuDetected; } catch { noVulkan = false; }
                     var risk = AlhPro.Core.InterpSizePolicy.JudgeEngineRisk(pw, ph,
-                        gpuIs50Series: EngineService.IsBlackwellGpu(),
+                        // 【2026-11-15】补帧黄字改成只看实测结论:50 系规则早就按实测路由了,
+                        // 这里却还按型号一律提示 ⇒ 明明跑得通也挂一条"会出无效画面"的黄字(用户当场抓到)。
+                        // 没测过(null)不提示;测过通过(true)不提示;只有真测出不可用(false)才提示。
+                        ncnnAvailable: EngineService.TryGetEngineVerdictSummary("rife", AppSettings.GpuIndex),
                         gpuRiskyOldNcnn: noVulkan,
                         onnxModelAvailable: RifeOnnxService.Available());
                     if (risk.Warn)
@@ -4378,19 +4381,17 @@ public sealed partial class VideoView : UserControl
         catch { return false; }
     }
 
-    /// <summary>RTX 50 系 + 旧引擎(2022 版 ncnn)提前提示(只告知,不再提供"换引擎")。
-    /// 【2026-09-25 视频页移除 waifu2x 后重写】原来这里「好的」= 换用 waifu2x;视频页不再提供它,
-    /// 而另一支 Real-CUGAN 同样是 ncnn-Vulkan(同一张卡上大概率同样不可用)⇒ **不拿"换引擎"当出路**。
-    /// 现在如实说明:处理时会自动改用 ONNX 稳定引擎(DirectML,输出不变),按「知道了」照跑即可。</summary>
+    /// <summary>超分引擎在这台机器上【实测】跑不通时提前说明(只告知,不提供"换引擎")。
+    /// 【2026-11-15】标题和正文不再写"检测到 RTX 50 系":触发条件是实测结论,不是显卡型号 ——
+    /// 写型号会让 50 系用户以为"我们有 50 系适配还硬说他不兼容"。</summary>
     private async Task AskBlackwellOldEngineAsync(string engineLabel)
     {
         var dlg = new ContentDialog
         {
-            Title = "RTX 50 系兼容提示",
+            Title = "本机实测:超分引擎无法用 GPU",
             Content = new TextBlock
             {
-                Text = $"检测到 RTX 50 系显卡。当前超分引擎「{engineLabel}」是较旧版本(2022 年)," +
-                    "在这类新卡上实测无法用 GPU 计算。\n\n" +
+                Text = $"本机实测:超分引擎「{engineLabel}」在这张显卡上无法用 GPU 计算。\n\n" +
                     "处理时会**自动改用 ONNX 稳定引擎**(DirectML GPU,兼容性更好,输出不变)—— 直接继续即可。",
                 TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
             },
@@ -10934,10 +10935,13 @@ public sealed partial class VideoView : UserControl
             var items = await e.DataView.GetStorageItemsAsync();
             // 【2026-11-12 用户要求:只要拖放就能进】不再按后缀拦截 —— 文件一律收下,
             // 能不能处理交给后续探测去判断并给出具体原因;别让用户卡在"格式不支持"这一步。
-            var files = items.OfType<Windows.Storage.StorageFile>()
-                .Select(f => f.Path)
+            // 【2026-11-15 用户:SVFI 拖什么都能进,我们不行】文件夹也要收 —— 递归摊开取里面的视频,
+            // 以前这一支直接回「请拖文件」,而人拖素材最常见的就是拖整个文件夹。
+            var raw = items.Select(i => i.Path)
                 .Where(p => !string.IsNullOrWhiteSpace(p))
                 .ToArray();
+            var files = AlhPro.DroppedPaths.Expand(raw, images: false);
+            Log($"拖入:{items.Count} 项 → 摊出 {files.Length} 个视频");
             if (files.Length > 0)
             {
                 await AddVideosAsync(files);
@@ -10945,9 +10949,10 @@ public sealed partial class VideoView : UserControl
             else
             {
                 var names = items.Select(i => i.Name).Take(3).ToArray();
+                string what = names.Length > 0 ? string.Join("、", names) : "未命名";
                 string why = items.Count == 0
                     ? "拖进来的东西里没有文件"
-                    : $"拖进来的是文件夹({(names.Length > 0 ? string.Join("、", names) : "未命名")}),请拖文件";
+                    : $"拖进来的文件夹里没找到视频({what});支持 mp4 / mkv / mov / webm / avi / m4v / ts / flv / wmv / mpg,子文件夹会一起找";
                 Log($"拖入被拒:{why}");
                 ShowDropHint(why);
             }
@@ -11549,7 +11554,7 @@ public sealed partial class VideoView : UserControl
         // 引擎路由已改成真机探测(EngineService.EnsureNcnnProbeAsync),提示也必须以【实测结论】为准 ——
         // 只有已经测出"这台机的 realesrgan ncnn 不可用"(TryGetNcnnVerdict == false)才弹窗;
         // 没测过就交给运行时探测去定并明确告知,避免"先弹窗说不兼容、结果实测跑得通"的说反话。
-        if (up && IsBlackwellGpu() && SelectedEngineIsReal
+        if (up && SelectedEngineIsReal
             && EngineService.TryGetNcnnVerdict("realesrgan", AppSettings.GpuIndex) == false)
         {
             // 【2026-09-25 视频页移除 waifu2x 后】这里原来"好的 = 换成 waifu2x";现在视频页只有
