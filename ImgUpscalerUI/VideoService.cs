@@ -418,6 +418,28 @@ public static partial class VideoService
     /// 【老设置文件的三个字段 `Jello` / `MotionBlur` / `DeShake` 仍保留在 VideoSettings 里】那是
     /// "老文件字段一律保留、只停止读取"的既定规矩(反序列化兼容 + 预设快照结构稳定),它们**不再有任何
     /// 读写点**,也不可能再影响处理结果。</param>
+    /// <summary>【2026-11-16】备用引擎(ONNX)降级前必须问过用户。
+    /// 现状:探测判定 ncnn 不可用就静默切 ONNX,而 ONNX 实测慢 20~60 倍 ⇒ 用户可能白等几小时。
+    /// 口径:<paramref name="ask"/> 为 null(无可问的界面,例如单测)时保持旧行为自动继续;
+    /// 有人可问就必须拿到明确答复,答复否 → 调用方抛错停任务,绝不"先跑起来再说"。</summary>
+    private static async Task<bool> ConfirmBackupEngineAsync(
+        Func<string, string, Task<bool>>? ask, string title, string reason, CancellationToken ct)
+    {
+        if (ask is null) return true;
+        AppLogger.Info($"[备用引擎] 询问用户:{title}");
+        bool ok;
+        try { ok = await ask(title, reason).ConfigureAwait(false); }
+        catch (Exception ex)
+        {
+            AppLogger.Warn("[备用引擎] 询问失败,按「使用」继续:" + ex.Message);
+            ok = true;
+        }
+        AppLogger.Info(ok ? "[备用引擎] 用户选择:使用备用引擎(ONNX,慢 20~60 倍)"
+                         : "[备用引擎] 用户选择:取消,本次任务不再继续");
+        ct.ThrowIfCancellationRequested();
+        return ok;
+    }
+
     public static async Task<string> ProcessVideoAsync(
         string inputVideo, string outputVideo,
         string engine, string model, double scale, bool doUpscale,
@@ -456,7 +478,9 @@ public static partial class VideoService
         // 默认开(用户实测口径:"填平后开头 1~3 秒的顿挫感消失")。**关上 = 与改动前逐字一致**(见下方接线处)。
         // 【已知代价(照实写,不靠偷偷加锐化找补)】源里"本来静止"的缺口处会插出轻微软化(小样实测中位 ≈6%)。
         bool smoothTimeline = true,
-        Func<Task>? pauseWait = null)
+        Func<Task>? pauseWait = null,
+        // 【2026-11-16】备用引擎(ONNX)降级必须先问过用户:标题 + 原因 → true=用备用引擎继续,false=取消本次。
+        Func<string, string, Task<bool>>? askBackupEngine = null)
     {
         // 静态报告字段清零:防止上一个视频的去重摘要/编码器信息残留在下一个视频的显示里
         LastDedupReport = null;
@@ -1768,9 +1792,11 @@ public static partial class VideoService
                         // 【按形态说话】失败原因由探测带回(初始化即崩 ≠ 出图但无效画面),措辞集中在 AlhPro.Core.ProbeDiagnosis:
                         // 前者在 Blackwell 上就是 NVIDIA 的 cooperative-matrix 驱动问题(要说清"不是本软件的问题"),
                         // 后者属引擎并发/渲染(不许甩锅给驱动)。
-                        AppLogger.Warn($"⚠ RIFE {interpModel} 在本机 GPU({gpuId})真机探测失败——为稳定性改用 ONNX 补帧路线。"
-                            + EngineService.LastProbeUserMessage);
-                        progress?.Report((interpPctBase, $"⚠ 补帧 ncnn 引擎在本机不可用,为稳定性自动改用 ONNX 补帧..."));
+                        string whyInterp = "补帧引擎(RIFE ncnn)在这张显卡上跑不起来:" + EngineService.LastProbeUserMessage;
+                        AppLogger.Warn($"⚠ RIFE {interpModel} 在本机 GPU({gpuId})真机探测失败(已重试过)——{whyInterp}");
+                        if (!await ConfirmBackupEngineAsync(askBackupEngine, "补帧引擎在这张显卡上跑不起来", whyInterp, ct).ConfigureAwait(false))
+                            throw new InvalidOperationException("你选择了取消:补帧只剩备用引擎(慢 20~60 倍),本次任务已停止。");
+                        progress?.Report((interpPctBase, $"⚠ 补帧 ncnn 引擎不可用,已按你的选择改用备用引擎(ONNX)补帧…"));
                         interpGpu = -1;   // 本视频后续补帧 API 全部走 ONNX(InterpSegmentAsync 传入)
                     }
                     else
@@ -2232,9 +2258,11 @@ public static partial class VideoService
                         // 【按形态说话】失败原因由探测带回(初始化即崩 ≠ 出图但无效画面),措辞集中在 AlhPro.Core.ProbeDiagnosis:
                         // 前者在 Blackwell 上就是 NVIDIA 的 cooperative-matrix 驱动问题(要说清"不是本软件的问题"),
                         // 后者属引擎并发/渲染(不许甩锅给驱动)。
-                        AppLogger.Warn($"⚠ RIFE {interpModel} 在本机 GPU({gpuId})真机探测失败——为稳定性改用 ONNX 补帧路线。"
-                            + EngineService.LastProbeUserMessage);
-                        progress?.Report((interpPctBase, $"⚠ 补帧 ncnn 引擎在本机不可用,为稳定性自动改用 ONNX 补帧..."));
+                        string whyInterp = "补帧引擎(RIFE ncnn)在这张显卡上跑不起来:" + EngineService.LastProbeUserMessage;
+                        AppLogger.Warn($"⚠ RIFE {interpModel} 在本机 GPU({gpuId})真机探测失败(已重试过)——{whyInterp}");
+                        if (!await ConfirmBackupEngineAsync(askBackupEngine, "补帧引擎在这张显卡上跑不起来", whyInterp, ct).ConfigureAwait(false))
+                            throw new InvalidOperationException("你选择了取消:补帧只剩备用引擎(慢 20~60 倍),本次任务已停止。");
+                        progress?.Report((interpPctBase, $"⚠ 补帧 ncnn 引擎不可用,已按你的选择改用备用引擎(ONNX)补帧…"));
                         interpGpu = -1;   // 本视频后续补帧 API 全部走 ONNX(InterpSegmentAsync 传入)
                     }
                     else
@@ -2410,9 +2438,11 @@ public static partial class VideoService
                         {
                             // ncnn GPU 不可用:不急着掉最慢的 ncnn-CPU —— 先试 ONNX DirectML(与 ncnn-Vulkan
                             // 是两套完全独立运行时,这些卡 DirectML 往往能正常 GPU 加速);ONNX 失败才自动掉 CPU。
-                            AppLogger.Warn($"⚠ 超分引擎 {engine} 真机探测失败(生产帧尺寸 1080×1920)——为稳定性改用 ONNX DirectML GPU(比 ncnn-CPU 快一个数量级)。"
-                                + EngineService.LastProbeUserMessage);
-                            progress?.Report((probePct, $"⚠ 超分引擎 {engine} 无法用 ncnn GPU,为稳定性改用 ONNX 稳定引擎(DirectML GPU)..."));
+                            string whyUpscale = "超分引擎(" + engine + ")在这张显卡上跑不起来:" + EngineService.LastProbeUserMessage;
+                            AppLogger.Warn($"⚠ 超分引擎 {engine} 真机探测失败(生产帧尺寸 1080×1920,已自动补测过)——{whyUpscale}");
+                            if (!await ConfirmBackupEngineAsync(askBackupEngine, "超分引擎在这张显卡上跑不起来", whyUpscale, ct).ConfigureAwait(false))
+                                throw new InvalidOperationException("你选择了取消:超分只剩备用引擎(慢 20~60 倍),本次任务已停止。");
+                            progress?.Report((probePct, $"⚠ 超分引擎 {engine} 不可用,已按你的选择改用备用引擎(ONNX DirectML)…"));
                             upGpu = -1;          // 触发下方 ONNX 分支
                             upOnnxDml = true;    // 且用 DirectML GPU(-2 自动选设备),而非强制 CPU
                             waifuOnnx = engine == "waifu2x" ? true : waifuOnnx;   // waifu2x 探测失败同样走 ONNX

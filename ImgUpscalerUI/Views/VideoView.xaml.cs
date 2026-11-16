@@ -293,6 +293,7 @@ public sealed class VideoItem : System.ComponentModel.INotifyPropertyChanged
 public sealed partial class VideoView : UserControl
 {
     private readonly ObservableCollection<VideoItem> _videos = new();
+    private bool _backupEngineApproved;   // 本次任务:用户已同意走备用引擎(ONNX,慢 20~60 倍)
     private bool _dupRefreshRun;   // 进入页面自动重估(防重复:每次页面实例只跑一次)
 
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
@@ -4384,6 +4385,46 @@ public sealed partial class VideoView : UserControl
     /// <summary>超分引擎在这台机器上【实测】跑不通时提前说明(只告知,不提供"换引擎")。
     /// 【2026-11-15】标题和正文不再写"检测到 RTX 50 系":触发条件是实测结论,不是显卡型号 ——
     /// 写型号会让 50 系用户以为"我们有 50 系适配还硬说他不兼容"。</summary>
+    /// <summary>【2026-11-16】ncnn 探测连试 3 次仍不可用时问用户:取消,还是用备用引擎(ONNX)继续。
+    /// 为什么要问:备用引擎实测慢 20~60 倍(同卡 ncnn 0.1~0.3 秒/帧 vs ONNX 3~11 秒/帧),
+    /// 静默切过去等于让用户白等几小时才发现。默认按钮放在「取消」上,回车不会误切慢路。</summary>
+    private Task<bool> AskBackupEngineAsync(string what, string reason)
+    {
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!DispatcherQueue.TryEnqueue(async () =>
+        {
+            try
+            {
+                var dialog = new ContentDialog
+                {
+                    Title = what,
+                    Content = reason + "\n\n"
+                        + "现在只剩两条路:\n"
+                        + "· 取消 —— 本次不处理,先重启电脑或更新显卡驱动,再回来自动检测;\n"
+                        + "· 用备用引擎继续 —— 能出片,但实测慢 20~60 倍(几秒才能出一帧),时间会明显变长。",
+                    PrimaryButtonText = "用备用引擎继续(慢)",
+                    CloseButtonText = "取消",
+                    DefaultButton = ContentDialogButton.Close,
+                    XamlRoot = XamlRoot,
+                };
+                var (shown, result) = await ALHPro.SafeDialog.TryShowAsync(dialog, "备用引擎");
+                // 没弹出来不算"用户点了取消"(见 DialogSafetyTests 的口径):按「用备用引擎继续」处理,
+                // 不因为界面问题把整批任务静默中止;真实选择有 shown 记录进日志。
+                tcs.TrySetResult(!shown || result == ContentDialogResult.Primary);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("备用引擎询问框失败,按取消处理:" + ex.Message);
+                tcs.TrySetResult(false);
+            }
+        }))
+        {
+            AppLogger.Warn("备用引擎询问框无法投递到界面线程,按取消处理");
+            tcs.TrySetResult(false);
+        }
+        return tcs.Task;
+    }
+
     private async Task AskBlackwellOldEngineAsync(string engineLabel)
     {
         var dlg = new ContentDialog
@@ -11843,6 +11884,7 @@ public sealed partial class VideoView : UserControl
             if (probePlan.ShouldProbe)
                 probeDecision = await EngineService.EnsureNcnnProbeDecisionAsync(probeEngine, gpuId, probePlan.Model, cts.Token, force: vulkanRecoveredNow);
             bool usable = AlhPro.Core.NcnnProbeRouting.KeepsNcnn(probeDecision);
+            _backupEngineApproved = false;   // 本次任务:用户在开跑前有没有点头同意走备用引擎(ONNX)
             if (probeDecision == AlhPro.Core.NcnnProbeReport.NotConcluded)
             {
                 try { Log($"本次未能实测该显卡({EngineService.LastNotConcludedReason(probeEngine, gpuId) ?? "未出结论"}),"
@@ -11861,10 +11903,21 @@ public sealed partial class VideoView : UserControl
                 }
                 else
                 {
-                    // 【2026-09-25 视频页移除 waifu2x 后】原来这里"好的 = 换成 waifu2x";
-                    // 现在没有可换的第三支引擎(Real-CUGAN 也是 ncnn-Vulkan,同卡大概率同样跑不通)
-                    // ⇒ 只如实告知:处理时会自动改用 ONNX 稳定引擎。
-                    await AskBlackwellCompatibleAsync(probeLabel);
+                    // 【2026-11-16】不再"只告知、直接继续":备用引擎(ONNX)慢 20~60 倍,要不要付这个代价
+                    // 必须由用户当场选。选取消就一批都不跑;选了才放行,而且本次不再重复问。
+                    string whyBackup = $"本机连测 3 次都没能让「{probeLabel}」在这张显卡上用 GPU 跑起来。"
+                        + Environment.NewLine + EngineService.LastProbeUserMessage;
+                    if (await AskBackupEngineAsync($"{probeLabel} 在这张显卡上跑不起来", whyBackup))
+                    {
+                        _backupEngineApproved = true;
+                        try { Log("用户选择:用备用引擎(ONNX)继续 —— 本次不再重复询问"); } catch { }
+                    }
+                    else
+                    {
+                        try { Log("用户选择:取消本次(超分只剩备用引擎,慢 20~60 倍)"); } catch { }
+                        VideoStatus.Text = "已取消:超分只剩备用引擎(慢 20~60 倍)。先重启电脑或更新显卡驱动,再点开始。";
+                        return;
+                    }
                 }
             }
         }
@@ -12606,6 +12659,8 @@ public sealed partial class VideoView : UserControl
                         // 预览:允许帧数偏少(3 秒本来就少,不该被"去重后帧太少"的防删光保护拦下)
                         allowFewFrames: allowFew || pv != null,
                         // 预览不接受暂停:传 null 直接跳过暂停等待点
+                        // 备用引擎(ONNX)慢 20~60 倍 ⇒ 必须本人点过「用备用引擎继续」才许降级(m11897)
+                        askBackupEngine: _backupEngineApproved ? null : AskBackupEngineAsync,
                         pauseWait: pv != null ? null : PauseWaitAsync));
                     // 预览:成片直接交回预览面板播放 —— 不标完成、不自动移除、不写列表状态
                     // (全片处理的那套收尾全在 else 分支里,逐字未改)

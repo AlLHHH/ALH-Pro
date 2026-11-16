@@ -556,9 +556,35 @@ public static partial class EngineService
     /// 老 bool 版本把四种情况(实测不可用 / 空闲显存不足跳过 / 本会话已跳过 / 被取消)压成同一个 false,
     /// 于是"显存不够没探"会被路由成"ncnn 不可用"⇒ 整段切 ONNX。真机事故与代价见
     /// <see cref="AlhPro.Core.NcnnProbeRouting"/> 的文件头(RTX 5060 Ti,6 秒/帧 vs 0.1~0.3 秒/帧)。</summary>
+    /// <summary>【2026-11-16】不再"一次不可用就定生死":实测不可用时按本表间隔再补测两轮(共 3 次),
+    /// 仍不行才把 Unavailable 交给调用方。理由见 <see cref="ProbeRetryPolicy"/>:健康卡也会被一次瞬时失败判死,
+    /// 而那条结论的代价不是重试 20 秒,是整段任务改走慢 20~60 倍的 ONNX。</summary>
+    public static readonly int[] NcnnUnavailableReprobeDelaysMs = { 3000, 8000 };
+
     public static async Task<AlhPro.Core.NcnnProbeReport> EnsureNcnnProbeDecisionAsync(
         string engine, int gpuId, string? model, CancellationToken ct, bool force = false)
-        => await EnsureNcnnProbeCoreAsync(engine, gpuId, model, ct, force).ConfigureAwait(false);
+    {
+        var decision = await EnsureNcnnProbeCoreAsync(engine, gpuId, model, ct, force).ConfigureAwait(false);
+        if (decision != AlhPro.Core.NcnnProbeReport.Unavailable || gpuId < 0) return decision;
+        for (int i = 0; i < NcnnUnavailableReprobeDelaysMs.Length; i++)
+        {
+            if (ct.IsCancellationRequested) return decision;
+            int delay = NcnnUnavailableReprobeDelaysMs[i];
+            AppLogger.Warn($"[探测] {engine} GPU({gpuId}) 实测不可用 —— {delay / 1000.0:0.#} 秒后补测"
+                + $"(第 {i + 2}/{NcnnUnavailableReprobeDelaysMs.Length + 1} 次;一次瞬时失败不该让整段走慢路)");
+            try { await Task.Delay(delay, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return decision; }
+            decision = await EnsureNcnnProbeCoreAsync(engine, gpuId, model, ct, force: true).ConfigureAwait(false);
+            if (decision != AlhPro.Core.NcnnProbeReport.Unavailable)
+            {
+                AppLogger.Info($"[探测] {engine} GPU({gpuId}) 补测第 {i + 2} 次改判:"
+                    + (decision == AlhPro.Core.NcnnProbeReport.Available ? "可用 → 走 ncnn" : "未测通 → 仍按 ncnn 处理"));
+                return decision;
+            }
+        }
+        AppLogger.Warn($"[探测] {engine} GPU({gpuId}) 连测 {NcnnUnavailableReprobeDelaysMs.Length + 1} 次都不可用 —— 才认这条结论");
+        return decision;
+    }
 
     /// <summary>兼容壳:老调用点只关心"能不能用 ncnn"时仍可用。**新写的路由判断请用三态版本**,
     /// 否则又会把"没测通"当成"测出不可用"。</summary>
