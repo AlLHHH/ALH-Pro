@@ -202,6 +202,16 @@ public class InterpFrameCountTests
     }
 
     /// <summary>差 1 帧不吵(分段边界的正常抖动),差 2 帧以上才报警;正负都算差。</summary>
+    /// <summary>【2026-11-16 自检】转场识别的每个切点各多带 1 帧:120 帧 4x 实测出 479,区间式算 477。
+    /// 成片时长与源差 0ms 时这 2 帧是分段边界的正常量,调用点按容忍 2 帧判(见 VideoService 帧数对账)。</summary>
+    [Fact]
+    public void Two_extra_frames_from_transition_cuts_do_not_raise_alarm()
+    {
+        Assert.False(VideoPipeline.FrameCountOffBy(479, 477, 2));
+        Assert.True(VideoPipeline.FrameCountOffBy(480, 477, 2));
+        var vs = System.IO.File.ReadAllText(RepoFile("ImgUpscalerUI", "VideoService.cs"));
+        Assert.Contains("FrameCountOffBy(finalNDiag, expectLedger, 2)", vs);
+    }
     [Theory]
     [InlineData(2603, 2603, false)]   // 一帧不差
     [InlineData(2604, 2603, false)]   // 多 1 帧:分段边界
@@ -234,5 +244,18 @@ public class InterpFrameCountTests
         double fine = VideoPipeline.VfrInputFramerate(perFrameRateStyle, RealNominalFps);
         Assert.Equal(120.0, fine, 6);
         Assert.Equal(0, VideoPipeline.CountTimestampCollisions(perFrameRateStyle, fine));
+    }
+
+    /// <summary>从测试输出目录往上找仓库根,定位源码文件(与其它契约测试同款做法)。</summary>
+    private static string RepoFile(params string[] parts)
+    {
+        var dir = new System.IO.DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            var cand = System.IO.Path.Combine(new[] { dir.FullName }.Concat(parts).ToArray());
+            if (System.IO.File.Exists(cand)) return cand;
+            dir = dir.Parent;
+        }
+        throw new System.IO.FileNotFoundException("找不到仓库文件: " + string.Join('/', parts));
     }
 }

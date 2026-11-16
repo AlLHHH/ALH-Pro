@@ -2470,6 +2470,20 @@ public static partial class VideoService
                 }
             }
 
+            // 【2026-11-16 · 全面自检抓到】"走 ncnn 还是走备用引擎(ONNX)"不能只看结论缓存:
+            // 缓存里那条「不可用」可能来自换引擎、换驱动之前的一次失败,而它会把整段任务**静默**钉在慢路上
+            // (自检复现:日志写「超分[realesrgan] 走 ncnn-Vulkan GPU(编号 0)」,随后这批实际是 ONNX,1.16 秒/帧)。
+            // 这里在真正定路线之前,按**真实引擎**取一次结论:缓存失败会被 EnsureNcnnProbeDecisionAsync 复核并连测 3 次;
+            // 仍不可用才由下面的切换点征得用户同意(不许自己接管)。
+            if (doUpscale && upscaleRuns && !waifuOnnx && upGpu >= 0)
+            {
+                var routeProbe = await EngineService.EnsureNcnnProbeDecisionAsync(engine, upGpu, null, ct).ConfigureAwait(false);
+                AppLogger.Info($"[探测] 超分路线复核:{engine} GPU({upGpu}) → {routeProbe}"
+                    + (AlhPro.Core.NcnnProbeRouting.KeepsNcnn(routeProbe)
+                        ? "(继续走 ncnn-Vulkan)"
+                        : "(实测不可用 → 只剩备用引擎,是否继续由用户决定)"));
+            }
+
             // 【任务 Q1 · 2026-09-13】阶段顺序不再靠全局开关(常量 false),改为**按实测单帧耗时自动判定**:
                 // 超分单帧成本 u 与"补帧在源分辨率/放大后分辨率的单帧成本"比较,谁便宜谁先跑。
                 // 判据/成本模型/安全边际(节省 <15% 不切换)/未标定回退,全在 AlhPro.Core.PipelineOrderPlan
@@ -2499,7 +2513,10 @@ public static partial class VideoService
                     bool calibPrefEsrgan = upGpu >= 0 && engine == "realesrgan" && EngineService.ShouldUseOnnxEsrgan();
                     bool calibPrefWaifu2x = upGpu >= 0 && engine == "waifu2x" && (EngineService.ShouldUseOnnxWaifu2x() || waifuOnnx);
                     bool calibNcnnProbePassed = EngineService.NcnnProbePassed(engine, upGpu);
-                    bool calibOnnx = AlhPro.Core.UpscaleBackendPlan.UseOnnx(engine, upGpu, calibPrefEsrgan, calibPrefWaifu2x,
+                    // 【2026-11-16 · 自检】标定样本只在 ncnn 上跑:探测没测通的机器原来自动拿 ONNX 标定,
+                    // 那 10 秒基本白花,还会写出「样本输出目录是空的(引擎没产出任何帧)」这种噪音
+                    // (自检日志实证)。标不出来就保守走旧顺序,不影响成片。
+                    bool calibOnnx = calibNcnnProbePassed && AlhPro.Core.UpscaleBackendPlan.UseOnnx(engine, upGpu, calibPrefEsrgan, calibPrefWaifu2x,
                         fastMode, calibNcnnProbePassed);
                     string calibBackend = AlhPro.Core.UpscaleBackendPlan.DescribeBackend(engine, upGpu, calibPrefEsrgan,
                         calibPrefWaifu2x, fastMode, upOnnxDml, calibNcnnProbePassed);
@@ -3080,11 +3097,28 @@ public static partial class VideoService
                                 bool ncnnProbePassed = EngineService.NcnnProbePassed(engine, upGpu);
                                 if (ncnnProbePassed && fastMode)
                                     AppLogger.Info("兼容模式已开,但该卡 ncnn 实测可用 → 仍走 ncnn-Vulkan(只按兼容模式降 tile/批大小)");
+                                // 【2026-11-16 · 自检】"因为实测不可用才改走 ONNX"这一种切换必须由用户点头:
+                                // 开跑前的同意只覆盖了 upGpu<0 那条路,而路线是在批内决定的 ⇒ 缓存里有失败结论时
+                                // 用户完全不知情就被挪到慢路上。这里补上同一道询问。用户自己选 ONNX / 兼容模式不算。
+                                bool probeFailedSwitch = upGpu >= 0 && !ncnnProbePassed
+                                    && !onnxPreferredEsrgan && !onnxPreferredWaifu2x && !fastMode;
                                 if (AlhPro.Core.UpscaleBackendPlan.UseOnnx(engine, upGpu, onnxPreferredEsrgan, onnxPreferredWaifu2x,
                                         fastMode, ncnnProbePassed))
+                                {
+                                    if (probeFailedSwitch)
+                                    {
+                                        string whyGrade = $"本机实测「{EngineService.EngineLabel(engine)}」在这张显卡上无法用 GPU 加速"
+                                            + $"(ncnn-Vulkan 连测 {EngineService.NcnnUnavailableReprobeDelaysMs.Length + 1} 次都没跑通)。"
+                                            + "\n\n只剩备用引擎(ONNX DirectML):能出片、结果一样,但实测慢 20~60 倍(几秒才能出一帧)。"
+                                            + "\n\n取消:先重启电脑或更新显卡驱动,再点开始。";
+                                        if (!await ConfirmBackupEngineAsync(askBackupEngine, "超分引擎在这张显卡上跑不起来", whyGrade, ct).ConfigureAwait(false))
+                                            throw new InvalidOperationException(
+                                                "你选择了取消:超分只剩备用引擎(慢 20~60 倍),本次任务已停止。先重启电脑或更新显卡驱动,再点开始。");
+                                    }
                                     onnxModelPath = engine == "waifu2x"
                                         ? EsrganOnnxService.FindWaifu2xModel(model)
                                         : EsrganOnnxService.ResolveEsrganOnnxPath(model);
+                                }
                             }
                             // 【让"批间停顿"可见】本批的计算引擎还没起来 —— ncnn 是"进程启动 + 模型加载",
                             // ONNX 稳定引擎是"每批新建 DirectML 推理会话",两者都是秒级固定开销。
@@ -3990,8 +4024,10 @@ public static partial class VideoService
                 //   也就正好是用户报"开了去重 / 转场识别就变速、音画不同步"的那两条。
                 //   这里只报警、不裁剪、不改任何行为:合帧的「均值补尾」与「帧率自愈」会把小偏差悄悄吸收,
                 //   日志里看不出问题;差 1 帧不吵(分段边界本就允许),差得多就写明方向。
+                //   【2026-11-16 自检】转场识别的每个切点各多带 1 帧(实测 120 帧 4x 出 479,区间式算 477),
+                //   而成片时长与源严丝合缝(容器差 0ms)—— 那是分段边界的正常量,故容忍 2 帧,再多才吵。
                 long expectLedger = AlhPro.Core.VideoPipeline.ExpectedInterpFrames(frameCount, multDiag, targetFpsWantFrames);
-                if (AlhPro.Core.VideoPipeline.FrameCountOffBy(finalNDiag, expectLedger, 1))
+                if (AlhPro.Core.VideoPipeline.FrameCountOffBy(finalNDiag, expectLedger, 2))
                     AppLogger.Warn($"⚠ 帧数对账:输出 {finalNDiag} 帧 ≠ 应有 {expectLedger} 帧"
                         + $"(差 {finalNDiag - expectLedger} 帧;去重后 {frameCount} 帧 × 步长 {multDiag:0.###} 帧"
                         + (targetFpsWantFrames > 0 ? $",指定帧率口径 {targetFpsWantFrames} 帧" : "")

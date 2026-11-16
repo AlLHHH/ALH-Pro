@@ -99,6 +99,82 @@ namespace AlhPro.Tests
             Assert.Contains("return;", after);                                        // 真的停,不是继续跑
         }
 
+        // 【2026-11-16 全面自检抓到】缓存里的一条「不可用」把整段任务静默钉在 ONNX 上:
+        // 日志写「超分[realesrgan] 走 ncnn-Vulkan GPU(编号 0)」,随后这批实际是 ONNX,1.16 秒/帧。
+        // 定路线之前必须按真实引擎取一次结论(缓存失败会被复核),而不是直接读缓存。
+        [Fact]
+        public void The_route_is_rechecked_with_the_real_engine_before_it_is_decided()
+        {
+            var vs = ReadFile("ImgUpscalerUI", "VideoService.cs");
+
+            int recheck = vs.IndexOf("[探测] 超分路线复核:", StringComparison.Ordinal);
+            Assert.True(recheck > 0, "定路线之前没有按真实引擎复核探测结论");
+
+            int call = vs.IndexOf("await EngineService.EnsureNcnnProbeDecisionAsync(engine, upGpu", StringComparison.Ordinal);
+            Assert.True(call > 0 && call < recheck, "复核日志之前没有真的调用三态探测入口");
+
+            // 复核必须发生在"决定走 ONNX"之前(批内那次判定)
+            int decide = vs.IndexOf("AlhPro.Core.UpscaleBackendPlan.UseOnnx(engine, upGpu, onnxPreferredEsrgan", StringComparison.Ordinal);
+            Assert.True(decide > call, "批内 ONNX 判定发生在复核之前 —— 又会拿缓存决定路线");
+        }
+
+        // 用户自己选 ONNX / 兼容模式不算"探测失败",不许拿它弹框;只有"实测不可用"这一种切换要问
+        [Fact]
+        public void Switching_to_onnx_because_the_probe_failed_also_asks_the_user()
+        {
+            var vs = ReadFile("ImgUpscalerUI", "VideoService.cs");
+            int flag = vs.IndexOf("bool probeFailedSwitch = upGpu >= 0 && !ncnnProbePassed", StringComparison.Ordinal);
+            Assert.True(flag > 0, "没有把「因探测失败而切 ONNX」这一种情况单独标出来");
+            Assert.Contains("&& !onnxPreferredEsrgan && !onnxPreferredWaifu2x && !fastMode;", vs);
+
+            var asks = IndexesOf(vs, "\"超分引擎在这张显卡上跑不起来\"");
+            Assert.True(asks.Count >= 2, "批内切 ONNX 前没有询问用户(只剩开跑前那一处)");
+
+            // 询问之后必须能停:同一段里要有 throw,不许"问了但照样跑"
+            var tail = vs.Substring(asks[asks.Count - 1], Math.Min(400, vs.Length - asks[asks.Count - 1]));
+            Assert.Contains("本次任务已停止", tail);
+        }
+
+        // 标定样本不再在"ncnn 从没测通"的机器上偷偷走 ONNX:那 10 秒白花,还会写出
+        // 「样本输出目录是空的(引擎没产出任何帧)」这种噪音(自检日志实证)。
+        [Fact]
+        public void Calibration_never_falls_back_to_the_onnx_engine()
+        {
+            var vs = ReadFile("ImgUpscalerUI", "VideoService.cs");
+            Assert.Contains("bool calibOnnx = calibNcnnProbePassed && AlhPro.Core.UpscaleBackendPlan.UseOnnx(", vs);
+        }
+
+        // 免探测快速通道的机器不写结论:只看缓存时,一条旧失败会把路线钉在 ONNX,
+// 与「超分路线复核 → 可用」自相矛盾(自检实测同一份日志两种声音,1690 ms/帧)。
+        [Fact]
+        public void The_pass_verdict_uses_the_same_fast_path_as_the_probe()
+        {
+            var es = ReadFile("ImgUpscalerUI", "EngineService.cs");
+            int start = es.IndexOf("public static bool NcnnProbePassed(string engine, int gpuId)", StringComparison.Ordinal);
+            Assert.True(start > 0, "找不到 NcnnProbePassed");
+            int end = es.IndexOf("// 【2026-09-24】这里曾有一个便捷入口", start, StringComparison.Ordinal);
+            Assert.True(end > start, "NcnnProbePassed 结构变了,测试需要更新");
+            var block = es.Substring(start, end - start);
+            Assert.Contains("TargetGpuIsPlainNvidia(gpuId, engine)) return true;", block);
+            Assert.Contains("TryGetEngineVerdictSummary(engine, gpuId) == true", block);
+        }
+
+        // 风险判定也必须跟探测核心同口径:免探测的机器不该被一条更早的模型级失败拽到 ONNX。
+        [Fact]
+        public void The_risk_predicate_uses_the_same_fast_path_as_the_probe()
+        {
+            var es = ReadFile("ImgUpscalerUI", "EngineService.cs");
+            int start = es.IndexOf("public static bool NcnnGpuRisky(string engine, int gpuId", StringComparison.Ordinal);
+            Assert.True(start > 0, "找不到 NcnnGpuRisky");
+            int end = es.IndexOf("private static bool OldNcnnGpuRiskyHeuristic", start, StringComparison.Ordinal);
+            Assert.True(end > start, "NcnnGpuRisky 结构变了,测试需要更新");
+            var block = es.Substring(start, end - start);
+            int fast = block.IndexOf("TargetGpuIsPlainNvidia(gpuId, engine)) return false;", StringComparison.Ordinal);
+            int cache = block.IndexOf("TryGetEngineVerdictSummary(engine, gpuId)", StringComparison.Ordinal);
+            Assert.True(fast > 0, "NcnnGpuRisky 没有和探测核心用同一条免探测判据");
+            Assert.True(cache > fast, "先读缓存再判快速通道 —— 旧结论仍会赢");
+        }
+
         private static System.Collections.Generic.List<int> IndexesOf(string text, string needle)
         {
             var list = new System.Collections.Generic.List<int>();

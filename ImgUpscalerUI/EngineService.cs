@@ -941,7 +941,15 @@ public static partial class EngineService
     /// <see cref="AlhPro.Core.UpscaleBackendPlan.UseOnnx"/> 的 2026-11-05 修订。
     public static bool NcnnProbePassed(string engine, int gpuId)
     {
-        try { return TryGetEngineVerdictSummary(engine, gpuId) == true; }
+        try
+        {
+            // 【2026-11-16 · 全面自检】免探测快速通道的机器(纯 N 卡 + 2026 重编引擎)根本不写结论,
+            // 只看缓存的话,一条**更早的模型级失败**(换引擎/换驱动之前留下的)就会把路线钉到 ONNX,
+            // 于是同一份日志里同时出现「超分路线复核 → 可用(继续 ncnn)」和「ONNX 超分路线」——
+            // 自检实测:1690 ms/帧 vs ncnn 的几十毫秒。判据与探测核心保持一致。
+            if (gpuId >= 0 && TargetGpuIsPlainNvidia(gpuId, engine)) return true;
+            return TryGetEngineVerdictSummary(engine, gpuId) == true;
+        }
         catch { return false; }
     }
 
@@ -1031,6 +1039,11 @@ public static partial class EngineService
     {
         try
         {
+            // 【2026-11-16 · 全面自检】免探测快速通道(纯 N 卡 + 2026 重编引擎)的机器从不需要探测,
+            // 缓存里那些更早的「模型级不可用」根本不是在说这一份引擎 —— 拿它当判据会出现
+            // 「超分路线复核 → 可用(继续 ncnn)」和「ONNX 超分路线」同一份日志里并存(自检实证,1066 ms/帧)。
+            // 运行期兜底仍在:真出无效画面/全黑时那台设备会被当场判不可用并降级。
+            if (gpuId >= 0 && TargetGpuIsPlainNvidia(gpuId, engine)) return false;
             // F1:结论现在按 engine|gpu|model 存,这里问的是"这个引擎在这张卡上能不能用" ——
             // 故按该引擎+GPU 的【全部已测模型】汇总:只要有一支实测不可用就按风险算(保守),
             // 全部已测模型都通过才算可用;一支都没测过 → 走下面的启发式(与原来完全一致)。
