@@ -452,6 +452,14 @@ public static partial class VideoService
                 attempts.Add((bak, realArgs, false));
                 attempts.Add((bak, StripPreset(realArgs), true));
             }
+            // 再往老一档(2023 年的 6.1.1):新版 ffmpeg 要求的 NVENC API 版本比老驱动能给的更高,
+            // 驱动没更新的机器只有这支开得动硬编 —— 2026-11-16 那台 RTX 3060 实测:8.x 六档全败,6.1.1 exit 0。
+            var legacy = LegacyFfmpegPath;
+            if (legacy != null && !string.Equals(legacy, ffmpeg, StringComparison.OrdinalIgnoreCase))
+            {
+                attempts.Add((legacy, realArgs, false));
+                attempts.Add((legacy, StripPreset(realArgs), true));
+            }
         }
         string lastWhy = "(未跑)";
         foreach (var (ff, args, noPreset) in attempts)
@@ -472,10 +480,17 @@ public static partial class VideoService
                         if (!WorkingHwEncoders.Contains(enc)) WorkingHwEncoders.Add(enc);
                         HwRecipes[enc] = new HwEncoderRecipe(ff, noPreset);
                     }
-                    if (noPreset || !ReferenceEquals(ff, ffmpeg))
+                    if (noPreset || !string.Equals(ff, ffmpeg, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // 换了 ffmpeg 时必须写清换的是哪一支(不然日志里"备用 ffmpeg"是谁永远说不清)
+                        string which = string.Equals(ff, ffmpeg, StringComparison.OrdinalIgnoreCase) ? ""
+                            : string.Equals(ff, LegacyFfmpegPath, StringComparison.OrdinalIgnoreCase)
+                                ? "最老一支 ffmpeg(6.1,给旧驱动的)"
+                                : "备用 ffmpeg";
                         AppLogger.Info($"硬件编码探测:{enc} 需放宽参数才可用(" +
-                            $"{(noPreset ? "去掉 -preset" : "")}{(noPreset && !ReferenceEquals(ff, ffmpeg) ? " + " : "")}" +
-                            $"{(!ReferenceEquals(ff, ffmpeg) ? "备用 ffmpeg" : "")}){logSuffix}");
+                            $"{(noPreset ? "去掉 -preset" : "")}{(noPreset && which.Length > 0 ? " + " : "")}" +
+                            $"{which}){logSuffix}");
+                    }
                     return true;
                 }
                 lastWhy = $"命令退出 0 但输出不合格(<{minFrames} 帧/解不开)";

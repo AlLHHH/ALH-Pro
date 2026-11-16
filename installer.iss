@@ -114,6 +114,14 @@ Source: "发布版\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs cre
 ; **漏拷时 Inno 在编译期就提示错误(找不到 Source),不会发出一份"悄悄变慢"的包**。
 Source: "发布版\engines\ffmpeg8\*"; DestDir: "{app}\engines\ffmpeg8"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+; 【最老的一支 ffmpeg(ffmpeg61,2023 年的 6.1.1)同样必须随包带上】
+; ffmpeg8 解决的是"接口太新、旧驱动打不开"里偏新的一半;真正卡住 2023 年驱动的是 NVENC API 版本:
+;   主 ffmpeg 与 ffmpeg8 都是 8.x(要 API 13),6.1.1 只要 12.1 ⇒ 这批机器只有 ffmpeg61 能硬编。
+; 依据:2026-11-16 那台 RTX 3060 Laptop(驱动 31.0.15.4630)六档硬编全败 exit -40、日志只剩
+;   "Driver does not support the required nvenc API version";同一台机器同款 6.1.1 实测 exit 0。
+; 漏拷的后果与上面那条一样:开跑前直接停(「本机没有可用的硬件编码器」),而这里漏了 Inno 编译期就会报错。
+Source: "发布版\engines\ffmpeg61\*"; DestDir: "{app}\engines\ffmpeg61"; Flags: ignoreversion recursesubdirs createallsubdirs
+
 [InstallDelete]
 ; 【2026-09-24 必须删掉这条 Real-CUGAN 清理规则】Real-CUGAN 已重新随包(2026 重编引擎 + models-se,
 ; 许可 MIT,见 THIRD_PARTY_NOTICES 第 16 条)。留着这条的后果不是"清理旧文件",而是

@@ -67,8 +67,20 @@ ALH Pro — 第三方组件许可声明
              https://github.com/FFmpeg/FFmpeg/archive/1a748fe2cd43e3ead22fafb1b5b7d77f153898a8.tar.gz
              对应随包文件: engines\ffmpeg\ffmpeg.exe  = N-126247-gb79d4c4c0a-20260823(145,810,432 字节)
                            engines\ffmpeg8\ffmpeg.exe = n8.1.2-50-g1a748fe2cd-20260903(541,184 字节)
+                           engines\ffmpeg61\ffmpeg.exe = 6.1.1-full_build-www.gyan.dev(135,416,832 字节,见下)
              构建脚本: https://github.com/BtbN/FFmpeg-Builds
              完整构建配置(configuration 逐字)见随包 licenses\ffmpeg-源码获取.txt
+
+   【第三支 ffmpeg 的单独说明:engines\ffmpeg61\ffmpeg.exe,版本 6.1.1】
+    为什么多带一支:主 ffmpeg 与 ffmpeg8 都是 8.x,要求 NVENC API 13;显卡驱动较旧的电脑
+      (例如 2023 年那批,驱动 31.0.15.4630)打不开这个接口,硬件编码一个都编不出来。
+      6.1.1 只要求 NVENC API 12.1,在这些机器上能正常用显卡编码。
+    构建来源: gyan.dev 的 full_build(https://www.gyan.dev/ffmpeg/builds/,
+      构建脚本 https://github.com/GyanD/codexffmpeg),同样启用 --enable-gpl --enable-version3。
+    对应源码: FFmpeg 6.1.1 上游发布包 https://ffmpeg.org/releases/ffmpeg-6.1.1.tar.xz
+      与上述构建脚本仓库;本站同样按 GPLv3 第 6 条提供——
+      需要时可在 https://alhpro.cn/download.html#source 获取,或直接向我们索取该版本的源码包。
+    许可全文: engines\ffmpeg61\COPYING.GPLv3(随包)
    说明: 本软件以独立进程方式调用 ffmpeg/ffprobe,未与其链接;
          依 GPLv3 第 6 条在本站公开提供对应源码(任何人可下载、重建、再分发)。
    版权: FFmpeg 开发团队

@@ -144,6 +144,17 @@ public static partial class VideoService
     /// <summary>备用 ffmpeg(如 8.x,用于 50 系/Blackwell NVENC 硬编在旧 7.1 上失败时的兜底)。
     /// 放 engines/ffmpeg8/ 目录;默认不存在则返回 null,完全不影响现有逻辑。</summary>
     public static string? BackupFfmpegPath => FindInEngines("ffmpeg8", "ffmpeg.exe");
+    /// <summary>**最老的一支** ffmpeg(2023 年的 6.1.1),给"显卡驱动太旧、打不开新版 NVENC 接口"的机器兜底。
+    /// 放 engines/ffmpeg61/ 目录;不存在返回 null。
+    ///
+    /// 【为什么需要它(真机实证)】ffmpeg 8.x 要 NVENC API 13,6.1 只要 12.1 —— 2026-11-16 那台
+    /// RTX 3060 Laptop(驱动 31.0.15.4630,2023 年的)六档硬编全败 `exit -40`,日志里只有
+    /// `Driver does not support the required nvenc API version`;同一台机器的同款 6.1.1 用
+    /// `-c:v h264_nvenc -preset p4` 实测 exit 0。更新驱动是根治,这支老 ffmpeg 让"暂时不想更新"的人也能硬编,
+    /// 而不是被迫退回 CPU(慢 7 倍以上)。
+    /// 【与 ffmpeg8 的分工】ffmpeg8 是**更新**的一支(给 50 系/Blackwell 新接口用),这一支是**更老**的一支
+    /// (给老驱动用);探测按 主 → 备用 ffmpeg8 → 本支 的顺序逐档实测,谁编得通就用谁,并把路径记进配方。</summary>
+    public static string? LegacyFfmpegPath => FindInEngines("ffmpeg61", "ffmpeg.exe");
     /// <summary>补帧引擎:ncnn-Vulkan 版 RIFE。
     /// 【优先 2026 重编版】engines/rife/ 下若同时存在 rife-ncnn-vulkan-2026.exe 与老的
     /// rife-ncnn-vulkan.exe,一律优先 2026 版:
