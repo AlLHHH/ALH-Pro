@@ -6,7 +6,7 @@
 ; 安装时「选择附加任务」若勾选「下载并安装模型包」仍会补全抠图模型(可跳过)。
 
 #define MyAppName "ALH Pro"
-#define MyAppVersion "1.4.9"
+#define MyAppVersion "1.4.10"
 #define MyAppExeName "ALHPro.exe"
 ; 【构建时间戳】(ISPP 在编译时求值):用于让用户一眼分辨"同名同版本的不同构建"。
 ; 起因:同一个 1.3.4 出了多次安装包,名字完全一样、大小只差几十 MB,用户无法确认手上是哪一个。

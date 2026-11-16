@@ -155,15 +155,14 @@ else { Say "  OK  声明:两份与唯一源一致,关键条目 $($noticeKeys.Cou
 
 # ===== ①g 随包文档:唯一源 → 发布版\ 副本(同名比 SHA256,不一致就覆盖并提示)=====
 # 【F3 修复 · 2026-09-25 根因 = 「随包副本没有同步机制」】①e 只管 licenses\、①f 只管 notice,
-# 而 README.md / 使用教程.md / RELEASE_NOTES.md / release_history.json / LICENSE 这些**随包文档**
+# 而 README.md / RELEASE_NOTES.md / release_history.json / LICENSE 这些**随包文档**
 # 一直是"改仓库那份、发布版那份看运气" ⇒ 安装包 (Source: "发布版\*") 会把**旧版**装进 {app}\。
 # 真机就出过两次(本 task 修的):发布版\README.md 停在 09-22 的旧文案(还写着"保留所有权利 / 禁止商用"),
-# 发布版\使用教程.md 比仓库版少一行。语义与 ①e **完全一致**:不一致就覆盖 + 提示。
+# (使用教程已于 2026-11-15 按用户要求整体删除,不再随包,这里只校验剩下的文档。)语义与 ①e **完全一致**:不一致就覆盖 + 提示。
 #   · 唯一源 = 仓库里那份;**发布版\ 那份是生成物,永远不许手改**(改了下次打包会被覆盖)。
 #   · 注意 README 有两份不同用途:随包的是 ImgUpscalerUI\README.md;仓库根 README.md 是项目说明(不随包)。
 $docPairs = @(
     @{ src = (Join-Path $root 'ImgUpscalerUI\README.md'); dst = (Join-Path $pub 'README.md');           why = '随包说明(唯一源 = ImgUpscalerUI\README.md;仓库根 README.md 是项目说明,不是这一份)' },
-    @{ src = (Join-Path $root '使用教程.md');             dst = (Join-Path $pub '使用教程.md');          why = '随包使用教程(用户第一手说明)' },
     @{ src = (Join-Path $root 'RELEASE_NOTES.md');        dst = (Join-Path $pub 'RELEASE_NOTES.md');     why = '更新公告(更新弹窗读它)' },
     @{ src = (Join-Path $root 'release_history.json');    dst = (Join-Path $pub 'release_history.json'); why = '更新弹窗的版本历史数据源' },
     @{ src = (Join-Path $root 'LICENSE');                 dst = (Join-Path $pub 'LICENSE');              why = '本软件自己的 MIT 许可原文' }
@@ -206,7 +205,6 @@ $required = @(
     @{ p = 'ALHPro.exe'; why = '主程序' },
     @{ p = 'ALHPro.dll'; why = '主程序' },
     @{ p = 'README.md'; why = '随包说明(唯一源 = ImgUpscalerUI\README.md;①g 会校验同哈希)' },
-    @{ p = '使用教程.md'; why = '随包使用教程(①g 会校验同哈希)' },
     @{ p = 'release_history.json'; why = '更新弹窗的版本历史数据源(①g 会校验同哈希)' },
     @{ p = 'LICENSE'; why = '本软件自己的 MIT 许可原文(MIT 要求随副本附带;另有 licenses\ALH-Pro-MIT-LICENSE.txt)' },
     @{ p = 'RELEASE_NOTES.md'; why = '更新公告(更新弹窗读它)' },
