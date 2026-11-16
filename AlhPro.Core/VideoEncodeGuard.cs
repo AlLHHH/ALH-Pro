@@ -165,8 +165,26 @@ public static class VideoEncodeGuard
     /// <summary>预检失败的**用户可见**提示错误(必须让他知道"现在是开跑前停下的,不是跑完几十分钟才失败")。
     /// 【文案红线】不许提"去设置里选 CPU 软编" —— 那个选项不存在(<see cref="CpuFallbackPolicy"/> 的 B8 口径)。</summary>
     public static string DescribePreflightFailure(string encoder, int width, int height, double fps,
-        string? detail = null, string? triedEncoders = null, bool h264LimitHit = false)
+        string? detail = null, string? triedEncoders = null, bool h264LimitHit = false,
+        bool nvencDriverTooOld = false)
     {
+        // 【2026-11-16 用户诊断包 · RTX 3060 那台】六档编码器全失败,日志只剩 `exit -40`,
+        // 于是一路报「本机没有可用的硬件编码器…也可能是没检测到可用显卡」—— 用户完全不知情:
+        // 他的显卡好好的,是 **NVIDIA 驱动太旧**(31.0.15.4630,2023 年的),我们随包的 ffmpeg
+        // 用新版 NVENC 接口,旧驱动打不开。这段就是他唯一能采取的动作,所以放最前面。
+        // (判据见 VideoService.Encode.cs 的 IsNvencDriverTooOld:ffmpeg 原话 "nvenc API version" /
+        //  "minimum required Nvidia driver";它只在拿到完整 stderr 时才可能出现 —— 与日志保留 3 行的修复配套。)
+        if (nvencDriverTooOld)
+        {
+            return "编码预检失败:这台机器的 **NVIDIA 显卡驱动太旧**,不是显卡坏了。\n"
+                + "我们随包的编码器用新版 NVENC 接口,旧驱动打不开它 —— 所以 nvenc 一支都编不出来。\n"
+                + "怎么办:① 更新 NVIDIA 显卡驱动(GeForce Experience 或官网,勾『清洁安装』)后重试,这是根治;"
+                + "② 驱动更新之前,这台机器只能用 CPU 编码出片,会比硬编慢很多;"
+                + "③ 换一台驱动较新的机器。\n"
+                + "本次已在**开始处理之前**停下:拆帧/补帧/超分都还没开始,不会白跑几十分钟。\n"
+                + (string.IsNullOrWhiteSpace(triedEncoders) ? "" : $"已试过的编码器:{triedEncoders}。\n")
+                + "最后一次原因:" + (string.IsNullOrWhiteSpace(detail) ? "(未给出原因)" : detail.Trim());
+        }
         // 【2026-11-09 用户诊断包】尺寸超 H.264 上限、本机又没有可用 HEVC 时,错误必须说人话:
         // 不是驱动坏了,是这个尺寸 H.264 编不了(H.264 硬编上限 4096,RDNA/NVENC/AMF 都一样)。
         if (h264LimitHit)

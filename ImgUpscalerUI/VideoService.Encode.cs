@@ -576,6 +576,9 @@ public static partial class VideoService
         chain.AddRange(AlhPro.Core.VideoEncodeGuard.FallbackEncoderChain(
             intendedEncoder, codecPref, HwEncoderSnapshot(), width, height));
         string lastDetail = "";
+        // 每一档失败的真实原因都留一份:最后要判「是不是 NVIDIA 驱动太旧」——
+        // 只看最后一档会漏(最后一档常常是 hevc_qsv 之类先撞"根本没有这个编码器")。
+        var allDetails = new System.Collections.Generic.List<string>();
         for (int i = 0; i < chain.Count; i++)
         {
             string encoder = chain[i];
@@ -591,6 +594,7 @@ public static partial class VideoService
                     return encoder;
                 }
                 lastDetail = detail;
+                allDetails.Add(detail);
                 // 打不开 = 确定性失败:同一个编码器再试还是打不开 ⇒ 立刻看下一个候选(不浪费那 1 秒)
                 if (kind == AlhPro.Core.VideoEncodeGuard.EncodeFailureKind.EncoderInit) break;
                 if (attempt == 1)
@@ -611,8 +615,13 @@ public static partial class VideoService
             AppLogger.Warn($"⚠ 输出 {width}×{height} 超过 H.264 上限 "
                 + $"{AlhPro.Core.VideoEncodeGuard.H264MaxDimension},且本机没有可用的 HEVC 硬编:"
                 + "已跳过 h264_* 候选(它在这个尺寸上确定编不了)");
+        bool nvencDriverTooOld = allDetails.Any(IsNvencDriverTooOld);
+        if (nvencDriverTooOld)
+            AppLogger.Warn("⚠ 编码预检全败:ffmpeg 说本机 NVIDIA 驱动太旧(打不开新版 NVENC 接口)"
+                + " —— 显卡没坏,更新驱动即可;这是用户唯一能自己解决的那一类。");
         throw new InvalidOperationException(AlhPro.Core.VideoEncodeGuard.DescribePreflightFailure(
-            intendedEncoder, width, height, nominalFps, lastDetail, string.Join(" / ", tried), h264LimitHit));
+            intendedEncoder, width, height, nominalFps, lastDetail, string.Join(" / ", tried), h264LimitHit,
+            nvencDriverTooOld));
     }
 
     /// <summary>预检只编 1 帧:命令由 <see cref="AlhPro.Core.VideoEncodeGuard.BuildPreflightCommand"/> 生成

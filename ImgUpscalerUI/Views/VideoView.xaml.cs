@@ -12721,6 +12721,11 @@ public sealed partial class VideoView : UserControl
                         item.StatusText = "✗ 失败";
                         AppLogger.Error($"视频处理失败: {item.Name}", ex);
                         Log($"  ✗ 失败:{ex.Message}");
+                        // 【2026-11-16 · RTX 3060 那台】驱动太旧时,失败的**原因**才是用户能动手的部分:
+                        // 把它顶到状态栏,而不是只留一行"完成 0 个"。判据用 Core 里那句固定开头,
+                        // 免得 UI 自己又猜一遍(文案只有一处定义)。
+                        if ((ex.Message ?? "").Contains("NVIDIA 显卡驱动太旧", StringComparison.Ordinal))
+                            VideoStatus.Text = "失败:显卡驱动太旧 —— 更新 NVIDIA 驱动后重试(日志里有原话)";
                         _failReasons.Add($"{item.Name}: {ex.Message}");
                         failCount++;
                     }
