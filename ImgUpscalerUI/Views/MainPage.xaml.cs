@@ -1495,7 +1495,8 @@ public sealed partial class MainPage : Page
             var raw = items.Select(i => i.Path)
                 .Where(p => !string.IsNullOrWhiteSpace(p))
                 .ToArray();
-            bool images = _currentTag == "upscale";
+            // 抠图页也吃图片:2026-11-16 之前它连拖放处理器都没有,拖过去毫无反应。
+            bool images = _currentTag is "upscale" or "cutout";
             var paths = AlhPro.DroppedPaths.Expand(raw, images);
             if (paths.Length == 0)
             {
@@ -1507,6 +1508,8 @@ public sealed partial class MainPage : Page
                 await _videoView.AcceptDroppedFilesAsync(paths);
             else if (_currentTag == "upscale" && _upView != null)
                 await _upView.AcceptDroppedFilesAsync(paths);
+            else if (_currentTag == "cutout" && _cutView != null)
+                await _cutView.AcceptDroppedFilesAsync(paths);
             else
                 AppLogger.Info($"当前页面({_currentTag})不接收拖入,已忽略");
         }

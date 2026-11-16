@@ -41,6 +41,12 @@ public sealed partial class CutoutView : UserControl
             : $"{n} 张图片";
     }
 
+    /// <summary>
+    /// 【2026-11-16】窗口级拖放转过来用的入口:抠图页以前完全不接拖放,
+    /// 把图拖到这一页等于什么都没发生。这里只负责收下,预览/参数/开始处理仍走页面原有逻辑。
+    /// </summary>
+    public Task AcceptDroppedFilesAsync(string[] paths) => ToolGrid.AddImagesAsync(paths);
+
     public CutoutView()
     {
         this.InitializeComponent();
