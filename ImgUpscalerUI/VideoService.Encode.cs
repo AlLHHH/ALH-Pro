@@ -333,7 +333,7 @@ public static partial class VideoService
                             // 旧代码一律写成"不可用(The operation was canceled.)",读日志的人只会得到
                             // "本机不支持硬解"这个【错误结论】(真机 8/8 次都是这种)。
                             bool probeTimedOut = decCts.IsCancellationRequested;
-                            string head = ex.Message.Split('\n')[0];
+                            string head = OneLineHead(ex.Message);
                             if (probeTimedOut)
                             {
                                 _hwJpegDecode = HwJpegDecode.ProbeTimeout;
@@ -483,7 +483,7 @@ public static partial class VideoService
             catch (Exception ex)
             {
                 if (ct.IsCancellationRequested) return false;
-                lastWhy = FirstLine(ex.Message);
+                lastWhy = OneLineHead(ex.Message);
             }
             finally { try { File.Delete(tmp); } catch { } }
         }
@@ -595,13 +595,13 @@ public static partial class VideoService
                 if (kind == AlhPro.Core.VideoEncodeGuard.EncodeFailureKind.EncoderInit) break;
                 if (attempt == 1)
                 {
-                    AppLogger.Warn($"⚠ 编码预检({encoder})第 1 次失败(瞬时类):{FirstLine(detail)} —— 1 秒后再试 1 次");
+                    AppLogger.Warn($"⚠ 编码预检({encoder})第 1 次失败(瞬时类):{OneLineHead(detail)} —— 1 秒后再试 1 次");
                     try { await Task.Delay(1000, ct).ConfigureAwait(false); } catch (OperationCanceledException) { throw; }
                 }
             }
             // 这一档不行:还有候选就换,并且把"换用 X"写进日志(不许静默换)
             if (i + 1 < chain.Count)
-                AppLogger.Warn(AlhPro.Core.VideoEncodeGuard.DescribeEncoderSwitch(encoder, chain[i + 1], FirstLine(lastDetail)));
+                AppLogger.Warn(AlhPro.Core.VideoEncodeGuard.DescribeEncoderSwitch(encoder, chain[i + 1], OneLineHead(lastDetail)));
         }
         // 【2026-11-09】真因判定:输出超 H.264 上限 + 本机**没有实测可用的 HEVC** ⇒ 这个尺寸就是编不出来
         // (实录那趟:试过 hevc_nvenc 失败、h264_amf 因尺寸必失败;文案必须直说尺寸到顶,而不是"编码器坏了")
@@ -646,9 +646,16 @@ public static partial class VideoService
         finally { try { File.Delete(tmp); } catch { } }
     }
 
-    /// <summary>多行诊断取第一行(给"第 N 次失败/换用 X"这种一行日志用)。</summary>
-    private static string FirstLine(string? text)
-        => string.IsNullOrWhiteSpace(text) ? "(未给出原因)" : text!.Trim().Split('\n')[0];
+    /// <summary>失败原因取**前 3 行**拼成一行。
+    ///
+    /// 【为什么不再只是第一行】真机 2026-11-16 3060 那台诊断包里,六档编码器的失败原因全部只剩 `[命令] 命令失败 (exit -40):` 这一行 —— ffmpeg 的原话("Cannot load ..." /
+    /// "OpenEncodeSessionEx failed" / "Driver does not support the required nvenc API version")都在
+    /// **第二行往后**,于是"为什么编不出来"在日志里彻底没有,只能让用户重跑一次。
+    /// 拼成一行是为了继续适配"逐档失败原因串成一条日志"的既有格式;换行替换成 ` / ` 不丢信息。</summary>
+    private static string OneLineHead(string? text)
+        => string.IsNullOrWhiteSpace(text)
+            ? "(未给出原因)"
+            : AlhPro.Core.VideoEncodeGuard.HeadOf(text, 3, 300).Replace("\r", "").Replace("\n", " / ");
 
     /// <summary>硬件编码是否因【显卡驱动过旧】而不可用(ffmpeg 的 nvenc 需较新版 NVIDIA 驱动 ≥610.00 / nvenc API 13.1;
     /// 用户驱动旧则报 "Driver does not support the required nvenc API version" / "minimum required Nvidia driver ... 610.00")。
