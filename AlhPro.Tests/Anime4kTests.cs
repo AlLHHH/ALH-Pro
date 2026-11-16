@@ -1,4 +1,4 @@
-﻿using AlhPro.Core;
+using AlhPro.Core;
 using System;
 using System.IO;
 using Xunit;

@@ -1,3 +1,6 @@
+// 【2026-11-16 清理】本文件有 6 处 CS0162:用户明确停用的旧实现(实时缩放、裁切、烘焙对比片等),保留是为了以后一行恢复入口;
+// 它们结构上包在 try/catch 里,整段删会破坏大括号配对,故在此显式关掉该告警。
+#pragma warning disable CS0162
 // VideoView.xaml.cs — 视频超分 + 补帧 + 裁剪板块
 using System;
 using System.Collections.ObjectModel;
@@ -1041,7 +1044,7 @@ public sealed partial class VideoView : UserControl
     {
         if (_suppressEvents) return;
         if (DedupPhaseAlignAnimeCheck == null || DedupPhaseAlignManualCheck == null) return;
-        bool v = sender == DedupPhaseAlignAnimeCheck
+        bool v = ReferenceEquals(sender, DedupPhaseAlignAnimeCheck)
             ? DedupPhaseAlignAnimeCheck.IsChecked == true
             : DedupPhaseAlignManualCheck.IsChecked == true;
         if (DedupPhaseAlignAnimeCheck.IsChecked != v) DedupPhaseAlignAnimeCheck.IsChecked = v;
@@ -13010,3 +13013,4 @@ public sealed partial class VideoView : UserControl
         _cts?.Cancel();
     }
 }
+#pragma warning restore CS0162

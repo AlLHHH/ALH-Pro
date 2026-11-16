@@ -187,7 +187,23 @@ namespace AlhPro.Tests
             return list;
         }
 
-        private static string ReadFile(params string[] parts)
+
+        // 【2026-11-16 用户要求】更新提示条里也要有「官方Q群」入口,点开是同一个二维码弹窗。
+        [Fact]
+        public void The_update_banner_offers_the_official_qq_group()
+        {
+            var xaml = ReadFile("ImgUpscalerUI", "Views", "MainPage.xaml");
+            int bar = xaml.IndexOf("x:Name=\"UpdateBar\"", StringComparison.Ordinal);
+            Assert.True(bar > 0, "找不到更新提示条");
+            int close = xaml.IndexOf("Content=\"✕\"", bar, StringComparison.Ordinal);
+            Assert.True(close > bar, "更新提示条结构变了,测试需要更新");
+            var block = xaml.Substring(bar, close - bar);
+            Assert.Contains("Content=\"官方Q群\"", block);
+            Assert.Contains("Click=\"Community_Click\"", block);
+            // 列数必须够用:主列 + 官网/GitHub/网盘/官方Q群 + 关闭 = 6 列
+            var cols = xaml.Substring(bar, xaml.IndexOf("</Grid.ColumnDefinitions>", bar, StringComparison.Ordinal) - bar);
+            Assert.Equal(6, System.Text.RegularExpressions.Regex.Matches(cols, "<ColumnDefinition ").Count);
+        }        private static string ReadFile(params string[] parts)
         {
             var dir = new DirectoryInfo(AppContext.BaseDirectory);
             while (dir != null)

@@ -1,4 +1,4 @@
-﻿namespace AlhPro.Core;
+namespace AlhPro.Core;
 
 /// <summary>1x 修复档(不变尺寸)用的 **Anime4K 着色器**(纯逻辑:只负责拼滤镜串与路径约定,可单测)。
 ///

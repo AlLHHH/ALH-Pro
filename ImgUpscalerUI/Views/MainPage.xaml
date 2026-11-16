@@ -203,6 +203,7 @@
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                             <Image Source="ms-appx:///Assets/ALHPro_icon.png" Width="18" Height="18"
@@ -224,7 +225,12 @@
                         <Button x:Name="UpdateBarNetDiskBtn" Grid.Column="3" Content="网盘下载" FontSize="12"
                                 Padding="14,4" Margin="0,0,8,0" Click="UpdateBarNetDisk_Click"
                                 Background="Transparent" BorderBrush="#55FFFFFF"/>
-                        <Button Grid.Column="4" Content="✕" FontSize="12" Padding="10,4"
+                        <!-- 【2026-11-16 用户要求】更新提示条里也放入口:点开就是官方Q群二维码(与侧栏「官方Q群」同一个弹窗) -->
+                        <Button x:Name="UpdateBarQqBtn" Grid.Column="4" Content="官方Q群" FontSize="12"
+                                Padding="14,4" Margin="0,0,8,0" Click="Community_Click"
+                                Background="Transparent" BorderBrush="#55FFFFFF"
+                                ToolTipService.ToolTip="官方Q群 767832870:手机 QQ 扫码加入"/>
+                        <Button Grid.Column="5" Content="✕" FontSize="12" Padding="10,4"
                                 Background="Transparent" BorderThickness="0"
                                 Click="UpdateBarClose_Click"/>
                     </Grid>

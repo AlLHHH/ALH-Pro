@@ -27,7 +27,10 @@ public sealed partial class MainPage : Page
 
     public MainPage()
     {
+        // 自检/截图开关:强制显示更新提示条(见 ForceShowUpdateBar)
         this.InitializeComponent();
+
+        if (ForceShowUpdateBar) UpdateBar.Visibility = Visibility.Visible;
         SetupPasteFilesShortcut();
         AppSettings.Load();      // 应用级开关(自动删除已完成项目等)
         SafeRender.Load();       // 加载"安全渲染"墙配置(自动/自定义)
@@ -1313,6 +1316,10 @@ public sealed partial class MainPage : Page
         catch { /* 打开失败忽略 */ }
         UpdateBar.Visibility = Visibility.Collapsed;
     }
+
+    /// <summary>【2026-11-16】只给自检/截图用的开关:环境变量 ALHPRO_SHOW_UPDATEBAR=1 时强制显示更新提示条。
+    /// 提示条正常只在检测到新版本时出现;GitHub 被限流或断网时永远看不到,那样没法核对外观。</summary>
+    private static bool ForceShowUpdateBar => Environment.GetEnvironmentVariable("ALHPRO_SHOW_UPDATEBAR") == "1";
 
     private void UpdateBarClose_Click(object sender, RoutedEventArgs e)
         => UpdateBar.Visibility = Visibility.Collapsed;
