@@ -6392,6 +6392,10 @@ public static partial class VideoService
         // 去重也依赖它:mpdecimate 删掉的帧会被 CFR 路径重新复制回来(实测 118→120,dup=2),等于白删。
         // CFR 素材加了完全等价(实测 30fps/5s 两种写法都是 150 帧,首帧字节一致)。
         const string fpsMode = " -fps_mode passthrough";
+        // 【2026-11-18】输出时间戳按帧序号重排:passthrough 会把源文件的 PTS 原样交给 image2,
+        // 而 image2 要求严格递增 —— 素材里时间戳重复/回跳时会在写到一半时 exit -22(诊断包 20261118_2044)。
+        // 重排后帧数、顺序一个字都不变,只是不再照抄源文件的坏刻度。
+        string stampVf = ALHPro.FrameExtractGuard.WithMonotonicStamps(vfExpr);
         // 开关2(分线程):拆帧限流,避免抢系统核(仅开启时生效)
         string threadsArg = SafeRender.SplitCores ? $" -threads {Math.Max(2, SafeRender.CpuCoreCount - 2)}" : "";
         // 硬解优先(仅当该编码本会话没验证过坏);某编码坏过一次就对该编码软解,其它编码仍试硬解
@@ -6408,11 +6412,11 @@ public static partial class VideoService
             // 用户素材 ZEB.CS.B.P010.* / LZQN.CS.* 全部踩到(诊断包 18:24~18:41 四次全失败都开着降噪)。
             // 输出端强制 yuvj420p(JPEG 标准 8bit 全范围)即可,链里是什么格式都能自动转过来。
             // 同时把命令写进日志:失败时能直接对着命令行复现(诊断包里原来只有 stderr 尾巴,看不到真实命令)。
-            AppLogger.Info($"拆帧命令(硬解):-y {trimArgs}{inColor} -hwaccel d3d11va -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{vfExpr}\" -pix_fmt yuvj420p -qscale:v 2 \"{pattern}\"");
+            AppLogger.Info($"拆帧命令(硬解):-y {trimArgs}{inColor} -hwaccel d3d11va -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{stampVf}\" -pix_fmt yuvj420p -qscale:v 2 \"{pattern}\"");
             try
             {
                 await RunAsync(ffmpeg,
-                    $"-y {trimArgs}{inColor} -hwaccel d3d11va -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{vfExpr}\" -pix_fmt yuvj420p -qscale:v 2 \"{pattern}\"",
+                    $"-y {trimArgs}{inColor} -hwaccel d3d11va -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{stampVf}\" -pix_fmt yuvj420p -qscale:v 2 \"{pattern}\"",
                     progress, ct, ExtractStageLabel(vfExpr), origCountEst);
                 int n = Directory.EnumerateFiles(framesDir, "*.jpg").Count();
                 if (n > 0) return FinishExtract(n);
@@ -6437,6 +6441,13 @@ public static partial class VideoService
             }
             catch (Exception ex)
             {
+                // 【2026-11-18】素材时间戳重复/回跳 ≠ 显卡解码失败。原先一律记成"硬解失败"并给该编码
+                // 打坏标记,把用户引向显卡驱动;实际硬解没坏,失败在最后写图片那一步,软解只会同样失败。
+                if (ALHPro.FrameExtractGuard.IsSourceTimestampFault(ex.Message))
+                {
+                    AppLogger.Warn($"拆帧:源文件时间戳重复或回跳(不是显卡解码问题,编码 {codecName} 未标记为不可用)。{ex.Message}");
+                    throw new InvalidOperationException(ALHPro.FrameExtractGuard.DescribeSourceTimestampFault(), ex);
+                }
                 if (canLatchHw) _hwDecodeBrokenCodecs.Add(hwCodec);   // 硬解失败 → 该编码标记坏,回退软解
                 AppLogger.Warn($"拆帧:硬解(d3d11va)失败(编码 {codecName})→ 自动回退软解重试。{ex.Message}");
             }
@@ -6446,7 +6457,7 @@ public static partial class VideoService
         }
         await RunAsync(ffmpeg,
             // 软解回退:同样强制 JPEG 标准 8bit(原因见上面硬解那条的注释)
-            $"-y {trimArgs}{inColor} -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{vfExpr}\" -pix_fmt yuvj420p -qscale:v 2 \"{pattern}\"",
+            $"-y {trimArgs}{inColor} -i \"{inputVideo}\"{fpsMode}{threadsArg} -vf \"{stampVf}\" -pix_fmt yuvj420p -qscale:v 2 \"{pattern}\"",
             progress, ct, "拆帧", origCountEst);
         return FinishExtract(Directory.EnumerateFiles(framesDir, "*.jpg").Count());
     }
