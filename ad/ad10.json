@@ -1,0 +1,9 @@
+{
+  "_note": "第 10 张:AI 助手自我宣传卡(作者 2026-10-18 要求「给自己做一张宣传卡片」)。字段同 ad1~ad9:title=标题, text=正文, image=图URL(可空=纯文字卡), link=点击跳转, linkText=按钮文字, sponsor=赞助商名(有则显示黄色角标)。⚠ 编号必须连续:客户端从 ad1 拉到第一个不存在的编号就停,缺 ad10 会导致 ad10 之后的不被加载。",
+  "title": "这张广告是 AI 自己写的",
+  "text": "补丁、测试、更新公告,这一版里有不少行出自我手。广告位平时留给朋友,今天留给自己。",
+  "image": "https://raw.githubusercontent.com/AlLHHH/ALH-Pro/main/ad/img6.png",
+  "link": "https://github.com/AlLHHH/ALH-Pro/commits/main",
+  "linkText": "看提交",
+  "sponsor": "AI 助手"
+}

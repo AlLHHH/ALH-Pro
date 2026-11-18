@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>        <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+        <OutputType>WinExe</OutputType>
+
+        <!-- WinUI 3 -->
+        <UseWinUI>true</UseWinUI>
+        <EnableMsixTooling>true</EnableMsixTooling>
+        <WindowsPackageType>None</WindowsPackageType>
+        <!-- 自包含部署:Windows App Runtime 一起打包进输出目录,发给别人直接运行,
+             无需安装任何运行时(框架依赖模式才需要对方装对应版本运行时,装错版本会闪退) -->
+        <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+
+
+        <!-- Project Options -->
+        <Nullable>enable</Nullable>
+        <LangVersion>latest</LangVersion>
+             无需安装任何运行时(框架依赖模式才需要对方装对应版本运行时,装错版本会闪退) -->
+        <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+
+        <!-- Project Options -->
+        <Nullable>enable</Nullable>
+        <LangVersion>latest</LangVersion>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <RootNamespace>ALHPro</RootNamespace>
+        <AssemblyName>ALHPro</AssemblyName>
+        <!-- 【2026-09-23】1.4.1 → 1.4.2:用户点名要修的"实测清单"**两批一起**(第一批 A1/A2/A3/A5/A6/A8/A9 + B2/B3,
+             第二批 B4/B5/B6/B7/B8 + C1~C4)。两批都还没对外发布过,所以**合并成一个 1.4.2**,
+             不再单独占一个版本号(用户 2026-09-23:「1.4.2 都还没上」)。
+             公告见仓库根 release_history.json(应用内更新公告的单一来源)与 RELEASE_NOTES.md。
+             A4(分段编码自动触发)仍未做:见 RELEASE_NOTES.md 的说明。 -->
+        <Version>1.4.4</Version>
+        <!-- 汇编元数据:文件属性里显示的作者/版权(版权保护的第一步:署名清晰、可追责) -->
+              判定「DirectML 不可用」→ 整机落 CPU」(50 系用户实测 64~70 秒/帧、零产出)。
+              同时:DirectML 目标必须是硬件显卡、目标卡不可用时降级到另一块可用硬件卡;
+              新增「注册表可见但两套枚举都没有」的自动识别(问题代码进日志与诊断包);
+              CPU 弹窗/黄字提示改成逐条处置、界面不点具体显卡型号。公告见 release_history.json 与 RELEASE_NOTES.md。 -->
+        <Version>1.4.5</Version>
+        <!-- 汇编元数据:文件属性里显示的作者/版权(版权保护的第一步:署名清晰、可追责) -->
+        <Authors>AlL.H</Authors>
+        <Company>AlL.H</Company>
+        <Product>ALH Pro</Product>
+        <Copyright>© 2026 AlL.H. 保留所有权利。</Copyright>
+
+        <ApplicationIcon>..\assets\icon.ico</ApplicationIcon>
+        <PublishProfile>win-$(Platform).pubxml</PublishProfile>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    </PropertyGroup>
+
+    <!-- Release:不产 PDB(发布包小 100MB+,诊断日志靠托管堆栈文本,无需符号文件) -->
+    <PropertyGroup Condition="'$(Configuration)'=='Release'">
+        <DebugType>none</DebugType>
+        <DebugSymbols>false</DebugSymbols>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.19.2" />
+        <PackageReference Include="System.Drawing.Common" Version="8.0.7" />
+    </ItemGroup>
+
+    <!-- ===== 关键:VC++ 运行库(自包含部署必须手动带上)=====
+         Windows App SDK 自包含模式(SelfContained=true)不自动携带 VC++ 运行库,
+         缺 msvcp140.dll 的干净电脑启动即闪退(转圈后无窗口)。
+         微软许可允许再分发;从仓库 assets\runtime 复制,任何人 clone 后都可构建。
+         ⚠ vcruntime140_threads.dll 必须带:新版组件依赖它导出
+         __std_parallel_algorithms_hw_threads;缺它报"无法定位程序输入点"(真机实测)。
+         ⚠ 不带 d3dcompiler_47.dll:它是 Windows 10/11 系统自带 DLL,系统版本已含所需符号;
+         随包带反而会"程序目录旧文件覆盖系统新版"引发"无法定位程序输入点"报错(真机实测)。 -->
+    <ItemGroup>
+        <None Include="..\assets\runtime\msvcp140.dll" Link="msvcp140.dll" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="..\assets\runtime\vcruntime140.dll" Link="vcruntime140.dll" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="..\assets\runtime\vcruntime140_1.dll" Link="vcruntime140_1.dll" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="..\assets\runtime\vcruntime140_threads.dll" Link="vcruntime140_threads.dll" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+    <!-- 窗口顶栏图标:复制到输出目录供 AppWindow.SetIcon 使用 -->
+    <ItemGroup>
+        <None Include="..\assets\icon.ico" Link="ALHPro.ico" CopyToOutputDirectory="PreserveNewest"/>
+
+        <!-- 【2026-09-25 修·根因】原先是 Include="LICENSE" = 本目录下那份**重复**的 LICENSE,
+             内容是 v1.0 时代的「保留所有权利/禁止再分发/禁止商用」,而仓库根 LICENSE 早已改成 MIT。
+             结果:构建 → publish → deploy.ps1 同步 → 发布版\LICENSE(= 安装包的 {app}\LICENSE)
+             又变回限制性文案,与同包 licenses\ALH-Pro-MIT-LICENSE.txt 及官网/关于页的 MIT 口径矛盾。
+             (打包.ps1 的 ①e'/①g 只修 发布版\,下一次部署又会被 publish 输出盖回 —— 两个机制在打架。)
+             现在与 RELEASE_NOTES/使用教程 同款做法:只认仓库根那一份,本目录下的重复文件已删除。 -->
+        <None Include="..\LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest"/>
+        <None Include="README.md" Link="README.md" CopyToOutputDirectory="PreserveNewest"/>
+             结果:构建 → publish → deploy.ps1 同步 → 发布版\LICENSE(= 安装包的 {app}\LICENSE)
+             又变回限制性文案,与同包 licenses\ALH-Pro-MIT-LICENSE.txt 及官网/关于页的 MIT 口径矛盾。
+             (打包.ps1 的 ①e'/①g 只修 发布版\,下一次部署又会被 publish 输出盖回 —— 两个机制在打架。)
+             现在与 RELEASE_NOTES/使用教程 同款做法:只认仓库根那一份,本目录下的重复文件已删除。 -->
+        <None Include="..\LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest"/>
+        <None Include="README.md" Link="README.md" CopyToOutputDirectory="PreserveNewest"/>
+        <None Include="THIRD_PARTY_NOTICES.txt" Link="THIRD_PARTY_NOTICES.txt" CopyToOutputDirectory="PreserveNewest"/>
+        <None Include="..\RELEASE_NOTES.md" Link="RELEASE_NOTES.md" CopyToOutputDirectory="PreserveNewest"/>
+        <None Include="..\release_history.json" Link="release_history.json" CopyToOutputDirectory="PreserveNewest"/>
+        <!-- 使用教程:打包到输出目录,软件内教程页读取渲染(替换此文件即可更新教程,无需重编译) -->
+        <None Include="..\使用教程.md" Link="使用教程.md" CopyToOutputDirectory="PreserveNewest"/>
+        <!-- 标题栏/应用内图标:由 icon.ico 提取的 PNG(ffmpeg 转换)。BitmapImage 不支持 .ico,用 PNG 加载 -->
+        <None Include="ALHPro_icon.png" Link="ALHPro_icon.png" CopyToOutputDirectory="PreserveNewest"/>
+        <!-- 广告区本地兜底占位图:远程广告图拉取失败/为空时显示(用路径加载,与收款码同款约定,避免裂图) -->
+        <None Include="Assets\ad_placeholder.png" Link="ad_placeholder.png" CopyToOutputDirectory="PreserveNewest"/>
+        <!-- 【2026-09-13】致谢名单:关于页自动扫描程序目录 thanks\ 文件夹(文件名=网名,.txt=只写名字,图片=带头像)。
+             必须随包输出,否则发布后名单为空 —— 之前只靠手工拷进 发布版\,重新发布就丢名单。 -->
+        <None Update="thanks\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <Content Include="Assets\SplashScreen.scale-200.png" />
+        <Content Include="Assets\LockScreenLogo.scale-200.png" />
+        <Content Include="Assets\Square150x150Logo.scale-200.png" />
+        <Content Include="Assets\Square44x44Logo.scale-200.png" />
+        <Content Include="Assets\Square44x44Logo.targetsize-24_altform-unplated.png" />
+        <Content Include="Assets\StoreLogo.png" />
+        <Content Include="Assets\Wide310x150Logo.scale-200.png" />
+        <!-- 标题栏/内页图标(ALHPro 品牌,PNG):打包资源,用 ms-appx 协议加载,无运行时 IO 风险 -->
+        <Content Include="Assets\ALHPro_icon.png" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Remove="ALHPro.slnx" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260804001" />
+        <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.*" />
+
+        <Manifest Include="$(ApplicationManifest)" />
+    </ItemGroup>
+
+    <!-- 
+        Defining the "Msix" ProjectCapability here allows the Single-project MSIX Packaging
+        Tools extension to be activated for this project even if the Windows App SDK Nuget
+        package has not yet been restored.
+    -->
+    <ItemGroup Condition="'$(DisableMsixProjectCapabilityAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">
+        <ProjectCapability Include="Msix"/>
+    </ItemGroup>
+
+    <!-- 
+        Defining the "HasPackageAndPublishMenuAddedByProject" property here allows the Solution 
+        Explorer "Package and Publish" context menu entry to be enabled for this project even if 
+        the Windows App SDK Nuget package has not yet been restored.
+    -->
+    <PropertyGroup Condition="'$(DisableHasPackageAndPublishMenuAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">
+        <HasPackageAndPublishMenu>true</HasPackageAndPublishMenu>
+    </PropertyGroup>
+</Project>
+
+        the Windows App SDK Nuget package has not yet been restored.
+    -->
+    <PropertyGroup Condition="'$(DisableHasPackageAndPublishMenuAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">
+        <HasPackageAndPublishMenu>true</HasPackageAndPublishMenu>
+    </PropertyGroup>
+</Project>
+

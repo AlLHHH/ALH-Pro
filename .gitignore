@@ -67,3 +67,36 @@ website/
 
 # 本地证据与投诉材料,不公开
 证据包_*/
+# ===== 只留给自己用的开发脚本与打包配置(2026-11-18) =====
+# 这些文件仍然在本机,只是不再进公开仓库,避免用户在这里看到我的构建流程。
+/deploy.ps1
+/打包.ps1
+/发版.ps1
+/发布到GitHub.ps1
+/upload-all.ps1
+/一键上传.bat
+/installer.iss
+/installer_full.iss
+/installer_nocut.iss
+/发布公告_*.md
+/_tmp_*
+/_dl*.ps1
+/_ui_*.ps1
+/_upload_*.ps1
+/_run*.ps1
+/_watch_progress.ps1
+/_rife_test.ps1
+/_add6s.ps1
+/_*.py
+/*.md
+!/README.md
+!/RELEASE_NOTES.md
+!/声明.md
+# 根目录的开发脚本一律不进公开仓库
+/*.ps1
+/*.bat
+/*.js
+/*.py
+
+/_*
+

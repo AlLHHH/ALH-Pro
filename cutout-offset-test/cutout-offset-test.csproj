@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>cutout_offset_test</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Drawing.Common" Version="8.0.8" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.19.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\ImgUpscalerUI\CutoutService.cs" Link="CutoutService.cs" />
+  </ItemGroup>
+
+</Project>
