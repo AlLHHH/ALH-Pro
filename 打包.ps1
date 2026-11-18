@@ -1,4 +1,4 @@
-﻿# ALH Pro 打包脚本(在仓库根目录运行)
+# ALH Pro 打包脚本(在仓库根目录运行)
 # 用法:powershell -NoProfile -ExecutionPolicy Bypass -File .\打包.ps1 [-SkipCheck]
 #   (pwsh 7 也能跑;两条路都实测过。)
 # ⚠ 【本文件必须带 UTF-8 BOM(EF BB BF)—— 这是硬要求,不是洁癖】2026-09-12 实测:
@@ -27,6 +27,19 @@ function Fail($m) { Write-Host "❌ $m" -ForegroundColor Red; exit 1 }
 
 $pub = Join-Path $root '发布版'
 if (!(Test-Path $pub)) { Fail '找不到 发布版\ 目录 —— 先跑 deploy.ps1' }
+# ===== ⓿ 付费版(ALH Pro Max)专属引擎绝不能出现在免费版发布包里 =====
+# 【2026-11-18 事故】免费版源码里 gmfss/emavfi/ifrnet/trtrtx/rnnoise 提及数都是 0,
+# 这些引擎只有付费版有;一旦被拷进 发布版\engines,installer.iss 的 Source: "发布版\*"
+# 会原样打进免费版安装包 —— 等于把付费功能白送。这里拦住。
+$paidEngineDirs = @('gmfss', 'gmfss104', 'gmfss104ar', 'emavfi', 'ifrnet', 'trtrtx', 'nr', 'rnnoise')
+$leaked = @()
+foreach ($d in $paidEngineDirs) {
+  if (Test-Path (Join-Path $pub "engines\$d")) { $leaked += $d }
+}
+if ($leaked.Count -gt 0) {
+  Fail ("发布版\engines 里出现了付费版专属引擎:" + ($leaked -join '、') + " —— 它们只属于 ALH Pro Max,免费版不能打包。请移出后再打。")
+}
+Say '✓ 发布版里没有付费版专属引擎'
 
 # ===== ① 备用 ffmpeg:仓库有、发布版缺 → 自动补 =====
 $repoFf8 = Join-Path $root 'engines\ffmpeg8'
