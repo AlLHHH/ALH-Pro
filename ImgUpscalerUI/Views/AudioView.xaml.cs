@@ -642,9 +642,10 @@ public sealed partial class AudioView : UserControl
                     AudioList.Items.Add(itNoAudio);
                     continue;
                 }
-                AudioInfo.Text = paths.Length > 1
-                    ? $"正在从视频里提取音频 {done}/{paths.Length}:{System.IO.Path.GetFileName(p)}…"
-                    : $"正在从视频里提取音频:{System.IO.Path.GetFileName(p)}…(大文件要几秒)";
+                ShowImportProgress(paths.Length > 1
+                    ? $"正在从视频里提取音频 {done}/{paths.Length}:{System.IO.Path.GetFileName(p)}"
+                    : $"正在从视频里提取音频:{System.IO.Path.GetFileName(p)}(大文件要几秒)",
+                    paths.Length > 1 ? done * 100.0 / paths.Length : -1);
                 await Task.Yield();
                 string? wav = await ExtractAudioToWavAsync(p);
                 if (wav != null)
@@ -668,6 +669,7 @@ public sealed partial class AudioView : UserControl
             _items.Add(it);
             AudioList.Items.Add(it);
         }
+        HideImportProgress();
         if (videos > 0)
         {
             try { FmtRadios.SelectedIndex = 1; } catch { }   // 1 = WAV,无损
@@ -685,6 +687,34 @@ public sealed partial class AudioView : UserControl
     /// 【2026-11-19】把视频/音频拖到音频页时直接进列表(提取音频)。
     /// 和「选择音频文件」走同一个 AddFiles,不另开一条处理链。
     /// </summary>
+    /// <summary>
+    /// 【2026-11-19】提取音轨时占住列表顶上那一行(和视频页导入同款极简条),
+    /// 让用户看到"正在提取 2/3"而不是干等。percent &lt; 0 表示不确定进度。
+    /// </summary>
+    private void ShowImportProgress(string text, double percent)
+    {
+        try
+        {
+            AudioImportText.Text = text;
+            if (percent < 0)
+            {
+                AudioImportBar.IsIndeterminate = true;
+            }
+            else
+            {
+                AudioImportBar.IsIndeterminate = false;
+                AudioImportBar.Value = Math.Max(0, Math.Min(100, percent));
+            }
+            AudioImportBox.Visibility = Visibility.Visible;
+        }
+        catch { }
+    }
+
+    private void HideImportProgress()
+    {
+        try { AudioImportBox.Visibility = Visibility.Collapsed; } catch { }
+    }
+
     public async Task AcceptDroppedFilesAsync(string[] paths)
     {
         try

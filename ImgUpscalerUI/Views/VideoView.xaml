@@ -1000,23 +1000,24 @@
                                TextTrimming="CharacterEllipsis"/>
                 </Grid>
                 <!-- 【2026-11-05】导入进度框:长得像列表里的一行,比底下那行小字直观。多文件导入时才出现。 -->
-                <Border x:Name="ImportBox" Grid.Row="2" Visibility="Collapsed" Padding="10,8"
-                        Background="{StaticResource AppPanelBrush}" CornerRadius="8"
+                <!-- 【2026-11-19】原来这里占一整块(两行字 + 宽进度条 + "取消导入"),用户反馈"太大一个"。
+                     改成单行:左边一句话、右边窄条、按钮只留一个字。名字保持不变,代码不用改。 -->
+                <Border x:Name="ImportBox" Grid.Row="2" Visibility="Collapsed" Padding="8,2"
+                        Background="{StaticResource AppPanelBrush}" CornerRadius="6"
                         BorderThickness="1" BorderBrush="{StaticResource AppBorderBrush}">
-                    <Grid ColumnSpacing="12">
+                    <Grid ColumnSpacing="10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="140"/>
+                            <ColumnDefinition Width="96"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="2" VerticalAlignment="Center">
-                            <TextBlock x:Name="ImportText" FontSize="13" TextTrimming="CharacterEllipsis"/>
-                            <TextBlock Text="导入中,先不要关窗口" FontSize="11" Opacity="0.55"/>
-                        </StackPanel>
+                        <TextBlock x:Name="ImportText" FontSize="12" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"/>
                         <ProgressBar x:Name="ImportBar" Grid.Column="1" VerticalAlignment="Center"
-                                     Minimum="0" Maximum="100" Value="0"/>
-                        <Button x:Name="ImportCancelBtn" Grid.Column="2" Content="取消导入" FontSize="12"
-                                Padding="10,4" VerticalAlignment="Center" Click="ImportCancelBtn_Click"/>
+                                     Height="3" Minimum="0" Maximum="100" Value="0"/>
+                        <Button x:Name="ImportCancelBtn" Grid.Column="2" Content="取消" FontSize="11"
+                                Padding="6,0" MinWidth="0" MinHeight="0" Height="22" VerticalAlignment="Center"
+                                Click="ImportCancelBtn_Click"/>
                     </Grid>
                 </Border>
                 <!-- 视频列表(支持鼠标框选多选,与图片放大一致) -->

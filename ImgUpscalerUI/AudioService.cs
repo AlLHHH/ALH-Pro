@@ -498,14 +498,56 @@ public static class AudioService
     /// <summary>任意音频 → 同采样率 立体声 16-bit WAV(升采样率输入:LavaSR 逐声道处理,保持声道数)。</summary>
     public static async Task ConvertToWavSameRateAsync(string input, string outputWav)
     {
-        var psi = NewFfmpegPsi(FfmpegPath, $"-y -i \"{input}\" -ac 2 -c:a pcm_s16le \"{outputWav}\"");
-        psi.RedirectStandardError = true;
-        using var p = Process.Start(psi);
-        if (p == null) throw new InvalidOperationException("无法启动 ffmpeg");
-        var err = p.StandardError.ReadToEndAsync();
-        await p.WaitForExitAsync();
-        if (p.ExitCode != 0 || !File.Exists(outputWav) || new FileInfo(outputWav).Length < 100)
-            throw new InvalidOperationException("转换 WAV 失败(保持采样率)");
+        // 【2026-11-19】原来只有一条命令,失败就抛"转换 WAV 失败(保持采样率)",把 ffmpeg 的报错原文吞了 ——
+        // 用户那边同一个动作连报两次错,日志里却看不出任何原因。现在:
+        //   ① 明确只取第 1 条音轨(-vn -map 0:a:0):某些容器默认选流会挑到视频,写进 wav 就失败
+        //   ② 仍失败 → 强制 48k 立体声(少数源码率/声道数 pcm 容器不接受)
+        //   ③ 再失败 → 不指定采样率与声道,让 ffmpeg 自己决定
+        // 每条尝试都把 stderr 前几行写进日志,最终失败时带进异常。
+        string[] attempts =
+        {
+            $"-y -i \"{input}\" -vn -map 0:a:0 -ac 2 -c:a pcm_s16le \"{outputWav}\"",
+            $"-y -i \"{input}\" -vn -map 0:a:0? -ar 48000 -ac 2 -c:a pcm_s16le \"{outputWav}\"",
+            $"-y -i \"{input}\" -vn -map 0:a:0? -c:a pcm_s16le \"{outputWav}\"",
+        };
+
+        string lastErr = "";
+        for (int i = 0; i < attempts.Length; i++)
+        {
+            try { if (File.Exists(outputWav)) File.Delete(outputWav); } catch { }
+
+            var psi = NewFfmpegPsi(FfmpegPath, attempts[i]);
+            psi.RedirectStandardError = true;
+            using var p = Process.Start(psi);
+            if (p == null) throw new InvalidOperationException("无法启动 ffmpeg");
+
+            var errTask = p.StandardError.ReadToEndAsync();
+            await p.WaitForExitAsync();
+            string errText = await errTask;
+
+            if (p.ExitCode == 0 && File.Exists(outputWav) && new FileInfo(outputWav).Length >= 100)
+            {
+                if (i > 0) AppLogger.Info($"音频页:第 {i + 1} 条转换命令才成功(前 {i} 条失败)");
+                return;
+            }
+
+            lastErr = FirstLines(errText, 3);
+            AppLogger.Warn($"音频页:WAV 转换第 {i + 1} 条命令失败(exit {p.ExitCode}):{lastErr}");
+        }
+
+        throw new InvalidOperationException($"转换 WAV 失败(保持采样率):{lastErr}");
+    }
+
+    /// <summary>取 ffmpeg 输出的前几行(有用信息都在 stderr,行首还有一堆空格)。</summary>
+    private static string FirstLines(string? text, int n)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return "(没有任何输出)";
+        var lines = text!.Split('\n')
+            .Select(t => t.Trim())
+            .Where(t => t.Length > 0)
+            .Take(n)
+            .ToArray();
+        return lines.Length == 0 ? "(输出为空)" : string.Join(" | ", lines);
     }
 
     /// <summary>44.1kHz WAV → 目标格式(0=MP3 320k 1=WAV 2=FLAC)。</summary>

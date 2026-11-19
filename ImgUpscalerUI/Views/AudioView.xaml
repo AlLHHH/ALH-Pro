@@ -266,6 +266,23 @@
                     <Rectangle x:Name="RbRectA" Stroke="#4C8DFF" StrokeThickness="1"
                                Fill="#404C8DFF" Visibility="Collapsed"/>
                 </Canvas>
+                <!-- 【2026-11-19】视频拖进来要当场提取音轨,大文件要几秒;
+                     和视频页同一个口径,只在列表顶上占一行,不弹窗、不挡操作。 -->
+                <Border x:Name="AudioImportBox" Visibility="Collapsed" VerticalAlignment="Top"
+                        HorizontalAlignment="Stretch" Margin="2,2,2,12" Padding="8,2"
+                        Background="{StaticResource AppPanel2Brush}" CornerRadius="6"
+                        BorderThickness="1" BorderBrush="{StaticResource AppBorderBrush}">
+                    <Grid ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="96"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="AudioImportText" FontSize="12" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"/>
+                        <ProgressBar x:Name="AudioImportBar" Grid.Column="1" VerticalAlignment="Center"
+                                     Height="3" Minimum="0" Maximum="100" Value="0"/>
+                    </Grid>
+                </Border>
             </Grid>
 
             <!-- 预览区:波形 + 播放 + 首尾裁剪(双击列表项才展开) -->
