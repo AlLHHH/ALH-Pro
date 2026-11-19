@@ -1475,8 +1475,17 @@ public sealed partial class MainPage : Page
     {
         try
         {
-            bool hasFiles = e.DataView.Contains(StandardDataFormats.StorageItems);
-            e.AcceptedOperation = hasFiles ? DataPackageOperation.Copy : DataPackageOperation.None;
+            // 【2026-11-19】不能只看 StorageItems:从压缩包里、网盘"在线文件"、邮件附件里
+            // 直接拖出来的东西没有本地路径,Windows 只给 FileGroupDescriptorW 这类虚拟格式。
+            // 以前这种情况把 AcceptedOperation 设成 None ⇒ 光标变成红色禁止符,
+            // 用户以为软件坏了("有些人的电脑就是拖不进来,有红叉")。
+            // 现在一律接受(光标正常),真正落点时再逐项判断,拿不到路径就当场告诉他怎么办。
+            bool hasFiles = e.DataView.Contains(StandardDataFormats.StorageItems)
+                || e.DataView.Contains("FileGroupDescriptorW")
+                || e.DataView.Contains("FileGroupDescriptor")
+                || e.DataView.Contains("Shell IDList Array")
+                || e.DataView.Contains("FileDrop");
+            e.AcceptedOperation = DataPackageOperation.Copy;
             if (!_rootDragLogged)
             {
                 _rootDragLogged = true;
@@ -1490,18 +1499,44 @@ public sealed partial class MainPage : Page
 
     private void Root_DragLeave(object sender, Microsoft.UI.Xaml.DragEventArgs e) { _rootDragLogged = false; }
 
+    /// <summary>窗口底部那行状态:给"拖不进来"这类当场原因用(不是弹窗,不打断)。</summary>
+    private void SetStatusLine(string text)
+    {
+        try { StatusText.Text = text; } catch { }
+    }
+
+    private const string DropNoLocalPathHint =
+        "拖进来的东西没有本地路径:压缩包里的先解压、网盘的先下载到硬盘,再拖一次(或点「添加文件」)";
+
     private async void Root_Drop(object sender, Microsoft.UI.Xaml.DragEventArgs e)
     {
         try
         {
             if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
             e.Handled = true;
-            var items = await e.DataView.GetStorageItemsAsync();
+            System.Collections.Generic.IReadOnlyList<Windows.Storage.IStorageItem> items;
+            try
+            {
+                items = await e.DataView.GetStorageItemsAsync();
+            }
+            catch (Exception exItems)
+            {
+                // 虚拟文件(压缩包内、网盘在线文件)在这里会抛,以前只写一句"处理失败",
+                // 用户端看到的就是"拖进去红叉 + 什么都没发生"。
+                AppLogger.Warn($"拖入:读不出文件列表(HRESULT=0x{exItems.HResult:X8}) —— 多半是没有本地路径的虚拟文件");
+                SetStatusLine(DropNoLocalPathHint);
+                return;
+            }
             // 【2026-11-15】文件夹也要收:按落到的页面决定摊开成视频还是图片。
             var raw = items.Select(i => i.Path)
                 .Where(p => !string.IsNullOrWhiteSpace(p))
                 .ToArray();
-            if (raw.Length == 0) return;
+            if (raw.Length == 0)
+            {
+                AppLogger.Warn($"拖入:{items.Count} 项全都没有本地路径(压缩包内 / 网盘在线文件)");
+                SetStatusLine(DropNoLocalPathHint);
+                return;
+            }
 
             // 【2026-11-19】整窗任意位置都算数:先按拖进来的文件类型算该去哪一页。
             // 当前页刚好合适就留在原页(在图片页拖着图片松手不会莫名跳页),
