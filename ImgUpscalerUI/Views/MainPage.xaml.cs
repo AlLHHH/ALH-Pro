@@ -1542,8 +1542,21 @@ public sealed partial class MainPage : Page
             // 当前页刚好合适就留在原页(在图片页拖着图片松手不会莫名跳页),
             // 不合适就自己切过去再导入 —— 以前是"页面不对就当没看见",
             // 用户在音频页、设置页松手会以为软件坏了。
-            var asVideos = AlhPro.DroppedPaths.Expand(raw, images: false);
-            var asImages = AlhPro.DroppedPaths.Expand(raw, images: true);
+            // 【2026-11-19】分类必须自己按后缀做:DroppedPaths.Expand 对「单个文件」是故意不按后缀筛的
+            // (它先把文件收下,处理不了再由探测给具体原因),所以只看 Expand 的返回会把视频当图片、
+            // 把图片当视频送进另外一页 —— 用户看到的就是「视频能拖进图片页」。
+            var videoExts = new HashSet<string>(AlhPro.DroppedPaths.VideoExtensions, StringComparer.OrdinalIgnoreCase);
+            var imageExts = new HashSet<string>(AlhPro.DroppedPaths.ImageExtensions, StringComparer.OrdinalIgnoreCase);
+            var asVideos = AlhPro.DroppedPaths.Expand(raw, images: false)
+                .Where(p => videoExts.Contains(Path.GetExtension(p))).ToArray();
+            var asImages = AlhPro.DroppedPaths.Expand(raw, images: true)
+                .Where(p => imageExts.Contains(Path.GetExtension(p))).ToArray();
+            if (asVideos.Length == 0 && asImages.Length == 0)
+            {
+                AppLogger.Warn($"拖入:{raw.Length} 个文件既不是视频也不是图片,已跳过(只支持视频与图片)");
+                SetStatusLine("拖进来的文件既不是视频也不是图片 —— 视频认 mp4/mkv/mov 等,图片认 png/jpg/webp 等");
+                return;
+            }
             bool curVideo = _currentTag == "video";
             bool curImage = _currentTag is "upscale" or "cutout";
             bool curAudio = _currentTag == "audio";

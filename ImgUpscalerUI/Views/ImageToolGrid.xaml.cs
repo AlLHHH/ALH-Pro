@@ -114,6 +114,14 @@ public sealed partial class ImageToolGrid : UserControl
             var path = p;
             // WebP/HEIC/HEIF/AVIF 引擎(System.Drawing)不支持 → WinRT 自动转码为 PNG(存应用私有目录,启动自动清理)
             var ext = Path.GetExtension(path);
+            // 【2026-11-19】兜底:这是图片导入的唯一入口,别的页面误把视频送进来时在这里挡掉,
+            // 不然它会当成一张读不出尺寸的图片混进列表(用户看到的就是「视频能放在图片页」)。
+            if (!IsImageExt(ext))
+            {
+                AppLogger.Warn($"图片页拒收非图片文件:{Path.GetFileName(path)}");
+                ListCount.Text = "这是视频:拖到「视频处理」页(图片页只收图片)";
+                continue;
+            }
             if (ext.Equals(".webp", StringComparison.OrdinalIgnoreCase)
                 || ext.Equals(".heic", StringComparison.OrdinalIgnoreCase)
                 || ext.Equals(".heif", StringComparison.OrdinalIgnoreCase)
