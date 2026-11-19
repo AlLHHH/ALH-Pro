@@ -744,6 +744,12 @@ namespace ALHPro
         protected override void OnLaunched(LaunchActivatedEventArgs e)
         {
             StartupTrace("OnLaunched 进入");
+
+            // ===== 【2026-11-19 拖放排查】先清掉「以管理员身份运行此程序」这个兼容性勾选 =====
+            // 用户只要在 exe 属性里勾过它,Windows 就把 RUNASADMIN 写进 HKCU\...\AppCompatFlags\Layers,
+            // 之后每次启动都是管理员权限 → 资源管理器拖文件进来被 UIPI 掐断(只剩一个红叉)。
+            // 删掉它不会影响任何功能:本软件本来就不需要管理员权限。
+            try { ImgUpscalerUI.ElevationRepair.TryClearRunAsAdminFlag(); } catch { }
             try
             {
                 int rid = DeElevate.GetIntegrityRid();
