@@ -1546,9 +1546,12 @@ public sealed partial class MainPage : Page
             var asImages = AlhPro.DroppedPaths.Expand(raw, images: true);
             bool curVideo = _currentTag == "video";
             bool curImage = _currentTag is "upscale" or "cutout";
+            bool curAudio = _currentTag == "audio";
 
             string target;
-            if (asVideos.Length > 0 && (curVideo || asImages.Length == 0)) target = "video";
+            // 【2026-11-19】视频拖到音频页 = 直接提取音频(用户要求),不再切去视频页。
+            if (asVideos.Length > 0 && curAudio) target = "audio";
+            else if (asVideos.Length > 0 && (curVideo || asImages.Length == 0)) target = "video";
             else if (asImages.Length > 0) target = curImage ? _currentTag! : "upscale";
             else
             {
@@ -1556,8 +1559,8 @@ public sealed partial class MainPage : Page
                 return;
             }
 
-            string[] paths = target == "video" ? asVideos : asImages;
-            string kind = target == "video" ? "视频" : "图片";
+            string[] paths = target == "video" || target == "audio" ? asVideos : asImages;
+            string kind = target == "audio" ? "音频(从视频提取)" : (target == "video" ? "视频" : "图片");
             AppLogger.Info($"拖入({_currentTag ?? "?"} → {target}):{items.Count} 项 → {paths.Length} 个{kind}");
 
             if (target != _currentTag)
@@ -1566,7 +1569,13 @@ public sealed partial class MainPage : Page
                 await Task.Delay(60);   // 页面切换是同步建视图,给它一帧落地时间再塞文件
             }
 
-            if (target == "video" && _videoView != null)
+            if (target == "audio")
+            {
+                // 【2026-11-19】和「选择音频文件」走同一个 AddFiles:视频文件也会被当成音频源提取。
+                if (_audioView == null) { ShowView("audio"); await Task.Delay(60); }
+                _audioView?.AcceptDroppedFilesAsync(paths);
+            }
+            else if (target == "video" && _videoView != null)
                 await _videoView.AcceptDroppedFilesAsync(paths);
             else if (target == "upscale" && _upView != null)
                 await _upView.AcceptDroppedFilesAsync(paths);

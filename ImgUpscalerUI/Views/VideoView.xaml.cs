@@ -3675,6 +3675,23 @@ public sealed partial class VideoView : UserControl
     private async Task AddVideosAsync(string[] paths)
     {
         int added = 0;
+        // 【2026-11-19】视频页只收视频。以前不判类型,图片拖进来会被当成视频塞进列表
+        // (用户当场质问「图片还能放在视频页」),这里挡掉并说清该去哪页。
+        var _imgExts = new System.Collections.Generic.HashSet<string>(AlhPro.DroppedPaths.ImageExtensions, System.StringComparer.OrdinalIgnoreCase);
+        var _imgs = paths.Where(p => _imgExts.Contains(System.IO.Path.GetExtension(p))).ToArray();
+        if (_imgs.Length > 0)
+        {
+            paths = paths.Where(p => !_imgExts.Contains(System.IO.Path.GetExtension(p))).ToArray();
+            try
+            {
+                VideoStatus.Text = _imgs.Length == 1
+                    ? "这是图片:拖到「图片超分」或「智能抠图」页(视频页只收视频)"
+                    : $"{_imgs.Length} 个图片被跳过:图片请拖到「图片超分」或「智能抠图」页";
+            }
+            catch { }
+            AppLogger.Info($"视频页跳过 {_imgs.Length} 个图片:{string.Join(" | ", _imgs.Select(System.IO.Path.GetFileName))}");
+            if (paths.Length == 0) return;
+        }
         // 【2026-11-05】批量导入时逐文件 ffprobe,可能几十秒没动静(用户以为卡死)⇒ 列表上方给一个进度框,
         // 带「取消导入」:取消时【已经导入成功的保留】,只丢掉正在探测的这一条(用户 2026-11-05 要求)。
         int importTotal = paths.Length;

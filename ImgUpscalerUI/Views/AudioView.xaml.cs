@@ -581,6 +581,24 @@ public sealed partial class AudioView : UserControl
         UpdateListButtons();
     }
 
+    /// <summary>
+    /// 【2026-11-19】把视频/音频拖到音频页时直接进列表(提取音频)。
+    /// 和「选择音频文件」走同一个 AddFiles,不另开一条处理链。
+    /// </summary>
+    public void AcceptDroppedFilesAsync(string[] paths)
+    {
+        try
+        {
+            if (paths == null || paths.Length == 0) return;
+            AddFiles(paths);
+            AppLogger.Info($"音频页收到拖放:{paths.Length} 个文件");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("音频页拖放导入失败", ex);
+        }
+    }
+
     // ---------- 选择文件 ----------
     private async void PickAudioBtn_Click(object sender, RoutedEventArgs e)
     {
