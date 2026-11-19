@@ -23,6 +23,8 @@ public sealed partial class MainPage : Page
     private string? _deferredViewTag;
     // 【2026-11-15】使用教程板块下线(用户要求):TutorialView 与 _tutorialView 字段一起删除。
     private string _currentTag = "upscale";
+    /// <summary>【2026-11-19】正在按 tag 把 NavList 的选中项同步过去(挡住 SelectionChanged 重入)。</summary>
+    private bool _syncingNav;
     private int _startupPageIndex;   // 构造时解析的启动页(0/1/2),供 Loaded 弹窗逻辑引用
 
     public MainPage()
@@ -786,6 +788,8 @@ public sealed partial class MainPage : Page
 
     private void NavList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        // ShowView 同步导航时会回到这里,挡掉以免再进一次 ShowView(反复重建页面)。
+        if (_syncingNav) return;
         if (NavList.SelectedItem is ListViewItem item && item.Tag is string tag)
             ShowView(tag);
     }
@@ -1603,9 +1607,29 @@ public sealed partial class MainPage : Page
         }
     }
 
+    /// <summary>把左侧导航的选中项切到 <paramref name="tag"/>(找不到就保持原样)。</summary>
+    private void SyncNavTo(string tag)
+    {
+        if (_syncingNav) return;
+        if (NavList.SelectedItem is ListViewItem cur && (cur.Tag as string) == tag) return;
+        foreach (var o in NavList.Items)
+        {
+            if (o is ListViewItem li && (li.Tag as string) == tag)
+            {
+                _syncingNav = true;
+                try { NavList.SelectedItem = li; }
+                finally { _syncingNav = false; }
+                return;
+            }
+        }
+    }
+
     private void ShowView(string tag)
     {
         _currentTag = tag;
+        // 【2026-11-19 用户反馈】拖放/命令行自动切页时右边换了、左边导航还停在上一个功能。
+        // 这里按 tag 反查导航项并选中;已经是它就什么都不做(避免无谓的选中事件)。
+        SyncNavTo(tag);
         ContentRoot.Children.Clear();
         // 记录最近使用界面(「上次退出界面」启动模式用);切换即保存,退出时也保存(见 MainWindow_Closed)
         // 索引口径:0=图片放大 1=图片抠图 2=视频处理 3=音频处理(见 StartupPageMap 注释,别再往下挤默认值;
