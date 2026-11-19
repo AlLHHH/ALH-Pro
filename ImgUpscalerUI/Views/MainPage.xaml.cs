@@ -1590,7 +1590,7 @@ public sealed partial class MainPage : Page
             {
                 // 【2026-11-19】和「选择音频文件」走同一个 AddFiles:视频文件也会被当成音频源提取。
                 if (_audioView == null) { ShowView("audio"); await Task.Delay(60); }
-                _audioView?.AcceptDroppedFilesAsync(paths);
+                if (_audioView != null) await _audioView.AcceptDroppedFilesAsync(paths);
             }
             else if (target == "video" && _videoView != null)
                 await _videoView.AcceptDroppedFilesAsync(paths);

@@ -24,11 +24,14 @@ namespace AlhPro.Tests
             => File.ReadAllText(Path.Combine(RepoRoot(), "ImgUpscalerUI", "Views", "AudioView.xaml.cs"));
 
         [Fact]
-        public void Videos_in_the_audio_list_say_they_are_extracted_on_export()
+        public void Videos_in_the_audio_list_become_wav_files_at_import_time()
         {
+            // 【2026-11-19 晚】用户接着要求:不要只加一句「导出时提取」,要在导入当下就转成音频。
             var cs = AudioViewCs();
             Assert.Contains("AlhPro.DroppedPaths.VideoExtensions", cs);
-            Assert.Contains("· 视频(导出时提取音频)", cs);
+            Assert.Contains("ExtractAudioToWavAsync", cs);
+            Assert.Contains("已把视频转成 WAV", cs);
+            Assert.Contains("个视频已转成 WAV(无损)", cs);
         }
 
         [Fact]
@@ -39,8 +42,10 @@ namespace AlhPro.Tests
             Assert.True(videos > 0, "找不到视频计数");
             int idx = cs.IndexOf("FmtRadios.SelectedIndex = 1;", videos, StringComparison.Ordinal);
             Assert.True(idx > videos, "有视频时要把输出格式切到 WAV(索引 1 = WAV)");
-            // 同一段里不能又把它改回 MP3/0
-            var slice = cs.Substring(videos, Math.Min(900, cs.Length - videos));
+            // 同一段里不能又把它改回 MP3/0(【2026-11-19】不再按固定 900 字截断:
+            // 导入流程里插了「提取音频」之后这段变长,截断会假红)
+            int end = cs.IndexOf("SelectedIndex = 0;", videos, StringComparison.Ordinal);
+            var slice = end > videos ? cs.Substring(videos, end - videos) : cs.Substring(videos);
             Assert.Contains("WAV", slice);
         }
     }

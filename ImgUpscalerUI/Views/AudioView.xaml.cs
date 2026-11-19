@@ -553,7 +553,7 @@ public sealed partial class AudioView : UserControl
                 .Where(f => IsAudioExt(f.Path))
                 .Select(f => f.Path).ToArray();
             if (files.Length > 0)
-                AddFiles(files);
+                await AddFilesAsync(files);
             else
                 Log("拖入的文件既不是音频也不是视频:支持 mp3/wav/flac/m4a 等,以及 mp4/mkv/mov 等视频");
         }
@@ -570,23 +570,101 @@ public sealed partial class AudioView : UserControl
     }
         .Any(ext => p.EndsWith(ext, StringComparison.OrdinalIgnoreCase));
 
-    private void AddFiles(string[] paths)
+    /// <summary>把视频里的音轨提取成 WAV(保持原采样率与声道,pcm_s16le 无损)。
+    /// 成功返回 wav 全路径;失败返回 null(由调用方回落成"视频"条目,不打断导入)。</summary>
+    private static async Task<string?> ExtractAudioToWavAsync(string videoPath)
     {
-        // 【2026-11-19】视频丢进音频页时,列表里原来只写 "xxx.mp4",用户会以为没转格式。
-        // 这里标明「视频 · 导出时提取音频」,并且默认把输出格式切到 WAV(pcm 无损)——
-        // 原来默认是 MP3,点了开始其实是再压一次,和"无损提取"的期待不符。
+        try
+        {
+            string dir = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ALHPro", "audio-src", PathFingerprint(videoPath));
+            System.IO.Directory.CreateDirectory(dir);
+            string wav = System.IO.Path.Combine(dir,
+                System.IO.Path.GetFileNameWithoutExtension(videoPath) + ".wav");
+            if (File.Exists(wav) && new FileInfo(wav).Length > 1024)
+                return wav;                       // 同一个视频拖过:直接复用
+            await AudioService.ConvertToWavSameRateAsync(videoPath, wav);
+            return File.Exists(wav) && new FileInfo(wav).Length > 1024 ? wav : null;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("音频页:从视频提取音频失败", ex);
+            return null;
+        }
+    }
+
+    /// <summary>源路径的短指纹。不能用 string.GetHashCode —— 它每次进程启动都变,
+    /// 会导致每次开软件都重新提取一遍。</summary>
+    private static string PathFingerprint(string path)
+    {
+        uint h = 2166136261;                      // FNV-1a 32 位
+        foreach (byte b in System.Text.Encoding.UTF8.GetBytes(path.ToLowerInvariant()))
+        {
+            h ^= b;
+            h *= 16777619;
+        }
+        return h.ToString("x8");
+    }
+
+    /// <summary>【2026-11-19 用户要求】视频拖进音频页时,导入当下就把音轨无损提取成 WAV,
+    /// 列表里看到的直接是音频文件(而不是一条写着 .mp4 的"视频")。
+    /// 提取结果放在 %LOCALAPPDATA%\ALHPro\audio-src\&lt;源路径指纹&gt;\&lt;原名&gt;.wav:
+    /// 同一个视频再拖一次会直接复用,不重复跑 ffmpeg。</summary>
+    private async Task AddFilesAsync(string[] paths)
+    {
         var videoExts = new System.Collections.Generic.HashSet<string>(
             AlhPro.DroppedPaths.VideoExtensions, StringComparer.OrdinalIgnoreCase);
         int videos = 0;
+        int done = 0;
         foreach (var p in paths)
         {
+            done++;
+            string usePath = p;
             bool isVideo = videoExts.Contains(System.IO.Path.GetExtension(p));
-            if (isVideo) videos++;
-            var it = new AudioItem { Path = p };
-            it.Display = isVideo ? it.Name + " · 视频(导出时提取音频)" : it.Name;
+            double probedDur = 0;
+            string display;
+            if (isVideo)
+            {
+                videos++;
+                // 先看这个视频到底有没有音轨 —— 没有音轨的视频提不出东西,
+                // 硬跑一次 ffmpeg 只会失败并给用户一句"提取失败"(实测撞到过)。
+                var (vdur, ch, _, _, _) = AudioService.Probe(p);
+                probedDur = vdur;
+                if (ch <= 0)
+                {
+                    display = System.IO.Path.GetFileName(p) + " · 视频(没有音轨,不需要提取)";
+                    AppLogger.Info($"音频页:视频没有音轨,保持原样 —— {System.IO.Path.GetFileName(p)}");
+                    var itNoAudio = new AudioItem { Path = p };
+                    itNoAudio.Display = display;
+                    itNoAudio.DurationSec = (float)vdur;
+                    _items.Add(itNoAudio);
+                    AudioList.Items.Add(itNoAudio);
+                    continue;
+                }
+                AudioInfo.Text = paths.Length > 1
+                    ? $"正在从视频里提取音频 {done}/{paths.Length}:{System.IO.Path.GetFileName(p)}…"
+                    : $"正在从视频里提取音频:{System.IO.Path.GetFileName(p)}…(大文件要几秒)";
+                await Task.Yield();
+                string? wav = await ExtractAudioToWavAsync(p);
+                if (wav != null)
+                {
+                    usePath = wav;
+                    AppLogger.Info($"音频页:已把视频转成 WAV —— {System.IO.Path.GetFileName(p)} → {System.IO.Path.GetFileName(wav)}");
+                }
+                display = usePath == p
+                    ? System.IO.Path.GetFileName(p) + " · 视频(提取失败,点开始会再试)"
+                    : System.IO.Path.GetFileName(usePath);
+            }
+            else
+            {
+                display = System.IO.Path.GetFileName(p);
+            }
+            var it = new AudioItem { Path = usePath };
+            it.Display = display;
             // 探测时长(用于裁剪滑块与展示)
-            var (dur, _, _, _, _) = AudioService.Probe(p);
-            it.DurationSec = (float)dur;
+            var (dur, _, _, _, _) = AudioService.Probe(usePath);
+            it.DurationSec = (float)(dur > 0 ? dur : probedDur);
             _items.Add(it);
             AudioList.Items.Add(it);
         }
@@ -595,9 +673,9 @@ public sealed partial class AudioView : UserControl
             try { FmtRadios.SelectedIndex = 1; } catch { }   // 1 = WAV,无损
         }
         AudioInfo.Text = videos > 0
-            ? $"{_items.Count} 个音频 · 其中 {videos} 个视频,点开始即提取(已选 WAV 无损)"
+            ? $"{_items.Count} 个音频 · {videos} 个视频已转成 WAV(无损)"
             : $"{_items.Count} 个音频";
-        Log($"已添加 {paths.Length} 个音频");
+        Log($"已添加 {paths.Length} 个音频({videos} 个来自视频)");
         // 【2026-09-23 修 A3】加完文件必须刷按钮 —— 原来这里只调 UpdateRunState()(它只管「开始处理」),
         // 于是"列表里已经有音频了,但「清空」还是灰的"(真机实测:同场景视频页/图片页都是亮的)。
         UpdateListButtons();
@@ -607,12 +685,12 @@ public sealed partial class AudioView : UserControl
     /// 【2026-11-19】把视频/音频拖到音频页时直接进列表(提取音频)。
     /// 和「选择音频文件」走同一个 AddFiles,不另开一条处理链。
     /// </summary>
-    public void AcceptDroppedFilesAsync(string[] paths)
+    public async Task AcceptDroppedFilesAsync(string[] paths)
     {
         try
         {
             if (paths == null || paths.Length == 0) return;
-            AddFiles(paths);
+            await AddFilesAsync(paths);
             AppLogger.Info($"音频页收到拖放:{paths.Length} 个文件");
         }
         catch (Exception ex)
@@ -638,7 +716,7 @@ public sealed partial class AudioView : UserControl
         picker.FileTypeFilter.Add(".wma");
         var files = await picker.PickMultipleFilesAsync();
         if (files == null || files.Count == 0) return;
-        AddFiles(files.Select(f => f.Path).ToArray());
+        await AddFilesAsync(files.Select(f => f.Path).ToArray());
     }
 
     // ---------- 预览/裁剪(双击才展开) ----------

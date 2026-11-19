@@ -47,7 +47,7 @@ namespace AlhPro.Tests
         public void The_audio_page_dispatch_reuses_the_same_import_path_as_the_picker()
         {
             var src = Read("ImgUpscalerUI", "Views", "MainPage.xaml.cs");
-            Assert.Contains("_audioView?.AcceptDroppedFilesAsync(paths);", src);
+            Assert.Contains("await _audioView.AcceptDroppedFilesAsync(paths);", src);
             // 音频目标传的是视频数组(视频里提取音频),不能退化成图片数组
             Assert.Contains("string[] paths = target == \"video\" || target == \"audio\" ? asVideos : asImages;", src);
         }
@@ -56,10 +56,10 @@ namespace AlhPro.Tests
         public void The_audio_page_accepts_files_through_one_entry_point()
         {
             var src = Read("ImgUpscalerUI", "Views", "AudioView.xaml.cs");
-            Assert.Contains("public void AcceptDroppedFilesAsync(string[] paths)", src);
-            var idx = src.IndexOf("public void AcceptDroppedFilesAsync(string[] paths)", StringComparison.Ordinal);
+            Assert.Contains("public async Task AcceptDroppedFilesAsync(string[] paths)", src);
+            var idx = src.IndexOf("public async Task AcceptDroppedFilesAsync(string[] paths)", StringComparison.Ordinal);
             var body = src.Substring(idx, Math.Min(900, src.Length - idx));
-            Assert.Contains("AddFiles(paths);", body);
+            Assert.Contains("await AddFilesAsync(paths);", body);
             // 出错必须落日志,不能静默
             Assert.Contains("AppLogger.Error(\"音频页拖放导入失败\", ex);", body);
         }
