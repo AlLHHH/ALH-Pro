@@ -555,11 +555,19 @@ public sealed partial class AudioView : UserControl
             if (files.Length > 0)
                 AddFiles(files);
             else
-                Log("拖入的文件不是支持的音频格式");
+                Log("拖入的文件既不是音频也不是视频:支持 mp3/wav/flac/m4a 等,以及 mp4/mkv/mov 等视频");
         }
     }
 
-    private static bool IsAudioExt(string p) => new[] { ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma" }
+    // 【2026-11-19】视频也能直接拖进来提取音频:ffmpeg 读 mp4/mkv 的音轨和读 mp3 没区别
+    // (实测 5 秒 mp4 → 5.00 秒 44.1kHz 立体声 wav)。以前这里只认音频后缀,
+    // 视频拖到音频页会被判"不是支持的音频格式",于是"视频转音频"看起来像没做。
+    private static bool IsAudioExt(string p) => new[]
+    {
+        ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma",
+        ".mp4", ".m4v", ".mkv", ".mov", ".avi", ".webm", ".ts", ".m2ts",
+        ".flv", ".wmv", ".mpg", ".mpeg",
+    }
         .Any(ext => p.EndsWith(ext, StringComparison.OrdinalIgnoreCase));
 
     private void AddFiles(string[] paths)
