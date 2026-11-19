@@ -3696,22 +3696,19 @@ public sealed partial class VideoView : UserControl
         // 带「取消导入」:取消时【已经导入成功的保留】,只丢掉正在探测的这一条(用户 2026-11-05 要求)。
         int importTotal = paths.Length;
         int importIndex = 0;
-        // 【2026-11-19】以前只有"一次拖多个"才显示进度框;单个大视频读信息要几秒,
-        // 界面上什么都不动 —— 用户反馈"跟卡了一样、没有反馈"。现在一个文件也显示。
-        bool multi = importTotal > 0;
+        bool multi = importTotal > 1;
+        // 【2026-11-19】单个大视频读信息要几秒,以前界面一片静止(用户反馈"跟卡了一样")。
+        // 不加框、不占额外位置:就用状态行那一行临时显示进度,读完恢复原来那句。
+        string? _oneStatusBackup = null;
         var batchItems = new System.Collections.Generic.List<VideoItem>();
         if (multi)
         {
             _importCts = new System.Threading.CancellationTokenSource();
-            ImportText.Text = importTotal > 1
-                ? $"正在导入 1 / {importTotal}…"
-                : $"正在读取「{Path.GetFileName(paths[0])}」的信息…(大文件可能要几秒,别急着再拖)";
+            ImportText.Text = $"正在导入 1 / {importTotal}…";
             ImportBar.Value = 0;
-            ImportBar.IsIndeterminate = importTotal == 1;
+            ImportBar.IsIndeterminate = false;
             ImportCancelBtn.IsEnabled = true;
             ImportBox.Visibility = Visibility.Visible;
-            // 先把进度框画出来,否则紧跟着的 ffprobe 会把它一起卡住
-            await Task.Yield();
         }
         bool cancelled = false;
         try
@@ -3735,6 +3732,12 @@ public sealed partial class VideoView : UserControl
                 // 必须 await:下面「输入帧率」框会按 FpsProbe 同步,不等它就等于把旧帧率又写回界面
                 await RefreshItemProbeAsync(existing);
                 continue;
+            }
+            if (importTotal == 1)
+            {
+                _oneStatusBackup ??= VideoStatus.Text;
+                VideoStatus.Text = $"正在读取「{Path.GetFileName(p)}」的信息…(大文件要几秒)";
+                await Task.Yield();
             }
             var info = await VideoService.ProbeVideoInfoAsync(p);
             var item = new VideoItem
@@ -3760,6 +3763,11 @@ public sealed partial class VideoView : UserControl
         }
         finally
         {
+            if (importTotal == 1 && _oneStatusBackup != null
+                && (VideoStatus.Text ?? "").StartsWith("正在读取", System.StringComparison.Ordinal))
+            {
+                try { VideoStatus.Text = _oneStatusBackup; } catch { }
+            }
             if (multi)
             {
                 if (cancelled)
