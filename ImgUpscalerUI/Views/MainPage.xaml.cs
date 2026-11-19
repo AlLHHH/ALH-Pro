@@ -1497,28 +1497,48 @@ public sealed partial class MainPage : Page
             if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
             e.Handled = true;
             var items = await e.DataView.GetStorageItemsAsync();
-            // 【2026-11-15】文件夹也要收:按当前页面决定摊开成视频还是图片;
-            // 以前这里只认 StorageFile,拖文件夹进来等于什么都没发生。
+            // 【2026-11-15】文件夹也要收:按落到的页面决定摊开成视频还是图片。
             var raw = items.Select(i => i.Path)
                 .Where(p => !string.IsNullOrWhiteSpace(p))
                 .ToArray();
-            // 抠图页也吃图片:2026-11-16 之前它连拖放处理器都没有,拖过去毫无反应。
-            bool images = _currentTag is "upscale" or "cutout";
-            var paths = AlhPro.DroppedPaths.Expand(raw, images);
-            if (paths.Length == 0)
+            if (raw.Length == 0) return;
+
+            // 【2026-11-19】整窗任意位置都算数:先按拖进来的文件类型算该去哪一页。
+            // 当前页刚好合适就留在原页(在图片页拖着图片松手不会莫名跳页),
+            // 不合适就自己切过去再导入 —— 以前是"页面不对就当没看见",
+            // 用户在音频页、设置页松手会以为软件坏了。
+            var asVideos = AlhPro.DroppedPaths.Expand(raw, images: false);
+            var asImages = AlhPro.DroppedPaths.Expand(raw, images: true);
+            bool curVideo = _currentTag == "video";
+            bool curImage = _currentTag is "upscale" or "cutout";
+
+            string target;
+            if (asVideos.Length > 0 && (curVideo || asImages.Length == 0)) target = "video";
+            else if (asImages.Length > 0) target = curImage ? _currentTag! : "upscale";
+            else
             {
-                AppLogger.Info($"拖入被拒({_currentTag ?? "?"}):{items.Count} 项里没找到{(images ? "图片" : "视频")}");
+                AppLogger.Info($"拖入被拒({_currentTag ?? "?"}):{items.Count} 项里没有可识别的视频或图片");
                 return;
             }
-            AppLogger.Info($"拖入({_currentTag ?? "?"}):{items.Count} 项 → {paths.Length} 个{(images ? "图片" : "视频")}");
-            if (_currentTag == "video" && _videoView != null)
+
+            string[] paths = target == "video" ? asVideos : asImages;
+            string kind = target == "video" ? "视频" : "图片";
+            AppLogger.Info($"拖入({_currentTag ?? "?"} → {target}):{items.Count} 项 → {paths.Length} 个{kind}");
+
+            if (target != _currentTag)
+            {
+                ShowView(target);
+                await Task.Delay(60);   // 页面切换是同步建视图,给它一帧落地时间再塞文件
+            }
+
+            if (target == "video" && _videoView != null)
                 await _videoView.AcceptDroppedFilesAsync(paths);
-            else if (_currentTag == "upscale" && _upView != null)
+            else if (target == "upscale" && _upView != null)
                 await _upView.AcceptDroppedFilesAsync(paths);
-            else if (_currentTag == "cutout" && _cutView != null)
+            else if (target == "cutout" && _cutView != null)
                 await _cutView.AcceptDroppedFilesAsync(paths);
             else
-                AppLogger.Info($"当前页面({_currentTag})不接收拖入,已忽略");
+                AppLogger.Info($"拖入:{target} 页还没建出来,{paths.Length} 个{kind}未导入");
         }
         catch (Exception ex)
         {
