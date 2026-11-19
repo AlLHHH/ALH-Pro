@@ -572,17 +572,31 @@ public sealed partial class AudioView : UserControl
 
     private void AddFiles(string[] paths)
     {
+        // 【2026-11-19】视频丢进音频页时,列表里原来只写 "xxx.mp4",用户会以为没转格式。
+        // 这里标明「视频 · 导出时提取音频」,并且默认把输出格式切到 WAV(pcm 无损)——
+        // 原来默认是 MP3,点了开始其实是再压一次,和"无损提取"的期待不符。
+        var videoExts = new System.Collections.Generic.HashSet<string>(
+            AlhPro.DroppedPaths.VideoExtensions, StringComparer.OrdinalIgnoreCase);
+        int videos = 0;
         foreach (var p in paths)
         {
+            bool isVideo = videoExts.Contains(System.IO.Path.GetExtension(p));
+            if (isVideo) videos++;
             var it = new AudioItem { Path = p };
-            it.Display = it.Name;
+            it.Display = isVideo ? it.Name + " · 视频(导出时提取音频)" : it.Name;
             // 探测时长(用于裁剪滑块与展示)
             var (dur, _, _, _, _) = AudioService.Probe(p);
             it.DurationSec = (float)dur;
             _items.Add(it);
             AudioList.Items.Add(it);
         }
-        AudioInfo.Text = $"{_items.Count} 个音频";
+        if (videos > 0)
+        {
+            try { FmtRadios.SelectedIndex = 1; } catch { }   // 1 = WAV,无损
+        }
+        AudioInfo.Text = videos > 0
+            ? $"{_items.Count} 个音频 · 其中 {videos} 个视频,点开始即提取(已选 WAV 无损)"
+            : $"{_items.Count} 个音频";
         Log($"已添加 {paths.Length} 个音频");
         // 【2026-09-23 修 A3】加完文件必须刷按钮 —— 原来这里只调 UpdateRunState()(它只管「开始处理」),
         // 于是"列表里已经有音频了,但「清空」还是灰的"(真机实测:同场景视频页/图片页都是亮的)。
