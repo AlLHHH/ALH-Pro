@@ -1138,7 +1138,7 @@
                 </StackPanel>
 
                 <!-- 预览/裁剪覆盖层(2026-09-17 拆成两页:双击=裁剪页(只有裁剪),「预览效果」=预览页(只有预览)) -->
-                <Grid x:Name="VideoPreviewOverlay" Grid.Row="2" Visibility="Collapsed" Background="#F20D0F14"
+                <Grid x:Name="VideoPreviewOverlay" Grid.Row="0" Grid.RowSpan="4" Visibility="Collapsed" Background="#F20D0F14"
                       PreviewKeyDown="VideoPreviewOverlay_PreviewKeyDown">
                     <!-- 空格 = 播放/暂停(用户反馈"部分情况下空格没用":以前只有播放器自带控件吃空格,
                          对比模式把自带控件关了就没反应了)。做成加速键,焦点在哪都能用(输入框除外,见处理函数)。
