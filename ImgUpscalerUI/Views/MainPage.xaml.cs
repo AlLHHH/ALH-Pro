@@ -35,6 +35,14 @@ public sealed partial class MainPage : Page
         if (ForceShowUpdateBar) UpdateBar.Visibility = Visibility.Visible;
         SetupPasteFilesShortcut();
         AppSettings.Load();      // 应用级开关(自动删除已完成项目等)
+        // 启动计数:用来把问卷邀请推迟到第 3 次启动(新用户刚装上别被弹窗拦)。
+        try
+        {
+            AppSettings.LaunchCount++;
+            AppSettings.Save();
+            AppLogger.Info($"启动计数:第 {AppSettings.LaunchCount} 次启动");
+        }
+        catch { }
         SafeRender.Load();       // 加载"安全渲染"墙配置(自动/自定义)
         // 休息提示 + 显眼的「跳过休息」按钮:显示在窗口底部状态栏右侧(任务处理中休息降温时)
         SafeRender.RestUiChanged += resting =>
@@ -565,6 +573,12 @@ public sealed partial class MainPage : Page
         try
         {
             string cur = UpdateChecker.CurrentVersion;
+            // 【2026-11-21】前两次启动一律不弹:新装用户先安安静静用两次,第三次再说。
+            if (AppSettings.LaunchCount < SurveyMinLaunch)
+            {
+                AppLogger.Info($"问卷:第 {AppSettings.LaunchCount} 次启动,还没到第 {SurveyMinLaunch} 次,本次不弹");
+                return;
+            }
             // 【跨版本】填写过 → 以后任何版本都不再弹(不是只这一版)
             if (!string.IsNullOrEmpty(AppSettings.SurveyShownVersion)) return;
             // 关闭过 → 下次启动 50% 概率再弹(50% 不弹)
@@ -593,6 +607,9 @@ public sealed partial class MainPage : Page
         }
         catch { }
     }
+
+    /// <summary>问卷最早在第几次启动之后才弹(含这一次)。</summary>
+    private const int SurveyMinLaunch = 3;
 
     /// <summary>更新后问卷链接(问卷星)。</summary>
     private const string SurveyUrl = "https://v.wjx.cn/vm/mBmsLtb.aspx#";
@@ -1459,6 +1476,14 @@ public sealed partial class MainPage : Page
                     break;
                 case "upscale":
                     await _upView.AcceptDroppedFilesAsync(paths);
+                    break;
+                case "cutout":
+                    await _cutView.AcceptDroppedFilesAsync(paths);
+                    break;
+                // 【2026-11-19】音频页同理:在这页按 Ctrl+V / 把文件拖到按钮外的空白处,
+                // 以前落到 default 被判「当前页面不收文件」——明明页面自己有导入能力。
+                case "audio":
+                    if (_audioView != null) await _audioView.AcceptDroppedFilesAsync(paths);
                     break;
                 default:
                     AppLogger.Info($"{from}:当前页面({_currentTag})不收文件,已忽略({paths.Length} 个)");

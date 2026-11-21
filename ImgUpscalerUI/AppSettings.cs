@@ -59,6 +59,9 @@ public static class AppSettings
     /// <summary>已"关闭"过问卷的版本(下次启动 50% 概率再弹)。</summary>
     public static string SurveyClosedVersion { get; set; } = "";
 
+    /// <summary>累计启动次数(每开一次软件加一;问卷等到第 3 次启动才弹,避免新用户刚装上就被打扰)。</summary>
+    public static int LaunchCount { get; set; }
+
     /// <summary>自检报告对应的软件版本(升级后自动作废旧缓存重测,报告修复才能生效)。</summary>
     public static string VulkanReportVersion { get; set; } = "";
 
@@ -108,6 +111,7 @@ public static class AppSettings
             SponsorPromptTime = d.SponsorPromptTime == default ? DateTime.MinValue : d.SponsorPromptTime;
             SurveyShownVersion = d.SurveyShownVersion ?? "";
             SurveyClosedVersion = d.SurveyClosedVersion ?? "";
+            LaunchCount = d.LaunchCount;
             VulkanReportVersion = d.VulkanReportVersion ?? "";
             TempDir = d.TempDir ?? "";
             LastShownVersion = d.LastShownVersion ?? "";
@@ -143,6 +147,7 @@ public static class AppSettings
                         SponsorPromptTime = SponsorPromptTime,
                         SurveyShownVersion = SurveyShownVersion,
                         SurveyClosedVersion = SurveyClosedVersion,
+                        LaunchCount = LaunchCount,
                         VulkanReportVersion = VulkanReportVersion,
                         TempDir = TempDir,
                         LastShownVersion = LastShownVersion,
@@ -169,6 +174,7 @@ public static class AppSettings
         public DateTime SponsorPromptTime { get; set; } = DateTime.MinValue;
         public string SurveyShownVersion { get; set; } = "";
         public string SurveyClosedVersion { get; set; } = "";
+        public int LaunchCount { get; set; }
         public string VulkanReportVersion { get; set; } = "";
         public string TempDir { get; set; } = "";
         public string LastShownVersion { get; set; } = "";

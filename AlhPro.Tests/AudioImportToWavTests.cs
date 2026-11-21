@@ -87,5 +87,18 @@ namespace AlhPro.Tests
             Assert.Contains("await _audioView.AcceptDroppedFilesAsync(paths);", main);
             Assert.DoesNotContain("_audioView?.AcceptDroppedFilesAsync(paths);", main);
         }
+
+        [Fact]
+        public void Pasting_on_the_audio_page_reaches_the_audio_page()
+        {
+            // 【2026-11-19】实测踩到:在音频页按 Ctrl+V 时日志写「当前页面(audio)不收文件,已忽略」
+            // —— 导入分派只写了 video/upscale,audio 落到 default。音频页自己明明有导入能力。
+            var main = File.ReadAllText(Path.Combine(RepoRoot(), "ImgUpscalerUI", "Views", "MainPage.xaml.cs"));
+            int audio = main.IndexOf("case \"audio\":", StringComparison.Ordinal);
+            Assert.True(audio > 0, "导入分派里没有 audio 分支");
+            int dispatch = main.IndexOf("_audioView.AcceptDroppedFilesAsync(paths)", audio, StringComparison.Ordinal);
+            Assert.True(dispatch > audio, "audio 分支没有把文件交给音频页");
+            Assert.Contains("case \"cutout\":", main);
+        }
     }
 }
