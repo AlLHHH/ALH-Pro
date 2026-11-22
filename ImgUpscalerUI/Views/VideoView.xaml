@@ -1150,8 +1150,13 @@
                     </Grid.KeyboardAccelerators>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
-                        <!-- 唯一画面:结果在下、原片在上(对比时原片按分割线裁切,左边原片/右边结果) -->
-                        <RowDefinition Height="*" MinHeight="140"/>
+                        <!-- 唯一画面:结果在下、原片在上(对比时原片按分割线裁切,左边原片/右边结果)
+                             【2026-11-22 · MinHeight 140 → 0】用户反馈"全屏时预览底下按钮不见了、
+                             普通窗口下预览下方也被画面盖住"。原来这一行写死 MinHeight=140:窗口不够高时
+                             这一行不肯让位,后面三条 Auto 行(裁剪控制区/预览控制区/重复帧工具行)就被挤出
+                             可视区、还会和画面**重叠**。改成 0 之后画面先让位,按钮永远留在窗口里;想看大画面
+                             直接把窗口拉高即可(这一行是 * 行,会自动吃满剩余高度)。 -->
+                        <RowDefinition Height="*" MinHeight="0"/>
                         <!-- 裁剪页控制区 -->
                         <RowDefinition Height="Auto"/>
                         <!-- 预览页控制区 -->
@@ -1161,13 +1166,19 @@
                     </Grid.RowDefinitions>
 
                     <!-- ① 顶栏:素材信息 | 视图三选一(仅预览页) | 放大 | 退出 -->
-                    <Grid Grid.Row="0" Margin="14,10,14,6" ColumnSpacing="10">
+                    <!-- 【2026-11-22 排版改两行】原来是一行四列(名字|视图|—|退出)。窗口窄的时候
+                         四个单选项这一列是 Auto,不肯压窄,于是整行往右溢:「左右对比」被切、连「退出」都被顶出
+                         窗口外。现在拆成两行 —— 上行:名字 + 退出(退出永远在右上角,一定点得到);
+                         下行:视图四选一(窄就只压这一行)。 -->
+                    <Grid Grid.Row="0" Margin="14,10,14,6" ColumnSpacing="10" RowSpacing="4">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
                         <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                             <TextBlock x:Name="PreviewName" FontSize="13" FontWeight="SemiBold"
                                        VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="380"/>
@@ -1179,8 +1190,8 @@
                                        VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="560"
                                        Visibility="Collapsed"/>
                         </StackPanel>
-                        <RadioButtons x:Name="PreviewViewRadios" Grid.Column="1" MaxColumns="4" SelectedIndex="0"
-                                      VerticalAlignment="Center"
+                        <RadioButtons x:Name="PreviewViewRadios" Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                                      MaxColumns="4" SelectedIndex="0" HorizontalAlignment="Left"
                                       SelectionChanged="PreviewViewRadios_SelectionChanged"
                                       ToolTipService.ToolTip="看原片 / 看处理效果 / 两者同时(整幅并排,预览跑完后**后台**合成一条对比片,合好自动切过去) / 左右对比(两个播放器实时裁切,分割线可拖,左原片右结果 —— 这条**不用等**合成)">
                             <!-- 【2026-09-22 无障碍/自测】四项原来都没有 AutomationId ⇒ 补 x:Name(注意**不能**叫
@@ -1206,7 +1217,7 @@
                              并把 4 处指向它的提示文案一起改掉(否则会叫人去点一个不存在的按钮)。
                              这一格现在空着:用户 2026-09-19 明确不要实时缩放控件,所以不放别的东西 ✔
                              【别再加回来】用户已经点过两次名(先加、后删) -->
-                        <Button Grid.Column="3" Content="退出" Click="PreviewClose_Click" FontSize="13" Padding="16,7"
+                        <Button Grid.Row="0" Grid.Column="1" Content="退出" Click="PreviewClose_Click" FontSize="13" Padding="16,7"
                                 VerticalAlignment="Center" ToolTipService.ToolTip="退出回到列表"/>
                     </Grid>
 
@@ -1315,10 +1326,22 @@
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
-                                <Slider Margin="-6,0,-11,0" x:Name="CmpSeek" Grid.Row="0" Minimum="0" Maximum="100" Value="0"
+                                <!-- 【2026-11-22】时间码从底行挪到进度条这一行的右端。底行原本是
+                                     「播放键 + 四个倍速 + 静音 + 时间码」挤一条,窗口一窄(左栏占掉 300px 之后
+                                     播放区只剩五百多)就把「慢动作4×/8×」和时间码顶出可视区 —— 用户看到的
+                                     就是"预览底下按钮没了"。时间码跟进度条同排之后,底行只留播放与倍速,窄窗也放得下。 -->
+                                <Grid Grid.Row="0" ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                <Slider Margin="-6,0,-6,0" x:Name="CmpSeek" Grid.Column="0" Minimum="0" Maximum="100" Value="0"
                                         StepFrequency="0.5" VerticalAlignment="Center"
                                         ValueChanged="CmpSeek_ValueChanged"
                                         ToolTipService.ToolTip="拖动定位:对比两边同时跳到同一时刻"/>
+                                    <TextBlock x:Name="CmpTime" Grid.Column="1" Text="0:00 / 0:00" FontSize="12"
+                                               VerticalAlignment="Center" MinWidth="96" TextAlignment="Right"/>
+                                </Grid>
                                 <Grid Grid.Row="1" ColumnSpacing="16">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
@@ -1340,19 +1363,26 @@
                                     </Button>
                                     <!-- 慢放:补帧后的片段用来看补出来的中间帧(原速1× / 慢动作2× / 4× / 8×)
                                          放在播放键旁边(都是"怎么播"),时间单独留在最右边 —— 之前全挤在一行太紧凑 -->
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                                        <!-- 【2026-11-22】原来是四个倍速挤一条横排(≈344px)。播放区在窄窗口里只剩
+                                             三百多像素(左边导航 178 + 参数栏 300 就吃掉了),横排必然被切 ⇒ 改成 2×2。
+                                             按钮太小会让 4×/8× 点不到,所以宁可多占一行高度。 -->
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
                                         <ToggleButton x:Name="CmpRate1Btn" Content="原速1×" Tag="1" IsChecked="True" FontSize="12"
                                                       Padding="14,4" MinWidth="80" Click="CmpRate_Click"
                                                       ToolTipService.ToolTip="原速播放"/>
                                         <ToggleButton x:Name="CmpRate2Btn" Content="慢动作2×" Tag="0.5" FontSize="12"
                                                       Padding="14,4" MinWidth="80" Click="CmpRate_Click"
                                                       ToolTipService.ToolTip="半速(2 倍慢动作)—— 看补出来的中间帧"/>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
                                         <ToggleButton x:Name="CmpRate4Btn" Content="慢动作4×" Tag="0.25" FontSize="12"
                                                       Padding="14,4" MinWidth="80" Click="CmpRate_Click"
                                                       ToolTipService.ToolTip="四分之一速(4 倍慢动作)"/>
                                         <ToggleButton x:Name="CmpRate8Btn" Content="慢动作8×" Tag="0.125" FontSize="12"
                                                       Padding="14,4" MinWidth="80" Click="CmpRate_Click"
                                                       ToolTipService.ToolTip="八分之一速(8 倍慢动作)"/>
+                                        </StackPanel>
                                     </StackPanel>
                                     <!-- 静音(用户要求:**默认静音**,且按键要能正常开关)
                                          上一版把"用户开关"和"慢动作自动静音"混成一个状态 → 慢动作下按钮怎么点都关不掉,
@@ -1363,8 +1393,7 @@
                                                   ToolTipService.ToolTip="当前:静音(默认)。点一下打开声音 —— 注意慢动作下打开会听到变调">
                                         <FontIcon x:Name="CmpMuteIcon" Glyph="&#xE74F;" FontSize="14"/>
                                     </ToggleButton>
-                                    <TextBlock x:Name="CmpTime" Grid.Column="3" Text="0:00 / 0:00" FontSize="12"
-                                               VerticalAlignment="Center" MinWidth="110" TextAlignment="Right"/>
+                                    <!-- 时间码已挪到上一行(见上方注释),这里不再重复放 -->
                                 </Grid>
                             </Grid>
                         </Border>
