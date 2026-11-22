@@ -2589,7 +2589,12 @@ public static partial class VideoService
                         .ToList();
                     var orderPlan = AlhPro.Core.PipelineOrderPlan.Decide(engine, model, upScaleNow, interpScale,
                         srcW, srcH, frameCount, areaScale: areaScaleNow,
-                        localPrices: sameBackendBook, machineKey: calibMachineKey, backend: calibBackend);
+                        localPrices: sameBackendBook, machineKey: calibMachineKey, backend: calibBackend,
+                        // 【2026-11-22】本机诊断包实证:TTA 让 4K 补帧从 0.34s/帧涨到 4.85s/帧,
+                        // 而顺序判定原来只看面积锚点 ⇒ 一定误判"超分很贵、先超分",把任务推进慢 2 倍多的路。
+                        // 这里把"这次到底开不开 TTA"喂给成本模型(只影响判定,不影响 ffmpeg 参数)。
+                        // v4.26 一律不传 TTA(见 interp 参数拼装处),所以它不算拖慢。
+                        interpSlowdown: (tta && interpModel != "rife-v4.26") ? AlhPro.Core.PipelineOrderPlan.TtaInterpSlowdown : 1.0);
                     upscaleFirst = orderPlan.UpscaleFirst;
                     // 【进度区间必须跟着"真正执行的顺序"走】否则进度条会先按旧顺序跳到 45% 再倒退
                     // (H 任务注释里点名的老问题)。这里就在判定点重算,闭包/后续阶段读到的都是新值;

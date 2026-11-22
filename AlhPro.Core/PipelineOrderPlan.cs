@@ -94,6 +94,16 @@ public static class PipelineOrderPlan
     /// <summary>补帧单帧成本的极小值兜底(小图外推不能算出 0 或负数)。</summary>
     public const double MinInterpSecondsPerFrame = 0.005;
 
+    /// <summary>TTA(高质量,减少光流伪影)对补帧单帧成本的拖慢倍数。
+    /// 【实测出处】2026-11-22 用户诊断包 `ALHPro_Diag_20261122_1930`:RTX 5060 Laptop 8GB、
+    /// 源 1280×720 → 超分 2x 到 3840×2160、补帧 4x、开 TTA,补帧实测 **4854 ms/输出帧**
+    /// (3960.6 秒 / 816 帧);同机同类任务不开 TTA 时 2160p 锚点只 0.2776 s/帧 ⇒ 约 14.4 倍。
+    /// 取 12 倍保守(宁可少判"先补帧",也不要把慢路推给用户)。RIFE 的 TTA 走 `-x -z`,
+    /// 单帧要做 8 次前向 + 反向重采样,面积越大倍数越接近上限,4K 就是最坏情况。
+    /// 【为什么必须是常量而不是"再测一次"】这个倍数要在**开跑之前**决定阶段顺序,
+    /// 那时还没有任何本机实测;它是唯一能拿到手的先验。</summary>
+    public const double TtaInterpSlowdown = 12.0;
+
     /// <summary>安全边际:预估节省低于它就不切换顺序(15%)。
     /// 【出处】本仓库口径(任务 Q1),**外部没有可参照的公开数值** —— 社区工具(某插帧社区/某插帧工具/某混合工具)
     /// 根本不做"按实测单帧耗时自动选阶段顺序"这件事,所以这条边际只能自定义。【不确定度】无外部对照,
@@ -239,7 +249,8 @@ public static class PipelineOrderPlan
     /// null/空白 = 不做机器过滤(单测/资料口径);**生产必须传**,否则别人机器的标定会被当成自己的。</param>
     public static Decision Decide(string? engine, string? model, double scale, int interpScale, int srcW, int srcH, int sourceFrames = 900,
         double areaScale = 0, double minSavingsPercent = UseBuiltInMinSavings,
-        IEnumerable<LocalPrice>? localPrices = null, string? machineKey = null, string? backend = null)
+        IEnumerable<LocalPrice>? localPrices = null, string? machineKey = null, string? backend = null,
+        double interpSlowdown = 1.0)
     {
         int engineScale = Math.Max(1, AlhPro.Core.EngineScalePolicy.Decide(engine ?? "", model ?? "", scale).EngineScale);
         string key = NormalizeModel(model) ?? (model ?? "?");
@@ -250,7 +261,7 @@ public static class PipelineOrderPlan
         bool measured = look.Usable;
         double up1080 = measured ? look.Price!.Value.SecondsPerFrame1080p : 0;
         var cost = new CostInput(key, engineScale, measured, up1080);
-        var d = Decide(cost, scale, interpScale, srcW, srcH, sourceFrames, minSavingsPercent, areaScale);
+        var d = Decide(cost, scale, interpScale, srcW, srcH, sourceFrames, minSavingsPercent, areaScale, interpSlowdown);
 
         // 理由里必须写清"这次用的是谁的数据"(用户就是被"拿开发机数字当本机"坑过):
         //   本机命中 → 原样引用出处(两次耗时 + N + 采样分辨率 + 折算 1080p 的 s/帧);
@@ -281,7 +292,7 @@ public static class PipelineOrderPlan
     /// <paramref name="minSavingsPercent"/> 省略(= <see cref="UseBuiltInMinSavings"/>)时用内置
     /// <see cref="MinSavingsPercent"/>;显式传具体值(含 0)则**完全听调用方**。</summary>
     public static Decision Decide(CostInput cost, double scale, int interpScale, int srcW, int srcH, int sourceFrames = 900,
-        double minSavingsPercent = UseBuiltInMinSavings, double areaScale = 0)
+        double minSavingsPercent = UseBuiltInMinSavings, double areaScale = 0, double interpSlowdown = 1.0)
     {
         if (minSavingsPercent < 0) minSavingsPercent = MinSavingsPercent;
         int k = interpScale < 1 ? 1 : interpScale;
@@ -292,8 +303,12 @@ public static class PipelineOrderPlan
         long srcPixels = (long)Math.Max(1, srcW) * Math.Max(1, srcH);
         long hiPixels = (long)Math.Max(1, Math.Round(srcW * sArea)) * (long)Math.Max(1, Math.Round(srcH * sArea));
         double u = ScaleUpscaleCostToPixels(cost.UpscalePerFrame1080p, srcPixels);
-        double rLo = InterpSecondsPerOutputFrame(srcPixels);
-        double rHi = InterpSecondsPerOutputFrame(hiPixels);
+        // 补帧成本乘以「本次实际开关」带来的拖慢倍数(开 TTA 时是 <see cref="TtaInterpSlowdown"/>)。
+        // 【为什么连 rLo 也要乘】两侧都吃 TTA:顺序只改"补帧吃到多大的帧",不改"每帧要多贵";
+        // 只乘 rHi 会让门槛算成负数级别的假象,结论会反过来。
+        double slow = interpSlowdown > 0 && double.IsFinite(interpSlowdown) ? interpSlowdown : 1.0;
+        double rLo = InterpSecondsPerOutputFrame(srcPixels) * slow;
+        double rHi = InterpSecondsPerOutputFrame(hiPixels) * slow;
         double threshold = k > 1 ? k * (rHi - rLo) / (k - 1) : double.PositiveInfinity;
 
         long n = Math.Max(1, sourceFrames);
@@ -318,6 +333,8 @@ public static class PipelineOrderPlan
         string why = margin
             ? (saving > 0 ? $"新顺序只省 {pct:0.#}%(< {minSavingsPercent:0.#}% 安全边际)→ 保持旧顺序" : $"新顺序反而更慢 {Math.Abs(pct):0.#}%")
             : (useNew ? $"u {u:0.####}s > 门槛 {threshold:0.####}s(超分很贵,先超分能少算补帧)" : $"u {u:0.####}s ≤ 门槛 {threshold:0.####}s(超分便宜,先补帧更省)");
+        // TTA 开着时把这件事写进理由:否则日志里补帧成本(1.15s/帧)和锚点表(0.0807)对不上,没人看得懂。
+        if (slow > 1.0) why += $"〔补帧单帧成本已按 TTA 拖慢 ×{slow:0.#} 计入〕";
         return new Decision(useNew, oldTotal, newTotal, saving, pct, threshold, u, rLo, rHi, srcPixels, hiPixels, margin, true, why);
     }
 }
