@@ -643,7 +643,6 @@ public sealed partial class VideoView : UserControl
             var slow = new System.Collections.Generic.List<string>();
             bool interp = InterpToggle.IsChecked == true;
             if (UpscaleToggle.IsChecked == true) slow.Add("超分");
-            if (TtaCheck.IsChecked == true) slow.Add("高质量 TTA");
             if (interp && AlhPro.Core.InterpScaleMap.IsHighRate(CurrentScaleIndex())) slow.Add("高倍率补帧");
             if (interp && SceneCheck.IsChecked == true) slow.Add("转场识别");
             if (DenoiseToggle.IsChecked == true) slow.Add("视频降噪");
@@ -1383,13 +1382,7 @@ public sealed partial class VideoView : UserControl
         // ⇒ 倍率与「指定帧率」这两个门槛恒为"可用";判断保留不动:一是改动面最小(牵动 TTA 与 3x/12x/16x、
         // 指定帧率共五处开关),二是将来若再放回非 v4 老模型,门槛会自动重新生效 —— 而不是静默把限制放开。
         bool v4Model = InterpModelCombo.SelectedIndex is 0 or 1 or 2;
-        // v4.26 的 TTA(-x/-z)实测长时间无响应 ⇒ 它是三项里唯一 TTA 要禁的一支(2026-09-24 加回时的实测结论,
-        // 见 VideoService.cs:4841 的同一口径)。非 v4 老模型已下架 ⇒ 不再有其它索引要算进来。
-        bool v426TtaBroken = InterpModelCombo.SelectedIndex is 2;
-        TtaCheck.IsEnabled = interp && !v426TtaBroken;
-        TtaCheck.Opacity = interp && !v426TtaBroken ? 1.0 : 0.5;
-        if (v426TtaBroken && TtaCheck.IsChecked == true)
-            TtaCheck.IsChecked = false;
+        // TTA 已于 2026-11-22 整体下架(用户裁决:只是让导出慢十几倍,没有别的作用)。
         Scale3xRadio.IsEnabled = v4Model;
         Scale3xRadio.Opacity = v4Model ? 1.0 : 0.5;
         Scale12xRadio.IsEnabled = v4Model;
@@ -1407,7 +1400,7 @@ public sealed partial class VideoView : UserControl
             {
                 0 => "推荐:通用画质 v4.13(最新,支持任意帧数精确补齐,最稳).",
                 1 => "通用画质 v4.6:与 v4.13 同架构、功能一样,效果/稳定性略逊;留作 v4.13 出问题时的备用.",
-                2 => "通用画质再新 v4.26:实测三支里最快(1080p 79~92 ms/输出帧),功能同 v4.13;唯一限制是「高质量 TTA」会长时间无响应,已自动置灰.",
+                2 => "通用画质再新 v4.26:实测三支里最快(1080p 79~92 ms/输出帧),功能同 v4.13.",
                 _ => "请选择补帧模型(下拉现在是 v4.13 / v4.6 / v4.26 三支).",
             };
             InterpModelHint.Text = hint;
@@ -1534,13 +1527,10 @@ public sealed partial class VideoView : UserControl
         // 【2026-09-22 已删】这里原来还有「最短补帧段 60 帧」勾选框的启用/置灰 —— 整块按用户裁决撤掉。
         // 【2026-09-21 已删】原先这里还有「果冻修复」三个控件的启用/置灰 + 那条橙色"会明显增加导出时间"提示。
         // 整块按用户要求删除 —— 连提示一起清掉,免得界面上还留着"果冻修复"字样。
-        // 快速模式:忽略 TTA(置灰提示)
         var fast = FastModeCheck.IsChecked == true;
-        TtaCheck.IsEnabled = interp && !fast;
-        TtaCheck.Opacity = fast ? 0.5 : 1.0;
         FastModeHint.Text = fast
-            ? "已启用:GPU 硬解拆帧、tile 减半、单批、帧批减半+批后释放内存、忽略 TTA、硬编合帧;去重/转场/后处理/码率/格式均不受影响"
-            : "给配置差的电脑用的:GPU 硬解拆帧、tile 减半(显存约降 4 倍)、单批处理防爆显存、帧批减半+批后释放内存、忽略 TTA、硬编合帧;去重/转场/后处理/码率/格式均不受影响";
+            ? "已启用:GPU 硬解拆帧、tile 减半、单批、帧批减半+批后释放内存、硬编合帧;去重/转场/后处理/码率/格式均不受影响"
+            : "给配置差的电脑用的:GPU 硬解拆帧、tile 减半(显存约降 4 倍)、单批处理防爆显存、帧批减半+批后释放内存、硬编合帧;去重/转场/后处理/码率/格式均不受影响";
 
         // 选择去重模式时自动把内置预设同步到手滑条(方便切到手动后继续微调);只在模式切换时生效
         if (dedup && dedupModel != _lastDedupModel)
@@ -1577,7 +1567,6 @@ public sealed partial class VideoView : UserControl
         var extras = new System.Collections.Generic.List<string>();
         if (dedup) extras.Add($"去重({DedupModelCombo.SelectedItem})");
         if (scene) extras.Add("转场识别");
-        if (TtaCheck.IsChecked == true) extras.Add("TTA");
         var extra = extras.Count > 0 ? " · " + string.Join(" · ", extras) : "";
         if (interp && inFps > 0)
         {
@@ -1666,7 +1655,6 @@ public sealed partial class VideoView : UserControl
         // 【2026-09-21 滑块恢复 ⇒ 重置也要把它带回默认档】0.30 = 内置判据(1 倍),
         // 即"没拉过滑块"的那个位置。(原先这里还要把「最短补帧段」开关回默认 —— 那条整块已撤,见 XAML 注释。)
         SceneSlider.Value = SceneThresholdDefault;
-        TtaCheck.IsChecked = false;
         SharpenSlider.Value = 0;
         ClaritySlider.Value = 0;
         UsmSlider.Value = 0;
@@ -1900,7 +1888,7 @@ public sealed partial class VideoView : UserControl
         // 禁止写死具体的 Rev 数字做判断,理由同 ModelOrderRev(写死 = Rev 一变就埋一颗定时炸弹)。
         public int SceneDefaultRev { get; set; }
         public double TimeStep { get; set; } = 0.5;
-        public bool Tta { get; set; } = false;   // TTA(高质量)默认关:v1.0 起改,默认开会让新机器慢 5~7 倍(用户感知"补帧慢/卡");要画质用户手动开
+        public bool Tta { get; set; } = false;   // TTA 已于 2026-11-22 下架:界面没有开关,写盘恒 false —— 字段保留只为旧设置文件能反序列化
         public string OutDir { get; set; } = "";
         public string CustomW { get; set; } = "1920";
         public string CustomH { get; set; } = "1080";
@@ -2710,7 +2698,6 @@ public sealed partial class VideoView : UserControl
         // 忽略是对的;现在滑块回来了,再忽略就等于"用户调过的值每次启动都被重置",那才是静默改行为。
         SceneSlider.Value = AlhPro.Core.SceneThresholdMap.Snap(d.SceneThr);
         // 时间步:旧/非法设置回退默认 0.5(滑条最小 0.05,字段缺失会停在 0.05,与默认/重置 0.5 不一致)。
-        TtaCheck.IsChecked = d.Tta;
         if (!string.IsNullOrWhiteSpace(d.OutDir) && Directory.Exists(d.OutDir))
         {
             OutFileBox.Text = d.OutDir;
@@ -3396,7 +3383,8 @@ public sealed partial class VideoView : UserControl
             // 【转场阈值滑块恢复后按真实值写盘】写的是**吸附到刻度后的值** —— 与送进判据的那个数逐字一致
             // (界面 Slider 的裸值带浮点尾巴)。这样"文件里存的是什么、下次跑的就是什么"永远对得上。
             SceneThr = AlhPro.Core.SceneThresholdMap.Snap(SceneSlider.Value),
-            Tta = TtaCheck.IsChecked == true,
+            // 2026-11-22:TTA 已下架,写盘恒 false(字段保留,只为旧设置文件能反序列化)
+            Tta = false,
             OutDir = _customOutDir ?? "",
             // 【2026-09-25】CustomW/CustomH 不再写入:自定义分辨率已移除(字段仍留在设置模型里,仅为兼容旧文件)。
             PostSharpen = (int)SharpenSlider.Value,
@@ -3509,14 +3497,6 @@ public sealed partial class VideoView : UserControl
         Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(oa, "Opacity");
         sb.Children.Add(oa);
         sb.Begin();
-    }
-
-    /// <summary>「高级参数」展开/收起:与手动面板同一套高度+曲线动画,下方内容平滑推下/收上。</summary>
-    private void AdvancedToggleBtn_Click(object sender, RoutedEventArgs e)
-    {
-        bool show = AdvancedPanel.Visibility != Visibility.Visible;
-        AnimateShowHide(AdvancedPanel, show);
-        AdvancedToggleBtn.Content = show ? "高级参数 ▴" : "高级参数 ▾";
     }
 
     // （「可变帧率保护」面板与它的展开/收起处理函数 VfrToggleBtn_Click 已于 2026-09-15 按用户裁决删除:
@@ -11828,7 +11808,7 @@ public sealed partial class VideoView : UserControl
             ? new AlhPro.Core.SceneCutOptions(sceneThresholdNow)
             : null;
         double? timeStep = null;   // 时间步功能已移除(引擎目录模式下 -s 无效),补帧用引擎默认时间步
-        var tta = TtaCheck.IsChecked == true;
+        var tta = false;   // 2026-11-22 用户裁决:TTA 整体下架 —— 界面不再提供,处理端永不开启
         if (!interp) targetFps = null;   // 指定输出帧率只在补帧时有意义(与去重可单独用不同)
 
         // 多视频输出目录/校验已提前到 _running 之前(见上方 baseDir 计算)

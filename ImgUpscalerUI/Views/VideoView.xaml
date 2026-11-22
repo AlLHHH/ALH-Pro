@@ -337,7 +337,7 @@
 
                     <TextBlock Text="补帧模型" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="InterpModelCombo" HorizontalAlignment="Stretch"
-                              ToolTipService.ToolTip="补帧模型:悬停每一项看官方说明、速度与模型大小。&#x0a;下拉为三支 v4 架构模型 —— 都能用 3x/4x/12x/16x 与指定帧率;「高质量 TTA」只有 v4.13 / v4.6 能开(v4.26 的 TTA 实测长时间无响应,选中它会被自动取消并置灰)。&#x0a;以前选过 动漫专用 / 高清 / 超高清 / 经典兼容 的话,设置会自动改用 v4.13。"
+                              ToolTipService.ToolTip="补帧模型:悬停每一项看官方说明、速度与模型大小。&#x0a;下拉为三支 v4 架构模型 —— 都能用 3x/4x/12x/16x 与指定帧率。&#x0a;以前选过 动漫专用 / 高清 / 超高清 / 经典兼容 的话,设置会自动改用 v4.13。"
                               SelectedIndex="0" SelectionChanged="Combo_Changed">
                         <!-- 【2026-09-16 用户裁决:只留 13 + 一个兼容性强的】下拉从 7 项精简到 2 项;
                              【2026-09-24 用户裁决:把 v4.26 作为第 3 支加回来】现在是 3 项。
@@ -347,25 +347,24 @@
                              切过去不丢任何功能;反之拿老架构当备用代价太大(用户一旦选到就只能 2x)。
                              v4.26 回来的理由(实测,不是推测):同一份 rife-ncnn-vulkan-2026.exe 直接能跑它,
                              1080p 两次冷跑 92.2 / 79.0 ms/输出帧,比 v4.13(103.8 / 91.2)只快不慢;权重 10.90 MB 现在随包。
-                             ⚠ v4.26 的「高质量 TTA」(-x/-z)**实测长时间无响应** ⇒ 它是唯一一项 TTA 会被置灰的(见 VideoView.xaml.cs 的 v426TtaBroken)。
                              ⚠ 序号即取值口径:0=v4.13、1=v4.6、2=v4.26(一律**末尾追加**,不许插队)。
                              老设置里存的 3~6 仍会被读设置时的范围检查挡掉 ⇒ 自动落到 0(v4.13);
                              但**存的 2 会被解释成 v4.26**(2026-09-16 之前 2 曾是「动漫专用」)—— 已下架 8 天,且两支都是 v4 补帧模型,不会退出,
                              这里如实记一笔而不做迁移:补帧侧没有 VideoModelOrder 那样的序号迁移表。
                              老 4 项的权重仍在 alh-pro\_retired_rife\(装机包因此小约 226MB),要恢复就搬回 engines\rife\ 并把本段改回来。 -->
                         <ComboBoxItem Content="通用画质最新 (RIFE v4.13)"
-                                      ToolTipService.ToolTip="通用画质最新 (RIFE v4.13):官方 RIFE 的常用实现;官方文档的模型表最新只列到 v4.6,v4.13 比它更新。&#x0a;本工程推荐:支持任意帧数精确补齐、3x/4x/12x/16x 与「高质量 TTA」,最稳。&#x0a;速度:1080p 约 0.06~0.09 秒/输出帧。&#x0a;模型大小:10.3 MB。"/>
+                                      ToolTipService.ToolTip="通用画质最新 (RIFE v4.13):官方 RIFE 的常用实现;官方文档的模型表最新只列到 v4.6,v4.13 比它更新。&#x0a;本工程推荐:支持任意帧数精确补齐、3x/4x/12x/16x,最稳。&#x0a;速度:1080p 约 0.06~0.09 秒/输出帧。&#x0a;模型大小:10.3 MB。"/>
                         <ComboBoxItem Content="通用画质 (RIFE v4.6)"
-                                      ToolTipService.ToolTip="通用画质 (RIFE v4.6):官方 README 模型表里的 4.6 版(上游 4.6)。&#x0a;与 v4.13 同架构、功能完全一样(3x/4x、指定帧率、TTA 都支持),效果与稳定性略逊;留作 v4.13 在你机器上出问题时的备用。&#x0a;模型大小:10.1 MB。"/>
+                                      ToolTipService.ToolTip="通用画质 (RIFE v4.6):官方 README 模型表里的 4.6 版(上游 4.6)。&#x0a;与 v4.13 同架构、功能完全一样(3x/4x、指定帧率都支持),效果与稳定性略逊;留作 v4.13 在你机器上出问题时的备用。&#x0a;模型大小:10.1 MB。"/>
                         <!-- 【2026-09-24 末尾追加】第 3 支。加它是因为它实测与 v4.13 同档速度,
                              且用的是同一份 rife-ncnn-vulkan-2026.exe —— 不需要新引擎、不需要新 exe。
                              ⚠ 顺序即序号,只许追加:2 = rife-v4.26。 -->
                         <ComboBoxItem Content="通用画质再新 (RIFE v4.26)"
-                                      ToolTipService.ToolTip="通用画质再新 (RIFE v4.26):RIFE 4.26 的模型权重(上游 Practical-RIFE 系列,权重与代码同为 MIT 许可)。&#x0a;本机实测(1080p,同素材)约 80~93 ms/输出帧,与 v4.13 同档(两次独立实测互有快慢,没有稳定差距)。&#x0a;功能:同 v4.13/v4.6,支持 3x/4x/12x/16x 与指定帧率。&#x0a;⚠ 唯一限制:「高质量 TTA」(-x/-z)在这支上实测会长时间无响应,选中它时该项自动置灰。&#x0a;模型大小:10.9 MB。"/>
+                                      ToolTipService.ToolTip="通用画质再新 (RIFE v4.26):RIFE 4.26 的模型权重(上游 Practical-RIFE 系列,权重与代码同为 MIT 许可)。&#x0a;本机实测(1080p,同素材)约 80~93 ms/输出帧,与 v4.13 同档(两次独立实测互有快慢,没有稳定差距)。&#x0a;功能:同 v4.13/v4.6,支持 3x/4x/12x/16x 与指定帧率。&#x0a;模型大小:10.9 MB。"/>
                     </ComboBox>
                     <!-- 补帧模型提示:随所选模型动态更新,说明推荐/各模型的问题(选 v4.13 提示推荐,选其它提示风险) -->
                     <TextBlock x:Name="InterpModelHint" FontSize="10" Opacity="0.65" TextWrapping="Wrap"
-                               Margin="0,2,0,4" Text="通用画质 v4.13 为推荐模型(帧数精确、稳定);v4.6 与它同架构、功能一样,是备选。三支都支持 3x/4x 与指定帧率;v4.26 速度与 v4.13 同档,但不支持「高质量 TTA」。"/>
+                               Margin="0,2,0,4" Text="通用画质 v4.13 为推荐模型(帧数精确、稳定);v4.6 与它同架构、功能一样,是备选。三支都支持 3x/4x 与指定帧率;v4.26 速度与 v4.13 同档。"/>
 
                     <Button x:Name="FpsToggleBtn" Content="视频帧率 ▾" HorizontalAlignment="Stretch"
                             Click="FpsToggleBtn_Click"
@@ -744,21 +743,6 @@
                          【老设置/老预设里的 Jello / MotionBlur / DeShake 三个字段保留】按本仓库规矩"老文件字段一律
                          保留、只停止读取":字段结构不动(反序列化兼容 + 预设快照不丢字段),读取时忽略、写回写关。 -->
 
-                    <Button x:Name="AdvancedToggleBtn" Content="高级参数 ▾" HorizontalAlignment="Stretch"
-                            Click="AdvancedToggleBtn_Click"
-                            ToolTipService.ToolTip="进阶参数,一般不用动"/>
-                    <StackPanel x:Name="AdvancedPanel" Spacing="10" Margin="0,8,0,4" Visibility="Collapsed">
-                            <TextBlock Text="光流调整" Style="{StaticResource SectionTitle}"/>
-                            <CheckBox x:Name="TtaCheck" Content="开启高质量(减少伪影)" ToolTipService.ToolTip="高质量(TTA):反复推演减少补帧的跳步/扭曲伪影。⚠ 开启后会严重增加导出时间(约慢 5~7 倍)。默认关闭(追求速度);画质优先可手动开启"
-                                      Checked="Options_Changed" Unchecked="Options_Changed"/>
-                            <TextBlock Text="⚠ 开启后会严重增加导出时间" Style="{StaticResource HintText}" TextWrapping="Wrap"/>
-
-                            <!-- 【2026-09-15 用户裁决:删除「补帧输出帧率基准」下拉】(原为 SectionTitle + FpsBaseCombo
-                                 (真实时间轴插值/匀速帧速率插值) + 一行黄色提示)。固定为**真实时间轴插值**(内部 fpsMode=2):
-                                 "匀速"档只会丢掉原片的定格节奏、让画面出现时刻与原片对不上;而且代码里 fpsMode=0 与 =2
-                                 本来就没有任何分支差别(唯一区分处早已注释掉) ⇒ 一个自己都分不清、只有坏分支的选项。
-                                 VideoSettings.FpsBase 字段保留(反序列化兼容),读取忽略、写回写 0(=真实时间轴)。 -->
-                        </StackPanel>
 
                     <TextBlock x:Name="InterpHint" Style="{StaticResource HintText}"
                                TextWrapping="Wrap"/>
