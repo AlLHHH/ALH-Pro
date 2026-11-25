@@ -11082,7 +11082,16 @@ public sealed partial class VideoView : UserControl
             // 倍率:0=1x(2x缩回) 1=2x 2=3x 3=4x(自定义分辨率入口已于 2026-09-25 移除)
             if (upOn && upscaleShrink1x) scale = 2;
             bool highRate = interpScale >= 4;   // 4x 及以上
-            double totalNeedGB = 0, totalSec = 0;
+            double totalSec = 0, peakNeedGB = 0;
+            // 【2026-11-25 用户反馈「多个视频就提示过 100G」】占盘口径 = **峰值**,不是总和:
+            // 多个视频是**一个一个跑**,每片跑完 `VideoService` 的 finally 立刻删掉临时帧,
+            // 同一时刻盘上只有一片。原来是把每片的占用累加进一个总量,于是把 2 个视频报成 2 倍、
+            // 5 个报成 5 倍 —— 数字吓人,而且会把「开始前诊断」的爆盘警告误触发。
+            var perVideoNeedGB = new System.Collections.Generic.List<double>();
+            int peakW = 0, peakH = 0;      // 最占地方那一片的尺寸/帧数(给「放不下时怎么办」算路线用)
+            double maxOneNeedGB = 0;       // 下面循环里的"目前最大那一片"(只用来记元数据)
+            long peakBaseFrames = 0;
+            double peakUpMult = 1.0;
             // ===== 超 4K 判定所需的 UI 值,必须在 UI 线程先读成局部量 =====
             // XAML 对象有线程亲和:后台线程读控件会抛 RPC_E_WRONG_THREAD(0x8001010E)。
             // 历史上这里正是在下面 Task.Run 的 lambda 内读 VideoScaleRadios.SelectedIndex /
@@ -11126,17 +11135,25 @@ public sealed partial class VideoView : UserControl
                         totalSec += VideoService.EstimateProcessSeconds(dur, fps, w, h,
                             upOn, scale, engine, interpOn, interpScale, dedupOn, 0, postFx: false,
                             freeRamGB: SafeRender.FreeRamGB);   // 传空闲内存 → 估算里计入"每批引擎启动开销 × 批数"
-                        // 占盘(JPG 中间帧峰值,与 C3 一致):源帧≈1MB/1080p,放大后×倍率²×0.18
-                        double srcMB = 1.0 * ((double)w * h) / (1920.0 * 1080.0); if (srcMB < 0.5) srcMB = 0.5;
+                        // 占盘:直接调处理端守门用的**同一个**函数(唯一口径)。
+                        // 以前这里手写第二份公式(漏了补帧直出 JPG 的 3.1 倍、也漏了每批并存帧),
+                        // 两个数字必然对不上 —— 界面说「装得下」、处理端却拒绝,或反过来。
                         double outMult = upOn ? (upscaleShrink1x ? 2.0 : Math.Max(1.0, scale)) : 1.0;
-                        double outMB = Math.Max(srcMB, srcMB * outMult * outMult * 0.18); if (outMB < 0.5) outMB = 0.5;
                         long baseFrames = (long)Math.Ceiling(Math.Max(1.0, dur * fps));
-                        long peakFrames = interpOn ? (long)Math.Ceiling((double)baseFrames * interpScale) : baseFrames;
-                        totalNeedGB += peakFrames * outMB * 1.6 / 1024.0;
+                        double oneNeedGB = AlhPro.Core.TempSpaceEstimate.NeedGigabytesFor(
+                            w, h, baseFrames, interpOn, interpScale, outMult, 0);
+                        perVideoNeedGB.Add(oneNeedGB);
+                        if (oneNeedGB >= maxOneNeedGB)
+                        {
+                            maxOneNeedGB = oneNeedGB;
+                            peakW = w; peakH = h; peakBaseFrames = baseFrames; peakUpMult = outMult;
+                        }
                     }
                     catch { }
                 }
             }).ConfigureAwait(true);
+            // 峰值只认 Core 的这一个函数(逐片占用、跑完即清 ⇒ 取最大,不相加)。
+            peakNeedGB = AlhPro.Core.TempSpaceEstimate.TaskPeakGigabytes(perVideoNeedGB);
 
             // ===== 超 4K 确认弹窗(用户要求加回:超 4K 必须让用户主动确认才继续) =====
             // 只对确实超 4K 的项弹;一个都没有就完全不弹(不为了"保险"每次都打断用户)。
@@ -11309,13 +11326,13 @@ public sealed partial class VideoView : UserControl
 
             // 硬风险1:会爆盘(预计占 > 当前临时盘剩余)
             bool diskRisk = false;
-            string needTxt = $"{totalNeedGB:0.#} GB";
+            string needTxt = $"{peakNeedGB:0.#} GB";
             try
             {
                 var tempRoot = ALHPro.EngineService.TempRoot;
                 var di = new System.IO.DriveInfo(tempRoot);
                 double freeGB = di.AvailableFreeSpace / (1024.0 * 1024.0 * 1024.0);
-                if (totalNeedGB > 0 && totalNeedGB > freeGB * 0.9) diskRisk = true;
+                if (peakNeedGB > 0 && peakNeedGB > freeGB * 0.9) diskRisk = true;
             }
             catch { }
 
@@ -11334,7 +11351,34 @@ public sealed partial class VideoView : UserControl
             lines.Add($"预计处理耗时:约 {totalSec / 60:0.#} 分钟");
             lines.Add($"预计占用临时盘:约 {needTxt}");
             if (diskRisk)
+            {
                 lines.Add("⚠ 空间不足:预计占用超过临时盘可用空间,可能中途爆盘。建议:清理磁盘 / 降低超分或补帧倍率 / 换剩余空间更大的盘。");
+                // 【2026-11-25】放不下这句话必须带上「改哪一项、改完要多少、放不放得下」——
+                // 同一个公式换参数重算(不新增第二套口径),用户照着改就行,不用反复试。
+                try
+                {
+                    double freeGB = new System.IO.DriveInfo(ALHPro.EngineService.TempRoot)
+                        .AvailableFreeSpace / (1024.0 * 1024 * 1024);
+                    string Mark(double gb) => gb <= freeGB ? $"✓放得下({gb:0}GB)" : $"✗({gb:0}GB)";
+                    if (peakUpMult > 1.0001)
+                    {
+                        double gbNoUp = AlhPro.Core.TempSpaceEstimate.NeedGigabytesFor(
+                            peakW, peakH, peakBaseFrames, interpOn, interpScale, 1.0, 0);
+                        lines.Add($"  关掉「超分」(补帧保留)→ 约 {gbNoUp:0}GB {Mark(gbNoUp)}");
+                    }
+                    if (interpOn)
+                    {
+                        double gbNoInterp = AlhPro.Core.TempSpaceEstimate.NeedGigabytesFor(
+                            peakW, peakH, peakBaseFrames, false, 1, peakUpMult, 0);
+                        lines.Add($"  关掉「补帧」→ 约 {gbNoInterp:0}GB {Mark(gbNoInterp)}");
+                    }
+                    double gbNeither = AlhPro.Core.TempSpaceEstimate.NeedGigabytesFor(
+                        peakW, peakH, peakBaseFrames, false, 1, 1.0, 0);
+                    lines.Add($"  两个都关 → 约 {gbNeither:0}GB {Mark(gbNeither)}");
+                    lines.Add("  (上面是按最占地方那一片算的;多个视频是逐个跑,跑完立刻清临时帧,不会叠加)");
+                }
+                catch { }
+            }
             if (resourceRisk)
                 lines.Add("⚠ 高倍率补帧 + 设备偏弱:可能因显存不足中途出错。建议:点「一键开启兼容模式」自动降分块/批大小,或改用 2x。");
             if (weakDevice)
@@ -12841,6 +12885,10 @@ public sealed partial class VideoView : UserControl
                     }
                     item.StatusText = "✗ 失败";
                     Log($"  ✗ 失败:{ex.Message}");
+                    // 【2026-11-25】临时盘放不下时,用户最需要的是「往哪降」而不是一段长日志:
+                    // 把结论顶到状态栏(细节仍在日志区),别再让「开始」变成一个立刻失败的动作。
+                    if ((ex.Message ?? "").StartsWith("临时磁盘空间不足", StringComparison.Ordinal))
+                        VideoStatus.Text = "失败:临时盘放不下这个视频 —— 日志区给了几条更省空间的路线(关超分 / 关补帧),改完再试";
                     failCount++;
                 }
             }

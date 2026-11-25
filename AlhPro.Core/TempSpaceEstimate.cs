@@ -65,6 +65,22 @@ public static class TempSpaceEstimate
     public static double NeedBytesForBatch(long peakFrames, double peakFrameMb, int batchFrames, double sourceFrameMb)
         => NeedBytes(peakFrames, peakFrameMb, batchFrames, sourceFrameMb);
 
+    /// <summary>多视频任务的整任务峰值(GB)。
+    /// 【为什么不是相加】临时帧是**逐片占用、逐片清理**的(每个视频跑完 VideoService 的 finally 就把工作目录删掉),
+    /// 同一时刻盘上只有一个视频的帧。按"各片相加"报,2 个视频就报成 2 倍、5 个报成 5 倍 —— 用户看到的就是
+    /// 「几个视频就说过 100GB」的假警报(2026-11-25 反馈)。峰值 = 最大那一片。
+    /// 传 null / 空集合返回 0(没有视频就不占盘)。</summary>
+    public static double TaskPeakGigabytes(System.Collections.Generic.IEnumerable<double> perVideoGigabytes)
+    {
+        double max = 0;
+        if (perVideoGigabytes == null) return 0;
+        foreach (var g in perVideoGigabytes)
+        {
+            if (double.IsFinite(g) && g > max) max = g;
+        }
+        return max;
+    }
+
     /// <summary>【2026-09-23 加】按**任意一组参数**算整任务临时盘需求(GB)。
     /// 【为什么要它 —— 来自一份真实用户反馈】某个用户报"不能补帧",诊断包里真相是:
     /// 4K 源 + 2x 超分(输出 8K)+ 2x 补帧的 5 分钟素材,预估要 **262GB**,而临时盘只剩 132GB
