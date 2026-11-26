@@ -2214,7 +2214,7 @@ public sealed partial class MainPage : Page
         "【用户协议】\n" +
         "1. 本软件为免费工具,仅用于个人合法用途,请勿用于侵权、违法或有损他人权益的用途;\n" +
         "2. 处理结果仅供参考,重要素材请务必自行备份,因使用本软件造成的任何损失由使用者自行承担;\n" +
-        "3. 引擎/模型版权归各自作者所有,详见 README 与许可声明;请勿去除版权信息或用于商业倒卖;\n" +
+        "3. 本软件以 GPL-3.0 开源,可自由使用与修改;再分发时请保留版权与许可信息,改动版同样以 GPL-3.0 提供源码;引擎/模型版权归各自作者所有;\n" +
         "4. 本软件所有处理在本机完成,不上传、不收集任何用户数据。\n" +
         "5. 您已阅读并同意本协议后,方可继续使用本软件;若不同意,请退出程序。";
 
@@ -2287,7 +2287,7 @@ public sealed partial class MainPage : Page
         "3. 您可随时点广告卡右上角「✕」隐藏本次,或在「设置 → 本次运行不显示广告」勾选(勾选只对本次运行生效,重启软件自动恢复显示;广告是本软件维持开发的唯一来源,没有永久关闭项)。关闭不影响软件任何功能。\n" +
         "4. 本软件不收集您的任何个人信息用于广告定向/推荐,不将您的使用数据上传给任何广告方。\n\n" +
         "四、版权与许可\n" +
-        "1. 本软件版权归作者所有;未经许可不得商业倒卖或为营利再分发,不得移除版权/许可信息。\n" +
+        "1. 本软件以 GNU GPL v3 开源:可自由使用、修改、再分发(含商业使用);须保留版权与许可信息,分发改动版须同样以 GPL-3.0 提供源码。\n" +
         "2. 本软件基于若干开源软件构建,受各自开源许可约束(见 THIRD_PARTY_NOTICES.txt)。\n\n" +
         "五、第三方软件\n" +
         "本软件集成 FFmpeg、Real-ESRGAN、waifu2x-ncnn、Real-CUGAN、RIFE、Anime4K 着色器、ONNX Runtime、BiRefNet、Demucs、LavaSR 等开源引擎/模型;其版权、许可与免责见随软件附带的 THIRD_PARTY_NOTICES.txt 及各项目主页。\n\n" +
@@ -2666,12 +2666,12 @@ public sealed partial class MainPage : Page
         };
         copyright.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
         {
-            Text = "© 2026 AlL.H. · MIT 许可",
+            Text = "© 2026 AlL.H. · GPL-3.0 开源许可",
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
         });
         copyright.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
         {
-            Text = "「ALH Pro」软件界面与代码版权归 AlL.H 所有,以 MIT 许可开源:可自由使用、修改与分发,但须保留本版权声明与许可原文。开源模型与引擎版权归各原作者所有(见上方致谢与许可声明),仅作为本软件底层能力使用,请遵循各自的许可,请勿移除版权信息。",
+            Text = "「ALH Pro」软件界面与代码版权归 AlL.H 所有,以 GNU GPL v3 开源:可自由使用、修改与再分发(含商业使用),但须保留本版权声明、GPL-3.0 原文,并让改动后的版本同样以 GPL-3.0 开放源码。开源模型与引擎版权归各原作者所有(见上方致谢与许可声明),仅作为本软件底层能力使用,请遵循各自的许可,请勿移除版权信息。",
         });
         content.Children.Add(copyright);
 

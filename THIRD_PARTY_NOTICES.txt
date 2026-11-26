@@ -5,6 +5,11 @@ ALH Pro — 第三方组件许可声明
 
 如分发本软件,请保留本文件。
 
+【本软件本体许可】ALH Pro 本体以 GNU 通用公共许可证第 3 版(GPL-3.0)发布,原文见随包的
+LICENSE。可以自由使用、修改、再分发,也可以商用;分发时须保留本文件与 LICENSE,分发修改
+过的版本须把改动后的完整源码同样以 GPL-3.0 提供。下列第三方组件仍按各自许可分发
+(多为 MIT / BSD / Apache-2.0 / LGPL / GPL),不受本软件 GPL-3.0 的影响。
+
 【本文件是唯一源】本文件(ImgUpscalerUI\THIRD_PARTY_NOTICES.txt)是**这份声明的唯一维护源**:
   · 构建时由 csproj 复制到输出目录 → `发布版\THIRD_PARTY_NOTICES.txt`(安装包实际带的那份);
   · 仓库根目录的 `THIRD_PARTY_NOTICES.txt` 是它的**逐字节副本**(由 `打包.ps1` 的 ①f 段比对/覆盖保持同步)。
