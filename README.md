@@ -6,7 +6,7 @@
 
 **所有处理在本机完成,不上传、不收集任何用户数据。** 全程中文界面。
 
-**© 2026 AlL.H. · GPL-3.0 许可。** 免费版开源(GPL-3.0):可以自由使用、修改、再分发,也可以商用;但再分发或分发改动版时必须保留版权与许可声明,并同样以 GPL-3.0 提供源码(详见 `LICENSE`)。开源引擎与模型版权归各原作者所有(见 THIRD_PARTY_NOTICES.txt)。
+**© 2026 AlL.H. · GPL-3.0 许可。** 免费版开源(GPL-3.0):可以自由使用、修改、再分发,也可以商用;但再分发或分发改动版时必须保留版权与许可声明,并同样以 GPL-3.0 提供源码(版权声明见 `COPYRIGHT.txt`,许可全文见 `LICENSE`)。开源引擎与模型版权归各原作者所有(见 THIRD_PARTY_NOTICES.txt)。
 
 - 引擎:waifu2x / Real-ESRGAN / RIFE(基于 nihui/ncnn)、U²-Net / ISNet / BiRefNet(基于 ONNX Runtime)、FFmpeg
 - 系统要求:Windows 10/11 x64(无 GPU 也可用,自动降级 CPU)
@@ -122,7 +122,7 @@ dotnet build ImgUpscalerUI/ImgUpscalerUI.csproj -c Release -p:Platform=x64
 
 ## ⚖️ 版权与许可
 
-- **本软件本体**:ALH Pro 采用 **GNU 通用公共许可证第 3 版(GPL-3.0)**(可自由使用、修改、再分发,含商业使用;分发时须保留版权与许可声明,分发改动版须同样以 GPL-3.0 提供源码),详见 **`LICENSE`**;
+- **本软件本体**:ALH Pro 采用 **GNU 通用公共许可证第 3 版(GPL-3.0)**(可自由使用、修改、再分发,含商业使用;分发时须保留版权与许可声明,分发改动版须同样以 GPL-3.0 提供源码),详见 **`LICENSE`**(版权声明在 `COPYRIGHT.txt`);
 - **第三方引擎/模型许可明细与源码链接**见 **`THIRD_PARTY_NOTICES.txt`**;
 - **FFmpeg**:随附构建为 GPL v3(BtbN 构建),本软件以独立子进程方式调用(未链接);
 - **图片/视频/音频素材处理全部在本机完成**,不上传、不收集任何用户数据。
@@ -133,7 +133,7 @@ dotnet build ImgUpscalerUI/ImgUpscalerUI.csproj -c Release -p:Platform=x64
 
 ALH Pro 采用 **GNU 通用公共许可证第 3 版(GPL-3.0)**。**版权归 AlL.H 所有**;任何人都可以运行、研究、修改、再分发本软件,也可以拿它做商业用途,条件是:
 
-- **保留声明**:分发时保留 `LICENSE` 里的版权声明与 GPL-3.0 原文,以及 `THIRD_PARTY_NOTICES.txt`;
+- **保留声明**:分发时保留 `COPYRIGHT.txt` 里的版权声明、`LICENSE` 里的 GPL-3.0 原文,以及 `THIRD_PARTY_NOTICES.txt`;
 - **同样开源**:分发修改过的版本,必须把改动后的完整源码同样以 GPL-3.0 提供出来(仓库本身就是这份源码);
 - **不带附加条款**:不能给下游再加比 GPL-3.0 更严的额外限制;
 - **无担保**:软件按现状提供,使用后果由使用者承担。

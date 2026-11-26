@@ -1,26 +1,3 @@
-ALH Pro (ALH Pro 免费版)
-Copyright (C) 2026 AlL.H
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-本程序以 GNU 通用公共许可证第 3 版(GPL-3.0)发布。可以自由使用、修改、再分发,
-也可以商业使用;分发时须保留本声明,分发修改过的版本须把改动后的完整源码同样以
-GPL-3.0 提供。随包的第三方引擎与模型(Real-ESRGAN、Real-CUGAN、RIFE、Anime4K、
-ONNX Runtime、DirectML、FFmpeg、rembg 等)仍按各自许可分发,详见 THIRD_PARTY_NOTICES.txt。
-
-===== 以下是 GNU General Public License 第 3 版原文 =====
-
                     GNU GENERAL PUBLIC LICENSE
                        Version 3, 29 June 2007
 

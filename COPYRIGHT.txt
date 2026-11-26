@@ -1,0 +1,12 @@
+ALH Pro (ALH Pro 免费版)
+Copyright (C) 2026 AlL.H
+
+本软件以 GNU 通用公共许可证第 3 版(GPL-3.0)发布。
+This program is released under the GNU General Public License, version 3.
+
+本文件的正文即 GPL-3.0 许可全文(LICENSE)。上面这几行是本软件的版权声明;
+GPL-3.0 要求:再分发时保留这份版权声明与许可原文;分发改动过的版本,
+须把改动后的完整源码同样以 GPL-3.0 提供。
+
+源代码:https://github.com/AlLHHH/ALH-Pro
+第三方组件仍按各自许可(见 THIRD_PARTY_NOTICES.txt)。
