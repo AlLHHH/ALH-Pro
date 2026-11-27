@@ -3,12 +3,15 @@ contact_links:
   - name: 官网与下载(安装包 / 完整版 / 模型包)
     url: https://alhpro.cn/download.html
     about: 请先从官网下载最新版。官网与 GitHub Releases 是本项目仅有的两个官方下载渠道。
-  - name: 使用教程
-    url: https://alhpro.cn/tutorial.html
-    about: 安装、显卡设置、超分 / 补帧 / 抠图 / 音频处理的图文步骤。
+  - name: 去除重复帧是什么
+    url: https://github.com/AlLHHH/ALH-Pro#关于去除重复帧
+    about: 这里指删除动画里重复的保持帧(一拍二、一拍三),不是平台搬运去重。提问前先看这段说明。
   - name: 常见问题(FAQ)
     url: https://alhpro.cn/faq.html
-    about: 装不上 / 双击没反应 / 提示未知发布者 / 跑得慢 / 首次启动较慢 —— 先看这里。
+    about: 装不上、双击没反应、提示未知发布者、跑得慢、首次启动较慢,先看这里。
+  - name: 更新日志
+    url: https://alhpro.cn/changelog.html
+    about: 每个版本改了什么。
   - name: 开源许可清单与第三方来源
     url: https://alhpro.cn/licenses.html
     about: 随包引擎与模型各自的许可、来源与校验值。

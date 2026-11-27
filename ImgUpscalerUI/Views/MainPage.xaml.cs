@@ -2331,6 +2331,8 @@ public sealed partial class MainPage : Page
         "2. 本软件基于若干开源软件构建,受各自开源许可约束(见 THIRD_PARTY_NOTICES.txt)。\n\n" +
         "五、第三方软件\n" +
         "本软件集成 FFmpeg、Real-ESRGAN、waifu2x-ncnn、Real-CUGAN、RIFE、Anime4K 着色器、ONNX Runtime、BiRefNet、Demucs、LavaSR 等开源引擎/模型;其版权、许可与免责见随软件附带的 THIRD_PARTY_NOTICES.txt 及各项目主页。\n\n" +
+        "六、功能范围\n" +
+        "视频处理中的「去除重复帧」指删除动画里重复的作画帧(一拍二、一拍三产生的保持帧),用于还原素材的内容帧率,属于画质处理。本软件不提供内容搬运、平台查重规避一类的功能。\n\n" +
         "以上声明最终解释权归作者所有,并随版本更新而可能调整。";
 
     private void ShowPrivacyPolicy()

@@ -476,7 +476,7 @@
 
                     <TextBlock Text="去重复帧" Style="{StaticResource SectionTitle}"/>
 
-                    <CheckBox x:Name="DedupCheck" Content="启用去重(静态/低变化画面)" ToolTipService.ToolTip="去除重复/静止帧,动漫必备,去重后自动得出内容帧率;可单独使用,不勾补帧也能只去重导出。算法:智能=自动识别素材拍数(一拍N)均匀采样;动漫=按动画拍型(一拍二/三/四)均匀采样;手动=自己选算法调参(含内容帧率采样)"
+                    <CheckBox x:Name="DedupCheck" Content="启用去重复帧(删除重复的保持帧)" ToolTipService.ToolTip="删除动画里重复的保持帧(一拍二、一拍三中重复的画面),还原素材真实的内容帧率;补帧前开启可避免重复帧被重复插帧。算法:智能=自动识别拍数后均匀采样;动漫=按动画拍型采样;手动=自选算法与参数。只删确认为重复的作画帧,口型与微动不删"
                               Checked="Options_Changed" Unchecked="Options_Changed"/>
                     <TextBlock Text="去重模型" Style="{StaticResource SectionTitle}"/>
                     <ComboBox x:Name="DedupModelCombo" HorizontalAlignment="Stretch" ToolTipService.ToolTip="去重模型:智能=自动识别素材拍数(一拍N)并均匀采样;动漫=按动画拍型(一拍二/三/四)均匀采样;手动=自己选算法(含内容帧率采样)自由调参"

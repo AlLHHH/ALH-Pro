@@ -100,3 +100,7 @@ website/
 
 /_*
 
+
+/.diag2_tmp/
+/.probe/
+/.soft_copyright_v10/
