@@ -78,6 +78,37 @@ public class GpuVisibilityTests
         Assert.Single(missing);
     }
 
+    // 【2026-11-27】「Microsoft Remote Display Adapter」等系统虚拟适配器只存在于设备表,
+    // 永远不会出现在 Vulkan/DXGI 硬件枚举里 —— 不排掉就每台机器一开软件就弹「显卡不见了」。
+    [Fact]
+    public void MissingFromEnumerations_系统虚拟适配器不参与比对()
+    {
+        var missing = GpuVisibility.MissingFromEnumerations(
+            new List<string>
+            {
+                "AMD Radeon(TM) 610M",
+                "Microsoft Remote Display Adapter",
+                "Microsoft Basic Render Driver",
+            },
+            new List<string> { "AMD Radeon(TM) 610M" },
+            new List<string>());
+
+        Assert.Empty(missing);
+    }
+
+    [Fact]
+    public void IsSystemVirtualAdapter_认得微软与串流投屏的适配器()
+    {
+        Assert.True(GpuVisibility.IsSystemVirtualAdapter("Microsoft Remote Display Adapter"));
+        Assert.True(GpuVisibility.IsSystemVirtualAdapter("microsoft basic render driver"));
+        Assert.True(GpuVisibility.IsSystemVirtualAdapter("Parsec Virtual Display Adapter"));
+        Assert.True(GpuVisibility.IsSystemVirtualAdapter("Spacedesk Indirect Display"));
+        Assert.False(GpuVisibility.IsSystemVirtualAdapter("AMD Radeon(TM) 610M"));
+        Assert.False(GpuVisibility.IsSystemVirtualAdapter("NVIDIA GeForce RTX 5060 Laptop GPU"));
+        Assert.False(GpuVisibility.IsSystemVirtualAdapter("Intel(R) UHD Graphics 630"));
+        Assert.False(GpuVisibility.IsSystemVirtualAdapter(null));
+    }
+
     [Fact]
     public void Same_大小写与包含都算同一张卡()
     {

@@ -27,6 +27,15 @@ namespace AlhPro
         public static readonly string[] ImageExtensions =
         {
             ".png", ".jpg", ".jpeg", ".jfif", ".webp", ".bmp", ".tif", ".tiff", ".gif", ".avif",
+            ".heic", ".heif",
+        };
+
+        /// <summary>纯音频后缀(音频页用来分流;视频后缀另算 —— 视频拖到音频页会当场提取音轨)。
+        /// 【2026-11-27】原来窗口级拖放只认「视频 / 图片」两类,mp3 拖到音频页被当成非法文件,
+        /// 混合拖放里的 mp3 也会无提示消失。</summary>
+        public static readonly string[] AudioExtensions =
+        {
+            ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".opus", ".wma", ".aif", ".aiff", ".ape",
         };
 
         /// <summary>一次最多收多少个文件:够用,且不会因为拖进一个大目录而假死。</summary>

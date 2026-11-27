@@ -582,10 +582,29 @@ public sealed partial class AudioView : UserControl
             System.IO.Directory.CreateDirectory(dir);
             string wav = System.IO.Path.Combine(dir,
                 System.IO.Path.GetFileNameWithoutExtension(videoPath) + ".wav");
-            if (File.Exists(wav) && new FileInfo(wav).Length > 1024)
-                return wav;                       // 同一个视频拖过:直接复用
+            // 【2026-11-27 审查发现】原来只判「文件在、超过 1KB」就复用,不看源文件有没有变:
+            // 源视频剪过/重新导出后仍拿旧 WAV(音画对不上),上次中途取消留下的半截 WAV 也会被当成品。
+            // 现在把「源文件大小 + 修改时间」记在 .stamp 里,对不上就重新提取。
+            string stamp = wav + ".stamp";
+            string want = "";
+            try
+            {
+                var fi = new FileInfo(videoPath);
+                if (fi.Exists) want = fi.Length + "|" + fi.LastWriteTimeUtc.Ticks;
+            }
+            catch { }
+            bool fresh = want.Length > 0
+                && File.Exists(wav) && new FileInfo(wav).Length > 1024
+                && File.Exists(stamp) && File.ReadAllText(stamp) == want;
+            if (fresh) return wav;               // 同一个视频、同一份源文件:直接复用
+            try { if (File.Exists(wav)) File.Delete(wav); } catch { }
             await AudioService.ConvertToWavSameRateAsync(videoPath, wav);
-            return File.Exists(wav) && new FileInfo(wav).Length > 1024 ? wav : null;
+            if (File.Exists(wav) && new FileInfo(wav).Length > 1024)
+            {
+                try { if (want.Length > 0) File.WriteAllText(stamp, want); } catch { }
+                return wav;
+            }
+            return null;
         }
         catch (Exception ex)
         {
@@ -629,7 +648,15 @@ public sealed partial class AudioView : UserControl
                 videos++;
                 // 先看这个视频到底有没有音轨 —— 没有音轨的视频提不出东西,
                 // 硬跑一次 ffmpeg 只会失败并给用户一句"提取失败"(实测撞到过)。
-                var (vdur, ch, _, _, _) = AudioService.Probe(p);
+                // 【2026-11-27 审查发现】Probe 是同步 `Process.WaitForExit`,以前在 UI 线程逐个跑:
+                // 一次拖 5 个 4K 视频进来,窗口会定格好几秒,用户以为没反应又拖一遍。
+                if (paths.Length > 1)
+                {
+                    ShowImportProgress($"正在读取 {done}/{paths.Length}:{System.IO.Path.GetFileName(p)}",
+                        done * 100.0 / paths.Length);
+                    await Task.Yield();
+                }
+                var (vdur, ch, _, _, _) = await Task.Run(() => AudioService.Probe(p));
                 probedDur = vdur;
                 if (ch <= 0)
                 {
@@ -663,8 +690,8 @@ public sealed partial class AudioView : UserControl
             }
             var it = new AudioItem { Path = usePath };
             it.Display = display;
-            // 探测时长(用于裁剪滑块与展示)
-            var (dur, _, _, _, _) = AudioService.Probe(usePath);
+            // 探测时长(用于裁剪滑块与展示)—— 同样挪到后台线程,别卡 UI
+            var (dur, _, _, _, _) = await Task.Run(() => AudioService.Probe(usePath));
             it.DurationSec = (float)(dur > 0 ? dur : probedDur);
             _items.Add(it);
             AudioList.Items.Add(it);

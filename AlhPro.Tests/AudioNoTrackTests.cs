@@ -30,7 +30,8 @@ namespace AlhPro.Tests
         public void A_video_without_audio_is_not_sent_through_the_extractor()
         {
             var s = View();
-            int probe = s.IndexOf("var (vdur, ch, _, _, _) = AudioService.Probe(p);", StringComparison.Ordinal);
+            // 探测挪到后台线程跑(2026-11-27:同步 WaitForExit 在 UI 线程会把窗口卡住),所以这里是 await Task.Run 的形式
+            int probe = s.IndexOf("AudioService.Probe(p)", StringComparison.Ordinal);
             int guard = s.IndexOf("if (ch <= 0)", StringComparison.Ordinal);
             int extract = s.IndexOf("string? wav = await ExtractAudioToWavAsync(p);", StringComparison.Ordinal);
             Assert.True(probe > 0, "没有先探测源视频的声道数");

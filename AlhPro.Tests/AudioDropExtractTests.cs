@@ -36,9 +36,10 @@ namespace AlhPro.Tests
         {
             var src = Read("ImgUpscalerUI", "Views", "MainPage.xaml.cs");
             Assert.Contains("bool curAudio = _currentTag == \"audio\";", src);
-            Assert.Contains("if (asVideos.Length > 0 && curAudio) target = \"audio\";", src);
+            // 2026-11-27:音频页现在视频和纯音频都收(mp3 拖到空白处以前被判非法)
+            Assert.Contains("if (curAudio && (asVideos.Length > 0 || asAudio.Length > 0)) target = \"audio\";", src);
             // 音频目标必须排在最前面,否则会先被「视频→视频页」那条接走
-            var audioIdx = src.IndexOf("if (asVideos.Length > 0 && curAudio) target = \"audio\";", StringComparison.Ordinal);
+            var audioIdx = src.IndexOf("if (curAudio && (asVideos.Length > 0 || asAudio.Length > 0)) target = \"audio\";", StringComparison.Ordinal);
             var videoIdx = src.IndexOf("else if (asVideos.Length > 0 && (curVideo || asImages.Length == 0)) target = \"video\";", StringComparison.Ordinal);
             Assert.True(audioIdx > 0 && videoIdx > audioIdx, "音频页的判断必须在视频页之前");
         }
@@ -48,8 +49,8 @@ namespace AlhPro.Tests
         {
             var src = Read("ImgUpscalerUI", "Views", "MainPage.xaml.cs");
             Assert.Contains("await _audioView.AcceptDroppedFilesAsync(paths);", src);
-            // 音频目标传的是视频数组(视频里提取音频),不能退化成图片数组
-            Assert.Contains("string[] paths = target == \"video\" || target == \"audio\" ? asVideos : asImages;", src);
+            // 音频目标传的是「视频 + 音频」两类的并集(视频里提取音轨、音频直接进列表)
+            Assert.Contains("paths = asVideos.Concat(asAudio)", src);
         }
 
         [Fact]

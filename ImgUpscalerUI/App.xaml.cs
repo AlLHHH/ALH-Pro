@@ -256,6 +256,15 @@ namespace ALHPro
                 if (n > 0) AppLogger.Info($"回收残留引擎进程 {n} 个(它们会占着 GPU 不放,是'编码变慢/硬编不可用'的常见诱因)");
             }
             catch { }
+            // 【2026-11-27 审查发现】音频页「视频导入即转 WAV」把产物缓存在 %LOCALAPPDATA%\ALHPro\audio-src,
+            // 以前永不清理:跑了几十个视频后能悄悄占掉几个 GB,用户既看不到也删不掉。
+            // 这里只删「超过 30 天没碰过」的缓存(每个源视频一个子目录,目录本身按最后写入时间算),正在用的不会被碰。
+            try
+            {
+                int pruned = PruneAudioWavCache(TimeSpan.FromDays(30), out long freed);
+                if (pruned > 0) AppLogger.Info($"清理音频临时缓存:删掉 {pruned} 个 30 天没动过的目录,释放 {freed / 1024.0 / 1024.0:0.0} MB");
+            }
+            catch { }
             // 【修复 一打开软件就启动即退出 · 2026-09-16 用户实测】旧版这里把"所有固定盘根目录"也塞进了扫描列表
             // (DriveInfo.GetDrives() → C:\ / D:\ / E:\),接着对每个 root 做 EnumerateDirectories。
             // 而本机【枚举 D:\ 盘根】会让任意 .NET 8 进程直接 AccessViolation(退出码 0xC0000005)硬崩:
@@ -413,6 +422,37 @@ namespace ALHPro
                     "(可能是另一个窗口/ALH Pro Max 正在跑的任务;" +
                     $"删除 {dirs} 个目录 / {files} 个文件 / {bytes / 1024.0 / 1024.0:0.#} MB)");
             return (dirs, files, bytes, false);
+        }
+
+        /// <summary>清掉 audio-src 里长期没动过的 WAV 缓存(音频页「视频导入即转 WAV」的产物)。
+        /// 只按子目录最后写入时间判断,删的是整目录;正在提取的目录刚写过,不会被选中。
+        /// 返回删除的目录数,out 参数回传释放的字节数。</summary>
+        private static int PruneAudioWavCache(TimeSpan olderThan, out long freedBytes)
+        {
+            freedBytes = 0;
+            int removed = 0;
+            string root = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ALHPro", "audio-src");
+            if (!System.IO.Directory.Exists(root)) return 0;
+            DateTime cut = DateTime.UtcNow - olderThan;
+            foreach (var dir in System.IO.Directory.EnumerateDirectories(root))
+            {
+                try
+                {
+                    if (System.IO.Directory.GetLastWriteTimeUtc(dir) > cut) continue;
+                    long size = 0;
+                    foreach (var f in System.IO.Directory.EnumerateFiles(dir, "*", System.IO.SearchOption.AllDirectories))
+                    {
+                        try { size += new System.IO.FileInfo(f).Length; } catch { }
+                    }
+                    System.IO.Directory.Delete(dir, recursive: true);
+                    freedBytes += size;
+                    removed++;
+                }
+                catch { }
+            }
+            return removed;
         }
 
         /// <summary>把关"这个目录能不能拿去扫残留",返回规范化后的目录(供去重),不放行时返回 null。

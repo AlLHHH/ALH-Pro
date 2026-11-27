@@ -932,9 +932,12 @@ public sealed partial class ImageToolGrid : UserControl
     private static System.Drawing.Bitmap ApplyExifOrientation(System.Drawing.Bitmap src) => ExifFix.Apply(src);
 
     // ---------- 拖拽添加 ----------
+    /// <summary>图片页认的后缀。**必须与 AlhPro.Core.DroppedPaths.ImageExtensions 同一份**:
+    /// 以前这里手抄了一份更窄的名单(漏了 .gif/.jfif),于是 gif 拖进图片页被整批丢掉,
+    /// 还反过来提示用户「这是视频:拖到视频处理页」(2026-11-27 审查发现)。</summary>
     public static bool IsImageExt(string ext)
-        => ext.ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".webp" or ".bmp"
-            or ".tif" or ".tiff" or ".heic" or ".heif" or ".avif";
+        => !string.IsNullOrEmpty(ext)
+           && AlhPro.DroppedPaths.ImageExtensions.Contains(ext.ToLowerInvariant());
 
     private void DropBorder_DragOver(object sender, DragEventArgs e)
         => e.AcceptedOperation = DataPackageOperation.Copy;

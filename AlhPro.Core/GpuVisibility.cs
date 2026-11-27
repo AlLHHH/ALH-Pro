@@ -20,14 +20,50 @@ public static class GpuVisibility
     {
         var result = new List<string>();
         if (registryNames == null) return result;
+        // 只要设备表里还有一张「真显卡」,系统虚拟适配器就不值得报(它们永远不会进硬件枚举)。
+        // 反过来,一台机器只剩 Microsoft Basic Display Adapter 这类名字 —— 那正是驱动掉光的故障现场,
+        // 这时必须照实报出来,不能被过滤静默掉。
+        bool hasRealAdapter = false;
         foreach (var r in registryNames)
         {
             if (string.IsNullOrWhiteSpace(r)) continue;
+            if (!IsSystemVirtualAdapter(r)) { hasRealAdapter = true; break; }
+        }
+        foreach (var r in registryNames)
+        {
+            if (string.IsNullOrWhiteSpace(r)) continue;
+            // 【2026-11-27】系统自带的虚拟显示适配器(RDP 的「Microsoft Remote Display Adapter」、
+            // 「Microsoft Basic Display/ Render Adapter」、串流/投屏的 Indirect Display 等)本来就不会出现在
+            // Vulkan/DXGI 的硬件枚举里,但它们会进系统设备表 —— 不排掉就会天天对用户喊「有一张显卡不见了」。
+            if (hasRealAdapter && IsSystemVirtualAdapter(r)) continue;
             if (ContainsName(engineNames, r) || ContainsName(dxgiNames, r)) continue;
             if (ContainsName(result, r)) continue;
             result.Add(r.Trim());
         }
         return result;
+    }
+
+    /// <summary>
+    /// 系统/远程/虚拟显示适配器 —— 它们只存在于系统设备表,永远不会出现在 Vulkan/DXGI 的硬件枚举里,
+    /// 拿去比对就会天天误报「显卡不见了」。
+    ///
+    /// <para>实测来源(2026-11-27 本机):Windows 长期存在的「Microsoft Remote Display Adapter」
+    /// 让每台机器一开软件就弹「⚠ 显卡可用性异常」。真实显卡名里不含这些关键词。</para>
+    /// </summary>
+    public static bool IsSystemVirtualAdapter(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return false;
+        string n = name.Trim().ToUpperInvariant();
+        if (n.Contains("MICROSOFT", StringComparison.Ordinal)) return true;          // Basic Display / Basic Render / Remote Display / Hyper-V
+        if (n.Contains("REMOTE DISPLAY", StringComparison.Ordinal)) return true;
+        if (n.Contains("BASIC RENDER", StringComparison.Ordinal)) return true;
+        if (n.Contains("BASIC DISPLAY", StringComparison.Ordinal)) return true;
+        if (n.Contains("INDIRECT DISPLAY", StringComparison.Ordinal)) return true;
+        if (n.Contains("VIRTUAL DISPLAY", StringComparison.Ordinal)) return true;
+        if (n.Contains("MIRROR DRIVER", StringComparison.Ordinal)) return true;
+        if (n.Contains("PARSEC", StringComparison.Ordinal)) return true;
+        if (n.Contains("SPACEDESK", StringComparison.Ordinal)) return true;
+        return false;
     }
 
     /// <summary>列表里是否有与 <paramref name="probe"/> 指同一张卡的名字。</summary>

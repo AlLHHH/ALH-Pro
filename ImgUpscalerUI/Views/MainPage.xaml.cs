@@ -1451,6 +1451,18 @@ public sealed partial class MainPage : Page
                 var ext = System.IO.Path.GetExtension(p);
                 return AlhPro.DroppedPaths.VideoExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
             });
+            // 【2026-11-27】纯音频(或拖到 exe 图标上的 mp3)以前一律被送进图片页,
+            // 再撞上「这是视频:拖到视频处理页」的错提示。这里按后缀分派到音频页。
+            bool hasAudio = paths.Any(p =>
+                AlhPro.DroppedPaths.AudioExtensions.Contains(
+                    System.IO.Path.GetExtension(p), StringComparer.OrdinalIgnoreCase));
+            if (hasAudio && !hasVideo)
+            {
+                if (_currentTag != "audio") ShowView("audio");
+                await Task.Delay(60);
+                await ImportPathsAsync(paths, "系统拖放(音频)");
+                return;
+            }
             if (hasVideo && _currentTag != "video") ShowView("video");
             else if (!hasVideo && _currentTag != "upscale") ShowView("upscale");
             await Task.Delay(60);   // 页面切换是同步建视图,给它一帧落地时间再塞文件
@@ -1541,7 +1553,18 @@ public sealed partial class MainPage : Page
     {
         try
         {
-            if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
+            if (!e.DataView.Contains(StandardDataFormats.StorageItems))
+            {
+                // 【2026-11-27】拖放光标在 DragOver 里一律显示「可复制」,但压缩包内/网盘在线文件
+                // 只给 FileGroupDescriptorW 这类虚拟格式 —— 这里以前直接 return:光标正常、松手毫无反应,
+                // 用户判断不了是软件坏了还是文件不支持。现在当场说清楚。
+                e.Handled = true;
+                string fmt;
+                try { fmt = string.Join(",", e.DataView.AvailableFormats); } catch { fmt = "(读不出)"; }
+                AppLogger.Warn($"拖入:没有 StorageItems(数据格式=[{fmt}]) —— 多半是压缩包内/网盘在线文件");
+                SetStatusLine(DropNoLocalPathHint);
+                return;
+            }
             e.Handled = true;
             System.Collections.Generic.IReadOnlyList<Windows.Storage.IStorageItem> items;
             try
@@ -1576,14 +1599,20 @@ public sealed partial class MainPage : Page
             // 把图片当视频送进另外一页 —— 用户看到的就是「视频能拖进图片页」。
             var videoExts = new HashSet<string>(AlhPro.DroppedPaths.VideoExtensions, StringComparer.OrdinalIgnoreCase);
             var imageExts = new HashSet<string>(AlhPro.DroppedPaths.ImageExtensions, StringComparer.OrdinalIgnoreCase);
+            // 【2026-11-27】音频单独算一类:以前窗口级拖放只认视频/图片,mp3 拖到音频页
+            // (除列表那块以外的任何位置)会被判「既不是视频也不是图片」直接丢掉;
+            // [mp4, mp3] 一起拖到音频页时 mp3 也无声消失。
+            var audioExts = new HashSet<string>(AlhPro.DroppedPaths.AudioExtensions, StringComparer.OrdinalIgnoreCase);
             var asVideos = AlhPro.DroppedPaths.Expand(raw, images: false)
                 .Where(p => videoExts.Contains(Path.GetExtension(p))).ToArray();
             var asImages = AlhPro.DroppedPaths.Expand(raw, images: true)
                 .Where(p => imageExts.Contains(Path.GetExtension(p))).ToArray();
-            if (asVideos.Length == 0 && asImages.Length == 0)
+            var asAudio = AlhPro.DroppedPaths.Expand(raw, images: false)
+                .Where(p => audioExts.Contains(Path.GetExtension(p))).ToArray();
+            if (asVideos.Length == 0 && asImages.Length == 0 && asAudio.Length == 0)
             {
-                AppLogger.Warn($"拖入:{raw.Length} 个文件既不是视频也不是图片,已跳过(只支持视频与图片)");
-                SetStatusLine("拖进来的文件既不是视频也不是图片 —— 视频认 mp4/mkv/mov 等,图片认 png/jpg/webp 等");
+                AppLogger.Warn($"拖入:{raw.Length} 个文件既不是视频也不是图片或音频,已跳过");
+                SetStatusLine("拖进来的文件既不是视频、图片,也不是音频 —— 视频认 mp4/mkv/mov,图片认 png/jpg/webp,音频认 mp3/wav/flac");
                 return;
             }
             bool curVideo = _currentTag == "video";
@@ -1592,17 +1621,28 @@ public sealed partial class MainPage : Page
 
             string target;
             // 【2026-11-19】视频拖到音频页 = 直接提取音频(用户要求),不再切去视频页。
-            if (asVideos.Length > 0 && curAudio) target = "audio";
+            // 【2026-11-27】纯音频同理:拖到哪一页都能落到音频页,而不是被判非法。
+            if (curAudio && (asVideos.Length > 0 || asAudio.Length > 0)) target = "audio";
             else if (asVideos.Length > 0 && (curVideo || asImages.Length == 0)) target = "video";
             else if (asImages.Length > 0) target = curImage ? _currentTag! : "upscale";
+            else if (asAudio.Length > 0) target = "audio";
             else
             {
-                AppLogger.Info($"拖入被拒({_currentTag ?? "?"}):{items.Count} 项里没有可识别的视频或图片");
+                AppLogger.Info($"拖入被拒({_currentTag ?? "?"}):{items.Count} 项里没有可识别的视频/图片/音频");
                 return;
             }
 
-            string[] paths = target == "video" || target == "audio" ? asVideos : asImages;
-            string kind = target == "audio" ? "音频(从视频提取)" : (target == "video" ? "视频" : "图片");
+            string[] paths;
+            if (target == "audio")
+            {
+                // 音频页既能收音频,也能收视频(当场提取音轨),两类一起给过去。
+                paths = asVideos.Concat(asAudio).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            }
+            else
+            {
+                paths = target == "video" ? asVideos : asImages;
+            }
+            string kind = target == "audio" ? "音频/视频(提取音轨)" : (target == "video" ? "视频" : "图片");
             AppLogger.Info($"拖入({_currentTag ?? "?"} → {target}):{items.Count} 项 → {paths.Length} 个{kind}");
 
             if (target != _currentTag)

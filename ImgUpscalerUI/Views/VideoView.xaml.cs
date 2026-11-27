@@ -11082,6 +11082,7 @@ public sealed partial class VideoView : UserControl
             // 倍率:0=1x(2x缩回) 1=2x 2=3x 3=4x(自定义分辨率入口已于 2026-09-25 移除)
             if (upOn && upscaleShrink1x) scale = 2;
             bool highRate = interpScale >= 4;   // 4x 及以上
+            bool fastModeNow = FastModeCheck.IsChecked == true;   // 只有给"批大小"估算用,别在后台线程读控件
             double totalSec = 0, peakNeedGB = 0;
             // 【2026-11-25 用户反馈「多个视频就提示过 100G」】占盘口径 = **峰值**,不是总和:
             // 多个视频是**一个一个跑**,每片跑完 `VideoService` 的 finally 立刻删掉临时帧,
@@ -11140,8 +11141,23 @@ public sealed partial class VideoView : UserControl
                         // 两个数字必然对不上 —— 界面说「装得下」、处理端却拒绝,或反过来。
                         double outMult = upOn ? (upscaleShrink1x ? 2.0 : Math.Max(1.0, scale)) : 1.0;
                         long baseFrames = (long)Math.Ceiling(Math.Max(1.0, dur * fps));
+                        // 【2026-11-27 审查发现】这里以前把 batchFrames 传 0,漏了「一批里同时占盘的两侧」;
+                        // 而处理端守门用的是真实批大小(VideoService.cs 的 perfBatchFrames,上限 700 帧)。
+                        // 于是界面少算 1~2GB:显示「✓放得下」,点开始立刻被守门拒绝(「临时磁盘空间不足」)。
+                        // 现在用处理端同一个批计划函数算批大小,口径对齐。
+                        int batchFrames = 0;
+                        try
+                        {
+                            long postFrames = interpOn ? baseFrames * Math.Max(1, interpScale) : baseFrames;
+                            int srcFramesClamp = (int)Math.Clamp(baseFrames, 1, 5_000_000);
+                            int postFramesClamp = (int)Math.Clamp(postFrames, 1, 5_000_000);
+                            batchFrames = SafeRender.GetVideoBatchPlan(
+                                srcFramesClamp, postFramesClamp, fastModeNow, diskTight: false,
+                                w, h, outW, outH).BatchSize;
+                        }
+                        catch { batchFrames = 0; }
                         double oneNeedGB = AlhPro.Core.TempSpaceEstimate.NeedGigabytesFor(
-                            w, h, baseFrames, interpOn, interpScale, outMult, 0);
+                            w, h, baseFrames, interpOn, interpScale, outMult, batchFrames);
                         perVideoNeedGB.Add(oneNeedGB);
                         if (oneNeedGB >= maxOneNeedGB)
                         {
@@ -11360,20 +11376,36 @@ public sealed partial class VideoView : UserControl
                     double freeGB = new System.IO.DriveInfo(ALHPro.EngineService.TempRoot)
                         .AvailableFreeSpace / (1024.0 * 1024 * 1024);
                     string Mark(double gb) => gb <= freeGB ? $"✓放得下({gb:0}GB)" : $"✗({gb:0}GB)";
+                    // 每条路线都要连"每批并存帧"一起算(与主数字、处理端守门同一口径),
+                    // 否则这里会给出偏乐观的 ✓,用户照着改完照样被拒绝。
+                    double NeedGbFor(bool withInterp, double upMult)
+                    {
+                        long bf = peakBaseFrames;
+                        int batch = 0;
+                        try
+                        {
+                            long post = withInterp ? bf * Math.Max(1, interpScale) : bf;
+                            int outW2 = (int)Math.Max(1, Math.Round(peakW * upMult));
+                            int outH2 = (int)Math.Max(1, Math.Round(peakH * upMult));
+                            batch = SafeRender.GetVideoBatchPlan(
+                                (int)Math.Clamp(bf, 1, 5_000_000), (int)Math.Clamp(post, 1, 5_000_000),
+                                fastModeNow, diskTight: false, peakW, peakH, outW2, outH2).BatchSize;
+                        }
+                        catch { batch = 0; }
+                        return AlhPro.Core.TempSpaceEstimate.NeedGigabytesFor(
+                            peakW, peakH, bf, withInterp, withInterp ? Math.Max(1, interpScale) : 1, upMult, batch);
+                    }
                     if (peakUpMult > 1.0001)
                     {
-                        double gbNoUp = AlhPro.Core.TempSpaceEstimate.NeedGigabytesFor(
-                            peakW, peakH, peakBaseFrames, interpOn, interpScale, 1.0, 0);
+                        double gbNoUp = NeedGbFor(interpOn, 1.0);
                         lines.Add($"  关掉「超分」(补帧保留)→ 约 {gbNoUp:0}GB {Mark(gbNoUp)}");
                     }
                     if (interpOn)
                     {
-                        double gbNoInterp = AlhPro.Core.TempSpaceEstimate.NeedGigabytesFor(
-                            peakW, peakH, peakBaseFrames, false, 1, peakUpMult, 0);
+                        double gbNoInterp = NeedGbFor(false, peakUpMult);
                         lines.Add($"  关掉「补帧」→ 约 {gbNoInterp:0}GB {Mark(gbNoInterp)}");
                     }
-                    double gbNeither = AlhPro.Core.TempSpaceEstimate.NeedGigabytesFor(
-                        peakW, peakH, peakBaseFrames, false, 1, 1.0, 0);
+                    double gbNeither = NeedGbFor(false, 1.0);
                     lines.Add($"  两个都关 → 约 {gbNeither:0}GB {Mark(gbNeither)}");
                     lines.Add("  (上面是按最占地方那一片算的;多个视频是逐个跑,跑完立刻清临时帧,不会叠加)");
                 }

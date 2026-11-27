@@ -93,7 +93,20 @@ public static class AppSettings
                 try { GpuName = GpuInfo.GetEngineDeviceName(GpuIndex) ?? ""; } catch { }
                 return;
             }
-            var d = System.Text.Json.JsonSerializer.Deserialize<Data>(File.ReadAllText(FilePath));
+            // 主文件读不出来(截断/损坏)时回退到 Save 时留下的 .bak —— 否则一次断电就把显卡编号、
+            // 临时目录、自检结论、问卷状态全丢成默认值。
+            string raw;
+            try
+            {
+                raw = File.ReadAllText(FilePath);
+            }
+            catch
+            {
+                string bak = FilePath + ".bak";
+                if (!File.Exists(bak)) throw;
+                raw = File.ReadAllText(bak);
+            }
+            var d = System.Text.Json.JsonSerializer.Deserialize<Data>(raw);
             if (d is null) return;
             AutoRemoveDone = d.AutoRemoveDone;
             GpuIndex = d.GpuIndex;
@@ -131,9 +144,8 @@ public static class AppSettings
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-                File.WriteAllText(FilePath,
-                    System.Text.Json.JsonSerializer.Serialize(new Data
-                    {
+                string json = System.Text.Json.JsonSerializer.Serialize(new Data
+                {
                         AutoRemoveDone = AutoRemoveDone,
                         GpuIndex = GpuIndex,
                         GpuName = GpuName,
@@ -153,9 +165,31 @@ public static class AppSettings
                         LastShownVersion = LastShownVersion,
                         HideUpdatePopup = HideUpdatePopup,
                         PendingUpdateTag = PendingUpdateTag,
-                    }));
+                    });
+                WriteAtomic(FilePath, json);
             }
             catch { /* 保存失败忽略 */ }
+        }
+    }
+
+    /// <summary>【2026-11-27 审查发现】原来直接 <c>File.WriteAllText</c> 覆盖设置文件:
+    /// 启动计数每次开机都写一次,写的那几毫秒被强杀/断电就会留下截断的 JSON ⇒ 下次 Load 走默认值,
+    /// 显卡编号、临时目录、自检结论、问卷状态全丢。现在先写临时文件再原子替换,并留一份 .bak 兜底。</summary>
+    private static void WriteAtomic(string path, string text)
+    {
+        string tmp = path + ".tmp";
+        string bak = path + ".bak";
+        File.WriteAllText(tmp, text);
+        try
+        {
+            if (File.Exists(path)) File.Replace(tmp, path, bak, ignoreMetadataErrors: true);
+            else File.Move(tmp, path);
+        }
+        catch
+        {
+            // 原子替换失败(权限/杀软占用):退回直接写,至少不丢这次的值。
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+            File.WriteAllText(path, text);
         }
     }
 
